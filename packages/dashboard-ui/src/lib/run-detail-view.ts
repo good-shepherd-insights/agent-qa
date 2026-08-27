@@ -63,6 +63,16 @@ export const MASKED_EMAIL_LABEL = 'masked email'
  */
 export const SCREENSHOT_UNAVAILABLE_LABEL = 'screenshot unavailable'
 
+/**
+ * What the tree says when the durable read itself FAILED (405-08 · D-03).
+ *
+ * Distinct from an empty projection on purpose. A run that recorded no steps and a run whose
+ * detail could not be read are different facts, and rendering both as an empty tree would make a
+ * server fault indistinguishable from a quiet test — the exact confusion D-18 removes at the
+ * member level, applied one level up.
+ */
+export const RUN_DETAIL_UNAVAILABLE_LABEL = 'Could not load this run\u2019s steps.'
+
 /** The screen-context affordance when the post-state matched the pre-state (RESEARCH D2). */
 export const SCREEN_STATE_UNCHANGED_LABEL = 'state unchanged'
 

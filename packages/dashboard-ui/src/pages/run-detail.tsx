@@ -3,7 +3,6 @@ import { useParams, useNavigate, useSearchParams, useLocation } from "react-rout
 import { routes, arrivedOnVerdictFrom, VERDICT_ROW_CATCH_UP_MAX, VERDICT_ROW_CATCH_UP_MS } from "@/lib/routes"
 import { toast } from "sonner"
 import { FileSearch, X, AlertCircle, ChevronRight, Copy, Check } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -23,27 +22,28 @@ import { StepTree } from "@/components/run-detail/step-tree"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import type { ScreenshotSide } from "@/components/run-detail/tab-overview"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { fetchRun, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
+import { fetchRun, fetchRunDetail, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
 import type { RunRow, StepRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary, PostProcessingRead } from "@/lib/api"
+import type { RunDetailProjection } from "@vostride/agent-qa-schema"
+import {
+  MEMBER_FILTER_ALL,
+  RUN_DETAIL_UNAVAILABLE_LABEL,
+  filterGroups,
+  groupRunDetail,
+  memberDisplayName,
+  parseMemberFilter,
+  showMemberChrome,
+} from "@/lib/run-detail-view"
 import { projectPostProcessingView } from "@/lib/post-processing-view"
 import { resolveVideoSrc } from "@/lib/artifact-media"
-import { getRunStatusDescriptor, getStatusBadgeClassName, shouldRouteRunToLive } from "@/lib/status"
+import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
 import { cn } from "@/lib/utils"
 import { formatTokens } from "@/lib/format"
 import { hasStepId, isSubactionSelection, type Selection } from "@/lib/selection"
-import { fromStepRow, type DisplayStep, withDisplayStepProgress } from "@/lib/display-step"
-
-function StatusBadge({ status }: { status: string }) {
-  const descriptor = getRunStatusDescriptor(status)
-  return (
-    <Badge className={getStatusBadgeClassName(descriptor.tone)}>
-      {descriptor.label}
-    </Badge>
-  )
-}
+import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
 
 function truncateWords(text: string, maxWords: number): { truncated: string; isTruncated: boolean } {
   const words = text.split(/\s+/)
@@ -95,43 +95,39 @@ function FailureBanner({ summary }: { summary: string }) {
   )
 }
 
-function sortStepsForSuiteAll(steps: StepRow[], suiteTests: RunRow[]) {
-  const testOrder = new Map(suiteTests.map((test, index) => [test.id, index]))
-  return [...steps].sort((a, b) => {
-    const orderA = testOrder.get(a.runId) ?? 0
-    const orderB = testOrder.get(b.runId) ?? 0
-    if (orderA !== orderB) return orderA - orderB
-    return a.stepOrder - b.stepOrder
-  })
-}
+/**
+ * THE v1 TOKEN LINE HAS NO PRODUCER ON THIS PAGE (405-08).
+ *
+ * `RunNavbar` still sums `promptTokens` / `completionTokens` off v1 step ROWS, and this page no
+ * longer reads any. Handing it an empty list is the honest wiring in the meantime: its token span
+ * is guarded on `totalTokens > 0`, so the header renders NOTHING rather than a fabricated
+ * `0 / 0` — "nobody measured this" and "this was free" must not collapse into each other (D-06).
+ * 405-11 repoints the header onto `tokenSummaryLine`, whose absent-is-not-zero rule is already
+ * pinned in `run-detail-view.ts`.
+ */
+const NO_V1_STEP_ROWS: StepRow[] = []
 
-function isSuiteParentRun(run: RunRow | null | undefined) {
-  return run?.suiteId != null && run.parentRunId == null
-}
-
-function buildDisplaySteps(steps: StepRow[], suiteTests: RunRow[], suiteSelectedView: string, isSuiteParent: boolean) {
-  const ordered = isSuiteParent && suiteSelectedView === "all" && suiteTests.length > 0
-    ? sortStepsForSuiteAll(steps, suiteTests)
-    : [...steps].sort((a, b) => a.stepOrder - b.stepOrder)
-  return withDisplayStepProgress(ordered.map(fromStepRow))
-}
-
+/**
+ * Which step a link is pointing at (405-08 · D-16).
+ *
+ * `?step=` NOW CARRIES THE MEMBER-SCOPED KEY `<testIndex>:<stepIndex>`, the same string the tree
+ * selects by. Until 405-08 it carried a bare step ordinal disambiguated by `?run=<childRunId>` —
+ * the child run id came from the parent/child walk this plan deleted, and a bare ordinal on a
+ * multi-member run names one row per member.
+ *
+ * A KEY THAT NAMES NO RENDERED STEP FALLS BACK TO THE FIRST ONE (T-405-25). The param is
+ * hand-editable, and it can also point at a member the current `?member=` filter narrowed away —
+ * both land the viewer at the top of the tree they can see, never on a blank panel.
+ */
 function getSelectionFromUrlOrFirst(
   displaySteps: DisplayStep[],
   searchParams: URLSearchParams,
-  isSuiteAll: boolean,
 ): Selection | null {
-  const urlStepOrder = searchParams.get("step")
-  const urlRunId = searchParams.get("run")
+  const urlStepKey = searchParams.get("step")
   const urlSubIndex = searchParams.get("sub")
 
-  if (urlStepOrder) {
-    const rawStepOrder = Number.parseInt(urlStepOrder, 10)
-    const targetStep = displaySteps.find((step) => {
-      if (step.rawStepOrder !== rawStepOrder) return false
-      if (isSuiteAll && urlRunId) return step.rawRunId === urlRunId
-      return true
-    })
+  if (urlStepKey) {
+    const targetStep = displaySteps.find((step) => step.id === urlStepKey)
     if (targetStep) {
       if (urlSubIndex != null) {
         return { type: "subaction", stepId: targetStep.id, subIndex: Number.parseInt(urlSubIndex, 10) }
@@ -196,9 +192,12 @@ export default function RunDetailPage() {
   const runTitle = run ? `Run - ${run.name}` : "Run"
   usePageTitle(runTitle)
   useRunStatusFavicon(getRunFaviconState(run?.status))
-  const [steps, setSteps] = useState<StepRow[]>([])
-  const [attempts, setAttempts] = useState<RunRow[]>([])
-  const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null)
+  // THE PAGE'S ONE DURABLE READ (D-03/D-16). `undefined` = not asked yet; `null` = the read
+  // FAILED. Those are different facts and the tree renders them differently: an unasked page is
+  // still loading, a failed read is an error posture, and an empty projection is a run that
+  // genuinely recorded nothing. Collapsing any two of them would make a server fault look like a
+  // quiet test.
+  const [detail, setDetail] = useState<RunDetailProjection | null | undefined>(undefined)
   const [isLoading, setIsLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [showVideo, setShowVideo] = useState(false)
@@ -207,10 +206,6 @@ export default function RunDetailPage() {
   const pipelineRef = useRef<ReasoningPipelineHandle | null>(null)
   const stepTreeScrollRef = useRef<HTMLDivElement | null>(null)
   const skippedInitialDefaultSelectionRef = useRef<string | null>(null)
-
-  const [suiteTests, setSuiteTests] = useState<RunRow[]>([])
-  const [suiteSelectedView, setSuiteSelectedView] = useState<string>('all')
-  const [allTestsSteps, setAllTestsSteps] = useState<StepRow[]>([])
 
   const [selection, setSelection] = useState<Selection | null>(null)
   const [allExecutionLogs, setAllExecutionLogs] = useState<ExecutionLogEntry[]>([])
@@ -302,41 +297,29 @@ export default function RunDetailPage() {
           catchUpTimer = setTimeout(() => { if (!cancelled) void loadRun() }, VERDICT_ROW_CATCH_UP_MS)
         }
 
-        if (isSuiteParentRun(data.run) && data.tests && data.tests.length > 0) {
-          setSuiteTests(data.tests)
-          setSuiteSelectedView('all')
-
-          const allSteps: StepRow[] = []
-          for (const child of data.tests) {
-            try {
-              const childData = await fetchRun(child.id)
-              if (cancelled) return
-              allSteps.push(...(childData.steps ?? []))
-            } catch {
-              // skip
-            }
-          }
-          setAllTestsSteps(allSteps)
-          setSteps(allSteps)
-          const displaySteps = buildDisplaySteps(allSteps, data.tests, "all", true)
-          setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, true))
-        } else {
-          setSteps(data.steps ?? [])
-          const fetchedAttempts = data.attempts ?? []
-          setAttempts(fetchedAttempts)
-          if (fetchedAttempts.length > 0) {
-            const lastAttempt = fetchedAttempts[fetchedAttempts.length - 1]
-            setSelectedAttemptId(lastAttempt.id)
-            const attemptData = await fetchRun(lastAttempt.id)
-            if (!cancelled) {
-              setSteps(attemptData.steps ?? [])
-              const displaySteps = buildDisplaySteps(attemptData.steps ?? [], [], "", false)
-              setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, false))
-            }
-          } else {
-            const displaySteps = buildDisplaySteps(data.steps ?? [], [], "", false)
-            setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, false))
-          }
+        // ONE DURABLE READ, AND ONLY ONE (D-03/D-16). What stood here until 405-08 was a walk:
+        // read the parent, then read every child run in a loop for its steps, then read the last
+        // attempt again for ITS steps — N+2 requests to draw one page, each of them able to fail
+        // on its own and silently drop a member (the `catch { // skip }` that used to sit in that
+        // loop). `runs.detail` answers the whole run in one unpaged projection, so a member that
+        // did not run arrives as a row rather than as an absence nobody noticed.
+        //
+        // A FAILED READ IS ITS OWN STATE, not a bounce and not an empty tree. The run row already
+        // rendered above, so the header, the verdict and the failure banner stay; only the tree
+        // says it could not be loaded.
+        try {
+          const projection = await fetchRunDetail(id!)
+          if (cancelled) return
+          setDetail(projection)
+          const groups = filterGroups(
+            groupRunDetail(projection),
+            parseMemberFilter(searchParams.get("member")),
+          )
+          setSelection(getSelectionFromUrlOrFirst(displayStepsForGroups(groups), searchParams))
+        } catch {
+          if (cancelled) return
+          setDetail(null)
+          setSelection(null)
         }
       } catch (err) {
         if (cancelled) return
@@ -415,10 +398,17 @@ export default function RunDetailPage() {
     setArtifactDrawerOpen(true)
   }, [])
 
-  const displaySteps = useMemo(
-    () => buildDisplaySteps(steps, suiteTests, suiteSelectedView, isSuiteParentRun(run)),
-    [steps, suiteTests, suiteSelectedView, run],
+  const memberFilter = parseMemberFilter(searchParams.get("member"))
+  const groups = useMemo(
+    () => (detail ? groupRunDetail(detail) : []),
+    [detail],
   )
+  const visibleGroups = useMemo(() => filterGroups(groups, memberFilter), [groups, memberFilter])
+  // CHROME KEYS ON THE RUN, NOT ON THE FILTER (D-16). A viewer who narrowed a five-member suite to
+  // one member is still looking at a suite, and hiding the header and the picker would strand them
+  // there with no way back.
+  const hasMemberChrome = detail ? showMemberChrome(detail) : false
+  const displaySteps = useMemo(() => displayStepsForGroups(visibleGroups), [visibleGroups])
 
   const selectedStep = useMemo(() => {
     if (!hasStepId(selection)) return null
@@ -444,6 +434,13 @@ export default function RunDetailPage() {
     return () => { cancelled = true }
   }, [accessibilityRunId])
 
+  // THE OVERVIEW'S SUB-ACTION IS STILL THE v1 ONE, AND IT IS NOW ALWAYS ABSENT (405-08 → 405-11).
+  // The tree selects durable sub-actions by ordinal, but the panels below read `SubActionData` —
+  // its reasoning blocks, its annotation and its screenshot paths. `subActionsData` has no
+  // producer on this page any more, so this resolves to `null` and the panels render their
+  // no-selection state. 405-11 repoints them onto `RunDetailSubAction` and content-addressed
+  // screenshot refs, and deletes the v1 shape with them. Leaving the reads in place rather than
+  // half-rewiring them keeps ONE plan responsible for that seam.
   const selectedSubAction = useMemo(() => {
     if (!isSubactionSelection(selection) || !selectedStep) return null
     return selectedStep.subActionsData?.[selection.subIndex] ?? null
@@ -453,8 +450,8 @@ export default function RunDetailPage() {
     if (!selectedStep) return null
 
     if (selectedSubAction) {
-      const beforePath = selectedSubAction.screenshotBeforePath ?? null
-      const afterPath = selectedSubAction.screenshotAfterPath ?? null
+      const beforePath: string | null = selectedSubAction.screenshotBeforePath ?? null
+      const afterPath: string | null = selectedSubAction.screenshotAfterPath ?? null
       if (!beforePath && !afterPath) return null
       return {
         key: [
@@ -469,8 +466,8 @@ export default function RunDetailPage() {
       }
     }
 
-    const beforePath = selectedStep.screenshotBeforePath
-    const afterPath = selectedStep.screenshotPath
+    const beforePath: string | null = selectedStep.screenshotBeforePath ?? null
+    const afterPath: string | null = selectedStep.screenshotPath ?? null
     if (!beforePath && !afterPath) return null
     return {
       key: [
@@ -533,91 +530,33 @@ export default function RunDetailPage() {
 
   const navItems = useMemo(() => {
     const items: NavItem[] = []
-    const isSuiteAll = isSuiteParentRun(run) && suiteSelectedView === 'all' && suiteTests.length > 0
-    const childRunIds = isSuiteAll ? new Set(suiteTests.map(t => t.id)) : null
 
-    // Suite-level setup hooks (not associated with any child test)
+    // Run-level setup hooks
     for (const hook of setupHooks) {
-      if (!childRunIds || !childRunIds.has(hook.runId)) {
-        items.push({ type: 'hook', logId: hook.id })
-      }
+      items.push({ type: 'hook', logId: hook.id })
     }
 
-    if (isSuiteAll) {
-      // Group steps by test runId, matching the step tree visual order
-      const grouped = new Map<string, typeof displaySteps>()
-      for (const step of displaySteps) {
-        const key = step.rawRunId ?? step.id
-        const existing = grouped.get(key) ?? []
-        existing.push(step)
-        grouped.set(key, existing)
-      }
-
-      for (const [runId, groupSteps] of grouped) {
-        // Per-test setup hooks
-        for (const hook of setupHooks) {
-          if (hook.runId === runId) {
-            items.push({ type: 'hook', logId: hook.id })
-          }
+    // ONE FLAT ORDER, AND IT IS ALREADY THE TREE'S (405-08). `displaySteps` comes out of the
+    // member-grouped projection in handle-then-ordinal order, so keyboard navigation walks the
+    // tree exactly as drawn without a second grouping pass to keep in step with the first.
+    for (const step of displaySteps) {
+      items.push({ type: 'step', stepId: step.id })
+      if (step.id === expandedStepId) {
+        for (const log of stepExecutionLogs) {
+          if (log.stepId === step.id) items.push({ type: 'exec', stepId: step.id, logId: log.id })
         }
-        // Steps + sub-actions
-        for (const step of groupSteps) {
-          items.push({ type: 'step', stepId: step.id })
-          if (step.id === expandedStepId) {
-            const stepLogs = stepExecutionLogs.filter((log) => {
-              if (log.stepId === step.id) return true
-              if (!log.stepId) return false
-              if (step.rawRunId && log.runId && step.rawRunId !== log.runId) return false
-              return Number.parseInt(log.stepId, 10) === step.rawStepOrder
-            })
-            for (const log of stepLogs) {
-              items.push({ type: 'exec', stepId: step.id, logId: log.id })
-            }
-            if (step.subActionsData) {
-              step.subActionsData.forEach((_, i) => {
-                items.push({ type: 'sub', stepId: step.id, subIndex: i })
-              })
-            }
-          }
-        }
-        // Per-test teardown hooks
-        for (const hook of teardownHooks) {
-          if (hook.runId === runId) {
-            items.push({ type: 'hook', logId: hook.id })
-          }
-        }
-      }
-    } else {
-      // Non-suite or single-test view: flat order
-      for (const step of displaySteps) {
-        items.push({ type: 'step', stepId: step.id })
-        if (step.id === expandedStepId) {
-          const stepLogs = stepExecutionLogs.filter((log) => {
-            if (log.stepId === step.id) return true
-            if (!log.stepId) return false
-            if (step.rawRunId && log.runId && step.rawRunId !== log.runId) return false
-            return Number.parseInt(log.stepId, 10) === step.rawStepOrder
-          })
-          for (const log of stepLogs) {
-            items.push({ type: 'exec', stepId: step.id, logId: log.id })
-          }
-          if (step.subActionsData) {
-            step.subActionsData.forEach((_, i) => {
-              items.push({ type: 'sub', stepId: step.id, subIndex: i })
-            })
-          }
+        for (const sub of step.subActions ?? []) {
+          items.push({ type: 'sub', stepId: step.id, subIndex: sub.subActionIndex })
         }
       }
     }
 
-    // Suite-level teardown hooks
+    // Run-level teardown hooks
     for (const hook of teardownHooks) {
-      if (!childRunIds || !childRunIds.has(hook.runId)) {
-        items.push({ type: 'hook', logId: hook.id })
-      }
+      items.push({ type: 'hook', logId: hook.id })
     }
     return items
-  }, [displaySteps, expandedStepId, stepExecutionLogs, setupHooks, teardownHooks, run, suiteSelectedView, suiteTests])
+  }, [displaySteps, expandedStepId, stepExecutionLogs, setupHooks, teardownHooks])
 
   const currentNavIdx = useMemo(() => {
     if (!selection) return -1
@@ -725,24 +664,24 @@ export default function RunDetailPage() {
   useKeyboardShortcuts(shortcuts)
 
   // Sync selection + tab to URL
+  //
+  // THE STEP PARAM IS THE SELECTION KEY ITSELF (405-08 · D-16) — `<testIndex>:<stepIndex>`, the
+  // same string the tree highlights by, so the round-trip is an identity rather than a
+  // translation. `?run=` is DELETED rather than left dormant: it named a child run id, and after
+  // 405-07 there are no child runs to name; a stale one in a bookmarked link must not survive into
+  // the rewritten query.
   useEffect(() => {
     const step = hasStepId(selection)
       ? displaySteps.find(s => s.id === selection.stepId)
       : null
-    const stepOrder = step?.rawStepOrder
-    const stepRunId = step?.rawRunId
 
     const next = new URLSearchParams(searchParams)
-    if (stepOrder != null) {
-      next.set('step', String(stepOrder))
+    if (step) {
+      next.set('step', step.id)
     } else {
       next.delete('step')
     }
-    if (isSuiteParentRun(run) && suiteSelectedView === 'all' && stepRunId) {
-      next.set('run', stepRunId)
-    } else {
-      next.delete('run')
-    }
+    next.delete('run')
     if (isSubactionSelection(selection)) {
       next.set('sub', String(selection.subIndex))
     } else {
@@ -757,7 +696,7 @@ export default function RunDetailPage() {
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true })
     }
-  }, [selection, activeTab, displaySteps, run, suiteSelectedView, searchParams, setSearchParams])
+  }, [selection, activeTab, displaySteps, searchParams, setSearchParams])
 
   // Scroll selected item into view
   useEffect(() => {
@@ -798,40 +737,33 @@ export default function RunDetailPage() {
     return () => cancelAnimationFrame(animationFrameId)
   }, [selection, displaySteps, searchParams])
 
-  const handleAttemptSelect = useCallback(async (attemptId: string) => {
-    setSelectedAttemptId(attemptId)
-    try {
-      const data = await fetchRun(attemptId)
-      setSteps(data.steps ?? [])
-      const displaySteps = buildDisplaySteps(data.steps ?? [], [], "", false)
-      setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, false))
-    } catch {
-      toast.error("Failed to load attempt")
-    }
-  }, [searchParams])
+  /**
+   * Narrow the tree to one member, or widen it back (D-16).
+   *
+   * THE FILTER IS URL STATE AND NOTHING ELSE. There is no second copy in React state to fall out
+   * of step with the address bar, and no fetch: the projection for the whole run is already in
+   * hand, so narrowing is a `filter` over it. That is the difference from what stood here — the
+   * suite picker re-fetched a child run and its logs on every change, so a link into one member
+   * showed a different page than clicking to it.
+   */
+  const handleMemberFilterChange = useCallback((value: string) => {
+    const next = new URLSearchParams(searchParams)
+    if (value === MEMBER_FILTER_ALL) next.delete('member')
+    else next.set('member', value)
+    // The selected step may belong to a member this filter just hid; the tree re-derives the
+    // selection from the URL below, and an unrenderable key falls back to the first visible step.
+    setSearchParams(next, { replace: false })
+  }, [searchParams, setSearchParams])
 
-  const handleSuiteViewChange = useCallback(async (value: string) => {
-    setSuiteSelectedView(value)
-    if (value === 'all') {
-      setSteps(allTestsSteps)
-      const displaySteps = buildDisplaySteps(allTestsSteps, suiteTests, "all", isSuiteParentRun(run))
-      setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, true))
-      if (id) {
-        fetchExecutionLogs(id).then(({ logs }) => setAllExecutionLogs(logs)).catch(() => {})
-      }
-    } else {
-      try {
-        const data = await fetchRun(value)
-        setSteps(data.steps ?? [])
-        const { logs } = await fetchExecutionLogs(value)
-        setAllExecutionLogs(logs)
-        const displaySteps = buildDisplaySteps(data.steps ?? [], [], value, false)
-        setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, false))
-      } catch {
-        toast.error("Failed to load test steps")
-      }
-    }
-  }, [allTestsSteps, id, run, searchParams, suiteTests])
+  // Keep the selection inside the visible tree. A member filter (or a deep link into a member that
+  // is filtered out) can leave `selection` pointing at a step nobody can see, and a highlighted row
+  // with no row is a panel showing details for something off-screen.
+  useEffect(() => {
+    if (isLoading) return
+    if (!hasStepId(selection)) return
+    if (displaySteps.some((step) => step.id === selection.stepId)) return
+    setSelection(displaySteps.length > 0 ? { type: 'step', stepId: displaySteps[0].id } : null)
+  }, [displaySteps, selection, isLoading])
 
   if (isLoading) return <DetailSkeleton />
 
@@ -855,7 +787,7 @@ export default function RunDetailPage() {
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <RunNavbar
           run={run}
-          steps={steps}
+          steps={NO_V1_STEP_ROWS}
           shortcutsOpen={shortcutsOpen}
           onToggleShortcuts={() => setShortcutsOpen(prev => !prev)}
           onOpenArtifacts={openArtifactDrawer}
@@ -871,45 +803,34 @@ export default function RunDetailPage() {
         >
           <ResizablePanel defaultSize={35} minSize={20}>
             <div ref={stepTreeScrollRef} className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto">
-              {/* Suite test selector */}
-              {isSuiteParentRun(run) && suiteTests.length > 0 ? (
+              {/*
+                THE MEMBER FILTER (D-16). What stood here was a picker over CHILD RUNS that
+                re-fetched one on every change, and beside it an attempts tab strip that re-fetched
+                a whole earlier attempt. D-17 retires the attempts picker outright — the projection
+                keeps the FINAL attempt's steps per handle plus a count, and the attempt-by-attempt
+                story stays in the run's own event log. So one control remains, it fetches nothing,
+                and it is absent entirely on a single-member run.
+              */}
+              {hasMemberChrome ? (
                 <div className="border-b px-3 py-2 shrink-0">
-                  <Select value={suiteSelectedView} onValueChange={handleSuiteViewChange}>
-                    <SelectTrigger className="w-full h-8 text-xs">
+                  <Select
+                    value={memberFilter === MEMBER_FILTER_ALL ? MEMBER_FILTER_ALL : String(memberFilter)}
+                    onValueChange={handleMemberFilterChange}
+                  >
+                    <SelectTrigger className="w-full h-8 text-xs" data-member-filter>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Tests ({suiteTests.length})</SelectItem>
-                      {suiteTests.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          <span className="flex items-center gap-2">
-                            {t.name}
-                            <StatusBadge status={t.status} />
-                          </span>
+                      <SelectItem value={MEMBER_FILTER_ALL}>
+                        All tests ({groups.length})
+                      </SelectItem>
+                      {groups.map(({ member }) => (
+                        <SelectItem key={member.testIndex} value={String(member.testIndex)}>
+                          {memberDisplayName(member)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-              ) : attempts.length > 0 ? (
-                <div className="flex gap-1 border-b px-3 py-2 shrink-0">
-                  {attempts.map((a) => (
-                    <button
-                      key={a.id}
-                      onClick={() => handleAttemptSelect(a.id)}
-                      className={cn(
-                        "px-3 py-1 text-xs rounded-sm border-b-2 transition-colors",
-                        selectedAttemptId === a.id
-                          ? "border-primary text-foreground font-medium"
-                          : "border-transparent text-muted-foreground hover:text-foreground"
-                      )}
-                    >
-                      Attempt {a.attemptNumber}
-                      <span className="ml-1.5">
-                        <StatusBadge status={a.status} />
-                      </span>
-                    </button>
-                  ))}
                 </div>
               ) : null}
 
@@ -960,16 +881,24 @@ export default function RunDetailPage() {
                 )
               })()}
 
-              <StepTree
-                steps={displaySteps}
-                selection={selection}
-                onSelect={setSelection}
-                suiteTests={isSuiteParentRun(run) ? suiteTests : undefined}
-                suiteSelectedView={suiteSelectedView}
-                setupHooks={setupHooks}
-                teardownHooks={teardownHooks}
-                inlineLogs={stepExecutionLogs}
-              />
+              {detail === null ? (
+                <div
+                  data-run-detail-error
+                  className="flex-1 flex items-center justify-center px-4 text-center text-sm text-muted-foreground"
+                >
+                  {RUN_DETAIL_UNAVAILABLE_LABEL}
+                </div>
+              ) : (
+                <StepTree
+                  groups={visibleGroups}
+                  showMemberChrome={hasMemberChrome}
+                  selection={selection}
+                  onSelect={setSelection}
+                  setupHooks={setupHooks}
+                  teardownHooks={teardownHooks}
+                  inlineLogs={stepExecutionLogs}
+                />
+              )}
             </div>
           </ResizablePanel>
 
