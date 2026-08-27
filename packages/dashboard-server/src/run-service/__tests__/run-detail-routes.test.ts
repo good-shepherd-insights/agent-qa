@@ -27,16 +27,28 @@
 // (see `run-detail-reader.ts`: the reader declares its own structural port type and imports
 // nothing from the agent package).
 
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
+  RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
   createFunctionRegistry,
   invokeFunction,
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
+// 405-05: the SHIPPED evidence-blob binding and the SHIPPED store that wrote the blob. Both are
+// DEV-only edges here, on the `@vostride/agent-qa-agent` reasoning at the top of this file —
+// `validate:arch` walks `src` with `__tests__` excluded and reconciles only runtime
+// `dependencies`, so the production edges these packages forbid stay forbidden. The point of
+// driving them is that a reader written in this file would be a second containment rule.
+import { createEvidenceBlobReader } from '@vostride/agent-qa-agent-local'
+import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   projectSubActionRecorded,
   type Action,
@@ -118,7 +130,10 @@ const REGISTRY_CALLER: FunctionCaller = {
  * they exist because `FunctionDeps` is non-partial on the read ports, which is itself the
  * contract 387 states: a composition that omits one fails to typecheck.
  */
-function depsWith(runDetail: FunctionDeps['runDetail']): FunctionDeps {
+function depsWith(
+  runDetail: FunctionDeps['runDetail'],
+  evidenceBlobs?: FunctionDeps['evidenceBlobs'],
+): FunctionDeps {
   return {
     runs: {
       list: () => Promise.resolve([]),
@@ -145,12 +160,16 @@ function depsWith(runDetail: FunctionDeps['runDetail']): FunctionDeps {
       }),
     },
     ...(runDetail === undefined ? {} : { runDetail }),
+    ...(evidenceBlobs === undefined ? {} : { evidenceBlobs }),
   } as unknown as FunctionDeps
 }
 
-function composeRegistry(runDetail: FunctionDeps['runDetail']): FunctionRegistry {
+function composeRegistry(
+  runDetail: FunctionDeps['runDetail'],
+  evidenceBlobs?: FunctionDeps['evidenceBlobs'],
+): FunctionRegistry {
   return createFunctionRegistry({
-    deps: depsWith(runDetail),
+    deps: depsWith(runDetail, evidenceBlobs),
     // Discards every row: this file asserts on the path, never on the audit trail.
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
@@ -172,6 +191,7 @@ function hostOver(registry: FunctionRegistry): AgentHost {
     runsPostProcessingFunctionId: 'test:planted-post-processing-op',
     runsEventsFunctionId: 'test:planted-events-op',
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
+    runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
     invokeFunction: (
       handle: AgentRegistryHandle,
       functionId: string,
@@ -189,8 +209,10 @@ function hostOver(registry: FunctionRegistry): AgentHost {
 const servers: Server[] = []
 const closers: Array<() => void> = []
 const databases: DashboardDatabase[] = []
+const roots: string[] = []
 
 afterEach(async () => {
+  while (roots.length > 0) rmSync(roots.pop() ?? '', { recursive: true, force: true })
   while (closers.length > 0) closers.pop()?.()
   while (servers.length > 0) {
     const server = servers.pop()
@@ -359,5 +381,196 @@ describe('GET /api/runs/:id/detail — the 405 tracer (D-01/D-03/D-14)', () => {
     const answer = await get(port, '/api/runs/..%2Fescape/detail')
     expect(answer.status, answer.raw).toBe(400)
     expect(answer.body).toEqual({ error: 'invalid_run_id' })
+  })
+})
+
+/** A real PNG head — the magic bytes plus an IHDR-shaped tail, so the sniff is not a one-byte win. */
+const PNG_BYTES = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+])
+const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
+/** Bytes that WANT to be a document. The sniffer has no arm that can grant it (T-405-15). */
+const SVG_BYTES = new TextEncoder().encode(
+  '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+)
+
+interface ServedArtifact {
+  readonly port: number
+  readonly sha: string
+  readonly root: string
+}
+
+/**
+ * Write ONE blob through the shipped store, bind the shipped reader over the same root, serve it.
+ *
+ * THE STORE MINTS THE SHA, THIS FILE NEVER DOES. `persistDecisionScreenshot` content-addresses the
+ * bytes and returns the ref; using its sha is what makes the round trip a claim about the content
+ * address rather than about two hex strings that happen to match.
+ */
+async function serveOneArtifact(
+  options: { readonly bytes: Uint8Array; readonly withHost?: boolean },
+): Promise<ServedArtifact> {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-405-05-'))
+  roots.push(root)
+  const ref = new FsEvidenceArtifactStore({ root, runId: RUN_ID })
+    .persistDecisionScreenshot(options.bytes)
+
+  const db = new DashboardDatabase({ dbPath: ':memory:' })
+  databases.push(db)
+  const registry = composeRegistry(
+    createDashboardRunDetailReader(db),
+    createEvidenceBlobReader({ agentQaRoot: root }),
+  )
+  const started = await startServer({
+    db,
+    port: 0,
+    ...(options.withHost === false ? {} : { agentHost: hostOver(registry) }),
+  })
+  closers.push(started.close)
+  return { port: (started.server.address() as AddressInfo).port, sha: ref.sha, root }
+}
+
+// ---- 405-05 (D-12/D-13/D-15 · DETL-03): the ref RESOLVES — a sha becomes immutable bytes -------
+//
+// THE SECOND HALF OF THE TRACER'S CLAIM. The cells above prove a minted `ArtifactRef` reaches a
+// browser as a sha; these prove that sha resolves to the exact bytes the runner wrote, with the
+// headers a content address earns. Nothing here is faked below the route: the blob is written by
+// the SHIPPED `FsEvidenceArtifactStore` under a real temp root, read back by the SHIPPED
+// `createEvidenceBlobReader`, served by the SHIPPED op through the SHIPPED registry, over a real
+// socket — so the arm's POSITION in `routes.ts` (above the `/api/runs/:id` catch-all, which claims
+// every four-segment GET) is inside the claim rather than assumed.
+//
+// AND THE REFUSALS ARE THE POINT AS MUCH AS THE BYTES. `getBlob` answers `undefined` for a
+// malformed sha and for an absent file alike; a door that could not tell those apart would render
+// one grey error for a bad link, a GC'd screenshot and a traversal attempt.
+
+describe('GET /api/runs/:runId/artifacts/:sha — the ref resolves (405-05, D-12/D-13/D-15)', () => {
+  it('serves the exact bytes under a content address, immutably and with nosniff', async () => {
+    const served = await serveOneArtifact({ bytes: PNG_BYTES })
+    const response = await fetch(
+      `http://127.0.0.1:${String(served.port)}/api/runs/${RUN_ID}/artifacts/${served.sha}`,
+    )
+
+    expect(response.status).toBe(200)
+    // THE BYTES, WHOLE. Not a length, not a hash of what came back — the array itself.
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(PNG_BYTES)
+
+    // D-12's header set, each one load-bearing and each one asserted rather than sampled.
+    expect(response.headers.get('etag'), 'the content address IS the validator').toBe(`"${served.sha}"`)
+    expect(response.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+    expect(response.headers.get('x-content-type-options'), 'T-405-15').toBe('nosniff')
+    expect(response.headers.get('content-type')).toBe('image/png')
+    expect(response.headers.get('content-length')).toBe(String(PNG_BYTES.length))
+  })
+
+  it('answers 304 for a matching If-None-Match, with no body at all', async () => {
+    const served = await serveOneArtifact({ bytes: PNG_BYTES })
+    const response = await fetch(
+      `http://127.0.0.1:${String(served.port)}/api/runs/${RUN_ID}/artifacts/${served.sha}`,
+      { headers: { 'If-None-Match': `"${served.sha}"` } },
+    )
+    expect(response.status).toBe(304)
+    expect(await response.text()).toBe('')
+    // The validator still travels, so a cache that revalidates keeps the same entry.
+    expect(response.headers.get('etag')).toBe(`"${served.sha}"`)
+  })
+
+  it('refuses a malformed sha with a fixed body that never echoes the request (T-405-14/T-405-18)', async () => {
+    const served = await serveOneArtifact({ bytes: PNG_BYTES })
+    const base = `http://127.0.0.1:${String(served.port)}/api/runs/${RUN_ID}/artifacts`
+
+    // 64 characters and not hex: long enough to look like a sha, refused by the CONTRACT.
+    const notHex = 'z'.repeat(64)
+    const nonHexAnswer = await fetch(`${base}/${notHex}`)
+    expect(nonHexAnswer.status).toBe(400)
+    const nonHexBody = await nonHexAnswer.text()
+    expect(JSON.parse(nonHexBody)).toEqual({ error: 'malformed_sha' })
+    expect(nonHexBody, 'the refusal never quotes the caller\'s own bytes').not.toContain(notHex)
+
+    // A traversal-shaped sha is refused by the SAME regex, before any path could be assembled.
+    const traversal = await fetch(`${base}/${encodeURIComponent('../../etc/passwd')}`)
+    expect(traversal.status).toBe(400)
+    expect(await traversal.json()).toEqual({ error: 'malformed_sha' })
+
+    // An UPPERCASE 64-hex sha names a file the store cannot have written, and is refused as
+    // malformed rather than reported as an honest miss.
+    const upper = await fetch(`${base}/${served.sha.toUpperCase()}`)
+    expect(upper.status).toBe(400)
+    expect(await upper.json()).toEqual({ error: 'malformed_sha' })
+  })
+
+  it('tells an unknown RUN from an absent BLOB — two 404s, two words (D-15)', async () => {
+    const served = await serveOneArtifact({ bytes: PNG_BYTES })
+    const origin = `http://127.0.0.1:${String(served.port)}`
+
+    // A well-formed sha under a run this root has no directory for.
+    const unknownRun = await fetch(
+      `${origin}/api/runs/r_no-such-run-was-ever-started-here-at-all/artifacts/${served.sha}`,
+    )
+    expect(unknownRun.status).toBe(404)
+    expect(await unknownRun.json()).toEqual({ error: 'unknown_run' })
+
+    // A well-formed sha under a run that DOES exist and holds no such blob.
+    const absentSha = 'b'.repeat(64)
+    const blobAbsent = await fetch(`${origin}/api/runs/${RUN_ID}/artifacts/${absentSha}`)
+    expect(blobAbsent.status).toBe(404)
+    const absentBody = await blobAbsent.text()
+    expect(JSON.parse(absentBody)).toEqual({ error: 'blob_absent' })
+    expect(absentBody, 'no refusal on this door echoes the requested sha').not.toContain(absentSha)
+  })
+
+  it('answers 503 with no agent host — an unbound door says so, it opens no store', async () => {
+    const served = await serveOneArtifact({ bytes: PNG_BYTES, withHost: false })
+    const response = await fetch(
+      `http://127.0.0.1:${String(served.port)}/api/runs/${RUN_ID}/artifacts/${served.sha}`,
+    )
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({ error: 'agent_host_unavailable' })
+  })
+
+  it('refuses a run id the op\'s own input schema rejects, touching no filesystem (T-405-14)', async () => {
+    const served = await serveOneArtifact({ bytes: PNG_BYTES })
+    const response = await fetch(
+      `http://127.0.0.1:${String(served.port)}/api/runs/%2e%2e%2fescape/artifacts/${served.sha}`,
+    )
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'invalid_run_id' })
+
+    // AND THE ROOT IS UNTOUCHED. The refusal happens at the contract, so nothing under the runs
+    // root was created, read or walked on the way to it — which is the claim a status code alone
+    // cannot make.
+    expect(readdirSync(join(served.root, 'runs')).sort()).toEqual([slugBranch(RUN_ID)])
+  })
+
+  it('serves a JPEG as image/jpeg and an unrecognised blob as an opaque download', async () => {
+    const jpeg = await serveOneArtifact({ bytes: JPEG_BYTES })
+    const jpegAnswer = await fetch(
+      `http://127.0.0.1:${String(jpeg.port)}/api/runs/${RUN_ID}/artifacts/${jpeg.sha}`,
+    )
+    expect(jpegAnswer.headers.get('content-type')).toBe('image/jpeg')
+
+    // An SVG document is bytes like any other, and it must NEVER be typed as one a browser
+    // renders — `nosniff` plus `application/octet-stream` is a download, not a script.
+    const svg = await serveOneArtifact({ bytes: SVG_BYTES })
+    const svgAnswer = await fetch(
+      `http://127.0.0.1:${String(svg.port)}/api/runs/${RUN_ID}/artifacts/${svg.sha}`,
+    )
+    expect(svgAnswer.headers.get('content-type')).toBe('application/octet-stream')
+    expect(svgAnswer.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(new Uint8Array(await svgAnswer.arrayBuffer())).toEqual(SVG_BYTES)
+  })
+})
+
+describe('the artifact arm reads no store of its own (D-13, the fourth-door law)', () => {
+  it('routes.ts names the evidence store nowhere — the bytes cross the function layer', async () => {
+    const source = await readFile(new URL('../../server/routes.ts', import.meta.url), 'utf8')
+    // A SOURCE ASSERTION, because the claim is about where a capability LIVES rather than about
+    // what a response contains: a route that constructed the store would serve byte-identical
+    // bytes and be invisible to every response-shape cell in this file — while being a private
+    // store read no roster row covers and no audit sink sees.
+    expect(source).not.toContain('FsEvidenceArtifactStore')
+    expect(source).toContain('serveRunArtifact')
   })
 })
