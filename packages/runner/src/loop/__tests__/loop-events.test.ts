@@ -8,7 +8,8 @@
 import { describe, it, expect } from 'vitest'
 import type { CacheKey, StepEvidence, SubActionEvidence } from '@vostride/agent-qa-schema'
 import type { LoopPorts, LoopEventEmitPort } from '../ports.js'
-import type { ActionPlanCache } from '../../cache/port.js'
+import type { ActionPlanCache, CacheablePlannedAction, CachedPlanValue } from '../../cache/port.js'
+import type { PlanResult, Planner } from '../types.js'
 import { executeStep } from '../index.js'
 import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -17,22 +18,27 @@ function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'plan
   return overrides
 }
 
+type StepFinalizedExtra = Parameters<LoopEventEmitPort['stepFinalized']>[1]
+
 function makeEventsPort(): {
   port: LoopEventEmitPort
   stepFinalized: StepEvidence[]
+  extras: (StepFinalizedExtra | undefined)[]
   subActions: { evidence: SubActionEvidence; index: number }[]
 } {
   const stepFinalized: StepEvidence[] = []
+  const extras: (StepFinalizedExtra | undefined)[] = []
   const subActions: { evidence: SubActionEvidence; index: number }[] = []
   const port: LoopEventEmitPort = {
-    stepFinalized(evidence) {
+    stepFinalized(evidence, extra) {
       stepFinalized.push(evidence)
+      extras.push(extra)
     },
     subActionRecorded(evidence, index) {
       subActions.push({ evidence, index })
     },
   }
-  return { port, stepFinalized, subActions }
+  return { port, stepFinalized, extras, subActions }
 }
 
 // A two-sub-action scenario: the first plan does not complete the step, the second does.
@@ -124,5 +130,62 @@ describe('loop cache-key digest threading (D-20)', () => {
     expect(suiteOnly).not.toBe(testOnly)
     expect(both).not.toBe(suiteOnly)
     expect(both).not.toBe(testOnly)
+  })
+})
+
+// ---- 405 D-05: the step's measured token usage rides the stepFinalized extra ------------
+
+describe('loop tokenUsage on stepFinalized (405 D-05 — absent is not zero)', () => {
+  it('(d) a step whose planner reported usage emits tokenUsage summing prompt + completion', async () => {
+    const spy = makeEventsPort()
+    const planner: Planner = {
+      async plan(): Promise<PlanResult> {
+        return {
+          plan: makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+          tokenUsage: { promptTokens: 120, completionTokens: 30, totalTokens: 150 },
+        }
+      },
+    }
+    const result = await executeStep(
+      'Click Log in',
+      ports({ adapter: makeAdapter(), planner, events: spy.port }),
+      makeStepContext(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(spy.extras).toHaveLength(1)
+    const usage = spy.extras[0]?.tokenUsage
+    expect(usage).toBeDefined()
+    expect(usage!.promptTokens).toBe(120)
+    expect(usage!.completionTokens).toBe(30)
+    expect(usage!.totalTokens).toBe(usage!.promptTokens + usage!.completionTokens)
+  })
+
+  it('(e) a cache-hit step made no model call, so the extra carries NO tokenUsage — never a zero triple', async () => {
+    const spy = makeEventsPort()
+    const cachedLogin: CachedPlanValue = {
+      plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
+      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      verificationOutcome: 'passed',
+    }
+    const cache: ActionPlanCache = {
+      async get() { return cachedLogin },
+      async set() {},
+      async invalidate() {},
+    }
+    const plannerSpy: Planner = {
+      async plan() { throw new Error('planner must not be called on a hit run') },
+    }
+    const result = await executeStep(
+      'Click Log in',
+      ports({ adapter: makeAdapter(), planner: plannerSpy, cache, events: spy.port }),
+      makeStepContext(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(result.evidence!.cacheStatus).toBe('hit')
+    expect(spy.extras).toHaveLength(1)
+    expect(spy.extras[0]).toBeDefined()
+    expect(spy.extras[0]!.tokenUsage).toBeUndefined()
   })
 })

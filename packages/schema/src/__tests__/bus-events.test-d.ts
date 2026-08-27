@@ -86,6 +86,28 @@ const rejectsServedBrief: StepFinalizedPayload = {
   servedBrief: {} as ServedBrief,
 }
 
+// 405 D-05: tokenUsage is additive-OPTIONAL — a payload without it typechecks, and the triple
+// is the only shape admitted (a bare number is a compile error). Absent is not zero.
+const acceptsAbsentTokenUsage: StepFinalizedPayload = {
+  testIndex: 0,
+  stepIndex: 0,
+  cacheStatus: 'hit',
+  verifierVerdict: {} as VerifierVerdict,
+  selfHealOccurred: false,
+  briefDigest: 'digest',
+}
+
+const rejectsScalarTokenUsage: StepFinalizedPayload = {
+  testIndex: 0,
+  stepIndex: 0,
+  cacheStatus: 'miss',
+  verifierVerdict: {} as VerifierVerdict,
+  selfHealOccurred: false,
+  briefDigest: 'digest',
+  // @ts-expect-error tokenUsage is the {promptTokens, completionTokens, totalTokens} triple
+  tokenUsage: 15,
+}
+
 // testFinished never embeds the steps array (D-10).
 const rejectsSteps: TestFinishedPayload = {
   testId: 't1',
@@ -98,4 +120,6 @@ const rejectsSteps: TestFinishedPayload = {
 void rejectsStateBefore
 void rejectsScreenshotBytes
 void rejectsServedBrief
+void acceptsAbsentTokenUsage
+void rejectsScalarTokenUsage
 void rejectsSteps

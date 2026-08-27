@@ -390,6 +390,30 @@ describe('projectStepFinalized widened fields (Q1 append — status/durationMs/e
   })
 })
 
+describe('projectStepFinalized tokenUsage (405 D-05 — absent is not zero)', () => {
+  it('carries the measured tokenUsage verbatim; the numbers pass the mask untouched', () => {
+    const payload = projectStepFinalized(
+      makeStepEvidence(false),
+      { testIndex: 0, stepIndex: 0 },
+      mask,
+      { tokenUsage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } },
+    )
+    expect(payload.tokenUsage).toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15 })
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+
+  it('omits tokenUsage entirely when nothing was measured — never a zero-filled triple', () => {
+    const payload = projectStepFinalized(
+      makeStepEvidence(false),
+      { testIndex: 0, stepIndex: 0 },
+      mask,
+      { status: 'passed' },
+    )
+    expect('tokenUsage' in payload).toBe(false)
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+})
+
 describe('projectTestFinished widened fields (Q1 append — durationMs/failureSummary/retryCount)', () => {
   it('carries the additive optional fields with failureSummary masked', () => {
     const payload = projectTestFinished(makePerTestOutcome(), mask, {

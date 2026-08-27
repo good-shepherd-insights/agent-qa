@@ -89,6 +89,31 @@ describe('event sink — widened stepFinalized leg (D-01, T-363-05)', () => {
   })
 })
 
+// ---- Test 1b: the 405 D-05 tokenUsage leg (absent is not zero) --------------------------
+
+describe('event sink — stepFinalized tokenUsage leg (405 D-05)', () => {
+  it('publishes the measured tokenUsage verbatim on the envelope payload', () => {
+    const { received, sink } = makeSink()
+    sink.loopEmitFor(0).stepFinalized(makeStepEvidence(), {
+      status: 'passed',
+      tokenUsage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+    })
+    const finalized = received.find((e) => e.type === 'stepFinalized')
+    expect(finalized).toBeDefined()
+    const payload = finalized!.payload as StepFinalizedPayload
+    expect(payload.tokenUsage).toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15 })
+  })
+
+  it('a bare stepFinalized publishes NO tokenUsage key — an unmeasured step is absent, not zero', () => {
+    const { received, sink } = makeSink()
+    sink.loopEmitFor(0).stepFinalized(makeStepEvidence())
+    const finalized = received.find((e) => e.type === 'stepFinalized')
+    expect(finalized).toBeDefined()
+    const payload = finalized!.payload as StepFinalizedPayload
+    expect('tokenUsage' in payload).toBe(false)
+  })
+})
+
 // ---- Test 2: hookStarted / hookFinished legs (masked captured streams) -------------------
 
 describe('event sink — hook lifecycle legs (D-01, T-363-05)', () => {
