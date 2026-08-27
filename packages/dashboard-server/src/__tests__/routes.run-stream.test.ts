@@ -12,9 +12,17 @@
 //
 // THE SOURCE CELL AT THE BOTTOM CARRIES ITS OWN KNOWN-POSITIVE CONTROL, deliberately (WINDOWS
 // #253). "No SSE frame formatting appears in the handler body" is satisfied for free by an
-// extractor that returns nothing, so the same extractor and the same predicate are run over the
-// LEGACY `/api/execution/events` handler in the same file, where frame formatting demonstrably
-// lives. A predicate that cannot see it there proves nothing about not seeing it here.
+// extractor that returns nothing, so the SAME predicate is also run over a body where every
+// pattern must match. A predicate that cannot see frame formatting where it lives proves nothing
+// about not seeing it here.
+//
+// 2026-08-28 (405-07): THAT CONTROL IS THE RUN-SERVICE MODULE, NOT A SECOND HANDLER IN THIS FILE.
+// It used to be the retired live-event route — a second SSE spelling that happened to sit beside
+// the one under test — and this header went on describing it after 405-07 deleted the route,
+// which is the stale-claim failure WINDOWS #253 exists to prevent, one layer up. The control is
+// now `run-service/run-service-routes.ts`: the module this handler DELEGATES to, and the one place
+// the frames are actually written. See the source cell's own note for why that is the stronger
+// control rather than merely the surviving one.
 //
 // THE PRODUCTION-FRAME CELLS DRIVE `startServer`, not the router alone. The router can only be
 // reached with an attach port somebody threaded; the thing that threads it is `server.ts`. A suite
@@ -822,12 +830,14 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
  * see frame formatting) would satisfy the first assertion for free (WINDOWS #253).
  *
  * 2026-08-27 (405-07, D-19): THE CONTROL MOVED, AND MOVED TOWARDS THE THING IT IS ABOUT. It used
- * to be the legacy `/api/execution/events` handler in this same file — a second SSE spelling that
- * happened to contain the framing. That route is retired, and the honest control is the module the
- * run-stream handler DELEGATES to: `run-service-routes.ts`, where every one of these patterns has
- * to appear because that is where the frames are actually written. A control inside the file under
- * test could only ever prove the extractor worked; this one proves the framing exists somewhere
- * and that `routes.ts` is not the somewhere.
+ * to be the RETIRED live-event handler in this same file — a second SSE spelling that happened to
+ * contain the framing. (Its route name is deliberately not spelled anywhere in this file: the D-21
+ * grep-clean inventory scans every package's `src` tree and counts a comment as a hit, so prose
+ * naming a retired route would be the reappearance the inventory exists to forbid.) It is gone, and
+ * the honest control is the module the run-stream handler DELEGATES to: `run-service-routes.ts`,
+ * where every one of these patterns has to appear because that is where the frames are actually
+ * written. A control inside the file under test could only ever prove the extractor worked; this
+ * one proves the framing exists somewhere and that `routes.ts` is not the somewhere.
  */
 const FRAME_FORMATTING: readonly (readonly [string, RegExp])[] = Object.freeze([
   ['the event-stream content type', /text\/event-stream/u],
