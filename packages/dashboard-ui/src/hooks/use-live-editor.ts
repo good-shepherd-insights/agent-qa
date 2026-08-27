@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { LiveExecutionLogEntry, SubActionData } from '@/lib/api'
-import type { LivePhase } from '@/hooks/use-execution-events'
+import type { LivePhase } from '@/lib/display-step'
 import { logLiveDebug } from '@/lib/live-debug'
 
 export interface StepExecution {

@@ -14,7 +14,27 @@ import {
 } from "lucide-react"
 import { motion } from "motion/react"
 import { cn } from "@/lib/utils"
-import type { LiveStep, LivePhase } from "@/hooks/use-execution-events"
+import type { LivePhase } from "@/lib/display-step"
+
+// The legacy feed's step record — relocated from the retired `use-execution-events` hook by 405
+// (D-19). This card is its only remaining consumer, so the type lives here now.
+export interface LiveStep {
+  id: string
+  kind: 'step' | 'hook'
+  hookPhase?: 'setup' | 'teardown' | 'inline'
+  hookExecutionId?: string
+  name: string
+  status: "pending" | "running" | "passed" | "failed" | "healed" | "skipped" | "flaky" | "cancelled"
+  duration?: number
+  error?: string
+  screenshot?: string
+  reasoning?: string
+  observation?: string
+  result?: string
+  plannedAction?: unknown
+  annotation?: unknown
+  phases?: LivePhase[]
+}
 
 function StepStatusIcon({ status }: { status: LiveStep["status"] }) {
   switch (status) {

@@ -1,7 +1,21 @@
 import type { StepRow, SubActionData, StepAnnotation } from './api'
-import type { LivePhase } from '@/hooks/use-execution-events'
 import type { EditorStep } from '@/hooks/use-live-editor'
 import { normalizeStepStatus } from '@/lib/status'
+
+// The live editor's phase record — relocated from the retired `use-execution-events` hook by 405
+// (D-19/D-20). The census measured that the editor executes in-process via core `executeStep` and
+// never used the retired spawn, so the editor stays; only this type moved to its consumer's home.
+export interface LivePhase {
+  phase: 'observe' | 'plan' | 'execute' | 'verify' | 'heal'
+  subActionIndex?: number
+  phaseOrdinal?: number
+  text?: string
+  confidence?: number
+  action?: unknown
+  success?: boolean
+  duration?: number
+  timestamp: string
+}
 
 export interface DisplayStep {
   id: string

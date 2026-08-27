@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { fromEditorStep, fromStepRow, groupPhasesIntoSubActions, withDisplayStepProgress } from '../lib/display-step'
-import type { LivePhase } from '@/hooks/use-execution-events'
+import type { LivePhase } from '@/lib/display-step'
 import type { StepRow } from '@/lib/api'
 
 function phase(p: LivePhase['phase'], overrides: Partial<LivePhase> = {}): LivePhase {
