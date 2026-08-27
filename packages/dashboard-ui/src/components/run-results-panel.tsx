@@ -1,18 +1,32 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { X, CheckCircle2, XCircle, CircleDashed, Clock, RefreshCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
-import { subscribeToExecutionEvents } from "@/lib/api"
+import { openRunStream } from "@/lib/api"
+import {
+  createInitialRunStreamState,
+  reduceRunStream,
+  type RunStreamState,
+} from "@/lib/run-stream-reducer"
 import { finalStepStatusForRun, getRunStatusDescriptor, normalizeStepStatus } from "@/lib/status"
 import { formatDuration } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+
+// THE ONE LIVE WIRE (405-03 · D-19). This panel used to read the legacy `/api/execution/events`
+// projection through `subscribeToExecutionEvents`; that feed's UI half is retired. It now folds the
+// SAME frozen envelopes `pages/live-run.tsx` folds, through the SAME pure reducer, so the editor's
+// panel and the live page cannot drift into two accounts of one run.
+//
+// A PANEL OPENED AFTER THE RUN ENDED IS SERVED BY REPLAY, not by a second durable read. The local
+// run-stream door replays the log from the beginning and then closes at `runFinished`, so the
+// reducer reaches the same terminal state either way — which is why there is no `fetchRunDetail`
+// fallback here for a finished run.
 
 interface StepInfo {
   name: string
   status: string
   duration?: number
-  error?: string
 }
 
 interface RunResultsPanelProps {
@@ -21,11 +35,11 @@ interface RunResultsPanelProps {
 }
 
 export function RunResultsPanel({ runId, onClose }: RunResultsPanelProps) {
-  const [steps, setSteps] = useState<StepInfo[]>([])
+  const [state, setState] = useState<RunStreamState>(createInitialRunStreamState)
   const [runStatus, setRunStatus] = useState<
     "connecting" | "running" | "complete" | "error"
   >("connecting")
-  const [finalStatus, setFinalStatus] = useState<string | undefined>()
+  const [streamError, setStreamError] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -33,9 +47,9 @@ export function RunResultsPanel({ runId, onClose }: RunResultsPanelProps) {
     if (!runId) return
 
     let cancelled = false
-    setSteps([])
+    setState(createInitialRunStreamState())
     setRunStatus("connecting")
-    setFinalStatus(undefined)
+    setStreamError(false)
     setElapsed(0)
 
     // Start elapsed timer
@@ -44,83 +58,89 @@ export function RunResultsPanel({ runId, onClose }: RunResultsPanelProps) {
       if (!cancelled) setElapsed(Date.now() - startTime)
     }, 200)
 
-    const source = subscribeToExecutionEvents(runId, {
-      onRunStart: () => {
-        if (!cancelled) setRunStatus("running")
-      },
-      onStepStart: (data) => {
+    const stopTimer = () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+    }
+
+    const source = openRunStream(runId, {
+      onEvent: (envelope) => {
         if (cancelled) return
+        setStreamError(false)
         setRunStatus("running")
-        setSteps((prev) => [
-          ...prev,
-          { name: data.stepName, status: "running" },
-        ])
+        setState((previous) => reduceRunStream(previous, envelope, Date.now()))
       },
-      onStepComplete: (data) => {
+      onFinished: () => {
         if (cancelled) return
-        setSteps((prev) => {
-          let completed = false
-          return prev.map((s) => {
-            if (completed || s.name !== data.stepName || s.status !== "running") return s
-            completed = true
-            return {
-              ...s,
-              status: normalizeStepStatus(data.status),
-              duration: data.duration,
-              error: data.error ?? undefined,
-            }
-          })
-        })
+        stopTimer()
       },
-      onRunComplete: (data) => {
+      onError: () => {
         if (cancelled) return
-        const descriptor = getRunStatusDescriptor(data.status)
-        setFinalStatus(descriptor.normalized)
-        setRunStatus(descriptor.normalized === "passed" ? "complete" : "error")
-        setSteps((prev) =>
-          prev.map((step) =>
-            step.status === "running"
-              ? { ...step, status: finalStepStatusForRun(data.status) }
-              : step,
-          ),
-        )
-        if (timerRef.current) clearInterval(timerRef.current)
-      },
-      onRunError: (data) => {
-        if (cancelled) return
-        setRunStatus("error")
-        setSteps((prev) => [
-          ...prev,
-          { name: "Run Error", status: "failed", error: data.error },
-        ])
-        if (timerRef.current) clearInterval(timerRef.current)
+        setStreamError(true)
+        stopTimer()
       },
     })
 
     return () => {
       cancelled = true
-      if (timerRef.current) clearInterval(timerRef.current)
+      stopTimer()
       source.close()
     }
   }, [runId])
 
+  // The run's own word for how it ended, as the reducer recorded it. `verdict` is first-verdict-wins
+  // there, so this cannot flip once the run has answered.
+  const finalStatus = state.verdict
+  const terminalDescriptor = finalStatus ? getRunStatusDescriptor(finalStatus) : null
+
+  // The timer stops when the run answers — `runFinished` may never arrive on a stream the browser
+  // dropped, but a verdict is an ending either way.
+  useEffect(() => {
+    if (finalStatus === undefined) return
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+  }, [finalStatus])
+
+  const steps = useMemo<StepInfo[]>(() => {
+    // The reducer keeps rows in bus seq order — the run's own total order, never arrival order.
+    return state.steps.map((row) => ({
+      name: row.text,
+      // A row still running when the run ended takes the run's ending, so a stream that stopped
+      // mid-step never leaves a spinner claiming work is still happening.
+      status: row.status === "running" && finalStatus !== undefined
+        ? finalStepStatusForRun(finalStatus)
+        : normalizeStepStatus(row.status),
+      duration: row.durationMs,
+    }))
+  }, [state.steps, finalStatus])
+
   if (!runId) return null
 
-  const terminalDescriptor = finalStatus ? getRunStatusDescriptor(finalStatus) : null
-  const headerLabel = runStatus === "connecting"
+  const posture: "connecting" | "running" | "complete" | "error" = terminalDescriptor
+    ? (terminalDescriptor.normalized === "passed" ? "complete" : "error")
+    : streamError
+    ? "error"
+    : runStatus
+
+  const inFlight = posture === "running" || posture === "connecting"
+  const headerLabel = posture === "connecting"
     ? "Connecting..."
-    : runStatus === "running"
+    : posture === "running"
     ? "Running"
-    : terminalDescriptor?.label ?? (runStatus === "complete" ? "Passed" : "Failed")
+    : terminalDescriptor?.label ?? (posture === "complete" ? "Passed" : "Failed")
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
-          {runStatus === "running" || runStatus === "connecting" ? (
+          {inFlight ? (
             <CircleDashed className="size-4 text-primary" />
-          ) : terminalDescriptor?.normalized === "passed" || runStatus === "complete" ? (
+          ) : terminalDescriptor?.normalized === "passed" || posture === "complete" ? (
             <CheckCircle2 className="size-4 text-emerald-500" />
           ) : terminalDescriptor?.normalized === "cancelled" ? (
             <Square className="size-4 text-muted-foreground" />
@@ -130,7 +150,7 @@ export function RunResultsPanel({ runId, onClose }: RunResultsPanelProps) {
             <XCircle className="size-4 text-red-500" />
           )}
           <span className="text-sm font-medium">{headerLabel}</span>
-          {(runStatus === "running" || runStatus === "connecting") && (
+          {inFlight && (
             <Badge variant="outline" className="text-xs gap-1">
               <Clock className="size-3" />
               {formatDuration(elapsed)}
@@ -148,6 +168,7 @@ export function RunResultsPanel({ runId, onClose }: RunResultsPanelProps) {
           {steps.map((step, i) => (
             <div
               key={`${step.name}-${i}`}
+              data-step-status={step.status}
               className={cn(
                 "relative overflow-hidden flex items-start gap-2 rounded-md border px-3 py-2 text-sm",
                 step.status === "running" && "live-running-surface border-border/60 bg-primary/5",
@@ -169,7 +190,7 @@ export function RunResultsPanel({ runId, onClose }: RunResultsPanelProps) {
                 <CheckCircle2 className="size-3.5 mt-0.5 text-emerald-500 shrink-0" />
               ) : step.status === "cancelled" ? (
                 <Square className="size-3.5 mt-0.5 text-muted-foreground shrink-0" />
-              ) : step.status === "flaky" ? (
+              ) : step.status === "flaky" || step.status === "healed" ? (
                 <RefreshCw className="size-3.5 mt-0.5 text-amber-500 shrink-0" />
               ) : (
                 <XCircle className="size-3.5 mt-0.5 text-red-500 shrink-0" />
@@ -182,7 +203,7 @@ export function RunResultsPanel({ runId, onClose }: RunResultsPanelProps) {
               )}
             </div>
           ))}
-          {steps.length === 0 && runStatus === "connecting" && (
+          {steps.length === 0 && posture === "connecting" && (
             <div className="text-sm text-muted-foreground text-center py-8">
               Waiting for events...
             </div>
