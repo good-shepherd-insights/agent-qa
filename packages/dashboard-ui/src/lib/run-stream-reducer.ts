@@ -20,7 +20,7 @@ import type {
  * WHY THIS IS A MODULE AND NOT A HOOK. What the live surface may show is a claim about a data
  * structure, not about a rendering discipline. A hook can only be exercised through a renderer, so
  * "the page cannot display a half-finished thought" would be an assertion about JSX — one refactor
- * away from being false while every cell stayed green. Here the claim is structural: {@link StepRow}
+ * away from being false while every cell stayed green. Here the claim is structural: {@link LiveStepRow}
  * has no field a half-finished thought could occupy, and the reducer builds rows field by field
  * rather than by spreading a payload, so there is no path by which one arrives.
  *
@@ -73,7 +73,15 @@ const TERMINAL_STEP_STATUSES: readonly StepStatus[] = ['passed', 'failed', 'heal
  * derived from tick timing would be a guess about what the agent is doing between two events, and a
  * guess rendered as fact is the provisional content this phase exists to stop showing.
  */
-export interface StepRow {
+/**
+ * One step row on the LIVE page, folded from the run stream.
+ *
+ * NAMED `LiveStepRow` SINCE 405-11, and the rename is the whole point of the name: the durable
+ * page's v1 row carried the same short name in the API module, so the two shapes were one grep
+ * apart from each other for anyone auditing which of them was retired. That one is gone; this one
+ * has a live producer and keeps a name that says which page it belongs to.
+ */
+export interface LiveStepRow {
   testIndex: number
   stepIndex: number
   status: StepStatus
@@ -132,7 +140,7 @@ export interface RunStreamState {
    */
   members: Readonly<Record<number, MemberRow>>
   /** Every step row, in bus seq order — never arrival order and never `ts` order. */
-  steps: readonly StepRow[]
+  steps: readonly LiveStepRow[]
   /** The run's attachable handle roster, as `runStarted` announced it. Undefined if it announced none. */
   handles?: readonly number[]
   /** The injected `now` at which the most recent envelope was folded. Undefined before the first. */
@@ -277,7 +285,7 @@ function withMember(state: RunStreamState, member: MemberRow): Readonly<Record<n
  * multiplexed can deliver a lower seq after a higher one. `seq` is the bus's total order and the
  * only one this page renders in.
  */
-function insertBySeq(rows: readonly StepRow[], row: StepRow): StepRow[] {
+function insertBySeq(rows: readonly LiveStepRow[], row: LiveStepRow): LiveStepRow[] {
   const next = [...rows]
   let at = next.length
   while (at > 0 && next[at - 1]!.createdSeq > row.createdSeq) at -= 1
@@ -285,13 +293,13 @@ function insertBySeq(rows: readonly StepRow[], row: StepRow): StepRow[] {
   return next
 }
 
-function replaceRow(rows: readonly StepRow[], index: number, row: StepRow): StepRow[] {
+function replaceRow(rows: readonly LiveStepRow[], index: number, row: LiveStepRow): LiveStepRow[] {
   const next = [...rows]
   next[index] = row
   return next
 }
 
-const rowIndexOf = (rows: readonly StepRow[], testIndex: number, stepIndex: number): number =>
+const rowIndexOf = (rows: readonly LiveStepRow[], testIndex: number, stepIndex: number): number =>
   rows.findIndex((row) => row.testIndex === testIndex && row.stepIndex === stepIndex)
 
 /**
@@ -359,7 +367,7 @@ export function reduceRunStream(state: RunStreamState, envelope: RunEventEnvelop
       const at = rowIndexOf(base.steps, payload.testIndex, payload.stepIndex)
       // A repeated `stepStarted` for the same coordinates is a retry attempt: the row goes back to
       // `running` with its tick count reset, because those ticks belong to the previous attempt.
-      const row: StepRow = {
+      const row: LiveStepRow = {
         testIndex: payload.testIndex,
         stepIndex: payload.stepIndex,
         status: 'running',

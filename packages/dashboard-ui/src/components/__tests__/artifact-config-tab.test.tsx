@@ -50,7 +50,6 @@ function makeRun() {
     metadata: null,
     startedAt: "2026-04-18T00:00:00.000Z",
     endedAt: "2026-04-18T00:00:01.200Z",
-    videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,
@@ -81,7 +80,6 @@ function baseResponse(payload: Record<string, unknown>, missingSections: string[
       createdAt: "2026-04-18T00:00:00.000Z",
       updatedAt: "2026-04-18T00:00:01.200Z",
     },
-    children: [],
     missingSections,
   }
 }
@@ -170,8 +168,6 @@ describe("ArtifactConfigTab", () => {
         ],
       },
     })
-    response.artifact!.kind = "suite-parent"
-    response.children = [{ run: { ...makeRun(), id: "child-login", testId: "t_login", name: "Login" }, artifact: null }]
 
     mount(response)
 

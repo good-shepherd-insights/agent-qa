@@ -184,7 +184,6 @@ function runRow(id: string, over: Record<string, unknown> = {}) {
     metadata: null,
     startedAt: "2026-04-18T00:00:00.000Z",
     endedAt: "2026-04-18T00:00:10.000Z",
-    videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,

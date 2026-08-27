@@ -1,1 +1,1 @@
-export type { RunRow, StepRow, Stats, RunsFilter } from './lib/api.js'
+export type { RunRow, Stats, RunsFilter } from './lib/api.js'

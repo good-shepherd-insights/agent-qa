@@ -2,15 +2,15 @@ import { Eye, Brain, Play, ShieldCheck } from 'lucide-react'
 import { ReasoningPipeline } from '@/components/reasoning-pipeline'
 import type { SectionDef } from '@/components/reasoning-pipeline'
 import { ConfidenceBadge } from '@/components/confidence-badge'
-import type { SubActionData } from '@/lib/api'
+import type { LiveSubAction } from '@/hooks/use-live-editor'
 import type { DisplayStep } from '@/lib/display-step'
 
 interface EditorStepDetailProps {
   step: DisplayStep
-  subAction: SubActionData | null
+  subAction: LiveSubAction | null
 }
 
-function buildSubActionSections(sub: SubActionData): SectionDef[] {
+function buildSubActionSections(sub: LiveSubAction): SectionDef[] {
   const sections: SectionDef[] = []
 
   if (sub.observation) {

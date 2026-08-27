@@ -90,7 +90,6 @@ const baseRun = {
   name: "Login run",
   filePath: "tests/login.yaml",
   status: "passed",
-  videoPath: null,
   duration: 1200,
   attributes: {
     "agent-qa.trigger": "cli",

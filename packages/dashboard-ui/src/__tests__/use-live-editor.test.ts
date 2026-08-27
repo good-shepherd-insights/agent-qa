@@ -20,7 +20,7 @@ function makeStep(
     networkLogs: [],
     variableSnapshot: null,
     originalStepName: null,
-    subActionsData: null,
+    liveSubActions: null,
     executionLogs: [],
     executionGeneration: 0,
     ...overrides,

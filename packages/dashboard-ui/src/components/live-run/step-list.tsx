@@ -1,6 +1,6 @@
 import { Check, Circle, CircleDashed, Minus, ShieldCheck, X } from 'lucide-react'
 
-import type { MemberRow, StepRow, StepStatus } from '@/lib/run-stream-reducer'
+import type { MemberRow, LiveStepRow, StepStatus } from '@/lib/run-stream-reducer'
 import { cn } from '@/lib/utils'
 
 /**
@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
  * verified. The durable record has all of it, complete, one click away at run detail. This surface
  * refuses to show a guess as a fact.
  *
- * THE PROPS ARE THE WHOLE STORY. {@link StepRow} carries no field a half-finished thought could
+ * THE PROPS ARE THE WHOLE STORY. {@link LiveStepRow} carries no field a half-finished thought could
  * occupy (403-04), and this component accepts nothing else — no envelope, no payload, no `unknown`
  * escape hatch. A future edit that wanted to render reasoning here would have to widen the props
  * first, which is a visible change to a published contract rather than one more line in the JSX.
@@ -56,13 +56,13 @@ const STATUS_TONE: Record<StepStatus, string> = {
 
 export interface StepListProps {
   members: readonly MemberRow[]
-  steps: readonly StepRow[]
+  steps: readonly LiveStepRow[]
   terminal: boolean
   /** The page's clock reading, injected — never `Date.now()` inside a render. */
   now: number
 }
 
-function StepRowView({ row, now }: { row: StepRow; now: number }) {
+function LiveStepRowView({ row, now }: { row: LiveStepRow; now: number }) {
   const Glyph = STATUS_GLYPH[row.status]
   const isRunning = row.status === 'running'
   const elapsedSeconds = row.startedAt === undefined ? undefined : (now - row.startedAt) / 1000
@@ -152,7 +152,7 @@ export function StepList({ members, steps, terminal, now }: StepListProps) {
             {rows.length > 0 && (
               <ul className="flex flex-col">
                 {rows.map((row) => (
-                  <StepRowView key={`${String(row.testIndex)}:${String(row.stepIndex)}`} row={row} now={now} />
+                  <LiveStepRowView key={`${String(row.testIndex)}:${String(row.stepIndex)}`} row={row} now={now} />
                 ))}
               </ul>
             )}

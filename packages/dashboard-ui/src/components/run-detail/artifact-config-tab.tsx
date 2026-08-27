@@ -47,20 +47,17 @@ function sourceKind(source: Record<string, unknown> | null): "test" | "suite" | 
   return "unknown"
 }
 
-function childRunIdForMember(
-  member: Record<string, unknown>,
-  response: RunArtifactResponse,
-): string | null {
-  const explicit = textAt(member, "childRunId")
-  if (explicit) return explicit
-  const testId = textAt(member, "testId")
-  const name = textAt(member, "name")
-  const child = response.children.find(({ run }) => {
-    if (testId && run.testId === testId) return true
-    if (name && run.name === name) return true
-    return false
-  })
-  return child?.run.id ?? null
+/**
+ * The child run this suite member ran as, if the artifact itself recorded one (405-11 · D-02).
+ *
+ * IT NO LONGER GUESSES. There used to be a fallback that searched the response's child runs for one
+ * whose test id — or, failing that, whose NAME — matched the member. Two members of a suite can
+ * share a name, so the second arm could link a member to another member's run; and after 405-07 a
+ * suite's members live under one run as handles, so there are no child runs to search. What is left
+ * is the id the artifact recorded, or nothing.
+ */
+function childRunIdForMember(member: Record<string, unknown>): string | null {
+  return textAt(member, "childRunId") ?? null
 }
 
 function ConfigSummary({ config }: { config: Record<string, unknown> }) {
@@ -143,7 +140,7 @@ function SuiteMembers({
         {members.map((member) => {
           const ref = recordAt(member, "ref")
           const index = typeof member.index === "number" ? member.index : 0
-          const childRunId = childRunIdForMember(member, response)
+          const childRunId = childRunIdForMember(member)
           const error = terminalErrorMessage(valueAt(member, "error"))
 
           return (

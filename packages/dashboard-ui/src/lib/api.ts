@@ -22,7 +22,6 @@ export interface RunRow {
   metadata: Record<string, unknown> | null
   startedAt: string | null
   endedAt: string | null
-  videoPath: string | null
   failureSummary: string | null
   errorLog: string | null
   memoryLog: string | null
@@ -68,78 +67,6 @@ export interface AccessibilityViolation {
   nodes: Array<{ html: string; target: string[] }>
 }
 
-export interface SubActionData {
-  index: number
-  observation: string
-  reasoning: string
-  plannedAction: unknown
-  result: 'success' | 'failure' | 'in-progress'
-  error?: string
-  screenStateBefore: string
-  screenStateAfter?: string
-  confidence?: number
-  verifierReasoning?: string
-  cached: boolean
-  tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
-  phaseDurations?: { observe?: number; plan?: number; execute?: number; verify?: number }
-  screenshotBeforePath?: string
-  screenshotAfterPath?: string
-  annotation?: StepAnnotation
-  screenContextBefore?: string
-  screenContextAfter?: string
-  data?: unknown
-}
-
-export interface StepRow {
-  id: string
-  runId: string
-  name: string
-  status: string
-  duration: number
-  action: unknown | null
-  observation: string | null
-  reasoning: string | null
-  plannedAction: unknown | null
-  result: string | null
-  error: string | null
-  screenshotPath: string | null
-  screenshotBeforePath: string | null
-  retryCount: number
-  capturedVariables: Record<string, string> | null
-  stepOrder: number
-  annotationData: StepAnnotation | null
-  healingScreenshotPaths: string[] | null
-  accessibilityViolations: AccessibilityViolation[] | null
-  consoleLogs: Array<{
-    level: string
-    text: string
-    location?: { url: string; lineNumber: number; columnNumber: number }
-    timestamp: number
-  }> | null
-  networkLogs: Array<{
-    url: string
-    method: string
-    status: number
-    requestHeaders: Record<string, string>
-    responseHeaders: Record<string, string>
-    body?: string
-    requestBody?: string
-    startTime: number
-    endTime: number
-    timing?: Record<string, number>
-  }> | null
-  confidence: number | null
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  subActionsData: SubActionData[] | null
-  variableSnapshot: Record<string, { value: string; source: string }> | null
-  originalStepName: string | null
-  screenContextBefore: string | null
-  screenContextAfter: string | null
-  createdAt: string
-}
-
 export interface Stats {
   totalRuns: number
   passed: number
@@ -170,7 +97,15 @@ export interface RunsFilter {
   offset?: number
 }
 
-export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'
+/**
+ * What a finalized run artifact is ABOUT (405-11 · 405-07's deferral).
+ *
+ * TWO MEMBERS, NOT FOUR. The union used to admit a suite parent and a suite child; the store's
+ * own column now REFUSES both, so nothing can write one and the two members were unreachable
+ * breadth. 405-07 left them in place deliberately — the drawer switches on this value to paint a
+ * badge, and narrowing a union a render site reads belongs with that render site, which is here.
+ */
+export type RunArtifactKind = 'test' | 'unknown'
 
 export interface RunArtifactPayload {
   schemaVersion: number
@@ -187,10 +122,16 @@ export interface RunArtifactRow {
   updatedAt: string
 }
 
+/**
+ * What the artifact drawer reads (405-11 · D-02/D-14).
+ *
+ * NO `children`. The key carried one entry per child run of a suite parent, and after 405-07 there
+ * are no child runs to carry: a suite's members live under ONE run as handles. A key that could
+ * only ever be empty is a shape that invites a reader to look for something that is not there.
+ */
 export interface RunArtifactResponse {
   run: RunRow
   artifact: RunArtifactRow | null
-  children: Array<{ run: RunRow; artifact: RunArtifactRow | null }>
   missingSections: string[]
 }
 
@@ -394,16 +335,15 @@ export async function fetchRunAttributeValues(key: string, opts: { q?: string; l
 }
 
 /**
- * `GET /api/runs/:id` — the run ROW, and after 405-07 nothing else.
+ * `GET /api/runs/:id` — the run ROW, and nothing else (405-11 · D-02/D-03).
  *
- * `steps`, `attempts` and `tests` are OPTIONAL AND NOW ALWAYS ABSENT. The server stopped serving
- * them with the v1 projection they read and the parent-run walk they came from (405-07, D-02/D-03);
- * the run's members, steps and sub-actions are `fetchRunDetail`'s, through `runs.detail`. They stay
- * on the type as optional rather than being deleted outright because 405-11 owns the page rebuild
- * that removes the readers — an absent key a caller defaults is an honest empty tree, where a
- * declared-but-missing array is a `TypeError` on first render.
+ * The three legacy keys are GONE from the type, not merely optional. 405-07 stopped the server
+ * serving them and left them optional so the page rebuild could remove their readers in one plan;
+ * that plan is this one, and the readers are gone. The run's members, steps and sub-actions come
+ * from `fetchRunDetail` through the durable projection — one read, one shape, one place a field
+ * can go missing loudly.
  */
-export async function fetchRun(id: string): Promise<{ run: RunRow; steps?: StepRow[]; attempts?: RunRow[]; tests?: RunRow[] }> {
+export async function fetchRun(id: string): Promise<{ run: RunRow }> {
   return request(`/api/runs/${encodeURIComponent(id)}`)
 }
 
@@ -1044,43 +984,6 @@ export interface AccessibilitySummary {
   scannedSteps: number
   unscannedSteps: number
   totalSteps: number
-}
-
-export interface ReasoningTrace {
-  id: string | null
-  stepId: string
-  observeText: string | null
-  observeDuration: number | null
-  planReasoning: string | null
-  planConfidence: number | null
-  planAction: unknown | null
-  planDuration: number | null
-  executeAction: unknown | null
-  executeDuration: number | null
-  verifyReasoning: string | null
-  verifySuccess: boolean | null
-  verifyDuration: number | null
-  healAttempts: Array<{
-    action: unknown
-    observationBefore: string
-    observationAfter?: string
-    success: boolean
-    attemptNumber?: number
-    strategy?: string
-    reasoning?: string
-    confidence?: number
-  }> | null
-  totalDuration: number | null
-  screenStateBefore: string | null
-  screenStateAfter: string | null
-  createdAt: string
-}
-
-export async function fetchStepReasoning(
-  runId: string,
-  stepOrder: number,
-): Promise<{ trace: ReasoningTrace }> {
-  return request(`/api/runs/${encodeURIComponent(runId)}/steps/${stepOrder}/reasoning`)
 }
 
 // Log API

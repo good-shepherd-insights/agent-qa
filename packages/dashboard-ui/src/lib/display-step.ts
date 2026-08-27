@@ -5,10 +5,10 @@ import type {
   VerifierVerdict,
 } from '@vostride/agent-qa-schema'
 
-import type { StepRow, SubActionData, StepAnnotation } from './api'
+import type { AccessibilityViolation } from './api'
 import type { RunDetailGroup } from './run-detail-view'
 import { runDetailStepKey } from './selection'
-import type { EditorStep } from '@/hooks/use-live-editor'
+import type { EditorStep, LiveSubAction } from '@/hooks/use-live-editor'
 import { normalizeStepStatus } from '@/lib/status'
 
 // The live editor's phase record — relocated from the retired `use-execution-events` hook by 405
@@ -27,15 +27,17 @@ export interface LivePhase {
 }
 
 /**
- * What a step looks like to the run-detail tree and panels.
+ * What a step looks like to the run-detail tree and panels, and to the live editor.
  *
- * TWO PRODUCERS, ONE SHAPE, MID-MIGRATION (405-08). {@link fromRunDetailStep} builds this from the
- * durable projection — the rebuilt page's only source — while {@link fromStepRow} and
- * {@link fromEditorStep} still build it from the v1 row and the live editor. The v1-only fields are
- * therefore OPTIONAL rather than null-filled: a durable step genuinely has no
- * `screenshotPath`, no `variableSnapshot` and no `accessibilityViolations`, and filling them with
- * `null` would spell "the v1 read happened and found nothing" where the truth is "that read no
- * longer exists". 405-11 deletes them together with their consumers.
+ * TWO PRODUCERS, TWO HALVES, AND NO OVERLAP (405-11). {@link fromRunDetailStep} builds this from
+ * the durable projection — the rebuilt page's ONLY source — and {@link fromEditorStep} builds it
+ * from a live editor step. The third producer, which read a v1 row served with the run, is gone
+ * with the row; so is every capture-path field it was the only writer of.
+ *
+ * THE LIVE-ONLY FIELDS STAY OPTIONAL RATHER THAN NULL-FILLED. A durable step genuinely has no
+ * variable snapshot and no accessibility violations, and filling those with `null` would spell
+ * "the read happened and found nothing" where the truth is that no such read exists. The tabs that
+ * show them render their not-captured state on the durable page, which is the honest answer.
  */
 export interface DisplayStep {
   /** `<testIndex>:<stepIndex>` for a durable step (see `runDetailStepKey`); the row id for a v1 one. */
@@ -62,13 +64,10 @@ export interface DisplayStep {
   /** ABSENT when the step reported no usage — never a zero (D-05/D-06). */
   tokenUsage?: RunStepTokenUsage
 
-  // ---- v1 / live-editor fields, deleted with their consumers by 405-11 ----
-  subActionsData?: SubActionData[] | null
+  // ---- live-editor fields; a durable step carries none of them ----
+  liveSubActions?: LiveSubAction[] | null
   originalStepName?: string | null
   variableSnapshot?: Record<string, { value: string; source: string }> | null
-  screenshotPath?: string | null
-  screenshotBeforePath?: string | null
-  annotationData?: StepAnnotation | null
   observation?: string | null
   reasoning?: string | null
   plannedAction?: unknown | null
@@ -93,9 +92,7 @@ export interface DisplayStep {
     endTime: number
     timing?: Record<string, number>
   }> | null
-  accessibilityViolations?: StepRow['accessibilityViolations']
-  screenContextBefore?: string | null
-  screenContextAfter?: string | null
+  accessibilityViolations?: AccessibilityViolation[] | null
   rawRunId?: string | null
 }
 
@@ -156,43 +153,11 @@ export function displayStepsForGroups(groups: readonly RunDetailGroup[]): Displa
   )
 }
 
-export function fromStepRow(step: StepRow): DisplayStep {
-  return {
-    id: step.id,
-    name: step.name,
-    status: step.status,
-    duration: step.duration,
-    subActionsData: step.subActionsData,
-    originalStepName: step.originalStepName,
-    variableSnapshot: step.variableSnapshot,
-    screenshotPath: step.screenshotPath,
-    screenshotBeforePath: step.screenshotBeforePath,
-    annotationData: step.annotationData,
-    observation: step.observation,
-    reasoning: step.reasoning,
-    plannedAction: step.plannedAction,
-    action: step.action,
-    error: step.error,
-    confidence: step.confidence,
-    runId: step.runId,
-    stepOrder: step.stepOrder,
-    consoleLogs: step.consoleLogs,
-    networkLogs: step.networkLogs,
-    accessibilityViolations: step.accessibilityViolations,
-    screenContextBefore: step.screenContextBefore,
-    screenContextAfter: step.screenContextAfter,
-    rawRunId: step.runId,
-    rawStepOrder: step.stepOrder,
-    displayStepOrder: step.stepOrder + 1,
-    displayStepTotal: null,
-  }
-}
-
 export function fromEditorStep(step: EditorStep, index: number): DisplayStep {
   const observe = step.phases.find(p => p.phase === 'observe')
   const plan = step.phases.find(p => p.phase === 'plan')
   const execute = step.phases.find(p => p.phase === 'execute')
-  const fallbackSubAction = step.subActionsData?.find((subAction) =>
+  const fallbackSubAction = step.liveSubActions?.find((subAction) =>
     Boolean(
       subAction.observation
       || subAction.reasoning
@@ -205,12 +170,9 @@ export function fromEditorStep(step: EditorStep, index: number): DisplayStep {
     name: step.instruction,
     status: normalizeStepStatus(step.status),
     duration: step.duration ?? 0,
-    subActionsData: step.subActionsData ?? groupPhasesIntoSubActions(step.phases),
+    liveSubActions: step.liveSubActions ?? groupPhasesIntoSubActions(step.phases),
     originalStepName: step.originalStepName,
     variableSnapshot: step.variableSnapshot,
-    screenshotPath: null,
-    screenshotBeforePath: null,
-    annotationData: null,
     observation: observe?.text ?? fallbackSubAction?.observation ?? null,
     reasoning: plan?.text ?? fallbackSubAction?.reasoning ?? null,
     plannedAction: execute?.action ?? fallbackSubAction?.plannedAction ?? null,
@@ -222,8 +184,6 @@ export function fromEditorStep(step: EditorStep, index: number): DisplayStep {
     consoleLogs: step.consoleLogs,
     networkLogs: step.networkLogs,
     accessibilityViolations: null,
-    screenContextBefore: null,
-    screenContextAfter: null,
     rawRunId: null,
     rawStepOrder: index,
     displayStepOrder: index + 1,
@@ -240,7 +200,7 @@ export function withDisplayStepProgress<T extends DisplayStep>(steps: T[]): T[] 
   }))
 }
 
-export function groupPhasesIntoSubActions(phases: LivePhase[]): SubActionData[] | null {
+export function groupPhasesIntoSubActions(phases: LivePhase[]): LiveSubAction[] | null {
   if (phases.length === 0) return null
 
   const groups: LivePhase[][] = []
@@ -270,8 +230,6 @@ export function groupPhasesIntoSubActions(phases: LivePhase[]): SubActionData[] 
         ? (verify.success ? 'success' : 'failure')
         : (index === groups.length - 1 ? 'in-progress' : 'failure'),
       error: undefined,
-      screenStateBefore: '',
-      cached: false,
       confidence: plan?.confidence,
       verifierReasoning: verify?.text,
       phaseDurations: {

@@ -5,7 +5,7 @@
 // through a renderer, so a claim about what the page can and cannot know would be a claim about a
 // rendering discipline. Here it is a claim about a data structure.
 //
-// THE SENTINEL CELL IS THE LOAD-BEARING ONE, AND A TYPE DOES NOT SUBSTITUTE FOR IT. `StepRow`
+// THE SENTINEL CELL IS THE LOAD-BEARING ONE, AND A TYPE DOES NOT SUBSTITUTE FOR IT. `LiveStepRow`
 // having no `plan`/`plannedAction`/`grounding`/`result`/`reasoning` field proves nothing at
 // runtime: `{ ...payload }` spreads all five in and the type never complains at the boundary where
 // the object was built. So the cells FEED payloads carrying every one of those fields with

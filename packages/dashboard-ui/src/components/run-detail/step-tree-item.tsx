@@ -33,8 +33,8 @@ interface StepTreeItemProps {
 }
 
 export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect, inlineLogs = [], embedded = false }: StepTreeItemProps) {
-  // THE DURABLE SUB-ACTIONS, NOT THE v1 BLOB (405-08). `subActionsData` has no producer on this
-  // page any more; it stays on the type until 405-11 deletes it with the overview's readers.
+  // THE DURABLE SUB-ACTIONS, NOT THE v1 BLOB (405-08/405-11). The v1 sub-action array this row
+  // used to read had no producer on this page, and 405-11 deleted it with the overview's readers.
   const subActions = step.subActions ?? []
   const hasSubActions = subActions.length > 0
 

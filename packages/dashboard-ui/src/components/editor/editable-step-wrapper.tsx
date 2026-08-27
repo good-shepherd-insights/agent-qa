@@ -4,7 +4,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GripVertical, X, Play, Loader2, Square, CheckCircle2, XCircle, Ban, ChevronRight } from 'lucide-react'
 import { StepTreeItem } from '@/components/run-detail/step-tree-item'
-import type { SubActionData } from '@/lib/api'
+import type { LiveSubAction } from '@/hooks/use-live-editor'
 import { cn, formatDuration } from '@/lib/utils'
 import type { DisplayStep } from '@/lib/display-step'
 import type { EditorStep } from '@/hooks/use-live-editor'
@@ -36,7 +36,7 @@ interface EditableStepWrapperProps {
 // editor never computed, or a `plan` reverse-engineered out of the action blob — which is exactly
 // the `JSON.parse`-and-guess the durable rewrite deleted. Two shapes, two rows, no invented facts.
 function EditorSubActionRow({ sub, index, stepId, isSelected, onSelect }: {
-  sub: SubActionData
+  sub: LiveSubAction
   index: number
   stepId: string
   isSelected: boolean
@@ -141,7 +141,7 @@ export function EditableStepWrapper({
   const isRunning = editorStep.status === 'running'
   const isCancelling = editorStep.status === 'cancelling'
   const isComplete = editorStep.status === 'passed' || editorStep.status === 'failed' || editorStep.status === 'cancelled'
-  const hasSubActions = step.subActionsData && step.subActionsData.length > 0
+  const hasSubActions = step.liveSubActions && step.liveSubActions.length > 0
 
   return (
     <li role="none" ref={setNodeRef} style={style}>
@@ -274,11 +274,11 @@ export function EditableStepWrapper({
               className="flex items-center gap-1 px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full border-t border-border/40"
             >
               <ChevronRight className={cn('size-3 transition-transform', subActionsExpanded && 'rotate-90')} />
-              {step.subActionsData!.length} sub-action{step.subActionsData!.length !== 1 ? 's' : ''}
+              {step.liveSubActions!.length} sub-action{step.liveSubActions!.length !== 1 ? 's' : ''}
             </button>
             {subActionsExpanded && (
               <ul role="group" className="border-t border-border/40">
-                {step.subActionsData!.map((sub, subIdx) => (
+                {step.liveSubActions!.map((sub, subIdx) => (
                   <EditorSubActionRow
                     key={subIdx}
                     sub={sub}

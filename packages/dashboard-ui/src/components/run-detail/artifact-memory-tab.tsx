@@ -154,20 +154,6 @@ function memoryLogFromRunJson(memoryLog: string | null | undefined): ArtifactRec
   }
 }
 
-function childArtifactLogsFrom(response: RunArtifactResponse): ArtifactRecord[] {
-  const logs: ArtifactRecord[] = []
-  for (const child of response.children) {
-    const artifactLog = memoryLogFromArtifact(child.artifact)
-    if (artifactLog) {
-      logs.push(artifactLog)
-      continue
-    }
-    const runLog = memoryLogFromRunJson(child.run.memoryLog)
-    if (runLog) logs.push(runLog)
-  }
-  return logs
-}
-
 function sumNumber(logs: ArtifactRecord[], key: string): number {
   return logs.reduce((sum, log) => sum + (numberAt(log, key) ?? 0), 0)
 }
@@ -210,11 +196,17 @@ function mergeArtifactLogs(logs: ArtifactRecord[]): ArtifactRecord | null {
   return merged
 }
 
+/**
+ * The memory log for this run (405-11 · D-02).
+ *
+ * THE CHILD-RUN MERGE IS GONE. A suite parent used to have its curation totals reconstructed by
+ * summing its children's logs; after 405-07 a suite's members live under ONE run, so the run's own
+ * artifact already carries the whole story and there is nothing to sum. The remaining fallback —
+ * the log stored on the run row — is unchanged.
+ */
 function memoryLogFrom(response: RunArtifactResponse): ArtifactRecord | null {
   const directLog = memoryLogFromArtifact(response.artifact)
   if (directLog) return directLog
-  const childLogs = childArtifactLogsFrom(response)
-  if (childLogs.length > 0) return mergeArtifactLogs(childLogs)
   return memoryLogFromRunJson(response.run.memoryLog)
 }
 

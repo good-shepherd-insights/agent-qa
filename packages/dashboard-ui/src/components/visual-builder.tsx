@@ -416,7 +416,7 @@ export function VisualBuilder({
                             }
                             isSelected={isSelected}
                             onSelectStep={(selectedStepId) => onSelect?.({ type: 'step', stepId: selectedStepId })}
-                            subActions={liveStep?.subActionsData ?? null}
+                            subActions={liveStep?.liveSubActions ?? null}
                             selectedSubActionIndex={selectedSubActionIndex}
                             onSelectSubAction={(selectedStepId, subIndex) =>
                               onSelect?.({ type: 'subaction', stepId: selectedStepId, subIndex })

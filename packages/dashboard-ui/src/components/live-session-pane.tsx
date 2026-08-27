@@ -308,7 +308,7 @@ function SelectedTestSummary({
 }: {
   test: EditorTest
   selectedStep: DisplayStep | null
-  subAction: NonNullable<DisplayStep["subActionsData"]>[number] | null
+  subAction: NonNullable<DisplayStep["liveSubActions"]>[number] | null
 }) {
   const displaySteps = test.liveSteps.map((stepDetail) => fromEditorStep(stepDetail, stepDetail.stepIndex))
 
@@ -362,7 +362,7 @@ function SelectedTestSummary({
           <div className="space-y-3">
             {displaySteps.map((step) => {
               const isSelectedStep = selectedStep?.id === step.id
-              const subActions = step.subActionsData ?? []
+              const subActions = step.liveSubActions ?? []
               return (
                 <div
                   key={step.id}
@@ -500,7 +500,7 @@ export function LiveSessionPane({
 
   const selectedLegacySubAction = useMemo(() => {
     if (selection?.type !== "subaction" || !selectedLegacyStep) return null
-    return selectedLegacyStep.subActionsData?.[selection.subIndex] ?? null
+    return selectedLegacyStep.liveSubActions?.[selection.subIndex] ?? null
   }, [selection, selectedLegacyStep])
 
   const selectedLegacyEditorStep = useMemo(
@@ -557,7 +557,7 @@ export function LiveSessionPane({
 
   const selectedSuiteSubAction = useMemo(() => {
     if (selection?.type !== "subaction" || !selectedSuiteStep) return null
-    return selectedSuiteStep.subActionsData?.[selection.subIndex] ?? null
+    return selectedSuiteStep.liveSubActions?.[selection.subIndex] ?? null
   }, [selection, selectedSuiteStep])
 
   const selectedTestDisplaySteps = useMemo(

@@ -47,7 +47,6 @@ function makeRun(overrides: Partial<RunArtifactResponse["run"]> = {}): RunArtifa
     metadata: null,
     startedAt: "2026-04-18T00:00:00.000Z",
     endedAt: "2026-04-18T00:00:01.200Z",
-    videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,
@@ -96,12 +95,20 @@ function responseWithMemory(log: Record<string, unknown>, missingSections: strin
       createdAt: "2026-04-18T00:00:00.000Z",
       updatedAt: "2026-04-18T00:00:01.200Z",
     },
-    children: [],
     missingSections,
   }
 }
 
-function suiteResponseWithChildMemory(log: Record<string, unknown>): RunArtifactResponse {
+/**
+ * A SUITE RUN'S OWN artifact carries its memory log (405-11 · D-02).
+ *
+ * The fixture this replaces built a suite PARENT whose memory had to be reconstructed by summing a
+ * CHILD run's artifact log. After 405-07 a suite's members live under one run as handles — there
+ * are no child runs and no `suite-parent` / `suite-child` artifact kinds — so the merge had nothing
+ * to merge and went with them. What is pinned instead is the property that still has a producer:
+ * a suite run reads its memory from its own artifact.
+ */
+function suiteResponse(log: Record<string, unknown>): RunArtifactResponse {
   return {
     run: makeRun({
       id: "suite-run",
@@ -112,37 +119,18 @@ function suiteResponseWithChildMemory(log: Record<string, unknown>): RunArtifact
     }),
     artifact: {
       runId: "suite-run",
-      kind: "suite-parent",
+      kind: "test",
       schemaVersion: 1,
       payload: {
         schemaVersion: 1,
         source: { kind: "suite", members: [{ index: 0, childRunId: "child-run" }] },
+        memory: { log },
       },
       finalizedAt: "2026-04-18T00:00:01.200Z",
       createdAt: "2026-04-18T00:00:00.000Z",
       updatedAt: "2026-04-18T00:00:01.200Z",
     },
-    children: [{
-      run: makeRun({
-        id: "child-run",
-        name: "Memory child",
-        parentRunId: "suite-run",
-        suiteId: "s_memory",
-      }),
-      artifact: {
-        runId: "child-run",
-        kind: "suite-child",
-        schemaVersion: 1,
-        payload: {
-          schemaVersion: 1,
-          memory: { log },
-        },
-        finalizedAt: "2026-04-18T00:00:01.200Z",
-        createdAt: "2026-04-18T00:00:00.000Z",
-        updatedAt: "2026-04-18T00:00:01.200Z",
-      },
-    }],
-    missingSections: ["memory"],
+    missingSections: [],
   }
 }
 
@@ -228,8 +216,8 @@ describe("ArtifactMemoryTab", () => {
     expect(container.textContent).toContain("Tokens: 10 / 5 / 15")
   })
 
-  it("renders suite parent memory from child artifact logs", () => {
-    mount(suiteResponseWithChildMemory({
+  it("renders a suite run's memory from its own artifact", () => {
+    mount(suiteResponse({
       added: 1,
       confirmed: 0,
       deprecated: 0,
@@ -245,8 +233,8 @@ describe("ArtifactMemoryTab", () => {
         reasoning: "Child run discovered new product memory.",
         before: null,
         after: observation("obs-suite-added", {
-          title: "Suite child product memory",
-          content: "suite child generated product memory",
+          title: "Suite member product memory",
+          content: "suite member generated product memory",
           trust: 0.6,
           source_test: "t_suite_child",
         }),
@@ -254,8 +242,8 @@ describe("ArtifactMemoryTab", () => {
     }))
 
     expect(container.textContent).not.toContain("Memory was not captured for this run.")
-    expect(container.textContent).toContain("Suite child product memory")
-    expect(container.textContent).toContain("suite child generated product memory")
+    expect(container.textContent).toContain("Suite member product memory")
+    expect(container.textContent).toContain("suite member generated product memory")
     expect(container.textContent).toContain("Tokens: 20 / 5 / 25")
   })
 

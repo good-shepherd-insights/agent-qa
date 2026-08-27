@@ -118,7 +118,6 @@ export default function RunsPage() {
           metadata: null,
           startedAt: e.startedAt,
           endedAt: null,
-          videoPath: null,
           failureSummary: null,
           errorLog: null,
           memoryLog: null,

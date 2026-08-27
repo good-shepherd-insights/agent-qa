@@ -183,7 +183,6 @@ function runRow(status: string): RunRow {
     metadata: null,
     startedAt: null,
     endedAt: null,
-  videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,

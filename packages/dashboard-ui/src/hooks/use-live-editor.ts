@@ -1,7 +1,48 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { LiveExecutionLogEntry, SubActionData } from '@/lib/api'
+import type { LiveExecutionLogEntry } from '@/lib/api'
 import type { LivePhase } from '@/lib/display-step'
 import { logLiveDebug } from '@/lib/live-debug'
+
+/**
+ * One sub-action of a LIVE editor step (405-11).
+ *
+ * IT LIVES HERE NOW, BESIDE ITS ONLY PRODUCER. This shape used to sit in the API module beside the
+ * durable run-detail types and carried five fields the live editor never wrote — two capture paths,
+ * an annotation and two screen-context strings — because run detail borrowed it for its v1
+ * projection. Refs are the only artifact addressing now and the durable page reads the projection's
+ * own sub-action, so what is left is exactly what the live editor produces: the phase texts, the
+ * planned action, the recorded outcome and the per-phase durations.
+ *
+ * The socket sends this list under its own wire key; {@link liveSubActionsOf} is the ONE place that
+ * key is read, so the wire spelling appears once in the UI and this is the shape everything else
+ * holds.
+ */
+export interface LiveSubAction {
+  index: number
+  observation: string
+  reasoning: string
+  plannedAction: unknown
+  result: 'success' | 'failure' | 'in-progress'
+  error?: string
+  confidence?: number
+  verifierReasoning?: string
+  phaseDurations?: { observe?: number; plan?: number; execute?: number; verify?: number }
+}
+
+/**
+ * Read the live-editor socket's sub-action list off a step result (405-11).
+ *
+ * THE ONE PLACE THE WIRE KEY IS SPELLED. The dashboard-server's live-editor socket names this list
+ * with the v1 run-detail spelling, and that name has a live producer on the other side of the
+ * socket, so it is not this plan's to rename. Reading it in exactly one place keeps the wire
+ * vocabulary from spreading back through the UI, and makes the boundary something a reader can
+ * find rather than something they have to grep for.
+ */
+function liveSubActionsOf(
+  result: { subActionsData?: LiveSubAction[] | null } | null | undefined,
+): LiveSubAction[] | null {
+  return result?.subActionsData ?? null
+}
 
 export interface StepExecution {
   phases: LivePhase[]
@@ -41,7 +82,7 @@ export interface EditorStep {
   }>
   variableSnapshot: Record<string, { value: string; source: string }> | null
   originalStepName: string | null
-  subActionsData: SubActionData[] | null
+  liveSubActions: LiveSubAction[] | null
   executionLogs: LiveExecutionLogEntry[]
   executionGeneration: number
 }
@@ -214,7 +255,7 @@ function createEditorStep(
     networkLogs: prev?.networkLogs ?? [],
     variableSnapshot: prev?.variableSnapshot ?? null,
     originalStepName: prev?.originalStepName ?? null,
-    subActionsData: prev?.subActionsData ?? null,
+    liveSubActions: prev?.liveSubActions ?? null,
     executionLogs: prev?.executionLogs ?? [],
     executionGeneration: prev?.executionGeneration ?? 0,
   }
@@ -668,7 +709,7 @@ export function useLiveEditor(
                   networkLogs: result?.networkLogs ?? [],
                   variableSnapshot: result?.variableSnapshot ?? null,
                   originalStepName: result?.originalStepName ?? null,
-                  subActionsData: result?.subActionsData ?? null,
+                  liveSubActions: liveSubActionsOf(result),
                   executionLogs: result?.executionLogs ?? [],
                 }
               : s,
@@ -726,7 +767,7 @@ export function useLiveEditor(
                 networkLogs: [],
                 variableSnapshot: null,
                 originalStepName: null,
-                subActionsData: null,
+                liveSubActions: null,
                 executionLogs: [],
               },
             ),
@@ -779,7 +820,7 @@ export function useLiveEditor(
                 networkLogs: result?.networkLogs ?? [],
                 variableSnapshot: result?.variableSnapshot ?? null,
                 originalStepName: result?.originalStepName ?? null,
-                subActionsData: result?.subActionsData ?? null,
+                liveSubActions: liveSubActionsOf(result),
                 executionLogs: result?.executionLogs ?? [],
               },
             ),
@@ -854,7 +895,7 @@ export function useLiveEditor(
                       networkLogs: stepResult?.networkLogs ?? existing.networkLogs,
                       variableSnapshot: stepResult?.variableSnapshot ?? existing.variableSnapshot,
                       originalStepName: stepResult?.originalStepName ?? existing.originalStepName,
-                      subActionsData: stepResult?.subActionsData ?? existing.subActionsData,
+                      liveSubActions: liveSubActionsOf(stepResult) ?? existing.liveSubActions,
                       executionLogs: stepResult?.executionLogs ?? existing.executionLogs,
                     },
                   )
@@ -1187,7 +1228,7 @@ export function useLiveEditor(
       networkLogs: [],
       variableSnapshot: null,
       originalStepName: null,
-      subActionsData: null,
+      liveSubActions: null,
       executionLogs: [],
       executionGeneration: 0,
     }])
@@ -1238,7 +1279,7 @@ export function useLiveEditor(
             networkLogs: [],
             variableSnapshot: null,
             originalStepName: null,
-            subActionsData: null,
+            liveSubActions: null,
             executionLogs: [],
             executionGeneration: currentGen,
           }
@@ -1402,7 +1443,7 @@ export function useLiveEditor(
               networkLogs: [],
               variableSnapshot: null,
               originalStepName: null,
-              subActionsData: null,
+              liveSubActions: null,
               executionLogs: [],
               executionGeneration: currentGen,
             }

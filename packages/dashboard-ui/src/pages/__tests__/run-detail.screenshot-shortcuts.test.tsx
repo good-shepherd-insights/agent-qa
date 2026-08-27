@@ -220,7 +220,6 @@ function makeRun(id: string, status = "passed") {
     startedAt: "2026-04-18T00:00:00.000Z",
     endedAt: "2026-04-18T00:00:01.000Z",
     source: "dashboard",
-    videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,

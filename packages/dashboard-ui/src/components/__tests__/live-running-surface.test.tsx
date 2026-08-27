@@ -70,7 +70,7 @@ function makeLiveStep(): TestStepDetail {
     networkLogs: [],
     variableSnapshot: null,
     originalStepName: null,
-    subActionsData: null,
+    liveSubActions: null,
     executionLogs: [],
     executionGeneration: 1,
     stepIndex: 0,

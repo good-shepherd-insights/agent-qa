@@ -143,7 +143,6 @@ function runRow(status: string) {
     startedAt: "2026-08-26T00:00:00.000Z",
     endedAt: "2026-08-26T00:00:01.000Z",
     source: "cli",
-    videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,

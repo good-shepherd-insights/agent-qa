@@ -4,7 +4,8 @@ import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import type { AccessibilitySummary, StepRow } from "@/lib/api"
+import type { AccessibilitySummary, AccessibilityViolation } from "@/lib/api"
+import type { DisplayStep } from "@/lib/display-step"
 
 vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children, className }: { children: ReactNode; className?: string }) => (
@@ -31,47 +32,17 @@ const summaryBase: AccessibilitySummary = {
   totalSteps: 0,
 }
 
-function makeStep(accessibilityViolations: StepRow["accessibilityViolations"]): StepRow {
-  return {
-    id: "step-1",
-    runId: "run-1",
-    name: "Inspect page",
-    status: "passed",
-    duration: 1000,
-    action: null,
-    observation: null,
-    reasoning: null,
-    plannedAction: null,
-    result: null,
-    error: null,
-    screenshotPath: null,
-    screenshotBeforePath: null,
-    retryCount: 0,
-    capturedVariables: null,
-    stepOrder: 0,
-    annotationData: null,
-    healingScreenshotPaths: null,
-    accessibilityViolations,
-    consoleLogs: null,
-    networkLogs: null,
-    confidence: null,
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    subActionsData: null,
-    variableSnapshot: null,
-    originalStepName: null,
-    screenContextBefore: null,
-    screenContextAfter: null,
-    createdAt: "2026-05-10T00:00:00.000Z",
-  }
+function makeStep(
+  accessibilityViolations: AccessibilityViolation[] | null,
+): Pick<DisplayStep, "accessibilityViolations"> {
+  return { accessibilityViolations }
 }
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null
 
 async function renderA11y(
-  accessibilityViolations: StepRow["accessibilityViolations"],
+  accessibilityViolations: AccessibilityViolation[] | null,
   summary: AccessibilitySummary | null = summaryBase,
 ) {
   container = document.createElement("div")

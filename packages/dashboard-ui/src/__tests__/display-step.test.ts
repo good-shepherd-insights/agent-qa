@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { fromEditorStep, fromStepRow, groupPhasesIntoSubActions, withDisplayStepProgress } from '../lib/display-step'
+import {
+  fromEditorStep,
+  fromRunDetailStep,
+  groupPhasesIntoSubActions,
+  withDisplayStepProgress,
+} from '../lib/display-step'
 import type { LivePhase } from '@/lib/display-step'
-import type { StepRow } from '@/lib/api'
+import type { RunDetailStep } from '@vostride/agent-qa-schema'
 
 function phase(p: LivePhase['phase'], overrides: Partial<LivePhase> = {}): LivePhase {
   return { phase: p, timestamp: new Date().toISOString(), ...overrides }
@@ -114,14 +119,12 @@ describe('fromEditorStep', () => {
       originalStepName: null,
       executionLogs: [],
       executionGeneration: 1,
-      subActionsData: [{
+      liveSubActions: [{
         index: 0,
         observation: 'README section is visible',
         reasoning: 'The page is already in the expected state',
         plannedAction: { type: 'verify', target: 'README section' },
         result: 'success',
-        screenStateBefore: '<main />',
-        cached: false,
         confidence: 0.91,
       }],
     }, 0)
@@ -133,133 +136,58 @@ describe('fromEditorStep', () => {
   })
 })
 
-describe('fromStepRow', () => {
-  it('preserves recorded accessibility violations for the A11y tab', () => {
-    const displayStep = fromStepRow({
-      id: 'step-a11y',
-      runId: 'run-a',
-      name: 'Inspect image alt text',
-      status: 'passed',
-      duration: 1000,
-      action: null,
-      observation: null,
-      reasoning: null,
-      plannedAction: null,
-      result: null,
-      error: null,
-      screenshotPath: null,
-      screenshotBeforePath: null,
-      retryCount: 0,
-      capturedVariables: null,
-      stepOrder: 0,
-      annotationData: null,
-      healingScreenshotPaths: null,
-      accessibilityViolations: [{
-        ruleId: 'image-alt',
-        impact: 'critical',
-        description: 'Images must have alternate text',
-        help: 'Image elements must have alternate text',
-        helpUrl: 'https://dequeuniversity.com/rules/axe/4.10/image-alt',
-        nodes: [{ html: '<img src="hero.png">', target: ['img'] }],
-      }],
-      consoleLogs: null,
-      networkLogs: null,
-      confidence: null,
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-      subActionsData: null,
-      variableSnapshot: null,
-      originalStepName: null,
-      screenContextBefore: null,
-      screenContextAfter: null,
-      createdAt: '2026-05-10T00:00:00.000Z',
-    } satisfies StepRow)
-
-    expect(displayStep.accessibilityViolations).toEqual([
-      expect.objectContaining({ ruleId: 'image-alt', impact: 'critical' }),
-    ])
-  })
-})
-
 describe('withDisplayStepProgress', () => {
-  it('adds display-only suite progress without mutating raw child step identity', () => {
-    const rawA = fromStepRow({
-      id: 'step-a',
-      runId: 'run-a',
-      name: 'Open home',
+  // THE DURABLE STEP IS THE ONLY ROW THIS NUMBERS NOW (405-11). The v1 builder these two fixtures
+  // used to call — and the row it read, with its capture paths and its per-step token counters —
+  // are deleted; refs are the only artifact addressing and the projection carries the spend. The
+  // property under test is unchanged: numbering is DISPLAY-ONLY and never edits the identity a
+  // deep link selects by.
+  it('adds display-only progress without mutating the durable step identity', () => {
+    const step = (stepIndex: number, stepText: string): RunDetailStep => ({
+      testIndex: 0,
+      stepIndex,
+      stepText,
+      cacheStatus: 'miss',
+      verifierVerdict: { pass: true, reasoning: 'looks right' },
+      selfHealOccurred: false,
+      briefDigest: `d0${String(stepIndex)}`,
       status: 'passed',
-      duration: 1000,
-      action: null,
-      observation: null,
-      reasoning: null,
-      plannedAction: null,
-      result: null,
-      error: null,
-      screenshotPath: null,
-      screenshotBeforePath: null,
-      retryCount: 0,
-      capturedVariables: null,
-      stepOrder: 0,
-      annotationData: null,
-      healingScreenshotPaths: null,
-      accessibilityViolations: null,
-      consoleLogs: null,
-      networkLogs: null,
-      confidence: null,
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-      subActionsData: null,
-      variableSnapshot: null,
-      originalStepName: null,
-      screenContextBefore: null,
-      screenContextAfter: null,
-      createdAt: '2026-04-18T00:00:00.000Z',
-    } satisfies StepRow)
-    const rawB = fromStepRow({
-      id: 'step-b',
-      runId: 'run-b',
-      name: 'Submit form',
-      status: 'failed',
-      duration: 1200,
-      action: null,
-      observation: null,
-      reasoning: null,
-      plannedAction: null,
-      result: null,
-      error: null,
-      screenshotPath: null,
-      screenshotBeforePath: null,
-      retryCount: 0,
-      capturedVariables: null,
-      stepOrder: 0,
-      annotationData: null,
-      healingScreenshotPaths: null,
-      accessibilityViolations: null,
-      consoleLogs: null,
-      networkLogs: null,
-      confidence: null,
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-      subActionsData: null,
-      variableSnapshot: null,
-      originalStepName: null,
-      screenContextBefore: null,
-      screenContextAfter: null,
-      createdAt: '2026-04-18T00:00:01.000Z',
-    } satisfies StepRow)
+      durationMs: 1000,
+    })
+
+    const rawA = fromRunDetailStep(step(0, 'Open home'), [])
+    const rawB = fromRunDetailStep(step(1, 'Submit form'), [])
 
     const display = withDisplayStepProgress([rawA, rawB])
 
-    expect(display.map((step) => [step.id, step.displayStepOrder, step.displayStepTotal])).toEqual([
-      ['step-a', 1, 2],
-      ['step-b', 2, 2],
+    expect(display.map((s) => [s.id, s.displayStepOrder, s.displayStepTotal])).toEqual([
+      ['0:0', 1, 2],
+      ['0:1', 2, 2],
     ])
-    expect(display[0].rawRunId).toBe('run-a')
     expect(display[0].rawStepOrder).toBe(0)
-    expect(display[1].rawRunId).toBe('run-b')
-    expect(display[1].rawStepOrder).toBe(0)
+    expect(display[1].rawStepOrder).toBe(1)
+    expect(display[0].id).toBe(rawA.id)
+    expect(display[1].id).toBe(rawB.id)
+  })
+
+  // The A11y tab's field used to arrive on the v1 row; a durable step carries none, and the tab
+  // renders its not-captured state rather than an empty violation list that would read as "clean".
+  it('leaves accessibility violations ABSENT on a durable step, not empty', () => {
+    const durable = fromRunDetailStep(
+      {
+        testIndex: 0,
+        stepIndex: 0,
+        stepText: 'Inspect image alt text',
+        cacheStatus: 'miss',
+        verifierVerdict: { pass: true, reasoning: 'alt text present' },
+        selfHealOccurred: false,
+        briefDigest: 'd00',
+        status: 'passed',
+        durationMs: 1000,
+      },
+      [],
+    )
+
+    expect(durable.accessibilityViolations).toBeUndefined()
   })
 })

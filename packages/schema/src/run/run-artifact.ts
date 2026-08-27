@@ -10,7 +10,17 @@
 
 export const RUN_ARTIFACT_SCHEMA_VERSION = 1 as const
 
-export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'
+/**
+ * What a finalized run artifact is ABOUT (405-11, closing 405-07's deferral).
+ *
+ * TWO MEMBERS, NOT FOUR. It used to admit a suite parent and a suite child as well. 405-07 narrowed
+ * the dashboard store's own column to refuse both — after the parent/child split was retired, a
+ * suite's members live under ONE run as handles — so nothing can write either value and the two
+ * members were unreachable breadth on every reader. They were left in place then because the UI
+ * badge switches on this value and narrowing a union a render site reads belongs with that render
+ * site; that edit landed with this one.
+ */
+export type RunArtifactKind = 'test' | 'unknown'
 
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonObject | JsonArray

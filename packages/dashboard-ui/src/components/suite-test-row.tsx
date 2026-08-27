@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import type { LiveHookExecution, TestStepDetail } from '@/hooks/use-live-editor'
 import { fromEditorStep } from '@/lib/display-step'
-import type { SubActionData } from '@/lib/api'
+import type { LiveSubAction } from '@/hooks/use-live-editor'
 import type { Selection } from '@/lib/selection'
 
 interface SuiteTestRowProps {
@@ -77,7 +77,7 @@ function StepStatusIcon({ status }: { status: TestStepDetail['status'] }) {
   }
 }
 
-function formatSubActionSummary(subAction: SubActionData): string {
+function formatSubActionSummary(subAction: LiveSubAction): string {
   if (subAction.observation) return subAction.observation
   if (subAction.reasoning) return subAction.reasoning
   if (subAction.plannedAction != null) return 'Planned action captured'
@@ -206,7 +206,7 @@ export function SuiteTestRow({
                   && selectedStepId === null
                   && (isRunningStep || (runningStepIndex === null && stepRowIndex === liveStepRows.length - 1))
                 const isStepSelected = selectedStepId === step.id || isImplicitSelectedStep
-                const subActions = displayStep.subActionsData ?? []
+                const subActions = displayStep.liveSubActions ?? []
                 return (
                   <div
                     key={step.id}
