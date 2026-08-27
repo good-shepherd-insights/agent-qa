@@ -249,6 +249,12 @@ describe('the catalog\'s example calls (D-08)', () => {
       'proposals.accept',
       'proposals.reject',
       'proposals.show',
+      // 2026-08-27 (405-05 D-12/D-13): a FIFTH member, in sort position, and a deliberate one.
+      // `runs.artifact` requires a `sha` constrained to 64 lowercase hex, and the derivation will
+      // not guess at a regular-expression `pattern` — which is right: an invented sha would be a
+      // documented example call that resolves to nothing, teaching a reader a request the store
+      // can only answer `blob_absent` for. The honest catalog entry is the explicit absence.
+      'runs.artifact',
     ])
     // The vacuity floor on the other side: most ops DO get an example, and a derivation that
     // returned `{}` for everything would satisfy every cell above this one.

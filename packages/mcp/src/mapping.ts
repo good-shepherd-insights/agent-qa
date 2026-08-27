@@ -500,6 +500,9 @@ export interface UnprojectedOp {
    * one thing a provenance column is for. The vocabulary is a CLOSED set and the bump guard pins
    * which entries carry which adjudicator by name, so it cannot widen again by habit.
    *
+   * 405-05 adds `runs.artifact` under the SAME `'405'` stamp on the same day and by the same
+   * ruling; the vocabulary does not widen for it.
+   *
    * WIDENED AGAIN on 2026-08-27 (405-01, D-03) for `runs.detail`, on exactly the 398 and 403
    * reasoning and for no new one: 397 could not have ruled on an op registered eight phases
    * later. The bump guard names which entry carries this adjudicator, in both directions, so an
@@ -564,6 +567,17 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
     opId: 'runs.postprocessing',
     reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
     adjudication: '397',
+  }),
+  Object.freeze({
+    opId: 'runs.artifact',
+    reason:
+      'D-12/D-13 (dated 2026-08-27, 405-05): not a mid-flight workflow read per D-02 — this '
+      + 'resolves ONE completed run\'s content-addressed evidence blob, and its result is a '
+      + 'base64 body. A `tools/call` round trip is the wrong carriage for bytes: a conversation '
+      + 'cannot render a PNG, and a tool that returned one would spend a context window on a '
+      + 'payload no reader can read. The two HTTP doors are its carriage, and 408\'s embed is the '
+      + 'surface that renders it. Deferred as its own seam, not omitted.',
+    adjudication: '405',
   }),
   Object.freeze({
     opId: 'runs.detail',

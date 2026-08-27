@@ -53,6 +53,11 @@ export {
   readRunDetail,
   serveRunDetailRead,
   type RunDetailReadOutcome,
+  // 405-05 (D-12/D-13): the ref-resolving pair, on the two names above's exact footing — the
+  // authed remote door answers with byte-identical bytes by CALLING `serveRunArtifact`.
+  readRunArtifact,
+  serveRunArtifact,
+  type RunArtifactReadOutcome,
 } from './run-service/run-detail-routes.js'
 export { TestFileManager } from './tests/test-file-manager.js'
 export type { TestFileInfo, TestValidationResult, TestValidationError } from './tests/test-file-manager.js'
@@ -61,6 +66,10 @@ export type { TestFileInfo, TestValidationResult, TestValidationError } from './
 // ports and hands them to `startServer`; the route table is published so a census cell can
 // enumerate every path this door answers.
 export {
+  // 405-05 (D-12 / 402 D-16): the two READ rows' templates, published on their siblings' footing
+  // so the conformance route census can name the paths it drives rather than spell them.
+  RUN_SERVICE_ARTIFACT_TEMPLATE,
+  RUN_SERVICE_DETAIL_TEMPLATE,
   RUN_SERVICE_EVENTS_TEMPLATE,
   RUN_SERVICE_LIVE_URL_TEMPLATE,
   RUN_SERVICE_OK_ROUTE,

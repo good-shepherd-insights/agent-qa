@@ -111,7 +111,12 @@ import {
   type TrustScope,
 } from '@vostride/agent-qa-schema'
 
+import type { AgentHost } from '../chat/host.js'
 import { readJsonBody } from '../server/body-parser.js'
+// 405-05 (D-12 / 402 D-16): THE SAME TWO ADAPTERS THE LOCAL DOOR CALLS. Imported rather than
+// re-implemented, because "both doors answer the same bytes" is a claim about there being one
+// implementation — two that agree today are two that can stop agreeing.
+import { serveRunArtifact, serveRunDetailRead } from './run-detail-routes.js'
 
 /**
  * The seq a subscriber attaches at to receive the whole run.
@@ -179,6 +184,20 @@ export interface RunServicePorts {
    * it into the `FunctionCaller` the op runs under; the door never chooses one.
    */
   mintLiveUrl(input: MintLiveUrlInput): Promise<RunsLiveUrlResult>
+  /**
+   * The injected agent host the two READ rows dispatch through (405-05, D-12/D-13).
+   *
+   * OPTIONAL, unlike `mintLiveUrl` above, and the asymmetry is deliberate rather than an
+   * oversight. `mintLiveUrl` is required because a composition that forgot it would answer a 404
+   * indistinguishable from an unserved path — but the argument runs the other way here: a host
+   * genuinely composed without a function registry (a bare mount, this file's own fixtures) has no
+   * capability to reach, and the honest answer is the SAME 503 `agent_host_unavailable` the local
+   * door already gives for exactly this state. One word, one meaning, both doors.
+   *
+   * It is a HANDLE and nothing else — this package may not name the agent packages, so what
+   * crosses is the seam `chat/host.ts` declares and the op ids the composition supplies as data.
+   */
+  readonly agentHost?: AgentHost
 }
 
 /** What minting one `liveUrl` needs from a request, as data. */
@@ -190,7 +209,17 @@ export interface MintLiveUrlInput {
 }
 
 /** Which handler a table row reaches. A closed union, so a row with no arm is a type error. */
-export type RunServiceRouteHandlerName = 'start' | 'events' | 'liveUrl' | 'ok'
+export type RunServiceRouteHandlerName =
+  | 'start'
+  | 'events'
+  | 'liveUrl'
+  // 405-05 (D-12 / 402 D-16): the two READ rows. 402 D-16 said "405's ref-resolving sha-keyed
+  // route mounts behind the same authed door", and mounting it here rather than beside it is what
+  // makes that literal: the verdict above the table applies to these rows by construction, and the
+  // census that drives every row unauthenticated inherits them the day they land.
+  | 'detail'
+  | 'artifact'
+  | 'ok'
 
 export interface RunServiceRouteRow {
   readonly method: 'GET' | 'POST'
@@ -223,6 +252,36 @@ const RUN_SERVICE_LIVE_URL_PATTERN = /^\/run\/([^/]+)\/live-url$/
  * other routes it serves. The dashboard's preflight is liveness AND early token validation in one
  * round-trip precisely because they are the same question at this door.
  */
+/**
+ * The durable run-detail READ (405-05, D-12 / 402 D-16) — the remote twin of the local door's
+ * `GET /api/runs/:id/detail`.
+ *
+ * IT DISPATCHES THROUGH THE SAME ADAPTER THE LOCAL DOOR CALLS. `serveRunDetailRead` is one
+ * function, so the two doors cannot come to disagree about what a run's projection is; a second
+ * spelling here would agree on the day it was written and be a wire-contract fork thereafter.
+ *
+ * THIS ROW IS MASKED, and deliberately. It is a machine wire like `/run/:runId/events` one line up
+ * — its consumer (the CLI's own `emitHuman`, 408's embed) is where a person meets the text, and
+ * that consumer is the display boundary. The alternative would restore declared secrets onto a
+ * BEARER-authed wire, extending the disclosure surface to every token holder and every
+ * intermediary, which is not what "the browser is never the boundary" (400-06) asks for. 405-10
+ * applies the unmask seam to the LOCAL door only and enrols this row on the masked side.
+ */
+export const RUN_SERVICE_DETAIL_TEMPLATE = '/run/:runId/detail'
+const RUN_SERVICE_DETAIL_PATTERN = /^\/run\/([^/]+)\/detail$/
+/**
+ * The ref-resolving artifact READ (405-05, D-12 / 402 D-16) — the remote twin of the local door's
+ * `GET /api/runs/:runId/artifacts/:sha`, and the row 402 D-16 named by anticipation.
+ *
+ * TWO CAPTURES, `[^/]+` ON BOTH. The runId is decoded and the sha is not: a content address is 64
+ * characters from `[0-9a-f]`, none of which percent-encoding can represent differently, so a sha
+ * segment that needed decoding is already not one.
+ *
+ * MASKED, LIKE ITS SIBLING AND MORE SO: these are BYTES. The unmask seam never touches an artifact
+ * body on any door (D-09) — a screenshot is not text and there is nothing in it to restore.
+ */
+export const RUN_SERVICE_ARTIFACT_TEMPLATE = '/run/:runId/artifacts/:sha'
+const RUN_SERVICE_ARTIFACT_PATTERN = /^\/run\/([^/]+)\/artifacts\/([^/]+)$/
 export const RUN_SERVICE_OK_ROUTE = '/ok'
 
 /**
@@ -247,6 +306,18 @@ export const RUN_SERVICE_ROUTE_TABLE: readonly RunServiceRouteRow[] = Object.fre
     path: RUN_SERVICE_LIVE_URL_TEMPLATE,
     handler: 'liveUrl',
     pattern: RUN_SERVICE_LIVE_URL_PATTERN,
+  },
+  {
+    method: 'GET',
+    path: RUN_SERVICE_DETAIL_TEMPLATE,
+    handler: 'detail',
+    pattern: RUN_SERVICE_DETAIL_PATTERN,
+  },
+  {
+    method: 'GET',
+    path: RUN_SERVICE_ARTIFACT_TEMPLATE,
+    handler: 'artifact',
+    pattern: RUN_SERVICE_ARTIFACT_PATTERN,
   },
   { method: 'GET', path: RUN_SERVICE_OK_ROUTE, handler: 'ok' },
 ] as const)
@@ -932,6 +1003,46 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
     )
   }
 
+  /**
+   * The two READ arms (405-05, D-12 / 402 D-16) — the remote twins of `routes.ts`'s own.
+   *
+   * THEY CALL THE LOCAL DOOR'S ADAPTERS AND FORMAT NOTHING, on `handleLiveUrl`'s rule and for its
+   * reason: a second shaping here would be a second contract for what a run's projection or an
+   * artifact's headers ARE, and the parity corpus would then compare two shapings rather than one.
+   *
+   * NO `boundary` OPTION IS PASSED, and that is this door's masked posture stated by omission:
+   * 405-10 gives `serveRunDetailRead` a `boundary` that DEFAULTS to machine (masked), and only the
+   * LOCAL arm opts into `'human'`. A row that wanted the human boundary would have to say so.
+   *
+   * AN UNCOMPOSED HOST IS 503 IN THE ADAPTERS' OWN VOCABULARY, not this door's closed error set.
+   * These two rows serve a shape the closed `RunServiceErrorCode` set was never written for — a
+   * whole projection, a PNG — so their refusals are the adapters' and are byte-identical to the
+   * local door's. What the closed set still owns is everything an UNAUTHENTICATED caller can see,
+   * and that is settled above the table, before either of these arms is reachable at all.
+   */
+  function handleAgentRead(
+    req: IncomingMessage,
+    res: ServerResponse,
+    runIdParam: string,
+    serve: (runId: string, host: AgentHost) => void,
+  ): void {
+    const host = ports.agentHost
+    if (host === undefined) {
+      respondJson(res, 503, { error: 'agent_host_unavailable' })
+      return
+    }
+    let runId: string
+    try {
+      runId = decodeURIComponent(runIdParam)
+    } catch {
+      // An undecodable segment names no run, and the honest answer is the one the ops' own input
+      // schemas give for an id they refuse — the local door's word, not a second one.
+      respondJson(res, 400, { error: 'invalid_run_id' })
+      return
+    }
+    serve(runId, host)
+  }
+
   const router = ((req: IncomingMessage, res: ServerResponse): void => {
     try {
       const path = (req.url ?? '/').split('?')[0] ?? '/'
@@ -961,6 +1072,17 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
           return
         case 'liveUrl':
           handleLiveUrl(matched.params[0] ?? '', req, res, verdict.trustScope)
+          return
+        case 'detail':
+          handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
+            serveRunDetailRead(req, res, { runId, host })
+          })
+          return
+        case 'artifact':
+          handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
+            // THE SHA RAW. Not decoded — see `RUN_SERVICE_ARTIFACT_TEMPLATE`.
+            serveRunArtifact(req, res, { runId, sha: matched.params[1] ?? '', host })
+          })
           return
         case 'ok':
           respondJson(res, 200, ports.readiness())

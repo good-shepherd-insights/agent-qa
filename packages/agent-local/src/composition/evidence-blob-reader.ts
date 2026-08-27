@@ -12,7 +12,7 @@
 //
 // THE TWO ABSENCES ARE SEPARATED HERE, AND HERE IS THE ONLY PLACE THEY CAN BE (D-15).
 // `FsEvidenceArtifactStore.getBlob` answers `undefined` for a malformed sha AND for an ENOENT,
-// and the layer above needs to tell "that run never existed" from "that run holds no such blob"
+// and the layer above needs to tell an unknown RUN apart from a run holding no such BLOB
 // — a bad link from a screenshot the diet collected. The run's own directory is what distinguishes
 // them: a run that has started has `runs/<slug(runId)>/` whether or not it has written a handoff
 // (RESEARCH Pattern 3), so directory presence is the run-existence question and the store's own

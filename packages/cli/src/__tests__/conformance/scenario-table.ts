@@ -71,6 +71,7 @@ import {
   QuarantineAddInputSchema,
   QuarantineListInputSchema,
   QuarantineReleaseInputSchema,
+  RunsArtifactInputSchema,
   RunsDetailInputSchema,
   RunsDigestInputSchema,
   RunsEventsInputSchema,
@@ -133,6 +134,7 @@ export const OP_INPUT_CONTRACTS = {
   'quarantine.add': QuarantineAddInputSchema,
   'quarantine.list': QuarantineListInputSchema,
   'quarantine.release': QuarantineReleaseInputSchema,
+  'runs.artifact': RunsArtifactInputSchema,
   'runs.detail': RunsDetailInputSchema,
   'runs.digest': RunsDigestInputSchema,
   'runs.events': RunsEventsInputSchema,
@@ -454,6 +456,13 @@ function scenario<Id extends ScenarioOpId>(row: ScenarioRow<Id>): ScenarioRow<Id
 }
 
 const FIXTURE_RUN_ID = 'run-alpha'
+/**
+ * A well-formed content address (405-05). 64 LOWERCASE hex, because `RunsArtifactInputSchema`
+ * refuses everything else — a placeholder of any other shape would make every `runs.artifact` row
+ * an input error, and the surfaces would then be measured refusing a malformed request rather than
+ * reaching (or declining to reach) the capability.
+ */
+const FIXTURE_ARTIFACT_SHA = 'a'.repeat(64)
 const FIXTURE_ENTITY_SHORT_ID = 'MEM-001'
 
 /**
@@ -1050,6 +1059,22 @@ export const SCENARIO_TABLE = Object.freeze([
   // siblings are — it is a completed-run read rather than a mid-flight one — and its markers are
   // the four top-level collections, so a projection that lost the token sum (whose three members
   // are absent by design) would red here rather than silently start declaring zeros.
+  // 405-05 D-12/D-13: THE ref-resolving read. Unprojected on MCP for its `runs.` read siblings'
+  // reason and one of its own — its result is a BASE64 BLOB, which is not a shape a `tools/call`
+  // round trip wants and not a payload a conversation can do anything with. Its markers are the
+  // four result keys, so a projection that lost `contentType` or `byteLength` would red here
+  // rather than start handing a surface bytes it cannot name or size.
+  scenario({
+    opId: 'runs.artifact',
+    input: { runId: FIXTURE_RUN_ID, sha: FIXTURE_ARTIFACT_SHA },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['bytesBase64', 'byteLength', 'contentType', 'runId', 'sha'] },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
   scenario({
     opId: 'runs.detail',
     input: { runId: FIXTURE_RUN_ID },

@@ -15,6 +15,9 @@
 // `agent.explain` is the arrival, and it lands on the unprojected side with its own dated reason.
 // RE-MEASURED 2026-08-27 (405-01 D-03): 44/22/22. `runs.detail` is the arrival and it lands on the
 // unprojected side too, with its own dated reason; the count cell below carries the live numbers.
+// RE-MEASURED AGAIN 2026-08-27 (405-05 D-12/D-13): 45/22/23. `runs.artifact` is the arrival and it
+// lands unprojected for a reason of its own — its result is a base64 blob, and a `tools/call` round
+// trip is the wrong carriage for bytes no conversation can render.
 // The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
@@ -345,9 +348,9 @@ describe('the partition law (D-03 / D-15)', () => {
   it('measures the registry at the count this suite header records', () => {
     // The denominator, stated where a reader can see it move. Not a rule — a MEASUREMENT, and the
     // sentence in the header is only true while this cell is green.
-    expect(declarations().length).toBe(44)
+    expect(declarations().length).toBe(45)
     expect(projectedOpIds().length).toBe(22)
-    expect(UNPROJECTED_OPS.length).toBe(22)
+    expect(UNPROJECTED_OPS.length).toBe(23)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -372,7 +375,7 @@ describe('the partition law (D-03 / D-15)', () => {
     // 2026-08-27 (405-01 D-03). The same widening for the same reason, two phases later:
     // `runs.detail` arrived in 405 and 397 could not have ruled on it. Membership is still
     // spelled by op id, so an entry stamped `'405'` because it was easier reds here.
-    const ADJUDICATED_BY_405 = new Set(['runs.detail'])
+    const ADJUDICATED_BY_405 = new Set(['runs.artifact', 'runs.detail'])
     const expectedAdjudicator = (opId: string): string =>
       ADJUDICATED_BY_398.has(opId)
         ? '398'

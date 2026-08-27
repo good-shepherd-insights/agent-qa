@@ -778,6 +778,13 @@ describe('agent-qa fn (generic function invoker)', () => {
       // The run-detail projection lives in the dashboard's SQLite database, which only
       // `agent-qa dashboard` holds; a plain CLI host has handoff documents and no projection at
       // all, so it says so BY NAME rather than answering an empty run.
+      // 405-05 D-12/D-13: BOUND here, and the CONTRAST with `runs.detail` one line down is the
+      // point rather than an inconsistency. Both are 405 reads about one run, and they bind in
+      // different places because they read different things: a run's projected step tree lives in
+      // a dashboard database only `agent-qa dashboard` holds, while its evidence blobs live under
+      // the runtime root EVERY local host has. So a plain CLI host can resolve a ref and cannot
+      // render a step tree, and it says exactly that.
+      'runs.artifact': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.detail': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
       'runs.digest': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },

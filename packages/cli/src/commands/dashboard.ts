@@ -1408,6 +1408,16 @@ export interface RunServiceCompositionInput {
    * this composer builds and owns one, exactly as it did.
    */
   readonly sessions?: RunServiceSessionRegistry
+  /**
+   * 405-05 (D-12 / 402 D-16): the composed agent host the two READ rows dispatch through.
+   *
+   * PASSED STRAIGHT THROUGH, on `sessions`' own rule — this composer decides nothing about it and
+   * composes no host of its own. It is the SAME `agentHost` the local door was handed, which is
+   * the whole of "mounts behind the same authed door": one registry, one caller, two credentials
+   * in front of it. Absent ⇒ both rows answer 503 `agent_host_unavailable`, in the local door's
+   * own word, which is an honest fact about a composition with no function layer behind it.
+   */
+  readonly agentHost?: RunServicePorts['agentHost']
 }
 
 export interface RunServiceComposition {
@@ -1529,6 +1539,10 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     attach: (runId) => sessions.attach(runId),
     readiness,
     mintLiveUrl,
+    // 405-05: conditionally spread on the house rule an absent port follows everywhere in this
+    // file — an absent host must be an ABSENT field, because the door reads exactly this record to
+    // decide whether it can dispatch a read at all.
+    ...(input.agentHost === undefined ? {} : { agentHost: input.agentHost }),
   }
 
   // THE STORE IS BOUND HERE, NOT PUBLISHED AND HOPED FOR (402-06, WINDOWS #224). Until this line
@@ -1745,7 +1759,11 @@ async function startDashboardBackedServices(
     const runServiceEntries = (servicesConfig.runServiceTokens ?? []) as readonly RunServiceTokenEntry[]
     const runService = runServiceEntries.length === 0
       ? undefined
-      : composeRunServicePorts({ entries: runServiceEntries, door: runDoor, sessions })
+      // 405-05 (D-12 / 402 D-16): the SAME host the local door serves through, handed to the
+      // remote one. Not a second composition — the two doors differ in the credential and in
+      // nothing else, which is what makes `/run/:runId/detail` and the local `/api/runs/:id/detail`
+      // one capability behind two front doors rather than two implementations of one idea.
+      : composeRunServicePorts({ entries: runServiceEntries, door: runDoor, sessions, agentHost })
 
     const { close, port: listeningPort } = await startServer({
       db,

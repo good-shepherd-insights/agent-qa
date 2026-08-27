@@ -315,14 +315,20 @@ describe('the refusal-shape census walks the module\'s OWN route table', () => {
    * added tomorrow is covered the day it lands and cannot escape this cell by nobody noticing it.
    * A hardcoded list of three paths would be a claim about three paths.
    */
+  // 405-05: `:sha` joins `:runId` as a template parameter. Substituted rather than left literal
+  // so the probe drives the row's real shape — a path still carrying `:sha` would match the
+  // pattern by accident and the census would be testing a coincidence.
   const probePathFor = (row: { readonly path: string }): string =>
-    row.path.replace(':runId', 'r_planted')
+    row.path.replace(':runId', 'r_planted').replace(':sha', 'a'.repeat(64))
 
   it('covers every declared route, and the table is not empty', async () => {
     // Non-vacuity first: a census over an empty table passes by finding nothing to drive.
-    expect(RUN_SERVICE_ROUTE_TABLE.length).toBeGreaterThanOrEqual(4)
+    // 405-05 (D-12 / 402 D-16): six. The two READ rows joined the table, which is exactly what
+    // "mounts behind the same authed door" has to mean mechanically — a row outside this array is
+    // unreachable, and a row inside it is driven unauthenticated by the two cells below.
+    expect(RUN_SERVICE_ROUTE_TABLE.length).toBeGreaterThanOrEqual(6)
     const handlers = RUN_SERVICE_ROUTE_TABLE.map((row) => row.handler).sort()
-    expect(handlers).toEqual(['events', 'liveUrl', 'ok', 'start'])
+    expect(handlers).toEqual(['artifact', 'detail', 'events', 'liveUrl', 'ok', 'start'])
   })
 
   it('refuses a MISSING token on every row with one body shape', async () => {
@@ -349,6 +355,88 @@ describe('the refusal-shape census walks the module\'s OWN route table', () => {
       const body = await response.json() as Record<string, unknown>
       expect(Object.keys(body), `${row.method} ${row.path}`).toEqual(['error'])
       expect(body).toEqual({ error: 'invalid_token' })
+    }
+  })
+})
+
+// ---- 405-05 (D-12 / 402 D-16): the two READ rows reach the adapters, behind the verdict --------
+//
+// WHAT THESE CELLS CLAIM AND WHAT THEY LEAVE TO OTHERS. The projection's shape, the header set and
+// every refusal word are measured over a REAL registry and a REAL store in
+// `run-detail-routes.test.ts`; re-asserting them here would be a second description of one
+// implementation. What only this file can measure is that the two rows are reachable AT ALL from
+// this door's dispatch — that the verdict passed, the pattern matched, the params were decoded and
+// the adapter ran — and that an uncomposed host says so in the local door's own word.
+describe('the READ rows dispatch through the injected host (405-05, D-12)', () => {
+  /** A host whose `invokeFunction` refuses by NAME, exactly as an unbound composition's would. */
+  function hostRefusing(name: string): RunServicePorts['agentHost'] {
+    return {
+      registry: {},
+      caller: {} as never,
+      agentAskFunctionId: 'test:planted-ask-op',
+      runsPostProcessingFunctionId: 'test:planted-post-processing-op',
+      runsEventsFunctionId: 'test:planted-events-op',
+      runsDetailFunctionId: 'test:planted-run-detail-op',
+      runsArtifactFunctionId: 'test:planted-run-artifact-op',
+      invokeFunction: () => Promise.reject(Object.assign(new Error('planted'), { name })),
+      foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: '' }, foldLines: [] }),
+      listDeclarations: () => [],
+      onSessionEvent: () => () => undefined,
+      unmaskForDisplay: (text: string) => text,
+    } as unknown as NonNullable<RunServicePorts['agentHost']>
+  }
+
+  it('reaches the run-detail adapter — a valid token, an unknown run, the op\'s own word', async () => {
+    const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError') }))
+    const response = await fetch(`${origin}/run/r_planted/detail`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    // 404 `unknown_run` PROVES THE WHOLE CHAIN: the verdict passed (a refused one is 401), the
+    // pattern matched (an unmatched one is 404 `unknown_route`), the param decoded, and the
+    // adapter classified the op's refusal. A door that never reached the op could not say this.
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'unknown_run' })
+  })
+
+  it('reaches the artifact adapter, and tells its two 404s apart on this door too', async () => {
+    const absent = await mount(fakePorts({ agentHost: hostRefusing('EvidenceBlobAbsentError') }))
+    const response = await fetch(`${absent}/run/r_planted/artifacts/${'a'.repeat(64)}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'blob_absent' })
+  })
+
+  it('refuses a malformed sha at the CONTRACT, before the op is reached', async () => {
+    // The host would refuse by name if it were reached; a 400 proves it was not.
+    const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError') }))
+    const response = await fetch(`${origin}/run/r_planted/artifacts/${'z'.repeat(64)}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'malformed_sha' })
+  })
+
+  it('says agent_host_unavailable — the LOCAL door\'s word — when no host is composed', async () => {
+    const origin = await mount()
+    for (const path of ['/run/r_planted/detail', `/run/r_planted/artifacts/${'a'.repeat(64)}`]) {
+      const response = await fetch(`${origin}${path}`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      })
+      expect(response.status, path).toBe(503)
+      expect(await response.json(), path).toEqual({ error: 'agent_host_unavailable' })
+    }
+  })
+
+  it('refuses BOTH rows unauthenticated, before any host is consulted', async () => {
+    // The row-level restatement of the census above, kept here because these two rows are the
+    // first on this door that would otherwise have reached a capability: a permissive arm here
+    // would serve one run's whole projection, or its screenshots, to an anonymous caller.
+    const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError') }))
+    for (const path of ['/run/r_planted/detail', `/run/r_planted/artifacts/${'a'.repeat(64)}`]) {
+      const response = await fetch(`${origin}${path}`)
+      expect(response.status, path).toBe(401)
+      expect(await response.json(), path).toEqual({ error: 'missing_authorization' })
     }
   })
 })

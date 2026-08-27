@@ -40,6 +40,8 @@ import {
   fromToolName,
   isChatMetaToolName,
   projectPlannerTools,
+  RUNS_ARTIFACT_FUNCTION_ID,
+  RUNS_DETAIL_FUNCTION_ID,
   RUNS_LIVE_URL_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
   type ChatResolverTable,
@@ -57,6 +59,8 @@ import {
 import {
   CHAT_CAPABILITIES_ROUTE,
   createChatRouter,
+  RUN_SERVICE_ARTIFACT_TEMPLATE,
+  RUN_SERVICE_DETAIL_TEMPLATE,
   RUN_SERVICE_EVENTS_TEMPLATE,
   RUN_SERVICE_LIVE_URL_TEMPLATE,
   RUN_SERVICE_OK_ROUTE,
@@ -929,6 +933,20 @@ export const RUN_SERVICE_ROUTE_BINDINGS: readonly RunServiceRouteBinding[] = Obj
     opId: RUNS_LIVE_URL_FUNCTION_ID,
   }),
   Object.freeze({
+    key: `GET ${RUN_SERVICE_DETAIL_TEMPLATE}`,
+    // 405-05 (D-12 / 402 D-16): the durable run-detail read, mounted behind the same authed door
+    // as its local twin. It DISPATCHES — the arm calls `serveRunDetailRead`, the SAME function
+    // object `routes.ts` calls, which goes through `invokeFunction` to `runs.detail` under a
+    // caller built from the verified bearer's trust scope.
+    opId: RUNS_DETAIL_FUNCTION_ID,
+  }),
+  Object.freeze({
+    key: `GET ${RUN_SERVICE_ARTIFACT_TEMPLATE}`,
+    // 405-05 (D-12 / 402 D-16): the ref-resolving read, on the row above's exact footing and
+    // through the same shared adapter — `serveRunArtifact`, one function object, two doors.
+    opId: RUNS_ARTIFACT_FUNCTION_ID,
+  }),
+  Object.freeze({
     key: `GET ${RUN_SERVICE_OK_ROUTE}`,
     // Readiness reports four facts this process measures about itself. It owns no capability, on the
     // same reasoning 398 D-02 used to keep the capability catalogue off the roster entirely.
@@ -1040,11 +1058,17 @@ export async function withRunServiceDoor<Answer>(
   // Composing the SHIPPED composers rather than a stand-in is this module's whole rule.
   const sessions = createRunServiceSessionRegistry({ observeSessions: runDoor.observeSessions })
   const liveView = composeLiveView({ sessions, origin: () => boundOrigin, door: runDoor })
+  // 405-05 (D-12 / 402 D-16): THE PROJECTION READER, bound over the same handle the ingest writes
+  // through — exactly as `agent-qa dashboard` binds it. Without it `GET /run/:runId/detail` would
+  // answer 503 `agent_host_unavailable`, which is a fact about a composition that forgot a port
+  // rather than about the door this file is enumerating.
+  const { createDashboardRunDetailReader } = await import('@vostride/agent-qa-dashboard')
   const { agentHost, host, enterRunTriggerScope } = composeDashboardDoor({
     agentQaRoot: join(configDir, '.agent-qa'),
     configPath: fixture.configPath,
     boundOrigin: () => boundOrigin,
     liveView: liveView.liveView,
+    runDetail: createDashboardRunDetailReader(db),
     runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(host)
@@ -1061,6 +1085,8 @@ export async function withRunServiceDoor<Answer>(
     env: { [RUN_SERVICE_FIXTURE_TOKEN_VAR]: RUN_SERVICE_FIXTURE_TOKEN },
     door: runDoor,
     sessions,
+    // 405-05: the SAME host the local door serves through, as `agent-qa dashboard` hands it.
+    agentHost,
   })
   const started = await startServer({
     db,
@@ -1159,6 +1185,46 @@ export async function enumerateRunServiceOpIds(): Promise<SurfaceEnumeration> {
         } catch {
           // Same reasoning as the ack: a 200 whose body the result contract refuses is a route
           // answering something other than the capability it is bound to.
+        }
+      }
+    }
+
+    if (runId !== undefined) {
+      // 405-05 (D-12 / 402 D-16): THE TWO READ ROWS, DRIVEN.
+      //
+      // WHAT COUNTS AS ANSWERED HERE, AND WHY IT IS NOT A 200. These two rows read DURABLE state
+      // about a run the fixture only just started, so whether a projection or a blob exists yet is
+      // a race this enumeration has no business winning. What is NOT a race is which vocabulary the
+      // door answers in: `unknown_run` and `blob_absent` are `runs.detail`'s and `runs.artifact`'s
+      // OWN refusals, minted inside the ops and classified by the shared adapters — so a body
+      // carrying one is proof the verdict passed, the pattern matched, the id decoded and the op
+      // ran. 503 `agent_host_unavailable` is deliberately NOT accepted: that is the door reached
+      // and the capability absent, which is the very state a route enumeration must not launder.
+      const detailWords = new Set(['unknown_run'])
+      const artifactWords = new Set(['unknown_run', 'blob_absent'])
+      const detail = await fetch(
+        `${origin}/run/${encodeURIComponent(runId)}/detail`,
+        { headers: bearer },
+      )
+      if (detail.status === 200) {
+        keys.push(`GET ${RUN_SERVICE_DETAIL_TEMPLATE}`)
+      } else if (detail.status === 404) {
+        const body = await detail.json().catch(() => undefined) as { error?: string } | undefined
+        if (body !== undefined && detailWords.has(body.error ?? '')) {
+          keys.push(`GET ${RUN_SERVICE_DETAIL_TEMPLATE}`)
+        }
+      }
+
+      // A well-formed content address the store has certainly never written: 64 lowercase hex, so
+      // the CONTRACT admits it and the answer comes from the op rather than from the schema.
+      const artifact = await fetch(
+        `${origin}/run/${encodeURIComponent(runId)}/artifacts/${'a'.repeat(64)}`,
+        { headers: bearer },
+      )
+      if (artifact.status === 404) {
+        const body = await artifact.json().catch(() => undefined) as { error?: string } | undefined
+        if (body !== undefined && artifactWords.has(body.error ?? '')) {
+          keys.push(`GET ${RUN_SERVICE_ARTIFACT_TEMPLATE}`)
         }
       }
     }

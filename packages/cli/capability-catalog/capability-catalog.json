@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 52,
+  "rowCount": 53,
   "rows": [
     {
       "alias": "digest",
@@ -1845,6 +1845,40 @@
       ]
     },
     {
+      "description": "Read one run's content-addressed evidence blob by its sha, with a sniffed content type.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "exampleCall": null,
+      "exampleCallAbsentReason": "D-08 (dated 2026-08-17): no example call is derivable for runs.artifact — params.sha constrains its value with the regular expression /^[0-9a-f]{64}$/, and a placeholder cannot be SHOWN to satisfy an arbitrary pattern — an example the shipped contract would reject teaches a caller a shape this product does not have. The explicit absence is the honest state; an example an agent copies and is refused for is worse than a column that says there is none.",
+      "id": "runs.artifact",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "sha": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "sha"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
       "description": "Read one run's durable members, steps and sub-actions as the dashboard projected them.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
@@ -2169,5 +2203,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "2294d45791a2a4f8139627092e59b3e3f62a87a59837f5dcc7c6ca3f311dae9b"
+  "rowsDigest": "0132386151796666e6f9f73d10b6678cafa9dfdc944c240907d026a02c92ef06"
 }

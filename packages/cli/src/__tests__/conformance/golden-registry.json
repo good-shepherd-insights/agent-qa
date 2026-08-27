@@ -8,7 +8,7 @@
     "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
     "test-runner update flag reaches this file."
   ],
-  "opCount": 44,
+  "opCount": 45,
   "rows": [
     {
       "bindingStatusAtRoot": "bound",
@@ -741,6 +741,26 @@
       "risk": {
         "name": "fn:quarantine.release",
         "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.artifact",
+      "inputSchemaDigest": "cbf6a662b9a59edffe93e677723ae292a703cc82f3e51f6706c12bafdce2e24e",
+      "outputSchemaDigest": "ca1da7c2e9c156069aa3413e5037499453ee9718d2506f3eeb3b8a66406b7d5c",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.artifact",
+        "readOnly": true,
         "recognized": true
       }
     },
