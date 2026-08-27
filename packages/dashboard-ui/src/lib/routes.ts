@@ -26,6 +26,12 @@ export const routes = {
   suiteView: (suiteId: string) => `/suite/${suiteId}`,
   suiteEdit: (suiteId: string) => `/suite/${suiteId}/edit`,
   configItem: (bucket: string, item: string) => `/config?bucket=${bucket}&item=${item}`,
+
+  // 405-06 · DETL-03 (D-14 / 400-08): hrefs are minted from this total map, never copied off a
+  // store-written URL. An artifact is addressed by the `{ id, sha }` ref the projection carries;
+  // the run id is encoded because it is opaque, and the sha is passed VERBATIM because the store
+  // validates its 64-hex shape and re-casing it would change the content address itself.
+  runArtifact: (runId: string, sha: string) => `/api/runs/${encodeURIComponent(runId)}/artifacts/${sha}`,
 } as const
 
 /**

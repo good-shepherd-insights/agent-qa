@@ -5,6 +5,7 @@ import type {
   ChatSessionEvent,
   PostProcessingDisposition,
   PostProcessingStatus,
+  RunDetailProjection,
   RunEventEnvelope,
   RunServiceReadiness,
   RunsLiveUrlResult,
@@ -394,6 +395,22 @@ export async function fetchRunAttributeValues(key: string, opts: { q?: string; l
 
 export async function fetchRun(id: string): Promise<{ run: RunRow; steps: StepRow[]; attempts: RunRow[]; tests?: RunRow[] }> {
   return request(`/api/runs/${encodeURIComponent(id)}`)
+}
+
+/**
+ * The rebuilt run-detail page's ONE durable read (405-06 · DETL-01, D-03).
+ *
+ * The result type is the op's own `RunDetailProjection`, imported from schema rather than
+ * re-declared here: the UI MIRRORS the contract instead of keeping a twin of it, so a field the op
+ * grows is readable without a second edit and a field it drops is a compile error rather than an
+ * `undefined` in a text node.
+ *
+ * `/api/runs/:id/detail` is registered ABOVE the `/api/runs/:id` catch-all, which claims every
+ * four-segment GET — so the id is encoded here exactly once, and an id carrying a slash addresses
+ * the route it names rather than one nobody registered.
+ */
+export async function fetchRunDetail(id: string): Promise<RunDetailProjection> {
+  return request(`/api/runs/${encodeURIComponent(id)}/detail`)
 }
 
 export async function fetchRunArtifact(id: string): Promise<RunArtifactResponse> {
