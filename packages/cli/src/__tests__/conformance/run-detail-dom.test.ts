@@ -751,6 +751,23 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       'a masked-marker delimiter reached a text node instead of being split into a chip — the '
       + `parser and the seam have drifted apart.${context()}`,
     ).toEqual([])
+
+    // THE TWO LANES SHARE ONE SENTENCE, and this is where that is held. Cell (2e) is about lane
+    // (B) alone and must stay green under a mutation that only breaks restoration; the claim that
+    // the two are being compared on the SAME producer string belongs to the restore cell, because
+    // restoration is what makes them differ. Without it, (2a) and (2e) could drift onto two
+    // unrelated strings and both go on passing about nothing in particular.
+    expect(
+      observed.planText,
+      'the restored value and the declared lane\'s generic marker are not in the same recorded '
+      + 'sentence, so cells (2a) and (2e) are no longer contrasting two lanes of one string. The '
+      + `fixture plants both in the planner's reasoning.${context()}`,
+    ).toContain(POPULATED_SECRET_VALUE)
+    expect(
+      observed.planText,
+      'the same sentence no longer carries the declared lane\'s generic marker — see the message '
+      + `on cell (2e), which owns that fact.${context()}`,
+    ).toContain(publishedRedactionMarker())
   })
 
   it('(2b) the masked side holds: neither planted value is in the SSE frames, the log or the database', () => {
@@ -857,11 +874,5 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       + '#286 must be re-measured, because the two-lane finding it records is what this cell holds '
       + `— or the reasoning stopped carrying the credential at all.${context()}`,
     ).toContain(marker)
-    expect(
-      observed.planText.includes(POPULATED_SECRET_VALUE),
-      'the two lanes must be distinguishable in ONE string for this cell to mean anything: the '
-      + 'name-seeded value restored beside the declared one that cannot be. If the seeded value is '
-      + `not in this sentence, cell (2a) and this cell are no longer about the same text.${context()}`,
-    ).toBe(true)
   })
 })
