@@ -164,6 +164,34 @@ describe('every member REFUSES an unknown key (.strict, never .strip)', () => {
     }
   })
 
+  // 405 DETL-06 / D-21. `healing_attempt_count` was declared on `RunCompletionShape` and produced
+  // by nothing — v49 settled that only the `healed` step status and `selfHealOccurred` are real
+  // healing facts. Deleting the field is not enough on its own: the point of the closed shape is
+  // that RE-ADDING it reds. Because every member is `.strictObject`, a payload carrying the key
+  // now fails to parse, and this cell goes green→red the moment the field comes back.
+  it('the retired healing_attempt_count is not a key of the completion shape, and is REFUSED', () => {
+    const base = {
+      name: 'agent-qa.test_run.completed' as const,
+      properties: { agent_qa_version: '0.1.21', step_count: 3, passed_step_count: 3 },
+    }
+    expect(AgentQaAnalyticsEventSchema.safeParse(base).success).toBe(true)
+    expect(
+      AgentQaAnalyticsEventSchema.safeParse({
+        ...base,
+        properties: { ...base.properties, healing_attempt_count: 2 },
+      }).success,
+    ).toBe(false)
+
+    // And the three token fields DO parse — the same shape, from the other direction, so this
+    // cell cannot pass by the completion member having lost its optional integers wholesale.
+    expect(
+      AgentQaAnalyticsEventSchema.safeParse({
+        ...base,
+        properties: { ...base.properties, input_tokens: 11, output_tokens: 6, total_tokens: 17 },
+      }).success,
+    ).toBe(true)
+  })
+
   // Prose about `.strip()` is not a call to it — four comments in this package explain why the v1
   // schemas used it and this one does not, and a raw substring search reported every one of them.
   // The scanner reads code.
