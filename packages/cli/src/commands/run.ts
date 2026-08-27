@@ -1910,11 +1910,19 @@ async function executeSuites(
           return await runVerdictFirstCurationTail({
             exitCode: verdictExitCode,
             detach: opts.detach === true,
-            // 404 D-10: pump under the lease the shell's post-verdict step ALREADY acquired.
-            // Taking it here rather than letting `drain()` consult again is what keeps acquire
-            // -> pump -> release one lease; a second consult would answer `held` by this very
+            // 404 D-10: pump under the lease the shell's post-verdict step decided on. Routing
+            // it here rather than letting `drain()` consult for itself is what keeps acquire ->
+            // pump -> release one lease; a second consult would answer `held` by this very
             // process and hand the chain off to nobody (RESEARCH Pitfall 3).
-            runTail: () => postRunTail.drain({ lease: postVerdict.takeAcquiredLease() }),
+            //
+            // HANDED AS A THUNK, NOT AS A VALUE (2026-08-27, CR-01). Taking the authority is what
+            // acquires it, and evaluating the take as the ARGUMENT acquired it before `drain()`
+            // was even entered — where a composition failure could then return past the release
+            // and past the step's own no-leak backstop, leaving the fence held for its TTL. The
+            // pump calls this when it is ready to hold a lease.
+            runTail: () => postRunTail.drain({
+              takeLease: () => postVerdict.takeAcquiredLease(),
+            }),
             // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
             finish: (input) => postRunTail.finish(input),
             onUnexpectedError: () => {
@@ -4910,8 +4918,11 @@ export function createRunCommand(): Command {
                 return await runVerdictFirstCurationTail({
                   exitCode,
                   detach: opts.detach === true,
-                  // 404 D-10: the same one-lease rule as the multi-suite site above.
-                  runTail: () => postRunTail.drain({ lease: postVerdict.takeAcquiredLease() }),
+                  // 404 D-10 / CR-01: the same one-lease rule, and the same take-inside-`drain()`
+                  // thunk, as the multi-suite site above.
+                  runTail: () => postRunTail.drain({
+                    takeLease: () => postVerdict.takeAcquiredLease(),
+                  }),
                   // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
                   finish: (input) => postRunTail.finish(input),
                   onUnexpectedError: () => {

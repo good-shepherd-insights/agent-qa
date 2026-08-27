@@ -155,7 +155,12 @@ apply_mutation () {
     M3)
       # The tail ignores what the step handed it. RESEARCH Pitfall 3: a process that holds the
       # writer lease and calls `acquireWriterLease` again is answered `held` — by ITSELF.
-      perl -0pi -e "s/        const handed = input\.lease\n/        const handed = undefined as typeof input.lease\n/" \
+      #
+      # 2026-08-27 (CR-01): the handed authority arrives as a THUNK the tail calls itself, rather
+      # than as a pre-evaluated `input.lease`, so this probe names the CALL. The cast keeps the
+      # declared type wide — a bare `undefined` would narrow the branch below it and make the leg
+      # measure a type error instead of the behaviour.
+      perl -0pi -e "s/        const handed = input\.takeLease\?\.\(\)\n/        const handed = undefined as ReturnType<NonNullable<typeof input.takeLease>>\n/" \
         "$REPO_ROOT/$TAIL_SUBJECT" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac

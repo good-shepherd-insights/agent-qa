@@ -623,14 +623,26 @@ describe('JOBQ-06 — the structural halves', () => {
     expect(source.match(/postRunTail\.enqueue\(\)/gu) ?? []).toHaveLength(0)
     // …and both sites tell the shell's step what to do about post-processing.
     expect(source.match(/postProcessing:/gu) ?? []).toHaveLength(2)
-    // 404-01 (D-10): both drains now PUMP UNDER THE LEASE the shell's post-verdict step already
-    // acquired. The pin follows the call shape rather than loosening to `drain(`, because a site
-    // that went back to a bare `drain()` would be a site consulting the writer lease a second time
-    // — answered `held` by its own process, handing the chain off to nobody (Pitfall 3).
+    // 404-01 (D-10): both drains now PUMP UNDER THE LEASE the shell's post-verdict step decided
+    // on. The pin follows the call shape rather than loosening to `drain(`, because a site that
+    // went back to a bare `drain()` would be a site consulting the writer lease a second time —
+    // answered `held` by its own process, handing the chain off to nobody (Pitfall 3).
+    //
+    // 2026-08-27 (CR-01): the shape is a THUNK. Taking the authority is what acquires it, so a
+    // site that evaluates the take as the ARGUMENT has minted the lease before `drain()` is
+    // entered — outside the try whose `finally` releases, and past the take-once flag the step's
+    // no-leak backstop reads. A composition failure inside `drain()` then held the project's
+    // writer fence, unheartbeated, for its whole TTL under a wire that already said `drained`.
     expect(
-      source.match(/postRunTail\.drain\(\{ lease: postVerdict\.takeAcquiredLease\(\) \}\)/gu) ?? [],
+      source.match(
+        /postRunTail\.drain\(\{\s*takeLease: \(\) => postVerdict\.takeAcquiredLease\(\),\s*\}\)/gu,
+      ) ?? [],
     ).toHaveLength(2)
     expect(source.match(/postRunTail\.drain\(\)/gu) ?? []).toHaveLength(0)
+    expect(
+      source.match(/drain\(\{\s*lease:/gu) ?? [],
+      'CR-01: a pre-evaluated authority is acquired outside the pump\'s own release',
+    ).toHaveLength(0)
     expect(source.match(/postRunTail\.finish\(/gu) ?? []).toHaveLength(2)
     // The v51 per-site tail is named at neither site any more (388-02's extraction).
     expect(source.match(/runCurationTail\(/gu) ?? []).toHaveLength(0)

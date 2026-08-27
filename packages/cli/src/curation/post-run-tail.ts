@@ -328,21 +328,45 @@ export interface PostRunTailHandle {
   /**
    * Pump this run's chain.
    *
-   * `input.lease` is the authority the 404 D-10 post-verdict step ALREADY acquired inside the
-   * shell, handed over rather than re-consulted. ONE LEASE PER RUN: acquire → pump → release. A
-   * process that holds the writer lease and calls `acquireWriterLease` again is answered `held` —
-   * by itself — and this pump would then "hand off" to nobody, leaving the chain unclaimed and the
-   * chips frozen (RESEARCH Pitfall 3, the 387-08 D-18 shape `CurationWriterAuthority` was minted
-   * for).
+   * `input.takeLease` is how the 404 D-10 post-verdict step's authority arrives: a THUNK, called
+   * by this method rather than evaluated by the caller. ONE LEASE PER RUN: acquire → pump →
+   * release. A process that holds the writer lease and calls `acquireWriterLease` again is
+   * answered `held` — by itself — and this pump would then "hand off" to nobody, leaving the chain
+   * unclaimed and the chips frozen (RESEARCH Pitfall 3, the 387-08 D-18 shape
+   * `CurationWriterAuthority` was minted for).
    *
-   * Absent ⇒ today's own consult, unchanged. That arm is not legacy debt: a harness driving this
-   * tail directly (`runRealTail`) never ran a shell and so has no lease to hand over.
+   * WHY A THUNK RATHER THAN THE AUTHORITY ITSELF (2026-08-27, CR-01). Taking the lease is what
+   * ACQUIRES it, so a caller that evaluated `takeAcquiredLease()` as the ARGUMENT had already
+   * minted the lease before this method was entered — and the setup below can throw. Resolving
+   * the knowledge root or composing the host reads the shipped modules, and that early return
+   * dropped an acquired lease no `finally` here had reached yet, which the step's own no-leak
+   * backstop could no longer see either: taking it had already spent the take-once flag. The fence
+   * was then held, unheartbeated, for its whole TTL while the wire had already published
+   * `drained`. Called HERE, the take happens after the root is known and INSIDE the try whose
+   * `finally` releases, so every path out of this method ends the authority it took.
+   *
+   * Absent, or answering `undefined` ⇒ this pump's own consult, unchanged. That arm is not legacy
+   * debt: a harness driving this tail directly never ran a shell and so has no lease to hand over,
+   * and a step whose probe found a holder deliberately hands back nothing — see the fallback
+   * clause on the post-verdict step's handoff box.
+   *
+   * `input.withoutLease` is the ONE knob on that fallback, and it exists because the doors
+   * genuinely differ. `'consult'` (the default) is `commands/run.ts`: the probe's answer was taken
+   * at the verdict and the holder may have released since, so asking again can still become a real
+   * drain. `'skip'` is the `runs.start` door (404 D-06), which pumps only on the step's own
+   * authority — it used to say so with a caller-side `if` wrapped around this call, and saying it
+   * here instead is what let the take move inside.
    *
    * 2026-08-26 (404 D-05): IT RESOLVES ITS OWN KNOWLEDGE ROOT AND COMPOSES ITS OWN HOST. Those two
    * used to be side effects of the `enqueue()` leg, so a tail whose enqueue had not run reported
    * `not-attempted` and drained nothing. With the enqueue in the shell that would be every tail.
+   * The root is resolved BEFORE the take and the host is composed AFTER it, so a root this tail
+   * cannot resolve costs no lease at all — there would be nothing to release one against.
    */
-  drain(input?: { readonly lease?: CurationWriterAuthority }): Promise<void>
+  drain(input?: {
+    readonly takeLease?: () => CurationWriterAuthority | undefined
+    readonly withoutLease?: 'consult' | 'skip'
+  }): Promise<void>
   /**
    * The user-facing close-out, run on EVERY leg — including the one `--detach` short-circuits.
    *
@@ -487,44 +511,60 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   }
 
   return {
-    async drain(input: { readonly lease?: CurationWriterAuthority } = {}): Promise<void> {
+    async drain(input: {
+      readonly takeLease?: () => CurationWriterAuthority | undefined
+      readonly withoutLease?: 'consult' | 'skip'
+    } = {}): Promise<void> {
       let root: string
-      let openedHost: LocalAgentHost
       try {
-        // 404 D-05: resolved and composed HERE. The enqueue leg used to do both as a side effect,
-        // and the step that replaced it runs in the shell — a tail that waited for a leg that no
-        // longer exists would report `not-attempted` for every run there is.
+        // 404 D-05: resolved HERE. The enqueue leg used to do it as a side effect, and the step
+        // that replaced it runs in the shell — a tail that waited for a leg that no longer exists
+        // would report `not-attempted` for every run there is.
         //
         // ONE ROOT, still: `resolveKnowledgeRoot` is the same pure function over the same
         // `knowledgeConfig`/`configDir` the producer resolved the run's root from, so this is a
         // re-derivation of a value rather than a second answer to where knowledge lives.
+        //
+        // AND IT IS THE ONE THING THAT HAPPENS BEFORE THE TAKE (CR-01). A release is addressed to
+        // a knowledge root; a lease acquired while this call was still able to throw would be a
+        // lease with no address to release it against, held to its TTL under a wire that already
+        // said `drained`. Nothing above this line acquires anything, so a root that cannot be
+        // resolved costs a warning and no fence.
         knowledgeRoot ??= ops().resolveKnowledgeRoot(opts.knowledgeConfig, opts.configDir)
         root = knowledgeRoot
-        openedHost = openHost()
       } catch (error) {
-        // Constructing the operations table or the composition reads the shipped modules, and a
-        // build where one of those reads throws must not send the exception past
-        // `runVerdictFirstCurationTail` into the command's framework catch (JOBQ-06).
+        // Constructing the operations table reads the shipped modules, and a build where one of
+        // those reads throws must not send the exception past `runVerdictFirstCurationTail` into
+        // the command's framework catch (JOBQ-06).
         drainOutcome = 'not-attempted'
         opts.log.warn(drainFailureWarning(opts.runId, error))
         return
       }
       let acquiredLeaseId: string | undefined
+      let openedHost: LocalAgentHost | undefined
       try {
         drainDeadlineMs = ops().now() + DRAIN_BUDGET_MS
-        const handed = input.lease
-        if (handed !== undefined) {
-          // 404 D-10: the step already consulted. Take its authority and go straight to the
-          // acquired branch's own sequence — adopt the epoch it minted, reclaim what a dead holder
-          // left, pump. No second `acquireWriterLease` call happens on this path at all, which is
-          // the whole point (Pitfall 3): the `held` and `refused` arms below are unreachable for a
-          // lease this process is already holding, and reaching them would be the bug.
-          //
-          // The release in this method's `finally` releases whichever lease the pump held, so the
-          // handed-over authority still leaves through exactly one release.
-          acquiredLeaseId = handed.leaseId
-          heldAuthority = handed
-        } else {
+        // THE TAKE, AND THE `finally` THAT ENDS IT, IN ONE TRY (CR-01). Calling the thunk is what
+        // acquires; the very next statement records what to release. Nothing can run between them.
+        const handed = input.takeLease?.()
+        acquiredLeaseId = handed?.leaseId
+        heldAuthority = handed
+        if (handed === undefined && input.withoutLease === 'skip') {
+          // 404 D-06's door rule, moved off the caller. Nothing was acquired and nothing is
+          // composed: `drainOutcome` stays `not-attempted`, which is what `finish({ detached })`
+          // reads to name the posture for a door that pumped nothing.
+          return
+        }
+        // Composed AFTER the take, so a composition that throws lands in the catch below with a
+        // release already armed above it — the exact path that used to drop the lease.
+        openedHost = openHost()
+        // 404 D-10: a handed authority goes straight to the acquired branch's own sequence — adopt
+        // the epoch the step minted, reclaim what a dead holder left, pump — and this consult is
+        // SKIPPED entirely. That is the whole point (Pitfall 3): the `held` and `refused` arms
+        // below are unreachable for a lease this process is already holding, and reaching them
+        // would be the bug. The release in this method's `finally` ends whichever lease the pump
+        // held, so a handed-over authority still leaves through exactly one release.
+        if (handed === undefined) {
           const acquired = ops().acquireWriterLease(root)
           if (acquired.kind === 'held') {
             // Pitfall 8: the SHIPPED envelope, verbatim. Its handler already calls both
@@ -678,10 +718,20 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // The report may not keep the optimistic `'drained'` set before the pump (WR-10).
         // Assigned here rather than cleared in `finally`, because `finally` also runs on the
         // paths that legitimately drained.
-        drainOutcome = 'threw'
+        //
+        // A host that never came up reads `not-attempted`, not `threw`, and the composition is
+        // the one thing this distinguishes: JOBQ-06's posture is that a build whose shipped
+        // modules will not compose ATTEMPTED nothing. Read off `openedHost` rather than off a
+        // second flag, because that variable already records exactly the fact being asked about.
+        drainOutcome = openedHost === undefined ? 'not-attempted' : 'threw'
         opts.log.warn(drainFailureWarning(opts.runId, error))
       } finally {
         heldAuthority = undefined
+        // THE ONE RELEASE, ON EVERY PATH OUT (CR-01). `acquiredLeaseId` is set in the same breath
+        // as the take above and by the acquired arm below it, so there is no exit from this try —
+        // return, throw or fall-through — that leaves a fence held by a process that stopped
+        // pumping. `root` is known before either could have run, so the release always has an
+        // address.
         if (acquiredLeaseId !== undefined) {
           try {
             ops().releaseLease({ knowledgeRoot: root, leaseId: acquiredLeaseId })
@@ -690,11 +740,13 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
             // over it would spend the verdict-first guarantee on cleanup.
           }
         }
-        try {
-          await openedHost.close()
-        } catch {
-          // Same posture: a store handle that will not close is the process's problem, and
-          // the process is about to exit.
+        if (openedHost !== undefined) {
+          try {
+            await openedHost.close()
+          } catch {
+            // Same posture: a store handle that will not close is the process's problem, and
+            // the process is about to exit.
+          }
         }
       }
     },

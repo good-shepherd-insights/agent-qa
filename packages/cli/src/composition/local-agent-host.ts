@@ -154,6 +154,9 @@ import type { CliAnalyticsHost } from './analytics-host.js'
 // runtime edge, and is how this host names the option shapes it merely passes through — the port
 // itself is still acquired through the deferred `await import(...)` in `createComposedRunExecution`.
 import type { InProcessCliRunExecutionOptions } from './in-process-run-execution.js'
+// Type-only: the pump's authority shape, named here because this door's drain leg declares
+// what its `takeLease` thunk answered. Erased at emit, so no runtime edge is added.
+import type { CurationWriterAuthority } from '../curation/curation-tail.js'
 import { buildConfigVisibilityOracle } from './config-visibility.js'
 import { buildMaskedResolvedConfig } from './masked-config.js'
 
@@ -390,9 +393,17 @@ function createComposedRunExecution(input: {
             //
             // DRAIN ONLY IF THE LEASE WAS ACTUALLY TAKEABLE. `takeAcquiredLease()` is the step's
             // one acquisition; `undefined` means somebody else holds it (or the posture was
-            // `detached`), and pumping anyway would mean a second consult answered `held` by this
-            // very process (Pitfall 3). `finish()` runs on BOTH arms, because the posture that
-            // most needs a line about work left queued is the one where nothing drained.
+            // `detached`), and this door declines to consult a second time for itself — so it
+            // says `withoutLease: 'skip'` and pumps nothing. `finish()` runs on BOTH arms, because
+            // the posture that most needs a line about work left queued is the one where nothing
+            // drained.
+            //
+            // THE RULE MOVED INTO THE CALL (2026-08-27, CR-01). It used to be an `if` around
+            // `drain({ lease: takeAcquiredLease() })`, which meant the lease was acquired out here
+            // — before `drain()` had resolved a root or composed a host, either of which can
+            // throw, and neither of which could then release what this line had already minted.
+            // The take now happens inside the pump's own try, so the skip has to be stated rather
+            // than performed.
             //
             // DEFERRED IMPORT, for the reason the drive's own is: `post-run-tail.ts` imports THIS
             // file statically (`composeCliLocalAgent`), so a static import back would close an
@@ -418,8 +429,11 @@ function createComposedRunExecution(input: {
                   ? {}
                   : { relay: input.runBridge.chipRelay }),
               })
-              const lease = context.postVerdict.takeAcquiredLease()
-              if (lease !== undefined) await tail.drain({ lease })
+              let lease: CurationWriterAuthority | undefined
+              await tail.drain({
+                takeLease: () => (lease = context.postVerdict.takeAcquiredLease()),
+                withoutLease: 'skip',
+              })
               await tail.finish({ detached: lease === undefined })
             },
             warn,

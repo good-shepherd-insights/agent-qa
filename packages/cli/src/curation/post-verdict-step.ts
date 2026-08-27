@@ -14,8 +14,22 @@
 //      forever. The shell awaits this step on EVERY door, so putting the enqueue here is what makes
 //      runner.md §2.1 — "the session's lifecycle ends when the verdict is reached AND its curation
 //      candidates are durably enqueued" — structurally true rather than true of one command.
-//   3. THE ONE LEASE ACQUISITION per run. `acquireWriterLease` is called AT MOST ONCE for a run,
-//      on the run's own knowledge root, and never again by anything downstream.
+//   3. THE ONE LEASE ACQUISITION BY THIS BOX. `acquireWriterLease` is called AT MOST ONCE here,
+//      on the run's own knowledge root, and this file never calls it a second time for a run.
+//
+//      THAT IS NOT THE SAME CLAIM AS "at most once per process", and this header asserted the
+//      stronger one until 2026-08-27 (WR-04). When the probe answers `held` or `refused` the plan
+//      stays `none` and `takeAcquiredLease()` hands back `undefined` — at which point the PUMP
+//      decides. `post-run-tail.ts`'s `drain()` runs its own `acquireWriterLease` on the
+//      `handed === undefined` arm, unless the door asked it not to with `withoutLease: 'skip'`
+//      (the `runs.start` door, 404 D-06). Laziness makes that arm MORE common rather than less:
+//      every `handedOff`/`refused` run now reaches it, plus every run whose deferred acquire
+//      loses the probe→acquire race this header documents below.
+//
+//      No two-holders defect follows, and the reason is structural rather than lucky: the arm
+//      runs PRECISELY when this box acquired nothing, so the pump's consult is a first
+//      acquisition and not a second. What is guaranteed is the thing Pitfall 3 is about — no
+//      process ever holds two authorities for one run — not a call count.
 //   4. THE HANDOFF BOX. What that acquisition produced leaves through `takeAcquiredLease()`, ONCE,
 //      to whoever will actually pump the chain.
 //
@@ -29,7 +43,7 @@
 // It was eager first, and eager was measurably wrong. The shell awaits this step on EVERY run,
 // including the runs that end above the tail: `in-process-run-execution.ts` re-throws
 // `produced.takeFrameworkError()` before `options.afterVerdict`, so a run that dies on "browser
-// support is not installed" never reaches `postRunTail.drain({ lease: … })`. Acquiring at the
+// support is not installed" never reaches `postRunTail.drain({ takeLease: … })`. Acquiring at the
 // verdict therefore minted an epoch and a lease file for a chain nobody was going to pump, and the
 // no-leak backstop below then released it and printed `post-run lease released untaken` on stderr
 // — on ORDINARY runs, which is how `run-parity.e2e.test.ts` caught it. Acquiring nothing costs
@@ -67,10 +81,17 @@
 // RESEARCH PITFALL 3 BY NAME — TWO LEASE HOLDERS IN ONE PROCESS. A process that holds the writer
 // lease and calls `acquireWriterLease` again is answered `held` — by ITSELF — and would hand its
 // own work off to nobody: chips never move and the claimed row is left claimed. That is why the
-// acquisition happens here at most once and travels to the pump as a value, rather than each leg
-// consulting the lease for itself. `takeAcquiredLease()` is take-ONCE for the same reason from the
-// other direction: two callers each believing they hold the lease is the same defect wearing a
-// different hat, and the second caller gets `undefined` instead of a duplicate authority.
+// acquisition happens here at most once and travels to the pump through ONE take, rather than
+// each leg consulting the lease for itself. `takeAcquiredLease()` is take-ONCE for the same reason
+// in the other direction: two callers each believing they hold the lease is the same defect
+// wearing a different hat, and the second caller gets `undefined` instead of a duplicate
+// authority.
+//
+// WHERE THE TAKE IS CALLED IS PART OF THE MITIGATION (2026-08-27, CR-01). Because taking is what
+// acquires, a caller that evaluates `takeAcquiredLease()` as an ARGUMENT has minted the lease
+// before the callee's first line — outside any `finally` the callee owns, and past the take-once
+// flag the backstop below reads. The pump therefore takes it ITSELF, inside the try that releases;
+// `post-run-tail.ts`'s `drain()` accepts a thunk for exactly this reason.
 //
 // WHAT LAZINESS COSTS, STATED. `drained` is the posture "nobody held this run's lease at the
 // verdict, so this process will take it and pump" (D-09), and between the verdict and the pump's
@@ -226,6 +247,11 @@ export interface PostVerdictHandoff {
    * all. A second call answers `undefined`, whether or not the first caller did anything with it —
    * see the Pitfall 3 note in this file's header. `undefined` also comes back when the acquisition
    * itself found a holder or refused, in which case the caller's own fallback consult decides.
+   *
+   * CALL IT WHERE YOU CAN RELEASE IT (2026-08-27, CR-01). This is a mutating call wearing the
+   * grammar of a getter, so a caller must invoke it from inside the scope whose `finally` releases
+   * — never as an argument to the thing that owns that scope. `post-run-tail.ts`'s `drain()` takes
+   * a `takeLease` thunk instead of an authority so that its callers cannot get this wrong.
    */
   takeAcquiredLease(): CurationWriterAuthority | undefined
   /**

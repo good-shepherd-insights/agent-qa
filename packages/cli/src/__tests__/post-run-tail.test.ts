@@ -163,7 +163,7 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     // re-acquires reports `handed-off` and nudges a daemon that does not exist.
     const h = harness({ lease: { kind: 'held', holder: { pid: 4242 } } as never })
     const tail = runPostRunTail(options(h))
-    await tail.drain({ lease: { leaseId: 'lease-from-the-step', epoch: 9 } })
+    await tail.drain({ takeLease: () => ({ leaseId: 'lease-from-the-step', epoch: 9 }) })
 
     expect(
       h.operations.acquireWriterLease as unknown as ReturnType<typeof vi.fn>,

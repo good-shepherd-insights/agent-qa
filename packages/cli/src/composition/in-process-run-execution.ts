@@ -147,13 +147,18 @@ export interface CliRunVerdictContext {
    * A DOOR'S TAIL MUST TAKE IT RATHER THAN CONSULT THE LEASE AGAIN. The step decided the posture
    * inside the shell, before `runFinished`; a tail that called `acquireWriterLease` for itself
    * after taking the authority would be answered `held` by its OWN process and would hand its work
-   * off to nobody (RESEARCH Pitfall 3). Hand it to the pump —
-   * `postRunTail.drain({ lease: postVerdict.takeAcquiredLease() })` — so acquire → pump → release
-   * stays one lease.
+   * off to nobody (RESEARCH Pitfall 3). Route it to the pump —
+   * `postRunTail.drain({ takeLease: () => postVerdict.takeAcquiredLease() })` — so acquire → pump
+   * → release stays one lease.
    *
    * 2026-08-26: TAKING IT IS WHAT ACQUIRES IT. The step's decision comes from a non-acquiring read,
    * so a door with no tail — or a run that dies above one — mutates no lease file and has nothing
    * to release. See `post-verdict-step.ts`'s header for the measurement that moved it.
+   *
+   * 2026-08-27 (CR-01): AND A THUNK IS WHY IT IS SAFE. Because taking acquires, the take may not
+   * happen where an exception can still skip the release — which is what evaluating it as the
+   * argument did. `drain()` calls the thunk itself, after the knowledge root is resolved and
+   * inside the try whose `finally` releases.
    */
   readonly postVerdict: PostVerdictHandoff
 }

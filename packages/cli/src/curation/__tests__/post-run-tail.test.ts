@@ -44,6 +44,11 @@ import {
   type PostRunTailOperations,
   type RunPostRunTailOptions,
 } from '../post-run-tail.js'
+import {
+  createPostVerdictStep,
+  releaseUntakenPostVerdictLease,
+  type PostVerdictStepOperations,
+} from '../post-verdict-step.js'
 
 const agentQaRoot = '/workspace/project/.agent-qa'
 const configDir = '/workspace/project'
@@ -582,4 +587,274 @@ describe('the pure renderers (exported for exactly these pins)', () => {
     // JSON-quoted, so a runId needing escaping cannot silently produce a broken command.
     expect(digestFetchCommand('run"x')).toBe('agent-qa digest "run\\"x"')
   })
+})
+
+// ══════════════════════════════════════════════════════════════════════════════════════════
+// CR-01 — THE WRITER FENCE, MODELLED AS A FENCE.
+//
+// These cells assert a STATE, not a call count and not a warning: after everything the run
+// process would do, is this project's writer lease still held? That is the only question the
+// defect was about. A lease acquired by the post-verdict step's `takeAcquiredLease()` used to be
+// dropped, unreleased and unrecoverable, whenever the tail's own setup threw — because the take
+// was evaluated as the ARGUMENT to `drain()`, which meant the acquisition happened before the
+// method that owns the release was entered, and the take-once flag was already spent by the time
+// the step's no-leak backstop looked in the box. The fence was then held with NO heartbeat for
+// the whole lease TTL, while the wire had already published the `drained` posture — a promise
+// that this process would pump, made by a process that had stopped.
+//
+// The throw is not hypothetical. `ops()`'s own doc records it as measured — a partially-stubbed
+// module graph is what found it — and `composeHost` runs the far larger construction.
+//
+// The counting assertions (`acquireWriterLease` once, `releaseLease` once) ride ALONG with the
+// fence assertion rather than standing in for it: a ledger that balanced while the fence stayed
+// held would be a fixture agreeing with itself.
+// ══════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A writer lease with a HOLDER, so "is it released" is a readable fact rather than a spy call.
+ *
+ * The two shipped behaviours this run's code depends on, and nothing else: an acquisition mints a
+ * new epoch when nobody holds it and answers `held` when somebody does, and a release clears the
+ * holder only for the lease id that actually holds it. The second half is what makes a double
+ * release visible instead of silently idempotent.
+ */
+function writerFence(): {
+  readonly acquireWriterLease: ReturnType<typeof vi.fn>
+  readonly releaseLease: ReturnType<typeof vi.fn>
+  readonly holder: () => string | undefined
+} {
+  let holder: string | undefined
+  let epoch = 0
+  const acquireWriterLease = vi.fn((_knowledgeRoot: string) => {
+    if (holder !== undefined) {
+      return { kind: 'held', holder: { leaseId: holder, pid: 4242, epoch, heartbeatAtMs: 1 } }
+    }
+    epoch += 1
+    holder = `lease-${epoch}`
+    return { kind: 'acquired', leaseId: holder, epoch }
+  })
+  const releaseLease = vi.fn((input: { knowledgeRoot: string; leaseId: string }) => {
+    if (holder === input.leaseId) holder = undefined
+    return { kind: 'released' }
+  })
+  return { acquireWriterLease, releaseLease, holder: () => holder }
+}
+
+/** The step's table: an ordinary local run — nobody holds the lease, and the enqueue succeeds. */
+function stepOperations(
+  fence: ReturnType<typeof writerFence>,
+  overrides: Record<string, unknown> = {},
+): Partial<PostVerdictStepOperations> {
+  return {
+    acquireWriterLease: fence.acquireWriterLease,
+    releaseLease: fence.releaseLease,
+    readWriterLease: vi.fn(() => ({ kind: 'absent' })),
+    deriveWriterLeaseFreshness: vi.fn(() => ({ kind: 'fresh' })),
+    nudgeDaemon: vi.fn(async () => undefined),
+    loadCompletedRunHandoff: vi.fn(() => handoff),
+    composeHost: vi.fn(() => ({
+      jobs: async () => ({
+        queue: { enqueue: vi.fn(async () => ({ job: { id: 'job_analyze' }, deduped: false })) },
+      }),
+      close: vi.fn(async () => undefined),
+    })),
+    now: () => 1_700_000_000_000,
+    ...overrides,
+  } as unknown as Partial<PostVerdictStepOperations>
+}
+
+/** The REAL step, composed over that fence, decided exactly as the shell decides it. */
+async function decidedStep(
+  fence: ReturnType<typeof writerFence>,
+  overrides: Record<string, unknown> = {},
+): Promise<ReturnType<typeof createPostVerdictStep>> {
+  const step = createPostVerdictStep({
+    runId,
+    agentQaRoot,
+    knowledgeRoot,
+    configPath,
+    log: { warn: () => undefined },
+    operations: stepOperations(fence, overrides),
+  })
+  await step.port.run({ runId: runId as never, verdict: 'passed' as never })
+  return step
+}
+
+/** The tail, over the same fence, with whatever the cell wants to break. */
+function tailOverFence(
+  h: Harness,
+  fence: ReturnType<typeof writerFence>,
+  overrides: Partial<PostRunTailOperations> = {},
+): ReturnType<typeof runPostRunTail> {
+  return runPostRunTail({
+    ...options(h),
+    operations: {
+      ...h.operations,
+      acquireWriterLease: fence.acquireWriterLease,
+      releaseLease: fence.releaseLease,
+      ...overrides,
+    } as unknown as PostRunTailOperations,
+  })
+}
+
+/** The drive's outermost close-out, verbatim in its effect: whatever nobody took is released. */
+function closeOutRun(
+  step: ReturnType<typeof createPostVerdictStep>,
+  fence: ReturnType<typeof writerFence>,
+): void {
+  releaseUntakenPostVerdictLease({
+    handoff: step.handoff,
+    knowledgeRoot,
+    runId,
+    log: { warn: () => undefined },
+    operations: {
+      releaseLease: fence.releaseLease as unknown as PostVerdictStepOperations['releaseLease'],
+    },
+  })
+}
+
+describe('CR-01 — an acquired writer lease is released on EVERY path out of drain()', () => {
+  it('releases it when composing the host throws, instead of holding the fence for its TTL',
+    async () => {
+      const fence = writerFence()
+      const step = await decidedStep(fence)
+      // THE LAZINESS, restated where this cell depends on it: the step DECIDED `drained` from a
+      // non-acquiring read, so nothing is held yet and the pump's request is what will mint it.
+      expect(fence.holder(), 'the decision reads the lease; it does not take it').toBeUndefined()
+      expect(fence.acquireWriterLease).not.toHaveBeenCalled()
+
+      const h = harness()
+      const tail = tailOverFence(h, fence, {
+        composeHost: vi.fn(() => {
+          throw new Error('[vitest] No "curateCompletedRun" export is defined')
+        }) as unknown as PostRunTailOperations['composeHost'],
+      })
+
+      await tail.drain({ takeLease: () => step.handoff.takeAcquiredLease() })
+      closeOutRun(step, fence)
+
+      // THE CLAIM. Not "a warning was logged" — the fence itself is free, so the next process to
+      // ask is told the truth rather than being told to wait 30s on a pump that is not running.
+      expect(
+        fence.holder(),
+        'a fence held by a process that stopped pumping is the defect CR-01 named',
+      ).toBeUndefined()
+      // …and it is free because it was RELEASED, once, by the leg that took it — not because it
+      // was never acquired. Both halves matter: the take is what the wire's `drained` promised.
+      expect(fence.acquireWriterLease).toHaveBeenCalledTimes(1)
+      expect(fence.releaseLease).toHaveBeenCalledTimes(1)
+      expect(fence.releaseLease).toHaveBeenCalledWith({ knowledgeRoot, leaseId: 'lease-1' })
+      // JOBQ-06 unchanged: a composition that never came up ATTEMPTED nothing, and the exit code
+      // froze long before this line.
+      expect(tail.report().drain).toBe('not-attempted')
+      expect(h.warn).toHaveBeenCalledTimes(1)
+    })
+
+  it('acquires NOTHING when the knowledge root cannot be resolved — there is no address to release against',
+    async () => {
+      // The other half of the early return, and the reason the take sits where it does rather
+      // than merely being wrapped: a release is addressed to a knowledge root, so a lease taken
+      // before the root is known would be a lease nothing in this process could ever end.
+      const fence = writerFence()
+      const step = await decidedStep(fence)
+
+      const h = harness()
+      const tail = tailOverFence(h, fence, {
+        resolveKnowledgeRoot: vi.fn(() => {
+          throw new Error('no knowledge root is configured for this project')
+        }) as unknown as PostRunTailOperations['resolveKnowledgeRoot'],
+      })
+
+      await tail.drain({ takeLease: () => step.handoff.takeAcquiredLease() })
+      closeOutRun(step, fence)
+
+      expect(fence.holder()).toBeUndefined()
+      expect(
+        fence.acquireWriterLease,
+        'the take is what acquires, and it never happened — so there is nothing to leak',
+      ).not.toHaveBeenCalled()
+      expect(fence.releaseLease).not.toHaveBeenCalled()
+      expect(tail.report().drain).toBe('not-attempted')
+    })
+
+  it('releases it when the pump itself throws, and reports `threw` rather than `not-attempted`',
+    async () => {
+      const fence = writerFence()
+      const step = await decidedStep(fence)
+
+      const h = harness()
+      const tail = tailOverFence(h, fence, {
+        composeHost: vi.fn(() => ({
+          jobs: async () => { throw new Error('the durable store would not open') },
+          close: vi.fn(async () => undefined),
+        })) as unknown as PostRunTailOperations['composeHost'],
+      })
+
+      await tail.drain({ takeLease: () => step.handoff.takeAcquiredLease() })
+      closeOutRun(step, fence)
+
+      expect(fence.holder()).toBeUndefined()
+      expect(fence.acquireWriterLease).toHaveBeenCalledTimes(1)
+      expect(fence.releaseLease).toHaveBeenCalledTimes(1)
+      // The host CAME UP here, so the posture is the pump's failure and not JOBQ-06's
+      // never-attempted composition. Two different facts, two different words.
+      expect(tail.report().drain).toBe('threw')
+    })
+})
+
+describe('the fallback consult, and the one door that declines it (WR-04 / 404 D-06)', () => {
+  /** A step whose probe finds a CURRENT-EPOCH holder: plan `none`, so the take answers nothing. */
+  async function stepWithAHolder(
+    fence: ReturnType<typeof writerFence>,
+  ): Promise<ReturnType<typeof createPostVerdictStep>> {
+    return await decidedStep(fence, {
+      readWriterLease: vi.fn(() => ({
+        kind: 'parsed',
+        lease: { leaseId: 'daemon', pid: 4242, epoch: 6, heartbeatAtMs: 1_700_000_000_000 },
+      })),
+    })
+  }
+
+  it('a take that answers `undefined` falls back to this pump\'s OWN acquisition by default',
+    async () => {
+      // The behaviour the step's header used to deny (WR-04). It is not a second acquisition:
+      // the step acquired nothing at all on this path, so the pump's consult is the first one —
+      // and it is worth making, because the holder may have released since the verdict.
+      const fence = writerFence()
+      const step = await stepWithAHolder(fence)
+      expect(step.handoff.takeAcquiredLease()).toBeUndefined()
+
+      const h = harness()
+      const tail = tailOverFence(h, fence)
+      await tail.drain({ takeLease: () => step.handoff.takeAcquiredLease() })
+
+      expect(fence.acquireWriterLease, 'the fallback consult is a real, first acquisition')
+        .toHaveBeenCalledTimes(1)
+      expect(tail.report().drain).toBe('drained')
+      expect(fence.holder(), 'and it still leaves through exactly one release').toBeUndefined()
+    })
+
+  it('`withoutLease: \'skip\'` pumps nothing and composes nothing — the `runs.start` door rule',
+    async () => {
+      const fence = writerFence()
+      const step = await stepWithAHolder(fence)
+
+      const h = harness()
+      const tail = tailOverFence(h, fence)
+      await tail.drain({
+        takeLease: () => step.handoff.takeAcquiredLease(),
+        withoutLease: 'skip',
+      })
+
+      expect(fence.acquireWriterLease, 'this door consults for nobody but itself')
+        .not.toHaveBeenCalled()
+      expect(
+        h.operations.composeHost as unknown as ReturnType<typeof vi.fn>,
+        'and it opens no store for a chain it is not going to pump',
+      ).not.toHaveBeenCalled()
+      // `not-attempted` is what `finish({ detached: true })` reads to name the posture, which is
+      // exactly what the caller-side `if` around this call used to produce.
+      expect(tail.report().drain).toBe('not-attempted')
+      expect(fence.holder()).toBeUndefined()
+    })
 })
