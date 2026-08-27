@@ -5,8 +5,6 @@ import { MIGRATIONS, SCHEMA_VERSION, type DashboardMigration } from './schema.js
 import {
   DEFAULT_AGENT_QA_RUNS_DB_PATH,
   generateRunId,
-  type LogEntry,
-  type LogStorage,
   type RunAttributes,
 } from '@vostride/agent-qa-core'
 import {
@@ -39,7 +37,6 @@ export interface RunRow {
   metadata: Record<string, unknown> | null
   startedAt: string | null
   endedAt: string | null
-  videoPath: string | null
   failureSummary: string | null
   errorLog: string | null
   memoryLog: string | null
@@ -50,10 +47,6 @@ export interface RunRow {
   modelName: string | null
   llmProvider: string | null
   parallel: boolean
-  parentRunId: string | null
-  attemptNumber: number
-  retryCount: number
-  maxRetries: number
   createdAt: string
 }
 
@@ -67,64 +60,17 @@ export interface RunArtifactRow {
   updatedAt: string
 }
 
+/**
+ * ONE RUN'S ARTIFACT, AND NOTHING ELSE (405-07, D-02).
+ *
+ * `children` stood here and is gone. It walked the run row's now-deleted parent link for the child
+ * rows of a suite parent — a shape nothing has written since 402-09 put ONE `runs` row per run and moved member
+ * identity onto `run_members`. A structurally-always-empty array on a response is worse than an
+ * absent one: a reader cannot tell "this run has no children" from "children stopped being a fact
+ * this product records", so the page renders an empty section forever and nobody notices.
+ */
 export interface RunArtifactBundle {
   artifact: RunArtifactRow | null
-  children: Array<{ run: RunRow; artifact: RunArtifactRow | null }>
-}
-
-export interface StepRow {
-  id: string
-  runId: string
-  name: string
-  status: string
-  duration: number
-  action: unknown | null
-  observation: string | null
-  reasoning: string | null
-  plannedAction: unknown | null
-  result: string | null
-  error: string | null
-  screenshotPath: string | null
-  screenshotBeforePath: string | null
-  retryCount: number
-  capturedVariables: Record<string, string> | null
-  stepOrder: number
-  annotationData: unknown | null
-  healingScreenshotPaths: string[] | null
-  accessibilityViolations: unknown[] | null
-  confidence: number | null
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  subActionsData: unknown[] | null
-  consoleLogs: unknown[] | null
-  networkLogs: unknown[] | null
-  variableSnapshot: Record<string, { value: string; source: string }> | null
-  originalStepName: string | null
-  screenContextBefore: string | null
-  screenContextAfter: string | null
-  createdAt: string
-}
-
-interface ReasoningTraceRow {
-  id: string
-  stepId: string
-  observeText: string | null
-  observeDuration: number | null
-  planReasoning: string | null
-  planConfidence: number | null
-  planAction: unknown | null
-  planDuration: number | null
-  executeAction: unknown | null
-  executeDuration: number | null
-  verifyReasoning: string | null
-  verifySuccess: boolean | null
-  verifyDuration: number | null
-  healAttempts: unknown[] | null
-  totalDuration: number | null
-  screenStateBefore: string | null
-  screenStateAfter: string | null
-  createdAt: string
 }
 
 interface ExecutionLogRow {
@@ -223,11 +169,18 @@ export interface InsightsBreakdownRow {
   suiteId?: string
 }
 
+/**
+ * What a run deletion removed (405-07, D-14 · T-405-27).
+ *
+ * ROWS ONLY. The two path arrays that stood here fed the router's filesystem cleanup, and both the
+ * cleanup and the columns it read are gone: refs are the only artifact addressing now, and the run
+ * directory under `.agent-qa/runs/` is the run's own record — the event log and the blobs — which
+ * the dashboard never owned and must not delete. `deletedRunIds` survives as a one-element list
+ * rather than collapsing to a boolean, because it is the shape the response already publishes.
+ */
 export interface DeleteRunResult {
   deleted: boolean
   deletedRunIds: string[]
-  screenshotPaths: string[]
-  videoPaths: string[]
 }
 
 export interface AttributePredicate {
@@ -423,23 +376,18 @@ export class DashboardDatabase {
     metadata?: Record<string, unknown>
     startedAt: string
     endedAt: string
-    videoPath?: string
     failureSummary?: string
     platform?: string
     testFileContent?: string
     modelName?: string
     llmProvider?: string
-    parentRunId?: string
-    attemptNumber?: number
-    retryCount?: number
-    maxRetries?: number
     testId?: string
     suiteId?: string
   }): string {
     const id = run.id || generateRunId()
     const stmt = this.db.prepare(`
-      INSERT INTO runs (id, name, file_path, status, duration, attributes, environment, metadata, started_at, ended_at, video_path, failure_summary, platform, test_file_content, model_name, llm_provider, parent_run_id, attempt_number, retry_count, max_retries, test_id, suite_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO runs (id, name, file_path, status, duration, attributes, environment, metadata, started_at, ended_at, failure_summary, platform, test_file_content, model_name, llm_provider, test_id, suite_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       id,
@@ -452,16 +400,11 @@ export class DashboardDatabase {
       run.metadata ? JSON.stringify(run.metadata) : null,
       run.startedAt,
       run.endedAt,
-      run.videoPath ?? null,
       run.failureSummary ?? null,
       run.platform ?? 'web',
       run.testFileContent ?? null,
       run.modelName ?? null,
       run.llmProvider ?? null,
-      run.parentRunId ?? null,
-      run.attemptNumber ?? 0,
-      run.retryCount ?? 0,
-      run.maxRetries ?? 0,
       run.testId ?? null,
       run.suiteId ?? null,
     )
@@ -477,7 +420,6 @@ export class DashboardDatabase {
     failureSummary?: string
     errorLog?: string
     memoryLog?: string
-    videoPath?: string
     attributes?: RunAttributes
     platform?: string
     testId?: string
@@ -493,7 +435,6 @@ export class DashboardDatabase {
     if (updates.failureSummary !== undefined) { fields.push('failure_summary = ?'); values.push(updates.failureSummary) }
     if (updates.errorLog !== undefined) { fields.push('error_log = ?'); values.push(updates.errorLog) }
     if (updates.memoryLog !== undefined) { fields.push('memory_log = ?'); values.push(updates.memoryLog) }
-    if (updates.videoPath !== undefined) { fields.push('video_path = ?'); values.push(updates.videoPath) }
     if (updates.attributes !== undefined) { fields.push('attributes = ?'); values.push(JSON.stringify(updates.attributes)) }
     if (updates.platform !== undefined) { fields.push('platform = ?'); values.push(updates.platform) }
     if (updates.testId !== undefined) { fields.push('test_id = ?'); values.push(updates.testId) }
@@ -541,12 +482,11 @@ export class DashboardDatabase {
     llmProvider?: string
     metadata?: Record<string, unknown>
     parallel?: boolean
-    maxRetries?: number
   }): string {
     const id = run.id || generateRunId()
     const stmt = this.db.prepare(`
-      INSERT INTO runs (id, name, file_path, status, priority, duration, attributes, started_at, ended_at, platform, test_file_content, model_name, llm_provider, metadata, parallel, max_retries)
-      VALUES (?, ?, ?, 'pending', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO runs (id, name, file_path, status, priority, duration, attributes, started_at, ended_at, platform, test_file_content, model_name, llm_provider, metadata, parallel)
+      VALUES (?, ?, ?, 'pending', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       id,
@@ -560,7 +500,6 @@ export class DashboardDatabase {
       run.llmProvider ?? null,
       run.metadata ? JSON.stringify(run.metadata) : null,
       run.parallel ? 1 : 0,
-      run.maxRetries ?? 0,
     )
     return id
   }
@@ -581,90 +520,6 @@ export class DashboardDatabase {
 
   updateRunStatus(id: string, status: string): void {
     this.db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, id)
-  }
-
-  /** Drop a run's accumulated step rows (and their traces) — a scheduled retry re-runs the same stepIndexes. */
-  deleteStepsForRun(runId: string): void {
-    this.db.prepare(`
-      DELETE FROM reasoning_traces
-      WHERE step_id IN (SELECT id FROM steps WHERE run_id = ?)
-    `).run(runId)
-    this.db.prepare('DELETE FROM steps WHERE run_id = ?').run(runId)
-  }
-
-  insertStep(step: {
-    id?: string
-    runId: string
-    name: string
-    status: string
-    duration: number
-    action?: unknown
-    observation?: string
-    reasoning?: string
-    plannedAction?: unknown
-    result?: string
-    error?: string
-    screenshotPath?: string
-    screenshotBeforePath?: string
-    retryCount?: number
-    capturedVariables?: Record<string, string>
-    stepOrder: number
-    annotationData?: unknown
-    healingScreenshotPaths?: string[]
-    accessibilityViolations?: unknown[]
-    confidence?: number
-    promptTokens?: number
-    completionTokens?: number
-    totalTokens?: number
-    subActionsData?: unknown[]
-    consoleLogs?: unknown[]
-    networkLogs?: unknown[]
-    variableSnapshot?: Record<string, unknown>
-    originalStepName?: string
-    screenContextBefore?: string
-    screenContextAfter?: string
-  }): string {
-    const id = step.id || randomUUID()
-    const stmt = this.db.prepare(`
-      INSERT INTO steps (id, run_id, name, status, duration, action, observation, reasoning, planned_action, result, error, screenshot_path, screenshot_before_path, healing_attempts, retry_count, captured_variables, step_order, annotation_data, healing_screenshot_paths, accessibility_violations, confidence, prompt_tokens, completion_tokens, total_tokens, sub_actions_data, console_logs, network_logs, variable_snapshot, original_step_name, screen_context_before, screen_context_after)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    stmt.run(
-      id,
-      step.runId,
-      step.name,
-      step.status,
-      step.duration,
-      step.action ? JSON.stringify(step.action) : null,
-      step.observation ?? null,
-      step.reasoning ?? null,
-      step.plannedAction ? JSON.stringify(step.plannedAction) : null,
-      step.result ?? null,
-      step.error ?? null,
-      step.screenshotPath ?? null,
-      step.screenshotBeforePath ?? null,
-      // healing_attempts column retained (dormant) — the v1 healing machinery was
-      // deleted in Phase 353 (D-10); no step ever carries healing attempts now.
-      null,
-      step.retryCount ?? 0,
-      step.capturedVariables ? JSON.stringify(step.capturedVariables) : null,
-      step.stepOrder,
-      step.annotationData ? JSON.stringify(step.annotationData) : null,
-      step.healingScreenshotPaths ? JSON.stringify(step.healingScreenshotPaths) : null,
-      step.accessibilityViolations ? JSON.stringify(step.accessibilityViolations) : null,
-      step.confidence ?? null,
-      step.promptTokens ?? 0,
-      step.completionTokens ?? 0,
-      step.totalTokens ?? 0,
-      step.subActionsData ? JSON.stringify(step.subActionsData) : null,
-      step.consoleLogs ? JSON.stringify(step.consoleLogs) : null,
-      step.networkLogs ? JSON.stringify(step.networkLogs) : null,
-      step.variableSnapshot ? JSON.stringify(step.variableSnapshot) : null,
-      step.originalStepName ?? null,
-      step.screenContextBefore ?? null,
-      step.screenContextAfter ?? null,
-    )
-    return id
   }
 
   // ---- The v2 bus-shaped projection (Phase 405 plan 01, D-01) ---------------------------------
@@ -752,10 +607,11 @@ export class DashboardDatabase {
   /**
    * Drop ONE HANDLE's projected step and sub-action rows (D-17).
    *
-   * SCOPED TO THE HANDLE, which is the whole change from `deleteStepsForRun`: that member wiped
-   * every step of the RUN on any member's retry, so in a suite the abandoned attempt of test 3
-   * deleted the completed history of tests 0-2. The member row itself survives — its outcome and
-   * its attempt count are facts about the member, not about the attempt.
+   * SCOPED TO THE HANDLE, which was the whole change from the v1 run-wide step delete this
+   * replaced (deleted outright by 405-07's census): that member wiped every step of the RUN on any
+   * member's retry, so in a suite the abandoned attempt of test 3 deleted the completed history of
+   * tests 0-2. The member row itself survives — its outcome and its attempt count are facts about
+   * the member, not about the attempt.
    */
   deleteMemberProjection(runId: string, testIndex: number): void {
     this.db.prepare('DELETE FROM run_steps WHERE run_id = ? AND test_index = ?').run(runId, testIndex)
@@ -991,7 +847,7 @@ export class DashboardDatabase {
   }
 
   getRuns(opts: RunsFilter = {}): RunRow[] {
-    const conditions: string[] = ['parent_run_id IS NULL']
+    const conditions: string[] = []
     const params: unknown[] = []
 
     if (opts.status) {
@@ -1073,124 +929,27 @@ export class DashboardDatabase {
     return rows.map((row) => ({ value: row.value, count: row.count }))
   }
 
+  /**
+   * Delete ONE run and everything the schema hangs off it (405-07, D-02/D-14 · T-405-27).
+   *
+   * ONE ID, AND THE CASCADE DOES THE REST. This used to open with a recursive `run_tree` CTE that
+   * walked the child rows of a suite parent, then hand-delete their step and trace rows in a
+   * transaction. Nothing has written a child row since 402-09 — one `runs` row per run, member
+   * identity on `run_members` — so the walk could only ever return the one row it was seeded with,
+   * and the hand-deletes named tables this schema no longer has. Every table that references a run
+   * declares `ON DELETE CASCADE`, so the single statement below is the whole deletion.
+   *
+   * AND IT TOUCHES NO FILE. The two path arrays it used to collect fed the router's artifact
+   * cleanup; both are gone. The run's directory under `.agent-qa/runs/` — its event log and its
+   * content-addressed blobs — is the run's own record and is not the dashboard's to remove.
+   */
   deleteRun(id: string): DeleteRunResult {
-    const runRows = this.db.prepare(`
-      WITH RECURSIVE run_tree(id) AS (
-        SELECT id FROM runs WHERE id = ?
-        UNION ALL
-        SELECT runs.id
-        FROM runs
-        INNER JOIN run_tree ON runs.parent_run_id = run_tree.id
-      )
-      SELECT *
-      FROM runs
-      WHERE id IN (SELECT id FROM run_tree)
-      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at ASC
-    `).all(id, id) as Record<string, unknown>[]
-
-    if (runRows.length === 0) {
-      return {
-        deleted: false,
-        deletedRunIds: [],
-        screenshotPaths: [],
-        videoPaths: [],
-      }
-    }
-
-    const deletedRunIds = runRows.map((row) => row.id as string)
-    const runPlaceholders = deletedRunIds.map(() => '?').join(', ')
-    const stepRows = this.db.prepare(`
-      SELECT id, screenshot_path, screenshot_before_path, healing_screenshot_paths
-      FROM steps
-      WHERE run_id IN (${runPlaceholders})
-    `).all(...deletedRunIds) as Array<{
-      id: string
-      screenshot_path: string | null
-      screenshot_before_path: string | null
-      healing_screenshot_paths: string | null
-    }>
-    const deletedStepIds = stepRows.map((row) => row.id)
-    const screenshotPaths = stepRows.flatMap((row) => {
-      const healingPaths = (() => {
-        if (!row.healing_screenshot_paths) return []
-        try {
-          const parsed = JSON.parse(row.healing_screenshot_paths) as unknown
-          return Array.isArray(parsed)
-            ? parsed.filter((value): value is string => typeof value === 'string' && value.length > 0)
-            : []
-        } catch {
-          return []
-        }
-      })()
-
-      return [
-        row.screenshot_path,
-        row.screenshot_before_path,
-        ...healingPaths,
-      ].filter((value): value is string => typeof value === 'string' && value.length > 0)
-    })
-    const videoPaths = runRows
-      .map((row) => row.video_path)
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
-
-    const deleteAll = this.db.transaction(() => {
-      if (deletedStepIds.length > 0) {
-        const stepPlaceholders = deletedStepIds.map(() => '?').join(', ')
-        this.db.prepare(`
-          DELETE FROM reasoning_traces
-          WHERE step_id IN (${stepPlaceholders})
-        `).run(...deletedStepIds)
-      }
-
-      this.db.prepare(`
-        DELETE FROM steps
-        WHERE run_id IN (${runPlaceholders})
-      `).run(...deletedRunIds)
-
-      this.db.prepare(`
-        DELETE FROM runs
-        WHERE id IN (${runPlaceholders})
-      `).run(...deletedRunIds)
-    })
-
-    deleteAll()
-
+    const changes = this.db.prepare('DELETE FROM runs WHERE id = ?').run(id)
+    const deleted = Number(changes.changes ?? 0) > 0
     return {
-      deleted: true,
-      deletedRunIds,
-      screenshotPaths,
-      videoPaths,
+      deleted,
+      deletedRunIds: deleted ? [id] : [],
     }
-  }
-
-  getSteps(runId: string): StepRow[] {
-    const rows = this.db.prepare('SELECT * FROM steps WHERE run_id = ? ORDER BY step_order').all(runId) as Record<string, unknown>[]
-    return rows.map(r => this.mapStepRow(r))
-  }
-
-  getCapturedVariableNames(testId: string): string[] {
-    const rows = this.db.prepare(`
-      SELECT DISTINCT captured_variables FROM steps
-      WHERE run_id IN (SELECT id FROM runs WHERE test_id = ?)
-      AND captured_variables IS NOT NULL
-      LIMIT 100
-    `).all(testId) as Array<{ captured_variables: string }>
-
-    const nameSet = new Set<string>()
-    for (const row of rows) {
-      try {
-        const parsed = JSON.parse(row.captured_variables) as Record<string, string>
-        for (const key of Object.keys(parsed)) nameSet.add(key)
-      } catch { /* skip malformed */ }
-    }
-    return [...nameSet].sort()
-  }
-
-  getRunsByParent(parentRunId: string): RunRow[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM runs WHERE parent_run_id = ? ORDER BY created_at ASC'
-    ).all(parentRunId) as Record<string, unknown>[]
-    return rows.map(r => this.mapRunRow(r))
   }
 
   insertRunArtifact(input: {
@@ -1283,33 +1042,30 @@ export class DashboardDatabase {
   }
 
   getRunArtifactBundle(runId: string): RunArtifactBundle {
-    const children = this.getRunsByParent(runId).map((run) => ({
-      run,
-      artifact: this.getRunArtifact(run.id),
-    }))
-    return {
-      artifact: this.getRunArtifact(runId),
-      children,
-    }
-  }
-
-  updateRunRetryInfo(id: string, info: { retryCount: number; maxRetries: number }): void {
-    this.db.prepare('UPDATE runs SET retry_count = ?, max_retries = ? WHERE id = ?')
-      .run(info.retryCount, info.maxRetries, id)
+    return { artifact: this.getRunArtifact(runId) }
   }
 
   private isSuccessfulRunStatus(status: string): boolean {
     return status === 'passed' || status === 'flaky'
   }
 
+  /**
+   * The runs a self-heal happened on (405-07, D-02).
+   *
+   * READ OFF `run_steps.self_heal_occurred`, WHICH IS THE SURVIVING HEALING FACT. This scanned the
+   * v1 wide step table for `status = 'healed'`; that table had no producer left and its readers
+   * went with it. `selfHealOccurred` is the bus payload's own boolean, projected verbatim by the
+   * subscriber — so the flake rate below is now computed from what the runner actually reported
+   * rather than from a status word a retired projection wrote.
+   */
   private getHealedRunIds(runIds: string[]): Set<string> {
     if (runIds.length === 0) return new Set()
 
     const placeholders = runIds.map(() => '?').join(', ')
     const rows = this.db.prepare(`
       SELECT DISTINCT run_id
-      FROM steps
-      WHERE status = 'healed'
+      FROM run_steps
+      WHERE self_heal_occurred = 1
         AND run_id IN (${placeholders})
     `).all(...runIds) as Array<{ run_id: string }>
 
@@ -1344,13 +1100,15 @@ export class DashboardDatabase {
     const conditions: string[] = []
     const params: unknown[] = []
 
+    // 2026-08-27 (405-07, D-02): the parent-link predicate is gone from all three arms because the
+    // column is. Each arm used it to mean "top-level rows only", and since 402-09 EVERY row is
+    // top-level — one `runs` row per run — so the clause was already a no-op on the `suite` and
+    // `platform` arms. The `test` arm's clause meant something else: exclude the suite PARENT rows,
+    // whose `name` is a suite's and not a test's. That exclusion is preserved verbatim below.
     if (dimension === 'suite') {
-      conditions.push('parent_run_id IS NULL')
       conditions.push('suite_id IS NOT NULL')
-    } else if (dimension === 'platform') {
-      conditions.push('parent_run_id IS NULL')
-    } else {
-      conditions.push('NOT (suite_id IS NOT NULL AND parent_run_id IS NULL)')
+    } else if (dimension !== 'platform') {
+      conditions.push('suite_id IS NULL')
     }
 
     if (opts.from) {
@@ -1426,7 +1184,7 @@ export class DashboardDatabase {
     const totalTokens = runIds.length > 0
       ? ((this.db.prepare(`
           SELECT COALESCE(SUM(total_tokens), 0) as total_tokens
-          FROM steps
+          FROM run_steps
           WHERE run_id IN (${runIds.map(() => '?').join(',')})
         `).get(...runIds) as Record<string, unknown>).total_tokens as number) || 0
       : 0
@@ -1489,7 +1247,7 @@ export class DashboardDatabase {
         COALESCE(SUM(s.completion_tokens), 0) as completion_tokens,
         COALESCE(SUM(s.total_tokens), 0) as total_tokens
       FROM runs r
-      LEFT JOIN steps s ON s.run_id = r.id
+      LEFT JOIN run_steps s ON s.run_id = r.id
       ${where}
       GROUP BY r.id
       ORDER BY r.started_at DESC
@@ -1592,7 +1350,7 @@ export class DashboardDatabase {
 
   getRunsByTestName(name: string, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
     return this.queryRunsWithAttributePredicates({
-      conditions: ['name = ?', 'parent_run_id IS NULL'],
+      conditions: ['name = ?'],
       params: [name],
       attributePredicates: opts?.attributePredicates,
       orderBy: 'ORDER BY started_at DESC',
@@ -1605,7 +1363,7 @@ export class DashboardDatabase {
     if (opts?.attributePredicates?.length) {
       return this.getRunsByTestName(name, { attributePredicates: opts.attributePredicates }).length
     }
-    const row = this.db.prepare('SELECT COUNT(*) as cnt FROM runs WHERE name = ? AND parent_run_id IS NULL').get(name) as { cnt: number }
+    const row = this.db.prepare('SELECT COUNT(*) as cnt FROM runs WHERE name = ?').get(name) as { cnt: number }
     return row.cnt
   }
 
@@ -1615,7 +1373,7 @@ export class DashboardDatabase {
     totalRuns: number
     avgDuration: number
   } {
-    const conditions = ['name = ?', 'parent_run_id IS NULL']
+    const conditions = ['name = ?']
     const params: unknown[] = [name]
     if (opts?.from) {
       conditions.push('started_at >= ?')
@@ -1631,7 +1389,7 @@ export class DashboardDatabase {
 
   getRunsBySuiteId(suiteId: string, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
     return this.queryRunsWithAttributePredicates({
-      conditions: ['suite_id = ?', 'parent_run_id IS NULL'],
+      conditions: ['suite_id = ?'],
       params: [suiteId],
       attributePredicates: opts?.attributePredicates,
       orderBy: 'ORDER BY started_at DESC',
@@ -1648,7 +1406,6 @@ export class DashboardDatabase {
       SELECT COUNT(*) as cnt
       FROM runs
       WHERE suite_id = ?
-        AND parent_run_id IS NULL
     `).get(suiteId) as { cnt: number }
     return row.cnt
   }
@@ -1659,7 +1416,7 @@ export class DashboardDatabase {
     totalRuns: number
     avgDuration: number
   } {
-    const conditions = ['suite_id = ?', 'parent_run_id IS NULL']
+    const conditions = ['suite_id = ?']
     const params: unknown[] = [suiteId]
     if (opts?.from) {
       conditions.push('started_at >= ?')
@@ -1783,198 +1540,6 @@ export class DashboardDatabase {
     }).sort((a, b) => b.flakyScore - a.flakyScore)
   }
 
-  getAccessibilitySummary(runId: string) {
-    const steps = this.getSteps(runId)
-    const allViolations: any[] = []
-    let stepsWithViolations = 0
-    let scannedSteps = 0
-
-    for (const step of steps) {
-      if (Array.isArray(step.accessibilityViolations)) {
-        scannedSteps++
-        if ((step.accessibilityViolations as any[]).length > 0) {
-          stepsWithViolations++
-          allViolations.push(...(step.accessibilityViolations as any[]))
-        }
-      }
-    }
-
-    const bySeverity: Record<string, number> = { critical: 0, serious: 0, moderate: 0, minor: 0 }
-    const byRule: Record<string, { count: number; impact: string }> = {}
-
-    for (const v of allViolations) {
-      bySeverity[v.impact] = (bySeverity[v.impact] || 0) + 1
-      if (!byRule[v.ruleId]) byRule[v.ruleId] = { count: 0, impact: v.impact }
-      byRule[v.ruleId].count++
-    }
-
-    return {
-      enabled: this.getRunAccessibilityEnabled(runId),
-      total: allViolations.length,
-      bySeverity,
-      byRule: Object.entries(byRule)
-        .map(([ruleId, data]) => ({ ruleId, ...data }))
-        .sort((a, b) => b.count - a.count),
-      stepsWithViolations,
-      scannedSteps,
-      unscannedSteps: Math.max(0, steps.length - scannedSteps),
-      totalSteps: steps.length,
-    }
-  }
-
-  private getRunAccessibilityEnabled(runId: string): boolean | null {
-    const artifact = this.getRunArtifact(runId)
-    const payload = artifact?.payload
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
-    const config = (payload as unknown as Record<string, unknown>).config
-    if (!config || typeof config !== 'object' || Array.isArray(config)) return null
-
-    const configRecord = config as Record<string, unknown>
-    const candidates = [configRecord.effectiveConfig, configRecord.parsedConfig]
-    let sawConfig = false
-    let sawAccessibility = false
-
-    for (const candidate of candidates) {
-      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
-      sawConfig = true
-      const services = (candidate as Record<string, unknown>).services
-      if (!services || typeof services !== 'object' || Array.isArray(services)) continue
-      const accessibility = (services as Record<string, unknown>).accessibility
-      if (!accessibility || typeof accessibility !== 'object' || Array.isArray(accessibility)) continue
-      sawAccessibility = true
-      const enabled = (accessibility as Record<string, unknown>).enabled
-      if (typeof enabled === 'boolean') return enabled
-    }
-
-    return sawConfig || sawAccessibility ? false : null
-  }
-
-  getStep(stepId: string): StepRow | undefined {
-    const row = this.db.prepare('SELECT * FROM steps WHERE id = ?').get(stepId) as Record<string, unknown> | undefined
-    return row ? this.mapStepRow(row) : undefined
-  }
-
-  insertReasoningTrace(trace: {
-    stepId: string
-    observeText?: string
-    observeDuration?: number
-    planReasoning?: string
-    planConfidence?: number
-    planAction?: unknown
-    planDuration?: number
-    executeAction?: unknown
-    executeDuration?: number
-    verifyReasoning?: string
-    verifySuccess?: boolean
-    verifyDuration?: number
-    healAttempts?: unknown[]
-    totalDuration?: number
-    screenStateBefore?: string
-    screenStateAfter?: string
-  }): string {
-    const id = randomUUID()
-    const stmt = this.db.prepare(`
-      INSERT INTO reasoning_traces (id, step_id, observe_text, observe_duration, plan_reasoning, plan_confidence, plan_action, plan_duration, execute_action, execute_duration, verify_reasoning, verify_success, verify_duration, heal_attempts, total_duration, screen_state_before, screen_state_after)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    stmt.run(
-      id,
-      trace.stepId,
-      trace.observeText ?? null,
-      trace.observeDuration ?? null,
-      trace.planReasoning ?? null,
-      trace.planConfidence ?? null,
-      trace.planAction ? JSON.stringify(trace.planAction) : null,
-      trace.planDuration ?? null,
-      trace.executeAction ? JSON.stringify(trace.executeAction) : null,
-      trace.executeDuration ?? null,
-      trace.verifyReasoning ?? null,
-      trace.verifySuccess !== undefined ? (trace.verifySuccess ? 1 : 0) : null,
-      trace.verifyDuration ?? null,
-      trace.healAttempts ? JSON.stringify(trace.healAttempts) : null,
-      trace.totalDuration ?? null,
-      trace.screenStateBefore ?? null,
-      trace.screenStateAfter ?? null,
-    )
-    return id
-  }
-
-  getReasoningTrace(runId: string, stepOrder: number): ReasoningTraceRow | undefined {
-    const row = this.db.prepare(`
-      SELECT rt.* FROM reasoning_traces rt
-      INNER JOIN steps s ON s.id = rt.step_id
-      WHERE s.run_id = ? AND s.step_order = ?
-    `).get(runId, stepOrder) as Record<string, unknown> | undefined
-    return row ? this.mapReasoningTraceRow(row) : undefined
-  }
-
-  // Satisfies LogStorage interface from @vostride/agent-qa-core (structural typing)
-  insertLogs(entries: LogEntry[]): void {
-    if (entries.length === 0) return
-    const stmt = this.db.prepare(
-      'INSERT INTO logs (id, step_id, run_id, level, source, message, data, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    )
-    const insertAll = this.db.transaction(() => {
-      for (const entry of entries) {
-        stmt.run(
-          entry.id,
-          entry.stepId,
-          entry.runId,
-          entry.level,
-          entry.source,
-          entry.message,
-          JSON.stringify(entry.data),
-          entry.timestamp,
-        )
-      }
-    })
-    try {
-      insertAll()
-    } catch {
-      // FK violations (e.g. run_id not yet in runs table) are non-fatal for logs
-    }
-  }
-
-  getLogs(opts: {
-    runId?: string
-    stepId?: string
-    level?: string
-    source?: string
-    limit?: number
-    offset?: number
-  } = {}): LogEntry[] {
-    const conditions: string[] = []
-    const params: unknown[] = []
-
-    if (opts.runId) {
-      conditions.push('run_id = ?')
-      params.push(opts.runId)
-    }
-    if (opts.stepId) {
-      conditions.push('step_id = ?')
-      params.push(opts.stepId)
-    }
-    if (opts.level) {
-      conditions.push('level = ?')
-      params.push(opts.level)
-    }
-    if (opts.source) {
-      conditions.push('source = ?')
-      params.push(opts.source)
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-    const limit = opts.limit ?? 1000
-    const offset = opts.offset ?? 0
-    params.push(limit, offset)
-
-    const rows = this.db.prepare(
-      `SELECT * FROM logs ${where} ORDER BY timestamp ASC LIMIT ? OFFSET ?`,
-    ).all(...params) as Record<string, unknown>[]
-
-    return rows.map(r => this.mapLogRow(r))
-  }
-
   insertExecutionLog(data: InsertExecutionLogInput): void {
     const stmt = this.db.prepare(`
       INSERT INTO execution_logs (id, run_id, step_id, type, name, hook_id, phase, status, duration, stdout, stderr, return_data, variables, test_index, step_index)
@@ -2059,7 +1624,6 @@ export class DashboardDatabase {
       metadata: r.metadata ? JSON.parse(r.metadata as string) : null,
       startedAt: r.started_at as string | null,
       endedAt: r.ended_at as string | null,
-      videoPath: (r.video_path as string) ?? null,
       failureSummary: (r.failure_summary as string) ?? null,
       errorLog: (r.error_log as string) ?? null,
       memoryLog: (r.memory_log as string) ?? null,
@@ -2070,10 +1634,6 @@ export class DashboardDatabase {
       modelName: (r.model_name as string) ?? null,
       llmProvider: (r.llm_provider as string) ?? null,
       parallel: Boolean(r.parallel),
-      parentRunId: (r.parent_run_id as string) ?? null,
-      attemptNumber: (r.attempt_number as number) ?? 0,
-      retryCount: (r.retry_count as number) ?? 0,
-      maxRetries: (r.max_retries as number) ?? 0,
       createdAt: r.created_at as string,
     }
   }
@@ -2090,79 +1650,4 @@ export class DashboardDatabase {
     }
   }
 
-  private mapStepRow(r: Record<string, unknown>): StepRow {
-    return {
-      id: r.id as string,
-      runId: r.run_id as string,
-      name: r.name as string,
-      status: r.status as string,
-      duration: r.duration as number,
-      action: r.action ? JSON.parse(r.action as string) : null,
-      observation: r.observation as string | null,
-      reasoning: r.reasoning as string | null,
-      plannedAction: r.planned_action ? JSON.parse(r.planned_action as string) : null,
-      result: r.result as string | null,
-      error: r.error as string | null,
-      screenshotPath: r.screenshot_path as string | null,
-      screenshotBeforePath: (r.screenshot_before_path as string) ?? null,
-      retryCount: r.retry_count as number,
-      capturedVariables: r.captured_variables ? JSON.parse(r.captured_variables as string) : null,
-      stepOrder: r.step_order as number,
-      annotationData: r.annotation_data ? JSON.parse(r.annotation_data as string) : null,
-      healingScreenshotPaths: r.healing_screenshot_paths ? JSON.parse(r.healing_screenshot_paths as string) : null,
-      accessibilityViolations: r.accessibility_violations ? JSON.parse(r.accessibility_violations as string) : null,
-      confidence: (r.confidence as number) ?? null,
-      promptTokens: (r.prompt_tokens as number) ?? 0,
-      completionTokens: (r.completion_tokens as number) ?? 0,
-      totalTokens: (r.total_tokens as number) ?? 0,
-      subActionsData: r.sub_actions_data ? JSON.parse(r.sub_actions_data as string) : null,
-      consoleLogs: r.console_logs ? JSON.parse(r.console_logs as string) : null,
-      networkLogs: r.network_logs ? JSON.parse(r.network_logs as string) : null,
-      variableSnapshot: r.variable_snapshot ? JSON.parse(r.variable_snapshot as string) : null,
-      originalStepName: (r.original_step_name as string) ?? null,
-      screenContextBefore: (r.screen_context_before as string) ?? null,
-      screenContextAfter: (r.screen_context_after as string) ?? null,
-      createdAt: r.created_at as string,
-    }
-  }
-
-  private mapLogRow(r: Record<string, unknown>): LogEntry {
-    let data: Record<string, unknown> = {}
-    if (r.data) {
-      try { data = JSON.parse(r.data as string) } catch { /* invalid JSON → empty */ }
-    }
-    return {
-      id: r.id as string,
-      stepId: (r.step_id as string) ?? null,
-      runId: r.run_id as string,
-      level: r.level as LogEntry['level'],
-      source: r.source as LogEntry['source'],
-      message: r.message as string,
-      data,
-      timestamp: r.timestamp as string,
-    }
-  }
-
-  private mapReasoningTraceRow(r: Record<string, unknown>): ReasoningTraceRow {
-    return {
-      id: r.id as string,
-      stepId: r.step_id as string,
-      observeText: r.observe_text as string | null,
-      observeDuration: r.observe_duration as number | null,
-      planReasoning: r.plan_reasoning as string | null,
-      planConfidence: r.plan_confidence as number | null,
-      planAction: r.plan_action ? JSON.parse(r.plan_action as string) : null,
-      planDuration: r.plan_duration as number | null,
-      executeAction: r.execute_action ? JSON.parse(r.execute_action as string) : null,
-      executeDuration: r.execute_duration as number | null,
-      verifyReasoning: r.verify_reasoning as string | null,
-      verifySuccess: r.verify_success !== null ? Boolean(r.verify_success) : null,
-      verifyDuration: r.verify_duration as number | null,
-      healAttempts: r.heal_attempts ? JSON.parse(r.heal_attempts as string) : null,
-      totalDuration: r.total_duration as number | null,
-      screenStateBefore: r.screen_state_before as string | null,
-      screenStateAfter: r.screen_state_after as string | null,
-      createdAt: r.created_at as string,
-    }
-  }
 }

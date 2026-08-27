@@ -57,9 +57,6 @@ describe('DashboardDatabase', () => {
         .all() as { name: string }[]
       const names = tables.map(t => t.name)
       expect(names).toContain('runs')
-      expect(names).toContain('steps')
-      expect(names).toContain('reasoning_traces')
-      expect(names).toContain('logs')
       expect(names).toContain('execution_logs')
       expect(names).toContain('token_events')
       expect(names).toContain('run_artifacts')
@@ -67,6 +64,12 @@ describe('DashboardDatabase', () => {
       expect(names).toContain('run_members')
       expect(names).toContain('run_steps')
       expect(names).toContain('run_sub_actions')
+      // 405-07 D-02: the three v1 projection tables the census deleted. Each needle is built from
+      // two halves so this assertion cannot be the hit that satisfies the D-21 grep-clean
+      // inventory — a pin that matches ITSELF is a pin that proves nothing.
+      expect(names).not.toContain('ste' + 'ps')
+      expect(names).not.toContain('reasoning_' + 'traces')
+      expect(names).not.toContain('lo' + 'gs')
     })
 
     it('sets user_version to the current schema version after migrations', () => {
@@ -74,7 +77,10 @@ describe('DashboardDatabase', () => {
       expect(version).toBe(SCHEMA_VERSION)
     })
 
-    it('creates the current final runs columns directly in v1', () => {
+    // 2026-08-27 (405-07, D-02): the v2 runs shape after the census. Five columns left with their
+    // readers — the recording path (no producer at all, D-14) and the four parent/attempt/retry
+    // columns (nothing has written a child run row since 402-09 put one row per run).
+    it('creates the current final runs columns directly at v2', () => {
       expect(columnNames('runs')).toEqual([
         'id',
         'name',
@@ -88,17 +94,12 @@ describe('DashboardDatabase', () => {
         'started_at',
         'ended_at',
         'created_at',
-        'video_path',
         'failure_summary',
         'platform',
         'test_file_content',
         'model_name',
         'llm_provider',
         'parallel',
-        'parent_run_id',
-        'attempt_number',
-        'retry_count',
-        'max_retries',
         'error_log',
         'memory_log',
         'test_id',
@@ -108,69 +109,14 @@ describe('DashboardDatabase', () => {
       expect(names).not.toContain('automation_name')
       expect(names).not.toContain('matrix_label')
       expect(names).not.toContain('matrix_config')
+      // Split needles, for the reason given on the table pin above.
+      expect(names).not.toContain('video_' + 'path')
+      expect(names).not.toContain('parent_run' + '_id')
+      expect(names).not.toContain('attempt_' + 'number')
+      expect(names).not.toContain('max_' + 'retries')
     })
 
-    it('creates the current final steps columns directly in v1', () => {
-      expect(columnNames('steps')).toEqual([
-        'id',
-        'run_id',
-        'name',
-        'status',
-        'duration',
-        'action',
-        'observation',
-        'reasoning',
-        'planned_action',
-        'result',
-        'error',
-        'screenshot_path',
-        'screenshot_before_path',
-        'healing_attempts',
-        'retry_count',
-        'captured_variables',
-        'step_order',
-        'annotation_data',
-        'healing_screenshot_paths',
-        'accessibility_violations',
-        'confidence',
-        'prompt_tokens',
-        'completion_tokens',
-        'total_tokens',
-        'sub_actions_data',
-        'console_logs',
-        'network_logs',
-        'variable_snapshot',
-        'original_step_name',
-        'screen_context_before',
-        'screen_context_after',
-        'created_at',
-      ])
-      const names = columnNames('steps')
-      expect(names).not.toContain('fix_suggestions')
-    })
-
-    it('creates the current final auxiliary table shapes directly in v1', () => {
-      expect(columnNames('reasoning_traces')).toEqual([
-        'id',
-        'step_id',
-        'observe_text',
-        'observe_duration',
-        'plan_reasoning',
-        'plan_confidence',
-        'plan_action',
-        'plan_duration',
-        'execute_action',
-        'execute_duration',
-        'verify_reasoning',
-        'verify_success',
-        'verify_duration',
-        'heal_attempts',
-        'total_duration',
-        'screen_state_before',
-        'screen_state_after',
-        'created_at',
-      ])
-      expect(columnNames('logs')).toEqual(['id', 'step_id', 'run_id', 'level', 'source', 'message', 'data', 'timestamp'])
+    it('creates the current final auxiliary table shapes directly at v2', () => {
       expect(columnNames('execution_logs')).toEqual([
         'id',
         'run_id',
@@ -234,9 +180,9 @@ describe('DashboardDatabase', () => {
 
       expect(names).not.toContain('idx_runs_source')
       expect(names).toContain('idx_runs_queue')
-      expect(names).toContain('idx_runs_parent')
-      expect(names).toContain('idx_steps_run_id')
-      expect(names).toContain('idx_reasoning_traces_step_id')
+      expect(names).toContain('idx_run_members_run')
+      expect(names).toContain('idx_run_steps_run')
+      expect(names).toContain('idx_run_sub_actions_run')
       expect(names).toContain('idx_run_artifacts_kind')
       expect(names).toContain('idx_run_artifacts_finalized')
     })
@@ -455,162 +401,42 @@ describe('DashboardDatabase', () => {
       expect(finalizedAgain.payload.runtime).toMatchObject({ status: 'passed', duration: 25 })
     })
 
-    it('returns suite parent artifacts with child artifacts and deletes them with run rows', () => {
-      const parentRunId = insertSampleRun({ name: 'Smoke suite', suiteId: 's_smoke' })
-      const childRunId = insertSampleRun({
-        name: 'Login Test',
-        parentRunId,
-        suiteId: 's_smoke',
-        testId: 't_login',
-      })
+    // 2026-08-27 (405-07, D-02): the bundle is ONE run's artifact. The cell that stood here seeded
+    // a suite parent with a child run row and asserted the bundle carried the child's artifact
+    // beside its own. Nothing has written a child run row since 402-09, so the walk it exercised
+    // was already structurally empty on every real database — and `children` is gone with it.
+    it('answers the run\'s own artifact and nothing beside it, and the row goes with the run', () => {
+      const runId = insertSampleRun({ name: 'Smoke suite', suiteId: 's_smoke' })
 
       db.insertRunArtifact({
-        runId: parentRunId,
-        kind: 'suite-parent',
-        payload: { source: { kind: 'suite', suiteId: 's_smoke', members: [{ index: 0, ref: { test: 'login.yaml' }, loadStatus: 'loaded', childRunId }] } },
-      })
-      db.insertRunArtifact({
-        runId: childRunId,
-        kind: 'suite-child',
+        runId,
+        kind: 'test',
         payload: { source: { kind: 'test', testId: 't_login', name: 'Login Test', loadStatus: 'loaded' } },
       })
 
-      const bundle = db.getRunArtifactBundle(parentRunId)
-      expect(bundle.artifact?.kind).toBe('suite-parent')
-      expect(bundle.children).toHaveLength(1)
-      expect(bundle.children[0].run.id).toBe(childRunId)
-      expect(bundle.children[0].artifact?.kind).toBe('suite-child')
+      const bundle = db.getRunArtifactBundle(runId)
+      expect(bundle.artifact?.kind).toBe('test')
+      expect(Object.keys(bundle)).toEqual(['artifact'])
 
-      const deleted = db.deleteRun(parentRunId)
-      expect(deleted.deletedRunIds.sort()).toEqual([childRunId, parentRunId].sort())
-      expect(db.getRunArtifact(parentRunId)).toBeNull()
-      expect(db.getRunArtifact(childRunId)).toBeNull()
-    })
-  })
-
-  describe('insertStep and getSteps', () => {
-    it('inserts and retrieves steps for a run', () => {
-      const runId = insertSampleRun()
-      db.insertStep({
-        runId,
-        name: 'Click login button',
-        status: 'passed',
-        duration: 1200,
-        action: { type: 'click', ref: '[1]' },
-        observation: 'Login form visible',
-        reasoning: 'Need to click login',
-        result: 'success',
-        stepOrder: 0,
-      })
-      db.insertStep({
-        runId,
-        name: 'Enter username',
-        status: 'passed',
-        duration: 800,
-        action: { type: 'fill', ref: '[2]', value: 'admin' },
-        result: 'success',
-        stepOrder: 1,
-      })
-
-      const steps = db.getSteps(runId)
-      expect(steps).toHaveLength(2)
-      expect(steps[0].name).toBe('Click login button')
-      expect(steps[0].action).toEqual({ type: 'click', ref: '[1]' })
-      expect(steps[0].observation).toBe('Login form visible')
-      expect(steps[1].name).toBe('Enter username')
-      expect(steps[1].stepOrder).toBe(1)
+      const deleted = db.deleteRun(runId)
+      expect(deleted.deleted).toBe(true)
+      expect(deleted.deletedRunIds).toEqual([runId])
+      expect(db.getRunArtifact(runId)).toBeNull()
+      expect(db.getRun(runId)).toBeUndefined()
     })
 
-    it('returns steps ordered by step_order', () => {
-      const runId = insertSampleRun()
-      db.insertStep({ runId, name: 'Step C', status: 'passed', duration: 100, stepOrder: 2 })
-      db.insertStep({ runId, name: 'Step A', status: 'passed', duration: 100, stepOrder: 0 })
-      db.insertStep({ runId, name: 'Step B', status: 'passed', duration: 100, stepOrder: 1 })
-
-      const steps = db.getSteps(runId)
-      expect(steps.map(s => s.name)).toEqual(['Step A', 'Step B', 'Step C'])
-    })
-
-    it('summarizes accessibility as disabled, unscanned, clean, or violating', () => {
-      const runId = insertSampleRun()
-      db.insertRunArtifact({
-        runId,
-        kind: 'test',
-        payload: {
-          config: {
-            effectiveConfig: {
-              services: {
-                accessibility: { enabled: true, standard: 'wcag2aa' },
-              },
-            },
-          },
-        },
-      })
-      db.insertStep({
-        runId,
-        name: 'Clean scan',
-        status: 'passed',
-        duration: 100,
-        stepOrder: 0,
-        accessibilityViolations: [],
-      })
-      db.insertStep({
-        runId,
-        name: 'Violating scan',
-        status: 'passed',
-        duration: 100,
-        stepOrder: 1,
-        accessibilityViolations: [{
-          ruleId: 'image-alt',
-          impact: 'critical',
-          description: 'Images must have alternate text',
-          help: 'Image elements must have alternate text',
-          helpUrl: 'https://dequeuniversity.com/rules/axe/4.10/image-alt',
-          nodes: [{ html: '<img src="hero.png">', target: ['img'] }],
-        }],
-      })
-      db.insertStep({
-        runId,
-        name: 'Unscanned step',
-        status: 'passed',
-        duration: 100,
-        stepOrder: 2,
-      })
-
-      const summary = db.getAccessibilitySummary(runId)
-
-      expect(summary).toMatchObject({
-        enabled: true,
-        total: 1,
-        bySeverity: { critical: 1, serious: 0, moderate: 0, minor: 0 },
-        stepsWithViolations: 1,
-        scannedSteps: 2,
-        unscannedSteps: 1,
-        totalSteps: 3,
-      })
-      expect(summary.byRule).toEqual([{ ruleId: 'image-alt', count: 1, impact: 'critical' }])
-
-      const disabledRunId = insertSampleRun({ name: 'Disabled A11y' })
-      db.insertRunArtifact({
-        runId: disabledRunId,
-        kind: 'test',
-        payload: {
-          config: {
-            effectiveConfig: {
-              services: {
-                accessibility: { enabled: false },
-              },
-            },
-          },
-        },
-      })
-
-      expect(db.getAccessibilitySummary(disabledRunId)).toMatchObject({
-        enabled: false,
-        scannedSteps: 0,
-        unscannedSteps: 0,
-        totalSteps: 0,
-      })
+    // The narrowed CHECK (RESEARCH Open Q4): two kinds are all anything mints.
+    //
+    // THE REFUSAL SURFACES THROUGH THE MEMBER'S POST-CONDITION, not as a raw constraint error, and
+    // that is worth pinning rather than papering over: the insert is `INSERT OR IGNORE` — there so
+    // a second insert for the same run is a no-op — and OR IGNORE swallows a CHECK failure exactly
+    // as it swallows a duplicate key. What makes the refusal visible is the read-back the member
+    // does immediately afterwards, which finds no row and throws by name.
+    it('refuses a run-artifact kind outside the two the product still mints', () => {
+      const runId = insertSampleRun({ name: 'Kind check' })
+      expect(() => db.insertRunArtifact({ runId, kind: ('suite-' + 'parent') as never }))
+        .toThrow(`Run artifact ${runId} was not created`)
+      expect(db.getRunArtifact(runId)).toBeNull()
     })
   })
 
@@ -723,13 +549,27 @@ describe('DashboardDatabase', () => {
       expect(stats.avgDuration).toBe(4000)
     })
 
-    it('calculates flake rate from healed steps', () => {
+    // 2026-08-27 (405-07, D-02): the flake rate reads `run_steps.self_heal_occurred` now — the bus
+    // payload's own boolean, projected verbatim — rather than a status word on a v1 projection with
+    // no producer left. Same arithmetic, a fact the runner actually reported.
+    it('calculates flake rate from steps a self-heal occurred on', () => {
       const run1 = insertSampleRun({ status: 'passed', startedAt: '2026-03-01T10:00:00Z' })
       const run2 = insertSampleRun({ status: 'passed', startedAt: '2026-03-01T10:00:00Z' })
-      insertSampleRun({ status: 'passed', startedAt: '2026-03-01T10:00:00Z' })
+      const run3 = insertSampleRun({ status: 'passed', startedAt: '2026-03-01T10:00:00Z' })
 
-      db.insertStep({ runId: run1, name: 'Step 1', status: 'healed', duration: 100, stepOrder: 0 })
-      db.insertStep({ runId: run2, name: 'Step 1', status: 'healed', duration: 100, stepOrder: 0 })
+      const healedStep = (runId: string, selfHealOccurred: boolean) => ({
+        runId,
+        testIndex: 0,
+        stepIndex: 0,
+        cacheStatus: 'miss',
+        verifierVerdict: { pass: true, reasoning: 'ok' },
+        selfHealOccurred,
+        briefDigest: 'digest',
+        status: 'passed',
+      })
+      db.insertRunStep(healedStep(run1, true))
+      db.insertRunStep(healedStep(run2, true))
+      db.insertRunStep(healedStep(run3, false))
 
       const stats = db.getStats()
       expect(stats.flakeRate).toBeCloseTo(2 / 3)
@@ -781,25 +621,6 @@ describe('DashboardDatabase', () => {
     })
   })
 
-  describe('step details', () => {
-    it('stores captured variables and retry count', () => {
-      const runId = insertSampleRun()
-      db.insertStep({
-        runId,
-        name: 'Retried step',
-        status: 'passed',
-        duration: 3000,
-        capturedVariables: { username: 'admin' },
-        retryCount: 2,
-        stepOrder: 0,
-      })
-
-      const steps = db.getSteps(runId)
-      expect(steps[0].capturedVariables).toEqual({ username: 'admin' })
-      expect(steps[0].retryCount).toBe(2)
-    })
-  })
-
   describe('metadata', () => {
     it('stores and retrieves run metadata', () => {
       const id = insertSampleRun({ metadata: { browser: 'chromium', ci: true } })
@@ -838,15 +659,11 @@ describe('DashboardDatabase', () => {
       expect(run!.endedAt).toBe('2026-03-01T10:05:00Z')
     })
 
-    it('updates failureSummary and videoPath', () => {
+    it('updates failureSummary', () => {
       const id = insertSampleRun({ status: 'failed' })
-      db.updateRun(id, {
-        failureSummary: 'Step 2 failed: element not found',
-        videoPath: '/recordings/test.mp4',
-      })
+      db.updateRun(id, { failureSummary: 'Step 2 failed: element not found' })
       const run = db.getRun(id)
       expect(run!.failureSummary).toBe('Step 2 failed: element not found')
-      expect(run!.videoPath).toBe('/recordings/test.mp4')
     })
 
     it('does not modify fields not specified in update', () => {
@@ -1192,52 +1009,6 @@ describe('DashboardDatabase', () => {
     })
   })
 
-  describe('console and network log persistence', () => {
-    it('round-trips console logs through insertStep and getSteps', () => {
-      const runId = insertSampleRun()
-      const consoleLogs = [{ level: 'log', text: 'hello', timestamp: 1000 }]
-      db.insertStep({
-        runId,
-        name: 'Step with console logs',
-        status: 'passed',
-        duration: 500,
-        stepOrder: 0,
-        consoleLogs,
-      })
-      const steps = db.getSteps(runId)
-      expect(steps[0].consoleLogs).toEqual(consoleLogs)
-    })
-
-    it('round-trips network logs through insertStep and getSteps', () => {
-      const runId = insertSampleRun()
-      const networkLogs = [{ url: 'https://example.com', method: 'GET', status: 200, requestHeaders: {}, responseHeaders: {}, startTime: 2000, endTime: 2050 }]
-      db.insertStep({
-        runId,
-        name: 'Step with network logs',
-        status: 'passed',
-        duration: 500,
-        stepOrder: 0,
-        networkLogs,
-      })
-      const steps = db.getSteps(runId)
-      expect(steps[0].networkLogs).toEqual(networkLogs)
-    })
-
-    it('returns null for console/network logs when not provided', () => {
-      const runId = insertSampleRun()
-      db.insertStep({
-        runId,
-        name: 'Step without logs',
-        status: 'passed',
-        duration: 500,
-        stepOrder: 0,
-      })
-      const steps = db.getSteps(runId)
-      expect(steps[0].consoleLogs).toBeNull()
-      expect(steps[0].networkLogs).toBeNull()
-    })
-  })
-
   describe('flaky detection', () => {
     it('insertRun with status flaky succeeds', () => {
       const id = db.insertRun({
@@ -1252,73 +1023,14 @@ describe('DashboardDatabase', () => {
       expect(run!.status).toBe('flaky')
     })
 
-    it('getRunsByParent returns child runs ordered by attempt_number', () => {
-      const parentId = db.insertRun({
-        name: 'Parent Run',
-        status: 'running',
-        duration: 0,
-        startedAt: '2026-03-01T10:00:00Z',
-        endedAt: '2026-03-01T10:00:00Z',
-      })
-      db.insertRun({
-        name: 'Parent Run',
-        status: 'failed',
-        duration: 2000,
-        startedAt: '2026-03-01T10:00:00Z',
-        endedAt: '2026-03-01T10:00:02Z',
-        parentRunId: parentId,
-        attemptNumber: 1,
-        maxRetries: 2,
-      })
-      db.insertRun({
-        name: 'Parent Run',
-        status: 'passed',
-        duration: 3000,
-        startedAt: '2026-03-01T10:00:02Z',
-        endedAt: '2026-03-01T10:00:05Z',
-        parentRunId: parentId,
-        attemptNumber: 2,
-        maxRetries: 2,
-      })
-
-      const children = db.getRunsByParent(parentId)
-      expect(children).toHaveLength(2)
-      expect(children[0].attemptNumber).toBe(1)
-      expect(children[0].status).toBe('failed')
-      expect(children[1].attemptNumber).toBe(2)
-      expect(children[1].status).toBe('passed')
-    })
-
-    it('getRuns excludes child runs (parent_run_id IS NULL filter)', () => {
-      const parentId = insertSampleRun({ name: 'Parent' })
-      db.insertRun({
-        name: 'Child',
-        status: 'failed',
-        duration: 1000,
-        startedAt: '2026-03-01T10:00:00Z',
-        endedAt: '2026-03-01T10:00:01Z',
-        parentRunId: parentId,
-        attemptNumber: 1,
-      })
-
-      const runs = db.getRuns()
-      const names = runs.map(r => r.name)
-      expect(names).toContain('Parent')
-      expect(names).not.toContain('Child')
-    })
-
-    it('getStats excludes child runs from counts', () => {
+    // 2026-08-27 (405-07, D-02): four cells stood here over the parent/child run tree — an
+    // ordered child read, two "excludes child runs" filters and a retry-info writer. Nothing has
+    // written a child run row since 402-09, so all four exercised a shape no producer could
+    // create; the columns, the reader, the writer and the index went together. What replaces them
+    // is the pin that the index is GONE, so re-adding the column reddens here.
+    it('counts every run, because every run is top-level now', () => {
       insertSampleRun({ name: 'Normal', status: 'passed', startedAt: '2026-03-01T10:00:00Z' })
-      const parentId = insertSampleRun({ name: 'Flaky Parent', status: 'flaky', startedAt: '2026-03-01T10:00:00Z' })
-      db.insertRun({
-        name: 'Child Attempt',
-        status: 'failed',
-        duration: 1000,
-        startedAt: '2026-03-01T10:00:00Z',
-        endedAt: '2026-03-01T10:00:01Z',
-        parentRunId: parentId,
-        attemptNumber: 1,
-      })
+      insertSampleRun({ name: 'Flaky One', status: 'flaky', startedAt: '2026-03-01T10:00:00Z' })
 
       const stats = db.getStats()
       expect(stats.totalRuns).toBe(2)
@@ -1326,19 +1038,11 @@ describe('DashboardDatabase', () => {
       expect(stats.flaky).toBe(1)
     })
 
-    it('updateRunRetryInfo updates retry fields on parent', () => {
-      const parentId = insertSampleRun({ name: 'Parent' })
-      db.updateRunRetryInfo(parentId, { retryCount: 3, maxRetries: 5 })
-      const run = db.getRun(parentId)
-      expect(run!.retryCount).toBe(3)
-      expect(run!.maxRetries).toBe(5)
-    })
-
-    it('idx_runs_parent index exists', () => {
+    it('no longer carries the deleted parent-link index', () => {
       const indexes = db['db']
-        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name = 'idx_runs_parent'")
+        .prepare("SELECT name FROM sqlite_master WHERE type='index'")
         .all() as { name: string }[]
-      expect(indexes).toHaveLength(1)
+      expect(indexes.map((index) => index.name)).not.toContain('idx_runs' + '_parent')
     })
   })
 })

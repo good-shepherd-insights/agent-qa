@@ -193,7 +193,11 @@ describe('createDashboardRunIngest', () => {
     await ingest.finalize()
 
     // ONE row for the whole suite — no children, and none orphaned somewhere else either.
-    expect(db.getRunsByParent(suiteRunId)).toEqual([])
+    //
+    // 2026-08-27 (405-07, D-02): the child read this used to call is gone with the column it read.
+    // `getRuns()` is now the WHOLE runs table rather than its top-level slice, which makes this the
+    // stronger claim: a child row minted anywhere would show up here, not merely fail to be
+    // returned by a reader that filtered for it.
     expect(db.getRuns().map((r) => r.id)).toEqual([suiteRunId])
     expect(db.getRun(suiteRunId)?.status).toBe('failed')
 
