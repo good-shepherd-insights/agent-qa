@@ -499,8 +499,14 @@ export interface UnprojectedOp {
    * one `'397'` to keep a literal green would have made the field record a ruling nobody made — the
    * one thing a provenance column is for. The vocabulary is a CLOSED set and the bump guard pins
    * which entries carry which adjudicator by name, so it cannot widen again by habit.
+   *
+   * WIDENED AGAIN on 2026-08-27 (405-01, D-03) for `runs.detail`, on exactly the 398 and 403
+   * reasoning and for no new one: 397 could not have ruled on an op registered eight phases
+   * later. The bump guard names which entry carries this adjudicator, in both directions, so an
+   * entry stamped `'405'` because it was easier reds there rather than joining a set that has
+   * quietly become "any phase number".
    */
-  readonly adjudication: '397' | '398' | '403'
+  readonly adjudication: '397' | '398' | '403' | '405'
 }
 
 export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
@@ -558,6 +564,16 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
     opId: 'runs.postprocessing',
     reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
     adjudication: '397',
+  }),
+  Object.freeze({
+    opId: 'runs.detail',
+    reason:
+      'D-03 (dated 2026-08-27, 405-01): not a mid-flight workflow read per D-02 — this is a '
+      + 'COMPLETED run\'s projected step tree, read by the durable run-detail page, and the '
+      + 'entity door already renders a run\'s card while the digest carries what triage needs. '
+      + 'The whole projection of a run is also a large one-shot payload with no shape a '
+      + '`tools/call` round trip wants. Deferred as its own seam, not omitted.',
+    adjudication: '405',
   }),
   Object.freeze({
     opId: 'runs.liveurl',

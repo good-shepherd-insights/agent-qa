@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 51,
+  "rowCount": 52,
   "rows": [
     {
       "alias": "digest",
@@ -1845,6 +1845,38 @@
       ]
     },
     {
+      "description": "Read one run's durable members, steps and sub-actions as the dashboard projected them.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "runId": "<RUNID>"
+        }
+      },
+      "id": "runs.detail",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
       "description": "Compose one run's digest: verdicts, chain, proposals awaiting a decision, counts.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
@@ -2137,5 +2169,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "82a3892b197bc5b04d782a012a587d4eb40ea565044cd0a07b0a313bc61710e3"
+  "rowsDigest": "2294d45791a2a4f8139627092e59b3e3f62a87a59837f5dcc7c6ca3f311dae9b"
 }

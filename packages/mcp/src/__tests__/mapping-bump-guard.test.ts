@@ -13,6 +13,8 @@
 // MEASURED 2026-08-17 (398 D-09): the registry declares 42 ops. 22 are projected by the twelve
 // tools; the other 20 are dispositioned in `UNPROJECTED_OPS`. Was 41/22/19 as measured 2026-08-16;
 // `agent.explain` is the arrival, and it lands on the unprojected side with its own dated reason.
+// RE-MEASURED 2026-08-27 (405-01 D-03): 44/22/22. `runs.detail` is the arrival and it lands on the
+// unprojected side too, with its own dated reason; the count cell below carries the live numbers.
 // The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
@@ -343,9 +345,9 @@ describe('the partition law (D-03 / D-15)', () => {
   it('measures the registry at the count this suite header records', () => {
     // The denominator, stated where a reader can see it move. Not a rule — a MEASUREMENT, and the
     // sentence in the header is only true while this cell is green.
-    expect(declarations().length).toBe(43)
+    expect(declarations().length).toBe(44)
     expect(projectedOpIds().length).toBe(22)
-    expect(UNPROJECTED_OPS.length).toBe(21)
+    expect(UNPROJECTED_OPS.length).toBe(22)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -367,8 +369,16 @@ describe('the partition law (D-03 / D-15)', () => {
     // `runs.liveurl` arrived in 403 and 397 could not have ruled on it. Membership is still
     // spelled by op id, so an entry stamped `'403'` because it was easier reds here.
     const ADJUDICATED_BY_403 = new Set(['runs.liveurl'])
+    // 2026-08-27 (405-01 D-03). The same widening for the same reason, two phases later:
+    // `runs.detail` arrived in 405 and 397 could not have ruled on it. Membership is still
+    // spelled by op id, so an entry stamped `'405'` because it was easier reds here.
+    const ADJUDICATED_BY_405 = new Set(['runs.detail'])
     const expectedAdjudicator = (opId: string): string =>
-      ADJUDICATED_BY_398.has(opId) ? '398' : ADJUDICATED_BY_403.has(opId) ? '403' : '397'
+      ADJUDICATED_BY_398.has(opId)
+        ? '398'
+        : ADJUDICATED_BY_403.has(opId)
+          ? '403'
+          : ADJUDICATED_BY_405.has(opId) ? '405' : '397'
     for (const entry of UNPROJECTED_OPS) {
       expect(entry.reason.length, entry.opId).toBeGreaterThan(20)
       expect(entry.adjudication, entry.opId).toBe(expectedAdjudicator(entry.opId))
@@ -383,6 +393,10 @@ describe('the partition law (D-03 / D-15)', () => {
       UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_403.has(entry.opId)).map((e) => e.opId),
       'the 403-adjudicated pin names entries the scoping note does not carry',
     ).toEqual([...ADJUDICATED_BY_403])
+    expect(
+      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_405.has(entry.opId)).map((e) => e.opId),
+      'the 405-adjudicated pin names entries the scoping note does not carry',
+    ).toEqual([...ADJUDICATED_BY_405])
   })
 
   // D-03's own note leads the list, and the ORDER is part of the decision: a reader scanning the

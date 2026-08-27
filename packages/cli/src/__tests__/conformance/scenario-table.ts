@@ -71,6 +71,7 @@ import {
   QuarantineAddInputSchema,
   QuarantineListInputSchema,
   QuarantineReleaseInputSchema,
+  RunsDetailInputSchema,
   RunsDigestInputSchema,
   RunsEventsInputSchema,
   RunsLiveUrlInputSchema,
@@ -132,6 +133,7 @@ export const OP_INPUT_CONTRACTS = {
   'quarantine.add': QuarantineAddInputSchema,
   'quarantine.list': QuarantineListInputSchema,
   'quarantine.release': QuarantineReleaseInputSchema,
+  'runs.detail': RunsDetailInputSchema,
   'runs.digest': RunsDigestInputSchema,
   'runs.events': RunsEventsInputSchema,
   'runs.liveurl': RunsLiveUrlInputSchema,
@@ -1044,6 +1046,21 @@ export const SCENARIO_TABLE = Object.freeze([
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 391 D-16: a PARSING input for a capability most compositions cannot run.
+  // 405-01 D-03: THE durable run-detail read. Unprojected on MCP for the reason its `runs.` read
+  // siblings are — it is a completed-run read rather than a mid-flight one — and its markers are
+  // the four top-level collections, so a projection that lost the token sum (whose three members
+  // are absent by design) would red here rather than silently start declaring zeros.
+  scenario({
+    opId: 'runs.detail',
+    input: { runId: FIXTURE_RUN_ID },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['members', 'runId', 'steps', 'subActions', 'tokens'] },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
   scenario({
     opId: 'runs.digest',
     input: { runId: FIXTURE_RUN_ID },

@@ -185,6 +185,52 @@ describe('projectSubActionRecorded (D-10, spec §2.2 sub-action tick)', () => {
     expect(JSON.stringify(payload)).not.toContain(SECRET)
     expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
   })
+
+  // ---- 405-01 (D-14 · RESEARCH D1): the ref fold, pinned so the drop cannot silently return ----
+  //
+  // Until 2026-08-27 this projection destructured `decisionScreenshotRef` and VOIDED it. The
+  // consequence had no symptom anywhere in this file — `artifactRefs` was declared on the payload
+  // and simply never populated, so the dashboard's projection had nothing to persist and the
+  // run-detail page had no screenshot to render. Three cells below, because the fold has three
+  // states and only one of them was ever exercised.
+
+  it('folds a decision screenshot ref into artifactRefs when the evidence carries no others', () => {
+    const ref = { id: `decision-screenshot:${'a'.repeat(64)}`, sha: 'a'.repeat(64) }
+    const payload = projectSubActionRecorded(
+      { ...makeSubActionEvidence(), decisionScreenshotRef: ref },
+      { testIndex: 0, stepIndex: 0, subActionIndex: 0 },
+      mask,
+    )
+    expect(payload.artifactRefs).toEqual([ref])
+  })
+
+  it('APPENDS the decision screenshot ref rather than displacing what the evidence already had', () => {
+    // The two are different claims — everything this sub-action produced, and the frame the
+    // planner decided from — so a fold that replaced one with the other would lose evidence in
+    // order to gain evidence.
+    const stored = { id: `artifact:${'b'.repeat(64)}`, sha: 'b'.repeat(64) }
+    const decision = { id: `decision-screenshot:${'c'.repeat(64)}`, sha: 'c'.repeat(64) }
+    const payload = projectSubActionRecorded(
+      { ...makeSubActionEvidence(), artifactRefs: [stored], decisionScreenshotRef: decision },
+      { testIndex: 0, stepIndex: 0, subActionIndex: 0 },
+      mask,
+    )
+    expect(payload.artifactRefs).toEqual([stored, decision])
+  })
+
+  it('control: neither present leaves NO artifactRefs key at all, never an empty array', () => {
+    // The control is what makes the two cells above mean anything, and it also pins the
+    // absent-is-spread-away idiom: an empty array would be a second spelling of "no artifacts",
+    // and a reader that had to tell `[]` from missing would be learning a distinction nothing
+    // means.
+    const payload = projectSubActionRecorded(
+      makeSubActionEvidence(),
+      { testIndex: 0, stepIndex: 0, subActionIndex: 0 },
+      mask,
+    )
+    expect(payload).not.toHaveProperty('artifactRefs')
+    expect('artifactRefs' in payload).toBe(false)
+  })
 })
 
 describe('projectTestFinished (D-10, spec §2.2 member-test lifecycle)', () => {
