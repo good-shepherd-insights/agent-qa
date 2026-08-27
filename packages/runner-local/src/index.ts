@@ -44,6 +44,26 @@ export type { FsRunArtifactStoreConfig } from './run-artifact-store.js'
 export { FsEvidenceArtifactStore, RUN_EVIDENCE_BLOBS_SUBDIR } from './evidence-artifact-store.js'
 export type { FsEvidenceArtifactStoreConfig } from './evidence-artifact-store.js'
 
+// Phase 405 D-08 — the per-run masking digest sidecar. Writes one masking-digests.json into the
+// SAME <root>/runs/<slug(runId)>/ family as events.jsonl, recording a host-keyed HMAC of each
+// SECRET placeholder's value so a restarted dashboard can restore placeholders by VALUE identity.
+// No clear secret is ever written; see masking-sidecar.ts for why the key is not optional.
+export {
+  MASKING_DIGESTS_FILE,
+  MASKING_DIGESTS_SCHEMA_VERSION,
+  MASKING_HOST_KEY_FILE,
+  digestMaskedValue,
+  readMaskingDigests,
+  resolveMaskingHostKey,
+  writeMaskingDigests,
+} from './masking-sidecar.js'
+export type {
+  MaskingDigestEntry,
+  MaskingDigestsFile,
+  ReadMaskingDigestsInput,
+  WriteMaskingDigestsInput,
+} from './masking-sidecar.js'
+
 // Phase 363 D-08 / Q10 — the sharp screenshot compressor behind the runner ScreenshotCompressor
 // port (sharp's host-adapter home; banned in the storage-neutral runner). `alignToWindow` /
 // `getImageDimensions` are host-side sharp utilities the mobile adapters call directly.
