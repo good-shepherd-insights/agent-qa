@@ -224,6 +224,18 @@ export interface StepFinalizedPayload {
   status?: 'passed' | 'failed' | 'healed' | 'skipped' | 'cancelled'
   durationMs?: number
   error?: string
+  /**
+   * 2026-08-27 (Phase 405 plan 04, D-05): the step's measured model-call usage, on the same
+   * 363 D-01 additive-optional footing as the three fields above — the frozen envelope and the
+   * event NAME are untouched. Summed by the runner loop over the calls IT made for this step
+   * (planner + verifier; heal turns ride the planner path), never re-derived downstream.
+   *
+   * ABSENT when no call was measured — a cache hit, a bypass, or a provider that reports no
+   * usage. Never zero-filled: a `{0,0,0}` here would be a measurement nobody made, and every
+   * consumer downstream (the NULL step columns, the omitted `runs.detail` sum, the omitted
+   * analytics fields) reads absence as "unmeasured" rather than "free".
+   */
+  tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
   readonly servedBrief?: never
 }
 

@@ -61,6 +61,7 @@ export function projectStepFinalized(
     status?: StepFinalizedPayload['status']
     durationMs?: number
     error?: string
+    tokenUsage?: StepFinalizedPayload['tokenUsage']
   },
 ): StepFinalizedPayload {
   const payload: StepFinalizedPayload = {
@@ -76,6 +77,10 @@ export function projectStepFinalized(
     ...(extra?.status !== undefined ? { status: extra.status } : {}),
     ...(extra?.durationMs !== undefined ? { durationMs: extra.durationMs } : {}),
     ...(extra?.error !== undefined ? { error: extra.error } : {}),
+    // 2026-08-27 (Phase 405 plan 04, D-05): same spread-when-defined rule, for the same
+    // reason — an unmeasured step carries NO key rather than a zero triple. The three
+    // members are numbers, so `maskPayloadStrings` walks past them untouched.
+    ...(extra?.tokenUsage !== undefined ? { tokenUsage: extra.tokenUsage } : {}),
   }
   return maskPayloadStrings(payload, mask)
 }

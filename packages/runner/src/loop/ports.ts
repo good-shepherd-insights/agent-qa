@@ -160,6 +160,12 @@ export interface LoopEventEmitPort {
       status?: StepFinalizedPayload['status']
       durationMs?: number
       error?: string
+      /**
+       * 405 D-05: the step's measured usage, from the loop's own planner + verifier tally.
+       * Absent when nothing was measured — the loop's `tokenUsage()` already answers
+       * `undefined` in that case, so absence is produced, never fabricated here.
+       */
+      tokenUsage?: StepFinalizedPayload['tokenUsage']
     },
   ): void
   subActionRecorded(evidence: SubActionEvidence, subActionIndex: number): void

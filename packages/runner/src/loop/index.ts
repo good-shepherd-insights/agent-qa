@@ -537,7 +537,11 @@ export async function executeStep(
     // stepFinalized event is emitted, so the parity enrichment rides here (not a second core-side
     // emission, which would double-publish). `error` is masked at the sink chokepoint (T-363-05).
     const durationMs = performance.now() - startTime
-    ports.events?.stepFinalized(evidence, { status, durationMs, error })
+    // 405 D-05: `tokenUsage()` is the ONE producer of this step's usage — it already feeds
+    // buildStepTrace four lines below, and already answers `undefined` when neither counter
+    // moved. Passing it here gives the bus the same number the legacy trace carries, with no
+    // second accumulator and no zero-fill.
+    ports.events?.stepFinalized(evidence, { status, durationMs, error, tokenUsage: tokenUsage() })
     // The legacy trace is projected FROM evidence (Open Q5) — this array is exactly
     // projectLegacyTrace(result.evidence); the loop never mutates it after projection.
     const subActions = projectLegacyTrace(evidence)
