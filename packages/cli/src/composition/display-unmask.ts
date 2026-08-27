@@ -79,8 +79,13 @@ const MARKER_CATEGORY: Record<string, MaskedCategory> = { SECRET: 'secret', EMAI
  * RUNS LAST AND OVER EVERYTHING LEFT, so the string `<SECRET_` cannot survive a scoped call
  * whatever the sidecar said. An unrecognised category is impossible by `PLACEHOLDER_PATTERN`'s own
  * closed alternation, and the `?? 'secret'` below is the fail-closed reading rather than a case.
+ *
+ * PUBLISHED AS THE FAIL-CLOSED DEFAULT SEAM. A host composed without a runtime root (the
+ * conformance suite's model-free doors, a cell measuring something else) can restore nothing, and
+ * the honest answer for such a host is a chip on every scoped placeholder rather than a raw
+ * `<SECRET_1>` — see `composeDashboardAgentHost`'s `unmaskForDisplay` default.
  */
-function markUnrestorable(text: string): string {
+export function markUnrestorablePlaceholders(text: string): string {
   return text.replaceAll(
     PLACEHOLDER_PATTERN,
     (_match, category: string) => maskedMarker(MARKER_CATEGORY[category] ?? 'secret'),
@@ -104,7 +109,7 @@ export function createDisplayUnmasker(input: DisplayUnmaskerInput): DisplayUnmas
     if (scope === undefined) return text
 
     const digests = readMaskingDigests({ root: input.agentQaRoot, runId: scope.runId })
-    if (digests === undefined) return markUnrestorable(text)
+    if (digests === undefined) return markUnrestorablePlaceholders(text)
 
     hostKey ??= resolveMaskingHostKey(input.agentQaRoot)
     const key = hostKey
@@ -163,7 +168,7 @@ export function createDisplayUnmasker(input: DisplayUnmaskerInput): DisplayUnmas
         out = out.split(placeholder).join(restore.get(placeholder) as string)
       }
 
-      return markUnrestorable(out)
+      return markUnrestorablePlaceholders(out)
     } finally {
       // The candidate map dies with the call. A context held across emits would be a resolved
       // secret map alive for the lifetime of a server process, for no gain.

@@ -29,7 +29,7 @@
 
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import type { Server } from 'node:http'
+import type { Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -66,6 +66,7 @@ import type { AgentHost, AgentRegistryHandle } from '../../chat/host.js'
 import { DashboardDatabase } from '../../db/database.js'
 import { createDashboardRunIngest } from '../../reporter/dashboard-subscriber.js'
 import { startServer } from '../../server/server.js'
+import { serveRunDetailRead } from '../run-detail-routes.js'
 import { createDashboardRunDetailReader } from '../run-detail-reader.js'
 
 /** A 64-hex sha, the shape `FsEvidenceArtifactStore` content-addresses a blob under. */
@@ -572,5 +573,123 @@ describe('the artifact arm reads no store of its own (D-13, the fourth-door law)
     // store read no roster row covers and no audit sink sees.
     expect(source).not.toContain('FsEvidenceArtifactStore')
     expect(source).toContain('serveRunArtifact')
+  })
+})
+
+// ---- 405-10 (D-09): the `boundary` option, and what each of its two values promises -----------
+//
+// THE DEFAULT IS THE POINT. `serveRunDetailRead` serves BOTH doors — the local one a person's
+// browser reads and the authed remote one a bearer token reads — and only the first is a display
+// boundary. So restoration is opt-in: a dispatch that says nothing gets the masked projection it
+// got before this plan, byte for byte, and the seam is never even consulted. These two cells drive
+// the adapter directly rather than through a socket, because the claim is about which VALUE the
+// option carries and a socket would add nothing but a port.
+
+/** A `ServerResponse` stand-in that records the one write the adapter makes. */
+function recordingResponse(): {
+  res: ServerResponse
+  status: () => number
+  raw: () => string
+  done: Promise<void>
+} {
+  let status = 0
+  let raw = ''
+  let settle: () => void = () => undefined
+  const done = new Promise<void>((resolve) => { settle = resolve })
+  const res = {
+    headersSent: false,
+    writableEnded: false,
+    writeHead(code: number): void { status = code },
+    end(body?: string): void {
+      raw = body ?? ''
+      ;(res as { writableEnded: boolean }).writableEnded = true
+      settle()
+    },
+    destroy(): void { settle() },
+  } as unknown as ServerResponse
+  return { res, status: () => status, raw: () => raw, done }
+}
+
+/** A host whose `runs.detail` answers one planted projection, recording every seam call. */
+function seamRecordingHost(projection: unknown): {
+  host: AgentHost
+  calls: Array<{ text: string; runId: string | undefined }>
+} {
+  const calls: Array<{ text: string; runId: string | undefined }> = []
+  return {
+    calls,
+    host: {
+      registry: {} as unknown as AgentRegistryHandle,
+      caller: REGISTRY_CALLER,
+      agentAskFunctionId: 'test:planted-ask-op',
+      runsPostProcessingFunctionId: 'test:planted-post-processing-op',
+      runsEventsFunctionId: 'test:planted-events-op',
+      runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
+      runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
+      invokeFunction: () => Promise.resolve(projection),
+      foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'planted' }, foldLines: [] }),
+      listDeclarations: () => [],
+      onSessionEvent: () => () => undefined,
+      unmaskForDisplay: (text: string, scope?: { runId: string }): string => {
+        calls.push({ text, runId: scope?.runId })
+        return text.split('<SECRET_0>').join('sk-restored-value')
+      },
+    } as unknown as AgentHost,
+  }
+}
+
+/** A projection shaped like the real one, with a placeholder in every string channel the page reads. */
+function maskedProjection(): Record<string, unknown> {
+  return {
+    runId: RUN_ID,
+    members: [{ testIndex: 0, attempts: 1, failureSummary: 'failed near <SECRET_0>' }],
+    steps: [{ stepIndex: 0, stepText: 'Navigate to <SECRET_0>', error: 'timeout on <SECRET_0>' }],
+    subActions: [{ subActionIndex: 0, plan: 'Type <SECRET_0>', plannedAction: '{"value":"<SECRET_0>"}' }],
+    tokens: { measuredSteps: 0, unmeasuredSteps: 1 },
+  }
+}
+
+describe("serveRunDetailRead's boundary option (405-10, D-09)", () => {
+  it("restores every string channel under this run's scope when boundary is 'human'", async () => {
+    const { host, calls } = seamRecordingHost(maskedProjection())
+    const recorder = recordingResponse()
+
+    serveRunDetailRead({} as never, recorder.res, { runId: RUN_ID, host, boundary: 'human' })
+    await recorder.done
+
+    expect(recorder.status()).toBe(200)
+    expect(recorder.raw()).not.toContain('<SECRET_')
+    const body = JSON.parse(recorder.raw()) as ReturnType<typeof maskedProjection>
+    expect((body.members as Array<{ failureSummary: string }>)[0].failureSummary)
+      .toBe('failed near sk-restored-value')
+    const step = (body.steps as Array<{ stepText: string; error: string }>)[0]
+    expect(step.stepText).toBe('Navigate to sk-restored-value')
+    expect(step.error).toBe('timeout on sk-restored-value')
+    const sub = (body.subActions as Array<{ plan: string; plannedAction: string }>)[0]
+    expect(sub.plan).toBe('Type sk-restored-value')
+    // A JSON-NESTED STRING IS STILL A STRING to the walk, and the restored value lands inside it
+    // without the outer body ceasing to parse — which is the Pitfall 3 claim.
+    expect(sub.plannedAction).toBe('{"value":"sk-restored-value"}')
+
+    // Every call carried THIS run's scope; none was scope-less.
+    expect(calls.length).toBeGreaterThan(0)
+    for (const call of calls) expect(call.runId).toBe(RUN_ID)
+    // Scalars never crossed the seam.
+    expect(calls.map((call) => call.text)).not.toContain('0')
+  })
+
+  it('leaves the projection masked and never consults the seam without a boundary (the remote door)', async () => {
+    const { host, calls } = seamRecordingHost(maskedProjection())
+    const recorder = recordingResponse()
+
+    // NO `boundary` — exactly what `run-service-routes.ts`'s `'detail'` dispatch passes (405-05).
+    serveRunDetailRead({} as never, recorder.res, { runId: RUN_ID, host })
+    await recorder.done
+
+    expect(recorder.status()).toBe(200)
+    expect(recorder.raw()).toContain('<SECRET_0>')
+    expect(recorder.raw()).not.toContain('sk-restored-value')
+    // Not merely "did not restore" — the host's seam was never called at all.
+    expect(calls).toEqual([])
   })
 })

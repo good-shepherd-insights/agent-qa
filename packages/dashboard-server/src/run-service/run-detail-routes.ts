@@ -24,6 +24,7 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import type { AgentHost } from '../chat/host.js'
+import { unmaskTreeForDisplay } from '../masking/display-tree.js'
 
 /** A refusal, already carrying its status and its single-key body. */
 interface RunDetailRefusal {
@@ -123,6 +124,24 @@ export interface RunDetailReadDeps {
   readonly runId: string
   /** The injected host. Its absence is the ROUTER'S 503, not this function's. */
   readonly host: AgentHost
+  /**
+   * WHO IS ON THE OTHER END OF THIS SOCKET (405-10, D-09) — and therefore whether masked
+   * placeholders are restored on the way out.
+   *
+   * IT DEFAULTS TO `'machine'`, WHICH IS THE MASKED POSTURE, and the default is the whole point.
+   * A door that has not thought about who is reading gets today's behaviour: the projection travels
+   * exactly as the subscriber wrote it, placeholders and all. Restoration is something an arm has
+   * to ASK for, in one token, at a place a reader can see — which is the fail-closed direction
+   * for a seam whose failure mode is putting a credential on a wire.
+   *
+   * `'human'` IS PASSED BY EXACTLY ONE ARM: the LOCAL door's `GET /api/runs/:id/detail` in
+   * `routes.ts`. The authed REMOTE door's `GET /run/:runId/detail` (`run-service-routes.ts`,
+   * 405-05) passes nothing and stays masked by construction — a bearer token authenticates a
+   * CLIENT, not a person's browser session, so restoring there would hand declared secrets to every
+   * token holder and every intermediary. 405-05 recorded that as a deliberate reversal of a
+   * CONTEXT.md integration point; reversing it back is adding `boundary: 'human'` to that dispatch.
+   */
+  readonly boundary?: 'human' | 'machine'
 }
 
 /** `GET /api/runs/:id/detail` — what the rebuilt run-detail page reads (D-03). */
@@ -137,7 +156,17 @@ export function serveRunDetailRead(
         respondJson(res, outcome.status, outcome.body)
         return
       }
-      respondJson(res, 200, outcome.body)
+      // THE SEAM, PER STRING ON THE PROJECTION TREE AND NEVER ON THE SERIALIZED BODY (Pitfall 3).
+      // A restored value carrying a quote would break a body unmasked after `JSON.stringify`;
+      // walked before it, the value is escaped like any other string. A refusal body is NEVER
+      // walked: it holds this door's own closed words and nothing a run ever masked.
+      respondJson(
+        res,
+        200,
+        deps.boundary === 'human'
+          ? unmaskTreeForDisplay(deps.host, outcome.body, { runId: deps.runId })
+          : outcome.body,
+      )
     },
     // The read classifies every refusal it can name; anything reaching here is this module
     // failing, which is a 500 by name and never a body that looks like an answer.

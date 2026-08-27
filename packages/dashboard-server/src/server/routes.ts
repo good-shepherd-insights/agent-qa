@@ -34,6 +34,7 @@ import {
 // cross the function layer and this file constructs no evidence store.
 // 405-01 (D-03): the durable run-detail read. One arm below, above the `/api/runs/:id` catch-all,
 // formatting nothing and opening no database.
+import { unmaskTreeForDisplay } from '../masking/display-tree.js'
 import { serveRunArtifact, serveRunDetailRead } from '../run-service/run-detail-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
@@ -1889,7 +1890,33 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const filtered = platformFilteredRuns.filter(run => matchesTargetFilter(run, target))
 
           const runs = filtered.slice(offset, offset + limit)
-          json(res, { runs, total: filtered.length, targets: targetOptions })
+          // THE HUMAN-READ SEAM, PER ROW AND UNDER THAT ROW'S OWN ID (405-10, D-09). A run row
+          // carries the run's `failureSummary` and name, both of which the masker reduced at
+          // write time — this is a page a person reads, so the placeholders are restored here or
+          // they reach the browser as `<SECRET_1>`. The scope is the ROW's id and never the
+          // request's: the digests that say which value a placeholder stood for are per run, so a
+          // list scoped to one run would restore every other row's placeholders to the wrong
+          // thing (or, correctly, to nothing at all).
+          //
+          // `deps.agentHost` ABSENT IS TODAY'S ANSWER. Test harnesses and any composition without
+          // a host answer exactly as they did before this plan: masked.
+          const humanRuns = deps.agentHost === undefined
+            ? runs
+            : runs.map((run) => unmaskTreeForDisplay(
+              deps.agentHost as AgentHost,
+              run,
+              { runId: String((run as { id?: unknown }).id ?? '') },
+            ))
+          // AND THEN THE AUTH-STATE REDACTOR, IN THAT ORDER (RESEARCH Pitfall 7, T-405-38). The
+          // seam can put back a value the masker reduced, and an auth-state-shaped one of those is
+          // exactly what `redactAuthStateValue` exists to hide — so it runs AFTER, never before.
+          // This arm had no redactor before this plan because nothing here could be cleartext;
+          // the seam is what makes it necessary.
+          json(res, sanitizeAuthStateForResponse({
+            runs: humanRuns,
+            total: filtered.length,
+            targets: targetOptions,
+          }))
         })
         .catch(() => json(res, { error: 'Failed to list runs' }, 500))
       return
@@ -1942,11 +1969,20 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return
       }
       const bundle = db.getRunArtifactBundle(runId)
-      json(res, sanitizeAuthStateForResponse({
+      // The artifact DRAWER is a human read (D-09) — its config snapshot and terminal errors are
+      // where a declared secret most often ended up. The seam runs on the JSON tree only; the
+      // artifact BYTES route (`/artifacts/:sha`) never crosses it at all.
+      const artifactBody = {
         run,
         artifact: sanitizeArtifactForResponse(bundle.artifact),
         missingSections: getArtifactMissingSections(bundle.artifact),
-      }))
+      }
+      // Seam BEFORE the redactor (Pitfall 7, T-405-38) — see the runs-list arm.
+      json(res, sanitizeAuthStateForResponse(
+        deps.agentHost === undefined
+          ? artifactBody
+          : unmaskTreeForDisplay(deps.agentHost, artifactBody, { runId }),
+      ))
       return
     }
 
@@ -1978,7 +2014,13 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       // no child rows — one `runs` row per run since 402-09 — and a suite's hook logs are written
       // against that one id, carrying `test_index`/`step_index` to say where in the run they ran.
       const logs = db.getExecutionLogs({ runId: id, stepId, type })
-      json(res, sanitizeAuthStateForResponse({ logs }))
+      // Execution logs are a human read (D-09): hook stdout and step errors are written masked and
+      // are read by a person looking for what went wrong. Seam BEFORE the redactor (Pitfall 7).
+      json(res, sanitizeAuthStateForResponse(
+        deps.agentHost === undefined
+          ? { logs }
+          : unmaskTreeForDisplay(deps.agentHost, { logs }, { runId: id }),
+      ))
       return
     }
 
@@ -2176,7 +2218,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         json(res, { error: 'invalid_run_id' }, 400)
         return
       }
-      serveRunDetailRead(req, res, { runId: detailRunId, host: deps.agentHost })
+      // THE ONE ARM THAT OPTS THE DISPLAY SEAM IN (405-10, D-09). This is the local door,
+      // read by a person's browser session. The authed REMOTE door's `/run/:runId/detail`
+      // dispatch passes nothing and stays masked by the option's `'machine'` default.
+      serveRunDetailRead(req, res, { runId: detailRunId, host: deps.agentHost, boundary: 'human' })
       return
     }
 
@@ -2258,7 +2303,14 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       // produced, so a page rendering them rendered an empty tree that looked like a bug rather
       // than like an absence. The run's members, steps and sub-actions are `GET /api/runs/:id/detail`'s,
       // through `runs.detail`.
-      json(res, sanitizeAuthStateForResponse({ run }))
+      //
+      // 405-10 (D-09): and the one row it does answer with is a human read, so it crosses the
+      // display seam BEFORE the auth-state redactor (Pitfall 7) on the runs-list arm's reasoning.
+      json(res, sanitizeAuthStateForResponse(
+        deps.agentHost === undefined
+          ? { run }
+          : unmaskTreeForDisplay(deps.agentHost, { run }, { runId: id }),
+      ))
       return
     }
 

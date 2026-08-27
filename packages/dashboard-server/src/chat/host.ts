@@ -234,8 +234,32 @@ export interface AgentHost {
    * THE PERSISTED RECORD IS NOT TOUCHED. The session JSONL and the replay window hold the masked
    * form; this runs on the way out, per emitted frame, so nothing durable gains cleartext and the
    * `unmask` count for any one byte stays exactly one.
+   *
+   * ---- 2026-08-28 (405-10, D-08/D-09/D-10): THE SCOPE, AND WHAT EACH ARM PROMISES ----
+   *
+   * `scope` NAMES THE RUN THE TEXT BELONGS TO, and it is what makes restoration possible at all.
+   * A run's masking map is in-memory and dies with the process (execution-safety §4), so a
+   * dashboard opened tomorrow can only restore a placeholder by matching a value it can re-derive
+   * from its own CURRENT sources against the keyed digest that run recorded — and the digests are
+   * per run. WITH a scope the seam re-derives, matches by value identity and restores; a
+   * placeholder it cannot restore (no sidecar, no key, a rotated-away value, a digest mismatch, or
+   * any `<EMAIL_n>`, which is minted by detection and re-derivable from nothing) is rewritten to
+   * the typed marker `maskedMarker(category)` from `@vostride/agent-qa-schema`, which the UI paints
+   * as a visibly-masked chip. The string `<SECRET_` therefore never leaves a scoped call.
+   *
+   * WITHOUT A SCOPE THE FUNCTION IS THE IDENTITY, and that is a decision rather than an omission.
+   * `chat-routes.ts` calls the one-argument form: a chat turn is not about one run, so there is no
+   * sidecar to match against, and the chat transcript has no chip renderer — a marker emitted
+   * there would put a raw U+241F in front of a person, which is exactly what D-10 forbids. Chat's
+   * display posture is therefore byte-for-byte what 400-06 shipped.
+   *
+   * RESTORATION IS OPT-IN, AT THE LOCAL HUMAN ARMS ONLY. `serveRunDetailRead`'s `boundary` option
+   * defaults to `'machine'` (masked), so the authed REMOTE door's `/run/:runId/detail` stays masked
+   * by construction: a bearer token authenticates a client, not a person's browser session, and
+   * restoring onto that wire would extend the disclosure surface to every token holder and every
+   * intermediary (405-05's recorded decision). Artifact BYTES are never touched on any door.
    */
-  unmaskForDisplay(text: string): string
+  unmaskForDisplay(text: string, scope?: { runId: string }): string
   /**
    * The committed capability catalog, as its ONE loader reads it (400-06, RESEARCH Open Q4).
    *

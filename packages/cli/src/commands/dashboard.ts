@@ -5,7 +5,6 @@ import { createRequire } from 'node:module'
 import pc from 'picocolors'
 import {
   AGENT_ASK_FUNCTION_ID,
-  createMaskingContext,
   foldFunctionResult,
   invokeFunction,
   LiveViewUnavailableError,
@@ -14,7 +13,6 @@ import {
   RUNS_EVENTS_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
-  unmaskForHumanOutput,
   type ConfigReaderPort,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
@@ -55,6 +53,8 @@ import {
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
 import type { RunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
 import { composeLiveView, mintLiveUrlThrough } from '../composition/live-view-composition.js'
+import { createDisplayUnmasker, markUnrestorablePlaceholders } from '../composition/display-unmask.js'
+import type { DisplayUnmask, DisplayUnmaskSecretStore } from '../composition/display-unmask.js'
 import {
   matchServiceBearer,
   resolveRunServiceTokens,
@@ -187,8 +187,26 @@ export function composeDashboardAgentHost(
    * the fail-closed direction.
    */
   enterAskingSession?: <T>(sessionId: string | undefined, run: () => T) => T,
+  /**
+   * The door's DISPLAY-UNMASK SEAM (405-10, D-08/D-09/D-10).
+   *
+   * SUPPLIED RATHER THAN BUILT HERE because building one needs the runtime root and the process's
+   * masking stores, and this composer is handed neither — `composeDashboardDoor` has both and
+   * always passes one. Optional for the same reason `enterAskingSession` is: this function is
+   * published so a caller can compose only the routes' seam, and such a caller must get a working
+   * host rather than a broken one.
+   *
+   * THE DEFAULT IS FAIL-CLOSED, NOT THE IDENTITY. A host with no root can restore nothing, so a
+   * SCOPED call marks every placeholder as a typed chip — an honest "this host cannot show you
+   * that" rather than a raw `<SECRET_1>` a reader would take for a bug. A SCOPE-LESS call is still
+   * the identity, which is chat's unchanged posture (see the seam's own law in `chat/host.ts`).
+   */
+  unmaskForDisplay?: DisplayUnmask,
 ): AgentHost {
   const enter = enterAskingSession ?? (<T>(_sessionId: string | undefined, run: () => T): T => run())
+  const unmask: DisplayUnmask = unmaskForDisplay
+    ?? ((text: string, scope?: { runId: string }): string =>
+      scope === undefined ? text : markUnrestorablePlaceholders(text))
   return {
     registry: host.registry,
     onSessionEvent: (listener) => sessionEvents.subscribe(listener),
@@ -246,22 +264,19 @@ export function composeDashboardAgentHost(
       registry: AgentRegistryHandle,
       caller: FunctionCaller,
     ): readonly AgentDeclarationRow[] => (registry as FunctionRegistry).list(caller),
-    // The fourth door's display boundary, in `chat.ts`'s `emitHuman` shape and for its law
-    // (400-06): "everything a surface prints goes through the masker". The context is created and
-    // disposed per emit rather than held, exactly as every CLI emit site does it — a long-lived
-    // one would be a resolved secret map kept alive for the lifetime of a server process, for no
-    // gain over building it at the moment bytes leave.
     // 400-06: the ONE loader, called by the door that serves the browser's `/help`. The path is
     // resolved by `loader.ts` (which ships the file) and never by dashboard-server.
     readCapabilityCatalog: (): unknown => loadCapabilityCatalog(),
-    unmaskForDisplay: (text: string): string => {
-      const maskingContext = createMaskingContext()
-      try {
-        return unmaskForHumanOutput(maskingContext, text)
-      } finally {
-        maskingContext.dispose()
-      }
-    },
+    // The fourth door's display boundary, in `chat.ts`'s `emitHuman` shape and for its law
+    // (400-06): "everything a surface prints goes through the masker".
+    //
+    // 2026-08-28 (405-10, D-08): IT USED TO BE AN EMPTY CONTEXT AND THEREFORE A NO-OP. A masking
+    // context minted fresh per emit has registered nothing, so unmasking over it restored nothing
+    // and every placeholder reached the browser raw — which is criterion 2's whole complaint. The seam above is the real one: it re-derives candidate values from THIS host's
+    // current sources and matches them to the run's recorded digests by value identity. It is still
+    // built per emit in the sense that matters — no resolved secret map is held between calls; the
+    // candidate context is created, matched against and disposed inside each scoped call.
+    unmaskForDisplay: unmask,
   }
 }
 
@@ -608,6 +623,22 @@ export interface DashboardDoorInput {
    */
   readonly boundOrigin: () => string | undefined
   /**
+   * The masking stores THIS PROCESS holds, as the run door unions them (405-10, D-08).
+   *
+   * THE SAME SET THE RUNS WERE SEEDED FROM, WHICH IS THE WHOLE POINT. The display seam restores a
+   * placeholder only when a value it can re-derive digests to what the run recorded, so it has to
+   * re-derive from the stores `bindMaskingSecrets` collected — not from a second, adjacent idea of
+   * what this process's secrets are. `createDashboardRunDoor` publishes the accessor beside
+   * `bindMaskingSecrets` and the command threads it here.
+   *
+   * A FACTORY, on `boundOrigin`'s reasoning: composers bind stores at different moments, and a set
+   * captured at composition time would be whichever ones happened to exist first.
+   *
+   * ABSENT means a host with no declared secrets to re-derive — every scoped placeholder becomes a
+   * typed chip, which is the honest answer and the fail-closed one.
+   */
+  readonly maskingSecretStores?: () => Iterable<DisplayUnmaskSecretStore>
+  /**
    * An EXPLICIT OVERRIDE of the context this door's policy decisions are taken in (D-05, spec §2.2).
    *
    * OPTIONAL SINCE 400-13, AND THE ABSENCE IS THE HONEST DEFAULT rather than a convenience. The
@@ -933,6 +964,19 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
         { askingSession: sessionId, reachableByChannelAlone: false },
         run,
       ),
+      // THE REAL DISPLAY SEAM (405-10, D-08/D-09). Every source is read PER EMIT through a
+      // factory, because all three can change while this server runs: a composer can bind a store
+      // after the door was built, the environment is the process's own, and a run's sidecar can
+      // appear at any time. `authStatePayloads` is empty here deliberately — this process reads no
+      // auth-state file of its own; the values 362-06 registers mid-run are the RUN's, and they
+      // reach this seam through the run's sidecar plus whatever store the door was given, never
+      // through a second file read at display time.
+      createDisplayUnmasker({
+        agentQaRoot: input.agentQaRoot,
+        secretStores: () => input.maskingSecretStores?.() ?? [],
+        env: () => process.env,
+        authStatePayloads: () => [],
+      }),
     ),
     resolveExecutionContext: (scopeId, options) =>
       postureOf(scopeId, options?.reachableByChannelAlone === true),
@@ -1037,6 +1081,21 @@ export interface DashboardRunDoor {
   bindMaskingSecrets(store: {
     forEachSecret(cb: (name: string, value: string) => void): void
   }): void
+  /**
+   * Read back the bound stores, as a set (405-10, D-08).
+   *
+   * THE READ SIDE OF `bindMaskingSecrets`, AND IT EXISTS FOR ONE CALLER: the display-unmask seam,
+   * which must re-derive candidate values from the SAME stores every run through this door was
+   * seeded from. A seam given its own store list would be a second answer to "what does this
+   * process consider a secret", free to disagree with the runs whose digests it is matching — and
+   * the disagreement would look exactly like a correct page with one chip too many.
+   *
+   * IT ANSWERS THE LIVE SET, NOT A COPY TAKEN AT COMPOSITION TIME. `composeRunServicePorts` and
+   * `composeLiveView` bind at different moments, and a snapshot would miss whichever bound later.
+   */
+  maskingSecretStores(): Iterable<{
+    forEachSecret(cb: (name: string, value: string) => void): void
+  }>
 }
 
 /** Structural, so this module names the dashboard package's own type without importing its value. */
@@ -1285,6 +1344,9 @@ export async function createDashboardRunDoor(input: {
       return () => { sessionObservers.delete(observer) }
     },
     bindMaskingSecrets: (store): void => { maskingSecretStores.add(store) },
+    // A FRESH ARRAY PER CALL, never the live `Set`: a caller that could `add` to it would be a
+    // second `bindMaskingSecrets` with none of its documentation.
+    maskingSecretStores: () => [...maskingSecretStores],
   }
 }
 
@@ -1732,6 +1794,9 @@ async function startDashboardBackedServices(
       // re-answer the question for every composition in this process (Pitfall 5).
       confirms,
       runBridge: runDoor.runBridge,
+      // 405-10 (D-08): the display seam re-derives from the SAME stores every run through this
+      // door was seeded from. Read back live rather than snapshotted — see the door's accessor.
+      maskingSecretStores: runDoor.maskingSecretStores,
     })
     runDoor.bindHost(runHost)
     // 401-09 (D-11): the other half of the box pair. With it bound, an ask-tier queued run asks the
