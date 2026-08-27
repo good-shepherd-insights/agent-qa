@@ -53,6 +53,7 @@ import type {
   CompactionHook,
   LiveViewPort,
   PlannerStagePort,
+  RunDetailReaderPort,
   ReconcileStrategy,
   AnalysisArtifactReaderPort,
   ClockPort,
@@ -1585,6 +1586,17 @@ export interface ComposeLocalAgentInput {
    */
   readonly liveView?: LiveViewPort
   /**
+   * 405 D-03: the durable run-detail projection read `runs.detail` binds through, handed straight
+   * through from the host — this composition decides nothing about it and constructs no database.
+   *
+   * OPTIONAL because the absence is a genuine host fact rather than a degradation: a CLI holds
+   * handoff documents and no dashboard projection database at all, so `runs.detail` lists
+   * `unbound` BY NAME rather than answering an empty run about a projection nobody ever wrote.
+   * The dashboard command is the one composing host that supplies it, over the single
+   * `DashboardDatabase` handle that server owns.
+   */
+  readonly runDetail?: RunDetailReaderPort
+  /**
    * 395-04 D-09 · CFGM-02: where the construction scan's seed values come from.
    *
    * THE SOURCES AND NOT A LIST OF STRINGS, so `seedMaskingContext` — the SAME function the run
@@ -2898,6 +2910,13 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         agentQaRoot: input.agentQaRoot,
         idSource: input.idSource ?? DIGEST_JOB_ID_SOURCE,
       }),
+      // 405 D-03: the run-detail projection read, conditionally spread on the house rule — an
+      // absent port must be an ABSENT field and not a present `undefined` one, because the
+      // registry reads exactly this record to decide what the capability LISTS as. Unlike
+      // `postProcessing` above it is NOT present on every local host: chip truth is readable from
+      // `agentQaRoot` alone, but a run's projected step tree lives in a dashboard database that
+      // only the dashboard process holds.
+      ...(input.runDetail === undefined ? {} : { runDetail: input.runDetail }),
       // Present iff this host can execute a run. The registry reads the SAME record to
       // decide what `runs.start` lists as, so the declaration and the dispatch cannot
       // disagree about whether this composition can run it (D-16).

@@ -38,15 +38,17 @@ function columnNames(tableName: string): string[] {
 
 describe('DashboardDatabase', () => {
   describe('schema creation', () => {
-    it('SCHEMA_VERSION is 1', () => {
-      expect(SCHEMA_VERSION).toBe(1)
+    // 2026-08-27 (405-01, D-02): the version moved to 2 as a HARD CUT. `MIGRATIONS` is no longer
+    // a chain — it is the ONE terminal entry stamped at `SCHEMA_VERSION`, because no database is
+    // ever migrated from an older shape (an older one is refused by name), so a chain of
+    // intermediate versions would be sql nothing can ever walk.
+    it('SCHEMA_VERSION is 2', () => {
+      expect(SCHEMA_VERSION).toBe(2)
     })
 
-    it('has migrations for every schema version', () => {
-      expect(MIGRATIONS).toHaveLength(SCHEMA_VERSION)
-      MIGRATIONS.forEach((migration, index) => {
-        expect(migration.version).toBe(index + 1)
-      })
+    it('MIGRATIONS is exactly one entry, stamped at the current schema version', () => {
+      expect(MIGRATIONS).toHaveLength(1)
+      expect(MIGRATIONS[0].version).toBe(SCHEMA_VERSION)
     })
 
     it('creates all expected tables', () => {
@@ -61,6 +63,10 @@ describe('DashboardDatabase', () => {
       expect(names).toContain('execution_logs')
       expect(names).toContain('token_events')
       expect(names).toContain('run_artifacts')
+      // 405-01 D-01: the v2 bus-shaped projection.
+      expect(names).toContain('run_members')
+      expect(names).toContain('run_steps')
+      expect(names).toContain('run_sub_actions')
     })
 
     it('sets user_version to the current schema version after migrations', () => {
@@ -180,6 +186,9 @@ describe('DashboardDatabase', () => {
         'variables',
         'created_at',
         'hook_id',
+        // 405-01 D-01: where in the run tree the hook ran; NULL means run-scoped.
+        'test_index',
+        'step_index',
       ])
       expect(columnNames('token_events')).toEqual(['id', 'model_name', 'prompt_tokens', 'completion_tokens', 'source', 'created_at'])
       expect(columnNames('run_artifacts')).toEqual([
@@ -247,35 +256,37 @@ describe('DashboardDatabase', () => {
   })
 
   describe('generic migration infrastructure', () => {
-    it('applies future migrations after the current user_version', () => {
+    // 2026-08-27 (405-01, D-02): the two cells that stood here asserted a WALKABLE CHAIN —
+    // "applies future migrations after the current user_version" and "skips migrations at or
+    // below it". Both described a shape this build no longer has and, worse, the second one
+    // described the exact behaviour RESEARCH Pitfall 4 names as a silent corruption: a database
+    // at version 1 being carried forward by re-running `CREATE TABLE IF NOT EXISTS` over the old
+    // wide shape. What replaces them is the contract that replaced the chain.
+
+    it('applies the single terminal migration to a fresh database', () => {
       const raw = createDashboardSqliteDatabase(':memory:')
       try {
         runSqliteMigrations(raw, [
           {
-            version: 1,
-            sql: ['CREATE TABLE future_baseline (id TEXT PRIMARY KEY)'],
-          },
-          {
             version: 2,
-            sql: ['ALTER TABLE future_baseline ADD COLUMN label TEXT'],
+            sql: [
+              'CREATE TABLE future_baseline (id TEXT PRIMARY KEY, label TEXT)',
+              'CREATE INDEX idx_future_baseline_label ON future_baseline(label)',
+            ],
           },
-          {
-            version: 3,
-            sql: ['CREATE INDEX idx_future_baseline_label ON future_baseline(label)'],
-          },
-        ], 3)
+        ], 2)
 
         const columns = raw.prepare('PRAGMA table_info(future_baseline)').all() as Array<{ name: string }>
         expect(columns.map((column) => column.name)).toContain('label')
         expect(raw.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name = 'idx_future_baseline_label'").get())
           .toEqual({ name: 'idx_future_baseline_label' })
-        expect(raw.pragma('user_version', { simple: true })).toBe(3)
+        expect(raw.pragma('user_version', { simple: true })).toBe(2)
       } finally {
         raw.close()
       }
     })
 
-    it('skips migrations at or below the current user_version', () => {
+    it('REFUSES a database stamped at an older version rather than migrating it (Pitfall 4)', () => {
       const raw = createDashboardSqliteDatabase(':memory:')
       try {
         raw.exec(`
@@ -283,22 +294,32 @@ describe('DashboardDatabase', () => {
           PRAGMA user_version = 1;
         `)
 
-        runSqliteMigrations(raw, [
-          {
-            version: 1,
-            sql: ['CREATE TABLE should_not_run (id TEXT PRIMARY KEY)'],
-          },
-          {
-            version: 2,
-            sql: ['ALTER TABLE future_baseline ADD COLUMN label TEXT'],
-          },
-        ], 2)
+        expect(() => runSqliteMigrations(raw, [
+          { version: 2, sql: ['CREATE TABLE should_not_run (id TEXT PRIMARY KEY)'] },
+        ], 2)).toThrow('Remove the dashboard database')
 
+        // Nothing ran, and the old file is exactly as it was. The alternative — the pre-405
+        // behaviour — created the new tables BESIDE the old shape and reported success.
         expect(raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'should_not_run'").get())
           .toBeUndefined()
-        const columns = raw.prepare('PRAGMA table_info(future_baseline)').all() as Array<{ name: string }>
-        expect(columns.map((column) => column.name)).toContain('label')
-        expect(raw.pragma('user_version', { simple: true })).toBe(2)
+        expect(raw.pragma('user_version', { simple: true })).toBe(1)
+      } finally {
+        raw.close()
+      }
+    })
+
+    it('refuses a migration set that is not the single terminal entry', () => {
+      const raw = createDashboardSqliteDatabase(':memory:')
+      try {
+        expect(() => runSqliteMigrations(raw, [
+          { version: 1, sql: [] },
+          { version: 2, sql: [] },
+        ], 2)).toThrow('Expected exactly 1 SQLite migration at version 2')
+        // A set whose only runnable entry is stamped at the WRONG version is refused too — an
+        // entry below the target would leave the file at a version this build cannot read.
+        expect(() => runSqliteMigrations(raw, [{ version: 1, sql: [] }], 2))
+          .toThrow('Expected exactly 1 SQLite migration at version 2')
+        expect(raw.pragma('user_version', { simple: true })).toBe(0)
       } finally {
         raw.close()
       }
@@ -344,17 +365,17 @@ describe('DashboardDatabase', () => {
       }
     })
 
-    it('rejects missing and unsorted future migration sets', () => {
+    it('names the versions it found when the set is not the single terminal entry', () => {
       const raw = createDashboardSqliteDatabase(':memory:')
       try {
+        // The message carries WHAT IT FOUND, not just what it wanted: a set that is wrong is
+        // usually wrong in a way the author can see at a glance from the versions.
         expect(() => runSqliteMigrations(raw, [
           { version: 1, sql: ['SELECT 1'] },
           { version: 3, sql: ['SELECT 1'] },
-        ], 3)).toThrow('Expected 3 SQLite migration(s), found 2')
-        expect(() => runSqliteMigrations(raw, [
-          { version: 2, sql: ['SELECT 1'] },
-          { version: 1, sql: ['SELECT 1'] },
-        ], 2)).toThrow('expected version 1, got 2')
+        ], 3)).toThrow('found 2 at [1, 3]')
+        expect(() => runSqliteMigrations(raw, [], 2))
+          .toThrow('found 0 at []')
       } finally {
         raw.close()
       }

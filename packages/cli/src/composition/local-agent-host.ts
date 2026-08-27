@@ -657,6 +657,14 @@ export interface ComposeCliLocalAgentInput {
    */
   liveView?: ComposeLocalAgentInput['liveView']
   /**
+   * 405 D-03: the durable run-detail projection read, FORWARDED UNTOUCHED to `composeLocalAgent`.
+   *
+   * A pass-through on `liveView`'s exact footing: this host neither creates nor defaults it. Only
+   * the dashboard command composes one — it is the only door that owns a projection database —
+   * and every other caller passes nothing, so `runs.detail` lists `unbound` by name.
+   */
+  runDetail?: ComposeLocalAgentInput['runDetail']
+  /**
    * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
    *
    * Defaults to the 386 `/invoke` transport, VERBATIM — no new protocol, no new route, and no
@@ -3660,6 +3668,8 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     ...(input.dispatchGrants === undefined ? {} : { dispatchGrants: input.dispatchGrants }),
     // 403 D-03: the live-view mint seam, forwarded untouched on the same house rule.
     ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
+    // 405 D-03: the run-detail projection read, forwarded untouched on the same house rule.
+    ...(input.runDetail === undefined ? {} : { runDetail: input.runDetail }),
     // 393 D-01: the keep-gate evaluator's host half, bound UNCONDITIONALLY on this host — a CLI
     // always has a config path, therefore a checkout root, therefore both verbs. Together with the
     // run executor one line up, this is what makes `authoring.draft.verify` read `bound` in this

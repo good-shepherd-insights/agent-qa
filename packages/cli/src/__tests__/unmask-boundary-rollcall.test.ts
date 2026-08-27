@@ -388,6 +388,9 @@ function dashboardRollCallHost(
     // so the other two are named and never reached — the shape is what has to be complete.
     runsPostProcessingFunctionId: 'runs.postprocessing',
     runsEventsFunctionId: 'runs.events',
+    // 405-01: the seam carries a fourth op id. This fixture dispatches only the ask, so this one
+    // is named and never reached — the SHAPE is what has to be complete.
+    runsDetailFunctionId: 'runs.detail',
     invokeFunction: () => Promise.resolve({
       sessionId: 'chat-20260821-000000-r0ll',
       turnId: 'turn-1',

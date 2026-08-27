@@ -48,9 +48,13 @@ function insertSampleStep(runId = 'run-1', id?: string) {
   })
 }
 
+// 2026-08-27 (405-01, D-02): the `logs` table is UNCHANGED by the v2 rewrite — it is v1 debris
+// with no bus producer, and plan 405-07's census deletes it with its readers. What moved is the
+// version pin below: this file used to assert the v1 baseline, and after the hard cut a fresh
+// database opens at 2.
 describe('Log Storage v1 Baseline', () => {
-  it('SCHEMA_VERSION is the v1 baseline', () => {
-    expect(SCHEMA_VERSION).toBe(1)
+  it('SCHEMA_VERSION is the v2 hard cut', () => {
+    expect(SCHEMA_VERSION).toBe(2)
   })
 
   it('creates logs table with correct columns', () => {

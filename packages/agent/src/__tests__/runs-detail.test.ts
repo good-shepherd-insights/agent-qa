@@ -1,0 +1,161 @@
+// `runs.detail` — the op's refusal vocabulary and the D-06 token sum (Phase 405 plan 01, D-03).
+//
+// The end-to-end path this op sits on is measured in `dashboard-server`'s tracer cell, over a real
+// database and a real socket. What CANNOT be measured there is what this file measures: the two
+// refusals by NAME, and the arithmetic of a sum whose whole contract is what it leaves out.
+//
+// THE SUM IS TESTED SEPARATELY FROM THE SPEC because it is separately exported, and it is
+// separately exported for the reason `projectPostProcessingChips` is: a total mapping with no
+// port and nothing to await can have an exhaustive table written over it for the cost of a test
+// file rather than a store.
+
+import type { RunDetailRows, RunDetailStep, RunId } from '@vostride/agent-qa-schema'
+import { describe, expect, it } from 'vitest'
+
+import {
+  RUNS_DETAIL_FUNCTION_ID,
+  projectRunTokenTotals,
+  runsDetailSpec,
+} from '../functions/ops/runs-detail.js'
+import type { FunctionDeps } from '../functions/spec.js'
+
+const RUN_ID = 'run-alpha' as RunId
+
+function step(overrides: Partial<RunDetailStep> = {}): RunDetailStep {
+  return {
+    testIndex: 0,
+    stepIndex: 0,
+    cacheStatus: 'miss',
+    verifierVerdict: { pass: true, reasoning: 'ok' },
+    selfHealOccurred: false,
+    briefDigest: 'digest',
+    ...overrides,
+  }
+}
+
+/** The only dep this op reads. Everything else on `FunctionDeps` is unreachable from here. */
+function depsWith(read: ((runId: RunId) => Promise<RunDetailRows | undefined>) | undefined): FunctionDeps {
+  return (read === undefined ? {} : { runDetail: { read } }) as unknown as FunctionDeps
+}
+
+const EMPTY_ROWS: RunDetailRows = { runId: RUN_ID, members: [], steps: [], subActions: [] }
+
+describe('the op refuses BY NAME rather than answering about a projection it cannot see', () => {
+  it('throws FunctionNotBoundError when the composition binds no runDetail port', async () => {
+    // Read STRUCTURALLY off `name`, exactly as the dashboard route classifies it — this package's
+    // consumers may not import the error class, so the name IS the contract.
+    await expect(runsDetailSpec.invoke({ runId: RUN_ID }, depsWith(undefined)))
+      .rejects.toMatchObject({ name: 'FunctionNotBoundError' })
+    // And it names the capability, so an operator learns WHICH op this host does not bind.
+    await expect(runsDetailSpec.invoke({ runId: RUN_ID }, depsWith(undefined)))
+      .rejects.toThrow(RUNS_DETAIL_FUNCTION_ID)
+  })
+
+  it('turns the port\'s undefined into RunNotFoundError — reusing runs.get\'s word, not a second one', async () => {
+    await expect(runsDetailSpec.invoke({ runId: RUN_ID }, depsWith(() => Promise.resolve(undefined))))
+      .rejects.toMatchObject({ name: 'RunNotFoundError' })
+  })
+
+  it('a run that exists and projected nothing is an ANSWER, not a refusal', async () => {
+    const result = await runsDetailSpec.invoke({ runId: RUN_ID }, depsWith(() => Promise.resolve(EMPTY_ROWS)))
+    expect(result.runId).toBe(RUN_ID)
+    expect(result.members).toEqual([])
+    expect(result.steps).toEqual([])
+    expect(result.subActions).toEqual([])
+    expect(result.tokens).toEqual({ measuredSteps: 0, unmeasuredSteps: 0 })
+  })
+
+  it('reads the port with the run id it was given and nothing else', async () => {
+    const seen: RunId[] = []
+    await runsDetailSpec.invoke({ runId: RUN_ID }, depsWith((runId) => {
+      seen.push(runId)
+      return Promise.resolve(EMPTY_ROWS)
+    }))
+    expect(seen).toEqual([RUN_ID])
+  })
+})
+
+describe('projectRunTokenTotals — absent is not zero (D-06)', () => {
+  it('answers two counts and NO sums when nothing was measured', () => {
+    const totals = projectRunTokenTotals([])
+    expect(totals).toEqual({ measuredSteps: 0, unmeasuredSteps: 0 })
+    // The key ABSENCE is the claim, not the value: a `totalTokens: 0` would be a measurement
+    // nobody took, and a page cannot tell that apart from a run that really spent nothing.
+    expect(Object.keys(totals).sort()).toEqual(['measuredSteps', 'unmeasuredSteps'])
+    expect('totalTokens' in totals).toBe(false)
+  })
+
+  it('offers no sums for a run whose every step is unmeasured', () => {
+    const totals = projectRunTokenTotals([step(), step({ stepIndex: 1 }), step({ stepIndex: 2 })])
+    expect(totals).toEqual({ measuredSteps: 0, unmeasuredSteps: 3 })
+    expect('totalTokens' in totals).toBe(false)
+  })
+
+  it('sums the measured steps and counts the rest', () => {
+    const totals = projectRunTokenTotals([
+      step({ stepIndex: 0, tokenUsage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 } }),
+      step({ stepIndex: 1, tokenUsage: { promptTokens: 300, completionTokens: 45, totalTokens: 345 } }),
+      step({ stepIndex: 2 }),
+    ])
+    expect(totals).toEqual({
+      measuredSteps: 2,
+      unmeasuredSteps: 1,
+      promptTokens: 400,
+      completionTokens: 65,
+      totalTokens: 465,
+    })
+  })
+
+  it('a measured step that genuinely spent zero is still MEASURED', () => {
+    // The distinction the whole shape exists for, from the other side: a provider that reported
+    // a zero-token call is a measurement, and it must not be counted as an absent one.
+    const totals = projectRunTokenTotals([
+      step({ tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } }),
+    ])
+    expect(totals).toEqual({
+      measuredSteps: 1,
+      unmeasuredSteps: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    })
+  })
+
+  it('is the sum the op returns — one producer, not two', async () => {
+    const rows: RunDetailRows = {
+      ...EMPTY_ROWS,
+      steps: [
+        step({ tokenUsage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } }),
+        step({ stepIndex: 1 }),
+      ],
+    }
+    const result = await runsDetailSpec.invoke({ runId: RUN_ID }, depsWith(() => Promise.resolve(rows)))
+    expect(result.tokens).toEqual(projectRunTokenTotals(rows.steps))
+  })
+})
+
+describe('the declaration', () => {
+  it('carries an id the D-15 taxonomy admits', () => {
+    expect(RUNS_DETAIL_FUNCTION_ID).toMatch(/^[a-z]+(?:\.[a-z]+)+$/)
+    expect(runsDetailSpec.id).toBe(RUNS_DETAIL_FUNCTION_ID)
+  })
+
+  it('is a read-tier, read-only unary op bound through the optional runDetail dep', () => {
+    expect(runsDetailSpec.requiredScopes).toEqual(['read'])
+    expect(runsDetailSpec.resultKind).toBe('unary')
+    expect(runsDetailSpec.boundThrough).toBe('runDetail')
+    expect(runsDetailSpec.risk).toEqual({ name: 'fn:runs.detail', recognized: true, readOnly: true })
+  })
+
+  it('folds the three counts and interpolates NOTHING from inside the payload', () => {
+    const verdict = runsDetailSpec.classify({
+      runId: RUN_ID,
+      members: [{ testIndex: 0, attempts: 1 }],
+      steps: [step()],
+      subActions: [],
+      tokens: { measuredSteps: 0, unmeasuredSteps: 1 },
+    })
+    expect(verdict.status).toBe('executed')
+    expect(verdict.outcome).toBe('1 member(s), 1 step(s), 0 sub-action(s)')
+  })
+})

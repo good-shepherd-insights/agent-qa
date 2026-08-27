@@ -9,6 +9,7 @@ import {
   foldFunctionResult,
   invokeFunction,
   LiveViewUnavailableError,
+  RUNS_DETAIL_FUNCTION_ID,
   RUNS_EVENTS_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
@@ -202,6 +203,10 @@ export function composeDashboardAgentHost(
     // composition that already knows them.
     runsPostProcessingFunctionId: RUNS_POST_PROCESSING_FUNCTION_ID,
     runsEventsFunctionId: RUNS_EVENTS_FUNCTION_ID,
+    // 405-01 (D-03): the third id the run-service routes dispatch, on the same footing and for the
+    // same reason. `packages/dashboard-server` may not import this package (validate:arch), so the
+    // id reaches it the only way an id can — as data from the composition that already knows it.
+    runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
     // 400-15: THE ONE PLACE THE ASKING CONVERSATION IS KNOWN AND STILL AHEAD OF EVERYTHING THAT
     // NEEDS IT. `handleTurn` makes exactly one call here per turn, carrying the browser's
     // `sessionId`; the gate's context resolver and the confirm port are both further down this same
@@ -651,6 +656,15 @@ export interface DashboardDoorInput {
    * no served origin) lists `runs.liveurl` `unbound` BY NAME.
    */
   readonly liveView?: ComposeCliLocalAgentInput['liveView']
+  /**
+   * 405 D-03: the durable run-detail projection read `runs.detail` binds through.
+   *
+   * PASSED STRAIGHT THROUGH to `composeCliLocalAgent`, on the same rule as `runBridge` and
+   * `liveView` above — this composer decides nothing about it and constructs no database. Absent
+   * (the conformance suite's posture, and any door composed without a dashboard database) lists
+   * `runs.detail` `unbound` BY NAME.
+   */
+  readonly runDetail?: ComposeCliLocalAgentInput['runDetail']
 }
 
 /** The composed door: the local host it owns, and the seam the routes consume. */
@@ -825,6 +839,8 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
     configPath: input.configPath,
     // 403 D-03: forwarded untouched, conditionally spread — an absent port is an ABSENT field.
     ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
+    // 405 D-03: forwarded untouched, conditionally spread — an absent port is an ABSENT field.
+    ...(input.runDetail === undefined ? {} : { runDetail: input.runDetail }),
     config: overlayDashboardBaseUrl(
       createMaskedConfigReader(input.configPath),
       input.boundOrigin,
@@ -1596,6 +1612,10 @@ async function startDashboardBackedServices(
     const {
       DashboardDatabase,
       createConfirmRegistry,
+      // 405-01 (D-03): the reader adapter over THIS server's one database handle. Built here
+      // because the composition root that holds both the database and the function layer is this
+      // command — `packages/dashboard-server` cannot reach the registry to bind itself.
+      createDashboardRunDetailReader,
       createPostProcessingRelay,
       resolveDashboardDbPath,
       startServer,
@@ -1679,6 +1699,10 @@ async function startDashboardBackedServices(
       configPath: configFilePath,
       boundOrigin: () => boundOrigin,
       liveView: liveView.liveView,
+      // 405 D-03: the SAME `db` the ingest writes through, read back through the function layer.
+      // One handle, one writer, one process — and the page's read now crosses the registry
+      // instead of reaching into SQLite from inside a route handler.
+      runDetail: createDashboardRunDetailReader(db),
       ...(chatModel === undefined ? {} : { chatModel }),
       // NO `resolveExecutionContext` (400-13). D-05 is answered per RESEARCH Pattern 2 — reuse
       // `local-interactive` rather than minting a fifth vocabulary member — but the answer is a
