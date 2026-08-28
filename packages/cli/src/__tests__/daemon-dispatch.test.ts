@@ -375,6 +375,66 @@ describe('resident daemon agent-job dispatcher (CR-05)', () => {
     expect(host.scheduler.timeoutDelays()).toContain(DISPATCH_POLL_MS)
   })
 
+  it('carries the claimed payload runId onto job-claimed and job-completed (D-16)', async () => {
+    let completed = 0
+    const host = await startHost(jobKinds(async () => {
+      completed += 1
+      return { status: 'complete', next: [] }
+    }))
+
+    const runId = 'r_fixture-daemon-dispatch'
+    const enqueued = await host.jobs.queue.enqueue(
+      FIXTURE_KIND,
+      { runId, index: 0 },
+      'run-scoped-job',
+    )
+    host.nudge()
+    await waitUntil(() => completed === 1, 'run-scoped job was not dispatched')
+
+    const events = readEvents(host.agentQaRoot)
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'job-claimed',
+      jobId: String(enqueued.job.id),
+      jobKind: FIXTURE_KIND,
+      attempt: 1,
+      runId,
+    }))
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'job-completed',
+      jobId: String(enqueued.job.id),
+      jobKind: FIXTURE_KIND,
+      attempt: 1,
+      disposition: 'completed',
+      handlerInvoked: true,
+      checkpointsPublished: 0,
+      runId,
+    }))
+  })
+
+  it('omits the runId key when the payload names none or names a non-string (D-16)', async () => {
+    let completed = 0
+    const host = await startHost(jobKinds(async () => {
+      completed += 1
+      return { status: 'complete', next: [] }
+    }))
+
+    const bare = await host.jobs.queue.enqueue(FIXTURE_KIND, { index: 0 }, 'no-run-id-job')
+    const numeric = await host.jobs.queue.enqueue(FIXTURE_KIND, { runId: 7 }, 'numeric-run-id-job')
+    host.nudge()
+    await waitUntil(() => completed === 2, 'payloads without a string runId were not dispatched')
+
+    const jobIds = new Set([String(bare.job.id), String(numeric.job.id)])
+    const observed = readEvents(host.agentQaRoot).filter((event) => (
+      (event.kind === 'job-claimed' || event.kind === 'job-completed')
+      && typeof event.jobId === 'string'
+      && jobIds.has(event.jobId)
+    ))
+    expect(observed).toHaveLength(4)
+    for (const event of observed) {
+      expect(Object.hasOwn(event, 'runId')).toBe(false)
+    }
+  })
+
   it('waits for an in-flight job before graceful teardown resolves', async () => {
     let entered = false
     let release = (): void => undefined
