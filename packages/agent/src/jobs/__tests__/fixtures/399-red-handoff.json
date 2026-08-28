@@ -1,0 +1,993 @@
+{
+  "schemaVersion": 6,
+  "runId": "r_ash-bend-sorted-alea-sten-nun-aus-tile-cede-acute",
+  "scope": {
+    "tier": "product",
+    "key": "automation-exercise"
+  },
+  "buildOrdinal": 8,
+  "executionContext": "local-interactive",
+  "aggregateVerdict": "failed",
+  "configDigests": {
+    "suiteConfigDigest": "bcb67eb541962b48",
+    "testConfigDigest": "d53ac9a36c2bd225"
+  },
+  "startedAt": 1787131827238,
+  "endedAt": 1787132329921,
+  "tests": [
+    {
+      "testId": "t_umble-ruby-direct-notify-rama-phony-dust-owl-lop-etch",
+      "testName": "Automation Exercise products smoke",
+      "filePath": "tests/automation-exercise/products-smoke.yaml",
+      "testIndex": 0,
+      "outcome": "failed",
+      "steps": [
+        {
+          "stepIndex": 0,
+          "stepText": "Click on \"Products\"",
+          "cacheStatus": "miss",
+          "servedBrief": {
+            "scope": {
+              "tier": "test",
+              "key": "Automation Exercise products smoke"
+            },
+            "asOfBuild": 8,
+            "budget": 2048,
+            "truncation": "",
+            "channel1": [
+              {
+                "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                "kind": "fact",
+                "summary": "link \" products\" navigates to https://automationexercise.com/products",
+                "trust": 0.5142857142857142,
+                "status": "active",
+                "servedAsCanary": false,
+                "tier": "L2"
+              }
+            ],
+            "channel2": [],
+            "channel3": [],
+            "briefDigest": "913171e542e794d9833af678d35464606c1f3ce50b0300c51f3344683f1d84c7",
+            "proof": {
+              "schemaVersion": 1,
+              "completeness": "lossless",
+              "recordCap": 24,
+              "combinedBudget": 6815,
+              "admissionEvents": [
+                {
+                  "ordinal": 0,
+                  "turnOrdinal": 0,
+                  "surface": "brief-line",
+                  "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "sourceId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "clusterKey": "{\"name\":\" products\",\"role\":\"link\",\"t\":\"el\"}",
+                  "renderedCost": 28,
+                  "chargeRepeated": false
+                }
+              ],
+              "promptTurns": [
+                {
+                  "ordinal": 0,
+                  "turnOrdinal": 0,
+                  "runDate": "2026-08-19",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "Observation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]",
+                  "contextTier": "",
+                  "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]\n\nCurrent date: 2026-08-19",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "0d0bfe47f65f4413465a295495de2f7ad1fd95dfa9c2c36b3ed0443e98ee82fd"
+                }
+              ]
+            }
+          },
+          "subActions": [
+            {
+              "plan": "The step asks to click the Products link. The current screen shows a navigation link labeled “ Products” with ref e5, so clicking that exact ref is the appropriate action.",
+              "plannedAction": {
+                "type": "click",
+                "elementDescription": "Products navigation link",
+                "clickDelay": 0,
+                "desiredState": "selected",
+                "ref": "e5"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787131844838,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 1280,
+                    "contentHeight": 9237
+                  },
+                  "captureMode": "full",
+                  "imageWidth": 768,
+                  "imageHeight": 432
+                },
+                "url": "https://automationexercise.com/"
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 1280,
+                    "height": 720
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 606.5,
+                    "y": 40.5,
+                    "boundingBox": {
+                      "x": 567,
+                      "y": 30,
+                      "width": 79,
+                      "height": 21
+                    }
+                  }
+                }
+              },
+              "exchanges": [],
+              "callRecord": {
+                "resolvedModelId": "gpt-5.5",
+                "effectiveMaxOutputTokens": 128000
+              },
+              "grounding": {
+                "descriptor": {
+                  "role": "link",
+                  "name": " products",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "tree-search",
+                    "outcome": "resolved",
+                    "resolvedRef": "e5"
+                  }
+                ]
+              },
+              "decisionScreenshotRef": {
+                "id": "decision-screenshot:4fbae59dafb18df5f1e34cfd5019b610bc9aa64c0b9b0e3f8b4b872f8512e6cc",
+                "sha": "4fbae59dafb18df5f1e34cfd5019b610bc9aa64c0b9b0e3f8b4b872f8512e6cc"
+              },
+              "stateAfter": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787131859741,
+                "metadata": {
+                  "captureMode": "textOnly",
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 1280,
+                    "contentHeight": 9237
+                  }
+                },
+                "url": "https://automationexercise.com/#google_vignette"
+              }
+            }
+          ],
+          "verifierVerdict": {
+            "pass": true,
+            "reasoning": "The Products link existed and the recorded action clicked that target. After the click, a Google vignette advertisement overlay appeared, but there is no visible application error or clear evidence that the click itself failed. Since this is an action step and not a verification of the Products page, the click is considered accomplished."
+          },
+          "retrievalTrace": {
+            "schemaVersion": 1,
+            "servedLines": [
+              {
+                "recordId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                "leg": "anchor",
+                "rank": 1,
+                "score": 1.0285714285714285
+              }
+            ],
+            "truncated": []
+          },
+          "workingMemory": [],
+          "verdictSource": "verifier-model",
+          "modelProfile": {
+            "provider": "openai-subscription",
+            "modelId": "gpt-5.5",
+            "vision": true,
+            "maxOutputTokens": 128000
+          },
+          "verifierIdentity": {
+            "provider": "openai-subscription",
+            "modelId": "gpt-5.5"
+          },
+          "toolSchemaDigest": "237b8ef7ceaea2b51bab714e512607bd092ca4fe2b1ba9b41bfbd4c355eb07dc"
+        },
+        {
+          "stepIndex": 1,
+          "stepText": "Verify the page says \"Kitchen Appliances\"",
+          "cacheStatus": "miss",
+          "servedBrief": {
+            "scope": {
+              "tier": "test",
+              "key": "Automation Exercise products smoke"
+            },
+            "asOfBuild": 8,
+            "budget": 2048,
+            "truncation": "",
+            "channel1": [
+              {
+                "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                "kind": "fact",
+                "summary": "link \" products\" navigates to https://automationexercise.com/products",
+                "trust": 0.5142857142857142,
+                "status": "active",
+                "servedAsCanary": false,
+                "tier": "L2"
+              }
+            ],
+            "channel2": [],
+            "channel3": [],
+            "briefDigest": "036de2f90931eb2696dea5a8b480d8eae3b3e0eff7b97582b1df0794be6c3b7c",
+            "proof": {
+              "schemaVersion": 1,
+              "completeness": "lossless",
+              "recordCap": 24,
+              "combinedBudget": 6815,
+              "admissionEvents": [
+                {
+                  "ordinal": 0,
+                  "turnOrdinal": 0,
+                  "surface": "brief-line",
+                  "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "sourceId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "clusterKey": "{\"name\":\" products\",\"role\":\"link\",\"t\":\"el\"}",
+                  "renderedCost": 28,
+                  "chargeRepeated": false
+                },
+                {
+                  "ordinal": 1,
+                  "turnOrdinal": 1,
+                  "surface": "brief-line",
+                  "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "sourceId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "clusterKey": "{\"name\":\" products\",\"role\":\"link\",\"t\":\"el\"}",
+                  "renderedCost": 28,
+                  "chargeRepeated": false
+                },
+                {
+                  "ordinal": 2,
+                  "turnOrdinal": 2,
+                  "surface": "brief-line",
+                  "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "sourceId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "clusterKey": "{\"name\":\" products\",\"role\":\"link\",\"t\":\"el\"}",
+                  "renderedCost": 28,
+                  "chargeRepeated": false
+                },
+                {
+                  "ordinal": 3,
+                  "turnOrdinal": 3,
+                  "surface": "brief-line",
+                  "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "sourceId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "clusterKey": "{\"name\":\" products\",\"role\":\"link\",\"t\":\"el\"}",
+                  "renderedCost": 28,
+                  "chargeRepeated": false
+                },
+                {
+                  "ordinal": 4,
+                  "turnOrdinal": 4,
+                  "surface": "brief-line",
+                  "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "sourceId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "clusterKey": "{\"name\":\" products\",\"role\":\"link\",\"t\":\"el\"}",
+                  "renderedCost": 28,
+                  "chargeRepeated": false
+                },
+                {
+                  "ordinal": 5,
+                  "turnOrdinal": 5,
+                  "surface": "brief-line",
+                  "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "sourceId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "clusterKey": "{\"name\":\" products\",\"role\":\"link\",\"t\":\"el\"}",
+                  "renderedCost": 28,
+                  "chargeRepeated": false
+                },
+                {
+                  "ordinal": 6,
+                  "turnOrdinal": 6,
+                  "surface": "brief-line",
+                  "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "sourceId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                  "clusterKey": "{\"name\":\" products\",\"role\":\"link\",\"t\":\"el\"}",
+                  "renderedCost": 28,
+                  "chargeRepeated": false
+                }
+              ],
+              "promptTurns": [
+                {
+                  "ordinal": 0,
+                  "turnOrdinal": 0,
+                  "runDate": "2026-08-19",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "Observation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]",
+                  "contextTier": "",
+                  "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]\n\nCurrent date: 2026-08-19",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "0d0bfe47f65f4413465a295495de2f7ad1fd95dfa9c2c36b3ed0443e98ee82fd"
+                },
+                {
+                  "ordinal": 1,
+                  "turnOrdinal": 1,
+                  "runDate": "2026-08-19",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "Observation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]",
+                  "contextTier": "",
+                  "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]\n\nCurrent date: 2026-08-19",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "0d0bfe47f65f4413465a295495de2f7ad1fd95dfa9c2c36b3ed0443e98ee82fd"
+                },
+                {
+                  "ordinal": 2,
+                  "turnOrdinal": 2,
+                  "runDate": "2026-08-19",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "Observation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]",
+                  "contextTier": "",
+                  "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]\n\nCurrent date: 2026-08-19",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "0d0bfe47f65f4413465a295495de2f7ad1fd95dfa9c2c36b3ed0443e98ee82fd"
+                },
+                {
+                  "ordinal": 3,
+                  "turnOrdinal": 3,
+                  "runDate": "2026-08-19",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "Observation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]",
+                  "contextTier": "",
+                  "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]\n\nCurrent date: 2026-08-19",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "0d0bfe47f65f4413465a295495de2f7ad1fd95dfa9c2c36b3ed0443e98ee82fd"
+                },
+                {
+                  "ordinal": 4,
+                  "turnOrdinal": 4,
+                  "runDate": "2026-08-19",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "Observation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]",
+                  "contextTier": "",
+                  "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]\n\nCurrent date: 2026-08-19",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "0d0bfe47f65f4413465a295495de2f7ad1fd95dfa9c2c36b3ed0443e98ee82fd"
+                },
+                {
+                  "ordinal": 5,
+                  "turnOrdinal": 5,
+                  "runDate": "2026-08-19",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "Observation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]",
+                  "contextTier": "",
+                  "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]\n\nCurrent date: 2026-08-19",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "0d0bfe47f65f4413465a295495de2f7ad1fd95dfa9c2c36b3ed0443e98ee82fd"
+                },
+                {
+                  "ordinal": 6,
+                  "turnOrdinal": 6,
+                  "runDate": "2026-08-19",
+                  "policyL0": "",
+                  "learnedL1": "",
+                  "learnedL2": "Observation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]",
+                  "contextTier": "",
+                  "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \" products\" navigates to https://automationexercise.com/products [unconfirmed since build 1]\n\nCurrent date: 2026-08-19",
+                  "policyDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "contextTierDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "volatileTierDigest": "0d0bfe47f65f4413465a295495de2f7ad1fd95dfa9c2c36b3ed0443e98ee82fd"
+                }
+              ]
+            }
+          },
+          "subActions": [
+            {
+              "plan": "The verification target cannot be visually confirmed while the advertisement overlay is blocking and dimming the page. The current screen shows a close control for the ad with ref e218, so I will dismiss it first to reveal the page content before verifying whether it says “Kitchen Appliances”.",
+              "plannedAction": {
+                "type": "click",
+                "elementDescription": "Close ad button on the blocking advertisement overlay",
+                "clickDelay": 1,
+                "desiredState": "checked",
+                "ref": "e218"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787131890723,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 1280,
+                    "contentHeight": 9237
+                  },
+                  "captureMode": "full",
+                  "imageWidth": 768,
+                  "imageHeight": 432
+                },
+                "url": "https://automationexercise.com/#google_vignette"
+              },
+              "result": {
+                "success": false,
+                "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()\u001b[22m\n",
+                "annotation": {
+                  "viewport": {
+                    "width": 1280,
+                    "height": 720
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "callRecord": {
+                "resolvedModelId": "gpt-5.5",
+                "effectiveMaxOutputTokens": 128000
+              },
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "close ad",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "tree-search",
+                    "outcome": "resolved",
+                    "resolvedRef": "e218"
+                  }
+                ]
+              },
+              "decisionScreenshotRef": {
+                "id": "decision-screenshot:3bcf4f5085e62551ef796201282e6e22733530ef90aaec59bbf840321ed7b93b",
+                "sha": "3bcf4f5085e62551ef796201282e6e22733530ef90aaec59bbf840321ed7b93b"
+              },
+              "stateAfter": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787132007776,
+                "metadata": {
+                  "captureMode": "textOnly",
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 1280,
+                    "contentHeight": 9237
+                  }
+                },
+                "url": "https://automationexercise.com/#google_vignette"
+              }
+            },
+            {
+              "plan": "The current step is a visual verification, but the page is dimmed by an advertisement overlay. The previous attempt to click the accessible “Close ad” button timed out, so I will try a different dismissal strategy: pressing Escape, which commonly closes modal/vignette overlays without relying on the failed close-button locator. After this, the page content should become visible for the Kitchen Appliances verification.",
+              "plannedAction": {
+                "type": "keypress",
+                "keys": [
+                  "Escape"
+                ],
+                "mode": "press",
+                "convertPlatformKeys": true
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787132007776,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 1280,
+                    "contentHeight": 9237
+                  },
+                  "captureMode": "full",
+                  "imageWidth": 768,
+                  "imageHeight": 432
+                },
+                "url": "https://automationexercise.com/#google_vignette"
+              },
+              "result": {
+                "success": true
+              },
+              "exchanges": [],
+              "callRecord": {
+                "resolvedModelId": "gpt-5.5",
+                "effectiveMaxOutputTokens": 128000
+              },
+              "decisionScreenshotRef": {
+                "id": "decision-screenshot:8a63b297e865f99efc020a686d2bfac6b1cf5bbc81096f6d3b2df8dbcfc6dd13",
+                "sha": "8a63b297e865f99efc020a686d2bfac6b1cf5bbc81096f6d3b2df8dbcfc6dd13"
+              },
+              "localEffect": {
+                "verbClass": "keypress",
+                "oracle": "hash-fallback",
+                "achieved": true
+              }
+            },
+            {
+              "plan": "The verification target “Kitchen Appliances” cannot be visually confirmed while the ad overlay is still dimming and blocking the page; the bulk predicate is not yet met because the overlay is visibly present. The prior click on the outer “Close ad” control e218 timed out, so I will try the inner button ref e221 that appears within the same close-ad control to dismiss the overlay and reveal the page content.",
+              "plannedAction": {
+                "type": "click",
+                "elementDescription": "inner close control within the advertisement overlay",
+                "clickDelay": 1,
+                "desiredState": "checked",
+                "ref": "e218"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787132039438,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 1280,
+                    "contentHeight": 9237
+                  },
+                  "captureMode": "full",
+                  "imageWidth": 768,
+                  "imageHeight": 432
+                },
+                "url": "https://automationexercise.com/#google_vignette"
+              },
+              "result": {
+                "success": false,
+                "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()\u001b[22m\n",
+                "annotation": {
+                  "viewport": {
+                    "width": 1280,
+                    "height": 720
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "callRecord": {
+                "resolvedModelId": "gpt-5.5",
+                "effectiveMaxOutputTokens": 128000
+              },
+              "grounding": {
+                "descriptor": {
+                  "role": "button",
+                  "name": "close ad",
+                  "ordinal": 0
+                },
+                "attempts": [
+                  {
+                    "stage": "tree-search",
+                    "outcome": "resolved",
+                    "resolvedRef": "e218"
+                  }
+                ]
+              },
+              "decisionScreenshotRef": {
+                "id": "decision-screenshot:73b6af37853c9991c470079cdded602ca2560d7da3389334cfe93e8a4a98d15a",
+                "sha": "73b6af37853c9991c470079cdded602ca2560d7da3389334cfe93e8a4a98d15a"
+              },
+              "stateAfter": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787132174005,
+                "metadata": {
+                  "captureMode": "textOnly",
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 1280,
+                    "contentHeight": 9237
+                  }
+                },
+                "url": "https://automationexercise.com/#google_vignette"
+              }
+            },
+            {
+              "plan": "The active predicate is that the ad overlay must be dismissed and page content visible before verifying “Kitchen Appliances.” The close-ad button ref e218 has repeatedly timed out and Escape did not dismiss the vignette; the current URL contains #google_vignette, indicating the overlay is tied to the vignette hash. Navigating directly to the same Products page without that hash is a different strategy to remove the blocking overlay and reveal the page content for the required verification.",
+              "plannedAction": {
+                "type": "navigate",
+                "to": "url",
+                "url": "https://automationexercise.com/products"
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787132174005,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 1280,
+                    "contentHeight": 9237
+                  },
+                  "captureMode": "full",
+                  "imageWidth": 768,
+                  "imageHeight": 432
+                },
+                "url": "https://automationexercise.com/#google_vignette"
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 1280,
+                    "height": 720
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "callRecord": {
+                "resolvedModelId": "gpt-5.5",
+                "effectiveMaxOutputTokens": 128000
+              },
+              "decisionScreenshotRef": {
+                "id": "decision-screenshot:8a63b297e865f99efc020a686d2bfac6b1cf5bbc81096f6d3b2df8dbcfc6dd13",
+                "sha": "8a63b297e865f99efc020a686d2bfac6b1cf5bbc81096f6d3b2df8dbcfc6dd13"
+              },
+              "localEffect": {
+                "verbClass": "navigate",
+                "oracle": "navigation",
+                "achieved": true
+              }
+            },
+            {
+              "plan": "The active predicate now holds: the ad overlay is dismissed because the URL is the normal /products page without #google_vignette, no modal/close-ad control is visible, and the Products page content (header, search box, Category, and All Products) is visible. The verification target “Kitchen Appliances” is not currently visible in the viewport, so before asserting I need to scroll through the page to try to bring that exact text into view.",
+              "plannedAction": {
+                "type": "scroll",
+                "mode": "untilVisible",
+                "text": "Kitchen Appliances",
+                "direction": "down",
+                "maxSwipes": 10,
+                "retryOpposite": false
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787132192705,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "contentWidth": 1280,
+                    "contentHeight": 8916
+                  },
+                  "captureMode": "full",
+                  "imageWidth": 768,
+                  "imageHeight": 432
+                },
+                "url": "https://automationexercise.com/products"
+              },
+              "result": {
+                "success": true,
+                "metadata": {
+                  "scrollUntilVisible": {
+                    "swipes": 10,
+                    "reversedOnce": false,
+                    "outcome": "cap"
+                  }
+                },
+                "annotation": {
+                  "viewport": {
+                    "width": 1280,
+                    "height": 720
+                  },
+                  "direction": "down",
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "callRecord": {
+                "resolvedModelId": "gpt-5.5",
+                "effectiveMaxOutputTokens": 128000
+              },
+              "decisionScreenshotRef": {
+                "id": "decision-screenshot:9b3406b9331a34512d041b40448cb66a7f4bcbfe3a6fb73d910e228a7611a333",
+                "sha": "9b3406b9331a34512d041b40448cb66a7f4bcbfe3a6fb73d910e228a7611a333"
+              },
+              "localEffect": {
+                "verbClass": "scroll",
+                "oracle": "scroll",
+                "achieved": true
+              }
+            },
+            {
+              "plan": "The active predicate holds: the ad overlay is dismissed because the page is at the normal /products URL, the Products page content and product grid are visible, and no close-ad/modal overlay is present. The current viewport still does not visibly show the exact verification text “Kitchen Appliances”; since there are elements below the viewport, I need to continue scrolling down to try to bring that exact text into view before asserting it.",
+              "plannedAction": {
+                "type": "scroll",
+                "mode": "untilVisible",
+                "text": "Kitchen Appliances",
+                "direction": "down",
+                "maxSwipes": 5,
+                "retryOpposite": false
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787132242885,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 7200,
+                    "contentWidth": 1840,
+                    "contentHeight": 8879
+                  },
+                  "captureMode": "full",
+                  "imageWidth": 768,
+                  "imageHeight": 432
+                },
+                "url": "https://automationexercise.com/products"
+              },
+              "result": {
+                "success": true,
+                "metadata": {
+                  "scrollUntilVisible": {
+                    "swipes": 5,
+                    "reversedOnce": false,
+                    "outcome": "cap"
+                  }
+                },
+                "annotation": {
+                  "viewport": {
+                    "width": 1280,
+                    "height": 720
+                  },
+                  "direction": "down",
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "exchanges": [],
+              "callRecord": {
+                "resolvedModelId": "gpt-5.5",
+                "effectiveMaxOutputTokens": 128000
+              },
+              "decisionScreenshotRef": {
+                "id": "decision-screenshot:f5c7e705f64dd0f5c4919c9825b5b5c5047b3da38f0bfa11716cf921b0251eba",
+                "sha": "f5c7e705f64dd0f5c4919c9825b5b5c5047b3da38f0bfa11716cf921b0251eba"
+              },
+              "localEffect": {
+                "verbClass": "scroll",
+                "oracle": "scroll",
+                "achieved": true
+              }
+            },
+            {
+              "plan": "The active predicate holds: the blocking ad overlay is dismissed because the page is at https://automationexercise.com/products without the google vignette hash, no Close ad/modal control is visible, and normal page content such as Subscription, footer copyright, and product/shopping-anchor elements is visible. However, the verification target “Kitchen Appliances” cannot be confirmed: after scrolling down through the page, the current observation is at the bottom with 0 below viewport, and the visible page text does not include “Kitchen Appliances”. Since the full page has been searched and the target text is absent, the requested verification cannot be achieved on this page.",
+              "plannedAction": {
+                "type": "assertAI",
+                "claim": "The page visibly says “Kitchen Appliances”.",
+                "mode": "multimodal",
+                "effort": "medium",
+                "consensus": 1,
+                "video": false
+              },
+              "stateBefore": {
+                "platform": "web",
+                "tree": "",
+                "elements": [],
+                "refMap": {},
+                "timestamp": 1787132296922,
+                "metadata": {
+                  "coordSpace": "viewport",
+                  "viewportWidth": 1280,
+                  "viewportHeight": 720,
+                  "scroll": {
+                    "offsetX": 0,
+                    "offsetY": 8159,
+                    "contentWidth": 1840,
+                    "contentHeight": 8879
+                  },
+                  "captureMode": "full",
+                  "imageWidth": 768,
+                  "imageHeight": 432
+                },
+                "url": "https://automationexercise.com/products"
+              },
+              "result": {
+                "success": false,
+                "error": "Planner signaled step failure: The active predicate holds: the blocking ad overlay is dismissed because the page is at https://automationexercise.com/products without the google vignette hash, no Close ad/modal control is visible, and normal page content such as Subscription, footer copyright, and product/shopping-anchor elements is visible. However, the verification target “Kitchen Appliances” cannot be confirmed: after scrolling down through the page, the current observation is at the bottom with 0 below viewport, and the visible page text does not include “Kitchen Appliances”. Since the full page has been searched and the target text is absent, the requested verification cannot be achieved on this page."
+              },
+              "exchanges": [],
+              "callRecord": {
+                "resolvedModelId": "gpt-5.5",
+                "effectiveMaxOutputTokens": 128000
+              },
+              "decisionScreenshotRef": {
+                "id": "decision-screenshot:2142fec133fc6159605dc184e8bab9d3b61d92274df50d444d75024404aa269c",
+                "sha": "2142fec133fc6159605dc184e8bab9d3b61d92274df50d444d75024404aa269c"
+              }
+            }
+          ],
+          "verifierVerdict": {
+            "pass": false,
+            "reasoning": "Step declared infeasible: After dismissing the ad overlay and scrolling to the bottom of the Products page, the text “Kitchen Appliances” is not visible or present in the observed page content."
+          },
+          "retrievalTrace": {
+            "schemaVersion": 1,
+            "servedLines": [
+              {
+                "recordId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+                "leg": "anchor",
+                "rank": 1,
+                "score": 1.0285714285714285
+              }
+            ],
+            "truncated": []
+          },
+          "selfHeal": {
+            "failedDecision": {
+              "plan": "The verification target “Kitchen Appliances” cannot be visually confirmed while the ad overlay is still dimming and blocking the page; the bulk predicate is not yet met because the overlay is visibly present. The prior click on the outer “Close ad” control e218 timed out, so I will try the inner button ref e221 that appears within the same close-ad control to dismiss the overlay and reveal the page content.",
+              "plannedAction": {
+                "type": "click",
+                "elementDescription": "inner close control within the advertisement overlay",
+                "clickDelay": 1,
+                "desiredState": "checked",
+                "ref": "e218"
+              },
+              "result": {
+                "success": false,
+                "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()\u001b[22m\n",
+                "annotation": {
+                  "viewport": {
+                    "width": 1280,
+                    "height": 720
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              }
+            },
+            "recoveringDecision": {
+              "plan": "The active predicate is that the ad overlay must be dismissed and page content visible before verifying “Kitchen Appliances.” The close-ad button ref e218 has repeatedly timed out and Escape did not dismiss the vignette; the current URL contains #google_vignette, indicating the overlay is tied to the vignette hash. Navigating directly to the same Products page without that hash is a different strategy to remove the blocking overlay and reveal the page content for the required verification.",
+              "plannedAction": {
+                "type": "navigate",
+                "to": "url",
+                "url": "https://automationexercise.com/products"
+              },
+              "result": {
+                "success": true,
+                "annotation": {
+                  "viewport": {
+                    "width": 1280,
+                    "height": 720
+                  },
+                  "kind": "point",
+                  "point": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              }
+            }
+          },
+          "workingMemory": [
+            {
+              "key": "verificationTarget",
+              "value": "Kitchen Appliances",
+              "kind": "progress-marker",
+              "provenance": "plannerInference",
+              "testIndex": 0,
+              "stepIndex": 2
+            }
+          ],
+          "termination": {
+            "kind": "infeasible",
+            "reason": "After dismissing the ad overlay and scrolling to the bottom of the Products page, the text “Kitchen Appliances” is not visible or present in the observed page content."
+          },
+          "modelProfile": {
+            "provider": "openai-subscription",
+            "modelId": "gpt-5.5",
+            "vision": true,
+            "maxOutputTokens": 128000
+          },
+          "verifierIdentity": {
+            "provider": "openai-subscription",
+            "modelId": "gpt-5.5"
+          },
+          "toolSchemaDigest": "237b8ef7ceaea2b51bab714e512607bd092ca4fe2b1ba9b41bfbd4c355eb07dc"
+        }
+      ],
+      "rootCause": {
+        "class": "unknown",
+        "producer": "deterministic-classifier",
+        "confidence": 0,
+        "evidence": {
+          "citedSteps": [
+            1
+          ],
+          "citedAnchors": [],
+          "citedArtifacts": [],
+          "rationale": "no deterministic signal matched"
+        },
+        "memoryMisdirectionRuledOut": true,
+        "perTest": 0
+      }
+    }
+  ]
+}
