@@ -69,17 +69,38 @@
 # any render, (3c) reads the chips — which are painted from the same markers whether the text was
 # cut or not — and (3f) scans bytes at rest. Those three are named as the control below.
 #
-# WHY THERE IS NO "TRUNCATE-BEFORE-PARSE" LEG. The reviewer named a third candidate mutation:
-# truncate the raw string BEFORE parsing it, restoring the page-local helper's wrong ordering. That
-# mutation cannot red a cell, and a leg that cannot red is a FATAL by this script's own law, so it
-# is written down here rather than disguised as a passing leg. `truncateMaskedText` spends its word
-# budget over segments precisely so a marker is one word; the naive helper split the RAW string on
-# WHITESPACE, and today's marker spelling (`\x1f`-delimited, no whitespace inside) means a
-# whitespace split cannot cut inside a marker. The wrong ordering is therefore invisible at the DOM
-# — it is harmless for exactly as long as the marker spelling contains no space. What guards it is
-# the ordering invariant pinned by the jsdom cells in `lib/__tests__/masked-text.test.ts`, which
-# feed the helper a marker whose payload DOES contain whitespace. That is where a regression in the
-# ordering reds; this script says so instead of claiming a measurement it did not make.
+# WHY THERE IS NO "TRUNCATE-BEFORE-PARSE" LEG IN THIS SCRIPT. The reviewer named a further
+# candidate mutation: truncate the raw string BEFORE parsing it, restoring the page-local helper's
+# wrong ordering. It is not a leg here, and the reason is narrower than it once said.
+#
+# THE MUTATION CANNOT RED A CELL OF *THIS* SUITE, which is a claim about the DOM file and nothing
+# more. `truncateMaskedText` spends its word budget over segments precisely so a marker is one word;
+# the naive helper split the RAW string on WHITESPACE, and today's marker spelling (`\x1f`-delimited,
+# no whitespace inside) means a whitespace split cannot cut inside a marker. So on the fixture this
+# file drives, both orderings produce the same preview, every cell here stays green, and a leg that
+# cannot red is a FATAL by this script's own law — hence a written-down non-leg rather than a leg
+# disguised as a passing one. The scope of that sentence is load-bearing: it does NOT mean the
+# mutation reds nothing anywhere.
+#
+# WHAT ACTUALLY REDS UNDER IT IS `lib/__tests__/masked-text.test.ts:123-132` — "charges a marker
+# glued to text exactly one word, and re-emits it unchanged". Its input is `contact:<EMAIL>.` with
+# `maxWords: 2`. Parsed first, that is three words (`contact:`, the marker, `.`) and the cell's
+# `expect(cut.isTruncated).toBe(true)` holds. Truncated first, the naive whitespace helper sees ONE
+# token, decides nothing is over a budget of two and returns `{ text: input, isTruncated: false }` —
+# and the cell reds on that expectation. A glued marker, not a whitespace-bearing one, is what
+# separates the two orderings at HEAD.
+#
+# AND THERE IS NO CELL FEEDING THE HELPER A MARKER WHOSE PAYLOAD CONTAINS WHITESPACE. An earlier
+# version of this block said there was, and pointed a future auditor at it. There is not, and one
+# cannot be written through the published API: `maskedMarker` is `(category: MaskedCategory) =>
+# string` over the closed set `secret | email` (`packages/schema/src/run/masked-marker.ts:50,61`),
+# `MASKED_MARKER_PATTERN` is `/␟masked:(secret|email)␟/` (line 75), and a hand-typed
+# `␟masked: secret␟` does not match that pattern — so it parses as ordinary TEXT and any cell built
+# on it would assert the parser's stray-delimiter behaviour rather than the ordering. The whitespace
+# case is the scenario `lib/masked-text.ts:59-64` says the ordering exists to survive, and it is
+# guarded today by the ordering itself plus the glued-marker cell above, NOT by a cell that feeds it
+# a whitespace payload. The day the schema pattern admits that form, that cell becomes writable and
+# should be written; until then this block claims only the measurement that exists.
 #
 # EVERY LEG CROSSES A `dist` BOUNDARY AND THE REBUILD IS PART OF THE MUTATION. All three subjects
 # are resolved by the spawned `agent-qa dashboard` as BUILT workspace dependencies — dashboard-ui's
