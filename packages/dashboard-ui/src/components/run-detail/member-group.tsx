@@ -19,11 +19,29 @@
 // runner's. They are rendered side by side rather than concatenated, because a reader looking at a
 // member that never started is entitled to know which claim came from where (405-06's
 // `memberNote` decision, restated in markup).
+//
+// AND THE RUNNER'S SENTENCE IS THE ONE THAT GOES THROUGH THE SEAM (D-10, T-405-40, 405 CR-03).
+// That asymmetry is the whole point of the two-speakers note above, so it is spelled out here
+// rather than left to be inferred:
+//
+//   - `failureSummary` is a PRODUCER string. `projectTestFinished` routes it through
+//     `maskPayloadStrings` by name, so it carries `<SECRET_n>` at rest and a typed marker after
+//     the display seam. Rendered raw, the marker's delimiter reaches a text node a person reads.
+//     It therefore goes through `MaskedText`, the same seam the overview has painted every
+//     producer string through since 405-11 and the same one 405-12 put on the sub-action row.
+//
+//   - `memberDisplayName` does NOT, and its absence from the seam is a decision. `testStarted.name`
+//     is published UNMASKED as structural identity, beside `testId` and for the same reason the
+//     shell states there — it is a member's name, not a captured stream. Wrapping it would claim a
+//     redaction the producer never made.
+//
+//   - `memberNote` does not either: it is this product's own constant, not a producer's sentence.
 
 import { useState, type ReactNode } from "react"
 import { ChevronRight } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { MaskedText } from "@/components/run-detail/masked-text"
 import { cn } from "@/lib/utils"
 import {
   memberDisplayName,
@@ -50,7 +68,7 @@ function ThinMemberBody({ group }: { group: RunDetailGroup }) {
       <span data-member-note>{note}</span>
       {failureSummary ? (
         <span data-member-failure-summary className="ml-2 select-text text-foreground/70">
-          {failureSummary}
+          <MaskedText text={failureSummary} />
         </span>
       ) : null}
     </div>

@@ -24,7 +24,7 @@ import type {
   RunDetailStep,
   RunDetailSubAction,
 } from "@vostride/agent-qa-schema"
-import { asRef } from "@vostride/agent-qa-schema"
+import { MASKED_MARKER_DELIMITER, asRef, maskedMarker } from "@vostride/agent-qa-schema"
 
 import { MemberGroup } from "@/components/run-detail/member-group"
 import { StepTree } from "@/components/run-detail/step-tree"
@@ -205,6 +205,46 @@ describe("a member that never ran renders honestly, never as an empty tree (D-18
     expect(view.textContent).toContain(DID_NOT_RUN_LABEL)
     expect(view.querySelector('[data-member-outcome="skipped"]')).toBeTruthy()
     expect(view.textContent).toContain("skipped by fail-fast")
+  })
+
+  it("paints the summary's masked marker as a chip and leaks no delimiter (D-10, 405 CR-03)", () => {
+    // THE PRODUCER'S SENTENCE, WITH A REDACTION IN IT. `failureSummary` is routed through the mask
+    // by `projectTestFinished`, so it carries a placeholder at rest and a typed marker after the
+    // display seam. Rendered raw it put the marker's own delimiter into a text node — the state
+    // D-10 forbids, and the same class 405-12 found on the sub-action row.
+    //
+    // The delimiter is asserted BY CONSTANT so a respelling of the marker cannot pass by drift.
+    const view = tree(
+      [
+        group(
+          member(2, {
+            name: "Checkout",
+            outcome: "failed",
+            failureSummary: `could not sign in with ${maskedMarker("secret")} at step 3`,
+          }),
+          [],
+        ),
+      ],
+      true,
+    )
+
+    const summary = view.querySelector("[data-member-failure-summary]")
+    expect(summary?.textContent).toContain("could not sign in with ")
+    expect(summary?.textContent).toContain(" at step 3")
+    expect(view.textContent).not.toContain(MASKED_MARKER_DELIMITER)
+  })
+
+  it("leaves the member's NAME unmasked — structural identity is not a redaction (405 CR-03)", () => {
+    // A CONTROL, and the asymmetry it pins is deliberate. `testStarted.name` is published UNMASKED
+    // beside `testId` as structural identity, so a name that happens to contain a marker-shaped
+    // sentence is not a redaction the producer made. Sending it through the seam would claim one.
+    // Without this cell, a later reader could "fix" the header the same way and be greeted by a
+    // green suite.
+    const named = member(3, { name: "Checkout", outcome: "failed" })
+    const view = tree([group(named, [])], true)
+
+    expect(view.textContent).toContain(memberDisplayName(named))
+    expect(view.querySelector("[data-member-failure-summary]")).toBeNull()
   })
 
   it("still renders the note when there is no grouping chrome to hang it on", () => {
