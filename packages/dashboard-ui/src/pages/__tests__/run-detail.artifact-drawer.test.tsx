@@ -50,6 +50,10 @@ vi.mock("@/lib/api", () => ({
   // the page would render its could-not-load posture — these cells would then pass while pinning
   // nothing about the drawer.
   fetchRunDetail: fetchRunDetailMock,
+  // 2026-08-29 (406-01, D-04): the page's THIRD read — the failure view's. This whole-module
+  // mock replaces `@/lib/api`, so an omitted export is `undefined` at the call site and every
+  // cell here dies before it asserts. Its own behaviour is measured in `run-detail.analysis.test.tsx`.
+  fetchRunAnalysis: () => Promise.resolve({ runId: '', verdicts: [], sentences: [], clusters: [] }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,

@@ -149,6 +149,21 @@ export interface AgentHost {
    */
   readonly runsArtifactFunctionId: string
   /**
+   * The agent package's `analysis.get` id, on `runsArtifactFunctionId`'s exact footing (406 D-04).
+   *
+   * SUPPLIED BY THE COMPOSITION, NEVER SPELLED HERE, for the reason its five neighbours are: the
+   * op id is the agent package's constant, a string literal in this package would be a second
+   * declaration of a capability's name free to drift from the spec that answers to it, and this
+   * package may not import `@vostride/agent-qa-agent` at all (validate:arch) — so there is nowhere
+   * here the real constant could come from.
+   *
+   * WHAT IT SERVES is the failure view: the resolved verdicts and rendered sentences a person
+   * reads inside each failed member's group, on BOTH doors through one adapter. `analysis.get` is
+   * the single producer of those sentences (389 D-11), so routing the page's read through this id
+   * is what keeps the browser, the CLI, chat and 408's embed reading one answer.
+   */
+  readonly analysisGetFunctionId: string
+  /**
    * `invokeFunction`, bound by the composer. THE one door call.
    *
    * `input` IS `unknown` (404-05). It was `AgentAskInput` while `agent.ask` was the only op this

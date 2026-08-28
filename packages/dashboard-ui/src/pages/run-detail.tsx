@@ -22,9 +22,9 @@ import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { fetchRun, fetchRunDetail, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
+import { fetchRun, fetchRunAnalysis, fetchRunDetail, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
 import type { RunRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary, PostProcessingRead } from "@/lib/api"
-import type { RunDetailProjection, RunDetailSubAction } from "@vostride/agent-qa-schema"
+import type { AnalysisGetOutput, RunDetailProjection, RunDetailSubAction } from "@vostride/agent-qa-schema"
 import {
   MEMBER_FILTER_ALL,
   RUN_DETAIL_UNAVAILABLE_LABEL,
@@ -35,6 +35,7 @@ import {
   showMemberChrome,
 } from "@/lib/run-detail-view"
 import { projectPostProcessingView } from "@/lib/post-processing-view"
+import { projectAnalysisView } from "@/lib/analysis-view"
 import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
@@ -146,6 +147,11 @@ export default function RunDetailPage() {
   // so re-deriving it on render costs nothing and keeps exactly one copy of the mapping.
   const [postProcessingRead, setPostProcessingRead] = useState<PostProcessingRead | undefined>(undefined)
 
+  // THE FAILURE VIEW'S OWN READ (406-01 · DETL-04, D-03/D-04). Held raw, like the chip read above,
+  // because `projectAnalysisView` is pure and total — re-deriving it on render costs nothing and
+  // keeps exactly one copy of the join.
+  const [analysis, setAnalysis] = useState<AnalysisGetOutput | undefined>(undefined)
+
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [artifactDrawerOpen, setArtifactDrawerOpen] = useState(false)
   const [artifactDrawerTab, setArtifactDrawerTab] = useState<ArtifactDrawerTab>("attributes")
@@ -175,6 +181,30 @@ export default function RunDetailPage() {
     setPostProcessingRead(undefined)
     return watchPostProcessing(id, { onRead: setPostProcessingRead })
   }, [id])
+
+  // THE CHIP WORD, AND NOTHING ELSE OFF THE FRAME (D-03, 404 D-17 applied a second time). A pushed
+  // `watchPostProcessing` frame is a TRIGGER: it says the durable answer may have moved. Nothing a
+  // frame carries is ever painted into a member's block — only `fetchRunAnalysis`'s result is.
+  const analysisChip = postProcessingRead?.kind === 'read'
+    ? postProcessingRead.status.chips.analysis
+    : undefined
+
+  // RE-READ ON EVERY TRANSITION OF THAT WORD, AND ON NO OTHER FRAME. The dependency list IS the
+  // D-03 rule: `pending → running → done | failed` each move the value and re-run this effect,
+  // while a repeated frame carrying the same word does not. No new socket, no new timer.
+  //
+  // A REJECTED READ LEAVES THE PREVIOUS ANSWER IN PLACE. Clearing on failure would blank a
+  // sentence the reader is looking at because one poll hiccuped; the honest state of a failed
+  // re-read is the last answer the op actually gave.
+  useEffect(() => {
+    if (!id) return
+    let cancelled = false
+    void fetchRunAnalysis(id).then(
+      (result) => { if (!cancelled) setAnalysis(result) },
+      () => { /* the previous answer stands — a rejected fetch is not a paint input */ },
+    )
+    return () => { cancelled = true }
+  }, [id, analysisChip])
 
   useEffect(() => {
     if (!id) return
@@ -331,6 +361,11 @@ export default function RunDetailPage() {
     [detail],
   )
   const visibleGroups = useMemo(() => filterGroups(groups, memberFilter), [groups, memberFilter])
+  // The op's bytes and the chip word, joined to member handles. The page composes no sentence.
+  const analysisView = useMemo(
+    () => projectAnalysisView(analysis, analysisChip),
+    [analysis, analysisChip],
+  )
   // CHROME KEYS ON THE RUN, NOT ON THE FILTER (D-16). A viewer who narrowed a five-member suite to
   // one member is still looking at a suite, and hiding the header and the picker would strand them
   // there with no way back.
@@ -766,6 +801,7 @@ export default function RunDetailPage() {
                 <StepTree
                   groups={visibleGroups}
                   showMemberChrome={hasMemberChrome}
+                  analysisView={analysisView}
                   selection={selection}
                   onSelect={setSelection}
                   setupHooks={setupHooks}

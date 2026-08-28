@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import pc from 'picocolors'
 import {
   AGENT_ASK_FUNCTION_ID,
+  ANALYSIS_GET_FUNCTION_ID,
   foldFunctionResult,
   invokeFunction,
   LiveViewUnavailableError,
@@ -230,6 +231,10 @@ export function composeDashboardAgentHost(
     // for the same reason — with the sharper one that this route serves BYTES, and the alternative
     // to an id is `packages/dashboard-server` constructing an evidence store from two URL segments.
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
+    // 406-01 (D-04): the fifth id, on the same footing and for the same reason. It is what the
+    // failure view's read dispatches on both doors — `analysis.get` is the single producer of a
+    // run's verdict sentences, and the dashboard package can only learn its name as data.
+    analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
     // 400-15: THE ONE PLACE THE ASKING CONVERSATION IS KNOWN AND STILL AHEAD OF EVERYTHING THAT
     // NEEDS IT. `handleTurn` makes exactly one call here per turn, carrying the browser's
     // `sessionId`; the gate's context resolver and the confirm port are both further down this same

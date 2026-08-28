@@ -36,6 +36,9 @@ import {
 // formatting nothing and opening no database.
 import { unmaskTreeForDisplay } from '../masking/display-tree.js'
 import { serveRunArtifact, serveRunDetailRead } from '../run-service/run-detail-routes.js'
+// 406-01 (D-04): the failure view's read. One arm below, beside the detail arm and above the
+// `/api/runs/:id` catch-all, formatting nothing and opening no database.
+import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -2271,6 +2274,36 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       // read by a person's browser session. The authed REMOTE door's `/run/:runId/detail`
       // dispatch passes nothing and stays masked by the option's `'machine'` default.
       serveRunDetailRead(req, res, { runId: detailRunId, host: deps.agentHost, boundary: 'human' })
+      return
+    }
+
+    // GET /api/runs/:id/analysis — one run's resolved verdicts, sentences and clusters (406-01, D-04).
+    //
+    // ABOVE THE `GET /api/runs/:id` CATCH-ALL BELOW, on the detail arm's measured precedent
+    // (RESEARCH Pitfall 2): that arm claims EVERY GET under the prefix and answers `Not found` for
+    // anything that is not exactly four segments — and `/api/runs/<id>/analysis` is four segments,
+    // so registered after it this route would be looked up as a run id and refused.
+    //
+    // IT DISPATCHES AND FORMATS NOTHING. `analysis.get` is THE single producer of a run's verdicts
+    // and sentences (389 D-11); everything below the 503 is `serveRunAnalysisRead`'s.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/analysis$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let analysisRunId: string
+      try {
+        analysisRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/analysis'.length))
+      } catch {
+        // An undecodable segment names no run, and the honest answer is the one the op's own
+        // input schema gives for an id it refuses.
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      // THE HUMAN DOOR, AND THE ONLY ONE THAT RESTORES (D-04's masking clause). The verdict
+      // sentence quotes the failing step's recorded error, so it carries placeholders exactly as
+      // the detail projection does. The authed REMOTE row passes no `boundary` and stays masked.
+      serveRunAnalysisRead(req, res, { runId: analysisRunId, host: deps.agentHost, boundary: 'human' })
       return
     }
 

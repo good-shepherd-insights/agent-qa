@@ -1253,6 +1253,7 @@ function seamHost(restoreTo: string = SEAM_RESTORED): {
       runsEventsFunctionId: 'runs.events',
       runsDetailFunctionId: 'runs.detail',
       runsArtifactFunctionId: 'runs.artifact',
+      analysisGetFunctionId: 'analysis.get',
       invokeFunction: () => Promise.resolve({}),
       foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: '' }, foldLines: [] }),
       listDeclarations: () => [],

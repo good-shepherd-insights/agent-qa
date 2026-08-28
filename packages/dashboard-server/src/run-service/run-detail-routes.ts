@@ -28,7 +28,7 @@ import { unmaskTreeForDisplay } from '../masking/display-tree.js'
 import { refuseCrossSiteRequest } from '../server/cross-site.js'
 
 /** A refusal, already carrying its status and its single-key body. */
-interface RunDetailRefusal {
+export interface RunDetailRefusal {
   readonly kind: 'refused'
   readonly status: number
   readonly body: Record<string, string>
@@ -60,8 +60,13 @@ function errorMessageOf(error: unknown): string {
  * has no reason to offer. Anything else is an unclassified throw from inside the store, whose
  * message may name a path or quote a row; that one travels as a NAME, which is a classification
  * rather than a disclosure.
+ *
+ * EXPORTED SINCE 406-01 (D-04). `run-analysis-routes.ts` dispatches `analysisGetFunctionId` through
+ * the same host and meets the same three refusals; a second spelling of `unknown_run` /
+ * `agent_host_unavailable` / `read_failed` there would be a second vocabulary for one door, free to
+ * drift the first time either side gains a class.
  */
-function refusalFor(error: unknown): RunDetailRefusal {
+export function refusalFor(error: unknown): RunDetailRefusal {
   const name = errorNameOf(error)
   if (name === 'RunNotFoundError') {
     return { kind: 'refused', status: 404, body: { error: 'unknown_run' } }
@@ -118,8 +123,11 @@ export async function readRunDetail(
  * `server/routes.ts` — which answered through the wildcard-writing `json()` — proved how easily the
  * accident goes the other way. If a later refactor wants one JSON writer across both files, the one
  * it converges on must be the no-grant one.
+ *
+ * EXPORTED SINCE 406-01: `run-analysis-routes.ts` is that later refactor's first caller, and it
+ * converged on this writer rather than minting a second one.
  */
-function respondJson(res: ServerResponse, status: number, data: unknown): void {
+export function respondJson(res: ServerResponse, status: number, data: unknown): void {
   if (res.headersSent || res.writableEnded) {
     res.destroy()
     return

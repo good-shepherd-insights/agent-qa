@@ -26,6 +26,7 @@ import { StepTreeItem } from "./step-tree-item"
 import type { ExecutionLogEntry } from "@/lib/api"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
 import type { RunDetailGroup } from "@/lib/run-detail-view"
+import type { MemberVerdictView } from "@/lib/analysis-view"
 import { hasStepId, type Selection } from "@/lib/selection"
 
 interface StepTreeProps {
@@ -33,6 +34,15 @@ interface StepTreeProps {
   groups: readonly RunDetailGroup[]
   /** Whether the RUN has more than one member — not whether the filter left more than one. */
   showMemberChrome?: boolean
+  /**
+   * The failure view, keyed by member handle (406-01 · DETL-04, D-05).
+   *
+   * PASSED THROUGH, NEVER READ HERE. This tree owns no analysis fact: the page projects the map
+   * from `analysis.get`'s bytes and this component hands each member its own entry, exactly as it
+   * hands each member its group. An empty map is the honest state of a green run and of a page
+   * whose first read has not landed.
+   */
+  analysisView?: ReadonlyMap<number, MemberVerdictView>
   selection: Selection | null
   onSelect: (sel: Selection | null) => void
   setupHooks?: ExecutionLogEntry[]
@@ -114,6 +124,7 @@ interface DisplayGroup {
 export function StepTree({
   groups,
   showMemberChrome = false,
+  analysisView,
   selection,
   onSelect,
   setupHooks = [],
@@ -180,6 +191,7 @@ export function StepTree({
               key={group.member.testIndex}
               group={group}
               showChrome={showMemberChrome}
+              verdict={analysisView?.get(group.member.testIndex)}
             >
               {steps.map((step) => (
                 <StepTreeItem

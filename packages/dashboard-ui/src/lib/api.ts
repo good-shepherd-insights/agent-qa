@@ -1,6 +1,7 @@
 import { RUN_EVENT_TYPES } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
+  AnalysisGetOutput,
   ClauseReceiptStatus,
   ChatSessionEvent,
   PostProcessingDisposition,
@@ -361,6 +362,22 @@ export async function fetchRun(id: string): Promise<{ run: RunRow }> {
  */
 export async function fetchRunDetail(id: string): Promise<RunDetailProjection> {
   return request(`/api/runs/${encodeURIComponent(id)}/detail`)
+}
+
+/**
+ * THE FAILURE VIEW'S ONE READ (406-01 · DETL-04, D-04).
+ *
+ * The result type is the op's own `AnalysisGetOutput`, imported from schema rather than
+ * re-declared here: the UI MIRRORS the contract instead of keeping a twin of it, so a field the op
+ * grows (406-03's evidence refs) is readable without a second edit and a field it drops is a
+ * compile error rather than an `undefined` in a text node.
+ *
+ * `/api/runs/:id/analysis` is registered ABOVE the `/api/runs/:id` catch-all, which claims every
+ * four-segment GET — so the id is encoded here exactly once, and an id carrying a slash addresses
+ * the route it names rather than one nobody registered.
+ */
+export async function fetchRunAnalysis(id: string): Promise<AnalysisGetOutput> {
+  return request(`/api/runs/${encodeURIComponent(id)}/analysis`)
 }
 
 export async function fetchRunArtifact(id: string): Promise<RunArtifactResponse> {

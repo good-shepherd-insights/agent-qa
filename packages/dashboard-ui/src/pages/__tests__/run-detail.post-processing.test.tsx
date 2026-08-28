@@ -60,6 +60,9 @@ vi.mock("@/lib/api", async () => {
     // the real one against a `fetch` these cells do not provide, and the page would sit in its
     // could-not-load posture while the chip client under test was measured on a broken screen.
     fetchRunDetail: fetchRunDetailMock,
+    // 2026-08-29 (406-01, D-04): the page's third read, stubbed to RESOLVE for the same reason —
+    // the real one would reach a `fetch` these cells do not provide.
+    fetchRunAnalysis: () => Promise.resolve({ runId: '', verdicts: [], sentences: [], clusters: [] }),
     fetchRunArtifact: fetchRunArtifactMock,
     fetchExecutionLogs: fetchExecutionLogsMock,
     fetchAccessibilitySummary: fetchAccessibilitySummaryMock,

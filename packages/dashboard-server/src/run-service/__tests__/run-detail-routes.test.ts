@@ -35,6 +35,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  ANALYSIS_GET_FUNCTION_ID,
   RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
   createFunctionRegistry,
@@ -193,6 +194,7 @@ function hostOver(registry: FunctionRegistry): AgentHost {
     runsEventsFunctionId: 'test:planted-events-op',
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
+    analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
     invokeFunction: (
       handle: AgentRegistryHandle,
       functionId: string,
@@ -626,6 +628,7 @@ function seamRecordingHost(projection: unknown): {
       runsEventsFunctionId: 'test:planted-events-op',
       runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
       runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
+      analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
       invokeFunction: () => Promise.resolve(projection),
       foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'planted' }, foldLines: [] }),
       listDeclarations: () => [],

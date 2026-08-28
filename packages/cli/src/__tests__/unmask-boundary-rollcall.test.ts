@@ -55,6 +55,7 @@ import type { AgentHost, SessionStreamWindow } from '@vostride/agent-qa-dashboar
 // implementation of both. DEV-only edges, on `run-detail-routes.test.ts`'s own reasoning:
 // `validate:arch` walks `src` with `__tests__` excluded, so the production firewall stands.
 import {
+  ANALYSIS_GET_FUNCTION_ID,
   RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
   createFunctionRegistry,
@@ -421,6 +422,9 @@ function dashboardRollCallHost(
     // 405-05: a fifth. Same posture — the SHAPE has to be complete; this fixture reaches only the
     // ask, and artifact BYTES are masked on every door anyway (D-09: the seam never unmasks a blob).
     runsArtifactFunctionId: 'runs.artifact',
+    // 406-01: a sixth. Same posture — the SHAPE has to be complete; this fixture reaches only the
+    // ask, and the RUN host below is where `analysis.get` is actually dispatched.
+    analysisGetFunctionId: 'analysis.get',
     invokeFunction: () => Promise.resolve({
       sessionId: 'chat-20260821-000000-r0ll',
       turnId: 'turn-1',
@@ -603,6 +607,7 @@ function dashboardRunRollCallHost(registry: FunctionRegistry): AgentHost {
     } as unknown as AgentHost['caller'],
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
+    analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
     invokeFunction: (
       handle: unknown,
       functionId: string,

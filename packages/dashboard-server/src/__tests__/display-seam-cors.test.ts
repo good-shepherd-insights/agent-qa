@@ -105,6 +105,7 @@ function seamHost(): AgentHost {
     runsEventsFunctionId: 'test:events',
     runsDetailFunctionId: 'test:runs-detail',
     runsArtifactFunctionId: 'test:runs-artifact',
+    analysisGetFunctionId: 'test:analysis-get',
     invokeFunction: () => Promise.resolve({
       runId: RUN_ID,
       members: [{ testIndex: 0, attempts: 1 }],
@@ -280,6 +281,11 @@ function discoverSeamModules(): SeamModule[] {
  * guarded is exactly what the first version of this invariant mistook for being guarded.
  */
 const REVIEWED_SEAM_MODULES: readonly string[] = [
+  // 406-01 (D-04, T-406-04): the failure view's adapter. Its ONE crossing sits behind
+  // `refuseCrossSiteRequest(req)` in the same function, gated on `boundary === 'human'` exactly as
+  // the detail adapter's is — the local arm opts in, the authed remote row passes nothing and
+  // never reaches the crossing at all. Reviewed against the source, not against a token count.
+  'run-service/run-analysis-routes.ts',
   'run-service/run-detail-routes.ts',
   'server/routes.ts',
 ]

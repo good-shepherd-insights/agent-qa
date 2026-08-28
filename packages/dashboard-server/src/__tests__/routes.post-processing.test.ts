@@ -81,6 +81,8 @@ function plantHost(options: PlantOptions): PlantedHost {
     runsDetailFunctionId: 'test:planted-run-detail-op',
     // 405-05: a fifth. Same posture — named so the SHAPE is complete, never reached from here.
     runsArtifactFunctionId: 'test:planted-run-artifact-op',
+    // 406-01: a sixth. Same posture — named so the SHAPE is complete, never reached from here.
+    analysisGetFunctionId: 'test:planted-analysis-get-op',
     invokeFunction: (registry, functionId, input, caller): Promise<unknown> => {
       calls.push({ registry, functionId, input, caller })
       if (functionId === PP_ID) {

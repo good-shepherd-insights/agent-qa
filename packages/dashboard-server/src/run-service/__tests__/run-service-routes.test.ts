@@ -378,6 +378,9 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
       runsEventsFunctionId: 'test:planted-events-op',
       runsDetailFunctionId: 'test:planted-run-detail-op',
       runsArtifactFunctionId: 'test:planted-run-artifact-op',
+      // 406-01 (D-04): a sixth. This fixture DOES reach it — the analysis row's cell below asserts
+      // the id the dispatch handed `invokeFunction`.
+      analysisGetFunctionId: 'test:planted-analysis-get-op',
       invokeFunction: () => Promise.reject(Object.assign(new Error('planted'), { name })),
       foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: '' }, foldLines: [] }),
       listDeclarations: () => [],

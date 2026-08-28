@@ -42,6 +42,8 @@ import { ChevronRight } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { MaskedText } from "@/components/run-detail/masked-text"
+import { VerdictBlock } from "@/components/run-detail/verdict-block"
+import type { MemberVerdictView } from "@/lib/analysis-view"
 import { cn } from "@/lib/utils"
 import {
   memberDisplayName,
@@ -55,6 +57,14 @@ interface MemberGroupProps {
   group: RunDetailGroup
   /** Whether this run has more than one member — a single-member run gets no grouping chrome. */
   showChrome: boolean
+  /**
+   * This member's verdict, when `analysis.get` had one for it (406-01 · DETL-04, D-05).
+   *
+   * ABSENT IS THE COMMON CASE AND IT RENDERS NOTHING. A passed member has no verdict at all —
+   * `resolveRunVerdicts` filters `passed | skipped | cancelled` — and a run whose analysis has not
+   * been read yet has none for anybody. Neither is an empty block; both are no block.
+   */
+  verdict?: MemberVerdictView
   children?: ReactNode
 }
 
@@ -75,7 +85,7 @@ function ThinMemberBody({ group }: { group: RunDetailGroup }) {
   )
 }
 
-export function MemberGroup({ group, showChrome, children }: MemberGroupProps) {
+export function MemberGroup({ group, showChrome, verdict, children }: MemberGroupProps) {
   const [open, setOpen] = useState(true)
   const { member } = group
   const isThin = group.steps.length === 0
@@ -83,9 +93,18 @@ export function MemberGroup({ group, showChrome, children }: MemberGroupProps) {
 
   const body = isThin ? <ThinMemberBody group={group} /> : <ul role="group">{children}</ul>
 
-  // No chrome, and the member ran: the steps stand on their own directly under the tree.
+  // THE WHY, DIRECTLY UNDER THE HEADER AND ABOVE THE STEPS (D-05). The sentence sits beside the
+  // steps it cites rather than in a panel of its own, so the member filter narrows both at once.
+  const verdictBlock = verdict === undefined ? null : <VerdictBlock view={verdict} />
+
+  // No chrome, and the member ran: the steps stand on their own directly under the tree. A
+  // single-member failed run still gets its sentence — the block is what the reader came for, and
+  // withholding it because there is one member would make the view conditional on suite shape.
   if (!showChrome) {
-    return isThin ? <li role="none">{body}</li> : <>{children}</>
+    if (isThin) return <li role="none">{verdictBlock}{body}</li>
+    // Wrapped in its own `role="none"` row: the parent is a `role="tree"` list, and a bare `div`
+    // between its items would be a child the tree role does not admit.
+    return <>{verdictBlock === null ? null : <li role="none">{verdictBlock}</li>}{children}</>
   }
 
   return (
@@ -118,6 +137,7 @@ export function MemberGroup({ group, showChrome, children }: MemberGroupProps) {
           </Badge>
         ) : null}
       </div>
+      {open ? verdictBlock : null}
       {open ? body : null}
     </li>
   )

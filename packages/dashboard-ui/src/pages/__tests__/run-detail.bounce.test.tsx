@@ -60,6 +60,10 @@ vi.mock("@/lib/api", () => ({
   // could-not-load posture, and every cell below would then pass while the page was in an error
   // state nobody asked for. The bounce must be measured on a page that loaded.
   fetchRunDetail: fetchRunDetailMock,
+  // 2026-08-29 (406-01, D-04): the page's THIRD read — the failure view's. This whole-module
+  // mock replaces `@/lib/api`, so an omitted export is `undefined` at the call site and every
+  // cell here dies before it asserts. Its own behaviour is measured in `run-detail.analysis.test.tsx`.
+  fetchRunAnalysis: () => Promise.resolve({ runId: '', verdicts: [], sentences: [], clusters: [] }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
