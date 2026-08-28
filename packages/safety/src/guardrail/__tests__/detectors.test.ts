@@ -160,6 +160,56 @@ describe('guardrail scan', () => {
     expect(output.fired).toEqual([])
   })
 
+  // ------------------------------------------------------------------------------------------
+  // ...AND A NONZERO INTEGER PART IS A DECIMAL TOO, WHEN THE LITERAL IS ONE A FLOAT FORMATTER
+  // PRINTED (ANLZ-01, measured 2026-08-29, phase 406).
+  //
+  // Three `analyze-run` jobs in the 399 session's job store died `permanent` on
+  // `handler-threw: Guardrail blocked outbound prompt leaf: creditCard`. Rebuilding each failed
+  // run's prompt from its own handoff and scanning it here reproduced the block on a
+  // memory-retrieval relevance score every time. The retune reads the LITERAL — never the
+  // preceding bytes, which is the shape that shipped the regression pinned above.
+  // ------------------------------------------------------------------------------------------
+
+  it('does not read the fraction of a printed nonzero-integer float as a credit-card candidate', () => {
+    // The measured leaf, verbatim: 36/35 as the anchor leg's relevance score. Its 16-digit
+    // fraction is Luhn-valid, which is the whole reason it ever looked like a card.
+    expect(luhnValid('0285714285714285')).toBe(true)
+
+    const output = scan('"score":1.0285714285714285}', policy)
+
+    expect(output.result).toEqual({ action: 'pass' })
+    expect(output.fired).toEqual([])
+  })
+
+  it('still blocks a PAN behind a nonzero integer part that no float formatter would print', () => {
+    // The 393 headline false negative, re-asserted against the WIDENED rule: `1.4111111111111111`
+    // is not the shortest round-trip decimal of any double (it reads back as
+    // `1.4111111111111112`), so the widening never admits it.
+    const card = '4111111111111111'
+    expect(String(Number(`1.${card}`))).not.toBe(`1.${card}`)
+
+    const output = scan(`card 1.${card} end`, policy)
+
+    expect(output.result.action).toBe('block')
+    expect(output.result.detector).toBe('creditCard')
+  })
+
+  it('leaves the widened residual open on purpose: a short PAN behind a nonzero integer part that round-trips as a float', () => {
+    // PINNED RESIDUAL 2, not an oversight — named in the `isFractionalTail` doc block with its
+    // measured bound. A 15-digit Amex round-trips behind 7 of the first 100 000 integer prefixes,
+    // and a 13-digit PAN behind 2%; a 16-digit PAN round-trips behind NONE of them, because 17
+    // significant digits exceed a double's precision. If a future change closes this, that is a
+    // deliberate retune: this test failing is the signal to update the doc alongside it.
+    const card = '378282246310005'
+    expect(luhnValid(card)).toBe(true)
+    expect(String(Number(`1.${card}`))).toBe(`1.${card}`)
+
+    expect(scan(`ref 1.${card} done`, policy).result).toEqual({ action: 'pass' })
+    // ...while the same card standing on its own is still blocked.
+    expect(scan(`ref ${card} done`, policy).result.action).toBe('block')
+  })
+
   it('blocks PEM private-key markers', () => {
     const marker = '-----BEGIN RSA PRIVATE KEY-----'
     const output = scan(`key ${marker}`, policy)
