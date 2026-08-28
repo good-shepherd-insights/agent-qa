@@ -455,6 +455,9 @@ importers:
       '@vostride/agent-qa-agent':
         specifier: workspace:*
         version: link:../agent
+      '@vostride/agent-qa-agent-local':
+        specifier: workspace:*
+        version: link:../agent-local
       '@vostride/agent-qa-arch':
         specifier: workspace:*
         version: link:../arch
