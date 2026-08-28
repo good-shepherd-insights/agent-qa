@@ -139,6 +139,16 @@
 # the same guard's sake in the other direction: a byte-identical restore is a turbo CACHE HIT, so a
 # plain build reports FULL TURBO and refreshes no dist mtime. Measured in 405-12/405-13 (fd9b95ae).
 #
+# AND THAT APPLIES TO THE ERROR PATHS, WHICH IS WHERE IT USED NOT TO (WINDOWS #294). A restored-but-
+# unbuilt tree is the exact false red the paragraph above describes, and every path that bailed out
+# early — a failed build, a leg that red the wrong cell, an interrupt — restored while the file on
+# disk was still mutated and then exited without rebuilding, handing the next person six freshness
+# refusals indistinguishable from a real red. `restore_and_rebuild` is now the only restore any of
+# them calls: it copies, and if it copied anything it rebuilds. Inside a failed build and inside the
+# EXIT trap it prints the `pnpm turbo run build --force` notice instead — the first because the
+# build is what just failed, the second because an EXIT trap can be running under a ^C and a person
+# aborting this script did not ask for four more minutes of turbo.
+#
 # A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS.
 #
 # THE VERDICTS ARE READ PER CELL FROM THE JSON REPORTER, never scraped out of prose. A cell name
@@ -196,17 +206,63 @@ sha_of () {
 # against the dists they drive — so an unconditional restore in the EXIT trap, which runs AFTER this
 # script's last rebuild, leaves every source "newer than" the artifacts and the next person to run
 # the suite gets seven refusals that read exactly like a red. Measured by 404-04.
+#
+# AND IT REPORTS WHETHER IT ACTUALLY COPIED, because the short-circuit above only held on the happy
+# path (WINDOWS #294). Every ERROR path restored while the file on disk WAS mutated — so `cmp`
+# differed, `cp` ran, mtimes bumped and no rebuild followed — leaving exactly the restored-but-unbuilt
+# tree this header warns about: a red the leg never measured, indistinguishable from a real one.
+# `RESTORE_COPIED` is what lets `restore_and_rebuild` below know a rebuild is owed.
+RESTORE_COPIED=0
 restore_subjects () {
   local path snapshot
+  RESTORE_COPIED=0
   for path in "${SUBJECT_PATHS[@]}"; do
     snapshot="$(snapshot_path "$path")"
     [ -f "$snapshot" ] || continue
     cmp -s "$snapshot" "$REPO_ROOT/$path" && continue
     cp "$snapshot" "$REPO_ROOT/$path"
+    RESTORE_COPIED=1
   done
 }
 
-trap 'restore_subjects; rm -rf "$WORK"' EXIT
+REBUILD_NOTICE="NOTICE: the subjects were restored from their snapshots, which bumps their mtimes,
+and this run could not rebuild afterwards. Every dist in this workspace is now OLDER than its
+source and run-detail-failure-dom.test.ts will refuse every cell with a freshness message that
+reads exactly like a red. RUN THIS BEFORE BELIEVING ANY SUITE:
+
+  ( cd $REPO_ROOT && pnpm turbo run build --force )
+"
+
+# THE ONLY RESTORE ANY ERROR PATH CALLS, because a restore is only half of putting the tree back.
+# The other half is the build: `--force`, because a byte-identical restore is a turbo CACHE HIT and
+# a plain build would report FULL TURBO and refresh no dist mtime.
+#
+# RECURSION IS GUARDED RATHER THAN RISKED. `build_all`'s own failure branch calls this, and the
+# thing that just failed is the build — so a second one would fail the same way, forever. Inside a
+# build, and inside the EXIT trap (which may be running because the user pressed ^C and does not
+# want a four-minute build), the notice is printed instead. That notice is this row's stated
+# minimum, and the rebuild is the stated fix; both are here.
+BUILDING=0
+IN_EXIT_TRAP=0
+restore_and_rebuild () {
+  restore_subjects
+  if [ "$RESTORE_COPIED" -eq 0 ]; then
+    return 0
+  fi
+  if [ "$BUILDING" -eq 1 ] || [ "$IN_EXIT_TRAP" -eq 1 ]; then
+    echo "$REBUILD_NOTICE" >&2
+    return 0
+  fi
+  build_all
+}
+
+on_exit () {
+  IN_EXIT_TRAP=1
+  restore_and_rebuild
+  rm -rf "$WORK"
+}
+
+trap on_exit EXIT
 
 declare -a BASELINE_SHAS=()
 for path in "${SUBJECT_PATHS[@]}"; do
@@ -324,21 +380,36 @@ apply_mutation () {
   esac
 }
 
-# THE MUTATION IS ASSERTED TO HAVE LANDED. A `perl` substitution that matched nothing exits 0 and
-# leaves the file untouched, and the leg would then measure an unmutated tree and report a green
-# suite as the mutation "measuring nothing" — the right verdict for the wrong reason, and one that
-# sends a reader looking at the cell instead of at this script's own pattern.
-assert_mutated () {
-  local index=0 path current
+# The baseline sha recorded for ONE subject, by path — the parallel array read by name.
+baseline_of () {
+  local index=0 path
   for path in "${SUBJECT_PATHS[@]}"; do
-    current="$(sha_of "$REPO_ROOT/$path")"
-    if [ "$current" != "${BASELINE_SHAS[$index]}" ]; then return 0; fi
+    if [ "$path" = "$1" ]; then echo "${BASELINE_SHAS[$index]}"; return 0; fi
     index=$((index + 1))
   done
-  return 1
+  echo "FATAL: $1 is not one of this script's subjects" >&2
+  exit 1
+}
+
+# THE MUTATION IS ASSERTED TO HAVE LANDED, ON THE LEG'S OWN SUBJECT. A `perl` substitution that
+# matched nothing exits 0 and leaves the file untouched, and the leg would then measure an unmutated
+# tree and report a green suite as the mutation "measuring nothing" — the right verdict for the
+# wrong reason, and one that sends a reader looking at the cell instead of at this script's pattern.
+#
+# THE SUBJECT IS A PARAMETER BECAUSE THE GUARD USED TO ANSWER ABOUT ANY FILE (WINDOWS #298). It
+# walked every path in `SUBJECT_PATHS` and returned success at the FIRST differing sha, so if M5's
+# pattern stopped matching `display-unmask.ts` while `failure-banner.tsx` was dirty for any reason —
+# a failed restore from a previous run, an editor buffer, an interrupted leg — it reported "mutated"
+# about the wrong file and M5 went on to reach the right verdict for the wrong reason, which is
+# precisely what the paragraph above says must never happen.
+assert_mutated () {
+  local path="$1" baseline="$2" current
+  current="$(sha_of "$REPO_ROOT/$path")"
+  [ "$current" != "$baseline" ]
 }
 
 build_all () {
+  BUILDING=1
   set +e
   pnpm turbo run build --force > "$WORK/build.log" 2>&1
   local rc=$?
@@ -346,9 +417,16 @@ build_all () {
   if [ "$rc" -ne 0 ]; then
     echo "FATAL: the forced workspace build failed — see $WORK/build.log" >&2
     tail -40 "$WORK/build.log" >&2
-    restore_subjects
+    # THE RESTORE STILL HAPPENS, AND SO DOES THE NOTICE (WINDOWS #294). This path used to `cp` the
+    # mutated subjects back and exit, leaving bumped mtimes over dists nothing rebuilt — the false
+    # red this script's header describes. `BUILDING` is still 1, so `restore_and_rebuild` restores
+    # and then prints the `--force` instruction rather than starting a second turbo run: the thing
+    # that just failed IS the build, this branch already exits non-zero, and a nested build of a
+    # workspace that cannot build is the recursion the row asks to be guarded against.
+    restore_and_rebuild
     exit 1
   fi
+  BUILDING=0
 }
 
 assert_restored () {
@@ -392,19 +470,23 @@ reds_from_verdicts () {
   ' "$VERDICTS"
 }
 
-# run_leg <name> <label> <required> <allowed> <green>
+# run_leg <name> <subject> <label> <required> <allowed> <green>
+#
+# THE SUBJECT IS PASSED IN because the mutation guard asserts about THAT FILE and no other
+# (WINDOWS #298). A leg whose own subject is unchanged is a FATAL, whatever else in the tree moved.
 run_leg () {
-  local name="$1" label="$2" required="$3" allowed="$4" green="$5"
+  local name="$1" subject="$2" label="$3" required="$4" allowed="$5" green="$6"
 
   echo "=== MUTATION $name — $label"
-  restore_subjects
+  echo "  subject $subject"
+  restore_and_rebuild
   apply_mutation "$name"
 
   case "${FAILURE_BANNER_MUTATION_SELFTEST:-}" in
     neutered) echo "  SELFTEST=neutered: applying a NO-OP edit in place of $name" ;;
     *)
-      if ! assert_mutated; then
-        echo "FATAL: mutation $name changed no byte — its pattern no longer matches the subject" >&2
+      if ! assert_mutated "$subject" "$(baseline_of "$subject")"; then
+        echo "FATAL: mutation $name changed no byte of $subject — its pattern no longer matches" >&2
         exit 1
       fi ;;
   esac
@@ -421,15 +503,13 @@ run_leg () {
   if [ ! -f "$VERDICTS" ]; then
     echo "FATAL: mutation $name produced no per-cell verdicts — the suite never ran" >&2
     sed -n '1,60p' "$LOG" >&2
-    restore_subjects
-    build_all
+    restore_and_rebuild
     exit 1
   fi
 
   if [ "$rc" -eq 0 ]; then
     echo "FATAL: the suite stayed green under the mutation — mutation $name measures nothing" >&2
-    restore_subjects
-    build_all
+    restore_and_rebuild
     exit 1
   fi
 
@@ -451,8 +531,7 @@ run_leg () {
     done <<< "$allowed"
     if [ "$ok" -eq 0 ]; then
       echo "FATAL: mutation $name red a cell outside its allowed list: $line" >&2
-      restore_subjects
-      build_all
+      restore_and_rebuild
       exit 1
     fi
   done <<< "$red"
@@ -463,8 +542,7 @@ run_leg () {
       *"$fragment"*) echo "  REQUIRED red observed: $fragment" ;;
       *)
         echo "FATAL: mutation $name did not red its named cell: $fragment" >&2
-        restore_subjects
-        build_all
+        restore_and_rebuild
         exit 1 ;;
     esac
   done <<< "$required"
@@ -474,15 +552,13 @@ run_leg () {
     case "$red" in
       *"$fragment"*)
         echo "FATAL: mutation $name red an expected NON-CATCHER: $fragment" >&2
-        restore_subjects
-        build_all
+        restore_and_rebuild
         exit 1 ;;
       *) echo "  expected non-catcher stayed green: $fragment" ;;
     esac
   done <<< "$green"
 
-  restore_subjects
-  build_all
+  restore_and_rebuild
   assert_restored
   echo
 }
@@ -501,10 +577,10 @@ if [ "$PREFLIGHT_RC" -ne 0 ]; then
 fi
 echo
 
-run_leg M4 "the banner's MaskedText render replaced by the raw string" "$REQUIRED_M4" "$ALLOWED_M4" "$GREEN_M4"
-run_leg M5 "the display-unmask seam made a marker pass, restoring nothing" "$REQUIRED_M5" "$ALLOWED_M5" "$GREEN_M5"
-run_leg M6 "truncateMaskedText hands its input back unchanged" "$REQUIRED_M6" "$ALLOWED_M6" "$GREEN_M6"
-run_leg M7 "the copy button's argument reverted to the whole summary" "$REQUIRED_M7" "$ALLOWED_M7" "$GREEN_M7"
+run_leg M4 "$BANNER_SUBJECT" "the banner's MaskedText render replaced by the raw string" "$REQUIRED_M4" "$ALLOWED_M4" "$GREEN_M4"
+run_leg M5 "$UNMASK_SUBJECT" "the display-unmask seam made a marker pass, restoring nothing" "$REQUIRED_M5" "$ALLOWED_M5" "$GREEN_M5"
+run_leg M6 "$TRUNCATE_SUBJECT" "truncateMaskedText hands its input back unchanged" "$REQUIRED_M6" "$ALLOWED_M6" "$GREEN_M6"
+run_leg M7 "$BANNER_SUBJECT" "the copy button's argument reverted to the whole summary" "$REQUIRED_M7" "$ALLOWED_M7" "$GREEN_M7"
 
 echo "PASS — taking the chip painting away from the banner red exactly the two chip cells, taking"
 echo "       restoration away from the display seam red exactly the restore cell, taking the"

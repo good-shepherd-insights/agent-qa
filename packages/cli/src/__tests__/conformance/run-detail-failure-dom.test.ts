@@ -107,22 +107,109 @@ const PAGE_BUDGET_MS = 60_000
 const TAIL_GRACE_MS = 2_000
 
 /**
+ * One source-level string body as the runtime would see it.
+ *
+ * JAVASCRIPT'S OWN RULE, WHICH IS THE ONLY ONE THAT MAKES THE READ FAITHFUL: a backslash escapes
+ * the character after it, `\n`/`\t`/`\r` and the two unicode forms name characters, and every
+ * other escape is the character itself. Without this, a constant whose text merely contains its own
+ * quote — the case that made the helper below quote-agnostic — would come back carrying the
+ * backslash the source needed and nothing on the page would ever match it.
+ */
+function unescapeStringBody(body: string): string {
+  const named: Record<string, string> = {
+    n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v', '0': '\0',
+  }
+  let out = ''
+  let index = 0
+  while (index < body.length) {
+    const char = body[index] as string
+    if (char !== '\\' || index + 1 >= body.length) {
+      out += char
+      index += 1
+      continue
+    }
+    const next = body[index + 1] as string
+    const braced = next === 'u' ? /^u\{([0-9a-fA-F]+)\}/u.exec(body.slice(index + 1)) : null
+    const quad = next === 'u' ? /^u([0-9a-fA-F]{4})/u.exec(body.slice(index + 1)) : null
+    const hex = next === 'x' ? /^x([0-9a-fA-F]{2})/u.exec(body.slice(index + 1)) : null
+    const escape = braced ?? quad ?? hex
+    if (escape !== null) {
+      out += String.fromCodePoint(Number.parseInt(escape[1] as string, 16))
+      index += 1 + escape[0].length
+      continue
+    }
+    out += named[next] ?? next
+    index += 2
+  }
+  return out
+}
+
+/**
  * A published constant, read out of the module that publishes it.
  *
- * `run-detail-dom.test.ts`'s helper, unchanged and for its reason: importing a `dashboard-ui`
- * module into a Node test would drag a renderer in, and a hardcoded copy would go on passing
- * against a page that says something else.
+ * `run-detail-dom.test.ts`'s helper, for its reason: importing a `dashboard-ui` module into a Node
+ * test would drag a renderer in, and a hardcoded copy would go on passing against a page that says
+ * something else.
+ *
+ * EITHER QUOTE STYLE, AND THE STYLE IS NOT THE CONSTANT'S BUSINESS (WINDOWS #297). This read used
+ * to accept single quotes only, so `MASKED_SECRET_LABEL` — which is DOUBLE-quoted because its text
+ * carries an apostrophe — could not be read at all, and the one cell that needed the secret chip's
+ * published label had to hardcode it, which is the green-for-the-wrong-reason this whole file
+ * exists to prevent. Worse in the other direction: a Prettier or ESLint quote-style change to
+ * `run-detail-view.ts` turned the WORKING email read into a `beforeAll` throw that red all six
+ * cells at once, for a formatting reason. The body is matched to the MATCHING quote across escaped
+ * pairs, so a `\'` inside a single-quoted constant does not end it early.
+ *
+ * A TEMPLATE LITERAL IS STILL REFUSED, deliberately: its body can interpolate, and a helper that
+ * returned the source text of `${...}` would be publishing a string nothing renders.
  */
 function publishedConstant(relativePath: string, name: string): string {
   const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
-  const entry = new RegExp(`export const ${name}(?::\\s*string)?\\s*=\\s*'([^']*)'`, 'u').exec(source)
+  const entry = new RegExp(
+    `export const ${name}(?::\\s*string)?\\s*=\\s*(['"])((?:\\\\.|[^\\\\])*?)\\1`,
+    'u',
+  ).exec(source)
   if (entry === null) {
-    throw new Error(`${name} is no longer a single-quoted top-level constant in ${relativePath}`)
+    throw new Error(
+      `${name} is no longer a single- or double-quoted top-level constant in ${relativePath}`,
+    )
   }
-  return entry[1] as string
+  return unescapeStringBody(entry[2] as string)
 }
 
 const MASKED_EMAIL_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_EMAIL_LABEL')
+
+/**
+ * The chip a `SECRET` placeholder this host cannot restore paints, read by CONSTANT at last.
+ *
+ * This is the read WINDOWS #297 blocked. It is a redaction spelling like the email label, so it
+ * joins the set `normaliseRedactions` collapses below — the fixture's own credential IS restored,
+ * so no secret chip appears on this page today, and the point of reading it by constant rather than
+ * typing it is that the day one does, both media are compared on the label the page actually shows.
+ */
+const MASKED_SECRET_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_SECRET_LABEL')
+
+// ── THE HELPER'S OWN CELL (WINDOWS #297). It is outside the drive's `describe` deliberately: it
+// reads one source file and nothing else, so it must not pull a spawned binary, a browser and a
+// real run in behind it. A helper whose failure mode is "throws in `beforeAll` and reds every cell
+// in the file at once" is worth three cells of its own.
+describe('publishedConstant reads a constant whatever quotes it carries (WINDOWS #297)', () => {
+  it('publishedConstant reads the DOUBLE-quoted secret label with its apostrophe intact', () => {
+    expect(MASKED_SECRET_LABEL).toContain("host's")
+    expect(MASKED_SECRET_LABEL.startsWith('masked secret')).toBe(true)
+    // The body is the RUNTIME string, not the source text: no backslash survives the read.
+    expect(MASKED_SECRET_LABEL).not.toContain('\\')
+  })
+
+  it('publishedConstant still reads the SINGLE-quoted email label, unchanged', () => {
+    expect(MASKED_EMAIL_LABEL).toBe('masked email')
+  })
+
+  it('publishedConstant refuses a name it cannot find rather than answering an empty string', () => {
+    expect(() => publishedConstant('lib/run-detail-view.ts', 'NOT_A_PUBLISHED_CONSTANT'))
+      .toThrow(/single- or double-quoted/u)
+  })
+})
 
 /** A fresh, non-global copy of the placeholder pattern — `PLACEHOLDER_PATTERN` carries `lastIndex`. */
 const placeholderRe = (): RegExp => new RegExp(PLACEHOLDER_PATTERN.source, 'u')
@@ -144,13 +231,18 @@ const REDACTION_SENTINEL = '<<REDACTION>>'
  * Collapsing the marker spelling too leaves exactly one thing for this cell to lose: whether the
  * clipboard carries the same WORDS the page did.
  *
- * The labels are read off the page's own chips rather than typed here, plus the one label this file
- * can read by constant. `MASKED_SECRET_LABEL` is double-quoted at `lib/run-detail-view.ts` (it
- * contains an apostrophe) and `publishedConstant` above reads only single-quoted constants — that
- * is WR-11 and it is not this change's to fix, which is why the chip texts are the primary source.
+ * The labels are read off the page's own chips rather than typed here, plus BOTH published labels,
+ * each read by constant. `MASKED_SECRET_LABEL` is double-quoted at `lib/run-detail-view.ts` (it
+ * contains an apostrophe) and `publishedConstant` could once read only single-quoted constants;
+ * that was WR-11 / WINDOWS #297 and it is fixed above, so the chip texts are no longer the only
+ * source available to this cell.
  */
 function normaliseRedactions(text: string, labels: readonly string[]): string {
-  const spellings = [...new Set([...labels, MASKED_EMAIL_LABEL].filter((label) => label !== ''))]
+  const spellings = [
+    ...new Set(
+      [...labels, MASKED_EMAIL_LABEL, MASKED_SECRET_LABEL].filter((label) => label !== ''),
+    ),
+  ]
   let out = text
   // The BRACKETED form first, whole: a bare-label pass run first would leave the brackets behind.
   for (const label of spellings) out = out.split(`[${label}]`).join(REDACTION_SENTINEL)
@@ -200,8 +292,17 @@ interface PageObservation {
   readonly finalUrl: string
   /** Why the banner never attached, when it never did. Recorded, so the cells red on the FACT. */
   readonly waitFailure?: string
-  /** Whether a `[data-failure-banner-toggle]` was present and clicked. */
+  /**
+   * Whether a `[data-failure-banner-toggle]` was present AND its click RESOLVED.
+   *
+   * BOTH HALVES, BECAUSE THE FLAG IS A CELL'S DIAGNOSIS (WINDOWS #293). It was set unconditionally
+   * on the line after a click whose rejection was swallowed, so an element that existed and could
+   * not be clicked — detached, obscured, timed out — reported `true`, and cell (3d) then red one
+   * assertion later with a message naming the wrong cause on the slowest suite in the repository.
+   */
   readonly toggled: boolean
+  /** Why the toggle click did not resolve, when it did not. Recorded, never thrown. */
+  readonly toggleFailure?: string
   /** What `navigator.clipboard.readText()` answered after copy was clicked while COLLAPSED. */
   readonly clipboard?: string
   /** Why the clipboard could not be measured, when it could not. Recorded, never thrown. */
@@ -270,6 +371,7 @@ function context(): string {
     `banner wait failure: ${observed?.waitFailure?.split('\n')[0] ?? '(none)'}`,
     `truncated state: ${observed?.truncated.state ?? '(no banner)'}; `
     + `toggled: ${String(observed?.toggled ?? false)}; `
+    + `toggle failure: ${observed?.toggleFailure ?? '(none)'}; `
     + `full state: ${observed?.full.state ?? '(no banner)'}`,
     `banner text (truncated): ${JSON.stringify((observed?.truncated.bannerText ?? '').slice(0, 400))}`,
     `banner text (full): ${JSON.stringify((observed?.full.bannerText ?? '').slice(0, 800))}`,
@@ -367,6 +469,7 @@ async function observeFailureBanner(
   const page: Page = await context_.newPage()
   let waitFailure: string | undefined
   let toggled = false
+  let toggleFailure: string | undefined
   const responses: RecordedResponse[] = []
   const pendingBodies: Promise<void>[] = []
   page.on('response', (response) => {
@@ -453,10 +556,18 @@ async function observeFailureBanner(
       }
     }
 
+    // THE FLAG RECORDS THE CLICK'S OUTCOME, NOT ITS ATTEMPT (WINDOWS #293). `toggled = true` used
+    // to sit unconditionally after a `.catch(() => undefined)`, so a click that threw still
+    // reported success and (3d) blamed a missing element for a click that failed on a present one.
     const toggle = page.locator('[data-failure-banner-toggle]')
     if ((await toggle.count()) > 0) {
-      await toggle.first().click().catch(() => undefined)
-      toggled = true
+      toggleFailure = await toggle.first().click().then(
+        () => undefined,
+        (error: unknown) =>
+          `the toggle was present but the click did not resolve: ${
+            error instanceof Error ? error.message : String(error)}`,
+      )
+      toggled = toggleFailure === undefined
       await page.locator('[data-failure-banner-state="full"]')
         .waitFor({ state: 'attached', timeout: PAGE_BUDGET_MS })
         .catch(() => undefined)
@@ -470,6 +581,7 @@ async function observeFailureBanner(
       finalUrl: page.url(),
       ...(waitFailure === undefined ? {} : { waitFailure }),
       toggled,
+      ...(toggleFailure === undefined ? {} : { toggleFailure }),
       ...(clipboard === undefined ? {} : { clipboard }),
       ...(clipboardFailure === undefined ? {} : { clipboardFailure }),
       ...(clipboardCopiedState === undefined ? {} : { clipboardCopiedState }),
@@ -719,9 +831,11 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
     const observed = visit()
     expect(
       observed.toggled,
-      'the banner rendered no `[data-failure-banner-toggle]`, so the expanded state was never '
-      + 'reachable. A summary over the preview budget must offer the toggle; without it the full '
-      + `text is unreadable and this claim is unmeasurable.${context()}`,
+      'the expanded state was never reached: either the banner rendered no '
+      + '`[data-failure-banner-toggle]`, or one was present and the click on it did not resolve — '
+      + '`toggle failure` in the block below names which. A summary over the preview budget must '
+      + `offer the toggle; without it the full text is unreadable and this claim is unmeasurable.${
+        context()}`,
     ).toBe(true)
     expect(
       observed.full.state,
