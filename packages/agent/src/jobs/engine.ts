@@ -176,6 +176,14 @@ export interface RanJobOutcomeBase {
    * claimed, so the driver failed it without handing it to its handler (D-18).
    */
   readonly handlerInvoked: boolean
+  /**
+   * The payload of the job AS CLAIMED, so a host can attribute this outcome to whatever the
+   * payload names — a run, above all — without going back to the store for a row the job has
+   * already moved past (406 D-16). Optional because the outcome is the engine's fact and the
+   * payload is the caller's: nothing here reads it, and no fabricated outcome must grow a
+   * field to keep compiling.
+   */
+  readonly payload?: unknown
 }
 
 export type RunNextJobOutcome =
@@ -424,6 +432,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
       ran: true,
       disposition: 'failed',
       job: failed.job,
+      payload: input.payload,
       checkpointsPublished: input.published,
       handlerInvoked: input.handlerInvoked,
       reason,
@@ -547,6 +556,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
           ran: true,
           disposition: 'cancelled',
           job,
+          payload: claim.payload,
           checkpointsPublished: published,
           handlerInvoked: true,
           honoredAtCheckpoint: boundary,
@@ -629,6 +639,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
             ran: true,
             disposition: 'retry-scheduled',
             job,
+            payload: claim.payload,
             checkpointsPublished: published,
             handlerInvoked: true,
             reason,
@@ -678,6 +689,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
           ran: true,
           disposition: 'completed',
           job: completed.job,
+          payload: claim.payload,
           checkpointsPublished: published,
           handlerInvoked: true,
           chained: completed.chained,
@@ -694,6 +706,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
           ran: true,
           disposition: 'retry-scheduled',
           job,
+          payload: claim.payload,
           checkpointsPublished: published,
           handlerInvoked: true,
           reason: outcome.reason,
