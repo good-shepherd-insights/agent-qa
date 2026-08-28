@@ -58,6 +58,21 @@
 // The email needs no declaration: `<EMAIL_n>` is minted lazily inside `mask()` by the email
 // detector over whatever text passes through, so an address in the planner's reasoning becomes a
 // placeholder without any host source declaring it.
+//
+// AND ONE RUN THAT FAILS, ADDED BY 405-14 (WINDOWS #287). The run-detail page has a render site
+// that only exists on a FAILED run — the failure banner — and it was the last site on the rebuilt
+// page painting a producer string raw. Nothing could measure it, because the run above PASSES. So
+// this module gained ONE additive knob, `startStubModelServer({ plannerOutcome: 'stepFailed' })`,
+// which sets the shipped `stepFailed` plan field on the planner's tool call. The runner is
+// untouched: that field is the product's own path to a step the planner declares impossible, and
+// the run reaches `runFinished` with a member `testFinished.outcome === 'failed'` carrying a
+// `failureSummary` that has masked placeholders in it.
+//
+// THE FAILING RUN'S TWO SENTENCES ARE FIXTURE-OWNED — `plannerFailureReasoning()` and
+// `POPULATED_FAILURE_STEP_TEXT` — and both are written to a WORD BUDGET the banner publishes
+// (`FAILURE_BANNER_PREVIEW_WORDS`). `POPULATED_FAILURE_STEP_TEXT` carries the arithmetic in full.
+// The rule that goes with it: a drift that moves the email marker past the preview budget is fixed
+// in these two sentences, never by widening the banner.
 
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
@@ -142,6 +157,33 @@ export const POPULATED_SUITE_PATH = 'suites/populated.suite.yaml'
 
 /** The test file the suite addresses, relative to the project root. */
 export const POPULATED_TEST_PATH = 'tests/populated.test.yaml'
+
+/**
+ * The single step a FAILING populated run declares (405-14 · WINDOWS #287).
+ *
+ * FIVE WORDS, AND THE COUNT IS LOAD-BEARING. `generateFailureSummary` prints the step NAME first —
+ * `Step 1/1 "<name>" failed: ...` — and the banner's collapsed state shows
+ * `FAILURE_BANNER_PREVIEW_WORDS` (20) words. The shipped step text is eighteen words, which would
+ * spend the whole budget before the planner's sentence began and leave the truncated banner with no
+ * marker to paint. This one leaves room for the failure sentence's email marker to land inside the
+ * preview.
+ *
+ * THE ARITHMETIC, WRITTEN OUT SO THE DOM CELL'S CLAIM IS AUDITABLE. On a `stepFailed` turn the loop
+ * returns `Step failed: <reasoning>` as the step error and records `Planner signaled step failure:
+ * <reasoning>` on the sub-action, so the summary opens:
+ *
+ *   `Step`(1) `1/1`(2) `"Acknowledge`(3) `the`(4) `notice`(5) `using`(6) `{{secret:…}}."`(7)
+ *   `failed:`(8) `Step`(9) `failed:`(10) `Cannot`(11) `acknowledge:`(12) `the`(13) `notice`(14)
+ *   `names`(15) `<EMAIL_n>`(16)
+ *
+ * — the email marker inside the budget, and the masking-seeded credential four words past it,
+ * visible only once a person expands the banner. A DRIFT THAT MOVES THE MARKER PAST WORD 20 IS
+ * FIXED HERE, in the fixture's own sentence, and NEVER by widening the banner's budget: the budget
+ * is what a person was shown, and editing it to make a cell green would be the cell changing the
+ * product to fit itself.
+ */
+export const POPULATED_FAILURE_STEP_TEXT =
+  `Acknowledge the notice using {{secret:${POPULATED_SECRET_NAME}}}.`
 
 /**
  * How long ONE populated run has to reach `runFinished` on the local run-stream door.
@@ -407,6 +449,26 @@ function plannerReasoning(): string {
   )
 }
 
+/**
+ * The planner's reasoning on the arm that DECLARES THE STEP IMPOSSIBLE (405-14 · WINDOWS #287).
+ *
+ * THE SAME THREE PLANTED VALUES, RE-ORDERED — and the order is the only difference that matters.
+ * `plannerReasoning` opens with the button sentence and reaches the email eleven words in, which on
+ * a failure summary (whose first eight words are the step header) would put the marker outside the
+ * banner's 20-word preview. This sentence leads with the email so the TRUNCATED banner has a chip
+ * to paint, and leaves the masking-seeded credential far enough back that it is visible only in the
+ * expanded state — which is what makes cells (3c) and (3e) two different claims rather than one.
+ *
+ * See {@link POPULATED_FAILURE_STEP_TEXT} for the word-by-word arithmetic this ordering satisfies.
+ */
+function plannerFailureReasoning(): string {
+  return (
+    `Cannot acknowledge: the notice names ${POPULATED_EMAIL} as contact, the operator `
+    + `credential is ${POPULATED_SECRET_VALUE}, and the declared step credential resolves to `
+    + `${POPULATED_DECLARED_SECRET_VALUE}. None of the three may ever be recorded in clear.`
+  )
+}
+
 function chatCompletion(
   model: string,
   message: Record<string, unknown>,
@@ -457,7 +519,35 @@ async function readBody(req: IncomingMessage): Promise<string> {
  * understand is a fact the cell must be able to read, and a fabricated success would be the stub
  * inventing product behaviour.
  */
-export async function startStubModelServer(): Promise<StubModelServer> {
+/**
+ * What the stub is asked to be, on the ONE axis a caller may move (405-14).
+ *
+ * ADDITIVE, WITH THE PASSING BEHAVIOUR AS THE DEFAULT. Every 405-09 and 405-12 caller passes
+ * nothing and gets byte-for-byte the run it had: the same canned responses, the same usage triples,
+ * the same grounding. The knob exists because the run-detail page has a render site — the failure
+ * banner — that only exists on a FAILED run, and a second whole fixture would be a second answer to
+ * "what did the door open" for a difference of one boolean in one tool-call argument.
+ */
+export interface StubModelServerOptions {
+  /**
+   * Which plan field the planner arm sets: finish the step, or declare it impossible.
+   *
+   * `'stepFailed'` sets `stepFailed: true` with `stepComplete: false`, which the runner loop reads
+   * at `loop/index.ts` — it records ONE sub-action carrying `Planner signaled step failure: …` and
+   * fails the step WITHOUT executing the action. Nothing in the runner changes to produce this: it
+   * is the shipped `stepFailed` path, driven from the wire the way a model would drive it.
+   *
+   * DELIBERATELY NOT `failureKind: 'infeasible'`. That fork records a typed termination block and
+   * returns a different verdict sentence; this fixture wants the ORDINARY failure, because the
+   * ordinary failure is the one every failing run in the field produces.
+   */
+  readonly plannerOutcome?: 'stepComplete' | 'stepFailed'
+}
+
+export async function startStubModelServer(
+  options: StubModelServerOptions = {},
+): Promise<StubModelServer> {
+  const plannerOutcome = options.plannerOutcome ?? 'stepComplete'
   const requests: RecordedStubRequest[] = []
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -522,13 +612,15 @@ export async function startStubModelServer(): Promise<StubModelServer> {
         const targeting = ref === undefined
           ? { target: { role: 'button', name: POPULATED_BUTTON_LABEL } }
           : { ref }
+        const failing = plannerOutcome === 'stepFailed'
         const args = {
           ...targeting,
           elementDescription: POPULATED_BUTTON_LABEL,
-          reasoning: plannerReasoning(),
+          reasoning: failing ? plannerFailureReasoning() : plannerReasoning(),
           confidence: 0.95,
-          stepComplete: true,
-          doesActionAdvanceUsTowardsGoal: true,
+          stepComplete: !failing,
+          ...(failing ? { stepFailed: true } : {}),
+          doesActionAdvanceUsTowardsGoal: !failing,
         }
         record('planner', 200, ref === undefined ? 'descriptor' : 'ref')
         respond(chatCompletion(
@@ -635,7 +727,20 @@ export interface PopulatedRunProject {
 export function populatedRunFixtureProject(
   label: string,
   addresses: { readonly modelBaseUrl: string; readonly targetUrl: string },
+  /**
+   * The single step line the test file declares (405-14).
+   *
+   * A THIRD PARAMETER RATHER THAN A SIXTH RECIPE, on this module's own law read the other way: the
+   * recipe's defining values are its two ADDRESSES, and both callers pass the same kind of address.
+   * The step sentence is a payload, not a fixed point, and a caller who needs a shorter one is
+   * asking the same door to open on a different word — not a different door.
+   */
+  options: { readonly stepText?: string } = {},
 ): PopulatedRunProject {
+  const stepText = options.stepText ?? (
+    `Click the ${POPULATED_BUTTON_LABEL} button on the notice page. The operator credential `
+    + `for this environment is {{secret:${POPULATED_SECRET_NAME}}}.`
+  )
   const root = trackTempRoot(mkdtempSync(join(tmpdir(), `agent-qa-405-09-${label}-`)))
   const configPath = join(root, 'agent-qa.config.yaml')
 
@@ -704,8 +809,7 @@ export function populatedRunFixtureProject(
     + `test-id: ${testId}\n`
     + `target: ${POPULATED_TARGET_NAME}\n`
     + 'steps:\n'
-    + `  - Click the ${POPULATED_BUTTON_LABEL} button on the notice page. The operator credential `
-    + `for this environment is {{secret:${POPULATED_SECRET_NAME}}}.\n`,
+    + `  - ${stepText}\n`,
     'utf8',
   )
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { useParams, useNavigate, useSearchParams, useLocation } from "react-router"
 import { routes, arrivedOnVerdictFrom, VERDICT_ROW_CATCH_UP_MAX, VERDICT_ROW_CATCH_UP_MS } from "@/lib/routes"
 import { toast } from "sonner"
-import { FileSearch, AlertCircle, ChevronRight, Copy, Check } from "lucide-react"
+import { FileSearch, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -19,6 +19,7 @@ import { RunNavbar } from "@/components/run-detail/run-navbar"
 import { ArtifactDrawer, type ArtifactDrawerTab } from "@/components/run-detail/artifact-drawer"
 import { HookDetailPanel } from "@/components/run-detail/hook-detail-panel"
 import { StepTree } from "@/components/run-detail/step-tree"
+import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { fetchRun, fetchRunDetail, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
@@ -38,61 +39,9 @@ import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
-import { cn } from "@/lib/utils"
 import { formatTokens } from "@/lib/format"
 import { hasStepId, isSubactionSelection, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
-
-function truncateWords(text: string, maxWords: number): { truncated: string; isTruncated: boolean } {
-  const words = text.split(/\s+/)
-  if (words.length <= maxWords) return { truncated: text, isTruncated: false }
-  return { truncated: words.slice(0, maxWords).join(' ') + '...', isTruncated: true }
-}
-
-function FailureBanner({ summary }: { summary: string }) {
-  const [open, setOpen] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const { truncated, isTruncated } = truncateWords(summary, 20)
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(summary)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  return (
-    <div className="mx-2 mt-2 rounded-[2px] border border-red-500/20 bg-red-500/5 px-3 py-2 shrink-0">
-      <div className="flex items-start gap-2">
-        <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
-        <span className="flex-1 text-sm text-foreground/80 select-text">
-          {open ? summary : truncated}
-        </span>
-        <button
-          onClick={handleCopy}
-          className="shrink-0 mt-0.5 p-0.5 rounded-sm hover:bg-red-500/10 transition-colors"
-          title="Copy failure summary"
-        >
-          {copied
-            ? <Check className="h-3.5 w-3.5 text-emerald-400" />
-            : <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-          }
-        </button>
-        {isTruncated && (
-          <button
-            onClick={() => setOpen(o => !o)}
-            className="shrink-0 mt-0.5 p-0.5 rounded-sm hover:bg-red-500/10 transition-colors"
-          >
-            <ChevronRight className={cn(
-              "h-3.5 w-3.5 text-muted-foreground transition-transform",
-              open && "rotate-90"
-            )} />
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
 
 /**
  * Which step a link is pointing at (405-08 · D-16).
