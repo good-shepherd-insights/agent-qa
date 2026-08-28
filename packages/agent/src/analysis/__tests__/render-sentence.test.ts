@@ -368,3 +368,72 @@ describe('byte determinism (D-05)', () => {
     expect(first).toBe(second)
   })
 })
+
+// The D-12 quote leg: quoted producer text is cleaned in the ONE renderer (406, DETL-04).
+//
+// The 399 seeded-red sentence is the canonical "before". Pinning it HERE — through
+// `renderVerdictSentence`, not through the sanitizer alone — is what makes the single code
+// path structural: the CLI print, 392's chat and the run page all compose their sentence with
+// this function, so a surface cannot read a differently-cleaned quote without a second
+// renderer, which is the drift D-12 exists to forbid. ESC is spelled as an escape, never as a
+// literal byte, so the cell about invisible characters is itself readable.
+
+const ESC = '\u001b'
+
+/** Copied from `demo/acceptance/399/399-analysis-seeded-red.json` — Playwright's raw error. */
+const SEEDED_RED_399_QUOTE =
+  'locator.click: Timeout 30000ms exceeded.\n'
+  + 'Call log:\n'
+  + `${ESC}[2m  - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()`
+  + `${ESC}[22m\n`
+
+const SEEDED_RED_399_PARTS: VerdictSentenceParts = {
+  perTest: 0,
+  groundingQuote: { stepIndex: 1, quote: SEEDED_RED_399_QUOTE },
+  discriminator: 'root cause undetermined',
+  nextAction: 'inspect the run manually — no deterministic signal matched',
+  links: [],
+}
+
+describe('D-12 quote sanitization — the 399 before/after through the ONE renderer', () => {
+  it('renders the seeded-red sentence as readable prose, pinned verbatim', () => {
+    const sentence = renderVerdictSentence(
+      verdictOf({ class: 'unknown', producer: 'deterministic-classifier', confidence: 0 }),
+      SEEDED_RED_399_PARTS,
+      undefined,
+      QUERY,
+    )
+
+    expect(sentence).toBe(
+      'unknown: observed (step 1): "locator.click: Timeout 30000ms exceeded. Call log: '
+        + "- waiting for getByRole('button', { name: 'Close ad', exact: true }).first()\""
+        + ' — root cause undetermined'
+        + ' — no failure history is recorded for this test'
+        + ' — next: inspect the run manually — no deterministic signal matched',
+    )
+    expect(sentence).not.toContain(ESC)
+    expect(sentence).not.toContain('\n')
+  })
+
+  it('cleans the test-outcome arm through the same leg — one rule, both arms', () => {
+    const sentence = renderVerdictSentence(
+      verdictOf({ class: 'unknown', producer: 'deterministic-classifier', confidence: 0 }),
+      {
+        ...HONEST_UNKNOWN_PARTS,
+        groundingQuote: { source: 'test-outcome', quote: `${ESC}[31mtimed\nout${ESC}[39m` },
+      },
+      undefined,
+      QUERY,
+    )
+
+    expect(sentence).toContain('observed (test outcome): "timed out"')
+    expect(sentence).not.toContain(ESC)
+  })
+
+  it('leaves an already-clean quote byte-identical — every prior pin stays green', () => {
+    const { provider } = providerAnswering(() => ({ kth: 3, windowBuilds: 5 }))
+    const sentence = renderVerdictSentence(verdictOf(), LLM_PARTS, provider, QUERY)
+
+    expect(sentence).toContain('observed (step 2): "Error: element "Submit" not found"')
+  })
+})
