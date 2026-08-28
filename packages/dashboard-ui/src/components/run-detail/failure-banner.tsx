@@ -22,10 +22,21 @@
 // marker spelling made it harmless.
 //
 // THE CLIPBOARD IS A SECOND MEDIUM A PERSON READS, SO IT GETS THE SAME RULE (T-405-43). What
-// `copyTextOf` writes is the sentence the reader just looked at — each marker replaced by the
-// PUBLISHED label its chip shows — not the marker-bearing string the seam produced. A copy button
+// `copyTextOf` writes is the sentence the reader just looked at — the PREVIEW while the banner is
+// collapsed, the whole summary once it has been expanded — with each marker replaced by the
+// PUBLISHED label its chip shows, never the marker-bearing string the seam produced.
+//
+// BOTH HALVES OF THAT RULE ARE LOAD-BEARING, AND THE SECOND ONE WAS MEASURED MISSING. A copy button
 // that pasted `␟masked:…␟` into a bug report would move the leak off the page rather than close
-// it, and the pasted text is read by exactly the people a redaction is kept from.
+// it, and the pasted text is read by exactly the people a redaction is kept from. A copy button
+// that pasted the FULL summary out of a COLLAPSED banner does the same thing with a RESTORED
+// credential: the display seam restores `<SECRET_n>` for the human reading the page, and on the
+// failing-run fixture the restored value sits at word 23 — three words past the preview budget — so
+// one click on a banner that never showed it put it on the clipboard. Measured on real Chromium
+// against the shipped bundle before this was fixed: 21 words / 170 chars on the page, 47 words /
+// 351 chars on the clipboard, the fixture's credential at word 24 of a string the reader never saw,
+// and byte-identical output from the expanded state because the argument ignored the banner's state
+// entirely. THE CLIPBOARD CARRIES WHAT WAS RENDERED AND NOTHING ELSE.
 //
 // TEXT NODES AND ELEMENTS, NEVER MARKUP (T-405-42): there is no `dangerouslySetInnerHTML` here or in
 // `MaskedText` below it, and a jsdom cell feeds this component markup and asserts no element.
@@ -50,17 +61,19 @@ import { cn } from "@/lib/utils"
 export const FAILURE_BANNER_PREVIEW_WORDS = 20
 
 /**
- * The summary as a clipboard string: every marker replaced by the sentence its chip shows.
+ * One RENDERED run of summary text as a clipboard string: every marker replaced by the sentence its
+ * chip shows.
  *
- * THE FULL SUMMARY, NEVER THE PREVIEW. The preview is a reading aid; what a person copies into a
- * bug report is the whole sentence the producer wrote, which is why this maps `summary` rather than
- * the truncated text.
+ * WHAT WAS RENDERED, NEVER MORE THAN IT. This takes the string the caller handed `MaskedText`
+ * rather than reading the summary itself, because the collapsed banner shows a PREVIEW: a clipboard
+ * built from the whole summary hands a reader restored cleartext the page never showed them, which
+ * is the half of the medium the marker->label substitution alone does not close.
  *
  * JOINED WITH NO SEPARATOR, because the segments already carry the producer's own spacing — a join
  * on anything else would insert whitespace the sentence never had around every redaction.
  */
-function copyTextOf(summary: string): string {
-  return splitMaskedText(summary)
+function copyTextOf(rendered: string): string {
+  return splitMaskedText(rendered)
     .map((segment) => (
       segment.kind === "text" ? segment.text : `[${maskedLabel(segment.category)}]`
     ))
@@ -81,8 +94,13 @@ export function FailureBanner({ summary }: { summary: string }) {
   // chevron or by the sentence being short enough not to need one.
   const showingFull = open || !preview.isTruncated
 
+  // THE SAME EXPRESSION AS THE RENDER, SPELLED OUT RATHER THAN HOISTED. `copyTextOf` is handed the
+  // exact string `MaskedText` below is handed, so the clipboard cannot carry a word the page did
+  // not. It is written out at both sites on purpose: `scripts/405-failure-banner-mutation.sh` M4
+  // matches the render call literally and M7 matches this one, and a hoisted `const rendered` would
+  // leave M4's pattern matching nothing — a leg that reds nothing is a FATAL by that script's law.
   const handleCopy = () => {
-    navigator.clipboard.writeText(copyTextOf(summary))
+    navigator.clipboard.writeText(copyTextOf(open ? summary : preview.text))
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -102,6 +120,7 @@ export function FailureBanner({ summary }: { summary: string }) {
           <MaskedText text={open ? summary : preview.text} />
         </span>
         <button
+          data-failure-banner-copy
           onClick={handleCopy}
           className="shrink-0 mt-0.5 p-0.5 rounded-sm hover:bg-red-500/10 transition-colors"
           title="Copy failure summary"

@@ -13,9 +13,13 @@
 // expanded state is asserted separately, exactly as the DOM cells do it.
 //
 // THE CLIPBOARD IS A SECOND MEDIUM A PERSON READS. What leaves this page on the clipboard is the
-// sentence the reader just looked at, with each marker replaced by the PUBLISHED label its chip
-// shows. Copy is asserted BY CONSTANT (405-06's law); a string re-typed here would stay green while
-// the chip said something else.
+// sentence the reader just looked at — the PREVIEW while the banner is collapsed and the whole
+// summary once it is expanded — with each marker replaced by the PUBLISHED label its chip shows.
+// Copy is asserted BY CONSTANT (405-06's law); a string re-typed here would stay green while the
+// chip said something else. Both copy cells assert a CONTAINMENT and an ABSENCE, because the defect
+// this rule was written against was an absence that no containment could have seen: the collapsed
+// banner copied the full summary, so a word past the budget — a restored credential, on the
+// conformance fixture — left the page from a banner that never showed it.
 
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -80,11 +84,38 @@ function textOf(view: HTMLDivElement): string {
   return view.querySelector("[data-failure-banner-text]")?.textContent ?? ""
 }
 
+function copyOf(view: HTMLDivElement): HTMLButtonElement | null {
+  return view.querySelector<HTMLButtonElement>("[data-failure-banner-copy]")
+}
+
+/**
+ * A clipboard the copy cells can read back.
+ *
+ * `navigator` IS SHARED ACROSS EVERY CELL IN THIS FILE, so the stub is torn down in `afterEach`
+ * below rather than left standing. jsdom implements no `navigator.clipboard`, and a cell that
+ * asserts the ABSENCE of the API — the one directly below — would silently see a previous cell's
+ * leftover stub and pass while measuring nothing.
+ */
+function stubClipboard(): ReturnType<typeof vi.fn<(text: string) => Promise<void>>> {
+  const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
+  return writeText
+}
+
+/** Whatever `navigator.clipboard` was before any cell in this file touched it (jsdom: nothing). */
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard")
+
+function restoreClipboard(): void {
+  if (originalClipboard === undefined) delete (navigator as { clipboard?: unknown }).clipboard
+  else Object.defineProperty(navigator, "clipboard", originalClipboard)
+}
+
 afterEach(() => {
   if (root) act(() => root!.unmount())
   root = null
   container?.remove()
   container = null
+  restoreClipboard()
 })
 
 describe("FailureBanner", () => {
@@ -138,27 +169,47 @@ describe("FailureBanner", () => {
     expect(view.textContent).not.toContain(MASKED_MARKER_DELIMITER)
   })
 
-  it("writes the FULL summary to the clipboard with every marker replaced by its published label", () => {
-    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText },
-      configurable: true,
-    })
+  it("writes only the PREVIEW to the clipboard while the banner is collapsed", () => {
+    const writeText = stubClipboard()
 
     const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
-    const copy = view.querySelector<HTMLButtonElement>('button[title="Copy failure summary"]')
-    expect(copy).not.toBeNull()
-    act(() => { copy!.click() })
+    act(() => { copyOf(view)!.click() })
 
     expect(writeText).toHaveBeenCalledTimes(1)
     const written = writeText.mock.calls[0]![0]
 
-    // THE WHOLE SUMMARY, not the preview: a copy button that pasted the truncated text would give a
+    // WHAT WAS RENDERED, AND NOT ONE WORD MORE. The banner is showing twenty words; word 26 is the
+    // secret marker and word 30 is the last word of the summary, and neither is on the page. A
+    // clipboard that carries them is carrying text this reader was never shown — and on the
+    // conformance fixture the word past the budget is a RESTORED CREDENTIAL, which is the whole
+    // reason this cell asserts an absence rather than only the label substitution.
+    expect(written).toBe(textOf(view).replace(MASKED_EMAIL_LABEL, `[${MASKED_EMAIL_LABEL}]`))
+    expect(written).not.toContain("w30")
+    expect(written).not.toContain(MASKED_SECRET_LABEL)
+    expect(written).toContain("w1 ")
+    expect(written).toContain(`[${MASKED_EMAIL_LABEL}]`)
+    expect(written.endsWith("...")).toBe(true)
+    // And nothing a person could not read on the page: no marker, no placeholder.
+    expect(written).not.toContain(MASKED_MARKER_DELIMITER)
+    expect(new RegExp(PLACEHOLDER_PATTERN.source, "u").test(written)).toBe(false)
+  })
+
+  it("writes the whole summary once the banner has been expanded", () => {
+    const writeText = stubClipboard()
+
+    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    act(() => { toggleOf(view)!.click() })
+    act(() => { copyOf(view)!.click() })
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const written = writeText.mock.calls[0]![0]
+
+    // EXPANDED, THE PAGE CARRIES THE WHOLE SENTENCE, SO THE CLIPBOARD DOES TOO. The rule is not
+    // "copy less"; it is "copy what was rendered" — a copy button stuck on the preview would give a
     // reader a bug report missing the half of the sentence they opened the banner to read.
     expect(written).toContain("w30")
     expect(written).toContain(`[${MASKED_EMAIL_LABEL}]`)
     expect(written).toContain(`[${MASKED_SECRET_LABEL}]`)
-    // And nothing a person could not read on the page: no marker, no placeholder.
     expect(written).not.toContain(MASKED_MARKER_DELIMITER)
     expect(new RegExp(PLACEHOLDER_PATTERN.source, "u").test(written)).toBe(false)
   })
