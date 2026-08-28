@@ -1,18 +1,33 @@
-// THE FAILURE VIEW'S PURE PROJECTION (406-01 · DETL-04, D-05 / D-10).
+// THE FAILURE VIEW'S PURE PROJECTION (406-01 · DETL-04, D-05 / D-10; 406-06 · D-08..D-11 / D-19).
 //
 // The page composes no sentence. Everything a member's block shows is a byte-identical copy of an
 // `analysis.get` `sentences[].sentence`, joined to the member by `perTest`, with a provenance label
 // this product owns. These cells pin exactly that: the join key, the totality of the map over an
 // absent or empty analysis, and the two provenance readings.
+//
+// AND THE LIFECYCLE IS KEYED OFF THE CHIP WORD, NEVER OFF THE TEXT (406-06 · D-09/D-11). The
+// marker cells below include a PAIR — one sentence carrying the deterministic floor's own
+// "root cause undetermined" wording, one carrying none — and require the SAME marker for both. A
+// projection that sniffed the sentence for fallback words would pass every other cell in this file
+// and fail that pair, which is the whole reason it is written as a pair.
 
 import { describe, expect, it } from 'vitest'
-import type { AnalysisGetOutput } from '@vostride/agent-qa-schema'
+import type {
+  AnalysisClusterView,
+  AnalysisGetOutput,
+  AnalysisResolvedVerdict,
+} from '@vostride/agent-qa-schema'
 
 import {
+  ANALYSIS_FAILED_FALLBACK_TEXT,
+  ANALYSIS_PROVISIONAL_TEXT,
   DETERMINISTIC_FALLBACK_LABEL,
   LLM_VERDICT_LABEL,
+  markerFor,
+  missingEvidenceLine,
   projectAnalysisView,
   provenanceLabel,
+  siblingLine,
 } from '@/lib/analysis-view'
 
 function analysis(over: Partial<AnalysisGetOutput> = {}): AnalysisGetOutput {
@@ -25,13 +40,34 @@ function analysis(over: Partial<AnalysisGetOutput> = {}): AnalysisGetOutput {
   }
 }
 
+function verdict(perTest: number, over: Partial<AnalysisResolvedVerdict> = {}): AnalysisResolvedVerdict {
+  return {
+    perTest,
+    testId: `t_${String(perTest)}`,
+    class: 'unknown',
+    producer: 'deterministic-classifier',
+    confidence: 0,
+    ...over,
+  }
+}
+
+function cluster(members: number[], over: Partial<AnalysisClusterView> = {}): AnalysisClusterView {
+  return {
+    fingerprint: 'timeout:submit',
+    count: members.length,
+    members: members.map((testIndex) => ({ testIndex, testId: `t_${String(testIndex)}` })),
+    representative: { testIndex: members[0] ?? 0, sentence: 'the representative sentence' },
+    ...over,
+  }
+}
+
 describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () => {
   it('joins by perTest and NEVER by array position — verdicts listed out of order', () => {
     const view = projectAnalysisView(
       analysis({
         verdicts: [
-          { perTest: 3, testId: 't_three', class: 'app_bug', producer: 'analyze-run', confidence: 0.86 },
-          { perTest: 1, testId: 't_one', class: 'unknown', producer: 'deterministic-classifier', confidence: 0 },
+          verdict(3, { testId: 't_three', class: 'app_bug', producer: 'analyze-run', confidence: 0.86 }),
+          verdict(1, { testId: 't_one' }),
         ],
         sentences: [
           { perTest: 1, testId: 't_one', sentence: 'the sentence for member ONE' },
@@ -52,25 +88,33 @@ describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () =
 
   it('projects an undefined analysis and an empty verdicts list to an EMPTY map (the green run)', () => {
     expect(projectAnalysisView(undefined, undefined).size).toBe(0)
+    expect(projectAnalysisView(undefined, 'running').size).toBe(0)
     expect(projectAnalysisView(undefined, 'done').size).toBe(0)
     // A green run: the op answered, and it answered that nothing needs explaining.
     expect(projectAnalysisView(analysis(), 'done').size).toBe(0)
   })
 
-  it('omits a verdict with no sentence rather than inventing one', () => {
+  it('keys a verdict whose sentence never arrived, and drops a sentence with no verdict', () => {
+    // 406-06 SUPERSEDES 406-01 HERE, and the plan says so in as many words. The verdict is what
+    // carries `producer`, `confidence` and — through the chip — the marker; withholding the whole
+    // entry because the renderer had not answered yet would withhold the provenance chip and the
+    // "analysis running" marker too, which are exactly what a reader needs while it has not.
+    // A SENTENCE with no verdict stays dropped: there is no producer to attribute it to.
     const view = projectAnalysisView(
       analysis({
-        verdicts: [
-          { perTest: 0, testId: 't_zero', class: 'unknown', producer: 'deterministic-classifier', confidence: 0 },
-        ],
-        sentences: [],
+        verdicts: [verdict(0)],
+        sentences: [{ perTest: 4, testId: 't_4', sentence: 'a sentence about nobody' }],
       }),
-      'done',
+      'running',
     )
-    expect(view.size, 'no sentence is no block — never an empty one').toBe(0)
+
+    expect([...view.keys()]).toEqual([0])
+    expect(view.get(0)?.sentence, 'empty, never invented').toBe('')
+    expect(view.get(0)?.provenance).toBe(DETERMINISTIC_FALLBACK_LABEL)
+    expect(view.get(4), 'a sentence nobody graded is not a block').toBeUndefined()
   })
 
-  it('reads provenance from the verdict\'s own producer and confidence (D-10)', () => {
+  it("reads provenance from the verdict's own producer and confidence (D-10)", () => {
     expect(provenanceLabel('analyze-run', 0.86)).toBe(`${LLM_VERDICT_LABEL} · 0.86`)
     expect(provenanceLabel('analyze-run', 1)).toBe(`${LLM_VERDICT_LABEL} · 1.00`)
     // The classifier's confidence is 0 by construction on the floor, and printing "· 0.00" beside
@@ -79,13 +123,206 @@ describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () =
 
     const view = projectAnalysisView(
       analysis({
-        verdicts: [
-          { perTest: 0, testId: 't0', class: 'unknown', producer: 'deterministic-classifier', confidence: 0 },
-        ],
-        sentences: [{ perTest: 0, testId: 't0', sentence: 'observed (step 0): "boom"' }],
+        verdicts: [verdict(0)],
+        sentences: [{ perTest: 0, testId: 't_0', sentence: 'observed (step 0): "boom"' }],
       }),
       'running',
     )
     expect(view.get(0)?.provenance).toBe(DETERMINISTIC_FALLBACK_LABEL)
+  })
+})
+
+describe('the marker is the chip word and nothing else (D-09/D-11)', () => {
+  it('maps every chip word — pending and running provisional, failed failed, done nothing', () => {
+    expect(markerFor('pending')).toBe('provisional')
+    expect(markerFor('running')).toBe('provisional')
+    expect(markerFor('failed')).toBe('failed')
+    expect(markerFor('done'), 'a terminal chain has nothing left to warn about').toBeUndefined()
+    expect(markerFor(undefined), 'no read has landed — that is not a marker').toBeUndefined()
+  })
+
+  it('carries the marker and its exported sentence onto the member view', () => {
+    const bytes = analysis({
+      verdicts: [verdict(0)],
+      sentences: [{ perTest: 0, testId: 't_0', sentence: 'observed (step 0): "boom"' }],
+    })
+
+    expect(projectAnalysisView(bytes, 'running').get(0)?.marker).toBe('provisional')
+    expect(projectAnalysisView(bytes, 'running').get(0)?.markerText).toBe(ANALYSIS_PROVISIONAL_TEXT)
+    expect(projectAnalysisView(bytes, 'pending').get(0)?.markerText).toBe(ANALYSIS_PROVISIONAL_TEXT)
+    expect(projectAnalysisView(bytes, 'failed').get(0)?.marker).toBe('failed')
+    expect(projectAnalysisView(bytes, 'failed').get(0)?.markerText).toBe(ANALYSIS_FAILED_FALLBACK_TEXT)
+    expect(projectAnalysisView(bytes, 'done').get(0)?.marker).toBeUndefined()
+    expect(projectAnalysisView(bytes, 'done').get(0)?.markerText).toBeUndefined()
+  })
+
+  it('gives the SAME marker to a sentence with the fallback words and one without them', () => {
+    // THE PAIR. The floor renderer ends its sentence with "root cause undetermined", and an
+    // implementation that read the marker off that phrase would look right until an LLM verdict
+    // happened to contain it — or until the floor's copy changed. The chip word is the input.
+    const withWords = analysis({
+      verdicts: [verdict(0)],
+      sentences: [
+        { perTest: 0, testId: 't_0', sentence: 'observed (step 0): "boom" — root cause undetermined' },
+      ],
+    })
+    const withoutWords = analysis({
+      verdicts: [verdict(0)],
+      sentences: [{ perTest: 0, testId: 't_0', sentence: 'the submit button never became enabled' }],
+    })
+
+    for (const chip of ['pending', 'running', 'done', 'failed'] as const) {
+      expect(
+        projectAnalysisView(withWords, chip).get(0)?.marker,
+        `the ${chip} marker must not read the sentence`,
+      ).toBe(projectAnalysisView(withoutWords, chip).get(0)?.marker)
+    }
+
+    // And a floor sentence under a `done` chain carries no marker at all: the analysis finished
+    // and the deterministic verdict is the answer, not a provisional one.
+    expect(projectAnalysisView(withWords, 'done').get(0)?.marker).toBeUndefined()
+  })
+})
+
+describe('clusters render as a per-member sibling line (D-08)', () => {
+  it('excludes self, keeps the producer order, and reads the plural line', () => {
+    const view = projectAnalysisView(
+      analysis({
+        verdicts: [verdict(0), verdict(4), verdict(7)],
+        sentences: [
+          { perTest: 0, testId: 't_0', sentence: 's0' },
+          { perTest: 4, testId: 't_4', sentence: 's4' },
+          { perTest: 7, testId: 't_7', sentence: 's7' },
+        ],
+        clusters: [cluster([0, 4, 7])],
+      }),
+      'done',
+    )
+
+    expect(view.get(4)?.siblings).toEqual([
+      { testIndex: 0, testId: 't_0' },
+      { testIndex: 7, testId: 't_7' },
+    ])
+    expect(view.get(4)?.siblingText).toBe(siblingLine(2))
+    expect(view.get(0)?.siblings.map((s) => s.testIndex), 'producer order, self removed').toEqual([4, 7])
+  })
+
+  it('says "1 other test" in the singular and "N other tests" in the plural', () => {
+    expect(siblingLine(1)).toBe('same failure as 1 other test')
+    expect(siblingLine(2)).toBe('same failure as 2 other tests')
+    expect(siblingLine(39)).toBe('same failure as 39 other tests')
+  })
+
+  it('renders NO line for a cluster of one — a lone failure is not a group', () => {
+    const view = projectAnalysisView(
+      analysis({
+        verdicts: [verdict(0)],
+        sentences: [{ perTest: 0, testId: 't_0', sentence: 's0' }],
+        clusters: [cluster([0])],
+      }),
+      'done',
+    )
+
+    expect(view.get(0)?.siblings).toEqual([])
+    expect(view.get(0)?.siblingText, 'no siblings is no sentence').toBeUndefined()
+  })
+
+  it('leaves a member no cluster mentions with no siblings at all', () => {
+    const view = projectAnalysisView(
+      analysis({
+        verdicts: [verdict(0), verdict(9)],
+        sentences: [
+          { perTest: 0, testId: 't_0', sentence: 's0' },
+          { perTest: 9, testId: 't_9', sentence: 's9' },
+        ],
+        clusters: [cluster([0, 4])],
+      }),
+      'done',
+    )
+
+    expect(view.get(9)?.siblings).toEqual([])
+    expect(view.get(9)?.siblingText).toBeUndefined()
+  })
+})
+
+describe('cited evidence rides the verdict, and absence is counted (D-01/D-19)', () => {
+  it('forwards citedSteps verbatim and answers an empty list when the op sent no evidence', () => {
+    const view = projectAnalysisView(
+      analysis({
+        verdicts: [
+          verdict(0, { evidence: { citedSteps: [2, 3], citedArtifacts: [] } }),
+          verdict(1),
+        ],
+        sentences: [
+          { perTest: 0, testId: 't_0', sentence: 's0' },
+          { perTest: 1, testId: 't_1', sentence: 's1' },
+        ],
+      }),
+      'done',
+    )
+
+    expect(view.get(0)?.citedSteps).toEqual([2, 3])
+    expect(view.get(1)?.citedSteps, 'a reader compiled before 406 sent nothing').toEqual([])
+    expect(view.get(1)?.citedArtifacts).toEqual([])
+    expect(view.get(1)?.missingEvidence).toBeUndefined()
+  })
+
+  it('marks a ref incomplete from EITHER absence fact, and never from presence-unknown', () => {
+    // `present` ABSENT IS NOT `present: false` (406-03). A host that cannot stat its blobs omits
+    // the key, and rendering that as a claimed absence would invent a deletion nobody measured.
+    const view = projectAnalysisView(
+      analysis({
+        verdicts: [
+          verdict(0, {
+            evidence: {
+              citedSteps: [],
+              citedArtifacts: [
+                { id: 'a-present', sha: 'sha-present', present: true },
+                { id: 'a-unknown', sha: 'sha-unknown' },
+                { id: 'a-gone', sha: 'sha-gone', present: false },
+                { id: 'a-never-attached', sha: 'sha-never', evidenceIncomplete: true },
+              ],
+            },
+          }),
+        ],
+        sentences: [{ perTest: 0, testId: 't_0', sentence: 's0' }],
+      }),
+      'done',
+    )
+
+    expect(view.get(0)?.citedArtifacts).toEqual([
+      { id: 'a-present', sha: 'sha-present', incomplete: false },
+      { id: 'a-unknown', sha: 'sha-unknown', incomplete: false },
+      { id: 'a-gone', sha: 'sha-gone', incomplete: true },
+      { id: 'a-never-attached', sha: 'sha-never', incomplete: true },
+    ])
+    expect(view.get(0)?.missingEvidence).toEqual({ missing: 2, total: 4 })
+    expect(view.get(0)?.missingEvidenceText).toBe(missingEvidenceLine({ missing: 2, total: 4 }))
+  })
+
+  it('counts nothing when every cited artifact is there', () => {
+    const view = projectAnalysisView(
+      analysis({
+        verdicts: [
+          verdict(0, {
+            evidence: {
+              citedSteps: [0],
+              citedArtifacts: [{ id: 'a', sha: 'sha-a', present: true }],
+            },
+          }),
+        ],
+        sentences: [{ perTest: 0, testId: 't_0', sentence: 's0' }],
+      }),
+      'done',
+    )
+
+    expect(view.get(0)?.missingEvidence, 'nothing missing is no count line').toBeUndefined()
+    expect(view.get(0)?.missingEvidenceText).toBeUndefined()
+  })
+
+  it('says "cited artifact" in the singular and "cited artifacts" in the plural (D-19)', () => {
+    expect(missingEvidenceLine({ missing: 1, total: 1 })).toBe('1 of 1 cited artifact unavailable')
+    expect(missingEvidenceLine({ missing: 1, total: 2 })).toBe('1 of 2 cited artifacts unavailable')
+    expect(missingEvidenceLine({ missing: 3, total: 3 })).toBe('3 of 3 cited artifacts unavailable')
   })
 })
