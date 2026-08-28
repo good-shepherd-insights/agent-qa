@@ -41,7 +41,7 @@ import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
 import { formatTokens } from "@/lib/format"
-import { hasStepId, isSubactionSelection, type Selection } from "@/lib/selection"
+import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
 
 /**
@@ -667,6 +667,54 @@ export default function RunDetailPage() {
     setSearchParams(next, { replace: false })
   }, [searchParams, setSearchParams])
 
+  /**
+   * Jump to a step the verdict cited (406-06 · D-02, first half).
+   *
+   * IT MINTS NO ID AND NO SCROLLER. The step key is `runDetailStepKey`'s — the one spelling the
+   * tree renders as `data-step-id`, the panels resolve by, and the `?step=` deep link round-trips
+   * through — so this is a `setSelection` and nothing more; the page's existing scroll-into-view
+   * effect finds the row inside `stepTreeScrollRef`. A second flattening or a second id spelling
+   * here would be the exact drift `displayStepsForGroups` exists to prevent.
+   *
+   * A CITED INDEX WITH NO STEP IS A NO-OP (T-406-18). The ordinals come off the producer's own
+   * evidence, and a verdict citing a step this run never recorded must not select a row that is not
+   * there, nor throw. The existence check is against ALL groups rather than the visible ones, which
+   * is what distinguishes "the filter is hiding it" from "it does not exist".
+   *
+   * AND WHEN THE FILTER IS HIDING IT, THE FILTER WIDENS FIRST. Selecting a step outside the visible
+   * tree would be undone one effect later by the guard below, which pulls the selection back to the
+   * first visible row — so the reader would click a cited step and land somewhere else entirely.
+   */
+  const onCitedStep = useCallback((testIndex: number, stepIndex: number) => {
+    const stepId = runDetailStepKey(testIndex, stepIndex)
+    const exists = groups.some(
+      (entry) =>
+        entry.member.testIndex === testIndex
+        && entry.steps.some(({ step }) => step.stepIndex === stepIndex),
+    )
+    if (!exists) return
+
+    if (!displaySteps.some((step) => step.id === stepId)) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('member')
+      setSearchParams(next, { replace: false })
+    }
+    setSelection({ type: 'step', stepId })
+  }, [groups, displaySteps, searchParams, setSearchParams])
+
+  /**
+   * Narrow the tree to a cluster sibling's own group (406-06 · D-08).
+   *
+   * THE FILTER'S OWN SPELLING, NOT A SECOND ONE. `?member=<testIndex>` is what the picker writes
+   * and what `parseMemberFilter` reads, so a sibling link and the picker are the same control
+   * reached two ways — and the link is shareable for free.
+   */
+  const onSelectMember = useCallback((testIndex: number) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('member', String(testIndex))
+    setSearchParams(next, { replace: false })
+  }, [searchParams, setSearchParams])
+
   // Keep the selection inside the visible tree. A member filter (or a deep link into a member that
   // is filtered out) can leave `selection` pointing at a step nobody can see, and a highlighted row
   // with no row is a panel showing details for something off-screen.
@@ -802,6 +850,8 @@ export default function RunDetailPage() {
                   groups={visibleGroups}
                   showMemberChrome={hasMemberChrome}
                   analysisView={analysisView}
+                  onCitedStep={onCitedStep}
+                  onSelectMember={onSelectMember}
                   selection={selection}
                   onSelect={setSelection}
                   setupHooks={setupHooks}

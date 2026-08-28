@@ -11,6 +11,17 @@
 //   3. a member with no verdict — a passed one — carries no block at all;
 //   4. a sentence containing markup renders as a TEXT NODE, never an element (T-406-02).
 //
+// AND FIVE MORE, ADDED IN 406-06, all about what the chip word and the op's evidence DO to the page:
+//
+//   5. the marker follows the chip through its whole lifecycle — provisional while the chain is
+//      running, gone when it is done, and the sentence is swapped IN PLACE (D-09);
+//   6. a permanently failed chain marks every failed member's block while the verdict itself is not
+//      re-graded — the producer stays the deterministic classifier (D-11);
+//   7. a cited step selects that step in the tree, through the page's existing `Selection` and the
+//      existing scroll effect — no new id spelling and no second scroller (D-02);
+//   8. a cluster sibling link narrows the member filter to that sibling's own group (D-08);
+//   9. EVERY member wears an outcome badge and only the failed one carries a block (D-07/D-05).
+//
 // THE MOCK BLOCK IS `run-detail.members.test.tsx`'S, with one addition: `watchPostProcessing`
 // CAPTURES its `onRead` so a cell can push frames. The real watcher constructs an `EventSource`
 // and a 3 s interval against a `fetch` these cells do not stub; its own behaviour is measured in
@@ -28,7 +39,13 @@ import type {
 } from "@vostride/agent-qa-schema"
 
 import RunDetailPage from "@/pages/run-detail"
-import { DETERMINISTIC_FALLBACK_LABEL, provenanceLabel } from "@/lib/analysis-view"
+import {
+  ANALYSIS_FAILED_FALLBACK_TEXT,
+  ANALYSIS_PROVISIONAL_TEXT,
+  DETERMINISTIC_FALLBACK_LABEL,
+  provenanceLabel,
+  siblingLine,
+} from "@/lib/analysis-view"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -175,6 +192,23 @@ const CHIP_RUNNING = { kind: "read", status: { runId: RUN_ID, chips: { analysis:
 const CHIP_DONE = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'done', curation: 'pending' } } }
 /** The SAME analysis word, a different curation word — a frame that must trigger nothing. */
 const CHIP_DONE_AGAIN = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'done', curation: 'done' } } }
+/** The chain fell over for good: the floor sentences are what exists (spec §1.2, D-11). */
+const CHIP_FAILED = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'failed', curation: 'pending' } } }
+
+/** Member 0 failed with TWO steps — a cited step that is not the page's default selection. */
+const TWO_STEP_MEMBER: RunDetailProjection = {
+  ...TWO_MEMBERS,
+  steps: [step(0, 0, "Open checkout"), step(0, 1, "Click Submit"), step(1, 0, "Open login")],
+}
+
+/** Both members failed, and the producer grouped them — the shape a sibling line needs. */
+const CLUSTERED_MEMBERS: RunDetailProjection = {
+  ...TWO_MEMBERS,
+  members: [
+    member(0, { name: "Checkout", outcome: "failed" }),
+    member(1, { name: "Login", outcome: "failed" }),
+  ],
+}
 
 function runRow(id: string) {
   return {
@@ -362,5 +396,145 @@ describe("a failed member's group carries the op's sentence and its provenance (
 
     expect(view.querySelector("[data-verdict-sentence]")?.textContent, "the last real answer stands")
       .toBe(FLOOR_SENTENCE)
+  })
+})
+
+describe("the sentence's lifecycle is painted from the chip word (D-09/D-11)", () => {
+  it("marks the floor provisional while the chain runs, then swaps the sentence IN PLACE", async () => {
+    const view = await renderPage()
+
+    await push(CHIP_RUNNING)
+    const marker = view.querySelector("[data-verdict-marker]")
+    expect(marker?.getAttribute("data-verdict-marker")).toBe("provisional")
+    expect(marker?.textContent).toBe(ANALYSIS_PROVISIONAL_TEXT)
+    expect(view.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-producer"))
+      .toBe("deterministic-classifier")
+
+    // The chain finishes and the op now answers an LLM verdict. D-03's re-read is the swap: the
+    // same block, a new sentence, and no marker — nothing here waits for a reload.
+    const upgraded = 'the Submit button never became enabled — the cart total never rendered'
+    fetchRunAnalysisMock.mockResolvedValue(analysisOf({
+      verdicts: [
+        { perTest: 0, testId: "t_checkout", class: "app_bug", producer: "analyze-run", confidence: 0.86 },
+      ],
+      sentences: [{ perTest: 0, testId: "t_checkout", sentence: upgraded }],
+    }))
+    await push(CHIP_DONE)
+
+    expect(view.querySelector("[data-verdict-marker]"), "a done chain warns about nothing").toBeNull()
+    expect(view.querySelector("[data-verdict-sentence]")?.textContent).toBe(upgraded)
+    expect(view.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-producer"))
+      .toBe("analyze-run")
+  })
+
+  it("marks a permanently failed chain in the TREE, and does not re-grade the verdict (D-11)", async () => {
+    // THE CHIP IS IN THE HEADER AND THE MARKER IS IN THE TREE, which is the whole decision: a
+    // reader scrolled into a 40-member suite must not have to look up to learn that the sentence
+    // beside them is the deterministic floor and is never going to improve.
+    const view = await renderPage()
+    await push(CHIP_FAILED)
+
+    const marker = view.querySelector("[data-verdict-marker]")
+    expect(marker?.getAttribute("data-verdict-marker")).toBe("failed")
+    expect(marker?.textContent).toBe(ANALYSIS_FAILED_FALLBACK_TEXT)
+    expect(
+      view.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-producer"),
+      "the floor verdict stands as it was authored",
+    ).toBe("deterministic-classifier")
+    expect(view.querySelector("[data-verdict-provenance]")?.textContent)
+      .toBe(DETERMINISTIC_FALLBACK_LABEL)
+  })
+})
+
+describe("the block's links do something (D-02, D-08)", () => {
+  it("selects the cited step in the tree, by the tree's own key", async () => {
+    fetchRunDetailMock.mockResolvedValue(TWO_STEP_MEMBER)
+    fetchRunAnalysisMock.mockResolvedValue(analysisOf({
+      verdicts: [
+        {
+          perTest: 0,
+          testId: "t_checkout",
+          class: "app_bug",
+          producer: "analyze-run",
+          confidence: 0.9,
+          evidence: { citedSteps: [1], citedArtifacts: [] },
+        },
+      ],
+    }))
+    const view = await renderPage()
+
+    // The page selects its first step at mount, so the CITED step is deliberately the second one:
+    // a cell citing `0:0` would pass without the wiring ever running.
+    expect(view.querySelector('[data-step-id="0:0"]')?.getAttribute("aria-selected")).toBe("true")
+    expect(view.querySelector('[data-step-id="0:1"]')?.getAttribute("aria-selected")).toBe("false")
+
+    const cited = view.querySelector('[data-cited-step="1"]')
+    expect(cited, "the verdict's own cited ordinal").not.toBeNull()
+    await act(async () => { (cited as HTMLButtonElement).click() })
+    await flushRender()
+
+    expect(
+      view.querySelector('[data-step-id="0:1"]')?.getAttribute("aria-selected"),
+      "the cited step is the selected row — the key is `runDetailStepKey`'s, not a second spelling",
+    ).toBe("true")
+    expect(view.querySelector('[data-step-id="0:0"]')?.getAttribute("aria-selected")).toBe("false")
+  })
+
+  it("narrows the tree to a cluster sibling's own group when its link is clicked", async () => {
+    fetchRunDetailMock.mockResolvedValue(CLUSTERED_MEMBERS)
+    fetchRunAnalysisMock.mockResolvedValue(analysisOf({
+      verdicts: [
+        { perTest: 0, testId: "t_checkout", class: "unknown", producer: "deterministic-classifier", confidence: 0 },
+        { perTest: 1, testId: "t_login", class: "unknown", producer: "deterministic-classifier", confidence: 0 },
+      ],
+      sentences: [
+        { perTest: 0, testId: "t_checkout", sentence: FLOOR_SENTENCE },
+        { perTest: 1, testId: "t_login", sentence: FLOOR_SENTENCE },
+      ],
+      clusters: [{
+        fingerprint: "not-found:submit",
+        count: 2,
+        members: [
+          { testIndex: 0, testId: "t_checkout" },
+          { testIndex: 1, testId: "t_login" },
+        ],
+        representative: { testIndex: 0, sentence: FLOOR_SENTENCE },
+      }],
+    }))
+    const view = await renderPage()
+
+    const line = view.querySelector('[data-member="0"] [data-cluster-siblings]')
+    expect(line?.textContent, "one sibling, and the line says so in the singular")
+      .toContain(siblingLine(1))
+
+    const link = view.querySelector('[data-member="0"] [data-cluster-sibling="1"]')
+    expect(link).not.toBeNull()
+    await act(async () => { (link as HTMLButtonElement).click() })
+    await flushRender()
+
+    expect(view.querySelector('[data-member="1"]'), "the sibling's own group").not.toBeNull()
+    expect(
+      view.querySelector('[data-member="0"]'),
+      "the member filter narrowed — the same control the picker writes",
+    ).toBeNull()
+  })
+})
+
+describe("every member wears its outcome, and only a graded one carries a block (D-07/D-05)", () => {
+  it("badges the passed member and the failed one, and blocks only the failed one", async () => {
+    const view = await renderPage()
+
+    expect(view.querySelector('[data-member="0"] [data-member-outcome]')?.getAttribute("data-member-outcome"))
+      .toBe("failed")
+    expect(
+      view.querySelector('[data-member="1"] [data-member-outcome]')?.getAttribute("data-member-outcome"),
+      "a passed member says PASSED — the D-07 reversal, on the page",
+    ).toBe("passed")
+
+    expect(view.querySelectorAll('[data-member="0"] [data-verdict-block]').length).toBe(1)
+    expect(
+      view.querySelectorAll('[data-member="1"] [data-verdict-block]').length,
+      "nothing to explain is no block, badge or no badge",
+    ).toBe(0)
   })
 })
