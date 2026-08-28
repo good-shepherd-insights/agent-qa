@@ -1,4 +1,22 @@
+// THE TREE'S PRIMARY LABEL IS A PRODUCER STRING AND THEREFORE GOES THROUGH `MaskedText`
+// (D-10, T-405-40, 405 CR-02).
+//
+// A DURABLE step has no `originalStepName` — `fromRunDetailStep` never sets it — so the branch
+// taken below is `parseRedactedSecretSegments(step.name)`, and that parser knows exactly one
+// idiom: `[secret:NAME]`. Everything else it passes through as literal text. But `step.name` is
+// the projection's `stepText`, masked at the producer and then rewritten by the display seam into
+// a typed marker for any placeholder the host could not restore — so the marker's own delimiter
+// reached a text node a person reads, which is the state D-10 exists to forbid.
+//
+// THIS IS 405-12'S DEFECT, ONE ROW UP. That plan drove the shipped bundle against a real masked
+// run and found the same leak in `sub-action-tree-item.tsx`; this is the tree's PRIMARY label, so
+// it is the more visible of the two. Every repository cell missed both for the same reason: they
+// all supply unmasked fixture text. The seam is the same one the overview has painted every
+// producer string through since 405-11 — a second spelling of it here would be a second answer to
+// what a redaction looks like.
+
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { MaskedText } from "@/components/run-detail/masked-text"
 import { cn } from "@/lib/utils"
 import type { DisplayStep } from "@/lib/display-step"
 
@@ -234,7 +252,7 @@ export function StepNameWithPills({ step }: { step: DisplayStep }) {
   return (
     <span className="flex-1 min-w-0 text-sm break-all">
       {segments.map((seg, i) => {
-        if (seg.type === 'text') return <span key={i}>{seg.value}</span>
+        if (seg.type === 'text') return <span key={i}><MaskedText text={seg.value} /></span>
 
         const snapshot = step.variableSnapshot?.[seg.varName]
         const sourceLabel = snapshot ? SOURCE_LABELS[snapshot.source] ?? snapshot.source : SOURCE_LABELS[seg.namespace] ?? seg.namespace
@@ -246,14 +264,14 @@ export function StepNameWithPills({ step }: { step: DisplayStep }) {
                 className={cn("rounded-sm px-1 py-px cursor-default", pillBgColor(snapshot?.source ?? seg.namespace))}
                 aria-label={`variable: ${seg.varName}`}
               >
-                {seg.resolvedValue}
+                <MaskedText text={seg.resolvedValue} />
               </span>
             </TooltipTrigger>
             <TooltipContent className="max-w-xs">
               <div className="space-y-1">
                 <div className="text-xs font-medium">{seg.varName}</div>
                 <div className="text-[10px] font-mono text-muted-foreground">{seg.templateSyntax}</div>
-                <div className="text-xs text-muted-foreground truncate">{seg.resolvedValue}</div>
+                <div className="text-xs text-muted-foreground truncate"><MaskedText text={seg.resolvedValue} /></div>
                 <div className="text-xs text-muted-foreground">{sourceLabel}</div>
               </div>
             </TooltipContent>
