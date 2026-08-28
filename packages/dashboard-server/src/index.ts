@@ -67,6 +67,8 @@ export type { TestFileInfo, TestValidationResult, TestValidationError } from './
 export {
   // 405-05 (D-12 / 402 D-16): the two READ rows' templates, published on their siblings' footing
   // so the conformance route census can name the paths it drives rather than spell them.
+  // 406-01 (D-04): the analysis row's template, on the same footing.
+  RUN_SERVICE_ANALYSIS_TEMPLATE,
   RUN_SERVICE_ARTIFACT_TEMPLATE,
   RUN_SERVICE_DETAIL_TEMPLATE,
   RUN_SERVICE_EVENTS_TEMPLATE,

@@ -35,6 +35,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  RUN_SERVICE_ANALYSIS_TEMPLATE,
   RUN_SERVICE_ROUTE_TABLE,
   createRunServiceRoutes,
   lastEventIdParamOf,
@@ -326,9 +327,12 @@ describe('the refusal-shape census walks the module\'s OWN route table', () => {
     // 405-05 (D-12 / 402 D-16): six. The two READ rows joined the table, which is exactly what
     // "mounts behind the same authed door" has to mean mechanically — a row outside this array is
     // unreachable, and a row inside it is driven unauthenticated by the two cells below.
-    expect(RUN_SERVICE_ROUTE_TABLE.length).toBeGreaterThanOrEqual(6)
+    // 406-01 (D-04): seven. The analysis row joined the table, and joining it here is what makes
+    // "the failure view is served on both doors" mechanical rather than a claim — the census cells
+    // below drive it unauthenticated the day it lands.
+    expect(RUN_SERVICE_ROUTE_TABLE.length).toBeGreaterThanOrEqual(7)
     const handlers = RUN_SERVICE_ROUTE_TABLE.map((row) => row.handler).sort()
-    expect(handlers).toEqual(['artifact', 'detail', 'events', 'liveUrl', 'ok', 'start'])
+    expect(handlers).toEqual(['analysis', 'artifact', 'detail', 'events', 'liveUrl', 'ok', 'start'])
   })
 
   it('refuses a MISSING token on every row with one body shape', async () => {
@@ -368,8 +372,12 @@ describe('the refusal-shape census walks the module\'s OWN route table', () => {
 // this door's dispatch — that the verdict passed, the pattern matched, the params were decoded and
 // the adapter ran — and that an uncomposed host says so in the local door's own word.
 describe('the READ rows dispatch through the injected host (405-05, D-12)', () => {
-  /** A host whose `invokeFunction` refuses by NAME, exactly as an unbound composition's would. */
-  function hostRefusing(name: string): RunServicePorts['agentHost'] {
+  /**
+   * A host whose `invokeFunction` refuses by NAME, exactly as an unbound composition's would —
+   * and which RECORDS the op id it was handed, so a row's dispatch can be measured rather than
+   * inferred from the status code it produced.
+   */
+  function hostRefusing(name: string, seen: string[] = []): RunServicePorts['agentHost'] {
     return {
       registry: {},
       caller: {} as never,
@@ -381,7 +389,10 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
       // 406-01 (D-04): a sixth. This fixture DOES reach it — the analysis row's cell below asserts
       // the id the dispatch handed `invokeFunction`.
       analysisGetFunctionId: 'test:planted-analysis-get-op',
-      invokeFunction: () => Promise.reject(Object.assign(new Error('planted'), { name })),
+      invokeFunction: (_registry: unknown, functionId: string) => {
+        seen.push(functionId)
+        return Promise.reject(Object.assign(new Error('planted'), { name }))
+      },
       foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: '' }, foldLines: [] }),
       listDeclarations: () => [],
       onSessionEvent: () => () => undefined,
@@ -399,6 +410,33 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
     // adapter classified the op's refusal. A door that never reached the op could not say this.
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'unknown_run' })
+  })
+
+  it('reaches the ANALYSIS adapter through analysisGetFunctionId (406-01, D-04)', async () => {
+    const seen: string[] = []
+    const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError', seen) }))
+    const response = await fetch(`${origin}${RUN_SERVICE_ANALYSIS_TEMPLATE.replace(':runId', 'r_planted')}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    // THE ID IS THE CLAIM. A 404 alone would be satisfied by a dispatch that reached the DETAIL
+    // adapter; what makes this row its own is the op it asked the host for.
+    expect(seen, 'the analysis row dispatches the analysis op, not its sibling')
+      .toEqual(['test:planted-analysis-get-op'])
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'unknown_run' })
+  })
+
+  it('leaves the analysis row MASKED — no boundary reaches the shared adapter (D-04)', async () => {
+    // A SOURCE ASSERTION, because the claim is about what the dispatch does NOT pass. The seam's
+    // behaviour is measured in the roll-call; what only this file can see is that this door's arm
+    // never opts in. The roll-call's masked-side row is the second half of the same guard.
+    const source = await readFile(new URL('../run-service-routes.ts', import.meta.url), 'utf8')
+    const opener = "case 'analysis':"
+    const start = source.indexOf(opener)
+    expect(start, 'the analysis arm was renamed — this cell would be vacuous').toBeGreaterThan(-1)
+    const arm = source.slice(start, source.indexOf('\n        case ', start + 1))
+    expect(arm).toContain('serveRunAnalysisRead(req, res, { runId, host })')
+    expect(arm, 'a bearer-authed wire never restores declared secrets').not.toContain('boundary')
   })
 
   it('reaches the artifact adapter, and tells its two 404s apart on this door too', async () => {
@@ -422,7 +460,7 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
 
   it('says agent_host_unavailable — the LOCAL door\'s word — when no host is composed', async () => {
     const origin = await mount()
-    for (const path of ['/run/r_planted/detail', `/run/r_planted/artifacts/${'a'.repeat(64)}`]) {
+    for (const path of ['/run/r_planted/detail', '/run/r_planted/analysis', `/run/r_planted/artifacts/${'a'.repeat(64)}`]) {
       const response = await fetch(`${origin}${path}`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       })
@@ -436,7 +474,7 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
     // first on this door that would otherwise have reached a capability: a permissive arm here
     // would serve one run's whole projection, or its screenshots, to an anonymous caller.
     const origin = await mount(fakePorts({ agentHost: hostRefusing('RunNotFoundError') }))
-    for (const path of ['/run/r_planted/detail', `/run/r_planted/artifacts/${'a'.repeat(64)}`]) {
+    for (const path of ['/run/r_planted/detail', '/run/r_planted/analysis', `/run/r_planted/artifacts/${'a'.repeat(64)}`]) {
       const response = await fetch(`${origin}${path}`)
       expect(response.status, path).toBe(401)
       expect(await response.json(), path).toEqual({ error: 'missing_authorization' })

@@ -504,6 +504,14 @@ export const SCENARIO_TABLE = Object.freeze([
   // 389 D-11: a PARSING input for a capability most compositions cannot run — validation precedes
   // the binding check, so a sample that failed the contract would make an unbound-refusal leg report
   // an input error and certify nothing about binding.
+  //
+  // 2026-08-29 (Phase 406 planned 2026-08-28), D-01/D-04 — THE MCP PARTITION DID NOT MOVE. `analysis.get` is now served
+  // on BOTH dashboard doors (`GET /api/runs/:id/analysis` locally, `GET /run/:runId/analysis` on
+  // the authed remote door), which is a change to which HTTP surfaces reach the op and not to which
+  // CALLER ORIGINS may. `not-mid-flight-read` still states the reason it is unprojected on MCP:
+  // whether an agent-origin caller reads a completed run's analysis is Phase 408's question, and
+  // answering it here — by widening the partition because a browser gained a route — would be
+  // deciding an agent-surface question by accident. The line below is unchanged, deliberately.
   scenario({
     opId: 'analysis.get',
     input: { runId: FIXTURE_RUN_ID },

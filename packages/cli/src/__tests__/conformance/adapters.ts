@@ -40,6 +40,7 @@ import {
   fromToolName,
   isChatMetaToolName,
   projectPlannerTools,
+  ANALYSIS_GET_FUNCTION_ID,
   RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
   RUNS_LIVE_URL_FUNCTION_ID,
@@ -59,6 +60,7 @@ import {
 import {
   CHAT_CAPABILITIES_ROUTE,
   createChatRouter,
+  RUN_SERVICE_ANALYSIS_TEMPLATE,
   RUN_SERVICE_ARTIFACT_TEMPLATE,
   RUN_SERVICE_DETAIL_TEMPLATE,
   RUN_SERVICE_EVENTS_TEMPLATE,
@@ -947,6 +949,12 @@ export const RUN_SERVICE_ROUTE_BINDINGS: readonly RunServiceRouteBinding[] = Obj
     opId: RUNS_ARTIFACT_FUNCTION_ID,
   }),
   Object.freeze({
+    key: `GET ${RUN_SERVICE_ANALYSIS_TEMPLATE}`,
+    // 406-01 (D-04): the failure view's read, on the two rows above's exact footing and through
+    // the same shared adapter — `serveRunAnalysisRead`, one function object, two doors.
+    opId: ANALYSIS_GET_FUNCTION_ID,
+  }),
+  Object.freeze({
     key: `GET ${RUN_SERVICE_OK_ROUTE}`,
     // Readiness reports four facts this process measures about itself. It owns no capability, on the
     // same reasoning 398 D-02 used to keep the capability catalogue off the roster entirely.
@@ -1215,6 +1223,22 @@ export async function enumerateRunServiceOpIds(): Promise<SurfaceEnumeration> {
         }
       }
 
+      // 406-01 (D-04): THE ANALYSIS ROW, on the detail row's exact footing. `unknown_run` is
+      // `analysis.get`'s own refusal, minted inside the op through `runs.get`, so a body carrying
+      // it proves this row reached the capability rather than merely the door.
+      const analysis = await fetch(
+        `${origin}/run/${encodeURIComponent(runId)}/analysis`,
+        { headers: bearer },
+      )
+      if (analysis.status === 200) {
+        keys.push(`GET ${RUN_SERVICE_ANALYSIS_TEMPLATE}`)
+      } else if (analysis.status === 404) {
+        const body = await analysis.json().catch(() => undefined) as { error?: string } | undefined
+        if (body !== undefined && detailWords.has(body.error ?? '')) {
+          keys.push(`GET ${RUN_SERVICE_ANALYSIS_TEMPLATE}`)
+        }
+      }
+
       // A well-formed content address the store has certainly never written: 64 lowercase hex, so
       // the CONTRACT admits it and the answer comes from the op rather than from the schema.
       const artifact = await fetch(
@@ -1255,7 +1279,7 @@ export const runServiceSurfaceAdapter: SurfaceAdapter = Object.freeze({
    * WHAT THIS DOOR CANNOT DO, DECLARED (D-04) — and every member is a property of the door today.
    *
    * The list is derived from nothing: it is written, reviewed, and readable beside
-   * `RUN_SERVICE_ROUTE_TABLE`, which publishes four routes and no fifth. A reader can check every
+   * `RUN_SERVICE_ROUTE_TABLE`, which publishes seven routes and no eighth. A reader can check every
    * line of it against that table in one screen, which is the whole reason the door's routes are
    * exported data.
    */
@@ -1272,14 +1296,16 @@ export const runServiceSurfaceAdapter: SurfaceAdapter = Object.freeze({
         + 'in reach',
     }),
     Object.freeze({
-      capability: 'every OTHER read op the registry declares (runs.get, runs.list, analysis.get, …)',
+      capability: 'every OTHER read op the registry declares (runs.get, runs.list, knowledge.*, …)',
       // 403-03: the grant gained `read` so the mint can dispatch, and the honest statement of what
       // still bounds this door is the ROUTE TABLE rather than the scope list. A scope is not a
-      // route: four paths are published, two of them dispatch, and no path reaches any other read.
-      why: 'the route table publishes four paths and only two of them dispatch — runs.start and '
-        + 'runs.liveurl; a remote caller addresses one run it started, reads its events and mints '
-        + 'a view link for it, and nothing else. The `read` scope is necessary for the mint and '
-        + 'sufficient for nothing else here, because no route reaches another read',
+      // route. 405-05 added the two run-shaped reads and 406-01 the analysis read, so the count is
+      // seven paths of which five dispatch — and every one of the five is a row a reader can point
+      // at, which is the property this entry exists to keep true.
+      why: 'the route table publishes seven paths and only five of them dispatch — runs.start, '
+        + 'runs.liveurl, runs.detail, runs.artifact and analysis.get; a remote caller addresses '
+        + 'one run it started, reads its events, its detail, its artifacts and its analysis, and '
+        + 'mints a view link for it, and nothing else. No route reaches any other read',
     }),
     Object.freeze({
       capability: 'run cancellation',

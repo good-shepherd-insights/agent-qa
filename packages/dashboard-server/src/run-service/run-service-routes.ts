@@ -117,6 +117,7 @@ import { readJsonBody } from '../server/body-parser.js'
 // re-implemented, because "both doors answer the same bytes" is a claim about there being one
 // implementation — two that agree today are two that can stop agreeing.
 import { serveRunArtifact, serveRunDetailRead } from './run-detail-routes.js'
+import { serveRunAnalysisRead } from './run-analysis-routes.js'
 
 /**
  * The seq a subscriber attaches at to receive the whole run.
@@ -219,6 +220,10 @@ export type RunServiceRouteHandlerName =
   // census that drives every row unauthenticated inherits them the day they land.
   | 'detail'
   | 'artifact'
+  // 406-01 (D-04): the failure view's read, on the two rows above's exact footing — the local
+  // door's `GET /api/runs/:id/analysis` mounts the SAME adapter, so 408's embed and every thin
+  // client parse one path shape whichever credential they hold.
+  | 'analysis'
   | 'ok'
 
 export interface RunServiceRouteRow {
@@ -282,6 +287,22 @@ const RUN_SERVICE_DETAIL_PATTERN = /^\/run\/([^/]+)\/detail$/
  */
 export const RUN_SERVICE_ARTIFACT_TEMPLATE = '/run/:runId/artifacts/:sha'
 const RUN_SERVICE_ARTIFACT_PATTERN = /^\/run\/([^/]+)\/artifacts\/([^/]+)$/
+/**
+ * The run-ANALYSIS read (406-01, D-04) — the remote twin of the local door's
+ * `GET /api/runs/:id/analysis`.
+ *
+ * IT DISPATCHES THROUGH THE SAME ADAPTER THE LOCAL DOOR CALLS, for the reason its detail sibling
+ * does: `serveRunAnalysisRead` is one function, so the two doors cannot come to disagree about
+ * what a run's analysis is.
+ *
+ * THIS ROW IS MASKED, AND FOR THE REASON ITS SIBLING IS. The verdict sentence quotes the failing
+ * step's recorded error, which carries declared placeholders at rest; restoring them onto a
+ * BEARER-authed wire would hand them to every token holder and every intermediary, and this row's
+ * consumer — the CLI's own emit, 408's embed — is where a person meets the text. The dispatch
+ * below passes no `boundary`, and the option's `'machine'` default is what keeps it masked.
+ */
+export const RUN_SERVICE_ANALYSIS_TEMPLATE = '/run/:runId/analysis'
+const RUN_SERVICE_ANALYSIS_PATTERN = /^\/run\/([^/]+)\/analysis$/
 export const RUN_SERVICE_OK_ROUTE = '/ok'
 
 /**
@@ -318,6 +339,12 @@ export const RUN_SERVICE_ROUTE_TABLE: readonly RunServiceRouteRow[] = Object.fre
     path: RUN_SERVICE_ARTIFACT_TEMPLATE,
     handler: 'artifact',
     pattern: RUN_SERVICE_ARTIFACT_PATTERN,
+  },
+  {
+    method: 'GET',
+    path: RUN_SERVICE_ANALYSIS_TEMPLATE,
+    handler: 'analysis',
+    pattern: RUN_SERVICE_ANALYSIS_PATTERN,
   },
   { method: 'GET', path: RUN_SERVICE_OK_ROUTE, handler: 'ok' },
 ] as const)
@@ -1082,6 +1109,17 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
           handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
             // THE SHA RAW. Not decoded — see `RUN_SERVICE_ARTIFACT_TEMPLATE`.
             serveRunArtifact(req, res, { runId, sha: matched.params[1] ?? '', host })
+          })
+          return
+        case 'analysis':
+          handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
+            // NO DISPLAY OPT-IN, AND THAT IS THE WHOLE DECISION (406 D-04, 405-10's precedent).
+            // The shared adapter's option defaults to `'machine'`; a token authenticates a
+            // client, not a person's browser session, so this body stays masked. Opting this arm
+            // in reds the roll-call's `machine:remote-run-analysis` row and a source cell in
+            // `run-service-routes.test.ts` that greps this very block — which is the review the
+            // reversal deserves.
+            serveRunAnalysisRead(req, res, { runId, host })
           })
           return
         case 'ok':

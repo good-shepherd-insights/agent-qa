@@ -366,6 +366,89 @@ function buildRollCallFixture(): RollCallFixture {
 const FIXTURE = buildRollCallFixture()
 const ALL_ORIGINALS = Object.values(SECRETS)
 
+/**
+ * The handoff `analysis.get` reads (406-01, D-04) — one failed member carrying ONE masked quote.
+ *
+ * A SECOND HANDOFF RATHER THAN A SECOND FIXTURE. It is built from `FIXTURE.ctx`, so it is the same
+ * masking context every other surface in this file derives from; what differs is the SHAPE the
+ * analysis path needs and the envelope stream cannot supply — a recorded sub-action `result.error`
+ * (which `errorTextOf` lifts into the sentence's grounding quote) and a persisted `rootCause`, so
+ * the floor leg produces a deterministic verdict rather than a minted `unknown` with no quote.
+ *
+ * The quote carries `SECRETS.error`, which is what makes both roll-call sides falsifiable: the
+ * local door must restore it into the sentence, and the authed remote door must not.
+ */
+const ROLLCALL_ANALYSIS_HANDOFF: CompletedRunHandoff = {
+  schemaVersion: 1,
+  runId: RUN_ID as unknown as RunId,
+  scope: SCOPE,
+  buildOrdinal: 1,
+  executionContext: 'local-headless',
+  aggregateVerdict: 'failed',
+  configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+  startedAt: 1_700_000_000_000,
+  endedAt: 1_700_000_010_000,
+  tests: [{
+    testId: 't0',
+    testName: 'Login test',
+    filePath: 'tests/login.yaml',
+    testIndex: 0,
+    outcome: 'failed',
+    steps: [{
+      stepIndex: 0,
+      stepText: 'Submit credentials',
+      cacheStatus: 'miss',
+      servedBrief: {
+        scope: SCOPE,
+        asOfBuild: 1,
+        budget: 0,
+        truncation: 'none',
+        channel1: [],
+        channel2: [],
+        channel3: [],
+        briefDigest: 'rollcall-analysis-digest',
+      },
+      subActions: [{
+        plan: 'submit the login form',
+        plannedAction: { type: 'click', ref: 'e1' },
+        // PRESENT BECAUSE THE ANCHOR WALK READS IT. `exercisedAnchors` resolves the planned
+        // action's ref against `stateBefore.elements` and mints the page anchor from its url; a
+        // sub-action without one makes the fingerprint leg throw rather than answer nothing.
+        stateBefore: {
+          platform: 'web',
+          tree: '',
+          elements: [],
+          refMap: {},
+          url: '/login',
+          timestamp: 1,
+          metadata: {
+            coordSpace: 'viewport',
+            viewportWidth: 1280,
+            viewportHeight: 720,
+            scroll: { offsetX: 0, offsetY: 0, contentWidth: 1280, contentHeight: 720 },
+            captureMode: 'textOnly',
+          },
+        },
+        result: { success: false, error: FIXTURE.ctx.mask(`Timeout waiting for token ${SECRETS.error}`) },
+      }],
+      verifierVerdict: { pass: false, reasoning: 'timeout' },
+    }],
+    rootCause: {
+      class: 'unknown',
+      producer: 'deterministic-classifier',
+      confidence: 0,
+      evidence: {
+        citedSteps: [],
+        citedAnchors: [],
+        citedArtifacts: [],
+        rationale: 'no deterministic signal matched',
+      },
+      memoryMisdirectionRuledOut: true,
+      perTest: 0,
+    },
+  }],
+} as unknown as CompletedRunHandoff
+
 /** Replay the full envelope stream through the REAL console reporter (the sole unmasking surface). */
 function renderConsole(): string {
   const chunks: string[] = []
@@ -558,11 +641,17 @@ function rollCallFunctionDeps(
 ): FunctionDeps {
   return {
     runs: {
-      list: () => Promise.resolve([]),
-      get: () => Promise.resolve(undefined),
+      list: () => Promise.resolve([ROLLCALL_ANALYSIS_HANDOFF]),
+      // 406-01: `analysis.get` reads the run through this port. Answering the handoff above is
+      // what lets the two analysis rows below be driven at all.
+      get: (runId: unknown) =>
+        Promise.resolve(String(runId) === RUN_ID ? ROLLCALL_ANALYSIS_HANDOFF : undefined),
       readEvents: () => Promise.resolve([]),
       readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
+    // 406-01: the FLOOR leg — the port is bound (so the op does not refuse by name) and there is
+    // no artifact, so the sentence is composed from the handoff's own recorded quote.
+    analysis: { getArtifact: () => undefined },
     knowledge: {
       listBundles: () => Promise.resolve([]),
       inspectRecords: () => Promise.resolve([]),
@@ -854,6 +943,14 @@ const HUMAN_SURFACES: HumanSurface[] = [
     render: () => localDashboardRead(`/api/runs/${RUN_ID}/detail`),
   },
   {
+    // 406-01 (D-04 · DETL-04): THE FAILURE VIEW'S READ. The floor sentence QUOTES the failing
+    // step's recorded error, so the restored value has to appear in this door's body — a
+    // producer string on a new door is a new crossing, and this row is where it is held.
+    name: 'dashboard:run-analysis',
+    originals: [SECRETS.error],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}/analysis`),
+  },
+  {
     // The run LIST. Its rows are a person's first sight of a failure, and the summary on each is
     // exactly where a masked value lands. The seam is applied PER ROW under that row's own id.
     name: 'dashboard:run-list',
@@ -1110,6 +1207,21 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
+    // 406-01 (D-04): THE AUTHED REMOTE DOOR'S ANALYSIS BODY, masked BY CONSTRUCTION for the reason
+    // its detail sibling above is — the remote dispatch calls `serveRunAnalysisRead` with no
+    // boundary and the option defaults to `'machine'`. This entry is where that decision is HELD:
+    // opting the arm in reds here, which is exactly the review the reversal deserves.
+    name: 'machine:remote-run-analysis',
+    render: async () => {
+      const ports = await rollCallServicePorts()
+      return overOneSocket(
+        createRunServiceRoutes(ports as never),
+        `/run/${RUN_ID}/analysis`,
+        { headers: { Authorization: `Bearer ${ROLLCALL_SERVICE_TOKEN}` } },
+      )
+    },
+  },
+  {
     // ARTIFACT BYTES — served exactly as stored, on every door (D-09: the seam never unmasks a
     // blob). The blob this fixture wrote carries a placeholder so the masked assertion has
     // something to see; the sha comparison INSIDE this render is the byte-identity claim, and it
@@ -1178,6 +1290,10 @@ const SURFACE_ROLLCALL = [
   'machine:run-stream-sse',
   'machine:remote-run-detail',
   'machine:artifact-bytes',
+  // 406-01 (D-04): the failure view's read, on both doors — restored on the local one, masked on
+  // the authed remote one.
+  'dashboard:run-analysis',
+  'machine:remote-run-analysis',
 ] as const
 
 describe('SEAM-05 unmask boundary roll-call — enrollment guard (T-363-31)', () => {
