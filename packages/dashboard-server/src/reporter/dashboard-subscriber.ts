@@ -54,6 +54,11 @@ import type { DashboardDatabase } from '../db/database.js'
  * THE NON-DARKENING `try {} catch {}` AROUND EVERY PROJECTION INSERT IS UNCHANGED and is
  * load-bearing: a projection row that fails to write must never darken the `runs` row. A dropped
  * step is visible as an absent step; a darkened run is a wrong verdict.
+ *
+ * 2026-08-28 (Phase 405 plan 13, D-21): every table, column, route and field phase 405 removed from
+ * around this module — and every one it deliberately kept, with the measurement that decided each —
+ * is registered in `DELETION-INVENTORY.md` at the repository root, under the dated 2026-08-28
+ * section. Read it before restoring anything that looks missing here.
  */
 
 type SourceSnapshot =

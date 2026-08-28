@@ -324,3 +324,157 @@ for "the predicate can see frame formatting" was that same handler; it moved to
 `pnpm typecheck` (44/44) · the whole `@vostride/agent-qa-dashboard` suite (48 files, 950 passed,
 1 skipped) · the four CLI run-door suites · `pnpm validate:arch` (43 cells). The standing red is
 `tools/embedding-bench` `tau-lex`, which predates this phase and is untouched by it.
+
+---
+
+## 2026-08-28 — the register closes: the v1 run-detail projection, the path artifacts and the legacy execution feed (Phase 405 plan 13, D-02 / D-14 / D-19 / D-20 / D-21)
+
+**This section does not delete anything.** Plans 01–12 did the deleting and 07 wrote the section
+above for the server half. This one is the phase's CLOSING register: it states what the whole of
+405 removed, what it deliberately kept and the measurement that decided each, and it names the
+instruments that will notice if any of it comes back. Per D-21 the acceptance for the deletions is
+**a grep-clean inventory plus mutation-measured closed-shape cells** — the 404 D-04 idiom —
+because a green suite cannot see a removed member returning: every assertion that a shape CONTAINS
+what it should is satisfied by a shape that contains more.
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the lexical inventory | 22 retired needles have ZERO occurrences across every package's production `src` tree (`.ts`/`.tsx`; `__tests__`, `*.test.*`, `*.test-d.*`, `dist`, `node_modules` excluded) — **comments count as hits** | `packages/dashboard-server/src/__tests__/405-debris-deleted.test.ts` |
+| the DDL closed shape | the joined version-2 migration carries no healing / recording-path / reasoning / parent-link / v1-table declaration, and DOES declare the five tables the census kept (`run_members`, `run_steps`, `run_sub_actions`, `token_events`, `execution_logs` — the second half is what stops the cell passing over an empty migration) | same file |
+| the UI closed shape | `RunDetailSubAction` is exactly the ten payload fields; `DisplayStep` declares no member naming a screenshot, healing capture, video or path; no run-detail component reaches the markup sink in CODE | `packages/dashboard-ui/src/lib/__tests__/run-detail-shape.test.ts` |
+| the analytics closed shape | the completion shape's key set, by EQUALITY, on both completion members | `packages/analytics/src/__tests__/events.test.ts` |
+| the mutation bar | each of the four above is proven to RED by re-adding the thing it forbids | `scripts/405-debris-mutation.sh` (`pnpm validate:debris-mutation`) |
+
+**Comments count as hits, and that is the point rather than a rough edge.** The inventory's promise
+is "this string is not in the shipped tree", not "no code calls it". A retirement note that spells
+the token it retired is indistinguishable, to any later grep, from the reappearance the register
+exists to forbid — and this phase was caught by exactly that three times (405-03 in rewire
+commentary, 405-04 in a pin, 405-07 twice in test prose, fixed in `271f67c5`). Every cell that must
+name a retired token therefore builds it from two halves, and the inventory cell asserts the
+property over **its own bytes** so it cannot be satisfied by matching itself.
+
+**The one exception, stated so it is not mistaken for an oversight: this file.** `DELETION-INVENTORY.md`
+is not under any package's `src`, and it names retired tokens literally because a register whose
+entries cannot be searched for is not a register.
+
+### What phase 405 deleted
+
+| Item | Producer measured | Reader on the rebuilt page | Disposition | Plan |
+|---|---|---|---|---|
+| the v1 wide `steps` table, `reasoning_traces`, `logs` and their eight indexes, with every repository member over them | none since the subscriber was rebuilt on the bus payloads (405-01) | none once the superseded read arms went | **DELETE** | 405-07 |
+| the superseded read arms — `/steps`, `/steps/:n/reasoning`, `/logs`, `/accessibility`, the captured-variable suggestion | — | superseded by `runs.detail` | **DELETE** (D-03) | 405-07 |
+| `runs.video_path`, `runs.parent_run_id`, `attempt_number`, `retry_count`, `max_retries` + `idx_runs_parent`, and their `RunRow` fields | none (video: none ever; the other four: none since 402-09) | none | **DELETE** | 405-07 |
+| the two path-addressed artifact routes, `resolveArtifactPath`, the served-path verdict, its refusal helper, the run-deletion filesystem sweep and the screenshots/videos dir wiring | — | refs only | **DELETE** (D-14) | 405-07 |
+| the legacy `/api/execution/events` SSE arm, `LiveExecutionEvent`, `getBufferedEvents`, the per-run replay buffers and counters, the push helper, the second emission and the synthetic `run-start`/`run-complete` bookends | — | none since 405-03 | **DELETE** (D-19) | 405-03 (UI half), 405-07 (server half) |
+| the `useExecutionEvents` hook, `subscribeToExecutionEvents` and `lib/live-timeline.ts` | — | — | **DELETE** (D-19/D-20) | 405-03 |
+| the v1 UI step shape — `StepRow`'s recording-path fields, `SubActionData`, `lib/artifact-media.ts`, `fetchStepReasoning` — and `RunArtifactKind`'s two suite members in both packages | — | — | **DELETE / NARROW** | 405-11 |
+| `db/run-id-migration.ts`, its test and its barrel export | no production caller since it was written | — | **DELETE** | 405-07 |
+| the analytics `healing_attempt_count` property | none (v49 settled that the `healed` step status and `selfHealOccurred` are the two real healing facts) | — | **DELETE** | 405-04 |
+| the analytics `parent_run_id` property | none anywhere in the package — 402-09 put one run row per run, 405-07 then deleted the column it named, so it could only ever have travelled as `undefined` | — | **DELETE** | 405-13 |
+
+### What was RETAINED, and the measurement that kept it
+
+| Item | Producer measured | Reader measured | Disposition |
+|---|---|---|---|
+| `token_events`, `/api/token-events/stats`, `/api/live-editor/ws` | the live-editor ws handler in `server/server.ts` — it executes IN-PROCESS via core `executeStep` and never used the retired child-process spawn | the insights page (`pages/insights.tsx`) | **KEEP** — D-20's census verdict, measured |
+| `execution_logs` (+ 405-01's `test_index` / `step_index`) | the subscriber's `hookFinished` arm | the hook panel | **KEEP** |
+| `runs.error_log` | `server.ts`'s run-settled handler | the run list's error posture | **KEEP** |
+| the construction-data `runs` columns — `metadata`, `environment`, `priority`, `parallel`, `test_file_content`, `model_name`, `llm_provider` | the queue/enqueue and settle writes | the runs list and insights | **KEEP** — written by the composition, never bus-projected, so outside D-02's "no producer on the bus" clause |
+| `LivePhase` | the live editor's own phase stream | `groupPhasesIntoSubActions`, the two live step cards | **KEEP** — only its HOME moved (out of the retired hook, into `lib/display-step.ts` beside its consumer) |
+| the `subActionsData` wire key | `dashboard-server`'s live-editor ws handler | exactly one named boundary in the UI: `liveSubActionsOf` in `hooks/use-live-editor.ts` | **KEEP** — see the scope note below |
+
+### D-20's census verdict, with the measurement
+
+D-20 asked whether the live editor was dead machinery that should go with the retired spawn, or a
+live surface whose only fault was importing a retired hook. It is the second, and the count is what
+decided it rather than judgment:
+
+- **Importers of `useExecutionEvents`: two — the hook module itself and its own test.** Nothing else
+  in the tree called it.
+- **Importers of `LivePhase`: five, and every one of them type-only** — `use-live-editor.ts`,
+  `live-step-card.tsx`, `live-editable-step-card.tsx`, `lib/display-step.ts` and
+  `display-step.test.ts`. A type-only import is not a dependency on the retired transport.
+- **The editor's execution path never touched the spawn:** it runs through core `executeStep`
+  in-process.
+- **`token_events` has one writer and one reader, both live:** the ws handler in `server/server.ts`
+  writes, `pages/insights.tsx` reads.
+
+⇒ the editor STAYS, `token_events` stays in the v2 DDL, `/api/live-editor/ws` stays, and only the
+hook import was replaced. Rejected: leaving it untouched by fiat (an unmeasured keep), and deleting
+it outright (an unmeasured delete).
+
+### The `runs` column census
+
+The table 405-07 measured, reproduced here as the closing record — a later reader looking for "why
+does `runs` still have a `parallel` column" should find the answer in the register, not in a plan.
+
+| Column | Producer | Reader | Disposition |
+|---|---|---|---|
+| `video_path` | none | none (D-14: no ref producer mints a recording, so the honest state is no column) | DELETE |
+| `parent_run_id`, `attempt_number`, `retry_count`, `max_retries` | none since 402-09 | none | DELETE |
+| `metadata`, `environment`, `priority`, `parallel`, `test_file_content`, `model_name`, `llm_provider` | queue/enqueue + settle | runs list, insights | KEEP |
+| `error_log` | `server.ts` run-settled | run list error posture | KEEP |
+| `detail` (new, 405-01) | the bus fold | the rebuilt run-detail page | the successor |
+
+The three v1 projection TABLES were replaced rather than merely dropped: `run_members` (one row per
+member handle, from `testStarted`/`testFinished`), `run_steps` (the whole `stepFinalized` payload,
+with the token columns NULLABLE and never `DEFAULT 0`) and `run_sub_actions` (the whole
+`subActionRecorded` payload). `runs.detail` is what the page reads; those three are what fills it.
+
+### Run deletion leaves the run directory alone (405-05, D-14 discretion)
+
+`DELETE /api/runs/:id` removes the dashboard's rows by `ON DELETE CASCADE` and **touches no file
+under `.agent-qa/runs/`**. The path-based cleanup went with the path-based addressing. This is a
+deliberate decision recorded as data, not a gap: the bus event log under `runs/<slug>/` is the run's
+own record (401 D-04), the post-run jobs read evidence blobs by sha, and the dashboard PROJECTS that
+record rather than owning it. A projection that deletes its source on eviction is not a projection.
+
+### Scope note — `subActionsData` is not in the inventory, and why
+
+405-11 reported the retired-needle grep over `packages/dashboard-ui/src` clean except two lines in
+`hooks/use-live-editor.ts` — the `LiveSubAction` field type and the read inside `liveSubActionsOf`
+— and recorded it as its Deviation 9 rather than letting it pass. **Adjudicated here as a KEEP,
+with the measurement.**
+
+`subActionsData` is the **live-editor socket's wire key**, produced today by `dashboard-server`'s ws
+handler on the other side of a package boundary. It is not debris: it has a live producer and a live
+reader. D-14 is about run-detail ARTIFACT addressing, and D-21's needle list is the retired
+run-detail/live-feed vocabulary — this name is neither. Renaming another package's wire contract
+from the consumer is a different change with a different blast radius, and it is not what this
+inventory measures.
+
+What 405-11 did do is the right shape and is why one name is tolerable: the wire key is spelled at
+**exactly one boundary** (`liveSubActionsOf`), and everything downstream holds `LiveSubAction`.
+Scattering nine reads of it through the UI would have kept the retired vocabulary alive by accident;
+renaming the UI's own field away from the wire's would have hidden where the boundary is.
+
+So the inventory's scope is narrowed here **explicitly and with a reason**, rather than by the cell
+quietly not listing the needle. If the wire key is ever renamed, this row is the record of what it
+was called and why it survived 405.
+
+### Where this register does NOT reach
+
+**The `403-09` "untouched until 405" remark CONTEXT.md names was not found.** A search for the
+phrase and for `403-09` across every package `src` tree and `spec/` returns no such remark — the
+three `until 405` hits are unrelated dated notes (`step-name-pills.test.tsx`,
+`sub-action-tree-item.tsx`, `run-detail.tsx`), each already correct, and every `403-09` hit is a
+threat id or a cross-reference. Recorded as **not found** rather than silently skipped, so a later
+reader does not go looking for an edit that was never needed.
+
+**`runs-table.tsx` and `run-navbar.tsx` still branch on `run.parentRunId`.** The camelCase UI field
+survives on `lib/api.ts`'s `RunRow`, and with the column deleted it is now always absent — so
+`run.suiteId != null && run.parentRunId == null` is a suite test that has quietly become
+`run.suiteId != null`. It is NOT a D-21 needle (the needle is the snake_case column, which is gone)
+and no 405 plan owns it. Filed in `deferred-items.md` rather than swept in here, because deleting a
+branch a suite-parent row used to take is a decision about what the runs list shows, not a deletion
+of debris.
+
+### Gate at the time of writing (2026-08-28)
+
+`pnpm typecheck` (44/44) · `pnpm validate:arch` (43 cells) · the whole `@vostride/agent-qa-dashboard`
+suite · the whole `@vostride/agent-qa-dashboard-ui` suite · the whole `@vostride/agent-qa-analytics`
+suite · `pnpm validate:debris-mutation` (four legs, each reddening its named cell, every subject
+restored byte-identically) and its neutered self-test fatal on green. The standing red is
+`tools/embedding-bench` `tau-lex`, which predates this phase (377) and is untouched by it.
