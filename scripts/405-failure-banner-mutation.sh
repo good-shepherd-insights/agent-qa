@@ -1,0 +1,378 @@
+#!/usr/bin/env bash
+#
+# 405-failure-banner-mutation.sh — the acceptance bar for the FAILURE BANNER half of criterion 2
+# (405-15, gap-closure round 1; the cells are 405-14's, WINDOWS #287).
+#
+# WHAT THIS PROVES, AND WHY A GREEN SUITE DOES NOT PROVE IT. `conformance/run-detail-failure-dom.
+# test.ts` asserts that six facts hold about a FAILED run's summary banner: the producer masked it,
+# the banner mounted truncated, the email is a typed chip in both states, the masking-seeded
+# credential is restored inside the expanded banner, and none of the three planted values is at rest
+# in the clear. Every one of those is a cell that asserts a fact is PRESENT — exactly the kind that
+# passes for free when it is looking at the wrong element, waiting on the wrong node, or reading a
+# fixture it accidentally produced itself. The only way to know a cell measures its fact is to take
+# the fact away and watch the cell go red — and to watch its NEIGHBOURS stay green, because a
+# mutation that reds the whole file is measuring blast radius.
+#
+# TWO MUTATIONS, ONE PER FACT-CARRIER, ACROSS TWO PACKAGES:
+#
+#   M4  the banner's `MaskedText` render replaced by the raw string — the summary still arrives
+#       through the display seam, the truncation still runs and the toggle still works; the only
+#       thing this leg removes is the CHIP PAINTING
+#   M5  405-12's M3 verbatim: the display-unmask seam still reads the sidecar, still resolves the
+#       host key, still re-derives every candidate and still matches every digest, and restores
+#       NOTHING
+#
+# WHAT EACH LEG IS EXPECTED TO REACH IS STATED IN ADVANCE, AND SO IS WHAT IT MUST NOT.
+#
+# M4 IS THE CHIP MUTATION. It reds (3c) and (3d) — the truncated and expanded chip claims — and it
+# must red NOTHING else. (3a) reads the run-stream envelope, which never crosses this component.
+# (3b) only asks that the banner mounted truncated, which a raw render still does. (3e) asks whether
+# the RESTORED credential is inside the banner text, and a raw render still prints it: the restore
+# happened upstream at the seam, so a banner that paints the string raw shows the restored value and
+# the un-restorable markers side by side. (3f) is an at-rest scan of bytes this component never
+# writes. Those four are the control, named below so the log records what did NOT move.
+#
+# M5 IS THE RESTORE MUTATION, AND ITS CONTROL IS THE POINT. (3e) is the ONLY cell of the six whose
+# fact is RESTORATION. The chip cells do not depend on it — an unrestored placeholder is rewritten
+# into a marker by the pass that runs last, and a marker is exactly what `MaskedText` paints as a
+# chip — so (3c) and (3d) must stay green. Neither does the at-rest scan (3f): the seam is a DISPLAY
+# lane and the bytes on disk and on the run-stream wire are masked by design (CONTEXT D-09). A
+# mutation that also red the chip cells would mean (3e) is measuring "there is text in the banner"
+# rather than "the seam restored it".
+#
+# WHY THERE IS NO "TRUNCATE-BEFORE-PARSE" LEG. The reviewer named a third candidate mutation:
+# truncate the raw string BEFORE parsing it, restoring the page-local helper's wrong ordering. That
+# mutation cannot red a cell, and a leg that cannot red is a FATAL by this script's own law, so it
+# is written down here rather than disguised as a passing leg. `truncateMaskedText` spends its word
+# budget over segments precisely so a marker is one word; the naive helper split the RAW string on
+# WHITESPACE, and today's marker spelling (`\x1f`-delimited, no whitespace inside) means a
+# whitespace split cannot cut inside a marker. The wrong ordering is therefore invisible at the DOM
+# — it is harmless for exactly as long as the marker spelling contains no space. What guards it is
+# the ordering invariant pinned by the jsdom cells in `lib/__tests__/masked-text.test.ts`, which
+# feed the helper a marker whose payload DOES contain whitespace. That is where a regression in the
+# ordering reds; this script says so instead of claiming a measurement it did not make.
+#
+# EVERY LEG CROSSES A `dist` BOUNDARY AND THE REBUILD IS PART OF THE MUTATION. Both subjects are
+# resolved by the spawned `agent-qa dashboard` as BUILT workspace dependencies — dashboard-ui's
+# bundle for M4, the cli dist for M5 — and the DOM file's own `buildFreshness` guard compares source
+# mtimes against those artifacts, so a restored-but-unbuilt source is "newer than" the build and
+# every cell refuses to run at all. That is a red the leg never measured. `--force` is required for
+# the same guard's sake in the other direction: a byte-identical restore is a turbo CACHE HIT, so a
+# plain build reports FULL TURBO and refreshes no dist mtime. Measured in 405-12/405-13 (fd9b95ae).
+#
+# A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS.
+#
+# THE VERDICTS ARE READ PER CELL FROM THE JSON REPORTER, never scraped out of prose. A cell name
+# that gains a comma would silently stop matching a line-oriented grep, and the failure mode of that
+# is a leg that reports "the named cell stayed green" about a cell that was red.
+#
+# THIS SCRIPT IS SLOW AND IT IS SLOW FOR A REASON. Five forced workspace builds (preflight plus
+# mutate-and-restore per leg) and three passes of a suite that spawns the built binary, launches a
+# real Chromium and executes a real failing run through a real planning turn. Minutes, not seconds.
+# It is the phase's ACCEPTANCE for the banner, run at wave merge and before `/gsd-verify-work`; the
+# per-commit sample is the fast unit cells.
+#
+# EXIT CODES ARE READ FROM THE PROCESS, NEVER THROUGH A PIPE.
+#
+# USAGE
+#   bash agent-qa/scripts/405-failure-banner-mutation.sh   # from the super-repository root
+#   bash scripts/405-failure-banner-mutation.sh            # from the agent-qa root
+#   pnpm validate:failure-banner-mutation                  # from the agent-qa root
+#
+# KNOBS
+#   FAILURE_BANNER_MUTATION_SELFTEST=neutered
+#       apply a NO-OP edit in place of every mutation. The script must then FATAL with "the suite
+#       stayed green under the mutation" — a gate nobody has seen fire is a comment.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+CLI_FILTER="agent-qa"
+
+BANNER_SUBJECT="packages/dashboard-ui/src/components/run-detail/failure-banner.tsx"
+UNMASK_SUBJECT="packages/cli/src/composition/display-unmask.ts"
+
+SUBJECT_PATHS=("$BANNER_SUBJECT" "$UNMASK_SUBJECT")
+
+DOM_SUITE="src/__tests__/conformance/run-detail-failure-dom.test.ts"
+
+WORK="$(mktemp -d)"
+LOG="$WORK/leg.log"
+VERDICTS="$WORK/verdicts.json"
+
+snapshot_path () { echo "$WORK/$(echo "$1" | tr '/' '_').snapshot"; }
+
+sha_of () {
+  if command -v shasum > /dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+  else sha256sum "$1" | cut -d' ' -f1
+  fi
+}
+
+# RESTORING IS A NO-OP WHEN THE BYTES ALREADY MATCH, and that is not tidiness. `cp` bumps an mtime
+# whether or not it changes a byte, and the DOM cells' `buildFreshness` guard compares source mtimes
+# against the dists they drive — so an unconditional restore in the EXIT trap, which runs AFTER this
+# script's last rebuild, leaves every source "newer than" the artifacts and the next person to run
+# the suite gets six refusals that read exactly like a red. Measured by 404-04.
+restore_subjects () {
+  local path snapshot
+  for path in "${SUBJECT_PATHS[@]}"; do
+    snapshot="$(snapshot_path "$path")"
+    [ -f "$snapshot" ] || continue
+    cmp -s "$snapshot" "$REPO_ROOT/$path" && continue
+    cp "$snapshot" "$REPO_ROOT/$path"
+  done
+}
+
+trap 'restore_subjects; rm -rf "$WORK"' EXIT
+
+declare -a BASELINE_SHAS=()
+for path in "${SUBJECT_PATHS[@]}"; do
+  cp "$REPO_ROOT/$path" "$(snapshot_path "$path")"
+  sha="$(sha_of "$(snapshot_path "$path")")"
+  BASELINE_SHAS+=("$sha")
+  echo "subject   $path"
+  echo "  sha256  $sha"
+done
+echo
+
+# ── The named cells, by the ordinal each carries in its own name. REQUIRED is every cell the
+# mutation exists to red; ALLOWED is everything a red is permitted to be; GREEN is the control —
+# cells this mutation must NOT reach, asserted by name so the log carries what stayed still.
+#
+# The ordinals are the contract between this script and the suite. A cell renamed without its
+# ordinal reds nothing here and this script says so by name rather than passing quietly.
+
+# The two chip claims, and only those: the seam still restored, the banner still mounted, and the
+# bytes at rest never went near this component.
+REQUIRED_M4="(3c)
+(3d)"
+ALLOWED_M4="(3c)
+(3d)"
+GREEN_M4="(3a)
+(3b)
+(3e)
+(3f)"
+
+# The one restore claim. The chips are painted from MARKERS, which an unrestored placeholder becomes
+# — so a seam that restores nothing leaves (3c)/(3d) exactly as they were, and (3f) scans a lane the
+# display seam never touches.
+REQUIRED_M5="(3e)"
+ALLOWED_M5="(3e)"
+GREEN_M5="(3a)
+(3b)
+(3c)
+(3d)
+(3f)"
+
+apply_mutation () {
+  case "${FAILURE_BANNER_MUTATION_SELFTEST:-}" in
+    neutered) return 0 ;;
+  esac
+  case "$1" in
+    M4)
+      # The chip seam removed at the ONE render site. `truncateMaskedText` still runs above, the
+      # toggle still switches `open`, and the clipboard path is untouched — so what this leg takes
+      # away is the painting of markers into typed chips, and nothing else. The summary reaching
+      # this expression is still the seam's output: restored where the host could, marker-bearing
+      # where it could not.
+      perl -0pi -e "s/          <MaskedText text=\{open \? summary : preview\.text\} \/>\n/          \{open ? summary : preview.text\}\n/" \
+        "$REPO_ROOT/$BANNER_SUBJECT" ;;
+    M5)
+      # 405-12's M3 verbatim. The seam still reads the sidecar, still resolves the host key, still
+      # re-derives every candidate and still matches the digests — and then puts the placeholder
+      # back in place of the value it matched, so the marker pass that runs last rewrites every one
+      # into a chip. A leg that had disabled the whole seam would also have removed the marker pass,
+      # which is a different mutation with a different meaning.
+      perl -0pi -e "s/            restore\.set\(placeholder, candidate\.value\)\n/            restore.set\(placeholder, placeholder\)\n/" \
+        "$REPO_ROOT/$UNMASK_SUBJECT" ;;
+    *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
+  esac
+}
+
+# THE MUTATION IS ASSERTED TO HAVE LANDED. A `perl` substitution that matched nothing exits 0 and
+# leaves the file untouched, and the leg would then measure an unmutated tree and report a green
+# suite as the mutation "measuring nothing" — the right verdict for the wrong reason, and one that
+# sends a reader looking at the cell instead of at this script's own pattern.
+assert_mutated () {
+  local index=0 path current
+  for path in "${SUBJECT_PATHS[@]}"; do
+    current="$(sha_of "$REPO_ROOT/$path")"
+    if [ "$current" != "${BASELINE_SHAS[$index]}" ]; then return 0; fi
+    index=$((index + 1))
+  done
+  return 1
+}
+
+build_all () {
+  set +e
+  pnpm turbo run build --force > "$WORK/build.log" 2>&1
+  local rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "FATAL: the forced workspace build failed — see $WORK/build.log" >&2
+    tail -40 "$WORK/build.log" >&2
+    restore_subjects
+    exit 1
+  fi
+}
+
+assert_restored () {
+  local index=0 path restored
+  for path in "${SUBJECT_PATHS[@]}"; do
+    restored="$(sha_of "$REPO_ROOT/$path")"
+    if [ "$restored" != "${BASELINE_SHAS[$index]}" ]; then
+      echo "FATAL: $path was not restored byte-identically ($restored)" >&2
+      exit 1
+    fi
+    index=$((index + 1))
+  done
+  echo "  every subject restored byte-identically (sha256 compared)"
+}
+
+# Run the suite, leaving per-cell verdicts in $VERDICTS. Answers the process's own exit code.
+#
+# IT DOES NOT TOUCH `errexit` ITSELF, and that is a correctness point rather than a style one. A
+# helper that ends with `set -e; return "$rc"` re-arms errexit and then returns non-zero — which
+# aborts the caller at the call site, before the caller can read the code it asked for. The whole
+# purpose of a mutation leg is to read a NON-ZERO exit, so the one function that produces it must
+# leave the shell exactly as it found it. Every caller wraps the call in its own `set +e`/`set -e`.
+run_suite () {
+  rm -f "$VERDICTS"
+  pnpm --filter "$CLI_FILTER" exec vitest run "$DOM_SUITE" \
+    --reporter=json --outputFile="$VERDICTS" > "$LOG" 2>&1
+}
+
+# Every cell whose recorded status is not `passed`, one ordinal per line.
+reds_from_verdicts () {
+  node -e '
+    const fs = require("node:fs")
+    const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    const out = []
+    for (const file of report.testResults ?? []) {
+      for (const cell of file.assertionResults ?? []) {
+        if (cell.status !== "passed") out.push(cell.title)
+      }
+    }
+    process.stdout.write(out.join("\n"))
+  ' "$VERDICTS"
+}
+
+# run_leg <name> <label> <required> <allowed> <green>
+run_leg () {
+  local name="$1" label="$2" required="$3" allowed="$4" green="$5"
+
+  echo "=== MUTATION $name — $label"
+  restore_subjects
+  apply_mutation "$name"
+
+  case "${FAILURE_BANNER_MUTATION_SELFTEST:-}" in
+    neutered) echo "  SELFTEST=neutered: applying a NO-OP edit in place of $name" ;;
+    *)
+      if ! assert_mutated; then
+        echo "FATAL: mutation $name changed no byte — its pattern no longer matches the subject" >&2
+        exit 1
+      fi ;;
+  esac
+
+  echo "  rebuilding every dist the spawned dashboard resolves, so it IS the mutated source"
+  build_all
+
+  set +e
+  run_suite
+  local rc=$?
+  set -e
+  echo "  leg exited $rc"
+
+  if [ ! -f "$VERDICTS" ]; then
+    echo "FATAL: mutation $name produced no per-cell verdicts — the suite never ran" >&2
+    sed -n '1,60p' "$LOG" >&2
+    restore_subjects
+    build_all
+    exit 1
+  fi
+
+  if [ "$rc" -eq 0 ]; then
+    echo "FATAL: the suite stayed green under the mutation — mutation $name measures nothing" >&2
+    restore_subjects
+    build_all
+    exit 1
+  fi
+
+  local red
+  red="$(reds_from_verdicts)"
+  echo "  cells red:"
+  local line fragment ok
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    echo "    - $line"
+  done <<< "$red"
+
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    ok=0
+    while IFS= read -r fragment; do
+      [ -z "$fragment" ] && continue
+      case "$line" in *"$fragment"*) ok=1 ;; esac
+    done <<< "$allowed"
+    if [ "$ok" -eq 0 ]; then
+      echo "FATAL: mutation $name red a cell outside its allowed list: $line" >&2
+      restore_subjects
+      build_all
+      exit 1
+    fi
+  done <<< "$red"
+
+  while IFS= read -r fragment; do
+    [ -z "$fragment" ] && continue
+    case "$red" in
+      *"$fragment"*) echo "  REQUIRED red observed: $fragment" ;;
+      *)
+        echo "FATAL: mutation $name did not red its named cell: $fragment" >&2
+        restore_subjects
+        build_all
+        exit 1 ;;
+    esac
+  done <<< "$required"
+
+  while IFS= read -r fragment; do
+    [ -z "$fragment" ] && continue
+    case "$red" in
+      *"$fragment"*)
+        echo "FATAL: mutation $name red an expected NON-CATCHER: $fragment" >&2
+        restore_subjects
+        build_all
+        exit 1 ;;
+      *) echo "  expected non-catcher stayed green: $fragment" ;;
+    esac
+  done <<< "$green"
+
+  restore_subjects
+  build_all
+  assert_restored
+  echo
+}
+
+echo "=== PREFLIGHT — the dists these cells drive, then the pre-mutation suite"
+build_all
+set +e
+run_suite
+PREFLIGHT_RC=$?
+set -e
+echo "  $DOM_SUITE exited $PREFLIGHT_RC"
+if [ "$PREFLIGHT_RC" -ne 0 ]; then
+  echo "FATAL: $DOM_SUITE is already red before any mutation" >&2
+  sed -n '1,100p' "$LOG" >&2
+  exit 1
+fi
+echo
+
+run_leg M4 "the banner's MaskedText render replaced by the raw string" "$REQUIRED_M4" "$ALLOWED_M4" "$GREEN_M4"
+run_leg M5 "the display-unmask seam made a marker pass, restoring nothing" "$REQUIRED_M5" "$ALLOWED_M5" "$GREEN_M5"
+
+echo "PASS — taking the chip painting away from the banner red exactly the two chip cells, and"
+echo "       taking restoration away from the display seam red exactly the restore cell, while the"
+echo "       producer's masked wire, the banner's own mounting and truncation, and the at-rest scan"
+echo "       of a failing run stayed green under the mutations that do not touch them."
