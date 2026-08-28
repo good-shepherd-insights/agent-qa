@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import type {
+  Action,
+  ActionAnnotation,
+  ArtifactRef,
   DeclaredModelProfile,
+  InterpolatedVariable,
+  MaskFn,
   ModelIdentity,
   RunId,
   ScopeKey,
@@ -10,13 +15,21 @@ import type {
 } from '@vostride/agent-qa-schema'
 import {
   asRecordId,
+  asRef,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   guardCompletedRunHandoff,
 } from '@vostride/agent-qa-schema'
+import { createMaskingContext } from '@vostride/agent-qa-safety'
 import type { RunConfig, RunMemberDescriptor } from '../ports.js'
 import type { TestResult } from '../../result.js'
-import { assembleHandoff, assemblePerTestOutcome, skippedPerTestOutcome } from '../handoff-assembly.js'
+import {
+  assembleHandoff,
+  assemblePerTestOutcome,
+  MASKED_HANDOFF_NARRATION_FIELDS,
+  skippedPerTestOutcome,
+} from '../handoff-assembly.js'
 import { makeEmptyServedBrief } from '../../loop/evidence.js'
+import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { startRun } from '../shell.js'
 
 const scope: ScopeKey = { tier: 'suite', key: 'checkout' }
@@ -311,5 +324,166 @@ describe('StepEvidence.planSource marker (D-12)', () => {
     expect(
       step.planSource?.kind === 'procedure-replay' ? step.planSource.guard.miss?.reason : undefined,
     ).toBe('descriptor-ambiguous')
+  })
+})
+
+// WINDOWS #305 · DETL-04 — masked-at-rest narration on the REAL-evidence arm. The masker here is
+// the product's OWN `createMaskingContext()`, seeded by `register`, so every assertion is against
+// the one `MaskFn` a run threads from `shell.ts` into both `assemblePerTestOutcome` and
+// `projectTestFinished` — never a stand-in that could answer "is this a secret" differently.
+describe('WINDOWS #305 — real step evidence is masked at rest (DETL-04)', () => {
+  const CREDENTIAL = 'zz-405-populated-secret-7f3a91c2'
+  const EMAIL = 'qa-person@example.com'
+  const STEP_TEXT = `Acknowledge the notice using ${CREDENTIAL}.`
+  const PLANNED_ACTION: Action = {
+    type: 'fill',
+    ref: asRef('e1'),
+    text: CREDENTIAL,
+    clearMode: 'replace',
+    submit: false,
+  }
+  const INTERPOLATED: InterpolatedVariable[] = [{ name: 'LOGIN_USER', value: EMAIL }]
+  const SCREENSHOT_REF: ArtifactRef = { id: 'decision-0', sha: 'a'.repeat(64) }
+  const ANNOTATION: ActionAnnotation = {
+    kind: 'point',
+    viewport: { width: 390, height: 844 },
+    point: { x: 195, y: 222 },
+  }
+
+  function seededMask(): MaskFn {
+    const context = createMaskingContext()
+    context.register(CREDENTIAL)
+    return (text: string) => context.mask(text)
+  }
+
+  function realEvidence(): StepEvidence {
+    return {
+      stepIndex: 0,
+      stepText: STEP_TEXT,
+      cacheStatus: 'miss',
+      servedBrief: makeEmptyServedBrief(scope, 7),
+      subActions: [
+        {
+          plan: `Type ${CREDENTIAL} into the field the notice names for ${EMAIL}`,
+          plannedAction: PLANNED_ACTION,
+          stateBefore: makeScreenState(),
+          result: {
+            success: false,
+            error: `Cannot acknowledge: the notice names ${EMAIL} as contact, the operator credential ${CREDENTIAL} was refused`,
+            data: { echoed: `server saw ${EMAIL}` },
+            metadata: { header: `authorization ${CREDENTIAL}` },
+            annotation: ANNOTATION,
+          },
+          decisionScreenshotRef: SCREENSHOT_REF,
+        },
+      ],
+      verifierVerdict: { pass: false, reasoning: `verifier read ${EMAIL} in the notice` },
+      interpolatedVariables: INTERPOLATED,
+    }
+  }
+
+  function resultWithEvidence(evidence: StepEvidence): TestResult {
+    return {
+      name: 'checkout',
+      filePath: 'checkout.test.ts',
+      status: 'failed',
+      duration: 1,
+      steps: [{ name: evidence.stepText, status: 'failed', duration: 1, evidence }],
+    }
+  }
+
+  function assembleOnce(mask: MaskFn): StepEvidence {
+    const outcome = assemblePerTestOutcome(member, resultWithEvidence(realEvidence()), 'failed', {
+      testIndex: 0,
+      scope,
+      buildOrdinal: 7,
+      mask,
+    })
+    return outcome.steps[0]
+  }
+
+  it('pins MASKED_HANDOFF_NARRATION_FIELDS by value — a later edit reds by NAME, not only behaviourally', () => {
+    expect(MASKED_HANDOFF_NARRATION_FIELDS).toEqual([
+      'verifierVerdict.reasoning',
+      'subActions[].plan',
+      'subActions[].result.error',
+      'subActions[].result.data',
+      'subActions[].result.metadata',
+    ])
+  })
+
+  it('masks the narration set through the run OWN MaskFn — one masker, no second detector', () => {
+    const step = assembleOnce(seededMask())
+    const subAction = step.subActions[0]
+
+    expect(step.verifierVerdict.reasoning).toBe('verifier read <EMAIL_0> in the notice')
+    expect(subAction.plan).toBe(
+      'Type <SECRET_0> into the field the notice names for <EMAIL_0>',
+    )
+    expect(subAction.result.error).toBe(
+      'Cannot acknowledge: the notice names <EMAIL_0> as contact, the operator credential <SECRET_0> was refused',
+    )
+    expect(subAction.result.data).toEqual({ echoed: 'server saw <EMAIL_0>' })
+    expect(subAction.result.metadata).toEqual({ header: 'authorization <SECRET_0>' })
+  })
+
+  it('leaves stepText, plannedAction and interpolatedVariables BYTE-IDENTICAL (the G-381-3 carve-out)', () => {
+    const step = assembleOnce(seededMask())
+
+    expect(step.stepText).toBe(STEP_TEXT)
+    expect(step.subActions[0].plannedAction).toEqual(PLANNED_ACTION)
+    expect(step.interpolatedVariables).toEqual(INTERPOLATED)
+    // the exact-match the emit fold depends on: the binding value is still findable in the action
+    expect(JSON.stringify(step.subActions[0].plannedAction)).toContain(CREDENTIAL)
+    expect(step.interpolatedVariables?.[0].value).toBe(EMAIL)
+  })
+
+  it('leaves the untouched-by-construction members deep-equal to the input', () => {
+    const input = realEvidence()
+    const step = assembleOnce(seededMask())
+    const subAction = step.subActions[0]
+
+    expect(subAction.stateBefore).toEqual(input.subActions[0].stateBefore)
+    expect(subAction.result.success).toBe(false)
+    expect(subAction.result.annotation).toEqual(ANNOTATION)
+    expect(subAction.decisionScreenshotRef).toEqual(SCREENSHOT_REF)
+    expect(step.servedBrief).toEqual(input.servedBrief)
+  })
+
+  it('is a FIXED POINT — assembling twice through the same context yields byte-identical steps', () => {
+    const mask = seededMask()
+    const first = assembleOnce(mask)
+    const second = assemblePerTestOutcome(member, resultWithEvidence(first), 'failed', {
+      testIndex: 0,
+      scope,
+      buildOrdinal: 7,
+      mask,
+    }).steps[0]
+
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+  })
+
+  it('still round-trips through the one handoff guard — only string VALUES moved', () => {
+    const config = {
+      runId: 'run-mask' as RunId,
+      scope,
+      executionContext: 'local-headless',
+      configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+      buildOrdinal: 7,
+      members: [member],
+      executor: async () => resultWithoutEvidence(),
+    } satisfies RunConfig
+    const outcome = assemblePerTestOutcome(
+      member,
+      resultWithEvidence(realEvidence()),
+      'failed',
+      { testIndex: 0, scope, buildOrdinal: 7, mask: seededMask() },
+    )
+
+    const handoff = assembleHandoff(config, [outcome], 'failed', { startedAt: 1, endedAt: 2 })
+    const reloaded = guardCompletedRunHandoff(JSON.parse(JSON.stringify(handoff)))
+
+    expect(reloaded.tests[0].steps[0].subActions[0].result.error).toContain('<EMAIL_0>')
+    expect(reloaded.tests[0].steps[0].stepText).toBe(STEP_TEXT)
   })
 })
