@@ -37,6 +37,7 @@
     "validate:funnel-mutation": "bash scripts/394-funnel-mutation.sh",
     "validate:refinement-mutation": "bash scripts/394-refinement-mutation.sh",
     "validate:run-detail-mutation": "bash scripts/405-run-detail-mutation.sh",
+    "validate:debris-mutation": "bash scripts/405-debris-mutation.sh",
     "release:docker": "node scripts/release/docker.mjs",
     "release:docker:check": "node scripts/release/docker.mjs --check-local",
     "release:dry-run": "node scripts/release/dry-run.mjs",

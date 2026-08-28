@@ -219,13 +219,13 @@ const DDL = MIGRATIONS.map((migration) => migration.sql.join('\n')).join('\n')
  * restoring one will not necessarily restore its old spelling.
  */
 const RETIRED_DDL_TOKENS: { label: string; needle: string }[] = [
-  { label: 'any healing column', needle: 'healing' + '_' },
-  { label: 'any recording-path column', needle: 'screensh' + 'ot_' },
-  { label: 'the reasoning-trace table', needle: 'reasoning_' + 'traces' },
-  { label: 'the run-level recording column', needle: 'video' + '_path' },
-  { label: 'the parent-link column', needle: 'parent_run' + '_id' },
-  { label: 'the v1 wide step table', needle: 'CREATE TABLE IF NOT EXISTS ' + 'steps' },
-  { label: 'the v1 log table', needle: 'CREATE TABLE IF NOT EXISTS ' + 'logs' },
+  { label: 'healing column', needle: 'healing' + '_' },
+  { label: 'recording-path column', needle: 'screensh' + 'ot_' },
+  { label: 'reasoning-trace table', needle: 'reasoning_' + 'traces' },
+  { label: 'run-level recording column', needle: 'video' + '_path' },
+  { label: 'parent-link column', needle: 'parent_run' + '_id' },
+  { label: 'v1 wide step table', needle: 'CREATE TABLE IF NOT EXISTS ' + 'steps' },
+  { label: 'v1 log table', needle: 'CREATE TABLE IF NOT EXISTS ' + 'logs' },
 ]
 
 /** The survivors. Without these the cell would pass over an empty migration. */
@@ -245,7 +245,7 @@ describe('the version-2 DDL is a closed shape (D-02, DETL-06)', () => {
   })
 
   for (const { label, needle } of RETIRED_DDL_TOKENS) {
-    it(`carries no ${label}`, () => {
+    it(`the version-2 DDL declares no ${label}`, () => {
       const offending = DDL.split('\n')
         .map((line, index) => ({ line: line.trim(), index: index + 1 }))
         .filter((entry) => entry.line.includes(needle))
