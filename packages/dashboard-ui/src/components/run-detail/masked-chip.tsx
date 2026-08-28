@@ -19,8 +19,14 @@ import { Badge } from "@/components/ui/badge"
 import { MASKED_EMAIL_LABEL, MASKED_SECRET_LABEL } from "@/lib/run-detail-view"
 import type { MaskedCategory } from "@vostride/agent-qa-schema"
 
-/** The published sentence per category — a closed switch, so a new category cannot render unnamed. */
-function maskedLabel(category: MaskedCategory): string {
+/**
+ * The published sentence per category — a closed switch, so a new category cannot render unnamed.
+ *
+ * EXPORTED SINCE 405-14 because the chip is no longer the only medium a person reads a redaction
+ * in: the failure banner's copy button writes the same sentence to the clipboard, and a second
+ * switch over the same closed set would be a second place a third category could go unnamed.
+ */
+export function maskedLabel(category: MaskedCategory): string {
   switch (category) {
     case "secret":
       return MASKED_SECRET_LABEL

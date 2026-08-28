@@ -21,6 +21,12 @@
 // producer sentence; `lib/masked-text.ts` records why that ordering was wrong even though today's
 // marker spelling made it harmless.
 //
+// THE CLIPBOARD IS A SECOND MEDIUM A PERSON READS, SO IT GETS THE SAME RULE (T-405-43). What
+// `copyTextOf` writes is the sentence the reader just looked at — each marker replaced by the
+// PUBLISHED label its chip shows — not the marker-bearing string the seam produced. A copy button
+// that pasted `␟masked:…␟` into a bug report would move the leak off the page rather than close
+// it, and the pasted text is read by exactly the people a redaction is kept from.
+//
 // TEXT NODES AND ELEMENTS, NEVER MARKUP (T-405-42): there is no `dangerouslySetInnerHTML` here or in
 // `MaskedText` below it, and a jsdom cell feeds this component markup and asserts no element.
 
@@ -28,7 +34,8 @@ import { useState } from "react"
 import { AlertCircle, Check, ChevronRight, Copy } from "lucide-react"
 
 import { MaskedText } from "@/components/run-detail/masked-text"
-import { truncateMaskedText } from "@/lib/masked-text"
+import { maskedLabel } from "@/components/run-detail/masked-chip"
+import { splitMaskedText, truncateMaskedText } from "@/lib/masked-text"
 import { cn } from "@/lib/utils"
 
 /**
@@ -42,13 +49,31 @@ import { cn } from "@/lib/utils"
  */
 export const FAILURE_BANNER_PREVIEW_WORDS = 20
 
+/**
+ * The summary as a clipboard string: every marker replaced by the sentence its chip shows.
+ *
+ * THE FULL SUMMARY, NEVER THE PREVIEW. The preview is a reading aid; what a person copies into a
+ * bug report is the whole sentence the producer wrote, which is why this maps `summary` rather than
+ * the truncated text.
+ *
+ * JOINED WITH NO SEPARATOR, because the segments already carry the producer's own spacing — a join
+ * on anything else would insert whitespace the sentence never had around every redaction.
+ */
+function copyTextOf(summary: string): string {
+  return splitMaskedText(summary)
+    .map((segment) => (
+      segment.kind === "text" ? segment.text : `[${maskedLabel(segment.category)}]`
+    ))
+    .join("")
+}
+
 export function FailureBanner({ summary }: { summary: string }) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const preview = truncateMaskedText(summary, FAILURE_BANNER_PREVIEW_WORDS)
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(summary)
+    navigator.clipboard.writeText(copyTextOf(summary))
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
