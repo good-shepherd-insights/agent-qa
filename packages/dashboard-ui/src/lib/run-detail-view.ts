@@ -20,7 +20,7 @@
 // reads, which is the one place that lie is unrecoverable.
 
 import type {
-  ArtifactRef,
+  RunDetailArtifactRef,
   RunDetailMember,
   RunDetailProjection,
   RunDetailStep,
@@ -57,12 +57,29 @@ export const MASKED_SECRET_LABEL = "masked secret — not in this host's config"
 export const MASKED_EMAIL_LABEL = 'masked email'
 
 /**
- * The honest state for a ref whose blob is gone or was never written (D-15).
+ * The honest state for a ref whose blob is gone or was never written (406-05 · D-17 / D-18).
  *
- * Never a broken image element, never a silently dropped row. 406 upgrades this to the ratified
- * `evidence-incomplete` rendering without changing the op or this constant's job.
+ * THE THIRD ABSENCE VOCABULARY, and the reason it has its own word. A masked chip says a value was
+ * redacted ON PURPOSE and the page could have shown it under another config; the read-unavailable
+ * sentence says THE READ ITSELF FAILED and the fact behind it may be perfectly intact; this one
+ * says THE BYTES ARE GONE and no retry, config or reload will bring them back. Three different
+ * things a reader would do next, so three different sentences — collapsing any pair would tell
+ * someone to go fix something that is not broken, or to give up on something that is.
+ *
+ * Never a broken image element, never a silently dropped row: an absent blob is a STATE.
  */
-export const SCREENSHOT_UNAVAILABLE_LABEL = 'screenshot unavailable'
+export const EVIDENCE_INCOMPLETE_LABEL = 'evidence incomplete'
+
+/**
+ * 405's name for {@link EVIDENCE_INCOMPLETE_LABEL}, kept as an alias for its importers.
+ *
+ * The 405 doc above this constant promised exactly this upgrade, and 406 spends it: the ratified
+ * word covers every ref site — the overview's screenshot pane and the failure view's cited links —
+ * so the screenshot-shaped name is no longer the whole story. It is an ALIAS rather than a second
+ * string, because two constants that happen to agree today are two constants that can disagree
+ * tomorrow. A later phase retires it deliberately.
+ */
+export const SCREENSHOT_UNAVAILABLE_LABEL: string = EVIDENCE_INCOMPLETE_LABEL
 
 /**
  * What the tree says when the durable read itself FAILED (405-08 · D-03).
@@ -307,10 +324,14 @@ export const DECISION_SCREENSHOT_REF_PREFIX = 'decision-screenshot:'
  * select. Deriving an "after" from the next sub-action's shot would be a join nobody recorded — the
  * screen may have moved for reasons this action did not cause, and a caption claiming otherwise is
  * a lie a reader cannot check.
+ *
+ * It answers the DETAIL-side ref (406-05 · D-17), not the runner's narrower mint, because the read
+ * annotated presence onto these rows and the pane's whole decision turns on that field. Returning
+ * the producer's shape would hide `present` from the one caller that exists to read it.
  */
 export function decisionScreenshotRef(
   subAction: Pick<RunDetailSubAction, 'artifactRefs'>,
-): ArtifactRef | undefined {
+): RunDetailArtifactRef | undefined {
   return subAction.artifactRefs?.find((ref) => ref.id.startsWith(DECISION_SCREENSHOT_REF_PREFIX))
 }
 

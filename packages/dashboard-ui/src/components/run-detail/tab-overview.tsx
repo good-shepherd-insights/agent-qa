@@ -14,20 +14,33 @@
 // a marker — or a raw placeholder — into a text node a person reads. There is no
 // `dangerouslySetInnerHTML` in this file.
 //
-// AN ABSENT BLOB IS A STATE, NOT A BROKEN IMAGE (D-15). A ref carrying `evidenceIncomplete` is not
-// requested at all, and a request that 404s flips the pane to the same visible node. "The evidence
-// is gone" and "the page is broken" must never look the same.
+// AN ABSENT BLOB IS A STATE, NOT A BROKEN IMAGE (D-15, widened by 406's D-17 / D-18). THREE roads
+// reach one visible node: a ref the producer already flagged `evidenceIncomplete`, a ref the
+// durable read itself found gone (`present: false` — D-17 stats the store at read time, so the
+// pane can refuse BEFORE asking), and a request that 404s on click. None of them is requested
+// twice and none of them is drawn as a broken image: "the evidence is gone" and "the page is
+// broken" must never look the same.
+//
+// PRESENCE UNKNOWN IS NOT AN ABSENCE, which is why the predicate reads `present === false` rather
+// than `!present`. A host whose store cannot stat leaves the key off entirely; treating that as
+// gone would make the page claim, on the strength of not having asked, that bytes it never looked
+// for are missing. The click-time refusal still covers the blob that really is.
+//
+// THE WORD ITSELF COMES FROM ONE COMPONENT (D-18). `EvidenceIncomplete` is shared with the failure
+// view's cited links, so the two surfaces cannot describe one fact in two words. The
+// `data-artifact-state` wrapper stays here — it is what the shipped-binary cells measure the PANE
+// by, while `data-evidence-state` is what they measure the STATE by.
 
 import { useState } from "react"
-import { Brain, Camera, ImageOff, Play, ShieldCheck, Target } from "lucide-react"
+import { Brain, Camera, Play, ShieldCheck, Target } from "lucide-react"
 
 import { ScreenshotViewer } from "@/components/screenshot-viewer"
 import { ReasoningPipeline } from "@/components/reasoning-pipeline"
 import type { SectionDef, ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
+import { EvidenceIncomplete } from "@/components/run-detail/evidence-incomplete"
 import { MaskedText } from "@/components/run-detail/masked-text"
 import { routes } from "@/lib/routes"
 import {
-  SCREENSHOT_UNAVAILABLE_LABEL,
   decisionScreenshotRef,
   screenStateChangeLabel,
   screenStateChip,
@@ -171,17 +184,6 @@ function ScreenshotAbsent({ label }: { label: string }) {
   )
 }
 
-function ScreenshotUnavailable() {
-  return (
-    <div data-artifact-state="unavailable" className="h-full w-full py-12">
-      <div className="flex min-h-[16rem] w-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-        <ImageOff className="h-8 w-8" />
-        <span className="text-sm font-medium text-foreground">{SCREENSHOT_UNAVAILABLE_LABEL}</span>
-      </div>
-    </div>
-  )
-}
-
 /**
  * The screenshot the planner looked at when it decided this turn (D-14 / D-15).
  *
@@ -189,10 +191,10 @@ function ScreenshotUnavailable() {
  * before/after pair to toggle between; the segmented control that used to sit here selected between
  * two path-addressed captures whose producer is gone.
  *
- * A REF CARRYING `evidenceIncomplete` IS NEVER REQUESTED. The producer already told us the bytes
- * are not there; asking anyway would turn a known fact into a network round-trip whose 404 we would
- * then have to interpret. Both roads end at the same visible node — this one just does not lie
- * about having looked.
+ * A REF KNOWN ABSENT IS NEVER REQUESTED (D-17). Whether the producer flagged it or the durable read
+ * stat'd the store and found nothing, we already know the bytes are not there; asking anyway would
+ * turn a known fact into a network round-trip whose 404 we would then have to interpret. All three
+ * roads end at the same visible node — the first two just do not lie about having looked.
  */
 function DecisionScreenshot({
   runId,
@@ -214,7 +216,13 @@ function DecisionScreenshot({
     )
   }
 
-  if (ref.evidenceIncomplete === true || failedSha === ref.sha) return <ScreenshotUnavailable />
+  if (ref.evidenceIncomplete === true || ref.present === false || failedSha === ref.sha) {
+    return (
+      <div data-artifact-state="unavailable" className="h-full w-full">
+        <EvidenceIncomplete variant="pane" />
+      </div>
+    )
+  }
 
   return (
     <div data-artifact-state="available" className="p-3 min-w-0">
