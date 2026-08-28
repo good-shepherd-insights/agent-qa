@@ -490,6 +490,46 @@ function jsonNoCors(res: ServerResponse, data: unknown, status = 200): void {
   res.end(body)
 }
 
+/**
+ * Refuse a cross-site driver on a read that crosses the display seam, and refuse it with NO
+ * cross-origin grant on the refusal either.
+ *
+ * WHY THESE ARMS AND NOT THE OTHERS (405 CR-01). 405-10 put `unmaskTreeForDisplay` on four read
+ * arms. Before that seam their bodies carried `<SECRET_1>` placeholders; they now carry the
+ * RESTORED CLEARTEXT of a declared secret. The sensitivity of the data behind this server's
+ * pre-existing wildcard `Access-Control-Allow-Origin` changed without the wildcard changing, so on
+ * these four arms the grant has to go: a page on any origin the operator has open could otherwise
+ * `fetch` the run list, read the ids, then `fetch` the artifact and read the secrets out of the
+ * config snapshot. The loopback bind is not a defence against that — it stops a remote HOST, and
+ * the attacker here is the operator's own browser reaching another ORIGIN.
+ *
+ * WHY THE REFUSAL AND NOT ONLY THE MISSING HEADER. Dropping the wildcard stops a page on another
+ * ORIGIN from READING the body. It does not stop DNS rebinding, where the attacker's own name
+ * resolves to a loopback address and the browser therefore treats the read as same-origin and asks
+ * for no grant at all. `refuseCrossSiteRequest` carries the Host check that closes that, and it
+ * ADMITS the caller that sends no `Origin` — the CLI, `curl`, the conformance harness — which is
+ * the local drive these arms exist for.
+ *
+ * SCOPE, DELIBERATELY NARROW. Only the arms that cross the seam. `json()` above keeps its wildcard
+ * for the legacy read routes, whose whole-server posture is the re-platform question its own
+ * docstring defers; widening it here would change the posture of routes this fix does not own.
+ *
+ * THE SHARED PREFLIGHT ARM IS LEFT ALONE, and that is a decision rather than an oversight. `cors()`
+ * still answers every OPTIONS with the wildcard. All four arms here are SIMPLE GETs, so a browser
+ * needs no preflight to send them and a preflight grant confers no read; what confers the read is
+ * the grant on the ACTUAL response, and that is the one removed. A preflighted variant now gets a
+ * permissive OPTIONS followed by a response the browser refuses to hand to the page — it fails
+ * closed. Excluding these paths from `cors()` would mean claiming the `/api/runs/` prefix ahead of
+ * the shared arm the way the chat door claims its own, which would capture the trigger, cancel,
+ * delete, live-url, detail and post-processing routes too: the whole-server posture change this
+ * fix is deliberately not making.
+ */
+function refuseCrossSiteDisplayRead(req: IncomingMessage, res: ServerResponse): boolean {
+  if (refuseCrossSiteRequest(req) === undefined) return false
+  jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+  return true
+}
+
 function notFound(res: ServerResponse, message = 'Not found'): void {
   json(res, { error: message }, 404)
 }
@@ -1852,6 +1892,9 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // GET /api/runs
     if (path === '/api/runs' && req.method === 'GET') {
+      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`. This arm
+      // crosses the display seam below, so its body can carry restored cleartext.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       const status = url.searchParams.get('status') ?? undefined
       const name = url.searchParams.get('name') ?? undefined
       const platform = url.searchParams.get('platform') ?? undefined
@@ -1912,13 +1955,13 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           // exactly what `redactAuthStateValue` exists to hide — so it runs AFTER, never before.
           // This arm had no redactor before this plan because nothing here could be cleartext;
           // the seam is what makes it necessary.
-          json(res, sanitizeAuthStateForResponse({
+          jsonNoCors(res, sanitizeAuthStateForResponse({
             runs: humanRuns,
             total: filtered.length,
             targets: targetOptions,
           }))
         })
-        .catch(() => json(res, { error: 'Failed to list runs' }, 500))
+        .catch(() => jsonNoCors(res, { error: 'Failed to list runs' }, 500))
       return
     }
 
@@ -1962,6 +2005,9 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
     // GET /api/runs/:id/artifact
     const runArtifactMatch = path.match(/^\/api\/runs\/([^/]+)\/artifact$/)
     if (runArtifactMatch && req.method === 'GET') {
+      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`. This arm
+      // crosses the display seam below, so its body can carry restored cleartext.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       const runId = decodeURIComponent(runArtifactMatch[1])
       const run = db.getRun(runId)
       if (!run) {
@@ -1978,7 +2024,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         missingSections: getArtifactMissingSections(bundle.artifact),
       }
       // Seam BEFORE the redactor (Pitfall 7, T-405-38) — see the runs-list arm.
-      json(res, sanitizeAuthStateForResponse(
+      jsonNoCors(res, sanitizeAuthStateForResponse(
         deps.agentHost === undefined
           ? artifactBody
           : unmaskTreeForDisplay(deps.agentHost, artifactBody, { runId }),
@@ -2000,6 +2046,9 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
 
     // GET /api/runs/:id/execution-logs
     if (path.startsWith('/api/runs/') && path.endsWith('/execution-logs') && req.method === 'GET') {
+      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`. This arm
+      // crosses the display seam below, so its body can carry restored cleartext.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       const segments = path.split('/')
       const id = segments[3]
       const run = db.getRun(id)
@@ -2016,7 +2065,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       const logs = db.getExecutionLogs({ runId: id, stepId, type })
       // Execution logs are a human read (D-09): hook stdout and step errors are written masked and
       // are read by a person looking for what went wrong. Seam BEFORE the redactor (Pitfall 7).
-      json(res, sanitizeAuthStateForResponse(
+      jsonNoCors(res, sanitizeAuthStateForResponse(
         deps.agentHost === undefined
           ? { logs }
           : unmaskTreeForDisplay(deps.agentHost, { logs }, { runId: id }),
@@ -2291,6 +2340,12 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         notFound(res)
         return
       }
+      // THE SAME-SITE GUARD (405 CR-01) — see `refuseCrossSiteDisplayRead`. It sits AFTER the shape
+      // check and not above it because this arm is the `/api/runs/` catch-all: the length test is
+      // what decides whether this request is the single-run door at all, and a path that is not
+      // that door should keep answering the generic 404 rather than a refusal about a door it
+      // never reached.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       const id = segments[3]
       const run = db.getRun(id)
       if (!run) {
@@ -2306,7 +2361,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       //
       // 405-10 (D-09): and the one row it does answer with is a human read, so it crosses the
       // display seam BEFORE the auth-state redactor (Pitfall 7) on the runs-list arm's reasoning.
-      json(res, sanitizeAuthStateForResponse(
+      jsonNoCors(res, sanitizeAuthStateForResponse(
         deps.agentHost === undefined
           ? { run }
           : unmaskTreeForDisplay(deps.agentHost, { run }, { runId: id }),

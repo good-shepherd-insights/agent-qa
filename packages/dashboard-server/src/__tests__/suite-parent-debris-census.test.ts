@@ -641,6 +641,13 @@ function buildRouter(db: DashboardDatabase): ReturnType<typeof createRouter> {
   } as unknown as Parameters<typeof createRouter>[0])
 }
 
+// A mock request that omits `Host` models no real client: HTTP/1.1 requires the header and every
+// browser, `curl`, `fetch` and the conformance harness sends it. The display-seam read arms
+// (405 CR-01) now refuse a request whose claimed Host is not a loopback name, so the default below
+// is what keeps these direct-invoke probes speaking the wire's own shape. An explicit `host` in
+// `options.headers` still wins, which is how the refusal itself is exercised.
+const LOOPBACK_HOST_HEADER = { host: '127.0.0.1:3470' } as const
+
 async function probeRoute(
   router: ReturnType<typeof createRouter>,
   url: string,
@@ -650,7 +657,9 @@ async function probeRoute(
     const req = new IncomingMessage(new Socket())
     req.method = options.method ?? 'GET'
     req.url = url
-    req.headers = options.body === undefined ? {} : { 'content-type': 'application/json' }
+    req.headers = options.body === undefined
+      ? { ...LOOPBACK_HOST_HEADER }
+      : { ...LOOPBACK_HOST_HEADER, 'content-type': 'application/json' }
     process.nextTick(() => {
       if (options.body !== undefined) req.push(Buffer.from(options.body))
       req.push(null)

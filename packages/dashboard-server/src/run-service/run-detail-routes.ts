@@ -106,6 +106,18 @@ export async function readRunDetail(
   }
 }
 
+/**
+ * This door's JSON writer — and the ABSENCE of a cross-origin grant on it is load-bearing (405 CR-01).
+ *
+ * `serveRunDetailRead` crosses the display seam, so this body carries the RESTORED CLEARTEXT of a
+ * declared secret. `Content-Type` and `Content-Length` are the whole header set on purpose: no
+ * `Access-Control-Allow-Origin`, because a page on another origin that the operator happens to have
+ * open must not be able to read a run's secrets out of this response. Until CR-01 that posture was
+ * an accident of which writer this file inherited rather than a decision, and the sibling arms in
+ * `server/routes.ts` — which answered through the wildcard-writing `json()` — proved how easily the
+ * accident goes the other way. If a later refactor wants one JSON writer across both files, the one
+ * it converges on must be the no-grant one.
+ */
 function respondJson(res: ServerResponse, status: number, data: unknown): void {
   if (res.headersSent || res.writableEnded) {
     res.destroy()

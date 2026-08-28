@@ -41,6 +41,13 @@ function insertRun(overrides: Record<string, unknown> = {}) {
   })
 }
 
+// A mock request that omits `Host` models no real client: HTTP/1.1 requires the header and every
+// browser, `curl`, `fetch` and the conformance harness sends it. The display-seam read arms
+// (405 CR-01) now refuse a request whose claimed Host is not a loopback name, so the default below
+// is what keeps these direct-invoke probes speaking the wire's own shape. An explicit `host` in
+// `options.headers` still wins, which is how the refusal itself is exercised.
+const LOOPBACK_HOST_HEADER = { host: '127.0.0.1:3470' } as const
+
 function createMockRequest(
   url: string,
   options: { method?: string; body?: string } = {},
@@ -48,6 +55,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
+  req.headers = { ...LOOPBACK_HOST_HEADER }
 
   process.nextTick(() => {
     if (options.body) {
