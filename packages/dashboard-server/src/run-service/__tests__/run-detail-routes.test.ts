@@ -654,7 +654,13 @@ describe("serveRunDetailRead's boundary option (405-10, D-09)", () => {
     const { host, calls } = seamRecordingHost(maskedProjection())
     const recorder = recordingResponse()
 
-    serveRunDetailRead({} as never, recorder.res, { runId: RUN_ID, host, boundary: 'human' })
+    // A LOOPBACK HOST, because the human arm now carries the same-site guard (405 CR-01, second
+    // pass) and a request that states no Host models no real HTTP/1.1 client.
+    serveRunDetailRead(
+      { headers: { host: '127.0.0.1:3470' } } as never,
+      recorder.res,
+      { runId: RUN_ID, host, boundary: 'human' },
+    )
     await recorder.done
 
     expect(recorder.status()).toBe(200)
@@ -683,7 +689,16 @@ describe("serveRunDetailRead's boundary option (405-10, D-09)", () => {
     const recorder = recordingResponse()
 
     // NO `boundary` — exactly what `run-service-routes.ts`'s `'detail'` dispatch passes (405-05).
-    serveRunDetailRead({} as never, recorder.res, { runId: RUN_ID, host })
+    //
+    // AND A DELIBERATELY NON-LOOPBACK HOST. The human arm's same-site guard would refuse this
+    // request outright; the remote door is reached at a real hostname and must not inherit a
+    // loopback check written for a person's local browser session. A 200 here is the assertion
+    // that the guard is gated on `boundary` and not on the function (405 CR-01, second pass).
+    serveRunDetailRead(
+      { headers: { host: 'runs.example.com' } } as never,
+      recorder.res,
+      { runId: RUN_ID, host },
+    )
     await recorder.done
 
     expect(recorder.status()).toBe(200)

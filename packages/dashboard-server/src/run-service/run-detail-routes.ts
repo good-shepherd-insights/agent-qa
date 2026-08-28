@@ -25,6 +25,7 @@ import {
 
 import type { AgentHost } from '../chat/host.js'
 import { unmaskTreeForDisplay } from '../masking/display-tree.js'
+import { refuseCrossSiteRequest } from '../server/cross-site.js'
 
 /** A refusal, already carrying its status and its single-key body. */
 interface RunDetailRefusal {
@@ -158,10 +159,42 @@ export interface RunDetailReadDeps {
 
 /** `GET /api/runs/:id/detail` — what the rebuilt run-detail page reads (D-03). */
 export function serveRunDetailRead(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   deps: RunDetailReadDeps,
 ): void {
+  // THE SAME-SITE GUARD, AND IT IS GATED ON `boundary` BECAUSE THIS FUNCTION SERVES TWO DOORS
+  // (405 CR-01, second pass).
+  //
+  // WHY IT LIVES HERE AND NOT AT THE ROUTER'S DISPATCH. The four sibling arms carry their guard in
+  // `routes.ts` because their seam call is in `routes.ts`. This arm's seam call is the line below,
+  // in this file, and it is the RICHEST restored body on the door — the whole run-detail
+  // projection. A guard placed at the dispatch would sit in a different file from the crossing it
+  // protects, which is exactly the split that let this arm be missed in the first pass: an
+  // invariant that reads one router cannot see a crossing in another module. Beside the seam, a
+  // future caller that opts into `'human'` inherits the guard instead of having to remember it.
+  //
+  // WHY `boundary === 'human'` AND NOT UNCONDITIONALLY. The authed REMOTE door dispatches this same
+  // function with no `boundary`, and that door is legitimately reached at a NON-loopback Host. An
+  // unconditional loopback check here would refuse every real remote read — a guard that breaks the
+  // door it was not written for. Gating on `boundary` makes the refusal fire exactly when
+  // restoration fires: the local human arm, and only it.
+  //
+  // WHAT IT IS FOR, GIVEN CORS IS ALREADY CLOSED HERE. `respondJson` writes no cross-origin grant,
+  // so a page on another ORIGIN already cannot read this body. What the grant's absence does NOT
+  // stop is DNS rebinding — the attacker's own name resolves to loopback, so the browser treats the
+  // read as same-origin and asks for no grant at all. The Host check inside `refuseCrossSiteRequest`
+  // is the rung that closes that, and it ADMITS the caller that sends no `Origin` at all, which is
+  // the local non-browser drive this door also serves.
+  //
+  // ORDERING. The router decodes the run id before calling this function, so a cross-site caller
+  // with an undecodable id still meets that 400 first. That is left as it is: the 400 is a statement
+  // about the caller's own input and discloses nothing about any run, where every answer this
+  // function can give does.
+  if (deps.boundary === 'human' && refuseCrossSiteRequest(req) !== undefined) {
+    respondJson(res, 403, { error: 'cross_site_refused' })
+    return
+  }
   void readRunDetail(deps.host, deps.runId).then(
     (outcome) => {
       if (outcome.kind === 'refused') {
