@@ -177,8 +177,9 @@ export class JobQueue extends EventEmitter {
   //
   // ~19 lines stood here walking the run's child rows and cancelling each member row. Under
   // the one-run model a parallel suite is ONE run row with member handles (402-04) — nothing writes
-  // `runs.parent_run_id` any more, so the walk could only ever have read an empty list while
-  // reading as live cancellation policy. Cancelling the run cancels the run.
+  // the run row's parent-link column any more (405-07 then deleted the column outright), so the
+  // walk could only ever have read an empty list while reading as live cancellation policy.
+  // Cancelling the run cancels the run.
   //
   // WHAT THIS DOES NOT TOUCH: `parallel` below. D-11 keeps the queue's parallel flag as CROSS-RUN
   // concurrency of INDEPENDENT jobs, which is what `findNextEligible` has always used it for. What

@@ -389,8 +389,8 @@ export async function startServer(opts: StartServerOptions): Promise<{
         //
         // ~75 lines stood here: force every `running`/`pending` child terminal, re-read them, and
         // derive the parent's status as the worst child status. A suite is now ONE run row with
-        // member handles (D-11, 402-04); nothing writes `runs.parent_run_id`, so the fold's own
-        // `updatedChildren.length === 0` branch — `worstStatus = isBrowserDisconnect ? 'cancelled'
+        // member handles (D-11, 402-04); nothing writes the run row's parent-link column, so the
+        // fold's own `updatedChildren.length === 0` branch — `worstStatus = isBrowserDisconnect ? 'cancelled'
         // : dbStatus` — was the only branch it could still take, and that is exactly what the
         // common path below already does (`dbStatus` is already `'cancelled'` on a browser
         // disconnect). What a suite run GAINS by falling through is the diagnostic

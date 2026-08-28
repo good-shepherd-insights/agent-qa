@@ -225,7 +225,10 @@ const RunCompletionShape = {
   failure_category: z.enum(ANALYTICS_FAILURE_CATEGORIES).optional(),
   duration_ms: NonNegativeNumber.optional(),
   run_id: RunIdSchema.optional(),
-  parent_run_id: RunIdSchema.optional(),
+  // 2026-08-28 (405-13, D-21/DETL-06). The parent-link property was deleted here. It was declared
+  // with no producer anywhere in this package — 402-09 put one run row per run and moved member
+  // identity onto handles, and 405-07 then deleted the column it named — so it could only ever
+  // have travelled as `undefined`. Same disposition and same reason as the healing counter below.
   step_count: NonNegativeInteger.optional(),
   passed_step_count: NonNegativeInteger.optional(),
   failed_step_count: NonNegativeInteger.optional(),

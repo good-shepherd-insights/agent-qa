@@ -251,8 +251,8 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
 
   // 2026-08-24 (Phase 402 plan 09, D-11): `insertRetryChild` AND `insertSuiteChild` ARE DELETED.
   //
-  // ~40 lines stood here minting run rows carrying `parent_run_id` — one per retry attempt, one per
-  // suite member. This module was the LIVE producer of new parent/child run records; the queue's
+  // ~40 lines stood here minting run rows carrying the parent-link column — one per retry attempt,
+  // one per suite member. This module was the LIVE producer of new parent/child run records; the queue's
   // fan-out and the routes' parent-kind mints were only its accessories. D-11: a parallel suite is
   // ONE run row with member handles (402-04's per-member handle addressing), no child runs, no
   // parent kind.
