@@ -152,7 +152,7 @@ export type { RunTargetClass } from './composition/run-risk.js'
 // runner wrote through, shared by the analysis job and by `runs.artifact`. Published because the
 // dashboard's own suite composes it directly: a reader written there would be a second answer to
 // where a run's blobs live.
-export { createEvidenceBlobReader, lookupEvidenceBlob, readEvidenceBlobBytes } from './composition/evidence-blob-reader.js'
+export { createEvidenceBlobReader, lookupEvidenceBlob, readEvidenceBlobBytes, statEvidenceBlob } from './composition/evidence-blob-reader.js'
 export type { CreateEvidenceBlobReaderInput } from './composition/evidence-blob-reader.js'
 export { createDispatchGrants } from './composition/dispatch-grants.js'
 export type { DispatchGrants } from './composition/dispatch-grants.js'

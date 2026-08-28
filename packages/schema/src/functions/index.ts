@@ -69,6 +69,8 @@ export type {
   RunsArtifactInput,
   RunsArtifactResult,
   EvidenceBlobLookup,
+  // 406-03 D-17: the same three words asked as a stat, for read-time presence annotation.
+  EvidenceBlobPresence,
 } from './runs'
 // 389 D-11: the analysis.get op's contracts — verdicts + sentences + clusters, one producer.
 export {

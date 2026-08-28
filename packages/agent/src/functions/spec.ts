@@ -36,6 +36,7 @@ import type {
   KnowledgeRecordsInspectInput,
   KnowledgeRejectInput,
   EvidenceBlobLookup,
+  EvidenceBlobPresence,
   MaskedResolvedConfig,
   ProposalsInboxPort,
   QuarantineOperationsPort,
@@ -865,6 +866,21 @@ export interface RunDetailReaderPort {
 export interface EvidenceBlobReaderPort {
   /** One blob's bytes, or which KIND of absence this host is reporting. */
   read(runId: RunId, sha: string): Promise<EvidenceBlobLookup>
+  /**
+   * The same question asked as a STAT — are the bytes still there — for read-time presence
+   * annotation on the durable reads (Phase 406, D-17).
+   *
+   * OPTIONAL SO THAT EVERY EXISTING IMPLEMENTATION AND FAKE KEEPS COMPILING, and for the sharper
+   * reason that absence here is a real host condition rather than an oversight: a host that cannot
+   * cheaply stat its blobs is not lying about anything, and an op that finds this member missing
+   * OMITS presence rather than reporting refs it never looked at as absent. A claimed absence is
+   * the one answer this field must never be able to give by accident, because it renders honest
+   * evidence as `evidence-incomplete`.
+   *
+   * IT ANSWERS THE SAME THREE WORDS `read` DOES, so the two cannot disagree about WHICH absence a
+   * ref is in — the read is this answer plus the bytes, never a second rule.
+   */
+  has?(runId: RunId, sha: string): Promise<EvidenceBlobPresence>
 }
 
 /**

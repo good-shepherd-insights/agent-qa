@@ -14,9 +14,14 @@
 // write of identical bytes overwrites the same file and stays idempotent. `getBlob` validates the
 // lowercase 64-hex shape before any path use so a malformed/traversal-shaped sha can never address
 // an arbitrary file (T-367-16); ENOENT is honest absence, other host failures surface.
+//
+// PRESENCE IS A STAT, NOT A READ (Phase 406, D-17). `hasBlob` answers whether a run still holds
+// the bytes behind an artifact ref so a durable read can annotate a whole run's refs without
+// loading a single screenshot; it runs the SAME regex guard first, for the same reason, and
+// touches the filesystem only after the shape is known good.
 
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { ArtifactRef } from '@vostride/agent-qa-schema'
@@ -49,6 +54,11 @@ export class FsEvidenceArtifactStore implements EvidenceArtifactStorePort {
     mkdirSync(this.dir, { recursive: true })
     writeFileSync(join(this.dir, sha), bytes)
     return { id: `decision-screenshot:${sha}`, sha }
+  }
+
+  hasBlob(sha: string): boolean {
+    if (!SHA256_HEX_RE.test(sha)) return false
+    return existsSync(join(this.dir, sha))
   }
 
   getBlob(sha: string): Uint8Array | undefined {

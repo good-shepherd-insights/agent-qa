@@ -916,6 +916,7 @@ export type {
   RunsArtifactInput,
   RunsArtifactResult,
   EvidenceBlobLookup,
+  EvidenceBlobPresence,
   AnalysisGetInput,
   AnalysisGetOutput,
   AnalysisResolvedVerdict,

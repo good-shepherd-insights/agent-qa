@@ -727,3 +727,14 @@ export type EvidenceBlobLookup =
   | { readonly status: 'found'; readonly bytes: Uint8Array }
   | { readonly status: 'blob_absent' }
   | { readonly status: 'unknown_run' }
+
+/**
+ * The same three words, asked as a STAT rather than as a read (Phase 406, D-17).
+ *
+ * DERIVED FROM {@link EvidenceBlobLookup} RATHER THAN RESPELLED, because presence and the read
+ * are one question asked at two costs: a durable read annotating every artifact ref on a run page
+ * must not load a screenshot to decide whether to draw a link. A second literal union here would
+ * be a second answer to which absences exist, free to fall behind the one the port already
+ * serves — and the whole value of the split (D-15) is that the two arms stay distinguishable.
+ */
+export type EvidenceBlobPresence = EvidenceBlobLookup['status']

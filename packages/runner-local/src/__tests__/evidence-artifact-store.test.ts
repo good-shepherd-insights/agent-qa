@@ -101,3 +101,48 @@ describe('FsEvidenceArtifactStore (CASS-02)', () => {
     expect((await stat(file)).isFile()).toBe(true)
   })
 })
+
+// `hasBlob` — presence as a STAT, never a read (406-03, D-17). The op layer asks "are the bytes
+// still there" for every artifact ref on a run-detail page; answering it through `getBlob` would
+// read every screenshot in the run to decide whether to draw a link.
+describe('FsEvidenceArtifactStore.hasBlob — presence without a read (D-17)', () => {
+  let root: string
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'fs-evidence-has-'))
+  })
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('hasBlob answers true for a sha the store just wrote, and false once it is unlinked', async () => {
+    const store = new FsEvidenceArtifactStore({ root, runId: 'run-1' })
+    const ref = store.persistDecisionScreenshot(new Uint8Array([7, 7, 7, 7]))
+
+    expect(store.hasBlob(ref.sha)).toBe(true)
+
+    await rm(join(blobsDir(root, 'run-1'), ref.sha))
+    expect(store.hasBlob(ref.sha)).toBe(false)
+  })
+
+  it('hasBlob answers false for a well-formed sha nothing ever wrote', () => {
+    const store = new FsEvidenceArtifactStore({ root, runId: 'run-1' })
+    store.persistDecisionScreenshot(new Uint8Array([1]))
+
+    expect(store.hasBlob(sha256hex(new Uint8Array([42])))).toBe(false)
+  })
+
+  it('hasBlob refuses a malformed sha before any path use — a store over a root that does not exist still answers false, never throws', () => {
+    // The root is deliberately absent: a guard that ran AFTER the join would surface the host's
+    // ENOENT shape instead of the contract's `false`, and `existsSync` would answer about a path
+    // assembled from the caller's string.
+    const store = new FsEvidenceArtifactStore({ root: join(root, 'no-such-root'), runId: 'run-1' })
+
+    expect(store.hasBlob('../../../../etc/passwd')).toBe(false)
+    expect(store.hasBlob('not-a-sha')).toBe(false)
+    expect(store.hasBlob(sha256hex(new Uint8Array([1])).toUpperCase())).toBe(false)
+    expect(store.hasBlob('a'.repeat(63))).toBe(false)
+    expect(store.hasBlob(sha256hex(new Uint8Array([1])))).toBe(false)
+  })
+})

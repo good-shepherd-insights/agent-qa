@@ -27,7 +27,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { EvidenceBlobReaderPort } from '@vostride/agent-qa-agent'
-import type { EvidenceBlobLookup, RunId } from '@vostride/agent-qa-schema'
+import type { EvidenceBlobLookup, EvidenceBlobPresence, RunId } from '@vostride/agent-qa-schema'
 import { FsEvidenceArtifactStore, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 
 /** The lowercase 64-hex shape a content address has. The store's own rule, checked before it. */
@@ -51,24 +51,55 @@ export interface CreateEvidenceBlobReaderInput {
  * guarding here is handing an unchecked string on toward a `join` — which is the one thing a port
  * implementation may never do, reachable or not.
  */
+function runDirectoryExists(input: CreateEvidenceBlobReaderInput, runId: string): boolean {
+  // THE RUN-EXISTENCE QUESTION, asked of the directory rather than of a handoff: a run that is
+  // mid-flight has a directory and no `handoff.json`, and answering `unknown_run` for it would
+  // make a live run's screenshots read as a broken link.
+  //
+  // ONE FUNCTION RATHER THAN TWO SPELLINGS, because the read and the stat below are the same rule
+  // at two costs: a second `existsSync` here is a second definition of what a known run IS, and
+  // the day one of them learns about a new layout the other reports a live run as unknown.
+  return existsSync(join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(runId)))
+}
+
 export function lookupEvidenceBlob(
   input: CreateEvidenceBlobReaderInput,
   runId: string,
   sha: string,
 ): EvidenceBlobLookup {
   if (!SHA256_HEX_RE.test(sha)) return { status: 'blob_absent' }
-  // THE RUN-EXISTENCE QUESTION, asked of the directory rather than of a handoff: a run that is
-  // mid-flight has a directory and no `handoff.json`, and answering `unknown_run` for it would
-  // make a live run's screenshots read as a broken link.
-  if (!existsSync(join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(runId)))) {
-    return { status: 'unknown_run' }
-  }
+  if (!runDirectoryExists(input, runId)) return { status: 'unknown_run' }
   const bytes = new FsEvidenceArtifactStore({ root: input.agentQaRoot, runId }).getBlob(sha)
   return bytes === undefined ? { status: 'blob_absent' } : { status: 'found', bytes }
 }
 
 /**
+ * THE SAME RULE, MINUS THE BYTES (Phase 406, D-17) — presence for a whole run's artifact refs.
+ *
+ * WHY NOT `lookupEvidenceBlob(...).status`: a run page annotates every ref it is about to render,
+ * and the read arm loads a screenshot into memory to reach the status it then discards. This
+ * shaping walks the identical three-way split — malformed sha, unknown run, then the store's own
+ * answer — and asks the store to STAT instead of read. The two arms above `runDirectoryExists`
+ * are shared code, not a copy, so `found` here and `found` there are the same claim.
+ */
+export function statEvidenceBlob(
+  input: CreateEvidenceBlobReaderInput,
+  runId: string,
+  sha: string,
+): EvidenceBlobPresence {
+  if (!SHA256_HEX_RE.test(sha)) return 'blob_absent'
+  if (!runDirectoryExists(input, runId)) return 'unknown_run'
+  return new FsEvidenceArtifactStore({ root: input.agentQaRoot, runId }).hasBlob(sha)
+    ? 'found'
+    : 'blob_absent'
+}
+
+/**
  * The op's PORT over {@link lookupEvidenceBlob}.
+ *
+ * BOTH MEMBERS ARE BOUND HERE (406, D-17): this host holds run directories, so it can honestly
+ * answer the optional presence member, and an op reading it gets `present` for every ref rather
+ * than the omitted key a host without local storage would leave.
  *
  * ASYNC EVEN THOUGH THE STORE IS NOT, because the port is the shape a host that does not hold its
  * blobs on a local disk would also have to satisfy — and a synchronous contract is one such a host
@@ -80,6 +111,8 @@ export function createEvidenceBlobReader(
   return {
     read: (runId: RunId, sha: string): Promise<EvidenceBlobLookup> =>
       Promise.resolve(lookupEvidenceBlob(input, String(runId), sha)),
+    has: (runId: RunId, sha: string): Promise<EvidenceBlobPresence> =>
+      Promise.resolve(statEvidenceBlob(input, String(runId), sha)),
   }
 }
 
