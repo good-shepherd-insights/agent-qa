@@ -21,11 +21,32 @@ export type ClassifiedSpecifier =
   | { kind: 'internal'; pkgName: string }
   | { kind: 'external'; pkgName: string }
 
+/**
+ * A line whose first non-whitespace characters open or continue a comment. Prose is not
+ * code, and SPECIFIER_RE cannot tell them apart: its `from '…'` alternative matches an
+ * ordinary English sentence that quotes a phrase after the word "from", which is how a doc
+ * comment has now reddened this check twice — 404-07, and again in 406-06 on the sentence
+ * distinguishing a row the filter hides from one that was never recorded.
+ *
+ * FULL-LINE ONLY, deliberately. A trailing comment after real code still scans, because the
+ * import on that line is real. Skipping is safe in the direction that matters: a commented-out
+ * import is not an import, so this can only remove false positives — it cannot hide a
+ * specifier that any runtime would resolve.
+ */
+function isFullLineComment(text: string): boolean {
+  const trimmed = text.trimStart()
+  return trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')
+}
+
 export function specifiersInSource(source: string, file: string): SpecifierHit[] {
   const hits: SpecifierHit[] = []
   const lines = source.split('\n')
 
   lines.forEach((text, index) => {
+    if (isFullLineComment(text)) {
+      return
+    }
+
     for (const match of text.matchAll(SPECIFIER_RE)) {
       const specifier = match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5]
       if (specifier) {

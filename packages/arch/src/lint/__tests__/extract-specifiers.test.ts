@@ -46,6 +46,30 @@ describe('specifier extraction', () => {
       { specifier: '@ai-sdk/openai', file, line: 2 },
     ])
   })
+
+  it('ignores prose in a full-line comment that reads as a specifier', () => {
+    // The 404-07 / 406-06 false positive: an English sentence quoting a phrase after the
+    // word "from" is not an import, and a line-based regex cannot tell on its own.
+    const source = [
+      ' * is what distinguishes "the filter is hiding it" from "it does not exist".',
+      '// see the note above, adapted from "some other module"',
+      '/* borrowed from "a third place" */',
+    ].join(String.fromCharCode(10))
+
+    expect(specifiersInSource(source, 'a.ts')).toEqual([])
+  })
+
+  it('still extracts a specifier from a code line carrying a trailing comment', () => {
+    const source = [
+      'import { a } from "./a.js" // adapted from "somewhere else"',
+      ' * prose from "not code"',
+    ].join(String.fromCharCode(10))
+
+    expect(specifiersInSource(source, 'a.ts').map(hit => hit.specifier)).toEqual([
+      './a.js',
+      'somewhere else',
+    ])
+  })
 })
 
 describe('specifier classification', () => {
