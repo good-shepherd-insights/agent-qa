@@ -42,6 +42,13 @@
 # column (the structural cell) and a D-21 needle in a production source (the lexical cell). Two
 # independent predicates catching the same return is the census idiom, not blast radius.
 #
+# AFTER RUNNING THIS SCRIPT, REBUILD WITH `--force` BEFORE THE CONFORMANCE ANCHORS. Every subject is
+# restored BYTE-IDENTICALLY, which turbo treats as a cache hit: a plain `pnpm build` then reports
+# FULL TURBO and refreshes no `dist` mtime, while the four sources this script touched are now newer
+# than the build. The CLI conformance cells carry a staleness guard that refuses to certify a stale
+# binary and will red with "run `pnpm build` at the repository root first". The fix is
+# `npx turbo run build --force`, not a rebuild. Same hazard the 404 mutation scripts documented.
+#
 # A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS.
 #
 # EXIT CODES ARE READ FROM THE PROCESS, NEVER THROUGH A PIPE.
