@@ -6,7 +6,10 @@
 // already distinct here and stay word-for-word unchanged. This plan adds the two D-15 states the
 // ref shape makes possible: a blob that IS addressable renders an image minted through the one
 // route minter, and a blob the producer already flagged as gone renders a visible refusal instead
-// of a broken image element.
+// of a broken image element. 406-05 re-pinned the refusal to `EVIDENCE_INCOMPLETE_LABEL` and its
+// `data-evidence-state` attribute: the pane's own `data-artifact-state` wrapper still says WHICH
+// slot refused, the nested attribute says WHICH absence it is, and the two are asserted together
+// so a wrapper painted around the wrong word cannot pass.
 //
 // The `src` is asserted against `routes.runArtifact` BY CALLING IT, not by writing the URL out. A
 // literal here would pass while the page minted a different path, which is exactly the drift the
@@ -24,7 +27,7 @@ import {
 } from "@/components/run-detail/tab-overview"
 import { fromRunDetailStep } from "@/lib/display-step"
 import { routes } from "@/lib/routes"
-import { SCREENSHOT_UNAVAILABLE_LABEL } from "@/lib/run-detail-view"
+import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
 import type { ArtifactRef, RunDetailSubAction } from "@vostride/agent-qa-schema"
 import { asRef } from "@vostride/agent-qa-schema"
 
@@ -118,7 +121,8 @@ describe("TabOverview screenshot states", () => {
 
     expect(view.textContent).toContain(NO_SCREENSHOT_LABEL)
     expect(view.textContent).not.toContain(PENDING_SCREENSHOT_LABEL)
-    expect(view.textContent).not.toContain(SCREENSHOT_UNAVAILABLE_LABEL)
+    expect(view.textContent).not.toContain(EVIDENCE_INCOMPLETE_LABEL)
+    expect(view.querySelector('[data-evidence-state="incomplete"]')).toBeNull()
     expect(view.querySelector("img")).toBeNull()
   })
 
@@ -138,8 +142,10 @@ describe("TabOverview screenshot states", () => {
       makeSubAction([{ id: `decision-screenshot:${SHA}`, sha: SHA, evidenceIncomplete: true }]),
     )
 
-    expect(view.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
-    expect(view.textContent).toContain(SCREENSHOT_UNAVAILABLE_LABEL)
+    expect(
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="incomplete"]'),
+    ).not.toBeNull()
+    expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
     expect(view.querySelector("img")).toBeNull()
   })
 
@@ -156,8 +162,10 @@ describe("TabOverview screenshot states", () => {
     })
 
     expect(view.querySelector("img")).toBeNull()
-    expect(view.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
-    expect(view.textContent).toContain(SCREENSHOT_UNAVAILABLE_LABEL)
+    expect(
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="incomplete"]'),
+    ).not.toBeNull()
+    expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
   })
 
   // An `artifactRefs` list is open — the producer may attach other evidence to the same turn — so

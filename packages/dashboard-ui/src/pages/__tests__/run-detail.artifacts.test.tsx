@@ -23,6 +23,7 @@ import { asRef, maskedMarker, MASKED_MARKER_DELIMITER } from "@vostride/agent-qa
 import { displayStepsForGroups } from "@/lib/display-step"
 import type { RunDetailGroup } from "@/lib/run-detail-view"
 import {
+  EVIDENCE_INCOMPLETE_LABEL,
   MASKED_EMAIL_LABEL,
   MASKED_SECRET_LABEL,
   SCREEN_STATE_CHANGED_LABEL,
@@ -279,8 +280,39 @@ describe("run detail renders the durable projection's five facts", () => {
 
     const view = await renderAt()
 
-    expect(view.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
+    expect(
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="incomplete"]'),
+    ).not.toBeNull()
+    expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
     expect(view.querySelector("img")).toBeNull()
+  })
+
+  // 406-05 · D-17 / D-18, T-406-16. THREE ABSENCES ON ONE PAGE, AND ONLY ONE OF THEM IS TRUE HERE.
+  // The read stat'd the store and found the bytes gone, so the page says so in the evidence
+  // vocabulary — and in NEITHER of the other two. A masked chip here would tell the reader a value
+  // was withheld on purpose and could be restored with a config change; the read-unavailable state
+  // would tell them to retry a read that in fact succeeded. Both are actions taken on a false
+  // belief, which is why the distinctness is a cell rather than a convention.
+  it("says the bytes are gone in one vocabulary, and not in the other two", async () => {
+    const base = makeProjection()
+    fetchRunDetailMock.mockImplementation(async () => ({
+      ...base,
+      subActions: [
+        {
+          ...base.subActions[0],
+          plan: "Sign in",
+          artifactRefs: [{ id: `decision-screenshot:${SHA}`, sha: SHA, present: false }],
+        },
+      ],
+    }))
+
+    const view = await renderAt()
+
+    expect(view.querySelector('[data-evidence-state="incomplete"]')).not.toBeNull()
+    expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
+    expect(view.querySelector("img")).toBeNull()
+    expect(view.querySelector("[data-masked]")).toBeNull()
+    expect(view.querySelector("[data-run-detail-error]")).toBeNull()
   })
 
   // D-10 / T-405-40. The load-bearing assertion is the last one: no marker survives into any text
