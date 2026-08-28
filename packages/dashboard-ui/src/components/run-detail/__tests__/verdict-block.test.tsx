@@ -27,10 +27,12 @@ import {
   ANALYSIS_PROVISIONAL_TEXT,
   CITED_ARTIFACT_LABEL,
   citedStepLabel,
+  missingEvidenceLine,
   provenanceLabel,
   siblingLine,
   type MemberVerdictView,
 } from "@/lib/analysis-view"
+import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -229,5 +231,102 @@ describe("a cited artifact is one click from the drawer (D-02, second half)", ()
   it("renders no cited-artifact affordance when the verdict cited no artifact", () => {
     const block = render({ citedArtifacts: [] })
     expect(block.querySelector("[data-cited-artifact]")).toBeNull()
+  })
+})
+
+describe("evidence that is GONE is a chip where the link was, and a count beside it (D-19)", () => {
+  /** One present ref and one whose bytes are gone — the shape D-19 is written about. */
+  const ONE_OF_TWO: Partial<MemberVerdictView> = {
+    citedArtifacts: [
+      { id: "art_0", sha: SHA_PRESENT, incomplete: false },
+      { id: "art_1", sha: SHA_GONE, incomplete: true },
+    ],
+    missingEvidence: { missing: 1, total: 2 },
+    missingEvidenceText: missingEvidenceLine({ missing: 1, total: 2 }),
+  }
+
+  it("keeps the absent ref IN the row as a chip, and keeps its present sibling clickable", () => {
+    const onCitedArtifact = vi.fn()
+    const block = render(ONE_OF_TWO, { onCitedArtifact })
+
+    expect(
+      block.querySelector(`[data-cited-artifact="${SHA_GONE}"]`),
+      "an affordance that opens nothing is a worse lie than the missing picture",
+    ).toBeNull()
+    expect(block.querySelector(`[data-cited-artifact="${SHA_PRESENT}"]`), "its sibling still opens")
+      .not.toBeNull()
+
+    const chip = block.querySelector('[data-cited-artifact-state="incomplete"]')
+    expect(chip?.getAttribute("data-cited-artifact-sha"), "the ref is named, not silently dropped")
+      .toBe(SHA_GONE)
+    expect(chip?.tagName, "not a button").not.toBe("BUTTON")
+    expect(chip?.querySelector("button"), "and nothing inside it is one either").toBeNull()
+
+    expect(
+      chip?.querySelector('[data-evidence-state="incomplete"]'),
+      "rendered through the ONE component, so the overview and this row cannot drift (D-18)",
+    ).not.toBeNull()
+    expect(chip?.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
+
+    act(() => {
+      ;(chip as HTMLElement).click()
+    })
+    expect(onCitedArtifact, "clicking the chip asks for nothing").not.toHaveBeenCalled()
+  })
+
+  it("says how many of how many are gone, in the exported line", () => {
+    const block = render(ONE_OF_TWO)
+
+    // ADDRESSED THE WAY 406-10 ADDRESSES IT — by the attribute's VALUE, not by reading it back off
+    // a node found some other way. The count is the selector, so a wrong count is a missing node.
+    const count = block.querySelector('[data-evidence-missing="1/2"]')
+    expect(count, "one of two, and the attribute says which").not.toBeNull()
+    expect(count?.textContent).toBe(missingEvidenceLine({ missing: 1, total: 2 }))
+  })
+
+  it("renders NO count line when every cited artifact is there", () => {
+    const block = render({ citedArtifacts: [{ id: "art_0", sha: SHA_PRESENT, incomplete: false }] })
+    expect(block.querySelector("[data-evidence-missing]")).toBeNull()
+    expect(block.querySelector('[data-cited-artifact-state="incomplete"]')).toBeNull()
+  })
+
+  it("does NOT re-grade the verdict because a screenshot is gone", () => {
+    // ONE MISSING SCREENSHOT IS NOT AN UNTRUSTWORTHY VERDICT (D-19). The whole-verdict badge was
+    // rejected precisely because it conflates the two; these three readings are what a reader —
+    // and 406-10's shipped-binary cells — use to tell a re-graded verdict from an intact one.
+    const intact = render({ citedArtifacts: [{ id: "art_0", sha: SHA_PRESENT, incomplete: false }] })
+    const producer = intact.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-producer")
+    const confidence = intact.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-confidence")
+    const sentence = intact.querySelector("[data-verdict-sentence]")?.textContent
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+
+    const partial = render(ONE_OF_TWO)
+    expect(partial.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-producer")).toBe(producer)
+    expect(partial.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-confidence")).toBe(confidence)
+    expect(partial.querySelector("[data-verdict-sentence]")?.textContent).toBe(sentence)
+  })
+
+  it("renders exactly ONE cited-artifact node when the only cited artifact is gone", () => {
+    // THE TWO MUTATIONS 406-11 LEGS, SHAPED AS ONE CELL. Dropping the absent ref would make this
+    // zero; rendering it as an ordinary link would make it a BUTTON. Either edit reds here.
+    const block = render({
+      citedArtifacts: [{ id: "art_0", sha: SHA_GONE, incomplete: true }],
+      missingEvidence: { missing: 1, total: 1 },
+      missingEvidenceText: missingEvidenceLine({ missing: 1, total: 1 }),
+    })
+
+    const nodes = block.querySelectorAll("[data-cited-artifact], [data-cited-artifact-state]")
+    expect(nodes.length, "never zero — the reader would count fewer citations than the verdict made")
+      .toBe(1)
+    expect(nodes[0]?.tagName, "never a button — that is the plain-pass mutation").not.toBe("BUTTON")
+    expect(nodes[0]?.getAttribute("data-cited-artifact-state")).toBe("incomplete")
+    expect(block.querySelector("[data-evidence-missing]")?.getAttribute("data-evidence-missing"))
+      .toBe("1/1")
+    expect(block.querySelector("[data-evidence-missing]")?.textContent)
+      .toBe(missingEvidenceLine({ missing: 1, total: 1 }))
   })
 })

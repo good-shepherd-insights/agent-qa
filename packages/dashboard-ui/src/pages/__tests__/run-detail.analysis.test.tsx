@@ -43,9 +43,11 @@ import {
   ANALYSIS_FAILED_FALLBACK_TEXT,
   ANALYSIS_PROVISIONAL_TEXT,
   DETERMINISTIC_FALLBACK_LABEL,
+  missingEvidenceLine,
   provenanceLabel,
   siblingLine,
 } from "@/lib/analysis-view"
+import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -536,5 +538,83 @@ describe("every member wears its outcome, and only a graded one carries a block 
       view.querySelectorAll('[data-member="1"] [data-verdict-block]').length,
       "nothing to explain is no block, badge or no badge",
     ).toBe(0)
+  })
+})
+
+describe("evidence the durable read found MISSING is said so, and changes nothing else (D-19)", () => {
+  /** 64-hex content addresses; the second one's bytes are gone at read time (`present: false`). */
+  const SHA_PRESENT = "a".repeat(64)
+  const SHA_GONE = "b".repeat(64)
+
+  it("paints the chip and the count line without touching the member's outcome badge", async () => {
+    fetchRunAnalysisMock.mockResolvedValue(analysisOf({
+      verdicts: [
+        {
+          perTest: 0,
+          testId: "t_checkout",
+          class: "unknown",
+          producer: "deterministic-classifier",
+          confidence: 0,
+          evidence: {
+            citedSteps: [],
+            citedArtifacts: [
+              { id: "art_0", sha: SHA_PRESENT, present: true },
+              { id: "art_1", sha: SHA_GONE, present: false },
+            ],
+          },
+        },
+      ],
+    }))
+    const view = await renderPage()
+
+    const chip = view.querySelector('[data-member="0"] [data-cited-artifact-state="incomplete"]')
+    expect(chip?.getAttribute("data-cited-artifact-sha"), "the ref keeps its place").toBe(SHA_GONE)
+    expect(chip?.querySelector('[data-evidence-state="incomplete"]')).not.toBeNull()
+    expect(chip?.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
+    expect(
+      view.querySelector(`[data-member="0"] [data-cited-artifact="${SHA_PRESENT}"]`),
+      "the artifact that IS there is still one click from the sentence",
+    ).not.toBeNull()
+
+    const count = view.querySelector('[data-member="0"] [data-evidence-missing]')
+    expect(count?.getAttribute("data-evidence-missing")).toBe("1/2")
+    expect(count?.textContent).toBe(missingEvidenceLine({ missing: 1, total: 2 }))
+
+    expect(
+      view.querySelector('[data-member="0"] [data-member-outcome]')?.getAttribute("data-member-outcome"),
+      "the verdict is NOT re-graded — one missing screenshot is not an untrustworthy verdict",
+    ).toBe("failed")
+    expect(view.querySelector('[data-member="0"] [data-verdict-sentence]')?.textContent)
+      .toBe(FLOOR_SENTENCE)
+    expect(
+      view.querySelector('[data-member="0"] [data-verdict-block]')?.getAttribute("data-verdict-producer"),
+    ).toBe("deterministic-classifier")
+
+    expect(
+      view.querySelector('[data-member="1"] [data-evidence-missing]'),
+      "the passed member is untouched — it has no block at all",
+    ).toBeNull()
+  })
+
+  it("says nothing about evidence when presence is UNKNOWN — an omission is not a deletion", async () => {
+    // 406-03's rule, on the page: a host that cannot cheaply stat its own blobs omits `present`,
+    // and `!present` would render that omission as a claimed deletion.
+    fetchRunAnalysisMock.mockResolvedValue(analysisOf({
+      verdicts: [
+        {
+          perTest: 0,
+          testId: "t_checkout",
+          class: "unknown",
+          producer: "deterministic-classifier",
+          confidence: 0,
+          evidence: { citedSteps: [], citedArtifacts: [{ id: "art_0", sha: SHA_PRESENT }] },
+        },
+      ],
+    }))
+    const view = await renderPage()
+
+    expect(view.querySelector('[data-member="0"] [data-evidence-missing]')).toBeNull()
+    expect(view.querySelector('[data-member="0"] [data-cited-artifact-state="incomplete"]')).toBeNull()
+    expect(view.querySelector(`[data-member="0"] [data-cited-artifact="${SHA_PRESENT}"]`)).not.toBeNull()
   })
 })

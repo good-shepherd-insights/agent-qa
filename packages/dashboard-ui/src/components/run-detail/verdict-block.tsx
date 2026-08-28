@@ -47,8 +47,19 @@
 // the picture here instead was rejected — it duplicates the overview's rendering and grows the page
 // once per red member on a 40-red run.
 //
+// AND AN ARTIFACT WHOSE BYTES ARE GONE IS STILL THERE, AS A CHIP (406-08 · D-19). The absent ref
+// keeps its place in the row wearing `EvidenceIncomplete inline` — never dropped (a reader would
+// count the links and conclude the verdict cited fewer things than it did) and never a button (an
+// affordance that opens nothing is the worse lie the one component's own header names). Its
+// siblings that ARE present stay clickable, and a count line under the row says how many of how
+// many are gone, so a reader scanning collapsed groups can see evidence is missing without opening
+// one. The sentence, the provenance, the marker and the member's outcome badge are all untouched:
+// ONE MISSING SCREENSHOT IS NOT AN UNTRUSTWORTHY VERDICT, and the whole-verdict badge that would
+// say otherwise was rejected. Bundle-level `evidence-incomplete` semantics belong to bundles.
+//
 // `data-*` DESCRIBES WHAT IS RENDERED, not what was passed (the banner's `showingFull` lesson).
 
+import { EvidenceIncomplete } from "@/components/run-detail/evidence-incomplete"
 import { MaskedText } from "@/components/run-detail/masked-text"
 import { CITED_ARTIFACT_LABEL, citedStepLabel, type MemberVerdictView } from "@/lib/analysis-view"
 import { memberHandleLabel } from "@/lib/run-detail-view"
@@ -114,9 +125,20 @@ export function VerdictBlock({
 
       {view.citedArtifacts.length === 0 ? null : (
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
-          {view.citedArtifacts
-            .filter((ref) => !ref.incomplete)
-            .map((ref) => (
+          {view.citedArtifacts.map((ref) =>
+            // `ref.incomplete ?` IS SPELLED HERE, ONCE, AND NOT HOISTED — 406-11's mutation legs
+            // match this expression literally. One leg drops the absent ref from the row, the other
+            // renders it as an ordinary link; both edit this ternary and both must red a cell.
+            ref.incomplete ? (
+              <span
+                key={ref.id}
+                data-cited-artifact-state="incomplete"
+                data-cited-artifact-sha={ref.sha}
+                className="inline-flex items-center"
+              >
+                <EvidenceIncomplete variant="inline" />
+              </span>
+            ) : (
               <button
                 key={ref.id}
                 type="button"
@@ -126,7 +148,17 @@ export function VerdictBlock({
               >
                 {CITED_ARTIFACT_LABEL}
               </button>
-            ))}
+            ),
+          )}
+        </div>
+      )}
+
+      {view.missingEvidence === undefined ? null : (
+        <div
+          data-evidence-missing={`${String(view.missingEvidence.missing)}/${String(view.missingEvidence.total)}`}
+          className="mt-1.5 text-[10px] text-muted-foreground"
+        >
+          {view.missingEvidenceText}
         </div>
       )}
 
