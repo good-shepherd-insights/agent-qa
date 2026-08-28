@@ -10,15 +10,21 @@
 // reads as "it passed everything"; rendering it with the did-not-run note, its persisted outcome
 // and the producer's own `failureSummary` says what actually happened.
 //
-// THE OUTCOME BADGE APPEARS ONLY ON A MEMBER THAT DID NOT RUN. D-16 is explicit that per-member
-// verdicts beside the aggregate are 406's DETL-04 and are not pre-claimed here; D-18 is the one
-// place CONTEXT asks for the outcome word on this page, and it asks for it about a member with no
-// steps. A member that ran shows its name, its handle and its re-run count — nothing else.
+// THE OUTCOME BADGE IS ON EVERY MEMBER THAT HAS AN OUTCOME, PASSED ONES INCLUDED (406 D-07).
+// 405-08 put it only on a member that did not run, because 405 D-16 was explicit that per-member
+// verdicts beside the aggregate were 406's DETL-04 and were not to be pre-claimed here. 406 D-07 is
+// that decision arriving, and it supersedes the paragraph this one replaces. The badge is painted
+// through `statusBadgeLook` — the RUN verdict badge's own palette, lifted into `lib/status.ts` so
+// there is exactly one definition — so a header reading "one aggregate + N members" reads one
+// vocabulary rather than two that happen to agree today. The attribute carries the RAW word and the
+// text carries the label, for the same reason the navbar's badge does.
 //
-// TWO SENTENCES, TWO SPEAKERS. The did-not-run note is this product's; `failureSummary` is the
-// runner's. They are rendered side by side rather than concatenated, because a reader looking at a
-// member that never started is entitled to know which claim came from where (405-06's
-// `memberNote` decision, restated in markup).
+// THREE SENTENCES, THREE SPEAKERS. The did-not-run note is this product's; `failureSummary` is the
+// runner's; the verdict block under a failed member is the ANALYSIS's (406 D-05), rendered in its
+// own component below the header and above the steps. They are rendered side by side rather than
+// concatenated, because a reader is entitled to know which claim came from where (405-06's
+// `memberNote` decision, restated in markup, now with a third voice on the page). The analysis
+// never merges with the runner's line: two producers, two blocks.
 //
 // AND THE RUNNER'S SENTENCE IS THE ONE THAT GOES THROUGH THE SEAM (D-10, T-405-40, 405 CR-03).
 // That asymmetry is the whole point of the two-speakers note above, so it is spelled out here
@@ -44,6 +50,7 @@ import { Badge } from "@/components/ui/badge"
 import { MaskedText } from "@/components/run-detail/masked-text"
 import { VerdictBlock } from "@/components/run-detail/verdict-block"
 import type { MemberVerdictView } from "@/lib/analysis-view"
+import { statusBadgeLook } from "@/lib/status"
 import { cn } from "@/lib/utils"
 import {
   memberDisplayName,
@@ -65,8 +72,21 @@ interface MemberGroupProps {
    * been read yet has none for anybody. Neither is an empty block; both are no block.
    */
   verdict?: MemberVerdictView
+  /**
+   * What a cited step and a cluster sibling DO (406-06 · D-02 / D-08).
+   *
+   * OPTIONAL, AND THE DEFAULT IS A NO-OP, matching `verdict` above and `analysisView` on the tree.
+   * A member group mounted without them — every cell in this file that is about grouping rather
+   * than about the failure view — renders the same markup and clicks nowhere. The page supplies
+   * both; nothing here resolves a step id or writes a search param.
+   */
+  onCitedStep?: (testIndex: number, stepIndex: number) => void
+  onSelectMember?: (testIndex: number) => void
   children?: ReactNode
 }
+
+/** The default for both handles above, spelled once so the two call sites cannot drift. */
+const NO_OP = () => {}
 
 /** The did-not-run body: this product's note, the persisted outcome, and the runner's own line. */
 function ThinMemberBody({ group }: { group: RunDetailGroup }) {
@@ -85,17 +105,30 @@ function ThinMemberBody({ group }: { group: RunDetailGroup }) {
   )
 }
 
-export function MemberGroup({ group, showChrome, verdict, children }: MemberGroupProps) {
+export function MemberGroup({
+  group,
+  showChrome,
+  verdict,
+  onCitedStep = NO_OP,
+  onSelectMember = NO_OP,
+  children,
+}: MemberGroupProps) {
   const [open, setOpen] = useState(true)
   const { member } = group
   const isThin = group.steps.length === 0
   const rerun = reranLabel(member.attempts)
+  // ONE PALETTE FOR THE AGGREGATE AND EVERY MEMBER (D-07). `undefined` where the projection
+  // recorded no outcome at all — an absent word is not a word to paint, and defaulting it would put
+  // a confident badge on a member nobody graded.
+  const outcomeLook = member.outcome === undefined ? undefined : statusBadgeLook(member.outcome)
 
   const body = isThin ? <ThinMemberBody group={group} /> : <ul role="group">{children}</ul>
 
   // THE WHY, DIRECTLY UNDER THE HEADER AND ABOVE THE STEPS (D-05). The sentence sits beside the
   // steps it cites rather than in a panel of its own, so the member filter narrows both at once.
-  const verdictBlock = verdict === undefined ? null : <VerdictBlock view={verdict} />
+  const verdictBlock = verdict === undefined ? null : (
+    <VerdictBlock view={verdict} onCitedStep={onCitedStep} onSelectMember={onSelectMember} />
+  )
 
   // No chrome, and the member ran: the steps stand on their own directly under the tree. A
   // single-member failed run still gets its sentence — the block is what the reader came for, and
@@ -128,14 +161,18 @@ export function MemberGroup({ group, showChrome, verdict, children }: MemberGrou
             {rerun}
           </span>
         ) : null}
-        {isThin && member.outcome ? (
+        {outcomeLook === undefined ? null : (
           <Badge
             data-member-outcome={member.outcome}
-            className="ml-auto shrink-0 text-[10px] uppercase tracking-wide"
+            variant={outcomeLook.variant}
+            className={cn(
+              "ml-auto shrink-0 text-[10px] uppercase tracking-wide",
+              outcomeLook.className,
+            )}
           >
-            {member.outcome}
+            {outcomeLook.label}
           </Badge>
-        ) : null}
+        )}
       </div>
       {open ? verdictBlock : null}
       {open ? body : null}

@@ -14,30 +14,9 @@ import type { PostProcessingView } from "@/lib/post-processing-view"
 import type { RunRow } from "@/lib/api"
 import { triggerRun } from "@/lib/api"
 import { tokenSummaryLine } from "@/lib/run-detail-view"
+import { statusBadgeLook } from "@/lib/status"
 import { formatDuration } from "@/lib/utils"
 import type { RunTokenTotals } from "@vostride/agent-qa-schema"
-
-type StatusBadgeLook = Pick<React.ComponentProps<typeof Badge>, "variant" | "className"> & { label: string }
-
-/** The closed switch, as data. One arm per word, unchanged in what it paints. */
-function statusBadgeLook(status: string): StatusBadgeLook {
-  switch (status) {
-    case "passed":
-      return { label: "Passed", className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" }
-    case "failed":
-      return { label: "Failed", variant: "destructive" }
-    case "healed":
-      return { label: "Healed", className: "bg-amber-500/15 text-amber-500 border-amber-500/20" }
-    case "flaky":
-      return { label: "Flaky", className: "bg-amber-500/15 text-amber-500 border-amber-500/20" }
-    case "skipped":
-      return { label: "Skipped", variant: "secondary" }
-    case "cancelled":
-      return { label: "Cancelled", className: "bg-muted text-muted-foreground border-border" }
-    default:
-      return { label: status, variant: "outline" }
-  }
-}
 
 /**
  * THE HEADER'S VERDICT BADGE, ADDRESSABLE (2026-08-26, Phase 404 · LIFE-01, D-13/D-15).

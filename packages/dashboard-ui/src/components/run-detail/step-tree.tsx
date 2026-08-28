@@ -43,6 +43,16 @@ interface StepTreeProps {
    * whose first read has not landed.
    */
   analysisView?: ReadonlyMap<number, MemberVerdictView>
+  /**
+   * What a cited step and a cluster sibling DO, handed straight down (406-06 · D-02 / D-08).
+   *
+   * PASSED THROUGH, NEVER CALLED HERE, and optional for the same reason `analysisView` is: this
+   * tree owns no analysis fact and no page state. Resolving a step ordinal to a selected row and
+   * writing the member filter both belong to the page, which is the only thing that holds
+   * `displaySteps` and the search params.
+   */
+  onCitedStep?: (testIndex: number, stepIndex: number) => void
+  onSelectMember?: (testIndex: number) => void
   selection: Selection | null
   onSelect: (sel: Selection | null) => void
   setupHooks?: ExecutionLogEntry[]
@@ -125,6 +135,8 @@ export function StepTree({
   groups,
   showMemberChrome = false,
   analysisView,
+  onCitedStep,
+  onSelectMember,
   selection,
   onSelect,
   setupHooks = [],
@@ -192,6 +204,8 @@ export function StepTree({
               group={group}
               showChrome={showMemberChrome}
               verdict={analysisView?.get(group.member.testIndex)}
+              onCitedStep={onCitedStep}
+              onSelectMember={onSelectMember}
             >
               {steps.map((step) => (
                 <StepTreeItem

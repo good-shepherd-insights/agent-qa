@@ -28,6 +28,7 @@ import { MASKED_MARKER_DELIMITER, asRef, maskedMarker } from "@vostride/agent-qa
 
 import { MemberGroup } from "@/components/run-detail/member-group"
 import { StepTree } from "@/components/run-detail/step-tree"
+import { statusBadgeLook } from "@/lib/status"
 import { SubActionTreeItem } from "@/components/run-detail/sub-action-tree-item"
 import {
   DID_NOT_RUN_LABEL,
@@ -160,16 +161,48 @@ describe("the step tree groups by member (D-16)", () => {
     expect(view.textContent).toContain("Step 0 of member 0")
   })
 
-  it("renders NO outcome badge on a member that ran — per-member verdicts beside the aggregate are 406's DETL-04", () => {
-    const view = tree(
-      [
-        group(member(0, { name: "Login", outcome: "passed" }), [step(0, 0)]),
-        group(member(1, { name: "Checkout", outcome: "failed" }), [step(1, 0)]),
-      ],
-      true,
-    )
+})
 
-    expect(view.querySelector("[data-member-outcome]")).toBeNull()
+describe("every member wears its outcome, in the navbar's one palette (406 D-07)", () => {
+  // WHAT THIS REPLACED. Until 406-06 this file asserted the OPPOSITE — no badge on a member that
+  // ran — because 405 D-16 was explicit that per-member outcomes beside the aggregate were 406's
+  // DETL-04 and were not to be pre-claimed. 406 D-07 is that decision arriving: the badge goes on
+  // every member that has an outcome, so "one aggregate + N members" reads as one vocabulary.
+  //
+  // AND IT IS ASSERTED THROUGH `statusBadgeLook`, never through colour strings typed here. The
+  // navbar and this header now share one definition; a cell that re-typed `emerald-500` would keep
+  // passing on the day the palette moved and the two surfaces diverged.
+  it("badges a member that PASSED, in the palette the run's own verdict badge uses", () => {
+    const view = tree([group(member(0, { name: "Login", outcome: "passed" }), [step(0, 0)])], true)
+
+    const badge = view.querySelector('[data-member-outcome="passed"]')
+    expect(badge, "a passed member says so — this is the D-07 reversal").not.toBeNull()
+    expect(badge?.textContent).toBe(statusBadgeLook("passed").label)
+    for (const cls of (statusBadgeLook("passed").className ?? "").split(" ")) {
+      expect(badge?.className, `the navbar's own ${cls}`).toContain(cls)
+    }
+  })
+
+  it("badges a member that FAILED with the same variant the header would paint", () => {
+    const view = tree([group(member(1, { name: "Checkout", outcome: "failed" }), [step(1, 0)])], true)
+
+    const badge = view.querySelector('[data-member-outcome="failed"]')
+    expect(badge?.getAttribute("data-variant")).toBe(statusBadgeLook("failed").variant)
+    expect(badge?.textContent).toBe(statusBadgeLook("failed").label)
+  })
+
+  it("carries the RAW outcome word on the attribute and the LABEL in the text", () => {
+    const view = tree([group(member(2, { name: "Cart", outcome: "cancelled" }), [step(2, 0)])], true)
+
+    const badge = view.querySelector("[data-member-outcome]")
+    expect(badge?.getAttribute("data-member-outcome"), "raw, for the cells").toBe("cancelled")
+    expect(badge?.textContent, "title-cased, for the reader").toBe(statusBadgeLook("cancelled").label)
+  })
+
+  it("renders no badge at all for a member the projection recorded no outcome for", () => {
+    const view = tree([group(member(0, { name: "Login" }), [step(0, 0)])], true)
+
+    expect(view.querySelector("[data-member-outcome]"), "no outcome is no badge").toBeNull()
   })
 })
 
@@ -191,7 +224,7 @@ describe("a re-run says so, and a first attempt says nothing (D-17)", () => {
 })
 
 describe("a member that never ran renders honestly, never as an empty tree (D-18)", () => {
-  it("shows the did-not-run note, the persisted outcome and the producer's own summary", () => {
+  it("shows the did-not-run note BESIDE the badge, and the producer's own summary (405 D-18)", () => {
     const view = tree(
       [
         group(
@@ -203,7 +236,10 @@ describe("a member that never ran renders honestly, never as an empty tree (D-18
     )
 
     expect(view.textContent).toContain(DID_NOT_RUN_LABEL)
+    // BOTH, and that is the D-07 point: the badge is now every member's, so the one place the
+    // outcome word already appeared must not lose its note to it.
     expect(view.querySelector('[data-member-outcome="skipped"]')).toBeTruthy()
+    expect(view.querySelector("[data-member-note]")?.textContent).toBe(DID_NOT_RUN_LABEL)
     expect(view.textContent).toContain("skipped by fail-fast")
   })
 

@@ -159,6 +159,19 @@ function markerTextFor(marker: MemberVerdictMarker | undefined): string | undefi
   return marker === 'provisional' ? ANALYSIS_PROVISIONAL_TEXT : ANALYSIS_FAILED_FALLBACK_TEXT
 }
 
+/**
+ * The affordance on a step the verdict cited (D-02).
+ *
+ * THE ORDINAL IS THE PRODUCER'S, NOT THE TREE'S. The sentence directly above this row quotes the
+ * same step as `observed (step N)`, and the step is addressed by `<testIndex>:<stepIndex>` in the
+ * `?step=` deep link, so both the prose a reader just read and the URL they can copy count from
+ * zero. The tree's own "step N of M" counter is a display ordinal and is deliberately not borrowed
+ * here — a link labelled one number that jumps to another is the off-by-one nobody debugs.
+ */
+export function citedStepLabel(stepIndex: number): string {
+  return `step ${String(stepIndex)}`
+}
+
 /** The cluster sibling line (D-08). Counts the SIBLINGS, so "other" is literally true. */
 export function siblingLine(count: number): string {
   return `same failure as ${String(count)} other ${count === 1 ? 'test' : 'tests'}`

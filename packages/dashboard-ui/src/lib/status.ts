@@ -204,3 +204,48 @@ export function getStatusTextClassName(tone: StatusTone): string {
       return 'text-muted-foreground'
   }
 }
+
+// ------------------------------ the one badge palette ------------------------------
+//
+// ONE DEFINITION FOR THE RUN'S VERDICT BADGE AND EVERY MEMBER'S (406-06 · D-07).
+//
+// This switch was the navbar's private helper until 406 D-07 put an outcome badge on every member
+// header. Two copies of it would be two palettes: the aggregate saying `Cancelled` in muted grey
+// while a member said it in something else, on one screen, about one run. It is lifted here rather
+// than exported from the navbar because `lib/` is where this page's pure descriptors already live,
+// and because a component importing a component for a lookup table is a dependency neither of them
+// needs. NOTHING ABOUT WHAT IS PAINTED CHANGED — the arms are the navbar's own, verbatim.
+//
+// THE TYPE IS STRUCTURAL, not `ComponentProps<typeof Badge>`. This module is pure and imports no
+// React, which is what lets the projection cells run without a DOM; naming the component here to
+// borrow its prop type would drag the whole component graph in for two field names.
+
+/** The `Badge` variants this palette selects from — a subset, spelled to stay assignable. */
+export type StatusBadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline'
+
+/** What one status word paints: its title-cased label, and the look that carries it. */
+export interface StatusBadgeLook {
+  label: string
+  variant?: StatusBadgeVariant
+  className?: string
+}
+
+/** The closed switch, as data. One arm per word, unchanged in what it paints. */
+export function statusBadgeLook(status: string): StatusBadgeLook {
+  switch (status) {
+    case 'passed':
+      return { label: 'Passed', className: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/20' }
+    case 'failed':
+      return { label: 'Failed', variant: 'destructive' }
+    case 'healed':
+      return { label: 'Healed', className: 'bg-amber-500/15 text-amber-500 border-amber-500/20' }
+    case 'flaky':
+      return { label: 'Flaky', className: 'bg-amber-500/15 text-amber-500 border-amber-500/20' }
+    case 'skipped':
+      return { label: 'Skipped', variant: 'secondary' }
+    case 'cancelled':
+      return { label: 'Cancelled', className: 'bg-muted text-muted-foreground border-border' }
+    default:
+      return { label: status, variant: 'outline' }
+  }
+}
