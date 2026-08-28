@@ -68,6 +68,18 @@
 // the run reaches `runFinished` with a member `testFinished.outcome === 'failed'` carrying a
 // `failureSummary` that has masked placeholders in it.
 //
+// AND A MODEL THAT CAN AUTHOR, ADDED BY 406-07 (D-14). The stub's fourth arm answers the
+// analyze-run AUTHOR — the plain-text `generate` the post-run tail makes, carrying neither `tools`
+// nor `response_format`. Its default (`analysisOutcome: 'floor'`) is the prose sentence every 405
+// caller already gets, which `parseJsonWithRepair` rejects, so the author degrades to the
+// deterministic floor and no verdict on the page ever says `analyze-run`.
+// `startStubModelServer({ analysisOutcome: 'authored' })` answers that ONE request shape with a
+// valid `OUTPUT_CONTRACT` object instead, recognised by the author's own `agent_context` line and
+// grounded in a verbatim substring of `POPULATED_FAILURE_STEP_TEXT`; `citeEvidenceFrom` points it
+// at the project root so the answer cites the run's REAL decision-screenshot sha. The arm sits
+// between the structured arm and the text fallback, so every other request shape is answered
+// exactly as before.
+//
 // THE FAILING RUN'S TWO SENTENCES ARE FIXTURE-OWNED — `plannerFailureReasoning()` and
 // `POPULATED_FAILURE_STEP_TEXT` — and both are written to a WORD BUDGET the banner publishes
 // (`FAILURE_BANNER_PREVIEW_WORDS`). `POPULATED_FAILURE_STEP_TEXT` carries the arithmetic in full.
@@ -76,7 +88,7 @@
 
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -353,7 +365,7 @@ export interface RecordedStubRequest {
   readonly method: string
   readonly path: string
   /** Which arm answered it — the dispatch decision, recorded rather than re-derived. */
-  readonly kind: 'planner' | 'structured' | 'text' | 'unknown'
+  readonly kind: 'planner' | 'structured' | 'analysis' | 'text' | 'unknown'
   readonly status: number
   /** Whether the planner arm resolved a live `ref` out of the observation, or fell back. */
   readonly grounding?: 'ref' | 'descriptor'
@@ -374,6 +386,17 @@ export interface StubModelServer extends FixtureServer {
   readonly baseUrl: string
   /** Every request this server answered, in arrival order. */
   readonly requests: readonly RecordedStubRequest[]
+  /**
+   * Point the `authored` arm at a project's `.agent-qa` root so its answer can cite the run's own
+   * decision screenshot.
+   *
+   * A SETTER RATHER THAN AN OPTION because the ordering forces it: the stub must be listening
+   * before the project is minted (the project's config names the stub's port), so the root does
+   * not exist at `startStubModelServer` time. Unset — or set to a root with no
+   * `runs/<slug>/blobs/` — the answer cites nothing, which is the honest empty `citedArtifacts`
+   * the validator also accepts.
+   */
+  citeEvidenceFrom(agentQaRoot: string): void
 }
 
 interface ChatCompletionsBody {
@@ -469,6 +492,89 @@ function plannerFailureReasoning(): string {
   )
 }
 
+/**
+ * The marker the `authored` arm recognises the analyze-run author's request by.
+ *
+ * IT IS THE AUTHOR'S OWN `agent_context` LINE, copied verbatim from
+ * `agent/src/jobs/analyze-run-author.ts` (`authorRunAnalysis`'s default `agent_context`), and
+ * spelled as a named constant so a rename there is found by one grep rather than by a red run
+ * three plans later. Matching on the line rather than on "no tools and no response_format" keeps
+ * the arm precise: any OTHER plain-text call the product makes still falls through to the prose
+ * fallback below, exactly as it did before this arm existed.
+ */
+export const ANALYSIS_PROMPT_MARKER = 'analyze-run: authoring root-cause verdicts'
+
+/**
+ * The grounding quote the scripted verdict cites.
+ *
+ * A VERBATIM CONTIGUOUS SUBSTRING of {@link POPULATED_FAILURE_STEP_TEXT}, which is what
+ * `validateAnalysisAgainstHandoff` demands of a `stepText`-sourced quote. A quote the validator
+ * rejects degrades that member to the deterministic floor, and the run-detail cell can then never
+ * see `producer: 'analyze-run'` — so the substring relation is pinned by a static cell rather than
+ * trusted.
+ */
+export const POPULATED_FAILURE_QUOTE = 'Acknowledge the notice'
+
+/** The scripted verdict's rationale — advisory, never rendered as the sentence. */
+export const POPULATED_ANALYSIS_RATIONALE =
+  'The planner declared the step impossible on a page that rendered normally.'
+
+/** The scripted verdict's discriminator — the run-detail cell asserts the sentence carries it. */
+export const POPULATED_ANALYSIS_DISCRIMINATOR =
+  'the same step completed on the previous build of this notice page'
+
+/** The scripted verdict's one concrete next action. */
+export const POPULATED_ANALYSIS_NEXT_ACTION =
+  'open the notice page and confirm the acknowledge control is reachable'
+
+/** A 64-hex sha, the only name shape `FsEvidenceArtifactStore` addresses a blob by. */
+const BLOB_SHA_RE = /^[0-9a-f]{64}$/u
+
+/**
+ * Every decision-screenshot sha this project's ONE run wrote, read off disk at answer time.
+ *
+ * READ LATE, NEVER CACHED. The blobs are written by the run the cell is currently driving, so a
+ * value captured when the root was registered would always be empty. Absent directories answer
+ * `[]` rather than throwing: a stub that threw here would hang the run instead of failing it, and
+ * an empty `citedArtifacts` is a shape the validator accepts.
+ */
+function decisionScreenshotRefs(agentQaRoot: string | undefined): { id: string; sha: string }[] {
+  if (agentQaRoot === undefined) return []
+  try {
+    const runsRoot = join(agentQaRoot, 'runs')
+    const runDir = readdirSync(runsRoot, { withFileTypes: true }).find((entry) =>
+      entry.isDirectory(),
+    )
+    if (runDir === undefined) return []
+    return readdirSync(join(runsRoot, runDir.name, 'blobs'))
+      .filter((name) => BLOB_SHA_RE.test(name))
+      .map((sha) => ({ id: `decision-screenshot:${sha}`, sha }))
+  } catch {
+    return []
+  }
+}
+
+/** The `OUTPUT_CONTRACT` object the `authored` arm answers with. */
+function authoredVerdictAnswer(citedArtifacts: readonly { id: string; sha: string }[]): string {
+  return JSON.stringify({
+    tests: [
+      {
+        testIndex: 0,
+        class: 'app_bug',
+        confidence: 0.86,
+        memoryMisdirectionRuledOut: true,
+        citedSteps: [0],
+        citedArtifacts,
+        rationale: POPULATED_ANALYSIS_RATIONALE,
+        groundingQuote: { stepIndex: 0, quote: POPULATED_FAILURE_QUOTE },
+        discriminator: POPULATED_ANALYSIS_DISCRIMINATOR,
+        nextAction: POPULATED_ANALYSIS_NEXT_ACTION,
+        links: [],
+      },
+    ],
+  })
+}
+
 function chatCompletion(
   model: string,
   message: Record<string, unknown>,
@@ -542,13 +648,26 @@ export interface StubModelServerOptions {
    * ordinary failure is the one every failing run in the field produces.
    */
   readonly plannerOutcome?: 'stepComplete' | 'stepFailed'
+  /**
+   * What the analyze-run AUTHOR is answered with (406-07 · D-14).
+   *
+   * ADDITIVE, WITH TODAY'S BEHAVIOUR AS THE DEFAULT. `'floor'` — the default, and what every
+   * 405-09 / 405-12 / 405-14 caller that passes nothing gets — answers the author's plain-text
+   * `generate` with the same canned prose as before, which the author cannot parse, so its member
+   * keeps the deterministic floor. `'authored'` answers that ONE request shape with a valid
+   * `OUTPUT_CONTRACT` object instead, so the persisted verdict carries `producer: 'analyze-run'`
+   * and the failure view has an authored sentence to render.
+   */
+  readonly analysisOutcome?: 'floor' | 'authored'
 }
 
 export async function startStubModelServer(
   options: StubModelServerOptions = {},
 ): Promise<StubModelServer> {
   const plannerOutcome = options.plannerOutcome ?? 'stepComplete'
+  const analysisOutcome = options.analysisOutcome ?? 'floor'
   const requests: RecordedStubRequest[] = []
+  let citedRoot: string | undefined
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
@@ -663,6 +782,23 @@ export async function startStubModelServer(
         return
       }
 
+      // The FOURTH arm (406-07 · D-14), between `structured` and the prose fallback. It is
+      // reached only when the caller asked for it AND the prompt carries the author's own
+      // `agent_context` line, so every other plain-text call still lands on the fallback below.
+      if (analysisOutcome === 'authored' && prompt.includes(ANALYSIS_PROMPT_MARKER)) {
+        record('analysis', 200)
+        respond(chatCompletion(
+          model,
+          {
+            role: 'assistant',
+            content: authoredVerdictAnswer(decisionScreenshotRefs(citedRoot)),
+          },
+          'stop',
+          { prompt: 3_402, completion: 196 },
+        ))
+        return
+      }
+
       record('text', 200)
       respond(chatCompletion(
         model,
@@ -687,6 +823,9 @@ export async function startStubModelServer(
     baseUrl: `${origin}/v1`,
     port,
     requests,
+    citeEvidenceFrom: (agentQaRoot: string) => {
+      citedRoot = agentQaRoot
+    },
     close: closer(server),
   }
 }
