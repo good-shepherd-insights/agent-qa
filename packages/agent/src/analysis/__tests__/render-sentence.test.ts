@@ -405,8 +405,8 @@ describe('D-12 quote sanitization — the 399 before/after through the ONE rende
     )
 
     expect(sentence).toBe(
-      'unknown: observed (step 1): "locator.click: Timeout 30000ms exceeded. Call log: '
-        + "- waiting for getByRole('button', { name: 'Close ad', exact: true }).first()\""
+      'unknown: observed (step 1): "locator.click: Timeout 30000ms exceeded. '
+        + "Call log: - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()\""
         + ' — root cause undetermined'
         + ' — no failure history is recorded for this test'
         + ' — next: inspect the run manually — no deterministic signal matched',

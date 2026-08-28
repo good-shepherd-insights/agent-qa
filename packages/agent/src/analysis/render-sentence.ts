@@ -18,6 +18,8 @@ import type {
   VerdictSentenceParts,
 } from '@vostride/agent-qa-schema'
 
+import { sanitizeQuoteText } from './quote-text.js'
+
 /**
  * The projection's key, spelled the way `run_test_outcomes` is keyed: stable test identity
  * is `(product, filePath, testName)` — NEVER `testId`, a per-run explicit id.
@@ -79,13 +81,19 @@ export interface RecurrenceProvider {
 const SENTENCE_SEPARATOR = ' — '
 
 /**
- * Obligation a: the verbatim grounding quote with its ref. The `test-outcome` arm is the
- * typed alternative for zero-step failures — never a fabricated stepIndex.
+ * Obligation a: the grounding quote with its ref. The `test-outcome` arm is the typed
+ * alternative for zero-step failures — never a fabricated stepIndex.
+ *
+ * 406 D-12: the quote is cleaned HERE, in the one renderer, so the CLI print, 392's chat and
+ * the run page read the same sentence through the single code path. `sanitizeQuoteText`
+ * removes rendering noise only — no word is dropped, reordered or truncated — and it runs at
+ * RENDER time, so `validateGroundingQuote` still holds the author to the raw captured bytes.
  */
 function groundingSegment(quote: VerdictSentenceParts['groundingQuote']): string {
+  const text = sanitizeQuoteText(quote.quote)
   return 'stepIndex' in quote
-    ? `observed (step ${quote.stepIndex}): "${quote.quote}"`
-    : `observed (test outcome): "${quote.quote}"`
+    ? `observed (step ${quote.stepIndex}): "${text}"`
+    : `observed (test outcome): "${text}"`
 }
 
 /** Month names, spelled here so the rendered deadline never depends on a host locale. */
