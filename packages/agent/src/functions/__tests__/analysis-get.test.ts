@@ -9,6 +9,10 @@
 // no artifact on disk answers the handoff floor (honest parts, minted unknowns); a run with
 // no failures answers empty lists. None of those is an error, because none of them is a lie.
 
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import {
   canonicalJson,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
@@ -520,5 +524,106 @@ describe('analysis.get — read-time presence on cited artifacts (D-17)', () => 
       { id: `decision-screenshot:${other}`, sha: other },
     ])
     expect(seen.sort()).toEqual([CITED_SHA, other].sort())
+  })
+})
+
+// D-12 through the op, and the census that keeps it single (406-04, DETL-04).
+//
+// Two claims, and the second is what makes the first durable. The op serves the CLEANED
+// sentence — the 399 seeded-red quote read as an escape stream on every surface — and its
+// cluster representative is that same string, looked up rather than re-rendered. The census
+// then reads the source of every surface package and pins that exactly ONE file spells
+// `observed (step`: a second composer would be a second sentence for one verdict, which is
+// precisely the drift D-12 exists to forbid.
+
+const ESC = '\u001b'
+
+/** Copied from `demo/acceptance/399/399-analysis-seeded-red.json` — Playwright's raw error. */
+const SEEDED_RED_399_QUOTE =
+  'locator.click: Timeout 30000ms exceeded.\n'
+  + 'Call log:\n'
+  + `${ESC}[2m  - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()`
+  + `${ESC}[22m\n`
+
+/** The readable form D-12 pins — every non-control word of the "before", in order, on one line. */
+const SEEDED_RED_399_READABLE =
+  'locator.click: Timeout 30000ms exceeded. '
+  + "Call log: - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()"
+
+function seededRed399Artifact(handoff: CompletedRunHandoff): RunAnalysisArtifact {
+  return {
+    schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
+    runId: String(handoff.runId),
+    verdicts: [upgradedAppBug(0)],
+    parts: [{
+      perTest: 0,
+      groundingQuote: { stepIndex: 1, quote: SEEDED_RED_399_QUOTE },
+      discriminator: 'root cause undetermined',
+      nextAction: 'inspect the run manually — no deterministic signal matched',
+      links: [],
+    }],
+  }
+}
+
+/** The repo root, from this file: `__tests__` → functions → src → agent → packages → root. */
+const CENSUS_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..')
+
+/** Every package that renders or serves a verdict sentence to a person. */
+const CENSUS_PACKAGES = ['agent', 'cli', 'dashboard-ui', 'dashboard-server', 'mcp'] as const
+
+/** Non-test `.ts`/`.tsx` under a package's `src`; a package that is not checked out is skipped. */
+function sourceFilesUnder(directory: string): string[] {
+  if (!existsSync(directory)) return []
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFilesUnder(path)
+    return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : []
+  })
+}
+
+/**
+ * One file's CODE, with full-line comments dropped.
+ *
+ * The census asks who COMPOSES the grounding segment, not who mentions it: this house writes
+ * header prose that quotes the rendered form, and a cell that counted those would go red for a
+ * paragraph — the one way to make a structural pin get deleted rather than obeyed.
+ */
+function codeOf(path: string): string {
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trimStart()
+      return !(trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*'))
+    })
+    .join('\n')
+}
+
+describe('analysis.get — the D-12 quote leg, through the ONE renderer (406)', () => {
+  it('serves the 399 seeded-red quote as readable prose — one renderer, one sentence', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const registry = registryWith({
+      handoff,
+      analysis: readerOf(seededRed399Artifact(handoff)),
+    })
+
+    const output = await analysisOf(registry, String(handoff.runId))
+
+    expect(output.sentences[0]!.sentence)
+      .toContain(`observed (step 1): "${SEEDED_RED_399_READABLE}"`)
+    expect(output.sentences[0]!.sentence).not.toContain(ESC)
+    expect(output.sentences[0]!.sentence).not.toContain('\n')
+    // The cluster LOOKS THE SENTENCE UP (D-15) rather than re-rendering it, so the cleaned
+    // form cannot drift between the per-test list and the cluster header.
+    expect(output.clusters[0]!.representative.sentence).toBe(output.sentences[0]!.sentence)
+  })
+
+  it('census: exactly ONE source file composes the grounding segment (single code path)', () => {
+    const composers = CENSUS_PACKAGES
+      .flatMap((name) => sourceFilesUnder(join(CENSUS_ROOT, 'packages', name, 'src')))
+      .filter((path) => codeOf(path).includes('observed (step'))
+      .map((path) => path.slice(CENSUS_ROOT.length + 1))
+      .sort()
+
+    expect(composers).toEqual(['packages/agent/src/analysis/render-sentence.ts'])
   })
 })
