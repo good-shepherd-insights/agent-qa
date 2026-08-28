@@ -155,6 +155,10 @@ export default function RunDetailPage() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [artifactDrawerOpen, setArtifactDrawerOpen] = useState(false)
   const [artifactDrawerTab, setArtifactDrawerTab] = useState<ArtifactDrawerTab>("attributes")
+  // WHICH cited artifact the drawer was opened with (406-08 · D-02). `null` for every other way in
+  // — the `i` / `c` / `m` shortcuts and the navbar action all open the drawer with nothing in hand,
+  // and the screenshot tab is not offered at all in that state.
+  const [artifactDrawerSha, setArtifactDrawerSha] = useState<string | null>(null)
   const [artifactResponse, setArtifactResponse] = useState<RunArtifactResponse | null>(null)
   const [artifactLoading, setArtifactLoading] = useState(false)
   const [artifactError, setArtifactError] = useState<string | null>(null)
@@ -350,10 +354,22 @@ export default function RunDetailPage() {
     void loadArtifact()
   }, [artifactDrawerOpen, artifactError, artifactLoading, artifactResponse, loadArtifact, run?.id])
 
-  const openArtifactDrawer = useCallback((tab: ArtifactDrawerTab) => {
+  const openArtifactDrawer = useCallback((tab: ArtifactDrawerTab, sha?: string) => {
     setArtifactDrawerTab(tab)
+    setArtifactDrawerSha(sha ?? null)
     setArtifactDrawerOpen(true)
   }, [])
+
+  /**
+   * Open a cited artifact where the reader already looks (406-08 · D-02, second half).
+   *
+   * THE PAGE OWNS THE DRAWER AND THE BLOCK OWNS NOTHING. `VerdictBlock` hands up a sha; this turns
+   * it into the drawer's screenshot tab, and the drawer mints the URL through the one route minter.
+   * No route, no window and no second URL spelling is created anywhere along that path.
+   */
+  const onCitedArtifact = useCallback((sha: string) => {
+    openArtifactDrawer("screenshot", sha)
+  }, [openArtifactDrawer])
 
   const memberFilter = parseMemberFilter(searchParams.get("member"))
   const groups = useMemo(
@@ -852,6 +868,7 @@ export default function RunDetailPage() {
                   analysisView={analysisView}
                   onCitedStep={onCitedStep}
                   onSelectMember={onSelectMember}
+                  onCitedArtifact={onCitedArtifact}
                   selection={selection}
                   onSelect={setSelection}
                   setupHooks={setupHooks}
@@ -893,6 +910,7 @@ export default function RunDetailPage() {
             run={run}
             open={artifactDrawerOpen}
             tab={artifactDrawerTab}
+            screenshotSha={artifactDrawerSha}
             response={artifactResponse}
             loading={artifactLoading}
             error={artifactError}

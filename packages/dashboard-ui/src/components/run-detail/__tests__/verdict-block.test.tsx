@@ -25,6 +25,7 @@ import { VerdictBlock } from "@/components/run-detail/verdict-block"
 import {
   ANALYSIS_FAILED_FALLBACK_TEXT,
   ANALYSIS_PROVISIONAL_TEXT,
+  CITED_ARTIFACT_LABEL,
   citedStepLabel,
   provenanceLabel,
   siblingLine,
@@ -71,15 +72,21 @@ function view(over: Partial<MemberVerdictView> = {}): MemberVerdictView {
 function render(over: Partial<MemberVerdictView> = {}, handlers: {
   onCitedStep?: (testIndex: number, stepIndex: number) => void
   onSelectMember?: (testIndex: number) => void
+  onCitedArtifact?: (sha: string) => void
 } = {}) {
   return mount(
     <VerdictBlock
       view={view(over)}
       onCitedStep={handlers.onCitedStep ?? (() => {})}
       onSelectMember={handlers.onSelectMember ?? (() => {})}
+      onCitedArtifact={handlers.onCitedArtifact ?? (() => {})}
     />,
   )
 }
+
+/** Two content addresses, distinct and 64-hex, so a cell can tell one ref from the other. */
+const SHA_PRESENT = "a".repeat(64)
+const SHA_GONE = "b".repeat(64)
 
 describe("the sentence's lifecycle is a marker, and the marker is the view's (D-09/D-11)", () => {
   it("paints the provisional marker with its exported sentence while the chain may still upgrade", () => {
@@ -196,5 +203,31 @@ describe("a cluster is a sibling LINE under the sentence, never a panel (D-08)",
     const block = render({ siblings: [] })
     expect(block.querySelector("[data-cluster-siblings]")).toBeNull()
     expect(block.querySelector("[data-cluster-sibling]")).toBeNull()
+  })
+})
+
+describe("a cited artifact is one click from the drawer (D-02, second half)", () => {
+  it("renders one button per present cited artifact and hands the click back its sha", () => {
+    const onCitedArtifact = vi.fn()
+    const block = render(
+      { citedArtifacts: [{ id: "art_0", sha: SHA_PRESENT, incomplete: false }] },
+      { onCitedArtifact },
+    )
+
+    const link = block.querySelector("[data-cited-artifact]")
+    expect(link?.getAttribute("data-cited-artifact"), "the sha VERBATIM — the content address itself")
+      .toBe(SHA_PRESENT)
+    expect(link?.tagName, "an affordance, not a label").toBe("BUTTON")
+    expect(link?.textContent).toBe(CITED_ARTIFACT_LABEL)
+
+    act(() => {
+      ;(link as HTMLButtonElement).click()
+    })
+    expect(onCitedArtifact, "the sha is the only handle the page needs").toHaveBeenCalledWith(SHA_PRESENT)
+  })
+
+  it("renders no cited-artifact affordance when the verdict cited no artifact", () => {
+    const block = render({ citedArtifacts: [] })
+    expect(block.querySelector("[data-cited-artifact]")).toBeNull()
   })
 })

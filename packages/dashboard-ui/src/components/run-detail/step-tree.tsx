@@ -44,7 +44,8 @@ interface StepTreeProps {
    */
   analysisView?: ReadonlyMap<number, MemberVerdictView>
   /**
-   * What a cited step and a cluster sibling DO, handed straight down (406-06 · D-02 / D-08).
+   * What a cited step, a cluster sibling and a cited artifact DO, handed straight down
+   * (406-06 / 406-08 · D-02 / D-08).
    *
    * PASSED THROUGH, NEVER CALLED HERE, and optional for the same reason `analysisView` is: this
    * tree owns no analysis fact and no page state. Resolving a step ordinal to a selected row and
@@ -53,6 +54,7 @@ interface StepTreeProps {
    */
   onCitedStep?: (testIndex: number, stepIndex: number) => void
   onSelectMember?: (testIndex: number) => void
+  onCitedArtifact?: (sha: string) => void
   selection: Selection | null
   onSelect: (sel: Selection | null) => void
   setupHooks?: ExecutionLogEntry[]
@@ -137,6 +139,7 @@ export function StepTree({
   analysisView,
   onCitedStep,
   onSelectMember,
+  onCitedArtifact,
   selection,
   onSelect,
   setupHooks = [],
@@ -206,6 +209,7 @@ export function StepTree({
               verdict={analysisView?.get(group.member.testIndex)}
               onCitedStep={onCitedStep}
               onSelectMember={onSelectMember}
+              onCitedArtifact={onCitedArtifact}
             >
               {steps.map((step) => (
                 <StepTreeItem

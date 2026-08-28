@@ -19,6 +19,7 @@ const {
   fetchRunMock,
   fetchRunDetailMock,
   fetchRunArtifactMock,
+  fetchRunAnalysisMock,
   fetchActiveExecutionsMock,
   fetchExecutionLogsMock,
   fetchAccessibilitySummaryMock,
@@ -30,6 +31,7 @@ const {
     fetchRunMock: vi.fn(),
     fetchRunDetailMock: vi.fn(),
     fetchRunArtifactMock: vi.fn(),
+    fetchRunAnalysisMock: vi.fn(),
     fetchActiveExecutionsMock: vi.fn(),
     fetchExecutionLogsMock: vi.fn(),
     fetchAccessibilitySummaryMock: vi.fn(),
@@ -53,7 +55,9 @@ vi.mock("@/lib/api", () => ({
   // 2026-08-29 (406-01, D-04): the page's THIRD read — the failure view's. This whole-module
   // mock replaces `@/lib/api`, so an omitted export is `undefined` at the call site and every
   // cell here dies before it asserts. Its own behaviour is measured in `run-detail.analysis.test.tsx`.
-  fetchRunAnalysis: () => Promise.resolve({ runId: '', verdicts: [], sentences: [], clusters: [] }),
+  // 2026-08-29 (406-08): now a MOCK rather than a constant double, because one cell here drives a
+  // cited artifact off a real verdict and through the page's `onCitedArtifact` wiring.
+  fetchRunAnalysis: fetchRunAnalysisMock,
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
@@ -102,6 +106,7 @@ vi.mock("@/components/run-detail/artifact-drawer", () => ({
   ArtifactDrawer: ({
     open,
     tab,
+    screenshotSha,
     response,
     loading,
     error,
@@ -110,12 +115,13 @@ vi.mock("@/components/run-detail/artifact-drawer", () => ({
     onRetry,
   }: {
     open: boolean
-    tab: "attributes" | "config" | "memory"
+    tab: "attributes" | "config" | "memory" | "screenshot"
+    screenshotSha: string | null
     response: { artifact: unknown; run?: { attributes?: Record<string, string> } } | null
     loading: boolean
     error: string | null
     onOpenChange: (open: boolean) => void
-    onTabChange: (tab: "attributes" | "config" | "memory") => void
+    onTabChange: (tab: "attributes" | "config" | "memory" | "screenshot") => void
     onRetry: () => void
   }) => {
     if (!open) return null
@@ -123,6 +129,7 @@ vi.mock("@/components/run-detail/artifact-drawer", () => ({
       <div
         data-testid="artifact-drawer"
         data-tab={tab}
+        data-screenshot-sha={screenshotSha ?? ""}
         data-loading={String(loading)}
         data-artifact={response?.artifact ? "present" : "missing"}
       >
@@ -169,9 +176,17 @@ vi.mock("@/components/run-detail/step-tree", () => ({
   StepTree: ({
     groups,
     selection,
+    analysisView,
+    onCitedArtifact,
   }: {
     groups: readonly RunDetailGroup[]
     selection: { type: string; stepId?: string; subIndex?: number } | null
+    // 406-08: the double renders the cited-artifact affordance the real tree renders through
+    // `MemberGroup` → `VerdictBlock`, because the claim under test here is the PAGE's wiring
+    // (`onCitedArtifact` → the drawer on a sha-keyed screenshot tab). The block's own view→markup
+    // mapping is pinned in `components/run-detail/__tests__/verdict-block.test.tsx`.
+    analysisView?: ReadonlyMap<number, { citedArtifacts: readonly { sha: string; incomplete: boolean }[] }>
+    onCitedArtifact?: (sha: string) => void
   }) => {
     const selectionLabel = selection
       ? `${selection.type}:${selection.stepId ?? ""}:${selection.subIndex ?? ""}`
@@ -183,6 +198,20 @@ vi.mock("@/components/run-detail/step-tree", () => ({
             {step.name}
           </div>
         ))}
+        {[...(analysisView?.values() ?? [])].flatMap((view) =>
+          view.citedArtifacts
+            .filter((ref) => !ref.incomplete)
+            .map((ref) => (
+              <button
+                key={ref.sha}
+                type="button"
+                data-cited-artifact={ref.sha}
+                onClick={() => onCitedArtifact?.(ref.sha)}
+              >
+                screenshot
+              </button>
+            )),
+        )}
       </div>
     )
   },
@@ -312,6 +341,27 @@ function makeArtifactResponse(id = "run-1") {
   }
 }
 
+/** A verdict citing ONE present artifact — the smallest shape the page's wiring needs (406-08). */
+const CITED_SHA = "d".repeat(64)
+
+function analysisCiting(sha: string) {
+  return {
+    runId: "run-1",
+    verdicts: [
+      {
+        perTest: 0,
+        testId: "t_artifact",
+        class: "unknown" as const,
+        producer: "deterministic-classifier" as const,
+        confidence: 0,
+        evidence: { citedSteps: [], citedArtifacts: [{ id: "art_0", sha, present: true }] },
+      },
+    ],
+    sentences: [{ perTest: 0, testId: "t_artifact", sentence: "observed (step 0): nothing" }],
+    clusters: [],
+  }
+}
+
 function LocationProbe() {
   const location = useLocation()
   return (
@@ -383,6 +433,7 @@ beforeEach(() => {
   fetchRunMock.mockReset()
   fetchRunDetailMock.mockReset()
   fetchRunArtifactMock.mockReset()
+  fetchRunAnalysisMock.mockReset()
   fetchActiveExecutionsMock.mockReset()
   fetchExecutionLogsMock.mockReset()
   fetchAccessibilitySummaryMock.mockReset()
@@ -400,6 +451,7 @@ beforeEach(() => {
     unscannedSteps: 0,
     totalSteps: 0,
   })
+  fetchRunAnalysisMock.mockResolvedValue({ runId: "", verdicts: [], sentences: [], clusters: [] })
   fetchRunMock.mockImplementation(async (id: string) => ({ run: makeRun(id) }))
   fetchRunDetailMock.mockImplementation(async (id: string) => makeProjection(id))
   fetchRunArtifactMock.mockImplementation(async (id: string) => makeArtifactResponse(id))
@@ -586,6 +638,46 @@ describe("RunDetailPage artifact drawer", () => {
     expect(searchParams(view).get("step")).toBe("0:0")
     expect(searchParams(view).get("sub")).toBe("0")
     expect(searchParams(view).get("tab")).toBe("network")
+  })
+
+  it("opens the drawer on a sha-keyed screenshot tab when a cited artifact is clicked (D-02)", async () => {
+    fetchRunAnalysisMock.mockResolvedValue(analysisCiting(CITED_SHA))
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
+
+    expect(view.querySelector('[data-testid="artifact-drawer"]'), "closed until the click").toBeNull()
+
+    await act(async () => {
+      ;(view.querySelector(`[data-cited-artifact="${CITED_SHA}"]`) as HTMLButtonElement).click()
+    })
+    await flushRender()
+
+    const drawer = view.querySelector('[data-testid="artifact-drawer"]') as HTMLElement
+    expect(drawer).not.toBeNull()
+    expect(drawer.getAttribute("data-tab")).toBe("screenshot")
+    expect(drawer.getAttribute("data-screenshot-sha"), "the sha travels to the tab").toBe(CITED_SHA)
+    expect(searchParams(view).get("step"), "opening evidence navigates nowhere").toBe("0:0")
+  })
+
+  it("leaves the I/C/M shortcuts exactly as they were — they carry no sha", async () => {
+    fetchRunAnalysisMock.mockResolvedValue(analysisCiting(CITED_SHA))
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
+
+    await act(async () => {
+      ;(view.querySelector(`[data-cited-artifact="${CITED_SHA}"]`) as HTMLButtonElement).click()
+    })
+    await flushRender()
+
+    await act(async () => {
+      latestShortcuts().i(new KeyboardEvent("keydown", { key: "i" }))
+    })
+    await flushRender()
+
+    const drawer = view.querySelector('[data-testid="artifact-drawer"]') as HTMLElement
+    expect(drawer.getAttribute("data-tab")).toBe("attributes")
+    expect(
+      drawer.getAttribute("data-screenshot-sha"),
+      "the three v1 tabs open with no artifact in hand, exactly as before",
+    ).toBe("")
   })
 
   it("resets artifact state and fetches again when a different run is rendered", async () => {

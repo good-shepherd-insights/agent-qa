@@ -73,7 +73,7 @@ interface MemberGroupProps {
    */
   verdict?: MemberVerdictView
   /**
-   * What a cited step and a cluster sibling DO (406-06 · D-02 / D-08).
+   * What a cited step, a cluster sibling and a cited artifact DO (406-06 / 406-08 · D-02 / D-08).
    *
    * OPTIONAL, AND THE DEFAULT IS A NO-OP, matching `verdict` above and `analysisView` on the tree.
    * A member group mounted without them — every cell in this file that is about grouping rather
@@ -82,10 +82,11 @@ interface MemberGroupProps {
    */
   onCitedStep?: (testIndex: number, stepIndex: number) => void
   onSelectMember?: (testIndex: number) => void
+  onCitedArtifact?: (sha: string) => void
   children?: ReactNode
 }
 
-/** The default for both handles above, spelled once so the two call sites cannot drift. */
+/** The default for every handle above, spelled once so the call sites cannot drift. */
 const NO_OP = () => {}
 
 /** The did-not-run body: this product's note, the persisted outcome, and the runner's own line. */
@@ -111,6 +112,7 @@ export function MemberGroup({
   verdict,
   onCitedStep = NO_OP,
   onSelectMember = NO_OP,
+  onCitedArtifact = NO_OP,
   children,
 }: MemberGroupProps) {
   const [open, setOpen] = useState(true)
@@ -127,7 +129,12 @@ export function MemberGroup({
   // THE WHY, DIRECTLY UNDER THE HEADER AND ABOVE THE STEPS (D-05). The sentence sits beside the
   // steps it cites rather than in a panel of its own, so the member filter narrows both at once.
   const verdictBlock = verdict === undefined ? null : (
-    <VerdictBlock view={verdict} onCitedStep={onCitedStep} onSelectMember={onSelectMember} />
+    <VerdictBlock
+      view={verdict}
+      onCitedStep={onCitedStep}
+      onSelectMember={onSelectMember}
+      onCitedArtifact={onCitedArtifact}
+    />
   )
 
   // No chrome, and the member ran: the steps stand on their own directly under the tree. A

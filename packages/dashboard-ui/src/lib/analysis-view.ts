@@ -172,6 +172,15 @@ export function citedStepLabel(stepIndex: number): string {
   return `step ${String(stepIndex)}`
 }
 
+/**
+ * The affordance on an artifact the verdict cited (D-02, second half).
+ *
+ * IT NAMES THE THING, NOT THE ACTION. The sha is on the element as `data-cited-artifact` and is
+ * what the click carries; a label that spelled it would put 64 hex characters in a sentence and
+ * still not tell a reader what opens. The word is the noun the drawer's own tab wears.
+ */
+export const CITED_ARTIFACT_LABEL = 'screenshot'
+
 /** The cluster sibling line (D-08). Counts the SIBLINGS, so "other" is literally true. */
 export function siblingLine(count: number): string {
   return `same failure as ${String(count)} other ${count === 1 ? 'test' : 'tests'}`

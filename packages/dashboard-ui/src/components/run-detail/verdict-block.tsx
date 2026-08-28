@@ -41,15 +41,16 @@
 // projection did not carry never becomes a button, and a button whose step the page cannot resolve
 // is a no-op there rather than a throw here.
 //
-// THE CITED-ARTIFACT LINKS AND THE MEMBER-LEVEL COUNT LINE ARE 406-08'S, and their slots are left
-// empty on purpose rather than pre-rendered: `view.citedArtifacts` and `view.missingEvidence` are
-// already on the view (406-06 projects both), so that plan adds an `onCitedArtifact` prop and two
-// rows below the cited steps without touching anything above them.
+// A CITED ARTIFACT OPENS IN THE DRAWER, AND ONLY THE PAGE KNOWS WHERE THAT IS (406-08 · D-02,
+// second half). The block hands up a sha and nothing else: no run id, no URL, no window. The page
+// turns that sha into the drawer's screenshot tab, whose `src` the one route minter mints. Rendering
+// the picture here instead was rejected — it duplicates the overview's rendering and grows the page
+// once per red member on a 40-red run.
 //
 // `data-*` DESCRIBES WHAT IS RENDERED, not what was passed (the banner's `showingFull` lesson).
 
 import { MaskedText } from "@/components/run-detail/masked-text"
-import { citedStepLabel, type MemberVerdictView } from "@/lib/analysis-view"
+import { CITED_ARTIFACT_LABEL, citedStepLabel, type MemberVerdictView } from "@/lib/analysis-view"
 import { memberHandleLabel } from "@/lib/run-detail-view"
 
 interface VerdictBlockProps {
@@ -58,6 +59,8 @@ interface VerdictBlockProps {
   onCitedStep: (testIndex: number, stepIndex: number) => void
   /** Narrow the member filter to a cluster sibling's own group (D-08). */
   onSelectMember: (testIndex: number) => void
+  /** Open the cited artifact — the sha is the whole handle the page needs (D-02). */
+  onCitedArtifact: (sha: string) => void
 }
 
 /** The one look every affordance in this block wears — a quiet inline chip, never a coloured link. */
@@ -65,7 +68,12 @@ const AFFORDANCE_CLASS =
   "rounded-[2px] border border-border/60 bg-background/60 px-1.5 py-0.5 font-mono text-[10px] " +
   "text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
 
-export function VerdictBlock({ view, onCitedStep, onSelectMember }: VerdictBlockProps) {
+export function VerdictBlock({
+  view,
+  onCitedStep,
+  onSelectMember,
+  onCitedArtifact,
+}: VerdictBlockProps) {
   return (
     <div
       data-verdict-block
@@ -101,6 +109,24 @@ export function VerdictBlock({ view, onCitedStep, onSelectMember }: VerdictBlock
               {citedStepLabel(stepIndex)}
             </button>
           ))}
+        </div>
+      )}
+
+      {view.citedArtifacts.length === 0 ? null : (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+          {view.citedArtifacts
+            .filter((ref) => !ref.incomplete)
+            .map((ref) => (
+              <button
+                key={ref.id}
+                type="button"
+                data-cited-artifact={ref.sha}
+                onClick={() => { onCitedArtifact(ref.sha) }}
+                className={AFFORDANCE_CLASS}
+              >
+                {CITED_ARTIFACT_LABEL}
+              </button>
+            ))}
         </div>
       )}
 
