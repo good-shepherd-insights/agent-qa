@@ -551,7 +551,13 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
 
     const attackerPort = await reserveEphemeralPort()
     const dash = `http://127.0.0.1:${String(f.dashboard.port)}`
-    const controlUrl = `${dash}/api/runs`
+    // THE CONTROL IS `/api/stats` AND NOT `/api/runs` (405 CR-01). This control exists to prove the
+    // page, the browser and the door are all live, so it must be a read that a foreign document is
+    // still ALLOWED to make. `/api/runs` was that read until 405-10 put restored cleartext on its
+    // body and CR-01 took the wildcard grant off it; using it here would now assert that the
+    // dashboard leaks the run list cross-origin, and the cell would be pinning the defect open.
+    // `/api/stats` is a legacy read on the unchanged wildcard posture and carries no run content.
+    const controlUrl = `${dash}/api/stats`
     const liveUrl = `${dash}/api/runs/${encodeURIComponent(f.runId)}/live-url`
 
     // THIS CELL MEASURES THE SECOND, INDEPENDENT LAYER: a capability answer carries no
