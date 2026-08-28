@@ -524,6 +524,25 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
       + 'budget by construction, so a banner that starts full means the truncation stopped running '
       + `— and the truncated-state claims below would be measuring the full text.${context()}`,
     ).toBe('truncated')
+
+    // AND THE ATTRIBUTE IS CHECKED AGAINST THE TEXT, because an attribute is only worth reading if
+    // it can disagree with what is on the page. `data-failure-banner-state` was once derived from
+    // the toggle's `useState(false)` alone, which made `truncated` a compile-time constant on
+    // mount: this cell would have gone on passing with the truncation deleted outright. The two
+    // assertions below are the fact the sentence above claims — the preview really is SHORTER than
+    // the full text, and it really was cut — and mutation leg M6 (`truncateMaskedText` returns its
+    // input unchanged) is the measurement that this cell can lose them.
+    expect(
+      observed.truncated.bannerText.length,
+      'the truncated banner is not shorter than the expanded one, so no truncation happened. The '
+      + 'fixture\'s summary is over the preview budget by construction; equal lengths mean the '
+      + `preview is the whole sentence and the two banner states are one claim.${context()}`,
+    ).toBeLessThan(observed.full.bannerText.length)
+    expect(
+      observed.truncated.bannerText,
+      'the truncated banner carries no ellipsis, which `truncateMaskedText` appends if and only if '
+      + `it cut something — so the preview was never over the budget.${context()}`,
+    ).toContain('...')
   })
 
   it('(3c) truncated state: the email is a typed chip, and no marker or placeholder reaches a text node', () => {

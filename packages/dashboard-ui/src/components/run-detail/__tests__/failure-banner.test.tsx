@@ -75,6 +75,11 @@ function toggleOf(view: HTMLDivElement): HTMLButtonElement | null {
   return view.querySelector<HTMLButtonElement>("[data-failure-banner-toggle]")
 }
 
+/** The sentence the banner is actually showing — the medium `data-failure-banner-state` describes. */
+function textOf(view: HTMLDivElement): string {
+  return view.querySelector("[data-failure-banner-text]")?.textContent ?? ""
+}
+
 afterEach(() => {
   if (root) act(() => root!.unmount())
   root = null
@@ -87,6 +92,13 @@ describe("FailureBanner", () => {
     const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
 
     expect(stateOf(view)).toBe("truncated")
+    // AND THE STATE IS CHECKED AGAINST THE TEXT. `truncated` was once a compile-time constant of
+    // this component — derived from the toggle's `useState(false)`, so it read `truncated` on first
+    // paint for every input, including one whose truncation had been deleted outright. These two
+    // assertions are the fact the attribute claims: the last word of the summary is NOT on the page,
+    // and the helper's ellipsis is. Without them the line above asserts `useState`.
+    expect(textOf(view)).not.toContain("w30")
+    expect(textOf(view).endsWith("...")).toBe(true)
     expect(view.querySelector('[data-masked="email"]')?.textContent).toContain(MASKED_EMAIL_LABEL)
     // The secret marker is word 26 — past the budget, so it is not in the preview at all. A chip
     // here would mean the budget was spent over something other than the parsed segments.
@@ -116,6 +128,10 @@ describe("FailureBanner", () => {
     const view = mount(<FailureBanner summary={short} />)
 
     expect(toggleOf(view)).toBeNull()
+    // FULL, ON FIRST PAINT, WITH NOTHING PRESSED. Nothing was cut, so the banner is showing the
+    // whole sentence — and the attribute a DOM cell reads to name which claim it is making has to
+    // say so. This is the cell that reds if the state is ever derived from the toggle again.
+    expect(stateOf(view)).toBe("full")
     expect(view.querySelector('[data-masked="email"]')?.textContent).toContain(MASKED_EMAIL_LABEL)
     expect(view.querySelector("[data-failure-banner-text]")?.textContent)
       .toContain("and nothing else")

@@ -13,7 +13,7 @@
 # the fact away and watch the cell go red — and to watch its NEIGHBOURS stay green, because a
 # mutation that reds the whole file is measuring blast radius.
 #
-# TWO MUTATIONS, ONE PER FACT-CARRIER, ACROSS TWO PACKAGES:
+# THREE MUTATIONS, ONE PER FACT-CARRIER, ACROSS TWO PACKAGES:
 #
 #   M4  the banner's `MaskedText` render replaced by the raw string — the summary still arrives
 #       through the display seam, the truncation still runs and the toggle still works; the only
@@ -21,16 +21,19 @@
 #   M5  405-12's M3 verbatim: the display-unmask seam still reads the sidecar, still resolves the
 #       host key, still re-derives every candidate and still matches every digest, and restores
 #       NOTHING
+#   M6  `truncateMaskedText` hands its input back unchanged — the parse still runs, the chip seam
+#       still paints, the seam still restores; the only thing this leg removes is the TRUNCATION
 #
 # WHAT EACH LEG IS EXPECTED TO REACH IS STATED IN ADVANCE, AND SO IS WHAT IT MUST NOT.
 #
 # M4 IS THE CHIP MUTATION. It reds (3c) and (3d) — the truncated and expanded chip claims — and it
 # must red NOTHING else. (3a) reads the run-stream envelope, which never crosses this component.
-# (3b) only asks that the banner mounted truncated, which a raw render still does. (3e) asks whether
-# the RESTORED credential is inside the banner text, and a raw render still prints it: the restore
-# happened upstream at the seam, so a banner that paints the string raw shows the restored value and
-# the un-restorable markers side by side. (3f) is an at-rest scan of bytes this component never
-# writes. Those four are the control, named below so the log records what did NOT move.
+# (3b) asks that the banner mounted showing a PREVIEW — shorter than the full text, ellipsis and
+# all — which a raw render still does, because M4 removes the painting and not the budget. (3e) asks
+# whether the RESTORED credential is inside the banner text, and a raw render still prints it: the
+# restore happened upstream at the seam, so a banner that paints the string raw shows the restored
+# value and the un-restorable markers side by side. (3f) is an at-rest scan of bytes this component
+# never writes. Those four are the control, named below so the log records what did NOT move.
 #
 # M5 IS THE RESTORE MUTATION, AND ITS CONTROL IS THE POINT. (3e) is the ONLY cell of the six whose
 # fact is RESTORATION. The chip cells do not depend on it — an unrestored placeholder is rewritten
@@ -38,7 +41,33 @@
 # chip — so (3c) and (3d) must stay green. Neither does the at-rest scan (3f): the seam is a DISPLAY
 # lane and the bytes on disk and on the run-stream wire are masked by design (CONTEXT D-09). A
 # mutation that also red the chip cells would mean (3e) is measuring "there is text in the banner"
-# rather than "the seam restored it".
+# rather than "the seam restored it". (3b) is a control here for the same reason it is under M4: an
+# unrestored placeholder becomes a one-word marker in place of a one-word value, so the word budget
+# spends identically and the preview is cut in exactly the same place.
+#
+# M6 IS THE TRUNCATION MUTATION, AND IT EXISTS BECAUSE (3b) HAD NOTHING TO LOSE. Before this leg,
+# `data-failure-banner-state` was derived from the toggle's `useState(false)` alone, so it read
+# `truncated` on first paint for EVERY input and (3b) asserted a compile-time constant of the
+# component — a cell naming a fact ("the truncation ran") it could not measure, and a control in the
+# two lists below that was structurally incapable of moving. A control that has never been shown to
+# move is a comment, by this script's own law below ("A GREEN SUITE UNDER ANY MUTATION IS A
+# FAILURE OF THIS SCRIPT"). M6 is the measurement that (3b)
+# can go red: with `truncateMaskedText` returning its input, the banner mounts showing the WHOLE
+# summary and (3b) loses all three of its assertions — the state attribute, the preview being
+# shorter than the full text, and the ellipsis.
+#
+# M6's blast radius is wider than one cell, and the reason is a property of the SUITE rather than a
+# weakness of the leg, so it is written down rather than tuned away:
+#
+#   (3d) reds because the toggle is rendered only when something was cut. Nothing was, so there is
+#        no `[data-failure-banner-toggle]` to click and `observed.toggled` is false.
+#   (3e) reds on its SECOND assertion — "the credential is not in the preview". That is a fact about
+#        truncation living inside the restore cell, and with the preview equal to the full text the
+#        credential is in both. The entanglement is real and it is (3e)'s, not M6's.
+#
+# What makes M6 a measurement and not a blast radius is what stays green: (3a) reads the wire before
+# any render, (3c) reads the chips — which are painted from the same markers whether the text was
+# cut or not — and (3f) scans bytes at rest. Those three are named as the control below.
 #
 # WHY THERE IS NO "TRUNCATE-BEFORE-PARSE" LEG. The reviewer named a third candidate mutation:
 # truncate the raw string BEFORE parsing it, restoring the page-local helper's wrong ordering. That
@@ -52,9 +81,9 @@
 # feed the helper a marker whose payload DOES contain whitespace. That is where a regression in the
 # ordering reds; this script says so instead of claiming a measurement it did not make.
 #
-# EVERY LEG CROSSES A `dist` BOUNDARY AND THE REBUILD IS PART OF THE MUTATION. Both subjects are
-# resolved by the spawned `agent-qa dashboard` as BUILT workspace dependencies — dashboard-ui's
-# bundle for M4, the cli dist for M5 — and the DOM file's own `buildFreshness` guard compares source
+# EVERY LEG CROSSES A `dist` BOUNDARY AND THE REBUILD IS PART OF THE MUTATION. All three subjects
+# are resolved by the spawned `agent-qa dashboard` as BUILT workspace dependencies — dashboard-ui's
+# bundle for M4 and M6, the cli dist for M5 — and the DOM file's own `buildFreshness` guard compares
 # mtimes against those artifacts, so a restored-but-unbuilt source is "newer than" the build and
 # every cell refuses to run at all. That is a red the leg never measured. `--force` is required for
 # the same guard's sake in the other direction: a byte-identical restore is a turbo CACHE HIT, so a
@@ -66,8 +95,8 @@
 # that gains a comma would silently stop matching a line-oriented grep, and the failure mode of that
 # is a leg that reports "the named cell stayed green" about a cell that was red.
 #
-# THIS SCRIPT IS SLOW AND IT IS SLOW FOR A REASON. Five forced workspace builds (preflight plus
-# mutate-and-restore per leg) and three passes of a suite that spawns the built binary, launches a
+# THIS SCRIPT IS SLOW AND IT IS SLOW FOR A REASON. Seven forced workspace builds (preflight plus
+# mutate-and-restore per leg) and four passes of a suite that spawns the built binary, launches a
 # real Chromium and executes a real failing run through a real planning turn. Minutes, not seconds.
 # It is the phase's ACCEPTANCE for the banner, run at wave merge and before `/gsd-verify-work`; the
 # per-commit sample is the fast unit cells.
@@ -94,8 +123,9 @@ CLI_FILTER="agent-qa"
 
 BANNER_SUBJECT="packages/dashboard-ui/src/components/run-detail/failure-banner.tsx"
 UNMASK_SUBJECT="packages/cli/src/composition/display-unmask.ts"
+TRUNCATE_SUBJECT="packages/dashboard-ui/src/lib/masked-text.ts"
 
-SUBJECT_PATHS=("$BANNER_SUBJECT" "$UNMASK_SUBJECT")
+SUBJECT_PATHS=("$BANNER_SUBJECT" "$UNMASK_SUBJECT" "$TRUNCATE_SUBJECT")
 
 DOM_SUITE="src/__tests__/conformance/run-detail-failure-dom.test.ts"
 
@@ -167,6 +197,21 @@ GREEN_M5="(3a)
 (3d)
 (3f)"
 
+# The truncation claim, plus the two cells that inherit it. (3b) is what this leg exists to move —
+# it is the one cell whose whole subject is the preview. (3d) and (3e) are REQUIRED rather than
+# merely ALLOWED because their dependence on the truncation is predicted above by name, and a
+# prediction that is not asserted is a note: if either stayed green under M6 the analysis in the
+# header would be wrong and this script should say so rather than pass.
+REQUIRED_M6="(3b)
+(3d)
+(3e)"
+ALLOWED_M6="(3b)
+(3d)
+(3e)"
+GREEN_M6="(3a)
+(3c)
+(3f)"
+
 apply_mutation () {
   case "${FAILURE_BANNER_MUTATION_SELFTEST:-}" in
     neutered) return 0 ;;
@@ -188,6 +233,15 @@ apply_mutation () {
       # which is a different mutation with a different meaning.
       perl -0pi -e "s/            restore\.set\(placeholder, candidate\.value\)\n/            restore.set\(placeholder, placeholder\)\n/" \
         "$REPO_ROOT/$UNMASK_SUBJECT" ;;
+    M6)
+      # THE BUDGET REMOVED, THE PARSE LEFT WHERE IT IS. Both return statements collapse into the
+      # at-or-under-budget one, so every input comes back byte-identical with `isTruncated: false`.
+      # `splitMaskedText` still runs above it and the loop still walks the segments — this leg takes
+      # away the TRUNCATION, not the ordering, and a leg that had deleted the parse as well would be
+      # measuring two things at once. Collapsing the pair (rather than negating the condition) also
+      # leaves no unreachable statement behind for the forced build to trip over.
+      perl -0pi -e 's/  if \(total <= maxWords\) return \{ text, isTruncated: false \}\n  return \{[^\n]*\n/  return { text, isTruncated: false }\n/' \
+        "$REPO_ROOT/$TRUNCATE_SUBJECT" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac
 }
@@ -371,8 +425,10 @@ echo
 
 run_leg M4 "the banner's MaskedText render replaced by the raw string" "$REQUIRED_M4" "$ALLOWED_M4" "$GREEN_M4"
 run_leg M5 "the display-unmask seam made a marker pass, restoring nothing" "$REQUIRED_M5" "$ALLOWED_M5" "$GREEN_M5"
+run_leg M6 "truncateMaskedText hands its input back unchanged" "$REQUIRED_M6" "$ALLOWED_M6" "$GREEN_M6"
 
-echo "PASS — taking the chip painting away from the banner red exactly the two chip cells, and"
-echo "       taking restoration away from the display seam red exactly the restore cell, while the"
-echo "       producer's masked wire, the banner's own mounting and truncation, and the at-rest scan"
-echo "       of a failing run stayed green under the mutations that do not touch them."
+echo "PASS — taking the chip painting away from the banner red exactly the two chip cells, taking"
+echo "       restoration away from the display seam red exactly the restore cell, and taking the"
+echo "       truncation away red the preview cell and the two claims that rest on it, while the"
+echo "       producer's masked wire, the chip painting and the at-rest scan of a failing run stayed"
+echo "       green under every mutation that does not touch them."

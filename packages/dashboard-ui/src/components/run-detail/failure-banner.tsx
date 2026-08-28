@@ -72,6 +72,15 @@ export function FailureBanner({ summary }: { summary: string }) {
   const [copied, setCopied] = useState(false)
   const preview = truncateMaskedText(summary, FAILURE_BANNER_PREVIEW_WORDS)
 
+  // WHAT IS RENDERED, NOT WHAT WAS PRESSED. `data-failure-banner-state` is the attribute every DOM
+  // cell reads to say which of the two claims it is making, so it has to describe the TEXT on the
+  // page. Derived from `open` alone it was a constant on mount — `truncated` for every input,
+  // including a summary that was never over the budget and a summary whose truncation had stopped
+  // running entirely — and a cell that asserted `truncated` there was asserting `useState(false)`.
+  // A banner showing all of its summary is `full` whether the reader got there by pressing the
+  // chevron or by the sentence being short enough not to need one.
+  const showingFull = open || !preview.isTruncated
+
   const handleCopy = () => {
     navigator.clipboard.writeText(copyTextOf(summary))
     setCopied(true)
@@ -81,7 +90,7 @@ export function FailureBanner({ summary }: { summary: string }) {
   return (
     <div
       data-failure-banner
-      data-failure-banner-state={open ? 'full' : 'truncated'}
+      data-failure-banner-state={showingFull ? 'full' : 'truncated'}
       className="mx-2 mt-2 rounded-[2px] border border-red-500/20 bg-red-500/5 px-3 py-2 shrink-0"
     >
       <div className="flex items-start gap-2">
