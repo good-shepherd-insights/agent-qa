@@ -111,16 +111,17 @@ export function FailureBanner({ summary }: { summary: string }) {
   // chevron or by the sentence being short enough not to need one.
   const showingFull = open || !preview.isTruncated
 
-  // THE SAME EXPRESSION AS THE RENDER, SPELLED OUT RATHER THAN HOISTED. `copyTextOf` is handed the
-  // exact string `MaskedText` below is handed, so the clipboard cannot carry a word the page did
-  // not. It is written out at both sites on purpose: `scripts/405-failure-banner-mutation.sh` M4
-  // matches the render call literally and M7 matches this one, and a hoisted `const rendered` would
-  // leave M4's pattern matching nothing — a leg that reds nothing is a FATAL by that script's law.
   const announce = (outcome: Exclude<CopyStatus, "idle">) => {
     setCopyStatus(outcome)
     setTimeout(() => setCopyStatus("idle"), 2000)
   }
 
+  // THE SAME EXPRESSION AS THE RENDER, SPELLED OUT RATHER THAN HOISTED. `copyTextOf` is handed the
+  // exact string `MaskedText` below is handed, so the clipboard cannot carry a word the page did
+  // not. It is written out at both sites on purpose: `scripts/405-failure-banner-mutation.sh` M4
+  // matches the render call literally and M7 matches this one, and a hoisted `const rendered` would
+  // leave M4's pattern matching nothing — a leg that reds nothing is a FATAL by that script's law.
+  //
   // THE CHECK MARK MEANS THE WRITE RESOLVED, AND NOTHING ELSE. `writeText` returns a promise that
   // rejects with `NotAllowedError` whenever the document is not focused or the permission was
   // denied — a routine condition, not an exotic one — and the previous spelling neither awaited nor
