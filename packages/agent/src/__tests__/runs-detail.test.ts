@@ -9,7 +9,13 @@
 // port and nothing to await can have an exhaustive table written over it for the cost of a test
 // file rather than a store.
 
-import type { RunDetailRows, RunDetailStep, RunId } from '@vostride/agent-qa-schema'
+import type {
+  EvidenceBlobPresence,
+  RunDetailRows,
+  RunDetailStep,
+  RunDetailSubAction,
+  RunId,
+} from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -180,5 +186,100 @@ describe('the declaration', () => {
     })
     expect(verdict.status).toBe('executed')
     expect(verdict.outcome).toBe('1 member(s), 1 step(s), 0 sub-action(s)')
+  })
+})
+
+// Read-time presence on every projected artifact ref (406-03, D-17, DETL-05).
+//
+// The projection records which blobs a sub-action produced; it cannot record whether they are
+// still on disk, because a producer writes once and a page reads later. So the op asks — once per
+// distinct sha, through the optional port — and a host that cannot answer leaves the key absent
+// rather than reporting refs it never looked at as missing.
+
+const SHA_A = 'a'.repeat(64)
+const SHA_B = 'b'.repeat(64)
+
+function subAction(artifactRefs?: RunDetailSubAction['artifactRefs']): RunDetailSubAction {
+  return {
+    testIndex: 0,
+    stepIndex: 0,
+    subActionIndex: 0,
+    plan: 'click submit',
+    plannedAction: {} as RunDetailSubAction['plannedAction'],
+    result: {} as RunDetailSubAction['result'],
+    screenStateHash: 'hash',
+    ...(artifactRefs === undefined ? {} : { artifactRefs }),
+  }
+}
+
+function depsWithBlobs(
+  rows: RunDetailRows,
+  has: ((runId: RunId, sha: string) => Promise<EvidenceBlobPresence>) | undefined,
+): FunctionDeps {
+  return {
+    runDetail: { read: () => Promise.resolve(rows) },
+    evidenceBlobs: {
+      read: () => Promise.resolve({ status: 'unknown_run' as const }),
+      ...(has === undefined ? {} : { has }),
+    },
+  } as unknown as FunctionDeps
+}
+
+describe('runs.detail — presence per artifact ref (D-17)', () => {
+  const ROWS: RunDetailRows = {
+    ...EMPTY_ROWS,
+    steps: [step()],
+    subActions: [subAction([{ id: `decision-screenshot:${SHA_A}`, sha: SHA_A }])],
+  }
+
+  it('annotates present: true for found and false for BOTH absences', async () => {
+    for (const [word, present] of [['found', true], ['blob_absent', false], ['unknown_run', false]] as const) {
+      const result = await runsDetailSpec.invoke(
+        { runId: RUN_ID },
+        depsWithBlobs(ROWS, () => Promise.resolve(word)),
+      )
+      expect(result.subActions[0]!.artifactRefs)
+        .toEqual([{ id: `decision-screenshot:${SHA_A}`, sha: SHA_A, present }])
+    }
+  })
+
+  it('OMITS present when the bound port cannot stat, and leaves the rest of the row untouched', async () => {
+    const result = await runsDetailSpec.invoke({ runId: RUN_ID }, depsWithBlobs(ROWS, undefined))
+    const ref = result.subActions[0]!.artifactRefs![0]!
+
+    expect('present' in ref).toBe(false)
+    expect(ref).toEqual({ id: `decision-screenshot:${SHA_A}`, sha: SHA_A })
+    // Everything the projection already served is byte-identical — presence is additive.
+    expect(result.subActions[0]!.plan).toBe('click submit')
+    expect(result.steps).toEqual(ROWS.steps)
+    expect(result.tokens).toEqual({ measuredSteps: 0, unmeasuredSteps: 1 })
+  })
+
+  it('leaves a sub-action with NO artifactRefs without the key, and stats each sha once', async () => {
+    const seen: string[] = []
+    const rows: RunDetailRows = {
+      ...EMPTY_ROWS,
+      subActions: [
+        subAction(),
+        subAction([
+          { id: `decision-screenshot:${SHA_A}`, sha: SHA_A },
+          { id: `decision-screenshot:${SHA_A}#again`, sha: SHA_A },
+          { id: `decision-screenshot:${SHA_B}`, sha: SHA_B, evidenceIncomplete: true },
+        ]),
+      ],
+    }
+
+    const result = await runsDetailSpec.invoke({ runId: RUN_ID }, depsWithBlobs(rows, (_runId, sha) => {
+      seen.push(sha)
+      return Promise.resolve('blob_absent')
+    }))
+
+    expect('artifactRefs' in result.subActions[0]!).toBe(false)
+    expect(result.subActions[1]!.artifactRefs).toEqual([
+      { id: `decision-screenshot:${SHA_A}`, sha: SHA_A, present: false },
+      { id: `decision-screenshot:${SHA_A}#again`, sha: SHA_A, present: false },
+      { id: `decision-screenshot:${SHA_B}`, sha: SHA_B, evidenceIncomplete: true, present: false },
+    ])
+    expect(seen.sort()).toEqual([SHA_A, SHA_B])
   })
 })

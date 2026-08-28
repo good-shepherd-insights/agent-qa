@@ -22,6 +22,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   AnalysisGetOutput,
+  EvidenceBlobPresence,
   CompletedRunHandoff,
   FunctionCaller,
   RunAnalysisArtifact,
@@ -35,7 +36,11 @@ import type { RecurrenceProvider, RecurrenceQuery } from '../../analysis/render-
 import { buildSyntheticHandoff } from '../../jobs/__tests__/fixtures/synthetic-handoff.js'
 import { FunctionNotBoundError, invokeFunction } from '../invoke.js'
 import { createFunctionRegistry } from '../registry.js'
-import type { AnalysisArtifactReaderPort, FunctionDeps } from '../spec.js'
+import type {
+  AnalysisArtifactReaderPort,
+  EvidenceBlobReaderPort,
+  FunctionDeps,
+} from '../spec.js'
 import { ANALYSIS_GET_FUNCTION_ID } from '../ops/analysis-get.js'
 import { RUNS_GET_FUNCTION_ID } from '../ops/runs-get.js'
 
@@ -111,6 +116,7 @@ function registryWith(options: {
   handoff?: CompletedRunHandoff
   analysis?: AnalysisArtifactReaderPort
   recurrence?: RecurrenceProvider
+  evidenceBlobs?: EvidenceBlobReaderPort
 }) {
   const { handoff } = options
   return createFunctionRegistry({
@@ -127,6 +133,7 @@ function registryWith(options: {
       },
       ...(options.analysis === undefined ? {} : { analysis: options.analysis }),
       ...(options.recurrence === undefined ? {} : { recurrence: options.recurrence }),
+      ...(options.evidenceBlobs === undefined ? {} : { evidenceBlobs: options.evidenceBlobs }),
     }),
     resolveExecutionContext: () => 'local-headless',
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
@@ -179,9 +186,11 @@ describe('analysis.get — the handoff floor (D-10)', () => {
     const output = await analysisOf(registry, String(handoff.runId))
 
     expect(output.runId).toBe(String(handoff.runId))
+    // 406 D-01: `evidence` is on every verdict, floor included — the minted unknown cites nothing
+    // and says so, rather than omitting the key and leaving a reader to guess which it meant.
     expect(output.verdicts).toEqual([
-      { perTest: 0, testId: 't_failed_0', class: 'unknown', producer: 'deterministic-classifier', confidence: 0 },
-      { perTest: 1, testId: 't_failed_1', class: 'unknown', producer: 'deterministic-classifier', confidence: 0 },
+      { perTest: 0, testId: 't_failed_0', class: 'unknown', producer: 'deterministic-classifier', confidence: 0, evidence: { citedSteps: [], citedArtifacts: [] } },
+      { perTest: 1, testId: 't_failed_1', class: 'unknown', producer: 'deterministic-classifier', confidence: 0, evidence: { citedSteps: [], citedArtifacts: [] } },
     ])
     expect(output.sentences).toHaveLength(2)
     for (const entry of output.sentences) {
@@ -216,7 +225,7 @@ describe('analysis.get — the artifact leg and the one accessor (D-10/D-11)', (
 
     const output = await analysisOf(registry, String(handoff.runId))
     expect(output.verdicts).toEqual([
-      { perTest: 0, testId: 't_failed_0', class: 'app_bug', producer: 'analyze-run', confidence: 0.9 },
+      { perTest: 0, testId: 't_failed_0', class: 'app_bug', producer: 'analyze-run', confidence: 0.9, evidence: { citedSteps: [0], citedArtifacts: [] } },
     ])
     expect(output.sentences[0]!.sentence)
       .toContain('the submit button disappeared after the cart update')
@@ -355,5 +364,161 @@ describe('analysis.get — the artifact leg and the one accessor (D-10/D-11)', (
       .toEqual(pure.map(({ fingerprint, count, members }) => ({ fingerprint, count, members })))
     expect(first.clusters.map((cluster) => cluster.representative.testIndex))
       .toEqual(pure.map((cluster) => cluster.representative.testIndex))
+  })
+})
+
+// The evidence projection (406-03, D-01/D-17, DETL-04/DETL-05).
+//
+// A verdict on the wire used to say WHAT it concluded and never WHAT it read. The failure view's
+// links are those refs, and re-deriving them in the page would be a second join over the same
+// artifact — so the op that already resolved the verdict projects its own evidence, and annotates
+// each cited artifact with whether the bytes are still there.
+//
+// FOUR PORT ARMS AND THEY ARE NOT THREE. `found` is the only `true`; both absences are `false`
+// because the bytes are gone either way; and a port with no `has` at all leaves the key ABSENT,
+// which is presence UNKNOWN — the one thing that must never render as a claimed absence.
+
+/** A port whose `has` answers one fixed word, recording what it was asked. */
+function blobsAnswering(
+  word: EvidenceBlobPresence,
+  seen?: string[],
+): EvidenceBlobReaderPort {
+  return {
+    read: () => Promise.resolve({ status: 'unknown_run' as const }),
+    has: (_runId, sha) => {
+      seen?.push(sha)
+      return Promise.resolve(word)
+    },
+  }
+}
+
+/** The shape every host bound before 406 — a read and nothing else. */
+const BLOBS_WITHOUT_HAS: EvidenceBlobReaderPort = {
+  read: () => Promise.resolve({ status: 'unknown_run' as const }),
+}
+
+const CITED_SHA = 'a'.repeat(64)
+
+function artifactCiting(
+  handoff: CompletedRunHandoff,
+  citedArtifacts: Verdict['evidence']['citedArtifacts'],
+): RunAnalysisArtifact {
+  const base = artifactFor(handoff)
+  return {
+    ...base,
+    verdicts: [{
+      ...base.verdicts[0]!,
+      evidence: { ...base.verdicts[0]!.evidence, citedSteps: [0], citedArtifacts },
+    }],
+  }
+}
+
+describe('analysis.get — the evidence projection (D-01)', () => {
+  it('carries every verdict\'s own citedSteps and citedArtifacts, floor included', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 2, passedCount: 1 })
+    const registry = registryWith({ handoff, analysis: readerOf(undefined) })
+
+    const output = await analysisOf(registry, String(handoff.runId))
+
+    // The floor's own evidence, not a stand-in: minted unknowns cite nothing, and an empty
+    // `citedArtifacts` is the honest projection of that — never an omitted key.
+    expect(output.verdicts.map((verdict) => verdict.evidence)).toEqual([
+      { citedSteps: [], citedArtifacts: [] },
+      { citedSteps: [], citedArtifacts: [] },
+    ])
+  })
+
+  it('projects the artifact verdict\'s cited steps and artifacts verbatim', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const artifact = artifactCiting(handoff, [{ id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA }])
+    const registry = registryWith({ handoff, analysis: readerOf(artifact) })
+
+    const output = await analysisOf(registry, String(handoff.runId))
+
+    expect(output.verdicts[0]!.evidence).toEqual({
+      citedSteps: [0],
+      citedArtifacts: [{ id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA }],
+    })
+  })
+
+  it('keeps citedAnchors and rationale OFF the serialized wire', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const registry = registryWith({ handoff, analysis: readerOf(artifactFor(handoff)) })
+
+    const body = JSON.stringify(await analysisOf(registry, String(handoff.runId)))
+
+    // The rationale is the model's own prose about a run; the anchors are an identity vocabulary
+    // no surface binds. Neither is refused later — neither is emitted.
+    expect(body).not.toContain('citedAnchors')
+    expect(body).not.toContain('rationale')
+    expect(body).not.toContain('the submit button never enabled after the cart update')
+  })
+})
+
+describe('analysis.get — read-time presence on cited artifacts (D-17)', () => {
+  async function citedArtifactUnder(
+    evidenceBlobs: EvidenceBlobReaderPort | undefined,
+    refs: Verdict['evidence']['citedArtifacts'] = [{ id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA }],
+  ) {
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const registry = registryWith({
+      handoff,
+      analysis: readerOf(artifactCiting(handoff, refs)),
+      ...(evidenceBlobs === undefined ? {} : { evidenceBlobs }),
+    })
+    const output = await analysisOf(registry, String(handoff.runId))
+    return output.verdicts[0]!.evidence!.citedArtifacts
+  }
+
+  it('answers present: true only for found', async () => {
+    expect(await citedArtifactUnder(blobsAnswering('found')))
+      .toEqual([{ id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA, present: true }])
+  })
+
+  it('answers present: false for blob_absent — the bytes are gone', async () => {
+    expect(await citedArtifactUnder(blobsAnswering('blob_absent')))
+      .toEqual([{ id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA, present: false }])
+  })
+
+  it('answers present: false for unknown_run too — a vanished run dir is the same absence to a reader', async () => {
+    expect(await citedArtifactUnder(blobsAnswering('unknown_run')))
+      .toEqual([{ id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA, present: false }])
+  })
+
+  it('OMITS present entirely for a port that cannot stat — unknown is not an absence', async () => {
+    const refs = await citedArtifactUnder(BLOBS_WITHOUT_HAS)
+    expect(refs).toEqual([{ id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA }])
+    expect('present' in refs[0]!).toBe(false)
+  })
+
+  it('OMITS present for a composition binding no evidence port at all', async () => {
+    const refs = await citedArtifactUnder(undefined)
+    expect('present' in refs[0]!).toBe(false)
+  })
+
+  it('keeps a producer-flagged evidenceIncomplete ref\'s flag ALONGSIDE present', async () => {
+    // Two facts about one ref: the producer knew at emit time that it could not attach the bytes,
+    // and the reader knows at read time that they are not there. The page renders one state from
+    // either, and collapsing them here would lose which side reported it.
+    const refs = await citedArtifactUnder(blobsAnswering('blob_absent'), [
+      { id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA, evidenceIncomplete: true },
+    ])
+    expect(refs).toEqual([{
+      id: `decision-screenshot:${CITED_SHA}`,
+      sha: CITED_SHA,
+      evidenceIncomplete: true,
+      present: false,
+    }])
+  })
+
+  it('stats each distinct sha ONCE however many verdicts cite it', async () => {
+    const seen: string[] = []
+    const other = 'b'.repeat(64)
+    await citedArtifactUnder(blobsAnswering('found', seen), [
+      { id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA },
+      { id: `decision-screenshot:${CITED_SHA}#again`, sha: CITED_SHA },
+      { id: `decision-screenshot:${other}`, sha: other },
+    ])
+    expect(seen.sort()).toEqual([CITED_SHA, other].sort())
   })
 })

@@ -14,6 +14,18 @@ import type { Verdict } from '../verdict/verdict'
 // Clusters mint NO identity (D-16): fingerprint value, count, member refs and a
 // representative — no short-ID, no `agentqa://` address, no `BUG-`. Durable problem
 // identity belongs to the issue engine's identity-key model (387 D-03).
+//
+// EVIDENCE ON THE WIRE (Phase 406, D-01). A verdict said what it CONCLUDED and never what it
+// READ, so a page wanting "jump to the step this is about" or "open the screenshot it looked at"
+// had to open `analysis.json` itself and re-join — a second producer of the same refs, which is
+// the one thing this op exists to prevent. Each resolved verdict now carries the cited steps and
+// cited artifacts it already held, ADDITIVELY: the field is optional in the type so a reader
+// compiled against the older DTO is unaffected, while the op always emits it.
+//
+// THE CITED ANCHORS AND THE RATIONALE ARE DELIBERATELY OFF IT. The anchor list is an identity
+// vocabulary no surface binds, and the rationale is the model's own prose about a run — it
+// belongs to the artifact and to the rendered sentence, not to a link target. Widening later is
+// additive; unpublishing is not.
 
 const verdictClassValues = [
   'test_bug',
@@ -39,12 +51,39 @@ export type AnalysisGetInput = z.infer<typeof AnalysisGetInputSchema>
  * its per-run `testId`. The full `Verdict` (evidence arrays, attribution) stays in the
  * artifact/handoff documents rather than crossing every surface boundary by default.
  */
+/**
+ * One artifact a verdict cited, as the analysis surface links it (D-01/D-17).
+ *
+ * TWO ABSENCE FACTS, KEPT APART. `evidenceIncomplete` is the PRODUCER's — it knew at emit time
+ * it could not attach these bytes — and `present` is the READER's, a stat taken when this DTO was
+ * built. A page renders one `evidence-incomplete` state from either, but collapsing them here
+ * would lose which side reported it, and only one of them can be fixed by re-running.
+ *
+ * `present` ABSENT IS NOT `present: false`. A host that cannot cheaply stat its blobs omits the
+ * key, and a page's predicate is `present === false` so that presence-unknown never renders as a
+ * claimed absence.
+ */
+export interface AnalysisCitedArtifact {
+  id: string
+  sha: string
+  evidenceIncomplete?: boolean
+  present?: boolean
+}
+
+/** What one verdict read, projected from its own `Verdict.evidence` — never re-derived (D-01). */
+export interface AnalysisVerdictEvidence {
+  citedSteps: number[]
+  citedArtifacts: AnalysisCitedArtifact[]
+}
+
 export interface AnalysisResolvedVerdict {
   perTest: number
   testId: string
   class: Verdict['class']
   producer: 'deterministic-classifier' | 'analyze-run'
   confidence: number
+  /** OPTIONAL for readers compiled before 406; the op always emits it (D-01). */
+  evidence?: AnalysisVerdictEvidence
 }
 
 /** One member test's composed sentence — the ONE renderer's output, verbatim (D-05). */
@@ -83,12 +122,25 @@ export interface AnalysisGetOutput {
   clusters: AnalysisClusterView[]
 }
 
+export const AnalysisCitedArtifactSchema = z.object({
+  id: z.string(),
+  sha: z.string(),
+  evidenceIncomplete: z.boolean().optional(),
+  present: z.boolean().optional(),
+}).strict() satisfies z.ZodType<AnalysisCitedArtifact>
+
+export const AnalysisVerdictEvidenceSchema = z.object({
+  citedSteps: z.array(z.number().int().nonnegative()),
+  citedArtifacts: z.array(AnalysisCitedArtifactSchema),
+}).strict() satisfies z.ZodType<AnalysisVerdictEvidence>
+
 export const AnalysisResolvedVerdictSchema = z.object({
   perTest: z.number().int().nonnegative(),
   testId: z.string(),
   class: z.enum(verdictClassValues),
   producer: z.enum(['deterministic-classifier', 'analyze-run']),
   confidence: z.number(),
+  evidence: AnalysisVerdictEvidenceSchema.optional(),
 }).strict() satisfies z.ZodType<AnalysisResolvedVerdict>
 
 export const AnalysisSentenceSchema = z.object({

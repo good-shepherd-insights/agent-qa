@@ -30,6 +30,7 @@ import type {
 
 import { FunctionNotBoundError } from '../spec.js'
 import type { ClauseVerdict, FunctionSpec } from '../spec.js'
+import { annotatePresence } from './evidence-presence.js'
 import { RunNotFoundError } from './runs-get.js'
 
 /**
@@ -120,11 +121,23 @@ export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> 
       throw new RunNotFoundError(String(input.runId))
     }
 
+    // READ-TIME PRESENCE, OPPORTUNISTICALLY (406 D-17). The projection recorded which blobs a
+    // sub-action produced; only a stat taken now can say whether they survived. `boundThrough`
+    // stays `runDetail` because this is not a binding condition: a host with no runtime root
+    // serves the whole projection and simply omits the key, which is presence UNKNOWN rather than
+    // a claimed absence.
+    const subActions = await Promise.all(rows.subActions.map(async (subAction) => {
+      const refs = subAction.artifactRefs
+      if (refs === undefined) return { ...subAction }
+      const artifactRefs = await annotatePresence(deps.evidenceBlobs, input.runId, refs)
+      return { ...subAction, artifactRefs }
+    }))
+
     return {
       runId: rows.runId,
       members: [...rows.members],
       steps: [...rows.steps],
-      subActions: [...rows.subActions],
+      subActions,
       tokens: projectRunTokenTotals(rows.steps),
     }
   },

@@ -64,6 +64,9 @@ export type {
   RunTokenTotals,
   RunDetailRows,
   RunDetailProjection,
+  // 406-03 D-17: the detail-side ref with read-time presence. The runner's own `ArtifactRef` is
+  // untouched — a producer has nothing to say about whether the bytes survive to be read.
+  RunDetailArtifactRef,
   // 405-05 D-12/D-13/D-15: the artifact read's shapes. `EvidenceBlobLookup` is the PORT's answer
   // and its two absences are kept APART on purpose — see the type's own doc.
   RunsArtifactInput,
@@ -76,6 +79,8 @@ export type {
 export {
   AnalysisGetInputSchema,
   AnalysisGetOutputSchema,
+  AnalysisCitedArtifactSchema,
+  AnalysisVerdictEvidenceSchema,
   AnalysisResolvedVerdictSchema,
   AnalysisSentenceSchema,
   AnalysisClusterViewSchema,
@@ -83,6 +88,8 @@ export {
 export type {
   AnalysisGetInput,
   AnalysisGetOutput,
+  AnalysisCitedArtifact,
+  AnalysisVerdictEvidence,
   AnalysisResolvedVerdict,
   AnalysisSentence,
   AnalysisClusterMemberRef,

@@ -33,6 +33,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { clusterVerdicts } from '../../analysis/cluster.js'
+import { annotatePresence } from './evidence-presence.js'
 import { renderVerdictSentence } from '../../analysis/render-sentence.js'
 import { templateSentenceParts } from '../../jobs/kinds.js'
 import { FunctionNotBoundError } from '../spec.js'
@@ -167,16 +168,26 @@ export const analysisGetSpec: FunctionSpec<AnalysisGetInput, AnalysisGetOutput> 
 
     return {
       runId,
-      verdicts: resolved.map((verdict) => {
+      // The verdict's OWN evidence, projected (406 D-01) — cited steps and cited artifacts as the
+      // resolved verdict already held them, so the failure view's links are this op's refs and not
+      // a second join over `analysis.json`. Presence is consulted OPPORTUNISTICALLY through the
+      // optional blob port: `boundThrough` stays `analysis`, because a host with no runtime root
+      // still serves a complete analysis — it simply cannot say whether the screenshots survive.
+      verdicts: await Promise.all(resolved.map(async (verdict) => {
         const test = document.tests.find((candidate) => candidate.testIndex === verdict.perTest)
+        const cited = verdict.evidence.citedArtifacts
         return {
           perTest: verdict.perTest,
           testId: test?.testId ?? '',
           class: verdict.class,
           producer: verdict.producer,
           confidence: verdict.confidence,
+          evidence: {
+            citedSteps: [...verdict.evidence.citedSteps],
+            citedArtifacts: await annotatePresence(deps.evidenceBlobs, input.runId, cited),
+          },
         }
-      }),
+      })),
       sentences,
       // Render-time clustering through the ONE pure fold (D-14); the representative carries
       // its already-composed sentence (D-15) — looked up, never re-rendered, so cluster and

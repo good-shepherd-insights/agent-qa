@@ -505,7 +505,24 @@ export interface RunDetailSubAction {
   result: RecordedActionResult
   screenStateHash: string
   screenStateHashAfter?: string
-  artifactRefs?: readonly ArtifactRef[]
+  artifactRefs?: readonly RunDetailArtifactRef[]
+}
+
+/**
+ * A projected artifact ref, annotated with read-time presence (Phase 406, D-17).
+ *
+ * A DETAIL-SIDE EXTENSION RATHER THAN A WIDER `ArtifactRef`, because `ArtifactRef` is the shape
+ * the RUNNER mints when it writes a blob, and a producer has nothing to say about whether the
+ * bytes survive to be read. Presence is a fact about the moment of the read, so it is added by
+ * the read.
+ *
+ * `present === false || evidenceIncomplete === true` IS ONE PAGE STATE, and the two arms are kept
+ * apart only so the page can say which side reported it: the producer knew at emit time, or the
+ * reader found it gone since. `present` ABSENT is presence UNKNOWN — a host that cannot stat its
+ * blobs — and the predicate is `=== false` precisely so it never renders as a claimed absence.
+ */
+export interface RunDetailArtifactRef extends ArtifactRef {
+  present?: boolean
 }
 
 /**
@@ -573,7 +590,8 @@ const ArtifactRefSchema = z.object({
   id: z.string(),
   sha: z.string(),
   evidenceIncomplete: z.boolean().optional(),
-}).strict() satisfies z.ZodType<ArtifactRef>
+  present: z.boolean().optional(),
+}).strict() satisfies z.ZodType<RunDetailArtifactRef>
 
 const VerifierVerdictSchema = z.object({
   pass: z.boolean(),
