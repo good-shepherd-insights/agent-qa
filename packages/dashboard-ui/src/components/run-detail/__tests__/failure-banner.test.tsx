@@ -93,6 +93,11 @@ function copyStatusOf(view: HTMLDivElement): string | null {
   return copyOf(view)?.getAttribute("data-copy-status") ?? null
 }
 
+/** What the live region is currently announcing — empty until an attempt has been made. */
+function announcementOf(view: HTMLDivElement): string {
+  return view.querySelector("[data-failure-banner-copy-status]")?.textContent ?? ""
+}
+
 /**
  * A clipboard the copy cells can read back.
  *
@@ -248,6 +253,39 @@ describe("FailureBanner", () => {
     await act(async () => { copyOf(view)!.click() })
 
     expect(copyStatusOf(view)).toBe("failed")
+  })
+
+  it("names the copy button and announces both outcomes in a live region", async () => {
+    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+
+    // A NAME, WHICH `title` IS NOT. `title` is a tooltip; the accessible name is what a screen
+    // reader reads when the button takes focus, and without it the control announced as "button".
+    expect(copyOf(view)!.getAttribute("aria-label")).toBe("Copy failure summary")
+
+    // AND A REGION THAT IS PRESENT FROM FIRST PAINT, EMPTY. A live region inserted at the same
+    // moment its text appears is frequently not announced; this one exists before the click and
+    // only its contents change.
+    const region = view.querySelector("[data-failure-banner-copy-status]")
+    expect(region).not.toBeNull()
+    expect(region!.getAttribute("aria-live")).toBe("polite")
+    expect(region!.getAttribute("role")).toBe("status")
+    expect(announcementOf(view)).toBe("")
+
+    const writeText = stubClipboard()
+    await act(async () => { copyOf(view)!.click() })
+    expect(announcementOf(view)).toContain("copied")
+    expect(writeText).toHaveBeenCalledTimes(1)
+  })
+
+  it("announces the failure too, rather than only swapping an icon", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>()
+      .mockRejectedValue(new DOMException("Document is not focused", "NotAllowedError"))
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
+
+    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    await act(async () => { copyOf(view)!.click() })
+
+    expect(announcementOf(view)).toContain("Could not copy")
   })
 
   // The producer's text is a text node and nothing else (T-405-42). A cell that fed markup and
