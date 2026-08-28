@@ -34,6 +34,15 @@
 // restored value on the FIRST process, which is the fact this file needs: the banner sits on the
 // restore lane like every other producer string on the page.
 //
+// THE CLIPBOARD IS MEASURED HERE TOO, AND ON THE SHIPPED BUNDLE (3g · T-405-43). The copy button
+// is a SECOND medium a person reads a redaction in, and until this cell existed the only thing
+// asserting it was a jsdom cell nothing had ever taken a fact away from. What it caught the first
+// time it ran on real Chromium: with the banner COLLAPSED, the page carried 21 words and the
+// clipboard carried 47, including the fixture's restored credential at word 24 — a value the reader
+// was never shown, one click away from a bug report. The cell therefore reads the clipboard back
+// through `navigator.clipboard.readText()` after clicking copy in the TRUNCATED state, which is why
+// this file's browser context is granted `clipboard-read`/`clipboard-write`.
+//
 // WHAT A RED ON (3f) MEANS, STATED BEFORE ANYONE IS TEMPTED. `runs.failure_summary` is an at-rest
 // sink no PASSING run ever writes, so this file's scan covers ground 405-12's cannot. If a planted
 // value turns up there, in `events.jsonl` or in an SSE frame, that is a NEW DETL-02 at-rest
@@ -42,7 +51,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { MASKED_MARKER_DELIMITER, PLACEHOLDER_PATTERN, slugBranch } from '@vostride/agent-qa-schema'
+import { MASKED_MARKER_DELIMITER, PLACEHOLDER_PATTERN, maskedMarker, slugBranch } from '@vostride/agent-qa-schema'
 import { chromium } from 'playwright-core'
 import type { Browser, BrowserContext, Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -118,6 +127,40 @@ const MASKED_EMAIL_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_E
 /** A fresh, non-global copy of the placeholder pattern — `PLACEHOLDER_PATTERN` carries `lastIndex`. */
 const placeholderRe = (): RegExp => new RegExp(PLACEHOLDER_PATTERN.source, 'u')
 
+/** What a redaction collapses to on both sides of (3g)'s comparison. Not a producible string. */
+const REDACTION_SENTINEL = '<<REDACTION>>'
+
+/**
+ * One string with every SPELLING of a redaction collapsed to a single sentinel.
+ *
+ * (3g) COMPARES TWO MEDIA THAT SPELL THE SAME REDACTION DIFFERENTLY BY DESIGN: the page paints a
+ * marker as a CHIP whose text is the published label, and the clipboard writes the same label in
+ * BRACKETS, because a bracket-less label in a pasted sentence would read as the producer's own
+ * words. Comparing the raw strings would therefore red on the difference the design asks for.
+ *
+ * IT IS ALSO WHAT KEEPS (3g) A SINGLE-FACT CELL. Mutation leg M4 replaces the banner's `MaskedText`
+ * render with the raw string, so the page then carries the MARKER where it used to carry a chip —
+ * and (3g) has no business moving under a mutation of the chip painting, which is (3c)/(3d)'s fact.
+ * Collapsing the marker spelling too leaves exactly one thing for this cell to lose: whether the
+ * clipboard carries the same WORDS the page did.
+ *
+ * The labels are read off the page's own chips rather than typed here, plus the one label this file
+ * can read by constant. `MASKED_SECRET_LABEL` is double-quoted at `lib/run-detail-view.ts` (it
+ * contains an apostrophe) and `publishedConstant` above reads only single-quoted constants — that
+ * is WR-11 and it is not this change's to fix, which is why the chip texts are the primary source.
+ */
+function normaliseRedactions(text: string, labels: readonly string[]): string {
+  const spellings = [...new Set([...labels, MASKED_EMAIL_LABEL].filter((label) => label !== ''))]
+  let out = text
+  // The BRACKETED form first, whole: a bare-label pass run first would leave the brackets behind.
+  for (const label of spellings) out = out.split(`[${label}]`).join(REDACTION_SENTINEL)
+  for (const label of spellings) out = out.split(label).join(REDACTION_SENTINEL)
+  for (const category of ['secret', 'email'] as const) {
+    out = out.split(maskedMarker(category)).join(REDACTION_SENTINEL)
+  }
+  return out
+}
+
 /** One response the browser actually received, as the cells that read it consume it. */
 interface RecordedResponse {
   readonly url: string
@@ -133,6 +176,14 @@ interface BannerState {
   readonly state?: string
   /** The banner's own `textContent` — what cell (3e) reads the restored value out of. */
   readonly bannerText: string
+  /**
+   * `[data-failure-banner-text]`'s `textContent` — the SENTENCE, without the buttons around it.
+   *
+   * (3g) compares the clipboard against THIS rather than against `bannerText`, because the live
+   * region that announces a completed copy is inside the banner and would otherwise become part of
+   * the string the copy of the page is measured against.
+   */
+  readonly renderedText: string
   /** Every `data-masked` category INSIDE the banner, in document order. */
   readonly maskedCategories: readonly string[]
   /** Every `[data-masked]` chip's visible text, inside the banner. */
@@ -151,6 +202,14 @@ interface PageObservation {
   readonly waitFailure?: string
   /** Whether a `[data-failure-banner-toggle]` was present and clicked. */
   readonly toggled: boolean
+  /** What `navigator.clipboard.readText()` answered after copy was clicked while COLLAPSED. */
+  readonly clipboard?: string
+  /** Why the clipboard could not be measured, when it could not. Recorded, never thrown. */
+  readonly clipboardFailure?: string
+  /** `data-failure-banner-state` as it read at the moment copy was clicked — (3g)'s precondition. */
+  readonly clipboardCopiedState?: string
+  /** `data-copy-status` after the wait, so a refused write names itself instead of timing out mutely. */
+  readonly clipboardCopyStatus?: string
   readonly truncated: BannerState
   readonly full: BannerState
   /** Every response this page received. */
@@ -216,6 +275,11 @@ function context(): string {
     `banner text (full): ${JSON.stringify((observed?.full.bannerText ?? '').slice(0, 800))}`,
     `banner chips (truncated): ${(observed?.truncated.maskedCategories ?? []).join(', ') || '(none)'}; `
     + `(full): ${(observed?.full.maskedCategories ?? []).join(', ') || '(none)'}`,
+    `clipboard: state at copy: ${observed?.clipboardCopiedState ?? '(never clicked)'}; `
+    + `copy status: ${observed?.clipboardCopyStatus ?? '(none)'}; `
+    + `failure: ${observed?.clipboardFailure ?? '(none)'}`,
+    `clipboard text: ${JSON.stringify((observed?.clipboard ?? '').slice(0, 800))}`,
+    `rendered text (truncated): ${JSON.stringify((observed?.truncated.renderedText ?? '').slice(0, 800))}`,
     `page api traffic: ${
       (observed?.responses ?? [])
         .filter((response) => response.url.includes('/api/'))
@@ -271,6 +335,7 @@ async function harvestBanner(page: Page): Promise<BannerState> {
     return {
       state: banner?.getAttribute('data-failure-banner-state') ?? undefined,
       bannerText: (banner?.textContent ?? ''),
+      renderedText: (banner?.querySelector('[data-failure-banner-text]')?.textContent ?? ''),
       maskedCategories: masked.map((element) => element.getAttribute('data-masked') ?? '?'),
       maskedChipText: masked.map((element) => (element.textContent ?? '').trim()),
       textNodes: nodes,
@@ -279,11 +344,20 @@ async function harvestBanner(page: Page): Promise<BannerState> {
   })
 }
 
+/** How long the copy button has to reach `data-copy-status="copied"` before (3g) gives up. */
+const CLIPBOARD_BUDGET_MS = 15_000
+
 /**
- * Open one failed run's detail page and harvest the banner in BOTH of its states.
+ * Open one failed run's detail page, harvest the banner in BOTH of its states, and read the
+ * clipboard the copy button writes while the banner is still COLLAPSED.
  *
  * THE TOGGLE IS CLICKED, NOT SIMULATED. The expanded state is what a person gets by pressing the
  * chevron, and the claim these cells make is about what the shipped bundle renders when they do.
+ *
+ * THE COPY IS CLICKED BEFORE THE TOGGLE AND THE ORDER IS THE MEASUREMENT. (3g)'s whole subject is
+ * what leaves a COLLAPSED banner; a copy taken after the expand would be measuring the state the
+ * defect was already correct in. The state attribute is re-read at the moment of the click and
+ * recorded, so the cell asserts its own precondition rather than assuming it.
  */
 async function observeFailureBanner(
   context_: BrowserContext,
@@ -328,6 +402,57 @@ async function observeFailureBanner(
 
     const truncated = await harvestBanner(page)
 
+    // THE CLIPBOARD, WHILE THE BANNER IS STILL COLLAPSED (3g).
+    //
+    // THE WRITE IS A PROMISE AND THE READ RACES IT, so the wait is on the button's own
+    // `data-copy-status`, which the component sets to `copied` only after `writeText` RESOLVES —
+    // not on a sleep, and not on the icon. When the write is refused (an unfocused document is the
+    // usual reason) the attribute reads `failed` instead, and that word is what the recorded
+    // failure carries, so a red names the cause rather than reporting a mute timeout.
+    let clipboard: string | undefined
+    let clipboardFailure: string | undefined
+    let clipboardCopiedState: string | undefined
+    let clipboardCopyStatus: string | undefined
+    const copy = page.locator('[data-failure-banner-copy]')
+    if ((await copy.count()) === 0) {
+      clipboardFailure = 'the banner rendered no `[data-failure-banner-copy]` button to click'
+    } else {
+      clipboardFailure = await copy.first().click().then(
+        () => undefined,
+        (error: unknown) =>
+          `the copy button could not be clicked: ${
+            error instanceof Error ? error.message : String(error)}`,
+      )
+      clipboardCopiedState = (await page.locator('[data-failure-banner]')
+        .getAttribute('data-failure-banner-state')) ?? undefined
+      if (clipboardFailure === undefined) {
+        const settled = await page
+          .locator('[data-failure-banner-copy][data-copy-status="copied"]')
+          .waitFor({ state: 'attached', timeout: CLIPBOARD_BUDGET_MS })
+          .then(() => true, () => false)
+        clipboardCopyStatus = (await copy.first().getAttribute('data-copy-status')) ?? undefined
+        if (!settled) {
+          clipboardFailure =
+            'the copy button never reported a resolved write — `data-copy-status` last read '
+            + `\`${clipboardCopyStatus ?? '(absent)'}\`. \`failed\` means the browser refused `
+            + '`navigator.clipboard.writeText`, which is what an unfocused document or an ungranted '
+            + '`clipboard-write` permission looks like.'
+        } else {
+          const read = await page.evaluate(async () => await navigator.clipboard.readText()).then(
+            (text) => ({ text }),
+            (error: unknown) => ({
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          )
+          if ('error' in read) {
+            clipboardFailure = `\`navigator.clipboard.readText()\` refused: ${read.error}`
+          } else {
+            clipboard = read.text
+          }
+        }
+      }
+    }
+
     const toggle = page.locator('[data-failure-banner-toggle]')
     if ((await toggle.count()) > 0) {
       await toggle.first().click().catch(() => undefined)
@@ -345,6 +470,10 @@ async function observeFailureBanner(
       finalUrl: page.url(),
       ...(waitFailure === undefined ? {} : { waitFailure }),
       toggled,
+      ...(clipboard === undefined ? {} : { clipboard }),
+      ...(clipboardFailure === undefined ? {} : { clipboardFailure }),
+      ...(clipboardCopiedState === undefined ? {} : { clipboardCopiedState }),
+      ...(clipboardCopyStatus === undefined ? {} : { clipboardCopyStatus }),
       truncated,
       full,
       responses,
@@ -434,7 +563,12 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
         recorded.runRow = { status: row.run.status, failureSummary: row.run.failureSummary }
       }
 
-      const visitContext = await browser.newContext()
+      // `clipboard-read`/`clipboard-write` ARE GRANTED ON THE CONTEXT because (3g) reads back what
+      // the copy button wrote. Without them Chromium refuses `writeText` in the page and the cell
+      // would red on a permission rather than on the fact it is measuring.
+      const visitContext = await browser.newContext({
+        permissions: ['clipboard-read', 'clipboard-write'],
+      })
       contexts.push(visitContext)
       recorded.observed = await observeFailureBanner(
         visitContext,
@@ -681,5 +815,66 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
         + `\`runs.failure_summary\` is the sink a passing run never writes.${context()}`,
       ).toBe(false)
     }
+  })
+
+  it('(3g) the clipboard carries ONLY what the collapsed banner rendered (T-405-43)', () => {
+    const observed = visit()
+    expect(
+      observed.clipboardFailure,
+      `the clipboard could not be measured at all, so this cell asserts nothing.${context()}`,
+    ).toBeUndefined()
+
+    // THE PRECONDITION IS ASSERTED, NOT ASSUMED. This cell's whole subject is what leaves a
+    // COLLAPSED banner; measured from an expanded one it would be asserting a tautology.
+    expect(
+      observed.clipboardCopiedState,
+      'the copy button was clicked while the banner was NOT collapsed, so what this cell read is '
+      + `not the fact it names.${context()}`,
+    ).toBe('truncated')
+
+    const clipboard = observed.clipboard ?? ''
+    expect(
+      clipboard,
+      `the copy button reported a resolved write and the clipboard is EMPTY.${context()}`,
+    ).not.toBe('')
+
+    // THE FACT. The display seam restores `<SECRET_n>` for the human reading the page, and the
+    // fixture plants the restored value at word 23 — three words past the preview budget, so it is
+    // NOT on a collapsed page. It was on the clipboard anyway: `copyTextOf` was handed the whole
+    // summary regardless of state, and one click on a banner that never showed the credential put
+    // 47 words on the clipboard against 21 on the page. A pasted bug report is read by exactly the
+    // people a redaction is kept from, restored or not.
+    expect(
+      clipboard.includes(POPULATED_SECRET_VALUE),
+      'the RESTORED credential is on the clipboard, copied from a COLLAPSED banner that never '
+      + 'showed it. The clipboard is a second medium a person reads: it carries what was RENDERED '
+      + `and nothing else.${context()}`,
+    ).toBe(false)
+    expect(
+      clipboard.includes(POPULATED_EMAIL),
+      `the planted address is on the clipboard in the clear.${context()}`,
+    ).toBe(false)
+    expect(
+      clipboard.includes(MASKED_MARKER_DELIMITER),
+      'a masked-marker delimiter is on the clipboard — the copy path is writing the seam\'s '
+      + `marker-bearing string rather than the published label its chip shows.${context()}`,
+    ).toBe(false)
+    expect(
+      placeholderRe().test(clipboard),
+      `a raw masking placeholder is on the clipboard.${context()}`,
+    ).toBe(false)
+
+    // AND IT IS THE RENDERED SENTENCE, WORD FOR WORD — the containment above cannot see a copy that
+    // carries three EXTRA words none of which happened to be planted. Both sides are normalised so
+    // that the two media's different spellings of the same redaction (a chip's bare label on the
+    // page, the same label in brackets on the clipboard, the marker itself under mutation M4) do
+    // not read as a difference; what is left to compare is the WORDS.
+    const labels = observed.truncated.maskedChipText
+    expect(
+      normaliseRedactions(clipboard, labels),
+      'the clipboard is not the sentence the collapsed banner rendered. A copy that carries more '
+      + 'than the page did is the defect this cell exists for; a copy that carries LESS would mean '
+      + `the copy path is truncating a second time.${context()}`,
+    ).toBe(normaliseRedactions(observed.truncated.renderedText, labels))
   })
 })

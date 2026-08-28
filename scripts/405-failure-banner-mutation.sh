@@ -4,16 +4,17 @@
 # (405-15, gap-closure round 1; the cells are 405-14's, WINDOWS #287).
 #
 # WHAT THIS PROVES, AND WHY A GREEN SUITE DOES NOT PROVE IT. `conformance/run-detail-failure-dom.
-# test.ts` asserts that six facts hold about a FAILED run's summary banner: the producer masked it,
+# test.ts` asserts that seven facts hold about a FAILED run's summary banner: the producer masked it,
 # the banner mounted truncated, the email is a typed chip in both states, the masking-seeded
-# credential is restored inside the expanded banner, and none of the three planted values is at rest
-# in the clear. Every one of those is a cell that asserts a fact is PRESENT — exactly the kind that
+# credential is restored inside the expanded banner, the CLIPBOARD carries only what the collapsed
+# banner rendered, and none of the three planted values is at rest in the clear. Every one of those
+# is a cell that asserts a fact is PRESENT — exactly the kind that
 # passes for free when it is looking at the wrong element, waiting on the wrong node, or reading a
 # fixture it accidentally produced itself. The only way to know a cell measures its fact is to take
 # the fact away and watch the cell go red — and to watch its NEIGHBOURS stay green, because a
 # mutation that reds the whole file is measuring blast radius.
 #
-# THREE MUTATIONS, ONE PER FACT-CARRIER, ACROSS TWO PACKAGES:
+# FOUR MUTATIONS, ONE PER FACT-CARRIER, ACROSS TWO PACKAGES:
 #
 #   M4  the banner's `MaskedText` render replaced by the raw string — the summary still arrives
 #       through the display seam, the truncation still runs and the toggle still works; the only
@@ -23,6 +24,9 @@
 #       NOTHING
 #   M6  `truncateMaskedText` hands its input back unchanged — the parse still runs, the chip seam
 #       still paints, the seam still restores; the only thing this leg removes is the TRUNCATION
+#   M7  the copy button's argument reverted to the whole summary — the page renders exactly what it
+#       rendered before, the truncation still runs and the labels are still substituted; the only
+#       thing this leg removes is the clipboard's AGREEMENT WITH THE PAGE
 #
 # WHAT EACH LEG IS EXPECTED TO REACH IS STATED IN ADVANCE, AND SO IS WHAT IT MUST NOT.
 #
@@ -64,10 +68,35 @@
 #   (3e) reds on its SECOND assertion — "the credential is not in the preview". That is a fact about
 #        truncation living inside the restore cell, and with the preview equal to the full text the
 #        credential is in both. The entanglement is real and it is (3e)'s, not M6's.
+#   (3g) reds for the same reason one medium over. With nothing cut, the banner mounts `full` and
+#        the copy button copies what is on the page — which is now the WHOLE summary, restored
+#        credential included. (3g) reds on its precondition (it asserts it measured a COLLAPSED
+#        banner) and would red again on the credential. A clipboard cell cannot be insulated from
+#        the truncation when its whole rule is "carry what was rendered".
 #
 # What makes M6 a measurement and not a blast radius is what stays green: (3a) reads the wire before
 # any render, (3c) reads the chips — which are painted from the same markers whether the text was
 # cut or not — and (3f) scans bytes at rest. Those three are named as the control below.
+#
+# M7 IS THE CLIPBOARD MUTATION, AND IT EXISTS BECAUSE THE CLIPBOARD HAD NOTHING TAKING ITS FACT
+# AWAY. `copyTextOf` is the one function in this round that converts a redaction into a
+# human-readable string in a SECOND medium, and until (3g) was written the only cell asserting it
+# was a jsdom unit cell whose red-ability had never been demonstrated. The gap was not theoretical:
+# the shipped button mapped the FULL summary regardless of banner state, so a click on a COLLAPSED
+# banner put 47 words on the clipboard against 21 on the page — including the fixture's RESTORED
+# credential at word 24, a value the reader had never been shown. That is what this leg restores.
+#
+# ITS BLAST RADIUS IS EXACTLY ONE CELL, and that is the point of where the mutation is placed. The
+# argument to `copyTextOf` is read by nothing but the clipboard: the render call beside it is
+# untouched, so the page paints the same chips over the same preview, the toggle still works, the
+# seam still restores and the bytes at rest never went near the copy path. (3a) through (3f) are
+# named as the control below — six cells, the whole rest of the file.
+#
+# WHY THE ARGUMENT IS SPELLED OUT AT BOTH SITES IN THE COMPONENT. `open ? summary : preview.text`
+# appears twice — once in the render and once in the copy — rather than being hoisted into a shared
+# `const`. M4's pattern matches the first literally and M7's matches the second; a hoist would leave
+# M4 matching nothing, which is a FATAL by this script's law rather than a tidier component. The
+# component says so at the call site so the next reader does not "clean it up".
 #
 # WHY THERE IS NO "TRUNCATE-BEFORE-PARSE" LEG IN THIS SCRIPT. The reviewer named a further
 # candidate mutation: truncate the raw string BEFORE parsing it, restoring the page-local helper's
@@ -104,7 +133,7 @@
 #
 # EVERY LEG CROSSES A `dist` BOUNDARY AND THE REBUILD IS PART OF THE MUTATION. All three subjects
 # are resolved by the spawned `agent-qa dashboard` as BUILT workspace dependencies — dashboard-ui's
-# bundle for M4 and M6, the cli dist for M5 — and the DOM file's own `buildFreshness` guard compares
+# bundle for M4, M6 and M7, the cli dist for M5 — and the DOM file's own `buildFreshness` guard compares
 # mtimes against those artifacts, so a restored-but-unbuilt source is "newer than" the build and
 # every cell refuses to run at all. That is a red the leg never measured. `--force` is required for
 # the same guard's sake in the other direction: a byte-identical restore is a turbo CACHE HIT, so a
@@ -116,8 +145,8 @@
 # that gains a comma would silently stop matching a line-oriented grep, and the failure mode of that
 # is a leg that reports "the named cell stayed green" about a cell that was red.
 #
-# THIS SCRIPT IS SLOW AND IT IS SLOW FOR A REASON. Seven forced workspace builds (preflight plus
-# mutate-and-restore per leg) and four passes of a suite that spawns the built binary, launches a
+# THIS SCRIPT IS SLOW AND IT IS SLOW FOR A REASON. Nine forced workspace builds (preflight plus
+# mutate-and-restore per leg) and five passes of a suite that spawns the built binary, launches a
 # real Chromium and executes a real failing run through a real planning turn. Minutes, not seconds.
 # It is the phase's ACCEPTANCE for the banner, run at wave merge and before `/gsd-verify-work`; the
 # per-commit sample is the fast unit cells.
@@ -166,7 +195,7 @@ sha_of () {
 # whether or not it changes a byte, and the DOM cells' `buildFreshness` guard compares source mtimes
 # against the dists they drive — so an unconditional restore in the EXIT trap, which runs AFTER this
 # script's last rebuild, leaves every source "newer than" the artifacts and the next person to run
-# the suite gets six refusals that read exactly like a red. Measured by 404-04.
+# the suite gets seven refusals that read exactly like a red. Measured by 404-04.
 restore_subjects () {
   local path snapshot
   for path in "${SUBJECT_PATHS[@]}"; do
@@ -205,7 +234,8 @@ ALLOWED_M4="(3c)
 GREEN_M4="(3a)
 (3b)
 (3e)
-(3f)"
+(3f)
+(3g)"
 
 # The one restore claim. The chips are painted from MARKERS, which an unrestored placeholder becomes
 # — so a seam that restores nothing leaves (3c)/(3d) exactly as they were, and (3f) scans a lane the
@@ -216,7 +246,8 @@ GREEN_M5="(3a)
 (3b)
 (3c)
 (3d)
-(3f)"
+(3f)
+(3g)"
 
 # The truncation claim, plus the two cells that inherit it. (3b) is what this leg exists to move —
 # it is the one cell whose whole subject is the preview. (3d) and (3e) are REQUIRED rather than
@@ -225,12 +256,28 @@ GREEN_M5="(3a)
 # header would be wrong and this script should say so rather than pass.
 REQUIRED_M6="(3b)
 (3d)
-(3e)"
+(3e)
+(3g)"
 ALLOWED_M6="(3b)
 (3d)
-(3e)"
+(3e)
+(3g)"
 GREEN_M6="(3a)
 (3c)
+(3f)"
+
+# The one clipboard claim, and nothing else. The argument to `copyTextOf` is read by the clipboard
+# and by nothing else on this page: the render call beside it is untouched, so the chips, the
+# preview, the toggle, the restore and the bytes at rest are all exactly where the unmutated tree
+# left them. Six controls for one required red is the widest control list in this script, and it is
+# the reason this leg is worth its four minutes.
+REQUIRED_M7="(3g)"
+ALLOWED_M7="(3g)"
+GREEN_M7="(3a)
+(3b)
+(3c)
+(3d)
+(3e)
 (3f)"
 
 apply_mutation () {
@@ -263,6 +310,16 @@ apply_mutation () {
       # leaves no unreachable statement behind for the forced build to trip over.
       perl -0pi -e 's/  if \(total <= maxWords\) return \{ text, isTruncated: false \}\n  return \{[^\n]*\n/  return { text, isTruncated: false }\n/' \
         "$REPO_ROOT/$TRUNCATE_SUBJECT" ;;
+    M7)
+      # THE CLIPBOARD'S ARGUMENT REVERTED TO THE WHOLE SUMMARY, AND NOTHING ELSE MOVED. This is the
+      # shipped defect, restored one token at a time: `copyTextOf` still substitutes every marker
+      # for its published label, `MaskedText` still paints the same chips over the same preview and
+      # the toggle still expands. What comes back is the state where a click on a COLLAPSED banner
+      # copies text the reader was never shown — 47 words against 21 on the page, the fixture's
+      # restored credential among them. The pattern matches the COPY call and not the render one
+      # beside it, which is why the component spells the expression out at both sites.
+      perl -0pi -e 's/copyTextOf\(open \? summary : preview\.text\)/copyTextOf(summary)/' \
+        "$REPO_ROOT/$BANNER_SUBJECT" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac
 }
@@ -447,9 +504,12 @@ echo
 run_leg M4 "the banner's MaskedText render replaced by the raw string" "$REQUIRED_M4" "$ALLOWED_M4" "$GREEN_M4"
 run_leg M5 "the display-unmask seam made a marker pass, restoring nothing" "$REQUIRED_M5" "$ALLOWED_M5" "$GREEN_M5"
 run_leg M6 "truncateMaskedText hands its input back unchanged" "$REQUIRED_M6" "$ALLOWED_M6" "$GREEN_M6"
+run_leg M7 "the copy button's argument reverted to the whole summary" "$REQUIRED_M7" "$ALLOWED_M7" "$GREEN_M7"
 
 echo "PASS — taking the chip painting away from the banner red exactly the two chip cells, taking"
-echo "       restoration away from the display seam red exactly the restore cell, and taking the"
-echo "       truncation away red the preview cell and the two claims that rest on it, while the"
-echo "       producer's masked wire, the chip painting and the at-rest scan of a failing run stayed"
-echo "       green under every mutation that does not touch them."
+echo "       restoration away from the display seam red exactly the restore cell, taking the"
+echo "       truncation away red the preview cell and the three claims that rest on it, and taking"
+echo "       the clipboard's agreement with the page away red exactly the clipboard cell and left"
+echo "       the other six standing, while the producer's masked wire, the chip painting and the"
+echo "       at-rest scan of a failing run stayed green under every mutation that does not touch"
+echo "       them."
