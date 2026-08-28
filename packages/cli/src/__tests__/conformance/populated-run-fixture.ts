@@ -173,26 +173,38 @@ export const POPULATED_TEST_PATH = 'tests/populated.test.yaml'
 /**
  * The single step a FAILING populated run declares (405-14 · WINDOWS #287).
  *
- * FIVE WORDS, AND THE COUNT IS LOAD-BEARING. `generateFailureSummary` prints the step NAME first —
- * `Step 1/1 "<name>" failed: ...` — and the banner's collapsed state shows
- * `FAILURE_BANNER_PREVIEW_WORDS` (20) words. The shipped step text is eighteen words, which would
- * spend the whole budget before the planner's sentence began and leave the truncated banner with no
- * marker to paint. This one leaves room for the failure sentence's email marker to land inside the
- * preview.
+ * THIS SENTENCE IS FIVE WORDS, AND THE COUNT IS LOAD-BEARING.
+ * `generateFailureSummary` prints the step NAME first — `Step 1/1 "<name>" failed: ...` — and the
+ * banner's collapsed state shows `FAILURE_BANNER_PREVIEW_WORDS` (20) words. The step text the
+ * PASSING recipe ships (`populatedRunFixtureProject`'s default) is SIXTEEN words, which would spend
+ * the budget before the planner's sentence began and leave the truncated banner with no marker to
+ * paint. Five leaves room for the failure sentence's email marker to land inside the preview.
  *
- * THE ARITHMETIC, WRITTEN OUT SO THE DOM CELL'S CLAIM IS AUDITABLE. On a `stepFailed` turn the loop
- * returns `Step failed: <reasoning>` as the step error and records `Planner signaled step failure:
- * <reasoning>` on the sub-action, so the summary opens:
+ * THE ARITHMETIC, WRITTEN OUT SO THE DOM CELL'S CLAIM IS AUDITABLE BY READING. Measured rather than
+ * counted by eye: `generateFailureSummary`'s format was executed over this module's own strings
+ * with the two masking placeholders in the positions the seam puts them, and the result split the
+ * way `truncateMaskedText` spends its budget (one word per whitespace-free token, one per marker).
+ * Three numbers in the block that stood here were wrong — the shipped step text's length, the
+ * credential's distance from the marker, and a five-word claim positioned as if it justified the
+ * first (WINDOWS #296).
+ *
+ * On a `stepFailed` turn the loop returns `Step failed: <reasoning>` as the step error and records
+ * `Planner signaled step failure: <reasoning>` on the sub-action, so the summary reads:
  *
  *   `Step`(1) `1/1`(2) `"Acknowledge`(3) `the`(4) `notice`(5) `using`(6) `{{secret:…}}."`(7)
  *   `failed:`(8) `Step`(9) `failed:`(10) `Cannot`(11) `acknowledge:`(12) `the`(13) `notice`(14)
- *   `names`(15) `<EMAIL_n>`(16)
+ *   `names`(15) `<EMAIL_n>`(16) `as`(17) `contact,`(18) `the`(19) `operator`(20) `credential`(21)
+ *   `is`(22) `<SECRET_n>,`(23)
  *
- * — the email marker inside the budget, and the masking-seeded credential four words past it,
- * visible only once a person expands the banner. A DRIFT THAT MOVES THE MARKER PAST WORD 20 IS
- * FIXED HERE, in the fixture's own sentence, and NEVER by widening the banner's budget: the budget
- * is what a person was shown, and editing it to make a cell green would be the cell changing the
- * product to fit itself.
+ * — the email marker at word 16, inside the budget; the masking-seeded credential at word 23, SEVEN
+ * words past the marker and THREE past the preview budget, so it is visible only once a person
+ * expands the banner. THOSE THREE WORDS OF MARGIN ARE THE WHOLE OF WHAT PROTECTS CELL (3e)'s
+ * NEGATIVE ASSERTION — that the credential is NOT in the truncated banner — so an edit to
+ * `generateFailureSummary`'s header format that spends three more words moves the credential into
+ * the preview and reds it. A DRIFT THAT MOVES EITHER MARKER ACROSS WORD 20 IS FIXED HERE, in the
+ * fixture's own sentences, and NEVER by widening the banner's budget: the budget is what a person
+ * was shown, and editing it to make a cell green would be the cell changing the product to fit
+ * itself.
  */
 export const POPULATED_FAILURE_STEP_TEXT =
   `Acknowledge the notice using {{secret:${POPULATED_SECRET_NAME}}}.`
@@ -476,9 +488,10 @@ function plannerReasoning(): string {
  * The planner's reasoning on the arm that DECLARES THE STEP IMPOSSIBLE (405-14 · WINDOWS #287).
  *
  * THE SAME THREE PLANTED VALUES, RE-ORDERED — and the order is the only difference that matters.
- * `plannerReasoning` opens with the button sentence and reaches the email eleven words in, which on
- * a failure summary (whose first eight words are the step header) would put the marker outside the
- * banner's 20-word preview. This sentence leads with the email so the TRUNCATED banner has a chip
+ * `plannerReasoning` opens with the button sentence and reaches the email TWENTY-ONE words in,
+ * which on a failure summary — whose first eight words are the step header and whose next two are
+ * the loop's own `Step failed:` — would put the marker at word 31, well outside the banner's
+ * 20-word preview (measured the same way as the block in {@link POPULATED_FAILURE_STEP_TEXT}). This sentence leads with the email so the TRUNCATED banner has a chip
  * to paint, and leaves the masking-seeded credential far enough back that it is visible only in the
  * expanded state — which is what makes cells (3c) and (3e) two different claims rather than one.
  *

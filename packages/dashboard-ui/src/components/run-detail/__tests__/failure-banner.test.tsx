@@ -27,7 +27,10 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { MASKED_MARKER_DELIMITER, PLACEHOLDER_PATTERN, maskedMarker } from "@vostride/agent-qa-schema"
 
-import { FailureBanner } from "@/components/run-detail/failure-banner"
+import {
+  FAILURE_BANNER_PREVIEW_WORDS,
+  FailureBanner,
+} from "@/components/run-detail/failure-banner"
 import { MASKED_EMAIL_LABEL, MASKED_SECRET_LABEL } from "@/lib/run-detail-view"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -42,17 +45,29 @@ const EMAIL = maskedMarker("email")
 const SECRET = maskedMarker("secret")
 
 /**
- * A thirty-word summary with a marker at word 18 and another at word 26.
+ * The two ordinals this file's summary plants its markers at, and the length of that summary.
  *
- * THE TWO ORDINALS STRADDLE THE PUBLISHED PREVIEW BUDGET (20), which is what makes the truncated
- * and expanded states observably different: the email is inside the preview and the secret is not.
- * The conformance fixture plants its own sentence against the same budget for the same reason.
+ * DERIVED FROM THE PUBLISHED BUDGET, NEVER RE-TYPED (WINDOWS #292). They straddle
+ * `FAILURE_BANNER_PREVIEW_WORDS` — the email two words inside it, the secret six words past it —
+ * which is what makes the truncated and expanded states observably different: the email is in the
+ * preview and the secret is not. Spelled as `18`/`26`/`30` against a budget of `20`, a change to
+ * the budget left this fixture asserting the old one and both cells measuring nothing they claim.
+ * The conformance fixture plants its own sentence against the same budget for the same reason, and
+ * names it in prose because it cannot import across the package boundary.
  */
-function summaryOfThirtyWords(): string {
+const EMAIL_ORDINAL = FAILURE_BANNER_PREVIEW_WORDS - 2
+const SECRET_ORDINAL = FAILURE_BANNER_PREVIEW_WORDS + 6
+const SUMMARY_WORDS = FAILURE_BANNER_PREVIEW_WORDS + 10
+
+/** The summary's LAST word — past the budget, so no cell may find it in the preview. */
+const LAST_WORD = `w${String(SUMMARY_WORDS)}`
+
+/** A summary of {@link SUMMARY_WORDS} words carrying both markers at the ordinals above. */
+function summaryOverTheBudget(): string {
   const parts: string[] = []
-  for (let ordinal = 1; ordinal <= 30; ordinal += 1) {
-    if (ordinal === 18) parts.push(EMAIL)
-    else if (ordinal === 26) parts.push(SECRET)
+  for (let ordinal = 1; ordinal <= SUMMARY_WORDS; ordinal += 1) {
+    if (ordinal === EMAIL_ORDINAL) parts.push(EMAIL)
+    else if (ordinal === SECRET_ORDINAL) parts.push(SECRET)
     else parts.push(`w${String(ordinal)}`)
   }
   return parts.join(" ")
@@ -130,7 +145,7 @@ afterEach(() => {
 
 describe("FailureBanner", () => {
   it("paints only the markers inside the preview budget, and no delimiter, while truncated", () => {
-    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    const view = mount(<FailureBanner summary={summaryOverTheBudget()} />)
 
     expect(stateOf(view)).toBe("truncated")
     // AND THE STATE IS CHECKED AGAINST THE TEXT. `truncated` was once a compile-time constant of
@@ -138,17 +153,17 @@ describe("FailureBanner", () => {
     // paint for every input, including one whose truncation had been deleted outright. These two
     // assertions are the fact the attribute claims: the last word of the summary is NOT on the page,
     // and the helper's ellipsis is. Without them the line above asserts `useState`.
-    expect(textOf(view)).not.toContain("w30")
+    expect(textOf(view)).not.toContain(LAST_WORD)
     expect(textOf(view).endsWith("...")).toBe(true)
     expect(view.querySelector('[data-masked="email"]')?.textContent).toContain(MASKED_EMAIL_LABEL)
-    // The secret marker is word 26 — past the budget, so it is not in the preview at all. A chip
+    // The secret marker sits past the budget, so it is not in the preview at all. A chip
     // here would mean the budget was spent over something other than the parsed segments.
     expect(view.querySelector('[data-masked="secret"]')).toBeNull()
     expect(view.textContent).not.toContain(MASKED_MARKER_DELIMITER)
   })
 
   it("shows both markers as chips once expanded, and returns to the preview when toggled back", () => {
-    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    const view = mount(<FailureBanner summary={summaryOverTheBudget()} />)
 
     const toggle = toggleOf(view)
     expect(toggle).not.toBeNull()
@@ -182,20 +197,20 @@ describe("FailureBanner", () => {
   it("writes only the PREVIEW to the clipboard while the banner is collapsed", async () => {
     const writeText = stubClipboard()
 
-    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    const view = mount(<FailureBanner summary={summaryOverTheBudget()} />)
     await act(async () => { copyOf(view)!.click() })
 
     expect(writeText).toHaveBeenCalledTimes(1)
     expect(copyStatusOf(view)).toBe("copied")
     const written = writeText.mock.calls[0]![0]
 
-    // WHAT WAS RENDERED, AND NOT ONE WORD MORE. The banner is showing twenty words; word 26 is the
-    // secret marker and word 30 is the last word of the summary, and neither is on the page. A
-    // clipboard that carries them is carrying text this reader was never shown — and on the
-    // conformance fixture the word past the budget is a RESTORED CREDENTIAL, which is the whole
-    // reason this cell asserts an absence rather than only the label substitution.
+    // WHAT WAS RENDERED, AND NOT ONE WORD MORE. The banner is showing `FAILURE_BANNER_PREVIEW_WORDS`
+    // words; the secret marker and the summary's last word are both past that budget, and neither is
+    // on the page. A clipboard that carries them is carrying text this reader was never shown — and
+    // on the conformance fixture the word past the budget is a RESTORED CREDENTIAL, which is the
+    // whole reason this cell asserts an absence rather than only the label substitution.
     expect(written).toBe(textOf(view).replace(MASKED_EMAIL_LABEL, `[${MASKED_EMAIL_LABEL}]`))
-    expect(written).not.toContain("w30")
+    expect(written).not.toContain(LAST_WORD)
     expect(written).not.toContain(MASKED_SECRET_LABEL)
     expect(written).toContain("w1 ")
     expect(written).toContain(`[${MASKED_EMAIL_LABEL}]`)
@@ -208,7 +223,7 @@ describe("FailureBanner", () => {
   it("writes the whole summary once the banner has been expanded", async () => {
     const writeText = stubClipboard()
 
-    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    const view = mount(<FailureBanner summary={summaryOverTheBudget()} />)
     act(() => { toggleOf(view)!.click() })
     await act(async () => { copyOf(view)!.click() })
 
@@ -219,7 +234,7 @@ describe("FailureBanner", () => {
     // EXPANDED, THE PAGE CARRIES THE WHOLE SENTENCE, SO THE CLIPBOARD DOES TOO. The rule is not
     // "copy less"; it is "copy what was rendered" — a copy button stuck on the preview would give a
     // reader a bug report missing the half of the sentence they opened the banner to read.
-    expect(written).toContain("w30")
+    expect(written).toContain(LAST_WORD)
     expect(written).toContain(`[${MASKED_EMAIL_LABEL}]`)
     expect(written).toContain(`[${MASKED_SECRET_LABEL}]`)
     expect(written).not.toContain(MASKED_MARKER_DELIMITER)
@@ -236,7 +251,7 @@ describe("FailureBanner", () => {
       .mockRejectedValue(new DOMException("Document is not focused", "NotAllowedError"))
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
 
-    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    const view = mount(<FailureBanner summary={summaryOverTheBudget()} />)
     await act(async () => { copyOf(view)!.click() })
 
     expect(writeText).toHaveBeenCalledTimes(1)
@@ -249,14 +264,14 @@ describe("FailureBanner", () => {
     // real shape of the API rather than a stub some earlier cell forgot to take away.
     expect((navigator as { clipboard?: unknown }).clipboard).toBeUndefined()
 
-    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    const view = mount(<FailureBanner summary={summaryOverTheBudget()} />)
     await act(async () => { copyOf(view)!.click() })
 
     expect(copyStatusOf(view)).toBe("failed")
   })
 
   it("names the copy button and announces both outcomes in a live region", async () => {
-    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    const view = mount(<FailureBanner summary={summaryOverTheBudget()} />)
 
     // A NAME, WHICH `title` IS NOT. `title` is a tooltip; the accessible name is what a screen
     // reader reads when the button takes focus, and without it the control announced as "button".
@@ -282,7 +297,7 @@ describe("FailureBanner", () => {
       .mockRejectedValue(new DOMException("Document is not focused", "NotAllowedError"))
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
 
-    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    const view = mount(<FailureBanner summary={summaryOverTheBudget()} />)
     await act(async () => { copyOf(view)!.click() })
 
     expect(announcementOf(view)).toContain("Could not copy")
