@@ -1,5 +1,5 @@
 // §A8 handoff assembly (D-04/D-07/D-17/D-20). Pure functions that fold per-member TestResults
-// into PerTestOutcomes and the one CompletedRunHandoff a run persists. Two invariants live here:
+// into PerTestOutcomes and the one CompletedRunHandoff a run persists. Three invariants live here:
 //
 //  1. Step re-indexing + evidence synthesis (RESEARCH Pitfall 4 / Open Q1). The loop hardcodes
 //     StepEvidence.stepIndex to 0, so the authoritative index is the array position — always
@@ -9,6 +9,19 @@
 //  2. Identity is copied FROM RunConfig, never re-derived (D-04/D-20): runId/scope/buildOrdinal/
 //     executionContext/configDigests on the handoff are the exact values the run keyed on, so run
 //     identity and handoff identity cannot fork by construction.
+//  3. REAL step evidence is masked AT REST here (WINDOWS #305 · DETL-04), through the run's own
+//     MaskFn — the SAME object `projectTestFinished` routes `failureSummary` through, one frame
+//     away in shell.ts. A durable artifact that records a detected value in clear is a disclosure
+//     no display seam can undo: the file outlives the process that held the placeholder→value
+//     pair. This is not a new rule and not a new detector; it applies the rule `failureSummary`
+//     already obeys to the second field the same shell frame assembles. `maskStepNarration` is
+//     the fold; the set it reaches, MASKED_HANDOFF_NARRATION_FIELDS, is spelled POSITIVELY per the
+//     authoring/loop.ts rule (a negation is only readable if you already know the whole field
+//     list), is derived from schema's QUOTE_SEARCHED_STEP_FIELDS, and DELIBERATELY EXCLUDES
+//     `stepText`, `plannedAction` and `interpolatedVariables`: those three are exact-string-
+//     matched against each other by cli/src/curation/emit-candidates.ts, and masking any one of
+//     them breaks the match the other two depend on — the G-381-3 prohibition documented on
+//     StepEvidence.interpolatedVariables.
 //
 // This module carries the EXECUTION verdict (RunStatus) and ATTACHES a caller-supplied root-cause
 // Verdict onto PerTestOutcome (373-07) — it never DERIVES one (§A9 boundary): all root-cause logic
@@ -20,12 +33,13 @@ import type {
   MemberTestOutcome,
   ModelIdentity,
   PerTestOutcome,
+  RecordedActionResult,
   RunStatus,
   ScopeKey,
   StepEvidence,
   Verdict,
 } from '@vostride/agent-qa-schema'
-import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, maskPayloadStrings } from '@vostride/agent-qa-schema'
 import type { MaskFn } from '@vostride/agent-qa-schema'
 import type { RunConfig, RunMemberDescriptor } from './ports.js'
 import type { StepResult, TestResult } from '../result.js'
@@ -63,6 +77,94 @@ function synthesizeStepEvidence(step: StepResult, stepIndex: number, deps: Synth
     ...(deps.modelProfile !== undefined ? { modelProfile: deps.modelProfile } : {}),
     ...(deps.verifierIdentity !== undefined ? { verifierIdentity: deps.verifierIdentity } : {}),
     ...(deps.toolSchemaDigest !== undefined ? { toolSchemaDigest: deps.toolSchemaDigest } : {}),
+  }
+}
+
+/**
+ * THE FIELDS OF A REAL {@link StepEvidence} THIS MODULE MASKS AT REST (WINDOWS #305 · DETL-04).
+ *
+ * A POSITIVE SET, asserted on this value itself in `__tests__/handoff-assembly.test.ts` rather
+ * than inferred from a case that happened to pass — so an edit that GROWS or SHRINKS it reds a
+ * cell by NAME even when no behavioural case notices. Growth is the dangerous direction: every
+ * addition here is a candidate G-381-3 break.
+ *
+ * Derived from schema's `QUOTE_SEARCHED_STEP_FIELDS` (the verbatim-presence searched set an
+ * authored verdict's grounding quote is validated against), MINUS `stepText`. Each member:
+ *
+ *   - `verifierVerdict.reasoning`     — the verifier's own words about what it saw
+ *   - `subActions[].plan`             — a planning turn's stated intent
+ *   - `subActions[].result.error`     — a captured failure message, verbatim from the app
+ *   - `subActions[].result.data`      — a captured payload of unknown shape
+ *   - `subActions[].result.metadata`  — a captured payload of unknown shape
+ *
+ * NOT on this list, and that omission is load-bearing rather than an oversight: `stepText`,
+ * `subActions[].plannedAction` and `interpolatedVariables` are exact-string-matched against one
+ * another by `cli/src/curation/emit-candidates.ts` (`testVariableSourceName`). Masking any one of
+ * them makes an email-valued login binding stop matching, emits no source name, and leaves replay
+ * permanently `hint` — G-381-3 itself, spelled out on `StepEvidence.interpolatedVariables`.
+ */
+export const MASKED_HANDOFF_NARRATION_FIELDS = [
+  'verifierVerdict.reasoning',
+  'subActions[].plan',
+  'subActions[].result.error',
+  'subActions[].result.data',
+  'subActions[].result.metadata',
+] as const
+
+/**
+ * Mask the narration members of one {@link RecordedActionResult}, under this module's
+ * spread-when-defined idiom so an absent key stays absent and no undefined hole survives the JSON
+ * round-trip.
+ *
+ * `success` and `annotation` are deliberately NOT members of the overrides: the first is a boolean
+ * and the second a geometry union whose `kind` is control flow for every consumer that reads it.
+ * Leaving them out of the transform is what makes their survival a guarantee rather than a
+ * coincidence of the mask happening to be a no-op on non-strings.
+ */
+function maskRecordedResult(result: RecordedActionResult, mask: MaskFn): RecordedActionResult {
+  return {
+    ...result,
+    ...(result.error !== undefined ? { error: mask(result.error) } : {}),
+    ...(result.data !== undefined ? { data: maskPayloadStrings(result.data, mask) } : {}),
+    ...(result.metadata !== undefined
+      ? { metadata: maskPayloadStrings(result.metadata, mask) }
+      : {}),
+  }
+}
+
+/**
+ * Mask exactly {@link MASKED_HANDOFF_NARRATION_FIELDS} of one real {@link StepEvidence}, through
+ * the run's own `mask`. Every other member rides the spread untouched.
+ *
+ * It does NOT reach `stepText`, `subActions[].plannedAction` or `interpolatedVariables` (the
+ * G-381-3 carve-out above), nor `subActions[].stateBefore` / `stateAfter` — the captured screen
+ * state is the APP's own page, and `stateBefore.elements` is what `exercisedAnchors` and
+ * `emit-candidates.ts` resolve refs and element ordinals against. Nor `artifactRefs` /
+ * `decisionScreenshotRef`, whose `sha` is a content-addressed lookup key.
+ *
+ * Both overrides are spread-WHEN-PRESENT, like every other optional in this module. `StepEvidence`
+ * declares both members required, so a well-typed producer always supplies them — but this
+ * function transforms a value it did not construct, and a partial one must come out of the fold
+ * exactly as it went in rather than gaining an undefined-valued key (or throwing). A member that
+ * is not there carries nothing to disclose, so totality costs no masking.
+ */
+function maskStepNarration(evidence: StepEvidence, mask: MaskFn): StepEvidence {
+  const verdict = evidence.verifierVerdict as StepEvidence['verifierVerdict'] | undefined
+  const subActions = evidence.subActions as StepEvidence['subActions'] | undefined
+  return {
+    ...evidence,
+    ...(verdict !== undefined
+      ? { verifierVerdict: { ...verdict, reasoning: mask(verdict.reasoning) } }
+      : {}),
+    ...(subActions !== undefined
+      ? {
+          subActions: subActions.map(subAction => ({
+            ...subAction,
+            plan: mask(subAction.plan),
+            result: maskRecordedResult(subAction.result, mask),
+          })),
+        }
+      : {}),
   }
 }
 
@@ -106,7 +208,7 @@ export function assemblePerTestOutcome(
   }
   const steps: StepEvidence[] = result.steps.map((step, index) =>
     step.evidence !== undefined
-      ? { ...step.evidence, stepIndex: index }
+      ? maskStepNarration({ ...step.evidence, stepIndex: index }, deps.mask)
       : synthesizeStepEvidence(step, index, synthDeps),
   )
   return {
