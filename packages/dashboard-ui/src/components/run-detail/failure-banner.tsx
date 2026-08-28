@@ -80,9 +80,12 @@ function copyTextOf(rendered: string): string {
     .join("")
 }
 
+/** What the last copy attempt did — `idle` until one is made, and back to `idle` after a moment. */
+type CopyStatus = "idle" | "copied" | "failed"
+
 export function FailureBanner({ summary }: { summary: string }) {
   const [open, setOpen] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle")
   const preview = truncateMaskedText(summary, FAILURE_BANNER_PREVIEW_WORDS)
 
   // WHAT IS RENDERED, NOT WHAT WAS PRESSED. `data-failure-banner-state` is the attribute every DOM
@@ -99,10 +102,26 @@ export function FailureBanner({ summary }: { summary: string }) {
   // not. It is written out at both sites on purpose: `scripts/405-failure-banner-mutation.sh` M4
   // matches the render call literally and M7 matches this one, and a hoisted `const rendered` would
   // leave M4's pattern matching nothing — a leg that reds nothing is a FATAL by that script's law.
+  const announce = (outcome: Exclude<CopyStatus, "idle">) => {
+    setCopyStatus(outcome)
+    setTimeout(() => setCopyStatus("idle"), 2000)
+  }
+
+  // THE CHECK MARK MEANS THE WRITE RESOLVED, AND NOTHING ELSE. `writeText` returns a promise that
+  // rejects with `NotAllowedError` whenever the document is not focused or the permission was
+  // denied — a routine condition, not an exotic one — and the previous spelling neither awaited nor
+  // caught it: an unhandled rejection, plus a green tick telling a reader the failure summary was
+  // on their clipboard when it was not. `navigator.clipboard` is also `undefined` outside a secure
+  // context, which the repo's Docker release reaches over any non-loopback hostname, and the bare
+  // property access threw a `TypeError` inside the click handler. Optional-chained, awaited and
+  // caught — `artifact-drawer.tsx`'s `copyText` idiom, with the outcome kept rather than dropped.
   const handleCopy = () => {
-    navigator.clipboard.writeText(copyTextOf(open ? summary : preview.text))
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    const written = navigator.clipboard?.writeText(copyTextOf(open ? summary : preview.text))
+    if (written === undefined) {
+      announce("failed")
+      return
+    }
+    void written.then(() => { announce("copied") }, () => { announce("failed") })
   }
 
   return (
@@ -121,13 +140,17 @@ export function FailureBanner({ summary }: { summary: string }) {
         </span>
         <button
           data-failure-banner-copy
+          data-copy-status={copyStatus}
           onClick={handleCopy}
           className="shrink-0 mt-0.5 p-0.5 rounded-sm hover:bg-red-500/10 transition-colors"
           title="Copy failure summary"
         >
-          {copied
+          {copyStatus === "copied"
             ? <Check className="h-3.5 w-3.5 text-emerald-400" />
-            : <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+            : <Copy className={cn(
+                "h-3.5 w-3.5",
+                copyStatus === "failed" ? "text-red-400" : "text-muted-foreground",
+              )} />
           }
         </button>
         {preview.isTruncated && (

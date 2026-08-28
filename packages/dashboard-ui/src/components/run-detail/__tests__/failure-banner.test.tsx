@@ -88,6 +88,11 @@ function copyOf(view: HTMLDivElement): HTMLButtonElement | null {
   return view.querySelector<HTMLButtonElement>("[data-failure-banner-copy]")
 }
 
+/** What the last copy attempt did, as the button records it — `idle`, `copied` or `failed`. */
+function copyStatusOf(view: HTMLDivElement): string | null {
+  return copyOf(view)?.getAttribute("data-copy-status") ?? null
+}
+
 /**
  * A clipboard the copy cells can read back.
  *
@@ -169,13 +174,14 @@ describe("FailureBanner", () => {
     expect(view.textContent).not.toContain(MASKED_MARKER_DELIMITER)
   })
 
-  it("writes only the PREVIEW to the clipboard while the banner is collapsed", () => {
+  it("writes only the PREVIEW to the clipboard while the banner is collapsed", async () => {
     const writeText = stubClipboard()
 
     const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
-    act(() => { copyOf(view)!.click() })
+    await act(async () => { copyOf(view)!.click() })
 
     expect(writeText).toHaveBeenCalledTimes(1)
+    expect(copyStatusOf(view)).toBe("copied")
     const written = writeText.mock.calls[0]![0]
 
     // WHAT WAS RENDERED, AND NOT ONE WORD MORE. The banner is showing twenty words; word 26 is the
@@ -194,14 +200,15 @@ describe("FailureBanner", () => {
     expect(new RegExp(PLACEHOLDER_PATTERN.source, "u").test(written)).toBe(false)
   })
 
-  it("writes the whole summary once the banner has been expanded", () => {
+  it("writes the whole summary once the banner has been expanded", async () => {
     const writeText = stubClipboard()
 
     const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
     act(() => { toggleOf(view)!.click() })
-    act(() => { copyOf(view)!.click() })
+    await act(async () => { copyOf(view)!.click() })
 
     expect(writeText).toHaveBeenCalledTimes(1)
+    expect(copyStatusOf(view)).toBe("copied")
     const written = writeText.mock.calls[0]![0]
 
     // EXPANDED, THE PAGE CARRIES THE WHOLE SENTENCE, SO THE CLIPBOARD DOES TOO. The rule is not
@@ -212,6 +219,35 @@ describe("FailureBanner", () => {
     expect(written).toContain(`[${MASKED_SECRET_LABEL}]`)
     expect(written).not.toContain(MASKED_MARKER_DELIMITER)
     expect(new RegExp(PLACEHOLDER_PATTERN.source, "u").test(written)).toBe(false)
+  })
+
+  // THE TWO ARMS THE GREEN TICK USED TO SWALLOW. `writeText` was called unguarded, unawaited and
+  // uncaught, and `copied` was set unconditionally on the line after it — so a denied permission
+  // produced an unhandled rejection AND a check mark, and a non-secure context threw a `TypeError`
+  // out of the click handler. Neither arm had a cell, which is why the defect shipped.
+
+  it("does not claim success when the clipboard write rejects", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>()
+      .mockRejectedValue(new DOMException("Document is not focused", "NotAllowedError"))
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
+
+    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    await act(async () => { copyOf(view)!.click() })
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(copyStatusOf(view)).toBe("failed")
+  })
+
+  it("neither throws nor claims success when there is no clipboard API at all", async () => {
+    // A NON-SECURE CONTEXT, WHICH IS WHAT jsdom ALREADY IS. `restoreClipboard` in `afterEach` puts
+    // the property back exactly as this environment had it — absent — so this cell is measuring the
+    // real shape of the API rather than a stub some earlier cell forgot to take away.
+    expect((navigator as { clipboard?: unknown }).clipboard).toBeUndefined()
+
+    const view = mount(<FailureBanner summary={summaryOfThirtyWords()} />)
+    await act(async () => { copyOf(view)!.click() })
+
+    expect(copyStatusOf(view)).toBe("failed")
   })
 
   // The producer's text is a text node and nothing else (T-405-42). A cell that fed markup and
