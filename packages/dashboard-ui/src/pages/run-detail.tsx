@@ -41,7 +41,6 @@ import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
-import { formatTokens } from "@/lib/format"
 import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
 
@@ -892,35 +891,6 @@ export default function RunDetailPage() {
                   </CollapsibleContent>
                 </Collapsible>
               )}
-
-              {run.memoryLog && (() => {
-                const mem = JSON.parse(run.memoryLog) as {
-                  added: number; confirmed: number; deprecated: number
-                  errors: string[]; curatorDuration: number
-                  tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
-                }
-                return (
-                  <Collapsible className="mx-2 mt-1">
-                    <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors group w-full">
-                      <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
-                      <span>Memory</span>
-                      <span className="ml-1 text-[10px] opacity-60">
-                        {mem.added}A {mem.confirmed}C {mem.deprecated}D
-                      </span>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <div className="mt-1 grid grid-cols-2 gap-x-6 gap-y-1 text-xs px-3 py-2 bg-muted/30 border border-border/50 rounded-[2px]">
-                        <div className="flex justify-between"><span className="text-muted-foreground">Added</span><span className="font-mono">{mem.added}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Confirmed</span><span className="font-mono">{mem.confirmed}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Deprecated</span><span className="font-mono">{mem.deprecated}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Errors</span><span className="font-mono">{mem.errors.length}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Curator Duration</span><span className="font-mono">{(mem.curatorDuration / 1000).toFixed(1)}s</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Tokens</span><span className="font-mono">{mem.tokenUsage ? `${formatTokens(mem.tokenUsage.promptTokens)} / ${formatTokens(mem.tokenUsage.completionTokens)}` : '\u2014'}</span></div>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                )
-              })()}
 
               {detail === null ? (
                 <div

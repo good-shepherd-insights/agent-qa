@@ -434,6 +434,7 @@ export class DashboardDatabase {
     if (updates.endedAt !== undefined) { fields.push('ended_at = ?'); values.push(updates.endedAt) }
     if (updates.failureSummary !== undefined) { fields.push('failure_summary = ?'); values.push(updates.failureSummary) }
     if (updates.errorLog !== undefined) { fields.push('error_log = ?'); values.push(updates.errorLog) }
+    // HISTORICAL-ONLY: no production caller passes `memoryLog` — see the marker on `memorySummary`.
     if (updates.memoryLog !== undefined) { fields.push('memory_log = ?'); values.push(updates.memoryLog) }
     if (updates.attributes !== undefined) { fields.push('attributes = ?'); values.push(JSON.stringify(updates.attributes)) }
     if (updates.platform !== undefined) { fields.push('platform = ?'); values.push(updates.platform) }
@@ -1189,6 +1190,24 @@ export class DashboardDatabase {
         `).get(...runIds) as Record<string, unknown>).total_tokens as number) || 0
       : 0
 
+    /*
+     * HISTORICAL-ONLY (407-16, REVIEW WR-04).
+     *
+     * `runs.memory_log` has NO production writer. 407-05 (`92773959`) deleted the last one along
+     * with the artifact drawer's v1 memory tab, and 407-16 deleted the run-detail collapsible that
+     * was still parsing the raw column inside a render function. This aggregate therefore reads
+     * LEGACY ROWS ONLY: on every install created since 407-05 it reports `runs: 0` and six zeroes,
+     * and it is retained solely so a database that predates the deletion keeps reporting what it
+     * actually recorded rather than silently losing it.
+     *
+     * The `memoryLog` setter on `updateRun` is retained for the same reason — historical-row tests
+     * need a way to plant such a row. Neither is a live path.
+     *
+     * RETIREMENT TRAVELS WITH THE INSIGHTS V1 SWEEP, not with this gap. The "Memory Curator"
+     * section of the insights page is still a live surface reading this value; deleting the column,
+     * its setter and this aggregate means deleting that section too, which is the pending todo
+     * STATE.md already carries for `memory_log` and `RunArtifactConfigSnapshot.memory`.
+     */
     const memorySummary = {
       runs: 0,
       added: 0,
