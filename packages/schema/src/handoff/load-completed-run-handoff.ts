@@ -214,8 +214,27 @@ const TEST_BUG_SUBTYPES = new Set<string>([
   'wrong_expected_value',
 ])
 
+/**
+ * The loader's spelling of the wire's `z.number().int().nonnegative()` — the domain
+ * `RunKnowledgePlanSourceSchema` (`../functions/runs`) declares for EVERY numeric member of a
+ * replay plan source: `flow.cursor`, `flow.length`, `guard.checksPassed`, `guard.total` and the
+ * three `procedureStepIndex` slots.
+ *
+ * The two predicates must never disagree. `planSourceOf` (agent `ops/runs-knowledge.ts`) picks an
+ * admitted value straight onto that strict wire, so a member this loader admits and the wire
+ * refuses reaches `spec.output.parse` as a thrown read and the Knowledge tab renders
+ * `read_failed` for the run — REVIEW WR-04, structurally the CR-01 class (a producer value
+ * reaching a stricter declaration) narrowed to "declared with a narrower domain than the
+ * admission predicate". A handoff carrying a negative cursor is malformed, not historical: the
+ * runner writes only indices and counts here (`recordProcedureReplaySource`, runner
+ * `loop/index.ts`), so nothing already on disk is refused by reading the wire's domain.
+ */
+function isOrdinal(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
 function hasProcedureStepIndexShape(value: unknown): boolean {
-  return isNonArrayObject(value) && typeof value.procedureStepIndex === 'number'
+  return isNonArrayObject(value) && isOrdinal(value.procedureStepIndex)
 }
 
 /**
@@ -240,13 +259,13 @@ function hasCompletePlanSourceShape(value: unknown): boolean {
 
   const guard = value.guard
   if (!isNonArrayObject(guard)) return false
-  if (typeof guard.checksPassed !== 'number' || typeof guard.total !== 'number') {
+  if (!isOrdinal(guard.checksPassed) || !isOrdinal(guard.total)) {
     return false
   }
   if ('miss' in guard) {
     const miss = guard.miss
     if (!isNonArrayObject(miss)) return false
-    if (typeof miss.procedureStepIndex !== 'number') return false
+    if (!isOrdinal(miss.procedureStepIndex)) return false
     if (
       typeof miss.reason !== 'string' ||
       !PLAN_SOURCE_MISS_REASONS.has(miss.reason)
@@ -261,13 +280,13 @@ function hasCompletePlanSourceShape(value: unknown): boolean {
     return false
   }
   if ('flow' in value) {
-    // F-381-51-1 · D-09: the additive flow cursor is admitted only well-formed — present ⇒
-    // {cursor, length} both finite numbers. Fail-closed on any other shape (the CR-02/381-36
-    // strictness is never loosened for a new member).
+    // F-381-51-1 · D-09 / 407-12 / 407-20: the additive flow cursor is admitted only
+    // well-formed — present ⇒ {cursor, length} both NON-NEGATIVE INTEGERS, the domain the wire
+    // declares (`RunKnowledgePlanSourceSchema.flow`). Fail-closed on any other shape (the
+    // CR-02/381-36 strictness is never loosened for a new member).
     const flow = value.flow
     if (!isNonArrayObject(flow)) return false
-    if (typeof flow.cursor !== 'number' || !Number.isFinite(flow.cursor)) return false
-    if (typeof flow.length !== 'number' || !Number.isFinite(flow.length)) return false
+    if (!isOrdinal(flow.cursor) || !isOrdinal(flow.length)) return false
   }
   return true
 }
