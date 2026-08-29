@@ -19,6 +19,7 @@
 // whether or not one is supplied, which is what keeps the wiring-parity claim true.
 
 import {
+  canaryAttributionsFor,
   diffSince,
   inspectRecords,
   listBundles,
@@ -94,6 +95,21 @@ export function createKnowledgeReaderPort(
       })
       await sight(result.kind === 'found' ? [result.record.recordId] : [])
       return result
+    },
+    /**
+     * 407 D-08: what became of the canary lines one run served.
+     *
+     * Resolved per call like its four siblings, and NOT sighted. The caller already holds every
+     * candidate id in the tuples it passes — it read them off its own run's evidence — so a
+     * sighting here would record that the reader was handed ids rather than that an entity was
+     * surfaced to anyone, which is the distinction the ledger exists to keep.
+     */
+    async canaryAttributions({ runId, tuples }) {
+      return canaryAttributionsFor({
+        knowledgeRoot: await input.resolveKnowledgeRoot(),
+        runId,
+        tuples,
+      })
     },
   }
 }

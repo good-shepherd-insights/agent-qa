@@ -384,4 +384,46 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
       target: { grain: 'record', recordId: 'rec-not-in-this-store' },
     })
   })
+
+  // 407-04 (D-08): the reader port's fifth member, bound over the `/reader` entry like the four
+  // above it. The claim is not that the attribution join works — `canary-attribution.test.ts`
+  // owns that — but that the COMPOSITION forwards what it was given: the run id, the tuples, and
+  // a knowledge root resolved per call rather than captured once.
+  it('binds canaryAttributions over the reader entry, forwarding the run and the tuples', async () => {
+    const recordId = publish()
+    let resolved = 0
+    const port = createKnowledgeReader(() => {
+      resolved += 1
+      return knowledgeRoot
+    })
+
+    expect(port.canaryAttributions).toBeTypeOf('function')
+
+    const tuples = [
+      { candidateId: recordId, testId: 'checkout', testIndex: 0, stepIndex: 1 },
+      { candidateId: recordId, testId: 'checkout', testIndex: 0, stepIndex: 2 },
+    ]
+    const rows = await port.canaryAttributions!({ runId: 'run-A', tuples })
+
+    // One row per tuple, in the order asked, each addressed back to the line it answers.
+    expect(rows.map((row) => [row.candidateId, row.testIndex, row.stepIndex])).toEqual([
+      [recordId, 0, 1],
+      [recordId, 0, 2],
+    ])
+    for (const row of rows) {
+      expect(row.observationId).toMatch(/^canary-outcome:[0-9a-f]{64}$/)
+      // Nothing is committed against these ids, so the honest answer carries no outcome AT ALL —
+      // an absent key, never a word a surface could print as a verdict.
+      expect(Object.hasOwn(row, 'outcome')).toBe(false)
+    }
+
+    // The run id is really forwarded: the same tuples under a different run are different
+    // observations, which is the whole reason the id is run-scoped.
+    const other = await port.canaryAttributions!({ runId: 'run-B', tuples })
+    expect(other.map((row) => row.observationId))
+      .not.toEqual(rows.map((row) => row.observationId))
+
+    // And the root is resolved PER CALL, like its four siblings.
+    expect(resolved).toBe(2)
+  })
 })

@@ -56,6 +56,19 @@ export type {
   QuarantineDisposition,
   QuarantineFloorEligibility,
 } from './quarantine/detection.js'
+// 407 D-08: the attribution read — what became of the canary lines a run served. On the READER
+// entry because it opens nothing, writes nothing and holds no lease: it walks committed bundle
+// files, recomputes each served tuple's observation id and reports the surviving outcome carrying
+// it. The append half of a canary outcome stays behind the writer lease on the main entry, which
+// is exactly the power this entry withholds — a read that could mint the outcome it reports would
+// be the tampering hazard rather than its mitigation (T-407-11).
+export { canaryAttributionsFor } from './serving/canary-attribution.js'
+export type {
+  CanaryAttributionOutcome,
+  CanaryAttributionRow,
+  CanaryAttributionTuple,
+  CanaryAttributionsForOptions,
+} from './serving/canary-attribution.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export type { BuildRange, ReadOptions, SearchOptions } from '@vostride/agent-qa-schema'
