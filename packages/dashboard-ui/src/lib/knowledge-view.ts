@@ -24,7 +24,7 @@
 // Publishing them here — with the shape of the `ready` arm they hang off — is what keeps those
 // plans pure additions to a proven module rather than three private spellings of one contract.
 
-import { TRACE_TRUNCATION_TOP_K } from '@vostride/agent-qa-schema'
+import { TRACE_TRUNCATION_TOP_K, formatEntityUri, parseShortId } from '@vostride/agent-qa-schema'
 import type {
   BriefWhyNoTraceReason,
   PostProcessingChipStatus,
@@ -35,10 +35,15 @@ import type {
   RetrievalTraceLeg,
   RunKnowledgeCanaryAttribution,
   RunKnowledgePlanSource,
+  RunKnowledgeProjection,
   RunKnowledgeStep,
   RunKnowledgeTrace,
   TraceLine,
 } from '@vostride/agent-qa-schema'
+
+import { entityRefRoute } from '@/chat/entity-card'
+import { COUNTS_NOT_RECORDED_TEXT, curationFactsText } from './post-processing-view'
+import { routes } from './routes'
 
 import type { KnowledgeRead } from './api'
 
@@ -274,6 +279,86 @@ export function showAllLinesLabel(total: number): string {
 
 /** The Learned half's heading — one `<h4>`, 16px/500 (407-09). */
 export const LEARNED_HEADING = 'Learned'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The Learned half's copy (407-09 · LERN-02, D-09 / D-10 / D-11 / D-12)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the half says while curation has not settled (D-12).
+ *
+ * A SENTENCE, NOT A SKELETON. A skeleton claims bytes are on their way and will arrive shortly;
+ * curation is a chain a daemon may not have picked up yet, and 404's own posture text exists
+ * because "pending" can mean hours. The sentence names the CONDITION the deltas depend on, which
+ * is the only thing a reader can act on — and it is the same sentence for `pending` and `running`
+ * because the reader is waiting on one fact either way.
+ */
+export const DELTAS_PENDING_TEXT = 'Deltas land when curation settles.'
+
+/**
+ * What the half says when curation failed (D-12).
+ *
+ * IT STATES THE CONSEQUENCE, not just the failure. An empty record list under a `failed` chip
+ * reads as "curation ran and changed nothing" to anyone not staring at the chip — the exact
+ * collapse between a failure and a settled no-op that D-12 was written against.
+ */
+export const CURATION_FAILED_TEXT = 'Curation failed — nothing was learned from this run.'
+
+/**
+ * The heading's sentence when a settled row committed no counts (D-12).
+ *
+ * The chip's {@link COUNTS_NOT_RECORDED_TEXT} says the same fact as a fragment beside a badge;
+ * this is the sentence form, in the half that has room for one. Both are published, neither is
+ * derived from the other by casing, and the cells pin both — a sentence built by upper-casing a
+ * fragment is a sentence that breaks the day the fragment gains a leading noun.
+ */
+export const COUNTS_NOT_RECORDED_SENTENCE = 'Counts not recorded for this run.'
+
+/**
+ * What the half says when the counts moved but no change record reached this run (D-10).
+ *
+ * `yet` is load-bearing. The run link is stamped on the change record by the reader's own
+ * `diffSince`, and a change whose attribution is not derivable carries no run id at all rather
+ * than a guessed one. So "no rows" here is an absence of ATTRIBUTION, not an absence of change —
+ * and the counts beside it, which did move, stay on screen to say so.
+ */
+export const CHANGES_NOT_AVAILABLE_TEXT = 'Change records for this run are not available yet.'
+
+/** What the half says when curation settled having moved neither count (D-12). */
+export const CHANGED_NOTHING_TEXT = 'Curation ran and changed nothing.'
+
+/** The one CTA in the whole tab (D-11) — where proposals are reviewed, never a proposal itself. */
+export const REVIEW_PROPOSALS_CTA = 'Review proposals'
+
+/**
+ * The pending-proposals line (D-11).
+ *
+ * THE VERB AGREES WITH THE COUNT, not just the noun. `1 proposals awaiting` and `1 proposal
+ * awaiting` are both wrong; the singular is its own sentence, which is why this is a function and
+ * not a template with an `s`.
+ */
+export function pendingProposalsLine(count: number): string {
+  return count === 1
+    ? '1 proposal awaits your decision'
+    : `${String(count)} proposals awaiting your decision`
+}
+
+/**
+ * The change kinds the Learned half paints — FOUR of the record's six (D-10).
+ *
+ * `added` and `purged` are deliberately not here. A record being born is what the knowledge store
+ * did with a candidate, and a record being deleted is a maintenance action; neither is what THIS
+ * RUN taught the store, which is what a reader opening a run's Learned half is asking. `promoted`
+ * IS in the set — it is the promotions kind D-10 names.
+ *
+ * A closed `as const` table rather than a predicate, so the component's badge switch and the cells
+ * both spell the vocabulary once and a fifth kind is a compile error rather than a silent drop.
+ */
+export const LEARNED_CHANGE_KINDS = ['confirmed', 'superseded', 'deprecated', 'promoted'] as const
+
+export type LearnedChangeKind = (typeof LEARNED_CHANGE_KINDS)[number]
+
+const LEARNED_CHANGE_KIND_SET: ReadonlySet<string> = new Set(LEARNED_CHANGE_KINDS)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The view
@@ -525,15 +610,60 @@ export interface StepRowView {
 }
 
 /**
- * The Learned half, as the panel will paint it.
+ * The five words the Learned half's root can carry (D-12).
  *
- * DECLARED NOW, FILLED BY 407-09. The members are the DTO's own, so the plan that paints them
- * adds a projection body and no new shape — and the `ready` arm below does not have to grow a
- * member (which every consumer would have to be re-typed against) on the day it does.
+ * FOUR OF THEM MIRROR THE CURATION CHIP and the fifth is the one the chip cannot say. A reader
+ * looking at the header and the panel at once must not see two different accounts of the same
+ * chain; `counts-absent` is the extra state because "settled, and nobody wrote the numbers down"
+ * is a fact about the frozen row rather than about the chain, and collapsing it into `done` would
+ * make an unrecorded run indistinguishable from one that changed nothing.
+ */
+export type LearnedState = 'pending' | 'running' | 'done' | 'failed' | 'counts-absent'
+
+/**
+ * One record this run's curation changed (D-10).
+ *
+ * `ref` AND `href` ARE TWO DIFFERENT ABSENCES. `ref` is missing when the record id is not an
+ * addressable entity short-ID at all — most record ids are content-derived bundle ids, and minting
+ * an entity URI for one would be hand-formatting an address to a thing the scheme does not name.
+ * `href` is missing when the reference IS canonical but this dashboard has no page for its kind
+ * (`ENTITY_KIND_ROUTES.MEM` is `null` under the DASH-03 contract). The row is addressable by
+ * `recordId` in both cases; neither absence is ever a guess.
+ */
+export interface LearnedRowView {
+  readonly kind: LearnedChangeKind
+  /** The record's own id, VERBATIM — the row addresses a record, not a title. */
+  readonly recordId: string
+  /** The canonical entity URI, built by the schema's own codec. Never hand-formatted here. */
+  readonly ref?: string
+  /** Where the reference goes in THIS build, when it goes anywhere. Never a minted route. */
+  readonly href?: string
+}
+
+/**
+ * The Learned half, as the panel paints it (407-09).
+ *
+ * `rows` IS REQUIRED AND `sentence` IS NOT, which is the shape of the contract rather than a
+ * convenience: every state has a list (empty for four of them) and exactly the states with nothing
+ * to list carry a sentence. A half with neither would render blank, and a blank half beside a
+ * populated Used half is the dishonesty D-12 exists to forbid — so `learnedView` below is total
+ * and every arm sets one or the other.
  */
 export interface LearnedView {
-  readonly changes: readonly RecordChange[]
-  readonly canaryAttributions: readonly RunKnowledgeCanaryAttribution[]
+  readonly state: LearnedState
+  /** The chip's own count line, from the chip's own function — one number, one wording (D-09). */
+  readonly countLine?: string
+  /** The state sentence. Absent exactly when {@link LearnedView.rows} is non-empty. */
+  readonly sentence?: string
+  readonly rows: readonly LearnedRowView[]
+}
+
+/** The pending-proposals line: a COUNT and a door, never any proposal content (D-11). */
+export interface ProposalsView {
+  readonly count: number
+  readonly line: string
+  readonly ctaText: string
+  readonly href: string
 }
 
 /** The rung that served THIS run, if the evidence recorded one (D-13). */
@@ -559,6 +689,7 @@ export type KnowledgeView =
       readonly used: { readonly summary: string; readonly steps: readonly StepRowView[] }
       readonly rung?: RungView
       readonly learned?: LearnedView
+      readonly proposals?: ProposalsView
     }
 
 /** Did this step get served anything at all, on any channel? The one fold "briefed" means. */
@@ -642,6 +773,111 @@ function stepDetail(
 }
 
 /**
+ * The canonical entity URI for a changed record, or nothing (D-10).
+ *
+ * BUILT BY THE SCHEMA'S CODEC, NEVER BY CONCATENATION. `formatEntityUri` is the one place the
+ * scheme, the kind segment and the short-ID canonicalisation live; a template literal here would
+ * be a second spelling of an address format that three other surfaces already publish, and it
+ * would go on producing well-formed-looking URIs after the codec moved.
+ *
+ * MOST RECORD IDS ARE NOT ENTITY ADDRESSES, and this is the honest answer to that. A change record
+ * carries a record-grain id — content-derived, like `fact-page-https-example-com-0f9a` — while the
+ * entity URI scheme names a MEM-ordinal short-ID minted by the entity ledger, which this
+ * dashboard has no access to. So the reference is built only for an id that ALREADY is a MEM
+ * short-ID, and every other row renders its id and no reference. Feeding a bundle id to the codec
+ * would throw; guessing an ordinal for it would mint an address to a different record.
+ */
+function learnedRecordRef(recordId: string): string | undefined {
+  return parseShortId(recordId)?.kind === 'MEM' ? formatEntityUri('MEM', recordId) : undefined
+}
+
+function learnedRow(row: RecordChange): LearnedRowView {
+  const ref = learnedRecordRef(row.recordId)
+  const href = ref === undefined ? undefined : entityRefRoute(ref)
+  return {
+    kind: row.change as LearnedChangeKind,
+    recordId: row.recordId,
+    ...(ref === undefined ? {} : { ref }),
+    ...(href === undefined ? {} : { href }),
+  }
+}
+
+/**
+ * The Learned half, as one of five states — and every one of them says something (D-12).
+ *
+ * THE ORDER OF THE ARMS IS THE ORDER OF THE QUESTIONS. Is the chain still moving? Did it fail?
+ * Did the frozen row record what it did? Did it do anything? Did any of it reach this run? Each
+ * answer stops there, because each sends a reader somewhere different, and a single collapsed
+ * "no rows" arm would send all five of them to the same shrug.
+ *
+ * THE COUNTS COME ONLY FROM THE SETTLED ROW (D-09). An unsettled chain has no counts to show — not
+ * zeros, not a stale pair from a previous read — so `countLine` is absent for `pending`, `running`
+ * and `failed`, and the chip beside it is silent for exactly the same reason.
+ */
+export function learnedView(
+  projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
+): LearnedView {
+  const { status, counts } = projection.curation
+
+  if (status === 'pending' || status === 'running') {
+    return { state: status, sentence: DELTAS_PENDING_TEXT, rows: [] }
+  }
+
+  if (status === 'failed') {
+    return { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [] }
+  }
+
+  if (counts === undefined) {
+    return {
+      state: 'counts-absent',
+      countLine: COUNTS_NOT_RECORDED_TEXT,
+      sentence: COUNTS_NOT_RECORDED_SENTENCE,
+      rows: [],
+    }
+  }
+
+  const countLine = curationFactsText(counts.curated, counts.deprecated)
+
+  if (counts.curated === 0 && counts.deprecated === 0) {
+    return { state: 'done', countLine, sentence: CHANGED_NOTHING_TEXT, rows: [] }
+  }
+
+  // ALREADY FILTERED TO THIS RUN by `runs.knowledge` (407-04's run-link stamping and canary
+  // observation join, never a since-ordinal window). This module narrows the KINDS and nothing
+  // else — re-filtering by run here would be a second, weaker copy of that join.
+  const rows = projection.learned.changes
+    .filter(row => LEARNED_CHANGE_KIND_SET.has(row.change))
+    .map(learnedRow)
+
+  return rows.length === 0
+    ? { state: 'done', countLine, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [] }
+    : { state: 'done', countLine, rows }
+}
+
+/**
+ * The pending-proposals line, or nothing at all (D-11).
+ *
+ * TWO ABSENCES COLLAPSE HERE, AND THAT IS DELIBERATE. `undefined` means this host owns no
+ * proposals inbox; `0` means the inbox answered and there is nothing waiting. Both render no line,
+ * because a line reading "0 proposals awaiting your decision" is a nag about an empty queue — and
+ * a reader who has nothing to decide does not need to be told which of the two reasons applies.
+ *
+ * THE PANEL CARRIES NO PROPOSAL CONTENT (T-407-22). A count and a door; the inbox owns the rest.
+ */
+function proposalsView(count: number | undefined): ProposalsView | undefined {
+  if (count === undefined || count === 0) return undefined
+  return {
+    count,
+    line: pendingProposalsLine(count),
+    ctaText: REVIEW_PROPOSALS_CTA,
+    // Proposals are reviewed through `/fn proposals.list` in chat; no dashboard inbox route
+    // exists, and this module does not mint one. `routes` is the same builder every other page
+    // navigates with, so a rename moves this link rather than leaving it pointing at nothing.
+    href: routes.chat,
+  }
+}
+
+/**
  * The read, as the tab — or as the named state that stopped there being one.
  *
  * FOUR ARMS, AND THREE OF THEM ARE ABSENCES. That ratio is the point: `runs.knowledge` answers
@@ -676,10 +912,14 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
         hints: steps.filter(row => row.planSource === 'procedure-hint').length,
       })
 
+  const proposals = proposalsView(projection.pendingProposalCount)
+
   return {
     state: 'ready',
     used: { summary, steps },
     ...(projection.retrievalRung === undefined ? {} : { rung: rungView(projection.retrievalRung) }),
+    learned: learnedView(projection),
+    ...(proposals === undefined ? {} : { proposals }),
   }
 }
 

@@ -766,6 +766,20 @@ function learnedFrom(
   return learnedView(read.projection)
 }
 
+/**
+ * The proposals line, read where it LIVES — the `ready` arm, beside `learned` and not inside it.
+ *
+ * The inbox is not this run's chain (D-11): a pending proposal outlives the curation that produced
+ * it, so it hangs off the tab rather than off a half whose state is a curation word.
+ */
+function proposalsFrom(
+  overrides: Partial<Extract<RunKnowledgeProjection, { kind: 'ready' }>> = {},
+) {
+  const view = projectKnowledgeView(ready(overrides))
+  if (view.state !== 'ready') throw new Error(`expected ready, got ${view.state}`)
+  return view.proposals
+}
+
 describe('the Learned half mirrors the curation word and NEVER renders blank (D-12)', () => {
   it('says deltas are still coming while curation is pending — a sentence, not a spinner', () => {
     const view = learnedFrom({ curation: { status: 'pending' } })
@@ -904,24 +918,22 @@ describe('the record list is the four LEARNED kinds and nothing else (D-10)', ()
 
 describe('the proposals line is a COUNT and a door, never any proposal content (D-11)', () => {
   it('renders no proposals member at all when the op bound no inbox', () => {
-    expect(learnedFrom({ curation: { status: 'done', counts: { curated: 1, deprecated: 0 } } }).proposals)
+    expect(proposalsFrom({ curation: { status: 'done', counts: { curated: 1, deprecated: 0 } } }))
       .toBeUndefined()
   })
 
   it('renders no proposals member when the inbox answered zero — a zero is not news', () => {
-    const view = learnedFrom({
+    expect(proposalsFrom({
       curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
       pendingProposalCount: 0,
-    })
-    expect(view.proposals).toBeUndefined()
+    })).toBeUndefined()
   })
 
   it('says one proposal awaits in the singular, and points at where proposals are reviewed', () => {
-    const view = learnedFrom({
+    expect(proposalsFrom({
       curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
       pendingProposalCount: 1,
-    })
-    expect(view.proposals).toEqual({
+    })).toEqual({
       count: 1,
       line: '1 proposal awaits your decision',
       ctaText: REVIEW_PROPOSALS_CTA,
@@ -930,19 +942,25 @@ describe('the proposals line is a COUNT and a door, never any proposal content (
   })
 
   it('says many proposals await in the plural', () => {
-    const view = learnedFrom({
+    expect(proposalsFrom({
       curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
       pendingProposalCount: 3,
-    })
-    expect(view.proposals?.line).toBe('3 proposals awaiting your decision')
+    })?.line).toBe('3 proposals awaiting your decision')
     expect(pendingProposalsLine(3)).toBe('3 proposals awaiting your decision')
     expect(pendingProposalsLine(1)).toBe('1 proposal awaits your decision')
   })
 
   it('shows the proposals line even while curation is unsettled — the inbox is not this run\'s chain', () => {
-    const view = learnedFrom({ curation: { status: 'pending' }, pendingProposalCount: 2 })
-    expect(view.state).toBe('pending')
-    expect(view.proposals?.count).toBe(2)
+    expect(proposalsFrom({ curation: { status: 'pending' }, pendingProposalCount: 2 })?.count).toBe(2)
+    expect(learnedFrom({ curation: { status: 'pending' } }).state).toBe('pending')
+  })
+
+  it('carries no proposal CONTENT anywhere in the view — a count and a door, nothing else (T-407-22)', () => {
+    const proposals = proposalsFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      pendingProposalCount: 2,
+    })
+    expect(Object.keys(proposals ?? {}).sort()).toEqual(['count', 'ctaText', 'href', 'line'])
   })
 })
 
