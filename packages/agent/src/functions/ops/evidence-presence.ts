@@ -29,9 +29,19 @@
 // failure view. The bundled local `existsSync` cannot throw, but the port is shaped for hosts that
 // do not hold blobs locally, i.e. hosts whose `has` is a network call.
 //
-// STATS ARE DEDUPED BY SHA WITHIN ONE CALL. A 40-failure run cites the same decision screenshot
-// from every member, and a run-detail page's sub-actions repeat refs across steps; one syscall per
-// distinct content address is the difference between a stat and a stat storm (T-406-12).
+// STATS ARE DEDUPED BY SHA WITHIN ONE CALL, AND ONE CALL IS ONE REF LIST — NOT ONE RUN (T-406-12).
+// `new Set(refs.map(...))` collapses the duplicates in the list it was handed, which is the refs
+// ONE verdict cites or the refs ONE sub-action produced. Both callers invoke this inside a
+// `Promise.all` — `analysis-get` per verdict, `runs-detail` per sub-action — so a 40-failure run
+// citing the same decision screenshot from every member still takes 40 stats, and a ref repeated
+// across a page's steps is stat'd once per step.
+//
+// THAT RESIDUAL IS RECORDED, NOT MITIGATED, and an earlier spelling of this note claimed the
+// opposite by citing exactly those two cross-call examples as things it collapsed. The fix, if it
+// ever needs one, is to hoist to one probe per read and join back by sha. It is not taken here:
+// v1 excludes performance work, the bundled `has` is a single `existsSync`, and the bound is
+// refs-per-member rather than refs-per-run. A note describing a mitigation the code does not
+// implement is worse than the syscalls, because the next reader budgets against it.
 
 import type { EvidenceBlobPresence, RunId } from '@vostride/agent-qa-schema'
 

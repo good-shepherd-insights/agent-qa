@@ -557,7 +557,11 @@ describe('analysis.get — read-time presence on cited artifacts (D-17)', () => 
     }])
   })
 
-  it('stats each distinct sha ONCE however many verdicts cite it', async () => {
+  it('stats each distinct sha ONCE within the ref list it is handed', async () => {
+    // WITHIN one verdict's cited list, which is the scope `annotatePresence` dedups over and the
+    // scope this cell measures. The cross-verdict case — 40 members citing one screenshot — is NOT
+    // collapsed, because both callers invoke the annotation per member; that residual is recorded
+    // on `evidence-presence.ts` rather than mitigated (T-406-12).
     const seen: string[] = []
     const other = 'b'.repeat(64)
     await citedArtifactUnder(blobsAnswering('found', seen), [
