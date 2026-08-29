@@ -68,6 +68,7 @@ export type {
   CanaryAttributionRow,
   CanaryAttributionTuple,
   CanaryAttributionsForOptions,
+  CanaryAttributionsResult,
 } from './serving/canary-attribution.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'

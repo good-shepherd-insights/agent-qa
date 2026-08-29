@@ -22,6 +22,15 @@
 // CR-03): an unreadable bundle can attribute nothing, so it must not be allowed to deny the rows
 // of the bundles that read cleanly. A store this walker cannot fully load is still a store it can
 // answer honestly about the readable part of; a store it cannot LIST is not, and still throws.
+//
+// A SKIPPED BUNDLE IS COUNTED, NEVER SILENTLY ABSORBED (407-19, REVIEW WR-03). "Confirmed
+// nowhere" and "the bundle that would have confirmed it could not be read" are different
+// instructions to a reader, and this walk is the only place that knows which one applies — so the
+// partiality travels ON the return value as `skippedBundles`, not as something a caller infers
+// from a sibling read happening to fail on the same file. That inference is exactly what used to
+// carry the signal, and it does not survive the two reads seeing different stores. The integrity
+// arm of the skip is the T-407-11 hazard class: bytes that parse but no longer hash to what the
+// manifest committed must never read back as a clean, positive `not attributed`.
 
 import { asRecordId, survivingOutcomeEvents } from '@vostride/agent-qa-schema'
 
@@ -58,6 +67,20 @@ export interface CanaryAttributionRow {
   outcome?: CanaryAttributionOutcome
 }
 
+/**
+ * The attribution answer, with the partiality of the walk that produced it.
+ *
+ * `skippedBundles > 0` means the answer is PARTIAL — some bundle in the store failed
+ * `loadMaintenanceBundle` (load or integrity) and was skipped. A caller that renders
+ * `not attributed` from an absent `outcome` must consult this first: on a partial walk the
+ * absence means "not found in the part of the store I could read", which is not the same claim
+ * (REVIEW WR-03; the T-407-11 hazard class is the integrity arm).
+ */
+export interface CanaryAttributionsResult {
+  rows: CanaryAttributionRow[]
+  skippedBundles: number
+}
+
 export interface CanaryAttributionsForOptions {
   knowledgeRoot: string
   runId: string
@@ -89,18 +112,27 @@ function isAttributingType(type: string): type is CanaryAttributionOutcome {
  * partially for — there is no way to know what was missed, so an empty-looking answer would be a
  * guess. The distinction is exactly "I read everything readable" versus "I do not know what is
  * here".
+ *
+ * AND IT SAYS HOW MANY IT SKIPPED. Every skip increments `skippedBundles`, which rides back out on
+ * the return value so the caller can tell the two absences apart (407-19, REVIEW WR-03). The count
+ * covers bundles OUTSIDE the candidate set too: a bundle that will not load has no readable
+ * manifest id, so there is no honest way to decide it was irrelevant.
  */
 function attributingOutcomesByObservationId(
   knowledgeRoot: string,
   candidateIds: ReadonlySet<string>,
-): Map<string, CanaryAttributionOutcome> {
+): { outcomes: Map<string, CanaryAttributionOutcome>; skippedBundles: number } {
   const outcomes = new Map<string, CanaryAttributionOutcome>()
+  let skippedBundles = 0
   for (const entry of enumerateMaintenanceBundleDirs(knowledgeRoot)) {
     let bundle
     try {
       bundle = loadMaintenanceBundle(entry)
     } catch (error) {
-      if (error instanceof KnowledgeMaintenanceScanError) continue
+      if (error instanceof KnowledgeMaintenanceScanError) {
+        skippedBundles += 1
+        continue
+      }
       throw error
     }
     if (!candidateIds.has(bundle.manifest.id)) continue
@@ -113,27 +145,31 @@ function attributingOutcomesByObservationId(
       outcomes.set(event.observationId, event.type)
     }
   }
-  return outcomes
+  return { outcomes, skippedBundles }
 }
 
 /**
  * Answer, per served canary tuple, the observation id it would have been attributed under and the
  * committed outcome carrying that id — when one survives.
  *
- * An empty tuple list answers `[]` without touching the store: there is nothing to look up, and a
- * walk that could fail on an unrelated bundle would turn "you asked about nothing" into an error.
+ * The answer carries `skippedBundles` beside the rows so the caller never has to infer the
+ * partiality of this walk from some other read (REVIEW WR-03).
+ *
+ * An empty tuple list answers no rows and no skips without touching the store: there is nothing to
+ * look up, and a walk that could fail on an unrelated bundle would turn "you asked about nothing"
+ * into an error.
  */
 export function canaryAttributionsFor(
   options: CanaryAttributionsForOptions,
-): CanaryAttributionRow[] {
-  if (options.tuples.length === 0) return []
+): CanaryAttributionsResult {
+  if (options.tuples.length === 0) return { rows: [], skippedBundles: 0 }
 
-  const outcomes = attributingOutcomesByObservationId(
+  const { outcomes, skippedBundles } = attributingOutcomesByObservationId(
     options.knowledgeRoot,
     new Set(options.tuples.map((tuple) => tuple.candidateId)),
   )
 
-  return options.tuples.map((tuple) => {
+  const rows = options.tuples.map((tuple) => {
     const observationId = canaryOutcomeObservationId({
       candidateId: asRecordId(tuple.candidateId),
       runId: options.runId,
@@ -150,4 +186,6 @@ export function canaryAttributionsFor(
       ...(outcome === undefined ? {} : { outcome }),
     }
   })
+
+  return { rows, skippedBundles }
 }
