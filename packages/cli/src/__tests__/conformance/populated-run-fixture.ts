@@ -518,6 +518,38 @@ function plannerReasoning(): string {
 }
 
 /**
+ * The measured ANLZ-01 leaf — a MEMORY-RETRIEVAL RELEVANCE SCORE, carried into this fixture's
+ * analyze-run prompt on purpose (406-11).
+ *
+ * WHY A FIXTURE CARRIES A FLOAT AT ALL. The 399 defect was not "the analyze-run job throws"; it was
+ * "the egress guardrail reads a printed float as a credit card". 406-07 measured the three literals
+ * that blocked three permanently-failed `analyze-run` jobs — `1.1428571428571428` (8/7),
+ * `1.4869565217391303` and this one — every one of them a `retrievalTrace.servedLines[].score` in
+ * the failing step's memory channel, whose Luhn-valid 16-digit fraction is all
+ * `CREDIT_CARD_CANDIDATE_RE` can see across the dot. Without such a literal in the prompt, a
+ * shipped-binary cell that watches the job row complete measures the AUTHORING PATH and not the
+ * guardrail: 406-11 reverted 406-07's fix, rebuilt, and the whole ten-cell suite stayed GREEN.
+ * That is the measurement this constant answers.
+ *
+ * WHY IT RIDES THE PLANNER'S RECORDED REASONING RATHER THAN A RETRIEVAL TRACE. This fixture mints
+ * an EMPTY `agent-qa-knowledge` directory, so no memory is served and `pack.memory` carries no
+ * trace to plant a score in. The nearest carrier that reaches the same place is the planner's own
+ * recorded reasoning: `subActions[].plan` is quoted verbatim into every evidence pack
+ * (`evidence-diet.ts` `quoteStep`) and the packs ARE the author's volatile tier
+ * (`analyze-run-author.ts` `volatileTier`). It is the failing arm's sentence, so only the RED
+ * drive's prompt carries it and the green control's planning turns are byte-identical to what they
+ * have always been.
+ *
+ * IT MUST STAY DELIMITED ON BOTH SIDES, and a trailing full stop would break that. `isFractionalTail`
+ * requires the fraction's right-hand neighbour to be a delimiter and treats `.` as NOT one (a dotted
+ * chain is a version string, not a float), so `relevance 1.0285714285714285.` BLOCKS AT HEAD and
+ * would red this fixture's own preflight. The sentence below therefore continues after the number.
+ * Measured through the real `scan()` under the default policy: `pass` at HEAD, `block` /
+ * `creditCard` with 406-07's fix reverted.
+ */
+export const POPULATED_RETRIEVAL_SCORE = '1.0285714285714285'
+
+/**
  * The planner's reasoning on the arm that DECLARES THE STEP IMPOSSIBLE (405-14 · WINDOWS #287).
  *
  * THE SAME THREE PLANTED VALUES, RE-ORDERED — and the order is the only difference that matters.
@@ -534,7 +566,14 @@ function plannerFailureReasoning(): string {
   return (
     `Cannot acknowledge: the notice names ${POPULATED_EMAIL} as contact, the operator `
     + `credential is ${POPULATED_SECRET_VALUE}, and the declared step credential resolves to `
-    + `${POPULATED_DECLARED_SECRET_VALUE}. None of the three may ever be recorded in clear.`
+    + `${POPULATED_DECLARED_SECRET_VALUE}. None of the three may ever be recorded in clear. `
+    // APPENDED, NEVER INTERLEAVED (406-11). Every word position the block above measures — the
+    // email at 21, the masking-seeded credential at 23, both relative to the banner's published
+    // preview budget — is a position from the FRONT, so the leaf rides at the back where it moves
+    // none of them. See {@link POPULATED_RETRIEVAL_SCORE} for why the sentence continues after the
+    // number rather than ending on it.
+    + `Memory retrieval served this step with relevance ${POPULATED_RETRIEVAL_SCORE} for the `
+    + `notice brief.`
   )
 }
 

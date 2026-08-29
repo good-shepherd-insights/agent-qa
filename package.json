@@ -39,6 +39,7 @@
     "validate:run-detail-mutation": "bash scripts/405-run-detail-mutation.sh",
     "validate:debris-mutation": "bash scripts/405-debris-mutation.sh",
     "validate:failure-banner-mutation": "bash scripts/405-failure-banner-mutation.sh",
+    "validate:failure-view-mutation": "bash scripts/406-failure-view-mutation.sh",
     "release:docker": "node scripts/release/docker.mjs",
     "release:docker:check": "node scripts/release/docker.mjs --check-local",
     "release:dry-run": "node scripts/release/dry-run.mjs",
