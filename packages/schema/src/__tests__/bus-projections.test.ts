@@ -436,3 +436,40 @@ describe('projectTestFinished widened fields (Q1 append — durationMs/failureSu
     expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
   })
 })
+
+describe('projectStepFinalized retrievalRung (407 D-14 — read from the EVIDENCE, not from extra)', () => {
+  it('carries the recorded rung verbatim; the closed enum words survive the mask', () => {
+    const evidence = makeStepEvidence(false)
+    evidence.retrievalRung = {
+      schemaVersion: 1,
+      rung: 'static-floor',
+      reason: 'native-runtime-unavailable',
+    }
+    const payload = projectStepFinalized(evidence, { testIndex: 0, stepIndex: 0 }, mask)
+    expect(payload.retrievalRung).toEqual({
+      schemaVersion: 1,
+      rung: 'static-floor',
+      reason: 'native-runtime-unavailable',
+    })
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+
+  it('carries a memidex rung with no reason key', () => {
+    const evidence = makeStepEvidence(false)
+    evidence.retrievalRung = { schemaVersion: 1, rung: 'memidex' }
+    const payload = projectStepFinalized(evidence, { testIndex: 0, stepIndex: 0 }, mask)
+    expect(payload.retrievalRung).toEqual({ schemaVersion: 1, rung: 'memidex' })
+    expect('reason' in (payload.retrievalRung as object)).toBe(false)
+  })
+
+  it('omits retrievalRung entirely when the evidence recorded none — never a zero-fill', () => {
+    const payload = projectStepFinalized(
+      makeStepEvidence(false),
+      { testIndex: 0, stepIndex: 0 },
+      mask,
+      { status: 'passed' },
+    )
+    expect('retrievalRung' in payload).toBe(false)
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+})

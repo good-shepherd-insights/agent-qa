@@ -102,8 +102,94 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     expect(() => guardCompletedRunHandoff(withoutVersion as CompletedRunHandoff)).toThrow()
   })
 
-  it('registers exactly the v2..v5 identity migrations so schemaVersion 1 stays unreadable', () => {
+  it('registers exactly the v2..v6 identity migrations so schemaVersion 1 stays unreadable', () => {
     expect(HANDOFF_MIGRATIONS).toBeDefined()
-    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2', '3', '4', '5'])
+    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2', '3', '4', '5', '6'])
+  })
+})
+
+// --- 407-03 (TRST-01, D-13): the additive `StepEvidence.retrievalRung` -----------------------
+//
+// The rung is recorded BESIDE the served brief, never inside it, so a v6 handoff stays
+// loadable and a v7 handoff that carries one is admitted only in the shape the schema
+// declares. Present-implies-valid, exactly as `retrievalTrace` next door.
+
+function makeStepWithRung(rung?: unknown): unknown {
+  return {
+    stepIndex: 0,
+    stepText: 'Save the record',
+    cacheStatus: 'miss',
+    servedBrief: {
+      scope,
+      asOfBuild: 1,
+      budget: 4096,
+      truncation: 'none',
+      channel1: [],
+      channel2: [],
+      channel3: [],
+      briefDigest: 'brief-digest-deadbeef',
+    },
+    subActions: [],
+    verifierVerdict: { pass: true, reasoning: 'saved' },
+    ...(rung !== undefined ? { retrievalRung: rung } : {}),
+  }
+}
+
+function makeHandoffWithStep(rung?: unknown): Record<string, unknown> {
+  return {
+    ...makeValidHandoff(),
+    tests: [
+      {
+        testId: 't-1',
+        testName: 'checkout happy path',
+        filePath: 'tests/checkout.test.yaml',
+        testIndex: 0,
+        outcome: 'passed',
+        steps: [makeStepWithRung(rung)],
+      },
+    ],
+  }
+}
+
+describe('StepEvidence.retrievalRung at the load boundary (407 D-13, TRST-01)', () => {
+  it('bumps the current handoff schemaVersion to 7', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
+  })
+
+  it('loads a stored schemaVersion 6 document whose steps carry no rung, unchanged', () => {
+    const doc = { ...makeHandoffWithStep(), schemaVersion: 6 }
+    const guarded = guardCompletedRunHandoff(doc)
+    const step = guarded.tests[0]?.steps[0]
+    expect(step).toBeDefined()
+    expect('retrievalRung' in (step as object)).toBe(false)
+  })
+
+  it('loads a v7 document whose step carries a recorded rung, field intact', () => {
+    const recorded = {
+      schemaVersion: 1,
+      rung: 'static-floor',
+      reason: 'native-runtime-unavailable',
+    }
+    const guarded = guardCompletedRunHandoff(makeHandoffWithStep(recorded))
+    expect(guarded.tests[0]?.steps[0]?.retrievalRung).toEqual(recorded)
+  })
+
+  it('admits a memidex rung carrying no reason key (the top rung names no cause)', () => {
+    const recorded = { schemaVersion: 1, rung: 'memidex' }
+    const guarded = guardCompletedRunHandoff(makeHandoffWithStep(recorded))
+    expect(guarded.tests[0]?.steps[0]?.retrievalRung).toEqual(recorded)
+  })
+
+  it('refuses a step whose retrievalRung is present but not a RecordedRetrievalRung', () => {
+    // Present-implies-valid: the same refusal an invalid `retrievalTrace` earns.
+    expect(() => guardCompletedRunHandoff(makeHandoffWithStep({ rung: 'fast' }))).toThrow(
+      /failed structural validation/,
+    )
+  })
+
+  it('refuses a rung whose word is outside the closed vocabulary', () => {
+    expect(() =>
+      guardCompletedRunHandoff(makeHandoffWithStep({ schemaVersion: 1, rung: 'dense-only' })),
+    ).toThrow(/failed structural validation/)
   })
 })
