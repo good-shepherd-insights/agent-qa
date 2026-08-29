@@ -18,11 +18,15 @@
 // observation has been retracted, still answers a row carrying its observation id and no
 // `outcome` key. The caller renders "not yet attributed" from that, which is a different and
 // more honest thing than a missing row — a missing row is indistinguishable from a tuple the
-// caller forgot to ask about.
+// caller forgot to ask about. The same reasoning skips a bundle that will not LOAD (407-14,
+// CR-03): an unreadable bundle can attribute nothing, so it must not be allowed to deny the rows
+// of the bundles that read cleanly. A store this walker cannot fully load is still a store it can
+// answer honestly about the readable part of; a store it cannot LIST is not, and still throws.
 
 import { asRecordId, survivingOutcomeEvents } from '@vostride/agent-qa-schema'
 
 import {
+  KnowledgeMaintenanceScanError,
   enumerateMaintenanceBundleDirs,
   loadMaintenanceBundle,
 } from '../maintenance-scan.js'
@@ -71,6 +75,20 @@ function isAttributingType(type: string): type is CanaryAttributionOutcome {
  * manifest is the only place a bundle's identity is verified, and matching on a directory name
  * would trust a filesystem convention no contract states. Bundles outside the candidate set are
  * enumerated but their outcomes are never folded.
+ *
+ * A BUNDLE THAT WILL NOT LOAD ATTRIBUTES NOTHING, AND DENIES NOTHING (407-14, CR-03). One corrupt,
+ * truncated or tampered directory — quite possibly one the asking run never served a line from —
+ * used to throw straight through this walk and turn the caller's whole read into a failure. It is
+ * SKIPPED instead: it can contribute no outcome (that is what "will not load" means), and it has
+ * no standing to withhold the outcomes of the bundles that do load. Skipping is not forgiving the
+ * corruption either — the maintenance scanner beside this one still refuses to answer for such a
+ * store, which is where a maintainer's fail-closed question belongs.
+ *
+ * ENUMERATE-LEVEL ERRORS STILL THROW. A product or bundle entry that is not a canonical directory
+ * means the walker cannot even LIST the store, and a store it cannot list is not one it can answer
+ * partially for — there is no way to know what was missed, so an empty-looking answer would be a
+ * guess. The distinction is exactly "I read everything readable" versus "I do not know what is
+ * here".
  */
 function attributingOutcomesByObservationId(
   knowledgeRoot: string,
@@ -78,7 +96,13 @@ function attributingOutcomesByObservationId(
 ): Map<string, CanaryAttributionOutcome> {
   const outcomes = new Map<string, CanaryAttributionOutcome>()
   for (const entry of enumerateMaintenanceBundleDirs(knowledgeRoot)) {
-    const bundle = loadMaintenanceBundle(entry)
+    let bundle
+    try {
+      bundle = loadMaintenanceBundle(entry)
+    } catch (error) {
+      if (error instanceof KnowledgeMaintenanceScanError) continue
+      throw error
+    }
     if (!candidateIds.has(bundle.manifest.id)) continue
     for (const event of survivingOutcomeEvents(bundle.events)) {
       if (event.observationId === undefined) continue
