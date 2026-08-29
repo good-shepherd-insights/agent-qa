@@ -1,0 +1,421 @@
+import { afterAll, describe, expect, it, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, relative, resolve } from 'node:path'
+
+import { DEFAULT_EMBEDDING_PROFILE, RETRIEVAL_RUNG_REASONS } from '@vostride/agent-qa-schema'
+
+import {
+  EMBEDDER_WORKER_NOT_REGISTERED_TEXT,
+  NO_KNOWLEDGE_ROOT_MESSAGE,
+  RUNG_CAUSE_LABELS,
+  createKnowledgeChecks,
+  type KnowledgeCheckProbes,
+} from '../commands/doctor-knowledge-checks.js'
+
+const STATIC_PROFILE = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' as const }
+
+/** `ready` carries a live `EmbedderPort`; no row reads it, so the cells hand over a stub. */
+function ready(rung: 'native' | 'floor', profile = DEFAULT_EMBEDDING_PROFILE) {
+  return { kind: 'ready', rung, profile, embedder: {} } as never
+}
+
+function deferred(reason: string) {
+  return { kind: 'deferred', reason } as never
+}
+
+const LEXICAL_ONLY = { kind: 'lexical-only' } as never
+
+interface Project {
+  config: Record<string, unknown>
+  configPath: string
+  knowledgeRoot: string
+  agentQaRoot: string
+  projectRoot: string
+}
+
+const created: string[] = []
+
+function makeProject(options: { withKnowledgeDir?: boolean } = {}): Project {
+  const projectRoot = mkdtempSync(join(tmpdir(), 'doctor-knowledge-'))
+  created.push(projectRoot)
+  const knowledgeRoot = join(projectRoot, 'agent-qa-knowledge')
+  if (options.withKnowledgeDir !== false) mkdirSync(knowledgeRoot, { recursive: true })
+  return {
+    config: { knowledge: { dir: 'agent-qa-knowledge' } },
+    configPath: join(projectRoot, 'agent-qa.config.yaml'),
+    knowledgeRoot,
+    agentQaRoot: join(projectRoot, '.agent-qa'),
+    projectRoot,
+  }
+}
+
+afterAll(() => {
+  for (const dir of created) rmSync(dir, { recursive: true, force: true })
+})
+
+function baseProbes(overrides: Partial<KnowledgeCheckProbes> = {}): KnowledgeCheckProbes {
+  return {
+    classifyIndexFace: () => ({ source: 'index' }),
+    resolveEmbedderCapability: () => Promise.resolve(ready('native')),
+    readWriterLease: () => ({ kind: 'absent' }),
+    readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
+    readDaemonEventLedger: () => ({ events: [] }),
+    ...overrides,
+  }
+}
+
+async function runChecks(project: Project, probes: KnowledgeCheckProbes) {
+  const checks = createKnowledgeChecks({
+    config: project.config,
+    configPath: project.configPath,
+    probes,
+  })
+  const results = await Promise.all(checks.map(check => check.check()))
+  return {
+    checks,
+    store: results[0]!,
+    embedder: results[1]!,
+    rung: results[2]!,
+  }
+}
+
+describe('createKnowledgeChecks', () => {
+  it('returns exactly three rows named store, embedder, rung in that order', () => {
+    const project = makeProject()
+    const checks = createKnowledgeChecks({ config: project.config, configPath: project.configPath })
+    expect(checks.map(check => check.name)).toEqual([
+      'Knowledge store',
+      'Embedder',
+      'Retrieval rung',
+    ])
+  })
+
+  it('skips all three rows when the raw config is null', async () => {
+    const project = makeProject()
+    const checks = createKnowledgeChecks({ config: null, configPath: project.configPath })
+    const results = await Promise.all(checks.map(check => check.check()))
+    expect(results).toEqual([
+      { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
+      { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
+      { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
+    ])
+  })
+
+  it('skips all three rows when the configured knowledge dir does not exist on disk', async () => {
+    const project = makeProject({ withKnowledgeDir: false })
+    const classifyIndexFace = vi.fn(() => ({ source: 'index' as const }))
+    const { store, embedder, rung } = await runChecks(project, baseProbes({ classifyIndexFace }))
+    expect(store.status).toBe('skip')
+    expect(embedder.status).toBe('skip')
+    expect(rung.status).toBe('skip')
+    expect(store.message).toBe(NO_KNOWLEDGE_ROOT_MESSAGE)
+    expect(classifyIndexFace).not.toHaveBeenCalled()
+  })
+
+  it('passes all three rows on an open index with a native embedder', async () => {
+    const project = makeProject()
+    const { store, embedder, rung } = await runChecks(project, baseProbes())
+    const relativeRoot = relative(process.cwd(), project.knowledgeRoot) || '.'
+    expect(store).toEqual({ status: 'pass', message: `index open at ${relativeRoot} (memidex)` })
+    expect(embedder).toEqual({
+      status: 'pass',
+      message: `native (${DEFAULT_EMBEDDING_PROFILE.model_id})`,
+    })
+    expect(rung).toEqual({ status: 'pass', message: 'memidex' })
+  })
+
+  it('warns store and rung on an absent index, and still probes the embedder for its own row', async () => {
+    const project = makeProject()
+    const resolveEmbedderCapability = vi.fn(() => Promise.resolve(ready('native')))
+    const { store, embedder, rung } = await runChecks(project, baseProbes({
+      classifyIndexFace: () => ({
+        source: 'scan',
+        reason: 'absent',
+        detail: 'derived index file is absent',
+        filePresent: false,
+      }),
+      resolveEmbedderCapability,
+    }))
+    const relativeRoot = relative(process.cwd(), project.knowledgeRoot) || '.'
+    expect(store).toEqual({
+      status: 'warn',
+      message: `no index at ${relativeRoot} — scanning bundles (${RUNG_CAUSE_LABELS['index-unavailable']})`,
+    })
+    expect(rung).toEqual({
+      status: 'warn',
+      message: `bundle-scan — ${RUNG_CAUSE_LABELS['index-unavailable']}`,
+    })
+    expect(embedder.status).toBe('pass')
+    expect(resolveEmbedderCapability).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['corrupt', 'locked', 'schema-version'] as const)(
+    'fails the store row on a present-but-unopenable index (%s), naming the reason word not the driver detail',
+    async (reason) => {
+      const project = makeProject()
+      const { checks, store, rung } = await runChecks(project, baseProbes({
+        classifyIndexFace: () => ({
+          source: 'scan',
+          reason,
+          detail: 'SQLITE_NOTADB: file is not a database (deep driver text)',
+          filePresent: true,
+        }),
+      }))
+      const indexPath = relative(process.cwd(), join(project.knowledgeRoot, 'memory', 'index', 'knowledge.db'))
+      expect(store.status).toBe('fail')
+      expect(store.message).toBe(`index at ${indexPath} could not be opened: ${reason}`)
+      expect(store.message).not.toContain('SQLITE_NOTADB')
+      expect(checks[0].fixInstructions).toContain('agent-qa knowledge rebuild-index')
+      expect(rung.status).toBe('warn')
+    },
+  )
+
+  it('warns the embedder and rung rows on a static floor reached because native could not load', async () => {
+    const project = makeProject()
+    const { embedder, rung } = await runChecks(project, baseProbes({
+      resolveEmbedderCapability: () => Promise.resolve(ready('floor')),
+    }))
+    expect(embedder).toEqual({
+      status: 'warn',
+      message: `static floor — ${RUNG_CAUSE_LABELS['native-runtime-unavailable']}`,
+    })
+    expect(rung).toEqual({
+      status: 'warn',
+      message: `static-floor — ${RUNG_CAUSE_LABELS['native-runtime-unavailable']}`,
+    })
+  })
+
+  it('names a deliberately static PREFERRED profile as configured rather than as a fault', async () => {
+    const project = makeProject()
+    const checks = createKnowledgeChecks({
+      config: project.config,
+      configPath: project.configPath,
+      preferredProfile: STATIC_PROFILE,
+      probes: baseProbes({
+        resolveEmbedderCapability: () => Promise.resolve(ready('floor', STATIC_PROFILE)),
+      }),
+    })
+    const [, embedder, rung] = await Promise.all(checks.map(check => check.check()))
+    expect(embedder).toEqual({
+      status: 'warn',
+      message: `static floor — ${RUNG_CAUSE_LABELS['profile-static-configured']}`,
+    })
+    expect(rung).toEqual({
+      status: 'warn',
+      message: `static-floor — ${RUNG_CAUSE_LABELS['profile-static-configured']}`,
+    })
+  })
+
+  it.each([
+    ['ram-budget', 'low-ram-deferral'],
+    ['cold-artifact', 'model-not-downloaded'],
+    ['load-failure', 'embedder-load-failed'],
+    ['worker-unavailable', 'profile-unresolved'],
+  ] as const)('warns embedder and rung for a deferred embedder (%s)', async (reason, expected) => {
+    const project = makeProject()
+    const { embedder, rung } = await runChecks(project, baseProbes({
+      resolveEmbedderCapability: () => Promise.resolve(deferred(reason)),
+    }))
+    expect(embedder).toEqual({ status: 'warn', message: `none — ${RUNG_CAUSE_LABELS[expected]}` })
+    expect(rung).toEqual({ status: 'warn', message: `lexical-only — ${RUNG_CAUSE_LABELS[expected]}` })
+  })
+
+  it('warns embedder and rung when the static floor was explicitly disabled', async () => {
+    const project = makeProject()
+    const { embedder, rung } = await runChecks(project, baseProbes({
+      resolveEmbedderCapability: () => Promise.resolve(LEXICAL_ONLY),
+    }))
+    expect(embedder).toEqual({
+      status: 'warn',
+      message: `none — ${RUNG_CAUSE_LABELS['floor-disabled']}`,
+    })
+    expect(rung).toEqual({
+      status: 'warn',
+      message: `lexical-only — ${RUNG_CAUSE_LABELS['floor-disabled']}`,
+    })
+  })
+
+  it('folds a rejecting capability probe into a load failure rather than throwing', async () => {
+    const project = makeProject()
+    const { embedder, rung } = await runChecks(project, baseProbes({
+      resolveEmbedderCapability: () => Promise.reject(new Error('probe exploded')),
+    }))
+    expect(embedder.message).toBe(`none — ${RUNG_CAUSE_LABELS['embedder-load-failed']}`)
+    expect(rung.message).toBe(`lexical-only — ${RUNG_CAUSE_LABELS['embedder-load-failed']}`)
+    expect(embedder.message).not.toContain('probe exploded')
+  })
+
+  it('fails the embedder row with the 399 wording when a live daemon lease has no worker registration', async () => {
+    const project = makeProject()
+    const { checks, embedder, rung } = await runChecks(project, baseProbes({
+      readWriterLease: () => ({ kind: 'parsed', lease: {} as never }),
+      readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
+      readDaemonEventLedger: () => ({
+        events: [
+          { kind: 'embedder-worker-start' },
+          {
+            kind: 'embedder-worker-exit',
+            reason: 'crash',
+            stderr: 'Error: Embedder worker could not resolve profile: deferred\n    at /home/u/.agent-qa/worker.js',
+          },
+        ],
+      }),
+    }))
+    expect(embedder).toEqual({ status: 'fail', message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT })
+    expect(embedder.message).not.toContain('/home/u/.agent-qa/worker.js')
+    expect(checks[1].fixInstructions).toContain('Set an explicit embedder profile')
+    expect(rung.status).not.toBe('fail')
+  })
+
+  it('fails the embedder row with the ledger reason word when the exit was not a profile failure', async () => {
+    const project = makeProject()
+    const { embedder } = await runChecks(project, baseProbes({
+      readWriterLease: () => ({ kind: 'parsed', lease: {} as never }),
+      readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
+      readDaemonEventLedger: () => ({
+        events: [{ kind: 'embedder-worker-exit', reason: 'terminated', stderr: 'SIGKILL' }],
+      }),
+    }))
+    expect(embedder).toEqual({
+      status: 'fail',
+      message: 'embedder worker failed to start: terminated',
+    })
+  })
+
+  it('fails with `no registration published` when a live lease has no exit row at all', async () => {
+    const project = makeProject()
+    const { embedder } = await runChecks(project, baseProbes({
+      readWriterLease: () => ({ kind: 'parsed', lease: {} as never }),
+      readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
+      readDaemonEventLedger: () => ({ events: [] }),
+    }))
+    expect(embedder).toEqual({
+      status: 'fail',
+      message: 'embedder worker failed to start: no registration published',
+    })
+  })
+
+  it('does not consult the daemon half at all when no writer lease is live', async () => {
+    const project = makeProject()
+    const readEmbedderWorkerRegistration = vi.fn(() => ({ kind: 'absent' as const }))
+    const readDaemonEventLedger = vi.fn(() => ({ events: [] }))
+    const { embedder } = await runChecks(project, baseProbes({
+      readWriterLease: () => ({ kind: 'absent' }),
+      readEmbedderWorkerRegistration,
+      readDaemonEventLedger,
+    }))
+    expect(readEmbedderWorkerRegistration).not.toHaveBeenCalled()
+    expect(readDaemonEventLedger).not.toHaveBeenCalled()
+    expect(embedder.status).toBe('pass')
+  })
+
+  it('leaves the embedder row PASSING when a live lease did publish a parsed registration', async () => {
+    const project = makeProject()
+    const { embedder } = await runChecks(project, baseProbes({
+      readWriterLease: () => ({ kind: 'parsed', lease: {} as never }),
+      readEmbedderWorkerRegistration: () => ({ kind: 'parsed', registration: {} as never }),
+      readDaemonEventLedger: () => ({ events: [] }),
+    }))
+    expect(embedder).toEqual({
+      status: 'pass',
+      message: `native (${DEFAULT_EMBEDDING_PROFILE.model_id})`,
+    })
+  })
+
+  it('probes each axis exactly once across all three rows', async () => {
+    const project = makeProject()
+    const classifyIndexFace = vi.fn(() => ({ source: 'index' as const }))
+    const resolveEmbedderCapability = vi.fn(() => Promise.resolve(ready('native')))
+    await runChecks(project, baseProbes({ classifyIndexFace, resolveEmbedderCapability }))
+    expect(classifyIndexFace).toHaveBeenCalledTimes(1)
+    expect(resolveEmbedderCapability).toHaveBeenCalledTimes(1)
+  })
+
+  it('hard-codes allowDownload false on the capability probe (D-20: asking must not change the answer)', async () => {
+    const project = makeProject()
+    const resolveEmbedderCapability = vi.fn(() => Promise.resolve(ready('native')))
+    await runChecks(project, baseProbes({ resolveEmbedderCapability }))
+    expect(resolveEmbedderCapability).toHaveBeenCalledWith(
+      expect.objectContaining({ allowDownload: false, agentQaRoot: project.agentQaRoot }),
+    )
+  })
+
+  it('never returns fail on the Retrieval rung row, over every index face x embedder outcome', async () => {
+    const project = makeProject()
+    const faces = [
+      { source: 'index' as const },
+      ...(['absent', 'corrupt', 'locked', 'schema-version'] as const).flatMap(reason => (
+        [true, false].map(filePresent => ({
+          source: 'scan' as const,
+          reason,
+          detail: 'detail',
+          filePresent,
+        }))
+      )),
+    ]
+    const embedders = [
+      ready('native'),
+      ready('floor'),
+      deferred('ram-budget'),
+      deferred('cold-artifact'),
+      deferred('load-failure'),
+      deferred('worker-unavailable'),
+      LEXICAL_ONLY,
+    ]
+
+    for (const face of faces) {
+      for (const embedder of embedders) {
+        const { rung } = await runChecks(project, baseProbes({
+          classifyIndexFace: () => face,
+          resolveEmbedderCapability: () => Promise.resolve(embedder),
+        }))
+        expect(rung.status).not.toBe('fail')
+        expect(rung.message.trim()).not.toBe('')
+        if (rung.status === 'warn') expect(rung.message).toContain(' — ')
+      }
+    }
+  })
+
+  it('maps every reason word in the closed vocabulary to a non-empty label', () => {
+    for (const reason of RETRIEVAL_RUNG_REASONS) {
+      expect(RUNG_CAUSE_LABELS[reason]).toBeTruthy()
+    }
+    expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual([...RETRIEVAL_RUNG_REASONS].sort())
+  })
+
+  it('is idempotent against a real knowledge root: same answers, byte-identical listing, nothing written', async () => {
+    const project = makeProject()
+    mkdirSync(join(project.knowledgeRoot, 'memory'), { recursive: true })
+    writeFileSync(join(project.knowledgeRoot, 'memory', '.keep'), '', 'utf8')
+
+    // Everything real EXCEPT the capability probe: a live probe may load a model, and this cell's
+    // subject is what the checks WRITE, not which rung this machine happens to be on.
+    const probes: KnowledgeCheckProbes = {
+      resolveEmbedderCapability: () => Promise.resolve(LEXICAL_ONLY),
+    }
+
+    const listing = () => readdirSync(project.projectRoot, { recursive: true }).map(String).sort()
+    const before = listing()
+
+    const first = await runChecks(project, probes)
+    const afterFirst = listing()
+    const second = await runChecks(project, probes)
+    const afterSecond = listing()
+
+    expect(second.store).toEqual(first.store)
+    expect(second.embedder).toEqual(first.embedder)
+    expect(second.rung).toEqual(first.rung)
+
+    expect(afterFirst).toEqual(before)
+    expect(afterSecond).toEqual(before)
+    expect(afterSecond.some(entry => entry.includes('.rebuild-requested'))).toBe(false)
+    expect(afterSecond.some(entry => entry.includes('lease'))).toBe(false)
+    expect(afterSecond.some(entry => entry.includes('.agent-qa'))).toBe(false)
+
+    expect(first.rung).toEqual({
+      status: 'warn',
+      message: `bundle-scan — ${RUNG_CAUSE_LABELS['index-unavailable']}`,
+    })
+  })
+})
