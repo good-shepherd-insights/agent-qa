@@ -3,6 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  createFunctionRegistry,
+  invokeFunction,
+  RUNS_KNOWLEDGE_FUNCTION_ID,
+  type FunctionDeps,
+} from '@vostride/agent-qa-agent'
+import {
   deriveBundleTrust,
   drainQueue,
   enumerateBundleDirs,
@@ -14,6 +20,7 @@ import {
   type CuratorAuthor,
   type LoadedBundle,
 } from '@vostride/agent-qa-knowledge-local'
+import { canaryAttributionsFor, diffSince } from '@vostride/agent-qa-knowledge-local/reader'
 import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import {
@@ -35,6 +42,7 @@ import {
 } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import {
+  RunKnowledgeProjectionSchema,
   asRef,
   asRunId,
   normalizeAnchor,
@@ -45,6 +53,7 @@ import {
   type CanaryOutcome,
   type CompletedRunHandoff,
   type ElementInfo,
+  type FunctionCaller,
   type ProcedureMatch,
   type RecordId,
   type ScopeKey,
@@ -640,15 +649,29 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     )).toBe(true)
   })
 
-  it('executes the committed credential procedure through every stored guard (CR-03)', { timeout: 60_000 }, async () => {
-    await ensureCommittedProcedure()
-
+  /**
+   * The guarded-replay fixture BOTH replay cells drive (407-12).
+   *
+   * Extracted verbatim from the CR-03 cell so the 407-12 projection cell replays through the
+   * SAME construction rather than a second hand-built approximation of it — a copy would let
+   * the two drift, and the whole point of the projection cell is that the evidence it feeds
+   * `runs.knowledge` is what the real loop really recorded. `counters` holds the two mutable
+   * tallies the cells read (`consults`, `planningCalls`); everything else is returned by name.
+   */
+  function replayHarness(): {
+    executed: Action[]
+    counters: { consults: number; planningCalls: number }
+    contextFor: (stepInstruction: string) => StepContext
+    flowCell: NonNullable<LoopPorts['procedureFlow']>
+    stepPorts: () => LoopPorts
+  } {
     const login = screenState([
       element('e-signin', 'button', 'Sign in'),
       element('e-email', 'textbox', 'Account email', { type: 'email' }),
       element('e-password', 'textbox', 'Account password', { type: 'password' }),
     ], '/login')
     const executed: Action[] = []
+    const counters = { consults: 0, planningCalls: 0 }
     const adapter: PlatformAdapter<'web'> = {
       platform: 'web',
       async setup() {},
@@ -661,10 +684,9 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
         return { success: true }
       },
     }
-    let planningCalls = 0
     const planner: Planner = {
       async plan() {
-        planningCalls += 1
+        counters.planningCalls += 1
         throw new Error('guarded replay must not call the planner')
       },
     }
@@ -679,13 +701,12 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     })
     const baseReader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
     const committed = procedureBundles()[0]!
-    let consults = 0
     // Keep production matching/trust, while the runner-style reader harness returns the exact
     // just-committed body bytes at the read seam used by guarded replay.
     const knowledgeReader = {
       ...baseReader,
       getProcedure(...args: Parameters<typeof baseReader.getProcedure>) {
-        consults += 1
+        counters.consults += 1
         return baseReader.getProcedure(...args)
       },
       read(id: RecordId, options?: Parameters<typeof baseReader.read>[1]) {
@@ -707,13 +728,20 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     // carry cell threads the cursor, and every body step re-earns dispatch through the
     // full guard ladder on its own step's fresh observation.
     const flowCell: NonNullable<LoopPorts['procedureFlow']> = {}
-    const stepPorts = () => ({
+    const stepPorts = (): LoopPorts => ({
       adapter,
       planner,
       knowledgeReader,
       secretStore,
       procedureFlow: flowCell,
     })
+    return { executed, counters, contextFor, flowCell, stepPorts }
+  }
+
+  it('executes the committed credential procedure through every stored guard (CR-03)', { timeout: 60_000 }, async () => {
+    await ensureCommittedProcedure()
+
+    const { executed, counters, contextFor, flowCell, stepPorts } = replayHarness()
 
     // Replay-recommended is a claim; adapter-observed execution is the CR-03 evidence.
     // Test step 0: the fresh consult earns replay and consumes body step 0 — exactly ONE
@@ -724,7 +752,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       contextFor('sign in and buy at checkout'),
     )
     expect(step0.status).toBe('passed')
-    expect(consults).toBe(1)
+    expect(counters.consults).toBe(1)
     expect(executed.map(({ type }) => type)).toEqual(['click'])
     expect(step0.evidence?.subActions).toHaveLength(1)
     expect(step0.evidence?.planSource).toEqual({
@@ -745,7 +773,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       contextFor('Enter the account email'),
     )
     expect(step1.status).toBe('passed')
-    expect(consults).toBe(1)
+    expect(counters.consults).toBe(1)
     expect(executed.map(({ type }) => type)).toEqual(['click', 'fill'])
     expect(executed.at(-1)).toMatchObject({ type: 'fill', text: 'buyer@example.test' })
     expect(step1.evidence?.subActions).toHaveLength(1)
@@ -766,7 +794,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       contextFor('Submit the account password'),
     )
     expect(step2.status).toBe('passed')
-    expect(planningCalls).toBe(0)
+    expect(counters.planningCalls).toBe(0)
     expect(executed.map(({ type }) => type)).toEqual(['click', 'fill', 'fill'])
     expect(executed.at(-1)).toMatchObject({
       type: 'fill',
@@ -782,6 +810,112 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       flow: { cursor: 2, length: 3 },
     })
     expect(flowCell.carry).toBeUndefined()
+  })
+
+  it('a real guarded replay run survives runs.knowledge\'s own output contract (407-12, CR-01)', { timeout: 60_000 }, async () => {
+    // THE SEAM CR-01 BROKE AT, CROSSED BY A REAL PRODUCER. The three `StepEvidence` objects fed
+    // in below are the ones the CR-03 cell's real `executeStep` loop just recorded against a
+    // really-committed procedure — not a hand-mirrored fixture — and they go through the SHIPPED
+    // dispatch (`createFunctionRegistry` + `invokeFunction`), which is where `spec.output.parse`
+    // lives. Before 407-12 this threw `unrecognized_keys: ["flow"]` out of `invokeFunction` for
+    // every replay run there has ever been, and the Knowledge tab rendered a read failure for
+    // exactly the runs D-07's "replayed 5/5" sentence exists to explain. A fixture cell alone
+    // could not have caught it, because the fixture is the thing that was wrong.
+    await ensureCommittedProcedure()
+
+    const { contextFor, stepPorts } = replayHarness()
+    const step0 = await executeStep(
+      'sign in and buy at checkout',
+      stepPorts(),
+      contextFor('sign in and buy at checkout'),
+    )
+    const step1 = await executeStep(
+      'Enter the account email',
+      stepPorts(),
+      contextFor('Enter the account email'),
+    )
+    const step2 = await executeStep(
+      'Submit the account password',
+      stepPorts(),
+      contextFor('Submit the account password'),
+    )
+
+    // The control: if the loop ever stopped recording `flow`, the assertions below would pass
+    // vacuously and this cell would guard nothing. It is the member under test.
+    expect(step0.evidence?.planSource).toHaveProperty('flow')
+
+    const runId = 'run-loop-replay-projection'
+    const recorded = [step0.evidence!, step1.evidence!, step2.evidence!]
+    const document = handoffWithSteps({
+      runId,
+      buildOrdinal: 44,
+      flow: FLOW,
+      filePath: FILE_PATH,
+      steps: recorded,
+    })
+
+    // The `explainRegistry` posture: empty-ish deps, cast once. `runs.get` resolves the handoff
+    // the real loop just produced and `knowledge` binds the REAL `/reader` entry functions the
+    // composition root binds; the three verbs this op never reaches are inert.
+    const deps = {
+      runs: {
+        list: () => Promise.resolve([document]),
+        get: () => Promise.resolve(document),
+        readEvents: () => Promise.resolve([]),
+        readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+      },
+      knowledge: {
+        listBundles: () => Promise.resolve([]),
+        inspectRecords: () => Promise.resolve([]),
+        showRecord: () => Promise.resolve({ kind: 'not-found' as const }),
+        diffSince: (input: { sinceOrdinal: number }) =>
+          Promise.resolve(diffSince({ knowledgeRoot, sinceOrdinal: input.sinceOrdinal })),
+        canaryAttributions: (input: Parameters<
+          NonNullable<FunctionDeps['knowledge']['canaryAttributions']>
+        >[0]) => Promise.resolve(canaryAttributionsFor({ knowledgeRoot, ...input })),
+      },
+      entities: {
+        resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+        get: () => Promise.resolve(undefined),
+      },
+      config: {
+        getMasked: () => Promise.resolve({
+          schemaVersion: 1,
+          configPath: 'agent-qa.config.yaml',
+          entries: [],
+        }),
+      },
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    } as unknown as FunctionDeps
+    const registry = createFunctionRegistry({
+      deps,
+      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      resolveExecutionContext: () => 'local-interactive',
+    })
+    const caller: FunctionCaller = {
+      surface: 'cli',
+      grantedScopes: ['read'],
+      safeMode: false,
+      origin: 'human',
+    }
+
+    // No try/catch and no `.rejects`: the assertion IS that this resolves. CR-01's failure was a
+    // `ZodError` escaping here, mapped to READ_FAILED_HEADING one layer up.
+    const result = await invokeFunction(registry, RUNS_KNOWLEDGE_FUNCTION_ID, { runId }, caller)
+    const parsed = RunKnowledgeProjectionSchema.safeParse(result)
+
+    expect(parsed.success).toBe(true)
+    if (!parsed.success || parsed.data.kind !== 'ready') {
+      throw new Error(`expected a ready projection, got ${JSON.stringify(result)}`)
+    }
+    expect(parsed.data.steps.map((step) => step.planSource)).toEqual(
+      recorded.map((evidence) => evidence.planSource),
+    )
+    expect(parsed.data.steps.map((step) => step.planSource)).toEqual([
+      { kind: 'procedure-replay', procedureId, guard: { checksPassed: 1, total: 1 }, flow: { cursor: 0, length: 3 } },
+      { kind: 'procedure-replay', procedureId, guard: { checksPassed: 1, total: 1 }, flow: { cursor: 1, length: 3 } },
+      { kind: 'procedure-replay', procedureId, guard: { checksPassed: 1, total: 1 }, flow: { cursor: 2, length: 3 } },
+    ])
   })
 
   it('a replay rejected by the verifier is never certified by live recovery', { timeout: 60_000 }, async () => {
