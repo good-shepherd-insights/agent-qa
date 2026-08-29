@@ -10,9 +10,17 @@
 // outcome event to make an assertion true: the write path stays behind the writer lease, and a
 // read that could write would be the T-407-11 tampering hazard rather than its mitigation.
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import {
   BundleOutcomeEventSchema,
@@ -140,15 +148,18 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
       knowledgeRoot,
       runId: RUN_ID,
       tuples: [tupleFor(candidateId, 2)],
-    })).toEqual([
-      {
-        candidateId,
-        testIndex: 0,
-        stepIndex: 2,
-        observationId,
-        outcome: 'confirmed',
-      },
-    ])
+    })).toEqual({
+      rows: [
+        {
+          candidateId,
+          testIndex: 0,
+          stepIndex: 2,
+          observationId,
+          outcome: 'confirmed',
+        },
+      ],
+      skippedBundles: 0,
+    })
   })
 
   it('reports a contradicting outcome the same way — the fold reads the event TYPE', () => {
@@ -170,15 +181,18 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
       knowledgeRoot,
       runId: RUN_ID,
       tuples: [tupleFor(candidateId, 4)],
-    })).toEqual([
-      {
-        candidateId,
-        testIndex: 0,
-        stepIndex: 4,
-        observationId,
-        outcome: 'contradicted',
-      },
-    ])
+    })).toEqual({
+      rows: [
+        {
+          candidateId,
+          testIndex: 0,
+          stepIndex: 4,
+          observationId,
+          outcome: 'contradicted',
+        },
+      ],
+      skippedBundles: 0,
+    })
   })
 
   it('a RETRACTED observation carries no outcome key — the surviving-events fold decides', () => {
@@ -205,16 +219,17 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
       }),
     ])
 
-    const rows = canaryAttributionsFor({
+    const answer = canaryAttributionsFor({
       knowledgeRoot,
       runId: RUN_ID,
       tuples: [tupleFor(candidateId, 1)],
     })
 
-    expect(rows).toEqual([
-      { candidateId, testIndex: 0, stepIndex: 1, observationId },
-    ])
-    expect(Object.hasOwn(rows[0]!, 'outcome')).toBe(false)
+    expect(answer).toEqual({
+      rows: [{ candidateId, testIndex: 0, stepIndex: 1, observationId }],
+      skippedBundles: 0,
+    })
+    expect(Object.hasOwn(answer.rows[0]!, 'outcome')).toBe(false)
   })
 
   it('a LIFECYCLE event carrying the same id attributes nothing — only the four words do', () => {
@@ -232,15 +247,16 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
       }),
     ])
 
-    const rows = canaryAttributionsFor({
+    const answer = canaryAttributionsFor({
       knowledgeRoot,
       runId: RUN_ID,
       tuples: [tupleFor(candidateId, 3)],
     })
 
-    expect(rows).toEqual([
-      { candidateId, testIndex: 0, stepIndex: 3, observationId },
-    ])
+    expect(answer).toEqual({
+      rows: [{ candidateId, testIndex: 0, stepIndex: 3, observationId }],
+      skippedBundles: 0,
+    })
   })
 
   it("another run's committed observation is not this run's — the id is run-scoped", () => {
@@ -264,7 +280,7 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
       }),
     ])
 
-    const rows = canaryAttributionsFor({
+    const { rows, skippedBundles } = canaryAttributionsFor({
       knowledgeRoot,
       runId: RUN_ID,
       tuples: [tupleFor(candidateId, 2)],
@@ -273,6 +289,7 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
     expect(rows[0]!.observationId).toBe(observationIdFor(candidateId, 2))
     expect(rows[0]!.observationId).not.toBe(otherRunObservationId)
     expect(Object.hasOwn(rows[0]!, 'outcome')).toBe(false)
+    expect(skippedBundles).toBe(0)
   })
 
   it('a candidate with no bundle on disk answers an unattributed row, never a throw', () => {
@@ -283,14 +300,17 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
       knowledgeRoot,
       runId: RUN_ID,
       tuples: [tupleFor(missing, 7)],
-    })).toEqual([
-      {
-        candidateId: missing,
-        testIndex: 0,
-        stepIndex: 7,
-        observationId: observationIdFor(missing, 7),
-      },
-    ])
+    })).toEqual({
+      rows: [
+        {
+          candidateId: missing,
+          testIndex: 0,
+          stepIndex: 7,
+          observationId: observationIdFor(missing, 7),
+        },
+      ],
+      skippedBundles: 0,
+    })
   })
 
   it('answers one row per tuple, in the order the caller asked, for the same candidate', () => {
@@ -321,10 +341,13 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
       knowledgeRoot,
       runId: RUN_ID,
       tuples: [tupleFor(candidateId, 1), tupleFor(candidateId, 0)],
-    })).toEqual([
-      { candidateId, testIndex: 0, stepIndex: 1, observationId: second, outcome: 'harmful' },
-      { candidateId, testIndex: 0, stepIndex: 0, observationId: first, outcome: 'confirmed' },
-    ])
+    })).toEqual({
+      rows: [
+        { candidateId, testIndex: 0, stepIndex: 1, observationId: second, outcome: 'harmful' },
+        { candidateId, testIndex: 0, stepIndex: 0, observationId: first, outcome: 'confirmed' },
+      ],
+      skippedBundles: 0,
+    })
   })
 
 
@@ -362,12 +385,13 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
       knowledgeRoot,
       runId: RUN_ID,
       tuples: [tupleFor(candidateId, 0)],
-    })).toEqual([
-      { candidateId, testIndex: 0, stepIndex: 0, observationId, outcome: 'confirmed' },
-    ])
+    })).toEqual({
+      rows: [{ candidateId, testIndex: 0, stepIndex: 0, observationId, outcome: 'confirmed' }],
+      skippedBundles: 1,
+    })
   })
 
-  it('an integrity-tampered sibling is skipped the same way', () => {
+  it('an integrity-tampered sibling is skipped the same way, and counted', () => {
     const probe = publishCandidate('Tamper survivor', [])
     const observationId = observationIdFor(probe, 1)
     rmSync(knowledgeRoot, { recursive: true, force: true })
@@ -387,25 +411,73 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
     // to what the manifest committed. Skipping it is not forgiving the tamper — the maintenance
     // scan next door still refuses to answer for this store; it is refusing to let a tampered
     // record decide whether an UNRELATED, still-verifying line gets its outcome.
-    const sibling = publishCandidateEntry('Aaa tampered sibling', [])
-    const recordPath = join(sibling.dir, 'record.md')
+    //
+    // The skip must be exercised BEFORE the line under test, and `enumerateMaintenanceBundleDirs`
+    // sorts by DIRECTORY name — which is content-derived, NOT the anchor's display name. So the
+    // published directory is renamed under a controlled `aaa-` prefix and this cell ASSERTS it
+    // now sorts first, instead of assuming an ordering nothing establishes (IN-06).
+    const sibling = publishCandidateEntry('Tampered sibling', [])
+    const bundlesDir = dirname(sibling.dir)
+    const tamperedName = `aaa-tampered-${basename(sibling.dir).slice(-16)}`
+    renameSync(sibling.dir, join(bundlesDir, tamperedName))
+    expect(readdirSync(bundlesDir).sort()[0]).toBe(tamperedName)
+
+    const recordPath = join(bundlesDir, tamperedName, 'record.md')
     writeFileSync(recordPath, `${readFileSync(recordPath, 'utf8')}\nunauthorized mutation\n`, 'utf8')
 
     expect(canaryAttributionsFor({
       knowledgeRoot,
       runId: RUN_ID,
       tuples: [tupleFor(candidateId, 1)],
-    })).toEqual([
-      { candidateId, testIndex: 0, stepIndex: 1, observationId, outcome: 'helpful' },
-    ])
+    })).toEqual({
+      rows: [{ candidateId, testIndex: 0, stepIndex: 1, observationId, outcome: 'helpful' }],
+      skippedBundles: 1,
+    })
   })
 
-  it('an empty tuple list answers [] WITHOUT walking the store', () => {
+  it('TWO unloadable siblings are counted TWICE — the skip is a count, not a boolean', () => {
+    const probe = publishCandidate('Counted canary', [])
+    const observationId = observationIdFor(probe, 2)
+    rmSync(knowledgeRoot, { recursive: true, force: true })
+    const candidateId = publishCandidate('Counted canary', [
+      event({
+        type: 'confirmed',
+        evidenceToken: 'counted-canary',
+        curationJobId: observationId,
+        buildOrdinal: 5,
+        observationId,
+        origin: 'agent-verified',
+      }),
+    ])
+    expect(candidateId).toBe(probe)
+
+    // A caller deciding how loudly to qualify its answer needs to know HOW MUCH of the store went
+    // unread, not merely that something did — so the walk reports a count, not a flag.
+    for (const name of ['aaa-malformed-0000000000000000', 'aab-malformed-0000000000000001']) {
+      const dir = join(knowledgeRoot, 'memory', 'shop', 'bundles', name)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'manifest.json'), '{ not json', 'utf8')
+    }
+
+    expect(canaryAttributionsFor({
+      knowledgeRoot,
+      runId: RUN_ID,
+      tuples: [tupleFor(candidateId, 2)],
+    })).toEqual({
+      rows: [{ candidateId, testIndex: 0, stepIndex: 2, observationId, outcome: 'confirmed' }],
+      skippedBundles: 2,
+    })
+  })
+
+  it('an empty tuple list answers no rows and no skips WITHOUT walking the store', () => {
     // A store the walker cannot read: the empty-tuple answer is only honest if it never looked.
     mkdirSync(join(knowledgeRoot, 'memory'), { recursive: true })
     writeFileSync(join(knowledgeRoot, 'memory', 'shop'), 'not a directory', 'utf8')
 
-    expect(canaryAttributionsFor({ knowledgeRoot, runId: RUN_ID, tuples: [] })).toEqual([])
+    expect(canaryAttributionsFor({ knowledgeRoot, runId: RUN_ID, tuples: [] })).toEqual({
+      rows: [],
+      skippedBundles: 0,
+    })
     expect(() => canaryAttributionsFor({
       knowledgeRoot,
       runId: RUN_ID,
