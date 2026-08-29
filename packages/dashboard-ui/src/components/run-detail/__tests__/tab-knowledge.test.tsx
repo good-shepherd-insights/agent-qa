@@ -265,12 +265,11 @@ describe("the Learned half sits below the Used half in the ready arm (D-01 layou
 
     const section = view.querySelector("[data-learned-state]")
     const lastStep = [...view.querySelectorAll("[data-step-index]")].at(-1)
-    expect(section).not.toBeNull()
-    expect(lastStep).toBeDefined()
+    if (section === null || lastStep === undefined) throw new Error("expected a Learned section after step rows")
     // `DOCUMENT_POSITION_FOLLOWING` — the Learned section comes after the last row, whatever the
     // nesting. Comparing `innerHTML` indices would pass on a section nested INSIDE the last row.
-    expect(lastStep?.compareDocumentPosition(section as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy()
+    expect(lastStep.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(lastStep.contains(section)).toBe(false)
   })
 
   it("paints the Learned heading and its sentence inside the ready shell, not a second pane", () => {

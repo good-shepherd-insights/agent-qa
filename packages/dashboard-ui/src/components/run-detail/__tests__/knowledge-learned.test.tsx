@@ -261,6 +261,9 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
 
     const cta = host.querySelector<HTMLAnchorElement>("a[data-review-proposals]")
     expect(cta?.textContent).toBe(REVIEW_PROPOSALS_CTA)
+    // The projection's own `ctaText` and the component's import must be the SAME spelling — a
+    // component rendering one while a consumer reads the other is two CTAs wearing one name.
+    expect(cta?.textContent).toBe(proposals.ctaText)
     expect(cta?.getAttribute("href")).toBe(routes.chat)
   })
 

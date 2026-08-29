@@ -31,6 +31,7 @@ import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EvidenceIncomplete } from "./evidence-incomplete"
+import { KnowledgeLearned } from "./knowledge-learned"
 import { KnowledgeStepDetail } from "./knowledge-step-detail"
 import { STEP_NO_BRIEF_TEXT, USED_HEADING, type KnowledgeView, type StepRowView } from "@/lib/knowledge-view"
 
@@ -100,6 +101,15 @@ export function TabKnowledge({ view }: { view: KnowledgeView | undefined }) {
           </ul>
         ) : null}
       </div>
+      {/*
+        THE SECOND HALF, AFTER THE FIRST (407-09). "What did this run read" then "what did it write
+        back" — the order is the reading order, and the `space-y-4` on the wrapper is the one gap
+        between them. The section renders only when the projection carried one: a tab that invented
+        a Learned half for a view without one would be painting a state the op did not say.
+      */}
+      {view.learned === undefined ? null : (
+        <KnowledgeLearned view={view.learned} proposals={view.proposals} />
+      )}
     </div>
   )
 }
