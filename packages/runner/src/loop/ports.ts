@@ -12,6 +12,7 @@ import type {
   MaskingContext,
   ProcedureBodyPayload,
   ProcedureMatch,
+  RecordedRetrievalRung,
   RecordId,
   ReadTrace,
   ScreenState,
@@ -240,6 +241,19 @@ export interface LoopPorts {
   compressor?: ScreenshotCompressor
   /** D-05 optional read-only knowledge reader — the loop degrades gracefully when absent. */
   knowledgeReader?: KnowledgeHintReader
+  /**
+   * 407 D-13/D-17 (2026-08-29) — the HOST's retrieval rung, resolved ONCE at the composition
+   * root by knowledge-local's single `resolveRetrievalRung`, never re-probed per step. It
+   * crosses as the schema type because the runner never imports knowledge-local (validate:arch
+   * enforces that); a promise because the resolver's embedder probe can cost a model load and
+   * overlapping it with run start keeps the probe off the critical path.
+   *
+   * It describes the ladder the machine was on when this run was served — NOT how this brief was
+   * ranked. Absent ⇒ no rung is stamped (D-05 degrade-when-absent); a rejection stamps nothing
+   * and never fails a step; and a rung is never stamped onto a step no reader served (D-16 —
+   * "no knowledge reader bound is not a rung").
+   */
+  knowledgeRetrievalRung?: Promise<RecordedRetrievalRung>
   /**
    * F-381-51-1 · D-09 member-scoped carry cell (the recordLedger shared-mutable-object
    * precedent): the caller owns ONE cell per test member and threads the SAME object into

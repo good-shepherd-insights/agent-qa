@@ -202,6 +202,15 @@ export async function executeStep(
   // D-02 (Plan 361-08): bind the one sub-action emission chokepoint to ports.events when
   // present, so every recordSubAction append emits `subActionRecorded` live — the five call
   // sites stay untouched. Unbound ⇒ no callback (byte-identical to today, D-05).
+  // 407 D-13/D-16: the rung was resolved ONCE at the composition root; the loop awaits that one
+  // promise and stamps what it gets. Two guards, each a way the banner could otherwise lie:
+  //   - no bound reader ⇒ no rung, because "no knowledge reader bound is not a rung" (D-16) and a
+  //     step served no brief must not be labelled as if a ladder chose its content;
+  //   - a rejected probe folds to `undefined` rather than propagating — asking the host what it
+  //     can do must never be able to fail a test step (T-407-16).
+  const retrievalRung = ports.knowledgeReader === undefined || ports.knowledgeRetrievalRung === undefined
+    ? undefined
+    : await ports.knowledgeRetrievalRung.catch(() => undefined)
   const recorder = new EvidenceRecorder({
     scope: { tier: 'test', key: context.testName },
     asOfBuild: ports.knowledgeAsOfBuild ?? 0,
@@ -216,6 +225,7 @@ export async function executeStep(
         }
       : undefined,
     toolSchemaDigest: ports.toolSchemaDigest,
+    retrievalRung,
   })
   const maskValue = ports.masking?.mask ?? ((value: string) => value)
   context.subActionHistory = []

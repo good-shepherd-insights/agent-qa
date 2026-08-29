@@ -141,6 +141,12 @@ export interface MemberRunConfig {
     recordCap: number
   }
   knowledgeAsOfBuild?: number
+  /**
+   * 407 D-13 — the host's retrieval rung, resolved once at the composition root and threaded
+   * verbatim onto every step's LoopPorts. Typed off LoopPorts so there is ONE spelling of the
+   * contract between the run shell and the loop.
+   */
+  knowledgeRetrievalRung?: LoopPorts['knowledgeRetrievalRung']
   recordLedger?: LoopPorts['recordLedger']
   beginMemoryTurn?: LoopPorts['beginMemoryTurn']
   drainMemoryReadTraces?: LoopPorts['drainMemoryReadTraces']
@@ -673,6 +679,7 @@ async function runMemberAttempt(
       procedureFlow,
       knowledgeBudgets: config.knowledgeBudgets,
       knowledgeAsOfBuild: config.knowledgeAsOfBuild,
+      knowledgeRetrievalRung: config.knowledgeRetrievalRung,
       recordLedger: config.recordLedger,
       beginMemoryTurn: config.beginMemoryTurn,
       drainMemoryReadTraces: config.drainMemoryReadTraces,

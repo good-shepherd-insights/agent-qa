@@ -10,6 +10,7 @@
 // unchanged until 361/363.
 import {
   computeBriefDigest,
+  NO_KNOWLEDGE_READER_TRUNCATION,
   toRecordedActionResult,
   TRACE_TRUNCATION_TOP_K,
 } from '@vostride/agent-qa-schema'
@@ -33,6 +34,7 @@ import type {
   PlanningFailureEvidence,
   Point,
   RecordedActionResult,
+  RecordedRetrievalRung,
   ReportedValueEvidence,
   ReadTrace,
   ScopeKey,
@@ -68,7 +70,7 @@ export function makeEmptyServedBrief(scope: ScopeKey, asOfBuild: number): Served
     scope,
     asOfBuild,
     budget: 0,
-    truncation: 'no brief served (no knowledge reader bound)',
+    truncation: NO_KNOWLEDGE_READER_TRUNCATION,
     channel1: [],
     channel2: [],
     channel3: [],
@@ -294,6 +296,14 @@ export class EvidenceRecorder {
   /** D-16 once-per-member bound-surface digest copied onto every finalized step. */
   private readonly toolSchemaDigest?: string
   /**
+   * 407 D-13: the HOST's retrieval rung at serve time, handed in by the composition root and
+   * copied onto every finalized step. It sits BESIDE `servedBrief` for the same reason
+   * `retrievalTrace` does — `computeBriefDigest` keys cassettes and acceptance evidence on the
+   * brief's bytes, so a rung channel inside the brief would invalidate every brief ever served.
+   * The recorder never resolves it: a run's rung is a fact about serve time, not a live probe.
+   */
+  private readonly retrievalRung?: RecordedRetrievalRung
+  /**
    * D-02 single sub-action chokepoint (Plan 361-08). When bound, invoked at the END of
    * every {@link recordSubAction} append with the recorded evidence and its index — so all
    * five loop call sites emit `subActionRecorded` through ONE seam, never per-call-site.
@@ -309,6 +319,7 @@ export class EvidenceRecorder {
     modelProfile?: DeclaredModelProfile
     verifierIdentity?: ModelIdentity
     toolSchemaDigest?: string
+    retrievalRung?: RecordedRetrievalRung
   }) {
     this.servedBrief = options?.servedBrief
       ?? makeEmptyServedBrief(options?.scope ?? { tier: 'test', key: '' }, options?.asOfBuild ?? 0)
@@ -316,6 +327,7 @@ export class EvidenceRecorder {
     this.modelProfile = options?.modelProfile
     this.verifierIdentity = options?.verifierIdentity
     this.toolSchemaDigest = options?.toolSchemaDigest
+    this.retrievalRung = options?.retrievalRung
   }
 
   private replaceServedBrief(next: ServedBrief): void {
@@ -718,6 +730,7 @@ export class EvidenceRecorder {
     }
     const retrievalTrace = this.foldRetrievalTrace()
     if (retrievalTrace !== undefined) evidence.retrievalTrace = retrievalTrace
+    if (this.retrievalRung !== undefined) evidence.retrievalRung = this.retrievalRung
     if (this.selfHeal) evidence.selfHeal = this.selfHeal
     if (this.stagnation) evidence.stagnation = this.stagnation
     if (this.cycle) evidence.cycle = this.cycle
