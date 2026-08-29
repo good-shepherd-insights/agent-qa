@@ -8,6 +8,7 @@ import type {
   PostProcessingStatus,
   RunDetailProjection,
   RunEventEnvelope,
+  RunKnowledgeProjection,
   RunServiceReadiness,
   RunsLiveUrlResult,
 } from '@vostride/agent-qa-schema'
@@ -379,6 +380,39 @@ export async function fetchRunDetail(id: string): Promise<RunDetailProjection> {
 export async function fetchRunAnalysis(id: string): Promise<AnalysisGetOutput> {
   return request(`/api/runs/${encodeURIComponent(id)}/analysis`)
 }
+
+/**
+ * THE KNOWLEDGE TAB'S ONE READ (407-02 · LERN-01, D-05).
+ *
+ * The result type is the op's own `RunKnowledgeProjection`, imported from schema rather than
+ * re-declared here: the UI MIRRORS the contract instead of keeping a twin of it, so a field the op
+ * grows (407-03's rung, 407-04's attributions) is readable without a second edit and a field it
+ * drops is a compile error rather than an `undefined` in a text node.
+ *
+ * `/api/runs/:id/knowledge` is registered ABOVE the `/api/runs/:id` catch-all, which claims every
+ * four-segment GET — so the id is encoded here exactly once, and an id carrying a slash addresses
+ * the route it names rather than one nobody registered.
+ *
+ * ONE READ FOR THE WHOLE TAB (D-03). The panel never composes from N `knowledge.brief.why` calls;
+ * every count it prints is folded from the rows this single answer already carried.
+ */
+export async function fetchRunKnowledge(id: string): Promise<RunKnowledgeProjection> {
+  return request(`/api/runs/${encodeURIComponent(id)}/knowledge`)
+}
+
+/**
+ * What one read of the knowledge door produced.
+ *
+ * A CLOSED UNION WITH A REFUSAL ARM, on `PostProcessingRead`'s footing above. The projection
+ * already answers its own absences as RESULTS — a pruned handoff is `evidence-incomplete`, a
+ * project with no store is `knowledgeStore: 'unbound'` — so the only thing left for this union to
+ * carry is the case where there is no projection at all: the op unbound on this host, the route
+ * down, the read refused. A shape that could only say "here is your panel" would have forced this
+ * client to invent an empty run out of a 503.
+ */
+export type KnowledgeRead =
+  | { readonly kind: 'read'; readonly projection: RunKnowledgeProjection }
+  | { readonly kind: 'unavailable'; readonly error: string }
 
 export async function fetchRunArtifact(id: string): Promise<RunArtifactResponse> {
   return request(`/api/runs/${encodeURIComponent(id)}/artifact`)
