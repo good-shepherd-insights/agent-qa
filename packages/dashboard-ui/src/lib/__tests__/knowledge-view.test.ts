@@ -35,6 +35,7 @@ import {
   CANARY_BADGE_TEXT,
   CHANGED_NOTHING_TEXT,
   CHANGES_NOT_AVAILABLE_TEXT,
+  CHANGES_UNREADABLE_TEXT,
   CHANNEL_PAGE_SIZE,
   COUNTS_NOT_RECORDED_SENTENCE,
   CURATION_FAILED_TEXT,
@@ -759,8 +760,12 @@ describe('the 407-06 copy is published as constants, like every sentence before 
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** One record change, with only the fields the Learned half reads varied. */
-function change(kind: RecordChange['change'], recordId = 'fact-cart-page-4ccac'): RecordChange {
-  return { schemaVersion: 1, recordId, change: kind, atOrdinal: 7 }
+function change(
+  kind: RecordChange['change'],
+  recordId = 'fact-cart-page-4ccac',
+  overrides: Partial<RecordChange> = {},
+): RecordChange {
+  return { schemaVersion: 1, recordId, change: kind, atOrdinal: 7, ...overrides }
 }
 
 /** The projection body the Learned half projects from; every cell varies one member of it. */
@@ -863,7 +868,15 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
   })
 })
 
-describe('the record list is the four LEARNED kinds and nothing else (D-10)', () => {
+// RE-PINNED 2026-08-30 (407-15 · R-407-15-01). The three cells below used to pin FOUR kinds:
+// 'keeps the four Learned kinds in the projection's own order', 'drops `added` and `purged` — a
+// birth and a deletion are not what this run LEARNED' and 'publishes the four kinds as one closed
+// table the component and the cells both name'. `added` moved INTO the set: 407-04 stamps
+// `sourceRunId` on the synthetic `added` change precisely so a run's new facts show here, and
+// under the four-kind literal the commonest curation outcome was served, attributed, then dropped
+// (REVIEW CR-04). `purged` is still out. The widening is a reconciliation of D-10 pending the
+// user's ruling — see R-407-15-01.
+describe('the record list is the five LEARNED kinds and nothing else (D-10, widened by R-407-15-01)', () => {
   const everyKind: readonly RecordChange['change'][] = [
     'added', 'confirmed', 'superseded', 'deprecated', 'promoted', 'purged',
   ]
@@ -878,19 +891,20 @@ describe('the record list is the four LEARNED kinds and nothing else (D-10)', ()
     }).rows
   }
 
-  it('keeps the four Learned kinds in the projection\'s own order', () => {
+  it('keeps the five Learned kinds in the projection\'s own order', () => {
     expect(rowsOfEveryKind().map(row => row.kind))
-      .toEqual(['confirmed', 'superseded', 'deprecated', 'promoted'])
+      .toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'promoted'])
   })
 
-  it('drops `added` and `purged` — a birth and a deletion are not what this run LEARNED', () => {
+  it('drops ONLY `purged` — a deletion is maintenance, never what this run taught the store', () => {
     const kinds = rowsOfEveryKind().map(row => row.kind) as readonly string[]
-    expect(kinds).not.toContain('added')
+    expect(kinds).toContain('added')
     expect(kinds).not.toContain('purged')
   })
 
-  it('publishes the four kinds as one closed table the component and the cells both name', () => {
-    expect([...LEARNED_CHANGE_KINDS]).toEqual(['confirmed', 'superseded', 'deprecated', 'promoted'])
+  it('publishes the five kinds as one closed table the component and the cells both name', () => {
+    expect([...LEARNED_CHANGE_KINDS])
+      .toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'promoted'])
   })
 
   it('carries the record id verbatim, however unlovely — the row addresses a record, not a title', () => {
@@ -919,6 +933,149 @@ describe('the record list is the four LEARNED kinds and nothing else (D-10)', ()
     // `ENTITY_KIND_ROUTES.MEM` is `null` under the DASH-03 contract: this build can say WHAT the
     // row points at without being able to say where to click, and it says exactly that.
     expect(rows[0]?.href).toBeUndefined()
+  })
+})
+
+describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
+  /**
+   * THE VERIFIER'S REPRODUCTION, INVERTED.
+   *
+   * Gap 2 drove a real curation that added one fact and deprecated nothing — the commonest
+   * curation outcome there is — and the half printed `curated 1 fact, deprecated 0` beside
+   * `Change records for this run are not available yet.` The record WAS on the wire, stamped with
+   * this run's id by `diffSince`, and the view discarded it. This cell is that projection with the
+   * answer it should have had.
+   */
+  it('lists the added record instead of denying it — one row, no sentence', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: {
+        changes: [change('added', 'fact-el-textbox-password-9a05ce', { sourceRunId: RUN_ID })],
+        canaryAttributions: [],
+      },
+    })
+
+    expect(view.state).toBe('done')
+    expect(view.countLine).toBe('curated 1 fact, deprecated 0')
+    expect(view.rows.length).toBe(1)
+    expect(view.rows[0]?.kind).toBe('added')
+    expect(view.rows[0]?.recordId).toBe('fact-el-textbox-password-9a05ce')
+    expect(view.sentence).toBeUndefined()
+  })
+
+  /**
+   * ROWS BEAT SENTENCES, and the disagreement is SHOWN rather than hidden (D-12).
+   *
+   * A settled row saying both counts are zero, beside a change record the store really attributed
+   * to this run, is two producers disagreeing. The old arm order consulted the counts first and so
+   * suppressed the record; the person then read `nothing curated` with no way to learn otherwise.
+   */
+  it('paints rows even when the frozen counts say nothing moved — a served record is never denied', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 0, deprecated: 0 } },
+      learned: { changes: [change('confirmed')], canaryAttributions: [] },
+    })
+
+    expect(view.state).toBe('done')
+    expect(view.countLine).toBe('nothing curated')
+    expect(view.rows.length).toBe(1)
+    expect(view.sentence).toBeUndefined()
+  })
+
+  it('paints rows under a settled row that recorded NO counts — the state word still says so', () => {
+    const view = learnedFrom({
+      curation: { status: 'done' },
+      learned: { changes: [change('promoted')], canaryAttributions: [] },
+    })
+
+    expect(view.state).toBe('counts-absent')
+    expect(view.countLine).toBe('counts not recorded for this run')
+    expect(view.rows.length).toBe(1)
+    expect(view.sentence).toBeUndefined()
+  })
+
+  it('lists NOTHING while the chain is unsettled, however many rows the projection carries (D-12)', () => {
+    for (const status of ['pending', 'running', 'failed'] as const) {
+      const view = learnedFrom({
+        curation: { status },
+        learned: { changes: [change('added'), change('confirmed')], canaryAttributions: [] },
+      })
+      expect(view.rows).toEqual([])
+      expect(view.sentence).toBeDefined()
+    }
+  })
+
+  /**
+   * WR-02 — ONE RECORD, TWO CHANGES, TWO KEYS.
+   *
+   * `diffSince` emits one `RecordChange` per surviving outcome event, so a bundle confirmed at
+   * ordinal 12 and superseded at 13 crosses the run filter twice. `LearnedRowView` drops
+   * `atOrdinal`, so keying by `recordId` alone collides and React drops or reorders a row on the
+   * re-render that fires as curation settles.
+   */
+  it('carries a composite key per row — record, change and ordinal', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: { changes: [change('added', 'rec_a', { atOrdinal: 4 })], canaryAttributions: [] },
+    })
+
+    expect(view.rows[0]?.key).toBe('rec_a:added:4')
+  })
+
+  it('gives two changes on ONE record two distinct keys, so neither row is reconciled away', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: {
+        changes: [
+          change('confirmed', 'rec_same', { atOrdinal: 12 }),
+          change('superseded', 'rec_same', { atOrdinal: 13 }),
+        ],
+        canaryAttributions: [],
+      },
+    })
+
+    expect(view.rows.map(row => row.key)).toEqual(['rec_same:confirmed:12', 'rec_same:superseded:13'])
+    expect(new Set(view.rows.map(row => row.key)).size).toBe(2)
+  })
+})
+
+describe('an unreadable store is named, never called "not available yet" (407-14)', () => {
+  /**
+   * TWO ABSENCES THAT MUST NOT WEAR ONE SENTENCE.
+   *
+   * `CHANGES_NOT_AVAILABLE_TEXT` means the store answered and no change carried this run's
+   * attribution. 407-14's `learned.scanIncomplete` means the store could not be READ — the op
+   * folded a `KnowledgeMaintenanceScanError` and published the fold rather than hiding it inside
+   * an emptiness. Saying "not available yet" about a store nobody could open tells a reader to
+   * wait for something that will never arrive on its own.
+   */
+  it('says the change records could not be READ, keeps the counts, and lists nothing', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      learned: { changes: [], canaryAttributions: [], scanIncomplete: true },
+    })
+
+    expect(view.state).toBe('done')
+    expect(view.countLine).toBe('curated 3 facts, deprecated 1')
+    expect(view.sentence).toBe(CHANGES_UNREADABLE_TEXT)
+    expect(view.scanIncomplete).toBe(true)
+    expect(view.rows).toEqual([])
+  })
+
+  it('sends the reader to the one door that grades the same fold — `doctor`, not a reload', () => {
+    expect(CHANGES_UNREADABLE_TEXT)
+      .toBe(`Change records could not be read from the knowledge store. ${DOCTOR_HINT_TEXT}`)
+    expect(CHANGES_UNREADABLE_TEXT).not.toBe(CHANGES_NOT_AVAILABLE_TEXT)
+  })
+
+  it('carries NO scanIncomplete member on a clean read — the flag is true or absent, never false', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      learned: { changes: [], canaryAttributions: [] },
+    })
+
+    expect(view.scanIncomplete).toBeUndefined()
+    expect(view.sentence).toBe(CHANGES_NOT_AVAILABLE_TEXT)
   })
 })
 
