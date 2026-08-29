@@ -17,14 +17,16 @@ import {
 } from '@vostride/agent-qa-core'
 import { createModel, getProvider } from '@vostride/agent-qa-model'
 
-type CheckStatus = 'pass' | 'warn' | 'fail' | 'skip'
+// 407 D-18: exported so `doctor-knowledge-checks.ts` can build rows this printer prints without
+// restating the row contract. The three types are the whole of what a row is.
+export type CheckStatus = 'pass' | 'warn' | 'fail' | 'skip'
 
-interface CheckResult {
+export interface CheckResult {
   status: CheckStatus
   message: string
 }
 
-interface DoctorCheck {
+export interface DoctorCheck {
   name: string
   check: () => Promise<CheckResult>
   fixInstructions: string

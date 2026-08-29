@@ -4,6 +4,7 @@ import { parse as parseYaml } from 'yaml'
 import pc from 'picocolors'
 import {
   AgentQaConfigSchema,
+  KnowledgeConfigSchema,
   loadLLMAuthPlugins,
   resolveKnowledgeRoot,
   yamlParseFailureMessage,
@@ -468,4 +469,32 @@ export function resolveConfiguredKnowledgeRoot(
   configDir: string,
 ): string {
   return resolveKnowledgeRoot(config.knowledge, configDir)
+}
+
+/**
+ * The same root, from a RAW config (407 D-18/D-19).
+ *
+ * `doctor` deliberately loads the config unvalidated so it can REPORT on a broken one, so it
+ * never has an `AgentQaConfig` to hand the resolver above. The schema's own `dir` default is what
+ * makes the root knowable from a config that never mentions `knowledge` at all — reproducing that
+ * default at a call site would be a second answer to "where does this project keep its knowledge".
+ *
+ * `null` means the question has no answer for this host: the config could not be read, or its
+ * `knowledge` block is malformed enough that the directory cannot be named. It does NOT mean the
+ * directory is missing — that is the caller's own existence check, because "configured but absent"
+ * and "not configured" read the same to a resolver and differently to a person.
+ */
+export function resolveRawConfigKnowledgeRoot(
+  config: Record<string, unknown> | null,
+  configPath: string,
+): string | null {
+  if (config === null) return null
+  try {
+    return resolveKnowledgeRoot(
+      KnowledgeConfigSchema.parse(config.knowledge ?? {}),
+      dirname(resolvePath(configPath)),
+    )
+  } catch {
+    return null
+  }
 }

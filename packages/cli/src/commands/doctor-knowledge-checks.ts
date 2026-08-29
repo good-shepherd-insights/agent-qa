@@ -1,0 +1,319 @@
+/**
+ * The three knowledge trust rows `agent-qa doctor` prints (407 TRST-02 · D-18/D-19/D-20).
+ *
+ * WHY THESE THREE EXIST. Before this, none of doctor's rows touched the knowledge substrate at
+ * all: a daemon whose embedder worker exits on every boot could run a whole session with no
+ * embedder and nothing on the surface said so. `Knowledge store` reports the index face,
+ * `Embedder` reports the capability outcome, and `Retrieval rung` reports the fold of the two —
+ * the one word the run banner would show for the same host.
+ *
+ * STATUS DISCIPLINE IS THE LOAD-BEARING PART (D-19). `doctor` sets exit code 1 on a `fail`, so a
+ * `fail` for a rung REACHED BY DESIGN would red the CI gate of every deliberately-degraded
+ * install — the static floor is the no-budget escape hatch and `lexical-only` means the floor was
+ * explicitly disabled. `fail` is therefore reserved for a subsystem that ERRORED: an index file
+ * that is present and will not open, or a daemon whose embedder worker never registered. The
+ * `Retrieval rung` row can never be `fail` at all; degraded is not failed.
+ *
+ * ONE FOLD, NOT THREE (D-17). All three rows read `foldRetrievalRung` from knowledge-local — the
+ * same function the runner's evidence recorder and the dashboard banner read. Three surfaces
+ * folding the same two axes independently is exactly how a banner and a doctor row come to
+ * disagree about one machine.
+ *
+ * THE IMPORT ROUTE IS NOT INCIDENTAL. 385 D-14/SC5 gives knowledge-local's writer entry exactly
+ * ONE importer workspace-wide, enforced at file granularity by the `reader-carveout` arch rule.
+ * The probes below therefore arrive through `LOCAL_KNOWLEDGE_PROBES`, bound at that one legal
+ * composition edge, rather than by naming knowledge-local from the CLI.
+ */
+import { existsSync } from 'node:fs'
+import { dirname, relative, resolve } from 'node:path'
+
+import {
+  DEFAULT_EMBEDDING_PROFILE,
+  type EmbeddingProfile,
+  type RecordedRetrievalRung,
+  type RetrievalRungReason,
+} from '@vostride/agent-qa-schema'
+import {
+  LOCAL_KNOWLEDGE_PROBES,
+  type AcquireEmbedderOutcome,
+  type IndexFace,
+  type ReadEmbedderWorkerRegistrationOutcome,
+  type ReadWriterLeaseOutcome,
+} from '@vostride/agent-qa-agent-local'
+
+import { resolveRawConfigKnowledgeRoot } from '../config.js'
+import { readDaemonEventLedger, type DaemonEvent } from '../daemon/events.js'
+import type { CheckResult, DoctorCheck } from './doctor.js'
+
+const { foldRetrievalRung, indexDbPath } = LOCAL_KNOWLEDGE_PROBES
+
+/**
+ * The closed reason vocabulary rendered for a person, as a TOTAL map rather than a switch with a
+ * default: a ninth `RetrievalRungReason` becomes a compile error here instead of a blank cause
+ * printed after an em dash. 407-11 pins this table equal to the dashboard's copy of it — the two
+ * surfaces share no UI module, so the labels are defined twice by necessity and asserted equal.
+ */
+export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
+  'native-runtime-unavailable': 'native ONNX runtime unavailable',
+  'profile-unresolved': 'embedder profile unresolved (deferred)',
+  'low-ram-deferral': 'embedding deferred on low memory',
+  'model-not-downloaded': 'embedding model not downloaded',
+  'embedder-load-failed': 'embedder failed to load',
+  'index-unavailable': 'knowledge index unavailable, scanning bundles',
+  'floor-disabled': 'static floor disabled',
+  'profile-static-configured': 'static profile configured',
+}
+
+/** D-16: no knowledge reader bound is not a rung. Every row still prints; none is omitted. */
+export const NO_KNOWLEDGE_ROOT_MESSAGE = 'no knowledge root configured'
+
+/**
+ * The 399 wording of record (D-20). The folded failure is named by its CAUSE, not its symptom,
+ * and the raw worker stderr that carries it never reaches the terminal (T-407-18).
+ */
+export const EMBEDDER_WORKER_NOT_REGISTERED_TEXT = 'daemon embedder worker not registered: could not resolve profile (deferred)'
+
+const STORE_FIX_PREFIX = 'Rebuild the index with `agent-qa knowledge rebuild-index`, or remove the corrupt file at'
+const EMBEDDER_FIX =
+  'Set an explicit embedder profile in agent-qa.config.yaml (the daemon cannot resolve `deferred`), then restart the daemon.'
+const RUNG_FIX = 'Run the checks above; the rung follows from the store and embedder rows.'
+
+/** The fold's index axis held OPEN, so the `Embedder` row reads its own subject's cause. */
+const INDEX_PRESENT: IndexFace = { source: 'index' }
+
+const SKIPPED: CheckResult = { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE }
+
+export interface KnowledgeCheckProbes {
+  classifyIndexFace?: (knowledgeRoot: string) => IndexFace
+  resolveEmbedderCapability?: (options: {
+    preferredProfile: EmbeddingProfile
+    allowDownload: false
+    agentQaRoot: string
+  }) => Promise<AcquireEmbedderOutcome>
+  readWriterLease?: (knowledgeRoot: string) => ReadWriterLeaseOutcome
+  readEmbedderWorkerRegistration?: (agentQaRoot: string) => ReadEmbedderWorkerRegistrationOutcome
+  readDaemonEventLedger?: (agentQaRoot: string) => { events: readonly DaemonEvent[] }
+}
+
+export interface CreateKnowledgeChecksInput {
+  /** The RAW config doctor loaded; `null` means it could not be read at all. */
+  config: Record<string, unknown> | null
+  configPath: string
+  preferredProfile?: EmbeddingProfile
+  probes?: KnowledgeCheckProbes
+}
+
+interface DaemonHalf {
+  registration: ReadEmbedderWorkerRegistrationOutcome
+  lastExit: DaemonEvent | undefined
+}
+
+interface KnowledgeProbe {
+  face: IndexFace
+  embedder: AcquireEmbedderOutcome
+  /** The fold over BOTH axes — the word the banner would show. */
+  rung: RecordedRetrievalRung
+  /** The same fold with the index axis held open, so the embedder row names its own cause. */
+  embedderRung: RecordedRetrievalRung
+  /** Consulted only when a daemon lease is live; `undefined` means nobody holds authority. */
+  daemon: DaemonHalf | undefined
+}
+
+interface KnowledgeCheckContext {
+  knowledgeRoot: string | null
+  relativeRoot: string
+  relativeIndexPath: string
+  probe: () => Promise<KnowledgeProbe>
+}
+
+/**
+ * D-16/D-19's "no knowledge root configured" predicate.
+ *
+ * A VALIDATED config always materialises `knowledge.dir` (the schema defaults it), and doctor
+ * loads the RAW config — so "the key is absent" cannot be the test. The two facts that can make
+ * this host have no store are: the config could not be read or named a root at all, or the
+ * directory it names is not on disk.
+ */
+function resolveKnowledgeRootOnDisk(
+  config: Record<string, unknown> | null,
+  configPath: string,
+): string | null {
+  const root = resolveRawConfigKnowledgeRoot(config, configPath)
+  if (root === null) return null
+  return existsSync(root) ? root : null
+}
+
+/** Printed relative to the cwd, so the only variable-length segment of a row is the reason word. */
+function displayPath(absolute: string): string {
+  return relative(process.cwd(), absolute) || '.'
+}
+
+function lastEmbedderWorkerExit(events: readonly DaemonEvent[]): DaemonEvent | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.kind === 'embedder-worker-exit') return event
+  }
+  return undefined
+}
+
+function stringField(event: DaemonEvent | undefined, field: string): string | undefined {
+  const value = event?.[field]
+  return typeof value === 'string' ? value : undefined
+}
+
+/**
+ * `reason` is absent IFF the rung is `memidex`, and every caller below has already returned on
+ * that arm. The fallback exists only to keep the lookup total; no row can reach it.
+ */
+function causeLabel(rung: RecordedRetrievalRung): string {
+  return RUNG_CAUSE_LABELS[rung.reason ?? 'index-unavailable']
+}
+
+function createKnowledgeStoreCheck(context: KnowledgeCheckContext): DoctorCheck {
+  return {
+    name: 'Knowledge store',
+    fixInstructions: `${STORE_FIX_PREFIX} ${context.relativeIndexPath} and re-run.`,
+    check: async (): Promise<CheckResult> => {
+      if (context.knowledgeRoot === null) return SKIPPED
+      const { face } = await context.probe()
+      if (face.source === 'index') {
+        return { status: 'pass', message: `index open at ${context.relativeRoot} (memidex)` }
+      }
+      // Present-but-unopenable is the ERRORED subsystem D-19 reserves `fail` for. The reason WORD
+      // goes to the terminal; the driver's own text (which quotes paths) stays out of it (T-407-18).
+      if (face.filePresent) {
+        return {
+          status: 'fail',
+          message: `index at ${context.relativeIndexPath} could not be opened: ${face.reason}`,
+        }
+      }
+      return {
+        status: 'warn',
+        message: `no index at ${context.relativeRoot} — scanning bundles (${RUNG_CAUSE_LABELS['index-unavailable']})`,
+      }
+    },
+  }
+}
+
+function createEmbedderCheck(context: KnowledgeCheckContext): DoctorCheck {
+  return {
+    name: 'Embedder',
+    fixInstructions: EMBEDDER_FIX,
+    check: async (): Promise<CheckResult> => {
+      if (context.knowledgeRoot === null) return SKIPPED
+      const { embedder, embedderRung, daemon } = await context.probe()
+
+      // D-20's second half, consulted FIRST when it exists: an in-process probe answers "what can
+      // this process do", which is not the same question as "does the standing daemon actually
+      // have an embedder". A host can resolve native in-process while the daemon has been serving
+      // every run of the day with none.
+      if (daemon !== undefined && daemon.registration.kind !== 'parsed') {
+        const stderr = stringField(daemon.lastExit, 'stderr') ?? ''
+        if (stderr.includes('could not resolve profile')) {
+          return { status: 'fail', message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT }
+        }
+        const reason = stringField(daemon.lastExit, 'reason') ?? 'no registration published'
+        return { status: 'fail', message: `embedder worker failed to start: ${reason}` }
+      }
+
+      if (embedder.kind === 'ready' && embedder.rung === 'native') {
+        return { status: 'pass', message: `native (${embedder.profile.model_id})` }
+      }
+      const label = causeLabel(embedderRung)
+      if (embedderRung.rung === 'static-floor') {
+        return { status: 'warn', message: `static floor — ${label}` }
+      }
+      return { status: 'warn', message: `none — ${label}` }
+    },
+  }
+}
+
+function createRetrievalRungCheck(context: KnowledgeCheckContext): DoctorCheck {
+  return {
+    name: 'Retrieval rung',
+    fixInstructions: RUNG_FIX,
+    check: async (): Promise<CheckResult> => {
+      if (context.knowledgeRoot === null) return SKIPPED
+      const { rung } = await context.probe()
+      // D-19: never a failure. A lower rung is a rung reached by design, and this row is the one
+      // that would otherwise red the CI gate of every host running on the floor on purpose.
+      if (rung.rung === 'memidex') return { status: 'pass', message: 'memidex' }
+      return { status: 'warn', message: `${rung.rung} — ${causeLabel(rung)}` }
+    },
+  }
+}
+
+/**
+ * The three rows, over ONE shared read-only probe.
+ *
+ * The probe is memoised across the trio because the three rows are three views of one host state:
+ * probing per row could report an index face to the store row and a different one to the rung row
+ * if a drain landed between them, which is the disagreement this whole design exists to prevent.
+ * It is also lazy, so a host with no knowledge root never touches the substrate at all.
+ */
+export function createKnowledgeChecks(
+  input: CreateKnowledgeChecksInput,
+): [DoctorCheck, DoctorCheck, DoctorCheck] {
+  const knowledgeRoot = resolveKnowledgeRootOnDisk(input.config, input.configPath)
+  const agentQaRoot = resolve(dirname(resolve(input.configPath)), '.agent-qa')
+  const preferredProfile = input.preferredProfile ?? DEFAULT_EMBEDDING_PROFILE
+
+  const probes = input.probes ?? {}
+  const classify = probes.classifyIndexFace ?? LOCAL_KNOWLEDGE_PROBES.classifyIndexFace
+  const capability = probes.resolveEmbedderCapability ?? LOCAL_KNOWLEDGE_PROBES.resolveEmbedderCapability
+  const lease = probes.readWriterLease ?? LOCAL_KNOWLEDGE_PROBES.readWriterLease
+  const registration =
+    probes.readEmbedderWorkerRegistration ?? LOCAL_KNOWLEDGE_PROBES.readEmbedderWorkerRegistration
+  const ledger = probes.readDaemonEventLedger ?? readDaemonEventLedger
+
+  let pending: Promise<KnowledgeProbe> | undefined
+
+  async function runProbe(root: string): Promise<KnowledgeProbe> {
+    const face = classify(root)
+
+    let embedder: AcquireEmbedderOutcome
+    try {
+      // `allowDownload: false` is not an option this surface offers: a probe that fetched a model
+      // would CHANGE the answer by asking the question (T-407-19).
+      embedder = await capability({ preferredProfile, allowDownload: false, agentQaRoot })
+    } catch {
+      embedder = { kind: 'deferred', reason: 'load-failure' }
+    }
+
+    let daemon: DaemonHalf | undefined
+    if (lease(root).kind === 'parsed') {
+      let events: readonly DaemonEvent[] = []
+      try {
+        events = ledger(agentQaRoot).events
+      } catch {
+        events = []
+      }
+      daemon = { registration: registration(agentQaRoot), lastExit: lastEmbedderWorkerExit(events) }
+    }
+
+    return {
+      face,
+      embedder,
+      rung: foldRetrievalRung(face, embedder, preferredProfile),
+      embedderRung: foldRetrievalRung(INDEX_PRESENT, embedder, preferredProfile),
+      daemon,
+    }
+  }
+
+  const context: KnowledgeCheckContext = {
+    knowledgeRoot,
+    relativeRoot: knowledgeRoot === null ? '' : displayPath(knowledgeRoot),
+    relativeIndexPath: knowledgeRoot === null ? '' : displayPath(indexDbPath(knowledgeRoot)),
+    probe: () => {
+      if (knowledgeRoot === null) throw new TypeError('no knowledge root to probe')
+      pending ??= runProbe(knowledgeRoot)
+      return pending
+    },
+  }
+
+  return [
+    createKnowledgeStoreCheck(context),
+    createEmbedderCheck(context),
+    createRetrievalRungCheck(context),
+  ]
+}

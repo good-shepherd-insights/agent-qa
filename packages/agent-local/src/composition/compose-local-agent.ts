@@ -83,6 +83,7 @@ import {
   ADDRESSING_LEDGER_DB_FILE,
   acquireEmbedder,
   acquireWriterLease,
+  classifyIndexFace,
   countPendingCurationJobs,
   createMemorySightingSource,
   createGrantOperations,
@@ -108,6 +109,7 @@ import {
   fingerprintRecurrence,
   listTestsInFile,
   foldQuarantineLedgerState,
+  foldRetrievalRung,
   foldRunOutcomes,
   createDraftReceiptsStore,
   createSuiteFingerprintIndex,
@@ -137,6 +139,7 @@ import {
   releaseLease,
   removeEmbedderWorkerRegistration,
   resetEmbedderCapability,
+  resolveEmbedderCapability,
   verifyEmbedderWorkerIncarnation,
   resolvePurgeAffectedSet,
   resolveRollbackAffectedSet,
@@ -266,6 +269,51 @@ import type { SqliteJobStore } from '../store/sqlite-job-store.js'
  * `probes` seam and the preferred profile stay knowledge-local's business.
  */
 export const resolveHostRetrievalRung: RetrievalRungResolver = resolveRetrievalRung
+
+/**
+ * 407 D-18/D-20 — the READ-ONLY knowledge probes a diagnostic grades a host with.
+ *
+ * `doctor` needs the two axes SEPARATELY, not just the folded word: its `Knowledge store` row is
+ * about the index face, its `Embedder` row is about the capability outcome, and only its third row
+ * is the fold. {@link resolveHostRetrievalRung} above hands back the fold alone, so a surface that
+ * had only that would have to re-derive the other two — which is a second fold in everything but
+ * name, and exactly what D-17's one-resolver rule exists to prevent.
+ *
+ * Published as its own frozen table rather than folded into {@link LOCAL_DAEMON_CAPABILITIES}
+ * because every member here is a READ. Nothing in it acquires a lease, spawns a worker, downloads
+ * an artifact or writes to the knowledge root, and a caller that holds this object cannot mutate
+ * the thing it is reporting on. That is the whole mitigation for T-407-19: the boundary is the
+ * shape of the capability, not a promise in a doc comment at the call site.
+ *
+ * `foldRetrievalRung` rides along for the same reason the resolver does — one fold table in one
+ * package, reached through the one edge that may name the writer entry (385 D-14/SC5).
+ */
+export interface LocalKnowledgeProbeCapabilities {
+  readonly classifyIndexFace: typeof classifyIndexFace
+  readonly foldRetrievalRung: typeof foldRetrievalRung
+  readonly indexDbPath: typeof indexDbPath
+  readonly readEmbedderWorkerRegistration: typeof readEmbedderWorkerRegistration
+  readonly readWriterLease: typeof readWriterLease
+  readonly resolveEmbedderCapability: typeof resolveEmbedderCapability
+}
+
+export const LOCAL_KNOWLEDGE_PROBES: LocalKnowledgeProbeCapabilities = Object.freeze({
+  classifyIndexFace,
+  foldRetrievalRung,
+  indexDbPath,
+  readEmbedderWorkerRegistration,
+  readWriterLease,
+  resolveEmbedderCapability,
+})
+
+// The probe vocabulary the three doctor rows are typed against, re-exported through the same one
+// edge. Types are erased, so this hands a caller no power the frozen table above does not.
+export type {
+  AcquireEmbedderOutcome,
+  IndexFace,
+  ReadEmbedderWorkerRegistrationOutcome,
+  ResolveEmbedderCapabilityOptions,
+} from '@vostride/agent-qa-knowledge-local'
 
 // 387-08 D-18: the delegate transport's own vocabulary, re-exported through the one edge that
 // names the writer entry — a surface builds an `ApplyDelegate` closure and returns an

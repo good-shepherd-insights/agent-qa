@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 
-import { DEFAULT_EMBEDDING_PROFILE, RETRIEVAL_RUNG_REASONS } from '@vostride/agent-qa-schema'
+import {
+  DEFAULT_EMBEDDING_PROFILE,
+  RETRIEVAL_RUNG_REASONS,
+  type EmbeddingProfile,
+} from '@vostride/agent-qa-schema'
 
 import {
   EMBEDDER_WORKER_NOT_REGISTERED_TEXT,
@@ -13,10 +17,10 @@ import {
   type KnowledgeCheckProbes,
 } from '../commands/doctor-knowledge-checks.js'
 
-const STATIC_PROFILE = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' as const }
+const STATIC_PROFILE: EmbeddingProfile = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' }
 
 /** `ready` carries a live `EmbedderPort`; no row reads it, so the cells hand over a stub. */
-function ready(rung: 'native' | 'floor', profile = DEFAULT_EMBEDDING_PROFILE) {
+function ready(rung: 'native' | 'floor', profile: EmbeddingProfile = DEFAULT_EMBEDDING_PROFILE) {
   return { kind: 'ready', rung, profile, embedder: {} } as never
 }
 

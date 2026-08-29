@@ -210,6 +210,10 @@ export {
   ENTITY_INDEX_SWEEP_INTERVAL_MS,
   LOCAL_CURATION_CAPABILITIES,
   LOCAL_DAEMON_CAPABILITIES,
+  // 407 D-18/D-20: the READ-ONLY knowledge probes `doctor` grades its three trust rows with.
+  // Published for the same reason the resolver above is: the CLI may not name knowledge-local,
+  // and a surface that could not reach these two axes separately would have to re-derive them.
+  LOCAL_KNOWLEDGE_PROBES,
   LocalAgentClosedError,
   RunProducedNoEventsError,
   // 407 D-13/D-17: the ONE retrieval-rung resolver, published from the one edge allowed to name
@@ -262,6 +266,7 @@ export type {
   LocalAgentJobs,
   LocalCurationCapabilities,
   LocalDaemonCapabilities,
+  LocalKnowledgeProbeCapabilities,
   LocalKnowledgeMaintenanceCapabilities,
   RunExecutionPort,
   SweepEntityIndexInput,
@@ -292,6 +297,10 @@ export type {
   HeartbeatLeaseOutcome,
   LeaseOperationOptions,
   ReadWriterLeaseOutcome,
+  // 407 D-18: the doctor rows' probe vocabulary, beside the lease vocabulary it sits with.
+  AcquireEmbedderOutcome,
+  IndexFace,
+  ReadEmbedderWorkerRegistrationOutcome,
   ReleaseLeaseOutcome,
   WriterLease,
   WriterLeaseFreshness,
