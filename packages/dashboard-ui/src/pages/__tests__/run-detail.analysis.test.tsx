@@ -29,7 +29,7 @@
 
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { MemoryRouter, Route, Routes } from "react-router"
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type {
   AnalysisGetOutput,
@@ -616,5 +616,139 @@ describe("evidence the durable read found MISSING is said so, and changes nothin
     expect(view.querySelector('[data-member="0"] [data-evidence-missing]')).toBeNull()
     expect(view.querySelector('[data-member="0"] [data-cited-artifact-state="incomplete"]')).toBeNull()
     expect(view.querySelector(`[data-member="0"] [data-cited-artifact="${SHA_PRESENT}"]`)).not.toBeNull()
+  })
+})
+
+// ----------------------------------------------------------------------------------------------
+// ONE RUN'S VERDICTS NEVER PAINT UNDER ANOTHER RUN'S MEMBERS (CR-02, measured 2026-08-29, phase
+// 406 review).
+//
+// The route is `/runs/:id`, so React Router changes the param WITHOUT remounting this page. The
+// analysis read held its answer across that change and `projectAnalysisView` keys on
+// `perTest` / `testIndex` — an integer both runs have — so every member of run B whose index
+// matched a failed member of run A wore run A's sentence, provenance, confidence, cited steps and
+// cited artifact shas.
+//
+// It is not a one-round-trip window either: `request()` throws on any non-2xx and the read answers
+// 404 for a run with no handoff, so navigating from a run WITH an analysis to one WITHOUT left the
+// first run's sentences on the second run's page indefinitely — including, on the local human
+// door, its RESTORED secret values, attributed to the wrong test.
+// ----------------------------------------------------------------------------------------------
+
+const RUN_B = "run-406-b"
+
+/** Run B's own projection: the SAME member indexes, which is exactly why a stale join is silent. */
+const TWO_MEMBERS_B: RunDetailProjection = { ...TWO_MEMBERS, runId: RUN_B }
+
+function NavToRunB() {
+  const navigate = useNavigate()
+  return (
+    <button type="button" data-testid="go-to-b" onClick={() => { navigate(`/runs/${RUN_B}`) }}>
+      go
+    </button>
+  )
+}
+
+/**
+ * Mount at run A with a control that navigates to run B on the SAME route. The element is one
+ * position of one type, so the page keeps its state across the param change — the production
+ * condition, not a simulation of it.
+ */
+async function renderPageWithNav() {
+  container = document.createElement("div")
+  document.body.appendChild(container)
+  root = createRoot(container)
+  await act(async () => {
+    root!.render(
+      <MemoryRouter initialEntries={[`/runs/${RUN_ID}`]}>
+        <Routes>
+          <Route
+            path="/runs/:id"
+            element={
+              <>
+                <NavToRunB />
+                <RunDetailPage />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+  })
+  await flushRender()
+  return container
+}
+
+async function goToRunB(view: HTMLElement) {
+  const button = view.querySelector('[data-testid="go-to-b"]') as HTMLButtonElement
+  await act(async () => { button.click() })
+  await flushRender()
+}
+
+describe("the analysis read is forgotten when the run id changes (CR-02)", () => {
+  beforeEach(() => {
+    fetchRunDetailMock.mockImplementation(async (id: string) =>
+      id === RUN_B ? TWO_MEMBERS_B : TWO_MEMBERS,
+    )
+  })
+
+  it("leaves run B's members bare when run B has no analysis at all (the 404 that made it permanent)", async () => {
+    fetchRunAnalysisMock.mockImplementation(async (id: string) => {
+      if (id === RUN_B) throw new Error("404 unknown_run")
+      return analysisOf()
+    })
+
+    const view = await renderPageWithNav()
+    expect(
+      view.querySelector('[data-member="0"] [data-verdict-sentence]')?.textContent,
+      "run A is painted from its own answer",
+    ).toBe(FLOOR_SENTENCE)
+
+    await goToRunB(view)
+
+    expect(fetchRunAnalysisMock).toHaveBeenCalledWith(RUN_B)
+    expect(
+      view.querySelectorAll("[data-verdict-block]").length,
+      "a run with no analysis has no blocks — not the previous run's",
+    ).toBe(0)
+    expect(
+      view.textContent,
+      "not one byte of run A's sentence survives the id change",
+    ).not.toContain(FLOOR_SENTENCE)
+  })
+
+  it("refuses an answer that is about another run, however it arrives", async () => {
+    // The belt-and-braces half: `AnalysisGetOutput.runId` is on the wire, so an answer for the
+    // run we just left can be recognised as such rather than joining silently on `perTest`.
+    fetchRunAnalysisMock.mockImplementation(async (id: string) => {
+      if (id === RUN_B) return analysisOf({ runId: RUN_ID })
+      return analysisOf()
+    })
+
+    const view = await renderPageWithNav()
+    await goToRunB(view)
+
+    expect(
+      view.querySelectorAll("[data-verdict-block]").length,
+      "an answer whose runId is not the run on screen is not a paint input",
+    ).toBe(0)
+    expect(view.textContent).not.toContain(FLOOR_SENTENCE)
+  })
+
+  it("still paints run B's OWN answer under run B's members", async () => {
+    // The other direction, pinned in the same group: forgetting the previous run must not turn
+    // into forgetting the current one.
+    const B_SENTENCE = 'observed (step 0): "Error: login timed out" — root cause undetermined'
+    fetchRunAnalysisMock.mockImplementation(async (id: string) =>
+      id === RUN_B
+        ? analysisOf({ runId: RUN_B, sentences: [{ perTest: 0, testId: "t_login", sentence: B_SENTENCE }] })
+        : analysisOf(),
+    )
+
+    const view = await renderPageWithNav()
+    await goToRunB(view)
+
+    expect(view.querySelector('[data-member="0"] [data-verdict-sentence]')?.textContent)
+      .toBe(B_SENTENCE)
   })
 })

@@ -200,12 +200,29 @@ export default function RunDetailPage() {
   // A REJECTED READ LEAVES THE PREVIOUS ANSWER IN PLACE. Clearing on failure would blank a
   // sentence the reader is looking at because one poll hiccuped; the honest state of a failed
   // re-read is the last answer the op actually gave.
+  //
+  // ...BUT ONLY FOR THE RUN IT WAS AN ANSWER ABOUT (CR-02, measured 2026-08-29). The route is
+  // `/runs/:id`, so a move from run A to run B changes the param WITHOUT remounting this page,
+  // and `projectAnalysisView` joins on `perTest` / `testIndex` — an integer both runs have. So a
+  // held answer does not go stale visibly; it JOINS, painting run A's sentence, provenance,
+  // confidence, cited steps and cited artifact shas under run B's members. And the rejection rule
+  // above made it permanent for the ordinary case, because the read answers 404 for a run with no
+  // handoff: navigating from a run WITH an analysis to one WITHOUT left A's sentences on B's page
+  // indefinitely, including this door's RESTORED secret values attributed to the wrong test.
+  //
+  // The sibling read above forgets the previous run on an id change for exactly this reason; the
+  // same rule applies here.
+  useEffect(() => { setAnalysis(undefined) }, [id])
+
   useEffect(() => {
     if (!id) return
     let cancelled = false
     void fetchRunAnalysis(id).then(
-      (result) => { if (!cancelled) setAnalysis(result) },
-      () => { /* the previous answer stands — a rejected fetch is not a paint input */ },
+      // THE ANSWER MUST BE ABOUT THE RUN ON SCREEN. The reset above closes the in-flight window;
+      // this closes the one an in-flight answer for the previous run would otherwise slip
+      // through. Two guards, each documenting a different way the join goes silently wrong.
+      (result) => { if (!cancelled && result.runId === id) setAnalysis(result) },
+      () => { /* the previous answer FOR THIS RUN stands — a rejected fetch is not a paint input */ },
     )
     return () => { cancelled = true }
   }, [id, analysisChip])
