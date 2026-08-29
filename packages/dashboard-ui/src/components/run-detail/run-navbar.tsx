@@ -10,13 +10,14 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 import { PostProcessingChips } from "@/components/run-detail/post-processing-chips"
+import { RetrievalRungBanner } from "@/components/run-detail/retrieval-rung-banner"
 import type { PostProcessingView } from "@/lib/post-processing-view"
 import type { RunRow } from "@/lib/api"
 import { triggerRun } from "@/lib/api"
 import { tokenSummaryLine } from "@/lib/run-detail-view"
 import { statusBadgeLook } from "@/lib/status"
 import { formatDuration } from "@/lib/utils"
-import type { RunTokenTotals } from "@vostride/agent-qa-schema"
+import type { RecordedRetrievalRung, RunTokenTotals } from "@vostride/agent-qa-schema"
 
 /**
  * THE HEADER'S VERDICT BADGE, ADDRESSABLE (2026-08-26, Phase 404 · LIFE-01, D-13/D-15).
@@ -78,6 +79,20 @@ interface RunNavbarProps {
    * every surface rendering this header without a run-detail page behind it should get.
    */
   onCurationClick?: () => void
+  /**
+   * The rung that served THIS run, as the durable `runs.knowledge` read recorded it (407-10 · D-13).
+   *
+   * UNDEFINED IS TWO FACTS THIS HEADER CANNOT TELL APART, and both render the same nothing: the
+   * read has not landed, or the run recorded no rung (a pre-407 run, or a project with no
+   * knowledge reader bound — D-16). That collapse is deliberate here, unlike `postProcessing`
+   * above: a chip area exists to say WHICH stage is pending, whereas the only honest thing to
+   * paint about a rung nobody has stated is no element at all.
+   *
+   * IT IS THE RECORDED VALUE AND NEVER A HOST PROBE. Fixing the machine tomorrow must not change
+   * what this header says about a run that already happened; the page reads it through
+   * `bannerRung`, which is where the "no store bound is not a rung" judgement lives.
+   */
+  retrievalRung?: RecordedRetrievalRung
 }
 
 export function RunNavbar({
@@ -89,6 +104,7 @@ export function RunNavbar({
   postProcessing,
   hasPostProcessing = false,
   onCurationClick,
+  retrievalRung,
 }: RunNavbarProps) {
   const navigate = useNavigate()
   const isSuiteParent = run.suiteId != null && run.parentRunId == null
@@ -112,7 +128,13 @@ export function RunNavbar({
   }
 
   return (
-    <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 min-w-0">
+    // TWO ROWS, ONE HEADER BLOCK. The banner is a second full-width row inside this `shrink-0`
+    // wrapper rather than a sibling of the page's panel group, so the header stays one block the
+    // layout can measure — 56px, or 56 + 28 when a run says its retrieval was degraded (D-14).
+    // It is NOT a third pane and NOT a toast: 403's two-pane rule holds on the live page and the
+    // same discipline holds here.
+    <div className="shrink-0">
+    <div className="flex h-14 items-center justify-between border-b px-4 min-w-0">
       <div className="flex items-center gap-2 min-w-0">
         <button
           onClick={() => navigate(routes.runs)}
@@ -255,6 +277,8 @@ export function RunNavbar({
           </a>
         )}
       </div>
+    </div>
+    <RetrievalRungBanner rung={retrievalRung?.rung} reason={retrievalRung?.reason} />
     </div>
   )
 }

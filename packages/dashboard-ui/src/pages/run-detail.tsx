@@ -35,7 +35,7 @@ import {
   showMemberChrome,
 } from "@/lib/run-detail-view"
 import { projectPostProcessingView } from "@/lib/post-processing-view"
-import { projectKnowledgeView } from "@/lib/knowledge-view"
+import { bannerRung, projectKnowledgeView } from "@/lib/knowledge-view"
 import { projectAnalysisView } from "@/lib/analysis-view"
 import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
@@ -819,6 +819,11 @@ export default function RunDetailPage() {
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        {/*
+          THE DURABLE RUNG RIDES THE READ THIS PAGE ALREADY MADE (407-10 · D-13). `bannerRung` is a
+          pure read of `knowledgeRead` — no second fetch, no new effect, and no new dependency on
+          the one-read-per-id effect above, whose cardinality 407-06 pinned.
+        */}
         <RunNavbar
           run={run}
           tokens={detail?.tokens}
@@ -826,6 +831,7 @@ export default function RunDetailPage() {
           onToggleShortcuts={() => setShortcutsOpen(prev => !prev)}
           onOpenArtifacts={openArtifactDrawer}
           onCurationClick={() => setActiveTab('knowledge')}
+          retrievalRung={bannerRung(knowledgeRead)}
           hasPostProcessing
           postProcessing={
             postProcessingRead === undefined ? undefined : projectPostProcessingView(postProcessingRead)

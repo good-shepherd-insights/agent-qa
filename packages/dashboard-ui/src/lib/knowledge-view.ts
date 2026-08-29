@@ -936,3 +936,95 @@ function rungView(recorded: RecordedRetrievalRung): RungView {
     ...(recorded.reason === undefined ? {} : { reason: recorded.reason }),
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The rung banner's copy of record (407-10 · TRST-01, D-13/D-14/D-15/D-16)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The three degraded rungs, as a person reads them — and `memidex` is deliberately not a key.
+ *
+ * TYPED WITHOUT THE TOP RUNG so the absence is structural rather than remembered. A table with a
+ * `memidex` label in it is a table a future caller can print, and printing anything for the top
+ * rung would put an amber strip across every healthy run's header. `Exclude` makes "there is no
+ * label for memidex" a compile error at the call site instead of a judgement call.
+ */
+export const RUNG_LABELS: Record<Exclude<RetrievalRung, 'memidex'>, string> = {
+  'bundle-scan': 'bundle scan',
+  'static-floor': 'static-floor embeddings',
+  'lexical-only': 'lexical-only retrieval',
+}
+
+/**
+ * WHY the ladder degraded, as a person reads it — a TOTAL map, never a switch with a default.
+ *
+ * BYTE-IDENTICAL TO `cli/src/commands/doctor-knowledge-checks.ts`, ON PURPOSE AND BY NECESSITY.
+ * The dashboard and the CLI share no UI module — `packages/cli` cannot import a React package's
+ * lib — so the eight labels are spelled twice and 407-11 asserts the two tables equal. Three of
+ * them (`model-not-downloaded`, `embedder-load-failed`, `profile-static-configured`) are NOT in
+ * UI-SPEC's five: the recorded enum has eight arms because `cold-artifact`, `load-failure` and a
+ * `static` PREFERRED profile are three distinct operator situations, and 407-08 chose the wording
+ * for them first. This table follows that one rather than the spec where the two differ.
+ *
+ * A ninth `RetrievalRungReason` becomes a compile error here instead of a blank cause printed
+ * after an em dash.
+ */
+export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
+  'native-runtime-unavailable': 'native ONNX runtime unavailable',
+  'profile-unresolved': 'embedder profile unresolved (deferred)',
+  'low-ram-deferral': 'embedding deferred on low memory',
+  'model-not-downloaded': 'embedding model not downloaded',
+  'embedder-load-failed': 'embedder failed to load',
+  'index-unavailable': 'knowledge index unavailable, scanning bundles',
+  'floor-disabled': 'static floor disabled',
+  'profile-static-configured': 'static profile configured',
+}
+
+/**
+ * Where the banner sends a reader who wants to know more.
+ *
+ * ONE DOOR, AND IT IS THE ONE THAT GRADES THE SAME FOLD (D-18). The banner states a fact about a
+ * run that already happened; `doctor` reads the host as it is now. Sending the reader there is
+ * what makes the banner actionable without letting it pretend to be a live probe (D-13).
+ */
+export const DOCTOR_HINT_TEXT = 'Run `agent-qa doctor`.'
+
+/**
+ * The whole banner sentence, or `undefined` when there is no banner to render.
+ *
+ * TWO ABSENCES, ONE ANSWER. `memidex` is not a degradation and `undefined` is "nobody has said
+ * yet" — a live header before the first evidence-carrying frame, or a run whose evidence predates
+ * 407. Both render no element, because an amber strip saying "retrieval is fine" and one saying
+ * "unknown" are each a claim this surface has no business making.
+ *
+ * THE CAUSE CLAUSE IS DROPPED, NOT BLANKED, when a degraded rung carries no reason. The fold that
+ * mints these values never does that — `reason` is absent IFF the rung is `memidex` — but the
+ * schema types it optional on every arm so the shape is reachable from a historical handoff, and
+ * an em dash with nothing after it is worse than a shorter sentence.
+ */
+export function rungBannerText(rung: RungView | undefined): string | undefined {
+  if (rung === undefined || rung.rung === 'memidex') return undefined
+  const cause = rung.reason === undefined ? '' : ` — ${RUNG_CAUSE_LABELS[rung.reason]}`
+  return `Retrieval degraded: ${RUNG_LABELS[rung.rung]}${cause}. ${DOCTOR_HINT_TEXT}`
+}
+
+/**
+ * The rung the run-detail header should paint, read off the DURABLE projection (D-13).
+ *
+ * THE JOIN LIVES HERE AND NOT IN THE PAGE, because three of its four silences are judgements
+ * about the read rather than about the header. A refused door and a pruned handoff have said
+ * nothing about retrieval; a project with no knowledge store bound never asked retrieval anything
+ * at all, so it was not served on a rung and a "degraded" strip would send an operator hunting a
+ * broken index instead of a missing config key (D-16). The tab states that case in its own words;
+ * the header stays silent.
+ *
+ * IT NEVER PROBES. The value is the one the evidence recorded at serve time, so a run served on
+ * the static floor stays labelled that way after the host is fixed. Fixing the machine must not
+ * rewrite what a past run's header says.
+ */
+export function bannerRung(read: KnowledgeRead | undefined): RecordedRetrievalRung | undefined {
+  if (read === undefined || read.kind !== 'read') return undefined
+  const projection = read.projection
+  if (projection.kind !== 'ready' || projection.knowledgeStore === 'unbound') return undefined
+  return projection.retrievalRung
+}

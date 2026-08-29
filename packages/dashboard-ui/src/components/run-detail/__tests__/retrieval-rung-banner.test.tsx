@@ -167,7 +167,8 @@ describe("two variants, one sentence (D-14)", () => {
     expect(el?.tagName).toBe("DIV")
     // 28px: 6 + 16 + 6. The header block never grows past the 56px navbar plus this row.
     expect(el?.getAttribute("class")).toContain("py-1.5")
-    expect(el?.getAttribute("class")).toContain("truncate")
+    // The sentence truncates INSIDE the fixed row; the whole of it stays in the wrapper's `title`.
+    expect(el?.querySelector(".truncate")).not.toBeNull()
   })
 
   it("both variants render the SAME sentence for the same rung", () => {
