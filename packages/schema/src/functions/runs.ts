@@ -961,6 +961,22 @@ export const RunKnowledgeProjectionSchema = z.discriminatedUnion('kind', [
     learned: z.object({
       changes: z.array(RecordChangeSchema),
       canaryAttributions: z.array(RunKnowledgeCanaryAttributionSchema),
+      /**
+       * THE LEARNED HALF DEGRADED, AND SAYS SO (407-14, CR-03).
+       *
+       * Present iff a knowledge-store scan error — one malformed, truncated or tampered bundle,
+       * quite possibly in a bundle this run never touched — folded one or both store enrichments
+       * to an empty list. Before this member the same byte took down the WHOLE read: the reader
+       * face threw, the op wrapped nothing, and the route rendered `read_failed` over a Used half
+       * that was perfectly intact.
+       *
+       * `true` OR ABSENT, never `false` — the projection's no-null/no-zero-fill idiom applied to a
+       * flag: a surface must not be able to read "we checked and the scan was fine" out of a build
+       * that never had the concept. An empty `changes` list with this key is a DIFFERENT fact from
+       * an empty one without it, which is the whole reason the marker is on the wire rather than
+       * inferred from emptiness.
+       */
+      scanIncomplete: z.literal(true).optional(),
     }).strict(),
     pendingProposalCount: z.number().int().nonnegative().optional(),
   }).strict(),

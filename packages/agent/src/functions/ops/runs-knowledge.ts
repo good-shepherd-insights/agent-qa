@@ -217,6 +217,23 @@ function stepsOf(document: CompletedRunHandoff): readonly StepEvidence[] {
   return document.tests.flatMap((test) => test.steps)
 }
 
+/**
+ * Is this the knowledge store saying "I could not read all of myself"? (407-14, CR-03)
+ *
+ * READ BY NAME, STRUCTURALLY, ON PURPOSE. `KnowledgeMaintenanceScanError` is declared in
+ * `packages/knowledge-local`, and this layer is storage-neutral — it holds a PORT, not a store, so
+ * it cannot import that class to test with `instanceof` without acquiring a dependency on one
+ * particular substrate (403-03 D-4's rule, and the same reason the op's own test file constructs
+ * the error rather than importing it). The class pins its own `name` as a readonly literal, which
+ * makes the string the stable part of the contract across the boundary.
+ *
+ * The narrowness is the safety. Only THIS name folds; every other error still leaves this op the
+ * way it arrived, so a bound path's real failure is still a failure.
+ */
+function isScanIncomplete(error: unknown): boolean {
+  return error instanceof Error && error.name === 'KnowledgeMaintenanceScanError'
+}
+
 export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgeProjection> = {
   id: RUNS_KNOWLEDGE_FUNCTION_ID,
   summary: "Project one run's used brief channels, serve-time traces, procedure use, recorded "
@@ -260,7 +277,12 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
       status: 'executed',
       outcome: `knowledge for ${output.runId} — ${String(output.steps.length)} steps, `
         + `${String(briefLines)} brief lines served, `
-        + `${String(output.learned.changes.length)} learned change(s)`,
+        + `${String(output.learned.changes.length)} learned change(s)`
+        // T-407-29. A degraded Learned half and a genuinely empty one both read `0 learned
+        // change(s)`, and an audit map that could not tell them apart would let an incomplete scan
+        // pass as a clean result forever. A clean read's line is byte-identical to what it always
+        // was — the suffix appears only where the flag does.
+        + (output.learned.scanIncomplete === true ? ', knowledge store scan incomplete' : ''),
     }
   },
   async invoke(input, deps: FunctionDeps) {
@@ -281,9 +303,20 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
     // well is what lets a future producer change stay visible rather than silently averaged.
     const runRung = evidence.map(recordedRungOf).find((rung) => rung !== undefined)
 
-    // Each optional dep is checked for PRESENCE rather than wrapped in a try/catch: swallowing
-    // would also swallow a real failure inside a bound path, and "this host has no queue
-    // database" is not the same fact as "the queue read threw" (runs-digest's rule).
+    // TWO DIFFERENT QUESTIONS, ANSWERED TWO DIFFERENT WAYS (407-14, CR-03).
+    //
+    // PRESENCE is still checked rather than caught: "this host has no queue database" is not the
+    // same fact as "the queue read threw" (runs-digest's rule), and a blanket try/catch would
+    // erase that difference along with every real failure inside a bound path.
+    //
+    // What IS caught, and only around the two knowledge-store enrichments, is the store's own
+    // named scan error (`isScanIncomplete`). A store that cannot read one bundle is not a store
+    // that is absent, and it is not a broken op either — it is a store that can answer PART of
+    // this question. Each enrichment folds INDEPENDENTLY to an empty list, and the fold is
+    // announced on the wire as `learned.scanIncomplete` rather than hidden inside an emptiness the
+    // caller would read as "nothing was learned". Anything not carrying that name propagates
+    // exactly as it did before.
+    let scanIncomplete = false
     const status: PostProcessingStatus | undefined = deps.postProcessing === undefined
       ? undefined
       : await runsPostProcessingSpec.invoke({ runId: input.runId }, deps)
@@ -309,9 +342,16 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
           }))))
 
     const attribute = deps.knowledge.canaryAttributions
-    const attributions = attribute === undefined || tuples.length === 0
-      ? []
-      : await attribute.call(deps.knowledge, { runId, tuples })
+    let attributions: Awaited<ReturnType<NonNullable<typeof attribute>>> = []
+    if (attribute !== undefined && tuples.length > 0) {
+      try {
+        attributions = await attribute.call(deps.knowledge, { runId, tuples })
+      } catch (error) {
+        if (!isScanIncomplete(error)) throw error
+        scanIncomplete = true
+        attributions = []
+      }
+    }
     // Rows appear ONLY for a tuple with a surviving attributed outcome; one still pending is
     // absent here and the panel reads "attribution pending" from the curation word. `flatMap`
     // rather than filter-then-map so the narrowing is PROVED by the control flow instead of
@@ -333,13 +373,24 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
     // A row carrying neither is DROPPED rather than guessed at: "this run deprecated that fact"
     // is a sentence a person acts on, and a neighbouring run's curation must never wear it.
     const observationIds = new Set(attributions.map((row) => row.observationId))
-    const diff = await knowledgeRecordsDiffSpec.invoke(
-      { sinceOrdinal: Math.max(0, document.buildOrdinal - 1) },
-      deps,
-    )
-    const changes: RecordChange[] = diff.changes.filter((change) =>
-      change.sourceRunId === runId
-      || (change.observationId !== undefined && observationIds.has(change.observationId)))
+    let changes: RecordChange[] = []
+    try {
+      const diff = await knowledgeRecordsDiffSpec.invoke(
+        { sinceOrdinal: Math.max(0, document.buildOrdinal - 1) },
+        deps,
+      )
+      changes = diff.changes.filter((change) =>
+        change.sourceRunId === runId
+        || (change.observationId !== undefined && observationIds.has(change.observationId)))
+    } catch (error) {
+      // `diffSince` keeps its MAINTENANCE-grade contract next door: a malformed bundle is an error
+      // to a maintainer asking what changed, and this op does not soften it there. The degradation
+      // belongs HERE, where the caller is a page (D-06's absence-is-a-result posture applied to the
+      // Learned enrichment) — an empty attributed list, and a flag naming why it is empty.
+      if (!isScanIncomplete(error)) throw error
+      scanIncomplete = true
+      changes = []
+    }
 
     const digest = deps.proposalsInbox === undefined
       ? undefined
@@ -365,7 +416,13 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
             }
           : {}),
       },
-      learned: { changes, canaryAttributions },
+      learned: {
+        changes,
+        canaryAttributions,
+        // Spread-when-true, never zero-filled: an absent key is the clean read, and `false` is a
+        // byte this DTO does not have (the layer's own no-null idiom).
+        ...(scanIncomplete ? { scanIncomplete: true as const } : {}),
+      },
       ...(digest === undefined ? {} : { pendingProposalCount: digest.pendingProposalCount }),
     }
   },
