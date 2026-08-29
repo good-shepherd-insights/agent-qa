@@ -5,6 +5,14 @@
  * permanently swaps the facade to an authoritative bundle scan plus a durable rebuild request,
  * while healthy readers stay read-only and query-only through openIndexReaderConnection. This
  * module never acquires the writer role or rebuilds inline.
+ *
+ * ONE ladder, ONE core, two callers (407 D-17, 407-13 CR-02): `classifyIndexFaceWithConnection`
+ * runs the degrade ladder exactly once per call and hands back the live connection on the healthy
+ * arm. `classifyIndexFace` is the PROBE wrapper — it releases that connection and writes nothing,
+ * so `doctor`, the retrieval-rung resolver and the local composition root can ask about the index
+ * without mutating it or leaking a handle. `openKnowledgeReader` is the SERVING facade — it KEEPS
+ * the connection the ladder blessed and owns the marker write. The facade never closes what it is
+ * about to reopen, so there is no window in which contention can degrade a healthy index.
  */
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
