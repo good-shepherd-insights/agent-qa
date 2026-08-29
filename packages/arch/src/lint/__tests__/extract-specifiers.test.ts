@@ -70,6 +70,35 @@ describe('specifier extraction', () => {
       'somewhere else',
     ])
   })
+
+  // ------------------------------------------------------------------------------------------
+  // A LINE THAT RESUMES CODE AFTER A BLOCK COMMENT CLOSES IS CODE (WR-02, measured 2026-08-29,
+  // phase 406 review).
+  //
+  // The first cut of the skip tested `trimStart().startsWith('/*' | '*' | '//')` and claimed in
+  // its own doc block that it "can only remove false positives — it cannot hide a specifier that
+  // any runtime would resolve". That claim was false for the two shapes below: measured with the
+  // shipped function, both returned ZERO hits while carrying an import any runtime resolves.
+  // `validate:arch` is a load-bearing firewall — `packages/agent` is `storageNeutral` and the
+  // whole `node:` namespace is forbidden to it — so this let a forbidden import ride past the
+  // check, introduced by an edit that looks like adding a lint pragma.
+  // ------------------------------------------------------------------------------------------
+
+  it('extracts a specifier from a line that opens with a lint pragma and then imports', () => {
+    const source = "/* eslint-disable import/order */ import { readFileSync } from 'node:fs'"
+
+    expect(specifiersInSource(source, 'a.ts').map(hit => hit.specifier)).toEqual(['node:fs'])
+  })
+
+  it('extracts a specifier from the line that closes a block comment and then imports', () => {
+    const source = ['/* a comment', "*/ import { join } from 'node:path'"].join(
+      String.fromCharCode(10),
+    )
+
+    expect(specifiersInSource(source, 'a.ts')).toEqual([
+      { specifier: 'node:path', file: 'a.ts', line: 2 },
+    ])
+  })
 })
 
 describe('specifier classification', () => {

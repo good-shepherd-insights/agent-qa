@@ -22,20 +22,42 @@ export type ClassifiedSpecifier =
   | { kind: 'external'; pkgName: string }
 
 /**
- * A line whose first non-whitespace characters open or continue a comment. Prose is not
- * code, and SPECIFIER_RE cannot tell them apart: its `from '…'` alternative matches an
- * ordinary English sentence that quotes a phrase after the word "from", which is how a doc
- * comment has now reddened this check twice — 404-07, and again in 406-06 on the sentence
- * distinguishing a row the filter hides from one that was never recorded.
+ * A line that is comment FOR ITS WHOLE LENGTH. Prose is not code, and SPECIFIER_RE cannot tell
+ * them apart: its `from '…'` alternative matches an ordinary English sentence that quotes a
+ * phrase after the word "from", which is how a doc comment has now reddened this check twice —
+ * 404-07, and again in 406-06 on the sentence distinguishing a row the filter hides from one
+ * that was never recorded.
  *
- * FULL-LINE ONLY, deliberately. A trailing comment after real code still scans, because the
- * import on that line is real. Skipping is safe in the direction that matters: a commented-out
- * import is not an import, so this can only remove false positives — it cannot hide a
- * specifier that any runtime would resolve.
+ * WHAT THIS IS AND IS NOT SAFE FOR (WR-02, measured 2026-08-29, phase 406 review). The first cut
+ * of this predicate tested only how a line STARTS, and its doc block claimed that "this can only
+ * remove false positives — it cannot hide a specifier that any runtime would resolve". THAT WAS
+ * FALSE, and unmeasured. Run over the shipped function, both of these returned zero hits:
+ *
+ *   /* eslint-disable import/order *\/ import { readFileSync } from 'node:fs'
+ *   /* a comment
+ *   *\/ import { join } from 'node:path'
+ *
+ * Both are imports any runtime resolves, and `validate:arch` is a load-bearing firewall —
+ * `packages/agent` is `storageNeutral` and the whole `node:` namespace is forbidden to it — so a
+ * forbidden import could ride past the check, introduced by an edit that looks like adding a lint
+ * pragma. Hence the rule below: a line that OPENS or CONTINUES a block comment counts as a
+ * comment only when the block does not CLOSE and hand the rest of the line back to code. A
+ * trailing comment after real code still scans, because the import on that line is real.
+ *
+ * RESIDUAL, named rather than implied. State is not tracked across lines: a multi-line `/* … *\/`
+ * body whose interior lines do NOT begin with `*` is still scanned as code, so the prose false
+ * positive this heuristic exists to suppress can still recur in that shape. Closing it needs a
+ * real block-comment state machine over the file, not a per-line test.
  */
 function isFullLineComment(text: string): boolean {
-  const trimmed = text.trimStart()
-  return trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')
+  const trimmed = text.trim()
+  if (trimmed.startsWith('//')) {
+    return true
+  }
+  if (trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+    return !trimmed.includes('*/') || trimmed.endsWith('*/')
+  }
+  return false
 }
 
 export function specifiersInSource(source: string, file: string): SpecifierHit[] {
