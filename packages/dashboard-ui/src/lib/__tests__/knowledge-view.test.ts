@@ -1014,13 +1014,29 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    * `atOrdinal`, so keying by `recordId` alone collides and React drops or reorders a row on the
    * re-render that fires as curation settles.
    */
-  it('carries a composite key per row — record, change and ordinal', () => {
+  it('carries a composite key per row — record, change, ordinal, evidence token and by-record', () => {
+    // RE-PINNED 407-18 (REVIEW WR-01). The 407-15 form stopped at the ordinal, and that triple is
+    // not what the PRODUCER treats as identity: `diffSince` falls through to `evidenceToken` and
+    // then `byRecordId` in its own comparator, so the key follows all five members it sorts on.
     const view = learnedFrom({
       curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('added', 'rec_a', { atOrdinal: 4 })], canaryAttributions: [] },
     })
 
-    expect(view.rows[0]?.key).toBe('rec_a:added:4')
+    expect(view.rows[0]?.key).toBe('rec_a:added:4::')
+  })
+
+  it('spells an absent optional as an EMPTY SEGMENT, never the word undefined', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: {
+        changes: [change('confirmed', 'rec', { atOrdinal: 12, evidenceToken: 'tok-a', byRecordId: 'by-1' })],
+        canaryAttributions: [],
+      },
+    })
+
+    expect(view.rows[0]?.key).toBe('rec:confirmed:12:tok-a:by-1')
+    expect(view.rows[0]?.key).not.toContain('undefined')
   })
 
   it('gives two changes on ONE record two distinct keys, so neither row is reconciled away', () => {
@@ -1035,7 +1051,32 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
       },
     })
 
-    expect(view.rows.map(row => row.key)).toEqual(['rec_same:confirmed:12', 'rec_same:superseded:13'])
+    expect(view.rows.map(row => row.key)).toEqual(['rec_same:confirmed:12::', 'rec_same:superseded:13::'])
+    expect(new Set(view.rows.map(row => row.key)).size).toBe(2)
+  })
+
+  /**
+   * REVIEW WR-01 — TWO `confirmed` EVENTS AT ONE ORDINAL ARE TWO ROWS.
+   *
+   * `survivingOutcomeEvents` dedupes on `evidenceToken:curationJobId`, NOT on type or ordinal, so
+   * one bundle can carry two confirmations at one `buildOrdinal` and `diffSince` emits both. The
+   * 407-15 triple collided on exactly that pair, and React reconciled one of the two rows away.
+   */
+  it('gives two confirmations at ONE ordinal distinct keys, on the evidence token alone', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      learned: {
+        changes: [
+          change('confirmed', 'rec_same', { atOrdinal: 12, evidenceToken: 'tok-a' }),
+          change('confirmed', 'rec_same', { atOrdinal: 12, evidenceToken: 'tok-b' }),
+        ],
+        canaryAttributions: [],
+      },
+    })
+
+    expect(view.rows.length).toBe(2)
+    expect(view.rows.map(row => row.key))
+      .toEqual(['rec_same:confirmed:12:tok-a:', 'rec_same:confirmed:12:tok-b:'])
     expect(new Set(view.rows.map(row => row.key)).size).toBe(2)
   })
 })

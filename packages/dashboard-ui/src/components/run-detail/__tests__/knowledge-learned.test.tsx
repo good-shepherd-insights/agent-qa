@@ -32,6 +32,7 @@ import {
   DELTAS_PENDING_TEXT,
   LEARNED_HEADING,
   REVIEW_PROPOSALS_CTA,
+  STORE_READ_INCOMPLETE_TEXT,
   pendingProposalsLine,
   type LearnedRowView,
   type LearnedView,
@@ -75,16 +76,18 @@ function rowsOf(host: HTMLElement): HTMLElement[] {
 
 function row(overrides: Partial<LearnedRowView> = {}): LearnedRowView {
   const base: LearnedRowView = {
-    key: "fact-cart-page-4ccac:confirmed:7",
+    key: "fact-cart-page-4ccac:confirmed:7::",
     kind: "confirmed",
     recordId: "fact-cart-page-4ccac",
   }
   // The default key tracks the default kind and id, so a cell that varies either still gets the
-  // composite `learnedRow` would have produced rather than a stale literal (WR-02).
+  // composite `learnedRow` would have produced rather than a stale literal (WR-02, widened to the
+  // producer's own five-member identity tuple by REVIEW WR-01 — the two trailing segments are the
+  // empty spellings of an absent `evidenceToken` and `byRecordId`).
   const merged = { ...base, ...overrides }
   return {
     ...merged,
-    key: overrides.key ?? `${merged.recordId}:${merged.kind}:7`,
+    key: overrides.key ?? `${merged.recordId}:${merged.kind}:7::`,
   }
 }
 
@@ -356,6 +359,78 @@ describe("an unreadable store is stamped on the root, never inferred from an emp
     const section = host.querySelector("[data-learned-state]")
     expect(section?.hasAttribute("data-learned-read")).toBe(false)
     expect(stateOf(host)).toBe("done")
+    // AND NO NOTE AT ALL (407-18). An empty paragraph beneath a clean read would be a degradation
+    // stamp nobody earned; the element is absent, not blank.
+    expect(host.querySelector("[data-learned-read-note]")).toBeNull()
+  })
+})
+
+describe("a partial read is painted beside the rows, and beneath an unsettled sentence (REVIEW CR-01, WR-05)", () => {
+  it("paints the row, the incomplete stamp and the read note — and NO sentence", () => {
+    const host = render({
+      state: "done",
+      countLine: "curated 1 fact, deprecated 0",
+      rows: [row()],
+      scanIncomplete: true,
+      readNote: STORE_READ_INCOMPLETE_TEXT,
+    })
+
+    expect(host.querySelector("[data-learned-state]")?.getAttribute("data-learned-read"))
+      .toBe("incomplete")
+    expect(rowsOf(host).length).toBe(1)
+    expect(host.querySelector("[data-learned-sentence]")).toBeNull()
+    expect(host.querySelector("[data-learned-read-note]")?.textContent)
+      .toBe(STORE_READ_INCOMPLETE_TEXT)
+  })
+
+  it("paints the pending sentence AND the note when a chain has not settled over an unreadable store", () => {
+    const host = render({
+      state: "pending",
+      sentence: DELTAS_PENDING_TEXT,
+      rows: [],
+      scanIncomplete: true,
+      readNote: STORE_READ_INCOMPLETE_TEXT,
+    })
+
+    expect(stateOf(host)).toBe("pending")
+    expect(host.querySelector("[data-learned-state]")?.getAttribute("data-learned-read"))
+      .toBe("incomplete")
+    expect(host.querySelector("[data-learned-sentence]")?.textContent).toBe(DELTAS_PENDING_TEXT)
+    expect(host.querySelector("[data-learned-read-note]")?.textContent)
+      .toBe(STORE_READ_INCOMPLETE_TEXT)
+    expect(host.querySelector("[data-learned-count-line]")).toBeNull()
+    expect(rowsOf(host).length).toBe(0)
+  })
+
+  /**
+   * REVIEW WR-01 AT THE MOUNT. Two `confirmed` events on ONE bundle at ONE ordinal survive the
+   * outcome-event dedupe when their evidence tokens differ, so the 407-15 triple keyed them
+   * identically and React warned and dropped one. The key now differs only in the token segment,
+   * and the console is watched to prove the difference is enough.
+   */
+  it("renders two confirmations that differ ONLY in the evidence token, with no duplicate-key warning", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    try {
+      const host = render({
+        state: "done",
+        countLine: "curated 2 facts, deprecated 0",
+        rows: [
+          row({ key: "r:confirmed:12:tok-a:", kind: "confirmed", recordId: "r" }),
+          row({ key: "r:confirmed:12:tok-b:", kind: "confirmed", recordId: "r" }),
+        ],
+      })
+
+      expect(rowsOf(host).length).toBe(2)
+      const warned = spy.mock.calls.some((call) => String(call[0]).includes("same key"))
+      expect(warned).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it("renders the row() default key in the producer's five-member form", () => {
+    expect(row().key).toBe("fact-cart-page-4ccac:confirmed:7::")
+    expect(row({ kind: "promoted", recordId: "r" }).key).toBe("r:promoted:7::")
   })
 })
 
