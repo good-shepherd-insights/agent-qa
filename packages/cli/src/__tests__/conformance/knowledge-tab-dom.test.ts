@@ -465,17 +465,36 @@ async function observeKnowledge(
 
     const treeStepCount = await page.locator('[data-step-id]').count()
 
-    // The durable header banner, read BEFORE any tab is touched: it is a run-detail header fact,
-    // not a Knowledge-tab one, and a reader sees it without pressing anything.
-    const bannerRung = await attributeOf(page, '[data-rung-banner]', 'data-rung')
-    const bannerReason = await attributeOf(page, '[data-rung-banner]', 'data-rung-reason')
-    const bannerText = await textOf(page, '[data-rung-banner]')
-
     // ── The tab, reached by its own key.
+    //
+    // AND THE HEADER IS READ AFTERWARDS, WHICH IS A MEASURED ORDERING RATHER THAN A PREFERENCE.
+    // The banner and the tab are two renderings of ONE `runs.knowledge` read, and that read lands
+    // strictly after the run-detail read the step tree waits on. Harvesting the header the moment
+    // `[data-step-id]` attaches therefore reads it before the read that feeds it has answered —
+    // which reds the banner cells under load and passes them on an idle machine. Waiting for the
+    // tab to leave its `loading` state is waiting for that one read; the banner is painted in the
+    // same commit, so both are then real.
     await page.keyboard.press('7')
     await page.locator('[data-knowledge-state]').first()
       .waitFor({ state: 'attached', timeout: PAGE_BUDGET_MS })
       .catch(() => undefined)
+    await page
+      .waitForFunction(
+        () => {
+          const node = document.querySelector('[data-knowledge-state]')
+          return node !== null && node.getAttribute('data-knowledge-state') !== 'loading'
+        },
+        undefined,
+        { timeout: PAGE_BUDGET_MS },
+      )
+      .catch(() => undefined)
+
+    // The durable header banner: a run-detail header fact, not a Knowledge-tab one — a reader sees
+    // it without pressing anything, and it stays painted on every tab.
+    const bannerRung = await attributeOf(page, '[data-rung-banner]', 'data-rung')
+    const bannerReason = await attributeOf(page, '[data-rung-banner]', 'data-rung-reason')
+    const bannerText = await textOf(page, '[data-rung-banner]')
+
     const stateAfter7 = await attributeOf(page, '[data-knowledge-state]', 'data-knowledge-state')
     const usedSummary = await textOf(page, '[data-used-summary]')
     const knowledgeStepCount = await page.locator('[data-step-index]').count()
