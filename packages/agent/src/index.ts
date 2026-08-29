@@ -171,6 +171,13 @@ export { ANALYSIS_GET_FUNCTION_ID } from './functions/ops/analysis-get.js'
 // name on the wire, and the alternative is a string literal in each — a second declaration of a
 // capability's name, free to drift. An ID is not a dispatch handle.
 export { RUNS_DIGEST_FUNCTION_ID } from './functions/ops/runs-digest.js'
+// 2026-08-29 (407 D-05): the Knowledge panel read's id, on exactly the footing of the constants
+// above. The dashboard's `/api/runs/:id/knowledge` arm dispatches it through the injected host,
+// and `packages/dashboard-server` may not import this package at all — so the id reaches that
+// route the only way an id can, as data from the composition that already knows it. The SPEC
+// stays inside `functions/`: a spec carries its own `invoke`, which is the private power SC1
+// abolishes, so `runs.knowledge` remains reachable only through `invokeFunction`.
+export { RUNS_KNOWLEDGE_FUNCTION_ID } from './functions/ops/runs-knowledge.js'
 // 392 plan 07: the run LISTING's id, on the same footing. The `status` alias resolves to it, so the
 // composed compound e2e's assertion that the second clause really dispatched there must break when
 // the op is renamed — which it cannot if the test compares against a string it spelled itself

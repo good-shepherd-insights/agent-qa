@@ -59,6 +59,7 @@ import { runsDigestSpec } from './ops/runs-digest.js'
 import { runsArtifactSpec } from './ops/runs-artifact.js'
 import { runsDetailSpec } from './ops/runs-detail.js'
 import { runsGetSpec } from './ops/runs-get.js'
+import { runsKnowledgeSpec } from './ops/runs-knowledge.js'
 import { runsListSpec } from './ops/runs-list.js'
 import { runsPostProcessingSpec } from './ops/runs-post-processing.js'
 import { runsStartSpec } from './ops/runs-start.js'
@@ -148,6 +149,16 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // KREV-02: the honest verb. Read-tier like its four siblings, and bound everywhere for the
   // same reason — its substrate is the RUNS port, which is required.
   knowledgeBriefWhySpec as FunctionSpec,
+  // 2026-08-29 (407 D-05/D-06): the Knowledge panel's ONE read — what a run USED (served brief
+  // channels, serve-time trace arms, procedure replay/hint, the recorded retrieval rung) and what
+  // it LEARNED (curation counts, the record changes attributable to it, canary outcomes). Placed
+  // directly after `knowledge.brief.why` because it is that verb widened from one step to a whole
+  // run, and BOUND EVERYWHERE for the identical reason: its substrate is the RUNS port, which is
+  // required. The three optional deps it consults only enrich the Learned half, so binding
+  // through any of them would leave a host with no queue database unable to see what its own runs
+  // used. A pruned handoff answers `evidence-incomplete` — a result the page renders, never a
+  // refusal it has to catch (D-06).
+  runsKnowledgeSpec as FunctionSpec,
   // 387 KREV-01 D-17: the MUTATING half — three proposes and one apply. Registered here and
   // bound only where a composition supplies `knowledgeReview`, so a read-only host lists all
   // four as `unbound` BY NAME rather than omitting them: a capability that is absent from a

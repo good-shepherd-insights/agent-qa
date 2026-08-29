@@ -1,6 +1,13 @@
 import { z } from 'zod'
 
 import type { Action } from '../action/index'
+// 407 D-05: the `runs.knowledge` panel DTO composes three already-minted contracts — the rung
+// vocabulary, the serve-time trace and the record-change row — rather than respelling any of
+// them, so the panel and the verbs it sits beside can never disagree about one run.
+import { RecordedRetrievalRungSchema } from '../brief/retrieval-rung'
+import { ServedRetrievalTraceV1Schema } from '../brief/retrieval-trace'
+import { BRIEF_WHY_NO_TRACE_REASONS } from '../knowledge/review-verbs'
+import { RecordChangeSchema } from '../knowledge/maintenance-views'
 import type { VerifierVerdict } from '../handoff/step-evidence'
 import type { ArtifactRef } from '../ids/artifact-ref'
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
@@ -728,6 +735,215 @@ export const RunsArtifactResultSchema = z.object({
 }).strict()
 
 export type RunsArtifactResult = z.infer<typeof RunsArtifactResultSchema>
+
+// ---- `runs.knowledge` — what one run USED and LEARNED (Phase 407, LERN-01/LERN-02 · D-05) -----
+//
+// ONE READ, ONE DTO, EVERY SURFACE. D-05's whole posture is that the Knowledge panel is a thin
+// client over a single registry verb rather than a page composing N `knowledge.brief.why` calls,
+// so this contract carries every fact the panel paints: per step the three served channels, the
+// serve-time trace arm, the procedure plan source and the recorded rung; per run the curation
+// word with its counts, the record changes attributable to this run, and the canary outcomes.
+//
+// THE SUBSTRATE IS THE RUN'S HANDOFF (D-06). Every field below is a projection of `StepEvidence`
+// or of a sibling op invoked with the same deps — nothing here is re-derived by querying today's
+// index, because a why-answer computed from the present would answer a different question than
+// the one asked (KREV-02's founding argument, applied to a whole run).
+
+/** `runs.knowledge` addresses exactly one recorded run, on `runs.postProcessing`'s one-field footing. */
+export const RunsKnowledgeInputSchema = z.object({
+  runId: runIdSchema,
+}).strict()
+
+export type RunsKnowledgeInput = z.infer<typeof RunsKnowledgeInputSchema>
+
+/**
+ * One channel-1 brief line as the panel renders it.
+ *
+ * PROJECTED FIELD BY FIELD rather than spread from `BriefLine`, so a field added to the serving
+ * contract cannot silently reach a page. `servedAsCanary` rides along because it is the
+ * serve-time half of D-08's attribution: the marker is always true of the line, the OUTCOME
+ * arrives later on `learned.canaryAttributions`, and the two must stay separately readable.
+ */
+export const RunKnowledgeBriefLineSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  summary: z.string(),
+  trust: z.number(),
+  status: z.string(),
+  servedAsCanary: z.boolean(),
+  tier: z.string(),
+}).strict()
+
+/** One channel-2 read trace as the panel renders it. */
+export const RunKnowledgeReadTraceSchema = z.object({
+  id: z.string(),
+  detailLevel: z.string(),
+  bodyDigest: z.string(),
+}).strict()
+
+/**
+ * One channel-3 caution as the panel renders it.
+ *
+ * `anchors` are DELIBERATELY NOT PROJECTED. The panel renders a caution's sentence and nothing
+ * else, and an anchor list is structural routing detail that would arrive on the wire with no
+ * reader — the projection carries what a surface paints, not everything the producer holds.
+ */
+export const RunKnowledgeCautionLineSchema = z.object({
+  id: z.string(),
+  summary: z.string(),
+}).strict()
+
+/**
+ * Why this step's brief said what it said — the trace, or a NAMED absence (D-04).
+ *
+ * The two arms are the `knowledge.brief.why` vocabulary applied per step, and they reuse that
+ * verb's own reason enum rather than a second spelling of it: one run answered through this op
+ * and the same run answered through `knowledge.brief.why` can never disagree about what a
+ * missing trace is called.
+ */
+export const RunKnowledgeTraceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('answered'),
+    trace: ServedRetrievalTraceV1Schema,
+  }).strict(),
+  z.object({
+    kind: z.literal('no-trace'),
+    reason: z.enum(BRIEF_WHY_NO_TRACE_REASONS),
+  }).strict(),
+])
+
+export type RunKnowledgeTrace = z.infer<typeof RunKnowledgeTraceSchema>
+
+/**
+ * The step's plan source, mirroring `StepPlanSource` MEMBER FOR MEMBER (D-07).
+ *
+ * A replay row and a hint row stay structurally distinct on the wire because G-381-4's whole
+ * lesson is that a demoted replay recommendation and an ordinary served hint are byte-identical
+ * unless something keeps them apart. The guard fold travels intact so the panel can say
+ * "replayed 5/5" or "broke at step 3: verifier rejection" without a second read.
+ */
+export const RunKnowledgePlanSourceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('procedure-replay'),
+    procedureId: z.string(),
+    guard: z.object({
+      checksPassed: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
+      miss: z.object({
+        procedureStepIndex: z.number().int().nonnegative(),
+        reason: z.enum([
+          'descriptor-ambiguous',
+          'descriptor-missing',
+          'page-anchor-mismatch',
+          'gate-refused',
+          'parameter-unbound',
+          'non-replayable-action',
+        ]),
+      }).strict().optional(),
+      executionFailure: z.object({
+        procedureStepIndex: z.number().int().nonnegative(),
+      }).strict().optional(),
+      verifierRejection: z.object({
+        procedureStepIndex: z.number().int().nonnegative(),
+      }).strict().optional(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    kind: z.literal('procedure-hint'),
+    procedureId: z.string(),
+    demotion: z.enum(['body-unreadable', 'body-unparseable', 'body-empty']).optional(),
+  }).strict(),
+])
+
+export type RunKnowledgePlanSource = z.infer<typeof RunKnowledgePlanSourceSchema>
+
+/**
+ * ONE STEP of one member test, with everything the panel shows for it.
+ *
+ * `testIndex` AND `stepIndex` both ride, because `stepIndex` is numbered PER MEMBER TEST — a run
+ * with two tests has two step 0s, and a row keyed on `stepIndex` alone would address neither
+ * (the `StepEvidenceAddress` never-guess contract, restated as a wire shape).
+ */
+export const RunKnowledgeStepSchema = z.object({
+  testId: z.string(),
+  testIndex: z.number().int().nonnegative(),
+  stepIndex: z.number().int().nonnegative(),
+  stepText: z.string(),
+  served: z.object({
+    channel1: z.array(RunKnowledgeBriefLineSchema),
+    channel2: z.array(RunKnowledgeReadTraceSchema),
+    channel3: z.array(RunKnowledgeCautionLineSchema),
+  }).strict(),
+  trace: RunKnowledgeTraceSchema,
+  planSource: RunKnowledgePlanSourceSchema.optional(),
+  retrievalRung: RecordedRetrievalRungSchema.optional(),
+}).strict()
+
+export type RunKnowledgeStep = z.infer<typeof RunKnowledgeStepSchema>
+
+/**
+ * One served canary line that curation later attributed an outcome to (D-08).
+ *
+ * `recordId` is the served line's own id — which IS the curation candidate id, the pin
+ * `emit-canary-outcomes.ts` already relies on — and `observationId` is the sha-derived id the
+ * outcome event carries, so a surface can trace a badge back to the exact event that justified
+ * it. Rows appear ONLY for tuples with a surviving attributed outcome; a canary line with no
+ * outcome yet is absent here and the panel reads "attribution pending" from the curation word.
+ */
+export const RunKnowledgeCanaryAttributionSchema = z.object({
+  testIndex: z.number().int().nonnegative(),
+  stepIndex: z.number().int().nonnegative(),
+  recordId: z.string(),
+  observationId: z.string(),
+  outcome: z.enum(['confirmed', 'contradicted', 'helpful', 'harmful']),
+}).strict()
+
+export type RunKnowledgeCanaryAttribution = z.infer<typeof RunKnowledgeCanaryAttributionSchema>
+
+/**
+ * The whole panel projection — TWO ARMS, and the second one is the point (D-06).
+ *
+ * `evidence-incomplete` is a RESULT, not a throw. A run whose handoff has been pruned is the
+ * ordinary "go looking" case 406 D-17 gave a component to, and a refusal would make a legible
+ * page state indistinguishable from a broken read.
+ *
+ * `knowledgeStore` distinguishes "this project has no knowledge store" from "retrieval ran and
+ * served nothing", derived from the durable {@link NO_KNOWLEDGE_READER_TRUNCATION} marker rather
+ * than from a handoff version — a version says when a run happened, not what was bound to it.
+ *
+ * NO `null` ANYWHERE. Absence is an absent key throughout (the layer's own idiom): `counts` is
+ * missing when the frozen notification row did not record both numbers, `pendingProposalCount`
+ * is missing when this host owns no proposals inbox, and neither reads as a zero somebody
+ * measured.
+ */
+export const RunKnowledgeProjectionSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('evidence-incomplete'),
+    runId: z.string(),
+  }).strict(),
+  z.object({
+    kind: z.literal('ready'),
+    runId: z.string(),
+    buildOrdinal: z.number().int().nonnegative(),
+    knowledgeStore: z.enum(['bound', 'unbound']),
+    retrievalRung: RecordedRetrievalRungSchema.optional(),
+    steps: z.array(RunKnowledgeStepSchema),
+    curation: z.object({
+      status: z.enum(POST_PROCESSING_CHIP_STATUSES),
+      counts: z.object({
+        curated: z.number().int().nonnegative(),
+        deprecated: z.number().int().nonnegative(),
+      }).strict().optional(),
+    }).strict(),
+    learned: z.object({
+      changes: z.array(RecordChangeSchema),
+      canaryAttributions: z.array(RunKnowledgeCanaryAttributionSchema),
+    }).strict(),
+    pendingProposalCount: z.number().int().nonnegative().optional(),
+  }).strict(),
+])
+
+export type RunKnowledgeProjection = z.infer<typeof RunKnowledgeProjectionSchema>
 
 /**
  * What the evidence-blob READ PORT answers with — three arms, and absence is TWO of them.

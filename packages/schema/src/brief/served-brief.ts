@@ -2,6 +2,22 @@ import type { Anchor } from '../identity/anchor'
 import type { ScopeKey } from '../identity/scope-key'
 import type { RecordId } from '../ids/record-id'
 
+/**
+ * The `truncation` string the runner writes when NO knowledge reader is bound (Phase 407, D-16).
+ *
+ * BYTE-IDENTICAL to the literal `makeEmptyServedBrief` has always written, lifted here so that
+ * the producer and every reader import ONE constant instead of spelling the sentence twice. It
+ * matters because this string is the ONLY durable marker distinguishing "this project has no
+ * knowledge store configured" from "retrieval ran and served nothing" — a distinction the
+ * Knowledge panel must make (no store → no banner and a stated absence; served nothing → an
+ * honest empty brief), and one that cannot be recovered from an empty channel list.
+ *
+ * NOT A RUNG. "No reader bound" is deliberately outside the {@link RETRIEVAL_RUNGS} ladder: a
+ * project that never configured a knowledge root did not degrade, so there is nothing to grade
+ * and no cause to name (D-16; `doctor` reports `skip`).
+ */
+export const NO_KNOWLEDGE_READER_TRUNCATION = 'no brief served (no knowledge reader bound)'
+
 export interface BriefLine {
   id: RecordId
   kind: string

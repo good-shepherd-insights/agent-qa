@@ -36,6 +36,19 @@ export {
   // that ref becomes bytes.
   RunsArtifactInputSchema,
   RunsArtifactResultSchema,
+  // 407 D-05: the `runs.knowledge` panel read's contracts — one input and one two-armed
+  // projection carrying what a run USED (served channels, trace arms, plan source, rung) and
+  // what it LEARNED (curation counts, attributable record changes, canary outcomes). They live
+  // beside `runs.detail`'s because they answer the same question about the same noun.
+  RunsKnowledgeInputSchema,
+  RunKnowledgeBriefLineSchema,
+  RunKnowledgeReadTraceSchema,
+  RunKnowledgeCautionLineSchema,
+  RunKnowledgeTraceSchema,
+  RunKnowledgePlanSourceSchema,
+  RunKnowledgeStepSchema,
+  RunKnowledgeCanaryAttributionSchema,
+  RunKnowledgeProjectionSchema,
   RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION,
   RunStartAcknowledgementSchema,
   RUN_EVENT_ENVELOPE_SCHEMA_VERSION,
@@ -71,6 +84,15 @@ export type {
   // and its two absences are kept APART on purpose — see the type's own doc.
   RunsArtifactInput,
   RunsArtifactResult,
+  // 407 D-05: the panel projection's inferred shapes. `RunKnowledgeStep` is the row a surface
+  // renders; `RunKnowledgeProjection` is the whole answer including the `evidence-incomplete`
+  // arm, which is a RESULT and not a refusal (D-06).
+  RunsKnowledgeInput,
+  RunKnowledgeProjection,
+  RunKnowledgeStep,
+  RunKnowledgeTrace,
+  RunKnowledgePlanSource,
+  RunKnowledgeCanaryAttribution,
   EvidenceBlobLookup,
   // 406-03 D-17: the same three words asked as a stat, for read-time presence annotation.
   EvidenceBlobPresence,

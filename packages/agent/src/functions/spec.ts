@@ -608,6 +608,43 @@ export interface KnowledgeReaderPort {
    * answer; it never decides what "found" means.
    */
   showRecord(input: KnowledgeRecordShowInput): Promise<KnowledgeRecordShowResult>
+  /**
+   * What became of the canary lines THIS run served (2026-08-29, Phase 407 · D-08).
+   *
+   * ONE ROW PER TUPLE ASKED ABOUT, in the order asked. The caller supplies the served-canary
+   * tuples it already holds from the run's own evidence — `candidateId` is the served channel-1
+   * line's id, which IS the curation candidate id — and the reader answers with the observation
+   * id each tuple's outcome event would carry, plus that outcome when a surviving attributed
+   * event exists. `outcome` ABSENT means "no attributed event survives for this tuple", which is
+   * an ordinary state (curation has not settled, or it settled and attributed nothing) and NOT
+   * an error; `observationId` is always present because it is DERIVED from the tuple —
+   * `canaryOutcomeObservationId({ candidateId, runId, testId, testIndex, stepIndex })` — rather
+   * than looked up, so a caller can name the event it is waiting for before that event exists.
+   *
+   * ON THE READER PORT AND NOT THE RUNS PORT, unlike `readStepEvidence` one interface up: the
+   * SERVING half of a canary (the marker) is a fact about the run and is read from its evidence,
+   * but the ATTRIBUTED half is a fact about the committed knowledge store's outcomes log. Asking
+   * the runs port for it would be asking a record of what happened for a record of what is true.
+   *
+   * OPTIONAL, so every existing port implementation and every test fake stays type-valid. The
+   * `/reader` entry implements it in 407-04 and agent-local binds it there; until then a caller
+   * sees `undefined` and renders the honest not-yet-attributed state rather than a wrong badge.
+   */
+  canaryAttributions?(input: {
+    runId: string
+    tuples: readonly {
+      candidateId: string
+      testId: string
+      testIndex: number
+      stepIndex: number
+    }[]
+  }): Promise<readonly {
+    candidateId: string
+    testIndex: number
+    stepIndex: number
+    observationId: string
+    outcome?: 'confirmed' | 'contradicted' | 'helpful' | 'harmful'
+  }[]>
 }
 
 /**

@@ -75,6 +75,7 @@ import {
   RunsDetailInputSchema,
   RunsDigestInputSchema,
   RunsEventsInputSchema,
+  RunsKnowledgeInputSchema,
   RunsLiveUrlInputSchema,
   RunsGetInputSchema,
   RunsListInputSchema,
@@ -138,6 +139,7 @@ export const OP_INPUT_CONTRACTS = {
   'runs.detail': RunsDetailInputSchema,
   'runs.digest': RunsDigestInputSchema,
   'runs.events': RunsEventsInputSchema,
+  'runs.knowledge': RunsKnowledgeInputSchema,
   'runs.liveurl': RunsLiveUrlInputSchema,
   'runs.get': RunsGetInputSchema,
   'runs.list': RunsListInputSchema,
@@ -1115,6 +1117,20 @@ export const SCENARIO_TABLE = Object.freeze([
         'verdictClusters',
       ],
     },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
+  // 407 D-05: the Knowledge panel's ONE read, beside `runs.digest` because both are whole-run
+  // compositions over the same noun. Unprojected over MCP on `runs.detail`'s footing — a durable
+  // post-run read is not a mid-flight one.
+  scenario({
+    opId: 'runs.knowledge',
+    input: { runId: FIXTURE_RUN_ID },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['kind', 'runId', 'steps', 'learned'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // The one STREAM op in the census. Unprojected because a `tools/call` is one round trip and has no

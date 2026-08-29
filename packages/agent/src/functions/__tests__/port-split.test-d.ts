@@ -36,8 +36,14 @@ import type {
 // under a name nobody thought of is precisely the one it would miss. Exact equality fails on
 // ANY arrival, which is the drift this pin exists to catch — including a `commit`, an `apply`,
 // or a plausible-looking `promote`.
+// 407 D-08 (2026-08-29) extends the set BY NAME rather than relaxing the equality, which is the
+// whole mechanism working again: `canaryAttributions` is a fifth READ member — it answers what
+// became of the canary lines a run served, out of the committed outcomes log — and `tsc` refused
+// the port widening until this line acknowledged it. It is optional on the interface so every
+// existing fake stays valid, and it is a read by construction: it takes tuples the caller already
+// holds and returns observation ids and outcomes, with no verb through which anything can change.
 expectTypeOf<keyof KnowledgeReaderPort>().toEqualTypeOf<
-  'listBundles' | 'inspectRecords' | 'diffSince' | 'showRecord'
+  'listBundles' | 'inspectRecords' | 'diffSince' | 'showRecord' | 'canaryAttributions'
 >()
 
 // The same claim from the other side, and it is not redundant with the one above: it is what

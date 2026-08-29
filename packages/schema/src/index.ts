@@ -165,6 +165,15 @@ export {
   TRACE_TRUNCATION_TOP_K,
   TraceLineSchema,
 } from './brief/index'
+// 407 TRST-01 D-13/D-17: the closed retrieval-rung vocabulary and its recorded form, plus the
+// durable D-16 marker that says no knowledge reader was bound at all. One spelling for the
+// runner that records, the banner that prints and the doctor row that grades.
+export {
+  NO_KNOWLEDGE_READER_TRUNCATION,
+  RETRIEVAL_RUNGS,
+  RETRIEVAL_RUNG_REASONS,
+  RecordedRetrievalRungSchema,
+} from './brief/index'
 export { CURRENT_HANDOFF_SCHEMA_VERSION } from './handoff/index'
 // 361 D-19: the one handoff version guard (SESSION-05 read-side discipline).
 export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } from './handoff/index'
@@ -330,6 +339,9 @@ export type {
   LosslessServedBrief,
   LosslessServedBriefProofV1,
   ReadTrace,
+  RecordedRetrievalRung,
+  RetrievalRung,
+  RetrievalRungReason,
   RetrievalTraceLeg,
   ServedAdmissionEvent,
   ServedAdmissionSurface,
@@ -841,6 +853,16 @@ export {
   // 405-05 D-12/D-13: the artifact read op's two contracts.
   RunsArtifactInputSchema,
   RunsArtifactResultSchema,
+  // 407 LERN-01/LERN-02 D-05: the `runs.knowledge` panel read's contracts.
+  RunsKnowledgeInputSchema,
+  RunKnowledgeBriefLineSchema,
+  RunKnowledgeReadTraceSchema,
+  RunKnowledgeCautionLineSchema,
+  RunKnowledgeTraceSchema,
+  RunKnowledgePlanSourceSchema,
+  RunKnowledgeStepSchema,
+  RunKnowledgeCanaryAttributionSchema,
+  RunKnowledgeProjectionSchema,
   RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION,
   RunStartAcknowledgementSchema,
   RUN_EVENT_ENVELOPE_SCHEMA_VERSION,
@@ -917,6 +939,13 @@ export type {
   // 405-05 D-12/D-13/D-15: the artifact read's shapes and the port's three-arm lookup answer.
   RunsArtifactInput,
   RunsArtifactResult,
+  // 407 D-05: the panel projection's inferred shapes.
+  RunsKnowledgeInput,
+  RunKnowledgeProjection,
+  RunKnowledgeStep,
+  RunKnowledgeTrace,
+  RunKnowledgePlanSource,
+  RunKnowledgeCanaryAttribution,
   EvidenceBlobLookup,
   EvidenceBlobPresence,
   RunDetailArtifactRef,
