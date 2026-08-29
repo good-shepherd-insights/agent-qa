@@ -17,20 +17,23 @@ import type { RunArtifactResponse, RunRow } from "@/lib/api"
 import { routes } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 import { ArtifactConfigTab } from "./artifact-config-tab"
-import { ArtifactMemoryTab } from "./artifact-memory-tab"
 import { EvidenceIncomplete } from "./evidence-incomplete"
 
 // THE FOURTH TAB IS THE FAILURE VIEW'S OPEN TARGET (406-08 · D-02, second half).
 //
 // A screenshot the verdict cites is one click from the sentence, and it lands HERE — in the drawer
-// a reader already reaches with `i` / `c` / `m` — rather than in an inline pane under the sentence
+// a reader already reaches with `i` / `c` — rather than in an inline pane under the sentence
 // (rejected: it duplicates the overview's rendering and grows the page once per red member) or in a
-// window of its own. The three v1 tabs, their shortcuts and their cells are untouched; the
+// window of its own. The record-fed tabs, their shortcuts and their cells are untouched; the
 // screenshot tab has no shortcut and is only reachable from a cited link, which is why its trigger
 // is not offered at all when no sha was clicked.
-export type ArtifactDrawerTab = "attributes" | "config" | "memory" | "screenshot"
+//
+// The v1 `memory` tab that once sat beside them is deleted (407-05 · D-02): it read shapes no
+// producer has written since v1, and the run-detail Knowledge tab is the live surface for what a
+// run was served. `m` opens THAT, and the drawer no longer offers a second answer.
+export type ArtifactDrawerTab = "attributes" | "config" | "screenshot"
 
-/** The three tabs the artifact RECORD feeds. The screenshot tab reads blob bytes, not the record. */
+/** The two tabs the artifact RECORD feeds. The screenshot tab reads blob bytes, not the record. */
 type ArtifactShellTab = Exclude<ArtifactDrawerTab, "screenshot">
 
 interface ArtifactDrawerProps {
@@ -204,13 +207,7 @@ function ShellTabContent({
     return <AttributesTab response={response} />
   }
 
-  if (tab === "config") {
-    return <ArtifactConfigTab response={response} />
-  }
-
-  return (
-    <ArtifactMemoryTab response={response} />
-  )
+  return <ArtifactConfigTab response={response} />
 }
 
 function DrawerBody({
@@ -323,9 +320,6 @@ export function ArtifactDrawer({
               <TabsTrigger value="config" className="max-w-32 flex-none">
                 Config
               </TabsTrigger>
-              <TabsTrigger value="memory" className="max-w-32 flex-none">
-                Memory
-              </TabsTrigger>
               {screenshotSha === null ? null : (
                 <TabsTrigger
                   value="screenshot"
@@ -350,15 +344,6 @@ export function ArtifactDrawer({
             <TabsContent value="config" className="m-0 px-4 py-4">
               <DrawerBody
                 tab="config"
-                response={response}
-                loading={loading}
-                error={error}
-                onRetry={onRetry}
-              />
-            </TabsContent>
-            <TabsContent value="memory" className="m-0 px-4 py-4">
-              <DrawerBody
-                tab="memory"
                 response={response}
                 loading={loading}
                 error={error}

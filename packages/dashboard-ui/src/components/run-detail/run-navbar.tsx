@@ -52,7 +52,12 @@ interface RunNavbarProps {
   tokens?: RunTokenTotals
   shortcutsOpen: boolean
   onToggleShortcuts: () => void
-  onOpenArtifacts?: (tab: "attributes" | "config" | "memory") => void
+  /**
+   * The drawer tabs this header can ASK FOR. Narrowed to the two the artifact record feeds
+   * (407-05 · D-02): the v1 `memory` tab is deleted, and `m` reaches the Knowledge tab through
+   * the page's own shortcut map rather than through this prop.
+   */
+  onOpenArtifacts?: (tab: "attributes" | "config") => void
   /**
    * The post-processing projection to paint beside the verdict badge (404-07, D-20).
    *

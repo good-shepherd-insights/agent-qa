@@ -96,7 +96,7 @@ vi.mock("@/components/empty-state", () => ({
 }))
 
 vi.mock("@/components/run-detail/run-navbar", () => ({
-  RunNavbar: ({ onOpenArtifacts }: { onOpenArtifacts: (tab: "attributes" | "config" | "memory") => void }) => (
+  RunNavbar: ({ onOpenArtifacts }: { onOpenArtifacts: (tab: "attributes" | "config") => void }) => (
     <button type="button" data-testid="navbar-artifacts" onClick={() => onOpenArtifacts("attributes")}>
       navbar artifacts
     </button>
@@ -116,13 +116,13 @@ vi.mock("@/components/run-detail/artifact-drawer", () => ({
     onRetry,
   }: {
     open: boolean
-    tab: "attributes" | "config" | "memory" | "screenshot"
+    tab: "attributes" | "config" | "screenshot"
     screenshotSha: string | null
     response: { artifact: unknown; run?: { attributes?: Record<string, string> } } | null
     loading: boolean
     error: string | null
     onOpenChange: (open: boolean) => void
-    onTabChange: (tab: "attributes" | "config" | "memory" | "screenshot") => void
+    onTabChange: (tab: "attributes" | "config" | "screenshot") => void
     onRetry: () => void
   }) => {
     if (!open) return null
@@ -149,7 +149,7 @@ vi.mock("@/components/run-detail/artifact-drawer", () => ({
             <p>This run does not have a persisted artifact record.</p>
           </div>
         ) : null}
-        <div>Attributes Config Memory</div>
+        <div>Attributes Config</div>
         {tab === "attributes" && response?.run?.attributes ? (
           <div>
             <button type="button">Copy JSON</button>
@@ -164,7 +164,7 @@ vi.mock("@/components/run-detail/artifact-drawer", () => ({
         ) : null}
         <button type="button" data-testid="drawer-close" onClick={() => onOpenChange(false)}>close</button>
         <button type="button" data-testid="drawer-attributes" onClick={() => onTabChange("attributes")}>attributes</button>
-        <button type="button" data-testid="drawer-memory" onClick={() => onTabChange("memory")}>memory</button>
+        <button type="button" data-testid="drawer-config" onClick={() => onTabChange("config")}>config</button>
       </div>
     )
   },
@@ -486,7 +486,7 @@ describe("RunDetailPage artifact drawer", () => {
     expect(drawer.getAttribute("data-tab")).toBe("attributes")
     expect(drawer.textContent).toContain("Attributes")
     expect(drawer.textContent).toContain("Config")
-    expect(drawer.textContent).toContain("Memory")
+    expect(drawer.textContent).not.toContain("Memory")
     expect(drawer.textContent).toContain("agent-qa.trigger")
     expect(drawer.textContent).toContain("agent-qa.runner")
     expect(drawer.textContent).toContain("git.branch")
@@ -644,17 +644,17 @@ describe("RunDetailPage artifact drawer", () => {
     const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
 
     await act(async () => {
-      latestShortcuts().c(new KeyboardEvent("keydown", { key: "c" }))
+      latestShortcuts().i(new KeyboardEvent("keydown", { key: "i" }))
     })
     await flushRender()
 
     await act(async () => {
-      ;(view.querySelector('[data-testid="drawer-memory"]') as HTMLButtonElement).click()
+      ;(view.querySelector('[data-testid="drawer-config"]') as HTMLButtonElement).click()
     })
     await flushRender()
 
     const drawer = view.querySelector('[data-testid="artifact-drawer"]') as HTMLElement
-    expect(drawer.getAttribute("data-tab")).toBe("memory")
+    expect(drawer.getAttribute("data-tab")).toBe("config")
     expect(fetchRunArtifactMock).toHaveBeenCalledTimes(1)
     expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
     expect(searchParams(view).get("step")).toBe("0:0")
