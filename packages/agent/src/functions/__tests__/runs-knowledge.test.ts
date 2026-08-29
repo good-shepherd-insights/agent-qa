@@ -264,6 +264,29 @@ function change(overrides: Partial<RecordChange> = {}): RecordChange {
   }
 }
 
+/**
+ * The layer's no-null idiom, asserted STRUCTURALLY (407-19, IN-03).
+ *
+ * `expect(JSON.stringify(result)).not.toContain('null')` reds on any record id, step text or CSS
+ * selector that merely CONTAINS those four letters — an unrelated fixture change breaks the cell
+ * and the failure says nothing about the idiom it was guarding. This walks the parsed value
+ * instead and names the path of the offending member, so a failure reads as an instruction.
+ */
+function assertNoNull(value: unknown, path = '$'): void {
+  if (value === null) {
+    expect.fail(`null at ${path} — absence in this DTO is an ABSENT KEY, never a null byte`)
+  }
+  if (Array.isArray(value)) {
+    value.forEach((member, index) => assertNoNull(member, `${path}[${index}]`))
+    return
+  }
+  if (typeof value === 'object') {
+    for (const [key, member] of Object.entries(value as object)) {
+      assertNoNull(member, path === '$' ? key : `${path}.${key}`)
+    }
+  }
+}
+
 function notification(
   curation: RunNotification['stages']['curation'],
 ): RunNotification {
@@ -538,13 +561,16 @@ describe('learned changes are attributed, never windowed (LERN-02, D-10)', () =>
     const result = await ready({
       knowledge: {
         diffSince: () => Promise.resolve([MINE, BY_OBSERVATION, NEIGHBOUR, UNATTRIBUTED]),
-        canaryAttributions: () => Promise.resolve([{
-          candidateId: 'rec-canary',
-          testIndex: 1,
-          stepIndex: 0,
-          observationId: 'canary-outcome:abc',
-          outcome: 'confirmed' as const,
-        }]),
+        canaryAttributions: () => Promise.resolve({
+          rows: [{
+            candidateId: 'rec-canary',
+            testIndex: 1,
+            stepIndex: 0,
+            observationId: 'canary-outcome:abc',
+            outcome: 'confirmed' as const,
+          }],
+          skippedBundles: 0,
+        }),
       },
     })
 
@@ -554,23 +580,26 @@ describe('learned changes are attributed, never windowed (LERN-02, D-10)', () =>
   it('projects only attributed canary rows, keyed by the step that served the line (D-08)', async () => {
     const result = await ready({
       knowledge: {
-        canaryAttributions: () => Promise.resolve([
-          {
-            candidateId: 'rec-canary',
-            testIndex: 1,
-            stepIndex: 0,
-            observationId: 'canary-outcome:abc',
-            outcome: 'contradicted' as const,
-          },
-          // A served canary with no surviving attributed event: an ordinary state, and it must
-          // NOT become a badge. The panel reads "attribution pending" from the curation word.
-          {
-            candidateId: 'rec-pending',
-            testIndex: 1,
-            stepIndex: 1,
-            observationId: 'canary-outcome:def',
-          },
-        ]),
+        canaryAttributions: () => Promise.resolve({
+          rows: [
+            {
+              candidateId: 'rec-canary',
+              testIndex: 1,
+              stepIndex: 0,
+              observationId: 'canary-outcome:abc',
+              outcome: 'contradicted' as const,
+            },
+            // A served canary with no surviving attributed event: an ordinary state, and it must
+            // NOT become a badge. The panel reads "attribution pending" from the curation word.
+            {
+              candidateId: 'rec-pending',
+              testIndex: 1,
+              stepIndex: 1,
+              observationId: 'canary-outcome:def',
+            },
+          ],
+          skippedBundles: 0,
+        }),
       },
     })
 
@@ -661,7 +690,7 @@ describe('an unrelated malformed bundle degrades the Learned enrichments, never 
     const result = await ready({ knowledge: { diffSince: () => Promise.resolve([MINE]) } })
 
     expect('scanIncomplete' in result.learned).toBe(false)
-    expect(JSON.stringify(result)).not.toContain('null')
+    assertNoNull(JSON.parse(JSON.stringify(result)))
   })
 
   it('names the incomplete scan on the receipt, and leaves a clean receipt byte-identical', async () => {
@@ -672,6 +701,71 @@ describe('an unrelated malformed bundle degrades the Learned enrichments, never 
 
     expect(degraded.outcome).toBe(`${CLEAN}, knowledge store scan incomplete`)
     expect(runsKnowledgeSpec.classify(await ready()).outcome).toBe(CLEAN)
+  })
+})
+
+describe('a partial attribution walk raises the flag by CONTRACT, and the op emits rows beside it (407-19, REVIEW WR-03)', () => {
+  // Before 407-19 the ONLY reason a half-read store reached the wire as `scanIncomplete` was that
+  // `diffSince` happened to throw on the same bundle. That coupling is not a contract: it does not
+  // hold when the two reads see different stores, and it disappears the moment anyone applies
+  // 407-14's per-bundle skip to `diffSince` too. The walk now COUNTS what it could not load, and
+  // the op reads the flag off that count — so the degradation marker belongs to the read that
+  // degraded.
+  const MINE = change({ recordId: 'rec-mine', sourceRunId: RUN_ID })
+
+  const ATTRIBUTED = {
+    candidateId: 'rec-canary',
+    testIndex: 1,
+    stepIndex: 0,
+    observationId: 'canary-outcome:abc',
+    outcome: 'confirmed' as const,
+  }
+
+  it('raises scanIncomplete from the walk\'s OWN count, keeping BOTH lists (the CR-01 shape)', async () => {
+    // The exact projection 407-18's rows-first view renders — now produced by the shipped op from
+    // real inputs rather than hand-built in a view fixture: rows on both lists AND the flag.
+    const result = await ready({
+      knowledge: {
+        diffSince: () => Promise.resolve([MINE]),
+        canaryAttributions: () => Promise.resolve({ rows: [ATTRIBUTED], skippedBundles: 1 }),
+      },
+    })
+
+    expect(result.learned.scanIncomplete).toBe(true)
+    expect(result.learned.changes.map((row) => row.recordId)).toEqual(['rec-mine'])
+    expect(result.learned.canaryAttributions).toEqual([{
+      testIndex: 1,
+      stepIndex: 0,
+      recordId: 'rec-canary',
+      observationId: 'canary-outcome:abc',
+      outcome: 'confirmed',
+    }])
+    expect(RunKnowledgeProjectionSchema.safeParse(result).success).toBe(true)
+  })
+
+  it('leaves the key ABSENT when the walk read the whole store — a count of 0 is a clean read', async () => {
+    const result = await ready({
+      knowledge: {
+        diffSince: () => Promise.resolve([MINE]),
+        canaryAttributions: () => Promise.resolve({ rows: [ATTRIBUTED], skippedBundles: 0 }),
+      },
+    })
+
+    expect('scanIncomplete' in result.learned).toBe(false)
+    expect(result.learned.canaryAttributions).toHaveLength(1)
+  })
+
+  it('names the incomplete scan on the receipt for the counted skip, exactly as for the thrown one', async () => {
+    const result = await ready({
+      knowledge: {
+        canaryAttributions: () => Promise.resolve({ rows: [ATTRIBUTED], skippedBundles: 1 }),
+      },
+    })
+
+    expect(runsKnowledgeSpec.classify(result).outcome).toBe(
+      `knowledge for ${RUN_ID} — 4 steps, 2 brief lines served, 0 learned change(s)`
+      + ', knowledge store scan incomplete',
+    )
   })
 })
 
@@ -696,7 +790,15 @@ describe('the DTO never carries a null and always validates', () => {
       chain: { notification: notification({ status: 'done', curated: 1 }) },
     })
 
-    expect(JSON.stringify(result)).not.toContain('null')
+    assertNoNull(JSON.parse(JSON.stringify(result)))
+  })
+
+  it('the no-null walk names the member it found — the idiom is structural, not textual', () => {
+    // The control for the helper above (IN-03): a record id, a step text or a selector carrying
+    // the four letters `null` must NOT red these cells, and a real null must red them by PATH.
+    expect(() => assertNoNull({ a: [{ b: null }] })).toThrow(/a\[0\]\.b/)
+    expect(() => assertNoNull({ recordId: 'rec-[data-null]', steps: ['nullable selector'] }))
+      .not.toThrow()
   })
 
   it('parses against its own declared output contract', async () => {

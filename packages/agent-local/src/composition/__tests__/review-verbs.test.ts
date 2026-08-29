@@ -403,7 +403,13 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
       { candidateId: recordId, testId: 'checkout', testIndex: 0, stepIndex: 1 },
       { candidateId: recordId, testId: 'checkout', testIndex: 0, stepIndex: 2 },
     ]
-    const rows = await port.canaryAttributions!({ runId: 'run-A', tuples })
+    const answer = await port.canaryAttributions!({ runId: 'run-A', tuples })
+    const rows = answer.rows
+
+    // The binding forwards the walk's own partiality count verbatim (407-19, REVIEW WR-03). This
+    // store is whole, so the honest answer is a count of zero — never an absent member the op
+    // would have to treat as "probably fine".
+    expect(answer.skippedBundles).toBe(0)
 
     // One row per tuple, in the order asked, each addressed back to the line it answers.
     expect(rows.map((row) => [row.candidateId, row.testIndex, row.stepIndex])).toEqual([
@@ -419,7 +425,7 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
 
     // The run id is really forwarded: the same tuples under a different run are different
     // observations, which is the whole reason the id is run-scoped.
-    const other = await port.canaryAttributions!({ runId: 'run-B', tuples })
+    const other = (await port.canaryAttributions!({ runId: 'run-B', tuples })).rows
     expect(other.map((row) => row.observationId))
       .not.toEqual(rows.map((row) => row.observationId))
 
