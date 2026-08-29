@@ -70,6 +70,14 @@ interface RunNavbarProps {
   postProcessing?: PostProcessingView | undefined
   /** Whether a chip client is wired at all. See {@link RunNavbarProps.postProcessing}. */
   hasPostProcessing?: boolean
+  /**
+   * What pressing the `curation` chip should do (407-09 · LERN-02, D-01).
+   *
+   * FORWARDED, NOT DECIDED. The navbar is presentational and owns no tab state; the page passes
+   * `() => setActiveTab('knowledge')`. Absent → the chip stays the shipped `<span>`, which is what
+   * every surface rendering this header without a run-detail page behind it should get.
+   */
+  onCurationClick?: () => void
 }
 
 export function RunNavbar({
@@ -80,6 +88,7 @@ export function RunNavbar({
   onOpenArtifacts,
   postProcessing,
   hasPostProcessing = false,
+  onCurationClick,
 }: RunNavbarProps) {
   const navigate = useNavigate()
   const isSuiteParent = run.suiteId != null && run.parentRunId == null
@@ -126,7 +135,9 @@ export function RunNavbar({
         ) : null}
         <StatusBadge status={run.status} />
         {/* D-20: the lifecycle story on one line — execution truth, then post-processing truth. */}
-        {hasPostProcessing ? <PostProcessingChips view={postProcessing} /> : null}
+        {hasPostProcessing ? (
+          <PostProcessingChips view={postProcessing} onCurationClick={onCurationClick} />
+        ) : null}
       </div>
 
       <div className="flex items-center gap-3 shrink-0">

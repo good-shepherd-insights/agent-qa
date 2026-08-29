@@ -98,6 +98,49 @@ export const CHIPS_UNAVAILABLE_TEXT = 'post-processing status unavailable'
 type ReadBody = Extract<PostProcessingRead, { kind: 'read' }>
 
 /**
+ * THE COUNT LINE, IN THE WORDING OF RECORD (407-09 · LERN-02, D-09).
+ *
+ * ONE FUNCTION, TWO SURFACES. The chip renders this string beside the `curation` badge and the
+ * Knowledge tab's Learned heading renders the SAME string; `lib/knowledge-view.ts` imports this
+ * rather than re-spelling it. Two spellings of one number is how a header and a panel end up
+ * disagreeing about a run in front of the person reading both at once.
+ *
+ * THE NOUN IS PLURALISED AND THE SECOND COUNT IS BARE. `curated 1 fact, deprecated 1` reads as a
+ * sentence; `deprecated 1 fact` would read as a second, different measurement of the same nouns.
+ *
+ * BOTH ZERO IS ITS OWN PHRASE. `curated 0 facts, deprecated 0` is arithmetically true and says
+ * nothing a reader can act on; `nothing curated` is the fact.
+ */
+export function curationFactsText(curated: number, deprecated: number): string {
+  if (curated === 0 && deprecated === 0) return 'nothing curated'
+  const noun = curated === 1 ? 'fact' : 'facts'
+  return `curated ${String(curated)} ${noun}, deprecated ${String(deprecated)}`
+}
+
+/**
+ * What a settled curation row says when it committed no counts (D-12).
+ *
+ * NEVER A ZERO. The notification row's counts are optional, and a stage that never got as far as
+ * committing reports its status and nothing else. Rendering `0` there would claim somebody counted
+ * and found none — which is what `nothing curated` above says, about a genuinely different row.
+ */
+export const COUNTS_NOT_RECORDED_TEXT = 'counts not recorded for this run'
+
+/** The `curation` chip's hover title once the page wires it as a door (D-01). */
+export const CURATION_CHIP_TITLE = 'Open the Knowledge tab (7)'
+
+/**
+ * The clickable chip's accessible name — the WORD plus where pressing it goes.
+ *
+ * The visible badge already reads `curation done`; a screen reader hearing only that would be told
+ * a status and not that it is a control. The name carries both, in that order, so the status is
+ * still the first thing heard.
+ */
+export function curationChipAccessibleName(status: PostProcessingChipStatus): string {
+  return `curation ${status} — open Knowledge tab`
+}
+
+/**
  * Curation's committed counts, as one sentence — or nothing.
  *
  * BOTH COUNTS OR NEITHER. The notification contract says a stage that never got as far as
@@ -110,7 +153,7 @@ function curationFacts(read: ReadBody): string | undefined {
   if (curation === undefined) return undefined
   const { curated, deprecated } = curation
   if (curated === undefined || deprecated === undefined) return undefined
-  return `curated ${String(curated)}, deprecated ${String(deprecated)}`
+  return curationFactsText(curated, deprecated)
 }
 
 function chipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChipView {
@@ -138,7 +181,16 @@ function chipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChi
 
   if (status === 'done' && stage === 'curation') {
     const facts = curationFacts(read)
-    return { status, ...(facts === undefined ? {} : { facts }) }
+    if (facts !== undefined) return { status, facts }
+    // A SETTLED ROW THAT COMMITTED NO COUNTS SAYS SO (D-12). There IS a terminal row here — the
+    // chain reached its end and froze one — so the absence is a recorded absence, and the honest
+    // rendering is that nobody wrote the numbers down. Blank would be indistinguishable from a chip
+    // whose read has not landed; `0` would be a measurement nobody made.
+    if (read.status.notification !== undefined) return { status, facts: COUNTS_NOT_RECORDED_TEXT }
+    // No terminal row at all: the chip word came from `chips.curation` with nothing behind it. The
+    // chain contract makes that unreachable, but the type permits it, and inventing a sentence about
+    // a row that does not exist is the one thing this module never does.
+    return { status }
   }
 
   // `running`, and `done` on a stage that commits no counts: one word, no parenthetical.

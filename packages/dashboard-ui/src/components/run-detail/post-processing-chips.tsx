@@ -24,6 +24,8 @@ import { Badge } from "@/components/ui/badge"
 import type * as React from "react"
 import {
   CHIPS_UNAVAILABLE_TEXT,
+  CURATION_CHIP_TITLE,
+  curationChipAccessibleName,
   type PostProcessingChipView,
   type PostProcessingStage,
   type PostProcessingView,
@@ -59,13 +61,34 @@ function chipLook(status: PostProcessingChipStatus): ChipLook {
   }
 }
 
-function Chip({ stage, chip }: { stage: PostProcessingStage; chip: PostProcessingChipView }) {
-  return (
-    <span
-      data-chip={stage}
-      data-chip-status={chip.status}
-      className="inline-flex items-center gap-1 min-w-0"
-    >
+/** The chip root's shipped layout, shared by both roots below so they cannot drift apart. */
+const CHIP_ROOT_CLASS = "inline-flex items-center gap-1 min-w-0"
+
+/**
+ * One chip — a `<span>`, or a `<button>` when the page gave it somewhere to go (407-09 · D-01).
+ *
+ * THE CHIP STAYS PRESENTATIONAL. It is handed a callback and calls it; it knows no tab, no route
+ * and no run id (400 D-13). A chip that navigated for itself would be a second answer to "what does
+ * this header do", and would grow an affordance in every surface that renders the navbar without a
+ * page behind it — which is exactly why the callback is optional and its absence is the shipped
+ * `<span>` unchanged.
+ *
+ * THE ROOT SWAPS ELEMENT, NOT CONTRACT. `data-chip` and `data-chip-status` ride the root either
+ * way and the body is one expression rendered into both, so the cells 404-08 addresses on the built
+ * bundle read the same selectors whether or not the chip is a door. Only `curation` ever becomes
+ * one: `analysis` has no half of the Knowledge tab to open.
+ */
+function Chip({
+  stage,
+  chip,
+  onCurationClick,
+}: {
+  stage: PostProcessingStage
+  chip: PostProcessingChipView
+  onCurationClick?: (() => void) | undefined
+}) {
+  const body = (
+    <>
       <Badge {...chipLook(chip.status)}>
         {CHIP_LABELS[stage]} {chip.status}
       </Badge>
@@ -94,6 +117,28 @@ function Chip({ stage, chip }: { stage: PostProcessingStage; chip: PostProcessin
           {chip.reasonAbsent}
         </span>
       )}
+    </>
+  )
+
+  if (stage === "curation" && onCurationClick !== undefined) {
+    return (
+      <button
+        type="button"
+        data-chip={stage}
+        data-chip-status={chip.status}
+        onClick={onCurationClick}
+        title={CURATION_CHIP_TITLE}
+        aria-label={curationChipAccessibleName(chip.status)}
+        className={`${CHIP_ROOT_CLASS} cursor-pointer transition-colors hover:text-foreground`}
+      >
+        {body}
+      </button>
+    )
+  }
+
+  return (
+    <span data-chip={stage} data-chip-status={chip.status} className={CHIP_ROOT_CLASS}>
+      {body}
     </span>
   )
 }
@@ -106,7 +151,14 @@ function Chip({ stage, chip }: { stage: PostProcessingStage; chip: PostProcessin
  * `unavailable` ("the store could not be read"). D-23 forbids collapsing the third into the first;
  * collapsing the second into the first would be the same lie one step earlier.
  */
-export function PostProcessingChips({ view }: { view: PostProcessingView | undefined }) {
+export function PostProcessingChips({
+  view,
+  onCurationClick,
+}: {
+  view: PostProcessingView | undefined
+  /** What pressing the `curation` chip should do. Absent → the chip is not a control (D-01). */
+  onCurationClick?: (() => void) | undefined
+}) {
   if (view === undefined) {
     return (
       <span data-chips-state="loading" className="text-xs text-muted-foreground shrink-0">
@@ -134,7 +186,7 @@ export function PostProcessingChips({ view }: { view: PostProcessingView | undef
   return (
     <span data-chips-state="chips" className="inline-flex items-center gap-2 min-w-0">
       <Chip stage="analysis" chip={view.analysis} />
-      <Chip stage="curation" chip={view.curation} />
+      <Chip stage="curation" chip={view.curation} onCurationClick={onCurationClick} />
     </span>
   )
 }

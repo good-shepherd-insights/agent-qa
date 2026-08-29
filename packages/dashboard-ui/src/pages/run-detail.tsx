@@ -825,6 +825,7 @@ export default function RunDetailPage() {
           shortcutsOpen={shortcutsOpen}
           onToggleShortcuts={() => setShortcutsOpen(prev => !prev)}
           onOpenArtifacts={openArtifactDrawer}
+          onCurationClick={() => setActiveTab('knowledge')}
           hasPostProcessing
           postProcessing={
             postProcessingRead === undefined ? undefined : projectPostProcessingView(postProcessingRead)
