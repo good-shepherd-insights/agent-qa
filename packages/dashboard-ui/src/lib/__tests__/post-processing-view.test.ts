@@ -18,8 +18,12 @@ import type { PostProcessingStatus } from '@vostride/agent-qa-schema'
 import type { PostProcessingRead } from '@/lib/api'
 import {
   CHIPS_UNAVAILABLE_TEXT,
+  COUNTS_NOT_RECORDED_TEXT,
+  CURATION_CHIP_TITLE,
   FAILED_REASON_ABSENT_TEXT,
   PENDING_POSTURE_TEXT,
+  curationChipAccessibleName,
+  curationFactsText,
   projectPostProcessingView,
 } from '@/lib/post-processing-view'
 
@@ -101,20 +105,40 @@ describe('a running chip says one word and nothing else', () => {
   })
 })
 
-describe('a terminal curation chip says what it committed (D-21)', () => {
-  it('reads `curated N, deprecated M` off the notification row on the same read', () => {
+describe('a terminal curation chip says what it committed (D-21, D-09 wording of record)', () => {
+  it('reads the count line off the notification row on the same read', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('done', 'done', notification({ status: 'done', curated: 4, deprecated: 2 })),
       disposition: 'drained',
     })))
-    expect(view.curation.facts).toBe('curated 4, deprecated 2')
+    expect(view.curation.facts).toBe('curated 4 facts, deprecated 2')
   })
 
-  it('says no facts when the row committed no counts — zeros would be a different claim', () => {
+  it('says `counts not recorded for this run` when the row committed no counts — never a zero (D-12)', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('done', 'done', notification({ status: 'done' })),
     })))
-    expect(view.curation.facts).toBeUndefined()
+    expect(view.curation.facts).toBe(COUNTS_NOT_RECORDED_TEXT)
+    expect(COUNTS_NOT_RECORDED_TEXT).toBe('counts not recorded for this run')
+  })
+
+  it('says the counts-absent line when only ONE of the pair was recorded — half a pair is no pair', () => {
+    const view = chips(projectPostProcessingView(read({
+      status: status('done', 'done', notification({ status: 'done', curated: 4 })),
+    })))
+    expect(view.curation.facts).toBe(COUNTS_NOT_RECORDED_TEXT)
+  })
+
+  it('keeps a bare `done` when there is no notification row at all — nothing to say counts about', () => {
+    const view = chips(projectPostProcessingView(read({ status: status('done', 'done') })))
+    expect(view.curation).toEqual({ status: 'done' })
+  })
+
+  it('renders both-zero as `nothing curated` rather than as two zeros', () => {
+    const view = chips(projectPostProcessingView(read({
+      status: status('done', 'done', notification({ status: 'done', curated: 0, deprecated: 0 })),
+    })))
+    expect(view.curation.facts).toBe('nothing curated')
   })
 
   it('never invents facts for the analysis chip — that stage commits no counts', () => {
@@ -179,5 +203,23 @@ describe('a failed chip says why, or says honestly that nobody recorded why (D-2
         expect(chip.error ?? chip.reasonAbsent).toBeTruthy()
       }
     }
+  })
+})
+
+describe('the count line is the wording of record, in one place (D-09)', () => {
+  it('pluralises the curated noun and leaves the deprecated count bare', () => {
+    expect(curationFactsText(3, 1)).toBe('curated 3 facts, deprecated 1')
+    expect(curationFactsText(1, 0)).toBe('curated 1 fact, deprecated 0')
+    expect(curationFactsText(0, 2)).toBe('curated 0 facts, deprecated 2')
+  })
+
+  it('collapses the both-zero pair to one phrase — two zeros read as a measurement nobody made', () => {
+    expect(curationFactsText(0, 0)).toBe('nothing curated')
+  })
+
+  it('publishes the chip hover title and the accessible name as constants the cells name', () => {
+    expect(CURATION_CHIP_TITLE).toBe('Open the Knowledge tab (7)')
+    expect(curationChipAccessibleName('done')).toBe('curation done — open Knowledge tab')
+    expect(curationChipAccessibleName('failed')).toBe('curation failed — open Knowledge tab')
   })
 })

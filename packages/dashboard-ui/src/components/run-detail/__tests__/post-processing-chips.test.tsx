@@ -25,8 +25,11 @@ import { PostProcessingChips, CHIP_LABELS } from "@/components/run-detail/post-p
 import { RunNavbar } from "@/components/run-detail/run-navbar"
 import {
   CHIPS_UNAVAILABLE_TEXT,
+  COUNTS_NOT_RECORDED_TEXT,
+  CURATION_CHIP_TITLE,
   FAILED_REASON_ABSENT_TEXT,
   PENDING_POSTURE_TEXT,
+  curationChipAccessibleName,
   type PostProcessingView,
 } from "@/lib/post-processing-view"
 import type { RunRow } from "@/lib/api"
@@ -110,9 +113,74 @@ describe("a pending chip says who is going to move it (D-22)", () => {
 
 describe("a terminal chip says what it committed (D-21)", () => {
   it("renders curation's counts in their own element", () => {
-    const host = render(chipsView({ status: "done" }, { status: "done", facts: "curated 4, deprecated 2" }))
-    expect(chip(host, "curation").querySelector("[data-chip-facts]")?.textContent).toBe("curated 4, deprecated 2")
+    const host = render(chipsView({ status: "done" }, { status: "done", facts: "curated 4 facts, deprecated 2" }))
+    expect(chip(host, "curation").querySelector("[data-chip-facts]")?.textContent).toBe("curated 4 facts, deprecated 2")
     expect(chip(host, "analysis").querySelector("[data-chip-facts]")).toBeNull()
+  })
+
+  it("renders the counts-absent line in the SAME slot — a `done` chip is never silent about counts (D-12)", () => {
+    const host = render(chipsView({ status: "done" }, { status: "done", facts: COUNTS_NOT_RECORDED_TEXT }))
+    expect(chip(host, "curation").querySelector("[data-chip-facts]")?.textContent).toBe(COUNTS_NOT_RECORDED_TEXT)
+  })
+})
+
+// THE CHIP AS A DOOR (D-01). The chip stays PRESENTATIONAL: it is handed a callback and calls it.
+// It does not know a tab, a route or a run. Absent the callback it is exactly the shipped `<span>` —
+// a header rendered without a page behind it must not grow an affordance that goes nowhere.
+describe("the curation chip is a click-through into the Knowledge tab (D-01)", () => {
+  function renderWithClick(onCurationClick: () => void): HTMLElement {
+    return mount(
+      <PostProcessingChips
+        view={chipsView({ status: "done" }, { status: "done", facts: COUNTS_NOT_RECORDED_TEXT })}
+        onCurationClick={onCurationClick}
+      />,
+    )
+  }
+
+  it("renders the curation chip root as a button carrying the hover title and the accessible name", () => {
+    const host = renderWithClick(vi.fn())
+    const root = chip(host, "curation")
+
+    expect(root.tagName).toBe("BUTTON")
+    expect(root.getAttribute("type")).toBe("button")
+    expect(root.getAttribute("title")).toBe(CURATION_CHIP_TITLE)
+    expect(root.getAttribute("aria-label")).toBe(curationChipAccessibleName("done"))
+  })
+
+  it("keeps every data attribute on the root when it becomes a button — the contract does not move", () => {
+    const host = renderWithClick(vi.fn())
+    const root = chip(host, "curation")
+
+    expect(root.getAttribute("data-chip")).toBe("curation")
+    expect(root.getAttribute("data-chip-status")).toBe("done")
+    expect(root.querySelector("[data-chip-facts]")?.textContent).toBe(COUNTS_NOT_RECORDED_TEXT)
+  })
+
+  it("calls the page's handler exactly once per click and never navigates itself", () => {
+    const onCurationClick = vi.fn()
+    const host = renderWithClick(onCurationClick)
+
+    act(() => { chip(host, "curation").click() })
+
+    expect(onCurationClick).toHaveBeenCalledTimes(1)
+  })
+
+  it("NEVER makes the analysis chip a button — only curation has a half of the tab to open", () => {
+    const host = renderWithClick(vi.fn())
+    const analysis = chip(host, "analysis")
+
+    expect(analysis.tagName).toBe("SPAN")
+    expect(analysis.getAttribute("title")).toBeNull()
+    expect(analysis.getAttribute("aria-label")).toBeNull()
+  })
+
+  it("stays today's span with no title when the page passes no handler", () => {
+    const host = render(chipsView({ status: "done" }, { status: "done" }))
+    const root = chip(host, "curation")
+
+    expect(root.tagName).toBe("SPAN")
+    expect(root.getAttribute("title")).toBeNull()
+    expect(root.getAttribute("aria-label")).toBeNull()
   })
 })
 
