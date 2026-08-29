@@ -107,19 +107,20 @@ function normalizeCardCandidate(candidate: string): string {
  * Is this candidate the fraction of a PRINTED DECIMAL NUMBER rather than a digit run in its
  * own right?
  *
- * THE RULE ENFORCED, verbatim — suppress iff all four hold:
+ * THE RULE ENFORCED, verbatim — suppress iff all five hold:
  *   1. `text[start - 1] === '.'`  (a decimal point immediately precedes the candidate)
  *   2. at least one digit precedes that `.`; call that maximal digit run the INTEGER PART
  *   3. the integer part STANDS ALONE: it begins the text, or the byte before it is neither a
  *      word character `[A-Za-z0-9_]` nor `'.'` (not glued to a word, not a link in a dotted
  *      chain)
- *   4. the integer part is either a single `0`, OR the whole literal `<integer>.<fraction>` is
+ *   4. the CANDIDATE IS EXACTLY THE FRACTION: the maximal decimal-digit run starting at the
+ *      candidate's own start, delimited on its right, equals the candidate's normalized digits
+ *   5. the integer part is either a single `0`, OR the whole literal `<integer>.<fraction>` is
  *      the SHORTEST ROUND-TRIP DECIMAL of the IEEE-754 double it denotes
- *      (`String(Number(literal)) === literal`), with the fraction likewise delimited on its
- *      right
- * Everything else — no integer part, a word-glued prefix, a dotted chain, or a nonzero-integer
- * literal that no float formatter would ever have printed — is NOT a fractional tail and falls
- * through to Luhn scoring, i.e. fails toward block.
+ *      (`String(Number(literal)) === literal`)
+ * Everything else — no integer part, a word-glued prefix, a dotted chain, a candidate that runs
+ * PAST the fraction, or a nonzero-integer literal that no float formatter would ever have
+ * printed — is NOT a fractional tail and falls through to Luhn scoring, i.e. fails toward block.
  *
  * WHY SUPPRESS AT ALL (measured 2026-08-10, demo local-form target). `CREDIT_CARD_CANDIDATE_RE`
  * cannot see across the `.` in `0.45833333333333337`, so what it offers for scoring is the 17-digit
@@ -135,11 +136,11 @@ function normalizeCardCandidate(candidate: string): string {
  * all. Through the real `scan()` + the default policy, `card 1.4111111111111111 end` and
  * `v1.4012888888881881 ok` both returned `{"action":"pass"}` while carrying Luhn-valid PANs, under a
  * policy whose creditCard action is `block`: a false negative in an egress control, i.e. prefixing a
- * PAN with any digit-and-dot let it leave the process to the model provider. Conditions 3 and 4
+ * PAN with any digit-and-dot let it leave the process to the model provider. Conditions 3 and 5
  * exist to close that while keeping the float fix, and a PRECEDING-BYTES TEST MUST NEVER RETURN —
- * condition 4 reads the LITERAL, never the neighbourhood.
+ * condition 5 reads the LITERAL, never the neighbourhood.
  *
- * WHY CONDITION 4 WAS WIDENED (ANLZ-01, measured 2026-08-29, phase 406). The accepted cost named
+ * WHY CONDITION 5 WAS WIDENED (ANLZ-01, measured 2026-08-29, phase 406). The accepted cost named
  * below was hit by a real page. Three `analyze-run` jobs in the 399 session's job store died
  * `permanent` after three attempts on `handler-threw: Guardrail blocked outbound prompt leaf:
  * creditCard`; rebuilding each failed run's analyze-run prompt from its own persisted handoff and
@@ -148,26 +149,48 @@ function normalizeCardCandidate(candidate: string): string {
  * fractions are all Luhn-valid. No card, no PII: a nonzero-integer float, exactly the shape the
  * accepted cost predicted. The retune route the previous revision prescribed was to admit a
  * delimited multi-digit integer part; taken literally that also readmits `card 1.<PAN> end`, the
- * headline 393 false negative. The round-trip test in condition 4 is the same widening made
+ * headline 393 false negative. The round-trip test in condition 5 is the same widening made
  * discriminating: it admits a number a float formatter PRINTED and refuses one somebody assembled,
  * so both the 406 false positive and the 393 false negative stay closed at once.
  *
- * RESIDUAL BYPASS 1, accepted and named (2026-08-10). A Luhn-valid PAN written as the fraction of a
- * standalone zero-integer decimal — `ratio 0.4111111111111111 done` — is still suppressed. It is
- * lexically indistinguishable from the legitimate probability floats above; no purely lexical
- * detector can separate them. Pinned deliberately by the test "leaves the residual bypass open on
- * purpose: a PAN as the fraction of a zero-integer decimal" in `__tests__/detectors.test.ts`.
+ * WHY CONDITION 4 EXISTS AT ALL — THE SEPARATOR HOLE (CR-01, measured 2026-08-29, phase 406
+ * review). The first cut of the round-trip test walked only decimal digits to find the fraction's
+ * end, so it STOPPED AT THE FIRST CARD SEPARATOR — while `CREDIT_CARD_CANDIDATE_RE` deliberately
+ * matches a PAN written with spaces or hyphens between its groups, which is how a card appears on a
+ * checkout page and in a Playwright error quoting one. For `card 1.4111 1111 1111 1111 end` the
+ * literal round-trip-tested was the harmless four-digit `1.4111`, so the whole Luhn-valid 16-digit
+ * candidate was suppressed before scoring. Measured through the real `scan()` under the default
+ * policy, `card 1.4111 1111 1111 1111 end`, `card 1.4111-1111-1111-1111 end` and
+ * `card 12.5555 5555 5555 4444 end` all returned `{"action":"pass"}` — every one of them BLOCKED
+ * before 406, i.e. a regression readmitting exactly the 393 class this block promises stays closed.
+ * Condition 4 closes it and GATES BOTH ARMS: a printed decimal's fraction is one contiguous digit
+ * run, so a candidate that reaches past that run was only a "fraction" because the scan stopped at a
+ * separator. `4111 1111 1111 1111` behind `1.` is not a float — it is a PAN. Because it gates the
+ * zero arm too, the same spelling behind `0.` (`ratio 0.4111 1111 1111 1111 done`, a pre-406 escape)
+ * now blocks as well.
  *
- * RESIDUAL BYPASS 2, accepted and named (2026-08-29, new with condition 4). A SHORT Luhn-valid PAN
- * behind a nonzero integer part is suppressed when that literal happens to round-trip. Measured over
- * integer prefixes 1..100000: a 16-digit PAN (`4111111111111111`, `4012888888881881`,
- * `5555555555554444`, `5105105105105100`, `6011111111111117`) round-trips for ZERO of them — 17
- * significant digits exceed a double's precision — so the dominant card format is untouched. A
- * 15-digit Amex (`378282246310005`) round-trips for 7 prefixes (0.007%) and a 13-digit PAN
- * (`4222222222222`) for 2047 (2%). The bound is what makes this acceptable: it is strictly narrower
- * than the delimited-integer-part retune, which would have opened all of them including 16 digits.
- * Pinned by the test "leaves the widened residual open on purpose: a short PAN behind a nonzero
- * integer part that round-trips as a float".
+ * RESIDUAL BYPASS 1, accepted and named (2026-08-10, re-scoped 2026-08-29 by condition 4). A
+ * Luhn-valid PAN written as the CONTIGUOUS fraction of a standalone zero-integer decimal —
+ * `ratio 0.4111111111111111 done` — is still suppressed. It is lexically indistinguishable from the
+ * legitimate probability floats above; no purely lexical detector can separate them. A
+ * SEPARATOR-formatted PAN behind the same `0.` is no longer part of this residual: a probability
+ * never contains a space or a hyphen, so condition 4 refuses it. Pinned deliberately by the test
+ * "leaves the residual bypass open on purpose: a PAN as the fraction of a zero-integer decimal" in
+ * `__tests__/detectors.test.ts`, with the separator half pinned in the block direction beside it.
+ *
+ * RESIDUAL BYPASS 2, accepted and named (2026-08-29, new with condition 5; bound corrected the same
+ * day by CR-01). A SHORT Luhn-valid PAN behind a nonzero integer part is suppressed when that
+ * literal happens to round-trip. THE BOUND BELOW IS A STATEMENT ABOUT CONTIGUOUS DIGIT RUNS AND
+ * NOTHING ELSE — a candidate longer than the fraction run never reaches the round-trip test now,
+ * because condition 4 refuses it first. Measured over integer prefixes 1..100000 for a CONTIGUOUS
+ * candidate: a 16-digit PAN (`4111111111111111`, `4012888888881881`, `5555555555554444`,
+ * `5105105105105100`, `6011111111111117`) round-trips for ZERO of them — 17 significant digits
+ * exceed a double's precision — so the dominant card format is untouched. A 15-digit Amex
+ * (`378282246310005`) round-trips for 7 prefixes (0.007%) and a 13-digit PAN (`4222222222222`) for
+ * 2047 (2%). The bound is what makes this acceptable: it is strictly narrower than the
+ * delimited-integer-part retune, which would have opened all of them including 16 digits. Pinned by
+ * the test "leaves the widened residual open on purpose: a short PAN behind a nonzero integer part
+ * that round-trips as a float".
  *
  * Adversarial encoding is outside this detector's accidental-egress scope: an adversary can encode a
  * PAN arbitrarily regardless of these rules.
@@ -180,7 +203,7 @@ function isDelimiter(char: string | undefined): boolean {
   return char === undefined || (char !== '.' && !/[A-Za-z0-9_]/.test(char))
 }
 
-function isFractionalTail(text: string, start: number): boolean {
+function isFractionalTail(text: string, start: number, candidateDigits: string): boolean {
   if (start < 2 || text[start - 1] !== '.') {
     return false
   }
@@ -197,18 +220,26 @@ function isFractionalTail(text: string, start: number): boolean {
     return false
   }
 
-  // The 2026-08-10 rule, preserved byte-for-byte: a standalone zero-integer decimal is a
-  // fractional tail unconditionally, so probability and confidence floats keep passing.
-  if (text.slice(integerStart, start - 1) === '0') {
-    return true
-  }
-
   let fractionEnd = start
   while (fractionEnd < text.length && isDecimalDigit(text[fractionEnd])) {
     fractionEnd += 1
   }
   if (!isDelimiter(fractionEnd === text.length ? undefined : text[fractionEnd])) {
     return false
+  }
+
+  // CONDITION 4, AND IT GATES BOTH ARMS BELOW (CR-01). A printed decimal's fraction is ONE
+  // CONTIGUOUS DIGIT RUN. A candidate whose digits reach past that run was only a "fraction"
+  // because this scan stopped at a card separator the candidate regex accepts — so
+  // `4111 1111 1111 1111` behind `1.` (or behind `0.`) is not a float, it is a PAN.
+  if (text.slice(start, fractionEnd) !== candidateDigits) {
+    return false
+  }
+
+  // The 2026-08-10 rule, preserved: a standalone zero-integer decimal is a fractional tail, so
+  // probability and confidence floats keep passing.
+  if (text.slice(integerStart, start - 1) === '0') {
+    return true
   }
 
   const literal = text.slice(integerStart, fractionEnd)
@@ -218,8 +249,8 @@ function isFractionalTail(text: string, start: number): boolean {
 
 function matchCreditCards(text: string): GuardrailMatch[] {
   return matchesFromRegex('creditCard', CREDIT_CARD_CANDIDATE_RE, text).filter((match) => {
-    if (isFractionalTail(text, match.start)) return false
     const digits = normalizeCardCandidate(match.value)
+    if (isFractionalTail(text, match.start, digits)) return false
     return digits.length >= 13 && digits.length <= 19 && luhnValid(digits)
   })
 }

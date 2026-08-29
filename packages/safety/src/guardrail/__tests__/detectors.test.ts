@@ -210,6 +210,73 @@ describe('guardrail scan', () => {
     expect(scan(`ref ${card} done`, policy).result.action).toBe('block')
   })
 
+  // ------------------------------------------------------------------------------------------
+  // ...AND A CANDIDATE THAT RUNS PAST THE FRACTION IS NOT A FRACTION AT ALL (CR-01, measured
+  // 2026-08-29, phase 406 review).
+  //
+  // `CREDIT_CARD_CANDIDATE_RE` deliberately matches a PAN written with SPACES OR HYPHENS between
+  // its groups — that is how a card appears on a checkout page and in a Playwright error quoting
+  // one. The first cut of condition 4 walked only decimal digits, so it stopped at the first card
+  // separator: for `card 1.4111 1111 1111 1111 end` the literal it round-trip-tested was the
+  // harmless four-digit `1.4111`, and the whole Luhn-valid 16-digit candidate was suppressed
+  // before scoring. Measured through this same real `scan()` + default policy, all three of the
+  // spellings below returned `{"action":"pass"}` while carrying a Luhn-valid PAN, under a policy
+  // whose creditCard action is `block`. All three were BLOCKED before phase 406.
+  //
+  // The rule that closes it: a printed decimal's fraction is ONE CONTIGUOUS DIGIT RUN, so a
+  // candidate reaching past that run was never a fraction. It gates the zero-integer arm too,
+  // which is why the separator-behind-zero spelling below blocks as well.
+  // ------------------------------------------------------------------------------------------
+
+  it('blocks a separator-formatted PAN behind a nonzero integer part', () => {
+    const card = '4111111111111111'
+    expect(luhnValid(card)).toBe(true)
+
+    const output = scan('card 1.4111 1111 1111 1111 end', policy)
+
+    expect(output.result.action).toBe('block')
+    expect(output.result.detector).toBe('creditCard')
+  })
+
+  it('blocks a hyphen-formatted PAN behind a nonzero integer part', () => {
+    const output = scan('card 1.4111-1111-1111-1111 end', policy)
+
+    expect(output.result.action).toBe('block')
+    expect(output.result.detector).toBe('creditCard')
+  })
+
+  it('blocks a separator-formatted PAN behind a multi-digit integer part', () => {
+    expect(luhnValid('5555555555554444')).toBe(true)
+
+    const output = scan('card 12.5555 5555 5555 4444 end', policy)
+
+    expect(output.result.action).toBe('block')
+    expect(output.result.detector).toBe('creditCard')
+  })
+
+  it('blocks a separator-formatted PAN behind a ZERO integer part', () => {
+    // The zero-integer arm returned `true` unconditionally, so this one escaped too — that arm
+    // predates 406, but this spelling is NOT the pinned residual: the residual is a
+    // lexically-indistinguishable probability float, and a probability never contains a space.
+    // The contiguous zero-integer residual two cases above stays open; this one does not.
+    const output = scan('ratio 0.4111 1111 1111 1111 done', policy)
+
+    expect(output.result.action).toBe('block')
+    expect(output.result.detector).toBe('creditCard')
+  })
+
+  it('keeps the measured ANLZ-01 relevance score passing under the CR-01 narrowing', () => {
+    // The leaf that killed three `analyze-run` jobs (8/7 as a memory-retrieval relevance score).
+    // Its fraction is one contiguous run, so the CR-01 gate never fires on it. If this reddens,
+    // the narrowing has undone ANLZ-01 and the phase's own acceptance drive with it.
+    expect(luhnValid('1428571428571428')).toBe(true)
+
+    const output = scan('confidence 1.1428571428571428 ok', policy)
+
+    expect(output.result).toEqual({ action: 'pass' })
+    expect(output.fired).toEqual([])
+  })
+
   it('blocks PEM private-key markers', () => {
     const marker = '-----BEGIN RSA PRIVATE KEY-----'
     const output = scan(`key ${marker}`, policy)
