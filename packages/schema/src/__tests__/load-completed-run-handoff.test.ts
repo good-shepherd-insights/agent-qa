@@ -21,6 +21,7 @@ import {
   type CompletedRunHandoff,
 } from '../handoff/completed-run-handoff'
 import { asRunId } from '../run/run-id'
+import { RunKnowledgePlanSourceSchema } from '../functions/runs'
 import type { ScopeKey } from '../identity/scope-key'
 
 const scope: ScopeKey = { tier: 'suite', key: 'checkout' }
@@ -318,5 +319,105 @@ describe("a replay plan source is admitted only in the wire's own domain (407-20
     expect(() => guardCompletedRunHandoff(replayHandoff(hint))).toThrow(
       /failed structural validation/,
     )
+  })
+})
+
+// --- 407-20 (REVIEW WR-04, structural half): the loader and the wire, measured as one rule ---
+//
+// The CR-01 class is TWO PREDICATES OVER ONE SHAPE drifting apart — a member the loader admits
+// and `RunKnowledgePlanSourceSchema` refuses is not a caught error, it is a `read_failed` page
+// for a run that really replayed a procedure. `planSourceOf` (agent `ops/runs-knowledge.ts`)
+// picks exactly the members the loader admitted onto that schema, member for member, so this
+// corpus turns any future drift — a slot tightened on the wire, a slot loosened at the loader,
+// a new numeric member added to one file and not the other — into a red here.
+
+const ORDINAL_SLOTS = [
+  'flow.cursor',
+  'flow.length',
+  'guard.checksPassed',
+  'guard.total',
+  'guard.miss.procedureStepIndex',
+  'guard.executionFailure.procedureStepIndex',
+  'guard.verifierRejection.procedureStepIndex',
+] as const
+
+const ORDINAL_CORPUS = [-1, 1.5, Number.NaN, 0, 3] as const
+
+/** Every optional replay member present and valid, so each slot can be varied in isolation. */
+function fullReplaySource(): Record<string, unknown> {
+  return {
+    kind: 'procedure-replay',
+    procedureId: 'p',
+    guard: {
+      checksPassed: 3,
+      total: 3,
+      miss: { procedureStepIndex: 1, reason: 'descriptor-missing' },
+      executionFailure: { procedureStepIndex: 2 },
+      verifierRejection: { procedureStepIndex: 0 },
+    },
+    flow: { cursor: 1, length: 3 },
+  }
+}
+
+function setPath(
+  target: Record<string, unknown>,
+  path: string,
+  value: unknown,
+): Record<string, unknown> {
+  const keys = path.split('.')
+  const leaf = keys.pop() as string
+  let cursor = target
+  for (const key of keys) {
+    cursor = cursor[key] as Record<string, unknown>
+  }
+  cursor[leaf] = value
+  return target
+}
+
+/** Whether the load boundary lets the document through at all (the version is always current). */
+function loaderAdmits(planSource: Record<string, unknown>): boolean {
+  try {
+    guardCompletedRunHandoff(replayHandoff(planSource))
+    return true
+  } catch {
+    return false
+  }
+}
+
+describe('the loader and the wire admit the same replay shapes — member for member (407-20)', () => {
+  it.each(
+    ORDINAL_SLOTS.flatMap((slot) =>
+      ORDINAL_CORPUS.map((value) => [slot, String(value)] as const),
+    ),
+  )('agrees on %s = %s', (slot, rendered) => {
+    const value = ORDINAL_CORPUS.find((candidate) => String(candidate) === rendered)
+    const planSource = setPath(fullReplaySource(), slot, value)
+    const admitted = loaderAdmits(planSource)
+    const onWire = RunKnowledgePlanSourceSchema.safeParse(planSource).success
+    expect(
+      admitted,
+      `${slot} = ${rendered}: the loader ${admitted ? 'ADMITS' : 'REFUSES'} what the wire ` +
+        `${onWire ? 'ADMITS' : 'REFUSES'} — the disagreeing side is the ` +
+        `${admitted ? 'loader' : 'wire'}`,
+    ).toBe(onWire)
+  })
+
+  it('is not vacuous — every slot admits an ordinal and refuses a negative, on both sides', () => {
+    for (const slot of ORDINAL_SLOTS) {
+      for (const admissible of [0, 3]) {
+        const planSource = setPath(fullReplaySource(), slot, admissible)
+        expect(loaderAdmits(planSource), `${slot} = ${admissible} loads`).toBe(true)
+        expect(
+          RunKnowledgePlanSourceSchema.safeParse(planSource).success,
+          `${slot} = ${admissible} is on the wire`,
+        ).toBe(true)
+      }
+      const refused = setPath(fullReplaySource(), slot, -1)
+      expect(loaderAdmits(refused), `${slot} = -1 is refused at load`).toBe(false)
+      expect(
+        RunKnowledgePlanSourceSchema.safeParse(refused).success,
+        `${slot} = -1 is refused on the wire`,
+      ).toBe(false)
+    }
   })
 })
