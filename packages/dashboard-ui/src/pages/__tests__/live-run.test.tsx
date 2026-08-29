@@ -1077,3 +1077,54 @@ describe('the bus is the truth on this page', () => {
     expect(document.documentElement.outerHTML).not.toContain(SENTINEL_REASONING)
   })
 })
+
+describe('the live header says which rung served this run, from the evidence (407-10 · TRST-01, D-14)', () => {
+  const FLOOR = { schemaVersion: 1, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
+
+  it('paints NOTHING before a frame has carried a rung — "not yet known" is the absent element', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted(), stepFinalized(0, 0, { status: 'passed' }))
+
+    expect(q('[data-rung-banner]')).toBeNull()
+    expect(qa('[data-rung]')).toHaveLength(0)
+  })
+
+  it('paints the same sentence run detail paints, in the meta strip, once a frame carries the rung', async () => {
+    await mount()
+    await open()
+    await emit(
+      runStarted(),
+      testStarted(0, 'the member', 1),
+      stepStarted(),
+      stepFinalized(0, 0, { status: 'passed', retrievalRung: FLOOR }),
+    )
+
+    const banner = q('[data-rung-banner]')
+    expect(banner).not.toBeNull()
+    expect(banner?.tagName).toBe('P')
+    expect(banner?.getAttribute('data-rung')).toBe('static-floor')
+    expect(banner?.getAttribute('data-rung-reason')).toBe('native-runtime-unavailable')
+    expect(banner?.textContent).toBe(
+      'Retrieval degraded: static-floor embeddings — native ONNX runtime unavailable. Run `agent-qa doctor`.',
+    )
+    // IN THE STRIP, NOT IN A THIRD PANE. 403's two-pane rule is what this cell is really guarding:
+    // the banner joins the header's existing second line beside `data-gap-marker` and the notices.
+    expect(banner?.parentElement?.className).toContain('flex-wrap')
+    expect(qa('[data-live-pane]')).toHaveLength(2)
+  })
+
+  it('opens the strip for a rung even when nothing else in it has anything to say', async () => {
+    // The strip is conditional. A rung arriving on a healthy, ungapped, still-running stream must
+    // open it on its own, or the banner would be reachable only by coincidence.
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
+    expect(q('[data-rung-banner]')).toBeNull()
+
+    await emit(stepFinalized(0, 0, { status: 'passed', retrievalRung: FLOOR }))
+    expect(q('[data-rung-banner]')).not.toBeNull()
+    expect(q('[data-gap-marker]')).toBeNull()
+    expect(q('[data-run-over]')).toBeNull()
+  })
+})

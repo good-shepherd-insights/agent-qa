@@ -632,3 +632,79 @@ describe('markGap records what a replay floor cost the viewer', () => {
     expect(first.gap).toEqual({ from: 21, to: 39 })
   })
 })
+
+describe('the retrieval rung is a RUN-CONSTANT, folded from the first frame that carries it (407-10 · D-14)', () => {
+  const FLOOR = { schemaVersion: 1, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
+  const LEXICAL = { schemaVersion: 1, rung: 'lexical-only', reason: 'floor-disabled' } as const
+
+  it('takes the rung off the first `stepFinalized` payload that carries one', () => {
+    const state = fold([stepStarted(0, 0), stepFinalized(0, 0, { status: 'passed', retrievalRung: FLOOR })])
+    expect(state.retrievalRung).toEqual(FLOOR)
+  })
+
+  it('FIRST FRAME WINS — a later frame never overwrites what the run already said', () => {
+    // The rung describes the HOST'S LADDER for this run, not this step's ranking. A header that
+    // re-pointed on every frame would flicker between two accounts of one machine mid-run, and the
+    // durable half (run-detail) would then disagree with whatever the live half stopped on.
+    const state = fold([
+      stepFinalized(0, 0, { status: 'passed', retrievalRung: FLOOR }),
+      stepFinalized(0, 1, { status: 'passed', retrievalRung: LEXICAL }),
+    ])
+    expect(state.retrievalRung).toEqual(FLOOR)
+  })
+
+  it('leaves a recorded rung alone when a later frame carries none', () => {
+    const state = fold([
+      stepFinalized(0, 0, { status: 'passed', retrievalRung: FLOOR }),
+      stepFinalized(0, 1, { status: 'passed' }),
+    ])
+    expect(state.retrievalRung).toEqual(FLOOR)
+  })
+
+  it('leaves the key ABSENT — not null, not a rung word — before any carrying frame', () => {
+    // "Not yet known" is the absence of the key, which is what lets the page render no element at
+    // all rather than a banner claiming a rung nobody has stated (D-14, live-run's before state).
+    const state = fold([stepStarted(0, 0), stepFinalized(0, 0, { status: 'passed' })])
+    expect(state.retrievalRung).toBeUndefined()
+    expect('retrievalRung' in state).toBe(false)
+    expect('retrievalRung' in createInitialRunStreamState()).toBe(false)
+  })
+
+  it('folds on the ROW-ABSENT arm too — a resumed stream can land a finalize with no prior start', () => {
+    // Two return paths in the `stepFinalized` arm, and only one of them is exercised by a stream
+    // that started at seq 1. A fold written into the common path only would silently drop the rung
+    // for exactly the reattach case the live page reconnects into.
+    const state = fold([stepFinalized(3, 2, { status: 'failed', retrievalRung: LEXICAL })])
+    expect(rowAt(state, 3, 2)).toMatchObject({ status: 'failed' })
+    expect(state.retrievalRung).toEqual(LEXICAL)
+  })
+
+  it('THE KEY CENSUS: `retrievalRung` is the ONLY new name a stepFinalized payload puts on the state', () => {
+    // The sentinel cell above proves no forbidden VALUE survives; this proves no unintended NAME
+    // does either. A payload carrying every field the producer emits is folded, and the state's
+    // own top-level key set is pinned — so a `{ ...payload }` regression in this arm reds by name.
+    const state = fold([
+      envelope('runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] }),
+      stepStarted(0, 0, 'click login'),
+      stepFinalized(0, 0, {
+        status: 'failed',
+        error: SENTINEL,
+        durationMs: 12,
+        retrievalRung: FLOOR,
+        tokenUsage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+      }),
+    ])
+    expect(Object.keys(state).sort()).toEqual([
+      'handles',
+      'lastEnvelopeAt',
+      'lastSeq',
+      'members',
+      'notices',
+      'retrievalRung',
+      'steps',
+      'terminal',
+    ])
+    expect(JSON.stringify(state)).not.toContain(SENTINEL)
+    expect(JSON.stringify(state)).not.toContain('tokenUsage')
+  })
+})
