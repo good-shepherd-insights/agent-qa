@@ -102,8 +102,8 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
   Record<string, { hardened: number; plainString: number; verdict: string }>
 > = {
   'functions/runs.ts': {
-    hardened: 10,
-    plainString: 5,
+    hardened: 11,
+    plainString: 7,
     verdict:
       'hardened here — `RunsStartInput.runId` is the caller-supplied id the run executes under and '
       + 'becomes `runs/<slugBranch(runId)>/`. 2026-08-25 (403-01 D-03) adds the EIGHTH: '
@@ -119,10 +119,18 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
       + 'run the evidence store is scoped to — the codec refuses the ids `slugBranch` would '
       + 'REWRITE, so a rewritten id can never address another run\'s blobs (T-405-14). Its `sha` '
       + 'is NOT a run-identifying field and carries its own 64-lowercase-hex regex instead. '
-      + 'The five plain fields are ACKNOWLEDGEMENT/EVENT/PROJECTION/RESULT '
+      + '2026-08-29 (407-01 D-05) adds the ELEVENTH: `RunsKnowledgeInput.runId` arrives as an '
+      + 'untrusted path segment of `GET /api/runs/:id/knowledge` and is the run whose handoff is '
+      + 'read — the runs port resolves it against the runs it enumerates rather than a path join, '
+      + 'and the codec is what makes an id the path layer would REWRITE a refusal before any '
+      + 'dispatch happens (T-407-01). '
+      + 'The seven plain fields are ACKNOWLEDGEMENT/EVENT/PROJECTION/RESULT '
       + 'projections (`RunStartAcknowledgement`, the bus envelope, `PostProcessingStatus`, '
-      + '405-01\'s `RunDetailProjection.runId` and 405-05\'s `RunsArtifactResult.runId`) whose '
-      + 'interfaces declare `string`: they echo an id a run already recorded, and none is an input.',
+      + '405-01\'s `RunDetailProjection.runId`, 405-05\'s `RunsArtifactResult.runId` and both '
+      + 'arms of 407-01\'s `RunKnowledgeProjection` — the `evidence-incomplete` arm echoes the id '
+      + 'for a run whose handoff is GONE, so hardening it would refuse to name the very run a '
+      + 'reader is asking about) whose interfaces declare `string`: each echoes an id a run '
+      + 'already recorded, and none is an input.',
   },
   'functions/analysis-get.ts': {
     hardened: 1,

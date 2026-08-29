@@ -333,6 +333,10 @@ const BOUND_OP_INPUTS: Readonly<Record<string, unknown>> = {
   'knowledge.records.inspect': { filter: {} },
   'runs.events': { runId: FIXTURE_RUN_ID },
   'runs.get': { runId: FIXTURE_RUN_ID },
+  // 407-01 D-05: bound under these ports because its substrate is the REQUIRED runs port — it
+  // declares no optional-dep binding key at all, so there is no composition that lists it and
+  // cannot run it.
+  'runs.knowledge': { runId: FIXTURE_RUN_ID },
   'runs.list': {},
 }
 

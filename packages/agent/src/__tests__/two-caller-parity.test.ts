@@ -315,6 +315,11 @@ const ALL_FUNCTION_IDS = [
   'runs.digest',
   'runs.events',
   'runs.get',
+  // 407-01 D-05: in SORT position between `runs.get` and `runs.list`, not appended — this list is
+  // compared against the registry's lexicographic listing, so an appended id would fail on ORDER
+  // while every member was present. Read-tier like its `runs.` siblings, so the derived non-read
+  // drop-out set below is unchanged, which keeps the filter assertion a claim about the RULE.
+  'runs.knowledge',
   'runs.list',
   // 403-01 D-03: read-tier like its `runs.` siblings — minting a VIEW-scoped, short-lived link is
   // a read of a run's live state, not a mutation of it — so it survives safe-mode filtering and

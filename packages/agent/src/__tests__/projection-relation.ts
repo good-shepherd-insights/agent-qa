@@ -64,6 +64,7 @@ import { runsDigestSpec } from '../functions/ops/runs-digest.js'
 import { runsArtifactSpec } from '../functions/ops/runs-artifact.js'
 import { runsDetailSpec } from '../functions/ops/runs-detail.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
+import { runsKnowledgeSpec } from '../functions/ops/runs-knowledge.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
 import { runsPostProcessingSpec } from '../functions/ops/runs-post-processing.js'
 import { runsStartSpec } from '../functions/ops/runs-start.js'
@@ -194,6 +195,12 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'runs.detail': runsDetailSpec,
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,
+  // 407-01 D-05. Paired here the day it is registered, on the growth seam's own rule. Its output
+  // is the first in this map carrying a TOP-LEVEL discriminated union whose two arms differ in
+  // nearly every field — `evidence-incomplete` holds only a run id where `ready` holds the whole
+  // panel — so an unchecked projection is exactly where a published catalogue could lose the
+  // absence arm and leave a caller with no declared way to learn that a run's evidence is gone.
+  'runs.knowledge': runsKnowledgeSpec,
   'runs.list': runsListSpec,
   // 403-01 D-03. Paired here the day it is registered, on the growth seam's own rule. Its output
   // carries a DISCRIMINATED UNION (`stream`), which is the first in this map — an unchecked

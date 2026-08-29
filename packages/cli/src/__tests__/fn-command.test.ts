@@ -789,6 +789,10 @@ describe('agent-qa fn (generic function invoker)', () => {
       'runs.digest': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      // 407-01 D-05: `bound` rather than `unbound`, and that is the row worth reading. The op
+      // declares no optional-dep binding key — its substrate is the REQUIRED runs port — so unlike
+      // `runs.detail` beside it there is no composition that lists this verb and then refuses it.
+      'runs.knowledge': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 403 D-03: UNBOUND from this composition, and that is the honest answer rather than an
       // oversight. `runs.liveurl` mints a viewing credential for a LIVE run, so it binds only where

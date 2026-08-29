@@ -554,7 +554,14 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // payload — a base64 blob — so a fold that reached into it would put a screenshot's bytes on a
     // receipt kept forever. It interpolates the sniffed type, the DECLARED `byteLength` and the
     // run id, which is why that length is a field on the result rather than something to measure.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(38)
+    //
+    // 2026-08-29 (407-01 D-05): 39. `runs.knowledge` arrives with its own `classify` member, and it
+    // is a fold this scan MUST range on `runs.detail`'s reasoning made sharper: its result carries
+    // every step's text AND every served brief line's summary — producer prose that is masked at
+    // rest — so a fold that reached into that payload for its outcome sentence would put a run's
+    // knowledge content, possibly masked material, onto a receipt. It counts steps, served lines
+    // and learned changes, and interpolates nothing from inside any of them.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(39)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {

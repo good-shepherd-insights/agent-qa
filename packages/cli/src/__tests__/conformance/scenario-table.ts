@@ -1119,20 +1119,6 @@ export const SCENARIO_TABLE = Object.freeze([
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
-  // 407 D-05: the Knowledge panel's ONE read, beside `runs.digest` because both are whole-run
-  // compositions over the same noun. Unprojected over MCP on `runs.detail`'s footing — a durable
-  // post-run read is not a mid-flight one.
-  scenario({
-    opId: 'runs.knowledge',
-    input: { runId: FIXTURE_RUN_ID },
-    perSurface: {
-      chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
-      fn: { reachable: true },
-    },
-    renderExpect: { markers: ['kind', 'runId', 'steps', 'learned'] },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
-  }),
   // The one STREAM op in the census. Unprojected because a `tools/call` is one round trip and has no
   // shape for a resumable event feed — the reason the mapping gives, and the reason its verdict
   // legs need their own comparison mechanics (384 D-08).
@@ -1168,6 +1154,27 @@ export const SCENARIO_TABLE = Object.freeze([
         'tests',
       ],
     },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
+  // 407 D-05: the Knowledge panel's ONE read. In SORT position after `runs.get` — this table is
+  // compared against its own committed sorted order, so a row placed where it reads well rather
+  // than where it sorts reds the render-parity leg. Unprojected over MCP on `runs.detail`'s
+  // footing: a durable post-run read is not a mid-flight one.
+  //
+  // THE MARKERS NAME THE `evidence-incomplete` ARM, and that is the honest set rather than a
+  // reduced one. The conformance fixture records no run under `FIXTURE_RUN_ID`, so what this op
+  // really produces here is the two-field absence arm — which is D-06 working: a pruned or absent
+  // handoff is a RESULT a surface renders, never a refusal. Naming `steps` and `learned` would be
+  // asserting about a shape nothing returns, which the render-parity leg refuses by construction.
+  scenario({
+    opId: 'runs.knowledge',
+    input: { runId: FIXTURE_RUN_ID },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['kind', 'runId'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
