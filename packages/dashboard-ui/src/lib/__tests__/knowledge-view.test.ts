@@ -16,8 +16,9 @@
 // Collapsing them would tell a reader the store is empty when in fact nothing asked it anything.
 
 import { describe, expect, it } from 'vitest'
-import { TRACE_TRUNCATION_TOP_K } from '@vostride/agent-qa-schema'
+import { TRACE_TRUNCATION_TOP_K, formatEntityUri } from '@vostride/agent-qa-schema'
 import type {
+  RecordChange,
   RunKnowledgeCanaryAttribution,
   RunKnowledgeProjection,
   RunKnowledgeStep,
@@ -25,11 +26,19 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import type { KnowledgeRead } from '@/lib/api'
+import { curationFactsText } from '@/lib/post-processing-view'
+import { routes } from '@/lib/routes'
 import {
   ATTRIBUTION_PENDING_TEXT,
   BROKE_CAUSE_LABELS,
   CANARY_BADGE_TEXT,
+  CHANGED_NOTHING_TEXT,
+  CHANGES_NOT_AVAILABLE_TEXT,
   CHANNEL_PAGE_SIZE,
+  COUNTS_NOT_RECORDED_SENTENCE,
+  CURATION_FAILED_TEXT,
+  DELTAS_PENDING_TEXT,
+  LEARNED_CHANGE_KINDS,
   LEARNED_HEADING,
   NOT_ATTRIBUTED_TEXT,
   NO_BRIEF_LINES_TEXT,
@@ -41,6 +50,7 @@ import {
   PRE_TRACE_TEXT,
   READ_FAILED_HEADING,
   REPLAY_FACT,
+  REVIEW_PROPOSALS_CTA,
   HINT_FACT,
   STEP_NOT_FOUND_TEXT,
   STEP_NO_BRIEF_TEXT,
@@ -55,6 +65,8 @@ import {
   channelPage,
   cutCandidates,
   cutCandidatesLabel,
+  learnedView,
+  pendingProposalsLine,
   planSourceSentence,
   planSourceView,
   projectKnowledgeView,
@@ -733,5 +745,246 @@ describe('the 407-06 copy is published as constants, like every sentence before 
 
   it('rounds a trace score to three places, so two adjacent candidates stop looking identical', () => {
     expect(traceLineText('anchor', 1, 1.48695)).toBe('leg anchor · rank 1 · score 1.487')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The Learned half (407-09 · LERN-02, D-09 / D-10 / D-11 / D-12)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One record change, with only the fields the Learned half reads varied. */
+function change(kind: RecordChange['change'], recordId = 'fact-cart-page-4ccac'): RecordChange {
+  return { schemaVersion: 1, recordId, change: kind, atOrdinal: 7 }
+}
+
+/** The projection body the Learned half projects from; every cell varies one member of it. */
+function learnedFrom(
+  overrides: Partial<Extract<RunKnowledgeProjection, { kind: 'ready' }>> = {},
+) {
+  const read = ready(overrides)
+  if (read.kind !== 'read' || read.projection.kind !== 'ready') throw new Error('fixture is not ready')
+  return learnedView(read.projection)
+}
+
+describe('the Learned half mirrors the curation word and NEVER renders blank (D-12)', () => {
+  it('says deltas are still coming while curation is pending — a sentence, not a spinner', () => {
+    const view = learnedFrom({ curation: { status: 'pending' } })
+    expect(view.state).toBe('pending')
+    expect(view.sentence).toBe(DELTAS_PENDING_TEXT)
+    expect(view.rows).toEqual([])
+    expect(view.countLine).toBeUndefined()
+  })
+
+  it('says the SAME sentence while curation is running — the reader waits on one fact, not two', () => {
+    const view = learnedFrom({ curation: { status: 'running' } })
+    expect(view.state).toBe('running')
+    expect(view.sentence).toBe(DELTAS_PENDING_TEXT)
+  })
+
+  it('states the failure outright rather than showing an empty list that reads as "nothing changed"', () => {
+    const view = learnedFrom({ curation: { status: 'failed' } })
+    expect(view.state).toBe('failed')
+    expect(view.sentence).toBe(CURATION_FAILED_TEXT)
+    expect(view.rows).toEqual([])
+  })
+
+  it('renders no count line while curation is unsettled — counts come only from the frozen row', () => {
+    for (const status of ['pending', 'running', 'failed'] as const) {
+      expect(learnedFrom({ curation: { status } }).countLine).toBeUndefined()
+    }
+  })
+
+  it('says the counts were not recorded — never a zero — when a settled row committed none (D-12)', () => {
+    const view = learnedFrom({ curation: { status: 'done' } })
+    expect(view.state).toBe('counts-absent')
+    expect(view.sentence).toBe(COUNTS_NOT_RECORDED_SENTENCE)
+    expect(view.countLine).toBe('counts not recorded for this run')
+    expect(JSON.stringify(view)).not.toContain('0')
+  })
+
+  it('keeps the two absences apart: `counts-absent` is a settled run, `pending` is an unsettled one', () => {
+    expect(learnedFrom({ curation: { status: 'done' } }).state)
+      .not.toBe(learnedFrom({ curation: { status: 'pending' } }).state)
+  })
+})
+
+describe('a settled curation says what it changed, in the chip\'s own words (D-09)', () => {
+  it('collapses a both-zero run to one phrase and one sentence, with no rows', () => {
+    const view = learnedFrom({ curation: { status: 'done', counts: { curated: 0, deprecated: 0 } } })
+    expect(view.state).toBe('done')
+    expect(view.countLine).toBe('nothing curated')
+    expect(view.sentence).toBe(CHANGED_NOTHING_TEXT)
+    expect(view.rows).toEqual([])
+  })
+
+  it('says the change records are not available YET when counts moved but no row reached this run', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      learned: { changes: [], canaryAttributions: [] },
+    })
+    expect(view.state).toBe('done')
+    expect(view.countLine).toBe('curated 3 facts, deprecated 1')
+    expect(view.sentence).toBe(CHANGES_NOT_AVAILABLE_TEXT)
+    expect(view.rows).toEqual([])
+  })
+
+  it('reads the count line from the SAME function the chip does — one number, one wording', () => {
+    const view = learnedFrom({ curation: { status: 'done', counts: { curated: 1, deprecated: 0 } } })
+    expect(view.countLine).toBe(curationFactsText(1, 0))
+  })
+
+  it('drops the state sentence once there are rows — the rows ARE the answer', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      learned: { changes: [change('confirmed')], canaryAttributions: [] },
+    })
+    expect(view.rows.length).toBe(1)
+    expect(view.sentence).toBeUndefined()
+  })
+})
+
+describe('the record list is the four LEARNED kinds and nothing else (D-10)', () => {
+  const everyKind: readonly RecordChange['change'][] = [
+    'added', 'confirmed', 'superseded', 'deprecated', 'promoted', 'purged',
+  ]
+
+  function rowsOfEveryKind() {
+    return learnedFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      learned: {
+        changes: everyKind.map((kind, index) => change(kind, `rec_${String(index)}`)),
+        canaryAttributions: [],
+      },
+    }).rows
+  }
+
+  it('keeps the four Learned kinds in the projection\'s own order', () => {
+    expect(rowsOfEveryKind().map(row => row.kind))
+      .toEqual(['confirmed', 'superseded', 'deprecated', 'promoted'])
+  })
+
+  it('drops `added` and `purged` — a birth and a deletion are not what this run LEARNED', () => {
+    const kinds = rowsOfEveryKind().map(row => row.kind) as readonly string[]
+    expect(kinds).not.toContain('added')
+    expect(kinds).not.toContain('purged')
+  })
+
+  it('publishes the four kinds as one closed table the component and the cells both name', () => {
+    expect([...LEARNED_CHANGE_KINDS]).toEqual(['confirmed', 'superseded', 'deprecated', 'promoted'])
+  })
+
+  it('carries the record id verbatim, however unlovely — the row addresses a record, not a title', () => {
+    const rows = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: { changes: [change('promoted', 'fact-page-https-example-com-0f9a')], canaryAttributions: [] },
+    }).rows
+    expect(rows[0]?.recordId).toBe('fact-page-https-example-com-0f9a')
+  })
+
+  it('mints NO href for a record id that is not an addressable entity — a guessed link is worse than none', () => {
+    const rows = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: { changes: [change('confirmed', 'fact-page-https-example-com-0f9a')], canaryAttributions: [] },
+    }).rows
+    expect(rows[0]?.href).toBeUndefined()
+    expect(rows[0]?.ref).toBeUndefined()
+  })
+
+  it('builds the canonical agentqa:// reference when the record IS addressed by a MEM short-ID', () => {
+    const rows = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: { changes: [change('superseded', 'MEM-001')], canaryAttributions: [] },
+    }).rows
+    expect(rows[0]?.ref).toBe(formatEntityUri('MEM', 'MEM-001'))
+    // `ENTITY_KIND_ROUTES.MEM` is `null` under the DASH-03 contract: this build can say WHAT the
+    // row points at without being able to say where to click, and it says exactly that.
+    expect(rows[0]?.href).toBeUndefined()
+  })
+})
+
+describe('the proposals line is a COUNT and a door, never any proposal content (D-11)', () => {
+  it('renders no proposals member at all when the op bound no inbox', () => {
+    expect(learnedFrom({ curation: { status: 'done', counts: { curated: 1, deprecated: 0 } } }).proposals)
+      .toBeUndefined()
+  })
+
+  it('renders no proposals member when the inbox answered zero — a zero is not news', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      pendingProposalCount: 0,
+    })
+    expect(view.proposals).toBeUndefined()
+  })
+
+  it('says one proposal awaits in the singular, and points at where proposals are reviewed', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      pendingProposalCount: 1,
+    })
+    expect(view.proposals).toEqual({
+      count: 1,
+      line: '1 proposal awaits your decision',
+      ctaText: REVIEW_PROPOSALS_CTA,
+      href: routes.chat,
+    })
+  })
+
+  it('says many proposals await in the plural', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      pendingProposalCount: 3,
+    })
+    expect(view.proposals?.line).toBe('3 proposals awaiting your decision')
+    expect(pendingProposalsLine(3)).toBe('3 proposals awaiting your decision')
+    expect(pendingProposalsLine(1)).toBe('1 proposal awaits your decision')
+  })
+
+  it('shows the proposals line even while curation is unsettled — the inbox is not this run\'s chain', () => {
+    const view = learnedFrom({ curation: { status: 'pending' }, pendingProposalCount: 2 })
+    expect(view.state).toBe('pending')
+    expect(view.proposals?.count).toBe(2)
+  })
+})
+
+describe('the ready arm carries the Learned half so the tab does not have to build one', () => {
+  it('fills `learned` on every ready view, and `proposals` only when there are any', () => {
+    const view = projectKnowledgeView(ready({
+      curation: { status: 'done', counts: { curated: 2, deprecated: 1 } },
+      learned: { changes: [change('confirmed', 'MEM-001')], canaryAttributions: [] },
+      pendingProposalCount: 4,
+    }))
+    if (view.state !== 'ready') throw new Error('expected ready')
+    expect(view.learned?.state).toBe('done')
+    expect(view.learned?.rows.length).toBe(1)
+    expect(view.proposals?.count).toBe(4)
+  })
+
+  it('omits `proposals` from the ready arm when the read carried no pending count', () => {
+    const view = projectKnowledgeView(ready({ curation: { status: 'running' } }))
+    if (view.state !== 'ready') throw new Error('expected ready')
+    expect('proposals' in view).toBe(false)
+    expect(view.learned?.state).toBe('running')
+  })
+})
+
+describe('the 407-09 copy is published as constants, like every sentence before it', () => {
+  it('spells each Learned sentence exactly once, and no two the same', () => {
+    expect(DELTAS_PENDING_TEXT).toBe('Deltas land when curation settles.')
+    expect(CURATION_FAILED_TEXT).toBe('Curation failed — nothing was learned from this run.')
+    expect(COUNTS_NOT_RECORDED_SENTENCE).toBe('Counts not recorded for this run.')
+    expect(CHANGES_NOT_AVAILABLE_TEXT).toBe('Change records for this run are not available yet.')
+    expect(CHANGED_NOTHING_TEXT).toBe('Curation ran and changed nothing.')
+    expect(REVIEW_PROPOSALS_CTA).toBe('Review proposals')
+    expect(new Set([
+      DELTAS_PENDING_TEXT,
+      CURATION_FAILED_TEXT,
+      COUNTS_NOT_RECORDED_SENTENCE,
+      CHANGES_NOT_AVAILABLE_TEXT,
+      CHANGED_NOTHING_TEXT,
+    ]).size).toBe(5)
+  })
+
+  it('keeps the Learned heading beside them, where 407-02 published it', () => {
+    expect(LEARNED_HEADING).toBe('Learned')
   })
 })
