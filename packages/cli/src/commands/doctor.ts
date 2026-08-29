@@ -16,6 +16,7 @@ import {
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
 import { createModel, getProvider } from '@vostride/agent-qa-model'
+import { createKnowledgeChecks } from './doctor-knowledge-checks.js'
 
 // 407 D-18: exported so `doctor-knowledge-checks.ts` can build rows this printer prints without
 // restating the row contract. The three types are the whole of what a row is.
@@ -627,6 +628,10 @@ export function createDoctorCommand(): Command {
         checkNodeVersion(),
         checkConfigFile(configPath),
         checkLegacyV1MemoryData(configPath),
+        // 407 D-18: the knowledge substrate's three rows sit here — directly after the legacy v1
+        // memory row, because they are the same subject — and before config validation, so the
+        // rung reads as the conclusion of the store and embedder rows above it.
+        ...createKnowledgeChecks({ config, configPath }),
         checkConfigValidation(config),
         checkSecretsFile(config, configPath),
         checkWorkspaceSupportFiles(config, configPath),

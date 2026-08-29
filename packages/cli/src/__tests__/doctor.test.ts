@@ -7,13 +7,21 @@ vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(),
 }))
 
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn(() => false),
-  readFile: vi.fn(),
-  writeFileSync: vi.fn(),
-  mkdirSync: vi.fn(),
-  readFileSync: vi.fn(() => ''),
-}))
+// 407-08: spread the real module rather than replacing it wholesale. doctor's knowledge rows reach
+// the real `foldRetrievalRung` through knowledge-local, and a TOTAL node:fs replacement makes that
+// package unloadable (its durable-fs layer names `openSync`/`fsyncSync` this suite never mocked).
+// The five entries below are the only ones any doctor row actually calls.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    existsSync: vi.fn(() => false),
+    readFile: vi.fn(),
+    writeFileSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    readFileSync: vi.fn(() => ''),
+  }
+})
 
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(() => Promise.reject({ code: 'ENOENT' })),
@@ -23,6 +31,34 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('@vostride/agent-qa-runner-local', () => ({
   checkDockerAvailable: vi.fn(() => Promise.resolve(true)),
 }))
+
+// 407 D-18: doctor's three knowledge rows reach their probes through the ONE composition edge
+// allowed to name knowledge-local (385 D-14/SC5), so that edge is what this suite replaces.
+//
+// `foldRetrievalRung` and `indexDbPath` are the REAL ones. Stubbing the fold here would let these
+// cells agree with a doctor that prints a different word from the one the runner records, which is
+// the exact disagreement D-17's one-fold rule exists to make impossible.
+const knowledgeProbeStubs = vi.hoisted(() => ({
+  classifyIndexFace: vi.fn<() => import('@vostride/agent-qa-agent-local').IndexFace>(
+    () => ({ source: 'index' }),
+  ),
+  resolveEmbedderCapability: vi.fn(),
+  readWriterLease: vi.fn(() => ({ kind: 'absent' as const })),
+  readEmbedderWorkerRegistration: vi.fn(() => ({ kind: 'absent' as const })),
+}))
+
+vi.mock('@vostride/agent-qa-agent-local', async () => {
+  const knowledge = await vi.importActual<typeof import('@vostride/agent-qa-knowledge-local')>(
+    '@vostride/agent-qa-knowledge-local',
+  )
+  return {
+    LOCAL_KNOWLEDGE_PROBES: {
+      foldRetrievalRung: knowledge.foldRetrievalRung,
+      indexDbPath: knowledge.indexDbPath,
+      ...knowledgeProbeStubs,
+    },
+  }
+})
 
 vi.mock('@vostride/agent-qa-core', async () => {
   const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
@@ -121,8 +157,9 @@ vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
 
 import { createDoctorCommand } from '../commands/doctor.js'
 import { execFileSync, execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
 import * as core from '@vostride/agent-qa-core'
 import { clearProviderRegistry, createModel, registerProvider } from '@vostride/agent-qa-model'
 import { generateText } from 'ai'
@@ -131,6 +168,7 @@ import { loadProviderPluginsForRawConfig } from '../provider-plugins.js'
 const mockExecSync = vi.mocked(execSync)
 const mockExecFileSync = vi.mocked(execFileSync)
 const mockExistsSync = vi.mocked(existsSync)
+const mockReadFileSync = vi.mocked(readFileSync)
 const mockReadFile = vi.mocked(readFile)
 const mockCreateModel = vi.mocked(createModel)
 const mockGetCredential = vi.mocked(core.getCredential)
@@ -154,6 +192,21 @@ function getOutput(): string {
   return consoleLogs.join('\n')
 }
 
+/** No doctor row reads the port; only the profile's model id reaches the terminal. */
+const NATIVE_READY = {
+  kind: 'ready',
+  rung: 'native',
+  profile: DEFAULT_EMBEDDING_PROFILE,
+  embedder: {},
+} as never
+
+/** The row after which the trio prints, and the row before which it must stop. */
+const KNOWLEDGE_ROW_NAMES = ['Knowledge store', 'Embedder', 'Retrieval rung'] as const
+
+function rowFor(name: string): string {
+  return consoleLogs.find(line => line.includes(`    ${name}  `)) ?? ''
+}
+
 describe('doctor command', () => {
   const originalVersion = process.version
   const originalPlatform = process.platform
@@ -168,6 +221,13 @@ describe('doctor command', () => {
     mockLoadLLMAuthPlugins.mockResolvedValue([])
     mockLoadProviderPluginsForRawConfig.mockResolvedValue()
     mockResolveAppiumExecutable.mockReturnValue({ command: 'appium', source: 'path' })
+    mockReadFileSync.mockReturnValue('')
+    // 407 D-18: a healthy knowledge substrate is the default posture; each knowledge cell below
+    // moves exactly the one axis it is about.
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({ source: 'index' })
+    knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue(NATIVE_READY)
+    knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'absent' })
+    knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
     // Clean env for consistent tests
     delete process.env.ANTHROPIC_API_KEY
     delete process.env.OPENAI_API_KEY
@@ -873,5 +933,146 @@ targets:
     await runDoctor()
     const output = getOutput()
     expect(output).toContain('Install Node.js 24+')
+  })
+  // ---- 407 TRST-02: the three knowledge trust rows (D-18/D-19/D-20) ----------------------------
+
+  async function runHealthyHost(): Promise<void> {
+    Object.defineProperty(process, 'version', { value: 'v24.10.0', writable: true })
+    mockExistsSync.mockReturnValue(true)
+    mockExecSync.mockReturnValue(Buffer.from('ok'))
+    mockResolveLLMAuth.mockResolvedValue({
+      kind: 'unauthenticated',
+      credentialKey: 'default',
+      provider: 'openai-compatible',
+      optional: true,
+      message: 'Testing without a saved credential.',
+    })
+    const { stringify } = await import('yaml')
+    mockReadFile.mockResolvedValue(stringify({
+      workspace: {
+        testMatch: ['tests/**/*.yaml'],
+        suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.secrets.local',
+      },
+      registry: { llms: [{ name: 'default', provider: 'openai-compatible', model: 'model-name', baseURL: 'https://remote.example/api/v1' }] },
+      services: { cache: { dir: '.agent-qa/cache', ttl: '7d' }, logging: { level: 'warn' }, vision: { screenshotSize: '1m' } },
+      use: {
+        browser: { name: 'chromium', headless: true },
+        timeout: { step: '30s', test: '10m', navigation: '10s' },
+        healing: { maxAttempts: 3 },
+        planner: { maxSubActions: 50, previousStepCount: 5 },
+        llm: 'default',
+      },
+    }) as never)
+    await runDoctor()
+  }
+
+  it('prints the trio between Legacy v1 memory data and Config validation, store then embedder then rung', async () => {
+    await runHealthyHost()
+
+    const indexOf = (name: string): number => consoleLogs.findIndex(line => line.includes(`    ${name}  `))
+    const legacy = indexOf('Legacy v1 memory data')
+    const validation = indexOf('Config validation')
+    const positions = KNOWLEDGE_ROW_NAMES.map(indexOf)
+
+    expect(legacy).toBeGreaterThanOrEqual(0)
+    expect(validation).toBeGreaterThanOrEqual(0)
+    expect(positions).toEqual([legacy + 1, legacy + 2, legacy + 3])
+    expect(positions[2]).toBeLessThan(validation)
+  })
+
+  it('skips all three rows when no knowledge root resolves, and never omits a row', async () => {
+    mockExistsSync.mockReturnValue(false)
+
+    await runDoctor()
+
+    for (const name of KNOWLEDGE_ROW_NAMES) {
+      expect(rowFor(name)).toContain('no knowledge root configured')
+      expect(rowFor(name)).toContain('SKIP')
+      expect(rowFor(name)).not.toContain('FAIL')
+    }
+    // The process exit code is deliberately NOT asserted here: with no config at all the LLM,
+    // workspace and validation rows fail on their own account, so an assertion about it would be
+    // about them. "Degraded by design still exits 0" is the WARN cell below, on a healthy host.
+    expect(getOutput()).not.toContain('Fix: Rebuild the index')
+    expect(getOutput()).not.toContain('Fix: Set an explicit embedder profile')
+  })
+
+  it('passes all three rows on an open index with a native embedder', async () => {
+    await runHealthyHost()
+
+    expect(rowFor('Knowledge store')).toContain('index open at')
+    expect(rowFor('Embedder')).toContain(`native (${DEFAULT_EMBEDDING_PROFILE.model_id})`)
+    expect(rowFor('Retrieval rung')).toContain('memidex')
+    for (const name of KNOWLEDGE_ROW_NAMES) expect(rowFor(name)).toContain('PASS')
+    expect(process.exitCode).toBe(0)
+  })
+
+  it('warns — never fails — a host degraded by design, so a floor install does not red the gate', async () => {
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({
+      source: 'scan',
+      reason: 'absent',
+      detail: 'derived index file is absent',
+      filePresent: false,
+    })
+    knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue({
+      kind: 'ready',
+      rung: 'floor',
+      profile: DEFAULT_EMBEDDING_PROFILE,
+      embedder: {},
+    } as never)
+
+    await runHealthyHost()
+
+    for (const name of KNOWLEDGE_ROW_NAMES) {
+      expect(rowFor(name)).toContain('WARN')
+      expect(rowFor(name)).not.toContain('FAIL')
+    }
+    expect(rowFor('Knowledge store')).toContain('scanning bundles')
+    expect(rowFor('Embedder')).toContain('static floor — native ONNX runtime unavailable')
+    expect(rowFor('Retrieval rung')).toContain('bundle-scan — knowledge index unavailable')
+    expect(process.exitCode).not.toBe(1)
+  })
+
+  it('fails the store row and exits 1 when the index file is present and will not open', async () => {
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({
+      source: 'scan',
+      reason: 'corrupt',
+      detail: 'SQLITE_NOTADB: file is not a database',
+      filePresent: true,
+    })
+
+    await runHealthyHost()
+
+    expect(rowFor('Knowledge store')).toContain('could not be opened: corrupt')
+    expect(rowFor('Knowledge store')).toContain('FAIL')
+    expect(getOutput()).toContain('Fix: Rebuild the index with `agent-qa knowledge rebuild-index`')
+    expect(rowFor('Retrieval rung')).not.toContain('FAIL')
+    expect(process.exitCode).toBe(1)
+  })
+
+  it('names the folded 399 failure by its cause when a live daemon lease published no worker registration', async () => {
+    knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'parsed', lease: {} } as never)
+    knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
+    mockReadFileSync.mockImplementation((target) => (
+      String(target).endsWith('daemon-events.jsonl')
+        ? `${JSON.stringify({
+          kind: 'embedder-worker-exit',
+          reason: 'crash',
+          stderr: 'Error: Embedder worker could not resolve profile: deferred\n    at /home/u/worker.js',
+        })}\n`
+        : ''
+    ))
+
+    await runHealthyHost()
+
+    expect(rowFor('Embedder')).toContain(
+      'daemon embedder worker not registered: could not resolve profile (deferred)',
+    )
+    expect(rowFor('Embedder')).toContain('FAIL')
+    expect(getOutput()).not.toContain('/home/u/worker.js')
+    expect(getOutput()).toContain('Fix: Set an explicit embedder profile in agent-qa.config.yaml')
   })
 })
