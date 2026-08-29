@@ -337,6 +337,20 @@ export const CHANGES_NOT_AVAILABLE_TEXT = 'Change records for this run are not a
  */
 export const CHANGES_UNREADABLE_TEXT = 'Change records could not be read from the knowledge store. Run `agent-qa doctor`.'
 
+/**
+ * The note that rides BESIDE an answer whose read was only partly successful (407-18 · CR-01).
+ *
+ * A DIFFERENT CLAIM FROM ITS SIBLING ABOVE, and the difference is the whole point.
+ * {@link CHANGES_UNREADABLE_TEXT} stands ALONE: there was nothing to list and nobody could look,
+ * so the sentence IS the answer. This one never stands alone — it rides under rows the store did
+ * serve, or under an unsettled-chain sentence, and says the answer on screen is real while the
+ * read behind it was partial. 407-14's op folds its two Learned enrichments INDEPENDENTLY, so
+ * `{ scanIncomplete: true, changes: [<a row>] }` is a sanctioned shape; the flag DECORATES the
+ * answer and never replaces it. Same door as every other degradation in this tab, because it is
+ * the same fold `doctor` grades.
+ */
+export const STORE_READ_INCOMPLETE_TEXT = 'The knowledge store could not be fully read. Run `agent-qa doctor`.'
+
 /** What the half says when curation settled having moved neither count (D-12). */
 export const CHANGED_NOTHING_TEXT = 'Curation ran and changed nothing.'
 
@@ -698,6 +712,16 @@ export interface LearnedView {
    * so a degraded half is addressable by a cell rather than inferred from its sentence.
    */
   readonly scanIncomplete?: true
+  /**
+   * {@link STORE_READ_INCOMPLETE_TEXT}, for the renderings where a PERSON must see the partiality.
+   *
+   * Present exactly when {@link LearnedView.scanIncomplete} is true AND the half is not already
+   * printing {@link CHANGES_UNREADABLE_TEXT} — that sentence names the store itself, and a note
+   * repeating the same door beneath it would be a nag rather than news. Absent otherwise, never
+   * an empty string: `data-learned-read` is the cell-visible half of this fact, and the note is
+   * the person-visible half (D-04, D-12).
+   */
+  readonly readNote?: string
 }
 
 /** The pending-proposals line: a COUNT and a door, never any proposal content (D-11). */
@@ -865,18 +889,36 @@ function learnedRow(row: RecordChange): LearnedRowView {
  * also list NOTHING even when the projection carries rows: a chain that has not settled has not
  * finished deciding what it changed, so listing its interim rows would date-stamp a claim it has
  * not made (D-12).
+ *
+ * THE STORE READ IS A FACT ABOUT THE READ, AND IT DECORATES EVERY ARM (407-18 · REVIEW CR-01 /
+ * WR-05). `learned.scanIncomplete` used to be asked ABOVE the row fold and answered with
+ * `rows: []` plus {@link CHANGES_UNREADABLE_TEXT} unconditionally — but 407-14's op folds its two
+ * Learned enrichments INDEPENDENTLY, so `{ scanIncomplete: true, changes: [<this run's record>] }`
+ * is a sanctioned, op-tested output. On it the half asserted the store could not be read while
+ * holding the record that proves it could: the same denial 407-15's `rows win` law was written
+ * against, committed by the commit that wrote the law. So the flag is now computed ONCE and spread
+ * into every return, including the three unsettled arms it used to return past (WR-05), and the
+ * SENTENCE form is reached only where there is genuinely nothing to list. A view handed rows
+ * paints them, whatever else it was told; the degradation rides beside them as the flag and
+ * {@link STORE_READ_INCOMPLETE_TEXT}.
  */
 export function learnedView(
   projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
 ): LearnedView {
   const { status, counts } = projection.curation
 
+  // COMPUTED ONCE, SPREAD EVERYWHERE (WR-05). Absent rather than `false` on a clean read — the
+  // same true-or-absent idiom the wire flag it mirrors is typed with.
+  const degraded = projection.learned.scanIncomplete === true ? { scanIncomplete: true as const } : {}
+  const readNote =
+    projection.learned.scanIncomplete === true ? { readNote: STORE_READ_INCOMPLETE_TEXT } : {}
+
   if (status === 'pending' || status === 'running') {
-    return { state: status, sentence: DELTAS_PENDING_TEXT, rows: [] }
+    return { state: status, sentence: DELTAS_PENDING_TEXT, rows: [], ...degraded, ...readNote }
   }
 
   if (status === 'failed') {
-    return { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [] }
+    return { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [], ...degraded, ...readNote }
   }
 
   const state: LearnedState = counts === undefined ? 'counts-absent' : 'done'
@@ -885,13 +927,6 @@ export function learnedView(
       ? COUNTS_NOT_RECORDED_TEXT
       : curationFactsText(counts.curated, counts.deprecated)
 
-  // THE STORE COULD NOT BE READ, and that is a different fact from every absence below it
-  // (407-14). An empty `changes` list carrying this flag is not "nothing reached this run"; it is
-  // "nobody could look". The counts stay — they came from the frozen row, not from the store.
-  if (projection.learned.scanIncomplete === true) {
-    return { state, countLine, sentence: CHANGES_UNREADABLE_TEXT, rows: [], scanIncomplete: true }
-  }
-
   // ALREADY FILTERED TO THIS RUN by `runs.knowledge` (407-04's run-link stamping and canary
   // observation join, never a since-ordinal window). This module narrows the KINDS and nothing
   // else — re-filtering by run here would be a second, weaker copy of that join.
@@ -899,8 +934,18 @@ export function learnedView(
     .filter(row => LEARNED_CHANGE_KIND_SET.has(row.change))
     .map(learnedRow)
 
-  if (rows.length > 0) return { state, countLine, rows }
+  // ROWS BEFORE SENTENCES, AND BEFORE THE FLAG (REVIEW CR-01). A record the store served is the
+  // answer; the partial read is a note beside it.
+  if (rows.length > 0) return { state, countLine, rows, ...degraded, ...readNote }
 
+  // NOTHING TO LIST AND NOBODY COULD LOOK — the one arm where the sentence IS the answer, so it
+  // carries no note: a second door beneath a sentence that already names one is a nag (407-14).
+  if (projection.learned.scanIncomplete === true) {
+    return { state, countLine, sentence: CHANGES_UNREADABLE_TEXT, rows: [], scanIncomplete: true }
+  }
+
+  // Below here the read was CLEAN — the flag would have been answered above — so no spread is
+  // needed on the three-sentence ladder, and adding one would only suggest it could be reached.
   if (counts === undefined) {
     return { state, countLine, sentence: COUNTS_NOT_RECORDED_SENTENCE, rows: [] }
   }

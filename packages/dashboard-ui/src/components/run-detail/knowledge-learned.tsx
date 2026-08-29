@@ -15,6 +15,13 @@
 // heading, and no rows. It is not a sixth STATE — the chain really did settle — which is why the
 // fact rides its own attribute instead of a state word the curation chip could not mirror.
 //
+// AND A SEVENTH: rows, or an unsettled-chain sentence, with the READ NOTE beneath, when the store
+// was only partly readable (407-18 · REVIEW CR-01/WR-05). The op degrades its two Learned
+// enrichments independently, so a served record and a partial read arrive together — the note is
+// the person-visible half of `data-learned-read`, which is the cell-visible half. Neither half
+// ever replaces the rows: a view handed records paints them and says the read was partial beside
+// them.
+//
 // ROWS WIN OVER SENTENCES, and that ordering lives in `learnedView`, not here. This file paints
 // whatever the view carries: the projection never hands it both a populated list and a sentence,
 // because a sentence beside rows would be a second, quieter account of the same records (CR-04).
@@ -125,6 +132,17 @@ export function KnowledgeLearned({
             <RecordRow key={row.key} row={row} />
           ))}
         </ul>
+      )}
+
+      {/*
+        BENEATH the answer, never instead of it. `readNote` is present exactly where the view was
+        degraded AND is not already printing the unreadable-store sentence, so this paragraph and
+        `[data-learned-sentence]` never both name the store (407-18).
+      */}
+      {view.readNote === undefined ? null : (
+        <p data-learned-read-note className="text-xs text-muted-foreground">
+          {view.readNote}
+        </p>
       )}
 
       {proposals === undefined ? null : (
