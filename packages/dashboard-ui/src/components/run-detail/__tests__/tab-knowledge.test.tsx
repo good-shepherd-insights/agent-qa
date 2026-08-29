@@ -66,6 +66,7 @@ function row(overrides: Partial<StepRowView> = {}): StepRowView {
     canaryLines: 1,
     planSource: "none",
     facts: ["2 brief lines", "1 canary"],
+    detail: { channel1: [], channel2: [], channel3: [] },
     ...overrides,
   }
 }

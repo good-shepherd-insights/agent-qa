@@ -26,12 +26,18 @@
 
 import { TRACE_TRUNCATION_TOP_K } from '@vostride/agent-qa-schema'
 import type {
+  BriefWhyNoTraceReason,
+  PostProcessingChipStatus,
   RecordChange,
   RecordedRetrievalRung,
   RetrievalRung,
   RetrievalRungReason,
+  RetrievalTraceLeg,
   RunKnowledgeCanaryAttribution,
+  RunKnowledgePlanSource,
   RunKnowledgeStep,
+  RunKnowledgeTrace,
+  TraceLine,
 } from '@vostride/agent-qa-schema'
 
 import type { KnowledgeRead } from './api'
@@ -200,6 +206,72 @@ export const PRE_TRACE_TEXT = 'no trace was captured for this run'
 /** The `step-not-found` no-trace arm, stated rather than dropped (D-04). */
 export const STEP_NOT_FOUND_TEXT = 'no evidence recorded for this step'
 
+/** The serve-time canary marker, worn by every canary line whatever curation did with it (D-08). */
+export const CANARY_BADGE_TEXT = 'canary'
+
+/**
+ * What a canary line says while curation is still `pending` or `running` (D-08).
+ *
+ * NOT BLANK, AND NOT AN OUTCOME. "Nobody has decided yet" is a different fact from "the fold ran
+ * and attributed nothing", and a line that rendered neither would read as though the canary had
+ * simply not mattered.
+ */
+export const ATTRIBUTION_PENDING_TEXT = 'attribution pending'
+
+/** What a canary line says when curation FAILED, or settled and attributed nothing to it (D-08). */
+export const NOT_ATTRIBUTED_TEXT = 'not attributed'
+
+/** The plan-source sentence for a step whose plan a procedure only HINTED at (D-07). */
+export const PROCEDURE_HINT_TEXT = 'procedure hint'
+
+/**
+ * The hint sentence for a hint that was a REPLAY RECOMMENDATION first (D-07, G-381-4).
+ *
+ * The distinction is the whole reason `demotion` is on the wire: a demoted replay and an ordinary
+ * served hint are byte-identical in what they served, and only the recorded demotion tells a
+ * reader that the procedure was trusted enough to replay and then was not.
+ */
+export const PROCEDURE_HINT_DEMOTED_TEXT = 'procedure hint (demoted from replay)'
+
+/** The replay sentence when the guard passed every check it had (D-07). */
+export function replayedText(checksPassed: number, total: number): string {
+  return `replayed ${String(checksPassed)}/${String(total)}`
+}
+
+/**
+ * The three ways a replay guard can break, in the words the Copywriting Contract spells.
+ *
+ * `executionFailure` reads `adapter failure` rather than its member name because the member names
+ * the layer that failed and the sentence names what a person can act on — an adapter that could
+ * not perform the recorded action.
+ */
+export const BROKE_CAUSE_LABELS = {
+  miss: 'miss',
+  executionFailure: 'adapter failure',
+  verifierRejection: 'verifier rejection',
+} as const
+
+export type BrokeCause = keyof typeof BROKE_CAUSE_LABELS
+
+/** The replay sentence when the guard broke — `k` is ONE-BASED, the ordinal a person counts by. */
+export function brokeAtText(step: number, cause: BrokeCause): string {
+  return `broke at step ${String(step)}: ${BROKE_CAUSE_LABELS[cause]}`
+}
+
+/** How many lines of one channel render before the rest go behind a disclosure (UI-SPEC). */
+export const CHANNEL_PAGE_SIZE = 50
+
+/**
+ * The paging trigger, counting the WHOLE channel rather than the hidden remainder.
+ *
+ * A reader deciding whether to open it is deciding how much they are about to be shown, which is
+ * the total; the remainder is arithmetic they would have to do against a number that is not on
+ * screen.
+ */
+export function showAllLinesLabel(total: number): string {
+  return `Show all ${String(total)} lines`
+}
+
 /** The Learned half's heading — one `<h4>`, 16px/500 (407-09). */
 export const LEARNED_HEADING = 'Learned'
 
@@ -216,6 +288,217 @@ export const LEARNED_HEADING = 'Learned'
  */
 export type StepPlanSourceWord = 'none' | 'procedure-replay' | 'procedure-hint'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The expanded step row — channels, why-traces, cut ledger, plan source (407-06)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * WHY this line was served — the trace's own answer, or the NAMED absence of one (D-04).
+ *
+ * EXACTLY TWO KINDS. Either the serve-time trace recorded this record and the panel prints what it
+ * recorded, or it did not and the panel prints which of the three absences applies. There is no
+ * third kind, because a third kind would be a rendering with no evidence behind it — and the one
+ * thing this surface must never do is compute a rank or a score of its own. The numbers below are
+ * READ from `trace.servedLines`; re-deriving them would answer about the index as it stands now
+ * rather than about the moment the brief was assembled (KREV-02's founding argument).
+ */
+export type LineWhy =
+  | {
+      readonly kind: 'answered'
+      readonly leg: RetrievalTraceLeg
+      readonly rank: number
+      readonly score: number
+    }
+  | { readonly kind: 'no-trace'; readonly reason: BriefWhyNoTraceReason }
+
+/** The word a canary line wears — one of six, and never blank (D-08). */
+export type CanaryOutcomeWord =
+  | 'confirmed'
+  | 'contradicted'
+  | 'helpful'
+  | 'harmful'
+  | 'pending'
+  | 'not-attributed'
+
+/** One channel-1 line, with its trace answer and (if it is a canary) its outcome word. */
+export interface BriefLineView {
+  readonly id: string
+  readonly kind: string
+  readonly summary: string
+  readonly trust: number
+  readonly status: string
+  readonly servedAsCanary: boolean
+  readonly tier: string
+  readonly why: LineWhy
+  /** Present exactly when {@link servedAsCanary} — a non-canary line has no outcome to report. */
+  readonly canaryOutcome?: CanaryOutcomeWord
+}
+
+/** One channel-2 read trace, as the row renders it. `bodyDigest` is storage identity, not shown. */
+export interface ReadTraceView {
+  readonly id: string
+  readonly detailLevel: string
+}
+
+/** One channel-3 caution, as the row renders it. */
+export interface CautionView {
+  readonly id: string
+  readonly summary: string
+}
+
+/** The truncated ledger — the answer to "why did it NOT say X" (D-04). */
+export interface CutCandidatesView {
+  readonly label: string
+  readonly lines: readonly TraceLine[]
+}
+
+/** The replay/hint row: the sentence of record and the tone the badge is tinted by. */
+export interface PlanSourceView {
+  readonly kind: 'procedure-replay' | 'procedure-hint'
+  readonly sentence: string
+  readonly tone: 'ok' | 'broke' | 'hint'
+}
+
+/** Everything an EXPANDED step row shows. Empty channels are empty arrays, never absent. */
+export interface StepDetailView {
+  readonly channel1: readonly BriefLineView[]
+  readonly channel2: readonly ReadTraceView[]
+  readonly channel3: readonly CautionView[]
+  /** Present only on an `answered` trace — see {@link cutCandidates}. */
+  readonly cut?: CutCandidatesView
+  /** Present only on a step whose evidence recorded a procedure plan source. */
+  readonly planSource?: PlanSourceView
+}
+
+/** One page of a channel, plus the trigger that reveals the rest. */
+export interface ChannelPage<T> {
+  readonly lines: readonly T[]
+  /** Absent when nothing is held back — an absent key, never a zero somebody counted. */
+  readonly hiddenCount?: number
+  readonly showAllLabel?: string
+}
+
+/**
+ * The channel-1 lines with their trace answers, matched by `recordId` (D-04, LERN-01).
+ *
+ * THE TRACE IS PASSED EXPLICITLY, beside the step it belongs to, so the join is visible at every
+ * call site rather than buried one dereference deep.
+ *
+ * THE `step-not-found` MAPPING IS THE ONE JUDGEMENT HERE. A trace that ANSWERED the step but
+ * carries no `servedLines` entry for this record is a PER-LINE absence: the run recorded evidence
+ * for the step and none for the line. That is the same situation `step-not-found` names one level
+ * up — evidence exists, the thing being asked about is not in it — so the line borrows that arm
+ * rather than inventing a fourth word no other surface renders. It is deliberately NOT
+ * `artifact-missing` (nothing was pruned) and NOT `pre-trace-run` (a trace plainly exists).
+ */
+export function briefLineViews(
+  step: RunKnowledgeStep,
+  trace: RunKnowledgeTrace,
+): readonly BriefLineView[] {
+  return step.served.channel1.map(line => ({ ...line, why: lineWhy(line.id, trace) }))
+}
+
+function lineWhy(recordId: string, trace: RunKnowledgeTrace): LineWhy {
+  if (trace.kind === 'no-trace') return { kind: 'no-trace', reason: trace.reason }
+
+  const served = trace.trace.servedLines.find(candidate => candidate.recordId === recordId)
+  if (served === undefined) return { kind: 'no-trace', reason: 'step-not-found' }
+
+  return { kind: 'answered', leg: served.leg, rank: served.rank, score: served.score }
+}
+
+/**
+ * The cut ledger, present ONLY where a trace answered (D-04).
+ *
+ * An answered trace that truncated nothing still gets the disclosure, reading `(0 of top 20)`:
+ * "the budget cut nothing" is a fact the trace recorded, and it is a different answer from "there
+ * is no trace to ask". Where there is no trace there is no ledger at all — an empty one would
+ * claim a measurement nobody took.
+ */
+export function cutCandidates(trace: RunKnowledgeTrace): CutCandidatesView | undefined {
+  if (trace.kind === 'no-trace') return undefined
+  return { label: cutCandidatesLabel(trace.trace.truncated.length), lines: trace.trace.truncated }
+}
+
+/**
+ * What a canary line says, from the curation word and the attribution — never blank (D-08).
+ *
+ * ORDER MATTERS. An unsettled chain is read FIRST, so a stale attribution from an earlier fold
+ * cannot be presented as this run's answer while the current one is still running; and a FAILED
+ * chain reads `not attributed` even where a row exists, because a fold that fell over did not
+ * finish deciding.
+ */
+export function canaryOutcomeWord(
+  curationStatus: PostProcessingChipStatus,
+  attribution: RunKnowledgeCanaryAttribution | undefined,
+): CanaryOutcomeWord {
+  if (curationStatus === 'pending' || curationStatus === 'running') return 'pending'
+  if (curationStatus === 'done' && attribution !== undefined) return attribution.outcome
+  return 'not-attributed'
+}
+
+/**
+ * The replay or hint sentence a step's plan source states (D-07).
+ *
+ * A GUARD MEMBER BEATS THE COUNT. `checksPassed === total` alongside a recorded `verifierRejection`
+ * is a guard that got through its checks and was refused anyway; printing `replayed 5/5` there
+ * would report a replay that did not happen. Precedence is miss → adapter → verifier: the earliest
+ * point at which the replay stopped being possible is the one worth naming.
+ */
+export function planSourceSentence(planSource: RunKnowledgePlanSource): string {
+  if (planSource.kind === 'procedure-hint') {
+    return planSource.demotion === undefined ? PROCEDURE_HINT_TEXT : PROCEDURE_HINT_DEMOTED_TEXT
+  }
+
+  const broke = brokeAt(planSource.guard)
+  if (broke !== undefined) return brokeAtText(broke.step + 1, broke.cause)
+
+  return replayedText(planSource.guard.checksPassed, planSource.guard.total)
+}
+
+function brokeAt(
+  guard: Extract<RunKnowledgePlanSource, { kind: 'procedure-replay' }>['guard'],
+): { readonly step: number; readonly cause: BrokeCause } | undefined {
+  if (guard.miss !== undefined) return { step: guard.miss.procedureStepIndex, cause: 'miss' }
+  if (guard.executionFailure !== undefined) {
+    return { step: guard.executionFailure.procedureStepIndex, cause: 'executionFailure' }
+  }
+  if (guard.verifierRejection !== undefined) {
+    return { step: guard.verifierRejection.procedureStepIndex, cause: 'verifierRejection' }
+  }
+  return undefined
+}
+
+/** The plan-source row: its sentence and the tone the UI-SPEC tints its badge by. */
+export function planSourceView(planSource: RunKnowledgePlanSource): PlanSourceView {
+  const sentence = planSourceSentence(planSource)
+  if (planSource.kind === 'procedure-hint') {
+    return { kind: 'procedure-hint', sentence, tone: 'hint' }
+  }
+  return {
+    kind: 'procedure-replay',
+    sentence,
+    tone: brokeAt(planSource.guard) === undefined ? 'ok' : 'broke',
+  }
+}
+
+/**
+ * The first {@link CHANNEL_PAGE_SIZE} lines of a channel, and the trigger for the rest.
+ *
+ * NO VIRTUALISATION, by design (UI-SPEC): step rows render collapsed, so the tab's DOM is bounded
+ * by the number of steps rather than by the number of lines. This bounds the one case that is not
+ * — a single step served hundreds of lines — without introducing a scroll owner inside a scroll
+ * owner.
+ */
+export function channelPage<T>(lines: readonly T[]): ChannelPage<T> {
+  if (lines.length <= CHANNEL_PAGE_SIZE) return { lines }
+  return {
+    lines: lines.slice(0, CHANNEL_PAGE_SIZE),
+    hiddenCount: lines.length - CHANNEL_PAGE_SIZE,
+    showAllLabel: showAllLinesLabel(lines.length),
+  }
+}
+
 /** One collapsed step row, ready to paint. */
 export interface StepRowView {
   readonly testIndex: number
@@ -231,6 +514,14 @@ export interface StepRowView {
   readonly facts: readonly string[]
   /** Present only on a step that served nothing; the row renders {@link STEP_NO_BRIEF_TEXT}. */
   readonly noBrief?: true
+  /**
+   * What the row shows when it is EXPANDED (407-06).
+   *
+   * Required, not optional: a row whose detail could be absent is a row a component has to guard,
+   * and the guard would render blank for the one case D-04 exists to prevent. A step that served
+   * nothing carries three empty channels — an answer, not a hole.
+   */
+  readonly detail: StepDetailView
 }
 
 /**
@@ -279,7 +570,11 @@ function canaryLineCount(step: RunKnowledgeStep): number {
   return step.served.channel1.filter(line => line.servedAsCanary).length
 }
 
-function stepRow(step: RunKnowledgeStep): StepRowView {
+function stepRow(
+  step: RunKnowledgeStep,
+  curationStatus: PostProcessingChipStatus,
+  attributions: readonly RunKnowledgeCanaryAttribution[],
+): StepRowView {
   const briefLines = servedLineCount(step)
   const canaryLines = canaryLineCount(step)
   const planSource: StepPlanSourceWord = step.planSource?.kind ?? 'none'
@@ -301,6 +596,48 @@ function stepRow(step: RunKnowledgeStep): StepRowView {
     // A step that served nothing keeps its row and says so. Dropping it would make a run look
     // shorter than it was, and D-04's whole posture is that nothing silently drops.
     ...(briefLines === 0 ? { noBrief: true as const } : {}),
+    detail: stepDetail(step, curationStatus, attributions),
+  }
+}
+
+/**
+ * The expanded body of one step row — THE ONLY PLACE THE CANARY OUTCOME WORD IS DECIDED.
+ *
+ * The join is on all three of `testIndex`, `stepIndex` and `recordId`. `stepIndex` is numbered per
+ * member test, so a run with two tests has two step 0s; joining on the pair alone would attribute
+ * one member's canary outcome to another member's line, which is the exact wrong-attribution
+ * failure D-10 was written against one layer down.
+ */
+function stepDetail(
+  step: RunKnowledgeStep,
+  curationStatus: PostProcessingChipStatus,
+  attributions: readonly RunKnowledgeCanaryAttribution[],
+): StepDetailView {
+  const channel1 = briefLineViews(step, step.trace).map(line =>
+    line.servedAsCanary
+      ? {
+          ...line,
+          canaryOutcome: canaryOutcomeWord(
+            curationStatus,
+            attributions.find(
+              row =>
+                row.testIndex === step.testIndex &&
+                row.stepIndex === step.stepIndex &&
+                row.recordId === line.id,
+            ),
+          ),
+        }
+      : line,
+  )
+
+  const cut = cutCandidates(step.trace)
+
+  return {
+    channel1,
+    channel2: step.served.channel2.map(line => ({ id: line.id, detailLevel: line.detailLevel })),
+    channel3: step.served.channel3.map(line => ({ id: line.id, summary: line.summary })),
+    ...(cut === undefined ? {} : { cut }),
+    ...(step.planSource === undefined ? {} : { planSource: planSourceView(step.planSource) }),
   }
 }
 
@@ -327,7 +664,9 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
     return { state: 'empty-no-store', heading: NO_STORE_HEADING, body: NO_STORE_BODY }
   }
 
-  const steps = projection.steps.map(stepRow)
+  const steps = projection.steps.map(step =>
+    stepRow(step, projection.curation.status, projection.learned.canaryAttributions),
+  )
   const summary = steps.length === 0
     ? NO_BRIEF_SERVED_TEXT
     : usedSummaryLine({
