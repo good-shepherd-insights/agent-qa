@@ -402,6 +402,43 @@ describe('WINDOWS #305 — real step evidence is masked at rest (DETL-04)', () =
     return outcome.steps[0]
   }
 
+  function assembleEvidence(evidence: StepEvidence, mask: MaskFn): StepEvidence {
+    const outcome = assemblePerTestOutcome(member, resultWithEvidence(evidence), 'failed', {
+      testIndex: 0,
+      scope,
+      buildOrdinal: 7,
+      mask,
+    })
+    return outcome.steps[0]
+  }
+
+  it('folds a PARTIAL value through unchanged instead of throwing — the totality it states', () => {
+    // The schema declares `plan`, `result` and `reasoning` required, so a well-typed producer
+    // never gets here. This fold transforms a value it did not construct, and its doc block
+    // promises a partial one comes out as it went in rather than gaining an undefined-valued key
+    // or throwing — a promise the next caller reads before deciding it is safe to reuse.
+    const partial = {
+      stepIndex: 0,
+      stepText: STEP_TEXT,
+      cacheStatus: 'miss',
+      servedBrief: makeEmptyServedBrief(scope, 7),
+      subActions: [{ plannedAction: PLANNED_ACTION, stateBefore: makeScreenState() }],
+      verifierVerdict: { pass: false },
+    } as unknown as StepEvidence
+
+    const step = assembleEvidence(partial, seededMask())
+    const subAction = step.subActions[0] as Partial<StepEvidence['subActions'][number]>
+
+    // ABSENT, not undefined-valued: a key that survives as a hole reappears after a JSON round
+    // trip as a field the consumer must now defend against.
+    expect('plan' in subAction).toBe(false)
+    expect('result' in subAction).toBe(false)
+    expect('reasoning' in step.verifierVerdict).toBe(false)
+    // What WAS there rides through untouched, including the G-381-3 carve-out.
+    expect(subAction.plannedAction).toEqual(PLANNED_ACTION)
+    expect(step.stepText).toBe(STEP_TEXT)
+  })
+
   it('pins MASKED_HANDOFF_NARRATION_FIELDS by value — a later edit reds by NAME, not only behaviourally', () => {
     expect(MASKED_HANDOFF_NARRATION_FIELDS).toEqual([
       'verifierVerdict.reasoning',

@@ -88,14 +88,29 @@ function synthesizeStepEvidence(step: StepResult, stepIndex: number, deps: Synth
  * cell by NAME even when no behavioural case notices. Growth is the dangerous direction: every
  * addition here is a candidate G-381-3 break.
  *
- * Derived from schema's `QUOTE_SEARCHED_STEP_FIELDS` (the verbatim-presence searched set an
- * authored verdict's grounding quote is validated against), MINUS `stepText`. Each member:
+ * THE SET IS "THE FIELDS THIS MODULE IS THE LAST MASKER FOR", not an arithmetic on schema's
+ * `QUOTE_SEARCHED_STEP_FIELDS`. An earlier note here said "that set MINUS `stepText`", which is
+ * wrong in both directions and is exactly what a later editor would re-derive from. Each member:
  *
  *   - `verifierVerdict.reasoning`     — the verifier's own words about what it saw
  *   - `subActions[].plan`             — a planning turn's stated intent
  *   - `subActions[].result.error`     — a captured failure message, verbatim from the app
  *   - `subActions[].result.data`      — a captured payload of unknown shape
  *   - `subActions[].result.metadata`  — a captured payload of unknown shape
+ *
+ * The last two are NOT quote-searched at all. They are here because they are captured payloads of
+ * unknown shape, which is a disclosure question and not a grounding-quote question.
+ *
+ * And five searched fields are deliberately absent. `stepText` is the carve-out below. The other
+ * four arrive here ALREADY masked, at record time, so masking them again would be a second masker
+ * for one field:
+ *
+ *   - `canonicalJson(reportedValue)`  — `schema/handoff/step-evidence.ts`, "masked-before-record"
+ *   - `canonicalJson(assertOutcome)`  — same file, same words, on the assertValue block
+ *   - `canonicalJson(aiJudgment)`     — `schema/handoff/verb-evidence.ts`, rationale masked-
+ *                                       before-record (T-360-01)
+ *   - `canonicalJson(termination)`    — `runner/src/loop/index.ts`, whose `reason` goes through
+ *                                       `redactSecretValue` before `recordTermination`
  *
  * NOT on this list, and that omission is load-bearing rather than an oversight: `stepText`,
  * `subActions[].plannedAction` and `interpolatedVariables` are exact-string-matched against one
@@ -110,6 +125,22 @@ export const MASKED_HANDOFF_NARRATION_FIELDS = [
   'subActions[].result.data',
   'subActions[].result.metadata',
 ] as const
+
+/**
+ * One narration field's override, present only when there is a string to mask.
+ *
+ * The whole module spells optionals this way, and this is the spelling of the fold's totality
+ * claim: a member that is not there stays not there, rather than becoming an undefined-valued key
+ * that survives the JSON round trip as a field every later consumer has to defend against. A
+ * member that is not there also carries nothing to disclose, so totality costs no masking.
+ */
+function maskWhenString<K extends string>(
+  key: K,
+  value: string | undefined,
+  mask: MaskFn,
+): Record<K, string> | Record<string, never> {
+  return value === undefined ? {} : ({ [key]: mask(value) } as Record<K, string>)
+}
 
 /**
  * Mask the narration members of one {@link RecordedActionResult}, under this module's
@@ -154,15 +185,21 @@ function maskStepNarration(evidence: StepEvidence, mask: MaskFn): StepEvidence {
   return {
     ...evidence,
     ...(verdict !== undefined
-      ? { verifierVerdict: { ...verdict, reasoning: mask(verdict.reasoning) } }
+      ? { verifierVerdict: { ...verdict, ...maskWhenString('reasoning', verdict.reasoning, mask) } }
       : {}),
     ...(subActions !== undefined
       ? {
-          subActions: subActions.map(subAction => ({
-            ...subAction,
-            plan: mask(subAction.plan),
-            result: maskRecordedResult(subAction.result, mask),
-          })),
+          subActions: subActions.map(subAction => {
+            // WIDENED, LIKE THE TWO ABOVE. The schema declares both members required, so these
+            // casts are the only way to ask the question the doc block promises an answer to.
+            const plan = subAction.plan as string | undefined
+            const result = subAction.result as RecordedActionResult | undefined
+            return {
+              ...subAction,
+              ...maskWhenString('plan', plan, mask),
+              ...(result !== undefined ? { result: maskRecordedResult(result, mask) } : {}),
+            }
+          }),
         }
       : {}),
   }
