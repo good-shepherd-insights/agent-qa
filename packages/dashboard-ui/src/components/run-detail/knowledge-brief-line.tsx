@@ -14,8 +14,10 @@
 // nothing renders an expander that would open onto nothing.
 //
 // THE CANARY MARKER IS UNCONDITIONAL (D-08). A line served as a canary says so whatever curation
-// did or did not decide, and the outcome badge beside it is one of six words — never blank. A
+// did or did not decide, and the outcome badge beside it is one of seven words — never blank. A
 // blank slot beside a canary marker reads as "this did not matter", which is a claim nobody made.
+// The seventh word, `unknown`, is the one a partial store read earns: `not attributed` asserts the
+// store was consulted and said no, and a scan that could not finish never made that claim (WR-02).
 //
 // ALL TEXT GOES THROUGH REACT TEXT NODES. No raw-HTML injection escape hatch appears anywhere in
 // this file — a grep for React's one is an acceptance criterion. The summary is a producer string
@@ -30,6 +32,7 @@ import { EvidenceIncomplete } from "./evidence-incomplete"
 import { MaskedText } from "./masked-text"
 import {
   ATTRIBUTION_PENDING_TEXT,
+  ATTRIBUTION_UNKNOWN_TEXT,
   CANARY_BADGE_TEXT,
   NOT_ATTRIBUTED_TEXT,
   PRE_TRACE_TEXT,
@@ -48,12 +51,22 @@ export const NESTED_TRIGGER_CLASS =
 const MONO_CLASS = "font-mono text-xs text-muted-foreground tabular-nums"
 
 /**
- * The six outcome words, as the badge that carries each.
+ * The seven outcome words, as the badge that carries each.
  *
  * ONE CLOSED MAPPING, matching the UI-SPEC Color table: emerald for the two words that say the
  * canary held up, destructive for the two that say it did not, amber outline while nobody has
  * decided, muted outline when the fold decided nothing. The words themselves come from
  * `lib/knowledge-view.ts`; only the LOOK is decided here.
+ *
+ * `unknown` WEARS THE SAME MUTED OUTLINE AS `not-attributed`, deliberately (407-18 · WR-02). The
+ * two say different things — one is an answer, the other is the absence of one — and the
+ * `data-canary-outcome` word is what tells them apart. A warning tint here would put the story of
+ * the degradation on a line that did nothing wrong; the Learned half's read note is where a
+ * partial read is explained.
+ *
+ * NO `default` ARM. The switch is exhaustive over `CanaryOutcomeWord` and its return type is not
+ * optional, so an eighth word is a COMPILE ERROR here rather than a badge that silently renders
+ * `undefined` — which is exactly how the missing `unknown` arm surfaced.
  */
 function outcomeBadge(word: CanaryOutcomeWord): { text: string; className: string; variant: "outline" | "destructive" } {
   switch (word) {
@@ -71,6 +84,8 @@ function outcomeBadge(word: CanaryOutcomeWord): { text: string; className: strin
       }
     case "not-attributed":
       return { text: NOT_ATTRIBUTED_TEXT, className: "text-muted-foreground", variant: "outline" }
+    case "unknown":
+      return { text: ATTRIBUTION_UNKNOWN_TEXT, className: "text-muted-foreground", variant: "outline" }
   }
 }
 

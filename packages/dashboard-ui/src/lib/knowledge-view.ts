@@ -226,6 +226,18 @@ export const ATTRIBUTION_PENDING_TEXT = 'attribution pending'
 /** What a canary line says when curation FAILED, or settled and attributed nothing to it (D-08). */
 export const NOT_ATTRIBUTED_TEXT = 'not attributed'
 
+/**
+ * What a canary line says when the read that would have answered it was PARTIAL (407-18 · WR-02).
+ *
+ * THE SIBLING ABOVE IS A POSITIVE CLAIM. `not attributed` says the store was consulted and no
+ * outcome survived for this line — a fact somebody measured. This one says the opposite kind of
+ * thing: nobody could finish looking. 407-14's op ships `canaryAttributions: []` whenever the
+ * attribution scan folded a `KnowledgeMaintenanceScanError`, so without this word every served
+ * canary on a partial read asserted a `no` the store never gave — while the same projection was
+ * telling the Learned half that nobody could look. One wire member, one story on both halves.
+ */
+export const ATTRIBUTION_UNKNOWN_TEXT = 'attribution unknown'
+
 /** The plan-source sentence for a step whose plan a procedure only HINTED at (D-07). */
 export const PROCEDURE_HINT_TEXT = 'procedure hint'
 
@@ -434,7 +446,12 @@ export type LineWhy =
     }
   | { readonly kind: 'no-trace'; readonly reason: BriefWhyNoTraceReason }
 
-/** The word a canary line wears — one of six, and never blank (D-08). */
+/**
+ * The word a canary line wears — one of SEVEN, and never blank (D-08, widened by REVIEW WR-02).
+ *
+ * `unknown` is the seventh and it is not a shade of `not-attributed`: one says the fold answered
+ * and found nothing, the other says the read behind the answer was partial (407-18).
+ */
 export type CanaryOutcomeWord =
   | 'confirmed'
   | 'contradicted'
@@ -442,6 +459,7 @@ export type CanaryOutcomeWord =
   | 'harmful'
   | 'pending'
   | 'not-attributed'
+  | 'unknown'
 
 /** One channel-1 line, with its trace answer and (if it is a canary) its outcome word. */
 export interface BriefLineView {
@@ -544,20 +562,30 @@ export function cutCandidates(trace: RunKnowledgeTrace): CutCandidatesView | und
 }
 
 /**
- * What a canary line says, from the curation word and the attribution — never blank (D-08).
+ * What a canary line says, from the curation word, the attribution and the READ — never blank.
  *
- * ORDER MATTERS. An unsettled chain is read FIRST, so a stale attribution from an earlier fold
- * cannot be presented as this run's answer while the current one is still running; and a FAILED
- * chain reads `not attributed` even where a row exists, because a fold that fell over did not
- * finish deciding.
+ * ORDER MATTERS, AND THERE ARE FOUR SETTLED ARMS NOW (D-08 · REVIEW WR-02). An unsettled chain is
+ * read FIRST, so a stale attribution from an earlier fold cannot be presented as this run's answer
+ * while the current one is still running — a partial read does not change that, because "nobody
+ * has decided yet" is still the truest thing on screen. Then a row that WAS read wins: an
+ * attribution the store served is a real answer whatever else the scan could not reach, which is
+ * the same `rows win` law the Learned half follows. Then a FAILED chain reads `not attributed`
+ * even on a partial read, because a fold that fell over attributed nothing whether or not the
+ * store was legible — the flag must not turn a failure into a question. Only then, on a settled
+ * chain with no row, does the read decide: `unknown` when it was partial, `not attributed` when it
+ * was clean and the store really did say no.
+ *
+ * `scanIncomplete` DEFAULTS TO FALSE so every existing caller keeps the word it had.
  */
 export function canaryOutcomeWord(
   curationStatus: PostProcessingChipStatus,
   attribution: RunKnowledgeCanaryAttribution | undefined,
+  scanIncomplete = false,
 ): CanaryOutcomeWord {
   if (curationStatus === 'pending' || curationStatus === 'running') return 'pending'
   if (curationStatus === 'done' && attribution !== undefined) return attribution.outcome
-  return 'not-attributed'
+  if (curationStatus === 'failed') return 'not-attributed'
+  return scanIncomplete ? 'unknown' : 'not-attributed'
 }
 
 /**
@@ -781,6 +809,7 @@ function stepRow(
   step: RunKnowledgeStep,
   curationStatus: PostProcessingChipStatus,
   attributions: readonly RunKnowledgeCanaryAttribution[],
+  scanIncomplete: boolean,
 ): StepRowView {
   const briefLines = servedLineCount(step)
   const canaryLines = canaryLineCount(step)
@@ -803,7 +832,7 @@ function stepRow(
     // A step that served nothing keeps its row and says so. Dropping it would make a run look
     // shorter than it was, and D-04's whole posture is that nothing silently drops.
     ...(briefLines === 0 ? { noBrief: true as const } : {}),
-    detail: stepDetail(step, curationStatus, attributions),
+    detail: stepDetail(step, curationStatus, attributions, scanIncomplete),
   }
 }
 
@@ -814,11 +843,18 @@ function stepRow(
  * member test, so a run with two tests has two step 0s; joining on the pair alone would attribute
  * one member's canary outcome to another member's line, which is the exact wrong-attribution
  * failure D-10 was written against one layer down.
+ *
+ * `scanIncomplete` IS A FACT ABOUT THE STORE READ, AND IT REACHES BOTH HALVES FROM ONE WIRE MEMBER
+ * (REVIEW WR-02). `learned.scanIncomplete` is where the op records that it could not finish
+ * looking, and the empty `canaryAttributions` list beside it is a CONSEQUENCE of that, not an
+ * answer. Threading the flag down here is what stops this half asserting a `no` the other half is
+ * simultaneously saying nobody was able to give.
  */
 function stepDetail(
   step: RunKnowledgeStep,
   curationStatus: PostProcessingChipStatus,
   attributions: readonly RunKnowledgeCanaryAttribution[],
+  scanIncomplete: boolean,
 ): StepDetailView {
   const channel1 = briefLineViews(step, step.trace).map(line =>
     line.servedAsCanary
@@ -832,6 +868,7 @@ function stepDetail(
                 row.stepIndex === step.stepIndex &&
                 row.recordId === line.id,
             ),
+            scanIncomplete,
           ),
         }
       : line,
@@ -1012,7 +1049,12 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
   }
 
   const steps = projection.steps.map(step =>
-    stepRow(step, projection.curation.status, projection.learned.canaryAttributions),
+    stepRow(
+      step,
+      projection.curation.status,
+      projection.learned.canaryAttributions,
+      projection.learned.scanIncomplete === true,
+    ),
   )
   const summary = steps.length === 0
     ? NO_BRIEF_SERVED_TEXT
