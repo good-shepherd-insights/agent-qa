@@ -10,7 +10,7 @@
 // outcome event to make an assertion true: the write path stays behind the writer lease, and a
 // read that could write would be the T-407-11 tampering hazard rather than its mitigation.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -61,10 +61,11 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
     }
   }
 
-  function publishCandidate(
+  /** The published bundle's id AND its directory — the tamper cell needs the bytes on disk. */
+  function publishCandidateEntry(
     name: string,
     initialEvents: readonly BundleOutcomeEvent[],
-  ): RecordId {
+  ): { id: RecordId; dir: string } {
     const outcome = publishBundle(config(), {
       draft: makeBundleDraftFixture({
         anchors: [{ t: 'el', role: 'Button', name }],
@@ -92,7 +93,14 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
 
     expect(outcome.kind).toBe('published')
     if (outcome.kind !== 'published') throw new Error('fixture bundle did not publish')
-    return outcome.id
+    return { id: outcome.id, dir: outcome.dir }
+  }
+
+  function publishCandidate(
+    name: string,
+    initialEvents: readonly BundleOutcomeEvent[],
+  ): RecordId {
+    return publishCandidateEntry(name, initialEvents).id
   }
 
   /** The id the WRITER would have stamped for this served line — recomputed, never read. */
@@ -316,6 +324,79 @@ describe('canaryAttributionsFor joins served canary tuples to committed outcomes
     })).toEqual([
       { candidateId, testIndex: 0, stepIndex: 1, observationId: second, outcome: 'harmful' },
       { candidateId, testIndex: 0, stepIndex: 0, observationId: first, outcome: 'confirmed' },
+    ])
+  })
+
+
+  it('a malformed bundle beside a healthy one is skipped, and the healthy line is still attributed', () => {
+    const probe = publishCandidate('Healthy canary', [])
+    const observationId = observationIdFor(probe, 0)
+    rmSync(knowledgeRoot, { recursive: true, force: true })
+    const candidateId = publishCandidate('Healthy canary', [
+      event({
+        type: 'confirmed',
+        evidenceToken: 'healthy-canary',
+        curationJobId: observationId,
+        buildOrdinal: 5,
+        observationId,
+        origin: 'agent-verified',
+      }),
+    ])
+    expect(candidateId).toBe(probe)
+
+    // A bundle directory some other process left half-written — one this run never served, never
+    // touched, and has no opinion about. Its name sorts BEFORE the healthy bundle's, so the skip is
+    // exercised on the way to the line under test rather than harmlessly after it. Before 407-14
+    // this single unparseable file made the WHOLE Knowledge tab read `read_failed`.
+    const malformed = join(
+      knowledgeRoot,
+      'memory',
+      'shop',
+      'bundles',
+      'aaa-malformed-0000000000000000',
+    )
+    mkdirSync(malformed, { recursive: true })
+    writeFileSync(join(malformed, 'manifest.json'), '{ not json', 'utf8')
+
+    expect(canaryAttributionsFor({
+      knowledgeRoot,
+      runId: RUN_ID,
+      tuples: [tupleFor(candidateId, 0)],
+    })).toEqual([
+      { candidateId, testIndex: 0, stepIndex: 0, observationId, outcome: 'confirmed' },
+    ])
+  })
+
+  it('an integrity-tampered sibling is skipped the same way', () => {
+    const probe = publishCandidate('Tamper survivor', [])
+    const observationId = observationIdFor(probe, 1)
+    rmSync(knowledgeRoot, { recursive: true, force: true })
+    const candidateId = publishCandidate('Tamper survivor', [
+      event({
+        type: 'helpful',
+        evidenceToken: 'tamper-survivor',
+        curationJobId: observationId,
+        buildOrdinal: 6,
+        observationId,
+        origin: 'agent-verified',
+      }),
+    ])
+    expect(candidateId).toBe(probe)
+
+    // The second failure mode `loadMaintenanceBundle` raises: bytes that parse but no longer hash
+    // to what the manifest committed. Skipping it is not forgiving the tamper — the maintenance
+    // scan next door still refuses to answer for this store; it is refusing to let a tampered
+    // record decide whether an UNRELATED, still-verifying line gets its outcome.
+    const sibling = publishCandidateEntry('Aaa tampered sibling', [])
+    const recordPath = join(sibling.dir, 'record.md')
+    writeFileSync(recordPath, `${readFileSync(recordPath, 'utf8')}\nunauthorized mutation\n`, 'utf8')
+
+    expect(canaryAttributionsFor({
+      knowledgeRoot,
+      runId: RUN_ID,
+      tuples: [tupleFor(candidateId, 1)],
+    })).toEqual([
+      { candidateId, testIndex: 0, stepIndex: 1, observationId, outcome: 'helpful' },
     ])
   })
 
