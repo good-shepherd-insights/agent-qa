@@ -15,6 +15,7 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { getRunFaviconState, type RunFaviconState, useRunStatusFavicon } from '@/hooks/use-run-status-favicon'
 import { cancelRun, classifyRunStreamClose, fetchRun, openRunStream } from '@/lib/api'
 import type { RunRow } from '@/lib/api'
+import { rungBannerText } from '@/lib/knowledge-view'
 import { routes, type RunDetailNavigationState } from '@/lib/routes'
 import {
   createInitialRunStreamState,
@@ -325,6 +326,16 @@ export default function LiveRunPage() {
   // element inside it can never come apart.
   const rung = state.retrievalRung
 
+  // THE SENTENCE, NOT THE VALUE (407-16 · REVIEW WR-01). `rungBannerText` is the SAME function
+  // `RetrievalRungBanner` calls to decide whether it renders at all, so gating the container on
+  // its result makes container and child structurally incapable of disagreeing. Reading the
+  // banner's own predicate here is the point: any future silence the banner learns (a new top
+  // rung, a new absent case) closes the strip with it, with nothing to keep in sync by hand.
+  const rungSentence = rungBannerText(rung === undefined ? undefined : {
+    rung: rung.rung,
+    ...(rung.reason === undefined ? {} : { reason: rung.reason }),
+  })
+
   return (
     <div className="flex h-screen min-w-0 flex-col overflow-hidden">
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
@@ -383,10 +394,18 @@ export default function LiveRunPage() {
         a run whose retrieval was degraded has one more short sentence to say — not a third region.
         The rung is in the visibility condition on its own, because it can be the ONLY thing the
         strip has to say on an otherwise healthy, ungapped, still-running stream.
+
+        BUT AS A SENTENCE, NOT AS A VALUE (407-16 · REVIEW WR-01). `memidex` is a perfectly
+        defined rung with nothing to say — it is the TOP rung, so the banner renders null for it.
+        Gating on the value's presence therefore opened this bordered rule, empty, under the
+        header of every healthy live run the moment its first `stepFinalized` frame landed: a
+        visible line the page had no statement to put on. The condition reads the banner's own
+        predicate (`rungSentence`) instead, so the container opens exactly when some child will
+        speak. A strip with nothing to say is not rendered.
       */}
       {(bandsTerminal || runMetaFailed || runOver || state.gap !== undefined
-        || state.retrievalRung !== undefined || state.notices.length > 0) && (
-        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-3 py-2 text-xs">
+        || rungSentence !== undefined || state.notices.length > 0) && (
+        <div data-run-meta-strip className="flex shrink-0 flex-wrap items-center gap-3 border-b px-3 py-2 text-xs">
           {bandsTerminal && (
             <div data-terminal-state={verdictDescriptor.normalized} className="flex items-center gap-2">
               <Badge className={getStatusBadgeClassName(verdictDescriptor.tone)}>{verdictDescriptor.label}</Badge>
