@@ -1,5 +1,6 @@
 import type {
   MemberTestOutcome,
+  RecordedRetrievalRung,
   RunEventEnvelope,
   RunStartedPayload,
   RunStatus,
@@ -151,6 +152,23 @@ export interface RunStreamState {
   terminal: boolean
   notices: readonly RunStreamNotice[]
   gap?: RunStreamGap
+  /**
+   * The retrieval rung this run was served on, as the FIRST `stepFinalized` frame carrying it
+   * said (407-10 · D-14).
+   *
+   * RUN-CONSTANT, SO THE FIRST FRAME WINS. The rung describes the HOST'S ladder at the moment
+   * this run was served — not how any one step's brief was ranked — so every frame that carries
+   * it carries the same value. Folding "last write wins" would be indistinguishable today and
+   * would turn any future per-step variation into a header that flickers between two accounts of
+   * one machine, and then disagrees with the durable banner run detail paints from the same
+   * evidence.
+   *
+   * ABSENT, NEVER NULLED, BEFORE THE FIRST CARRYING FRAME. "Not yet known" is the missing key —
+   * which is what lets the page render no element at all rather than a banner claiming a rung
+   * nobody has stated. A pre-407 run and a run with no knowledge reader bound (D-16) never leave
+   * this state.
+   */
+  retrievalRung?: RecordedRetrievalRung
 }
 
 export type LivenessKind = 'connecting' | 'live' | 'reconnecting' | 'lost'
@@ -388,11 +406,18 @@ export function reduceRunStream(state: RunStreamState, envelope: RunEventEnvelop
       const payload = envelope.payload as StepFinalizedPayload
       const status = stepStatusOf(payload)
       const at = rowIndexOf(base.steps, payload.testIndex, payload.stepIndex)
+      // ONE NAMED FIELD, READ BEFORE THE ARMS SPLIT. Spelled here rather than inside each return
+      // so the resumed-stream path (no prior `stepStarted`) cannot drift out of the rule — that
+      // is the very path a reconnecting live page lands on. `??` is what makes the first carrying
+      // frame win: an already-recorded rung is never reconsidered.
+      const retrievalRung = base.retrievalRung ?? payload.retrievalRung
+      const rung = retrievalRung === undefined ? {} : { retrievalRung }
       if (at < 0) {
         // A finalize with no prior start — a resumed stream can land between the two. The row is
         // created directly in its final status rather than being invented as `running` first.
         return {
           ...base,
+          ...rung,
           members: withMember(base, { ...memberFor(base, payload.testIndex), testIndex: payload.testIndex }),
           steps: insertBySeq(base.steps, {
             testIndex: payload.testIndex,
@@ -409,6 +434,7 @@ export function reduceRunStream(state: RunStreamState, envelope: RunEventEnvelop
       // The tick count survives finalize: it is the step's history, not its animation.
       return {
         ...base,
+        ...rung,
         steps: replaceRow(base.steps, at, { ...previous, status, durationMs: payload.durationMs }),
       }
     }

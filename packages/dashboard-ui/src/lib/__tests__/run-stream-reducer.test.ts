@@ -683,6 +683,10 @@ describe('the retrieval rung is a RUN-CONSTANT, folded from the first frame that
     // The sentinel cell above proves no forbidden VALUE survives; this proves no unintended NAME
     // does either. A payload carrying every field the producer emits is folded, and the state's
     // own top-level key set is pinned — so a `{ ...payload }` regression in this arm reds by name.
+    //
+    // `gap` and `verdict` are in the census because `createInitialRunStreamState` writes them as
+    // present-with-undefined. `retrievalRung` is deliberately NOT written there — the cell above
+    // is where that absence is the subject.
     const state = fold([
       envelope('runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] }),
       stepStarted(0, 0, 'click login'),
@@ -695,6 +699,7 @@ describe('the retrieval rung is a RUN-CONSTANT, folded from the first frame that
       }),
     ])
     expect(Object.keys(state).sort()).toEqual([
+      'gap',
       'handles',
       'lastEnvelopeAt',
       'lastSeq',
@@ -703,6 +708,7 @@ describe('the retrieval rung is a RUN-CONSTANT, folded from the first frame that
       'retrievalRung',
       'steps',
       'terminal',
+      'verdict',
     ])
     expect(JSON.stringify(state)).not.toContain(SENTINEL)
     expect(JSON.stringify(state)).not.toContain('tokenUsage')

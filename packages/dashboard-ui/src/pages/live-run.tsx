@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/empty-state'
 import { LivenessPill, livenessForAttach } from '@/components/live-run/liveness-pill'
 import { PreviewPane } from '@/components/live-run/preview-pane'
 import { StepList } from '@/components/live-run/step-list'
+import { RetrievalRungBanner } from '@/components/run-detail/retrieval-rung-banner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
@@ -319,6 +320,11 @@ export default function LiveRunPage() {
   // no-verdict reasoning.
   const bandsTerminal = state.terminal && state.verdict === undefined
 
+  // The rung the FIRST evidence-carrying frame reported, if one has arrived (407-10 · D-14). Named
+  // here rather than read twice in the JSX below, so the strip's visibility condition and the
+  // element inside it can never come apart.
+  const rung = state.retrievalRung
+
   return (
     <div className="flex h-screen min-w-0 flex-col overflow-hidden">
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
@@ -371,7 +377,15 @@ export default function LiveRunPage() {
         </div>
       </div>
 
-      {(bandsTerminal || runMetaFailed || runOver || state.gap !== undefined || state.notices.length > 0) && (
+      {/*
+        THE HEADER'S SECOND LINE, AND THE RUNG JOINS IT RATHER THAN OPENING A PANE (407-10 · D-14).
+        403's two-pane rule is not negotiable here: the strip already exists, it already wraps, and
+        a run whose retrieval was degraded has one more short sentence to say — not a third region.
+        The rung is in the visibility condition on its own, because it can be the ONLY thing the
+        strip has to say on an otherwise healthy, ungapped, still-running stream.
+      */}
+      {(bandsTerminal || runMetaFailed || runOver || state.gap !== undefined
+        || state.retrievalRung !== undefined || state.notices.length > 0) && (
         <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-3 py-2 text-xs">
           {bandsTerminal && (
             <div data-terminal-state={verdictDescriptor.normalized} className="flex items-center gap-2">
@@ -392,6 +406,12 @@ export default function LiveRunPage() {
               {gapMarkerText(state.gap.from, state.gap.to)}
             </p>
           )}
+          {/*
+            AFTER THE GAP MARKER, BEFORE THE NOTICES. The gap says what this VIEWER missed; the rung
+            says what the RUN was served on; the notices are the producer's own words. Reading order
+            is scope order.
+          */}
+          <RetrievalRungBanner variant="live" rung={rung?.rung} reason={rung?.reason} />
           {runMetaFailed && (
             <p data-run-meta-unavailable className="text-muted-foreground">
               run details unavailable — the live stream is unaffected
