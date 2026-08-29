@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
 import {
+  CHANNEL_EYEBROWS,
   NO_BRIEF_SERVED_TEXT,
   NO_STORE_BODY,
   NO_STORE_HEADING,
@@ -180,6 +181,38 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
 
     const badges = Array.from(view.querySelectorAll('[data-slot="badge"]'))
     expect(badges.map(b => b.textContent)).toEqual(["2 brief lines", "1 canary", "hint"])
+  })
+
+  it("fills the row's detail slot with the CHANNEL SECTIONS once it is expanded (407-06)", () => {
+    const view = mount(<TabKnowledge view={readyView([row({
+      detail: {
+        channel1: [{
+          id: "rec_1",
+          kind: "fact",
+          summary: "the cart page lives at /view_cart",
+          trust: 0.9,
+          status: "active",
+          servedAsCanary: true,
+          tier: "confirmed",
+          why: { kind: "answered", leg: "anchor", rank: 1, score: 1.48695 },
+          canaryOutcome: "confirmed",
+        }],
+        channel2: [],
+        channel3: [],
+      },
+    })])} />)
+
+    // Closed, the detail is not in the document at all — Radix mounts the content on open.
+    expect(view.textContent).not.toContain(CHANNEL_EYEBROWS[1])
+
+    act(() => { (view.querySelector('[data-slot="collapsible-trigger"]') as HTMLElement).click() })
+
+    const slot = view.querySelector("[data-step-detail]")
+    expect(slot).not.toBeNull()
+    expect(slot?.textContent).toContain(CHANNEL_EYEBROWS[1])
+    expect(slot?.textContent).toContain(CHANNEL_EYEBROWS[2])
+    expect(slot?.textContent).toContain(CHANNEL_EYEBROWS[3])
+    expect(view.querySelector('li[data-served-channel="1"][data-canary-outcome="confirmed"]')).not.toBeNull()
   })
 
   it("prints the no-brief-served sentence and NO rows when the run had no steps at all", () => {
