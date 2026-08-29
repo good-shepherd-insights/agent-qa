@@ -49,8 +49,16 @@ const RUN_SERVICE_DIR = join(PACKAGE_SRC, 'run-service')
 const RUN_ID = 'run-405-cr01'
 
 /**
- * THE FIVE ARMS 405-10 PUT THE SEAM ON. Named here as PATHS rather than as a source list, because
- * what a browser can read is a property of the wire and not of a symbol table.
+ * THE ARMS THE SEAM IS ON — the five 405-10 put it on, plus the sixth 406-01 added. Named here as
+ * PATHS rather than as a source list, because what a browser can read is a property of the wire
+ * and not of a symbol table.
+ *
+ * AN ARM ENROLLS IN BOTH HALVES OR IN NEITHER. `REVIEWED_SEAM_MODULES` below is a regex over
+ * source text; this list is what drives a socket. 406 added `run-analysis-routes.ts` to that
+ * register and left `/analysis` out of this one, so the newest door restoring cleartext for a
+ * human was asserted only by a grep for a guard token — and this file's own header records that
+ * the source half once "mistook not being guarded for being guarded". The wire half is the answer
+ * to that, so a new arm is not covered until it appears HERE.
  */
 const SEAM_READ_PATHS: readonly string[] = [
   '/api/runs',
@@ -58,6 +66,9 @@ const SEAM_READ_PATHS: readonly string[] = [
   `/api/runs/${RUN_ID}/artifact`,
   `/api/runs/${RUN_ID}/execution-logs`,
   `/api/runs/${RUN_ID}/detail`,
+  // 406-01 (D-04): the failure view's read. Restores on the local human arm exactly as `/detail`
+  // does, because the verdict sentence quotes the failing step's recorded error.
+  `/api/runs/${RUN_ID}/analysis`,
 ]
 
 /** A legacy read that is NOT behind the seam. Its wildcard is unchanged and this cell says so. */
