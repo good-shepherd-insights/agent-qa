@@ -591,6 +591,90 @@ describe('learned changes are attributed, never windowed (LERN-02, D-10)', () =>
   })
 })
 
+describe('an unrelated malformed bundle degrades the Learned enrichments, never the read (CR-03)', () => {
+  // The knowledge store's own fail-closed error, built the way the op must recognise it: BY NAME.
+  // `packages/agent` is storage-neutral and cannot import `KnowledgeMaintenanceScanError` from
+  // `knowledge-local`, and neither may this file — so the cell constructs the exact wire the op
+  // reads (403-03 D-4: read a foreign error structurally, never `instanceof` across a substrate
+  // boundary).
+  function scanError(path: string): Error {
+    return Object.assign(
+      new Error(`knowledge maintenance scan incomplete at ${path}: bundle-load: manifest-invalid`),
+      { name: 'KnowledgeMaintenanceScanError' },
+    )
+  }
+
+  const MALFORMED = 'memory/shop/bundles/aaa-malformed-0000000000000000'
+  const MINE = change({ recordId: 'rec-mine', sourceRunId: RUN_ID })
+
+  /** `twoByTwo` with a recorded rung on its first step, so the Used half can be SEEN to survive. */
+  function withRecordedRung(): CompletedRunHandoff {
+    const base = twoByTwo()
+    return handoff(base.tests.map((member, testIndex) => (testIndex === 0
+      ? {
+          ...member,
+          steps: member.steps.map((evidence, stepIndex) => (stepIndex === 0
+            ? ({ ...evidence, retrievalRung: RUNG } as StepEvidence)
+            : evidence)),
+        }
+      : member)) as PerTestOutcome[])
+  }
+
+  it('folds a scan error from the records diff to an empty list and says so on the wire', async () => {
+    const result = await ready({
+      document: withRecordedRung(),
+      knowledge: { diffSince: () => Promise.reject(scanError(MALFORMED)) },
+    })
+
+    // The whole Used half is intact — every step, and the rung the run recorded. One malformed
+    // bundle this run never touched used to make ALL of this a `read_failed` page.
+    expect(result.steps).toHaveLength(4)
+    expect(result.retrievalRung).toEqual(RUNG)
+    expect(result.learned.changes).toEqual([])
+    expect(result.learned.scanIncomplete).toBe(true)
+    expect(RunKnowledgeProjectionSchema.safeParse(result).success).toBe(true)
+  })
+
+  it('degrades the two enrichments INDEPENDENTLY — a failed attribution keeps the diff rows', async () => {
+    const result = await ready({
+      knowledge: {
+        diffSince: () => Promise.resolve([MINE]),
+        canaryAttributions: () => Promise.reject(scanError(MALFORMED)),
+      },
+    })
+
+    expect(result.learned.canaryAttributions).toEqual([])
+    expect(result.learned.changes.map((row) => row.recordId)).toEqual(['rec-mine'])
+    expect(result.learned.scanIncomplete).toBe(true)
+  })
+
+  it('still propagates an error that is NOT a knowledge-store scan error', async () => {
+    // The posture this op has always held, and does not abandon here: a real failure inside a
+    // BOUND path is not swallowed. Only the store's own named scan error folds.
+    await expect(runsKnowledgeSpec.invoke(
+      { runId: asRunId(RUN_ID) },
+      deps({ knowledge: { diffSince: () => Promise.reject(new Error('disk on fire')) } }),
+    )).rejects.toThrow('disk on fire')
+  })
+
+  it('carries NO scanIncomplete key at all on a clean read — never a false', async () => {
+    const result = await ready({ knowledge: { diffSince: () => Promise.resolve([MINE]) } })
+
+    expect('scanIncomplete' in result.learned).toBe(false)
+    expect(JSON.stringify(result)).not.toContain('null')
+  })
+
+  it('names the incomplete scan on the receipt, and leaves a clean receipt byte-identical', async () => {
+    const CLEAN = `knowledge for ${RUN_ID} — 4 steps, 2 brief lines served, 0 learned change(s)`
+    const degraded = runsKnowledgeSpec.classify(await ready({
+      knowledge: { diffSince: () => Promise.reject(scanError(MALFORMED)) },
+    }))
+
+    expect(degraded.outcome).toBe(`${CLEAN}, knowledge store scan incomplete`)
+    expect(runsKnowledgeSpec.classify(await ready()).outcome).toBe(CLEAN)
+  })
+})
+
 describe('the proposals line rides only where an inbox is bound (D-11)', () => {
   it('carries no pendingProposalCount key on a host with no inbox', async () => {
     const result = await ready()
