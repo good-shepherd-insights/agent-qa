@@ -316,6 +316,14 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
     // announced on the wire as `learned.scanIncomplete` rather than hidden inside an emptiness the
     // caller would read as "nothing was learned". Anything not carrying that name propagates
     // exactly as it did before.
+    //
+    // AND THE FLAG IS RAISED BY CONTRACT, NOT BY COINCIDENCE (407-19, REVIEW WR-03). The
+    // attribution walk reports `skippedBundles` on its own answer, so a store it could only
+    // half-read raises this flag even when it returns rows and even when the records diff read
+    // cleanly. Before that count existed, the only thing raising the flag for a half-read store
+    // was `diffSince` happening to throw on the same bundle — an inference that fails the moment
+    // the two reads see different stores. A degradation marker belongs to the read that degraded;
+    // it is never inferred from a sibling.
     let scanIncomplete = false
     const status: PostProcessingStatus | undefined = deps.postProcessing === undefined
       ? undefined
@@ -342,10 +350,15 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
           }))))
 
     const attribute = deps.knowledge.canaryAttributions
-    let attributions: Awaited<ReturnType<NonNullable<typeof attribute>>> = []
+    let attributions: Awaited<ReturnType<NonNullable<typeof attribute>>>['rows'] = []
     if (attribute !== undefined && tuples.length > 0) {
       try {
-        attributions = await attribute.call(deps.knowledge, { runId, tuples })
+        const attributed = await attribute.call(deps.knowledge, { runId, tuples })
+        attributions = attributed.rows
+        // The rows are kept BESIDE the flag rather than dropped by it: a bundle the walk could not
+        // load denies nothing to the bundles that read cleanly (407-14's rule), and the flag says
+        // the list may be short — not that it is worthless.
+        if (attributed.skippedBundles > 0) scanIncomplete = true
       } catch (error) {
         if (!isScanIncomplete(error)) throw error
         scanIncomplete = true

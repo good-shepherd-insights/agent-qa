@@ -629,6 +629,14 @@ export interface KnowledgeReaderPort {
    * OPTIONAL, so every existing port implementation and every test fake stays type-valid. The
    * `/reader` entry implements it in 407-04 and agent-local binds it there; until then a caller
    * sees `undefined` and renders the honest not-yet-attributed state rather than a wrong badge.
+   *
+   * THE ANSWER CARRIES ITS OWN PARTIALITY (407-19, REVIEW WR-03). `skippedBundles` is the walk's
+   * count of bundles it could not load — corrupt, truncated, or failing the integrity check that
+   * catches tampering. `> 0` means the answer is PARTIAL, and a caller must not render an absent
+   * `outcome` as a positive `not attributed`: on a partial walk that absence means "not found in
+   * the part of the store I could read", which is a different sentence. The count rides HERE, on
+   * the read that degraded, rather than being inferred from a sibling read failing on the same
+   * file — an inference that does not survive the two reads seeing different stores.
    */
   canaryAttributions?(input: {
     runId: string
@@ -638,13 +646,16 @@ export interface KnowledgeReaderPort {
       testIndex: number
       stepIndex: number
     }[]
-  }): Promise<readonly {
-    candidateId: string
-    testIndex: number
-    stepIndex: number
-    observationId: string
-    outcome?: 'confirmed' | 'contradicted' | 'helpful' | 'harmful'
-  }[]>
+  }): Promise<{
+    readonly rows: readonly {
+      candidateId: string
+      testIndex: number
+      stepIndex: number
+      observationId: string
+      outcome?: 'confirmed' | 'contradicted' | 'helpful' | 'harmful'
+    }[]
+    readonly skippedBundles: number
+  }>
 }
 
 /**

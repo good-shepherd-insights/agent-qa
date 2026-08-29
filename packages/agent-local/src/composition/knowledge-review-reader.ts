@@ -103,6 +103,11 @@ export function createKnowledgeReaderPort(
      * candidate id in the tuples it passes — it read them off its own run's evidence — so a
      * sighting here would record that the reader was handed ids rather than that an entity was
      * surfaced to anyone, which is the distinction the ledger exists to keep.
+     *
+     * The reader entry's answer is forwarded VERBATIM, `skippedBundles` included (407-19, REVIEW
+     * WR-03). This binding neither counts nor interprets: how much of the store went unread is a
+     * fact only the walk knows, and a composition that dropped it here would hand the op a
+     * clean-looking answer over a half-read store.
      */
     async canaryAttributions({ runId, tuples }) {
       return canaryAttributionsFor({

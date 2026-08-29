@@ -267,10 +267,11 @@ function change(overrides: Partial<RecordChange> = {}): RecordChange {
 /**
  * The layer's no-null idiom, asserted STRUCTURALLY (407-19, IN-03).
  *
- * `expect(JSON.stringify(result)).not.toContain('null')` reds on any record id, step text or CSS
- * selector that merely CONTAINS those four letters — an unrelated fixture change breaks the cell
- * and the failure says nothing about the idiom it was guarding. This walks the parsed value
- * instead and names the path of the offending member, so a failure reads as an instruction.
+ * Serialising the DTO and searching those bytes for the four letters `n-u-l-l` — the form these
+ * cells used before — reds on any record id, step text or CSS selector that merely CONTAINS them.
+ * An unrelated fixture change breaks the cell and the failure says nothing about the idiom it was
+ * guarding. This walks the parsed value instead and names the path of the offending member, so a
+ * failure reads as an instruction.
  */
 function assertNoNull(value: unknown, path = '$'): void {
   if (value === null) {
