@@ -1,5 +1,6 @@
 import type { Action } from '../action/index'
 import type { ServedRetrievalTraceV1 } from '../brief/retrieval-trace'
+import type { RecordedRetrievalRung } from '../brief/retrieval-rung'
 import type { ServedBrief } from '../brief/served-brief'
 import type { RecordId } from '../ids/record-id'
 import type { WorkingMemoryEntry } from '../memory/working-memory-entry'
@@ -150,6 +151,25 @@ export interface StepEvidence {
    * no-trace result rather than by re-running retrieval against today's index (D-15).
   */
   retrievalTrace?: ServedRetrievalTraceV1
+  /**
+   * The HOST's retrieval rung at the moment this step's brief was served (TRST-01 · 407 D-13,
+   * 2026-08-29).
+   *
+   * BESIDE `servedBrief`, on exactly the same 387 Q3 footing `retrievalTrace` above carries —
+   * never a `ServedBrief` widening. The reason is the same concrete one: `computeBriefDigest`
+   * keys cassettes and acceptance evidence on the brief's bytes, so a rung channel inside it
+   * would change the digest of every brief ever served. §A11 stays exactly three channels.
+   *
+   * RUN-CONSTANT. The rung describes the machine's ladder for this run, not a per-line ranking
+   * claim: a surface renders "retrieval was on rung X for this run", never "this brief was
+   * dense-ranked". It is folded ONCE (`knowledge-local/src/retrieval-rung.ts`) from the two
+   * axes only that package can see, and recorded here so the banner stays honest about a past
+   * run after the host is fixed.
+   *
+   * ABSENT on pre-407 runs, and absent on a run served with no knowledge reader bound at all
+   * (D-16 — that run's truncation marker is the durable fact, and there is no ladder to name).
+  */
+  retrievalRung?: RecordedRetrievalRung
   /**
    * The run's configured decision context, embedded per step including cache-hit steps
    * (D-06). New runs populate it by construction; it remains optional only for structural

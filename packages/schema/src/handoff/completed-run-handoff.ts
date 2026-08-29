@@ -4,7 +4,7 @@ import type { ExecutionContext, RunStatus } from '../run/run-status'
 import type { QuarantineAppliedEntry } from '../quarantine/quarantine-ledger'
 import type { PerTestOutcome } from './per-test-outcome'
 
-export const CURRENT_HANDOFF_SCHEMA_VERSION = 6
+export const CURRENT_HANDOFF_SCHEMA_VERSION = 7
 
 export interface CompletedRunHandoff {
   schemaVersion: number

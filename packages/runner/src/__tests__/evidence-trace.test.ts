@@ -383,9 +383,10 @@ describe('the assembled handoff carries a trace-bearing step at schemaVersion 5 
     // literal named: a handoff carrying a retrievalTrace and stamping anything BELOW 5 would be
     // claiming to predate the field it carries, which is exactly the distinction D-15's honest
     // no-trace answer is built on. 390-01 bumped the contract to 6 (the quarantine disposition);
-    // the floor the trace field needs is unchanged, so the pin moves with the constant.
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(6)
-    expect(handoff.schemaVersion).toBe(6)
+    // 407-03 bumped it to 7 (StepEvidence.retrievalRung, 2026-08-29). The floor the trace field
+    // needs is unchanged either time, so the pin moves with the constant.
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
+    expect(handoff.schemaVersion).toBe(7)
     expect(handoff.schemaVersion).toBeGreaterThanOrEqual(5)
   })
 

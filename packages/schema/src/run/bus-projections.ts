@@ -81,6 +81,11 @@ export function projectStepFinalized(
     // reason — an unmeasured step carries NO key rather than a zero triple. The three
     // members are numbers, so `maskPayloadStrings` walks past them untouched.
     ...(extra?.tokenUsage !== undefined ? { tokenUsage: extra.tokenUsage } : {}),
+    // 2026-08-29 (Phase 407 plan 03, D-14): same spread-when-defined rule, read from the
+    // EVIDENCE rather than from `extra` — unlike the 363 appends above, the rung IS a
+    // `StepEvidence` field (D-13). A step whose evidence recorded no rung carries no key, so
+    // absence on the wire keeps meaning "no ladder was named" and never "the top rung".
+    ...(evidence.retrievalRung !== undefined ? { retrievalRung: evidence.retrievalRung } : {}),
   }
   return maskPayloadStrings(payload, mask)
 }

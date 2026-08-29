@@ -5,6 +5,7 @@ import type { GroundingEvidence } from '../screen/target-descriptor'
 import type { ScopeKey } from '../identity/scope-key'
 import type { MemberTestOutcome } from './member-outcome'
 import type { ExecutionContext, RunStatus } from './run-status'
+import type { RecordedRetrievalRung } from '../brief/retrieval-rung'
 import type { VerifierVerdict } from '../handoff/step-evidence'
 
 /**
@@ -236,6 +237,17 @@ export interface StepFinalizedPayload {
    * analytics fields) reads absence as "unmeasured" rather than "free".
    */
   tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  /**
+   * 2026-08-29 (Phase 407 plan 03, D-14): the host's retrieval rung at the moment this step's
+   * brief was served, on the same 363 D-01 additive-optional footing as the fields above — the
+   * frozen envelope and the event NAME are untouched.
+   *
+   * Unlike the 363 extras this fact is NOT sourced from the runner `StepResult`: it IS a
+   * `StepEvidence` field (407 D-13), so the projection reads it off the evidence. ABSENT when the
+   * evidence carries none — a pre-407 run, or a run that bound no knowledge reader (D-16). Both
+   * members are closed enum words, so `maskPayloadStrings` walks them unchanged in meaning.
+   */
+  retrievalRung?: RecordedRetrievalRung
   readonly servedBrief?: never
 }
 

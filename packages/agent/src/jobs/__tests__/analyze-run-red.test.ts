@@ -221,10 +221,15 @@ function load399RedHandoff(): CompletedRunHandoff {
 }
 
 describe('the trimmed 399 red handoff fixture still loads through the shipped guard', () => {
-  it('is a current-version handoff with one failed member whose floor is unknown', () => {
+  it('is a v6 capture that still loads, with one failed member whose floor is unknown', () => {
     const handoff = load399RedHandoff()
 
-    expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
+    // 2026-08-29 (407-03, D-13): the contract moved to 7 and this fixture is a REAL captured
+    // handoff stamped 6. Its stamp is left alone on purpose — restamping it would erase the one
+    // property it now proves, that an already-written v6 document off disk still loads through
+    // the registered v6 -> v7 identity migration. Exact equality is preserved, at 6.
+    expect(handoff.schemaVersion).toBe(6)
+    expect(handoff.schemaVersion).toBeLessThanOrEqual(CURRENT_HANDOFF_SCHEMA_VERSION)
     expect(handoff.aggregateVerdict).toBe('failed')
     expect(handoff.tests).toHaveLength(1)
     expect(handoff.tests[0]?.outcome).toBe('failed')

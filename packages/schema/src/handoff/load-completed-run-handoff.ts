@@ -1,3 +1,4 @@
+import { RecordedRetrievalRungSchema } from '../brief/retrieval-rung'
 import { ServedRetrievalTraceV1Schema } from '../brief/retrieval-trace'
 import { CURRENT_HANDOFF_SCHEMA_VERSION } from './completed-run-handoff'
 import type { CompletedRunHandoff } from './completed-run-handoff'
@@ -55,6 +56,16 @@ export const HANDOFF_MIGRATIONS: MigrationRegistry = {
    * nothing, and every later consumer reads the disposition out of this contract.
    */
   5: (doc) => doc,
+  /**
+   * v6 → v7 (407 D-13, 2026-08-29): `StepEvidence.retrievalRung` is optional-additive, so every
+   * already-written v6 handoff loads unchanged and simply carries no rung.
+   *
+   * Registered rather than skipped for exactly the reason the trace bump was registered: a
+   * stamped document is the only way a reader can tell a run that PREDATES rung capture from a
+   * run that captured no rung because it bound no knowledge reader (D-16). The banner and
+   * `doctor` both read that distinction, and neither can recover it from an absent field alone.
+   */
+  6: (doc) => doc,
 }
 
 function isNonArrayObject(value: unknown): value is Record<string, unknown> {
@@ -361,6 +372,21 @@ function hasCompleteRetrievalTraceShape(value: unknown): boolean {
   return ServedRetrievalTraceV1Schema.safeParse(value).success
 }
 
+/**
+ * Validates a present `retrievalRung` (407 D-13) by DELEGATING to the schema that declares it,
+ * for the same reason the trace predicate above delegates: the rung ships as a zod schema, and a
+ * second hand-rolled spelling here would be a guard free to drift from the contract its producer
+ * validates against.
+ *
+ * Present-implies-valid, and absence stays legal: a pre-407 run has no rung and never will, and
+ * neither does a run that bound no knowledge reader. Presence is admitted only in the closed
+ * two-word form the banner renders and `doctor` grades — an open string here would reach a
+ * surface that has no rendering for it.
+ */
+function hasCompleteRetrievalRungShape(value: unknown): boolean {
+  return RecordedRetrievalRungSchema.safeParse(value).success
+}
+
 function hasCompleteStepShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
 
@@ -385,7 +411,8 @@ function hasCompleteStepShape(value: unknown): boolean {
     (!('interpolatedVariables' in value) ||
       hasCompleteInterpolatedVariablesShape(value.interpolatedVariables)) &&
     (!('retrievalTrace' in value) ||
-      hasCompleteRetrievalTraceShape(value.retrievalTrace))
+      hasCompleteRetrievalTraceShape(value.retrievalTrace)) &&
+    (!('retrievalRung' in value) || hasCompleteRetrievalRungShape(value.retrievalRung))
   )
 }
 

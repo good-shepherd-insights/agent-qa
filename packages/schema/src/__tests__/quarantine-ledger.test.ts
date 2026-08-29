@@ -357,8 +357,11 @@ describe('handoff quarantine disposition', () => {
     }
   }
 
-  it('bumps the handoff contract to 6 with a registered identity migration from 5', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(6)
+  it('bumps the handoff contract past 5 with a registered identity migration from 5', () => {
+    // 2026-08-29 (407-03, D-13): the CURRENT pin moves to 7 for the `retrievalRung` bump.
+    // The cell's SUBJECT — that v5 documents still walk forward through a registered identity
+    // migration — is unchanged and still asserted below.
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
     expect(typeof HANDOFF_MIGRATIONS[5]).toBe('function')
     const stored = { schemaVersion: 5, marker: true }
     expect(HANDOFF_MIGRATIONS[5](stored)).toBe(stored)

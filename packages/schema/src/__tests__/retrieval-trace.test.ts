@@ -227,8 +227,9 @@ function handoffWithStep(step: Record<string, unknown>): Record<string, unknown>
 }
 
 describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
-  it('pins the current handoff schema version at 6 (390-01 quarantine disposition bump)', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(6)
+  // 2026-08-29 (407-03, D-13): repinned BY NAME for the `StepEvidence.retrievalRung` bump.
+  it('pins the current handoff schema version at 7 (407-03 retrievalRung bump)', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
   })
 
   it('loads an already-written schemaVersion 4 document unchanged (identity migration)', () => {
@@ -245,7 +246,9 @@ describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
   it('refuses a NEWER-than-current document BY NAME rather than by shape', () => {
     let thrown: unknown
     try {
-      guardCompletedRunHandoff({ ...makeHandoff(), schemaVersion: 7 })
+      // 2026-08-29 (407-03): repinned to 8 — one past the new current — rather than switched
+      // to `CURRENT + 1`, so this stays an exact-equality census a version bump must notice.
+      guardCompletedRunHandoff({ ...makeHandoff(), schemaVersion: 8 })
     } catch (error) {
       thrown = error
     }
@@ -253,8 +256,8 @@ describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
     expect(thrown).toBeInstanceOf(HandoffVersionError)
     const error = thrown as HandoffVersionError
     expect(error.name).toBe('HandoffVersionError')
-    expect(error.foundVersion).toBe(7)
-    expect(error.supportedVersion).toBe(6)
+    expect(error.foundVersion).toBe(8)
+    expect(error.supportedVersion).toBe(7)
   })
 
   it('loads a v5 step that carries NO retrievalTrace (historical absence, D-15)', () => {
