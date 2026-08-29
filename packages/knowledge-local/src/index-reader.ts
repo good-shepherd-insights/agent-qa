@@ -757,25 +757,34 @@ export type IndexFace =
     }
 
 /**
- * The degrade ladder as a PURE READ (407 D-17, T-407-10).
+ * The degrade ladder, ONE core, with the live connection on the healthy arm (407-13, CR-02).
  *
- * ONE ladder, two callers. {@link openKnowledgeReader} below is the SERVING facade and keeps its
- * side effect — a degraded open still writes the durable D-07 rebuild request. This function is
- * the PROBE half: identical checks in identical order, but it writes no marker and holds no
- * connection open, because its other caller is the retrieval-rung resolver that `doctor` and the
- * runner's evidence recorder invoke. A probe that requested a rebuild would make merely ASKING
- * about the index a mutation of the knowledge root.
+ * The healthy arm returns the connection it just probed WITHOUT closing it, because the caller
+ * that is about to serve from the index must keep the very connection the ladder blessed. Closing
+ * here and reopening in the facade opened a TOCTOU window: a writer, a drain or a sibling reader
+ * holding the database across it made the reopen throw SQLITE_BUSY, which the facade could only
+ * read as a `locked` degrade — a durable rebuild request plus a process-lifetime swap to bundle
+ * scan, for an index that was healthy the whole time. The trust surface must never report a
+ * degradation the trust surface itself caused.
+ *
+ * Unhealthy arms still close: nothing downstream wants a connection to an index that just failed.
  */
-export function classifyIndexFace(
+type ClassifiedIndex =
+  | { face: { source: 'index' }; connection: IndexReaderConnection }
+  | { face: Extract<IndexFace, { source: 'scan' }>; connection?: undefined }
+
+function classifyIndexFaceWithConnection(
   knowledgeRoot: string,
-  opts: OpenKnowledgeReaderOptions = {},
-): IndexFace {
+  opts: OpenKnowledgeReaderOptions,
+): ClassifiedIndex {
   if (!existsSync(indexDbPath(knowledgeRoot))) {
     return {
-      source: 'scan',
-      reason: 'absent',
-      detail: 'derived index file is absent',
-      filePresent: false,
+      face: {
+        source: 'scan',
+        reason: 'absent',
+        detail: 'derived index file is absent',
+        filePresent: false,
+      },
     }
   }
 
@@ -785,16 +794,18 @@ export function classifyIndexFace(
   } catch (error) {
     const detail = errorMessage(error)
     return {
-      source: 'scan',
-      reason: lockedReason(detail) ? 'locked' : 'corrupt',
-      detail,
-      filePresent: true,
+      face: {
+        source: 'scan',
+        reason: lockedReason(detail) ? 'locked' : 'corrupt',
+        detail,
+        filePresent: true,
+      },
     }
   }
 
   const health = probeIndexHealth(connection.db)
-  closeBestEffort(connection)
   if (!health.ok) {
+    closeBestEffort(connection)
     let reason: RebuildReason
     if (health.probe === 'schema-version') {
       reason = 'schema-version'
@@ -803,33 +814,55 @@ export function classifyIndexFace(
     } else {
       reason = lockedReason(health.reason) ? 'locked' : 'corrupt'
     }
-    return { source: 'scan', reason, detail: health.reason, filePresent: true }
+    return { face: { source: 'scan', reason, detail: health.reason, filePresent: true } }
   }
 
-  return { source: 'index' }
+  return { face: { source: 'index' }, connection }
 }
 
+/**
+ * The degrade ladder as a PURE READ (407 D-17, T-407-10).
+ *
+ * ONE ladder, ONE core, two callers. {@link openKnowledgeReader} below is the SERVING facade: it
+ * keeps the connection the core blessed and keeps the side effect — a degraded open still writes
+ * the durable D-07 rebuild request. This function is the PROBE half: the identical checks in the
+ * identical order over the identical core, but it releases the connection and writes no marker,
+ * because its other callers are the retrieval-rung resolver that `doctor` and the runner's
+ * evidence recorder invoke, and the local composition root's knowledge probes. A probe that
+ * requested a rebuild would make merely ASKING about the index a mutation of the knowledge root;
+ * a probe that returned a live handle would make every `doctor` call a connection leak. The probe
+ * hands back a face, never a handle — only the serving facade holds a connection.
+ */
+export function classifyIndexFace(
+  knowledgeRoot: string,
+  opts: OpenKnowledgeReaderOptions = {},
+): IndexFace {
+  const result = classifyIndexFaceWithConnection(knowledgeRoot, opts)
+  if (result.connection !== undefined) closeBestEffort(result.connection)
+  return result.face
+}
+
+/**
+ * The SERVING facade: classify once, then serve from the connection the classifier blessed.
+ *
+ * 407-13 (CR-02): this used to call the pure probe and then open a SECOND connection of its own,
+ * so a lock acquired in the gap between the probe's close and this open degraded a healthy index
+ * — writing the durable rebuild marker and dropping every later retrieval in the process to
+ * bundle scan on nothing but contention. It also let `resolveRetrievalRung` report `memidex` while
+ * the reader it was describing served `bundle-scan`, the exact banner/reality disagreement D-17's
+ * one-fold rule exists to prevent. The facade must never close what it is about to reopen: there
+ * is one open on the healthy path and no window for a lock to arrive in.
+ */
 export function openKnowledgeReader(
   knowledgeRoot: string,
   opts: OpenKnowledgeReaderOptions = {},
 ): KnowledgeReader {
-  const face = classifyIndexFace(knowledgeRoot, opts)
-  if (face.source === 'scan') {
+  const result = classifyIndexFaceWithConnection(knowledgeRoot, opts)
+  if (result.connection === undefined) {
     // The marker write lives HERE, in the serving facade, and not in the classifier: requesting a
     // rebuild is what a reader that just failed to serve from the index owes the drainer.
-    return degrade(knowledgeRoot, face.reason, face.detail)
+    return degrade(knowledgeRoot, result.face.reason, result.face.detail)
   }
 
-  // The classifier closed the connection it probed with, so the healthy path re-opens one for the
-  // facade to own. A failure on this second open is the same locked/corrupt degrade the first one
-  // would have taken.
-  let connection: IndexReaderConnection
-  try {
-    connection = openIndexReaderConnection(knowledgeRoot, opts)
-  } catch (error) {
-    const detail = errorMessage(error)
-    return degrade(knowledgeRoot, lockedReason(detail) ? 'locked' : 'corrupt', detail)
-  }
-
-  return operationDegradingReader(knowledgeRoot, connection)
+  return operationDegradingReader(knowledgeRoot, result.connection)
 }
