@@ -58,6 +58,7 @@ import {
   ANALYSIS_GET_FUNCTION_ID,
   RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
+  RUNS_KNOWLEDGE_FUNCTION_ID,
   createFunctionRegistry,
   invokeFunction,
   type FunctionDeps,
@@ -508,6 +509,9 @@ function dashboardRollCallHost(
     // 406-01: a sixth. Same posture — the SHAPE has to be complete; this fixture reaches only the
     // ask, and the RUN host below is where `analysis.get` is actually dispatched.
     analysisGetFunctionId: 'analysis.get',
+    // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
+    // workspace still satisfies the interface.
+    runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
     invokeFunction: () => Promise.resolve({
       sessionId: 'chat-20260821-000000-r0ll',
       turnId: 'turn-1',
@@ -697,6 +701,9 @@ function dashboardRunRollCallHost(registry: FunctionRegistry): AgentHost {
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
     analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
+    // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
+    // workspace still satisfies the interface.
+    runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
     invokeFunction: (
       handle: unknown,
       functionId: string,

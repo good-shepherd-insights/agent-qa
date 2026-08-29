@@ -389,6 +389,9 @@ describe('the READ rows dispatch through the injected host (405-05, D-12)', () =
       // 406-01 (D-04): a sixth. This fixture DOES reach it — the analysis row's cell below asserts
       // the id the dispatch handed `invokeFunction`.
       analysisGetFunctionId: 'test:planted-analysis-get-op',
+      // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
+      // workspace still satisfies the interface.
+      runsKnowledgeFunctionId: 'test:planted-run-knowledge-op',
       invokeFunction: (_registry: unknown, functionId: string) => {
         seen.push(functionId)
         return Promise.reject(Object.assign(new Error('planted'), { name }))

@@ -260,6 +260,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // this package at all, so the id has to be HANDED to it; a literal there would be a name it
   // cannot type-check against the spec that answers to it. A string is not a dispatch handle.
   'RUNS_EVENTS_FUNCTION_ID',
+  // 407-01 (D-05): the Knowledge panel read's id, on the footing of every op-id constant around
+  // it. The route that serves `GET /api/runs/:id/knowledge` lives in `packages/dashboard-server`,
+  // which may not import the agent package at all, so the name reaches it as DATA from the
+  // composition that knows it. A string is not a dispatch handle — and `runsKnowledgeSpec` is
+  // deliberately not on this list, because a spec carries its own `invoke`, which is the private
+  // power SC1 abolishes.
+  'RUNS_KNOWLEDGE_FUNCTION_ID',
   // 392 plan 07: the run listing's id — what the `status` alias resolves to, published so the
   // composed compound e2e names the op by IMPORT rather than by a literal it made up.
   'RUNS_LIST_FUNCTION_ID',

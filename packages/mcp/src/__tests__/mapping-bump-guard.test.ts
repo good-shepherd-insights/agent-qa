@@ -18,6 +18,10 @@
 // RE-MEASURED AGAIN 2026-08-27 (405-05 D-12/D-13): 45/22/23. `runs.artifact` is the arrival and it
 // lands unprojected for a reason of its own — its result is a base64 blob, and a `tools/call` round
 // trip is the wrong carriage for bytes no conversation can render.
+// RE-MEASURED AGAIN 2026-08-29 (407-01 D-05): 46/22/24. `runs.knowledge` is the arrival and it
+// lands unprojected on `runs.detail`'s footing — a completed run's whole used-and-learned
+// projection, three served channels and a retrieval trace per step, is a large one-shot payload
+// rather than a mid-flight read.
 // The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
@@ -348,9 +352,9 @@ describe('the partition law (D-03 / D-15)', () => {
   it('measures the registry at the count this suite header records', () => {
     // The denominator, stated where a reader can see it move. Not a rule — a MEASUREMENT, and the
     // sentence in the header is only true while this cell is green.
-    expect(declarations().length).toBe(45)
+    expect(declarations().length).toBe(46)
     expect(projectedOpIds().length).toBe(22)
-    expect(UNPROJECTED_OPS.length).toBe(23)
+    expect(UNPROJECTED_OPS.length).toBe(24)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -376,12 +380,18 @@ describe('the partition law (D-03 / D-15)', () => {
     // `runs.detail` arrived in 405 and 397 could not have ruled on it. Membership is still
     // spelled by op id, so an entry stamped `'405'` because it was easier reds here.
     const ADJUDICATED_BY_405 = new Set(['runs.artifact', 'runs.detail'])
+    // 2026-08-29 (407-01 D-05). The same widening for the same reason, two phases later:
+    // `runs.knowledge` arrived in 407 and 397 could not have ruled on it. Membership is still
+    // spelled by op id, so an entry stamped `'407'` because it was easier reds here.
+    const ADJUDICATED_BY_407 = new Set(['runs.knowledge'])
     const expectedAdjudicator = (opId: string): string =>
       ADJUDICATED_BY_398.has(opId)
         ? '398'
         : ADJUDICATED_BY_403.has(opId)
           ? '403'
-          : ADJUDICATED_BY_405.has(opId) ? '405' : '397'
+          : ADJUDICATED_BY_405.has(opId)
+            ? '405'
+            : ADJUDICATED_BY_407.has(opId) ? '407' : '397'
     for (const entry of UNPROJECTED_OPS) {
       expect(entry.reason.length, entry.opId).toBeGreaterThan(20)
       expect(entry.adjudication, entry.opId).toBe(expectedAdjudicator(entry.opId))
@@ -400,6 +410,10 @@ describe('the partition law (D-03 / D-15)', () => {
       UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_405.has(entry.opId)).map((e) => e.opId),
       'the 405-adjudicated pin names entries the scoping note does not carry',
     ).toEqual([...ADJUDICATED_BY_405])
+    expect(
+      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_407.has(entry.opId)).map((e) => e.opId),
+      'the 407-adjudicated pin names entries the scoping note does not carry',
+    ).toEqual([...ADJUDICATED_BY_407])
   })
 
   // D-03's own note leads the list, and the ORDER is part of the decision: a reader scanning the

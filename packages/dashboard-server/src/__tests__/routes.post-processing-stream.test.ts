@@ -171,6 +171,9 @@ function plantedHost(read: {
     runsArtifactFunctionId: 'test:planted-run-artifact-op',
     // 406-01: a sixth. Same posture — named so the SHAPE is complete, never reached from here.
     analysisGetFunctionId: 'test:planted-analysis-get-op',
+    // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
+    // workspace still satisfies the interface.
+    runsKnowledgeFunctionId: 'test:planted-run-knowledge-op',
     invokeFunction: (_registry, functionId): Promise<unknown> => {
       if (functionId === PP_ID) return Promise.resolve(read.status())
       if (functionId === EVENTS_ID) {

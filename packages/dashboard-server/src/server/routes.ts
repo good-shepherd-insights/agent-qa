@@ -39,6 +39,10 @@ import { serveRunArtifact, serveRunDetailRead } from '../run-service/run-detail-
 // 406-01 (D-04): the failure view's read. One arm below, beside the detail arm and above the
 // `/api/runs/:id` catch-all, formatting nothing and opening no database.
 import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
+// 407-01 (D-05): the Knowledge panel's read — what a run used and learned. One arm below, beside
+// the analysis arm and above the `/api/runs/:id` catch-all, formatting nothing and opening no
+// database.
+import { serveRunKnowledgeRead } from '../run-service/run-knowledge-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -2304,6 +2308,44 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       // sentence quotes the failing step's recorded error, so it carries placeholders exactly as
       // the detail projection does. The authed REMOTE row passes no `boundary` and stays masked.
       serveRunAnalysisRead(req, res, { runId: analysisRunId, host: deps.agentHost, boundary: 'human' })
+      return
+    }
+
+    // GET /api/runs/:id/knowledge — what this run used and learned (407-01, D-05/D-06).
+    //
+    // ABOVE THE `GET /api/runs/:id` CATCH-ALL BELOW, on the detail and analysis arms' measured
+    // precedent (RESEARCH Pitfall 2): that arm claims EVERY GET under the prefix and answers
+    // `Not found` for anything that is not exactly four segments — and `/api/runs/<id>/knowledge`
+    // is four segments, so registered after it this route would be looked up as a run id and
+    // refused.
+    //
+    // IT DISPATCHES AND FORMATS NOTHING. `runs.knowledge` is THE single producer of the Knowledge
+    // tab's whole view (407 D-05) — served brief channels, serve-time traces, procedure use, the
+    // recorded rung, curator deltas — and everything below the 503 is `serveRunKnowledgeRead`'s.
+    // A run whose handoff has been pruned comes back 200 with `kind: 'evidence-incomplete'`, not
+    // a 404: D-06 makes that a state the page renders rather than a refusal it has to catch.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/knowledge$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let knowledgeRunId: string
+      try {
+        knowledgeRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/knowledge'.length))
+      } catch {
+        // An undecodable segment names no run, and the honest answer is the one the op's own
+        // input schema gives for an id it refuses.
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      // THE HUMAN DOOR, AND THE ONLY ONE THAT RESTORES (405-10 D-09). The projection carries every
+      // step's text and every served brief line's summary, all masked at rest, so this arm opts the
+      // display seam in exactly as its two neighbours do.
+      serveRunKnowledgeRead(req, res, {
+        runId: knowledgeRunId,
+        host: deps.agentHost,
+        boundary: 'human',
+      })
       return
     }
 

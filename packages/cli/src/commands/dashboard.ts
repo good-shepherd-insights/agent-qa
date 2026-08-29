@@ -12,6 +12,7 @@ import {
   RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
   RUNS_EVENTS_FUNCTION_ID,
+  RUNS_KNOWLEDGE_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
   type ConfigReaderPort,
@@ -235,6 +236,10 @@ export function composeDashboardAgentHost(
     // failure view's read dispatches on both doors — `analysis.get` is the single producer of a
     // run's verdict sentences, and the dashboard package can only learn its name as data.
     analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
+    // 407-01 (D-05): the sixth id, on the same footing and for the same reason. It is what the
+    // Knowledge tab's read dispatches — `runs.knowledge` is the single producer of what a run used
+    // and learned, and the dashboard package can only learn its name as data.
+    runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
     // 400-15: THE ONE PLACE THE ASKING CONVERSATION IS KNOWN AND STILL AHEAD OF EVERYTHING THAT
     // NEEDS IT. `handleTurn` makes exactly one call here per turn, carrying the browser's
     // `sessionId`; the gate's context resolver and the confirm port are both further down this same

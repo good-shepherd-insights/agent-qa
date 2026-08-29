@@ -164,6 +164,25 @@ export interface AgentHost {
    */
   readonly analysisGetFunctionId: string
   /**
+   * The agent package's `runs.knowledge` id, on `analysisGetFunctionId`'s exact footing
+   * (2026-08-29, 407-01 D-05).
+   *
+   * THE SIXTH ID THE RUN-SERVICE ROUTES DISPATCH, supplied by the composition and never spelled
+   * here, for the reason its five neighbours are: the op id is the agent package's constant, a
+   * string literal in this package would be a second declaration of a capability's name free to
+   * drift from the spec that answers to it, and this package may not import
+   * `@vostride/agent-qa-agent` at all (validate:arch) — so there is nowhere here the real constant
+   * could come from.
+   *
+   * WHAT IT SERVES is the Knowledge panel: what a run USED (the brief channels served per step,
+   * the serve-time trace behind each, procedure replay and hint use, the recorded retrieval rung)
+   * and what it LEARNED (curation counts, the record changes attributable to it, canary outcomes).
+   * `runs.knowledge` is the single producer of that whole view (407 D-05), so routing the page's
+   * read through this id is what keeps the browser, the CLI, MCP and chat reading one answer
+   * instead of a page composing it from N per-step calls that can disagree.
+   */
+  readonly runsKnowledgeFunctionId: string
+  /**
    * `invokeFunction`, bound by the composer. THE one door call.
    *
    * `input` IS `unknown` (404-05). It was `AgentAskInput` while `agent.ask` was the only op this

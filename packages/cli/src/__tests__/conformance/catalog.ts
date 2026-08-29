@@ -235,6 +235,11 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     Object.freeze(['runs.digest', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.events', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    // 2026-08-29 (407-01, D-05): in SORT position after `runs.get`. The used-and-learned READ has
+    // no shipped documentation page — the surface a person meets it through is the dashboard's
+    // Knowledge tab, which 407-06/09/10 build — so this is the same honest absence its `runs.`
+    // read siblings above carry, not a link to a page that describes something else.
+    Object.freeze(['runs.knowledge', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     // 2026-08-25 (403-01, D-03): an EXPLICIT, DATED absence with its OWN reason. The shipped
     // `docs/run-service.md` gains a "Minting a liveUrl" section in 403-03; pointing this row at it
     // before it exists would be exactly the guess the honest-absence rule refuses, and the row is

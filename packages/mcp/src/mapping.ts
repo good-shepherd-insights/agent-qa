@@ -17,6 +17,12 @@
 // in the same change-set anyway, because a header that goes on stating a partition the code stopped
 // having is the class of untruth the ops' own docstrings were caught in (397 D-18).
 //
+// 2026-08-29 (407-01 D-05): the unprojected side grows again, and the registry with it, when
+// `runs.knowledge` is registered — so the partition holds with both sides one larger. Unprojected
+// DELIBERATELY and on `runs.detail`'s footing: a completed run's whole used-and-learned projection
+// is a large one-shot payload, not a mid-flight read. The guard is the mechanism; this sentence is
+// updated in the same change-set for the reason the paragraph below states.
+//
 // 2026-08-25 (403-01 D-03): twenty to twenty-one, and the registry from forty-two to forty-three,
 // when `runs.liveurl` was registered. Unprojected DELIBERATELY: minting a live-view capability
 // token is handing out a credential, and whether an MCP caller may mint one is Phase 408's
@@ -508,8 +514,12 @@ export interface UnprojectedOp {
    * later. The bump guard names which entry carries this adjudicator, in both directions, so an
    * entry stamped `'405'` because it was easier reds there rather than joining a set that has
    * quietly become "any phase number".
+   *
+   * WIDENED AGAIN on 2026-08-29 (407-01, D-05) for `runs.knowledge`, on exactly that reasoning and
+   * for no new one: 397 could not have ruled on an op registered ten phases later. Membership is
+   * still spelled by op id in the bump guard, in both directions.
    */
-  readonly adjudication: '397' | '398' | '403' | '405'
+  readonly adjudication: '397' | '398' | '403' | '405' | '407'
 }
 
 export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
@@ -588,6 +598,20 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + 'The whole projection of a run is also a large one-shot payload with no shape a '
       + '`tools/call` round trip wants. Deferred as its own seam, not omitted.',
     adjudication: '405',
+  }),
+  Object.freeze({
+    opId: 'runs.knowledge',
+    reason:
+      'D-05 (dated 2026-08-29, 407-01): not a mid-flight workflow read per D-02 — this is a '
+      + "COMPLETED run's used-and-learned projection, read by the durable Knowledge tab, and it is "
+      + 'unprojected on exactly the footing its sibling `runs.detail` is. It carries every step\'s '
+      + "three served brief channels, each one's serve-time retrieval trace and the truncated "
+      + 'candidate ledger beside it, so it is a large one-shot payload with no shape a '
+      + '`tools/call` round trip wants — larger than the step tree, not smaller. A planner '
+      + 'mid-flight also has no use for what a FINISHED run was briefed with; the entity door '
+      + "already renders a record's card and the digest carries what triage needs. Deferred as its "
+      + 'own seam, not omitted.',
+    adjudication: '407',
   }),
   Object.freeze({
     opId: 'runs.liveurl',

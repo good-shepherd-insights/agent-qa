@@ -69,6 +69,10 @@ const SEAM_READ_PATHS: readonly string[] = [
   // 406-01 (D-04): the failure view's read. Restores on the local human arm exactly as `/detail`
   // does, because the verdict sentence quotes the failing step's recorded error.
   `/api/runs/${RUN_ID}/analysis`,
+  // 407-01 (D-05): the Knowledge panel's read. Restores on the local human arm for the same
+  // reason and over MORE producer text than either neighbour — every step's text, every served
+  // brief line's summary and every caution's sentence, all masked at rest.
+  `/api/runs/${RUN_ID}/knowledge`,
 ]
 
 /** A legacy read that is NOT behind the seam. Its wildcard is unchanged and this cell says so. */
@@ -117,6 +121,9 @@ function seamHost(): AgentHost {
     runsDetailFunctionId: 'test:runs-detail',
     runsArtifactFunctionId: 'test:runs-artifact',
     analysisGetFunctionId: 'test:analysis-get',
+    // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
+    // workspace still satisfies the interface.
+    runsKnowledgeFunctionId: 'test:run-knowledge',
     invokeFunction: () => Promise.resolve({
       runId: RUN_ID,
       members: [{ testIndex: 0, attempts: 1 }],
@@ -298,6 +305,13 @@ const REVIEWED_SEAM_MODULES: readonly string[] = [
   // never reaches the crossing at all. Reviewed against the source, not against a token count.
   'run-service/run-analysis-routes.ts',
   'run-service/run-detail-routes.ts',
+  // 407-01 (D-05, T-407-03/T-407-04): the Knowledge panel's adapter. Its ONE crossing sits behind
+  // `refuseCrossSiteRequest(req)` in the same function, gated on `boundary === 'human'` exactly as
+  // its two neighbours are — the local arm opts in, and any authed remote row passes nothing and
+  // never reaches the crossing at all. It answers through the same no-grant `respondJson` it
+  // imports from the detail adapter rather than a second writer. Reviewed against the source, not
+  // against a token count.
+  'run-service/run-knowledge-routes.ts',
   'server/routes.ts',
 ]
 

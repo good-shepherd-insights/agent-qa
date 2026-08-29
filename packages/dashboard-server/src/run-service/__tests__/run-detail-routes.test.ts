@@ -38,6 +38,7 @@ import {
   ANALYSIS_GET_FUNCTION_ID,
   RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
+  RUNS_KNOWLEDGE_FUNCTION_ID,
   createFunctionRegistry,
   invokeFunction,
   type FunctionDeps,
@@ -195,6 +196,9 @@ function hostOver(registry: FunctionRegistry): AgentHost {
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
     analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
+    // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
+    // workspace still satisfies the interface.
+    runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
     invokeFunction: (
       handle: AgentRegistryHandle,
       functionId: string,
@@ -629,6 +633,9 @@ function seamRecordingHost(projection: unknown): {
       runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
       runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
       analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
+      // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
+      // workspace still satisfies the interface.
+      runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
       invokeFunction: () => Promise.resolve(projection),
       foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'planted' }, foldLines: [] }),
       listDeclarations: () => [],

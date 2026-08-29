@@ -1254,6 +1254,9 @@ function seamHost(restoreTo: string = SEAM_RESTORED): {
       runsDetailFunctionId: 'runs.detail',
       runsArtifactFunctionId: 'runs.artifact',
       analysisGetFunctionId: 'analysis.get',
+      // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
+      // workspace still satisfies the interface.
+      runsKnowledgeFunctionId: 'runs.knowledge',
       invokeFunction: () => Promise.resolve({}),
       foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: '' }, foldLines: [] }),
       listDeclarations: () => [],
