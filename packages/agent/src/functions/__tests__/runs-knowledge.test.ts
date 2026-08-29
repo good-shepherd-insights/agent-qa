@@ -19,6 +19,7 @@ import {
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   NO_KNOWLEDGE_READER_TRUNCATION,
+  RunKnowledgeProjectionSchema,
   asRunId,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -34,6 +35,9 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import { knowledgeRecordsDiffSpec } from '../ops/knowledge-records-diff.js'
+import { runsDigestSpec } from '../ops/runs-digest.js'
+import { runsPostProcessingSpec } from '../ops/runs-post-processing.js'
 import { runsKnowledgeSpec } from '../ops/runs-knowledge.js'
 import type {
   FunctionDeps,
@@ -123,6 +127,10 @@ const REPLAY: StepPlanSource = {
     total: 3,
     miss: { procedureStepIndex: 2, reason: 'page-anchor-mismatch' },
   },
+  // 407-12 (CR-01). `recordProcedureReplaySource` writes `flow` on EVERY replay it records, so a
+  // fixture without it could not see the seam at all: the arm was `.strict()` and never declared
+  // the member, and the wire refused every real replay run while this file stayed green.
+  flow: { cursor: 0, length: 3 },
 }
 
 const HINT: StepPlanSource = {
@@ -293,6 +301,16 @@ describe('the spec declares a read-tier, everywhere-bound contract (D-05)', () =
     // database unable to see what its own runs used, which is most of this projection.
     expect(runsKnowledgeSpec.boundThrough).toBeUndefined()
   })
+
+  it('composes only siblings that declare the same read tier it does (407-12, WR-08)', () => {
+    // The header's "composition inside the layer, not a dispatch path around the gate" argument
+    // holds ONLY while every sibling this op calls directly needs no more scope than this call
+    // was granted. Nothing else enforces that; a widened sibling would silently exercise a
+    // capability a `read` caller never asked for, and emit no receipt for it. It reds HERE.
+    for (const spec of [runsPostProcessingSpec, knowledgeRecordsDiffSpec, runsDigestSpec]) {
+      expect(spec.requiredScopes).toEqual(runsKnowledgeSpec.requiredScopes)
+    }
+  })
 })
 
 describe('the Used half projects every step of every member test (LERN-01, D-03)', () => {
@@ -353,6 +371,55 @@ describe('the Used half projects every step of every member test (LERN-01, D-03)
     expect(result.steps[3]?.planSource).toEqual(HINT)
     // A step that replayed nothing carries NO key — a different byte from an empty source.
     expect(result.steps[1] && 'planSource' in result.steps[1]).toBe(false)
+  })
+})
+
+describe('the plan source is PICKED onto the wire, never spread (CR-01)', () => {
+  it('carries the runner-written flow cursor of a real replay onto the wire', async () => {
+    // The exact input CR-01 reproduced a `ZodError` with: the arm is `.strict()`, the runner
+    // writes `flow` unconditionally, and before 407-12 this refused rather than projected.
+    const result = await ready()
+
+    expect(result.steps[0]?.planSource).toEqual(REPLAY)
+    expect(result.steps[0]?.planSource).toHaveProperty('flow', { cursor: 0, length: 3 })
+  })
+
+  it('keeps every declared member of both arms — the pick is not a narrowing', async () => {
+    const result = await ready()
+
+    expect(result.steps[0]?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: 'rec-proc-1',
+      guard: {
+        checksPassed: 2,
+        total: 3,
+        miss: { procedureStepIndex: 2, reason: 'page-anchor-mismatch' },
+      },
+      flow: { cursor: 0, length: 3 },
+    })
+    expect(result.steps[3]?.planSource).toEqual({
+      kind: 'procedure-hint',
+      procedureId: 'rec-proc-2',
+      demotion: 'body-empty',
+    })
+  })
+
+  it('drops a producer member this build does not declare, and still parses', async () => {
+    // The channels are field-picked so a serving-contract addition cannot silently reach a page
+    // (405's display posture). Before CR-01 the plan source alone was SPREAD, so the next
+    // producer member would have reached the strict wire and refused the whole read — exactly
+    // how `flow` shipped. A field-pick makes that class of break impossible rather than pending.
+    const evidence = step(0, {
+      planSource: { ...REPLAY, futureMember: 'x' } as unknown as StepPlanSource,
+    })
+    const result = await runsKnowledgeSpec.invoke(
+      { runId: asRunId(RUN_ID) },
+      deps({ document: handoff([test(0, [evidence])]) }),
+    )
+
+    expect(result.kind).toBe('ready')
+    expect(RunKnowledgeProjectionSchema.safeParse(result).success).toBe(true)
+    expect(JSON.stringify(result)).not.toContain('futureMember')
   })
 })
 
