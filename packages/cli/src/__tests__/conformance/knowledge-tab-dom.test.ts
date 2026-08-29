@@ -65,6 +65,7 @@ import {
   type BundleDiscriminant,
   type BundleDraft,
   type DistilledObservation,
+  type RunKnowledgeCanaryAttribution,
   type RunKnowledgeProjection,
 } from '@vostride/agent-qa-schema'
 import { chromium } from 'playwright-core'
@@ -151,6 +152,29 @@ function publishedLabelTable(name: string): Record<string, string> {
   return table
 }
 
+/**
+ * An exported array literal of single-quoted members, as a list.
+ *
+ * The `publishedConstant` idiom applied to a CLOSED VOCABULARY. `LEARNED_CHANGE_KINDS` is the one
+ * this file needs and it is the table R-407-15-01 widened to five, so hand-typing the members here
+ * would leave (c4) re-deriving the door's answer from a vocabulary the view no longer holds — a
+ * cell that goes on passing against a page filtering by a different set. A source read that finds
+ * nothing THROWS, so the cell reds with the reason rather than falling back to a literal.
+ */
+function publishedStringArray(name: string): readonly string[] {
+  const block = new RegExp(`export const ${name}[^=]*=\\s*\\[([^\\]]*)\\]`, 'u')
+    .exec(knowledgeViewSource())
+  if (block === null) {
+    throw new Error(`${name} is no longer an exported array literal in ${KNOWLEDGE_VIEW_REL}`)
+  }
+  const members = Array.from((block[1] as string).matchAll(/'([^']+)'/gu))
+    .map(hit => hit[1] as string)
+  if (members.length === 0) {
+    throw new Error(`${name} carries no single-quoted members in ${KNOWLEDGE_VIEW_REL}`)
+  }
+  return members
+}
+
 const RUNG_LABELS = publishedLabelTable('RUNG_LABELS')
 const RUNG_CAUSE_LABELS = publishedLabelTable('RUNG_CAUSE_LABELS')
 const DOCTOR_HINT_TEXT = publishedConstant('DOCTOR_HINT_TEXT')
@@ -159,6 +183,8 @@ const NO_BRIEF_SERVED_TEXT = publishedConstant('NO_BRIEF_SERVED_TEXT')
 const STEP_NO_BRIEF_TEXT = publishedConstant('STEP_NO_BRIEF_TEXT')
 const WHY_TRIGGER_TEXT = publishedConstant('WHY_TRIGGER_TEXT')
 const CHANGES_UNREADABLE_TEXT = publishedConstant('CHANGES_UNREADABLE_TEXT')
+/** The five Learned kinds `learnedView` narrows to, READ FROM SOURCE and never retyped here. */
+const LEARNED_CHANGE_KINDS = publishedStringArray('LEARNED_CHANGE_KINDS')
 
 /**
  * The banner sentence, composed from the two published tables and the published hint.
@@ -279,18 +305,14 @@ async function seedServedRecord(project: {
   readonly root: string
   readonly agentQaRoot: string
 }): Promise<{ readonly id: string; readonly outcome: string }> {
-  const knowledgeRoot = join(project.root, 'agent-qa-knowledge')
-  const storeConfig: BundleStoreConfig = {
-    knowledgeRoot,
-    productKey: POPULATED_TARGET_NAME,
-    auditBaseDir: project.agentQaRoot,
-    commitArtifacts: 'none',
-    writerLeaseId: 'knowledge-tab-dom-seed',
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
-  }
+  // ONE SPELLING OF THE STORE HANDLE (REVIEW IN-04). `bundleStoreFor` was extracted for exactly
+  // this config — its docstring already says "the store handle both writers below take, differing
+  // only in the lease they hold" — and a second literal here is the drift the helper exists to
+  // prevent. The lease is the only member that ever differed.
+  const storeConfig = bundleStoreFor(project, 'knowledge-tab-dom-seed')
   const published = publishBundleForTest(storeConfig, seededBundleInput())
   if (published.kind !== 'published') return { id: '', outcome: published.kind }
-  await rebuildIndex({ knowledgeRoot })
+  await rebuildIndex({ knowledgeRoot: storeConfig.knowledgeRoot })
   return { id: String(published.id), outcome: 'published' }
 }
 
@@ -451,6 +473,14 @@ interface ServedLineObservation {
   readonly recordId: string
   readonly traceState: string
   readonly servedAsCanary: string
+  /**
+   * `data-canary-outcome`, as the line stamped it — ABSENT when the attribute is absent (407-18).
+   *
+   * The component omits the attribute entirely on a line that was not served as a canary, and an
+   * empty string here would be indistinguishable from an outcome it forgot to stamp. That
+   * distinction is the whole subject of (c4)'s third agreement.
+   */
+  readonly canaryOutcome?: string
   /** The `Why this line?` disclosure's text, after it was opened. Absent when there was none. */
   readonly whyText?: string
 }
@@ -616,6 +646,53 @@ function readyProjection(
   return projection as Extract<RunKnowledgeProjection, { kind: 'ready' }>
 }
 
+// ── The two view rules (c4) re-derives from the door's answer ────────────────────────────────────
+//
+// SPELLED ONCE EACH, NAMING THE FUNCTION THEY MIRROR. `packages/cli` cannot import dashboard-ui's
+// lib, so an agreement cell has to restate the rule — and a restatement that drifts is worse than
+// no cell at all. Both mirrors read their vocabulary out of `knowledge-view.ts` (the kinds) or
+// spell its documented arm ORDER (the canary word), and both carry the source location so the two
+// move together.
+
+/**
+ * The Learned rows the door's answer implies — `learnedView`'s kind narrow, and nothing else.
+ *
+ * MIRRORS `learnedView` (`packages/dashboard-ui/src/lib/knowledge-view.ts`): it filters
+ * `projection.learned.changes` through `LEARNED_CHANGE_KIND_SET` and maps each survivor to a row,
+ * in the producer's order — it does NOT re-filter by run, because `runs.knowledge` already did
+ * that join. This is the DOOR side of the agreement; `PageObservation.learnedRows` is the PAGE
+ * side.
+ */
+function learnedRowsOf(
+  projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
+): readonly { readonly change: string; readonly id: string }[] {
+  return projection.learned.changes
+    .filter((change) => LEARNED_CHANGE_KINDS.includes(change.change))
+    .map((change) => ({ change: change.change, id: change.recordId }))
+}
+
+/**
+ * The word a canary line must wear, re-derived from the projection.
+ *
+ * MIRRORS `canaryOutcomeWord` (`packages/dashboard-ui/src/lib/knowledge-view.ts`), rule for rule
+ * and IN ITS ORDER, which is load-bearing:
+ *   1. an unsettled chain reads `pending` — a partial read does not change that;
+ *   2. a row that WAS read wins, whatever else the scan could not reach;
+ *   3. a FAILED chain reads `not-attributed` even on a partial read (407-18's documented
+ *      deviation from REVIEW WR-02's fix sketch — a fold that fell over attributed nothing);
+ *   4. only then does the read decide: `unknown` when partial, `not-attributed` when clean.
+ */
+function expectedCanaryWord(
+  curationStatus: string,
+  attribution: RunKnowledgeCanaryAttribution | undefined,
+  scanIncomplete: boolean,
+): string {
+  if (curationStatus === 'pending' || curationStatus === 'running') return 'pending'
+  if (curationStatus === 'done' && attribution !== undefined) return attribution.outcome
+  if (curationStatus === 'failed') return 'not-attributed'
+  return scanIncomplete ? 'unknown' : 'not-attributed'
+}
+
 async function textOf(page: Page, selector: string): Promise<string | undefined> {
   const node = page.locator(selector).first()
   if ((await node.count()) === 0) return undefined
@@ -735,6 +812,9 @@ async function observeKnowledge(
         const harvested = await line.evaluate((element) => ({
           traceState: element.getAttribute('data-trace-state') ?? '?',
           servedAsCanary: element.getAttribute('data-served-as-canary') ?? '?',
+          // `null` here is the attribute being ABSENT, which is the clean answer for a
+          // non-canary line; it is carried through as an absent key, never as an empty string.
+          canaryOutcome: element.getAttribute('data-canary-outcome'),
           // The mono paragraphs inside the line: the first is the record id, and the trace answer
           // is the one that follows an opened disclosure.
           monoText: Array.from(element.querySelectorAll('p'))
@@ -746,6 +826,9 @@ async function observeKnowledge(
           recordId: harvested.monoText[0] ?? '',
           traceState: harvested.traceState,
           servedAsCanary: harvested.servedAsCanary,
+          ...(harvested.canaryOutcome === null
+            ? {}
+            : { canaryOutcome: harvested.canaryOutcome }),
           ...(whyText === undefined ? {} : { whyText }),
         })
       }
@@ -1470,5 +1553,174 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
         + `wire. The refusing issues are the value above.${context(where, read.recorded)}`,
       ).toBe('')
     }
+  })
+
+  it('(c4) the page and the door agree, world by world — Learned rows, the read stamp, and every served line\'s outcome word', () => {
+    // THE CR-01 LAW ON THE SHIPPED ARTIFACT, OVER EVERY WORLD THIS FILE BUILDS (REVIEW CR-01).
+    //
+    // 407-18 restored the agreement at the view, 407-19 made the op raise the flag by contract and
+    // 407-20 closed the loader↔wire seam — each proven green at its own layer. What no unit cell
+    // can see is whether the two halves of the tab and the door still tell ONE story after three
+    // packages moved underneath them. This cell asks the same page these fixtures already drove,
+    // in every world they reach, three questions:
+    //
+    //   (1) are the Learned rows painted exactly the door's `learned.changes` narrowed to the five
+    //       published kinds, in order, whenever the curation chain has SETTLED — and nothing at
+    //       all when it has not (D-12: an unsettled chain has not finished deciding)?
+    //   (2) is `data-learned-read="incomplete"` present exactly when `learned.scanIncomplete` is
+    //       `true` — absent, never empty, on a clean read?
+    //   (3) does every painted served line wear the word the projection implies, by
+    //       `canaryOutcomeWord`'s own four-arm order — and no attribute at all on a line that was
+    //       not served as a canary?
+    //
+    // THE CENSUS IS THE MEASUREMENT OF REACHABILITY BOUND (a). One row per world, printed once
+    // verbatim, recording `(scanIncomplete, changes.length, canary lines painted)`. The claim "no
+    // built-bundle world yields `{ scanIncomplete: true, changes: [non-empty] }`" is READ OFF that
+    // table rather than argued, and any future world that does produce the shape appears in the
+    // same table instead of going unnoticed. The cell does NOT assert the bound — it is a
+    // cardinality of the worlds that exist, not a law, and asserting it would red the day someone
+    // builds the world the op already sanctions.
+
+    const worlds = [
+      { world: 'scan', label: 'scan' as const, recorded: scan, projection: scan.projection, visit: scan.visit },
+      { world: 'served', label: 'served' as const, recorded: served, projection: served.projection, visit: served.visit },
+      {
+        world: 'after-run',
+        label: 'served' as const,
+        recorded: served,
+        projection: served.afterRun?.projection,
+        visit: served.afterRun?.visit,
+      },
+      {
+        world: 'malformed',
+        label: 'served' as const,
+        recorded: served,
+        projection: served.malformed?.projection,
+        visit: served.malformed?.visit,
+      },
+    ]
+
+    // FOLDED WITHOUT ASSERTING, so the census exists — and prints — even for the run that is about
+    // to red. `changes: -1` is the sentinel for a world whose read never answered `ready`; the
+    // assertion below names it, and no passing run can carry it.
+    const census = worlds.map((entry) => ({
+      world: entry.world,
+      scanIncomplete: (entry.projection?.kind === 'ready' ? entry.projection : undefined)
+        ?.learned.scanIncomplete === true,
+      changes: entry.projection?.kind === 'ready' ? entry.projection.learned.changes.length : -1,
+      canaryLines: (entry.visit?.servedLines ?? [])
+        .filter((line) => line.servedAsCanary === 'true').length,
+    }))
+
+    // PRINTED ONCE, AFTER THE FOLD AND BEFORE THE ASSERTIONS, so the vitest output carries the
+    // table verbatim whether the cell passes or fails.
+    //
+    // TO SEE IT ON A GREEN RUN, PASS `--silent=false`: this vitest defaults to `passed-only`, so a
+    // passing cell's stdout is dropped by the reporter while a failing one's is kept. The flag has
+    // to reach vitest directly — `pnpm exec` swallows it — e.g.
+    //   node ../../node_modules/vitest/vitest.mjs run --silent=false --reporter=verbose \
+    //     src/__tests__/conformance/knowledge-tab-dom.test.ts
+    // The census is embedded in every failure message below regardless, so a RED always carries it.
+    console.info('(c4) census', JSON.stringify(census))
+
+    const censusOf = (world: string): string =>
+      `\n(c4) world: ${world}; entry: ${JSON.stringify(census.find((row) => row.world === world))}`
+      + `\n(c4) census: ${JSON.stringify(census)}`
+
+    for (const entry of worlds) {
+      const seen = censusOf(entry.world) + context(entry.label, entry.recorded)
+      expect(
+        entry.projection?.kind,
+        `the ${entry.world} world recorded no \`ready\` projection, so there is no door answer to `
+        + `agree with.${seen}`,
+      ).toBe('ready')
+      const ready = entry.projection as Extract<RunKnowledgeProjection, { kind: 'ready' }>
+      expect(
+        entry.visit,
+        `the ${entry.world} world's run-detail page was never observed.${seen}`,
+      ).toBeDefined()
+      const painted = entry.visit as PageObservation
+
+      // ── AGREEMENT 1: rows painted ⇔ rows served, narrowed to the published kinds.
+      const settled = ready.curation.status === 'done'
+      expect(
+        painted.learnedRows,
+        `AGREEMENT 1 BROKE in the ${entry.world} world: the Learned rows the page painted are not `
+        + `the door's \`learned.changes\` narrowed to ${JSON.stringify(LEARNED_CHANGE_KINDS)}`
+        + `${settled ? '' : ' (an unsettled chain lists NOTHING — D-12)'}. This is the CR-01 class: `
+        + `a half that paints a different set from the one it was served.${seen}`,
+      ).toEqual(settled ? learnedRowsOf(ready) : [])
+
+      // ── AGREEMENT 2: the read stamp ⇔ the wire flag, absent rather than empty on a clean read.
+      expect(
+        painted.learnedRead,
+        `AGREEMENT 2 BROKE in the ${entry.world} world: \`data-learned-read\` and `
+        + `\`learned.scanIncomplete\` disagree. The stamp is a fact about the READ and must survive `
+        + `every arm (REVIEW WR-05).${seen}`,
+      ).toBe(ready.learned.scanIncomplete === true ? 'incomplete' : undefined)
+
+      // ── AGREEMENT 3: every painted served line wears the word the projection implies.
+      //
+      // THE EXPANDED ROW IS DERIVED THE WAY THE HARVEST DERIVES IT — the first step whose
+      // `channel1` is non-empty, else the first step — because `data-brief-lines` IS
+      // `channel1.length` and the Used half renders `projection.steps` in order. Matching by index
+      // rather than by id is what makes a MISSING line a red instead of a silently skipped one.
+      const expanded = ready.steps.find((step) => step.served.channel1.length > 0) ?? ready.steps[0]
+      const doorLines = expanded?.served.channel1 ?? []
+      expect(
+        painted.servedLines.map((line) => line.recordId),
+        `AGREEMENT 3 BROKE in the ${entry.world} world: the channel-1 lines the expanded row `
+        + `painted are not the lines the door served for that step.${seen}`,
+      ).toEqual(doorLines.map((line) => line.id))
+
+      painted.servedLines.forEach((line, index) => {
+        const doorLine = doorLines[index] as NonNullable<(typeof doorLines)[number]>
+        const attribution = ready.learned.canaryAttributions.find(
+          (row) =>
+            row.testIndex === (expanded as NonNullable<typeof expanded>).testIndex &&
+            row.stepIndex === (expanded as NonNullable<typeof expanded>).stepIndex &&
+            row.recordId === doorLine.id,
+        )
+        expect(
+          line.servedAsCanary,
+          `AGREEMENT 3 BROKE in the ${entry.world} world: line ${String(index)} `
+          + `(${doorLine.id}) was stamped \`data-served-as-canary="${line.servedAsCanary}"\` over a `
+          + `door line the reader marked \`${String(doorLine.servedAsCanary)}\`.${seen}`,
+        ).toBe(doorLine.servedAsCanary ? 'true' : 'false')
+        expect(
+          line.canaryOutcome,
+          `AGREEMENT 3 BROKE in the ${entry.world} world: line ${String(index)} `
+          + `(${doorLine.id}) wears \`${line.canaryOutcome ?? '(absent)'}\` where the projection — `
+          + `curation \`${ready.curation.status}\`, attribution `
+          + `${attribution === undefined ? '(none)' : attribution.outcome}, scanIncomplete `
+          + `${String(ready.learned.scanIncomplete === true)} — implies otherwise. A canary word is `
+          + `never blank and never a positive claim nobody was able to make (REVIEW WR-02).${seen}`,
+        ).toBe(
+          doorLine.servedAsCanary
+            ? expectedCanaryWord(
+                ready.curation.status,
+                attribution,
+                ready.learned.scanIncomplete === true,
+              )
+            : undefined,
+        )
+      })
+    }
+
+    // ── NON-VACUITY, on the Learned side. Three of the four worlds legitimately carry no rows, so
+    // a cell asserting only "page equals door" would pass on four empty agreements. The after-run
+    // world is the one that MUST be non-empty: (c1) publishes a record against the finished run
+    // precisely so the door serves an `added` change and the page paints it.
+    const afterRun = census.find((row) => row.world === 'after-run')
+    expect(
+      afterRun?.changes ?? 0,
+      `the after-run world served NO changes, so (c4)'s Learned agreement passed by emptiness `
+      + `alone.${censusOf('after-run')}${context('served', served)}`,
+    ).toBeGreaterThanOrEqual(1)
+    expect(
+      served.afterRun?.visit?.learnedRows.length ?? 0,
+      `the after-run world painted NO Learned rows, so (c4)'s Learned agreement passed by emptiness `
+      + `alone.${censusOf('after-run')}${context('served', served)}`,
+    ).toBeGreaterThanOrEqual(1)
   })
 })
