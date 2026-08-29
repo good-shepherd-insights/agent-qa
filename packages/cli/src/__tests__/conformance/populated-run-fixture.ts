@@ -210,6 +210,39 @@ export const POPULATED_FAILURE_STEP_TEXT =
   `Acknowledge the notice using {{secret:${POPULATED_SECRET_NAME}}}.`
 
 /**
+ * The part of {@link POPULATED_FAILURE_STEP_TEXT} that survives SECRET REDACTION (406-10).
+ *
+ * WHY A PREFIX AND NOT THE WHOLE SENTENCE. The runner resolves `{{secret:NAME}}` and its
+ * `SecretRedactor` rewrites the resolved value before anything is recorded or prompted, so the step
+ * a planner is shown reads `Acknowledge the notice using [secret:POPULATED_STEP_SECRET].` — a
+ * different string from the one this module declares. A stub arm keyed on the declared sentence
+ * would never match. This prefix is the largest leading run that both spellings share.
+ *
+ * IT IS ALSO THE ONE THING THE FIXTURE'S TWO STEPS DO NOT SHARE. The passing recipe's default step
+ * opens `Click the ${POPULATED_BUTTON_LABEL} button on the notice page.`; nothing in it contains
+ * these four words, which is what lets one stub answer a two-member run with one failing member and
+ * one passing one. See {@link StubModelServerOptions.failOnlyStepText}.
+ */
+export const POPULATED_FAILURE_STEP_MARKER = 'Acknowledge the notice using'
+
+/**
+ * The second, PASSING step a two-member populated run declares (406-10).
+ *
+ * A SECOND MEMBER EXISTS FOR ONE REASON, AND IT IS A RENDER SITE. `showMemberChrome` is
+ * `members.length > 1`, so a single-member run paints NO `data-member` wrapper and NO
+ * `data-member-outcome` badge at all — the per-member outcome the milestone's second success
+ * criterion is about is simply not on the page. A cell that asserted "every member wears its
+ * outcome" against one member would be asserting over an empty set and passing for nothing.
+ *
+ * IT DELIBERATELY DOES NOT CARRY {@link POPULATED_FAILURE_STEP_MARKER}, so the stub's
+ * `failOnlyStepText` arm answers this turn `stepComplete` while the failing member's turn is
+ * declared impossible. One run, two outcomes, one stub — which is also the contrast the failure
+ * view is for: a red member with a sentence beside a green member with nothing to explain.
+ */
+export const POPULATED_PASSING_STEP_TEXT =
+  `Click the ${POPULATED_BUTTON_LABEL} button and confirm the notice state changed.`
+
+/**
  * How long ONE populated run has to reach `runFinished` on the local run-stream door.
  *
  * Longer than the drainable fixture's 90s because this run actually launches Chromium, loads a
@@ -662,6 +695,19 @@ export interface StubModelServerOptions {
    */
   readonly plannerOutcome?: 'stepComplete' | 'stepFailed'
   /**
+   * Narrow `plannerOutcome: 'stepFailed'` to the planning turns of ONE step (406-10).
+   *
+   * ADDITIVE, WITH TODAY'S BEHAVIOUR AS THE DEFAULT. Unset — every 405-14 caller — the failing arm
+   * answers every planning turn exactly as it did, so a one-member failing run is byte-identical.
+   * Set, a turn whose collected prompt does NOT carry this text is answered `stepComplete`, which
+   * is how a TWO-member run gets one failed member and one passed one out of a single stub.
+   *
+   * THE DISPATCH IS STILL ON THE REQUEST BODY, never on a call counter — this module's own law. The
+   * text a caller passes must be one that survives the runner's secret redaction, which is what
+   * {@link POPULATED_FAILURE_STEP_MARKER} is for.
+   */
+  readonly failOnlyStepText?: string
+  /**
    * What the analyze-run AUTHOR is answered with (406-07 · D-14).
    *
    * ADDITIVE, WITH TODAY'S BEHAVIOUR AS THE DEFAULT. `'floor'` — the default, and what every
@@ -679,6 +725,7 @@ export async function startStubModelServer(
 ): Promise<StubModelServer> {
   const plannerOutcome = options.plannerOutcome ?? 'stepComplete'
   const analysisOutcome = options.analysisOutcome ?? 'floor'
+  const { failOnlyStepText } = options
   const requests: RecordedStubRequest[] = []
   let citedRoot: string | undefined
 
@@ -744,7 +791,10 @@ export async function startStubModelServer(
         const targeting = ref === undefined
           ? { target: { role: 'button', name: POPULATED_BUTTON_LABEL } }
           : { ref }
+        // The step-scoped narrowing (406-10), spelled where the outcome is decided rather than at
+        // the option, so a turn the caller did not name is answered by the ORDINARY arm.
         const failing = plannerOutcome === 'stepFailed'
+          && (failOnlyStepText === undefined || prompt.includes(failOnlyStepText))
         const args = {
           ...targeting,
           elementDescription: POPULATED_BUTTON_LABEL,
@@ -854,7 +904,12 @@ export interface PopulatedRunProject {
   readonly suitePath: string
   readonly testPath: string
   readonly testId: string
+  /** The second member's id — present exactly when `secondStepText` was asked for (406-10). */
+  readonly secondTestId?: string
 }
+
+/** The second test file a two-member populated run declares, relative to the project root. */
+export const POPULATED_SECOND_TEST_PATH = 'tests/populated-second.test.yaml'
 
 /**
  * A project whose dashboard-triggered SUITE run executes one live planning turn against a page.
@@ -887,7 +942,21 @@ export function populatedRunFixtureProject(
    * The step sentence is a payload, not a fixed point, and a caller who needs a shorter one is
    * asking the same door to open on a different word — not a different door.
    */
-  options: { readonly stepText?: string } = {},
+  options: {
+    readonly stepText?: string
+    /**
+     * A SECOND test's step line, which makes this run a two-member one (406-10).
+     *
+     * ADDITIVE AND ABSENT BY DEFAULT, so every 405 caller gets the one-member suite it had. It is
+     * here rather than in a sixth recipe on this function's own law — the recipe's defining values
+     * are its two ADDRESSES, and a second step sentence is a payload, not a fixed point.
+     *
+     * WHAT IT BUYS, AND IT IS NOT SYMMETRY. `showMemberChrome` is `members.length > 1`: below that
+     * threshold the page paints no `data-member` wrapper and no `data-member-outcome` badge, so the
+     * per-member outcome is not on the page to measure. See {@link POPULATED_PASSING_STEP_TEXT}.
+     */
+    readonly secondStepText?: string
+  } = {},
 ): PopulatedRunProject {
   const stepText = options.stepText ?? (
     `Click the ${POPULATED_BUTTON_LABEL} button on the notice page. The operator credential `
@@ -965,6 +1034,22 @@ export function populatedRunFixtureProject(
     'utf8',
   )
 
+  // THE SECOND MEMBER, WHEN ONE WAS ASKED FOR (406-10). It is a second FILE rather than a second
+  // step on the first test: members are tests, and two steps under one test would still be one
+  // member — which is the exact thing this option exists to stop being true.
+  const secondTestId = options.secondStepText === undefined ? undefined : generateTestId()
+  if (options.secondStepText !== undefined && secondTestId !== undefined) {
+    writeFileSync(
+      join(root, POPULATED_SECOND_TEST_PATH),
+      'name: The populated run conformance second probe\n'
+      + `test-id: ${secondTestId}\n`
+      + `target: ${POPULATED_TARGET_NAME}\n`
+      + 'steps:\n'
+      + `  - ${options.secondStepText}\n`,
+      'utf8',
+    )
+  }
+
   mkdirSync(join(root, 'suites'), { recursive: true })
   writeFileSync(
     join(root, POPULATED_SUITE_PATH),
@@ -972,7 +1057,10 @@ export function populatedRunFixtureProject(
     + `suite-id: ${generateSuiteId()}\n`
     + `target: ${POPULATED_TARGET_NAME}\n`
     + 'tests:\n'
-    + `  - test: ${POPULATED_TEST_PATH}\n    id: ${testId}\n`,
+    + `  - test: ${POPULATED_TEST_PATH}\n    id: ${testId}\n`
+    + (secondTestId === undefined
+      ? ''
+      : `  - test: ${POPULATED_SECOND_TEST_PATH}\n    id: ${secondTestId}\n`),
     'utf8',
   )
 
@@ -983,6 +1071,7 @@ export function populatedRunFixtureProject(
     suitePath: POPULATED_SUITE_PATH,
     testPath: POPULATED_TEST_PATH,
     testId,
+    ...(secondTestId === undefined ? {} : { secondTestId }),
   }
 }
 
