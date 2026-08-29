@@ -19,13 +19,14 @@
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { MemoryRouter } from "react-router"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { KnowledgeLearned } from "@/components/run-detail/knowledge-learned"
 import { routes } from "@/lib/routes"
 import {
   CHANGED_NOTHING_TEXT,
   CHANGES_NOT_AVAILABLE_TEXT,
+  CHANGES_UNREADABLE_TEXT,
   COUNTS_NOT_RECORDED_SENTENCE,
   CURATION_FAILED_TEXT,
   DELTAS_PENDING_TEXT,
@@ -73,7 +74,18 @@ function rowsOf(host: HTMLElement): HTMLElement[] {
 }
 
 function row(overrides: Partial<LearnedRowView> = {}): LearnedRowView {
-  return { kind: "confirmed", recordId: "fact-cart-page-4ccac", ...overrides }
+  const base: LearnedRowView = {
+    key: "fact-cart-page-4ccac:confirmed:7",
+    kind: "confirmed",
+    recordId: "fact-cart-page-4ccac",
+  }
+  // The default key tracks the default kind and id, so a cell that varies either still gets the
+  // composite `learnedRow` would have produced rather than a stale literal (WR-02).
+  const merged = { ...base, ...overrides }
+  return {
+    ...merged,
+    key: overrides.key ?? `${merged.recordId}:${merged.kind}:7`,
+  }
 }
 
 describe("an unsettled curation says so in words, never in a spinner (D-12)", () => {
@@ -241,6 +253,109 @@ describe("the record list is one addressable row per change (D-10)", () => {
     const host = render(populated)
 
     expect(host.querySelector("[data-learned-sentence]")).toBeNull()
+  })
+})
+
+describe("a curated NEW fact is painted, not denied (CR-04, R-407-15-01)", () => {
+  const everyKind = ["added", "confirmed", "superseded", "deprecated", "promoted"] as const
+
+  it("renders one li per kind for all FIVE Learned kinds, in the view's order", () => {
+    const host = render({
+      state: "done",
+      countLine: "curated 3 facts, deprecated 1",
+      rows: everyKind.map((kind, index) => row({ kind, recordId: `rec_${String(index)}` })),
+    })
+
+    expect(rowsOf(host).map((el) => el.getAttribute("data-record-change"))).toEqual([...everyKind])
+  })
+
+  it("gives `added` the emerald a promotion wears — the SPEC allows no new colour for it", () => {
+    const host = render({
+      state: "done",
+      countLine: "curated 1 fact, deprecated 0",
+      rows: [row({ kind: "added", recordId: "fact-el-textbox-password-9a05ce" })],
+    })
+
+    const badge = rowsOf(host)[0]?.querySelector("span")
+    expect(badge?.className).toContain("text-emerald-500")
+  })
+
+  /**
+   * THE VERIFIER'S REPRODUCTION, AT THE COMPONENT. Gap 2's projection painted a count line beside
+   * a sentence denying the record it had been handed; the fixed half paints the row instead.
+   */
+  it("paints the added record's row and no sentence at all", () => {
+    const host = render({
+      state: "done",
+      countLine: "curated 1 fact, deprecated 0",
+      rows: [row({ kind: "added", recordId: "fact-el-textbox-password-9a05ce" })],
+    })
+
+    expect(rowsOf(host).length).toBe(1)
+    expect(rowsOf(host)[0]?.getAttribute("data-record-id")).toBe("fact-el-textbox-password-9a05ce")
+    expect(host.querySelector("[data-learned-sentence]")).toBeNull()
+  })
+
+  /**
+   * WR-02 AT THE MOUNT. Two changes on one bundle share a `recordId`, so keying by it collided and
+   * React warned; a cell that only counted `li` would have passed on the first render and lost a
+   * row on the re-render that fires as curation settles. This one watches the console too.
+   */
+  it("renders BOTH changes of one record, with no duplicate-key warning", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    try {
+      const host = render({
+        state: "done",
+        countLine: "curated 1 fact, deprecated 0",
+        rows: [
+          row({ key: "r:confirmed:12", kind: "confirmed", recordId: "r" }),
+          row({ key: "r:superseded:13", kind: "superseded", recordId: "r" }),
+        ],
+      })
+
+      expect(rowsOf(host).length).toBe(2)
+      expect(rowsOf(host).map((el) => el.getAttribute("data-record-change")))
+        .toEqual(["confirmed", "superseded"])
+      const warned = spy.mock.calls.some((call) => String(call[0]).includes("same key"))
+      expect(warned).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe("an unreadable store is stamped on the root, never inferred from an empty list (407-14)", () => {
+  const unreadable: LearnedView = {
+    state: "done",
+    countLine: "curated 3 facts, deprecated 1",
+    sentence: CHANGES_UNREADABLE_TEXT,
+    rows: [],
+    scanIncomplete: true,
+  }
+
+  it("carries data-learned-read=incomplete, the counts, the sentence and no rows", () => {
+    const host = render(unreadable)
+
+    expect(host.querySelector("[data-learned-state]")?.getAttribute("data-learned-read"))
+      .toBe("incomplete")
+    expect(host.querySelector("[data-learned-count-line]")?.textContent)
+      .toBe("curated 3 facts, deprecated 1")
+    expect(host.querySelector("[data-learned-sentence]")?.textContent)
+      .toBe(CHANGES_UNREADABLE_TEXT)
+    expect(rowsOf(host).length).toBe(0)
+  })
+
+  it("omits the attribute ENTIRELY on a clean read — absent, never an empty string", () => {
+    const host = render({
+      state: "done",
+      countLine: "curated 3 facts, deprecated 1",
+      sentence: CHANGES_NOT_AVAILABLE_TEXT,
+      rows: [],
+    })
+
+    const section = host.querySelector("[data-learned-state]")
+    expect(section?.hasAttribute("data-learned-read")).toBe(false)
+    expect(stateOf(host)).toBe("done")
   })
 })
 
