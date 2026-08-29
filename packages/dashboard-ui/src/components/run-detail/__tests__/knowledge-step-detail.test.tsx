@@ -30,6 +30,7 @@ import { KnowledgeStepDetail } from "@/components/run-detail/knowledge-step-deta
 import { KnowledgeBriefLine } from "@/components/run-detail/knowledge-brief-line"
 import {
   ATTRIBUTION_PENDING_TEXT,
+  ATTRIBUTION_UNKNOWN_TEXT,
   CANARY_BADGE_TEXT,
   CHANNEL_EYEBROWS,
   NOT_ATTRIBUTED_TEXT,
@@ -175,6 +176,27 @@ describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)"
 
     expect(view.querySelector("li")?.getAttribute("data-canary-outcome")).toBe("not-attributed")
     expect(view.textContent).toContain(NOT_ATTRIBUTED_TEXT)
+  })
+
+  /**
+   * REVIEW WR-02 AT THE MOUNT. `not attributed` claims the store answered; on a partial read
+   * nobody asked it. The look is the SAME muted outline — the degradation is explained by the
+   * Learned half's note, not by a second warning tint over here.
+   */
+  it("says ATTRIBUTION UNKNOWN when the read that would have answered was partial", () => {
+    const view = mount(
+      <KnowledgeBriefLine line={line({ servedAsCanary: true, canaryOutcome: "unknown" })} />,
+    )
+
+    expect(view.querySelector("li")?.getAttribute("data-canary-outcome")).toBe("unknown")
+
+    const badges = Array.from(view.querySelectorAll('[data-slot="badge"]'))
+    expect(badges.map((b) => b.textContent)).toEqual([CANARY_BADGE_TEXT, ATTRIBUTION_UNKNOWN_TEXT])
+
+    const outcome = badges[1]?.className ?? ""
+    expect(outcome).toContain("text-muted-foreground")
+    expect(outcome).not.toContain("text-amber-500")
+    expect(outcome).not.toContain("text-emerald-500")
   })
 
   it("leaves a non-canary line with no outcome attribute and no canary badge at all", () => {

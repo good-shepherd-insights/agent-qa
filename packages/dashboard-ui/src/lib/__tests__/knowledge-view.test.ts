@@ -31,6 +31,7 @@ import { curationFactsText } from '@/lib/post-processing-view'
 import { routes } from '@/lib/routes'
 import {
   ATTRIBUTION_PENDING_TEXT,
+  ATTRIBUTION_UNKNOWN_TEXT,
   BROKE_CAUSE_LABELS,
   CANARY_BADGE_TEXT,
   CHANGED_NOTHING_TEXT,
@@ -537,6 +538,70 @@ describe('a canary line is never blank — it says pending, not-attributed, or t
     expect(canaryOutcomeWord('failed', attribution())).toBe('not-attributed')
     expect(canaryOutcomeWord('failed', undefined)).toBe('not-attributed')
   })
+
+  /**
+   * REVIEW WR-02 — `not attributed` IS A POSITIVE CLAIM, AND A PARTIAL READ CANNOT MAKE IT.
+   *
+   * When the store scan is incomplete the op ships `canaryAttributions: []`, so every served
+   * canary line read `not attributed` — the store was consulted and said no — while the very same
+   * projection was telling the Learned half that nobody could look. `unknown` is the absence of an
+   * answer, which is what a partial read actually produced.
+   */
+  it('says UNKNOWN, not NOT-ATTRIBUTED, when the read that would have answered was partial', () => {
+    expect(canaryOutcomeWord('done', undefined, true)).toBe('unknown')
+    // The default keeps every existing caller green, and says the same thing explicitly.
+    expect(canaryOutcomeWord('done', undefined)).toBe('not-attributed')
+    expect(canaryOutcomeWord('done', undefined, false)).toBe('not-attributed')
+  })
+
+  it('lets a row that WAS read win over the flag — rows beat degradation here as on the other half', () => {
+    for (const outcome of ['confirmed', 'contradicted', 'helpful', 'harmful'] as const) {
+      expect(canaryOutcomeWord('done', attribution({ outcome }), true)).toBe(outcome)
+    }
+  })
+
+  it('reads the UNSETTLED chain first even on a partial read — pending is still the answer', () => {
+    expect(canaryOutcomeWord('pending', undefined, true)).toBe('pending')
+    expect(canaryOutcomeWord('running', attribution(), true)).toBe('pending')
+  })
+
+  it('keeps NOT-ATTRIBUTED for a FAILED chain — a partial read does not turn a failure into a question', () => {
+    expect(canaryOutcomeWord('failed', undefined, true)).toBe('not-attributed')
+    expect(canaryOutcomeWord('failed', attribution(), true)).toBe('not-attributed')
+  })
+
+  it('draws the line between the two words in the published copy, not in a component', () => {
+    expect(ATTRIBUTION_UNKNOWN_TEXT).toBe('attribution unknown')
+    expect(ATTRIBUTION_UNKNOWN_TEXT).not.toBe(NOT_ATTRIBUTED_TEXT)
+  })
+
+  /**
+   * THE FOURTH SETTLED ARM IS REACHED FROM EXACTLY ONE COMBINATION, and this walks all of them.
+   *
+   * A cell per arm proves each arm answers; only the sweep proves no OTHER combination leaks into
+   * `unknown` — which is the way a widened vocabulary usually goes wrong.
+   */
+  it('reaches `unknown` from exactly ONE combination — settled, no row, partial read', () => {
+    const words = new Set<string>()
+
+    for (const status of ['pending', 'running', 'failed', 'done'] as const) {
+      for (const row of [undefined, attribution()]) {
+        for (const partial of [false, true]) {
+          const word = canaryOutcomeWord(status, row, partial)
+          if (word === 'unknown') {
+            expect(status).toBe('done')
+            expect(row).toBeUndefined()
+            expect(partial).toBe(true)
+          }
+          expect(word).not.toBe('')
+          words.add(word)
+        }
+      }
+    }
+
+    expect(words.has('unknown')).toBe(true)
+    expect([...words].sort()).toEqual(['confirmed', 'not-attributed', 'pending', 'unknown'])
+  })
 })
 
 describe('a replay states its guard outcome and a hint states its demotion (D-07)', () => {
@@ -690,6 +755,27 @@ describe('the projection joins the trace, the ledger, the outcome and the plan s
     expect(detailOf(view, 0).channel1[0].canaryOutcome).toBe('helpful')
     // The SAME record id on a NEIGHBOURING member test is a different served line.
     expect(detailOf(view, 1).channel1[0].canaryOutcome).toBe('not-attributed')
+  })
+
+  /**
+   * REVIEW WR-02 THROUGH THE WHOLE FOLD. `stepRow`/`stepDetail` are never handed the wire flag,
+   * so the Used half denied outcomes the store was never asked for. One member reaches both
+   * halves, so both halves say the same thing about the same read.
+   */
+  it('says UNKNOWN on a served canary line whose store read was partial, not NOT-ATTRIBUTED', () => {
+    const partial = {
+      steps: [step({ served: { channel1: [briefLine(true, 'rec_a')], channel2: [], channel3: [] } })],
+      curation: { status: 'done' as const },
+      learned: { changes: [], canaryAttributions: [], scanIncomplete: true as const },
+    }
+
+    expect(detailOf(projectKnowledgeView(ready(partial))).channel1[0].canaryOutcome).toBe('unknown')
+
+    // The SAME projection with a clean read keeps the positive claim it earned.
+    expect(detailOf(projectKnowledgeView(ready({
+      ...partial,
+      learned: { changes: [], canaryAttributions: [] },
+    }))).channel1[0].canaryOutcome).toBe('not-attributed')
   })
 
   it('leaves a non-canary line with NO outcome key at all — never a word it did not earn', () => {

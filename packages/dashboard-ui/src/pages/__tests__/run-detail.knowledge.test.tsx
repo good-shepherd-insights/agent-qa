@@ -28,6 +28,7 @@ import type { RunKnowledgeProjection } from "@vostride/agent-qa-schema"
 
 import RunDetailPage from "@/pages/run-detail"
 import {
+  ATTRIBUTION_UNKNOWN_TEXT,
   CHANNEL_EYEBROWS,
   NO_STORE_HEADING,
   READ_FAILED_HEADING,
@@ -449,6 +450,26 @@ describe("a partial store read paints the rows it was handed AND says the read w
 
     expect(view.querySelector('li[data-served-channel="1"]')?.getAttribute("data-canary-outcome"))
       .toBe("confirmed")
+  })
+
+  // REVIEW WR-02 AT THE PAGE. The op ships `canaryAttributions: []` whenever the attribution scan
+  // failed, so a served canary line under a settled chain has no row to join — and the word it
+  // wears must be a question, not the positive claim that the store said no.
+  it("says the attribution is UNKNOWN for a served canary the partial read never answered", async () => {
+    fetchRunKnowledgeMock.mockResolvedValue({
+      ...PARTIAL,
+      learned: { ...PARTIAL.learned, canaryAttributions: [] },
+    })
+
+    const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
+
+    const trigger = view.querySelector('[data-step-index] [data-slot="collapsible-trigger"]')
+    await act(async () => { (trigger as HTMLElement).click() })
+
+    expect(view.querySelector('li[data-served-channel="1"]')?.getAttribute("data-canary-outcome")).toBe("unknown")
+    expect(view.textContent).toContain(ATTRIBUTION_UNKNOWN_TEXT)
+    expect(view.querySelector("[data-learned-state]")?.getAttribute("data-learned-read"))
+      .toBe("incomplete")
   })
 })
 
