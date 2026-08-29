@@ -821,6 +821,13 @@ export type RunKnowledgeTrace = z.infer<typeof RunKnowledgeTraceSchema>
  * lesson is that a demoted replay recommendation and an ordinary served hint are byte-identical
  * unless something keeps them apart. The guard fold travels intact so the panel can say
  * "replayed 5/5" or "broke at step 3: verifier rejection" without a second read.
+ *
+ * MEMBER FOR MEMBER IS A LIST, NOT AN ADJECTIVE (407-12, CR-01). The replay arm names
+ * `procedureId`, `guard` AND `flow`; the hint arm names `procedureId` and `demotion`. The claim
+ * was made in prose here while `flow` was missing and the arm was `.strict()`, so every run that
+ * really replayed a procedure — the only runs the "replayed 5/5" sentence exists for — failed
+ * `spec.output.parse` with `unrecognized_keys` and the Knowledge tab rendered a read failure.
+ * A member added to `StepPlanSource` belongs in this list on the same commit.
  */
 export const RunKnowledgePlanSourceSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -847,6 +854,22 @@ export const RunKnowledgePlanSourceSchema = z.discriminatedUnion('kind', [
         procedureStepIndex: z.number().int().nonnegative(),
       }).strict().optional(),
     }).strict(),
+    /**
+     * The cross-flow position of this test step (407-12, CR-01), mirroring `StepPlanSource.flow`:
+     * `cursor` = the committed body-step index this test step attempted, `length` = the committed
+     * body's step count. The runner writes it UNCONDITIONALLY on every replay plan source it
+     * records (`recordProcedureReplaySource` returns early when there is no cursor, and otherwise
+     * always emits the member), so on disk it is present on every replay row a shipped build
+     * wrote. Optional here only because pre-F-381-51-1 handoffs predate it.
+     *
+     * It rides BESIDE the guard fold and never inside it: the fold is per-step
+     * (`checksPassed`/`total` over this step's attempted actions), and folding a cross-flow
+     * cursor into it would make "this step's replayed actions all passed" mean two things.
+     */
+    flow: z.object({
+      cursor: z.number().int().nonnegative(),
+      length: z.number().int().nonnegative(),
+    }).strict().optional(),
   }).strict(),
   z.object({
     kind: z.literal('procedure-hint'),

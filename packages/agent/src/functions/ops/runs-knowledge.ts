@@ -44,11 +44,13 @@ import type {
   RecordChange,
   RecordedRetrievalRung,
   RunKnowledgeCanaryAttribution,
+  RunKnowledgePlanSource,
   RunKnowledgeProjection,
   RunKnowledgeStep,
   RunKnowledgeTrace,
   RunsKnowledgeInput,
   StepEvidence,
+  StepPlanSource,
 } from '@vostride/agent-qa-schema'
 
 import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
@@ -67,19 +69,11 @@ import { projectPostProcessingChips, runsPostProcessingSpec } from './runs-post-
 export const RUNS_KNOWLEDGE_FUNCTION_ID = 'runs.knowledge'
 
 /**
- * The recorded rung, read forward-compatibly (407-03 lands the evidence field).
- *
- * `StepEvidence.retrievalRung` is an ADDITIVE optional field 407-03 adds beside `retrievalTrace`;
- * this op ships first because D-05's whole argument is that the substrate is proven before the
- * surfaces are painted. Reading it through a narrow structural view rather than off the interface
- * keeps this file compiling across that seam in either order, and the value is VALIDATED rather
- * than cast: a handoff carrying a rung shape this build does not recognise projects no rung at
- * all, which is the same honest absence a pre-407 run gives.
+ * The recorded rung, VALIDATED and never cast, because the handoff is bytes another build wrote.
  */
 function recordedRungOf(evidence: StepEvidence): RecordedRetrievalRung | undefined {
-  const candidate = (evidence as StepEvidence & { retrievalRung?: unknown }).retrievalRung
-  if (candidate === undefined) return undefined
-  const parsed = RecordedRetrievalRungSchema.safeParse(candidate)
+  if (evidence.retrievalRung === undefined) return undefined
+  const parsed = RecordedRetrievalRungSchema.safeParse(evidence.retrievalRung)
   return parsed.success ? parsed.data : undefined
 }
 
@@ -127,6 +121,48 @@ function cautionLine(line: CautionLine): RunKnowledgeStep['served']['channel3'][
   return { id: String(line.id), summary: line.summary }
 }
 
+/**
+ * The plan source, PICKED member by member for the same reason the channels are (CR-01).
+ *
+ * This was the one producer value the op spread verbatim, and the wire arm it spread onto is
+ * `.strict()` — so the day `StepPlanSource` grew `flow`, every run that had really replayed a
+ * procedure started failing `spec.output.parse` with `unrecognized_keys` and the Knowledge tab
+ * rendered a read failure for exactly the runs D-07 exists to explain. A field-pick makes that
+ * class of break impossible rather than pending: an undeclared member on disk is DROPPED here,
+ * and a member this build wants on the wire has to be named in both places on the same commit.
+ *
+ * Every optional is spread-when-defined, never zero-filled: an absent `miss` is an absent key.
+ */
+function planSourceOf(source: StepPlanSource): RunKnowledgePlanSource {
+  if (source.kind === 'procedure-hint') {
+    return {
+      kind: 'procedure-hint',
+      procedureId: String(source.procedureId),
+      ...(source.demotion === undefined ? {} : { demotion: source.demotion }),
+    }
+  }
+  const { checksPassed, total, miss, executionFailure, verifierRejection } = source.guard
+  const { flow } = source
+  return {
+    kind: 'procedure-replay',
+    procedureId: String(source.procedureId),
+    guard: {
+      checksPassed,
+      total,
+      ...(miss === undefined
+        ? {}
+        : { miss: { procedureStepIndex: miss.procedureStepIndex, reason: miss.reason } }),
+      ...(executionFailure === undefined
+        ? {}
+        : { executionFailure: { procedureStepIndex: executionFailure.procedureStepIndex } }),
+      ...(verifierRejection === undefined
+        ? {}
+        : { verifierRejection: { procedureStepIndex: verifierRejection.procedureStepIndex } }),
+    },
+    ...(flow === undefined ? {} : { flow: { cursor: flow.cursor, length: flow.length } }),
+  }
+}
+
 function projectStep(
   testId: string,
   testIndex: number,
@@ -144,10 +180,12 @@ function projectStep(
       channel3: evidence.servedBrief.channel3.map(cautionLine),
     },
     trace: traceArmOf(evidence),
-    // Spread-away absence, never a `null` and never a zero-fill: a step that replayed no
-    // procedure carries NO `planSource` key, which is a different byte from one that carries an
-    // empty source (the layer's own idiom).
-    ...(evidence.planSource === undefined ? {} : { planSource: evidence.planSource }),
+    // PICKED, not spread (CR-01) — see `planSourceOf`. Spread-away absence, never a `null` and
+    // never a zero-fill: a step that replayed no procedure carries NO `planSource` key, which is
+    // a different byte from one that carries an empty source (the layer's own idiom).
+    ...(evidence.planSource === undefined
+      ? {}
+      : { planSource: planSourceOf(evidence.planSource) }),
     ...(rung === undefined ? {} : { retrievalRung: rung }),
   }
 }
@@ -274,16 +312,20 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
     const attributions = attribute === undefined || tuples.length === 0
       ? []
       : await attribute.call(deps.knowledge, { runId, tuples })
-    const canaryAttributions: RunKnowledgeCanaryAttribution[] = attributions
-      .filter((row) => row.outcome !== undefined)
-      .map((row) => ({
-        testIndex: row.testIndex,
-        stepIndex: row.stepIndex,
-        recordId: row.candidateId,
-        observationId: row.observationId,
-        // Narrowed by the filter above; the assertion states what the filter proved.
-        outcome: row.outcome as NonNullable<typeof row.outcome>,
-      }))
+    // Rows appear ONLY for a tuple with a surviving attributed outcome; one still pending is
+    // absent here and the panel reads "attribution pending" from the curation word. `flatMap`
+    // rather than filter-then-map so the narrowing is PROVED by the control flow instead of
+    // re-stated in an assertion the compiler cannot check against a later shape change.
+    const canaryAttributions: RunKnowledgeCanaryAttribution[] = attributions.flatMap((row) =>
+      row.outcome === undefined
+        ? []
+        : [{
+            testIndex: row.testIndex,
+            stepIndex: row.stepIndex,
+            recordId: row.candidateId,
+            observationId: row.observationId,
+            outcome: row.outcome,
+          }])
 
     // ATTRIBUTION, NOT A WINDOW (D-10). The since-ordinal only bounds how much the sibling op
     // reads; what makes a row THIS run's is the explicit link — the bundle provenance run id
