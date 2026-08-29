@@ -6,6 +6,7 @@ import {
   asRef,
   computeBriefDigest,
   guardLosslessServedBrief,
+  NO_KNOWLEDGE_READER_TRUNCATION,
   sha256hex,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -13,6 +14,7 @@ import type {
   ArtifactRef,
   Decision,
   MaskingContext,
+  RecordedRetrievalRung,
   ScopeKey,
   ServedAdmissionEvent,
   ServedPromptTurn,
@@ -168,6 +170,43 @@ describe('makeEmptyServedBrief', () => {
     expect(brief.budget).toBe(0)
     expect(brief.truncation).toContain('no brief served')
     expect(brief.briefDigest).toBe(computeBriefDigest(brief))
+  })
+
+  // 407-07 D-16: the "no reader bound" marker is ONE constant with two importers. The
+  // schema owns the bytes because `recordedRungOf`/`runs.knowledge` reads the same marker
+  // to tell "no knowledge store configured" apart from "a rung was never recorded"; a
+  // second literal here could drift and silently break that distinction.
+  it('marks the empty brief with the schema-owned NO_KNOWLEDGE_READER_TRUNCATION constant', () => {
+    const brief = makeEmptyServedBrief({ tier: 'test', key: 'checkout' }, 42)
+    expect(brief.truncation).toBe(NO_KNOWLEDGE_READER_TRUNCATION)
+  })
+})
+
+// 407-07 · D-13: the rung the HOST was on when this run was served, stamped beside
+// `retrievalTrace` and never inside `servedBrief` (the digest-stability argument 407-03
+// records). The recorder does not resolve it — it is handed one, once per run.
+describe('EvidenceRecorder retrievalRung stamping (407 D-13)', () => {
+  const rung: RecordedRetrievalRung = {
+    schemaVersion: 1,
+    rung: 'static-floor',
+    reason: 'native-runtime-unavailable',
+  }
+
+  it('stamps the handed rung onto finalized evidence, verbatim', () => {
+    const recorder = new EvidenceRecorder({ retrievalRung: rung })
+    const evidence = recorder.finalize(passVerdict, 0, 'log in')
+    expect(evidence.retrievalRung).toEqual(rung)
+  })
+
+  it('omits the key entirely when no rung was handed — never a zero-fill', () => {
+    const evidence = new EvidenceRecorder().finalize(passVerdict, 0, 'log in')
+    expect('retrievalRung' in evidence).toBe(false)
+  })
+
+  it('leaves servedBrief bytes untouched — the rung never enters the brief digest', () => {
+    const withRung = new EvidenceRecorder({ retrievalRung: rung }).finalize(passVerdict, 0, 'log in')
+    const without = new EvidenceRecorder().finalize(passVerdict, 0, 'log in')
+    expect(withRung.servedBrief.briefDigest).toBe(without.servedBrief.briefDigest)
   })
 })
 

@@ -3,6 +3,8 @@
 // spec-locked boundaries (assert, verifier, self-heal) by reuse of an observation the
 // loop already takes. Plus the redact-before-record security lock and the cache fold.
 import { describe, it, expect } from 'vitest'
+import type { BriefBlock, RecordedRetrievalRung } from '@vostride/agent-qa-schema'
+import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import type { LoopPorts } from '../ports.js'
 import type { ActionPlanCache, CacheablePlannedAction, CachedPlanValue } from '../../cache/port.js'
 import type { Action } from '../../platform.js'
@@ -11,6 +13,14 @@ import { executeStep } from '../index.js'
 import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { noCautions, servedBrief } from './fixtures/served-trace.js'
+
+const EMPTY_BRIEF: BriefBlock = {
+  tiers: { L0: '', L1: '', L2: '' },
+  lines: [],
+  truncation: '',
+  admissions: [],
+}
 
 function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'planner'>): LoopPorts {
   return overrides
@@ -131,5 +141,70 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     const result = await executeStep('Click Log in', ports({ adapter: makeAdapter(), planner: plannerSpy, cache }), makeStepContext())
     expect(result.status).toBe('passed')
     expect(result.evidence!.cacheStatus).toBe('hit')
+  })
+})
+
+// 407-07 · D-13/D-16: the loop is HANDED a rung (resolved once at the composition root) and
+// stamps it into every step's evidence. Three laws are pinned here because each one is a way
+// the banner could lie: a rung stamped on a run that served no brief (D-16), a rung lost
+// because a host probe was slow, and a step FAILED because asking about the host threw.
+describe('loop retrieval rung threading (407 D-13/D-16)', () => {
+  const rung: RecordedRetrievalRung = {
+    schemaVersion: 1,
+    rung: 'lexical-only',
+    reason: 'floor-disabled',
+  }
+
+  function knowledgeReader(): KnowledgeHintReader {
+    return {
+      getRunBrief: () => servedBrief(EMPTY_BRIEF),
+      search: () => [],
+      read: () => undefined,
+      getCautions: () => noCautions(),
+      getProcedure: () => undefined,
+      emitCanaryOutcome: () => {},
+    }
+  }
+
+  it('awaits the handed promise and stamps the rung when a reader served the step', async () => {
+    const result = await executeStep(
+      'Click Log in',
+      ports({
+        adapter: makeAdapter(),
+        planner: makePlanner(),
+        knowledgeReader: knowledgeReader(),
+        knowledgeRetrievalRung: Promise.resolve(rung),
+      }),
+      makeStepContext(),
+    )
+    expect(result.evidence!.retrievalRung).toEqual(rung)
+  })
+
+  it('stamps NO rung when no knowledge reader is bound — no reader bound is not a rung (D-16)', async () => {
+    const result = await executeStep(
+      'Click Log in',
+      ports({
+        adapter: makeAdapter(),
+        planner: makePlanner(),
+        knowledgeRetrievalRung: Promise.resolve(rung),
+      }),
+      makeStepContext(),
+    )
+    expect('retrievalRung' in result.evidence!).toBe(false)
+  })
+
+  it('a rejected host probe stamps nothing and never fails the step', async () => {
+    const result = await executeStep(
+      'Click Log in',
+      ports({
+        adapter: makeAdapter(),
+        planner: makePlanner(),
+        knowledgeReader: knowledgeReader(),
+        knowledgeRetrievalRung: Promise.reject(new Error('probe failed')),
+      }),
+      makeStepContext(),
+    )
+    expect(result.status).toBe('passed')
+    expect('retrievalRung' in result.evidence!).toBe(false)
   })
 })

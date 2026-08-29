@@ -17,6 +17,7 @@ import type {
   HookFinishedPayload,
   HookStartedPayload,
   MaskingContext,
+  RecordedRetrievalRung,
   RunEventEnvelope,
   ScopeKey,
   StepEvidence,
@@ -111,6 +112,34 @@ describe('event sink — stepFinalized tokenUsage leg (405 D-05)', () => {
     expect(finalized).toBeDefined()
     const payload = finalized!.payload as StepFinalizedPayload
     expect('tokenUsage' in payload).toBe(false)
+  })
+})
+
+// ---- Test 1c: the 407 D-13/D-14 retrievalRung leg (the live-header banner's source) -----
+
+describe('event sink — stepFinalized retrievalRung leg (407 D-13/D-14)', () => {
+  const rung: RecordedRetrievalRung = {
+    schemaVersion: 1,
+    rung: 'bundle-scan',
+    reason: 'index-unavailable',
+  }
+
+  it('publishes the recorded rung byte-equal when the evidence carries one', () => {
+    const { received, sink } = makeSink()
+    sink.loopEmitFor(0).stepFinalized({ ...makeStepEvidence(), retrievalRung: rung })
+    const finalized = received.find((e) => e.type === 'stepFinalized')
+    expect(finalized).toBeDefined()
+    const payload = finalized!.payload as StepFinalizedPayload
+    expect(payload.retrievalRung).toEqual(rung)
+  })
+
+  it('publishes NO retrievalRung key when the evidence recorded none (D-16)', () => {
+    const { received, sink } = makeSink()
+    sink.loopEmitFor(0).stepFinalized(makeStepEvidence())
+    const finalized = received.find((e) => e.type === 'stepFinalized')
+    expect(finalized).toBeDefined()
+    const payload = finalized!.payload as StepFinalizedPayload
+    expect('retrievalRung' in payload).toBe(false)
   })
 })
 
