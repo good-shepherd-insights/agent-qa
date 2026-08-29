@@ -1080,6 +1080,7 @@ describe('the bus is the truth on this page', () => {
 
 describe('the live header says which rung served this run, from the evidence (407-10 · TRST-01, D-14)', () => {
   const FLOOR = { schemaVersion: 1, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
+  const TOP = { schemaVersion: 1, rung: 'memidex' } as const
 
   it('paints NOTHING before a frame has carried a rung — "not yet known" is the absent element', async () => {
     await mount()
@@ -1088,6 +1089,48 @@ describe('the live header says which rung served this run, from the evidence (40
 
     expect(q('[data-rung-banner]')).toBeNull()
     expect(qa('[data-rung]')).toHaveLength(0)
+    expect(q('[data-run-meta-strip]')).toBeNull()
+  })
+
+  it('paints NO strip at all on a healthy run — the top rung is not a sentence', async () => {
+    // WR-01. `memidex` is a DEFINED value with no sentence: the banner returns null for it. A
+    // container gated on the value rather than on the sentence therefore opened an empty bordered
+    // rule under the header of every healthy live run, once its first evidence-carrying frame
+    // landed. Container and child share one predicate, so they cannot disagree.
+    await mount()
+    await open()
+    await emit(
+      runStarted(),
+      testStarted(0, 'the member', 1),
+      stepStarted(),
+      stepFinalized(0, 0, { status: 'passed', retrievalRung: TOP }),
+    )
+
+    expect(q('[data-run-meta-strip]')).toBeNull()
+    expect(q('[data-rung-banner]')).toBeNull()
+    expect(qa('[data-live-pane]')).toHaveLength(2)
+  })
+
+  it('opens the strip for a gap beside a memidex rung, and paints no banner in it', async () => {
+    // The other half of the same predicate: the strip still opens for anything that DOES have a
+    // sentence. A healthy rung standing beside a gap marker neither suppresses the strip nor
+    // paints a banner of its own.
+    classifyRunStreamCloseMock.mockResolvedValue({ kind: 'replay_floor', earliestAvailableSeq: 40 })
+    await mount()
+    await open()
+    await emit(
+      runStarted(),
+      testStarted(0, 'the member', 1),
+      stepStarted(),
+      stepFinalized(0, 0, { status: 'passed', retrievalRung: TOP }),
+      envelope('heartbeat', {}, 12),
+    )
+
+    await fail(CLOSED)
+
+    expect(q('[data-run-meta-strip]')).not.toBeNull()
+    expect(q('[data-gap-marker]')).not.toBeNull()
+    expect(q('[data-rung-banner]')).toBeNull()
   })
 
   it('paints the same sentence run detail paints, in the meta strip, once a frame carries the rung', async () => {
@@ -1123,6 +1166,7 @@ describe('the live header says which rung served this run, from the evidence (40
     expect(q('[data-rung-banner]')).toBeNull()
 
     await emit(stepFinalized(0, 0, { status: 'passed', retrievalRung: FLOOR }))
+    expect(q('[data-run-meta-strip]')).not.toBeNull()
     expect(q('[data-rung-banner]')).not.toBeNull()
     expect(q('[data-gap-marker]')).toBeNull()
     expect(q('[data-run-over]')).toBeNull()
