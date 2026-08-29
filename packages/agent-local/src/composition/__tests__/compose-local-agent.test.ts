@@ -528,7 +528,15 @@ describe('composeLocalAgent (D-15)', () => {
 
       // Artifact absent → the D-10 floor: the minted unknown, honestly rendered.
       expect(answer.verdicts).toEqual([
-        { perTest: 0, testId: 't_checkout', class: 'unknown', producer: 'deterministic-classifier', confidence: 0 },
+        {
+          perTest: 0, testId: 't_checkout', class: 'unknown',
+          producer: 'deterministic-classifier', confidence: 0,
+          // 406-03 (`a8bf2950`) put every verdict's own evidence on the wire. The
+          // deterministic floor cites nothing, and asserting that here — rather than
+          // relaxing this pin to a subset match — keeps the exact-equality claim that
+          // the floor is the minted unknown and NOTHING else.
+          evidence: { citedSteps: [], citedArtifacts: [] },
+        },
       ])
       expect(answer.sentences[0]!.sentence).toContain('no failure history is recorded for this test')
     })
@@ -562,7 +570,15 @@ describe('composeLocalAgent (D-15)', () => {
 
       // The run's OWN deterministic floor — never the foreign app_bug verdict or its parts.
       expect(foreign.verdicts).toEqual([
-        { perTest: 0, testId: 't_checkout', class: 'unknown', producer: 'deterministic-classifier', confidence: 0 },
+        {
+          perTest: 0, testId: 't_checkout', class: 'unknown',
+          producer: 'deterministic-classifier', confidence: 0,
+          // 406-03 (`a8bf2950`) put every verdict's own evidence on the wire. The
+          // deterministic floor cites nothing, and asserting that here — rather than
+          // relaxing this pin to a subset match — keeps the exact-equality claim that
+          // the floor is the minted unknown and NOTHING else.
+          evidence: { citedSteps: [], citedArtifacts: [] },
+        },
       ])
       expect(foreign.sentences[0]!.sentence).toContain('unknown:')
       expect(foreign.sentences[0]!.sentence).not.toContain('app_bug')
