@@ -56,6 +56,7 @@ import {
   HINT_FACT,
   STEP_NOT_FOUND_TEXT,
   STEP_NO_BRIEF_TEXT,
+  STORE_READ_INCOMPLETE_TEXT,
   USED_HEADING,
   WHY_TRIGGER_TEXT,
   CHANNEL_EYEBROWS,
@@ -1076,6 +1077,127 @@ describe('an unreadable store is named, never called "not available yet" (407-14
 
     expect(view.scanIncomplete).toBeUndefined()
     expect(view.sentence).toBe(CHANGES_NOT_AVAILABLE_TEXT)
+  })
+})
+
+describe('a partial read decorates the answer, it never replaces it (REVIEW CR-01, WR-05)', () => {
+  /**
+   * THE REVIEW'S REPRODUCTION, INVERTED (REVIEW CR-01).
+   *
+   * `runs.knowledge` folds its two Learned enrichments INDEPENDENTLY, so a failed attribution
+   * scan beside a readable diff publishes `{ scanIncomplete: true, changes: [<this run's row>] }`
+   * — a sanctioned, op-tested shape. The shipped arm put the flag ABOVE the row fold and returned
+   * `rows: []`, so the half asserted the store could not be read while holding the record that
+   * proves it could. The flag DECORATES the answer; it never replaces it.
+   */
+  it('paints the row it was handed and keeps the flag beside it — no unreadable-store sentence', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: {
+        changes: [change('confirmed', 'rec-mine', { sourceRunId: RUN_ID })],
+        canaryAttributions: [],
+        scanIncomplete: true,
+      },
+    })
+
+    expect(view.state).toBe('done')
+    expect(view.countLine).toBe('curated 1 fact, deprecated 0')
+    expect(view.rows.length).toBe(1)
+    expect(view.rows[0]?.recordId).toBe('rec-mine')
+    expect(view.sentence).toBeUndefined()
+    expect(view.scanIncomplete).toBe(true)
+    expect(view.readNote).toBe(STORE_READ_INCOMPLETE_TEXT)
+  })
+
+  /**
+   * THE FLAG-ONLY WORLD IS UNTOUCHED (407-17's (c2) shape).
+   *
+   * Nothing to list AND nothing readable is the one arm whose sentence already names the store,
+   * so the note would be a second, quieter copy of the sentence beside it — a nag, not news.
+   */
+  it('still names the unreadable store when the kind filter left nothing to paint, and adds NO note', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
+      learned: { changes: [], canaryAttributions: [], scanIncomplete: true },
+    })
+
+    expect(view.sentence).toBe(CHANGES_UNREADABLE_TEXT)
+    expect(view.rows).toEqual([])
+    expect(view.scanIncomplete).toBe(true)
+    expect(view.readNote).toBeUndefined()
+    expect('readNote' in view).toBe(false)
+  })
+
+  /**
+   * WR-05 — THE FLAG IS A FACT ABOUT THE READ, NOT ABOUT THE CHAIN.
+   *
+   * The unsettled arms returned before the flag was ever consulted, so a run waiting on a chain
+   * that will settle, over a store nobody can open, rendered `Deltas land when curation settles.`
+   * with no stamp at all — no cell and no operator grep could see the degradation.
+   */
+  it('carries the flag and the note through the unsettled arms — pending and running', () => {
+    for (const status of ['pending', 'running'] as const) {
+      const view = learnedFrom({
+        curation: { status },
+        learned: { changes: [], canaryAttributions: [], scanIncomplete: true },
+      })
+
+      expect(view.state).toBe(status)
+      expect(view.sentence).toBe(DELTAS_PENDING_TEXT)
+      expect(view.rows).toEqual([])
+      expect(view.scanIncomplete).toBe(true)
+      expect(view.readNote).toBe(STORE_READ_INCOMPLETE_TEXT)
+    }
+  })
+
+  it('carries the flag and the note through a FAILED chain — the failure sentence still stands', () => {
+    const view = learnedFrom({
+      curation: { status: 'failed' },
+      learned: { changes: [], canaryAttributions: [], scanIncomplete: true },
+    })
+
+    expect(view.state).toBe('failed')
+    expect(view.sentence).toBe(CURATION_FAILED_TEXT)
+    expect(view.rows).toEqual([])
+    expect(view.scanIncomplete).toBe(true)
+    expect(view.readNote).toBe(STORE_READ_INCOMPLETE_TEXT)
+  })
+
+  it('paints rows under a counts-absent settled row on a partial read, note and all', () => {
+    const view = learnedFrom({
+      curation: { status: 'done' },
+      learned: {
+        changes: [change('promoted', 'rec-mine', { sourceRunId: RUN_ID })],
+        canaryAttributions: [],
+        scanIncomplete: true,
+      },
+    })
+
+    expect(view.state).toBe('counts-absent')
+    expect(view.countLine).toBe('counts not recorded for this run')
+    expect(view.rows.length).toBe(1)
+    expect(view.sentence).toBeUndefined()
+    expect(view.scanIncomplete).toBe(true)
+    expect(view.readNote).toBe(STORE_READ_INCOMPLETE_TEXT)
+  })
+
+  it('carries NEITHER member on a clean read, in every state — absence is an absent key', () => {
+    for (const status of ['pending', 'running', 'failed', 'done'] as const) {
+      const view = learnedFrom({
+        curation: status === 'done' ? { status, counts: { curated: 1, deprecated: 0 } } : { status },
+        learned: { changes: [change('added')], canaryAttributions: [] },
+      })
+
+      expect('scanIncomplete' in view).toBe(false)
+      expect('readNote' in view).toBe(false)
+    }
+  })
+
+  it('sends the reader to the same door as every other degradation, in its own words', () => {
+    expect(STORE_READ_INCOMPLETE_TEXT)
+      .toBe(`The knowledge store could not be fully read. ${DOCTOR_HINT_TEXT}`)
+    expect(STORE_READ_INCOMPLETE_TEXT).not.toBe(CHANGES_UNREADABLE_TEXT)
+    expect(STORE_READ_INCOMPLETE_TEXT).not.toBe(CHANGES_NOT_AVAILABLE_TEXT)
   })
 })
 

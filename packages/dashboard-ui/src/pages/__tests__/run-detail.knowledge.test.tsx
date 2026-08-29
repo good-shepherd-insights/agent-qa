@@ -31,6 +31,7 @@ import {
   CHANNEL_EYEBROWS,
   NO_STORE_HEADING,
   READ_FAILED_HEADING,
+  STORE_READ_INCOMPLETE_TEXT,
   readFailedBody,
 } from "@/lib/knowledge-view"
 
@@ -396,6 +397,58 @@ describe("a populated read paints the Used half, end to end (D-03 / D-04 / D-08)
 
     expect(view.querySelector("[data-cut-candidates]")?.getAttribute("data-cut-candidates")).toBe("1")
     expect(view.querySelector("[data-plan-source-outcome]")?.textContent).toContain("replayed 5/5")
+  })
+})
+
+describe("a partial store read paints the rows it was handed AND says the read was partial (REVIEW CR-01)", () => {
+  // THE OP'S OWN SANCTIONED SHAPE, crossed through the real client double, the real
+  // `projectKnowledgeView` and the real `KnowledgeLearned`. `runs.knowledge` degrades its two
+  // Learned enrichments INDEPENDENTLY, so a failed attribution scan beside a readable diff ships
+  // a change row AND the flag. Everything below the wire must render that as a row with a stamp,
+  // never as an assertion that the store could not be read.
+  const PARTIAL = {
+    ...POPULATED,
+    learned: {
+      ...POPULATED.learned,
+      changes: [{
+        schemaVersion: 1 as const,
+        recordId: "fact-el-textbox-password-9a05ce",
+        change: "confirmed" as const,
+        atOrdinal: 2,
+        sourceRunId: RUN_ID,
+      }],
+      scanIncomplete: true as const,
+    },
+  }
+
+  it("lists the served change, stamps the root incomplete and prints the read note", async () => {
+    fetchRunKnowledgeMock.mockResolvedValue(PARTIAL)
+
+    const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
+
+    expect(knowledgeState(view)).toBe("ready")
+
+    const rows = view.querySelectorAll('li[data-record-change="confirmed"]')
+    expect(rows.length).toBe(1)
+    expect(rows[0]?.getAttribute("data-record-id")).toBe("fact-el-textbox-password-9a05ce")
+
+    const learned = view.querySelector("[data-learned-state]")
+    expect(learned?.getAttribute("data-learned-read")).toBe("incomplete")
+    expect(view.querySelector("[data-learned-sentence]")).toBeNull()
+    expect(view.querySelector("[data-learned-read-note]")?.textContent)
+      .toBe(STORE_READ_INCOMPLETE_TEXT)
+  })
+
+  it("keeps a canary outcome that WAS read — a partial read does not un-answer an answered line", async () => {
+    fetchRunKnowledgeMock.mockResolvedValue(PARTIAL)
+
+    const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
+
+    const trigger = view.querySelector('[data-step-index] [data-slot="collapsible-trigger"]')
+    await act(async () => { (trigger as HTMLElement).click() })
+
+    expect(view.querySelector('li[data-served-channel="1"]')?.getAttribute("data-canary-outcome"))
+      .toBe("confirmed")
   })
 })
 
