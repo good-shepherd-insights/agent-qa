@@ -45,7 +45,7 @@
 // and `post-processing-dom.test.ts`'s `publishedConstant` idiom, widened to a `Record` literal.
 // A hardcoded copy would go on passing against a page that says something else.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -158,6 +158,7 @@ const NO_BRIEF_LINES_TEXT = publishedConstant('NO_BRIEF_LINES_TEXT')
 const NO_BRIEF_SERVED_TEXT = publishedConstant('NO_BRIEF_SERVED_TEXT')
 const STEP_NO_BRIEF_TEXT = publishedConstant('STEP_NO_BRIEF_TEXT')
 const WHY_TRIGGER_TEXT = publishedConstant('WHY_TRIGGER_TEXT')
+const CHANGES_UNREADABLE_TEXT = publishedConstant('CHANGES_UNREADABLE_TEXT')
 
 /**
  * The banner sentence, composed from the two published tables and the published hint.
@@ -293,6 +294,156 @@ async function seedServedRecord(project: {
   return { id: String(published.id), outcome: 'published' }
 }
 
+// ── The two worlds 407-17 adds: a fact curated AFTER the run, and one unreadable bundle ──────────
+
+/**
+ * The summary the after-run record carries — a DIFFERENT control from the seed's.
+ *
+ * A second bundle at the same discriminant would be `already-exists`, and a second bundle whose
+ * anchors the fixture page resolves would change what the RUN served — which is (b1)/(b2)'s
+ * subject. `Dismiss` is neither: a record the store holds, attributable to this run, that nothing
+ * in the already-finished run ever asked for.
+ */
+const AFTER_RUN_SUMMARY = 'The Dismiss control closes the notice after acknowledgement.'
+
+/** The lease the after-run publish takes, and the curation job it names. */
+const AFTER_RUN_LEASE = 'knowledge-tab-dom-after-run'
+
+/**
+ * The unreadable bundle directory, named to sort FIRST inside `bundles/`.
+ *
+ * `enumerateMaintenanceBundleDirs` sorts by name, so an `aaa-` prefix puts the throw at the very
+ * front of the maintenance walk — the harshest ordering for the per-bundle skip 407-14 added, and
+ * the one that would have failed loudest before it.
+ */
+const MALFORMED_BUNDLE_DIR = 'aaa-malformed-0000000000000000'
+
+/** The store handle both writers below take, differing only in the lease they hold. */
+function bundleStoreFor(
+  project: { readonly root: string; readonly agentQaRoot: string },
+  writerLeaseId: string,
+): BundleStoreConfig {
+  return {
+    knowledgeRoot: join(project.root, 'agent-qa-knowledge'),
+    productKey: POPULATED_TARGET_NAME,
+    auditBaseDir: project.agentQaRoot,
+    commitArtifacts: 'none',
+    writerLeaseId,
+    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+  }
+}
+
+/**
+ * A bundle born at the run's OWN build ordinal, linked to the run, carrying no outcome events.
+ *
+ * THIS IS THE COMMONEST CURATION OUTCOME, and every value here is chosen to make it one. `diffSince`
+ * synthesises an `added` change when a bundle's earliest ordinal is GREATER than the since-ordinal
+ * it was asked about; the op asks `max(0, buildOrdinal - 1)`, so a record created at the run's own
+ * ordinal is inside the window by exactly one. `initialEvents: []` is what makes the earliest
+ * ordinal the manifest's `createdAtOrdinal` rather than a confirming event's — a record that was
+ * merely BORN, which is the shape 407-04 stamps `sourceRunId` onto and 407-15 finally paints.
+ */
+function afterRunBundleInput(
+  runId: string,
+  testId: string,
+  buildOrdinal: number,
+): PublishBundleInput {
+  const draft: BundleDraft = {
+    kind: 'fact',
+    subtype: 'selector',
+    anchors: [
+      { t: 'el', role: 'button', name: 'Dismiss', ordinal: 0 },
+      { t: 'page', route: '/' },
+      { t: 'selector', literal: '[data-testid="dismiss"]' },
+    ],
+    scope: { tier: 'product', key: POPULATED_TARGET_NAME },
+    summary: AFTER_RUN_SUMMARY,
+    body: 'The Dismiss control was resolved and verified on the notice page.',
+    distilledEvidenceRef: {
+      id: 'knowledge-tab-dom-after-run-evidence',
+      sha: 'c'.repeat(64),
+    },
+    originStage: 'run-curation',
+  }
+  const discriminant: BundleDiscriminant = {
+    kind: 'fact',
+    subtype: 'selector',
+    elementRef: { role: 'button', name: 'Dismiss' },
+  }
+  const observation: DistilledObservation = {
+    schemaVersion: 1,
+    step: { naturalKey: 'dismiss-click', ordinal: 0 },
+    platform: 'web',
+    element: { naturalKey: 'button:dismiss:0' },
+    locator: { selector: '[data-testid="dismiss"]' },
+    observedAtOrdinal: buildOrdinal,
+  }
+  return {
+    draft,
+    discriminant,
+    originClass: 'agent-verified',
+    createdAtOrdinal: buildOrdinal,
+    screenStates: [],
+    initialEvents: [],
+    relations: [],
+    provenance: {
+      mode: 'run-linked',
+      runId,
+      testId,
+      stepIndex: 0,
+      curationJobId: AFTER_RUN_LEASE,
+      sourceBuildOrdinal: buildOrdinal,
+    },
+    artifacts: [],
+    evidenceMarkdown: 'Deterministically observed while dismissing the notice.\n',
+    distilledObservations: [observation],
+  }
+}
+
+/**
+ * Publish the after-run record into a store a dashboard is already serving.
+ *
+ * NO INDEX REBUILD, deliberately. The Learned half is fed by the change walk, which reads bundle
+ * DIRECTORIES; refreshing the index would additionally change what RETRIEVAL would answer, and
+ * this record must be invisible to the run's already-recorded serve while being visible to the
+ * change walk. The seeded fixture's single rebuild call is therefore the only one in this file.
+ */
+function publishAfterRun(
+  project: { readonly root: string; readonly agentQaRoot: string },
+  runId: string,
+  testId: string,
+  buildOrdinal: number,
+): { readonly id: string; readonly outcome: string } {
+  const published = publishBundleForTest(
+    bundleStoreFor(project, AFTER_RUN_LEASE),
+    afterRunBundleInput(runId, testId, buildOrdinal),
+  )
+  if (published.kind !== 'published') return { id: '', outcome: published.kind }
+  return { id: String(published.id), outcome: 'published' }
+}
+
+/**
+ * Plant ONE bundle directory the maintenance walk cannot load, beside the healthy ones.
+ *
+ * A directory whose `manifest.json` is not JSON is a `bundle-load` throw out of
+ * `loadMaintenanceBundle` — the exact shape 407-14's per-bundle skip and by-name fold were built
+ * for. It is planted LAST in the drive, because from this point every read of this store is a
+ * degraded one.
+ */
+function plantMalformedBundle(project: { readonly root: string }): string {
+  const dir = join(
+    project.root,
+    'agent-qa-knowledge',
+    'memory',
+    POPULATED_TARGET_NAME,
+    'bundles',
+    MALFORMED_BUNDLE_DIR,
+  )
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'manifest.json'), '{ not json', 'utf8')
+  return dir
+}
+
 // ── What one page visit records ──────────────────────────────────────────────────────────────────
 
 /** One served channel-1 line, as the expanded row painted it. */
@@ -326,6 +477,12 @@ interface PageObservation {
   readonly firstRowNoBriefText?: string
   /** `data-learned-state` on the Learned half's root, when the half rendered. */
   readonly learnedState?: string
+  /** Every record row the Learned half painted, in document order (407-15's row contract). */
+  readonly learnedRows: readonly { readonly change: string; readonly id: string }[]
+  /** `data-learned-read` on the Learned root. Absent IS the clean read — never an empty string. */
+  readonly learnedRead?: string
+  /** The `[data-learned-sentence]` prose, when the half printed one. */
+  readonly learnedSentence?: string
   /** The channel-1 lines of the first row the drive expanded. */
   readonly servedLines: readonly ServedLineObservation[]
   /** `data-knowledge-state` after `1` — absent is the tab having been left. */
@@ -349,6 +506,21 @@ interface Recorded {
   projectionBody?: string
   visit?: PageObservation
   seed?: { readonly id: string; readonly outcome: string }
+  /** What the store looked like after ONE more fact was curated against the finished run. */
+  afterRun?: {
+    readonly publishedId: string
+    readonly publishOutcome: string
+    readonly projection?: RunKnowledgeProjection
+    readonly projectionBody?: string
+    readonly visit?: PageObservation
+  }
+  /** What the same run reads like once one unreadable bundle sits beside the healthy ones. */
+  malformed?: {
+    readonly projection?: RunKnowledgeProjection
+    readonly projectionStatus?: number
+    readonly projectionBody?: string
+    readonly visit?: PageObservation
+  }
   dashboardStderr?: string
   failure?: string
 }
@@ -386,7 +558,26 @@ function context(label: string, recorded: Recorded): string {
     `used summary: ${JSON.stringify(recorded.visit?.usedSummary ?? null)}`,
     `knowledge step rows: ${String(recorded.visit?.knowledgeStepCount ?? 0)}; `
     + `brief-line counts: ${(recorded.visit?.briefLineCounts ?? []).join(', ') || '(none)'}`,
-    `learned state: ${recorded.visit?.learnedState ?? '(absent)'}`,
+    `learned state: ${recorded.visit?.learnedState ?? '(absent)'}; `
+    + `read=${recorded.visit?.learnedRead ?? '(clean)'}; `
+    + `rows=${JSON.stringify(recorded.visit?.learnedRows ?? [])}; `
+    + `sentence=${JSON.stringify(recorded.visit?.learnedSentence ?? null)}`,
+    `after-run: ${recorded.afterRun === undefined
+      ? '(not published)'
+      : `${recorded.afterRun.publishOutcome} ${recorded.afterRun.publishedId}`}; `
+    + `kind=${recorded.afterRun?.projection?.kind ?? '(none)'}; `
+    + `state=${recorded.afterRun?.visit?.learnedState ?? '(absent)'}; `
+    + `rows=${JSON.stringify(recorded.afterRun?.visit?.learnedRows ?? [])}; `
+    + `sentence=${JSON.stringify(recorded.afterRun?.visit?.learnedSentence ?? null)}`,
+    `after-run projection: ${(recorded.afterRun?.projectionBody ?? '').slice(0, 1_400)}`,
+    `malformed: status=${String(recorded.malformed?.projectionStatus ?? 0)}; `
+    + `kind=${recorded.malformed?.projection?.kind ?? '(none)'}; `
+    + `state7=${recorded.malformed?.visit?.stateAfter7 ?? '(none)'}; `
+    + `steps=${String(recorded.malformed?.visit?.knowledgeStepCount ?? 0)}; `
+    + `read=${recorded.malformed?.visit?.learnedRead ?? '(clean)'}; `
+    + `rows=${JSON.stringify(recorded.malformed?.visit?.learnedRows ?? [])}; `
+    + `sentence=${JSON.stringify(recorded.malformed?.visit?.learnedSentence ?? null)}`,
+    `malformed projection: ${(recorded.malformed?.projectionBody ?? '').slice(0, 1_400)}`,
     `served lines: ${JSON.stringify(recorded.visit?.servedLines ?? [])}`,
     `drawer tabs: ${(recorded.visit?.drawerTabLabels ?? []).join(', ') || '(none)'}`,
     `curation chip tag: ${recorded.visit?.curationChipTag ?? '(absent)'}`,
@@ -506,6 +697,16 @@ async function observeKnowledge(
       `[data-step-index] >> text=${STEP_NO_BRIEF_TEXT}`,
     ).catch(() => undefined)
     const learnedState = await attributeOf(page, '[data-learned-state]', 'data-learned-state')
+    // ATTRIBUTE-ADDRESSED, NOT TEXT-ADDRESSED. The row's identity is `data-record-change` +
+    // `data-record-id`; its badge word and its tint are presentation this file does not pin.
+    const learnedRead = await attributeOf(page, '[data-learned-state]', 'data-learned-read')
+    const learnedSentence = await textOf(page, '[data-learned-sentence]')
+    const learnedRows = await page
+      .locator('[data-learned-state] li[data-record-change]')
+      .evaluateAll((rows) => rows.map((row) => ({
+        change: row.getAttribute('data-record-change') ?? '?',
+        id: row.getAttribute('data-record-id') ?? '?',
+      })))
 
     // ── One expanded row, and the why-trace inside it. The row that served something is chosen by
     // the attribute the panel stamped, so a fixture that served nothing expands its first row and
@@ -614,6 +815,9 @@ async function observeKnowledge(
       briefLineCounts,
       ...(firstRowNoBriefText === undefined ? {} : { firstRowNoBriefText }),
       ...(learnedState === undefined ? {} : { learnedState }),
+      learnedRows,
+      ...(learnedRead === undefined ? {} : { learnedRead }),
+      ...(learnedSentence === undefined ? {} : { learnedSentence }),
       servedLines,
       ...(stateAfterOverview === undefined ? {} : { stateAfterOverview }),
       ...(stateAfterM === undefined ? {} : { stateAfterM }),
@@ -668,6 +872,77 @@ async function readSettledProjection(
   }
 }
 
+/** Open a FRESH context and harvest the run-detail page again, tracked for teardown. */
+async function freshVisit(origin: string, runId: string): Promise<PageObservation> {
+  const browserContext = await (browser as Browser).newContext()
+  contexts.push(browserContext)
+  return observeKnowledge(browserContext, origin, runId)
+}
+
+/**
+ * The two worlds that can only exist AFTER the first reading, in the only order they can be read.
+ *
+ * BOTH ARE MUTATIONS OF A STORE A DASHBOARD IS ALREADY SERVING, which is the point: the question
+ * is not whether the op can project a store built this way, but whether the SHIPPED door answers
+ * correctly when the store changes under it. The order is forced — the malformed plant makes every
+ * subsequent read of this root a degraded one, so the after-run world has to be measured first or
+ * not at all.
+ *
+ * THE FIRST FIXTURE'S DRIVE IS UNTOUCHED. `knowledge-tab-dom-scan` never reaches here, so (a1)-(a7)
+ * measure exactly the page they measured before.
+ */
+async function driveLaterWorlds(
+  project: { readonly root: string; readonly agentQaRoot: string },
+  origin: string,
+  recorded: Recorded,
+): Promise<void> {
+  const settled = recorded.projection
+  const ready = settled?.kind === 'ready' ? settled : undefined
+  const runId = (recorded.drive as PopulatedRunDrive).runId
+  // THE RUN'S OWN ORDINAL, read off the projection rather than assumed: the op asks `diffSince`
+  // about `max(0, buildOrdinal - 1)`, so a record born at this number is inside the window by
+  // exactly one whatever the fixture's counter reached.
+  const buildOrdinal = ready?.buildOrdinal ?? SEED_ORDINAL
+  const testId = ready?.steps[0]?.testId ?? 'test-knowledge-tab-dom-after-run'
+
+  let published = publishAfterRun(project, runId, testId, buildOrdinal)
+  if (published.outcome !== 'published') {
+    // A lease the post-run curation chain still holds is the one refusal worth waiting out, and
+    // waiting it out means letting the chain SETTLE rather than sleeping. Exactly ONE retry; the
+    // outcome is reported verbatim by (c1) either way, and there is no skip arm.
+    const settleAgain: Recorded = {}
+    await readSettledProjection(origin, runId, settleAgain)
+    published = publishAfterRun(project, runId, testId, buildOrdinal)
+  }
+  const afterRead: Recorded = {}
+  await readSettledProjection(origin, runId, afterRead)
+  const afterVisit = await freshVisit(origin, runId)
+  recorded.afterRun = {
+    publishedId: published.id,
+    publishOutcome: published.outcome,
+    ...(afterRead.projection === undefined ? {} : { projection: afterRead.projection }),
+    ...(afterRead.projectionBody === undefined
+      ? {}
+      : { projectionBody: afterRead.projectionBody }),
+    visit: afterVisit,
+  }
+
+  plantMalformedBundle(project)
+  const malformedRead: Recorded = {}
+  await readSettledProjection(origin, runId, malformedRead)
+  const malformedVisit = await freshVisit(origin, runId)
+  recorded.malformed = {
+    ...(malformedRead.projection === undefined ? {} : { projection: malformedRead.projection }),
+    ...(malformedRead.projectionStatus === undefined
+      ? {}
+      : { projectionStatus: malformedRead.projectionStatus }),
+    ...(malformedRead.projectionBody === undefined
+      ? {}
+      : { projectionBody: malformedRead.projectionBody }),
+    visit: malformedVisit,
+  }
+}
+
 /** Drive ONE fixture end to end and record everything it produced. */
 async function driveFixture(
   label: string,
@@ -705,6 +980,7 @@ async function driveFixture(
       dashboard.origin,
       recorded.drive.runId,
     )
+    if (seed) await driveLaterWorlds(project, dashboard.origin, recorded)
   } catch (error) {
     recorded.failure = error instanceof Error ? error.message : String(error)
   }
@@ -1038,5 +1314,161 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       `the Used half drew no step rows for a run the tree drew ${String(observed.treeStepCount)} `
       + `steps for.${context('served', served)}`,
     ).toBeGreaterThan(0)
+  })
+
+  // ── (C) The two worlds the gap round was written for, measured on the same built bundle.
+  //
+  // WHY THEY ARE HERE AND NOT IN A UNIT CELL. 407-14 proved the op folds a named scan error and
+  // 407-15 proved the view paints an `added` row — each against a fixture the plan itself
+  // constructed. Neither proved that the SHIPPED binary, serving a real store that a real run
+  // really wrote, reaches those arms: the seam between the two is a store on disk, an HTTP door
+  // and a bundle in a browser, and a seam is exactly what a green unit suite cannot see. These
+  // three cells drive the same run these fixtures already drove, with the store mutated underneath
+  // it, and read the answer off the page.
+
+  it('(c1) a fact curated AFTER the run, linked to it, is served as an added change and painted as an added row', () => {
+    visitOf('served', served)
+    const afterRun = served.afterRun
+    expect(
+      afterRun?.publishOutcome,
+      'the after-run bundle did not publish, so there is no `added` change for the op to attribute '
+      + `or the page to paint. This is a fixture fault, not a page fault.${context('served', served)}`,
+    ).toBe('published')
+
+    const projection = afterRun?.projection
+    expect(
+      projection?.kind,
+      'the `/api/runs/:id/knowledge` read taken after one more fact was curated did not answer '
+      + `\`ready\`.${context('served', served)}`,
+    ).toBe('ready')
+    const ready = projection as Extract<RunKnowledgeProjection, { kind: 'ready' }>
+    const publishedId = afterRun?.publishedId as string
+    const added = ready.learned.changes.find((change) =>
+      change.change === 'added' && change.recordId === publishedId)
+    expect(
+      added,
+      'the op served no `added` change for the record published against this run AFTER it '
+      + 'finished. Either the change walk never synthesised the birth (the since-ordinal window) '
+      + "or the op's attribution filter dropped it (407-04's `sourceRunId` stamp)."
+      + context('served', served),
+    ).toBeDefined()
+    expect(
+      (added as NonNullable<typeof added>).sourceRunId,
+      "the `added` change is not stamped with this run's id, so nothing links the record's birth "
+      + `to the run that caused it.${context('served', served)}`,
+    ).toBe(served.drive?.runId)
+
+    const observed = afterRun?.visit
+    expect(
+      observed,
+      `the after-run run-detail page was never observed.${context('served', served)}`,
+    ).toBeDefined()
+    const painted = observed as PageObservation
+    expect(
+      painted.learnedRows.some((row) => row.change === 'added' && row.id === publishedId),
+      'the Learned half painted no `li[data-record-change="added"][data-record-id]` for the record '
+      + `the op served as this run's own addition.${context('served', served)}`,
+    ).toBe(true)
+    expect(
+      painted.learnedSentence,
+      'the Learned half printed a state sentence beside rows it had been handed. Rows are consulted '
+      + `BEFORE the sentence ladder (407-15) — a served record is never denied.${context('served', served)}`,
+    ).toBeUndefined()
+    expect(
+      ['done', 'counts-absent'].includes(painted.learnedState ?? ''),
+      'the Learned half is not in a settled state on a run whose chain already reached a terminal '
+      + `curation word.${context('served', served)}`,
+    ).toBe(true)
+  })
+
+  it('(c2) one malformed bundle beside the healthy ones does not take the tab down', () => {
+    const healthy = visitOf('served', served)
+    const servedReady = readyProjection('served', served)
+    const malformed = served.malformed
+    expect(
+      malformed?.projectionStatus,
+      'the spawned door answered a non-200 for a run whose store gained ONE unreadable bundle the '
+      + `run never served a line from.${context('served', served)}`,
+    ).toBe(200)
+    const projection = malformed?.projection
+    expect(
+      projection?.kind,
+      'the read taken with one malformed bundle in the store did not answer `ready` — the whole '
+      + `trust surface went down with a file none of it depended on.${context('served', served)}`,
+    ).toBe('ready')
+    const ready = projection as Extract<RunKnowledgeProjection, { kind: 'ready' }>
+    expect(
+      ready.learned.scanIncomplete,
+      'the op folded the store scan error without SAYING so. An empty `changes` list carrying no '
+      + `marker reads as "nothing was learned", which is a different fact.${context('served', served)}`,
+    ).toBe(true)
+    expect(
+      ready.steps.length,
+      'one unreadable bundle changed how many steps the Used half is given, so the degradation did '
+      + `not stay inside the Learned enrichment.${context('served', served)}`,
+    ).toBe(servedReady.steps.length)
+    expect(
+      ready.retrievalRung,
+      'one unreadable bundle changed the rung this run RECORDED at serve time — a fact frozen '
+      + `before the bundle existed.${context('served', served)}`,
+    ).toEqual(servedReady.retrievalRung)
+
+    const observed = malformed?.visit
+    expect(
+      observed,
+      `the malformed-store run-detail page was never observed.${context('served', served)}`,
+    ).toBeDefined()
+    const painted = observed as PageObservation
+    expect(
+      painted.stateAfter7,
+      `pressing \`7\` did not land on a READY Knowledge tab.${context('served', served)}`,
+    ).toBe('ready')
+    expect(
+      painted.knowledgeStepCount,
+      `the Used half drew a different number of step rows than it drew on the same run before the `
+      + `malformed bundle existed.${context('served', served)}`,
+    ).toBe(healthy.knowledgeStepCount)
+    expect(
+      painted.learnedRead,
+      'the Learned half did not stamp `data-learned-read="incomplete"`, so a reader is shown an '
+      + `absence with no way to tell it from an unreadable store.${context('served', served)}`,
+    ).toBe('incomplete')
+    expect(
+      painted.learnedRows.length,
+      'the Learned half painted record rows out of a scan that did not complete.'
+      + context('served', served),
+    ).toBe(0)
+    expect(
+      painted.learnedSentence,
+      'the Learned half did not print the published unreadable-store sentence, so a reader is told '
+      + `to wait for a page that will never fill on its own.${context('served', served)}`,
+    ).toBe(CHANGES_UNREADABLE_TEXT)
+  })
+
+  it('(c3) every projection this file read parses against the wire contract', () => {
+    // THE CR-01 CLASS, ON THE SHIPPED DOOR. `readSettledProjection` only STORES a parsed body, so a
+    // projection that failed its own contract would leave `recorded.projection` undefined and every
+    // other cell reporting a missing read. This cell reads the RAW body instead, so the failure is
+    // named as what it is — the op serving a shape its own schema refuses.
+    const reads = [
+      { label: 'scan', recorded: scan, body: scan.projectionBody },
+      { label: 'served', recorded: served, body: served.projectionBody },
+      { label: 'after-run', recorded: served, body: served.afterRun?.projectionBody },
+      { label: 'malformed', recorded: served, body: served.malformed?.projectionBody },
+    ] as const
+    for (const read of reads) {
+      const where = read.recorded === scan ? 'scan' : 'served'
+      expect(
+        read.body,
+        `the ${read.label} read recorded no response body at all.${context(where, read.recorded)}`,
+      ).toBeDefined()
+      const parsed = RunKnowledgeProjectionSchema.safeParse(JSON.parse(read.body as string))
+      expect(
+        parsed.success ? '' : JSON.stringify(parsed.error.issues),
+        `the ${read.label} projection does not satisfy \`RunKnowledgeProjectionSchema\` — a `
+        + `projection failing its OWN contract, which is the CR-01 class this round closed at the `
+        + `wire. The refusing issues are the value above.${context(where, read.recorded)}`,
+      ).toBe('')
+    }
   })
 })
