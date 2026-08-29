@@ -31,6 +31,7 @@ import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EvidenceIncomplete } from "./evidence-incomplete"
+import { KnowledgeStepDetail } from "./knowledge-step-detail"
 import { STEP_NO_BRIEF_TEXT, USED_HEADING, type KnowledgeView, type StepRowView } from "@/lib/knowledge-view"
 
 /** The tab body's own padding and rhythm (UI-SPEC: `TabsContent` → `ScrollArea` → this div). */
@@ -113,9 +114,9 @@ export function TabKnowledge({ view }: { view: KnowledgeView | undefined }) {
  * badges rather than dropping the row: a run that looks shorter than it was is a worse answer
  * than a row that says nothing happened here.
  *
- * The expanded body holds ONE ANCHOR and no text. 407-06 fills `data-step-detail` with the
- * channel lines and the per-line traces; shipping the anchor now is what makes that plan a pure
- * addition rather than a re-shaping of this row.
+ * The expanded body holds ONE ANCHOR (407-02) that 407-06 filled with `KnowledgeStepDetail` — the
+ * three channels, the per-line why-trace, the cut ledger and the procedure outcome. The anchor
+ * stayed the same element and the row kept its shape, which is what made that plan an addition.
  */
 function StepRow({ row }: { row: StepRowView }) {
   return (
@@ -141,7 +142,9 @@ function StepRow({ row }: { row: StepRowView }) {
           )}
         </CollapsibleTrigger>
         <CollapsibleContent className="bg-muted/40 rounded-[var(--radius)] px-3 py-2 space-y-2">
-          <div data-step-detail />
+          <div data-step-detail>
+            <KnowledgeStepDetail detail={row.detail} />
+          </div>
         </CollapsibleContent>
       </li>
     </Collapsible>
