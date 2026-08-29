@@ -193,3 +193,130 @@ describe('StepEvidence.retrievalRung at the load boundary (407 D-13, TRST-01)', 
     ).toThrow(/failed structural validation/)
   })
 })
+
+// --- 407-20 (REVIEW WR-04): a replay plan source is admitted only in the wire's own domain ---
+//
+// `hasCompletePlanSourceShape` used to admit `flow.cursor`/`flow.length` as merely FINITE numbers
+// and `guard.checksPassed`/`guard.total`/`*.procedureStepIndex` as a bare `typeof === 'number'`,
+// while `RunKnowledgePlanSourceSchema` (`../functions/runs`) declares every one of them
+// `z.number().int().nonnegative()`. `planSourceOf` picks an admitted value straight onto that
+// strict wire, so a `-1` cursor loaded here and then threw at `spec.output.parse` — the Knowledge
+// tab rendering `read_failed` for that run. A handoff carrying a negative cursor is malformed, so
+// it is refused where it is LOADED, through the same arm an unknown `miss.reason` takes today.
+
+function makeReplayStep(planSource: unknown): unknown {
+  return {
+    stepIndex: 0,
+    stepText: 'Save the record',
+    cacheStatus: 'miss',
+    servedBrief: {
+      scope,
+      asOfBuild: 1,
+      budget: 4096,
+      truncation: 'none',
+      channel1: [],
+      channel2: [],
+      channel3: [],
+      briefDigest: 'brief-digest-deadbeef',
+    },
+    subActions: [],
+    verifierVerdict: { pass: true, reasoning: 'saved' },
+    planSource,
+  }
+}
+
+function replayHandoff(planSource: unknown): Record<string, unknown> {
+  return {
+    ...makeValidHandoff(),
+    tests: [
+      {
+        testId: 't-1',
+        testName: 'checkout happy path',
+        filePath: 'tests/checkout.test.yaml',
+        testIndex: 0,
+        outcome: 'passed',
+        steps: [makeReplayStep(planSource)],
+      },
+    ],
+  }
+}
+
+/** The shape `recordProcedureReplaySource` (runner loop/index.ts:406) really writes. */
+function replaySource(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: 'procedure-replay',
+    procedureId: 'p',
+    guard: { checksPassed: 3, total: 3 },
+    flow: { cursor: 1, length: 3 },
+    ...overrides,
+  }
+}
+
+describe("a replay plan source is admitted only in the wire's own domain (407-20, REVIEW WR-04)", () => {
+  it('loads a step whose replay plan source carries the ordinals the runner writes', () => {
+    const guarded = guardCompletedRunHandoff(replayHandoff(replaySource()))
+    expect(guarded.tests[0]?.steps[0]?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: 'p',
+      guard: { checksPassed: 3, total: 3 },
+      flow: { cursor: 1, length: 3 },
+    })
+  })
+
+  it.each([
+    ['flow.cursor: -1', replaySource({ flow: { cursor: -1, length: 3 } })],
+    ['flow.length: 1.5', replaySource({ flow: { cursor: 1, length: 1.5 } })],
+    ['flow.cursor: Number.NaN', replaySource({ flow: { cursor: Number.NaN, length: 3 } })],
+    ['guard.checksPassed: -1', replaySource({ guard: { checksPassed: -1, total: 3 } })],
+    ['guard.total: 2.5', replaySource({ guard: { checksPassed: 2, total: 2.5 } })],
+    [
+      'guard.miss.procedureStepIndex: 1.5',
+      replaySource({
+        guard: {
+          checksPassed: 1,
+          total: 3,
+          miss: { procedureStepIndex: 1.5, reason: 'descriptor-missing' },
+        },
+      }),
+    ],
+    [
+      'guard.executionFailure.procedureStepIndex: -1',
+      replaySource({
+        guard: { checksPassed: 1, total: 3, executionFailure: { procedureStepIndex: -1 } },
+      }),
+    ],
+    [
+      'guard.verifierRejection.procedureStepIndex: 0.5',
+      replaySource({
+        guard: { checksPassed: 1, total: 3, verifierRejection: { procedureStepIndex: 0.5 } },
+      }),
+    ],
+  ])('refuses a replay plan source carrying %s', (_label, planSource) => {
+    // The same refusal arm an unknown `miss.reason` earns today — never admitted here and
+    // then thrown at by `spec.output.parse` as a `read_failed` page.
+    expect(() => guardCompletedRunHandoff(replayHandoff(planSource))).toThrow(
+      /failed structural validation/,
+    )
+  })
+
+  it('leaves an ordinary procedure-hint plan source untouched', () => {
+    const hint = { kind: 'procedure-hint', procedureId: 'p' }
+    expect(guardCompletedRunHandoff(replayHandoff(hint)).tests[0]?.steps[0]?.planSource).toEqual(
+      hint,
+    )
+  })
+
+  it('leaves a procedure-hint carrying a declared demotion untouched', () => {
+    const hint = { kind: 'procedure-hint', procedureId: 'p', demotion: 'body-empty' }
+    expect(guardCompletedRunHandoff(replayHandoff(hint)).tests[0]?.steps[0]?.planSource).toEqual(
+      hint,
+    )
+  })
+
+  it('still refuses a procedure-hint whose demotion is outside the closed union', () => {
+    const hint = { kind: 'procedure-hint', procedureId: 'p', demotion: 'body-elsewhere' }
+    expect(() => guardCompletedRunHandoff(replayHandoff(hint))).toThrow(
+      /failed structural validation/,
+    )
+  })
+})
