@@ -10,6 +10,15 @@
 // nothing", which is a different run from the one in front of them. So every arm below carries
 // either rows or a sentence, and the projection is total so this component needs no fallback.
 //
+// THE SIXTH RENDERING is a settled state word carrying a sentence that names an UNREADABLE STORE
+// (407-14/407-15): `data-learned-read="incomplete"` on the root, the counts still beside the
+// heading, and no rows. It is not a sixth STATE — the chain really did settle — which is why the
+// fact rides its own attribute instead of a state word the curation chip could not mirror.
+//
+// ROWS WIN OVER SENTENCES, and that ordering lives in `learnedView`, not here. This file paints
+// whatever the view carries: the projection never hands it both a populated list and a sentence,
+// because a sentence beside rows would be a second, quieter account of the same records (CR-04).
+//
 // NO SKELETON AND NO SPINNER, EVER. `pending` here is not "bytes are on their way"; it is a chain
 // a daemon may not have picked up for hours (404's posture text exists for exactly that reason).
 // A shimmer would promise an arrival nobody has scheduled.
@@ -45,17 +54,25 @@ import {
 const HEADING_CLASS = "text-base font-medium leading-snug"
 
 /**
- * The kind badge's look, as a closed table over the four Learned kinds.
+ * The kind badge's look, as a closed table over the five Learned kinds.
  *
  * `promoted` borrows the verdict badge's emerald because a promotion is the one change in the set
  * that made the store MORE trusted; `deprecated` is the same destructive as a failed run because
  * it is the one that retired something. `confirmed` and `superseded` are bare outlines: they moved
  * a record without changing what a reader should do about it.
  *
- * A `Record<LearnedChangeKind, …>` rather than a switch with a default, so a fifth kind is a
- * compile error here rather than a row that silently paints whichever arm the lookup missed.
+ * `added` TAKES THE SAME EMERALD, and the borrowing is deliberate rather than lazy. A new record
+ * made the store LARGER, not more trusted, so the two are not the same event — but the UI-SPEC
+ * adds no colour in this phase and `added` is the only other positive kind in the table, so it
+ * wears the one success tint the SPEC already reserves. The `data-record-change` attribute, not
+ * the tint, is what tells the two apart for a cell or a reader looking closely.
+ *
+ * A `Record<LearnedChangeKind, …>` rather than a switch with a default, so a sixth kind is a
+ * compile error here rather than a row that silently paints whichever arm the lookup missed —
+ * which is precisely what happened when `added` was admitted to the vocabulary at the view.
  */
 const KIND_LOOK: Record<LearnedChangeKind, Parameters<typeof Badge>[0]> = {
+  added: { className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" },
   confirmed: { variant: "outline" },
   superseded: { variant: "outline" },
   deprecated: { variant: "destructive" },
@@ -82,7 +99,11 @@ export function KnowledgeLearned({
   proposals?: ProposalsView | undefined
 }) {
   return (
-    <section data-learned-state={view.state} className="space-y-2">
+    <section
+      data-learned-state={view.state}
+      {...(view.scanIncomplete === true ? { "data-learned-read": "incomplete" } : {})}
+      className="space-y-2"
+    >
       <div className="flex flex-wrap items-baseline gap-2">
         <h4 className={HEADING_CLASS}>{LEARNED_HEADING}</h4>
         {view.countLine === undefined ? null : (
@@ -101,7 +122,7 @@ export function KnowledgeLearned({
       {view.rows.length === 0 ? null : (
         <ul className="space-y-2">
           {view.rows.map(row => (
-            <RecordRow key={row.recordId} row={row} />
+            <RecordRow key={row.key} row={row} />
           ))}
         </ul>
       )}
