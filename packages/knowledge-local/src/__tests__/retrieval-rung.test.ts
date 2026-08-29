@@ -21,7 +21,7 @@ import {
   resetEmbedderCapability,
   type EmbedderProbes,
 } from '../embedder-acquire.js'
-import { classifyIndexFace } from '../index-reader.js'
+import { classifyIndexFace, openKnowledgeReader } from '../index-reader.js'
 import type { IndexFace } from '../index-reader.js'
 import { indexDbPath } from '../index-open.js'
 import { rebuildIndex } from '../index-rebuild.js'
@@ -213,6 +213,11 @@ describe('classifyIndexFace — the ladder as a PURE READ (T-407-10)', () => {
     expect(face.source === 'scan' && face.detail.length > 0).toBe(true)
     // A probe that requests a rebuild would turn `doctor` into a writer.
     expect(markerExists(knowledgeRoot)).toBe(false)
+
+    // Control, so the assertion above cannot pass vacuously: the SERVING facade over the very
+    // same root does write the marker. One ladder, two callers, one side effect.
+    openKnowledgeReader(knowledgeRoot).close()
+    expect(markerExists(knowledgeRoot)).toBe(true)
   })
 
   it('reports index for a healthy rebuilt root, holding no connection open', async () => {

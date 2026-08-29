@@ -274,13 +274,23 @@ export {
   CHANNEL_3_CAUTION_LEG,
   SERVING_TRACE_LEGS,
 } from './serving/serve-trace.js'
+export { classifyIndexFace } from './index-reader.js'
 export type {
   DenseHit,
   DenseSearchOptions,
+  IndexFace,
   KnowledgeReader,
   KnowledgeSearchOptions,
   OpenKnowledgeReaderOptions,
 } from './index-reader.js'
+// Main entry only. The resolver opens an index probe and may load a model, so it is not
+// reader-entry material — the `./reader` subpath stays the cheap read face.
+export { foldRetrievalRung, resolveRetrievalRung } from './retrieval-rung.js'
+export type {
+  EmbedderAxis,
+  IndexAxis,
+  ResolveRetrievalRungOptions,
+} from './retrieval-rung.js'
 export { buildRetrievalQuery } from './query-helper.js'
 export type { RetrievalQuery, RetrievalQueryInput } from './query-helper.js'
 export { retrieve } from './retrieve.js'
