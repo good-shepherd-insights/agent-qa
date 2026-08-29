@@ -24,6 +24,7 @@ import type {
   RunKnowledgeStep,
   TraceLine,
 } from '@vostride/agent-qa-schema'
+import { RETRIEVAL_RUNGS, RETRIEVAL_RUNG_REASONS } from '@vostride/agent-qa-schema'
 
 import type { KnowledgeRead } from '@/lib/api'
 import { curationFactsText } from '@/lib/post-processing-view'
@@ -57,6 +58,10 @@ import {
   USED_HEADING,
   WHY_TRIGGER_TEXT,
   CHANNEL_EYEBROWS,
+  DOCTOR_HINT_TEXT,
+  RUNG_CAUSE_LABELS,
+  RUNG_LABELS,
+  bannerRung,
   briefLineViews,
   briefLinesFact,
   brokeAtText,
@@ -72,6 +77,7 @@ import {
   projectKnowledgeView,
   readFailedBody,
   replayedText,
+  rungBannerText,
   showAllLinesLabel,
   stepRowTitle,
   traceLineText,
@@ -1004,5 +1010,103 @@ describe('the 407-09 copy is published as constants, like every sentence before 
 
   it('keeps the Learned heading beside them, where 407-02 published it', () => {
     expect(LEARNED_HEADING).toBe('Learned')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The rung banner's copy of record (407-10 · TRST-01, D-13/D-14/D-15/D-16)
+// ---------------------------------------------------------------------------
+
+describe('the banner sentence is composed from closed tables, never from an error (D-15)', () => {
+  it('renders the SENTENCE OF RECORD byte-for-byte for a floor host', () => {
+    // UI-SPEC § Copywriting → "Banner sentence of record". Spelled as a literal here on purpose:
+    // this is the one string 407-11 and the visual check read back, so a cell composed from the
+    // same constants the implementation uses would go green on a template that lost its em dash.
+    expect(rungBannerText({ rung: 'static-floor', reason: 'native-runtime-unavailable' })).toBe(
+      'Retrieval degraded: static-floor embeddings — native ONNX runtime unavailable. Run `agent-qa doctor`.',
+    )
+  })
+
+  it('renders the other two degraded rungs through the same template', () => {
+    expect(rungBannerText({ rung: 'bundle-scan', reason: 'index-unavailable' })).toBe(
+      'Retrieval degraded: bundle scan — knowledge index unavailable, scanning bundles. Run `agent-qa doctor`.',
+    )
+    expect(rungBannerText({ rung: 'lexical-only', reason: 'floor-disabled' })).toBe(
+      'Retrieval degraded: lexical-only retrieval — static floor disabled. Run `agent-qa doctor`.',
+    )
+  })
+
+  it('says NOTHING for the top rung and for a run that recorded none', () => {
+    // `memidex` is not a degradation, and "not yet known" is the absence of a sentence — both
+    // render no banner at all rather than a reassuring one (D-14/D-16).
+    expect(rungBannerText({ rung: 'memidex' })).toBeUndefined()
+    expect(rungBannerText(undefined)).toBeUndefined()
+  })
+
+  it('drops the cause clause rather than printing a blank one when a degraded rung carries no reason', () => {
+    // The fold never mints this, but the schema types `reason` optional on every rung, so the
+    // shape is reachable. An em dash with nothing after it is the failure this arm exists to avoid.
+    const text = rungBannerText({ rung: 'static-floor' })
+    expect(text).toBe('Retrieval degraded: static-floor embeddings. Run `agent-qa doctor`.')
+    expect(text).not.toContain('—')
+  })
+
+  it('ends every sentence with the doctor hint, and the hint is one exported constant', () => {
+    expect(DOCTOR_HINT_TEXT).toBe('Run `agent-qa doctor`.')
+    for (const reason of RETRIEVAL_RUNG_REASONS) {
+      const text = rungBannerText({ rung: 'static-floor', reason })
+      expect(text?.endsWith(DOCTOR_HINT_TEXT)).toBe(true)
+    }
+  })
+})
+
+describe('the two label tables are TOTAL over the schema vocabularies', () => {
+  it('RUNG_CAUSE_LABELS has exactly the eight recorded reasons, none blank', () => {
+    expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual([...RETRIEVAL_RUNG_REASONS].sort())
+    for (const reason of RETRIEVAL_RUNG_REASONS) {
+      expect(RUNG_CAUSE_LABELS[reason].length).toBeGreaterThan(0)
+    }
+  })
+
+  it('carries the doctor row wording verbatim for the three labels the CLI reconciled (407-08)', () => {
+    // These three are NOT in UI-SPEC's five. `doctor-knowledge-checks.ts` chose them; 407-11 pins
+    // the two tables equal. This cell is the dashboard half of that pin, stated locally so the
+    // drift reds here first.
+    expect(RUNG_CAUSE_LABELS['model-not-downloaded']).toBe('embedding model not downloaded')
+    expect(RUNG_CAUSE_LABELS['embedder-load-failed']).toBe('embedder failed to load')
+    expect(RUNG_CAUSE_LABELS['profile-static-configured']).toBe('static profile configured')
+  })
+
+  it('RUNG_LABELS names every rung EXCEPT the top one — a table with a `memidex` label invites a banner for it', () => {
+    expect(Object.keys(RUNG_LABELS).sort()).toEqual(
+      RETRIEVAL_RUNGS.filter(rung => rung !== 'memidex').slice().sort(),
+    )
+    expect(RUNG_LABELS['bundle-scan']).toBe('bundle scan')
+    expect(RUNG_LABELS['static-floor']).toBe('static-floor embeddings')
+    expect(RUNG_LABELS['lexical-only']).toBe('lexical-only retrieval')
+  })
+})
+
+describe('the header reads the rung off the DURABLE projection, and only where there is one (D-13/D-16)', () => {
+  const RECORDED = { schemaVersion: 1, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
+
+  it('hands the recorded value back untouched for a bound store', () => {
+    expect(bannerRung(ready({ retrievalRung: RECORDED }))).toEqual(RECORDED)
+  })
+
+  it('says nothing for a project with NO knowledge store bound (D-16)', () => {
+    // A run that never asked retrieval anything was not served on a rung. The tab says so in its
+    // own words; the header stays silent rather than labelling the run degraded.
+    expect(bannerRung(ready({ knowledgeStore: 'unbound', retrievalRung: RECORDED }))).toBeUndefined()
+  })
+
+  it('says nothing for a pre-407 run whose evidence recorded no rung', () => {
+    expect(bannerRung(ready({}))).toBeUndefined()
+  })
+
+  it('says nothing for a pruned handoff, a refused door, or a read that has not landed', () => {
+    expect(bannerRung({ kind: 'read', projection: { kind: 'evidence-incomplete', runId: RUN_ID } })).toBeUndefined()
+    expect(bannerRung({ kind: 'unavailable', error: 'boom' })).toBeUndefined()
+    expect(bannerRung(undefined)).toBeUndefined()
   })
 })

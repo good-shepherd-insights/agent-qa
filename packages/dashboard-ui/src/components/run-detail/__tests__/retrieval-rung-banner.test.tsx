@@ -1,0 +1,240 @@
+// @vitest-environment jsdom
+
+// THE ONE-LINE RUNG BANNER, IN A DOM (407-10 · TRST-01, D-13/D-14/D-15/D-16, D-19's tone).
+//
+// TWO HEADERS, ONE COMPONENT. Run-detail paints it from the durable `runs.knowledge` read and
+// live-run paints it from the first `stepFinalized` frame that carries the rung. Those are two
+// feeds and two placements, but ONE sentence — so the sentence is proven here, once, and the two
+// pages are proven only to have wired the right value into it.
+//
+// THE ABSENCE CELLS ARE THE LOAD-BEARING ONES. `memidex` is not a degradation and `undefined` is
+// "nobody has said yet"; both render NO element, because a banner that renders empty for the top
+// rung would put an amber strip on every healthy run, and one that renders "unknown" before the
+// first frame would claim a fact the page does not have. An assertion that only ever looks at what
+// IS painted cannot see either.
+//
+// THE TINT IS AMBER AND NEVER RED, and that is asserted as an ABSENCE of the red vocabulary rather
+// than as the presence of a class name. A degraded rung is a rung reached by design (D-19): the
+// static floor is the no-budget escape hatch and `lexical-only` means the floor was switched off
+// on purpose. `fail` is a doctor-only state for a subsystem that ERRORED, and the banner never
+// sees one — a run that got served got a rung.
+
+import { act, type ReactElement } from "react"
+import { createRoot, type Root } from "react-dom/client"
+import { MemoryRouter } from "react-router"
+import { afterEach, describe, expect, it, vi } from "vitest"
+
+import { RetrievalRungBanner } from "@/components/run-detail/retrieval-rung-banner"
+import { RunNavbar } from "@/components/run-detail/run-navbar"
+import { rungBannerText } from "@/lib/knowledge-view"
+import type { RunRow } from "@/lib/api"
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+
+let root: Root | undefined
+let container: HTMLDivElement | undefined
+
+afterEach(() => {
+  if (root !== undefined) act(() => { root?.unmount() })
+  container?.remove()
+  root = undefined
+  container = undefined
+})
+
+function mount(element: ReactElement): HTMLElement {
+  container = document.createElement("div")
+  document.body.append(container)
+  root = createRoot(container)
+  act(() => { root?.render(element) })
+  return container
+}
+
+const banner = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-rung-banner]")
+
+/** The sentence of record, taken from the module that owns it so feed and assertion cannot drift. */
+const FLOOR_SENTENCE = rungBannerText({ rung: "static-floor", reason: "native-runtime-unavailable" })
+
+function runRow(): RunRow {
+  return {
+    id: "r_rung_header",
+    name: "a header probe",
+    filePath: "tests/probe.test.yaml",
+    status: "passed",
+    duration: 1000,
+    attributes: {},
+    environment: null,
+    metadata: null,
+    startedAt: null,
+    endedAt: null,
+    failureSummary: null,
+    errorLog: null,
+    memoryLog: null,
+    testId: null,
+    suiteId: null,
+    platform: "web",
+    testFileContent: null,
+    modelName: null,
+    llmProvider: null,
+    parentRunId: null,
+    attemptNumber: 1,
+    retryCount: 0,
+    maxRetries: 0,
+    createdAt: "2026-08-29T00:00:00.000Z",
+  }
+}
+
+describe("the top rung and the unknown rung render NOTHING (D-14, D-16)", () => {
+  it("renders no element at all for `memidex`", () => {
+    const host = mount(<RetrievalRungBanner rung="memidex" />)
+    expect(banner(host)).toBeNull()
+    expect(host.textContent).toBe("")
+  })
+
+  it("renders no element at all when no rung is known yet", () => {
+    const host = mount(<RetrievalRungBanner />)
+    expect(banner(host)).toBeNull()
+    expect(host.textContent).toBe("")
+  })
+})
+
+describe("a degraded rung says rung, cause and the doctor hint on one line (D-15)", () => {
+  it("carries the DOM contract and the sentence of record", () => {
+    const host = mount(<RetrievalRungBanner rung="static-floor" reason="native-runtime-unavailable" />)
+    const el = banner(host)
+    expect(el).not.toBeNull()
+    expect(el?.getAttribute("data-rung")).toBe("static-floor")
+    expect(el?.getAttribute("data-rung-reason")).toBe("native-runtime-unavailable")
+    // `status`, never `alert` — it is informational about a run, not an interruption (UI-SPEC).
+    expect(el?.getAttribute("role")).toBe("status")
+    // BYTE-EQUAL including the `code` element around the command: the DOM cells read `textContent`,
+    // so an element split that inserted or dropped a space would be a silent copy change.
+    expect(el?.textContent).toBe(FLOOR_SENTENCE)
+    expect(el?.getAttribute("title")).toBe(FLOOR_SENTENCE)
+  })
+
+  it("carries the raw enum words, not the labels, in the attributes", () => {
+    const host = mount(<RetrievalRungBanner rung="bundle-scan" reason="index-unavailable" />)
+    const el = banner(host)
+    expect(el?.getAttribute("data-rung")).toBe("bundle-scan")
+    expect(el?.getAttribute("data-rung-reason")).toBe("index-unavailable")
+    expect(el?.textContent).toContain("bundle scan")
+    expect(el?.textContent).toContain("knowledge index unavailable, scanning bundles")
+  })
+
+  it("leaves `data-rung-reason` ABSENT rather than empty when the rung carries no cause", () => {
+    const host = mount(<RetrievalRungBanner rung="lexical-only" />)
+    const el = banner(host)
+    expect(el?.getAttribute("data-rung")).toBe("lexical-only")
+    expect(el?.hasAttribute("data-rung-reason")).toBe(false)
+  })
+})
+
+describe("the tint is amber, and it is never red (D-19's rationale on the header)", () => {
+  it("paints the warning icon amber in the navbar variant", () => {
+    const host = mount(<RetrievalRungBanner rung="static-floor" reason="native-runtime-unavailable" />)
+    const icon = banner(host)?.querySelector("svg")
+    expect(icon).not.toBeNull()
+    expect(icon?.getAttribute("class")).toContain("text-amber-500")
+    expect(icon?.getAttribute("aria-hidden")).toBe("true")
+  })
+
+  it("carries no red or destructive class anywhere in the rendered subtree", () => {
+    const host = mount(<RetrievalRungBanner rung="lexical-only" reason="floor-disabled" />)
+    for (const el of host.querySelectorAll("*")) {
+      expect(el.getAttribute("class") ?? "").not.toMatch(/destructive|red-\d/)
+    }
+  })
+})
+
+describe("two variants, one sentence (D-14)", () => {
+  it("the live variant is a `p` in the meta strip's idiom — amber text, no icon", () => {
+    const host = mount(
+      <RetrievalRungBanner variant="live" rung="static-floor" reason="native-runtime-unavailable" />,
+    )
+    const el = banner(host)
+    expect(el?.tagName).toBe("P")
+    expect(el?.getAttribute("class")).toContain("text-amber-500")
+    // No icon: it sits among `data-gap-marker` and `data-run-notice` siblings, which carry none.
+    expect(el?.querySelector("svg")).toBeNull()
+    expect(el?.textContent).toBe(FLOOR_SENTENCE)
+  })
+
+  it("the navbar variant is a full-width strip row, not an inline chip", () => {
+    const host = mount(<RetrievalRungBanner rung="static-floor" reason="native-runtime-unavailable" />)
+    const el = banner(host)
+    expect(el?.tagName).toBe("DIV")
+    // 28px: 6 + 16 + 6. The header block never grows past the 56px navbar plus this row.
+    expect(el?.getAttribute("class")).toContain("py-1.5")
+    expect(el?.getAttribute("class")).toContain("truncate")
+  })
+
+  it("both variants render the SAME sentence for the same rung", () => {
+    const navbarHost = mount(<RetrievalRungBanner rung="bundle-scan" reason="index-unavailable" />)
+    const navbarText = banner(navbarHost)?.textContent
+    act(() => { root?.unmount() })
+    container?.remove()
+    const liveHost = mount(<RetrievalRungBanner variant="live" rung="bundle-scan" reason="index-unavailable" />)
+    expect(banner(liveHost)?.textContent).toBe(navbarText)
+  })
+})
+
+describe("the run header wires it as a second row, once (D-14)", () => {
+  it("renders EXACTLY ONE banner when the durable read carried a degraded rung", () => {
+    const host = mount(
+      <MemoryRouter>
+        <RunNavbar
+          run={runRow()}
+          shortcutsOpen={false}
+          onToggleShortcuts={() => {}}
+          retrievalRung={{ schemaVersion: 1, rung: "bundle-scan", reason: "index-unavailable" }}
+        />
+      </MemoryRouter>,
+    )
+    expect(host.querySelectorAll("[data-rung-banner]")).toHaveLength(1)
+    expect(host.querySelector("[data-rung-banner]")?.getAttribute("data-rung")).toBe("bundle-scan")
+    // The verdict badge is still painted exactly once — the second row is an ADDITION.
+    expect(host.querySelectorAll("[data-verdict-badge]")).toHaveLength(1)
+  })
+
+  it("renders no banner at all when the header was handed no rung", () => {
+    const host = mount(
+      <MemoryRouter>
+        <RunNavbar run={runRow()} shortcutsOpen={false} onToggleShortcuts={() => {}} />
+      </MemoryRouter>,
+    )
+    expect(host.querySelectorAll("[data-rung-banner]")).toHaveLength(0)
+    expect(host.querySelectorAll("[data-verdict-badge]")).toHaveLength(1)
+  })
+
+  it("NO OTHER ELEMENT in the header carries `data-rung` (UI-SPEC DOM contract)", () => {
+    const host = mount(
+      <MemoryRouter>
+        <RunNavbar
+          run={runRow()}
+          shortcutsOpen={false}
+          onToggleShortcuts={() => {}}
+          retrievalRung={{ schemaVersion: 1, rung: "static-floor", reason: "native-runtime-unavailable" }}
+        />
+      </MemoryRouter>,
+    )
+    const carriers = [...host.querySelectorAll("[data-rung]")]
+    expect(carriers).toHaveLength(1)
+    expect(carriers[0]?.hasAttribute("data-rung-banner")).toBe(true)
+  })
+
+  it("renders no banner for a run served on the top rung", () => {
+    const host = mount(
+      <MemoryRouter>
+        <RunNavbar
+          run={runRow()}
+          shortcutsOpen={false}
+          onToggleShortcuts={() => {}}
+          retrievalRung={{ schemaVersion: 1, rung: "memidex" }}
+        />
+      </MemoryRouter>,
+    )
+    expect(host.querySelectorAll("[data-rung-banner]")).toHaveLength(0)
+  })
+})
