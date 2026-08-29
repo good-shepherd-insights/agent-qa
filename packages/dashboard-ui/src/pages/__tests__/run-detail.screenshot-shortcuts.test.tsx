@@ -54,6 +54,7 @@ vi.mock("@/lib/api", () => ({
   // mock replaces `@/lib/api`, so an omitted export is `undefined` at the call site and every
   // cell here dies before it asserts. Its own behaviour is measured in `run-detail.analysis.test.tsx`.
   fetchRunAnalysis: () => Promise.resolve({ runId: '', verdicts: [], sentences: [], clusters: [] }),
+  fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,

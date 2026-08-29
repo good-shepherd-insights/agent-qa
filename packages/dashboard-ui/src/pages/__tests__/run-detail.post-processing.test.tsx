@@ -63,6 +63,7 @@ vi.mock("@/lib/api", async () => {
     // 2026-08-29 (406-01, D-04): the page's third read, stubbed to RESOLVE for the same reason —
     // the real one would reach a `fetch` these cells do not provide.
     fetchRunAnalysis: () => Promise.resolve({ runId: '', verdicts: [], sentences: [], clusters: [] }),
+    fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
     fetchRunArtifact: fetchRunArtifactMock,
     fetchExecutionLogs: fetchExecutionLogsMock,
     fetchAccessibilitySummary: fetchAccessibilitySummaryMock,

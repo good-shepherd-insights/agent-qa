@@ -58,6 +58,7 @@ vi.mock("@/lib/api", () => ({
   // 2026-08-29 (406-08): now a MOCK rather than a constant double, because one cell here drives a
   // cited artifact off a real verdict and through the page's `onCitedArtifact` wiring.
   fetchRunAnalysis: fetchRunAnalysisMock,
+  fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
@@ -218,7 +219,11 @@ vi.mock("@/components/run-detail/step-tree", () => ({
 }))
 
 vi.mock("@/components/run-detail/tab-panels", () => ({
-  TabPanels: () => <div data-testid="tab-panels" />,
+  // The double carries `activeTab` so a shortcut cell can read the tab the PAGE handed down,
+  // rather than inferring it from the URL the page also writes (407-02 · D-01/D-02).
+  TabPanels: ({ activeTab }: { activeTab: string }) => (
+    <div data-testid="tab-panels" data-active-tab={activeTab} />
+  ),
 }))
 
 vi.mock("@/components/ui/tooltip", () => ({
@@ -509,7 +514,12 @@ describe("RunDetailPage artifact drawer", () => {
     expect(searchParams(view).get("tab")).toBe("network")
   })
 
-  it("opens Memory with M and keeps navigation state stable", async () => {
+  // M NO LONGER OPENS A DRAWER (407-02 · D-02). The v1 memory drawer tab it used to open is dead
+  // debris 407-05 deletes grep-clean; the key is re-pointed at the Knowledge tab HERE so it is
+  // never dead for the length of a plan. The cell asserts BOTH halves of that: the tab the page
+  // hands down moved, and no drawer opened — a shortcut that quietly did both would be two
+  // surfaces answering one keypress.
+  it("opens the Knowledge tab with M and keeps navigation state stable (D-02)", async () => {
     const view = await renderAt("/runs/run-1?step=0:0&sub=0")
     const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
 
@@ -518,15 +528,27 @@ describe("RunDetailPage artifact drawer", () => {
     })
     await flushRender()
 
-    const drawer = view.querySelector('[data-testid="artifact-drawer"]') as HTMLElement
-    expect(drawer).not.toBeNull()
-    expect(drawer.getAttribute("data-tab")).toBe("memory")
-    expect(fetchRunArtifactMock).toHaveBeenCalledWith("run-1")
+    expect(view.querySelector('[data-testid="artifact-drawer"]')).toBeNull()
+    expect(view.querySelector('[data-testid="tab-panels"]')?.getAttribute("data-active-tab")).toBe("knowledge")
     expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
     expect(searchParams(view).get("step")).toBe("0:0")
     expect(searchParams(view).get("sub")).toBe("0")
     expect(searchParams(view).get("run")).toBeNull()
-    expect(searchParams(view).get("tab")).toBeNull()
+    expect(searchParams(view).get("tab")).toBe("knowledge")
+  })
+
+  // The number key and the letter key reach the SAME tab — the legend promises both, and a
+  // seventh trigger nobody can reach by number would be the one tab that broke the pattern.
+  it("opens the Knowledge tab with 7 as well (D-01)", async () => {
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
+
+    await act(async () => {
+      latestShortcuts()["7"](new KeyboardEvent("keydown", { key: "7" }))
+    })
+    await flushRender()
+
+    expect(view.querySelector('[data-testid="tab-panels"]')?.getAttribute("data-active-tab")).toBe("knowledge")
+    expect(searchParams(view).get("tab")).toBe("knowledge")
   })
 
   it("closes the drawer on first Escape before clearing selection", async () => {

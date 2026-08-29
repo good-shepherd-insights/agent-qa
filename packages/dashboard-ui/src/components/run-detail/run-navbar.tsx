@@ -193,6 +193,7 @@ export function RunNavbar({
                     { key: "4", label: "Console" },
                     { key: "5", label: "ARIA" },
                     { key: "6", label: "A11y" },
+                    { key: "7", label: "Knowledge" },
                   ]} />
                 </div>
                 <div>
@@ -209,7 +210,7 @@ export function RunNavbar({
                   <ShortcutLegend hints={[
                     { key: "I", label: "Details: Attributes" },
                     { key: "C", label: "Artifacts: Config" },
-                    { key: "M", label: "Artifacts: Memory" },
+                    { key: "M", label: "Knowledge tab" },
                     { key: "R", label: "Re-run" },
                     { key: "Shift+?", label: "Shortcuts" },
                     { key: "Esc", label: "Close" },

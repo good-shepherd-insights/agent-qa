@@ -22,8 +22,8 @@ import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { fetchRun, fetchRunAnalysis, fetchRunDetail, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
-import type { RunRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary, PostProcessingRead } from "@/lib/api"
+import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
+import type { RunRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary, KnowledgeRead, PostProcessingRead } from "@/lib/api"
 import type { AnalysisGetOutput, RunDetailProjection, RunDetailSubAction } from "@vostride/agent-qa-schema"
 import {
   MEMBER_FILTER_ALL,
@@ -35,6 +35,7 @@ import {
   showMemberChrome,
 } from "@/lib/run-detail-view"
 import { projectPostProcessingView } from "@/lib/post-processing-view"
+import { projectKnowledgeView } from "@/lib/knowledge-view"
 import { projectAnalysisView } from "@/lib/analysis-view"
 import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
@@ -146,6 +147,14 @@ export default function RunDetailPage() {
   // page know about this chain". The raw READ is what is held — the projection is pure and total,
   // so re-deriving it on render costs nothing and keeps exactly one copy of the mapping.
   const [postProcessingRead, setPostProcessingRead] = useState<PostProcessingRead | undefined>(undefined)
+
+  // THE KNOWLEDGE TAB'S OWN READ (407-02 · LERN-01, D-05). The page owns the client and the tab is
+  // presentational, on the chip read's footing above: a tab that fetched for itself would open one
+  // client per remount of a component the tab strip remounts. Held RAW because
+  // `projectKnowledgeView` is pure and total — re-deriving it costs nothing and keeps exactly one
+  // copy of the mapping. `undefined` is "the first read has not landed", which is the tab's
+  // `loading` state and is deliberately not a member of the projection's own union.
+  const [knowledgeRead, setKnowledgeRead] = useState<KnowledgeRead | undefined>(undefined)
 
   // THE FAILURE VIEW'S OWN READ (406-01 · DETL-04, D-03/D-04). Held raw, like the chip read above,
   // because `projectAnalysisView` is pure and total — re-deriving it on render costs nothing and
@@ -333,6 +342,36 @@ export default function RunDetailPage() {
       .catch(() => {})
     return () => { cancelled = true }
   }, [id, isLoading])
+
+  // ONE READ FOR THE WHOLE KNOWLEDGE TAB (407-02 · D-03/D-05). Not a poll and not a subscription:
+  // a run's served brief is a durable fact about a run that already happened, so it is read once
+  // per id and never again. The Learned half moves with curation, which the chip read already
+  // watches; 407-09 spends that trigger rather than adding a second timer here.
+  //
+  // A REJECTED READ IS A STATE, NOT A SWALLOWED ERROR. `runs.knowledge` answers its own absences
+  // as RESULTS — a pruned handoff and a project with no store both arrive on the `read` arm — so
+  // the only thing reaching the catch is a door that refused or fell over, and the tab says so
+  // (D-06). Clearing to `undefined` would show a skeleton forever for a read that already failed.
+  useEffect(() => {
+    if (!id) return
+    let cancelled = false
+    setKnowledgeRead(undefined)
+    fetchRunKnowledge(id)
+      .then(projection => {
+        if (!cancelled) setKnowledgeRead({ kind: 'read', projection })
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setKnowledgeRead({ kind: 'unavailable', error: err instanceof Error ? err.message : String(err) })
+        }
+      })
+    return () => { cancelled = true }
+  }, [id])
+
+  const knowledgeView = useMemo(
+    () => (knowledgeRead === undefined ? undefined : projectKnowledgeView(knowledgeRead)),
+    [knowledgeRead],
+  )
 
   useEffect(() => {
     artifactLoadedRunIdRef.current = null
@@ -537,7 +576,7 @@ export default function RunDetailPage() {
     return { type: 'subaction', stepId: item.stepId, subIndex: item.subIndex }
   }
 
-  const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y'] as const
+  const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'] as const
 
   const shortcuts = useMemo(() => {
     const map: Record<string, (e: KeyboardEvent) => void> = {
@@ -580,9 +619,14 @@ export default function RunDetailPage() {
       '4': () => setActiveTab(TAB_NAMES[3]),
       '5': () => setActiveTab(TAB_NAMES[4]),
       '6': () => setActiveTab(TAB_NAMES[5]),
+      '7': () => setActiveTab(TAB_NAMES[6]),
       i: () => openArtifactDrawer("attributes"),
       c: () => openArtifactDrawer("config"),
-      m: () => openArtifactDrawer("memory"),
+      // `M` RE-POINTED, NOT RETIRED (407 D-02). The v1 memory drawer tab this key opened is dead
+      // debris that 407-05 deletes grep-clean; re-pointing it here rather than there means the
+      // shortcut is never dead for the length of a plan, and the muscle memory lands on the
+      // surface that actually holds this run's memory story.
+      m: () => setActiveTab('knowledge'),
       r: () => {
         if (!run) return
         const wasLocal = run.attributes["agent-qa.runner"] === "local"
@@ -916,6 +960,7 @@ export default function RunDetailPage() {
                   accessibilitySummary={accessibilitySummary}
                   platform={run.platform}
                   pipelineRef={pipelineRef}
+                  knowledge={knowledgeView}
                 />
               )}
             </div>

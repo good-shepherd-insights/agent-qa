@@ -181,7 +181,11 @@ describe("RunNavbar", () => {
 
     expect(container.textContent).toContain("Details: Attributes")
     expect(container.textContent).toContain("Artifacts: Config")
-    expect(container.textContent).toContain("Artifacts: Memory")
+    // 407-02 D-02: `M` no longer opens the dead v1 memory drawer tab — it opens the Knowledge
+    // tab, and the legend says so. The old row is asserted GONE for the same reason the two
+    // screenshot rows below are: a row for a key that does something else is a row that misleads.
+    expect(container.textContent).toContain("Knowledge tab")
+    expect(container.textContent).not.toContain("Artifacts: Memory")
     expect(container.textContent).toContain("Shift+?")
     expect(container.textContent).not.toContain("Before screenshot")
     expect(container.textContent).not.toContain("After screenshot")

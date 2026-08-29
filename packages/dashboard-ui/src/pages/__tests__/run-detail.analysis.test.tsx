@@ -88,6 +88,7 @@ vi.mock("@/lib/api", () => ({
   fetchRun: fetchRunMock,
   fetchRunDetail: fetchRunDetailMock,
   fetchRunAnalysis: fetchRunAnalysisMock,
+  fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
   fetchAccessibilitySummary: fetchAccessibilitySummaryMock,

@@ -8,7 +8,9 @@ import { TabNetwork } from "./tab-network"
 import { TabConsole } from "./tab-console"
 import { TabAriaTree } from "./tab-aria-tree"
 import { TabA11y } from "./tab-a11y"
+import { TabKnowledge } from "./tab-knowledge"
 import type { AccessibilitySummary, ExecutionLogEntry } from "@/lib/api"
+import type { KnowledgeView } from "@/lib/knowledge-view"
 import type { DisplayStep } from "@/lib/display-step"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
@@ -25,6 +27,11 @@ interface TabPanelsProps {
   platform?: string
   screenshotEmptyState?: ScreenshotEmptyState
   pipelineRef?: React.RefObject<ReasoningPipelineHandle | null>
+  /**
+   * The Knowledge tab's whole input (407-02 · D-01). `undefined` is the read that has not landed
+   * — the page owns the one `runs.knowledge` client, and this component paints what it is handed.
+   */
+  knowledge?: KnowledgeView | undefined
 }
 
 export function TabPanels({
@@ -39,6 +46,7 @@ export function TabPanels({
   platform,
   screenshotEmptyState = "absent",
   pipelineRef,
+  knowledge,
 }: TabPanelsProps) {
   const hasExecutionLogs = executionLogs.length > 0
   const consoleScrollRef = useRef<HTMLDivElement>(null)
@@ -76,6 +84,13 @@ export function TabPanels({
         </TabsTrigger>
         <TabsTrigger value="aria" className="text-xs rounded-none flex-initial">ARIA Tree</TabsTrigger>
         <TabsTrigger value="a11y" className="text-xs rounded-none flex-initial">A11y</TabsTrigger>
+        {/*
+          THE TRIGGER IS STATIC TAB METADATA (UI-SPEC, Knowledge tab trigger). It renders with its
+          six siblings whatever the `runs.knowledge` read is doing: the loading state and the error
+          state both live INSIDE the content, so the tab is always selectable and never lies about
+          whether there is something behind it.
+        */}
+        <TabsTrigger value="knowledge" className="text-xs rounded-none flex-initial">Knowledge</TabsTrigger>
       </TabsList>
 
       <TabsContent value="overview" className="flex-1 min-h-0">
@@ -121,6 +136,12 @@ export function TabPanels({
       <TabsContent value="a11y" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
           <TabA11y step={step} summary={accessibilitySummary} />
+        </ScrollArea>
+      </TabsContent>
+
+      <TabsContent value="knowledge" className="flex-1 min-h-0">
+        <ScrollArea className="h-full">
+          <TabKnowledge view={knowledge} />
         </ScrollArea>
       </TabsContent>
     </Tabs>
