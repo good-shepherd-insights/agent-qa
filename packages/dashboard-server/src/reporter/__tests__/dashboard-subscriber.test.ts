@@ -102,20 +102,21 @@ describe('createDashboardRunIngest', () => {
     ingest.handler(ev(busRunId, 'verdict', { verdict: 'passed' }))
     ingest.handler(ev(busRunId, 'runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: seq }))
 
-    await ingest.finalize({ memory: { log: { added: 1, confirmed: 2, deprecated: 0, errors: [], curatorDuration: 5 } } })
+    await ingest.finalize({})
 
     const run = db.getRun(runId)
     expect(run?.status).toBe('passed')
     expect(run?.duration).toBe(5000)
-    expect(JSON.parse(run!.memoryLog!).added).toBe(1)
 
     const artifact = db.getRunArtifact(runId)
     expect(artifact).not.toBeNull()
     expect(artifact?.finalizedAt).toBeTruthy()
-    // route shape: config + source sections present, memory attached at finalize
+    // route shape: config + source sections present. NO `memory` section: the v1 member of
+    // `DashboardRunIngestFinalizeExtra` is deleted (407-05 · D-02), so a finalize can no longer
+    // stage one even if a caller tried — the drawer tab that read it is gone with it.
     expect((artifact?.payload.source as Record<string, unknown>).name).toBe('Login Test')
     expect((artifact?.payload.config as Record<string, unknown>).model).toBeDefined()
-    expect((artifact?.payload.memory as Record<string, unknown>).log).toBeDefined()
+    expect(Object.keys(artifact!.payload)).not.toContain('memory')
     expect(artifact?.payload.metadata?.attributes).toEqual(attributes)
     expect((artifact?.payload.runtime as Record<string, unknown>).status).toBe('passed')
 

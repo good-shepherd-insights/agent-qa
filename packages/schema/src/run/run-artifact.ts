@@ -118,53 +118,11 @@ export interface RunArtifactRuntimeSnapshot extends ArtifactRecord {
   failureSummary?: string | null
 }
 
-export type RunArtifactMemoryDeltaAction = 'add' | 'confirm' | 'deprecate' | 'delete'
-
-export interface RunArtifactMemoryObservationSnapshot {
-  id: string
-  title: string
-  content: string
-  trust: number
-  created: string
-  last_confirmed: string
-  confirmed_count: number
-  contradicted_count: number
-  source_test: string
-  position?: number
-  suite_snapshot?: Array<{ test: string; id: string }>
-}
-
-export interface RunArtifactMemoryDelta {
-  action: RunArtifactMemoryDeltaAction
-  tier: 'products' | 'suites' | 'tests'
-  scope: string
-  observationId: string
-  reasoning: string
-  before: RunArtifactMemoryObservationSnapshot | null
-  after: RunArtifactMemoryObservationSnapshot | null
-  error?: string
-}
-
-export interface RunArtifactMemorySnapshot {
-  log?: {
-    added: number
-    confirmed: number
-    deprecated: number
-    deleted?: number
-    deltas?: RunArtifactMemoryDelta[]
-    errors: string[]
-    curatorDuration: number
-    tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
-  }
-  aggregate?: ArtifactRecord
-}
-
 export interface RunArtifactPayload {
   schemaVersion: typeof RUN_ARTIFACT_SCHEMA_VERSION
   config?: RunArtifactConfigSnapshot | ArtifactRecord
   source?: RunArtifactTestSourceSnapshot | RunArtifactSuiteSourceSnapshot | ArtifactRecord
   runtime?: RunArtifactRuntimeSnapshot
-  memory?: RunArtifactMemorySnapshot | ArtifactRecord
   errors?: RunArtifactTerminalError[]
   metadata?: RunArtifactMetadata
 }

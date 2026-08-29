@@ -683,14 +683,13 @@ describe('GET /api/runs route contract', () => {
       payload: {
         config: { rawConfigContent: 'registry: {}', envFile: { content: 'TOKEN=abc', variables: { TOKEN: 'abc' }, path: '.env' } },
         source: { kind: 'test', name: 'Artifact Run', rawYaml: 'name: original artifact content' },
-        memory: { log: { added: 1, confirmed: 0, deprecated: 0, deleted: 0, errors: [], curatorDuration: 1, deltas: [] } },
       },
     })
 
     const res = await invokeRoute(router, '/api/runs/run-artifact/artifact')
     expect(res.status).toBe(200)
     const data = JSON.parse(res.body) as {
-      artifact: { payload: { config: any; source: any; memory: any } }
+      artifact: { payload: { config: any; source: any } }
       missingSections: string[]
     }
 
@@ -755,7 +754,6 @@ describe('GET /api/runs route contract', () => {
       payload: {
         config: { rawConfigContent: 'registry: {}' },
         source: { kind: 'test', name: 'DB Only Run', rawYaml: 'name: preserved' },
-        memory: { log: { added: 0, confirmed: 0, deprecated: 0, deleted: 0, errors: [], curatorDuration: 0, deltas: [] } },
       },
     })
     const throwIfCalled = () => {

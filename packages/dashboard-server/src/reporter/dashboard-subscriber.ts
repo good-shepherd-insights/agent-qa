@@ -4,7 +4,6 @@ import type {
   HookFinishedPayload,
   RunArtifactConfigSnapshot,
   RunArtifactKind,
-  RunArtifactMemorySnapshot,
   RunArtifactStageInput,
   RunArtifactSuiteSourceSnapshot,
   RunArtifactTestSourceSnapshot,
@@ -104,11 +103,15 @@ export interface DashboardRunIngestDeps {
 }
 
 /**
- * The post-run section the CLI closure supplies to `finalize()` — memory/curator data
- * stays core-owned; the bus never carries it, so it arrives out-of-band at flush.
+ * The post-run section the CLI closure supplies to `finalize()` — data the bus never carries,
+ * so it arrives out-of-band at flush.
+ *
+ * The v1 `memory` member is DELETED (407-05 · D-02). It was the last writer feeding the dead
+ * artifact-drawer memory tab, no producer in `packages/cli` or `packages/runner-local` has passed
+ * it since v1, and a field only a test could supply is a contract claiming a producer that does
+ * not exist. `runs.memory_log` and its insights reader keep their own writer and are untouched.
  */
 export interface DashboardRunIngestFinalizeExtra {
-  memory?: RunArtifactMemorySnapshot | ArtifactRecord
   runtime?: ArtifactRecord
 }
 
@@ -496,8 +499,8 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
 
   function handleRunFinished(aggregateVerdict?: string): void {
     // The aggregate verdict is authoritative at the run level. The PRIMARY run_artifact
-    // is deliberately left open here — finalize() lands the out-of-band memory/curator
-    // section (the bus never carries it) and finalizes last (Pitfall 6 flush idiom).
+    // is deliberately left open here — finalize() lands the out-of-band runtime section
+    // (the bus never carries it) and finalizes last (Pitfall 6 flush idiom).
     const endedAt = now()
     if (runId) db.updateRun(runId, { status: toRunStatus(aggregateVerdict), endedAt })
   }
@@ -551,17 +554,6 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
       finalized = true
       if (!runId) return
 
-      const memory = extra?.memory
-      if (memory && isRecord(memory)) {
-        const log = (memory as { log?: unknown }).log
-        const artifact = db.getRunArtifact(runId)
-        if (log !== undefined) {
-          db.updateRun(runId, { memoryLog: JSON.stringify(log) })
-        }
-        if (artifact && !artifact.finalizedAt) {
-          db.stageRunArtifact(runId, { memory: memory as RunArtifactStageInput['memory'] })
-        }
-      }
       if (extra?.runtime) {
         stageRuntime(runId, extra.runtime)
       }
