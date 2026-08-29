@@ -8,7 +8,7 @@
     "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
     "test-runner update flag reaches this file."
   ],
-  "opCount": 45,
+  "opCount": 46,
   "rows": [
     {
       "bindingStatusAtRoot": "bound",
@@ -545,7 +545,7 @@
       "classifies": true,
       "id": "knowledge.records.diff",
       "inputSchemaDigest": "13ef772cfc51debbcf88c19eb55fd9cf10405f1de55eae4f51dd4d1060ed4780",
-      "outputSchemaDigest": "82e87197b7cd9b769b1d3a0ba90e26217eb826b5ebe5af4a97ea53633619f667",
+      "outputSchemaDigest": "8b89dcd8e23a853ad8f8f378c8063e619083cabfc8894e1c176c01ac7e2736a0",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
@@ -840,6 +840,26 @@
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.get",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.knowledge",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "2a5133267c6658e28d448f5c249fb7f58b8f9ea9328a0c2394ed95e5506c63fe",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.knowledge",
         "readOnly": true,
         "recognized": true
       }

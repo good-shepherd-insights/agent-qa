@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 53,
+  "rowCount": 54,
   "rows": [
     {
       "alias": "digest",
@@ -2013,6 +2013,38 @@
       ]
     },
     {
+      "description": "Project one run's used brief channels, serve-time traces, procedure use, recorded retrieval rung and curator deltas from its handoff.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "runId": "<RUNID>"
+        }
+      },
+      "id": "runs.knowledge",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
       "description": "List the completed runs recorded for this project.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
@@ -2203,5 +2235,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "0132386151796666e6f9f73d10b6678cafa9dfdc944c240907d026a02c92ef06"
+  "rowsDigest": "8f78a984f7a7ff4144275960b943b335bb31eddc33b31c1488f7709a06d88c05"
 }
