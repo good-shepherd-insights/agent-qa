@@ -32,9 +32,13 @@ import type {
   CompletedRunHandoff,
   FunctionCaller,
   MaskedResolvedConfig,
+  ModelCapabilities,
+  RecordedRetrievalRung,
   RunStartAcknowledgement,
   RunsStartInput,
 } from '@vostride/agent-qa-schema'
+import { makeScreenState, runMemberTest } from '@vostride/agent-qa-runner'
+import type { MemberRunConfig, PlatformAdapter } from '@vostride/agent-qa-runner'
 
 import {
   RunProducedNoEventsError,
@@ -42,7 +46,11 @@ import {
   createLocalRunInvocation,
 } from '../compose-local-agent.js'
 import type { LocalAgentHost, RunExecutionPort } from '../compose-local-agent.js'
-import { buildRunPorts } from '../run-composition.js'
+import {
+  buildMemberRunConfig,
+  buildRunPorts,
+  openRunKnowledgeComposition,
+} from '../run-composition.js'
 import { createRunInvocationCore } from '../run-invocation-core.js'
 import type { RunAssemblyContext, RunConfig } from '../run-invocation-core.js'
 
@@ -289,5 +297,240 @@ describe('the runs.start ack is read off the durable record, over the core (401-
 
     await expect(invokeFunction(host.registry, 'runs.start', {}, CALLER))
       .rejects.toMatchObject({ name: 'RunProducedNoEventsError' })
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// 407-07 · D-13/D-16/D-17 — THE RUNG THREAD, FROM THE COMPOSITION ROOT TO A STEP'S EVIDENCE.
+//
+// The banner 407-10 paints reads a value recorded by the run that was served. Nothing else can be
+// honest: a header that probed the host at render time would relabel a degraded run the moment
+// the machine was fixed. So the rung is resolved ONCE here — where the knowledge root and the
+// `.agent-qa` root are both known — and carried, never re-derived.
+//
+// The cells below pin the three joints that thread can come apart at, in order:
+//   1. the composition CALLS the one resolver, once, with both roots;
+//   2. `buildMemberRunConfig` carries the SAME promise object through (not a copy, not a re-await);
+//   3. a real member run, through the REAL loop, lands that rung on every step's evidence.
+// Joint 3 is what makes 1 and 2 more than plumbing assertions.
+// ---------------------------------------------------------------------------------------------
+
+const FIXTURE_RUNG: RecordedRetrievalRung = {
+  schemaVersion: 1,
+  rung: 'bundle-scan',
+  reason: 'index-unavailable',
+}
+
+function fixtureAccounting() {
+  return {
+    getCeilings: () => ({ contextWindow: 32_768, maxOutput: 4_096 }),
+    estimate: () => 32,
+  }
+}
+
+function fixtureCapabilities(): ModelCapabilities {
+  return {
+    text: true,
+    vision: true,
+    visionToolMessages: true,
+    toolCalling: true,
+    structuredOutput: true,
+    streaming: true,
+    contextWindow: 32_768,
+    maxOutput: 4_096,
+  }
+}
+
+describe('the retrieval rung is resolved once at the composition root (407 D-13/D-17)', () => {
+  it('calls THE resolver exactly once, with both roots, and returns what it resolved', async () => {
+    const knowledgeRoot = mkdtempSync(join(tmpdir(), 'rung-composition-'))
+    try {
+      const calls: Array<{ knowledgeRoot: string; agentQaRoot?: string }> = []
+      const composition = openRunKnowledgeComposition({
+        knowledgeRoot,
+        product: 'shop',
+        scope: { tier: 'test', key: 'checkout' },
+        asOfBuild: 7,
+        capabilities: fixtureCapabilities(),
+        accounting: fixtureAccounting(),
+        qaRulesText: 'rules',
+        workingContextText: 'checkout context',
+        agentQaRoot: join(knowledgeRoot, '..', '.agent-qa'),
+        resolveRetrievalRung: (options) => {
+          calls.push({ knowledgeRoot: options.knowledgeRoot, agentQaRoot: options.agentQaRoot })
+          return Promise.resolve(FIXTURE_RUNG)
+        },
+      })
+
+      await expect(composition.retrievalRung).resolves.toEqual(FIXTURE_RUNG)
+      // ONCE. A per-step probe would make the recorded value a fact about render time rather than
+      // about serve time, which is exactly the lie D-13 exists to prevent.
+      expect(calls).toHaveLength(1)
+      expect(calls[0]).toEqual({
+        knowledgeRoot,
+        agentQaRoot: join(knowledgeRoot, '..', '.agent-qa'),
+      })
+    } finally {
+      rmSync(knowledgeRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('omits agentQaRoot entirely when the caller has none — never an undefined key', async () => {
+    const knowledgeRoot = mkdtempSync(join(tmpdir(), 'rung-composition-noroot-'))
+    try {
+      const calls: Array<Record<string, unknown>> = []
+      const composition = openRunKnowledgeComposition({
+        knowledgeRoot,
+        scope: { tier: 'test', key: 'checkout' },
+        asOfBuild: 7,
+        capabilities: fixtureCapabilities(),
+        accounting: fixtureAccounting(),
+        qaRulesText: 'rules',
+        workingContextText: 'checkout context',
+        resolveRetrievalRung: (options) => {
+          calls.push({ ...options })
+          return Promise.resolve(FIXTURE_RUNG)
+        },
+      })
+
+      await composition.retrievalRung
+      expect(calls).toHaveLength(1)
+      expect('agentQaRoot' in calls[0]!).toBe(false)
+    } finally {
+      rmSync(knowledgeRoot, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('buildMemberRunConfig carries the rung promise through (407 D-13)', () => {
+  it('threads the SAME promise object onto the member run config', () => {
+    const promise = Promise.resolve(FIXTURE_RUNG)
+    const config = buildMemberRunConfig({
+      ...memberRunConfigFixtureInput(),
+      knowledgeRetrievalRung: promise,
+    })
+    expect(config.knowledgeRetrievalRung).toBe(promise)
+  })
+
+  it('leaves the key absent when the caller passes none (D-16 degrade-when-absent)', () => {
+    const config = buildMemberRunConfig(memberRunConfigFixtureInput())
+    expect(config.knowledgeRetrievalRung).toBeUndefined()
+  })
+})
+
+/** The minimum `buildMemberRunConfig` input — every slot this plan does not measure is a stub. */
+function memberRunConfigFixtureInput(): Parameters<typeof buildMemberRunConfig>[0] {
+  return {
+    adapter: fixtureAdapter(),
+    planner: { plan: () => { throw new Error('no planning in this cell') } },
+    plannerModel: {} as never,
+    verifierModel: {} as never,
+    sink: fixtureSink(),
+    testIndex: 0,
+    abortSignal: new AbortController().signal,
+    filePath: 'tests/one.yaml',
+  }
+}
+
+function fixtureAdapter(): PlatformAdapter {
+  return {
+    platform: 'web',
+    setup: () => Promise.resolve(),
+    cleanup: () => Promise.resolve(),
+    observe: () => Promise.resolve(makeScreenState()),
+    execute: () => Promise.resolve({ success: true }),
+  } as unknown as PlatformAdapter
+}
+
+function fixtureSink(): MemberRunConfig['sink'] {
+  return {
+    stepStarted: () => {},
+    loopEmitFor: () => ({ stepFinalized: () => {}, subActionRecorded: () => {} }),
+    hookStarted: () => {},
+    hookFinished: () => {},
+    testRetryScheduled: () => {},
+  } as unknown as MemberRunConfig['sink']
+}
+
+describe('THE THREAD END TO END — a real member run stamps the composed rung (407 D-13/D-16)', () => {
+  it('lands the composed rung on EVERY step of a run served by a bound reader', async () => {
+    const knowledgeRoot = mkdtempSync(join(tmpdir(), 'rung-thread-'))
+    try {
+      const composition = openRunKnowledgeComposition({
+        knowledgeRoot,
+        product: 'shop',
+        scope: { tier: 'test', key: 'checkout' },
+        asOfBuild: 7,
+        capabilities: fixtureCapabilities(),
+        accounting: fixtureAccounting(),
+        qaRulesText: 'rules',
+        workingContextText: 'checkout context',
+        agentQaRoot: join(knowledgeRoot, '.agent-qa'),
+        resolveRetrievalRung: () => Promise.resolve(FIXTURE_RUNG),
+      })
+
+      const config = buildMemberRunConfig({
+        ...memberRunConfigFixtureInput(),
+        planner: {
+          plan: () => Promise.resolve({
+            plan: {
+              reasoning: 'clicking the log in button',
+              action: { type: 'click', ref: 'e2' },
+              confidence: 0.9,
+              stepComplete: true,
+              stepFailed: false,
+            },
+          }),
+        } as never,
+        knowledgeReader: composition.reader,
+        knowledgeBudgets: composition.budgets,
+        knowledgeAsOfBuild: 7,
+        recordLedger: composition.recordLedger,
+        knowledgeRetrievalRung: composition.retrievalRung,
+      })
+
+      const result = await runMemberTest(
+        {
+          testId: 't1',
+          name: 'the only member',
+          filePath: 'tests/one.yaml',
+          steps: ['Click Log in', 'Click Log in again'],
+        },
+        config,
+      )
+
+      expect(result.steps).toHaveLength(2)
+      for (const step of result.steps) {
+        expect(step.evidence?.retrievalRung).toEqual(FIXTURE_RUNG)
+      }
+    } finally {
+      rmSync(knowledgeRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('stamps NO rung when no reader is bound, even with a rung in hand (D-16)', async () => {
+    const config = buildMemberRunConfig({
+      ...memberRunConfigFixtureInput(),
+      planner: {
+        plan: () => Promise.resolve({
+          plan: {
+            reasoning: 'clicking the log in button',
+            action: { type: 'click', ref: 'e2' },
+            confidence: 0.9,
+            stepComplete: true,
+            stepFailed: false,
+          },
+        }),
+      } as never,
+      knowledgeRetrievalRung: Promise.resolve(FIXTURE_RUNG),
+    })
+
+    const result = await runMemberTest(
+      { testId: 't1', name: 'the only member', filePath: 'tests/one.yaml', steps: ['Click Log in'] },
+      config,
+    )
+
+    expect(result.steps).toHaveLength(1)
+    expect('retrievalRung' in result.steps[0]!.evidence!).toBe(false)
   })
 })
