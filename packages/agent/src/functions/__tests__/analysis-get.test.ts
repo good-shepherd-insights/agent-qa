@@ -401,6 +401,24 @@ const BLOBS_WITHOUT_HAS: EvidenceBlobReaderPort = {
   read: () => Promise.resolve({ status: 'unknown_run' as const }),
 }
 
+/**
+ * A port whose `has` REJECTS for the named shas and answers `found` for the rest.
+ *
+ * The bundled local implementation is `existsSync` and cannot throw, so this is the shape the
+ * PORT is documented for rather than the one it is bound to today: a host that does not hold its
+ * blobs locally stats them over a network (`spec.ts` — `EvidenceBlobReaderPort.has`), and a
+ * network stat fails. Presence is opportunistic on every surface that reads it, so a failed stat
+ * is presence UNKNOWN and never a failed read.
+ */
+function blobsRejectingFor(shas: readonly string[]): EvidenceBlobReaderPort {
+  return {
+    read: () => Promise.resolve({ status: 'unknown_run' as const }),
+    has: (_runId, sha) => shas.includes(sha)
+      ? Promise.reject(new Error('stat failed: connection reset'))
+      : Promise.resolve('found' as const),
+  }
+}
+
 const CITED_SHA = 'a'.repeat(64)
 
 function artifactCiting(
@@ -498,6 +516,30 @@ describe('analysis.get — read-time presence on cited artifacts (D-17)', () => 
   it('OMITS present for a composition binding no evidence port at all', async () => {
     const refs = await citedArtifactUnder(undefined)
     expect('present' in refs[0]!).toBe(false)
+  })
+
+  it('a REJECTED stat does not fail the read, and leaves the key ABSENT rather than false', async () => {
+    // The annotation is opportunistic everywhere it is documented — "a host with no runtime root
+    // still serves a complete analysis". A rejected stat that rejected the whole op would make an
+    // optional annotation the thing that takes down the failure view.
+    const refs = await citedArtifactUnder(blobsRejectingFor([CITED_SHA]))
+
+    // ABSENT, not `present: false`. A stat that never answered is presence UNKNOWN, and `false`
+    // here would be a claimed absence built from a failed lookup — the one answer the port's own
+    // doc says this field must never give by accident.
+    expect('present' in refs[0]!).toBe(false)
+    expect(refs).toEqual([{ id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA }])
+  })
+
+  it('one rejected sha does not erase the presence of the shas that DID answer', async () => {
+    const other = 'b'.repeat(64)
+    const refs = await citedArtifactUnder(blobsRejectingFor([CITED_SHA]), [
+      { id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA },
+      { id: `decision-screenshot:${other}`, sha: other },
+    ])
+
+    expect('present' in refs[0]!).toBe(false)
+    expect(refs[1]).toEqual({ id: `decision-screenshot:${other}`, sha: other, present: true })
   })
 
   it('keeps a producer-flagged evidenceIncomplete ref\'s flag ALONGSIDE present', async () => {

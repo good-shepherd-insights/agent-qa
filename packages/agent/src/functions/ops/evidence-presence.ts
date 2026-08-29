@@ -11,10 +11,23 @@
 // Here the question is narrower — are the bytes there — and the answer is no either way. A page
 // rendering "evidence incomplete" has the same thing to say about a pruned run and a pruned blob.
 //
-// A PORT WITHOUT `has` LEAVES THE KEY ABSENT, WHICH IS THE WHOLE POINT (D-17). Presence unknown is
-// not an absence, and reporting `present: false` for refs this host never looked at would render
-// honest, intact evidence as incomplete. The refs come back untouched — copies, so a caller cannot
-// mutate the port's rows — and the page's `present === false` predicate stays false.
+// UNKNOWN LEAVES THE KEY ABSENT, WHICH IS THE WHOLE POINT (D-17). Presence unknown is not an
+// absence, and reporting `present: false` for refs this host never looked at would render honest,
+// intact evidence as incomplete. The refs come back untouched — copies, so a caller cannot mutate
+// the port's rows — and the page's `present === false` predicate stays false.
+//
+// THERE ARE TWO WAYS TO NOT KNOW, AND BOTH TAKE THE SAME EXIT. A port with no `has` never looked;
+// a `has` that REJECTED looked and did not come back. `present` is derived from an answer that is
+// in hand, never from a lookup miss — `answers.get(sha) === 'found'` would read the second case as
+// a claimed absence, which is the one answer this field must never give by accident.
+//
+// AND A REJECTED STAT IS NEVER A FAILED READ. Every surface reading this calls it opportunistic:
+// "a host with no runtime root still serves a complete analysis" (`analysis-get.ts`), "this is not
+// a binding condition" (`runs-detail.ts`), "a host that cannot cheaply stat its blobs is not lying
+// about anything" (`spec.ts`). A rejection escaping here throws out of `invoke` and the routes map
+// it to `read_failed` — an optional annotation taking down the whole run-detail page and the whole
+// failure view. The bundled local `existsSync` cannot throw, but the port is shaped for hosts that
+// do not hold blobs locally, i.e. hosts whose `has` is a network call.
 //
 // STATS ARE DEDUPED BY SHA WITHIN ONE CALL. A 40-failure run cites the same decision screenshot
 // from every member, and a run-detail page's sub-actions repeat refs across steps; one syscall per
@@ -33,10 +46,20 @@ export async function annotatePresence<T extends { sha: string }>(
   if (has === undefined) return refs.map((ref) => ({ ...ref }))
 
   const distinct = [...new Set(refs.map((ref) => ref.sha))]
-  const answers = new Map<string, EvidenceBlobPresence>(
-    await Promise.all(distinct.map(async (sha): Promise<[string, EvidenceBlobPresence]> =>
-      [sha, await has.call(port, runId, sha)])),
+  const answers = new Map<string, EvidenceBlobPresence | undefined>(
+    await Promise.all(distinct.map(async (sha): Promise<[string, EvidenceBlobPresence | undefined]> => {
+      // PER SHA, so one host that cannot answer about one blob costs presence on that blob only.
+      // Absorbing at the `Promise.all` instead would lose every sibling answer already in hand.
+      try {
+        return [sha, await has.call(port, runId, sha)]
+      } catch {
+        return [sha, undefined]
+      }
+    })),
   )
 
-  return refs.map((ref) => ({ ...ref, present: answers.get(ref.sha) === 'found' }))
+  return refs.map((ref) => {
+    const answer = answers.get(ref.sha)
+    return answer === undefined ? { ...ref } : { ...ref, present: answer === 'found' }
+  })
 }

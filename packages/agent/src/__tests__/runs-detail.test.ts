@@ -255,6 +255,43 @@ describe('runs.detail — presence per artifact ref (D-17)', () => {
     expect(result.tokens).toEqual({ measuredSteps: 0, unmeasuredSteps: 1 })
   })
 
+  it('a REJECTED stat does not fail the read, and leaves the key ABSENT rather than false', async () => {
+    // Presence is opportunistic on this op by its own note — "this is not a binding condition".
+    // A rejected stat that rejected the read would map to `read_failed` at the route and take the
+    // whole run-detail page down over an annotation that is allowed to be missing.
+    const result = await runsDetailSpec.invoke(
+      { runId: RUN_ID },
+      depsWithBlobs(ROWS, () => Promise.reject(new Error('stat failed: connection reset'))),
+    )
+    const ref = result.subActions[0]!.artifactRefs![0]!
+
+    // ABSENT, not `present: false`. A failed stat is presence UNKNOWN; reporting it as an absence
+    // would render intact evidence as incomplete on the strength of a lookup that never happened.
+    expect('present' in ref).toBe(false)
+    expect(ref).toEqual({ id: `decision-screenshot:${SHA_A}`, sha: SHA_A })
+    // The rest of the projection is untouched — the annotation failing costs the annotation only.
+    expect(result.subActions[0]!.plan).toBe('click submit')
+    expect(result.steps).toEqual(ROWS.steps)
+  })
+
+  it('one rejected sha does not erase the presence of the shas that DID answer', async () => {
+    const rows: RunDetailRows = {
+      ...EMPTY_ROWS,
+      subActions: [subAction([
+        { id: `decision-screenshot:${SHA_A}`, sha: SHA_A },
+        { id: `decision-screenshot:${SHA_B}`, sha: SHA_B },
+      ])],
+    }
+    const result = await runsDetailSpec.invoke({ runId: RUN_ID }, depsWithBlobs(rows, (_runId, sha) =>
+      sha === SHA_A
+        ? Promise.reject(new Error('stat failed: connection reset'))
+        : Promise.resolve('found' as const)))
+    const refs = result.subActions[0]!.artifactRefs!
+
+    expect('present' in refs[0]!).toBe(false)
+    expect(refs[1]).toEqual({ id: `decision-screenshot:${SHA_B}`, sha: SHA_B, present: true })
+  })
+
   it('leaves a sub-action with NO artifactRefs without the key, and stats each sha once', async () => {
     const seen: string[] = []
     const rows: RunDetailRows = {
