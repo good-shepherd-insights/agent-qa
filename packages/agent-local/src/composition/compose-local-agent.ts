@@ -154,6 +154,7 @@ import {
   createAuthoringReader,
   openAddressingLedger as openAddressingLedgerForReview,
   proposeReview,
+  resolveRetrievalRung,
 } from '@vostride/agent-qa-knowledge-local'
 import type {
   ApplyDelegate,
@@ -223,6 +224,7 @@ import { createEvidenceBlobReader, readEvidenceBlobBytes } from './evidence-blob
 import { createDispatchGrants } from './dispatch-grants.js'
 import type { DispatchGrants } from './dispatch-grants.js'
 import { buildRunPorts } from './run-composition.js'
+import type { RetrievalRungResolver } from './run-composition.js'
 import { writeAnalysisArtifact } from '../analysis/persist-analysis.js'
 import { createJsonlSessionLog } from '../session/jsonl-session-log.js'
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
@@ -248,6 +250,22 @@ import type { SqliteJobStore } from '../store/sqlite-job-store.js'
 // `LOCAL_CURATION_CAPABILITIES` directly; a host that has a handle takes it from `host.curation`,
 // which is the same frozen object. Threading a handle through the curation tail's call graph would
 // have been a signature change to code D-14 requires this phase to leave semantically untouched.
+
+/**
+ * 407 D-13/D-17 — THE retrieval-rung resolver, bound at the one edge that may name the writer
+ * entry (385 D-14/SC5) and handed to `openRunKnowledgeComposition` by every run door.
+ *
+ * The binding exists so there is exactly ONE resolver in the tree with exactly ONE importer of
+ * the package that owns it. `run-composition.ts` declares the seam's shape structurally and takes
+ * the function as a required input rather than importing it — naming knowledge-local's main entry
+ * from a second file would retire the singleton the arch gate enforces, and the fix would look
+ * like relaxing the gate.
+ *
+ * Typed as {@link RetrievalRungResolver} rather than by its own signature, so the pass-through
+ * that reaches the CLI is the narrow two-root contract the doors actually use — the embedder
+ * `probes` seam and the preferred profile stay knowledge-local's business.
+ */
+export const resolveHostRetrievalRung: RetrievalRungResolver = resolveRetrievalRung
 
 // 387-08 D-18: the delegate transport's own vocabulary, re-exported through the one edge that
 // names the writer entry — a surface builds an `ApplyDelegate` closure and returns an

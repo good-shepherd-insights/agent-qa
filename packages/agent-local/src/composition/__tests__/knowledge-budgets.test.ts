@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { asRecordId, type ModelCapabilities } from '@vostride/agent-qa-schema'
+import { asRecordId, type ModelCapabilities, type RecordedRetrievalRung } from '@vostride/agent-qa-schema'
 import { LLMPlanner } from '@vostride/agent-qa-runner'
 import type { KnowledgeHintReader, NonActionToolMap } from '@vostride/agent-qa-runner'
 import { createFrozenKnowledgeReader } from '../knowledge-reader.js'
@@ -19,6 +19,16 @@ import {
   memoryToolGate,
   scaledRecordCap,
 } from '../knowledge-budgets.js'
+
+/**
+ * 407 D-17: the composition takes THE rung resolver as a required injection, so these cells —
+ * which are about budgets, not about the host — hand it a fake and never probe the machine.
+ */
+const fakeResolveRetrievalRung = (): Promise<RecordedRetrievalRung> => Promise.resolve({
+  schemaVersion: 1,
+  rung: 'bundle-scan',
+  reason: 'index-unavailable',
+})
 
 function capabilities(overrides: Partial<ModelCapabilities> = {}): ModelCapabilities {
   return {
@@ -166,6 +176,7 @@ describe('run knowledge composition', () => {
       accounting,
       qaRulesText: 'rules',
       workingContextText: 'checkout context',
+      resolveRetrievalRung: fakeResolveRetrievalRung,
     })
     const capable = openRunKnowledgeComposition({
       knowledgeRoot,
@@ -176,6 +187,7 @@ describe('run knowledge composition', () => {
       accounting,
       qaRulesText: 'rules',
       workingContextText: 'checkout context',
+      resolveRetrievalRung: fakeResolveRetrievalRung,
     })
 
     const weakPlanner = new LLMPlanner(
@@ -223,6 +235,7 @@ describe('run knowledge composition', () => {
         },
         qaRulesText: 'rules',
         workingContextText: 'checkout context',
+        resolveRetrievalRung: fakeResolveRetrievalRung,
       })
       composition.beginMemoryTurn?.(scope, [missingId])
 

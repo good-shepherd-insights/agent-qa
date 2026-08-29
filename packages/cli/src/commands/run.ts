@@ -64,6 +64,7 @@ import {
   memoryToolGate,
   openRunKnowledgeComposition,
   resolveBuildTagSetting,
+  resolveHostRetrievalRung,
   resolveRunBuildOrdinal,
   resolveRunExecutionContext,
   toMemberTest,
@@ -3222,6 +3223,10 @@ export async function produceSuiteRunMembers(
             // SEAM-03 (D-04): the per-run SafetyHookRunner (read at call time — bindings predate the mint).
             safetyHooks: runSafetyHooks,
             knowledgeReader: prepared.knowledge?.reader,
+            // 407 D-13: the rung this run was SERVED on, resolved once when the composition
+            // opened and carried into every step's evidence — so a run served on the static
+            // floor stays labelled that way forever, even after the host is fixed.
+            knowledgeRetrievalRung: prepared.knowledge?.retrievalRung,
             knowledgeBudgets: prepared.knowledge?.budgets,
             // Read at call time, like `runSafetyHooks` above: these bindings are constructed before
             // the gate, and the ordinal is assigned by the assembler the core calls after it.
@@ -3415,6 +3420,10 @@ export async function produceSuiteRunMembers(
       for (const prepared of preparedSuites) {
         const knowledge = openRunKnowledgeComposition({
           knowledgeRoot,
+          // 407 D-13: the hosted runtime root the embedder probe discovers its worker under —
+          // the same `resolvePath(configDir, '.agent-qa')` idiom every other door here uses.
+          agentQaRoot: resolvePath(configDir, '.agent-qa'),
+          resolveRetrievalRung: resolveHostRetrievalRung,
           product: prepared.product ?? runProduct,
           scope: { tier: 'product', key: prepared.product ?? runProduct },
           parentScopes: [{
@@ -3955,6 +3964,9 @@ export async function produceDirectRunMembers(
       }
       const knowledge = openRunKnowledgeComposition({
         knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
+        // 407 D-13: same hosted runtime root as the suite door — both doors resolve the rung.
+        agentQaRoot: resolvePath(configDir, '.agent-qa'),
+        resolveRetrievalRung: resolveHostRetrievalRung,
         product: testResolvedTarget.product,
         scope: { tier: 'test', key: testDef.name },
         asOfBuild: singleBuildOrdinal,
@@ -4113,6 +4125,8 @@ export async function produceDirectRunMembers(
         masking: singleMaskingContext,
         safetyHooks: singleSafetyHooks,
         knowledgeReader: knowledge.reader,
+        // 407 D-13: see the suite door above — one resolve per run, carried, never re-probed.
+        knowledgeRetrievalRung: knowledge.retrievalRung,
         knowledgeBudgets: knowledge.budgets,
         knowledgeAsOfBuild: singleBuildOrdinal,
         recordLedger: knowledge.recordLedger,

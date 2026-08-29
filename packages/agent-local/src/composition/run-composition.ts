@@ -32,6 +32,7 @@ import type { TokenAccounting } from '@vostride/agent-qa-model'
 import type {
   MaskingContext,
   ModelCapabilities,
+  RecordedRetrievalRung,
   RecordId,
   ReadTrace,
   ScopeKey,
@@ -123,9 +124,38 @@ type AccountedMessage = Parameters<TokenAccounting['estimate']>[0][number]
 
 type KnowledgeAccounting = Pick<TokenAccounting, 'estimate' | 'getCeilings'>
 
+/**
+ * 407 D-13/D-17 — the shape of THE retrieval-rung resolver, declared structurally here and
+ * INJECTED rather than imported.
+ *
+ * knowledge-local's main entry has exactly ONE importer in this workspace by ratified rule
+ * (385 D-14/SC5, enforced at file granularity by `findKnowledgeWriterSingletonOffenders`), and
+ * that importer is `compose-local-agent.ts` — the local composition root. `resolveRetrievalRung`
+ * lives on the main entry deliberately (407-03: it opens an index probe and may load a model, so
+ * it is not `./reader` material), so naming it from this file would have made a second importer
+ * and quietly retired the invariant. The seam keeps the singleton intact while leaving exactly
+ * one implementation in the tree: `compose-local-agent.ts` re-exports the real resolver as
+ * `resolveHostRetrievalRung`, and both CLI doors pass THAT.
+ *
+ * It is REQUIRED, not optional-with-a-default. A default would be a second place the production
+ * resolver could be chosen from, and an omission at a new door would show up as a run with no
+ * rung — a banner that silently says nothing — rather than as a compile error.
+ */
+export type RetrievalRungResolver = (
+  options: { knowledgeRoot: string; agentQaRoot?: string },
+) => Promise<RecordedRetrievalRung>
+
 export interface RunKnowledgeComposition {
   reader: KnowledgeHintReader
   budgets: KnowledgeBudgets
+  /**
+   * 407 D-13 — the HOST's retrieval ladder at THIS run's serve time, started here and awaited
+   * exactly once by the first step's evidence recorder. It is a promise rather than a value
+   * because the resolver's embedder probe can cost a model load, and overlapping that with run
+   * start keeps it off the critical path (T-407-16). Never re-probed per step: a run's rung is a
+   * fact about when it was served, not a live indicator of the machine.
+   */
+  retrievalRung: Promise<RecordedRetrievalRung>
   recordLedger: RecordLedger
   nonActionTools?: NonActionToolMap
   beginMemoryTurn?: (scope?: ScopeKey, exposedIds?: readonly RecordId[]) => void
@@ -143,6 +173,18 @@ export interface OpenRunKnowledgeCompositionInput {
   accounting: KnowledgeAccounting
   qaRulesText: string
   workingContextText: string
+  /**
+   * 407 D-13 — the hosted runtime root (`<configDir>/.agent-qa`) the embedder probe discovers its
+   * worker under. Absent falls back to the acquirer's own rule, so a caller that does not know the
+   * root still gets an honest answer rather than an error.
+   */
+  agentQaRoot?: string
+  /**
+   * 407 D-17 — the injected rung resolver. Production callers pass `resolveHostRetrievalRung`
+   * (the composition root's binding of THE one knowledge-local resolver); tests pass a fake and
+   * never touch the host. See {@link RetrievalRungResolver} for why it is injected and required.
+   */
+  resolveRetrievalRung: RetrievalRungResolver
 }
 
 /**
@@ -179,6 +221,15 @@ export function openRunKnowledgeComposition(
     asOfBuild: input.asOfBuild,
     recordCap: budgets.recordCap,
   })
+  // D-13: started HERE, beside the reader that will serve this run, because this is the only place
+  // that knows both roots. Nobody awaits it until the first step's recorder does, so a no-op catch
+  // is attached now — an unhandled rejection from a probe that merely asks what the host can do
+  // must not become a process-level warning (or, under a stricter host, a crash).
+  const retrievalRung = input.resolveRetrievalRung({
+    knowledgeRoot: input.knowledgeRoot,
+    ...(input.agentQaRoot === undefined ? {} : { agentQaRoot: input.agentQaRoot }),
+  })
+  retrievalRung.catch(() => undefined)
   const channel2Enabled = memoryToolGate(input.capabilities)
   const recordLedger = createRecordLedger({
     cap: budgets.recordCap,
@@ -206,6 +257,7 @@ export function openRunKnowledgeComposition(
   return {
     reader,
     budgets,
+    retrievalRung,
     recordLedger,
     nonActionTools: memory?.tools,
     beginMemoryTurn: memory?.beginTurn,
@@ -977,6 +1029,8 @@ export interface BuildMemberRunConfigInput {
   compressor?: ScreenshotCompressor
   safetyHooks?: SafetyHookRunner
   knowledgeReader?: KnowledgeHintReader
+  /** 407 D-13 — the composed rung, carried through untouched to the loop's evidence recorder. */
+  knowledgeRetrievalRung?: Promise<RecordedRetrievalRung>
   knowledgeBudgets?: KnowledgeBudgets
   knowledgeAsOfBuild?: number
   recordLedger?: RecordLedger
@@ -1040,6 +1094,7 @@ export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRu
     compressor: input.compressor,
     safetyHooks: input.safetyHooks,
     knowledgeReader: input.knowledgeReader,
+    knowledgeRetrievalRung: input.knowledgeRetrievalRung,
     knowledgeBudgets: input.knowledgeBudgets,
     knowledgeAsOfBuild: input.knowledgeAsOfBuild,
     recordLedger: input.recordLedger,

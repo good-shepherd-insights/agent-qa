@@ -47,6 +47,7 @@ export type {
   BuildMemberRunConfigInput,
   BuildRunSessionSafetyHooksInput,
   OpenRunKnowledgeCompositionInput,
+  RetrievalRungResolver,
   RunConfigDigests,
   RunDigestMemberInput,
   RunExecutionContext,
@@ -211,6 +212,9 @@ export {
   LOCAL_DAEMON_CAPABILITIES,
   LocalAgentClosedError,
   RunProducedNoEventsError,
+  // 407 D-13/D-17: the ONE retrieval-rung resolver, published from the one edge allowed to name
+  // knowledge-local's writer entry so both CLI run doors can hand it to the composition.
+  resolveHostRetrievalRung,
   SYSTEM_CLOCK,
   sweepEntityIndexProjection,
   UNCLAIMABLE_BY_PROSE_POSTURE,
