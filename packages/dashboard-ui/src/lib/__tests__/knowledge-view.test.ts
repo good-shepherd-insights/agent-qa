@@ -17,15 +17,27 @@
 
 import { describe, expect, it } from 'vitest'
 import { TRACE_TRUNCATION_TOP_K } from '@vostride/agent-qa-schema'
-import type { RunKnowledgeProjection, RunKnowledgeStep } from '@vostride/agent-qa-schema'
+import type {
+  RunKnowledgeCanaryAttribution,
+  RunKnowledgeProjection,
+  RunKnowledgeStep,
+  TraceLine,
+} from '@vostride/agent-qa-schema'
 
 import type { KnowledgeRead } from '@/lib/api'
 import {
+  ATTRIBUTION_PENDING_TEXT,
+  BROKE_CAUSE_LABELS,
+  CANARY_BADGE_TEXT,
+  CHANNEL_PAGE_SIZE,
   LEARNED_HEADING,
+  NOT_ATTRIBUTED_TEXT,
   NO_BRIEF_LINES_TEXT,
   NO_BRIEF_SERVED_TEXT,
   NO_STORE_BODY,
   NO_STORE_HEADING,
+  PROCEDURE_HINT_DEMOTED_TEXT,
+  PROCEDURE_HINT_TEXT,
   PRE_TRACE_TEXT,
   READ_FAILED_HEADING,
   REPLAY_FACT,
@@ -35,11 +47,20 @@ import {
   USED_HEADING,
   WHY_TRIGGER_TEXT,
   CHANNEL_EYEBROWS,
+  briefLineViews,
   briefLinesFact,
+  brokeAtText,
   canaryFact,
+  canaryOutcomeWord,
+  channelPage,
+  cutCandidates,
   cutCandidatesLabel,
+  planSourceSentence,
+  planSourceView,
   projectKnowledgeView,
   readFailedBody,
+  replayedText,
+  showAllLinesLabel,
   stepRowTitle,
   traceLineText,
   usedSummaryLine,
@@ -61,9 +82,9 @@ function step(overrides: Partial<RunKnowledgeStep> = {}): RunKnowledgeStep {
 }
 
 /** One channel-1 brief line; `servedAsCanary` is the only field any cell here varies. */
-function briefLine(servedAsCanary = false): RunKnowledgeStep['served']['channel1'][number] {
+function briefLine(servedAsCanary = false, id = 'rec_1'): RunKnowledgeStep['served']['channel1'][number] {
   return {
-    id: 'rec_1',
+    id,
     kind: 'fact',
     summary: 'the cart page lives at /view_cart',
     trust: 0.9,
@@ -339,5 +360,378 @@ describe('the reserved copy the expansion plans consume is published NOW', () =>
     expect(USED_HEADING).toBe('Used')
     expect(LEARNED_HEADING).toBe('Learned')
     expect(new Set([PRE_TRACE_TEXT, STEP_NOT_FOUND_TEXT, STEP_NO_BRIEF_TEXT]).size).toBe(3)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 407-06 — the Used half in full: the per-line why-trace, the cut ledger, the
+// canary outcome word, the replay/hint sentence and the channel page.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One answered trace, carrying whatever served/cut ledgers a cell hands it. */
+function answered(
+  servedLines: readonly TraceLine[] = [],
+  truncated: readonly TraceLine[] = [],
+): RunKnowledgeStep['trace'] {
+  return {
+    kind: 'answered',
+    trace: { schemaVersion: 1, servedLines: [...servedLines], truncated: [...truncated] },
+  }
+}
+
+function traceLine(recordId: string, over: Partial<TraceLine> = {}): TraceLine {
+  return { recordId, leg: 'anchor', rank: 1, score: 1.48695, ...over }
+}
+
+function attribution(
+  over: Partial<RunKnowledgeCanaryAttribution> = {},
+): RunKnowledgeCanaryAttribution {
+  return {
+    testIndex: 0,
+    stepIndex: 0,
+    recordId: 'rec_1',
+    observationId: 'canary-outcome:abc',
+    outcome: 'confirmed',
+    ...over,
+  }
+}
+
+/** The one detail of the one row of a ready view — most cells below want exactly this. */
+function detailOf(view: ReturnType<typeof projectKnowledgeView>, index = 0) {
+  return usedOf(view).steps[index].detail
+}
+
+describe('a served line carries the trace answer that explains IT, and nothing it computed (D-04)', () => {
+  it('answers a served line from the trace ledger — leg, rank and score, matched by recordId', () => {
+    const lines = briefLineViews(
+      step({ served: { channel1: [briefLine(false, 'rec_a')], channel2: [], channel3: [] } }),
+      answered([traceLine('rec_a', { leg: 'dense', rank: 4, score: 0.25 })]),
+    )
+
+    expect(lines).toHaveLength(1)
+    expect(lines[0].why).toEqual({ kind: 'answered', leg: 'dense', rank: 4, score: 0.25 })
+  })
+
+  it('forwards the LEG WORD the trace recorded, never a re-worded one', () => {
+    for (const leg of ['lexical', 'dense', 'anchor'] as const) {
+      const lines = briefLineViews(
+        step({ served: { channel1: [briefLine(false, 'rec_a')], channel2: [], channel3: [] } }),
+        answered([traceLine('rec_a', { leg })]),
+      )
+      if (lines[0].why.kind !== 'answered') throw new Error('unreachable')
+      expect(lines[0].why.leg).toBe(leg)
+    }
+  })
+
+  it('maps a line the ANSWERED trace recorded nothing for to the step-not-found arm', () => {
+    const lines = briefLineViews(
+      step({ served: { channel1: [briefLine(false, 'rec_a')], channel2: [], channel3: [] } }),
+      answered([traceLine('rec_other')]),
+    )
+
+    expect(lines[0].why).toEqual({ kind: 'no-trace', reason: 'step-not-found' })
+  })
+
+  it('gives EVERY line the step trace\'s own reason, verbatim, when the step has no trace', () => {
+    for (const reason of ['pre-trace-run', 'artifact-missing', 'step-not-found'] as const) {
+      const lines = briefLineViews(
+        step({
+          served: { channel1: [briefLine(false, 'rec_a'), briefLine(false, 'rec_b')], channel2: [], channel3: [] },
+        }),
+        { kind: 'no-trace', reason },
+      )
+      expect(lines.map(line => line.why)).toEqual([
+        { kind: 'no-trace', reason },
+        { kind: 'no-trace', reason },
+      ])
+    }
+  })
+
+  it('has exactly TWO kinds of why — answered, and a named absence', () => {
+    const kinds = new Set([
+      ...briefLineViews(
+        step({ served: { channel1: [briefLine(false, 'rec_a')], channel2: [], channel3: [] } }),
+        answered([traceLine('rec_a')]),
+      ).map(line => line.why.kind),
+      ...briefLineViews(
+        step({ served: { channel1: [briefLine(false, 'rec_a')], channel2: [], channel3: [] } }),
+        { kind: 'no-trace', reason: 'pre-trace-run' },
+      ).map(line => line.why.kind),
+    ])
+
+    expect(kinds).toEqual(new Set(['answered', 'no-trace']))
+  })
+
+  it('keeps the served line\'s own fields beside the why — the panel paints one object', () => {
+    const lines = briefLineViews(
+      step({ served: { channel1: [briefLine(true, 'rec_a')], channel2: [], channel3: [] } }),
+      answered([traceLine('rec_a')]),
+    )
+
+    expect(lines[0].id).toBe('rec_a')
+    expect(lines[0].summary).toBe('the cart page lives at /view_cart')
+    expect(lines[0].servedAsCanary).toBe(true)
+  })
+})
+
+describe('the cut ledger is the answer to "why did it NOT say X" (D-04)', () => {
+  it('labels the ledger from the producer cap and carries the cut lines through', () => {
+    const cut = cutCandidates(answered([], [traceLine('rec_x'), traceLine('rec_y'), traceLine('rec_z')]))
+
+    expect(cut).toEqual({
+      label: cutCandidatesLabel(3),
+      lines: [traceLine('rec_x'), traceLine('rec_y'), traceLine('rec_z')],
+    })
+    expect(cut?.label).toBe(`Cut candidates (3 of top ${String(TRACE_TRUNCATION_TOP_K)})`)
+  })
+
+  it('has NO ledger at all when the step has no trace — an empty one would claim nothing was cut', () => {
+    expect(cutCandidates({ kind: 'no-trace', reason: 'artifact-missing' })).toBeUndefined()
+  })
+
+  it('keeps the ledger on an answered trace that truncated nothing — zero cut IS a recorded fact', () => {
+    expect(cutCandidates(answered([traceLine('rec_a')]))).toEqual({
+      label: cutCandidatesLabel(0),
+      lines: [],
+    })
+  })
+})
+
+describe('a canary line is never blank — it says pending, not-attributed, or the outcome (D-08)', () => {
+  it('says PENDING while curation has not settled, whatever the attributions hold', () => {
+    expect(canaryOutcomeWord('pending', attribution())).toBe('pending')
+    expect(canaryOutcomeWord('running', undefined)).toBe('pending')
+  })
+
+  it('says the attributed OUTCOME WORD once curation is done', () => {
+    for (const outcome of ['confirmed', 'contradicted', 'helpful', 'harmful'] as const) {
+      expect(canaryOutcomeWord('done', attribution({ outcome }))).toBe(outcome)
+    }
+  })
+
+  it('says NOT-ATTRIBUTED when curation is done and nothing was attributed to this line', () => {
+    expect(canaryOutcomeWord('done', undefined)).toBe('not-attributed')
+  })
+
+  it('says NOT-ATTRIBUTED when curation FAILED — a stale outcome is not this run\'s answer', () => {
+    expect(canaryOutcomeWord('failed', attribution())).toBe('not-attributed')
+    expect(canaryOutcomeWord('failed', undefined)).toBe('not-attributed')
+  })
+})
+
+describe('a replay states its guard outcome and a hint states its demotion (D-07)', () => {
+  it('reads replayed n/n when every check passed and nothing broke', () => {
+    expect(planSourceSentence({
+      kind: 'procedure-replay',
+      procedureId: 'p_1',
+      guard: { checksPassed: 5, total: 5 },
+    })).toBe(replayedText(5, 5))
+    expect(replayedText(5, 5)).toBe('replayed 5/5')
+  })
+
+  it('names the broken step ONE-BASED, with the cause word the contract spells', () => {
+    expect(planSourceSentence({
+      kind: 'procedure-replay',
+      procedureId: 'p_1',
+      guard: { checksPassed: 2, total: 5, miss: { procedureStepIndex: 2, reason: 'gate-refused' } },
+    })).toBe('broke at step 3: miss')
+
+    expect(planSourceSentence({
+      kind: 'procedure-replay',
+      procedureId: 'p_1',
+      guard: { checksPassed: 1, total: 5, executionFailure: { procedureStepIndex: 1 } },
+    })).toBe('broke at step 2: adapter failure')
+
+    expect(planSourceSentence({
+      kind: 'procedure-replay',
+      procedureId: 'p_1',
+      guard: { checksPassed: 3, total: 5, verifierRejection: { procedureStepIndex: 3 } },
+    })).toBe('broke at step 4: verifier rejection')
+  })
+
+  it('breaks at the FIRST cause in precedence order — miss, then adapter, then verifier', () => {
+    expect(planSourceSentence({
+      kind: 'procedure-replay',
+      procedureId: 'p_1',
+      guard: {
+        checksPassed: 0,
+        total: 5,
+        miss: { procedureStepIndex: 0, reason: 'descriptor-missing' },
+        executionFailure: { procedureStepIndex: 1 },
+        verifierRejection: { procedureStepIndex: 2 },
+      },
+    })).toBe(brokeAtText(1, 'miss'))
+  })
+
+  it('does NOT read replayed n/n when a guard member broke, even at full checksPassed', () => {
+    expect(planSourceSentence({
+      kind: 'procedure-replay',
+      procedureId: 'p_1',
+      guard: { checksPassed: 5, total: 5, verifierRejection: { procedureStepIndex: 4 } },
+    })).toBe('broke at step 5: verifier rejection')
+  })
+
+  it('says procedure hint, and says so it was DEMOTED when the evidence recorded a demotion', () => {
+    expect(planSourceSentence({ kind: 'procedure-hint', procedureId: 'p_2' })).toBe(PROCEDURE_HINT_TEXT)
+    expect(planSourceSentence({ kind: 'procedure-hint', procedureId: 'p_2', demotion: 'body-empty' }))
+      .toBe(PROCEDURE_HINT_DEMOTED_TEXT)
+    expect(PROCEDURE_HINT_TEXT).toBe('procedure hint')
+    expect(PROCEDURE_HINT_DEMOTED_TEXT).toBe('procedure hint (demoted from replay)')
+  })
+
+  it('tones the row ok, broke or hint — the three looks the UI-SPEC colours', () => {
+    expect(planSourceView({
+      kind: 'procedure-replay', procedureId: 'p', guard: { checksPassed: 2, total: 2 },
+    })).toEqual({ kind: 'procedure-replay', sentence: 'replayed 2/2', tone: 'ok' })
+
+    expect(planSourceView({
+      kind: 'procedure-replay',
+      procedureId: 'p',
+      guard: { checksPassed: 0, total: 2, miss: { procedureStepIndex: 0, reason: 'gate-refused' } },
+    })).toEqual({ kind: 'procedure-replay', sentence: 'broke at step 1: miss', tone: 'broke' })
+
+    expect(planSourceView({ kind: 'procedure-hint', procedureId: 'p' }))
+      .toEqual({ kind: 'procedure-hint', sentence: PROCEDURE_HINT_TEXT, tone: 'hint' })
+  })
+
+  it('names the three broke causes exactly as the Copywriting Contract spells them', () => {
+    expect(BROKE_CAUSE_LABELS).toEqual({
+      miss: 'miss',
+      executionFailure: 'adapter failure',
+      verifierRejection: 'verifier rejection',
+    })
+  })
+})
+
+describe('a long channel shows a page, and says how many it is holding back', () => {
+  it('shows every line and holds nothing back at or below the page size', () => {
+    const lines = Array.from({ length: CHANNEL_PAGE_SIZE }, (_, i) => `line ${String(i)}`)
+    const page = channelPage(lines)
+
+    expect(page.lines).toHaveLength(CHANNEL_PAGE_SIZE)
+    expect(page.hiddenCount).toBeUndefined()
+    expect(page.showAllLabel).toBeUndefined()
+    expect(CHANNEL_PAGE_SIZE).toBe(50)
+  })
+
+  it('shows the first 50 and offers the WHOLE count in the trigger, not the hidden one', () => {
+    const lines = Array.from({ length: 60 }, (_, i) => `line ${String(i)}`)
+    const page = channelPage(lines)
+
+    expect(page.lines).toHaveLength(50)
+    expect(page.lines[49]).toBe('line 49')
+    expect(page.hiddenCount).toBe(10)
+    expect(page.showAllLabel).toBe(showAllLinesLabel(60))
+    expect(showAllLinesLabel(60)).toBe('Show all 60 lines')
+  })
+})
+
+describe('the projection joins the trace, the ledger, the outcome and the plan source per step', () => {
+  it('builds one detail per step, with the three channels the op recorded', () => {
+    const view = projectKnowledgeView(ready({
+      steps: [step({
+        served: {
+          channel1: [briefLine(false, 'rec_a')],
+          channel2: [{ id: 'rec_b', detailLevel: 'full', bodyDigest: 'sha256:b' }],
+          channel3: [{ id: 'rec_c', summary: 'this page is slow' }],
+        },
+        trace: answered([traceLine('rec_a', { leg: 'lexical', rank: 2, score: 0.5 })]),
+      })],
+    }))
+
+    const detail = detailOf(view)
+    expect(detail.channel1.map(l => l.id)).toEqual(['rec_a'])
+    expect(detail.channel1[0].why).toEqual({ kind: 'answered', leg: 'lexical', rank: 2, score: 0.5 })
+    expect(detail.channel2).toEqual([{ id: 'rec_b', detailLevel: 'full' }])
+    expect(detail.channel3).toEqual([{ id: 'rec_c', summary: 'this page is slow' }])
+  })
+
+  it('joins the canary outcome on testIndex, stepIndex AND recordId — all three, or none', () => {
+    const view = projectKnowledgeView(ready({
+      steps: [
+        step({
+          testIndex: 0,
+          stepIndex: 0,
+          served: { channel1: [briefLine(true, 'rec_a')], channel2: [], channel3: [] },
+        }),
+        step({
+          testIndex: 1,
+          stepIndex: 0,
+          served: { channel1: [briefLine(true, 'rec_a')], channel2: [], channel3: [] },
+        }),
+      ],
+      curation: { status: 'done' },
+      learned: {
+        changes: [],
+        canaryAttributions: [attribution({ testIndex: 0, stepIndex: 0, recordId: 'rec_a', outcome: 'helpful' })],
+      },
+    }))
+
+    expect(detailOf(view, 0).channel1[0].canaryOutcome).toBe('helpful')
+    // The SAME record id on a NEIGHBOURING member test is a different served line.
+    expect(detailOf(view, 1).channel1[0].canaryOutcome).toBe('not-attributed')
+  })
+
+  it('leaves a non-canary line with NO outcome key at all — never a word it did not earn', () => {
+    const view = projectKnowledgeView(ready({
+      steps: [step({ served: { channel1: [briefLine(false, 'rec_a')], channel2: [], channel3: [] } })],
+      curation: { status: 'done' },
+    }))
+
+    const line = detailOf(view).channel1[0]
+    expect(line.canaryOutcome).toBeUndefined()
+    expect('canaryOutcome' in line).toBe(false)
+  })
+
+  it('reads the curation word from the projection, so an unsettled chain says pending', () => {
+    const view = projectKnowledgeView(ready({
+      steps: [step({ served: { channel1: [briefLine(true, 'rec_a')], channel2: [], channel3: [] } })],
+      curation: { status: 'running' },
+      learned: { changes: [], canaryAttributions: [attribution({ recordId: 'rec_a' })] },
+    }))
+
+    expect(detailOf(view).channel1[0].canaryOutcome).toBe('pending')
+  })
+
+  it('carries the plan-source row and the cut ledger onto the detail', () => {
+    const view = projectKnowledgeView(ready({
+      steps: [step({
+        served: { channel1: [briefLine(false, 'rec_a')], channel2: [], channel3: [] },
+        trace: answered([traceLine('rec_a')], [traceLine('rec_cut')]),
+        planSource: { kind: 'procedure-replay', procedureId: 'p_1', guard: { checksPassed: 5, total: 5 } },
+      })],
+    }))
+
+    const detail = detailOf(view)
+    expect(detail.cut?.label).toBe(cutCandidatesLabel(1))
+    expect(detail.planSource).toEqual({ kind: 'procedure-replay', sentence: 'replayed 5/5', tone: 'ok' })
+  })
+
+  it('leaves the cut ledger and the plan source ABSENT — not null — when the step recorded neither', () => {
+    const view = projectKnowledgeView(ready({ steps: [step()] }))
+
+    const detail = detailOf(view)
+    expect('cut' in detail).toBe(false)
+    expect('planSource' in detail).toBe(false)
+    expect(JSON.stringify(detail)).not.toContain('null')
+  })
+
+  it('gives a step that served nothing an EMPTY detail rather than no detail', () => {
+    const view = projectKnowledgeView(ready({ steps: [step()] }))
+
+    expect(detailOf(view)).toEqual({ channel1: [], channel2: [], channel3: [] })
+  })
+})
+
+describe('the 407-06 copy is published as constants, like every sentence before it', () => {
+  it('spells the canary marker and both unsettled words exactly once', () => {
+    expect(CANARY_BADGE_TEXT).toBe('canary')
+    expect(ATTRIBUTION_PENDING_TEXT).toBe('attribution pending')
+    expect(NOT_ATTRIBUTED_TEXT).toBe('not attributed')
+    expect(new Set([CANARY_BADGE_TEXT, ATTRIBUTION_PENDING_TEXT, NOT_ATTRIBUTED_TEXT]).size).toBe(3)
+  })
+
+  it('rounds a trace score to three places, so two adjacent candidates stop looking identical', () => {
+    expect(traceLineText('anchor', 1, 1.48695)).toBe('leg anchor · rank 1 · score 1.487')
   })
 })
