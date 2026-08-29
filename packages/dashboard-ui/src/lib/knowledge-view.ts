@@ -324,6 +324,19 @@ export const COUNTS_NOT_RECORDED_SENTENCE = 'Counts not recorded for this run.'
  */
 export const CHANGES_NOT_AVAILABLE_TEXT = 'Change records for this run are not available yet.'
 
+/**
+ * What the half says when the knowledge store could not be READ at all (407-14 · 407-15).
+ *
+ * A DIFFERENT ABSENCE FROM ITS SIBLING ABOVE, and the distinction is the whole reason it exists.
+ * {@link CHANGES_NOT_AVAILABLE_TEXT} names an absence of ATTRIBUTION — the store answered and no
+ * change carried this run's id. This one names an absence of a READABLE STORE: 407-14's op folded
+ * a `KnowledgeMaintenanceScanError` and published `learned.scanIncomplete` rather than letting the
+ * failure masquerade as an empty list. Telling that reader to wait — `yet` — would send them back
+ * to a page that will never fill on its own, so this sentence sends them to the one door that
+ * grades the same fold instead.
+ */
+export const CHANGES_UNREADABLE_TEXT = 'Change records could not be read from the knowledge store. Run `agent-qa doctor`.'
+
 /** What the half says when curation settled having moved neither count (D-12). */
 export const CHANGED_NOTHING_TEXT = 'Curation ran and changed nothing.'
 
@@ -344,17 +357,28 @@ export function pendingProposalsLine(count: number): string {
 }
 
 /**
- * The change kinds the Learned half paints — FOUR of the record's six (D-10).
+ * The change kinds the Learned half paints — FIVE of the record's six (D-10, widened by 407-15).
  *
- * `added` and `purged` are deliberately not here. A record being born is what the knowledge store
- * did with a candidate, and a record being deleted is a maintenance action; neither is what THIS
- * RUN taught the store, which is what a reader opening a run's Learned half is asking. `promoted`
- * IS in the set — it is the promotions kind D-10 names.
+ * `added` IS WHAT THE RUN TAUGHT THE STORE. 407-04 stamps `sourceRunId` onto the synthetic `added`
+ * change from the bundle's own `provenance.runId` precisely so a run-linked record's birth is
+ * attributable to the run that produced it: a fact that exists because this run ran is this run's
+ * teaching, not the store's bookkeeping. Under the earlier four-kind table the commonest curation
+ * outcome — one new fact, nothing deprecated — was served by the op, correctly attributed, then
+ * dropped here, and the half printed `Change records for this run are not available yet.` beside
+ * `curated 1 fact, deprecated 0` (REVIEW CR-04, VERIFICATION gap 2).
+ *
+ * `purged` stays out: a deletion is a maintenance action taken ON the store, never something a run
+ * taught it. `promoted` is in — it is the promotions kind D-10 names.
+ *
+ * THE WIDENING BENDS A LOCKED DECISION and says so. D-10 enumerates four kinds; this table carries
+ * five as reconciliation R-407-15-01, pending the user's ruling alongside UAT items 6–8. If the
+ * ruling goes the other way the revert is this entry, one `KIND_LOOK` arm and one sentence arm —
+ * the widening was made only at the view, never in the schema, the op or the store.
  *
  * A closed `as const` table rather than a predicate, so the component's badge switch and the cells
- * both spell the vocabulary once and a fifth kind is a compile error rather than a silent drop.
+ * both spell the vocabulary once and a sixth kind is a compile error rather than a silent drop.
  */
-export const LEARNED_CHANGE_KINDS = ['confirmed', 'superseded', 'deprecated', 'promoted'] as const
+export const LEARNED_CHANGE_KINDS = ['added', 'confirmed', 'superseded', 'deprecated', 'promoted'] as const
 
 export type LearnedChangeKind = (typeof LEARNED_CHANGE_KINDS)[number]
 
@@ -631,6 +655,16 @@ export type LearnedState = 'pending' | 'running' | 'done' | 'failed' | 'counts-a
  * `recordId` in both cases; neither absence is ever a guess.
  */
 export interface LearnedRowView {
+  /**
+   * The row's identity across a re-render — `${recordId}:${change}:${atOrdinal}` (WR-02).
+   *
+   * ONE RECORD CAN CARRY SEVERAL CHANGES IN ONE RUN. `diffSince` emits one `RecordChange` per
+   * surviving outcome event, so a bundle confirmed at ordinal 12 and superseded at 13 crosses the
+   * op's run filter twice and lands here as two near-identical rows. The view drops `atOrdinal`,
+   * so `recordId` alone is not unique and React would warn and reconcile one of the two away on
+   * the re-render that fires as curation settles — which is exactly when the second row appears.
+   */
+  readonly key: string
   readonly kind: LearnedChangeKind
   /** The record's own id, VERBATIM — the row addresses a record, not a title. */
   readonly recordId: string
@@ -656,6 +690,14 @@ export interface LearnedView {
   /** The state sentence. Absent exactly when {@link LearnedView.rows} is non-empty. */
   readonly sentence?: string
   readonly rows: readonly LearnedRowView[]
+  /**
+   * Present only when the op could not READ the knowledge store (407-14).
+   *
+   * True or absent, never `false` — the same idiom the wire flag it mirrors is typed with
+   * (`z.literal(true).optional()`). The component stamps `data-learned-read="incomplete"` from it,
+   * so a degraded half is addressable by a cell rather than inferred from its sentence.
+   */
+  readonly scanIncomplete?: true
 }
 
 /** The pending-proposals line: a COUNT and a door, never any proposal content (D-11). */
@@ -795,6 +837,7 @@ function learnedRow(row: RecordChange): LearnedRowView {
   const ref = learnedRecordRef(row.recordId)
   const href = ref === undefined ? undefined : entityRefRoute(ref)
   return {
+    key: `${row.recordId}:${row.change}:${String(row.atOrdinal)}`,
     kind: row.change as LearnedChangeKind,
     recordId: row.recordId,
     ...(ref === undefined ? {} : { ref }),
@@ -806,13 +849,22 @@ function learnedRow(row: RecordChange): LearnedRowView {
  * The Learned half, as one of five states — and every one of them says something (D-12).
  *
  * THE ORDER OF THE ARMS IS THE ORDER OF THE QUESTIONS. Is the chain still moving? Did it fail?
- * Did the frozen row record what it did? Did it do anything? Did any of it reach this run? Each
- * answer stops there, because each sends a reader somewhere different, and a single collapsed
- * "no rows" arm would send all five of them to the same shrug.
+ * Could the store even be read? Did any of it reach this run? Did the frozen row record what it
+ * did? Did it do anything? Each answer stops there, because each sends a reader somewhere
+ * different, and a single collapsed "no rows" arm would send all of them to the same shrug.
+ *
+ * ROWS COME BEFORE SENTENCES, once curation has settled (407-15 · REVIEW CR-04). The earlier arm
+ * order asked the COUNTS first and only reached the rows if the counts had moved, so a run whose
+ * settled row recorded `0 / 0` — or recorded nothing at all — silently discarded change records
+ * the op had already served and attributed. A half that denies a record it was handed is worse
+ * than one that shows a disagreement between two producers: the disagreement is the news.
  *
  * THE COUNTS COME ONLY FROM THE SETTLED ROW (D-09). An unsettled chain has no counts to show — not
  * zeros, not a stale pair from a previous read — so `countLine` is absent for `pending`, `running`
- * and `failed`, and the chip beside it is silent for exactly the same reason.
+ * and `failed`, and the chip beside it is silent for exactly the same reason. Those three arms
+ * also list NOTHING even when the projection carries rows: a chain that has not settled has not
+ * finished deciding what it changed, so listing its interim rows would date-stamp a claim it has
+ * not made (D-12).
  */
 export function learnedView(
   projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
@@ -827,19 +879,17 @@ export function learnedView(
     return { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [] }
   }
 
-  if (counts === undefined) {
-    return {
-      state: 'counts-absent',
-      countLine: COUNTS_NOT_RECORDED_TEXT,
-      sentence: COUNTS_NOT_RECORDED_SENTENCE,
-      rows: [],
-    }
-  }
+  const state: LearnedState = counts === undefined ? 'counts-absent' : 'done'
+  const countLine =
+    counts === undefined
+      ? COUNTS_NOT_RECORDED_TEXT
+      : curationFactsText(counts.curated, counts.deprecated)
 
-  const countLine = curationFactsText(counts.curated, counts.deprecated)
-
-  if (counts.curated === 0 && counts.deprecated === 0) {
-    return { state: 'done', countLine, sentence: CHANGED_NOTHING_TEXT, rows: [] }
+  // THE STORE COULD NOT BE READ, and that is a different fact from every absence below it
+  // (407-14). An empty `changes` list carrying this flag is not "nothing reached this run"; it is
+  // "nobody could look". The counts stay — they came from the frozen row, not from the store.
+  if (projection.learned.scanIncomplete === true) {
+    return { state, countLine, sentence: CHANGES_UNREADABLE_TEXT, rows: [], scanIncomplete: true }
   }
 
   // ALREADY FILTERED TO THIS RUN by `runs.knowledge` (407-04's run-link stamping and canary
@@ -849,9 +899,15 @@ export function learnedView(
     .filter(row => LEARNED_CHANGE_KIND_SET.has(row.change))
     .map(learnedRow)
 
-  return rows.length === 0
-    ? { state: 'done', countLine, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [] }
-    : { state: 'done', countLine, rows }
+  if (rows.length > 0) return { state, countLine, rows }
+
+  if (counts === undefined) {
+    return { state, countLine, sentence: COUNTS_NOT_RECORDED_SENTENCE, rows: [] }
+  }
+
+  return counts.curated === 0 && counts.deprecated === 0
+    ? { state, countLine, sentence: CHANGED_NOTHING_TEXT, rows: [] }
+    : { state, countLine, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [] }
 }
 
 /**
