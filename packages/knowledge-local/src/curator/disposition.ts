@@ -4,14 +4,12 @@ import {
   isCredentialValueField,
   isReplayableActionShape,
   parseProcedureBody,
-  sha256hex,
   foldMeasurements,
   normalizeAnchor,
   supersessionKey as schemaSupersessionKey,
   type Anchor,
   type BundleDraft,
   type BundleStatus,
-  type CanaryOutcome,
   type Delta,
   type DeltaOrigin,
   type DistilledObservation,
@@ -55,25 +53,12 @@ import {
 /** Provisional §7.3.1 cap. Phase 379 may retune it only through an explicit constant edit. */
 export const BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN = 1
 
-/**
- * D-22: bind one canary observation to the served candidate and attributed step. The schema
- * evidence-token recipe adds the exercised anchor and build ordinal; together those fields are
- * the complete replay identity required by §7.5.1.
- */
-export function canaryOutcomeObservationId(
-  outcome: Pick<
-    CanaryOutcome,
-    'candidateId' | 'runId' | 'testId' | 'testIndex' | 'stepIndex'
-  >,
-): string {
-  return `canary-outcome:${sha256hex(canonicalJson({
-    candidateId: outcome.candidateId,
-    runId: outcome.runId,
-    testId: outcome.testId,
-    testIndex: outcome.testIndex,
-    stepIndex: outcome.stepIndex,
-  }))}`
-}
+// 407-04 (D-08/D-10): `canaryOutcomeObservationId` MOVED to `../serving/canary-observation-id.js`
+// and is re-exported here so every writer-side caller keeps its import path. The reader entry must
+// recompute the identity the writer stamped, and this file cannot be on that entry — it names the
+// bundle store, the egress checkpoint and the curation queue payloads. One implementation, two
+// import paths: a second spelling would be a silent attribution failure, not a compile error.
+export { canaryOutcomeObservationId } from '../serving/canary-observation-id.js'
 
 /**
  * 381-03 (PROC-01 D-02/D-03): the verified queue evidence the procedure-extraction wall

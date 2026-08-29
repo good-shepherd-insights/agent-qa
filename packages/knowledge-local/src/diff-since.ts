@@ -9,6 +9,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   BundleOutcomeEvent,
+  BundleProvenance,
   RecordChange,
 } from '@vostride/agent-qa-schema'
 
@@ -31,9 +32,54 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
+/**
+ * The run this event's curation belongs to, or `undefined` when it is not DERIVABLE (Phase 407,
+ * LERN-02 · D-10 as reconciled by 407-01).
+ *
+ * There is no single "this run's curation job id" to join on: a commit stamps
+ * `curationJobId = candidateId`, a promotion stamps `promote:<candidateId>`, and a canary outcome
+ * stamps a sha-derived observation id. The bundle's own `run-linked` provenance carries BOTH the
+ * run and the candidate id those two job spellings are built from, so an event whose job id is one
+ * of them was produced by this bundle's own curation and no other.
+ *
+ * An event carrying a NEIGHBOURING candidate's job id gets nothing. A change attributed to the
+ * wrong run is worse than one attributed to no run: a person reading "this run deprecated that
+ * fact" acts on it.
+ */
+function linkedRunId(
+  event: BundleOutcomeEvent,
+  provenance: BundleProvenance,
+): string | undefined {
+  if (provenance.mode !== 'run-linked' || provenance.curationJobId === undefined) return undefined
+  return event.curationJobId === provenance.curationJobId
+    || event.curationJobId === `promote:${provenance.curationJobId}`
+    ? provenance.runId
+    : undefined
+}
+
+/**
+ * The two run links, spread onto every change a surviving event produces.
+ *
+ * `observationId` is a DIFFERENT axis from `sourceRunId` rather than a fallback for it: a canary
+ * outcome is attributed by an id the consumer recomputes from the run's own served tuples, while a
+ * commit or promotion is attributed by run id. Absent keys, never nulls — a change written before
+ * this field existed and a change for which nothing is derivable must read identically.
+ */
+function runLinks(
+  event: BundleOutcomeEvent,
+  provenance: BundleProvenance,
+): { sourceRunId?: string; observationId?: string } {
+  const runId = linkedRunId(event, provenance)
+  return {
+    ...(runId === undefined ? {} : { sourceRunId: runId }),
+    ...(event.observationId === undefined ? {} : { observationId: event.observationId }),
+  }
+}
+
 function directChange(
   recordId: string,
   event: BundleOutcomeEvent,
+  provenance: BundleProvenance,
 ): RecordChange | undefined {
   switch (event.type) {
     case 'confirmed':
@@ -45,6 +91,7 @@ function directChange(
         change: event.type,
         atOrdinal: event.buildOrdinal,
         evidenceToken: event.evidenceToken,
+        ...runLinks(event, provenance),
       })
     case 'superseded':
       return RecordChangeSchema.parse({
@@ -54,6 +101,7 @@ function directChange(
         atOrdinal: event.buildOrdinal,
         evidenceToken: event.evidenceToken,
         byRecordId: event.byRecordId,
+        ...runLinks(event, provenance),
       })
     default:
       return undefined
@@ -155,13 +203,19 @@ export function diffSince(options: DiffSinceOptions): RecordChange[] {
         recordId: bundle.manifest.id,
         change: 'added',
         atOrdinal: earliestOrdinal,
+        // 407-04 (D-10): the appearance of a record IS the run's doing whenever the bundle
+        // records one — no `curationJobId` match is needed, because no event produced this
+        // change. A standalone bundle names no run and gets no key.
+        ...(bundle.provenance.mode === 'run-linked'
+          ? { sourceRunId: bundle.provenance.runId }
+          : {}),
       }))
       eventLowerBound = earliestOrdinal
     }
 
     for (const event of survivingEvents) {
       if (event.buildOrdinal <= eventLowerBound) continue
-      const change = directChange(bundle.manifest.id, event)
+      const change = directChange(bundle.manifest.id, event, bundle.provenance)
       if (change !== undefined) changes.push(change)
     }
   }

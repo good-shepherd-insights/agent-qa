@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import {
   BundleOutcomeEventSchema,
+  asRecordId,
   guardRecordChange,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -14,7 +15,10 @@ import type {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { publishBundle } from '../bundle-publish.test-helper.js'
-import type { BundleStoreConfig } from '../bundle-publish.test-helper.js'
+import type {
+  BundleStoreConfig,
+  PublishBundleInput,
+} from '../bundle-publish.test-helper.js'
 import * as knowledgeLocal from '../index.js'
 import {
   makeBundleDraftFixture,
@@ -67,6 +71,12 @@ describe('diffSince deterministic maintenance history', () => {
     scope: string,
     createdAtOrdinal: number,
     initialEvents: readonly BundleOutcomeEvent[],
+    provenance: PublishBundleInput['provenance'] = {
+      mode: 'run-linked',
+      runId: `diff-${scope}`,
+      testId: 'diff-since',
+      stepIndex: 0,
+    },
   ): RecordId {
     const outcome = publishBundle(config(), {
       draft: makeBundleDraftFixture({
@@ -84,12 +94,7 @@ describe('diffSince deterministic maintenance history', () => {
       screenStates: [makeScreenStateFixture()],
       initialEvents: [...initialEvents],
       relations: [],
-      provenance: {
-        mode: 'run-linked',
-        runId: `diff-${scope}`,
-        testId: 'diff-since',
-        stepIndex: 0,
-      },
+      provenance,
       artifacts: [],
     })
 
@@ -174,11 +179,16 @@ describe('diffSince deterministic maintenance history', () => {
       evidenceToken: 'superseded-at-12',
       byRecordId: confirmedId,
     })
+    // 407-04 (LERN-02, D-10): the synthetic `added` change carries the bundle's OWN run link,
+    // which every fixture here publishes with `mode: 'run-linked'`. The lifecycle changes above
+    // do not, because this fixture's provenance names no `curationJobId` for their events to
+    // match — which is the point of the rule and not an omission in the fixture.
     expect(changes).toContainEqual({
       schemaVersion: 1,
       recordId: addedId,
       change: 'added',
       atOrdinal: 13,
+      sourceRunId: 'diff-added',
     })
     expect(changes.some((change) => change.recordId === retractedId)).toBe(false)
     expect(diffSince(knowledgeRoot, 11).some((change) => (
@@ -213,6 +223,7 @@ describe('diffSince deterministic maintenance history', () => {
         recordId: addedId,
         change: 'added',
         atOrdinal: 11,
+        sourceRunId: 'diff-added-transition',
       },
       {
         schemaVersion: 1,
@@ -403,5 +414,310 @@ describe('diffSince deterministic maintenance history', () => {
 
     expect(second).toEqual(first)
     expect(first).toEqual(sorted)
+  })
+
+  // 407-04 (LERN-02 · D-10 as reconciled by 407-01). The run link is stamped from the two places
+  // it is DURABLE — the bundle's own `run-linked` provenance and the outcome event's observation
+  // id — and nowhere else. A change attributed to the wrong run is worse than one attributed to
+  // no run at all, because a person reading "this run deprecated that fact" acts on it.
+  describe('the run link (LERN-02, D-10)', () => {
+    it("stamps the bundle's own run on the synthetic added change", () => {
+      const recordId = publishFact('Run linked added', 'run-linked-added', 3, [], {
+        mode: 'run-linked',
+        runId: 'run-A',
+        testId: 'attribution',
+        stepIndex: 0,
+        curationJobId: 'cand-1',
+      })
+
+      const changes = diffSince(knowledgeRoot, 0).map(guardRecordChange)
+
+      expect(changes).toEqual([
+        {
+          schemaVersion: 1,
+          recordId,
+          change: 'added',
+          atOrdinal: 3,
+          sourceRunId: 'run-A',
+        },
+      ])
+    })
+
+    it("stamps the run on a commit event carrying the bundle's own candidate id", () => {
+      const recordId = publishFact('Own candidate commit', 'own-candidate', 3, [
+        event({
+          type: 'confirmed',
+          evidenceToken: 'own-candidate-at-5',
+          curationJobId: 'cand-1',
+          buildOrdinal: 5,
+          origin: 'agent-verified',
+        }),
+      ], {
+        mode: 'run-linked',
+        runId: 'run-A',
+        testId: 'attribution',
+        stepIndex: 0,
+        curationJobId: 'cand-1',
+      })
+
+      expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
+        {
+          schemaVersion: 1,
+          recordId,
+          change: 'confirmed',
+          atOrdinal: 5,
+          evidenceToken: 'own-candidate-at-5',
+          sourceRunId: 'run-A',
+        },
+      ])
+    })
+
+    it('stamps the run on a promotion event stamped promote:<candidateId>', () => {
+      const recordId = publishFact('Promoted candidate', 'promoted-candidate', 3, [
+        event({
+          type: 'promoted',
+          evidenceToken: 'promoted-at-6',
+          curationJobId: 'promote:cand-1',
+          buildOrdinal: 6,
+        }),
+      ], {
+        mode: 'run-linked',
+        runId: 'run-A',
+        testId: 'attribution',
+        stepIndex: 0,
+        curationJobId: 'cand-1',
+      })
+
+      expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
+        {
+          schemaVersion: 1,
+          recordId,
+          change: 'promoted',
+          atOrdinal: 6,
+          evidenceToken: 'promoted-at-6',
+          sourceRunId: 'run-A',
+        },
+      ])
+    })
+
+    it("leaves a NEIGHBOURING candidate's event unattributed — no sourceRunId key at all", () => {
+      const recordId = publishFact('Neighbour job', 'neighbour-job', 3, [
+        event({
+          type: 'confirmed',
+          evidenceToken: 'neighbour-at-5',
+          curationJobId: 'cand-9',
+          buildOrdinal: 5,
+          origin: 'agent-verified',
+        }),
+      ], {
+        mode: 'run-linked',
+        runId: 'run-A',
+        testId: 'attribution',
+        stepIndex: 0,
+        curationJobId: 'cand-1',
+      })
+
+      const changes = diffSince(knowledgeRoot, 4).map(guardRecordChange)
+
+      expect(changes).toEqual([
+        {
+          schemaVersion: 1,
+          recordId,
+          change: 'confirmed',
+          atOrdinal: 5,
+          evidenceToken: 'neighbour-at-5',
+        },
+      ])
+      expect(Object.hasOwn(changes[0]!, 'sourceRunId')).toBe(false)
+    })
+
+    it('carries the observation id of the event the change came from', () => {
+      const recordId = publishFact('Canary attributed', 'canary-attributed', 3, [
+        event({
+          type: 'confirmed',
+          evidenceToken: 'canary-at-5',
+          curationJobId: 'cand-1',
+          buildOrdinal: 5,
+          observationId: 'canary-outcome:abc',
+          origin: 'agent-verified',
+        }),
+      ], {
+        mode: 'run-linked',
+        runId: 'run-A',
+        testId: 'attribution',
+        stepIndex: 0,
+        curationJobId: 'cand-1',
+      })
+
+      expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
+        {
+          schemaVersion: 1,
+          recordId,
+          change: 'confirmed',
+          atOrdinal: 5,
+          evidenceToken: 'canary-at-5',
+          sourceRunId: 'run-A',
+          observationId: 'canary-outcome:abc',
+        },
+      ])
+    })
+
+    it('a standalone bundle yields the pre-change shape byte for byte — no new keys appear', () => {
+      const recordId = publishFact('Standalone', 'standalone-fact', 3, [
+        event({
+          type: 'confirmed',
+          evidenceToken: 'standalone-at-5',
+          curationJobId: 'cand-1',
+          buildOrdinal: 5,
+          origin: 'agent-verified',
+        }),
+      ], {
+        mode: 'standalone',
+        sourceDescription: 'imported by hand',
+      })
+
+      const changes = diffSince(knowledgeRoot, 0).map(guardRecordChange)
+
+      expect(JSON.stringify(changes)).toBe(JSON.stringify([
+        {
+          schemaVersion: 1,
+          recordId,
+          change: 'added',
+          atOrdinal: 3,
+        },
+        {
+          schemaVersion: 1,
+          recordId,
+          change: 'confirmed',
+          atOrdinal: 5,
+          evidenceToken: 'standalone-at-5',
+        },
+      ]))
+      expect(JSON.stringify(changes)).not.toContain('sourceRunId')
+      expect(JSON.stringify(changes)).not.toContain('observationId')
+    })
+
+    it("carries the observation id even when the event's job matches no run link", () => {
+      const recordId = publishFact('Unlinked observation', 'unlinked-observation', 3, [
+        event({
+          type: 'deprecated',
+          evidenceToken: 'unlinked-at-5',
+          curationJobId: 'cand-9',
+          buildOrdinal: 5,
+          observationId: 'canary-outcome:def',
+          reason: 'contradicted by a later run',
+        }),
+      ], {
+        mode: 'standalone',
+        sourceDescription: 'imported by hand',
+      })
+
+      expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
+        {
+          schemaVersion: 1,
+          recordId,
+          change: 'deprecated',
+          atOrdinal: 5,
+          evidenceToken: 'unlinked-at-5',
+          observationId: 'canary-outcome:def',
+        },
+      ])
+    })
+
+    it('stamps the superseded arm too — the run link is not a per-change-kind exception', () => {
+      const victimId = publishFact('Supersession victim', 'supersession-victim', 3, [], {
+        mode: 'standalone',
+        sourceDescription: 'the victim',
+      })
+      const recordId = publishFact('Supersession source', 'supersession-source', 3, [
+        event({
+          type: 'superseded',
+          evidenceToken: 'superseded-at-5',
+          curationJobId: 'cand-1',
+          buildOrdinal: 5,
+          byRecordId: victimId,
+        }),
+      ], {
+        mode: 'run-linked',
+        runId: 'run-A',
+        testId: 'attribution',
+        stepIndex: 0,
+        curationJobId: 'cand-1',
+      })
+
+      expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
+        {
+          schemaVersion: 1,
+          recordId,
+          change: 'superseded',
+          atOrdinal: 5,
+          evidenceToken: 'superseded-at-5',
+          byRecordId: victimId,
+          sourceRunId: 'run-A',
+        },
+      ])
+    })
+
+    it('stamps nothing on a purge change — a receipt carries no run and none is invented', () => {
+      publishFact('Purge subject', 'purge-subject', 3, [], {
+        mode: 'run-linked',
+        runId: 'run-A',
+        testId: 'attribution',
+        stepIndex: 0,
+        curationJobId: 'cand-1',
+      })
+      const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
+      mkdirSync(receiptsDir, { recursive: true })
+      writeFileSync(
+        join(receiptsDir, 'purge-purged-record.json'),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          purgedRecordId: 'purged-record',
+          purgedAtOrdinal: 14,
+          initiator: 'test-operator',
+          affectedPaths: ['memory/shop/bundles/purged-record'],
+          firstCommittedOrdinal: 2,
+        })}\n`,
+        'utf8',
+      )
+
+      const purged = diffSince(knowledgeRoot, 10).filter((change) => change.change === 'purged')
+
+      expect(purged).toEqual([
+        {
+          schemaVersion: 1,
+          recordId: 'purged-record',
+          change: 'purged',
+          atOrdinal: 14,
+        },
+      ])
+    })
+  })
+})
+
+// 407-04: the canary observation identity moved to `serving/canary-observation-id.ts` so the
+// READER entry may import it — `curator/disposition.ts` names the writer-side bundle store, the
+// egress checkpoint and the queue payloads, none of which a read may reach. The move is only
+// safe if it is a MOVE: the writer stamps this id onto the event it appends and the reader
+// recomputes it to find that event again, so a second spelling would be a silent attribution
+// failure rather than a compile error.
+describe('canaryOutcomeObservationId has exactly one implementation', () => {
+  it('is the SAME function reference through both module paths, for the same bytes', async () => {
+    const serving = await import('../serving/canary-observation-id.js')
+    const curator = await import('../curator/disposition.js')
+
+    expect(serving.canaryOutcomeObservationId).toBeTypeOf('function')
+    expect(curator.canaryOutcomeObservationId).toBe(serving.canaryOutcomeObservationId)
+
+    const tuple = {
+      candidateId: asRecordId('cand-1'),
+      runId: 'run-A',
+      testId: 't',
+      testIndex: 0,
+      stepIndex: 2,
+    }
+    const id = serving.canaryOutcomeObservationId(tuple)
+    expect(id).toMatch(/^canary-outcome:[0-9a-f]{64}$/)
+    expect(curator.canaryOutcomeObservationId(tuple)).toBe(id)
   })
 })
