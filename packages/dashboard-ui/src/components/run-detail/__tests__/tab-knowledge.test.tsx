@@ -25,7 +25,9 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
 import {
+  CHANGED_NOTHING_TEXT,
   CHANNEL_EYEBROWS,
+  LEARNED_HEADING,
   NO_BRIEF_SERVED_TEXT,
   NO_STORE_BODY,
   NO_STORE_HEADING,
@@ -34,6 +36,7 @@ import {
   USED_HEADING,
   readFailedBody,
   type KnowledgeView,
+  type LearnedView,
   type StepRowView,
 } from "@/lib/knowledge-view"
 
@@ -239,5 +242,48 @@ describe("producer text reaches the DOM as TEXT, never as markup (T-407-06)", ()
 
     expect(view.querySelector("img")).toBeNull()
     expect(view.textContent).toContain(hostile)
+  })
+})
+
+// THE TWO HALVES, IN ORDER (407-09 · LERN-02). The Used half answers "what did this run READ" and
+// the Learned half answers "what did it WRITE BACK", and the second only makes sense after the
+// first — which is why the order is a cell and not a styling detail.
+describe("the Learned half sits below the Used half in the ready arm (D-01 layout order)", () => {
+  const learned: LearnedView = {
+    state: "done",
+    countLine: "nothing curated",
+    sentence: CHANGED_NOTHING_TEXT,
+    rows: [],
+  }
+
+  function readyWithLearned(steps: StepRowView[]): KnowledgeView {
+    return { state: "ready", used: { summary: "1 step briefed", steps }, learned }
+  }
+
+  it("renders the Learned section AFTER the last step row in document order", () => {
+    const view = mount(<TabKnowledge view={readyWithLearned([row(), row({ stepIndex: 1 })])} />)
+
+    const section = view.querySelector("[data-learned-state]")
+    const lastStep = [...view.querySelectorAll("[data-step-index]")].at(-1)
+    expect(section).not.toBeNull()
+    expect(lastStep).toBeDefined()
+    // `DOCUMENT_POSITION_FOLLOWING` — the Learned section comes after the last row, whatever the
+    // nesting. Comparing `innerHTML` indices would pass on a section nested INSIDE the last row.
+    expect(lastStep?.compareDocumentPosition(section as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+  })
+
+  it("paints the Learned heading and its sentence inside the ready shell, not a second pane", () => {
+    const view = mount(<TabKnowledge view={readyWithLearned([row()])} />)
+
+    expect(stateOf(view)).toBe("ready")
+    expect(view.textContent).toContain(LEARNED_HEADING)
+    expect(view.textContent).toContain(CHANGED_NOTHING_TEXT)
+  })
+
+  it("renders NO Learned section when the ready arm carried none — nothing is invented here", () => {
+    const view = mount(<TabKnowledge view={readyView([row()])} />)
+
+    expect(view.querySelector("[data-learned-state]")).toBeNull()
   })
 })
