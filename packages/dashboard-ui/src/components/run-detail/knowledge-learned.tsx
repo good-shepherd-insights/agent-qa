@@ -22,9 +22,19 @@
 // ever replaces the rows: a view handed records paints them and says the read was partial beside
 // them.
 //
+// AND AN EIGHTH: rows with the CHAIN NOTE beneath them, when curation settled `failed` AFTER it
+// had already committed change records (407-26 · REVIEW CR-01 · owner ruling 2026-08-31). A chain
+// that fell over cannot un-commit what it wrote, so the records are painted and the chain's fate
+// is stated beside them in `[data-learned-chain-note]`. The no-rows `failed` arm did not move: it
+// still prints `Curation failed — nothing was learned from this run.` in the sentence slot, which
+// is the one arm where nothing on screen falsifies it.
+//
 // ROWS WIN OVER SENTENCES, and that ordering lives in `learnedView`, not here. This file paints
 // whatever the view carries: the projection never hands it both a populated list and a sentence,
 // because a sentence beside rows would be a second, quieter account of the same records (CR-04).
+// THAT RULE IS WHY THE EIGHTH RENDERING NEEDED A NEW SLOT rather than a reworded sentence — a
+// failed chain's fate travels in `chainNote`, beneath the rows, precisely so that the sentence
+// contract above stays intact instead of being bent to carry a second account of the same list.
 //
 // NO SKELETON AND NO SPINNER, EVER. `pending` here is not "bytes are on their way"; it is a chain
 // a daemon may not have picked up for hours (404's posture text exists for exactly that reason).
@@ -132,6 +142,25 @@ export function KnowledgeLearned({
             <RecordRow key={row.key} row={row} />
           ))}
         </ul>
+      )}
+
+      {/*
+        THE CHAIN'S FATE, BENEATH THE RECORDS AND NEVER INSTEAD OF THEM (407-26 · REVIEW CR-01 /
+        G-407-12 · owner ruling 2026-08-31). The rows above are what a failed chain committed
+        before it stopped; this paragraph says what happened to the chain that wrote them. It rides
+        under the list, so a reader is never shown a sentence standing where the records should be.
+
+        IT REPORTS THE CHAIN; THE PARAGRAPH BELOW REPORTS THE READ. That is why they are two
+        elements and not one: the op degrades those two enrichments independently, so a view
+        carrying both facts prints both, each addressable on its own attribute.
+
+        CHAIN FIRST, THEN READ, because this note is about the list a reader is already looking at
+        and the one below is about how much of the store anyone could see at all.
+      */}
+      {view.chainNote === undefined ? null : (
+        <p data-learned-chain-note className="text-xs text-muted-foreground">
+          {view.chainNote}
+        </p>
       )}
 
       {/*
