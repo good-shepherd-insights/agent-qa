@@ -28,6 +28,7 @@ import {
   CHANGES_NOT_AVAILABLE_TEXT,
   CHANGES_UNREADABLE_TEXT,
   COUNTS_NOT_RECORDED_SENTENCE,
+  CURATION_FAILED_PARTIAL_TEXT,
   CURATION_FAILED_TEXT,
   DELTAS_PENDING_TEXT,
   LEARNED_HEADING,
@@ -123,6 +124,84 @@ describe("a failed curation states the consequence, not just the failure (D-12)"
     expect(host.textContent).toContain(CURATION_FAILED_TEXT)
     expect(rowsOf(host).length).toBe(0)
     expect(host.querySelector("button")).toBeNull()
+  })
+})
+
+// A FAILED CHAIN CANNOT UN-COMMIT WHAT IT ALREADY WROTE (owner ruling 2026-08-31 · REVIEW CR-01 /
+// G-407-12, the Learned-half twin of the "a served row wins" ruling 407-22 applied to the Used
+// half). 407-26 hoisted `learnedView`'s rows fold above the whole curation-status ladder and put
+// the chain's fate in its own slot; these cells are the half a person sees.
+//
+// TWO PRODUCERS, THEREFORE TWO SLOTS. `chainNote` reports the CHAIN — these records were committed
+// before it stopped — and `readNote` reports the READ — this is not all of the store. The op folds
+// `curation` and `learned` independently and the conformance file's `attributed-failed` world
+// carries both at once, so one paragraph could only ever speak for one of them while silently
+// standing in for the other. Both are pinned below, in document order, each by its own attribute.
+describe("a failed chain paints the records it committed and notes its fate BESIDE them (CR-01, G-407-12)", () => {
+  it("paints the row and the chain note, and prints NO sentence over the records", () => {
+    const host = render({
+      state: "failed",
+      rows: [row()],
+      chainNote: CURATION_FAILED_PARTIAL_TEXT,
+    })
+
+    expect(stateOf(host)).toBe("failed")
+    expect(rowsOf(host).length).toBe(1)
+    expect(host.querySelector("[data-learned-chain-note]")?.textContent)
+      .toBe(CURATION_FAILED_PARTIAL_TEXT)
+    // The falsifiable claim is the one that must be gone: `Curation failed — nothing was learned
+    // from this run.` printed over a record the same projection carries is a claim that projection
+    // disproves. The slot it lived in is empty here, not reworded.
+    expect(host.querySelector("[data-learned-sentence]")).toBeNull()
+    expect(host.textContent).not.toContain(CURATION_FAILED_TEXT)
+  })
+
+  it("leaves the no-rows arm exactly as it shipped — the approved sentence, and no note ELEMENT", () => {
+    const host = render({ state: "failed", sentence: CURATION_FAILED_TEXT, rows: [] })
+
+    expect(stateOf(host)).toBe("failed")
+    expect(host.querySelector("[data-learned-sentence]")?.textContent).toBe(CURATION_FAILED_TEXT)
+    expect(rowsOf(host).length).toBe(0)
+    // Absent, never blank. An empty paragraph would be a chain-failure stamp on an arm whose
+    // failure is already stated above it, and a cell could not tell the two apart.
+    expect(host.querySelector("[data-learned-chain-note]")).toBeNull()
+  })
+
+  it("prints BOTH notes when a failed chain's records arrive over a partly-read store", () => {
+    const host = render({
+      state: "failed",
+      rows: [row()],
+      chainNote: CURATION_FAILED_PARTIAL_TEXT,
+      scanIncomplete: true,
+      readNote: STORE_READ_INCOMPLETE_TEXT,
+    })
+
+    expect(rowsOf(host).length).toBe(1)
+    expect(host.querySelector("[data-learned-state]")?.getAttribute("data-learned-read"))
+      .toBe("incomplete")
+    expect(host.querySelector("[data-learned-chain-note]")?.textContent)
+      .toBe(CURATION_FAILED_PARTIAL_TEXT)
+    expect(host.querySelector("[data-learned-read-note]")?.textContent)
+      .toBe(STORE_READ_INCOMPLETE_TEXT)
+
+    // ORDER IS PART OF THE CONTRACT: the chain note is about the LIST a reader is already looking
+    // at, the read note is about how much of the store anyone could see, so the chain note rides
+    // directly under the rows and the read note under it. Read off a query naming BOTH paragraphs
+    // by their own attributes — an index into a broader `<p>` query would also catch the heading
+    // region and would pass on an ordering nobody asserted.
+    const notes = [...host.querySelectorAll<HTMLElement>(
+      "p[data-learned-chain-note], p[data-learned-read-note]",
+    )]
+    expect(notes.map(note => note.textContent))
+      .toEqual([CURATION_FAILED_PARTIAL_TEXT, STORE_READ_INCOMPLETE_TEXT])
+
+    const chain = host.querySelector("[data-learned-chain-note]")
+    const read = host.querySelector("[data-learned-read-note]")
+    expect(chain).not.toBeNull()
+    expect(read).not.toBeNull()
+    expect(
+      (chain?.compareDocumentPosition(read as Node) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
   })
 })
 
