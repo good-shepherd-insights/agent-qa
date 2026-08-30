@@ -1242,6 +1242,32 @@ targets:
     expect(rowFor('Knowledge store')).toContain('FAIL')
   })
 
+  // 407-29 (G-407-22 · REVIEW IN-04): a SIBLING of the census above, deliberately not an edit to
+  // it — the census is a 407-24 pin and stays byte-unchanged. Same fixture, same width, same
+  // collected lines, one further property: nothing this command prints ends in whitespace.
+  it('emits no line ending in whitespace at a resolved width of 80', async () => {
+    forceTerminalWidth(80)
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({
+      source: 'scan',
+      reason: 'corrupt',
+      detail: 'SQLITE_NOTADB: file is not a database',
+      filePresent: true,
+    })
+
+    await runHealthyHost()
+
+    const lines = consoleLogs.map(stripAnsi)
+    const trailing = lines
+      .filter(line => line !== line.trimEnd())
+      .map(line => JSON.stringify(line))
+    expect(trailing).toEqual([])
+
+    // Non-vacuous: the run really did emit rows and a wrapped Fix line, so this cannot pass by
+    // emptiness the way a census over no output would.
+    expect(lines.filter(line => line.startsWith('    '))).not.toHaveLength(0)
+    expect(lines.filter(line => FIX_LINE_PATTERN.test(line))).not.toHaveLength(0)
+  })
+
   it('leaves every row on one line at a wide width, byte-identical to the pre-change output', async () => {
     forceTerminalWidth(WIDE_TEST_WIDTH)
 
@@ -1600,5 +1626,28 @@ describe('doctor status token (407-29 · G-407-18)', () => {
     // rather than on its consequence. At runtime the total table has no `undefined` branch left,
     // so the same call throws instead of quietly degrading to a bare word.
     expect(() => formatStatus('pass')).toThrow(TypeError)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 407-29 (G-407-22 · REVIEW IN-04): nothing to instruct instructs nothing.
+//
+// `wrapWords('')` returns `[]`, and the guard returned `['      Fix: ']` — a line whose only
+// content is trailing whitespace. Unreachable today (every `fixInstructions` is a non-empty
+// literal), which is precisely why the guard should render nothing rather than render badly:
+// the case it exists for is the case it got wrong.
+// ---------------------------------------------------------------------------
+
+describe('doctor fix lines: nothing to instruct (407-29 · G-407-22)', () => {
+  it('returns no line at all for an instruction with no content', () => {
+    for (const instructions of ['', '   ', '\n', '\t \n']) {
+      expect(formatFixLines(instructions, 80)).toEqual([])
+    }
+  })
+
+  it('still writes a short instruction exactly as the pre-change emit loop did', () => {
+    expect(formatFixLines('Install Node.js 24+ from https://nodejs.org/', 80)).toEqual([
+      '      Fix: Install Node.js 24+ from https://nodejs.org/',
+    ])
   })
 })
