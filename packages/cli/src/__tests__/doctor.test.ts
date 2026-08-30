@@ -274,10 +274,12 @@ function restoreTerminalWidth(): void {
  * A row as ONE string, however many lines it took (407-24).
  *
  * The recognition rule is mechanical and in TWO parts, and the order matters. A continuation line
- * is indented deeper than a row's own four spaces and begins no new check name. AND a line
- * matching `^ {6}Fix: ` ENDS the row unconditionally, tested BEFORE the indent test: the emit loop
- * prints the fix line at six spaces, so an indent-only rule would silently swallow a failing
- * check's fix instructions into `rowFor('Knowledge store')`.
+ * is `CONTINUATION_PATTERN` — SIX spaces followed by a non-space, the indent the emit loop writes
+ * beneath a row — and the constant is read rather than paraphrased, so this reader and the
+ * 80-column census that reads the same constant cannot drift apart (407-30 · REVIEW WR-05). AND a
+ * line matching `^ {6}Fix: ` ENDS the row unconditionally, tested BEFORE the indent test: the emit
+ * loop prints the fix line at six spaces too, so an indent-only rule would silently swallow a
+ * failing check's fix instructions into `rowFor('Knowledge store')`.
  *
  * That hazard is invisible to a "widen it and prove nothing changed" run: all eighteen existing
  * call sites assert with `toContain` on a substring that is present either way, so a WRONG helper
@@ -295,7 +297,7 @@ function rowFor(name: string): string {
   for (let index = start + 1; index < lines.length; index += 1) {
     const line = lines[index] ?? ''
     if (FIX_LINE_PATTERN.test(line)) break
-    if (!/^ {5}/.test(line)) break
+    if (!CONTINUATION_PATTERN.test(line)) break
     parts.push(line.trim())
   }
   return parts.join(' ')
