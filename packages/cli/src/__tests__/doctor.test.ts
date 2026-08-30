@@ -159,6 +159,7 @@ import pc from 'picocolors'
 import {
   DEFAULT_TERMINAL_WIDTH,
   IDENTITY_DECORATION,
+  MIN_USABLE_WIDTH,
   composeRow,
   createDoctorCommand,
   formatCheckRow,
@@ -1322,6 +1323,22 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
     expect(DEFAULT_TERMINAL_WIDTH).toBe(80)
   })
 
+  // 407-30 (G-407-21 · REVIEW IN-03): the floor on what the ENVIRONMENT may claim. `COLUMNS=4` is
+  // accepted by the ladder above and drives `width - CONTINUATION_INDENT.length` negative, putting
+  // every word of every message on its own over-wide line — a diagnostic nobody can read.
+  it('floors the resolved width, so no environment can claim a width with no content column', () => {
+    setStdoutColumns(4)
+    expect(resolveTerminalWidth()).toBe(MIN_USABLE_WIDTH)
+
+    setStdoutColumns(undefined)
+    process.env.COLUMNS = '4'
+    expect(resolveTerminalWidth()).toBe(MIN_USABLE_WIDTH)
+
+    // The deepest indent the command writes is the eleven-column `Fix: ` hanging indent, so the
+    // floor must leave content columns beneath even that.
+    expect(MIN_USABLE_WIDTH).toBeGreaterThan(11)
+  })
+
   it('ignores a non-positive or unparseable width from either source', () => {
     setStdoutColumns(0)
     process.env.COLUMNS = 'wide'
@@ -1399,6 +1416,87 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
     expect(offenders.slice(0, 5)).toEqual([])
   })
 
+  // 407-30 (G-407-21 · REVIEW IN-03): a SECOND corpus beside the one above, never an edit to it.
+  //
+  // The existing corpus sweeps `nameLength <= 40` at `width >= 60`, where `name.length + 14 > width`
+  // cannot fire — so the head-line exception it would have caught is unreachable from it. This one
+  // sweeps the widths and names where it IS reachable and SAMPLES message lengths instead of
+  // sweeping them: the message dimension is already swept exhaustively above, and this cell is
+  // about width against name.
+  //
+  // Every line wider than the width must fall into exactly ONE of the two DOCUMENTED exceptions,
+  // and each must be OBSERVED — a classification that never fires is not a classification.
+  it('classifies every over-wide line into one of the two documented exceptions, and observes both', () => {
+    const statuses: CheckStatus[] = ['pass', 'warn', 'fail', 'skip']
+    /** Widths at or below the floor's reach, so `affordable < MIN_DOTS` is attainable. */
+    const narrowWidths = [20, 24, 32, 40, 48]
+    /** Sampled, not swept — including one message carrying a token wider than any budget here. */
+    const sampledMessages: [string, string][] = [
+      ['empty', ''],
+      ['one short word', 'corrupt'],
+      ['wordy 23', wordyMessage(23)],
+      ['wordy 60', wordyMessage(60)],
+      ['wordy 137', wordyMessage(137)],
+      ['long token', `index at ${MEASURED_INDEX_PATH} could not be opened: corrupt`],
+    ]
+
+    const offenders: string[] = []
+    let uncutTokenLines = 0
+    let headFloorLines = 0
+    let combinations = 0
+
+    for (const width of narrowWidths) {
+      for (let nameLength = 1; nameLength <= 70; nameLength += 1) {
+        const name = 'n'.repeat(nameLength)
+        for (const [label, message] of sampledMessages) {
+          for (const status of statuses) {
+            combinations += 1
+            const row = formatCheckRow(name, message, status, width)
+            for (const line of [row.plainLine, ...row.continuations]) {
+              if (line.length <= width) continue
+              // EXCEPTION ONE (T-407-24-01): a word wider than the budget takes its own line
+              // UNCUT. Such a line is a single unbroken token once its indent is stripped.
+              if (!line.trim().includes(' ')) {
+                uncutTokenLines += 1
+                continue
+              }
+              // EXCEPTION TWO (407-30 · REVIEW IN-03): `segmentsFor` clamps with
+              // `Math.max(MIN_DOTS, ...)`, so when `affordable < MIN_DOTS` the FLOOR wins and the
+              // head line comes to `name.length + 14` — four indent, two separator, two dots, two
+              // separator, four status word. Unlike the first, this line CONTAINS SPACES.
+              if (
+                line === row.plainLine
+                && line.length === nameLength + 14
+                && nameLength + 14 > width
+              ) {
+                headFloorLines += 1
+                continue
+              }
+              offenders.push(
+                `width=${width} name=${nameLength} message=${label} status=${status}`
+                + ` produced ${line.length} columns in NEITHER documented exception:`
+                + ` ${JSON.stringify(line)}`,
+              )
+            }
+          }
+        }
+      }
+    }
+
+    expect(offenders.slice(0, 5)).toEqual([])
+    expect(combinations).toBe(narrowWidths.length * 70 * sampledMessages.length * statuses.length)
+    expect(
+      uncutTokenLines,
+      'exception one (a word wider than the budget, uncut and alone) never fired in this sweep,'
+      + ' so the classification proved nothing about it',
+    ).toBeGreaterThan(0)
+    expect(
+      headFloorLines,
+      'exception two (the head line at name.length + 14, produced by the MIN_DOTS floor) never'
+      + ' fired in this sweep, so the corpus is still not reaching the case IN-03 reported',
+    ).toBeGreaterThan(0)
+  })
+
   it('gives a word longer than the wrap budget its own uncut line, the only line that may exceed the width', () => {
     const sha = 'a'.repeat(64)
 
@@ -1413,6 +1511,16 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
     expect(overlong).toHaveLength(1)
     // Uncut and alone on its line: a sha a person cannot copy is a sha this row failed to report.
     expect(overlong[0]?.trim()).toBe(sha)
+  })
+
+  // 407-30 (G-407-21 · REVIEW IN-03): the SECOND floor, on what any CALLER may ask for. The
+  // resolver above bounds the environment; this bounds a direct call, which `formatFixLines`
+  // already floors the same way. Different callers, different jobs, so both floors exist.
+  it('puts one word per line rather than taking a negative budget when a caller asks below the indent', () => {
+    const row = formatCheckRow('n', 'alpha beta gamma', 'fail', 3)
+
+    expect(row.continuations.map(line => line.trim())).toEqual(['alpha', 'beta', 'gamma'])
+    for (const line of row.continuations) expect(line.startsWith('      ')).toBe(true)
   })
 
   it('wraps the measured 156-column Fix line with a hanging indent, keeping its six-space prefix', () => {
