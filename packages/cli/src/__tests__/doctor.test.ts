@@ -1651,3 +1651,66 @@ describe('doctor fix lines: nothing to instruct (407-29 · G-407-22)', () => {
     ])
   })
 })
+
+// ---------------------------------------------------------------------------
+// 407-30 (G-407-17 · REVIEW WR-05): ONE definition of a continuation line.
+//
+// Three spellings of the same concept lived in this file: `CONTINUATION_PATTERN` (`/^ {6}\S/`,
+// read by the 80-column census), `rowFor`'s docstring (six spaces, the indent the emit loop
+// writes) and `rowFor`'s code (`/^ {5}/`). Five is unreachable from today's emit loop — it writes
+// four, six or eleven — so the helper was correct BY ACCIDENT, and a reader whose rule disagrees
+// with the published constant is one edit away from joining a line the census classifies as
+// something else.
+//
+// These two cells drive `rowFor` over a SYNTHETIC captured log rather than a command run, because
+// the subject is the READER'S rule and not any particular output. Each seeds a real six-space
+// continuation as well, so a helper that simply stopped joining everything could not pass them.
+// ---------------------------------------------------------------------------
+
+describe('doctor row reader: one definition of a continuation (407-30 · G-407-17)', () => {
+  const HEAD = '    Knowledge store  ..........  FAIL'
+  const REAL_CONTINUATION = `      ${MEASURED_FAIL_MESSAGE}`
+  const NEXT_ROW = '    Embedder  ..........  PASS'
+
+  afterEach(() => {
+    consoleLogs.length = 0
+  })
+
+  function seed(...lines: string[]): void {
+    consoleLogs.length = 0
+    consoleLogs.push(...lines)
+  }
+
+  it('ends the row at a FIVE-space line instead of joining it', () => {
+    seed(HEAD, REAL_CONTINUATION, '     five-space impostor', NEXT_ROW)
+
+    const row = rowFor('Knowledge store')
+
+    expect(
+      row,
+      'the five-space line was joined: the reader is still using the /^ {5}/ rule instead of'
+      + ' CONTINUATION_PATTERN, which the census and the emit loop both spell as six spaces',
+    ).toBe(`${HEAD} ${MEASURED_FAIL_MESSAGE}`)
+    expect(row).not.toContain('impostor')
+  })
+
+  it('ends the row at a six-space line with nothing after the indent', () => {
+    seed(
+      HEAD,
+      REAL_CONTINUATION,
+      '      ',
+      '      text beneath the blank padded line',
+      NEXT_ROW,
+    )
+
+    const row = rowFor('Knowledge store')
+
+    expect(
+      row,
+      'a blank padded line was joined: the reader is using an indent-only rule, while'
+      + ' CONTINUATION_PATTERN requires a NON-SPACE after the six spaces',
+    ).toBe(`${HEAD} ${MEASURED_FAIL_MESSAGE}`)
+    expect(row.endsWith(' ')).toBe(false)
+    expect(row).not.toContain('text beneath the blank padded line')
+  })
+})
