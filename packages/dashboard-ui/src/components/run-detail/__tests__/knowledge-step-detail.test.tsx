@@ -191,6 +191,67 @@ describe("a content-derived brief line can shrink its own box, not merely overfl
   })
 })
 
+/**
+ * THE SAME LAW, EVERY CHANNEL OF THE EXPANDED ROW (407-28 · G-407-13, LERN-01).
+ *
+ * The block above pins channel 1 by mounting `KnowledgeBriefLine` alone — which is structurally
+ * incapable of reaching channels 2 and 3, and is exactly why the identical nodes there went
+ * unfixed. These cells mount the WHOLE step detail and drive ONE table over every node in it that
+ * paints a content-derived token, so the next such node added to any channel is caught by an
+ * existing rule rather than by another review round.
+ *
+ * The four subject strings are deliberately DISTINCT from one another: `deepestWithText` addresses
+ * by exact text, and two identical strings in sibling subtrees is an ambiguity the helper's own
+ * cells (below) exist to remove.
+ */
+describe("every unbroken token in the expanded row can shrink its own box, whichever channel served it (G-407-13)", () => {
+  const CHANNEL2_ID = "fact-page-https-automationexercise-com-view-cart-376e539e6c7b4e75"
+  const CHANNEL3_SUMMARY = "https://automationexercise.com/product_details/44?variant=very-long-unbroken-query-string"
+  const CHANNEL3_ID = "caution-el-button-add-to-cart-20f5876cc5299c11a4d0e93b7c6182fa"
+  const CUT_RECORD_ID = "fact-flow-measurement-assert-value-url-df4af96cce9a48d9b310275e"
+  // The `<li>` is the painted box, and it paints the whole composed sentence — only the LEADING
+  // token is unbroken, which is why this one is the mildest of the four rather than absent.
+  const CUT_LINE_TEXT = `${CUT_RECORD_ID} · leg lexical · rank 21 · score 0.110`
+
+  /** The whole expanded row, cut ledger already disclosed, all four subjects painted at once. */
+  function expandedRow(): HTMLElement {
+    const view = mount(<KnowledgeStepDetail detail={detail({
+      channel1: [line()],
+      channel2: [{ id: CHANNEL2_ID, detailLevel: "full" }],
+      channel3: [{ id: CHANNEL3_ID, summary: CHANNEL3_SUMMARY }],
+      cut: {
+        label: cutCandidatesLabel(1),
+        lines: [{ recordId: CUT_RECORD_ID, leg: "lexical", rank: 21, score: 0.11 }],
+      },
+    })} />)
+    click(view.querySelector('[data-cut-candidates] [data-slot="collapsible-trigger"]'))
+    return view
+  }
+
+  const SUBJECTS: readonly { readonly what: string; readonly text: string }[] = [
+    { what: "the channel-2 read-trace id", text: CHANNEL2_ID },
+    { what: "the channel-3 caution summary", text: CHANNEL3_SUMMARY },
+    { what: "the channel-3 caution id", text: CHANNEL3_ID },
+    { what: "the cut-candidate line", text: CUT_LINE_TEXT },
+  ]
+
+  for (const subject of SUBJECTS) {
+    it(`${subject.what} carries the break that reduces its intrinsic width`, () => {
+      const painted = deepestWithText(expandedRow(), subject.text)
+
+      expect(painted).not.toBeNull()
+      expect(painted?.className).toContain("wrap-anywhere")
+    })
+  }
+
+  it("does not widen the shared mono class to get there — the why-answer row keeps its own", () => {
+    const view = expandedRow()
+
+    const channel2Id = deepestWithText(view, CHANNEL2_ID)
+    expect(channel2Id?.className).toContain("font-mono text-xs text-muted-foreground tabular-nums")
+  })
+})
+
 describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)", () => {
   it("wears the canary marker and the attributed outcome once curation settled", () => {
     const view = mount(
