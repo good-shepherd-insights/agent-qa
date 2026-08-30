@@ -367,7 +367,10 @@ export function formatCheckRow(
 export function formatFixLines(instructions: string, width: number): string[] {
   const flat = flatten(instructions)
   const wrapped = wrapWords(flat, Math.max(1, width - FIX_PREFIX.length))
-  if (wrapped.length === 0) return [`${FIX_PREFIX}${flat}`]
+  // A check with nothing to instruct instructs NOTHING. The guard exists precisely for the case
+  // the previous form rendered badly: it returned the bare prefix, a line whose only content is
+  // trailing whitespace (407-29 · REVIEW IN-04).
+  if (wrapped.length === 0) return []
   return wrapped.map((line, index) => (
     index === 0 ? `${FIX_PREFIX}${line}` : `${FIX_HANGING_INDENT}${line}`
   ))
