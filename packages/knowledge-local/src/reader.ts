@@ -70,6 +70,18 @@ export type {
   CanaryAttributionsForOptions,
   CanaryAttributionsResult,
 } from './serving/canary-attribution.js'
+// 407-25: the JOIN KEY ITSELF, published beside the read that recomputes it.
+//
+// It belongs on this entry for the same reason `canaryAttributionsFor` does, and for one more.
+// The reason it shares: it is a pure derivation over five fields of a served tuple — it opens
+// nothing, writes nothing and holds no lease, so publishing it grants none of the power this
+// entry withholds (T-407-25-04). The reason that is its own: the READ side recomputes this id
+// rather than reading a stored copy, which is what makes the attribution join evidence instead
+// of a claim — and a harness that must PLANT the outcome event the reader will find has to
+// recompute it the same way. Reaching for a second spelling there would produce a plant the
+// reader never finds, and a green agreement over an empty set. There is exactly one
+// implementation; `curator/disposition.ts` re-exports it for the writer side.
+export { canaryOutcomeObservationId } from './serving/canary-observation-id.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export type { BuildRange, ReadOptions, SearchOptions } from '@vostride/agent-qa-schema'
