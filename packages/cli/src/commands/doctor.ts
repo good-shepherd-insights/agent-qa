@@ -236,6 +236,11 @@ export interface CheckRow extends RowSegments {
  * A word wider than the budget gets its own line UNCUT and is the only line that may exceed the
  * width. That is deliberate: the over-long tokens this command prints are index paths and shas,
  * and a path silently truncated to fit is a diagnostic a person copies and cannot use.
+ *
+ * The `/\s+/` split is a NO-OP on separators now (407-29): every caller hands it a pre-flattened
+ * string, so it can no longer be the place where a narrow terminal quietly normalises spacing a
+ * wide terminal printed verbatim. The two paths see the same bytes and differ only in where the
+ * line breaks fall.
  */
 function wrapWords(text: string, budget: number): string[] {
   const words = text.split(/\s+/).filter(word => word.length > 0)
@@ -283,7 +288,27 @@ function segmentsFor(name: string, message: string, statusWord: string, width: n
 }
 
 /**
+ * A message is ONE LINE by the time the budget sees it (407-29 · G-407-14).
+ *
+ * A producer newline is not a layout instruction — it is a byte that would silently push the
+ * status word off the name line, past a length check that counted it as ONE COLUMN. Nothing this
+ * renderer prints is a literal the repository controls: an arbitrary `err.message`, a plugin's
+ * `auth.message`, a 60-character slice of a provider SDK error and a join of Zod issue messages
+ * all arrive here as-is. So the normalisation happens at the door, once, before any arithmetic:
+ * every whitespace run — newline, carriage return, tab, form feed — collapses to a single space,
+ * and the result is trimmed. A whitespace-only message therefore becomes the empty string and
+ * takes the no-message shape, which is the right rendering of nothing to say.
+ */
+function flatten(message: string): string {
+  return message.replace(/\s+/gu, ' ').trim()
+}
+
+/**
  * A row in one of TWO shapes, chosen by ONE law: the status word never leaves the name line.
+ *
+ * The law is only true because the message is FLATTENED first: `String.length` and display
+ * columns are the same number for a single line and different numbers for a string carrying a
+ * break, and the shape is chosen by comparing that length to the width.
  *
  * A reader scanning a column of statuses is scanning the left-hand names beside them, so a `FAIL`
  * that soft-wrapped onto a continuation line reads as the verdict of the row below it. When the
@@ -304,14 +329,15 @@ export function formatCheckRow(
   status: CheckStatus,
   width: number,
 ): CheckRow {
+  const flat = flatten(message)
   const statusWord = STATUS_WORDS[status]
-  const oneLine = segmentsFor(name, message, statusWord, width)
-  if (message === '' || oneLine.plainLine.length <= width) return oneLine
+  const oneLine = segmentsFor(name, flat, statusWord, width)
+  if (flat === '' || oneLine.plainLine.length <= width) return oneLine
 
   const head = segmentsFor(name, '', statusWord, width)
   return {
     ...head,
-    continuations: wrapWords(message, width - CONTINUATION_INDENT.length)
+    continuations: wrapWords(flat, width - CONTINUATION_INDENT.length)
       .map(line => `${CONTINUATION_INDENT}${line}`),
   }
 }
@@ -323,10 +349,15 @@ export function formatCheckRow(
  * still begins with the same six-space `Fix: ` prefix the command has always written, so a
  * substring assertion on a short instruction is unaffected; continuations hang under it so they
  * read as belonging to the row above rather than as rows of their own.
+ *
+ * Flattened at the door for the same reason the check row is: an instruction carrying a break
+ * would otherwise smuggle one past the hanging indent, and a continuation that is not indented
+ * reads as a row of its own.
  */
 export function formatFixLines(instructions: string, width: number): string[] {
-  const wrapped = wrapWords(instructions, Math.max(1, width - FIX_PREFIX.length))
-  if (wrapped.length === 0) return [`${FIX_PREFIX}${instructions}`]
+  const flat = flatten(instructions)
+  const wrapped = wrapWords(flat, Math.max(1, width - FIX_PREFIX.length))
+  if (wrapped.length === 0) return [`${FIX_PREFIX}${flat}`]
   return wrapped.map((line, index) => (
     index === 0 ? `${FIX_PREFIX}${line}` : `${FIX_HANGING_INDENT}${line}`
   ))
