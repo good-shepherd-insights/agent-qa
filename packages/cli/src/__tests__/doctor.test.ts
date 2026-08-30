@@ -214,8 +214,90 @@ const NATIVE_READY = {
 /** The row after which the trio prints, and the row before which it must stop. */
 const KNOWLEDGE_ROW_NAMES = ['Knowledge store', 'Embedder', 'Retrieval rung'] as const
 
+const ESC = String.fromCharCode(27)
+const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, 'g')
+const stripAnsi = (text: string): string => text.replace(ANSI_PATTERN, '')
+
+/** 407-24: the emit loop's fix line, at SIX spaces — deeper than a row's four. */
+const FIX_LINE_PATTERN = /^ {6}Fix: /
+/** 407-24: a message line that moved beneath its row, at the same six-space indent. */
+const CONTINUATION_PATTERN = /^ {6}\S/
+
+/** The strings the 407 UAT measured on the built cli, transcribed so the cells can pin the widths. */
+const MEASURED_INDEX_PATH = 'agent-qa-knowledge/memory/index/knowledge.db'
+const MEASURED_FAIL_MESSAGE = `index at ${MEASURED_INDEX_PATH} could not be opened: corrupt`
+const MEASURED_FIX_INSTRUCTIONS =
+  'Rebuild the index with `agent-qa knowledge rebuild-index`, or remove the corrupt file at '
+  + `${MEASURED_INDEX_PATH} and re-run.`
+
+/**
+ * The row template doctor composed BEFORE 407-24, transcribed from the pre-change emit loop
+ * (`    {name}  {dots}  {message}  {status}` with `padDots`' 60-column target). The byte-identical
+ * pins below build their expectation from this rather than from a snapshot, so a reader can see
+ * exactly which bytes are being promised.
+ */
+function preChangeRow(name: string, message: string, statusWord: string): string {
+  const dots = '.'.repeat(Math.max(2, 60 - (name.length + message.length)))
+  return `    ${name}  ${dots}  ${message}  ${statusWord}`
+}
+
+/**
+ * 407-24: wide enough that every row this suite renders still fits on ONE line, so the eighteen
+ * existing `rowFor` call sites keep measuring exactly the pre-change bytes. Pinned here rather
+ * than inherited from the terminal, because a row's shape must be decided by the cell and not by
+ * whatever width the host running the suite happens to have.
+ */
+const WIDE_TEST_WIDTH = 200
+
+const ORIGINAL_STDOUT_COLUMNS = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+
+function setStdoutColumns(value: number | undefined): void {
+  Object.defineProperty(process.stdout, 'columns', { value, configurable: true, writable: true })
+}
+
+/** Resolve to exactly this width: stdout wins over COLUMNS, so clear COLUMNS as well. */
+function forceTerminalWidth(width: number): void {
+  setStdoutColumns(width)
+  delete process.env.COLUMNS
+}
+
+function restoreTerminalWidth(): void {
+  if (ORIGINAL_STDOUT_COLUMNS) {
+    Object.defineProperty(process.stdout, 'columns', ORIGINAL_STDOUT_COLUMNS)
+  } else {
+    setStdoutColumns(undefined)
+  }
+}
+
+/**
+ * A row as ONE string, however many lines it took (407-24).
+ *
+ * The recognition rule is mechanical and in TWO parts, and the order matters. A continuation line
+ * is indented deeper than a row's own four spaces and begins no new check name. AND a line
+ * matching `^ {6}Fix: ` ENDS the row unconditionally, tested BEFORE the indent test: the emit loop
+ * prints the fix line at six spaces, so an indent-only rule would silently swallow a failing
+ * check's fix instructions into `rowFor('Knowledge store')`.
+ *
+ * That hazard is invisible to a "widen it and prove nothing changed" run: all eighteen existing
+ * call sites assert with `toContain` on a substring that is present either way, so a WRONG helper
+ * is green at that step. The terminator cell below is what proves the rule instead.
+ *
+ * ANSI is stripped before matching because the fix line is dimmed as a WHOLE — the escape sits
+ * before its indent, so a raw `^ {6}` test would miss it on a colour-enabled host.
+ */
 function rowFor(name: string): string {
-  return consoleLogs.find(line => line.includes(`    ${name}  `)) ?? ''
+  const lines = consoleLogs.map(stripAnsi)
+  const start = lines.findIndex(line => line.startsWith(`    ${name}  `))
+  if (start < 0) return ''
+
+  const parts: string[] = [lines[start] ?? '']
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? ''
+    if (FIX_LINE_PATTERN.test(line)) break
+    if (!/^ {5}/.test(line)) break
+    parts.push(line.trim())
+  }
+  return parts.join(' ')
 }
 
 describe('doctor command', () => {
@@ -239,6 +321,10 @@ describe('doctor command', () => {
     knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue(NATIVE_READY)
     knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'absent' })
     knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
+    // 407-24: pin the width every command-level cell renders at. Wide enough that every row
+    // still fits on one line, so these cells keep measuring the pre-change bytes and the shape
+    // of a row is decided by the cell rather than by this host's terminal.
+    forceTerminalWidth(WIDE_TEST_WIDTH)
     // Clean env for consistent tests
     delete process.env.ANTHROPIC_API_KEY
     delete process.env.OPENAI_API_KEY
@@ -252,6 +338,7 @@ describe('doctor command', () => {
     Object.defineProperty(process, 'version', { value: originalVersion, writable: true })
     Object.defineProperty(process, 'platform', { value: originalPlatform })
     process.env = { ...originalEnv }
+    restoreTerminalWidth()
   })
 
   it('Node.js version check passes for v24+', async () => {
@@ -1086,6 +1173,82 @@ targets:
     expect(getOutput()).not.toContain('/home/u/worker.js')
     expect(getOutput()).toContain('Fix: Set an explicit embedder profile in agent-qa.config.yaml')
   })
+
+  // -------------------------------------------------------------------------
+  // 407-24 (G-407-3): the command measured against the width it resolved.
+  // -------------------------------------------------------------------------
+
+  it('stops a row at the Fix line instead of absorbing a failing check into it', async () => {
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({
+      source: 'scan',
+      reason: 'corrupt',
+      detail: 'SQLITE_NOTADB: file is not a database',
+      filePresent: true,
+    })
+
+    await runHealthyHost()
+
+    const row = rowFor('Knowledge store')
+    expect(row).toContain(MEASURED_FAIL_MESSAGE)
+    expect(row).toContain('FAIL')
+    // The fix line IS printed — so the two negatives below are about the JOIN, not about absence.
+    expect(getOutput()).toContain(`Fix: ${MEASURED_FIX_INSTRUCTIONS}`)
+    // The whole instruction string and the prefix literal. Deliberately not a token scan: the row
+    // and its instructions legitimately share ordinary words ("index", "the", "at"), so a
+    // token-by-token search would red on a correct helper, and "contains no substring" is
+    // unsatisfiable as literally worded.
+    expect(row).not.toContain(MEASURED_FIX_INSTRUCTIONS)
+    expect(row).not.toContain('Fix: ')
+  })
+
+  it('emits no line wider than 80 columns at a resolved width of 80', async () => {
+    forceTerminalWidth(80)
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({
+      source: 'scan',
+      reason: 'corrupt',
+      detail: 'SQLITE_NOTADB: file is not a database',
+      filePresent: true,
+    })
+
+    await runHealthyHost()
+
+    const lines = consoleLogs.map(stripAnsi)
+    // Strip before measuring even though picocolors disables itself off a TTY: the census must
+    // measure what a COLOURED terminal receives, not what this harness happened to capture.
+    const offenders = lines
+      .filter(line => line.length > 80)
+      .map(line => `${line.length} columns: ${JSON.stringify(line)}`)
+    expect(offenders).toEqual([])
+
+    // Non-vacuous: at least one row actually took the two-line shape, so a future change that made
+    // every message short could not turn this census green by emptiness.
+    const continuations = lines.filter(
+      line => CONTINUATION_PATTERN.test(line) && !FIX_LINE_PATTERN.test(line),
+    )
+    expect(continuations.length).toBeGreaterThan(0)
+
+    // The status word never left the name line.
+    const head = lines.find(line => line.startsWith('    Knowledge store  '))
+    expect(head).toContain('FAIL')
+    expect(rowFor('Knowledge store')).toContain(MEASURED_FAIL_MESSAGE)
+    expect(rowFor('Knowledge store')).toContain('FAIL')
+  })
+
+  it('leaves every row on one line at a wide width, byte-identical to the pre-change output', async () => {
+    forceTerminalWidth(WIDE_TEST_WIDTH)
+
+    await runHealthyHost()
+
+    const lines = consoleLogs.map(stripAnsi)
+    expect(lines.filter(line => /^ {5}/.test(line))).toEqual([])
+    expect(lines).toContain(
+      preChangeRow('Knowledge store', 'index open at agent-qa-knowledge (memidex)', 'PASS'),
+    )
+    expect(lines).toContain(
+      preChangeRow('Embedder', `native (${DEFAULT_EMBEDDING_PROFILE.model_id})`, 'PASS'),
+    )
+    expect(lines).toContain(preChangeRow('Retrieval rung', 'memidex', 'PASS'))
+  })
 })
 
 
@@ -1096,47 +1259,16 @@ targets:
 // have — a width the code never named is the failure the UAT caught.
 // ---------------------------------------------------------------------------
 
-const ESC = String.fromCharCode(27)
-const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, 'g')
-const stripAnsi = (text: string): string => text.replace(ANSI_PATTERN, '')
-
-/** The strings the 407 UAT measured on the built cli, transcribed so the cells can pin the widths. */
-const MEASURED_INDEX_PATH = 'agent-qa-knowledge/memory/index/knowledge.db'
-const MEASURED_FAIL_MESSAGE = `index at ${MEASURED_INDEX_PATH} could not be opened: corrupt`
-const MEASURED_FIX_INSTRUCTIONS =
-  'Rebuild the index with `agent-qa knowledge rebuild-index`, or remove the corrupt file at '
-  + `${MEASURED_INDEX_PATH} and re-run.`
-
-/**
- * The row template doctor composed BEFORE 407-24, transcribed from the pre-change emit loop
- * (`    {name}  {dots}  {message}  {status}` with `padDots`' 60-column target). The byte-identical
- * pins below build their expectation from this rather than from a snapshot, so a reader can see
- * exactly which bytes are being promised.
- */
-function preChangeRow(name: string, message: string, statusWord: string): string {
-  const dots = '.'.repeat(Math.max(2, 60 - (name.length + message.length)))
-  return `    ${name}  ${dots}  ${message}  ${statusWord}`
-}
-
 /** A message of about the requested length built from short words, so no long-word exception fires. */
 function wordyMessage(length: number): string {
   return 'lorem ipsum dolor sit amet '.repeat(20).slice(0, length).trimEnd()
 }
 
 describe('doctor row renderer (407-24 · G-407-3)', () => {
-  const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
   const originalColumnsEnv = process.env.COLUMNS
 
-  function setStdoutColumns(value: number | undefined): void {
-    Object.defineProperty(process.stdout, 'columns', {
-      value,
-      configurable: true,
-      writable: true,
-    })
-  }
-
   afterEach(() => {
-    if (originalColumns) Object.defineProperty(process.stdout, 'columns', originalColumns)
+    restoreTerminalWidth()
     if (originalColumnsEnv === undefined) delete process.env.COLUMNS
     else process.env.COLUMNS = originalColumnsEnv
   })
