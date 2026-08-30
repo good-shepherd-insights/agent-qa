@@ -332,6 +332,30 @@ export const DELTAS_PENDING_TEXT = 'Deltas land when curation settles.'
 export const CURATION_FAILED_TEXT = 'Curation failed — nothing was learned from this run.'
 
 /**
+ * The note that rides BESIDE records a failed chain had already committed (407-26 · G-407-12).
+ *
+ * A NOTE, NEVER A REPLACEMENT. It is published in {@link LearnedView.chainNote} rather than in
+ * `sentence`, whose own contract is "absent exactly when rows is non-empty": a sentence printed
+ * over painted rows is a second, quieter account of the same records, which is the thing CR-04
+ * forbids. This one rides UNDER them, exactly as {@link STORE_READ_INCOMPLETE_TEXT} rides under
+ * an answer whose read was partial.
+ *
+ * ITS SIBLING ABOVE COULD NOT SIMPLY BE REUSED. `Curation failed — nothing was learned from this
+ * run.` is a positive, falsifiable claim; printed over records the same `RunKnowledgeProjection`
+ * carries, it is a claim that projection disproves (REVIEW CR-01). Relocating it beside the rows
+ * would relocate the falsehood, not retire it. So the stronger sentence is kept for the one arm
+ * where nothing falsifies it — `rows.length === 0` — and this weaker pair of facts, both true at
+ * once, is what a reader gets when there is something to list.
+ *
+ * ITS WORDING IS NOT SETTLED. The string is the round-3 review's own proposed wording, verbatim,
+ * so the owner rules on a sentence already in front of them — but it JOINS UAT item 10's open
+ * copy decision rather than arriving approved, and the UI-SPEC row it belongs beside is still to
+ * be written (407-27).
+ */
+export const CURATION_FAILED_PARTIAL_TEXT =
+  'Curation failed — these records were committed before it stopped.'
+
+/**
  * The heading's sentence when a settled row committed no counts (D-12).
  *
  * The chip's {@link COUNTS_NOT_RECORDED_TEXT} says the same fact as a fragment beside a badge;
@@ -594,7 +618,9 @@ export function cutCandidates(trace: RunKnowledgeTrace): CutCandidatesView | und
  *      this line is where the chain's fate is reported; repeating it here as `not attributed`
  *      would be a SECOND and different claim — that the store was consulted and said no — made
  *      while this very projection holds the row that disproves it. Same `rows win` law the Learned
- *      half follows.
+ *      half follows — a claim this sentence made from 407-22 until 407-26, when
+ *      {@link learnedView}'s own `failed` arm was finally moved below its rows fold and the two
+ *      halves stopped disagreeing (REVIEW CR-01 · G-407-12).
  *
  *   3. THEN, WITH NO ROW, THE READ DECIDES. `unknown` when the flag is set, because nobody could
  *      finish looking; `not attributed` when it is clear, because the walk completed and no
@@ -792,6 +818,21 @@ export interface LearnedView {
    * the person-visible half (D-04, D-12).
    */
   readonly readNote?: string
+  /**
+   * {@link CURATION_FAILED_PARTIAL_TEXT}, when a SETTLED-AND-FAILED chain has rows to list.
+   *
+   * THE SIBLING OF {@link LearnedView.readNote}, AND DELIBERATELY NOT THAT SLOT. The chain's fate
+   * and the store's readability are two independent producers — 407-14's op folds `curation` and
+   * `learned` separately, and the conformance file's `attributed-failed` world carries
+   * `{ status: 'failed', scanIncomplete: true }` at once — so one slot could only ever report one
+   * of them, and whichever it reported would be silently speaking for the other. That is the
+   * coupling round-2 WR-03 named; two notes is the fix, not one flag with two meanings.
+   *
+   * Present exactly when `state` is `failed` AND {@link LearnedView.rows} is non-empty; absent
+   * everywhere else, including the no-rows `failed` arm, which keeps {@link CURATION_FAILED_TEXT}
+   * in `sentence` unchanged. It never carries a fact about the store read (407-26 · G-407-12).
+   */
+  readonly chainNote?: string
 }
 
 /** The pending-proposals line: a COUNT and a door, never any proposal content (D-11). */
@@ -964,10 +1005,28 @@ function learnedRow(row: RecordChange): LearnedRowView {
  *
  * THE COUNTS COME ONLY FROM THE SETTLED ROW (D-09). An unsettled chain has no counts to show — not
  * zeros, not a stale pair from a previous read — so `countLine` is absent for `pending`, `running`
- * and `failed`, and the chip beside it is silent for exactly the same reason. Those three arms
- * also list NOTHING even when the projection carries rows: a chain that has not settled has not
- * finished deciding what it changed, so listing its interim rows would date-stamp a claim it has
- * not made (D-12).
+ * and `failed`, and the chip beside it is silent for exactly the same reason. TWO of those arms —
+ * `pending` and `running` — also list NOTHING even when the projection carries rows: a chain that
+ * has not settled has not finished deciding what it changed, so listing its interim rows would
+ * date-stamp a claim it has not made (D-12).
+ *
+ * A SETTLED-AND-FAILED CHAIN IS NOT ONE OF THEM, AND USED TO BE TREATED AS IF IT WERE (407-26 ·
+ * REVIEW CR-01 · G-407-12, owner ruling 2026-08-31). `failed` HAS settled, so the justification
+ * above never described it; the arm nonetheless returned `rows: []` eleven lines above the fold
+ * and printed {@link CURATION_FAILED_TEXT} — `nothing was learned from this run` — over change
+ * records the op had served and stamped with this run's own id. `learned.changes` comes from the
+ * `diffSince` walk over the COMMITTED store; `curation.status` comes from a different sibling op;
+ * a stage that committed records and then fell over later in the chain produces exactly that
+ * shape. A chain that fell over cannot un-commit what it already wrote, so the records are
+ * PAINTED and the failure is stated beside them in {@link LearnedView.chainNote}. This is the
+ * third instance of one rule, now consistent across the tab: 407-18 moved the fold above the
+ * scan-incomplete FLAG arm, 407-22 made a served attribution row beat `canaryOutcomeWord`'s
+ * settled arms, and this moves it above the CHAIN-STATUS arm.
+ *
+ * WHICH IS WHY THE FOLD IS HOISTED RATHER THAN COPIED INTO THE ARM. An arm that returns before
+ * the fold is an arm that can deny a record without ever having looked at it; the only way to
+ * make that structurally impossible is to leave no code between the fold and the returns. Every
+ * arm below therefore chooses only WHAT TO SAY about rows it can already see.
  *
  * THE STORE READ IS A FACT ABOUT THE READ, AND IT DECORATES EVERY ARM (407-18 · REVIEW CR-01 /
  * WR-05). `learned.scanIncomplete` used to be asked ABOVE the row fold and answered with
@@ -992,12 +1051,30 @@ export function learnedView(
   const readNote =
     projection.learned.scanIncomplete === true ? { readNote: STORE_READ_INCOMPLETE_TEXT } : {}
 
+  // ALREADY FILTERED TO THIS RUN by `runs.knowledge` (407-04's run-link stamping and canary
+  // observation join, never a since-ordinal window). This module narrows the KINDS and nothing
+  // else — re-filtering by run here would be a second, weaker copy of that join.
+  //
+  // HOISTED ABOVE THE WHOLE STATUS LADDER (407-26 · REVIEW CR-01 · G-407-12). An arm that returns
+  // before this fold is an arm that can deny a record without having looked at it, and no comment
+  // prevents the next arm from being written above it — leaving no code between the fold and the
+  // returns does.
+  const rows = projection.learned.changes
+    .filter(row => LEARNED_CHANGE_KIND_SET.has(row.change))
+    .map(learnedRow)
+
   if (status === 'pending' || status === 'running') {
+    // `rows: []` here is now a STATEMENT, not a consequence of ordering: the rows are in scope and
+    // this arm declines to list them, because an unsettled chain has not finished deciding (D-12).
     return { state: status, sentence: DELTAS_PENDING_TEXT, rows: [], ...degraded, ...readNote }
   }
 
   if (status === 'failed') {
-    return { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [], ...degraded, ...readNote }
+    // A SETTLED chain that fell over cannot un-commit what it already wrote. With records to list,
+    // the failure is a note BESIDE them; with none, the arm is the object that shipped before.
+    return rows.length > 0
+      ? { state: 'failed', rows, chainNote: CURATION_FAILED_PARTIAL_TEXT, ...degraded, ...readNote }
+      : { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [], ...degraded, ...readNote }
   }
 
   const state: LearnedState = counts === undefined ? 'counts-absent' : 'done'
@@ -1005,13 +1082,6 @@ export function learnedView(
     counts === undefined
       ? COUNTS_NOT_RECORDED_TEXT
       : curationFactsText(counts.curated, counts.deprecated)
-
-  // ALREADY FILTERED TO THIS RUN by `runs.knowledge` (407-04's run-link stamping and canary
-  // observation join, never a since-ordinal window). This module narrows the KINDS and nothing
-  // else — re-filtering by run here would be a second, weaker copy of that join.
-  const rows = projection.learned.changes
-    .filter(row => LEARNED_CHANGE_KIND_SET.has(row.change))
-    .map(learnedRow)
 
   // ROWS BEFORE SENTENCES, AND BEFORE THE FLAG (REVIEW CR-01). A record the store served is the
   // answer; the partial read is a note beside it.
