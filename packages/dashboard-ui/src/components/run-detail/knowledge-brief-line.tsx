@@ -103,8 +103,16 @@ export function KnowledgeBriefLine({ line }: { line: BriefLineView }) {
       className="space-y-1"
     >
       <div className="flex flex-wrap items-center gap-2">
-        {/* `break-words`: a 120-char brief line wraps inside the row rather than widening it. */}
-        <span className="text-sm break-words"><MaskedText text={line.summary} /></span>
+        {/*
+          `wrap-anywhere` (`overflow-wrap: anywhere`), NOT `break-words`. A summary is regularly ONE
+          UNBROKEN TOKEN — a URL, a selector literal, a content-derived record id — and
+          `overflow-wrap: break-word` only offers such a token a break opportunity once the box has
+          ALREADY been sized: it leaves min-content width at the full unbroken token. A flex item
+          sized from its own content therefore never shrinks and never reaches the break, which is
+          how this span was measured grown to 895px inside a 639px parent WITH `break-word` applied.
+          `anywhere` is the spelling that participates in intrinsic sizing, so the row can shrink it.
+        */}
+        <span className="text-sm wrap-anywhere"><MaskedText text={line.summary} /></span>
         {line.servedAsCanary ? (
           <Badge variant="outline" className="text-xs">{CANARY_BADGE_TEXT}</Badge>
         ) : null}
@@ -112,7 +120,10 @@ export function KnowledgeBriefLine({ line }: { line: BriefLineView }) {
           <Badge variant={outcome.variant} className={`text-xs ${outcome.className}`}>{outcome.text}</Badge>
         )}
       </div>
-      <p className={MONO_CLASS}>{line.id}</p>
+      {/* The same intrinsic break, at the USE SITE rather than inside `MONO_CLASS`: that constant is
+          shared with the why-answer row, whose composed leg/rank/score sentence has spaces and has
+          not been measured wanting. A record id is content-derived and unbroken by construction. */}
+      <p className={`${MONO_CLASS} wrap-anywhere`}>{line.id}</p>
       <LineWhyRow line={line} />
     </li>
   )
