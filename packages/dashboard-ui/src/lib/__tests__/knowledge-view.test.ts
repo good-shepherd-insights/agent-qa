@@ -1191,29 +1191,39 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    * `atOrdinal`, so keying by `recordId` alone collides and React drops or reorders a row on the
    * re-render that fires as curation settles.
    */
-  it('carries a composite key per row — record, change, ordinal, evidence token and by-record', () => {
-    // RE-PINNED 407-18 (REVIEW WR-01). The 407-15 form stopped at the ordinal, and that triple is
-    // not what the PRODUCER treats as identity: `diffSince` falls through to `evidenceToken` and
-    // then `byRecordId` in its own comparator, so the key follows all five members it sorts on.
+  it('leads the key with the ROW INDEX, then names the record it belongs to', () => {
+    // RE-SPELLED 407-26 (REVIEW WR-04). The five-member form this replaces claimed to BE the
+    // producer's dedupe identity and could not be: `survivingOutcomeEvents` dedupes on
+    // `${evidenceToken}:${curationJobId}`, and `RecordChangeSchema` is `.strict()` and carries no
+    // `curationJobId` at all — so no projection of `RecordChange`'s own members can reproduce it.
+    // A key can therefore be TOTAL by construction or be a guess; this project chooses total.
     const view = learnedFrom({
       curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
       learned: { changes: [change('added', 'rec_a', { atOrdinal: 4 })], canaryAttributions: [] },
     })
 
-    expect(view.rows[0]?.key).toBe('rec_a:added:4::')
+    expect(view.rows[0]?.key).toBe('0:rec_a:added:4')
   })
 
-  it('spells an absent optional as an EMPTY SEGMENT, never the word undefined', () => {
-    const view = learnedFrom({
-      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+  it('never spells the word undefined, and returns the same key for the same input twice', () => {
+    // The former sibling of this cell pinned an EMPTY SEGMENT for an absent optional. The new key
+    // has no optional segments, so what is left to pin is that the key is total and deterministic:
+    // it leads with the index, names only members every `RecordChange` carries, and a second
+    // projection of the same bytes produces the same string.
+    const input = {
+      curation: { status: 'done' as const, counts: { curated: 1, deprecated: 0 } },
       learned: {
         changes: [change('confirmed', 'rec', { atOrdinal: 12, evidenceToken: 'tok-a', byRecordId: 'by-1' })],
         canaryAttributions: [],
       },
-    })
+    }
 
-    expect(view.rows[0]?.key).toBe('rec:confirmed:12:tok-a:by-1')
-    expect(view.rows[0]?.key).not.toContain('undefined')
+    const first = learnedFrom(input)
+    const second = learnedFrom(input)
+
+    expect(first.rows[0]?.key).toBe('0:rec:confirmed:12')
+    expect(first.rows[0]?.key).not.toContain('undefined')
+    expect(second.rows[0]?.key).toBe(first.rows[0]?.key)
   })
 
   it('gives two changes on ONE record two distinct keys, so neither row is reconciled away', () => {
@@ -1228,7 +1238,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
       },
     })
 
-    expect(view.rows.map(row => row.key)).toEqual(['rec_same:confirmed:12::', 'rec_same:superseded:13::'])
+    expect(view.rows.map(row => row.key)).toEqual(['0:rec_same:confirmed:12', '1:rec_same:superseded:13'])
     expect(new Set(view.rows.map(row => row.key)).size).toBe(2)
   })
 
@@ -1239,7 +1249,7 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
    * one bundle can carry two confirmations at one `buildOrdinal` and `diffSince` emits both. The
    * 407-15 triple collided on exactly that pair, and React reconciled one of the two rows away.
    */
-  it('gives two confirmations at ONE ordinal distinct keys, on the evidence token alone', () => {
+  it('gives two confirmations at ONE ordinal distinct keys, on the index that separates them', () => {
     const view = learnedFrom({
       curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
       learned: {
@@ -1253,8 +1263,57 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
 
     expect(view.rows.length).toBe(2)
     expect(view.rows.map(row => row.key))
-      .toEqual(['rec_same:confirmed:12:tok-a:', 'rec_same:confirmed:12:tok-b:'])
+      .toEqual(['0:rec_same:confirmed:12', '1:rec_same:confirmed:12'])
     expect(new Set(view.rows.map(row => row.key)).size).toBe(2)
+  })
+
+  /**
+   * REVIEW WR-04 (round-2 WR-05, OPEN ACROSS THREE ROUNDS) — THE CASE THE OLD KEY COULD NOT SEE.
+   *
+   * `deriveEvidenceToken` hashes `(attributingObservationId, anchor, buildOrdinal)` and
+   * deliberately EXCLUDES the candidate id, while `confirmedEvent` stamps
+   * `curationJobId: job.candidateId`. So one evidence token with two `curationJobId`s is
+   * reachable by construction, both events survive `survivingOutcomeEvents`' dedupe, and
+   * `diffSince` emits two `RecordChange`s identical in ALL FIVE members the old key spelled —
+   * `recordId`, `change`, `atOrdinal`, `evidenceToken` and `byRecordId`. React warned and
+   * reconciled one away on the re-render that fires as curation settles, which is exactly when
+   * the second row appears.
+   */
+  it('separates two changes identical in all five previously-keyed members', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      learned: {
+        changes: [
+          change('confirmed', 'rec_same', { atOrdinal: 12, evidenceToken: 'tok-a', byRecordId: 'by-1' }),
+          change('confirmed', 'rec_same', { atOrdinal: 12, evidenceToken: 'tok-a', byRecordId: 'by-1' }),
+        ],
+        canaryAttributions: [],
+      },
+    })
+
+    const keys = view.rows.map(row => row.key)
+    expect(view.rows.length).toBe(2)
+    expect(keys[0]).not.toBe(keys[1])
+    expect(new Set(keys).size).toBe(2)
+    expect(new Set(keys).size).toBe(view.rows.length)
+  })
+
+  it('assigns indices over the rows actually PAINTED, not over the changes served', () => {
+    // The kept-kind filter runs BEFORE the index is assigned, so a dropped `purged` change does
+    // not leave a hole in the numbering of the rows that survive it.
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      learned: {
+        changes: [
+          change('purged', 'rec_gone'),
+          change('added', 'rec_a', { atOrdinal: 1 }),
+          change('promoted', 'rec_b', { atOrdinal: 2 }),
+        ],
+        canaryAttributions: [],
+      },
+    })
+
+    expect(view.rows.map(row => row.key)).toEqual(['0:rec_a:added:1', '1:rec_b:promoted:2'])
   })
 })
 
