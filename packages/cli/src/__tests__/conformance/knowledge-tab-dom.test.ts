@@ -45,7 +45,7 @@
 // and `post-processing-dom.test.ts`'s `publishedConstant` idiom, widened to a `Record` literal.
 // A hardcoded copy would go on passing against a page that says something else.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -702,6 +702,8 @@ interface Recorded {
    * store holds an outcome it really served (407-25, G-407-11).
    */
   attributedFailed?: AttributedFailure
+  /** The unbroken-token layout differential, measured in the browser both ways (407-25, G-407-2). */
+  wrapProbe?: WrapProbe
   dashboardStderr?: string
   failure?: string
 }
@@ -772,6 +774,7 @@ function context(label: string, recorded: Recorded): string {
     + `rows=${JSON.stringify(recorded.attributedFailed?.visit?.learnedRows ?? [])}; `
     + `lines=${JSON.stringify(recorded.attributedFailed?.visit?.servedLines ?? [])}`,
     `attributed-failed projection: ${(recorded.attributedFailed?.projectionBody ?? '').slice(0, 1_400)}`,
+    `wrap probe: ${JSON.stringify(recorded.wrapProbe ?? null)}`,
     `served lines: ${JSON.stringify(recorded.visit?.servedLines ?? [])}`,
     `drawer tabs: ${(recorded.visit?.drawerTabLabels ?? []).join(', ') || '(none)'}`,
     `curation chip tag: ${recorded.visit?.curationChipTag ?? '(absent)'}`,
@@ -1126,6 +1129,202 @@ async function freshVisit(origin: string, runId: string): Promise<PageObservatio
   return observeKnowledge(browserContext, origin, runId)
 }
 
+// ── (c6): does an unbroken token FIT, measured in the browser, both ways (407-25, G-407-2) ───────
+
+/** One pair of geometry readings, taken after a forced layout. */
+interface WrapGeometry {
+  readonly rowScrollWidth: number
+  readonly rowClientWidth: number
+  readonly summaryScrollWidth: number
+  readonly summaryClientWidth: number
+}
+
+/** Everything the unbroken-token probe measured, or the reason it measured nothing. */
+interface WrapProbe {
+  readonly failure?: string
+  /** The summary text the probe addressed the node BY, read off the projection. */
+  readonly addressedBy: string
+  /** The node's class list as found, before the utility was removed. */
+  readonly classListBefore: string
+  /** The class list after the probe put everything back. Must equal `classListBefore`. */
+  readonly classListAfter: string
+  readonly withUtility?: WrapGeometry
+  readonly withoutUtility?: WrapGeometry
+}
+
+/** The break utility 407-23 shipped onto the brief-line summary span. */
+const WRAP_UTILITY_CLASS = 'wrap-anywhere'
+
+/** The pathological input the UAT measured: 120 identical characters, no break opportunity. */
+const UNBROKEN_TOKEN = 'x'.repeat(120)
+
+/**
+ * Substitute an unbroken 120-character token into the served line's summary and measure the row,
+ * with the break utility and then without it.
+ *
+ * WHAT THE SUBSTITUTION IS. A real layout measurement of a real element, with its real classes, in
+ * its real container, in the same built bundle a person installs.
+ *
+ * WHAT IT IS NOT. A claim that this fixture naturally produces such a token. It cannot: the seeded
+ * summary is prose by design, and changing the fixture would move (b1)/(b2)'s subject. The question
+ * this cell answers is content-INDEPENDENT — given this node, in this row, does an unbroken token
+ * fit — so substituting the content is the honest way to ask it rather than a way to dodge it.
+ *
+ * BOTH HALVES ARE MEASURED BECAUSE ONLY THE PAIR IS EVIDENCE. A single reading showing no overrun
+ * is equally consistent with "the fix works" and "this viewport happened to be wide enough". The
+ * differential — same node, same viewport, same token, one class removed — is what pins the fix as
+ * the cause of its own effect.
+ *
+ * THE NODE IS ADDRESSED BY ITS TEXT, never by position, following 407-23's `deepestWithText` idiom:
+ * the deepest element inside the served line whose text is exactly the projection's own summary. A
+ * positional selector would silently measure a neighbouring element if the row were rearranged.
+ *
+ * The probe restores the original text and class list before returning, and reports the class list
+ * it read back so a failed restore is visible rather than inferred.
+ */
+async function probeUnbrokenTokenWrap(
+  origin: string,
+  runId: string,
+  summaryText: string,
+): Promise<WrapProbe> {
+  const browserContext = await (browser as Browser).newContext()
+  contexts.push(browserContext)
+  const page: Page = await browserContext.newPage()
+  try {
+    await page.goto(`${origin}/runs/${encodeURIComponent(runId)}`)
+    await page.locator('[data-step-id]').first()
+      .waitFor({ state: 'attached', timeout: PAGE_BUDGET_MS })
+      .catch(() => undefined)
+    // The same navigation (b1)/(b2) use — the key a person presses, not a `?tab=` deep link.
+    await page.keyboard.press('7')
+    await page.locator('[data-knowledge-state]').first()
+      .waitFor({ state: 'attached', timeout: PAGE_BUDGET_MS })
+      .catch(() => undefined)
+    await page
+      .waitForFunction(
+        () => {
+          const node = document.querySelector('[data-knowledge-state]')
+          return node !== null && node.getAttribute('data-knowledge-state') !== 'loading'
+        },
+        undefined,
+        { timeout: PAGE_BUDGET_MS },
+      )
+      .catch(() => undefined)
+
+    const rows = page.locator('[data-step-index]')
+    const rowCount = await rows.count()
+    let target = -1
+    for (let index = 0; index < rowCount; index += 1) {
+      const count = await rows.nth(index).getAttribute('data-brief-lines')
+      if (count !== null && Number(count) > 0) { target = index; break }
+    }
+    if (target === -1) {
+      return {
+        failure: 'no expanded row served a channel-1 line to measure',
+        addressedBy: summaryText,
+        classListBefore: '',
+        classListAfter: '',
+      }
+    }
+    const row = rows.nth(target)
+    await row.locator('button').first().click().catch(() => undefined)
+    await row.locator('[data-step-detail]').first()
+      .waitFor({ state: 'attached', timeout: PAGE_BUDGET_MS })
+      .catch(() => undefined)
+    await page.locator('li[data-served-channel="1"]').first()
+      .waitFor({ state: 'attached', timeout: PAGE_BUDGET_MS })
+      .catch(() => undefined)
+
+    // ONE `page.evaluate`: four numbers, two forced layouts, and the restore, so nothing between
+    // the two readings can move the box for any reason other than the class that was removed.
+    return await page.evaluate(
+      ({ summary, token, utility }) => {
+        const line = document.querySelector('li[data-served-channel="1"]')
+        if (line === null) {
+          return {
+            failure: 'the expanded row painted no `li[data-served-channel="1"]`',
+            addressedBy: summary,
+            classListBefore: '',
+            classListAfter: '',
+          }
+        }
+        // ADDRESSED BY TEXT: the DEEPEST element whose own text is exactly the summary.
+        const candidates = Array.from(line.querySelectorAll('*')).filter(
+          (node) => (node.textContent ?? '').trim() === summary,
+        )
+        const node = candidates[candidates.length - 1]
+        if (node === undefined || !(node instanceof HTMLElement)) {
+          return {
+            failure: `no element inside the served line has text exactly \`${summary}\``,
+            addressedBy: summary,
+            classListBefore: '',
+            classListAfter: '',
+          }
+        }
+        const classListBefore = node.className
+        const originalHtml = node.innerHTML
+
+        const geometry = (): {
+          rowScrollWidth: number
+          rowClientWidth: number
+          summaryScrollWidth: number
+          summaryClientWidth: number
+        } => ({
+          rowScrollWidth: line.scrollWidth,
+          rowClientWidth: line.clientWidth,
+          summaryScrollWidth: node.scrollWidth,
+          summaryClientWidth: node.clientWidth,
+        })
+
+        node.textContent = token
+        // Forced synchronous layout before the reading, so the number is this token's, not the
+        // previous frame's.
+        void node.offsetWidth
+        const withUtility = geometry()
+
+        node.classList.remove(utility)
+        void node.offsetWidth
+        const withoutUtility = geometry()
+
+        node.classList.add(utility)
+        node.innerHTML = originalHtml
+        void node.offsetWidth
+        const classListAfter = node.className
+
+        return { addressedBy: summary, classListBefore, classListAfter, withUtility, withoutUtility }
+      },
+      { summary: summaryText, token: UNBROKEN_TOKEN, utility: WRAP_UTILITY_CLASS },
+    )
+  } finally {
+    await page.close()
+  }
+}
+
+/**
+ * The `.wrap-anywhere` rules the BUILT stylesheet carries, whole-rule, selector list included.
+ *
+ * KEYED ON SELECTOR PRESENCE IN THE DIST CSS, never on a bare declaration and never on one exact
+ * minified rule body. `overflow-wrap:anywhere` ALREADY ships in that file today for the
+ * arbitrary-value class `[overflow-wrap:anywhere]`, emitted at 13 sites across 7 files — so a
+ * declaration grep is green before the fix and green after it and distinguishes nothing. And a
+ * byte-exact grep for `.wrap-anywhere{overflow-wrap:anywhere}` would fail the day an emitter
+ * grouped identical bodies into a selector list (`.foo,.wrap-anywhere{…}`) while the utility
+ * worked perfectly — pushing a CORRECT implementation onto 407-23's contingency branch.
+ */
+function distCssRulesMatching(pattern: RegExp): readonly string[] {
+  const assets = join(PACKAGES_ROOT, 'dashboard-ui', 'dist', 'assets')
+  if (!existsSync(assets)) return []
+  const rules: string[] = []
+  for (const name of readdirSync(assets)) {
+    if (!name.endsWith('.css')) continue
+    const text = readFileSync(join(assets, name), 'utf8')
+    for (const match of text.matchAll(/[^{}]*\{[^{}]*\}/g)) {
+      if (pattern.test(match[0])) rules.push(match[0])
+    }
+  }
+  return rules
+}
+
 /**
  * The two worlds that can only exist AFTER the first reading, in the only order they can be read.
  *
@@ -1214,6 +1413,37 @@ async function driveLaterWorlds(
   // ── THE FIFTH WORLD, LAST. See this function's docstring for why the ordering is not negotiable
   // and why the flag it inherits is expected.
   await plantAttributedFailure(project, origin, runId, buildOrdinal, recorded)
+
+  // ── AND THE LAYOUT DIFFERENTIAL AFTER EVERYTHING, on a page of its own. It mutates the DOM of a
+  // page it then closes, so it can disturb no recorded reading — but it runs last anyway, because
+  // "measured after every world was recorded" is a cheaper fact to check than "harmless".
+  const summaryText = servedSummaryOf(
+    recorded.projection,
+    recorded.afterRun?.projection,
+    recorded.malformed?.projection,
+  )
+  recorded.wrapProbe = summaryText === undefined
+    ? {
+        failure: 'no recorded projection carried a channel-1 summary to address the node by',
+        addressedBy: '',
+        classListBefore: '',
+        classListAfter: '',
+      }
+    : await probeUnbrokenTokenWrap(origin, runId, summaryText)
+}
+
+/** The first channel-1 summary any recorded projection carried — the probe's addressing text. */
+function servedSummaryOf(
+  ...projections: readonly (RunKnowledgeProjection | undefined)[]
+): string | undefined {
+  for (const projection of projections) {
+    if (projection?.kind !== 'ready') continue
+    for (const step of projection.steps) {
+      const line = step.served.channel1[0]
+      if (line !== undefined) return line.summary
+    }
+  }
+  return undefined
 }
 
 /**
@@ -2121,5 +2351,135 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       + `pins the behaviour as shipped so a change to it is visible, not because it is endorsed.`
       + `${seen}`,
     ).toEqual([])
+  })
+
+  it('(c6) an unbroken 120-char summary fits the row with the break utility and overruns it without — measured, both ways', () => {
+    // G-407-2, MEASURED WHERE THE UAT FOUND IT: real Chromium, the built bundle, the shipped
+    // `agent-qa dashboard`, the same 1280px-wide default viewport the UAT drove.
+    //
+    // The UAT recorded `scrollW 895 vs clientW 639` — a 256px horizontal overrun — on a row whose
+    // summary held 120 identical characters. 407-23 replaced `break-words` with `wrap-anywhere`
+    // (`overflow-wrap: anywhere`), which is the spelling that participates in intrinsic sizing.
+    // This cell asks the browser whether that is true HERE, and asks it twice.
+    //
+    // THE PAIR IS THE EVIDENCE, NOT EITHER READING. "No overrun" alone is equally consistent with a
+    // wide viewport. The second reading removes ONE class from the SAME node in the SAME layout and
+    // the overrun comes back — which is what makes the fix the cause of its own effect.
+    const probe = served.wrapProbe
+    const seen = `\n(c6) probe: ${JSON.stringify(probe ?? null)}${context('served', served)}`
+
+    expect(
+      probe?.failure,
+      `the (c6) unbroken-token probe never measured anything.${seen}`,
+    ).toBeUndefined()
+    const withUtility = probe?.withUtility
+    const withoutUtility = probe?.withoutUtility
+    expect(withUtility, `(c6) recorded no WITH-utility geometry.${seen}`).toBeDefined()
+    expect(withoutUtility, `(c6) recorded no WITHOUT-utility geometry.${seen}`).toBeDefined()
+    const held = withUtility as WrapGeometry
+    const bare = withoutUtility as WrapGeometry
+
+    // PRINTED ONCE on a green run, the way the census is (`--silent=false` to see it), and carried
+    // verbatim in every failure message below.
+    console.info('(c6) unbroken-token geometry', JSON.stringify({
+      addressedBy: probe?.addressedBy,
+      withUtility: held,
+      withoutUtility: bare,
+    }))
+
+    // ── THE NODE REALLY CARRIED THE UTILITY. Removing a class that was not there would produce a
+    // "differential" of two identical readings, and the second assertion below would then be
+    // measuring nothing at all.
+    expect(
+      probe?.classListBefore ?? '',
+      `the summary node the probe addressed does not carry \`${WRAP_UTILITY_CLASS}\`, so the `
+      + `second reading removed nothing and the differential is not a differential.${seen}`,
+    ).toContain(WRAP_UTILITY_CLASS)
+    expect(
+      probe?.classListAfter,
+      `the probe did not put the summary node's class list back.${seen}`,
+    ).toBe(probe?.classListBefore)
+
+    // ── HALF ONE: with the utility, the row does not overrun.
+    expect(
+      held.rowScrollWidth,
+      `WITH \`${WRAP_UTILITY_CLASS}\` the served line still overruns its own box: scrollWidth `
+      + `${String(held.rowScrollWidth)} vs clientWidth ${String(held.rowClientWidth)}. The UAT `
+      + `measured 895 vs 639 before the fix (G-407-2).${seen}`,
+    ).toBeLessThanOrEqual(held.rowClientWidth)
+
+    // ── HALF TWO: without it, the overrun comes back. This is the half that pins the cause.
+    expect(
+      bare.rowScrollWidth,
+      `WITHOUT \`${WRAP_UTILITY_CLASS}\` the served line does NOT overrun (scrollWidth `
+      + `${String(bare.rowScrollWidth)} vs clientWidth ${String(bare.rowClientWidth)}), so the `
+      + `first reading proved nothing about the class — this viewport is simply wide enough for a `
+      + `120-character token, and the differential G-407-2 needs is not being measured.${seen}`,
+    ).toBeGreaterThan(bare.rowClientWidth)
+  })
+
+  it('(c6b) the built stylesheet defines the utility the component ships — by SELECTOR, in the dist CSS', () => {
+    // NEVER A BARE DECLARATION GREP. `overflow-wrap:anywhere` is in this file TODAY for the
+    // arbitrary-value class `[overflow-wrap:anywhere]`, emitted at 13 sites across 7 files
+    // (`reasoning-pipeline.tsx`, `live-mode-auth-state-control.tsx`, `live-session-pane.tsx`,
+    // `reasoning-pipeline.wrap.test.tsx`, `auth-states-section.tsx`, `tab-overview.tsx`,
+    // `editor-step-detail.tsx`). A declaration grep was green before 407-23 and is green after it,
+    // and distinguishes nothing.
+    //
+    // NEVER ONE EXACT MINIFIED RULE BODY EITHER. `.wrap-anywhere{overflow-wrap:anywhere}` is only
+    // ONE of the shapes a correct emitter produces; an emitter that grouped identical bodies into a
+    // selector list would fail a byte-exact grep while the utility worked perfectly, and would push
+    // a CORRECT implementation onto the contingency branch below.
+    //
+    // 407-23's CONTINGENCY HAS EXACTLY ONE TRIGGER: the `.wrap-anywhere` SELECTOR is ABSENT. It is
+    // not the expected path — the pinned Tailwind 4.2.4 defines the utility (`dist/lib.js` carries
+    // `t("wrap-anywhere",[["overflow-wrap","anywhere"]])`), so the named branch is the one that
+    // should be taken, and 407-23 measured it being taken.
+    const named = distCssRulesMatching(/\.wrap-anywhere[,{]/)
+    const componentSource = readFileSync(
+      join(
+        PACKAGES_ROOT,
+        'dashboard-ui',
+        'src',
+        'components',
+        'run-detail',
+        'knowledge-brief-line.tsx',
+      ),
+      'utf8',
+    )
+
+    if (named.length > 0) {
+      expect(
+        named.filter((rule) => rule.includes('overflow-wrap:anywhere')).length,
+        `the built stylesheet carries ${String(named.length)} rule(s) whose selector list names `
+        + `\`.wrap-anywhere\` — ${JSON.stringify(named)} — but none of them declares `
+        + `\`overflow-wrap:anywhere\` in its own body, so the class the component ships is a no-op.`,
+      ).toBeGreaterThanOrEqual(1)
+      expect(
+        componentSource.includes(WRAP_UTILITY_CLASS),
+        `the dist CSS defines \`.wrap-anywhere\` but \`knowledge-brief-line.tsx\` no longer ships `
+        + `the class, so nothing on this page uses it.`,
+      ).toBe(true)
+      return
+    }
+
+    // ── THE FALLBACK, entered ONLY on absence of the named selector, and NOT vacuous. It needs
+    // BOTH halves: the escaped rule already ships in the dist CSS today, and the source tsx is the
+    // very file 407-23's contingency would have just written, so either half alone moves the
+    // vacuity rather than removing it.
+    const escaped = distCssRulesMatching(/\.\\\[overflow-wrap\\:anywhere\\\][,{]/)
+    expect(
+      escaped.filter((rule) => rule.includes('overflow-wrap:anywhere')).length,
+      `no rule in the built stylesheet names \`.wrap-anywhere\` OR the escaped arbitrary-value `
+      + `selector \`.\\[overflow-wrap\\:anywhere\\]\` with the declaration in its body, so the `
+      + `Knowledge tab ships NO intrinsic break utility at all.`,
+    ).toBeGreaterThanOrEqual(1)
+    expect(
+      componentSource.includes('[overflow-wrap:anywhere]'),
+      `the named \`.wrap-anywhere\` selector is absent from the dist CSS, so 407-23's contingency `
+      + `applies — but \`knowledge-brief-line.tsx\` does not ship the arbitrary-value spelling `
+      + `either, so the escaped rule found above belongs to some OTHER component and proves nothing `
+      + `about this line.`,
+    ).toBe(true)
   })
 })
