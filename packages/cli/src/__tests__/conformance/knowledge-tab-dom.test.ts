@@ -77,6 +77,7 @@ import {
   type DistilledObservation,
   type RunKnowledgeCanaryAttribution,
   type RunKnowledgeProjection,
+  type RunKnowledgeStep,
 } from '@vostride/agent-qa-schema'
 import { chromium } from 'playwright-core'
 import type { Browser, BrowserContext, Page } from 'playwright-core'
@@ -170,17 +171,61 @@ function publishedLabelTable(name: string): Record<string, string> {
  * would leave (c4) re-deriving the door's answer from a vocabulary the view no longer holds — a
  * cell that goes on passing against a page filtering by a different set. A source read that finds
  * nothing THROWS, so the cell reds with the reason rather than falling back to a literal.
+ *
+ * IT USED TO THROW ONLY ON ZERO, WHICH IS THE ONE FAILURE THAT CANNOT HAPPEN QUIETLY (G-407-19 ·
+ * REVIEW IN-01). The two that CAN are a capture that stopped early and a member the recovery regex
+ * cannot see, and each yields a SHORTER list in silence — leaving (c4) narrowing the door's answer
+ * by a subset of the vocabulary the view actually holds. Both are now rejected directly:
+ *
+ *   1. A CAPTURED SLICE CONTAINING A FURTHER `[`. `[^\]]*` stops at the first `]`, so a nested
+ *      array — or a member holding one — truncates the literal mid-way.
+ *   2. A QUOTE CENSUS THE RECOVERED MEMBERS DO NOT ACCOUNT FOR. Members are recovered with
+ *      `/'([^']+)'/gu`, so the census MUST count apostrophes, double quotes AND backticks: a
+ *      member respelled `"promoted"` contributes ZERO apostrophes, drops silently out of the list,
+ *      and leaves an apostrophe-only tally reading exactly `2 * members.length` — the check would
+ *      pass on IN-01's own named failure mode and be a check-shaped thing rather than a check.
+ *      Counting all three and requiring `2 * members.length` is what actually rejects it.
+ *
+ * WHAT IS DELIBERATELY NOT ASSERTED IS THE MEMBER COUNT. `LEARNED_CHANGE_KINDS.length === 5` would
+ * read as a rejection of a narrowing and act as a freeze on the vocabulary — and whether the table
+ * holds four kinds or five is UAT item 9, still open and still the owner's. These two checks reject
+ * a SILENT narrowing without ruling on what the right size is.
  */
-function publishedStringArray(name: string): readonly string[] {
+function publishedStringArray(
+  name: string,
+  // THE SOURCE IS A PARAMETER SO THE TWO REJECTIONS CAN BE DRIVEN. `(c7)` hands it a hand-built
+  // slice carrying IN-01's own named failure mode; every real caller takes the default and reads
+  // the module that publishes the vocabulary.
+  source: string = knowledgeViewSource(),
+): readonly string[] {
   const block = new RegExp(`export const ${name}[^=]*=\\s*\\[([^\\]]*)\\]`, 'u')
-    .exec(knowledgeViewSource())
+    .exec(source)
   if (block === null) {
     throw new Error(`${name} is no longer an exported array literal in ${KNOWLEDGE_VIEW_REL}`)
   }
-  const members = Array.from((block[1] as string).matchAll(/'([^']+)'/gu))
-    .map(hit => hit[1] as string)
+  const slice = block[1] as string
+  if (slice.includes('[')) {
+    throw new Error(
+      `${name}'s captured literal in ${KNOWLEDGE_VIEW_REL} contains a further \`[\`, so the `
+      + `capture stopped at an inner \`]\` and the member list below would be a TRUNCATION of the `
+      + `vocabulary rather than the vocabulary. Slice: ${JSON.stringify(slice)}`,
+    )
+  }
+  const members = Array.from(slice.matchAll(/'([^']+)'/gu)).map(hit => hit[1] as string)
   if (members.length === 0) {
     throw new Error(`${name} carries no single-quoted members in ${KNOWLEDGE_VIEW_REL}`)
+  }
+  const quoteCensus = (slice.match(/['"`]/gu) ?? []).length
+  if (quoteCensus !== 2 * members.length) {
+    throw new Error(
+      `${name}'s captured literal in ${KNOWLEDGE_VIEW_REL} holds ${String(quoteCensus)} quote `
+      + `character(s) — apostrophes, double quotes and backticks together — but the `
+      + `${String(members.length)} member(s) recovered account for only `
+      + `${String(2 * members.length)}. A member written in any delimiter other than an apostrophe `
+      + `is invisible to the recovery regex and would drop out of the list SILENTLY, leaving every `
+      + `caller narrowing by a subset of the real vocabulary. Recovered: `
+      + `${JSON.stringify(members)}; slice: ${JSON.stringify(slice)}`,
+    )
   }
   return members
 }
@@ -982,6 +1027,41 @@ function readyProjection(
 // move together.
 
 /**
+ * How many brief lines a step was served, across ALL THREE channels.
+ *
+ * MIRRORS `servedLineCount` (`packages/dashboard-ui/src/lib/knowledge-view.ts:882`) and shares its
+ * name deliberately: that function is what `stepRow` stamps `data-brief-lines` from, and
+ * `data-brief-lines` is the attribute this file's own harvest picks the expanded row BY — the
+ * first row whose value is greater than zero (`observeKnowledge`). Any mirror that derives the
+ * expanded row differently can select a DIFFERENT step from the one the page actually expanded,
+ * and then compare two unrelated things and call the result an agreement.
+ *
+ * THAT IS WHAT WAS WRONG (G-407-15 · REVIEW WR-03, round-2 WR-04 part 1). Two sites derived the
+ * row as `channel1.length > 0` while the attribute sums three channels. A step serving only a
+ * channel-2 read trace has `data-brief-lines="1"` and is what the harvest expands, while a
+ * channel-1-only predicate skips past it to some later step.
+ */
+function servedLineCount(step: RunKnowledgeStep): number {
+  return step.served.channel1.length + step.served.channel2.length + step.served.channel3.length
+}
+
+/**
+ * Which arm the channel-1 mirrors take for this world — reported as a census column, not inferred.
+ *
+ * `non-empty` is the agreement as it has always been; `empty` is the arm where the selected step
+ * served no channel-1 line and the mirror asserts an ABSENCE instead of a match. `(none)` is a
+ * world whose read never answered `ready`.
+ */
+function channel1BranchOf(projection: RunKnowledgeProjection | undefined): string {
+  if (projection?.kind !== 'ready') return '(none)'
+  // THE HARVEST'S OWN RULE, spelled the way both mirrors spell it: the first step whose
+  // `data-brief-lines` is greater than zero, else the first step.
+  const expanded = projection.steps.find((step) => servedLineCount(step) > 0)
+    ?? projection.steps[0]
+  return (expanded?.served.channel1.length ?? 0) > 0 ? 'non-empty' : 'empty'
+}
+
+/**
  * The Learned rows the door's answer implies — `learnedView`'s kind narrow, and nothing else.
  *
  * MIRRORS `learnedView` (`packages/dashboard-ui/src/lib/knowledge-view.ts`): it filters
@@ -1410,11 +1490,21 @@ async function probeUnbrokenTokenWrap(
             classListAfter: '',
           }
         }
-        // ADDRESSED BY TEXT: the DEEPEST element whose own text is exactly the summary.
+        // ADDRESSED BY TEXT, AND THE RULE IS CONTAINMENT (G-407-23 · REVIEW IN-05). The match that
+        // contains no other match — DELIBERATELY the same rule 407-28 gave `deepestWithText` in
+        // `knowledge-step-detail.test.tsx`, so the Chromium probe and the jsdom cell address "the
+        // painted node" by one law. The old rule took the LAST match in document order, which
+        // coincides with the deepest only while the subtree holds ONE match chain; a later SIBLING
+        // subtree painting the same exact string is also "last", and the probe would then measure
+        // an unrelated box and report it as the summary's geometry.
         const candidates = Array.from(line.querySelectorAll('*')).filter(
           (node) => (node.textContent ?? '').trim() === summary,
         )
-        const node = candidates[candidates.length - 1]
+        const node = candidates.find(
+          (candidate) => !candidates.some(
+            (other) => other !== candidate && candidate.contains(other),
+          ),
+        )
         if (node === undefined || !(node instanceof HTMLElement)) {
           return {
             failure: `no element inside the served line has text exactly \`${summary}\``,
@@ -1919,6 +2009,10 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       + `a fixture fault, not a page fault.${context('served', served)}`,
     ).toBe('published')
     const projection = readyProjection('served', served)
+    // DELIBERATELY NOT `servedLineCount` — and this is the one channel-1 predicate in the file
+    // that must stay one. This cell's claim is that the run served a CHANNEL-1 line out of a root
+    // holding one published record; summing the other two channels in would let a step whose only
+    // brief line was a channel-2 read trace satisfy it, and the claim would stop being made.
     const servedSteps = projection.steps.filter((step) => step.served.channel1.length > 0)
     expect(
       servedSteps.length,
@@ -2035,8 +2129,8 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
   it('(b5) the Used summary counts the steps that really were briefed', () => {
     const observed = visitOf('served', served)
     const projection = readyProjection('served', served)
-    const briefed = projection.steps.filter((step) =>
-      step.served.channel1.length + step.served.channel2.length + step.served.channel3.length > 0)
+    // The three-channel sum this file already spelled correctly here, now spelled ONCE.
+    const briefed = projection.steps.filter((step) => servedLineCount(step) > 0)
     expect(
       observed.usedSummary,
       `the Used half painted no summary line at all.${context('served', served)}`,
@@ -2301,6 +2395,14 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       attributions: entry.projection?.kind === 'ready'
         ? entry.projection.learned.canaryAttributions.length
         : -1,
+      // ONE COLUMN ADDED BY 407-31, and it exists because widening the expanded-row predicate to
+      // `servedLineCount` opened a way for AGREEMENT 3 and (c5) to pass over an EMPTY intersection
+      // (G-407-15). Both mirrors still compare CHANNEL-1 lines — that is the right comparison —
+      // but a step selected for its channel-2 brief line has an empty `channel1`, and the
+      // agreement would then be `[]` against `[]`. Both sites BRANCH on that, and this column is
+      // where the run REPORTS which arm it took, so a fixture change that moves the selection onto
+      // an all-channel-2 step is a visible column change rather than a silently emptied agreement.
+      channel1Branch: channel1BranchOf(entry.projection),
     }))
 
     // PRINTED ONCE, AFTER THE FOLD AND BEFORE THE ASSERTIONS, so the vitest output carries the
@@ -2334,13 +2436,15 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
 
       // ── AGREEMENT 1: rows painted ⇔ rows served, narrowed to the published kinds.
       //
-      // THREE ARMS, NOT TWO (407-25). `attributed-failed` is the first SETTLED-BUT-FAILED world
-      // this file has ever driven, and the old two-valued `settled = status === 'done'` classified
-      // it as UNSETTLED — reporting a settled chain under a law it is not breaking. The EXPECTED
-      // VALUE does not move: rows on the settled-and-done arm, `[]` on the other two, which is
-      // exactly what the old expression already evaluated to. What moves is that the message now
-      // STATES the reason, per arm. A gate whose message describes a different law from the one it
-      // enforces is a gate the next reader trusts wrongly.
+      // THREE ARMS, AND SINCE 407-31 TWO OF THEM LIST ROWS. `attributed-failed` was the first
+      // SETTLED-BUT-FAILED world this file drove, and the old two-valued `settled = status ===
+      // 'done'` classified it as UNSETTLED — reporting a settled chain under a law it is not
+      // breaking. 407-25 split the arm and left its expectation where it was, because the shipped
+      // `failed` arm returned `rows: []` and no world could show otherwise. Both halves of that
+      // have now moved: the owner ruled (2026-08-31, REVIEW CR-01, G-407-12), 407-26 hoisted the
+      // fold above the whole status ladder, and the sixth world holds a served change row over a
+      // failed chain so the expectation below is NON-EMPTY on this arm rather than `[]` against
+      // `[]`.
       const chainWord = ready.curation.status
       const arm = chainWord === 'pending' || chainWord === 'running'
         ? 'unsettled'
@@ -2348,20 +2452,19 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       const armNote = arm === 'unsettled'
         ? ' (UNSETTLED chain — it has not finished deciding, so it lists NOTHING: D-12)'
         : arm === 'settled-and-failed'
-          ? ' (SETTLED-AND-FAILED chain — it also lists nothing today, and for a DIFFERENT reason: '
-            + "`learnedView`'s `failed` arm returns `rows: []` before it ever folds "
-            + '`projection.learned.changes`. That arm discards a served change row the same way '
-            + '`canaryOutcomeWord` used to discard a served attribution row — the UNRULED '
-            + 'asymmetry 407-22 surfaced and deliberately did not fix. This gate enforces the '
-            + 'behaviour as shipped; it does not endorse it.)'
-          : ' (SETTLED-AND-DONE chain — the only arm that lists rows)'
+          ? ' (SETTLED-AND-FAILED chain — IT LISTS EXACTLY WHAT A SETTLED-AND-DONE ONE WOULD. A '
+            + 'chain that fell over cannot un-commit records it had already written, so the rows '
+            + 'stand and the failure is reported BESIDE them — by the Learned root\'s state word '
+            + 'and by `[data-learned-chain-note]`, never by the absence of rows. Authority: owner '
+            + 'ruling 2026-08-31, REVIEW CR-01, G-407-12.)'
+          : ' (SETTLED-AND-DONE chain — the other arm that lists rows)'
       expect(
         painted.learnedRows,
         `AGREEMENT 1 BROKE in the ${entry.world} world: the Learned rows the page painted are not `
         + `the door's \`learned.changes\` narrowed to ${JSON.stringify(LEARNED_CHANGE_KINDS)}`
         + `${armNote}. This is the CR-01 class: `
         + `a half that paints a different set from the one it was served.${seen}`,
-      ).toEqual(arm === 'settled-and-done' ? learnedRowsOf(ready) : [])
+      ).toEqual(arm === 'unsettled' ? [] : learnedRowsOf(ready))
 
       // ── AGREEMENT 2: the read stamp ⇔ the wire flag, absent rather than empty on a clean read.
       expect(
@@ -2373,17 +2476,36 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
 
       // ── AGREEMENT 3: every painted served line wears the word the projection implies.
       //
-      // THE EXPANDED ROW IS DERIVED THE WAY THE HARVEST DERIVES IT — the first step whose
-      // `channel1` is non-empty, else the first step — because `data-brief-lines` IS
-      // `channel1.length` and the Used half renders `projection.steps` in order. Matching by index
-      // rather than by id is what makes a MISSING line a red instead of a silently skipped one.
-      const expanded = ready.steps.find((step) => step.served.channel1.length > 0) ?? ready.steps[0]
+      // THE EXPANDED ROW IS DERIVED THE WAY THE HARVEST DERIVES IT — `servedLineCount`, the same
+      // three-channel sum `data-brief-lines` is stamped from, because that attribute is what
+      // `observeKnowledge` picks the row BY. The old predicate here read `channel1.length > 0`
+      // and the comment beneath it claimed `data-brief-lines` IS `channel1.length`; both were
+      // wrong, and a step briefed only on channel 2 would have been expanded by the page and
+      // skipped by this mirror (G-407-15 · REVIEW WR-03). Matching by index rather than by id is
+      // what makes a MISSING line a red instead of a silently skipped one.
+      const expanded = ready.steps.find((step) => servedLineCount(step) > 0) ?? ready.steps[0]
       const doorLines = expanded?.served.channel1 ?? []
-      expect(
-        painted.servedLines.map((line) => line.recordId),
-        `AGREEMENT 3 BROKE in the ${entry.world} world: the channel-1 lines the expanded row `
-        + `painted are not the lines the door served for that step.${seen}`,
-      ).toEqual(doorLines.map((line) => line.id))
+      // THE WIDENING'S OWN HOLE, STATED RATHER THAN FALLEN INTO. `doorLines` stays on channel 1 —
+      // that is the right comparison and it is unchanged — but the widened predicate can now
+      // select a step whose `channel1` is EMPTY, and `[]` against `[]` is the passing-over-an-
+      // empty-intersection shape this round closes everywhere else. So the empty case gets its
+      // own assertion and its own words, and the census column above says which arm ran.
+      if (doorLines.length > 0) {
+        expect(
+          painted.servedLines.map((line) => line.recordId),
+          `AGREEMENT 3 BROKE in the ${entry.world} world: the channel-1 lines the expanded row `
+          + `painted are not the lines the door served for that step.${seen}`,
+        ).toEqual(doorLines.map((line) => line.id))
+      } else {
+        expect(
+          painted.servedLines.length,
+          `AGREEMENT 3 BROKE in the ${entry.world} world ON ITS EMPTY ARM: the expanded step `
+          + `served NO channel-1 line — it was selected for its channel-2 or channel-3 brief `
+          + `lines — so this world proves an ABSENCE, and the page painted `
+          + `${String(painted.servedLines.length)} \`li[data-served-channel="1"]\` anyway. The `
+          + `census column \`channel1Branch\` records that this world took the empty arm.${seen}`,
+        ).toBe(0)
+      }
 
       painted.servedLines.forEach((line, index) => {
         const doorLine = doorLines[index] as NonNullable<(typeof doorLines)[number]>
@@ -2634,11 +2756,28 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     ).toBe('failed')
 
     // ── HALF ONE OF THE RULING: the served line wears the row's own outcome.
-    const expanded = ready.steps.find((step) => step.served.channel1.length > 0) ?? ready.steps[0]
+    //
+    // THE SAME `servedLineCount` DERIVATION AGREEMENT 3 USES (G-407-15 · REVIEW WR-03). This cell
+    // copied the channel-1-only predicate a second time when it was written; it now shares the
+    // harvest's own rule, and — because that rule can select a step whose `channel1` is empty —
+    // states its empty case rather than comparing `[]` with `[]`.
+    const expanded = ready.steps.find((step) => servedLineCount(step) > 0) ?? ready.steps[0]
     const doorLines = expanded?.served.channel1 ?? []
     const canaryLines = visit.servedLines
       .map((line, index) => ({ line, index }))
       .filter((held) => held.line.servedAsCanary === 'true')
+    if (doorLines.length === 0) {
+      expect(
+        visit.servedLines.length,
+        `the attributed-failed world's expanded step served NO channel-1 line — it was selected `
+        + `for its channel-2 or channel-3 brief lines — so this cell can only prove an ABSENCE, `
+        + `and the page painted ${String(visit.servedLines.length)} channel-1 line(s) anyway. The `
+        + `(c4) census column \`channel1Branch\` records that this world took the empty arm, and `
+        + `the ruling itself is then unmeasured here: reopen it against a fixture whose expanded `
+        + `step serves channel 1.${seen}`,
+      ).toBe(0)
+      return
+    }
     expect(
       canaryLines.length,
       `the attributed-failed world painted no served canary line.${seen}`,
@@ -2678,12 +2817,36 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       `the Learned half's root does not read \`failed\` in the attributed-failed world, so the `
       + `page is no longer saying the two facts side by side.${seen}`,
     ).toBe('failed')
+    // ── AND THE EMPTY ROW LIST HERE IS PINNED TO AN EMPTY DOOR LIST, NOT TO A LAW.
+    //
+    // THE ANSWER DID NOT MOVE; ITS REASON DID (REVIEW CR-01 · G-407-12). This assertion used to
+    // say the empty list was `learnedView`'s failed arm discarding served rows as shipped. That
+    // is no longer true and, since the owner ruling of 2026-08-31, no longer the law: a
+    // settled-and-failed chain lists exactly what a settled-and-done one would, and AGREEMENT 1
+    // now enforces that on BOTH settled arms. `[]` is still the right answer HERE for a reason
+    // that has nothing to do with the failed arm — this world is driven AFTER
+    // `plantMalformedBundle`, its change-records read degrades permanently for that memory root,
+    // and the door serves no change at all. So the door's own emptiness is asserted FIRST, and
+    // the page's emptiness is tied to it.
+    //
+    // THE LAW IS MEASURED IN THE SIXTH WORLD, `failed-with-changes`, which is planted BEFORE the
+    // malformed bundle precisely so it can hold both a failed chain and served change records.
+    expect(
+      ready.learned.changes.length,
+      `the attributed-failed world's door served \`learned.changes\` after all, so the empty page `
+      + `list below is no longer explained by an empty door list — and this cell would be `
+      + `asserting the very behaviour AGREEMENT 1 now forbids. If the change-records read stopped `
+      + `degrading for a root holding a malformed bundle, this cell needs rewriting, not `
+      + `silencing.${seen}`,
+    ).toBe(0)
     expect(
       visit.learnedRows,
-      `the Learned half painted record rows over a \`failed\` chain. \`learnedView\`'s \`failed\` `
-      + `arm returns \`rows: []\` as shipped — the UNRULED asymmetry 407-22 surfaced. This cell `
-      + `pins the behaviour as shipped so a change to it is visible, not because it is endorsed.`
-      + `${seen}`,
+      `the Learned half painted record rows the door did not serve: \`learned.changes\` is empty `
+      + `in this world (the malformed bundle planted before it degrades the change-records read `
+      + `permanently for this root), so there is nothing for the half to list. This is NOT the `
+      + `failed arm suppressing rows — that behaviour was ruled against on 2026-08-31 and `
+      + `AGREEMENT 1 enforces the ruling; the law is measured in the \`failed-with-changes\` `
+      + `world.${seen}`,
     ).toEqual([])
   })
 
@@ -2729,10 +2892,20 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       `the summary node the probe addressed does not carry \`${WRAP_UTILITY_CLASS}\`, so the `
       + `second reading removed nothing and the differential is not a differential.${seen}`,
     ).toContain(WRAP_UTILITY_CLASS)
+    // COMPARED AS SETS, NOT AS STRINGS (G-407-20 · REVIEW IN-02). `DOMTokenList.add` APPENDS, so
+    // byte equality between the two class lists holds only while `wrap-anywhere` happens to be the
+    // LAST token in the component's className — reorder the className and this assertion reds
+    // while the probe behaved perfectly. What the probe actually promises is that the node was put
+    // back the way it was found, and that is a claim about the SET of classes.
+    const classSet = (list: string | undefined): readonly string[] =>
+      (list ?? '').split(/\s+/u).filter((token) => token !== '').sort()
     expect(
-      probe?.classListAfter,
-      `the probe did not put the summary node's class list back.${seen}`,
-    ).toBe(probe?.classListBefore)
+      classSet(probe?.classListAfter),
+      `the probe did not put the summary node's class list back: it was `
+      + `\`${probe?.classListBefore ?? '(none)'}\` and it is now `
+      + `\`${probe?.classListAfter ?? '(none)'}\`. Compared as SETS — a reordered className is not `
+      + `a failed restore, a missing or extra utility is.${seen}`,
+    ).toEqual(classSet(probe?.classListBefore))
 
     // ── HALF ONE: with the utility, the row does not overrun.
     expect(
@@ -2815,5 +2988,56 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       + `either, so the escaped rule found above belongs to some OTHER component and proves nothing `
       + `about this line.`,
     ).toBe(true)
+  })
+
+  it('(c7) the vocabulary read refuses a slice it can only partly see — nested bracket, and a member in another delimiter', () => {
+    // G-407-19 · REVIEW IN-01, DRIVEN RATHER THAN ASSERTED IN A DOCSTRING.
+    //
+    // `publishedStringArray` used to throw only on ZERO members, which is the one narrowing that
+    // cannot happen quietly. The two that can each produce a SHORTER list in silence, leaving (c4)
+    // re-deriving the door's answer from a subset of the vocabulary the view actually holds.
+    //
+    // THE SECOND SLICE IS THE ONE THAT MATTERS. Members are recovered with `/'([^']+)'/gu`, so a
+    // member respelled `"promoted"` contributes ZERO apostrophes: it drops out of the recovered
+    // list AND out of an apostrophe-only census at the same time, and the tally still reads
+    // `2 * members.length`. Only a census counting apostrophes, double quotes and backticks
+    // together rejects it — which is exactly what this cell proves is happening.
+    const nested = "export const FAKE_KINDS = ['added', ['confirmed'], 'promoted'] as const"
+    expect(
+      () => publishedStringArray('FAKE_KINDS', nested),
+      'a captured literal containing a further `[` was accepted, so a nested array truncates the '
+      + 'vocabulary at the inner `]` and every caller narrows by a prefix of it.',
+    ).toThrow(/contains a further/u)
+
+    // FIVE MEMBERS, ONE RESPELLED IN DOUBLE QUOTES. Four are recovered; the apostrophe count is
+    // 8 = 2 * 4, so an apostrophe-only census would wave this through.
+    const respelled =
+      'export const FAKE_KINDS = [\'added\', \'confirmed\', \'superseded\', \'deprecated\', '
+      + '"promoted"] as const'
+    expect(
+      (respelled.match(/'/gu) ?? []).length,
+      'the fixture slice no longer has the apostrophe count that makes this cell discriminating — '
+      + 'an apostrophe-only census must read exactly `2 * members.length` over it, or the cell '
+      + 'proves nothing about counting the other two delimiters.',
+    ).toBe(8)
+    expect(
+      Array.from(respelled.matchAll(/'([^']+)'/gu)).length,
+      'the fixture slice no longer recovers exactly four apostrophe-delimited members, so the '
+      + 'apostrophe-only census would no longer have passed and the cell is measuring the wrong '
+      + 'thing.',
+    ).toBe(4)
+    expect(
+      () => publishedStringArray('FAKE_KINDS', respelled),
+      'a member respelled in double quotes was accepted: it dropped silently out of the recovered '
+      + 'list while an apostrophe-only census still balanced. This is IN-01\'s own named failure '
+      + 'mode, and the three-delimiter quote census exists to reject it.',
+    ).toThrow(/quote character/u)
+
+    // AND THE REAL VOCABULARY STILL READS, so the hardening did not simply make the function
+    // throw. NO SIZE IS ASSERTED — four kinds versus five is UAT item 9 and still the owner's.
+    expect(
+      LEARNED_CHANGE_KINDS.length,
+      'the published Learned vocabulary recovered no members at all from `knowledge-view.ts`.',
+    ).toBeGreaterThanOrEqual(1)
   })
 })
