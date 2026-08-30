@@ -30,6 +30,8 @@ import RunDetailPage from "@/pages/run-detail"
 import {
   ATTRIBUTION_UNKNOWN_TEXT,
   CHANNEL_EYEBROWS,
+  CURATION_FAILED_PARTIAL_TEXT,
+  CURATION_FAILED_TEXT,
   NOT_ATTRIBUTED_TEXT,
   NO_STORE_HEADING,
   READ_FAILED_HEADING,
@@ -402,6 +404,22 @@ describe("a populated read paints the Used half, end to end (D-03 / D-04 / D-08)
   })
 })
 
+/**
+ * THE ONE REAL `RecordChange` THIS FILE OWNS, hoisted to module scope (407-27).
+ *
+ * Two describes now need a projection that actually carries a committed change — the partial-read
+ * block below and the failed-chain block that closes G-407-12 — and a second hand-typed copy of
+ * the wire shape is a fixture that drifts the moment a member is added. One object, spread into
+ * both, so a future `RecordChangeSchema` member either lands in both fixtures or in neither.
+ */
+const SERVED_CHANGE = {
+  schemaVersion: 1 as const,
+  recordId: "fact-el-textbox-password-9a05ce",
+  change: "confirmed" as const,
+  atOrdinal: 2,
+  sourceRunId: RUN_ID,
+}
+
 describe("a partial store read paints the rows it was handed AND says the read was partial (REVIEW CR-01)", () => {
   // THE OP'S OWN SANCTIONED SHAPE, crossed through the real client double, the real
   // `projectKnowledgeView` and the real `KnowledgeLearned`. `runs.knowledge` degrades its two
@@ -412,13 +430,7 @@ describe("a partial store read paints the rows it was handed AND says the read w
     ...POPULATED,
     learned: {
       ...POPULATED.learned,
-      changes: [{
-        schemaVersion: 1 as const,
-        recordId: "fact-el-textbox-password-9a05ce",
-        change: "confirmed" as const,
-        atOrdinal: 2,
-        sourceRunId: RUN_ID,
-      }],
+      changes: [SERVED_CHANGE],
       scanIncomplete: true as const,
     },
   }
@@ -484,6 +496,13 @@ describe("a served attribution row beats a FAILED curation chain, at the page (4
   //
   // Fixtures are SPREAD FROM THE READY ONE and override only `curation` and `learned`, so a future
   // wire member cannot quietly make these cells stop resembling the page they claim to measure.
+  //
+  // WHAT THE LEARNED HALF DOES UNDER A FAILED CHAIN HAS SINCE BEEN RULED ON, and this block's
+  // first cell was rewritten to match (407-26/27 · REVIEW CR-01 / G-407-12 · owner ruling
+  // 2026-08-31). It is NOT that the half correctly lists nothing while the chip reads `failed`:
+  // the half lists whatever the store committed before the chain stopped, and states the chain's
+  // fate beneath the list. The cell below asserts that painted row; the describe after this one
+  // owns the note, the sentence it replaced, and the no-rows arm that did not move.
 
   async function expandedLineOf(projection: RunKnowledgeProjection) {
     fetchRunKnowledgeMock.mockResolvedValue(projection)
@@ -493,9 +512,16 @@ describe("a served attribution row beats a FAILED curation chain, at the page (4
     return { view, line: view.querySelector('li[data-served-channel="1"]') }
   }
 
+  // THE FIXTURE CARRIES A COMMITTED CHANGE RECORD (407-27, repairing WINDOWS #315). It did not
+  // when 407-22 wrote this block: `POPULATED.learned.changes` is `[]`, so the closing assertion
+  // below — `li[data-record-change]` count — was zero whatever the failed arm did with rows, and
+  // pinned nothing about the arm it was written under. `SERVED_CHANGE` is the same wire object
+  // the partial-read block uses, so the count is now a reading of the LAW and would go red if the
+  // chain-status ladder ever swallowed a served record again.
   const FAILED_WITH_ROW: RunKnowledgeProjection = {
     ...POPULATED,
     curation: { status: "failed" },
+    learned: { ...POPULATED.learned, changes: [SERVED_CHANGE] },
   }
 
   it("paints the row's outcome on the line while the Learned half still reads failed — two facts, side by side", async () => {
@@ -514,7 +540,15 @@ describe("a served attribution row beats a FAILED curation chain, at the page (4
     // ruling: neither half is allowed to speak for the other.
     const learned = view.querySelector("[data-learned-state]")
     expect(learned?.getAttribute("data-learned-state")).toBe("failed")
-    expect(view.querySelectorAll("li[data-record-change]").length).toBe(0)
+
+    // AND THE LEARNED LIST IS NOT EMPTIED BY THE CHAIN'S FATE EITHER (407-26/27 · owner ruling
+    // 2026-08-31). This assertion used to read `.length).toBe(0)` over a fixture with no change
+    // records at all — green for a reason that had nothing to do with the failed arm. The fixture
+    // now carries one, so the count is a reading: a chain that fell over after committing a
+    // record does not un-commit it, and the record is on screen beside the `failed` chip.
+    const changeRows = view.querySelectorAll("li[data-record-change]")
+    expect(changeRows.length).toBe(1)
+    expect(changeRows[0]?.getAttribute("data-record-id")).toBe(SERVED_CHANGE.recordId)
   })
 
   // THE SUB-QUESTION THE RULING LEFT OPEN, crossed at the page on both of its halves. With no row
@@ -540,6 +574,87 @@ describe("a served attribution row beats a FAILED curation chain, at the page (4
 
     expect(line?.getAttribute("data-canary-outcome")).toBe("not-attributed")
     expect(view.textContent).toContain(NOT_ATTRIBUTED_TEXT)
+  })
+})
+
+describe("the Learned half paints what a failed chain committed, and states its fate beneath (407-26/27 · owner ruling 2026-08-31, REVIEW CR-01 / G-407-12)", () => {
+  // THE SAME LAW AS THE BLOCK ABOVE, ONE HALF OVER. 407-22 settled it for the canary line: a
+  // chain that fell over cannot un-answer a line the store already answered. This settles it for
+  // the record list — a chain that fell over cannot un-commit a record it already wrote — and the
+  // half now reports the failure BESIDE the list instead of printing a sentence over the top of
+  // it saying nothing was learned, which the very projection carrying those records disproves.
+  //
+  // CROSSED END TO END, deliberately: the real client double, the real `projectKnowledgeView`
+  // fold 407-26 hoisted, and the real `KnowledgeLearned` paragraph 407-27 added. A cell that
+  // rendered the component directly would stay green if either the fold or the renderer regressed.
+  const FAILED_WITH_CHANGES: RunKnowledgeProjection = {
+    ...POPULATED,
+    curation: { status: "failed" },
+    learned: { ...POPULATED.learned, changes: [SERVED_CHANGE] },
+  }
+
+  it("lists the committed record and prints the chain note — and NO sentence denying it", async () => {
+    fetchRunKnowledgeMock.mockResolvedValue(FAILED_WITH_CHANGES)
+
+    const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
+
+    expect(knowledgeState(view)).toBe("ready")
+
+    const rows = view.querySelectorAll("li[data-record-change]")
+    expect(rows.length).toBe(1)
+    expect(rows[0]?.getAttribute("data-record-id")).toBe(SERVED_CHANGE.recordId)
+
+    expect(view.querySelector("[data-learned-chain-note]")?.textContent)
+      .toBe(CURATION_FAILED_PARTIAL_TEXT)
+
+    // THE FALSIFIABLE CLAIM IS GONE FROM THE PAGE, not merely moved: the sentence slot is empty
+    // and the words `nothing was learned from this run` appear nowhere above a painted record.
+    expect(view.querySelector("[data-learned-sentence]")).toBeNull()
+    expect(view.textContent).not.toContain(CURATION_FAILED_TEXT)
+
+    // AND THE CHIP STILL REPORTS THE CHAIN. The two facts sit side by side, which is exactly the
+    // pair 407-22 established on the Used half — neither half speaks for the other.
+    expect(view.querySelector("[data-learned-state]")?.getAttribute("data-learned-state"))
+      .toBe("failed")
+  })
+
+  it("prints BOTH notes when that failed chain's records arrive over a partly-read store", async () => {
+    fetchRunKnowledgeMock.mockResolvedValue({
+      ...FAILED_WITH_CHANGES,
+      learned: { ...FAILED_WITH_CHANGES.learned, scanIncomplete: true as const },
+    })
+
+    const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
+
+    expect(view.querySelectorAll("li[data-record-change]").length).toBe(1)
+
+    const learned = view.querySelector("[data-learned-state]")
+    expect(learned?.getAttribute("data-learned-read")).toBe("incomplete")
+    expect(view.querySelector("[data-learned-chain-note]")?.textContent)
+      .toBe(CURATION_FAILED_PARTIAL_TEXT)
+    expect(view.querySelector("[data-learned-read-note]")?.textContent)
+      .toBe(STORE_READ_INCOMPLETE_TEXT)
+
+    // Two producers, two paragraphs, in the order the component argues for: the chain note is
+    // about the list on screen, the read note about how much of the store anyone could see.
+    const notes = [...view.querySelectorAll<HTMLElement>(
+      "p[data-learned-chain-note], p[data-learned-read-note]",
+    )]
+    expect(notes.map(note => note.textContent))
+      .toEqual([CURATION_FAILED_PARTIAL_TEXT, STORE_READ_INCOMPLETE_TEXT])
+  })
+
+  it("still prints the APPROVED sentence, and no note, when the failed chain committed nothing", async () => {
+    // The arm that did not move, pinned at the page so the round can show it did not move.
+    fetchRunKnowledgeMock.mockResolvedValue({ ...POPULATED, curation: { status: "failed" } })
+
+    const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
+
+    expect(view.querySelector("[data-learned-sentence]")?.textContent).toBe(CURATION_FAILED_TEXT)
+    expect(view.querySelectorAll("li[data-record-change]").length).toBe(0)
+    expect(view.querySelector("[data-learned-chain-note]")).toBeNull()
+    expect(view.querySelector("[data-learned-state]")?.getAttribute("data-learned-state"))
+      .toBe("failed")
   })
 })
 
