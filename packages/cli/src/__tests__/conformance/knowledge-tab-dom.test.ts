@@ -193,6 +193,14 @@ const NO_BRIEF_SERVED_TEXT = publishedConstant('NO_BRIEF_SERVED_TEXT')
 const STEP_NO_BRIEF_TEXT = publishedConstant('STEP_NO_BRIEF_TEXT')
 const WHY_TRIGGER_TEXT = publishedConstant('WHY_TRIGGER_TEXT')
 const CHANGES_UNREADABLE_TEXT = publishedConstant('CHANGES_UNREADABLE_TEXT')
+/**
+ * The note a failed chain prints BESIDE the records it had already committed (407-26/27).
+ *
+ * READ FROM SOURCE, never retyped: the wording is explicitly unsettled (it joins UAT item 10's
+ * open copy decision), so a cell holding a literal copy would red on a rewording that is not a
+ * defect, and — worse — would go on passing if the view stopped publishing the note at all.
+ */
+const CURATION_FAILED_PARTIAL_TEXT = publishedConstant('CURATION_FAILED_PARTIAL_TEXT')
 /** The five Learned kinds `learnedView` narrows to, READ FROM SOURCE and never retyped here. */
 const LEARNED_CHANGE_KINDS = publishedStringArray('LEARNED_CHANGE_KINDS')
 
@@ -612,6 +620,47 @@ function plantFailedCuration(
   }
 }
 
+// ── The SIXTH world 407-31 adds: a failed chain over records the door still serves ───────────────
+
+/**
+ * The five `jobs` columns `plantFailedCuration` writes, as they stood before it wrote them.
+ *
+ * FIVE, NOT ONE. The restore's honesty is a claim about every column the plant touched, and a
+ * `changes === 1` from the UPDATE proves only that a row was MATCHED. `status` is the single
+ * column any downstream reading discriminates, so a restore that put `status` back over a stale
+ * `last_failure_reason` or a rewritten `updated_at` would satisfy every witness except a
+ * comparison of the values themselves. That comparison is what this record exists for.
+ */
+interface CurationJobRow {
+  readonly status: string
+  readonly claimedAt: string | null
+  readonly updatedAt: string | null
+  readonly lastFailureKind: string | null
+  readonly lastFailureReason: string | null
+}
+
+/** What the sixth world's snapshot-plant-restore did, reported rather than asserted on. */
+interface FailedWithChanges {
+  /** The five columns as found, before the plant. Absent when the row or the database was not there. */
+  readonly snapshot?: CurationJobRow
+  /** How many `jobs` rows the plant's UPDATE changed. Exactly 1 is the claim. */
+  readonly jobRowsUpdated: number
+  /** How many `jobs` rows the restore's UPDATE changed. Exactly 1 is the claim. */
+  readonly jobRowsRestored: number
+  /**
+   * The same five columns re-read AFTER the restore, with the SAME reader that took the snapshot.
+   *
+   * The same reader, deliberately: a second reader could disagree with the first about what a
+   * column IS — a `NULL` read as `''`, an integer read as a string — and the comparison would then
+   * be green because two readings were wrong in the same direction.
+   */
+  readonly afterRestore?: CurationJobRow
+  readonly projection?: RunKnowledgeProjection
+  readonly projectionStatus?: number
+  readonly projectionBody?: string
+  readonly visit?: PageObservation
+}
+
 // ── What one page visit records ──────────────────────────────────────────────────────────────────
 
 /** One served channel-1 line, as the expanded row painted it. */
@@ -659,6 +708,13 @@ interface PageObservation {
   readonly learnedRead?: string
   /** The `[data-learned-sentence]` prose, when the half printed one. */
   readonly learnedSentence?: string
+  /**
+   * The `[data-learned-chain-note]` prose, when the half printed one (407-27 · G-407-12).
+   *
+   * A NOTE BESIDE ROWS, never instead of them — absent is the half printing none, never an empty
+   * string, exactly as `learnedSentence` is carried.
+   */
+  readonly learnedChainNote?: string
   /** The channel-1 lines of the first row the drive expanded. */
   readonly servedLines: readonly ServedLineObservation[]
   /** `data-knowledge-state` after `1` — absent is the tab having been left. */
@@ -702,6 +758,12 @@ interface Recorded {
    * store holds an outcome it really served (407-25, G-407-11).
    */
   attributedFailed?: AttributedFailure
+  /**
+   * The SIXTH world (407-31, G-407-12): a chain that fell over while the door still serves the
+   * change records it had already committed — planted BEFORE the malformed bundle and reverted
+   * behind itself. See `driveLaterWorlds`' docstring for why it cannot be driven anywhere else.
+   */
+  failedWithChanges?: FailedWithChanges
   /** The unbroken-token layout differential, measured in the browser both ways (407-25, G-407-2). */
   wrapProbe?: WrapProbe
   dashboardStderr?: string
@@ -774,6 +836,21 @@ function context(label: string, recorded: Recorded): string {
     + `rows=${JSON.stringify(recorded.attributedFailed?.visit?.learnedRows ?? [])}; `
     + `lines=${JSON.stringify(recorded.attributedFailed?.visit?.servedLines ?? [])}`,
     `attributed-failed projection: ${(recorded.attributedFailed?.projectionBody ?? '').slice(0, 1_400)}`,
+    // THE SIXTH WORLD REPORTS ITS PLANT *AND* ITS REVERT. Both row counts and both column
+    // readings are here, so a plant that addressed nothing and a restore that put back four
+    // columns of five are each visible in the first failure message rather than diagnosed
+    // afterwards from a world that looks green.
+    `failed-with-changes: job rows updated=${String(recorded.failedWithChanges?.jobRowsUpdated ?? 0)}; `
+    + `restored=${String(recorded.failedWithChanges?.jobRowsRestored ?? 0)}; `
+    + `snapshot=${JSON.stringify(recorded.failedWithChanges?.snapshot ?? null)}; `
+    + `after restore=${JSON.stringify(recorded.failedWithChanges?.afterRestore ?? null)}; `
+    + `status=${String(recorded.failedWithChanges?.projectionStatus ?? 0)}; `
+    + `kind=${recorded.failedWithChanges?.projection?.kind ?? '(none)'}; `
+    + `state=${recorded.failedWithChanges?.visit?.learnedState ?? '(absent)'}; `
+    + `read=${recorded.failedWithChanges?.visit?.learnedRead ?? '(clean)'}; `
+    + `rows=${JSON.stringify(recorded.failedWithChanges?.visit?.learnedRows ?? [])}; `
+    + `chain note=${JSON.stringify(recorded.failedWithChanges?.visit?.learnedChainNote ?? null)}`,
+    `failed-with-changes projection: ${(recorded.failedWithChanges?.projectionBody ?? '').slice(0, 1_400)}`,
     `wrap probe: ${JSON.stringify(recorded.wrapProbe ?? null)}`,
     `served lines: ${JSON.stringify(recorded.visit?.servedLines ?? [])}`,
     `drawer tabs: ${(recorded.visit?.drawerTabLabels ?? []).join(', ') || '(none)'}`,
@@ -945,6 +1022,7 @@ async function observeKnowledge(
     // `data-record-id`; its badge word and its tint are presentation this file does not pin.
     const learnedRead = await attributeOf(page, '[data-learned-state]', 'data-learned-read')
     const learnedSentence = await textOf(page, '[data-learned-sentence]')
+    const learnedChainNote = await textOf(page, '[data-learned-chain-note]')
     const learnedRows = await page
       .locator('[data-learned-state] li[data-record-change]')
       .evaluateAll((rows) => rows.map((row) => ({
@@ -1068,6 +1146,7 @@ async function observeKnowledge(
       learnedRows,
       ...(learnedRead === undefined ? {} : { learnedRead }),
       ...(learnedSentence === undefined ? {} : { learnedSentence }),
+      ...(learnedChainNote === undefined ? {} : { learnedChainNote }),
       servedLines,
       ...(stateAfterOverview === undefined ? {} : { stateAfterOverview }),
       ...(stateAfterM === undefined ? {} : { stateAfterM }),
@@ -2049,6 +2128,17 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
         projection: served.afterRun?.projection,
         visit: served.afterRun?.visit,
       },
+      // THE SIXTH WORLD (407-31, G-407-12), AT ITS DRIVE POSITION — after `after-run`, before
+      // `malformed`. It is listed where it is DRIVEN rather than where it was added, because the
+      // census is a record of the store's history and a row out of order would make the two
+      // `changes` readings on either side of the malformed plant read as unrelated facts.
+      {
+        world: 'failed-with-changes',
+        label: 'served' as const,
+        recorded: served,
+        projection: served.failedWithChanges?.projection,
+        visit: served.failedWithChanges?.visit,
+      },
       {
         world: 'malformed',
         label: 'served' as const,
@@ -2217,6 +2307,123 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       `the after-run world painted NO Learned rows, so (c4)'s Learned agreement passed by emptiness `
       + `alone.${censusOf('after-run')}${context('served', served)}`,
     ).toBeGreaterThanOrEqual(1)
+
+    // ── NON-VACUITY, on the SIXTH WORLD — nine assertions, nine messages, nine reasons.
+    //
+    // THIS IS THE ONLY WORLD IN WHICH G-407-12 IS MEASURABLE ON THE ARTIFACT A PERSON INSTALLS,
+    // and it costs nine assertions because it has nine independent ways to be a world that proves
+    // nothing. The law under test — a settled-and-failed chain lists exactly what a settled-and-done
+    // one would — is a claim about a chain that is `failed` AND holds rows. Either half missing and
+    // AGREEMENT 1's settled-and-failed arm compares `[]` with `[]` and passes having measured
+    // nothing, which is WR-04's failure mode landing on the very arm this round exists to rule.
+    //
+    // THE READ MUST ALSO BE CLEAN. `learnedView` has a partial-read arm as well as a failed-chain
+    // arm; a world carrying `scanIncomplete` would leave a reader unable to say which arm the
+    // agreement exercised. That is why the sixth world is planted BEFORE the malformed bundle
+    // rather than beside the fifth.
+    const failedWithChangesReady = served.failedWithChanges?.projection?.kind === 'ready'
+      ? served.failedWithChanges.projection
+      : undefined
+    const seenFWC = censusOf('failed-with-changes') + context('served', served)
+
+    expect(
+      failedWithChangesReady?.curation.status,
+      `the failed-with-changes world's chain is NOT \`failed\`, so AGREEMENT 1's `
+      + `settled-and-failed arm was never exercised by a world that holds rows. The plant updated `
+      + `${String(served.failedWithChanges?.jobRowsUpdated ?? 0)} \`jobs\` row(s).${seenFWC}`,
+    ).toBe('failed')
+
+    expect(
+      served.failedWithChanges?.jobRowsUpdated ?? 0,
+      `the sixth world's curation plant changed a number of \`jobs\` rows other than exactly one. `
+      + `Nought means it addressed no row at all and the world would read \`done\`; more than one `
+      + `means \`chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE).curateMemory\` matched a `
+      + `neighbouring run's row.${seenFWC}`,
+    ).toBe(1)
+
+    expect(
+      failedWithChangesReady?.learned.changes.length ?? 0,
+      `the failed-with-changes world's door served NO \`learned.changes\` row, so the `
+      + `settled-and-failed arm's expectation is EMPTY and the agreement compares \`[]\` with `
+      + `\`[]\` — the exact vacuity this world was built to remove. This world is planted BEFORE `
+      + `\`plantMalformedBundle\` precisely so the change-records read is still intact here.`
+      + `${seenFWC}`,
+    ).toBeGreaterThanOrEqual(1)
+
+    expect(
+      failedWithChangesReady?.learned.scanIncomplete,
+      `the failed-with-changes world's read is NOT clean — \`learned.scanIncomplete\` is present, `
+      + `so this world would be measuring \`learnedView\`'s PARTIAL-READ arm rather than its `
+      + `FAILED-CHAIN arm, and the two cannot be told apart from the outside. A degraded read here `
+      + `means the plant ordering slipped and something ran after \`plantMalformedBundle\`.`
+      + `${seenFWC}`,
+    ).toBeUndefined()
+
+    expect(
+      served.failedWithChanges?.visit?.learnedRows.length ?? 0,
+      `the failed-with-changes world's PAGE painted no \`li[data-record-change]\` at all, over a `
+      + `door that served `
+      + `${String(failedWithChangesReady?.learned.changes.length ?? 0)} change record(s). This is `
+      + `G-407-12 itself, measured on the shipped bundle: the failed arm denying rows the same `
+      + `projection holds.${seenFWC}`,
+    ).toBeGreaterThanOrEqual(1)
+
+    expect(
+      served.failedWithChanges?.visit?.learnedState,
+      `the failed-with-changes world's Learned root does not read \`failed\`, so the page has `
+      + `stopped saying the two facts side by side — the chain fell over AND these records were `
+      + `committed before it did.${seenFWC}`,
+    ).toBe('failed')
+
+    expect(
+      served.failedWithChanges?.visit?.learnedChainNote,
+      `the failed-with-changes world's page printed no \`[data-learned-chain-note]\` carrying `
+      + `\`CURATION_FAILED_PARTIAL_TEXT\` (read from \`knowledge-view.ts\`, never retyped here). `
+      + `Rows without the note is a page that has silently dropped the chain's fate; the note `
+      + `without rows is the sentence arm and a different world.${seenFWC}`,
+    ).toBe(CURATION_FAILED_PARTIAL_TEXT)
+
+    // ── THE EIGHTH: THE REVERT, PROVEN ON EVERY COLUMN THE PLANT WROTE.
+    //
+    // ONE OBJECT COMPARISON, so a red prints the snapshot beside the post-restore re-read rather
+    // than naming one field and hiding the other four. And the row count rides INSIDE it because
+    // the two facts are one claim: `changes === 1` proves a row was MATCHED, never that the values
+    // put into it were the values taken out of it. A restore that matched the row and wrote four
+    // of five columns satisfies the count and fails the comparison, which is the whole reason the
+    // comparison is here.
+    expect(
+      {
+        rowsRestored: served.failedWithChanges?.jobRowsRestored ?? 0,
+        columns: served.failedWithChanges?.afterRestore,
+      },
+      `THE SIXTH WORLD'S JOBS ROW WAS NOT PUT BACK. The restore must change exactly ONE row and `
+      + `leave all five columns \`plantFailedCuration\` writes — \`status\`, \`claimed_at\`, `
+      + `\`updated_at\`, \`last_failure_kind\`, \`last_failure_reason\` — reading exactly what the `
+      + `snapshot read before the plant. The re-read above is taken with the SAME `
+      + `\`snapshotCurationJobRow\` that took the snapshot, so a disagreement is a disagreement `
+      + `about VALUES and not about two readers. If this reds, every world driven after this one — `
+      + `\`malformed\` and \`attributed-failed\` — has had its recorded reading altered by THIS `
+      + `plan and the round's census is not comparable to round 3's.${seenFWC}`,
+    ).toEqual({
+      rowsRestored: 1,
+      columns: served.failedWithChanges?.snapshot,
+    })
+
+    // ── THE NINTH: the downstream witness, and deliberately the SECOND one rather than the only.
+    //
+    // It discriminates the `status` column ALONE. A restore that put `status` back while leaving
+    // `last_failure_reason` at the plant's lease string, or `updated_at` at the plant's clock,
+    // greens this assertion and reds the eighth — which is exactly why both are here, and why the
+    // eighth is the one that carries the word PROVEN.
+    expect(
+      (served.malformed?.projection?.kind === 'ready'
+        ? served.malformed.projection
+        : undefined)?.curation.status,
+      `the malformed world's chain no longer reads \`done\`. The sixth world's plant was not `
+      + `reverted before \`plantMalformedBundle\` ran, so an EXISTING world's recorded reading has `
+      + `been overwritten by this plan — the census can no longer be compared with round 3's, and `
+      + `the four original rows are no longer byte-identical.${seenFWC}`,
+    ).toBe('done')
 
     // ── NON-VACUITY, on the FIFTH WORLD — three assertions, three messages, three reasons.
     //
