@@ -1215,10 +1215,17 @@ targets:
     const lines = consoleLogs.map(stripAnsi)
     // Strip before measuring even though picocolors disables itself off a TTY: the census must
     // measure what a COLOURED terminal receives, not what this harness happened to capture.
-    const offenders = lines
-      .filter(line => line.length > 80)
+    const overlong = lines.filter(line => line.length > 80)
+    // The ONE documented exception (T-407-24-01): a single word wider than the wrap budget takes
+    // its own line UNCUT. `Legacy v1 memory data` prints an ABSOLUTE path, so on a deep enough
+    // checkout that token alone can exceed 80 — and a path a person cannot copy is a diagnostic
+    // that failed. Every line that is not one unbroken token must fit.
+    const offenders = overlong
+      .filter(line => line.trim().includes(' '))
       .map(line => `${line.length} columns: ${JSON.stringify(line)}`)
     expect(offenders).toEqual([])
+    // And each exception really IS one unbroken token, never a word the wrapper cut in half.
+    for (const line of overlong) expect(line.trim()).not.toContain(' ')
 
     // Non-vacuous: at least one row actually took the two-line shape, so a future change that made
     // every message short could not turn this census green by emptiness.

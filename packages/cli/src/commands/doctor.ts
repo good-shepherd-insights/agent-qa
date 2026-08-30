@@ -332,15 +332,6 @@ export function formatFixLines(instructions: string, width: number): string[] {
   ))
 }
 
-/**
- * The pre-407-24 gutter, still what the emit loop calls until the next task rewires it. Its
- * 60-column target lives on as `DOT_TARGET_COLUMNS` above; the only thing the renderer adds is the
- * clamp that keeps the composed row inside the resolved width.
- */
-function padDots(name: string, message: string): string {
-  const dots = Math.max(MIN_DOTS, DOT_TARGET_COLUMNS - (name.length + message.length))
-  return pc.dim('.'.repeat(dots))
-}
 
 function checkNodeVersion(): DoctorCheck {
   return {
@@ -872,16 +863,25 @@ export function createDoctorCommand(): Command {
       let hasFailure = false
       const results: { check: DoctorCheck; result: CheckResult }[] = []
 
+      // 407-24 (G-407-3): every line below goes through the width budget. Colour is applied HERE
+      // and only here, by handing named decorators to the same `composeRow` the formatter used to
+      // derive its plain line — so the printed line and the pinned one are one recipe run twice.
+      //
+      // THIS CHANGE IS CONFINED TO ROW RENDERING. No probe, no capability discovery and no
+      // registration cleanup is touched by it: the checks above still answer exactly what they
+      // answered before, and doctor still only reads.
+      const width = resolveTerminalWidth()
+
       for (const check of checks) {
         const result = await check.check()
         results.push({ check, result })
 
-        const dots = padDots(check.name, result.message)
-        const status = formatStatus(STATUS_WORDS[result.status])
-        console.log(`    ${check.name}  ${dots}  ${result.message}  ${status}`)
+        const row = formatCheckRow(check.name, result.message, result.status, width)
+        console.log(composeRow(row, { dots: pc.dim, status: formatStatus }))
+        for (const line of row.continuations) console.log(line)
 
         if (result.status === 'fail') {
-          console.log(pc.dim(`      Fix: ${check.fixInstructions}`))
+          for (const line of formatFixLines(check.fixInstructions, width)) console.log(pc.dim(line))
           hasFailure = true
         }
       }

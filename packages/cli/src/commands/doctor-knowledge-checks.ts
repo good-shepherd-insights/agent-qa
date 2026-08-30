@@ -143,7 +143,17 @@ function resolveKnowledgeRootOnDisk(
   return existsSync(root) ? root : null
 }
 
-/** Printed relative to the cwd, so the only variable-length segment of a row is the reason word. */
+/**
+ * Printed relative to the cwd so it stays short and copy-pasteable — but its length is NOT
+ * bounded: a deeper project, or a run from the filesystem root, widens it without limit.
+ *
+ * This docstring used to claim the reason WORD was the only variable-length segment of a row.
+ * The 407 UAT measured that false: at `COLUMNS=80` the `Knowledge store` FAIL row came to 113
+ * columns with a 7-character reason word, and the reason vocabulary is a closed four-value enum
+ * capped at 14 characters (`absent|corrupt|locked|schema-version`), so the length came from the
+ * PATH. What bounds a row now is the RENDERER — `formatCheckRow` in `doctor.ts` — which is where
+ * the budget belongs, because no message length can overrun a width the renderer enforces.
+ */
 function displayPath(absolute: string): string {
   return relative(process.cwd(), absolute) || '.'
 }
