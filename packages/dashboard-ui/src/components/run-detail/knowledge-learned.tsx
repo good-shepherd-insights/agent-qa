@@ -183,6 +183,12 @@ export function KnowledgeLearned({
  * able to say where to click (`ENTITY_KIND_ROUTES.MEM` is `null` under the DASH-03 contract).
  * Absent → nothing, because inventing an address for an unaddressable record is the guessed link
  * D-10 forbids.
+ *
+ * AND THAT SAME FACT IS WHY THE ID NEEDS AN INTRINSIC BREAK (407-23 · G-407-2): a content-derived
+ * bundle id is one unbroken token, so `wrap-anywhere` (`overflow-wrap: anywhere`) is what lets this
+ * baseline row shrink it — `break-word` permits a break only after the box has already been sized,
+ * which is not soon enough for an item sized from its own content. The reference beside it solves
+ * the same problem the other way, with `truncate max-w-[32rem]`, and is left exactly as it is.
  */
 function RecordRow({ row }: { row: LearnedRowView }) {
   return (
@@ -206,7 +212,7 @@ function RecordRow({ row }: { row: LearnedRowView }) {
           {row.ref}
         </Link>
       )}
-      <span data-record-id-text className="font-mono text-xs text-muted-foreground">
+      <span data-record-id-text className="font-mono text-xs text-muted-foreground wrap-anywhere">
         {row.recordId}
       </span>
     </li>
