@@ -155,7 +155,18 @@ vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
   consoleLogs.push(args.map(String).join(' '))
 })
 
-import { createDoctorCommand } from '../commands/doctor.js'
+import pc from 'picocolors'
+import {
+  DEFAULT_TERMINAL_WIDTH,
+  IDENTITY_DECORATION,
+  composeRow,
+  createDoctorCommand,
+  formatCheckRow,
+  formatFixLines,
+  formatStatus,
+  resolveTerminalWidth,
+  type CheckStatus,
+} from '../commands/doctor.js'
 import { execFileSync, execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -1074,5 +1085,215 @@ targets:
     expect(rowFor('Embedder')).toContain('FAIL')
     expect(getOutput()).not.toContain('/home/u/worker.js')
     expect(getOutput()).toContain('Fix: Set an explicit embedder profile in agent-qa.config.yaml')
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// 407-24 (G-407-3): the row renderer, measured directly rather than through the
+// command. Every cell below passes the width as a PARAMETER, so it measures the
+// renderer at a width it chose instead of at whatever width this host happens to
+// have — a width the code never named is the failure the UAT caught.
+// ---------------------------------------------------------------------------
+
+const ESC = String.fromCharCode(27)
+const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, 'g')
+const stripAnsi = (text: string): string => text.replace(ANSI_PATTERN, '')
+
+/** The strings the 407 UAT measured on the built cli, transcribed so the cells can pin the widths. */
+const MEASURED_INDEX_PATH = 'agent-qa-knowledge/memory/index/knowledge.db'
+const MEASURED_FAIL_MESSAGE = `index at ${MEASURED_INDEX_PATH} could not be opened: corrupt`
+const MEASURED_FIX_INSTRUCTIONS =
+  'Rebuild the index with `agent-qa knowledge rebuild-index`, or remove the corrupt file at '
+  + `${MEASURED_INDEX_PATH} and re-run.`
+
+/**
+ * The row template doctor composed BEFORE 407-24, transcribed from the pre-change emit loop
+ * (`    {name}  {dots}  {message}  {status}` with `padDots`' 60-column target). The byte-identical
+ * pins below build their expectation from this rather than from a snapshot, so a reader can see
+ * exactly which bytes are being promised.
+ */
+function preChangeRow(name: string, message: string, statusWord: string): string {
+  const dots = '.'.repeat(Math.max(2, 60 - (name.length + message.length)))
+  return `    ${name}  ${dots}  ${message}  ${statusWord}`
+}
+
+/** A message of about the requested length built from short words, so no long-word exception fires. */
+function wordyMessage(length: number): string {
+  return 'lorem ipsum dolor sit amet '.repeat(20).slice(0, length).trimEnd()
+}
+
+describe('doctor row renderer (407-24 · G-407-3)', () => {
+  const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+  const originalColumnsEnv = process.env.COLUMNS
+
+  function setStdoutColumns(value: number | undefined): void {
+    Object.defineProperty(process.stdout, 'columns', {
+      value,
+      configurable: true,
+      writable: true,
+    })
+  }
+
+  afterEach(() => {
+    if (originalColumns) Object.defineProperty(process.stdout, 'columns', originalColumns)
+    if (originalColumnsEnv === undefined) delete process.env.COLUMNS
+    else process.env.COLUMNS = originalColumnsEnv
+  })
+
+  it('resolves the width from stdout first, then COLUMNS, then the documented default', () => {
+    setStdoutColumns(133)
+    process.env.COLUMNS = '44'
+    expect(resolveTerminalWidth()).toBe(133)
+
+    setStdoutColumns(undefined)
+    expect(resolveTerminalWidth()).toBe(44)
+
+    delete process.env.COLUMNS
+    expect(resolveTerminalWidth()).toBe(DEFAULT_TERMINAL_WIDTH)
+    expect(DEFAULT_TERMINAL_WIDTH).toBe(80)
+  })
+
+  it('ignores a non-positive or unparseable width from either source', () => {
+    setStdoutColumns(0)
+    process.env.COLUMNS = 'wide'
+    expect(resolveTerminalWidth()).toBe(DEFAULT_TERMINAL_WIDTH)
+
+    setStdoutColumns(Number.NaN)
+    process.env.COLUMNS = '-20'
+    expect(resolveTerminalWidth()).toBe(DEFAULT_TERMINAL_WIDTH)
+  })
+
+  it('composes a fitting row byte-for-byte the way the pre-change emit loop did', () => {
+    const name = 'Knowledge store'
+    const message = 'index open at agent-qa-knowledge (memidex)'
+
+    const row = formatCheckRow(name, message, 'pass', 200)
+
+    expect(row.plainLine).toBe(preChangeRow(name, message, 'PASS'))
+    expect(row.continuations).toEqual([])
+    expect(row.message).toBe(message)
+  })
+
+  it('never adds dots: a row that already fits keeps the exact gutter it has today', () => {
+    const name = 'Node.js'
+    const message = 'v24.10.0'
+
+    for (const width of [80, 120, 400]) {
+      expect(formatCheckRow(name, message, 'pass', width).plainLine)
+        .toBe(preChangeRow(name, message, 'PASS'))
+    }
+  })
+
+  it('keeps FAIL on the name line and wraps the measured 113-column row under 80', () => {
+    // The width the UAT measured on the built cli, reproduced here from the same two strings.
+    expect(preChangeRow('Knowledge store', MEASURED_FAIL_MESSAGE, 'FAIL')).toHaveLength(113)
+
+    const row = formatCheckRow('Knowledge store', MEASURED_FAIL_MESSAGE, 'fail', 80)
+
+    expect(row.plainLine).toContain('Knowledge store')
+    expect(row.plainLine).toContain('FAIL')
+    expect(row.message).toBe('')
+    expect(row.continuations.length).toBeGreaterThan(1)
+    for (const line of [row.plainLine, ...row.continuations]) {
+      expect(line.length).toBeLessThanOrEqual(80)
+    }
+    // Nothing was cut: the wrapped lines rejoin into the message exactly.
+    expect(row.continuations.map(line => line.trim()).join(' ')).toBe(MEASURED_FAIL_MESSAGE)
+    // The gutter degrades to padDots' floor rather than going negative.
+    expect(row.dots.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('bounds every returned line at the width across the name x message x status corpus', () => {
+    const statuses: CheckStatus[] = ['pass', 'warn', 'fail', 'skip']
+    const offenders: string[] = []
+
+    for (const width of [60, 80, 120]) {
+      for (let nameLength = 1; nameLength <= 40; nameLength += 1) {
+        const name = 'n'.repeat(nameLength)
+        for (let messageLength = 1; messageLength <= 200; messageLength += 1) {
+          const message = wordyMessage(messageLength)
+          for (const status of statuses) {
+            const row = formatCheckRow(name, message, status, width)
+            for (const line of [row.plainLine, ...row.continuations]) {
+              if (line.length > width) {
+                offenders.push(
+                  `width=${width} name=${nameLength} message=${messageLength} status=${status}`
+                  + ` produced ${line.length} columns: ${JSON.stringify(line)}`,
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+
+    expect(offenders.slice(0, 5)).toEqual([])
+  })
+
+  it('gives a word longer than the wrap budget its own uncut line, the only line that may exceed the width', () => {
+    const sha = 'a'.repeat(64)
+
+    const row = formatCheckRow(
+      'Knowledge store',
+      `index at ${sha} could not be opened: corrupt`,
+      'fail',
+      40,
+    )
+
+    const overlong = [row.plainLine, ...row.continuations].filter(line => line.length > 40)
+    expect(overlong).toHaveLength(1)
+    // Uncut and alone on its line: a sha a person cannot copy is a sha this row failed to report.
+    expect(overlong[0]?.trim()).toBe(sha)
+  })
+
+  it('wraps the measured 156-column Fix line with a hanging indent, keeping its six-space prefix', () => {
+    expect(`      Fix: ${MEASURED_FIX_INSTRUCTIONS}`).toHaveLength(156)
+
+    const lines = formatFixLines(MEASURED_FIX_INSTRUCTIONS, 80)
+
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines[0]?.startsWith('      Fix: ')).toBe(true)
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(80)
+    for (const line of lines.slice(1)) expect(line.startsWith('           ')).toBe(true)
+    expect(lines.map(line => line.trim()).join(' ')).toBe(`Fix: ${MEASURED_FIX_INSTRUCTIONS}`)
+  })
+
+  it('leaves a short Fix line exactly as the pre-change emit loop wrote it', () => {
+    expect(formatFixLines('Install Node.js 24+ from https://nodejs.org/', 80)).toEqual([
+      '      Fix: Install Node.js 24+ from https://nodejs.org/',
+    ])
+  })
+
+  it('pins the SHIPPED decoration through the SHIPPED composer to plainLine', () => {
+    // What this buys over a self-consistency check: asserting `plainLine` equals a composition of
+    // its OWN segments proves only that the formatter agrees with itself, and would stay green
+    // while the emit path composed something else entirely. Running the decoration the emit loop
+    // actually passes through the composer the emit loop actually calls, then stripping it, is
+    // what pins the emitted line to the pinned one.
+    const cases: [string, number][] = [
+      ['index open at agent-qa-knowledge (memidex)', 200],
+      [MEASURED_FAIL_MESSAGE, 80],
+    ]
+
+    for (const [message, width] of cases) {
+      const row = formatCheckRow('Knowledge store', message, 'fail', width)
+
+      expect(stripAnsi(composeRow(row, { dots: pc.dim, status: formatStatus }))).toBe(row.plainLine)
+
+      // Non-vacuity: picocolors disables itself off a TTY, so the assertion above can degrade to an
+      // identity check on this host. Forcing escapes proves stripAnsi is doing real work.
+      const forced = composeRow(row, {
+        dots: segment => `${ESC}[2m${segment}${ESC}[22m`,
+        status: segment => `${ESC}[31m${segment}${ESC}[39m`,
+      })
+      expect(forced).not.toBe(row.plainLine)
+      expect(stripAnsi(forced)).toBe(row.plainLine)
+    }
+  })
+
+  it('composes with identity decorators to exactly the plain line', () => {
+    const row = formatCheckRow('Embedder', 'native (all-MiniLM-L6-v2)', 'pass', 120)
+    expect(composeRow(row, IDENTITY_DECORATION)).toBe(row.plainLine)
   })
 })
