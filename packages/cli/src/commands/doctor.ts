@@ -126,6 +126,21 @@ async function resolveActiveLLMAuth(llm: ActiveLLMConfig): Promise<ResolvedDocto
 /** The width assumed when neither `process.stdout.columns` nor `COLUMNS` can answer. */
 export const DEFAULT_TERMINAL_WIDTH = 80
 
+/**
+ * The narrowest width this command will act on, whatever the environment claims (407-30).
+ *
+ * The arithmetic, not a taste: the shortest row this command can compose is FIFTEEN columns —
+ * four indent, one name character, two separator, two dots at the `MIN_DOTS` floor, two separator,
+ * four status word — and the deepest indent it writes is the ELEVEN-column `Fix: ` hanging indent.
+ * Twenty therefore leaves nine content columns beneath the deepest indent and fourteen beneath a
+ * continuation. Below it there is effectively no content column at all: `COLUMNS=4` was accepted
+ * before this floor and made `width - CONTINUATION_INDENT.length` NEGATIVE, putting every word on
+ * a line of its own. A floor is honest where a negative budget is not — it renders a narrow
+ * terminal's output as if the terminal were twenty columns, which is readable, instead of
+ * shredding it one word per line.
+ */
+export const MIN_USABLE_WIDTH = 20
+
 const ROW_INDENT = '    '
 /** Deeper than a row's own four spaces, so a continuation reads as subordinate to the row above. */
 const CONTINUATION_INDENT = '      '
@@ -180,14 +195,19 @@ export function formatStatus(statusWord: StatusWord): string {
  * command something it has no other way to learn, so it is consulted second. 80 is the last
  * resort because it is the width a terminal is assumed to have when nothing says otherwise — the
  * VT100 default every wrapping convention since has inherited.
+ *
+ * Whatever the ladder answers is FLOORED at `MIN_USABLE_WIDTH` (407-30 · REVIEW IN-03). That floor
+ * bounds what the ENVIRONMENT is allowed to claim; `formatCheckRow` and `formatFixLines` floor
+ * their own wrap budgets separately, because a caller can pass any width directly without coming
+ * through here at all. Two floors, two different callers, two different jobs.
  */
 export function resolveTerminalWidth(): number {
   const columns = process.stdout?.columns
   if (typeof columns === 'number' && Number.isFinite(columns) && columns > 0) {
-    return Math.floor(columns)
+    return Math.max(MIN_USABLE_WIDTH, Math.floor(columns))
   }
   const fromEnv = Number.parseInt(process.env.COLUMNS ?? '', 10)
-  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.max(MIN_USABLE_WIDTH, fromEnv)
   return DEFAULT_TERMINAL_WIDTH
 }
 
@@ -275,6 +295,16 @@ function wrapWords(text: string, budget: number): string[] {
  * approximately true — a row that already fits keeps the precise gutter it has today. The
  * overhead is measured by composing with an empty dot run rather than by re-adding the separator
  * widths by hand, so the arithmetic cannot drift from `composeRow`'s template.
+ *
+ * THE ONE CASE WHERE THE HEAD LINE STILL EXCEEDS THE WIDTH, spelled as arithmetic (407-30 ·
+ * REVIEW IN-03). The clamp's OUTER `Math.max` is a floor, so when `affordable < MIN_DOTS` the
+ * floor wins and the composed head line comes to `name.length + 14` — four indent, two separator,
+ * two dots, two separator, four status word — which is wider than the width by definition of
+ * `affordable` having gone below the floor. Two dots is the least gutter that still reads as a
+ * gutter, and a name is not the renderer's to truncate: a check whose name has been cut is a
+ * check the reader cannot look up. So this line is emitted over-wide and the terminal wraps it.
+ * Unlike the long-word exception it CONTAINS SPACES, which is why a census cannot dismiss every
+ * over-wide line as one unbroken token.
  */
 function segmentsFor(
   name: string,
@@ -331,7 +361,17 @@ function flatten(message: string): string {
  * composed text would force its caller to re-discover those spans by pattern-matching, which is
  * both fiddly and the likeliest way the byte-identical pin quietly stops measuring the shipped
  * line. Width is a PARAMETER, not a read of `process.stdout`, so a test can measure the renderer
- * at a width it chose.
+ * at a width it chose — and because it is a parameter, the wrap budget is floored at 1 here the
+ * same way `formatFixLines` floors its own. `resolveTerminalWidth` bounds what the environment may
+ * claim; this bounds what any CALLER may ask for, and they are different jobs with different
+ * callers.
+ *
+ * TWO lines may exceed the width, and only these two (407-30 · REVIEW IN-03):
+ *   1. a word wider than the wrap budget, alone on its line UNCUT — an index path or a sha
+ *      silently truncated to fit is a diagnostic a person copies and cannot use;
+ *   2. the HEAD line when `segmentsFor`'s dot floor wins, at exactly `name.length + 14` columns
+ *      with `name.length + 14 > width`. Unlike the first, this one CONTAINS SPACES, so a
+ *      command-level census must CLASSIFY an over-wide line rather than assume it is one token.
  */
 export function formatCheckRow(
   name: string,
@@ -347,7 +387,7 @@ export function formatCheckRow(
   const head = segmentsFor(name, '', statusWord, width)
   return {
     ...head,
-    continuations: wrapWords(flat, width - CONTINUATION_INDENT.length)
+    continuations: wrapWords(flat, Math.max(1, width - CONTINUATION_INDENT.length))
       .map(line => `${CONTINUATION_INDENT}${line}`),
   }
 }
