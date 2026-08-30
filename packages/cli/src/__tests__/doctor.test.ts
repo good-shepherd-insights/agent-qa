@@ -1554,3 +1554,51 @@ describe('doctor row renderer: the flattening law (407-29 · G-407-14)', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// 407-29 (G-407-18 · REVIEW WR-06): the status token is TYPED.
+//
+// 407-24 widened `formatStatus` from `CheckStatus` to `string` with an unchecked
+// `STATUS_COLOURS[statusWord as StatusWord]` and an `undefined` fallback, so `formatStatus('pass')`
+// — the lowercase value every other function in the file deals in, and the value the OLD signature
+// accepted — type-checked, missed the table and printed a bare uncoloured word. The widening was
+// never required: `RowDecoration.status` narrowed alongside it, so the decorator contract carries
+// the type instead of discarding it.
+// ---------------------------------------------------------------------------
+
+describe('doctor status token (407-29 · G-407-18)', () => {
+  it('paints every status word, and the table has no silent fallback left', async () => {
+    // picocolors decides `isColorSupported` ONCE, at its own module load, and `STATUS_COLOURS`
+    // captures the bound formatters. So the only way to see real paint is a fresh doctor module
+    // over a colour-ENABLED picocolors. Without that this cell degrades to an identity check and
+    // could not tell a painted word from a dropped table entry.
+    vi.doMock('picocolors', async () => {
+      const actual = await vi.importActual<{ default: typeof pc }>('picocolors')
+      return { default: (actual.default as unknown as { createColors: (on: boolean) => typeof pc })
+        .createColors(true) }
+    })
+    vi.resetModules()
+    try {
+      const { formatStatus: paint } = await import('../commands/doctor.js')
+
+      for (const word of ['PASS', 'WARN', 'FAIL', 'SKIP'] as const) {
+        const painted = paint(word)
+        expect(painted).not.toBe(word)
+        expect(stripAnsi(painted)).toBe(word)
+      }
+    } finally {
+      vi.doUnmock('picocolors')
+      vi.resetModules()
+    }
+  })
+
+  it('rejects a lowercase CheckStatus where a status WORD belongs', () => {
+    // @ts-expect-error 407-29 (REVIEW WR-06): a `CheckStatus` is not a `StatusWord`. This call
+    // type-checked before the narrowing, missed the table and printed an uncoloured `pass`. The
+    // directive is the gate: `tsconfig.json` includes `src`, so `tsc --noEmit` fails on an UNUSED
+    // directive the moment anybody re-widens the parameter — it reds on the regression itself
+    // rather than on its consequence. At runtime the total table has no `undefined` branch left,
+    // so the same call throws instead of quietly degrading to a bare word.
+    expect(() => formatStatus('pass')).toThrow(TypeError)
+  })
+})
