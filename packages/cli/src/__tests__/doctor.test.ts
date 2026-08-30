@@ -165,6 +165,7 @@ import {
   formatFixLines,
   formatStatus,
   resolveTerminalWidth,
+  type CheckRow,
   type CheckStatus,
 } from '../commands/doctor.js'
 import { execFileSync, execSync } from 'node:child_process'
@@ -1434,5 +1435,122 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
   it('composes with identity decorators to exactly the plain line', () => {
     const row = formatCheckRow('Embedder', 'native (all-MiniLM-L6-v2)', 'pass', 120)
     expect(composeRow(row, IDENTITY_DECORATION)).toBe(row.plainLine)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 407-29 (G-407-14 · REVIEW WR-02): the flattening law.
+//
+// 407-24 gave every row a width budget, and the budget measures `String.length`. A `\n` counts as
+// ONE column there and as a LINE BREAK on the terminal, so a message carrying one measures short,
+// takes the one-line path, and prints with the status word pushed onto a second visual line —
+// the exact detachment G-407-3 exists to prevent. None of the four producers that reach this
+// renderer is a literal the repository controls: `doctor.ts:505` prints `err.message` from an
+// arbitrary throw, `:502`/`:527`/`:557` print a plugin's `auth.message`, `:591` prints a
+// 60-character slice of a provider SDK error, and `:399-401` joins Zod issue messages.
+//
+// The second half is the same root: `wrapWords` splits on `/\s+/`, so a message carrying a double
+// space or a tab printed VERBATIM on a wide terminal and NORMALISED on a narrow one. A diagnostic
+// whose text depends on the reader's window is a diagnostic two people cannot compare.
+// ---------------------------------------------------------------------------
+
+/**
+ * The message text a row carries, whichever shape it took, with the LINE JOINS collapsed and
+ * nothing else.
+ *
+ * Deliberately not a whitespace normaliser: normalising here would hide exactly the defect this
+ * block measures. Continuation lines are trimmed and joined with one space because that join is
+ * an artefact of wrapping; every other space inside the message is left exactly as the renderer
+ * emitted it, so a double space surviving on one path and not the other still shows up.
+ */
+function messageTextOf(row: CheckRow): string {
+  const parts = row.message === '' ? row.continuations : [row.message]
+  return parts.map(part => part.trim()).join(' ')
+}
+
+/** A producer message carrying a break the command never wrote — `doctor.ts:505`, `:591`, `:401`. */
+const NEWLINE_MESSAGE = 'Authentication failed\nresponse: 401'
+/** A composed message whose spacing is deliberate, carrying a double space AND a tab. */
+const SPACED_MESSAGE =
+  'index at agent-qa-knowledge/memory/index/knowledge.db  could not be opened:\tcorrupt'
+
+describe('doctor row renderer: the flattening law (407-29 · G-407-14)', () => {
+  afterEach(() => {
+    restoreTerminalWidth()
+  })
+
+  it('never emits a line containing the break a producer smuggled into the message', () => {
+    for (const width of [40, 80, 200, 400]) {
+      const row = formatCheckRow('LLM connection', NEWLINE_MESSAGE, 'fail', width)
+
+      // A property of EVERY emitted line, not of one arrangement of one message: the assertion
+      // scans what the command would print rather than comparing to a hand-built expectation.
+      for (const line of [row.plainLine, ...row.continuations]) {
+        expect(line).not.toContain('\n')
+      }
+    }
+  })
+
+  it('keeps the status word on the name line the terminal actually draws', () => {
+    const row = formatCheckRow('LLM connection', NEWLINE_MESSAGE, 'fail', 80)
+
+    // `plainLine` is ONE terminal line by construction, which is what makes the length check and
+    // the display width the same number. Before flattening this split into two, and `FAIL` sat on
+    // the second — read by a scanner as the verdict of the row below.
+    expect(row.plainLine.split('\n')).toHaveLength(1)
+    expect(row.plainLine).toContain('LLM connection')
+    expect(row.plainLine).toContain('FAIL')
+  })
+
+  it('decides the shape on the flattened length, not on the raw one', () => {
+    const wide = formatCheckRow('LLM connection', NEWLINE_MESSAGE, 'fail', 200)
+    expect(wide.continuations).toEqual([])
+    expect(wide.message).toBe('Authentication failed response: 401')
+
+    const narrow = formatCheckRow('LLM connection', NEWLINE_MESSAGE, 'fail', 50)
+    expect(narrow.message).toBe('')
+    expect(narrow.continuations.length).toBeGreaterThan(0)
+    expect(narrow.continuations.map(line => line.trim()).join(' '))
+      .toBe('Authentication failed response: 401')
+  })
+
+  it('renders the same message text at 80 columns and at 400', () => {
+    const narrow = formatCheckRow('Knowledge store', SPACED_MESSAGE, 'fail', 80)
+    const wide = formatCheckRow('Knowledge store', SPACED_MESSAGE, 'fail', 400)
+
+    // Non-vacuity: the two widths really did take the two different shapes, so this cannot pass by
+    // both paths happening to be the same path.
+    expect(narrow.continuations.length).toBeGreaterThan(0)
+    expect(wide.continuations).toEqual([])
+
+    expect(messageTextOf(narrow)).toBe(messageTextOf(wide))
+    expect(messageTextOf(wide))
+      .toBe('index at agent-qa-knowledge/memory/index/knowledge.db could not be opened: corrupt')
+  })
+
+  it('gives a whitespace-only message the no-message shape', () => {
+    for (const blank of ['   ', '\t', '\n', ' \t \n ']) {
+      const row = formatCheckRow('Embedder', blank, 'skip', 80)
+      const empty = formatCheckRow('Embedder', '', 'skip', 80)
+
+      expect(row.plainLine).toBe(empty.plainLine)
+      expect(row.message).toBe('')
+      expect(row.continuations).toEqual([])
+    }
+  })
+
+  it('flattens the fix instruction too, so no Fix line carries a break', () => {
+    const inputs = [
+      'Rebuild the index with `agent-qa knowledge rebuild-index`,\nor remove the corrupt file.',
+      'Run\t`agent-qa auth test`',
+      '\n',
+    ]
+
+    for (const instructions of inputs) {
+      for (const line of formatFixLines(instructions, 80)) {
+        expect(line).not.toContain('\n')
+        expect(line).not.toContain('\t')
+      }
+    }
   })
 })
