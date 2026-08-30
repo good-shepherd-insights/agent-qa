@@ -160,10 +160,15 @@ const STATUS_COLOURS: Record<StatusWord, (text: string) => string> = {
  * bare four-character word and colour is applied at emit time by handing this function to
  * `composeRow` as a decorator. Taking the word (rather than the `CheckStatus`) is what lets it BE
  * that decorator.
+ *
+ * That reason never required the parameter to be `string` (407-29 · REVIEW WR-06). `RowDecoration`
+ * narrowed alongside it, so the DECORATOR CONTRACT carries the type instead of discarding it: the
+ * shape is preserved and the guarantee comes back. With `STATUS_COLOURS` already total over
+ * `StatusWord`, there is no cast and no `undefined` branch to fall through — an eighth status is a
+ * compile error in TWO places rather than a silently uncoloured word in one.
  */
-export function formatStatus(statusWord: string): string {
-  const paint = STATUS_COLOURS[statusWord as StatusWord]
-  return paint === undefined ? statusWord : paint(statusWord)
+export function formatStatus(statusWord: StatusWord): string {
+  return STATUS_COLOURS[statusWord](statusWord)
 }
 
 /**
@@ -188,16 +193,16 @@ export function resolveTerminalWidth(): number {
 
 /** The four plain, ANSI-free spans a row is made of. Colour is a property of the SEGMENT. */
 export interface RowSegments {
-  name: string
-  dots: string
+  readonly name: string
+  readonly dots: string
   /** The message when it shares the head line; the EMPTY STRING when it moved beneath the row. */
-  message: string
-  status: string
+  readonly message: string
+  readonly status: StatusWord
 }
 
 export interface RowDecoration {
-  dots: (segment: string) => string
-  status: (segment: string) => string
+  readonly dots: (segment: string) => string
+  readonly status: (segment: StatusWord) => string
 }
 
 /** Composes the plain line: the decorators the formatter itself uses to derive `plainLine`. */
@@ -271,7 +276,12 @@ function wrapWords(text: string, budget: number): string[] {
  * overhead is measured by composing with an empty dot run rather than by re-adding the separator
  * widths by hand, so the arithmetic cannot drift from `composeRow`'s template.
  */
-function segmentsFor(name: string, message: string, statusWord: string, width: number): CheckRow {
+function segmentsFor(
+  name: string,
+  message: string,
+  statusWord: StatusWord,
+  width: number,
+): CheckRow {
   const preferred = Math.max(MIN_DOTS, DOT_TARGET_COLUMNS - (name.length + message.length))
   const bare: RowSegments = { name, dots: '', message, status: statusWord }
   const affordable = width - composeRow(bare, IDENTITY_DECORATION).length
@@ -362,7 +372,6 @@ export function formatFixLines(instructions: string, width: number): string[] {
     index === 0 ? `${FIX_PREFIX}${line}` : `${FIX_HANGING_INDENT}${line}`
   ))
 }
-
 
 function checkNodeVersion(): DoctorCheck {
   return {
