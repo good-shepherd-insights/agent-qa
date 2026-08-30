@@ -39,6 +39,7 @@ import {
   CHANGES_UNREADABLE_TEXT,
   CHANNEL_PAGE_SIZE,
   COUNTS_NOT_RECORDED_SENTENCE,
+  CURATION_FAILED_PARTIAL_TEXT,
   CURATION_FAILED_TEXT,
   DELTAS_PENDING_TEXT,
   LEARNED_CHANGE_KINDS,
@@ -1114,15 +1115,72 @@ describe('a curated NEW fact is what the run learned (CR-04, D-10)', () => {
     expect(view.sentence).toBeUndefined()
   })
 
-  it('lists NOTHING while the chain is unsettled, however many rows the projection carries (D-12)', () => {
-    for (const status of ['pending', 'running', 'failed'] as const) {
+  it('lists NOTHING while the chain is UNSETTLED, however many rows the projection carries (D-12)', () => {
+    // RE-SCOPED 407-26 (G-407-12). This cell used to iterate `failed` too, under a title that
+    // contradicted its own subject: `failed` is a SETTLED chain, and the D-12 justification the
+    // title cites — "a chain that has not settled has not finished deciding what it changed" —
+    // does not describe it. The settled-and-failed case moved to the cell below.
+    for (const status of ['pending', 'running'] as const) {
       const view = learnedFrom({
         curation: { status },
         learned: { changes: [change('added'), change('confirmed')], canaryAttributions: [] },
       })
       expect(view.rows).toEqual([])
-      expect(view.sentence).toBeDefined()
+      expect(view.sentence).toBe(DELTAS_PENDING_TEXT)
+      expect(view.chainNote).toBeUndefined()
     }
+  })
+
+  /**
+   * G-407-12 / REVIEW CR-01 — OWNER RULING 2026-08-31: A SERVED ROW WINS ON THE LEARNED HALF TOO.
+   *
+   * 407-22 ruled that "a chain that fell over cannot un-commit an outcome event it already
+   * appended" and applied it to the Used half's `canaryOutcomeWord`. The owner extended the same
+   * ruling to this half. `learned.changes` comes from the `diffSince` walk over the COMMITTED
+   * store, filtered by 407-04's run-link stamping; `curation.status` comes from a different
+   * sibling op. `{ status: 'failed', changes: [row] }` is therefore a producible shape, and the
+   * records in it were served and stamped with this run's own id before the chain fell over.
+   */
+  it('PAINTS records a failed chain already committed — a chain that fell over cannot un-commit them', () => {
+    const view = learnedFrom({
+      curation: { status: 'failed' },
+      learned: { changes: [change('added'), change('confirmed')], canaryAttributions: [] },
+    })
+
+    expect(view.state).toBe('failed')
+    expect(view.rows.length).toBe(2)
+    // The failure is a NOTE beside the rows, never a sentence over them: `sentence`'s own
+    // published contract is "absent exactly when rows is non-empty".
+    expect(view.sentence).toBeUndefined()
+    expect(view.chainNote).toBe(CURATION_FAILED_PARTIAL_TEXT)
+    // D-09 is untouched — counts still come only from the settled notification row.
+    expect(view.countLine).toBeUndefined()
+  })
+
+  it('keeps the no-rows failed arm byte-identical — the approved sentence, and no note', () => {
+    const view = learnedFrom({
+      curation: { status: 'failed' },
+      learned: { changes: [], canaryAttributions: [] },
+    })
+
+    expect(view.state).toBe('failed')
+    expect(view.sentence).toBe(CURATION_FAILED_TEXT)
+    expect(view.rows).toEqual([])
+    expect(view.chainNote).toBeUndefined()
+    expect(view.countLine).toBeUndefined()
+  })
+
+  it('narrows the KINDS on the failed arm exactly as on the done arm — it is the same fold', () => {
+    const view = learnedFrom({
+      curation: { status: 'failed' },
+      learned: {
+        changes: [change('added'), change('purged', 'rec-purged')],
+        canaryAttributions: [],
+      },
+    })
+
+    expect(view.rows.map(row => row.kind)).toEqual(['added'])
+    expect(view.chainNote).toBe(CURATION_FAILED_PARTIAL_TEXT)
   })
 
   /**
@@ -1323,6 +1381,34 @@ describe('a partial read decorates the answer, it never replaces it (REVIEW CR-0
     expect(view.readNote).toBe(STORE_READ_INCOMPLETE_TEXT)
   })
 
+  /**
+   * TWO PRODUCERS, TWO NOTES, NEITHER SPEAKING FOR THE OTHER (407-26 · G-407-12).
+   *
+   * The chain's fate and the store's readability are folded INDEPENDENTLY by 407-14's op, so a
+   * projection can carry both at once — the shipped conformance file's fifth world
+   * (`attributed-failed`) literally does. One slot could only report one of them, which is the
+   * coupling round-2 WR-03 named; `chainNote` and `readNote` are therefore siblings, not a
+   * single flag with two meanings.
+   */
+  it('carries the chain note AND the read note at once — a failed chain over a partial read', () => {
+    const view = learnedFrom({
+      curation: { status: 'failed' },
+      learned: {
+        changes: [change('confirmed', 'rec-mine', { sourceRunId: RUN_ID })],
+        canaryAttributions: [],
+        scanIncomplete: true,
+      },
+    })
+
+    expect(view.state).toBe('failed')
+    expect(view.rows.length).toBe(1)
+    expect(view.sentence).toBeUndefined()
+    expect(view.chainNote).toBe(CURATION_FAILED_PARTIAL_TEXT)
+    expect(view.scanIncomplete).toBe(true)
+    expect(view.readNote).toBe(STORE_READ_INCOMPLETE_TEXT)
+    expect(view.chainNote).not.toBe(view.readNote)
+  })
+
   it('paints rows under a counts-absent settled row on a partial read, note and all', () => {
     const view = learnedFrom({
       curation: { status: 'done' },
@@ -1434,6 +1520,8 @@ describe('the 407-09 copy is published as constants, like every sentence before 
   it('spells each Learned sentence exactly once, and no two the same', () => {
     expect(DELTAS_PENDING_TEXT).toBe('Deltas land when curation settles.')
     expect(CURATION_FAILED_TEXT).toBe('Curation failed — nothing was learned from this run.')
+    expect(CURATION_FAILED_PARTIAL_TEXT)
+      .toBe('Curation failed — these records were committed before it stopped.')
     expect(COUNTS_NOT_RECORDED_SENTENCE).toBe('Counts not recorded for this run.')
     expect(CHANGES_NOT_AVAILABLE_TEXT).toBe('Change records for this run are not available yet.')
     expect(CHANGED_NOTHING_TEXT).toBe('Curation ran and changed nothing.')
@@ -1441,10 +1529,11 @@ describe('the 407-09 copy is published as constants, like every sentence before 
     expect(new Set([
       DELTAS_PENDING_TEXT,
       CURATION_FAILED_TEXT,
+      CURATION_FAILED_PARTIAL_TEXT,
       COUNTS_NOT_RECORDED_SENTENCE,
       CHANGES_NOT_AVAILABLE_TEXT,
       CHANGED_NOTHING_TEXT,
-    ]).size).toBe(5)
+    ]).size).toBe(6)
   })
 
   it('keeps the Learned heading beside them, where 407-02 published it', () => {
