@@ -95,6 +95,20 @@ function linesOf(view: HTMLElement, channel: "1" | "2" | "3"): HTMLElement[] {
   return Array.from(view.querySelectorAll(`li[data-served-channel="${channel}"]`))
 }
 
+/**
+ * The deepest element whose text content is exactly `text` — the box that actually paints it.
+ *
+ * Addressing the painted node by its CONTENT rather than by position keeps a styling cell honest
+ * if the row is later rearranged: a positional query would happily go on measuring whatever moved
+ * into the slot.
+ */
+function deepestWithText(view: HTMLElement, text: string): HTMLElement | null {
+  const matches = Array.from(view.querySelectorAll<HTMLElement>("*")).filter(
+    (el) => el.textContent === text,
+  )
+  return matches.length === 0 ? null : (matches[matches.length - 1] ?? null)
+}
+
 describe("a served line carries the trace that explains it, inline (D-04)", () => {
   it("marks the line answered and reveals its leg, rank and score behind the why trigger", () => {
     const view = mount(<KnowledgeBriefLine line={line()} />)
@@ -141,6 +155,39 @@ describe("a served line carries the trace that explains it, inline (D-04)", () =
 
     expect(view.querySelector("li")?.getAttribute("data-trace-state")).toBe("step-not-found")
     expect(view.textContent).toContain(STEP_NOT_FOUND_TEXT)
+  })
+})
+
+/**
+ * AN UNBROKEN TOKEN HAS TO BE ABLE TO SHRINK ITS OWN BOX (407-23 · G-407-2, LERN-01).
+ *
+ * A brief summary is a producer string and is regularly ONE UNBROKEN TOKEN — a URL, a selector
+ * literal, a content-derived record id. `break-words` (`overflow-wrap: break-word`) offers such a
+ * token a break opportunity only once the box has ALREADY been sized, and a flex item sized from
+ * its own content never gets that far: the UAT measured the summary span grown to 895px inside a
+ * 639px parent with `break-word` already computed on it. `overflow-wrap: anywhere` is the one that
+ * reduces min-content width, so the item can shrink and the break opportunity is actually reached.
+ *
+ * These cells therefore pin the PROPERTY THAT SIZES, not the property that merely permits a break.
+ */
+describe("a content-derived brief line can shrink its own box, not merely overflow it (G-407-2)", () => {
+  const UNBROKEN_SUMMARY = "x".repeat(120)
+  const UNBROKEN_ID = "fact-el-textbox-password-9a05ce7d3b1f4c28e6a09d5417bc32ea6f81d40c"
+
+  it("lets an unbroken 120-char summary reduce its intrinsic width instead of widening the row", () => {
+    const view = mount(<KnowledgeBriefLine line={line({ summary: UNBROKEN_SUMMARY })} />)
+
+    const summary = deepestWithText(view, UNBROKEN_SUMMARY)
+    expect(summary).not.toBeNull()
+    expect(summary?.className).toContain("wrap-anywhere")
+  })
+
+  it("lets the served line's content-derived record id reduce its intrinsic width too", () => {
+    const view = mount(<KnowledgeBriefLine line={line({ id: UNBROKEN_ID })} />)
+
+    const recordId = deepestWithText(view, UNBROKEN_ID)
+    expect(recordId).not.toBeNull()
+    expect(recordId?.className).toContain("wrap-anywhere")
   })
 })
 
