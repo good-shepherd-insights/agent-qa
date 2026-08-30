@@ -30,6 +30,7 @@ import RunDetailPage from "@/pages/run-detail"
 import {
   ATTRIBUTION_UNKNOWN_TEXT,
   CHANNEL_EYEBROWS,
+  NOT_ATTRIBUTED_TEXT,
   NO_STORE_HEADING,
   READ_FAILED_HEADING,
   STORE_READ_INCOMPLETE_TEXT,
@@ -470,6 +471,75 @@ describe("a partial store read paints the rows it was handed AND says the read w
     expect(view.textContent).toContain(ATTRIBUTION_UNKNOWN_TEXT)
     expect(view.querySelector("[data-learned-state]")?.getAttribute("data-learned-read"))
       .toBe("incomplete")
+  })
+})
+
+describe("a served attribution row beats a FAILED curation chain, at the page (407-22 · owner ruling 2026-08-30, UAT item 11)", () => {
+  // TWO QUESTIONS, TWO ANSWERS, ONE PAGE. `curation.status` comes from a sibling op; the
+  // `canaryAttributions` rows come from the committed store walk. They are independent facts that
+  // meet only in the view fold, and the tab has a place for each: the chip reports what the
+  // curation chain did, the line reports what the store answered about THIS record. Until 407-22
+  // the line answered with the chain's fate — printing `not attributed`, a positive claim that the
+  // store was consulted and said no, beside a `confirmed` row held in the very same projection.
+  //
+  // Fixtures are SPREAD FROM THE READY ONE and override only `curation` and `learned`, so a future
+  // wire member cannot quietly make these cells stop resembling the page they claim to measure.
+
+  async function expandedLineOf(projection: RunKnowledgeProjection) {
+    fetchRunKnowledgeMock.mockResolvedValue(projection)
+    const view = await renderAt(`/runs/${RUN_ID}?tab=knowledge`)
+    const trigger = view.querySelector('[data-step-index] [data-slot="collapsible-trigger"]')
+    await act(async () => { (trigger as HTMLElement).click() })
+    return { view, line: view.querySelector('li[data-served-channel="1"]') }
+  }
+
+  const FAILED_WITH_ROW: RunKnowledgeProjection = {
+    ...POPULATED,
+    curation: { status: "failed" },
+  }
+
+  it("paints the row's outcome on the line while the Learned half still reads failed — two facts, side by side", async () => {
+    const { view, line } = await expandedLineOf(FAILED_WITH_ROW)
+
+    expect(knowledgeState(view)).toBe("ready")
+
+    // THE LINE ANSWERS FROM THE STORE. A chain that fell over cannot un-commit an outcome event it
+    // already appended, and this projection is holding the row that proves it appended one.
+    expect(line?.getAttribute("data-canary-outcome")).toBe("confirmed")
+    expect(line?.textContent).toContain("confirmed")
+    expect(view.textContent).not.toContain(NOT_ATTRIBUTED_TEXT)
+
+    // THE CHIP ANSWERS FROM THE CHAIN, and it is not softened by the row. These are different
+    // questions and the page answers each from its own evidence — which is the whole point of the
+    // ruling: neither half is allowed to speak for the other.
+    const learned = view.querySelector("[data-learned-state]")
+    expect(learned?.getAttribute("data-learned-state")).toBe("failed")
+    expect(view.querySelectorAll("li[data-record-change]").length).toBe(0)
+  })
+
+  // THE SUB-QUESTION THE RULING LEFT OPEN, crossed at the page on both of its halves. With no row
+  // there is nothing the store served, so the word is decided by whether anybody could FINISH
+  // LOOKING — never by the chain's fate, which is already reported by the chip above.
+  it("says UNKNOWN for a failed chain with no row when the read was partial — nobody could finish looking", async () => {
+    const { view, line } = await expandedLineOf({
+      ...POPULATED,
+      curation: { status: "failed" },
+      learned: { ...POPULATED.learned, canaryAttributions: [], scanIncomplete: true },
+    })
+
+    expect(line?.getAttribute("data-canary-outcome")).toBe("unknown")
+    expect(view.textContent).toContain(ATTRIBUTION_UNKNOWN_TEXT)
+  })
+
+  it("says NOT-ATTRIBUTED for a failed chain with no row when the read was CLEAN — the walk finished and found nothing", async () => {
+    const { view, line } = await expandedLineOf({
+      ...POPULATED,
+      curation: { status: "failed" },
+      learned: { ...POPULATED.learned, canaryAttributions: [] },
+    })
+
+    expect(line?.getAttribute("data-canary-outcome")).toBe("not-attributed")
+    expect(view.textContent).toContain(NOT_ATTRIBUTED_TEXT)
   })
 })
 
