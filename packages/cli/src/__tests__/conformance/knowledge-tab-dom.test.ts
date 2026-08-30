@@ -623,6 +623,89 @@ function plantFailedCuration(
 // ── The SIXTH world 407-31 adds: a failed chain over records the door still serves ───────────────
 
 /**
+ * Read the five columns `plantFailedCuration` writes, for the row it addresses.
+ *
+ * THE SAME ADDRESS AND THE SAME DATABASE AS THE PLANT — `chainJobIdsForRun(runId,
+ * DIGEST_JOB_ID_SOURCE).curateMemory` in the project's own `agent-jobs.db`, opened with the same
+ * busy timeout and closed in a `finally`, because the dashboard child is still serving. Reading a
+ * different row, or reading it a different way, would make the comparison below a comparison of
+ * two readers rather than of two values.
+ *
+ * Answers nothing when the database or the row is absent, so the guard reds on a missing snapshot
+ * rather than on a comparison against a fabricated default.
+ */
+function snapshotCurationJobRow(
+  project: { readonly agentQaRoot: string },
+  runId: string,
+): CurationJobRow | undefined {
+  const path = join(project.agentQaRoot, 'agent-jobs.db')
+  if (!existsSync(path)) return undefined
+  const db = new DatabaseSync(path, { timeout: 10_000 })
+  try {
+    const ids = chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE)
+    const row = db
+      .prepare(
+        'SELECT status, claimed_at, updated_at, last_failure_kind, last_failure_reason '
+        + 'FROM jobs WHERE id = ?',
+      )
+      .get(String(ids.curateMemory)) as Record<string, unknown> | undefined
+    if (row === undefined) return undefined
+    const text = (value: unknown): string | null => (value === null || value === undefined
+      ? null
+      : String(value))
+    return {
+      status: String(row['status']),
+      claimedAt: text(row['claimed_at']),
+      updatedAt: text(row['updated_at']),
+      lastFailureKind: text(row['last_failure_kind']),
+      lastFailureReason: text(row['last_failure_reason']),
+    }
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * Put the five columns back exactly as {@link snapshotCurationJobRow} found them.
+ *
+ * WHY A REVERT AT ALL. The sixth world has to be planted BEFORE `plantMalformedBundle` — see
+ * `driveLaterWorlds`' docstring — and the two worlds driven after it were recorded against a
+ * `curate-memory` row reading `done`. Leaving this plant standing would silently rewrite both of
+ * their readings and make round 4's census incomparable with round 3's.
+ *
+ * Returns the number of rows the UPDATE changed. Exactly one is the claim, and the guard asserts
+ * it TOGETHER with a re-read of the five columns: a matched row is not a restored row.
+ */
+function restoreCurationJobRow(
+  project: { readonly agentQaRoot: string },
+  runId: string,
+  snapshot: CurationJobRow,
+): number {
+  const path = join(project.agentQaRoot, 'agent-jobs.db')
+  if (!existsSync(path)) return 0
+  const db = new DatabaseSync(path, { timeout: 10_000 })
+  try {
+    const ids = chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE)
+    const changed = db
+      .prepare(
+        'UPDATE jobs SET status = ?, claimed_at = ?, updated_at = ?, last_failure_kind = ?, '
+        + 'last_failure_reason = ? WHERE id = ?',
+      )
+      .run(
+        snapshot.status,
+        snapshot.claimedAt,
+        snapshot.updatedAt,
+        snapshot.lastFailureKind,
+        snapshot.lastFailureReason,
+        String(ids.curateMemory),
+      )
+    return Number(changed.changes)
+  } finally {
+    db.close()
+  }
+}
+
+/**
  * The five `jobs` columns `plantFailedCuration` writes, as they stood before it wrote them.
  *
  * FIVE, NOT ONE. The restore's honesty is a claim about every column the plant touched, and a
@@ -1472,6 +1555,50 @@ async function driveLaterWorlds(
       ? {}
       : { projectionBody: afterRead.projectionBody }),
     visit: afterVisit,
+  }
+
+  // ── THE SIXTH WORLD (407-31, G-407-12), HERE AND NOWHERE ELSE, AND UNDONE BEFORE THE NEXT LINE.
+  //
+  // IT CANNOT BE DRIVEN LATER. `plantMalformedBundle` below writes a bundle the maintenance walk
+  // cannot load; `knowledgeRecordsDiffSpec` throws, `runs-knowledge.ts` catches `isScanIncomplete`
+  // and publishes `changes: []`, and THE SKIP IS PERMANENT FOR THIS ROOT. Every world after that
+  // line reads `changes: 0` — round 3's census records exactly that for `malformed` and for
+  // `attributed-failed` — so a world that must hold a served change row beside a failed chain has
+  // to be driven while the change-records read is still intact, which is here.
+  //
+  // THE EXISTING PLANTS MUST SEE THE STORE AS THEY SEE IT TODAY, which is why the jobs-table
+  // change is undone rather than left standing. Nothing below this block is reordered and nothing
+  // below it is given a different store: the plant is one UPDATE to one `jobs` row, and the row is
+  // put back before `plantMalformedBundle` runs.
+  //
+  // AND THE REVERT IS PROVEN RATHER THAN TRUSTED. Two independent witnesses, in the guard and not
+  // here: a re-read of the same five columns with the same reader, deep-equalled against the
+  // snapshot; and the malformed world's own chain word, which still reads `done`. Nothing in this
+  // block asserts — both row counts and both column readings are REPORTED, exactly as the fifth
+  // world reports its append verdict, so a plant that did nothing or a restore that put back four
+  // columns of five is named by the guard rather than swallowed by a passing agreement.
+  const curationSnapshot = snapshotCurationJobRow(project, runId)
+  const failedRowsUpdated = plantFailedCuration(project, runId)
+  const failedRead: Recorded = {}
+  await readSettledProjection(origin, runId, failedRead)
+  const failedVisit = await freshVisit(origin, runId)
+  const rowsRestored = curationSnapshot === undefined
+    ? 0
+    : restoreCurationJobRow(project, runId, curationSnapshot)
+  const afterRestore = snapshotCurationJobRow(project, runId)
+  recorded.failedWithChanges = {
+    ...(curationSnapshot === undefined ? {} : { snapshot: curationSnapshot }),
+    jobRowsUpdated: failedRowsUpdated,
+    jobRowsRestored: rowsRestored,
+    ...(afterRestore === undefined ? {} : { afterRestore }),
+    ...(failedRead.projection === undefined ? {} : { projection: failedRead.projection }),
+    ...(failedRead.projectionStatus === undefined
+      ? {}
+      : { projectionStatus: failedRead.projectionStatus }),
+    ...(failedRead.projectionBody === undefined
+      ? {}
+      : { projectionBody: failedRead.projectionBody }),
+    visit: failedVisit,
   }
 
   plantMalformedBundle(project)
