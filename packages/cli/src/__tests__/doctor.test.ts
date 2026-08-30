@@ -156,19 +156,20 @@ vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
 })
 
 import pc from 'picocolors'
+import { createDoctorCommand, type CheckStatus } from '../commands/doctor.js'
+// 407-30 (REVIEW IN-06): the renderer is its own module, so its symbols come from there. Only the
+// import paths moved — not one assertion in this file changed.
 import {
   DEFAULT_TERMINAL_WIDTH,
   IDENTITY_DECORATION,
   MIN_USABLE_WIDTH,
   composeRow,
-  createDoctorCommand,
   formatCheckRow,
   formatFixLines,
   formatStatus,
   resolveTerminalWidth,
   type CheckRow,
-  type CheckStatus,
-} from '../commands/doctor.js'
+} from '../commands/doctor-row.js'
 import { execFileSync, execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -1715,7 +1716,7 @@ describe('doctor status token (407-29 · G-407-18)', () => {
     })
     vi.resetModules()
     try {
-      const { formatStatus: paint } = await import('../commands/doctor.js')
+      const { formatStatus: paint } = await import('../commands/doctor-row.js')
 
       for (const word of ['PASS', 'WARN', 'FAIL', 'SKIP'] as const) {
         const painted = paint(word)
