@@ -756,7 +756,7 @@ export type LearnedState = 'pending' | 'running' | 'done' | 'failed' | 'counts-a
  */
 export interface LearnedRowView {
   /**
-   * The row's identity across a re-render — the PRODUCER'S OWN identity tuple (REVIEW WR-01).
+   * The row's identity across a re-render — TOTAL BY CONSTRUCTION (407-26 · REVIEW WR-04).
    *
    * ONE RECORD CAN CARRY SEVERAL CHANGES IN ONE RUN. `diffSince` emits one `RecordChange` per
    * surviving outcome event, so a bundle confirmed at ordinal 12 and superseded at 13 crosses the
@@ -764,15 +764,24 @@ export interface LearnedRowView {
    * unique, and React would warn and reconcile one of the two away on the re-render that fires as
    * curation settles — which is exactly when the second row appears.
    *
-   * NOR IS THE TRIPLE `(recordId, change, atOrdinal)` UNIQUE, which is why WR-02's first form was
-   * only a partial close (REVIEW WR-01, dated 407-18). `survivingOutcomeEvents` dedupes on
-   * `eventDedupKey = \`${evidenceToken}:${curationJobId}\`` — not on type and not on ordinal — so
-   * two `confirmed` events on one bundle at one `buildOrdinal` with different evidence tokens both
-   * survive and both become changes identical in all three members. `diffSince`'s own sort
-   * comparator proves the module does not treat that triple as identity either: it falls through
-   * to `evidenceToken` and then `byRecordId` as tie-breakers. The key therefore spells the same
-   * five members the producer sorts on, with an ABSENT optional written as an empty segment —
-   * never the word `undefined`, which would be a value some record could legitimately carry.
+   * NO PROJECTION OF `RecordChange`'S OWN MEMBERS CAN REPRODUCE THE PRODUCER'S IDENTITY, and every
+   * form of this key before 407-26 claimed to (round-2 WR-05, re-raised as REVIEW WR-04 and open
+   * across three rounds). `survivingOutcomeEvents` dedupes on
+   * `eventDedupKey = \`${evidenceToken}:${curationJobId}\``, and `curationJobId` reaches this DTO
+   * nowhere: `RecordChangeSchema` is `.strict()` and does not carry it. `deriveEvidenceToken`
+   * hashes `(attributingObservationId, anchor, buildOrdinal)` and deliberately EXCLUDES the
+   * candidate id, while `confirmedEvent` stamps `curationJobId: job.candidateId` — so one evidence
+   * token with two job ids is reachable by construction, both events survive the dedupe, and the
+   * two changes that arrive here are identical in all five members the old key spelled. A key
+   * built from those members is therefore not the producer's identity; it is a guess that happens
+   * to hold until that shape appears.
+   *
+   * SO THE INDEX IS THE TIE-BREAK, AND IT IS SOUND HERE SPECIFICALLY. The list is re-derived from
+   * the projection on every render by {@link learnedView}'s fold and handed to a plain `.map` in
+   * `knowledge-learned.tsx` — never spliced, never sorted in place, never memoised across a
+   * projection change. Within a render pass the index IS the row, and across one it is a total
+   * order over rows that were all rebuilt together. The record members are retained after it
+   * purely so a key read in DevTools still names the record it belongs to.
    */
   readonly key: string
   readonly kind: LearnedChangeKind
@@ -977,11 +986,11 @@ function learnedRecordRef(recordId: string): string | undefined {
   return parseShortId(recordId)?.kind === 'MEM' ? formatEntityUri('MEM', recordId) : undefined
 }
 
-function learnedRow(row: RecordChange): LearnedRowView {
+function learnedRow(row: RecordChange, index: number): LearnedRowView {
   const ref = learnedRecordRef(row.recordId)
   const href = ref === undefined ? undefined : entityRefRoute(ref)
   return {
-    key: `${row.recordId}:${row.change}:${String(row.atOrdinal)}:${row.evidenceToken ?? ''}:${row.byRecordId ?? ''}`,
+    key: `${String(index)}:${row.recordId}:${row.change}:${String(row.atOrdinal)}`,
     kind: row.change as LearnedChangeKind,
     recordId: row.recordId,
     ...(ref === undefined ? {} : { ref }),
@@ -1061,7 +1070,7 @@ export function learnedView(
   // returns does.
   const rows = projection.learned.changes
     .filter(row => LEARNED_CHANGE_KIND_SET.has(row.change))
-    .map(learnedRow)
+    .map((row, index) => learnedRow(row, index))
 
   if (status === 'pending' || status === 'running') {
     // `rows: []` here is now a STATEMENT, not a consequence of ordering: the rows are in scope and
