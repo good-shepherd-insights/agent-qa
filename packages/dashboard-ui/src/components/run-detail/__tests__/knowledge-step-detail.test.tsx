@@ -109,6 +109,37 @@ function deepestWithText(view: HTMLElement, text: string): HTMLElement | null {
   return matches.length === 0 ? null : (matches[matches.length - 1] ?? null)
 }
 
+describe("the painted node is the one no other match contains (407-28 · IN-05)", () => {
+  const TARGET = "fact-page-https-example-com-9f2c1ad4"
+
+  /** A `wrapper > leaf` chain whose leaf paints exactly `text`, tagged so a failure names it. */
+  function chain(leafId: string, text: string): HTMLElement {
+    const wrapper = document.createElement("div")
+    const leaf = document.createElement("span")
+    leaf.id = leafId
+    leaf.textContent = text
+    wrapper.append(leaf)
+    return wrapper
+  }
+
+  it("returns the FIRST chain's leaf when a later sibling subtree paints the same text", () => {
+    const outer = document.createElement("div")
+    outer.append(chain("first-chain-leaf", TARGET), chain("later-sibling-leaf", TARGET))
+
+    // Document order is [wrapper, leaf, wrapper, leaf]: the LAST match is the later sibling's
+    // leaf, which is a different box in a different subtree. Only containment picks the box the
+    // caller meant — the one that contains no other match.
+    expect(deepestWithText(outer, TARGET)?.id).toBe("first-chain-leaf")
+  })
+
+  it("still answers null when nothing paints the text", () => {
+    const outer = document.createElement("div")
+    outer.append(chain("only-leaf", "a different string entirely"))
+
+    expect(deepestWithText(outer, TARGET)).toBeNull()
+  })
+})
+
 describe("a served line carries the trace that explains it, inline (D-04)", () => {
   it("marks the line answered and reveals its leg, rank and score behind the why trigger", () => {
     const view = mount(<KnowledgeBriefLine line={line()} />)
