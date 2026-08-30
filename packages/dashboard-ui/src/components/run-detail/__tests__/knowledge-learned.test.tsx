@@ -212,6 +212,25 @@ describe("the record list is one addressable row per change (D-10)", () => {
     }
   })
 
+  /**
+   * A CONTENT-DERIVED BUNDLE ID IS ONE UNBROKEN TOKEN (407-23 · G-407-2, LERN-02).
+   *
+   * `RecordRow`'s own docstring already argues that a change record's id is a content-derived
+   * bundle id far more often than an entity short-ID — `fact-page-https-example-com-0f9a` and its
+   * longer siblings carry no space to break at. `break-word` would let such a token overflow; only
+   * `overflow-wrap: anywhere` reduces its min-content width so the baseline row can SHRINK it.
+   * The reference beside it solves the same problem the other way (`truncate max-w-[32rem]`) and is
+   * deliberately not touched here.
+   */
+  it("lets a content-derived record id shrink its own box rather than widen the row", () => {
+    const host = render(populated)
+
+    for (const el of rowsOf(host)) {
+      const id = el.querySelector("[data-record-id-text]")
+      expect(id?.className).toContain("wrap-anywhere")
+    }
+  })
+
   it("renders a ROUTED reference as an accent anchor with the truncation rule the SPEC states", () => {
     const host = render({
       state: "done",
