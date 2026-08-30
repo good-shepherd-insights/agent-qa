@@ -534,9 +534,26 @@ describe('a canary line is never blank — it says pending, not-attributed, or t
     expect(canaryOutcomeWord('done', undefined)).toBe('not-attributed')
   })
 
-  it('says NOT-ATTRIBUTED when curation FAILED — a stale outcome is not this run\'s answer', () => {
-    expect(canaryOutcomeWord('failed', attribution())).toBe('not-attributed')
+  /**
+   * THE OWNER'S RULING, 2026-08-30 (UAT item 11 · G-407-11 · REVIEW CR-01).
+   *
+   * A ROW THE STORE SERVED IS AN ANSWER, AND A CHAIN THAT FELL OVER CANNOT UN-APPEND IT. The
+   * curation job's fate is reported by the chip beside this line; printing `not attributed` here
+   * as well is a SECOND, DIFFERENT claim — that the store was consulted and said no — made while
+   * the same projection holds the row that disproves it. From 407-06 (`a795316e`) to 407-21 the
+   * row arm was gated `curationStatus === 'done'`, and the domain being exactly
+   * {pending, running, done, failed} that conjunct's ONLY effect was to route this cell past the
+   * row it had already been handed.
+   */
+  it('lets a SERVED ROW beat a FAILED chain — a fold that fell over cannot un-commit an outcome it appended', () => {
+    for (const outcome of ['confirmed', 'contradicted', 'helpful', 'harmful'] as const) {
+      expect(canaryOutcomeWord('failed', attribution({ outcome }))).toBe(outcome)
+    }
+  })
+
+  it('says NOT-ATTRIBUTED for a FAILED chain with NO row on a CLEAN read — the walk finished and found nothing', () => {
     expect(canaryOutcomeWord('failed', undefined)).toBe('not-attributed')
+    expect(canaryOutcomeWord('failed', undefined, false)).toBe('not-attributed')
   })
 
   /**
@@ -565,9 +582,23 @@ describe('a canary line is never blank — it says pending, not-attributed, or t
     expect(canaryOutcomeWord('running', attribution(), true)).toBe('pending')
   })
 
-  it('keeps NOT-ATTRIBUTED for a FAILED chain — a partial read does not turn a failure into a question', () => {
-    expect(canaryOutcomeWord('failed', undefined, true)).toBe('not-attributed')
-    expect(canaryOutcomeWord('failed', attribution(), true)).toBe('not-attributed')
+  it('honours a served row on a FAILED chain over a PARTIAL read too — the row is the one measured fact of the three', () => {
+    for (const outcome of ['confirmed', 'contradicted', 'helpful', 'harmful'] as const) {
+      expect(canaryOutcomeWord('failed', attribution({ outcome }), true)).toBe(outcome)
+    }
+  })
+
+  /**
+   * THE SUB-QUESTION THE RULING LEFT OPEN, ANSWERED THE SAME WAY WR-02 ANSWERED IT FOR `done`.
+   *
+   * The review's own fix sketch kept a `failed` arm ahead of the flag and so answered
+   * `not-attributed` here. We answer `unknown` instead: with the walk incomplete NOBODY
+   * established that nothing was attributed, so the positive claim is simply unavailable — and
+   * the chain's failure is evidence about the CHAIN, not about how much of the store could be
+   * read. That is 407-18/WR-02's argument verbatim, applied to the arm this ruling re-opened.
+   */
+  it('says UNKNOWN for a FAILED chain with no row over a PARTIAL read — nobody could finish looking', () => {
+    expect(canaryOutcomeWord('failed', undefined, true)).toBe('unknown')
   })
 
   it('draws the line between the two words in the published copy, not in a component', () => {
@@ -576,12 +607,14 @@ describe('a canary line is never blank — it says pending, not-attributed, or t
   })
 
   /**
-   * THE FOURTH SETTLED ARM IS REACHED FROM EXACTLY ONE COMBINATION, and this walks all of them.
+   * `unknown` IS NOW REACHABLE FROM TWO COMBINATIONS, AND THE SWEEP SAYS SO RATHER THAN LOOSENING.
    *
-   * A cell per arm proves each arm answers; only the sweep proves no OTHER combination leaks into
-   * `unknown` — which is the way a widened vocabulary usually goes wrong.
+   * 407-22 moved the second one in (`failed` + no row + partial read), so the assertion states the
+   * PREDICATE the word answers to — settled chain, no row, partial read — instead of naming one
+   * status. A cell per arm proves each arm answers; only the sweep proves no OTHER combination
+   * leaks into `unknown`, which is the way a widened vocabulary usually goes wrong.
    */
-  it('reaches `unknown` from exactly ONE combination — settled, no row, partial read', () => {
+  it('reaches `unknown` only where the chain SETTLED, no row was served and the read was partial — from either settled word', () => {
     const words = new Set<string>()
 
     for (const status of ['pending', 'running', 'failed', 'done'] as const) {
@@ -589,7 +622,7 @@ describe('a canary line is never blank — it says pending, not-attributed, or t
         for (const partial of [false, true]) {
           const word = canaryOutcomeWord(status, row, partial)
           if (word === 'unknown') {
-            expect(status).toBe('done')
+            expect(status === 'done' || status === 'failed').toBe(true)
             expect(row).toBeUndefined()
             expect(partial).toBe(true)
           }
