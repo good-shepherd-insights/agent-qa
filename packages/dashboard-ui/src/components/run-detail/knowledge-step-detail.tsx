@@ -59,7 +59,13 @@ export function KnowledgeStepDetail({ detail }: { detail: StepDetailView }) {
         <ul className={CHANNEL_LIST_CLASS}>
           {detail.channel2.map(trace => (
             <li key={trace.id} data-served-channel="2" className="flex flex-wrap items-center gap-2">
-              <span className={MONO_CLASS}>{trace.id}</span>
+              {/* This id had NO break at all, and it is a flex item of a `flex flex-wrap` row —
+                  sized from its own content, so its min-content contribution was the whole
+                  unbroken record id and the row could only grow past its column.
+                  `overflow-wrap: anywhere` is the value that reduces that contribution;
+                  `overflow-wrap: break-word` would not, which is why the other spelling is
+                  nowhere in this file. Applied here rather than in the shared mono constant. */}
+              <span className={`${MONO_CLASS} wrap-anywhere`}>{trace.id}</span>
               <span className="text-xs text-muted-foreground">{trace.detailLevel}</span>
             </li>
           ))}
@@ -71,8 +77,15 @@ export function KnowledgeStepDetail({ detail }: { detail: StepDetailView }) {
         <ul className={CHANNEL_LIST_CLASS}>
           {detail.channel3.map(caution => (
             <li key={caution.id} data-served-channel="3" className="space-y-1">
-              <span className="text-sm break-words"><MaskedText text={caution.summary} /></span>
-              <p className={MONO_CLASS}>{caution.id}</p>
+              {/* `overflow-wrap: anywhere`, NOT `overflow-wrap: break-word`. Same node shape, same
+                  reason as channel 1 (`knowledge-brief-line.tsx`): a caution summary is regularly
+                  one unbroken token, and `break-word` leaves min-content width at the whole token —
+                  it offers a break only once the box HAS a width, so a content-sized box never
+                  shrinks far enough to reach it. Only `anywhere` participates in intrinsic sizing.
+                  This span was byte-identical to the channel-1 span before that fix. */}
+              <span className="text-sm wrap-anywhere"><MaskedText text={caution.summary} /></span>
+              {/* Applied at the USE SITE, not inside the shared mono constant above. */}
+              <p className={`${MONO_CLASS} wrap-anywhere`}>{caution.id}</p>
             </li>
           ))}
         </ul>
@@ -88,8 +101,11 @@ export function KnowledgeStepDetail({ detail }: { detail: StepDetailView }) {
             <CollapsibleContent className="mt-2 space-y-1">
               <p className={EYEBROW_CLASS}>{CUT_EYEBROW}</p>
               <ul className={CHANNEL_LIST_CLASS}>
+                {/* Only the LEADING token of this sentence is unbroken — the record id — but that
+                    is enough to set the line's min-content width, so it gets the same treatment at
+                    the same use site. The spaced leg/rank/score remainder is unaffected. */}
                 {detail.cut.lines.map(candidate => (
-                  <li key={candidate.recordId} className={MONO_CLASS}>
+                  <li key={candidate.recordId} className={`${MONO_CLASS} wrap-anywhere`}>
                     {candidate.recordId} · leg {candidate.leg} · rank {String(candidate.rank)} · score{" "}
                     {candidate.score.toFixed(3)}
                   </li>
