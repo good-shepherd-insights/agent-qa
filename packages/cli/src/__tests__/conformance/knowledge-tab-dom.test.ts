@@ -47,13 +47,22 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
+import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
+import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import {
+  appendOutcomeEvent,
   publishBundleForTest,
   rebuildIndex,
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '@vostride/agent-qa-knowledge-local'
+// 407-25: the JOIN KEY, taken from the READ barrel that publishes it rather than re-derived here.
+// The reader recomputes this id to find the event; a harness that PLANTS the event must compute
+// the same one, and a second spelling would produce a plant no read ever finds — a green
+// agreement over an empty set, which is the failure the non-vacuity block below exists to catch.
+import { canaryOutcomeObservationId } from '@vostride/agent-qa-knowledge-local/reader'
 import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
@@ -62,6 +71,7 @@ import {
   BundleOutcomeEventSchema,
   RunKnowledgeProjectionSchema,
   asEvidenceToken,
+  asRecordId,
   type BundleDiscriminant,
   type BundleDraft,
   type DistilledObservation,
@@ -466,6 +476,142 @@ function plantMalformedBundle(project: { readonly root: string }): string {
   return dir
 }
 
+// ── The FIFTH world 407-25 adds: a chain that failed over a row the store really served ─────────
+
+/** The lease the attribution plant takes, and the curation job its event names. */
+const ATTRIBUTED_FAILED_LEASE = 'knowledge-tab-dom-attributed-failed'
+
+/** One served canary line, addressed the way the projection recorded it. */
+interface ServedCanaryTuple {
+  readonly candidateId: string
+  readonly testId: string
+  readonly testIndex: number
+  readonly stepIndex: number
+}
+
+/** What the two plants of the `attributed-failed` world did, reported rather than asserted on. */
+interface AttributedFailure {
+  readonly tuple?: ServedCanaryTuple
+  readonly plantedObservationId: string
+  /** `appendOutcomeEvent`'s own verdict — `appended`, `duplicate`, `not-found`, `egress-blocked`. */
+  readonly appendOutcome: string
+  /** How many `jobs` rows the curation plant's UPDATE actually changed. Exactly 1 is the claim. */
+  readonly jobRowsUpdated: number
+  readonly projection?: RunKnowledgeProjection
+  readonly projectionStatus?: number
+  readonly projectionBody?: string
+  readonly visit?: PageObservation
+}
+
+/**
+ * The served canary tuple THIS RUN recorded, read off a projection rather than guessed.
+ *
+ * The op builds its tuples from channel-1 lines with `servedAsCanary` set, taking the line's own
+ * id as the candidate id and `testId` / `testIndex` / `stepIndex` off the handoff document
+ * (`runs-knowledge.ts`). Every one of those fields also rides on the projection, so the plant can
+ * be ADDRESSED off the recorded reading instead of reconstructed from fixture knowledge — which is
+ * what makes the planted observation id the one the reader will recompute rather than a lookalike.
+ *
+ * The reading is taken from the FIRST recorded `ready` projection that carries such a line. The
+ * served tuple is a fact about the finished RUN, identical in every world here, and the earliest
+ * reading is the one taken before any plant touched the store.
+ */
+function servedCanaryTupleOf(
+  ...projections: readonly (RunKnowledgeProjection | undefined)[]
+): ServedCanaryTuple | undefined {
+  for (const projection of projections) {
+    if (projection?.kind !== 'ready') continue
+    for (const step of projection.steps) {
+      const line = step.served.channel1.find((candidate) => candidate.servedAsCanary)
+      if (line === undefined) continue
+      return {
+        candidateId: String(line.id),
+        testId: step.testId,
+        testIndex: step.testIndex,
+        stepIndex: step.stepIndex,
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Append ONE real attributing outcome event onto the bundle the run served as a canary.
+ *
+ * THROUGH `appendOutcomeEvent`, NEVER A RAW FILE APPEND (T-407-25-01). That writer rewrites the
+ * manifest hash for the outcomes log, so the bundle stays integrity-clean and the maintenance walk
+ * still LOADS it. A line appended straight to `outcomes.jsonl` would fail the integrity arm, the
+ * walk would SKIP the bundle, and the plant would produce no row at all while the agreement below
+ * passed over an empty set.
+ *
+ * The event's `observationId` is recomputed with the reader's own derivation, so the walk finds it.
+ */
+function plantCanaryAttribution(
+  project: { readonly root: string; readonly agentQaRoot: string },
+  runId: string,
+  buildOrdinal: number,
+  tuple: ServedCanaryTuple,
+): { readonly observationId: string; readonly outcome: string } {
+  const observationId = canaryOutcomeObservationId({
+    candidateId: asRecordId(tuple.candidateId),
+    runId,
+    testId: tuple.testId,
+    testIndex: tuple.testIndex,
+    stepIndex: tuple.stepIndex,
+  })
+  const appended = appendOutcomeEvent(
+    bundleStoreFor(project, ATTRIBUTED_FAILED_LEASE),
+    asRecordId(tuple.candidateId),
+    BundleOutcomeEventSchema.parse({
+      type: 'confirmed',
+      evidenceToken: asEvidenceToken(ATTRIBUTED_FAILED_LEASE),
+      curationJobId: ATTRIBUTED_FAILED_LEASE,
+      buildOrdinal,
+      observationId,
+      origin: 'agent-verified',
+    }),
+  )
+  return { observationId, outcome: appended.kind }
+}
+
+/**
+ * Force this run's `curate-memory` row terminal-failed in the project's OWN queue database.
+ *
+ * ADDRESSED BY THE DERIVATION THE READER USES (T-407-25-02). `chainJobIdsForRun(runId,
+ * DIGEST_JOB_ID_SOURCE).curateMemory` is the same expression `runs.postprocessing` evaluates to
+ * find the row it projects, so the plant cannot address a row the read does not. Matching on
+ * `kind = 'curate-memory'` would work today and hit a neighbouring run's row the moment a fixture
+ * drives two.
+ *
+ * The row is opened WRITABLE with a busy timeout while the dashboard child is still serving; the
+ * chip read (`post-processing-reader.ts`) opens the file read-only per request with no caching, so
+ * the next page load and the next projection read both see this write.
+ *
+ * Returns the number of rows the UPDATE actually changed. Nought is the plant that addressed
+ * nothing, and the cell asserts against it rather than letting the world read `done` and the
+ * agreement pass for the wrong reason.
+ */
+function plantFailedCuration(
+  project: { readonly agentQaRoot: string },
+  runId: string,
+): number {
+  const path = join(project.agentQaRoot, 'agent-jobs.db')
+  if (!existsSync(path)) return 0
+  const db = new DatabaseSync(path, { timeout: 10_000 })
+  try {
+    const ids = chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE)
+    const changed = db
+      .prepare(
+        "UPDATE jobs SET status = 'failed', claimed_at = NULL, updated_at = ?, "
+        + "last_failure_kind = 'permanent', last_failure_reason = ? WHERE id = ?",
+      )
+      .run(new Date().toISOString(), ATTRIBUTED_FAILED_LEASE, String(ids.curateMemory))
+    return Number(changed.changes)
+  } finally {
+    db.close()
+  }
+}
+
 // ── What one page visit records ──────────────────────────────────────────────────────────────────
 
 /** One served channel-1 line, as the expanded row painted it. */
@@ -551,6 +697,11 @@ interface Recorded {
     readonly projectionBody?: string
     readonly visit?: PageObservation
   }
+  /**
+   * The world the 2026-08-30 owner ruling is ABOUT: a curation chain that fell over while the
+   * store holds an outcome it really served (407-25, G-407-11).
+   */
+  attributedFailed?: AttributedFailure
   dashboardStderr?: string
   failure?: string
 }
@@ -608,6 +759,19 @@ function context(label: string, recorded: Recorded): string {
     + `rows=${JSON.stringify(recorded.malformed?.visit?.learnedRows ?? [])}; `
     + `sentence=${JSON.stringify(recorded.malformed?.visit?.learnedSentence ?? null)}`,
     `malformed projection: ${(recorded.malformed?.projectionBody ?? '').slice(0, 1_400)}`,
+    // THE PLANTS REPORT THEMSELVES IN THE FIRST FAILURE MESSAGE A READER SEES. A plant that
+    // quietly did nothing — an append the integrity arm refused, an UPDATE that addressed no row —
+    // must be visible here rather than diagnosed afterwards from a green-looking empty set.
+    `attributed-failed: planted=${recorded.attributedFailed?.plantedObservationId ?? '(not planted)'}; `
+    + `append=${recorded.attributedFailed?.appendOutcome ?? '(none)'}; `
+    + `job rows updated=${String(recorded.attributedFailed?.jobRowsUpdated ?? 0)}; `
+    + `tuple=${JSON.stringify(recorded.attributedFailed?.tuple ?? null)}; `
+    + `status=${String(recorded.attributedFailed?.projectionStatus ?? 0)}; `
+    + `kind=${recorded.attributedFailed?.projection?.kind ?? '(none)'}; `
+    + `state=${recorded.attributedFailed?.visit?.learnedState ?? '(absent)'}; `
+    + `rows=${JSON.stringify(recorded.attributedFailed?.visit?.learnedRows ?? [])}; `
+    + `lines=${JSON.stringify(recorded.attributedFailed?.visit?.servedLines ?? [])}`,
+    `attributed-failed projection: ${(recorded.attributedFailed?.projectionBody ?? '').slice(0, 1_400)}`,
     `served lines: ${JSON.stringify(recorded.visit?.servedLines ?? [])}`,
     `drawer tabs: ${(recorded.visit?.drawerTabLabels ?? []).join(', ') || '(none)'}`,
     `curation chip tag: ${recorded.visit?.curationChipTag ?? '(absent)'}`,
@@ -971,6 +1135,28 @@ async function freshVisit(origin: string, runId: string): Promise<PageObservatio
  * subsequent read of this root a degraded one, so the after-run world has to be measured first or
  * not at all.
  *
+ * THREE WORLDS SINCE 407-25, AND THE THIRD GOES LAST FOR THE SAME REASON THE SECOND DID.
+ * `attributed-failed` plants a real attributing outcome event and forces this run's `curate-memory`
+ * row terminal-failed, producing the shape the 2026-08-30 owner ruling is about: a chain that fell
+ * over while the store holds a row it really served. Both of its plants run AFTER the malformed
+ * visit BECAUSE the malformed world is the only world that currently paints the partial-read word,
+ * and an attribution row planted before it would replace the `unknown` crossing round 2 fought for
+ * on the built bundle. Reordering is forbidden.
+ *
+ * WHAT THE ORDERING DOES NOT BUY, SAID HERE SO NOBODY "FIXES" THE CENSUS BY MOVING THE PLANTS
+ * EARLIER: the fifth world INHERITS `scanIncomplete: true`, and that is correct rather than a
+ * contradiction. A SKIPPED BUNDLE IS PERMANENT FOR THIS ROOT. `attributingOutcomesByObservationId`
+ * (`canary-attribution.ts`) counts a skip for the malformed directory on EVERY later walk of the
+ * root — its own docstring says why, "a bundle that will not load has no readable manifest id, so
+ * there is no honest way to decide it was irrelevant" — and `runs-knowledge.ts` raises the flag off
+ * any non-zero skip count. So TWO census rows carry the flag from here on. Ordering preserves the
+ * malformed world's RECORDED reading; it was never going to preserve the flag's exclusivity.
+ *
+ * AND THAT COSTS THE MEASUREMENT NOTHING, which is precisely why `(c5)` measures the ROW-WINS law
+ * rather than the flag arm. In the fifth world the attribution row is PRESENT, so `canaryOutcomeWord`
+ * decides on its second arm and never reaches the flag at all. The flag arm keeps its own untouched
+ * witness in the malformed world, recorded before either plant ran.
+ *
  * THE FIRST FIXTURE'S DRIVE IS UNTOUCHED. `knowledge-tab-dom-scan` never reaches here, so (a1)-(a7)
  * measure exactly the page they measured before.
  */
@@ -1023,6 +1209,48 @@ async function driveLaterWorlds(
       ? {}
       : { projectionBody: malformedRead.projectionBody }),
     visit: malformedVisit,
+  }
+
+  // ── THE FIFTH WORLD, LAST. See this function's docstring for why the ordering is not negotiable
+  // and why the flag it inherits is expected.
+  await plantAttributedFailure(project, origin, runId, buildOrdinal, recorded)
+}
+
+/**
+ * Plant the world the ruling is about, and record what the shipped door then says about it.
+ *
+ * Nothing here asserts. Both plants report their own outcome — the append verdict verbatim, the
+ * UPDATE's row count — and `(c4)`'s non-vacuity block is where a plant that did nothing reds.
+ */
+async function plantAttributedFailure(
+  project: { readonly root: string; readonly agentQaRoot: string },
+  origin: string,
+  runId: string,
+  buildOrdinal: number,
+  recorded: Recorded,
+): Promise<void> {
+  const tuple = servedCanaryTupleOf(
+    recorded.projection,
+    recorded.afterRun?.projection,
+    recorded.malformed?.projection,
+  )
+  const planted = tuple === undefined
+    ? { observationId: '', outcome: '(no served canary tuple in any recorded projection)' }
+    : plantCanaryAttribution(project, runId, buildOrdinal, tuple)
+  const jobRowsUpdated = plantFailedCuration(project, runId)
+
+  const read: Recorded = {}
+  await readSettledProjection(origin, runId, read)
+  const visit = await freshVisit(origin, runId)
+  recorded.attributedFailed = {
+    ...(tuple === undefined ? {} : { tuple }),
+    plantedObservationId: planted.observationId,
+    appendOutcome: planted.outcome,
+    jobRowsUpdated,
+    ...(read.projection === undefined ? {} : { projection: read.projection }),
+    ...(read.projectionStatus === undefined ? {} : { projectionStatus: read.projectionStatus }),
+    ...(read.projectionBody === undefined ? {} : { projectionBody: read.projectionBody }),
+    visit,
   }
 }
 
@@ -1598,6 +1826,15 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
         projection: served.malformed?.projection,
         visit: served.malformed?.visit,
       },
+      // THE FIFTH WORLD (407-25, G-407-11): a chain that failed over a row the store really
+      // served. Last in the array as it is last in the drive — see `driveLaterWorlds`' docstring.
+      {
+        world: 'attributed-failed',
+        label: 'served' as const,
+        recorded: served,
+        projection: served.attributedFailed?.projection,
+        visit: served.attributedFailed?.visit,
+      },
     ]
 
     // FOLDED WITHOUT ASSERTING, so the census exists — and prints — even for the run that is about
@@ -1610,6 +1847,13 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       changes: entry.projection?.kind === 'ready' ? entry.projection.learned.changes.length : -1,
       canaryLines: (entry.visit?.servedLines ?? [])
         .filter((line) => line.servedAsCanary === 'true').length,
+      // TWO COLUMNS ADDED BY 407-25, and every column that was here keeps its name so the round-2
+      // four-row table and this five-row one can be read side by side. `curation` is the chain word
+      // the projection carried; `attributions` is how many rows the store served for it.
+      curation: entry.projection?.kind === 'ready' ? entry.projection.curation.status : '(none)',
+      attributions: entry.projection?.kind === 'ready'
+        ? entry.projection.learned.canaryAttributions.length
+        : -1,
     }))
 
     // PRINTED ONCE, AFTER THE FOLD AND BEFORE THE ASSERTIONS, so the vitest output carries the
@@ -1642,14 +1886,35 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       const painted = entry.visit as PageObservation
 
       // ── AGREEMENT 1: rows painted ⇔ rows served, narrowed to the published kinds.
-      const settled = ready.curation.status === 'done'
+      //
+      // THREE ARMS, NOT TWO (407-25). `attributed-failed` is the first SETTLED-BUT-FAILED world
+      // this file has ever driven, and the old two-valued `settled = status === 'done'` classified
+      // it as UNSETTLED — reporting a settled chain under a law it is not breaking. The EXPECTED
+      // VALUE does not move: rows on the settled-and-done arm, `[]` on the other two, which is
+      // exactly what the old expression already evaluated to. What moves is that the message now
+      // STATES the reason, per arm. A gate whose message describes a different law from the one it
+      // enforces is a gate the next reader trusts wrongly.
+      const chainWord = ready.curation.status
+      const arm = chainWord === 'pending' || chainWord === 'running'
+        ? 'unsettled'
+        : chainWord === 'failed' ? 'settled-and-failed' : 'settled-and-done'
+      const armNote = arm === 'unsettled'
+        ? ' (UNSETTLED chain — it has not finished deciding, so it lists NOTHING: D-12)'
+        : arm === 'settled-and-failed'
+          ? ' (SETTLED-AND-FAILED chain — it also lists nothing today, and for a DIFFERENT reason: '
+            + "`learnedView`'s `failed` arm returns `rows: []` before it ever folds "
+            + '`projection.learned.changes`. That arm discards a served change row the same way '
+            + '`canaryOutcomeWord` used to discard a served attribution row — the UNRULED '
+            + 'asymmetry 407-22 surfaced and deliberately did not fix. This gate enforces the '
+            + 'behaviour as shipped; it does not endorse it.)'
+          : ' (SETTLED-AND-DONE chain — the only arm that lists rows)'
       expect(
         painted.learnedRows,
         `AGREEMENT 1 BROKE in the ${entry.world} world: the Learned rows the page painted are not `
         + `the door's \`learned.changes\` narrowed to ${JSON.stringify(LEARNED_CHANGE_KINDS)}`
-        + `${settled ? '' : ' (an unsettled chain lists NOTHING — D-12)'}. This is the CR-01 class: `
+        + `${armNote}. This is the CR-01 class: `
         + `a half that paints a different set from the one it was served.${seen}`,
-      ).toEqual(settled ? learnedRowsOf(ready) : [])
+      ).toEqual(arm === 'settled-and-done' ? learnedRowsOf(ready) : [])
 
       // ── AGREEMENT 2: the read stamp ⇔ the wire flag, absent rather than empty on a clean read.
       expect(
@@ -1722,5 +1987,139 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       `the after-run world painted NO Learned rows, so (c4)'s Learned agreement passed by emptiness `
       + `alone.${censusOf('after-run')}${context('served', served)}`,
     ).toBeGreaterThanOrEqual(1)
+
+    // ── NON-VACUITY, on the FIFTH WORLD — three assertions, three messages, three reasons.
+    //
+    // WR-04 named this failure mode on this very cell in round 2: an agreement over an empty
+    // intersection passes. `attributed-failed` has THREE preconditions and they fail
+    // independently — the curation plant can address no row, the attribution plant's append can be
+    // refused, and the page can paint no canary line — so a single combined assertion would report
+    // whichever happened to be checked first and hide the other two.
+    const attributedFailedReady = served.attributedFailed?.projection?.kind === 'ready'
+      ? served.attributedFailed.projection
+      : undefined
+    const seenAF = censusOf('attributed-failed') + context('served', served)
+
+    expect(
+      attributedFailedReady?.curation.status,
+      `the attributed-failed world's chain is NOT \`failed\`, so (c5) would be measuring a world `
+      + `the ruling is not about. The curation plant updated `
+      + `${String(served.attributedFailed?.jobRowsUpdated ?? 0)} \`jobs\` row(s) — it must update `
+      + `exactly ONE, the row \`chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE).curateMemory\` `
+      + `addresses.${seenAF}`,
+    ).toBe('failed')
+
+    expect(
+      served.attributedFailed?.jobRowsUpdated ?? 0,
+      `the curation plant changed a number of \`jobs\` rows other than exactly one. Nought means it `
+      + `addressed no row at all and the world would read \`done\`; more than one means the `
+      + `derivation matched a neighbouring run's row.${seenAF}`,
+    ).toBe(1)
+
+    expect(
+      attributedFailedReady?.learned.canaryAttributions.length ?? 0,
+      `the attributed-failed world served NO \`canaryAttributions\` row, so (c5)'s agreement would `
+      + `pass over an empty intersection (REVIEW WR-04). The attribution plant reported `
+      + `\`${served.attributedFailed?.appendOutcome ?? '(none)'}\` for observation id `
+      + `\`${served.attributedFailed?.plantedObservationId || '(none)'}\` — anything other than `
+      + `\`appended\` is the plant, not the read.${seenAF}`,
+    ).toBeGreaterThanOrEqual(1)
+
+    expect(
+      (served.attributedFailed?.visit?.servedLines ?? [])
+        .filter((line) => line.servedAsCanary === 'true').length,
+      `the attributed-failed world's page painted NO served canary line, so there is no line for `
+      + `(c5) to read a word off.${seenAF}`,
+    ).toBeGreaterThanOrEqual(1)
+  })
+
+  it('(c5) the ruling on the shipped page — a served row beats a failed chain, and the chip still says the chain fell over', () => {
+    // THE OWNER RULING OF 2026-08-30 (UAT item 11, gap G-407-11), STATED DIRECTLY RATHER THAN
+    // THROUGH THE GENERIC MIRROR.
+    //
+    // (c4)'s third agreement measures this world too — `expectedCanaryWord` carries 407-22's law,
+    // so agreement 3 over `attributed-failed` IS the ruling re-derived. This cell says it once
+    // more WITHOUT the mirror, because the mirror could drift and because the ruling has a SECOND
+    // half the mirror does not reach: the chain's fate and the store's answer are two different
+    // facts a reader must be able to see side by side. `not attributed` is a positive claim that
+    // the store was consulted and answered no; the projection here disproves it while the Learned
+    // half goes on reporting, correctly, that the chain failed.
+    //
+    // IT MEASURES THE ROW-WINS ARM, NOT THE FLAG ARM, and that is deliberate. This world inherits
+    // `scanIncomplete: true` from the malformed bundle planted before it (permanent for this root
+    // — see `driveLaterWorlds`). With a row present, `canaryOutcomeWord` decides on its SECOND arm
+    // and never consults the flag, so the inherited flag changes nothing here. The flag arm keeps
+    // its own witness in the malformed world.
+    const recorded = served.attributedFailed
+    const seen = context('served', served)
+
+    expect(
+      recorded?.projection?.kind,
+      `the attributed-failed world recorded no \`ready\` projection.${seen}`,
+    ).toBe('ready')
+    const ready = recorded?.projection as Extract<RunKnowledgeProjection, { kind: 'ready' }>
+    const painted = recorded?.visit
+    expect(painted, `the attributed-failed world's page was never observed.${seen}`).toBeDefined()
+    const visit = painted as PageObservation
+
+    // ── The chain really fell over, and the door says so.
+    expect(
+      ready.curation.status,
+      `the attributed-failed world's chain is not \`failed\`, so this is not the world the ruling `
+      + `is about.${seen}`,
+    ).toBe('failed')
+
+    // ── HALF ONE OF THE RULING: the served line wears the row's own outcome.
+    const expanded = ready.steps.find((step) => step.served.channel1.length > 0) ?? ready.steps[0]
+    const doorLines = expanded?.served.channel1 ?? []
+    const canaryLines = visit.servedLines
+      .map((line, index) => ({ line, index }))
+      .filter((held) => held.line.servedAsCanary === 'true')
+    expect(
+      canaryLines.length,
+      `the attributed-failed world painted no served canary line.${seen}`,
+    ).toBeGreaterThanOrEqual(1)
+
+    let joined = 0
+    for (const held of canaryLines) {
+      const doorLine = doorLines[held.index]
+      const attribution = ready.learned.canaryAttributions.find(
+        (row) =>
+          row.testIndex === (expanded as NonNullable<typeof expanded>).testIndex &&
+          row.stepIndex === (expanded as NonNullable<typeof expanded>).stepIndex &&
+          row.recordId === (doorLine === undefined ? '' : doorLine.id),
+      )
+      if (attribution === undefined) continue
+      joined += 1
+      expect(
+        held.line.canaryOutcome,
+        `THE RULING IS NOT ON THE PAGE: the served canary line `
+        + `\`${doorLine === undefined ? '(no door line)' : doorLine.id}\` wears `
+        + `\`${held.line.canaryOutcome ?? '(absent)'}\` while the SAME projection holds a `
+        + `\`${attribution.outcome}\` row for it under observation id `
+        + `\`${attribution.observationId}\` and a \`${ready.curation.status}\` chain. A row the `
+        + `store actually served must beat a failed chain — \`not attributed\` is a positive claim `
+        + `the projection beside it disproves (owner ruling 2026-08-30, UAT item 11).${seen}`,
+      ).toBe(attribution.outcome)
+    }
+    expect(
+      joined,
+      `no painted canary line JOINED a \`canaryAttributions\` row, so the loop above asserted `
+      + `nothing at all — the vacuity WR-04 named.${seen}`,
+    ).toBeGreaterThanOrEqual(1)
+
+    // ── HALF TWO: the chain's fate is still reported, beside the row rather than instead of it.
+    expect(
+      visit.learnedState,
+      `the Learned half's root does not read \`failed\` in the attributed-failed world, so the `
+      + `page is no longer saying the two facts side by side.${seen}`,
+    ).toBe('failed')
+    expect(
+      visit.learnedRows,
+      `the Learned half painted record rows over a \`failed\` chain. \`learnedView\`'s \`failed\` `
+      + `arm returns \`rows: []\` as shipped — the UNRULED asymmetry 407-22 surfaced. This cell `
+      + `pins the behaviour as shipped so a change to it is visible, not because it is endorsed.`
+      + `${seen}`,
+    ).toEqual([])
   })
 })
