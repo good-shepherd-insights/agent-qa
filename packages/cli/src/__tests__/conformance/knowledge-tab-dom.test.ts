@@ -675,12 +675,13 @@ function learnedRowsOf(
  * The word a canary line must wear, re-derived from the projection.
  *
  * MIRRORS `canaryOutcomeWord` (`packages/dashboard-ui/src/lib/knowledge-view.ts`), rule for rule
- * and IN ITS ORDER, which is load-bearing:
+ * and IN ITS ORDER, which is load-bearing. Three arms since 407-22 (owner ruling 2026-08-30, UAT
+ * item 11) — the chain's word is consulted on the FIRST line and nowhere else:
  *   1. an unsettled chain reads `pending` — a partial read does not change that;
- *   2. a row that WAS read wins, whatever else the scan could not reach;
- *   3. a FAILED chain reads `not-attributed` even on a partial read (407-18's documented
- *      deviation from REVIEW WR-02's fix sketch — a fold that fell over attributed nothing);
- *   4. only then does the read decide: `unknown` when partial, `not-attributed` when clean.
+ *   2. a row that WAS read wins on EITHER settled arm, whatever else the scan could not reach: a
+ *      chain that fell over cannot un-commit an outcome it already appended, and the chip beside
+ *      the line is where the chain's fate is reported;
+ *   3. with no row, the READ decides: `unknown` when partial, `not-attributed` when clean.
  */
 function expectedCanaryWord(
   curationStatus: string,
@@ -688,8 +689,7 @@ function expectedCanaryWord(
   scanIncomplete: boolean,
 ): string {
   if (curationStatus === 'pending' || curationStatus === 'running') return 'pending'
-  if (curationStatus === 'done' && attribution !== undefined) return attribution.outcome
-  if (curationStatus === 'failed') return 'not-attributed'
+  if (attribution !== undefined) return attribution.outcome
   return scanIncomplete ? 'unknown' : 'not-attributed'
 }
 
@@ -1570,8 +1570,8 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     //   (2) is `data-learned-read="incomplete"` present exactly when `learned.scanIncomplete` is
     //       `true` — absent, never empty, on a clean read?
     //   (3) does every painted served line wear the word the projection implies, by
-    //       `canaryOutcomeWord`'s own four-arm order — and no attribute at all on a line that was
-    //       not served as a canary?
+    //       `canaryOutcomeWord`'s own three-arm order — unsettled chain, then a served row, then
+    //       the read — and no attribute at all on a line that was not served as a canary?
     //
     // THE CENSUS IS THE MEASUREMENT OF REACHABILITY BOUND (a). One row per world, printed once
     // verbatim, recording `(scanIncomplete, changes.length, canary lines painted)`. The claim "no

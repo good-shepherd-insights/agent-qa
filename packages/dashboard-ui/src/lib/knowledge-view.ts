@@ -223,7 +223,16 @@ export const CANARY_BADGE_TEXT = 'canary'
  */
 export const ATTRIBUTION_PENDING_TEXT = 'attribution pending'
 
-/** What a canary line says when curation FAILED, or settled and attributed nothing to it (D-08). */
+/**
+ * What a canary line says when the store was consulted and answered no (D-08 · 407-22).
+ *
+ * ONE WORLD ONLY, AND IT IS A MEASUREMENT: the curation chain SETTLED, the store walk COMPLETED,
+ * and no surviving outcome carried this line's observation id. It no longer covers a failed chain
+ * — a chain that fell over is a fact about the chain, reported by the chip, and it cannot
+ * un-commit an outcome the store already served (owner ruling 2026-08-30, UAT item 11). Nor does
+ * it cover a partial read; {@link ATTRIBUTION_UNKNOWN_TEXT} is the word for the absence of an
+ * answer.
+ */
 export const NOT_ATTRIBUTED_TEXT = 'not attributed'
 
 /**
@@ -235,6 +244,12 @@ export const NOT_ATTRIBUTED_TEXT = 'not attributed'
  * attribution scan folded a `KnowledgeMaintenanceScanError`, so without this word every served
  * canary on a partial read asserted a `no` the store never gave — while the same projection was
  * telling the Learned half that nobody could look. One wire member, one story on both halves.
+ *
+ * A SECOND WORLD REACHES IT SINCE 407-22: a FAILED chain over an unreadable part of the store,
+ * with no row served. A failed chain is exactly as unable to answer "was anything attributed?" as
+ * a settled one when nobody could finish the walk — so it is the FLAG that decides the word here,
+ * never the chip. The chain's failure is evidence about the chain; how much of the store could be
+ * read is a separate fact, and it is the one this word reports.
  */
 export const ATTRIBUTION_UNKNOWN_TEXT = 'attribution unknown'
 
@@ -564,16 +579,34 @@ export function cutCandidates(trace: RunKnowledgeTrace): CutCandidatesView | und
 /**
  * What a canary line says, from the curation word, the attribution and the READ — never blank.
  *
- * ORDER MATTERS, AND THERE ARE FOUR SETTLED ARMS NOW (D-08 · REVIEW WR-02). An unsettled chain is
- * read FIRST, so a stale attribution from an earlier fold cannot be presented as this run's answer
- * while the current one is still running — a partial read does not change that, because "nobody
- * has decided yet" is still the truest thing on screen. Then a row that WAS read wins: an
- * attribution the store served is a real answer whatever else the scan could not reach, which is
- * the same `rows win` law the Learned half follows. Then a FAILED chain reads `not attributed`
- * even on a partial read, because a fold that fell over attributed nothing whether or not the
- * store was legible — the flag must not turn a failure into a question. Only then, on a settled
- * chain with no row, does the read decide: `unknown` when it was partial, `not attributed` when it
- * was clean and the store really did say no.
+ * ORDER MATTERS, AND THERE ARE THREE ARMS (D-08 · REVIEW WR-02 · 407-22, owner ruling 2026-08-30).
+ * The chain's own word is consulted on exactly ONE line of this function — the first — and nowhere
+ * else. Three movements, in this order:
+ *
+ *   1. AN UNSETTLED CHAIN IS READ FIRST. `pending` and `running` mean nobody has decided yet, and
+ *      that outranks both a stale row from an earlier fold and a partial read: presenting a
+ *      previous fold's attribution as this run's answer while the current one is still working
+ *      would be the page answering a question that is still open.
+ *
+ *   2. THEN A ROW THAT WAS READ WINS — ON EITHER SETTLED ARM, WITH NO STATUS CONJUNCT. An
+ *      attribution the store served is a real answer whatever else the scan could not reach, and a
+ *      chain that fell over cannot un-commit an outcome event it already appended. The chip beside
+ *      this line is where the chain's fate is reported; repeating it here as `not attributed`
+ *      would be a SECOND and different claim — that the store was consulted and said no — made
+ *      while this very projection holds the row that disproves it. Same `rows win` law the Learned
+ *      half follows.
+ *
+ *   3. THEN, WITH NO ROW, THE READ DECIDES. `unknown` when the flag is set, because nobody could
+ *      finish looking; `not attributed` when it is clear, because the walk completed and no
+ *      surviving outcome carried this line's observation id — a fact somebody measured.
+ *
+ * THE FOURTH ARM WAS DELETED, NOT REORDERED. From 407-06 (`a795316e`) to 407-21 a standalone arm
+ * answered `not attributed` for a FAILED chain, and 407-18's must_haves restated it. Once the row
+ * is consulted first, the only case that arm still governed is the NO-row case — and that case is
+ * properly decided by the READ, which is the fact that actually determines whether anybody was
+ * able to answer, where the chain's failure is evidence about the chain. The owner ruled the arm
+ * out on 2026-08-30 (UAT item 11 / G-407-11 / REVIEW CR-01); this function's own law, two
+ * paragraphs above, had said as much since 407-06 while the code below it said otherwise.
  *
  * `scanIncomplete` DEFAULTS TO FALSE so every existing caller keeps the word it had.
  */
@@ -583,8 +616,7 @@ export function canaryOutcomeWord(
   scanIncomplete = false,
 ): CanaryOutcomeWord {
   if (curationStatus === 'pending' || curationStatus === 'running') return 'pending'
-  if (curationStatus === 'done' && attribution !== undefined) return attribution.outcome
-  if (curationStatus === 'failed') return 'not-attributed'
+  if (attribution !== undefined) return attribution.outcome
   return scanIncomplete ? 'unknown' : 'not-attributed'
 }
 
