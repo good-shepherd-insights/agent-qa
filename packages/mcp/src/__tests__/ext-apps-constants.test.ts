@@ -224,9 +224,27 @@ describe('the other restated spec strings are in the official schema (A5)', () =
     const wrapper = readFileSync(join(SRC_ROOT, 'app-wrapper.ts'), 'utf8')
     // Scoped to the handshake block, not the whole file: a coincidental `appInfo` in a comment
     // elsewhere must not satisfy a claim about what the page POSTS.
+    //
+    // BOUNDED BY THE DOCUMENT'S OWN STRUCTURE, NOT BY A CHARACTER COUNT (WR-11, 408-12). This was
+    // `wrapper.slice(start, start + 600)`, and a magic width guarding a schema-derived list is the
+    // weakest link in an otherwise derived cell: it degrades SILENTLY as the block grows. A comment,
+    // a reformat or a fourth member pushes a required param out of the window and the census reports
+    // it missing — a red about the test harness wearing the words of a red about the served
+    // document. The census reads its required list from the SHIPPED SCHEMA, so its bound has to come
+    // from the SHIPPED DOCUMENT too, and not from a guess about how long that document will stay.
+    //
+    // The closing form of the handshake's own `postMessage` call is that bound: the block runs from
+    // the method name to the `}, '*');` that closes the single call carrying it.
     const start = wrapper.indexOf("method: 'ui/initialize'")
     expect(start, 'the wrapper still posts a ui/initialize request').toBeGreaterThan(-1)
-    const block = wrapper.slice(start, start + 600)
+    const end = wrapper.indexOf("}, '*');", start)
+    expect(
+      end,
+      'the ui/initialize handshake is no longer a single postMessage call — this is a finding about '
+      + 'the served document, not about this test: the census can no longer say which bytes are the '
+      + 'handshake, so re-derive the bound from whatever structure now carries it',
+    ).toBeGreaterThan(start)
+    const block = wrapper.slice(start, end)
 
     const missing = required.filter((param) => !block.includes(`${param}:`))
     expect(
