@@ -107,6 +107,12 @@ export type {
 } from './app-resource.js'
 
 export {
+  // 2026-08-31 (Phase 408 plan 06 Task 1 · A5): the three handshake constants join the sentence
+  // constants on the barrel for the same reason they have — plan 06's harness asserts the
+  // `ui/initialize` message the page really posts, and a harness that restated these values would
+  // be checking its own transcription rather than the product's.
+  APP_WRAPPER_APP_NAME,
+  APP_WRAPPER_APP_VERSION,
   APP_WRAPPER_CONNECTING_MESSAGE,
   APP_WRAPPER_EXPIRED_HINT,
   APP_WRAPPER_EXPIRED_MESSAGE,
@@ -115,6 +121,7 @@ export {
   APP_WRAPPER_PERMANENT_LINK_LABEL,
   APP_WRAPPER_RUN_ENDED_MESSAGE,
   APP_WRAPPER_STATES,
+  APP_WRAPPER_UI_PROTOCOL_VERSION,
   APP_WRAPPER_UNREACHABLE_MESSAGE,
   renderAppWrapperPage,
 } from './app-wrapper.js'

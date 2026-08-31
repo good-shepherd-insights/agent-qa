@@ -138,6 +138,27 @@ export const APP_WRAPPER_PERMANENT_LINK_LABEL = 'open in your browser'
 export const APP_WRAPPER_LOAD_TIMEOUT_MS = 10_000
 
 /**
+ * The MCP Apps protocol version this wrapper announces in its `ui/initialize` request.
+ *
+ * MEASURED, not guessed (408-06 Task 1): `@modelcontextprotocol/ext-apps@1.7.5` carries exactly
+ * two protocol versions — `2025-11-21` and `2026-01-26` — and `2026-01-26` is the one its
+ * `AppBridge` treats as latest. `ext-apps-constants.test.ts` pins the spelling against the
+ * package's own shipped schema, so this literal cannot drift from the vocabulary in silence.
+ */
+export const APP_WRAPPER_UI_PROTOCOL_VERSION = '2026-01-26'
+
+/**
+ * What this document calls itself to a host (`ui/initialize`'s required `appInfo`).
+ *
+ * Exported so a cell asserts the SAME bytes the page posts, per this file's standing rule that a
+ * value a person or a host can observe is never restated in a test.
+ */
+export const APP_WRAPPER_APP_NAME = 'agent-qa-live-view'
+
+/** The wrapper's own version, bumped only when the handshake it performs changes. */
+export const APP_WRAPPER_APP_VERSION = '1.0.0'
+
+/**
  * ONE minted view onto ONE member handle of the run.
  *
  * `liveUrl` carries its token in the FRAGMENT (403 D-04), so this value is the only place a live
@@ -326,20 +347,33 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
   // HAND-ROLLED AND DELIBERATELY ISOLATED IN THIS ONE BLOCK. The ext-apps package
   // declares a peer on the v1 monolith SDK, so importing its app-bridge into production would drag
   // a second SDK generation in (Pitfall 3) — and this page has no bundler anyway. RESEARCH
-  // assumption A5 rates the method-name and field spellings MEDIUM (single spec fetch), so plan 06's
-  // harness measures this exchange against the OFFICIAL app-bridge and may correct the spelling
-  // here. Keeping it in one block with no other behaviour hanging off it is what makes that
-  // correction a small diff instead of an archaeology exercise.
+  // assumption A5 rated the method-name and field spellings MEDIUM (single spec fetch), and plan
+  // 02's coverage entry D9 deferred the adjudication to plan 06.
   //
-  // IT ASKS FOR NOTHING. No permissions, no tools, no re-mint (D-10) — it announces that this
-  // document is ready, which is all a wrapper that renders no run state of its own has to say.
+  // PLAN 06 MEASURED IT, AND IT HAD DRIFTED. Against the installed
+  // @modelcontextprotocol/ext-apps@1.7.5's own generated schema, McpUiInitializeRequest.params
+  // requires THREE members: protocolVersion, appInfo and appCapabilities. This block sent only the
+  // first, so a host validating the request against the published schema would have rejected the
+  // handshake outright, and the failure would have looked like a host that simply does not support
+  // Apps. The two missing members are now sent, and ext-apps-constants.test.ts cell (4d) derives
+  // the required list FROM the shipped schema rather than restating it, so the next spec change
+  // reds here instead of on a user's machine.
+  //
+  // IT STILL ASKS FOR NOTHING. appCapabilities is deliberately empty: this document exposes no
+  // tools, requests no display mode and declares no experimental feature (the schema requires no
+  // member of it). No permissions, no re-mint (D-10) — it announces that this document is ready,
+  // which is all a wrapper that renders no run state of its own has to say.
   try {
     if (window.parent !== window) {
       window.parent.postMessage({
         jsonrpc: '2.0',
         id: 'ui-init-1',
         method: 'ui/initialize',
-        params: { protocolVersion: '2026-01-26' }
+        params: {
+          protocolVersion: ${scriptLiteral(APP_WRAPPER_UI_PROTOCOL_VERSION)},
+          appInfo: { name: ${scriptLiteral(APP_WRAPPER_APP_NAME)}, version: ${scriptLiteral(APP_WRAPPER_APP_VERSION)} },
+          appCapabilities: {}
+        }
       }, '*');
     }
   } catch (e) { /* a host that refuses the message changes nothing about what this page shows */ }
