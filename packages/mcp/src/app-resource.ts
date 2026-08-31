@@ -104,6 +104,8 @@ import type {
 
 import { renderAppWrapperPage } from './app-wrapper.js'
 import type { AppWrapperMint } from './app-wrapper.js'
+import { liveRunLinkOf } from './live-link.js'
+import type { LiveLinkSupplier } from './live-link.js'
 import { visibleToCaller } from './visibility.js'
 
 /**
@@ -123,6 +125,24 @@ export const APP_RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app'
 
 /** The published App address. ONE template, per run — the runId is the only variable. */
 export const APP_RESOURCE_URI_TEMPLATE = 'ui://agent-qa/live-run/{runId}'
+
+/**
+ * The template EXPANDED for one concrete run (408 plan 03, D-05).
+ *
+ * WHY THIS IS A FUNCTION AND NOT A STRING EACH CALLER COMPOSES. `projection.ts` advertises the
+ * TEMPLATE on a carrier tool's `_meta`, and a carrier RESULT advertises the concrete address of the
+ * run it just named — two spellings of one address, in two files, that would be free to disagree
+ * about the scheme, the namespace or the segment order. Expanding through the template constant
+ * makes drift impossible: there is one place the address is written down and one rule for filling
+ * it in.
+ *
+ * ENCODED WITH `encodeURIComponent`, which is the exact inverse of the `decodeURIComponent` the one
+ * codec above applies — so `parseAppUri(appResourceUriFor(id)).runId === id` for every id, and an
+ * address this package composes is one this package can read back.
+ */
+export function appResourceUriFor(runId: string): string {
+  return APP_RESOURCE_URI_TEMPLATE.replace('{runId}', encodeURIComponent(runId))
+}
 
 /** The registered resource name. Prefixed like the tools, so one namespace reads as one server. */
 export const APP_RESOURCE_NAME = 'agent_qa_live_run_app'
@@ -265,6 +285,20 @@ export interface AppResourceReadDeps {
   readonly invoke: AppResourceInvoke
   /** How CALLER text leaving this handler is masked. Required — see the header's channel split. */
   readonly maskText: (text: string) => string
+  /**
+   * Which dashboard this process is pointed at, for D-08's permanent link (408 plan 03).
+   *
+   * OPTIONAL, and its absence is a real posture rather than a gap: a composition that knows of no
+   * dashboard renders the wrapper with NO anchor at all, which is what plan 01 shipped and what the
+   * honest-absence law requires — a link to nothing is the dishonesty this milestone removes.
+   *
+   * THIS IS THE ONE SLOT WHOSE ABSENCE COSTS A PERSON SOMETHING, which is why it is wired rather
+   * than left where plan 01 left it: the wrapper's `expired` and `unreachable-origin` states are
+   * D-11's answers for "the embed cannot show you this", and both of them are supposed to hand a
+   * person the browser instead. A wrapper reaching those states with no link is a dead end wearing
+   * an honest sentence.
+   */
+  readonly liveLink?: LiveLinkSupplier
 }
 
 /**
@@ -386,13 +420,19 @@ export function createAppResourceReadHandler(
       }
     }
 
+    // D-08's link-out, composed from whatever base this composition was pointed at (408 plan 03).
+    // The SAME composition every carrier result uses — `liveRunLinkOf` is the one place the address
+    // is built — so the anchor inside the App and the line beside a tool result cannot name two
+    // different pages for one run. With no base, the slot stays ABSENT rather than fabricated: the
+    // wrapper renders no anchor at all for an absent link.
+    const base = deps.liveLink?.dashboardBaseUrl()
+    const permanentLink
+      = base === undefined || base.trim() === '' ? undefined : liveRunLinkOf(base.trim(), runId)
+
     const html = renderAppWrapperPage({
       runId,
       mints,
-      // D-08's link-out is composed by the carrier path in plan 03; until it is bound, the slot is
-      // ABSENT rather than a fabricated URL — a link to nothing is the dishonesty this milestone
-      // removes, and the wrapper renders no anchor at all for an absent link.
-      permanentLink: undefined,
+      permanentLink,
       runLive: mints.length > 0,
     })
 
@@ -463,6 +503,8 @@ export interface AppResourceDeps {
   readonly registry: FunctionRegistry
   readonly caller: FunctionCaller
   readonly maskText: (text: string) => string
+  /** D-08's base supplier, passed straight through to the read. See {@link AppResourceReadDeps}. */
+  readonly liveLink?: LiveLinkSupplier
 }
 
 /**
@@ -509,6 +551,9 @@ export function registerAppResources(
     // they do for a tool call. There is no store, no cache and no second data path.
     invoke: (opId, input) => invokeFunction(deps.registry, opId, input, deps.caller),
     maskText: deps.maskText,
+    // Absent stays ABSENT rather than becoming a present `undefined` supplier: the house rule for
+    // an optional member, and the two are the same posture to the read either way.
+    ...(deps.liveLink === undefined ? {} : { liveLink: deps.liveLink }),
   })
 
   server.registerResource(

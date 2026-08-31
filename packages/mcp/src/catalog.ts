@@ -45,9 +45,11 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
-import { MCP_APPS_EXTENSION_ID, registerAppResources } from './app-resource.js'
+import { MCP_APPS_EXTENSION_ID, appResourceUriFor, registerAppResources } from './app-resource.js'
 import { createApplyToolHandler, summarizeProposalForApply } from './apply-refusal.js'
 import type { ApplyToolCallContext, ApplyToolInput } from './apply-refusal.js'
+import { liveLinkLineFor } from './live-link.js'
+import type { LiveLinkSupplier } from './live-link.js'
 import {
   advertisedContracts,
   AGENT_QA_OP_CONTRACTS,
@@ -92,6 +94,19 @@ export interface AgentQaMcpServerDeps {
    * nobody thought to pass one, which is the same place the leak was found.
    */
   readonly maskText: (text: string) => string
+  /**
+   * Which dashboard this process is pointed at, for D-08's permanent link (408 plan 03).
+   *
+   * OPTIONAL, AND ITS ABSENCE IS THE DEGENERATE CASE RATHER THAN A SECOND BRANCH: a host that
+   * supplies nothing and a supplier that answers `undefined` are the same fact — no dashboard is
+   * configured and none is running here — and both take the same path to the same named-absence
+   * line. There is no arm below that asks which of the two happened, deliberately: a distinction
+   * nothing acts on is a distinction that eventually acquires a wrong action.
+   *
+   * A FACTORY, NOT A STRING, because on the co-hosted composition the bound origin does not exist
+   * until a port has been bound — `commands/dashboard.ts` composes this host before it listens.
+   */
+  readonly liveLink?: LiveLinkSupplier
 }
 
 /** The host-bound `(registry, caller)` closure over `invokeFunction`. */
@@ -206,6 +221,78 @@ async function runProjection(
 }
 
 /**
+ * The concrete run this carrier's result is ABOUT, read from the source the projection declares.
+ *
+ * DEFENSIVE ON BOTH ARMS, and neither arm is hypothetical. `runIdFrom: 'input'` reads the args the
+ * SDK already validated against the advertised input schema; `runIdFrom: 'output'` reads the op's
+ * own result, which is a `RunStartAcknowledgement` today and could be a fold's arm tomorrow. Either
+ * can answer with something that is not a string — and the honest treatment of that is the same as
+ * the honest treatment of a missing dashboard: the LINE becomes the named absence and there is no
+ * concrete App address to advertise. What it must never be is a crash, because that would turn a
+ * decoration into a way to fail a tool call that had already succeeded.
+ */
+function carrierRunIdOf(
+  projection: ToolProjection,
+  args: unknown,
+  output: unknown,
+): string | undefined {
+  const source = projection.ui?.runIdFrom === 'output' ? output : args
+  const runId = (source as { runId?: unknown } | null | undefined)?.runId
+  return typeof runId === 'string' && runId !== '' ? runId : undefined
+}
+
+/**
+ * Add D-08's link-out line and D-05's concrete App address to a CARRIER's result.
+ *
+ * ADDITIVE, AND ONLY ADDITIVE. One `content` text part is appended and one `_meta` key is set; the
+ * op's own answer — the masked serialization `structuredContent` and its text are both composed
+ * from — is byte-identical to what it was. This is deliberately NOT a second serialization: a
+ * result whose data channel was rebuilt beside its text channel is exactly the two-channel drift
+ * `masked-result.ts` exists to prevent.
+ *
+ * THE LINE PASSES THROUGH `maskText`, on the house law that everything a surface prints does. It is
+ * a no-op on a well-formed link and it is supposed to be: the dashboard base is `masked: false` by
+ * the overlay law (a loopback origin this process minted is not the operator's secret), and the
+ * page it names is tokenless by D-08. Masking it anyway costs nothing and means nobody has to
+ * remember that this one printed string is exempt — which is how the 396-03 gap happened.
+ *
+ * `_meta.ui.resourceUri` ATTACHES UNCONDITIONALLY — it is not gated on negotiation, and that is the
+ * adjudicated answer rather than an oversight (D-09 + RESEARCH A2). `_meta` is INERT: a host that
+ * never negotiated `io.modelcontextprotocol/ui` has no code that reads it, so what it receives is a
+ * key it ignores. The ACTING channel is the `ui://` read, and THAT is gated — by
+ * `negotiatedAppsExtension`, above every line that could mint (plan 02, clause 3 of the ruling in
+ * `app-resource.ts`). Gating the advertisement as well would buy nothing and cost the thing D-09
+ * asks for: a host must be able to SEE that an App exists in order to ask for it.
+ *
+ * A REFUSAL IS NOT DECORATED. `maskedToolError` results, and the withheld-result arm of
+ * `maskedToolResult`, are left exactly as they are: a refusal is not a carrier of a watch
+ * affordance, and appending "watch live" to a sentence explaining why nothing happened would be a
+ * link to a run that was never started.
+ */
+function decorateCarrierResult(input: {
+  readonly result: CallToolResult
+  readonly projection: ToolProjection
+  readonly args: unknown
+  readonly output: unknown
+  readonly maskText: (text: string) => string
+  readonly liveLink?: LiveLinkSupplier
+}): CallToolResult {
+  if (input.projection.ui === undefined) return input.result
+  if (input.result.isError === true) return input.result
+
+  const runId = carrierRunIdOf(input.projection, input.args, input.output)
+  const line = liveLinkLineFor(input.liveLink?.dashboardBaseUrl(), runId)
+
+  return {
+    ...input.result,
+    content: [...input.result.content, { type: 'text' as const, text: input.maskText(line) }],
+    ...(runId === undefined
+      ? {}
+      : { _meta: { ...input.result._meta, ui: { resourceUri: appResourceUriFor(runId) } } }),
+  }
+}
+
+/**
  * The one generic tool handler.
  *
  * Input validation happened twice before the invoke — once by the SDK against the advertised
@@ -216,13 +303,24 @@ function createProjectionHandler(
   projection: ToolProjection,
   invoke: BoundInvoke,
   maskText: (text: string) => string,
+  liveLink?: LiveLinkSupplier,
 ) {
   return async (args: unknown): Promise<CallToolResult> => {
     try {
+      const output = await runProjection(projection, args, invoke)
       // BOTH channels from ONE masked serialization (396-06). `structuredContent` used to be the
       // raw op output, and a declared credential reached the wire through it verbatim while the
       // text beside it read `<SECRET_0>` — RESEARCH Pitfall 9's own named channel, measured.
-      return maskedToolResult(await runProjection(projection, args, invoke), maskText)
+      const result = maskedToolResult(output, maskText)
+      // 408 D-05/D-08/D-09: the watch affordance, on every carrier result, for every host class.
+      return decorateCarrierResult({
+        result,
+        projection,
+        args,
+        output,
+        maskText,
+        ...(liveLink === undefined ? {} : { liveLink }),
+      })
     } catch (err) {
       // A refusal is a RESULT, not a transport failure: the caller gets the reason as a tool
       // error it can read. The message is masked for the reason the whole file exists — an
@@ -553,7 +651,11 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
       continue
     }
 
-    server.registerTool(projection.name, config, createProjectionHandler(projection, invoke, deps.maskText))
+    server.registerTool(
+      projection.name,
+      config,
+      createProjectionHandler(projection, invoke, deps.maskText, deps.liveLink),
+    )
   }
 
   // D-15: the retired v1 names, answered at the dispatch edge with `registered` — the set the loop
@@ -579,6 +681,9 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
     registry: deps.registry,
     caller: deps.caller,
     maskText: deps.maskText,
+    // 408 plan 03 (D-08): the SAME supplier the carrier decoration reads, so the anchor inside the
+    // App document and the line beside a tool result name one page for one run.
+    ...(deps.liveLink === undefined ? {} : { liveLink: deps.liveLink }),
   })
 
   return server

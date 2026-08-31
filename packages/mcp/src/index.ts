@@ -92,6 +92,7 @@ export {
   AppResourceReadError,
   AppResourceUriError,
   MCP_APPS_EXTENSION_ID,
+  appResourceUriFor,
   createAppResourceReadHandler,
   negotiatedAppsExtension,
   parseAppUri,
@@ -118,6 +119,20 @@ export {
   renderAppWrapperPage,
 } from './app-wrapper.js'
 export type { AppWrapperInput, AppWrapperMint, AppWrapperState } from './app-wrapper.js'
+
+// 2026-08-31 (Phase 408 plan 03, D-08/D-09 · MCPA-01): the permanent link-out. On the barrel
+// because two HOSTS compose the supplier that feeds it — the standalone `agent-qa mcp` command and
+// the co-hosted mount inside `agent-qa dashboard` — and plan 04's App-less scan cell asserts
+// against the SAME line helpers this surface prints rather than against a transcription of them.
+// Publishing them hands a consumer no capability: three pure functions over strings it already
+// holds, and one constant that is deliberately not an address.
+export {
+  LIVE_LINK_ABSENT_LINE,
+  liveLinkLine,
+  liveLinkLineFor,
+  liveRunLinkOf,
+} from './live-link.js'
+export type { LiveLinkSupplier } from './live-link.js'
 
 export { McpProjectionError, toRegisterToolConfig } from './projection.js'
 export type { ProjectedOpSpec, RegisterToolConfig } from './projection.js'
