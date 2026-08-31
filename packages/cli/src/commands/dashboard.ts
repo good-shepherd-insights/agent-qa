@@ -1715,6 +1715,80 @@ export function mcpMountPlanFor(config: unknown): McpCoHostMountPlan {
   return { mount: enabled && tokenCount > 0, port, tokenCount }
 }
 
+/**
+ * What binding the co-hosted MCP listener left behind (408-09 WR-01 / WR-02).
+ *
+ * `server` is the handle the CALLER should keep — `undefined` when the bind failed, which is what
+ * makes "the dashboard survives a failed optional mount" observable rather than argued.
+ */
+export interface McpCoHostListenResult {
+  readonly server: NodeHttpServer | undefined
+  readonly boundPort: number | undefined
+  readonly warning: string | undefined
+}
+
+/**
+ * Bind the co-hosted MCP listener, scoping EVERY failure on it to itself (408-09, WR-02 · T-408-17).
+ *
+ * WHY THIS IS A FUNCTION AND NOT FOUR LINES AT THE MOUNT SITE. The mount runs AFTER `startServer`
+ * has bound and the dashboard is already serving, and before 408-09 a bind failure here rejected a
+ * promise whose rejection reached the command's outer `catch` and `process.exit(2)`. An optional
+ * secondary listener took the primary surface down with it — reachable in the ordinary case,
+ * because the default port is the same constant a concurrently running `agent-qa mcp --http` binds
+ * — and the message an operator met (`listen EADDRINUSE :::3471`) never once said "MCP". Extracting
+ * the bind is what lets a cell drive a REAL occupied port and observe a surviving process; the
+ * dashboard composition itself needs a database and an execution backend to reach.
+ *
+ * TWO ERROR DOORS, AND THEY ARE DIFFERENT DOORS. The listen-time handler is registered by NAME and
+ * REMOVED inside the `listen` callback before the promise settles; a durable `on('error')` is then
+ * attached in its place. Before 408-09 the `once('error')` handler stayed attached after listen, so
+ * a later runtime socket error resolved an already-settled promise and was discarded with no log at
+ * all — a silent half of the same defect.
+ *
+ * The bind address is the CONSTANT the standalone face binds, never a config value: an operator who
+ * could widen this to `0.0.0.0` through configuration would be one typo from exposing an ungated
+ * function registry to their network.
+ */
+export async function mountCoHostedMcp(input: {
+  readonly server: NodeHttpServer
+  readonly port: number
+  readonly warn?: (line: string) => void
+}): Promise<McpCoHostListenResult> {
+  const { server, port } = input
+  const warn = input.warn ?? ((line: string) => console.error(pc.yellow(line)))
+
+  try {
+    await new Promise<void>((listening, failed) => {
+      const onListenError = (error: Error): void => failed(error)
+      server.once('error', onListenError)
+      server.listen(port, MCP_HTTP_BIND_HOST, () => {
+        // Detached BEFORE the promise settles, so it cannot be reached again by a later socket
+        // error and resolve something already resolved.
+        server.off('error', onListenError)
+        listening()
+      })
+    })
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    const warning = `MCP endpoint not mounted on ${MCP_HTTP_BIND_HOST}:${String(port)} — ${reason}. `
+      + 'The dashboard is unaffected and keeps serving.'
+    warn(warning)
+    // Best effort: a server that never listened has nothing to close, and one that half-bound must
+    // not be left holding a descriptor.
+    try { server.close() } catch { /* nothing was bound */ }
+    return { server: undefined, boundPort: undefined, warning }
+  }
+
+  const address = server.address()
+  const boundPort = typeof address === 'object' && address !== null ? address.port : port
+  // The durable door. Anything the socket raises from here on is an operator-visible line, never a
+  // discarded event.
+  server.on('error', (error: Error) => {
+    warn(`MCP endpoint socket error on ${MCP_HTTP_BIND_HOST}:${String(boundPort)}: ${error.message}`)
+  })
+  return { server, boundPort, warning: undefined }
+}
+
 type DashboardCommandOptions = {
   port?: string
   db?: string
@@ -2066,22 +2140,22 @@ async function startDashboardBackedServices(
           },
         }),
       )
-      await new Promise<void>((listening, failed) => {
-        const server = mcpServer!
-        server.once('error', failed)
-        // The bind address is the CONSTANT the standalone face binds, never a config value — an
-        // operator who could widen this to `0.0.0.0` through configuration would be one typo from
-        // exposing an ungated function registry to their network.
-        server.listen(mcpPort, MCP_HTTP_BIND_HOST, () => listening())
-      })
-      const mcpAddress = mcpServer.address()
-      const mcpBound = typeof mcpAddress === 'object' && mcpAddress !== null
-        ? mcpAddress.port
-        : mcpPort
-      console.log(pc.dim(
-        `MCP endpoint listening on http://${MCP_HTTP_BIND_HOST}:${String(mcpBound)}/ `
-        + `(${String(mcpTokens.length)} declared caller credential(s); live view attached).`,
-      ))
+      // THE OPTIONAL SURFACE CANNOT TAKE THE PRIMARY ONE DOWN (408-09, WR-02 · T-408-17). The
+      // dashboard is already serving by the time this line runs, so a failure here costs the
+      // operator a warning that NAMES the MCP endpoint and the port, not their dashboard. The
+      // handle `mountCoHostedMcp` answers is the handle this command keeps: `undefined` on failure,
+      // which is exactly the state the shutdown path's `mcpServer?.close()` already handles.
+      const mcpMount = await mountCoHostedMcp({ server: mcpServer, port: mcpPort })
+      mcpServer = mcpMount.server
+      if (mcpMount.server === undefined) {
+        mcpMasking.dispose()
+        mcpMasking = undefined
+      } else {
+        console.log(pc.dim(
+          `MCP endpoint listening on http://${MCP_HTTP_BIND_HOST}:${String(mcpMount.boundPort)}/ `
+          + `(${String(mcpTokens.length)} declared caller credential(s); live view attached).`,
+        ))
+      }
     }
 
     if (opts.open) {
