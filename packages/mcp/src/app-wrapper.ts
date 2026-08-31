@@ -42,6 +42,20 @@
 // mint has already aged out by the time the document is built, the document is BORN `expired`: it
 // never assigns a src, so there is no dead frame to flash before the sentence appears.
 //
+// AND `expired` IS ABSORBING (2026-09-01; the cell is `cli/src/__tests__/app-wrapper-dom.test.ts`
+// cell (6), and 408-VERIFICATION.md is where the defect was measured). The expiry timer is
+// ONE-SHOT, so for as long as anything could re-enter `attach()` the document could be walked back
+// OUT of its terminal state: a handle-picker change re-pointed the frame at an already-aged
+// `liveUrl` and painted the word `live` over a dead pane, permanently — the outcome this header
+// already calls worse than a blank frame. `attach()` therefore returns immediately when the
+// document already reads `expired`, and the expiry callback DISABLES the picker, because an
+// affordance that outlives the thing it operates on is a second lie. Read against D-08: the
+// permanent link is the PRIMARY way to watch a run and the embedded pane is one credential-bounded,
+// time-bounded variant of it, so `expired` is not an interruption of the resting state — it is the
+// RETURN to it, and returns are one-way. Cell (6) renders with a short TTL, waits for `expired`,
+// changes the picker, and asserts the document is still `expired` with no frame src and still
+// carrying the link and the hint D-10 requires it to carry.
+//
 // SELF-CONTAINED AND PURE. No imports, no external stylesheet, no build step: the whole document is
 // the string this function returns, because a host renders it inside a sandbox with no network
 // identity of its own. `renderAppWrapperPage` is a pure function of its input (the clock included,
@@ -406,6 +420,14 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
   var expiryTimer = null;
 
   function attach(mint) {
+    // THE EXPIRED STATE IS TERMINAL, AND THIS IS THE ONE PLACE IT COULD BE LEFT (D-10). The
+    // picker's change handler — and nothing else — can reach this function after the one-shot
+    // expiry timer has fired; without this line the next statements would set the connecting state
+    // and assign an aged token over a document that had already told the truth, and no timer would
+    // ever correct it. The identical predicate inside settle() stays where it is: it closes the
+    // OTHER door, a probe or a frame load that was already in flight when the timer fired, so
+    // neither guard makes the other dead.
+    if (root.getAttribute('data-app-state') === 'expired') return;
     var mine = (attachId += 1);
     var loaded = false;
     var settled = false;
@@ -447,6 +469,10 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
     expiryTimer = setTimeout(function () {
       attachId += 1;
       if (frame !== null) frame.removeAttribute('src');
+      // The picker is an affordance of the EMBEDDED variant; when the variant is gone the
+      // affordance goes with it, so the control a person can reach and the state the document is in
+      // cannot disagree.
+      picker.setAttribute('disabled', '');
       setState('expired');
     }, expiresInMs);
   }

@@ -8,10 +8,12 @@
 // composed. Nothing about the INNER embed page is re-tested here: its own states are 403's proven
 // ground, and this file's subject is what the OUTER document does with a frame it cannot see into.
 //
-// WHY A BROWSER IS NOT OPTIONAL FOR THESE THREE CLAIMS. Plan 01 asserted the wrapper's BYTES; the
-// three questions left are about behaviour no string can answer — does a dead origin end as a
-// NAMED state rather than a blank rectangle, does the picker swap without touching the network,
-// and does a loaded frame actually reach `live`. Each is a property of the browser's event loop.
+// WHY A BROWSER IS NOT OPTIONAL FOR THESE CLAIMS. Plan 01 asserted the wrapper's BYTES; the
+// questions left are about behaviour no string can answer — does a dead origin end as a NAMED
+// state rather than a blank rectangle, does the picker swap without touching the network, does a
+// loaded frame actually reach `live`, and once the document has expired does it STAY expired no
+// matter what a person does to it. Each is a property of the browser's event loop, and the last of
+// them is the one `408-VERIFICATION.md` measured going the other way (plan 07, cell (6)).
 //
 // A MEASURED FACT THAT SHAPED THE WRAPPER, recorded here because it is the reason cell (3) is not
 // a one-liner: in Chromium an iframe pointing at a REFUSED connection still fires `load` (measured
@@ -27,12 +29,18 @@
 //                                                                which the wrapper then calls live
 //   E2  the picker re-fetching or re-minting on change       -> cell (4)'s request counter
 //   E3  the live state losing its display rule               -> cell (5)
+//   E4  the `attach()` expired early-return removed          -> cell (6), MEASURED: the document
+//                                                               reads `live` again after the picker
+//                                                               change and the frame carries an
+//                                                               already-aged liveUrl
 
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import {
+  APP_WRAPPER_EXPIRED_HINT,
+  APP_WRAPPER_EXPIRED_MESSAGE,
   APP_WRAPPER_LOAD_TIMEOUT_MS,
   APP_WRAPPER_PERMANENT_LINK_LABEL,
   APP_WRAPPER_UNREACHABLE_MESSAGE,
@@ -47,7 +55,7 @@ const BROWSER_INSTALL_INSTRUCTION =
   'these cells drive a REAL Chromium — the only place the wrapper\'s states can be observed as a '
   + 'person meets them: run `pnpm exec playwright install chromium` and re-run. THEY MUST NOT BE '
   + 'SKIPPED WHEN THE BROWSER IS ABSENT: every other cell in this phase asserts bytes, and these '
-  + 'three are the only ones that assert behaviour.'
+  + 'are the only ones that assert behaviour.'
 
 const RUN_ID = 'run-408-02-dom'
 
@@ -201,6 +209,71 @@ describe('the wrapper in a real browser (D-11)', () => {
       expect(await page.locator('[data-app-live-frame]').isVisible()).toBe(true)
       // A single mint needs no picker, so it is not shown — one pane and no chrome.
       expect(await page.locator('[data-app-handle-picker]').isVisible()).toBe(false)
+    } finally {
+      await page.close()
+    }
+  }, 180_000)
+
+  // THE VERIFIER'S OWN PROBE, MADE PERMANENT (408-VERIFICATION.md gaps[0]/gaps[1], ROADMAP SC2
+  // clause 2, D-10). Before plan 07 the expiry timer was one-shot and `attach()` was reachable from
+  // the picker afterwards, so a person who left the App open past the TTL and then swapped handles
+  // got the word `live` painted over a pane whose token had aged out — a state the wrapper's own
+  // header calls worse than a blank frame, and one nothing later would correct.
+  //
+  // THE INNER ORIGIN IS REACHABLE HERE ON PURPOSE. A dead origin would reach `expired` for the
+  // wrong reason; the claim is about a pane that was GENUINELY live and then aged out, which is the
+  // only shape in which the defect was reachable.
+  //
+  // THE PICKER CHANGE IS FORCED past the actionability checks deliberately. The `disabled`
+  // attribute is asserted below as its own claim, but if the change were only PREVENTED by that
+  // attribute this cell would be measuring Playwright's refusal to drive a disabled control rather
+  // than the wrapper's terminal guard — and removing the `attach()` early return would leave it
+  // green. Forcing the change event fires the handler exactly as a host that ignores `disabled`
+  // would, so leg E4 reds on the guard itself.
+  it('(6) an expired document STAYS expired when the picker is changed, and keeps the link and hint', async () => {
+    const inner = await serveStatic('<!doctype html><title>inner</title>ok', 'text/html')
+    const permanentLink = `${inner}/runs/${RUN_ID}/live`
+    const expiresAt = Date.now() + 2_000
+    const mints = [mint(0, inner, expiresAt), mint(1, inner, expiresAt)]
+    const url = await serveWrapper(mints, permanentLink)
+
+    const page = await held().newPage()
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded' })
+      // It was live FIRST — otherwise this cell would pass against a document born expired, which
+      // is a state plan 02 already proved and not the transition under test.
+      await page.locator('[data-app-state="live"]').waitFor({ state: 'attached', timeout: 30_000 })
+      await page
+        .locator('[data-app-state="expired"]')
+        .waitFor({ state: 'attached', timeout: 30_000 })
+
+      await page.locator('[data-app-handle-picker]').selectOption('1', { force: true })
+      // Longer than the wrapper's OWN bound, so any competing transition the change could have
+      // started — `connecting`, a probe resolving to `live`, the timeout arm naming
+      // `unreachable-origin` — has had its full chance to land before the reads below.
+      await page.waitForTimeout(APP_WRAPPER_LOAD_TIMEOUT_MS + 2_000)
+
+      expect(
+        await page.locator('[data-app-state]').getAttribute('data-app-state'),
+        'expired is ABSORBING — no interaction the page offers can leave it',
+      ).toBe('expired')
+      expect(
+        await page.locator('[data-app-live-frame]').getAttribute('src'),
+        'no aged liveUrl is ever re-assigned to the frame',
+      ).toBeNull()
+
+      // D-10's other half, and the second gap the verification recorded: the expired state must go
+      // on CARRYING the way out for the whole life of the document, not only on the first render.
+      expect(await page.locator('[data-app-message]').textContent()).toBe(APP_WRAPPER_EXPIRED_MESSAGE)
+      expect(await page.locator('[data-app-hint]').textContent()).toBe(APP_WRAPPER_EXPIRED_HINT)
+      const link = page.locator('[data-app-permanent-link]')
+      expect(await link.getAttribute('href')).toBe(permanentLink)
+
+      // The affordance and the state cannot disagree.
+      expect(
+        await page.locator('[data-app-handle-picker]').getAttribute('disabled'),
+        'the picker is an affordance of the embedded variant — it goes when the variant goes',
+      ).not.toBeNull()
     } finally {
       await page.close()
     }
