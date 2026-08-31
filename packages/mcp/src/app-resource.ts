@@ -1,0 +1,408 @@
+// The MCP App resource surface — `ui://agent-qa/live-run/{runId}` (408 plan 01, D-01..D-07 · MCPA-01).
+//
+// WHY THIS FILE EXISTS. 403 made a run watchable at a `liveUrl`; a host that negotiated the official
+// MCP Apps extension (`io.modelcontextprotocol/ui`) renders server-delivered HTML in a sandboxed
+// iframe. This module is the join: one resource template whose read mints a `liveUrl` per member
+// handle and serves the wrapper page that iframes them. Everything it registers, resolves and
+// refuses follows `resources.ts` — the ratified template for a non-tool MCP surface in this package
+// — because a second registration idiom would be a second set of rules for the same three
+// questions (who may see it, what parses the address, what masks the answer).
+//
+// THE MINT CHANNEL IS THE WHOLE SECURITY ARGUMENT (D-01, T-408-01). `runs.liveurl` stays
+// UNPROJECTED as a callable tool: a projected mint tool would put a live credential into
+// model-readable tool-result text, which is the exact shape of T-395-R5-10, and masking it would
+// make the tool useless. Instead the mint happens HERE, by reference, inside the App-rendering
+// path, and the token lands only in the HTML the HOST renders. That is a structural property of
+// the channel, not an instruction anybody has to remember.
+//
+// AND THAT IS WHY THIS SURFACE DOES NOT MASK ITS SERVED PAYLOAD — the one deliberate divergence
+// from `resources.ts`, which masks its contents for a measured reason (a card composed from STORED
+// data through a handler nothing else masks). This document is composed from data MINTED one
+// millisecond earlier for this exact response, and the token is the payload: a masked token is a
+// broken embed, so masking here would not be safety, it would be the failure mode. The refusal
+// path masks exactly as `resources.ts`'s does, because a refusal echoes CALLER text and that is a
+// different channel with the opposite answer. The split is by channel, and it is pinned by cells
+// rather than by this paragraph.
+//
+// THE TEMPLATE IS UNLISTED, AND THAT IS A DECISION (Pitfall 2). `{ list: undefined }` means the
+// address never appears in a `resources/list`, so no model-driven enumeration can walk to a minted
+// token by discovery. A caller that already knows a run id can still read it — the disposition of
+// that channel is Plan 02's negotiation gate and Plan 04's scan corpus; what this plan owes is that
+// discovery is not a route.
+//
+// ONE CODEC, NO SECOND PARSER (T-396-08 / T-408-02). `parseAppUri` is the only thing in this
+// package that reads a `ui://` address, and it defers the run-id question to the MINT OP'S OWN
+// input contract rather than re-deriving path safety here. A local regex over the id would be a
+// second, weaker reading of a string that names a directory.
+//
+// Protocol grounding. SEP-1730 puts extensions OUTSIDE every conformance tier — a host owes an
+// extension nothing, which is exactly why the link-out rides every carrier result and why an App
+// that never renders costs a caller no capability. SEP-2575 (the stateless protocol) is why the
+// mint happens on the READ rather than once at registration: there is no session to hold a token
+// in, so freshness is the cheap path rather than a feature. SEP-2567 removed per-connection
+// variance from list endpoints, which is the other half of `{ list: undefined }` below — this
+// template's absence from listings is a property of the SERVER, identical for every caller granted
+// the same scopes, and not a capability-conditional listing smuggled in through a resolver.
+// SEP-2549's cache hints are declined for the same reason the mint is per-read: a cacheable App
+// document would be a cacheable credential.
+
+import { ResourceTemplate } from '@modelcontextprotocol/server'
+import type { ReadResourceResult, ResourceMetadata } from '@modelcontextprotocol/server'
+import {
+  invokeFunction,
+  FunctionNotBoundError,
+  LiveViewUnavailableError,
+  RUNS_EVENTS_FUNCTION_ID,
+  RUNS_LIVE_URL_FUNCTION_ID,
+  UnknownRunError,
+} from '@vostride/agent-qa-agent'
+import type { FunctionRegistry } from '@vostride/agent-qa-agent'
+import { handleRosterOf, RunsLiveUrlInputSchema } from '@vostride/agent-qa-schema'
+import type {
+  FunctionCaller,
+  RunEventEnvelope,
+  RunsLiveUrlResult,
+} from '@vostride/agent-qa-schema'
+
+import { renderAppWrapperPage } from './app-wrapper.js'
+import type { AppWrapperMint } from './app-wrapper.js'
+import { visibleToCaller } from './visibility.js'
+
+/**
+ * The official MCP Apps extension id (spec revision 2026-01-26).
+ *
+ * RESTATED LOCALLY RATHER THAN IMPORTED, and the reason is a measured peer conflict:
+ * `@modelcontextprotocol/ext-apps` declares `peerDependencies: { '@modelcontextprotocol/sdk':
+ * '^1.29.0' }` — the v1 monolith — while this package ships the 2.0.0 split SDK, so importing its
+ * `/server` entry would drag a second SDK generation into production (Pitfall 3). The string is
+ * therefore ours, and Plan 06's census pins it against ext-apps' shipped schema so a typo'd
+ * reverse-DNS id cannot fail silently as "never negotiated".
+ */
+export const MCP_APPS_EXTENSION_ID = 'io.modelcontextprotocol/ui'
+
+/** The media type an App resource is served as. Restated locally for the reason above. */
+export const APP_RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app'
+
+/** The published App address. ONE template, per run — the runId is the only variable. */
+export const APP_RESOURCE_URI_TEMPLATE = 'ui://agent-qa/live-run/{runId}'
+
+/** The registered resource name. Prefixed like the tools, so one namespace reads as one server. */
+export const APP_RESOURCE_NAME = 'agent_qa_live_run_app'
+
+const APP_RESOURCE_TITLE = 'agent-qa live run'
+
+// Authored prose about the SURFACE, not about any run — the same class of string as a tool's
+// curated title, so it is not masked. Nothing interpolated here comes from a caller or from storage.
+const APP_RESOURCE_DESCRIPTION =
+  'The live view for one run, as an MCP App: a sandboxed page embedding the run\'s live preview '
+  + 'for each member handle. Rendered fresh on every read.'
+
+/** The `ui://` scheme and the two fixed path segments, spelled once for the one codec below. */
+const APP_URI_PREFIX = 'ui://agent-qa/live-run/'
+
+/**
+ * The ONE parser of a `ui://` app address.
+ *
+ * TOTAL AND UNDECORATED: it answers the run id or `undefined`, and it never explains which clause
+ * refused — the caller-facing sentence is the read handler's, phrased once.
+ *
+ * THE RUN ID IS JUDGED BY THE MINT OP'S OWN INPUT CONTRACT, not by a pattern this file invented.
+ * `RunsLiveUrlInputSchema` carries `runIdSchema` — the codec that decides whether a string may name
+ * this run's own directory, so an address carrying `..`, a path separator or a control character is
+ * refused here by exactly the rule that refuses it everywhere else. Stated the other way round,
+ * which is the honest reading: an app address is well-formed precisely when the op this read mints
+ * through would accept the run it names, so the two can never disagree about one string.
+ */
+export function parseAppUri(href: string): { readonly runId: string } | undefined {
+  if (!href.startsWith(APP_URI_PREFIX)) return undefined
+  const tail = href.slice(APP_URI_PREFIX.length)
+  if (tail === '') return undefined
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(tail)
+  } catch {
+    return undefined
+  }
+  const parsed = RunsLiveUrlInputSchema.safeParse({ runId: decoded })
+  if (!parsed.success) return undefined
+  return { runId: parsed.data.runId }
+}
+
+/** An address the one codec does not recognise. */
+export class AppResourceUriError extends Error {
+  constructor(detail: string) {
+    super(`${detail} is not a canonical ui://agent-qa/live-run address`)
+    this.name = 'AppResourceUriError'
+  }
+}
+
+/**
+ * A refusal from the App read that is NOT a run-liveness fact.
+ *
+ * Deliberately narrow: absence of a live session is rendered, never thrown (D-07), so anything that
+ * reaches this class is a genuine failure of the read — a missing scope, an unknown op, a broken
+ * composition — and it carries its message masked for the same reason `resources.ts`'s does.
+ */
+export class AppResourceReadError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AppResourceReadError'
+  }
+}
+
+/** The host-bound `(registry, caller)` closure over `invokeFunction`. */
+export type AppResourceInvoke = (opId: string, input: unknown) => Promise<unknown>
+
+export interface AppResourceReadDeps {
+  readonly invoke: AppResourceInvoke
+  /** How CALLER text leaving this handler is masked. Required — see the header's channel split. */
+  readonly maskText: (text: string) => string
+}
+
+/**
+ * True when a refusal is a statement about this host's LIVENESS rather than about the read.
+ *
+ * The three shapes a not-live composition can answer with, named by class rather than by message:
+ * a host with no live-view port at all (`FunctionNotBoundError` from the binding check, or
+ * `LiveViewUnavailableError` from the op when the port is bound but serves no origin), and a run
+ * this host holds no session for (`UnknownRunError`). Each becomes the wrapper's honest not-live
+ * document — never an error surface, and never a blank frame (D-07).
+ */
+function isNotLiveRefusal(error: unknown): boolean {
+  return (
+    error instanceof UnknownRunError
+    || error instanceof LiveViewUnavailableError
+    || error instanceof FunctionNotBoundError
+  )
+}
+
+/**
+ * The handle roster this run ANNOUNCED, read off its own first envelope.
+ *
+ * `runStarted` is seq 1 and carries the roster as an additive payload field (402-04 D-10), so one
+ * envelope answers the whole question and the iterator is disposed immediately — a resource read
+ * that drained a run's entire event log to learn two integers would be a second, far more expensive
+ * answer to a question the first element already answers.
+ *
+ * Answers `undefined` rather than a default, so the CALLER decides what an unannounced roster
+ * means; the read handler reads it as handle 0, the single-member case every non-suite run is.
+ */
+async function announcedRoster(
+  invoke: AppResourceInvoke,
+  runId: string,
+): Promise<readonly number[] | undefined> {
+  const stream = await invoke(RUNS_EVENTS_FUNCTION_ID, { runId })
+  const iterable = stream as AsyncIterable<RunEventEnvelope> | undefined
+  if (iterable === undefined || typeof iterable[Symbol.asyncIterator] !== 'function') {
+    return undefined
+  }
+  const iterator = iterable[Symbol.asyncIterator]()
+  try {
+    const first = await iterator.next()
+    if (first.done === true) return undefined
+    return handleRosterOf(first.value)
+  } finally {
+    await iterator.return?.(undefined)
+  }
+}
+
+/**
+ * Build the App read.
+ *
+ * Exported so a cell can drive it without a server, and so the parse/mint/render behaviour is
+ * observable independently of registration — the two halves fail in different directions.
+ */
+export function createAppResourceReadHandler(
+  deps: AppResourceReadDeps,
+): (uri: URL) => Promise<ReadResourceResult> {
+  return async (uri: URL): Promise<ReadResourceResult> => {
+    const parsed = parseAppUri(uri.href)
+    if (parsed === undefined) {
+      // The echoed address is caller-supplied text, so it is masked exactly as `resources.ts`
+      // masks its own — this is the refusal channel, and the channel split is the point.
+      throw new AppResourceUriError(deps.maskText(uri.href))
+    }
+    const { runId } = parsed
+
+    let roster: readonly number[] | undefined
+    let notLive = false
+    try {
+      roster = await announcedRoster(deps.invoke, runId)
+    } catch (err) {
+      if (!isNotLiveRefusal(err)) {
+        throw new AppResourceReadError(
+          deps.maskText(err instanceof Error ? err.message : String(err)),
+        )
+      }
+      notLive = true
+    }
+
+    const mints: AppWrapperMint[] = []
+    if (!notLive) {
+      for (const handle of roster ?? [0]) {
+        // THE ONE INVOCATION WALL, once per handle (D-06). Fresh on EVERY read, which is D-10's
+        // fresh-on-render for free: nothing is cached here, so there is no stale token to serve.
+        let minted: RunsLiveUrlResult
+        try {
+          minted = (await deps.invoke(RUNS_LIVE_URL_FUNCTION_ID, {
+            runId,
+            handle,
+          })) as RunsLiveUrlResult
+        } catch (err) {
+          if (!isNotLiveRefusal(err)) {
+            throw new AppResourceReadError(
+              deps.maskText(err instanceof Error ? err.message : String(err)),
+            )
+          }
+          // One member of a suite can finish while the run continues, so a per-handle refusal
+          // drops that PANE rather than the whole document. Zero surviving mints is the run-level
+          // not-live case, decided below by counting rather than by a second flag.
+          continue
+        }
+        mints.push({
+          handle: minted.handle,
+          liveUrl: minted.liveUrl,
+          expiresAt: minted.expiresAt,
+          streamKind: minted.stream.kind,
+        })
+      }
+    }
+
+    const html = renderAppWrapperPage({
+      runId,
+      mints,
+      // D-08's link-out is composed by the carrier path in plan 03; until it is bound, the slot is
+      // ABSENT rather than a fabricated URL — a link to nothing is the dishonesty this milestone
+      // removes, and the wrapper renders no anchor at all for an absent link.
+      permanentLink: undefined,
+      runLive: mints.length > 0,
+    })
+
+    // NOT MASKED, and the inversion of `resources.ts`'s rule is the decision. That module masks
+    // because its payload is STORED data reaching a caller through a handler nothing else masks;
+    // this payload is a credential minted for this response, whose whole purpose is to be handed to
+    // the host's iframe intact. A masked token is a broken embed, so masking here would be the
+    // defect rather than the guard. The channel that DOES echo caller text — the refusals above —
+    // is masked, and Plan 04's scan cell is the standing gate on every model-readable channel.
+    const frameDomain = mints[0] === undefined ? undefined : originOf(mints[0].liveUrl)
+
+    return {
+      contents: [
+        {
+          // Re-formatted through the codec's own vocabulary rather than echoed, so the address a
+          // caller reads back is the canonical one.
+          uri: `${APP_URI_PREFIX}${runId}`,
+          mimeType: APP_RESOURCE_MIME_TYPE,
+          text: html,
+          // The host's default is `frame-src 'none'`, so an App that names no frame domain renders
+          // a BLOCKED inner frame — the blank pane criterion 2 forbids (Pitfall 1). The allowed
+          // origin is the minted link's OWN origin rather than a separately configured one, so the
+          // allow can never be broader than the document needs (T-408-05); with no mints there is
+          // no inner frame, and the block is omitted rather than emitted empty.
+          ...(frameDomain === undefined
+            ? {}
+            : { _meta: { ui: { csp: { frameDomains: [frameDomain] } } } }),
+        },
+      ],
+    }
+  }
+}
+
+/** The origin of a minted `liveUrl`, or `undefined` if it is not a URL this host can name. */
+function originOf(liveUrl: string): string | undefined {
+  try {
+    return new URL(liveUrl).origin
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The slice of `McpServer` this module uses.
+ *
+ * The same narrow structural type `resources.ts` declares, spelled with the SDK's own
+ * `ResourceTemplate` / `ResourceMetadata` / `ReadResourceResult` — so a cell can observe the
+ * registration without assembling a protocol server while a real `McpServer` still satisfies it.
+ * Read that module's note before narrowing any member here: a hand-narrowed config or a
+ * `readonly` result array makes `McpServer` unassignable and the compiler names the wrong cause.
+ */
+export interface AppResourceRegistrar {
+  registerResource(
+    name: string,
+    template: ResourceTemplate,
+    config: ResourceMetadata,
+    read: (uri: URL) => Promise<ReadResourceResult>,
+  ): unknown
+}
+
+/** Exactly what this module needs from the host — the same record `catalog.ts` already holds. */
+export interface AppResourceDeps {
+  readonly registry: FunctionRegistry
+  readonly caller: FunctionCaller
+  readonly maskText: (text: string) => string
+}
+
+/**
+ * Register the App template when this composition can honestly serve it, and answer what it
+ * registered.
+ *
+ * Returns the registered template URIs rather than nothing, for `resources.ts`'s reason: "registered
+ * none" and "registered one" are the two halves of the claim, and a caller that had to inspect a
+ * server to tell them apart could only ever test one of them.
+ *
+ * THREE CONDITIONS, ALL READ OFF THE REGISTRY'S OWN DECLARATIONS (D-02/D-03):
+ *
+ *  1. Both ops this surface reads through — the mint and the roster read — are declared here. A
+ *     composition that registered neither has no App to offer.
+ *  2. This caller may see them. `visibleToCaller` over the scopes the REGISTRY declares, never a
+ *     constant restated in this file; watching a run is a `read` (D-02), so the App survives safe
+ *     mode exactly as the entity templates do.
+ *  3. The mint is BOUND in this composition. This is D-03's floor made structural: the standalone
+ *     `agent-qa mcp` process composes no `liveView` port, so its `runs.liveurl` is declared-and-
+ *     unbound and every mint there would refuse by name. Registering an App on that host would
+ *     advertise an address whose every read is honestly empty — so it registers nothing at all,
+ *     and the link-out is that host's whole answer. On a co-hosted composition the same three
+ *     lines register it, by composition rather than by configuration.
+ *
+ * A composition that fails any of them gets NO template and NO error — the same answer `catalog.ts`
+ * gives a tool whose op is missing, because refusing to build would take an entire MCP connection
+ * down over one unavailable capability.
+ */
+export function registerAppResources(
+  server: AppResourceRegistrar,
+  deps: AppResourceDeps,
+): readonly string[] {
+  const declared = deps.registry.list(deps.caller)
+  const mint = declared.find((candidate) => candidate.id === RUNS_LIVE_URL_FUNCTION_ID)
+  const roster = declared.find((candidate) => candidate.id === RUNS_EVENTS_FUNCTION_ID)
+  if (mint === undefined || roster === undefined) return []
+  if (!visibleToCaller(mint.requiredScopes, deps.caller.grantedScopes)) return []
+  if (!visibleToCaller(roster.requiredScopes, deps.caller.grantedScopes)) return []
+  if (mint.bindingStatus !== 'bound') return []
+
+  const read = createAppResourceReadHandler({
+    // The wall, bound once: every mint crosses `invokeFunction` with this host's registry and this
+    // caller, so the scope check, the origin check and the policy gate under it all run exactly as
+    // they do for a tool call. There is no store, no cache and no second data path.
+    invoke: (opId, input) => invokeFunction(deps.registry, opId, input, deps.caller),
+    maskText: deps.maskText,
+  })
+
+  server.registerResource(
+    APP_RESOURCE_NAME,
+    // `list: undefined` is REQUIRED to be spelled out by the SDK, and here the explicit absence is
+    // load-bearing rather than merely honest: an unlisted template cannot be reached by
+    // enumeration, so no model walking `resources/list` can discover an address whose read mints a
+    // credential (Pitfall 2). Enumerating every watchable run is a listing this surface does not
+    // offer, and this is the line that says so.
+    new ResourceTemplate(APP_RESOURCE_URI_TEMPLATE, { list: undefined }),
+    {
+      title: APP_RESOURCE_TITLE,
+      description: APP_RESOURCE_DESCRIPTION,
+      mimeType: APP_RESOURCE_MIME_TYPE,
+    },
+    read,
+  )
+
+  return [APP_RESOURCE_URI_TEMPLATE]
+}

@@ -45,6 +45,7 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
+import { MCP_APPS_EXTENSION_ID, registerAppResources } from './app-resource.js'
 import { createApplyToolHandler, summarizeProposalForApply } from './apply-refusal.js'
 import type { ApplyToolCallContext, ApplyToolInput } from './apply-refusal.js'
 import {
@@ -464,7 +465,19 @@ function installV1NameRedirect(server: McpServer, deps: V1RedirectDeps): void {
 export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
   const server = new McpServer(
     { name: 'agent-qa', version: AGENT_QA_MCP_SERVER_VERSION },
-    { capabilities: { tools: {}, resources: {} } },
+    {
+      capabilities: {
+        tools: {},
+        resources: {},
+        // 408 D-04: the official MCP Apps extension, ADVERTISED rather than assumed. Extensions are
+        // bilateral opt-in — a client declares support in the `io.modelcontextprotocol/
+        // clientCapabilities` envelope it sends on every request, and reads the server's set back
+        // from discovery — so a server that renders App HTML without naming the extension here is
+        // one no host will ever ask for it. The value is an empty record because this extension
+        // carries no server-side options; what it says is that this endpoint speaks it at all.
+        extensions: { [MCP_APPS_EXTENSION_ID]: {} },
+      },
+    },
   )
 
   const invoke: BoundInvoke = (opId, input) =>
@@ -551,6 +564,18 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
   // the SAME wall. Registered here rather than by the host so a `resource_link` in any tool result
   // above is dereferenceable on the instance that produced it.
   registerEntityResources(server, {
+    registry: deps.registry,
+    caller: deps.caller,
+    maskText: deps.maskText,
+  })
+
+  // 408 D-01/D-02/D-04: the App template for a live run, registered HERE for the reason the entity
+  // templates are — a `_meta.ui.resourceUri` on any carrier tool above is only a decoration unless
+  // it is dereferenceable on the very instance that advertised it. It crosses the SAME wall, is
+  // gated by the SAME visibility law over the registry's own declarations, and registers NOTHING on
+  // a composition that cannot honestly mint (D-03's floor), so a host without a live view is told
+  // by structural absence rather than by a read that always fails.
+  registerAppResources(server, {
     registry: deps.registry,
     caller: deps.caller,
     maskText: deps.maskText,

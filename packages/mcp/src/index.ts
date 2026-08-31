@@ -75,6 +75,44 @@ export type { V1MigrationArm, V1ToolMigrationEntry } from './migration-map.js'
 
 export { maskedToolResult } from './masked-result.js'
 
+// 2026-08-31 (Phase 408 plan 01, D-01/D-04 · MCPA-01): the MCP App surface, published on the same
+// driven-directly reasoning as everything above it — the registration gate, the read handler and
+// the wrapper renderer each fail in a different direction, and a cell that could only observe them
+// through a running protocol server could measure at most one of the three. Publishing them hands a
+// consumer no capability it did not already have: `registerAppResources` needs a registry and a
+// caller it must already hold, the read handler is a closure over a wall it cannot widen, and
+// `renderAppWrapperPage` is a pure function of values its caller composed. The constants are on the
+// barrel because Plan 06's census pins them against the ext-apps package from outside this one.
+export {
+  APP_RESOURCE_MIME_TYPE,
+  APP_RESOURCE_NAME,
+  APP_RESOURCE_URI_TEMPLATE,
+  AppResourceReadError,
+  AppResourceUriError,
+  MCP_APPS_EXTENSION_ID,
+  createAppResourceReadHandler,
+  parseAppUri,
+  registerAppResources,
+} from './app-resource.js'
+export type {
+  AppResourceDeps,
+  AppResourceInvoke,
+  AppResourceReadDeps,
+  AppResourceRegistrar,
+} from './app-resource.js'
+
+export {
+  APP_WRAPPER_CONNECTING_MESSAGE,
+  APP_WRAPPER_EXPIRED_MESSAGE,
+  APP_WRAPPER_LIVE_MESSAGE,
+  APP_WRAPPER_PERMANENT_LINK_LABEL,
+  APP_WRAPPER_RUN_ENDED_MESSAGE,
+  APP_WRAPPER_STATES,
+  APP_WRAPPER_UNREACHABLE_ORIGIN_MESSAGE,
+  renderAppWrapperPage,
+} from './app-wrapper.js'
+export type { AppWrapperInput, AppWrapperMint, AppWrapperState } from './app-wrapper.js'
+
 export { McpProjectionError, toRegisterToolConfig } from './projection.js'
 export type { ProjectedOpSpec, RegisterToolConfig } from './projection.js'
 
