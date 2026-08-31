@@ -43,12 +43,15 @@
 //   D5  the carrier link composed from something other than the base -> covered by the mcp
 //       package's own `live-link.test.ts` C4 leg (measured there); here the base under test is
 //       the BOUND ORIGIN, which no other value in this fixture is equal to
+//   D6  the App wrapper's permanent-link slot left as plan 01 shipped it -> MEASURED: restoring
+//       `permanentLink: undefined` reds `renders D-08's permanent-link slot` (1 of 15) — AFTER a
+//       rebuild. The first attempt passed against a stale `dist`, which is why cell 0 exists.
 
 import { createServer } from 'node:http'
 import type { Server as NodeHttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { connect as netConnect } from 'node:net'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -311,6 +314,34 @@ async function rawRequest(headers: Record<string, string>): Promise<{
   })
 }
 
+// ---- 0. Artifact freshness, FIRST (408-05 D-O's reasoning, applied here) -----------------------
+//
+// THIS FILE READS THE BUILT `@vostride/agent-qa-mcp`, not its source — a cross-package import in
+// this workspace resolves to `dist`. So a stale artifact makes every App cell below assert the
+// PREVIOUS build, and it does so silently and greenly. That is not hypothetical here: the
+// permanent-link cell's own mutation leg passed against a stale `dist` on the first attempt and
+// only red after a rebuild, which is the same failure 408-01 lost an afternoon to and 408-05 built
+// its scoped freshness gate for. Scoped to the THREE source files that compose what this file
+// measures, deliberately: an unrelated edit elsewhere in the package must not red a claim about the
+// App and the carrier decoration.
+
+const MCP_PACKAGE_DIR = resolvePath(dirname(fileURLToPath(import.meta.url)), '../../../mcp')
+const MCP_ARTIFACT = resolvePath(MCP_PACKAGE_DIR, 'dist/index.js')
+const MCP_REBUILD_INSTRUCTION = 'run `pnpm --filter @vostride/agent-qa-mcp run build`'
+
+describe('this file measures a FRESH artifact (408-05 D-O)', () => {
+  it('reads a build no older than the sources it measures', () => {
+    const artifact = statSync(MCP_ARTIFACT).mtimeMs
+    for (const source of ['src/app-resource.ts', 'src/catalog.ts', 'src/live-link.ts']) {
+      const path = resolvePath(MCP_PACKAGE_DIR, source)
+      expect(
+        statSync(path).mtimeMs <= artifact,
+        `${source} is newer than the built mcp package — ${MCP_REBUILD_INSTRUCTION}`,
+      ).toBe(true)
+    }
+  })
+})
+
 // ---- 1. The guard order, reused verbatim (Pitfall 7 · T-408-10, T-408-11) ----------------------
 
 describe('the mounted endpoint keeps the standalone face\'s guard order (Pitfall 7)', () => {
@@ -381,6 +412,25 @@ describe('a served App token validates against THIS composition\'s validator (D-
         now: Date.now(),
       })
       expect(verdict.kind).toBe('ok')
+    } finally {
+      await client.close().catch(() => {})
+    }
+  })
+
+  it('renders D-08\'s permanent-link slot, pointing at the tokenless page (closes 408-01\'s stub)', async () => {
+    const client = await connectAs(TOKEN_VALUE)
+    try {
+      const result = await client.readResource({ uri: APP_URI })
+      const html = (result.contents as readonly { text?: string }[])[0]?.text ?? ''
+
+      // Plan 01 shipped this slot ABSENT, because composing the link needs a base and a base is
+      // composition territory that plan did not touch. It is composed here, so the anchor exists
+      // AND the script is handed the address it points the anchor at — which is what D-11's
+      // `expired` and `unreachable-origin` states hand a person instead of a dead frame.
+      expect(html).toContain('data-app-permanent-link')
+      expect(html).toContain(liveRunLinkOf(harness.boundOrigin, RUN_ID))
+      // The SAME page the carrier line names — one address for one run, never two.
+      expect(html).toContain(`/runs/${RUN_ID}/live`)
     } finally {
       await client.close().catch(() => {})
     }
