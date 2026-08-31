@@ -417,7 +417,6 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
   }
 
   var attachId = 0;
-  var expiryTimer = null;
 
   function attach(mint) {
     // THE EXPIRED STATE IS TERMINAL, AND THIS IS THE ONE PLACE IT COULD BE LEFT (D-10). The
@@ -466,9 +465,12 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
   // D-10: the deadline was computed at RENDER time and arrives as a delta, so the host's own clock
   // never enters the comparison. When it fires the document says so and stops — nothing here mints.
   if (expiresInMs > 0) {
-    expiryTimer = setTimeout(function () {
+    setTimeout(function () {
       attachId += 1;
-      if (frame !== null) frame.removeAttribute('src');
+      // Unconditional: the script returned above when mints was empty, and a non-empty mints is
+      // exactly the condition under which the renderer emits the iframe, so there is no reachable
+      // state in which this callback runs without a frame to strip.
+      frame.removeAttribute('src');
       // The picker is an affordance of the EMBEDDED variant; when the variant is gone the
       // affordance goes with it, so the control a person can reach and the state the document is in
       // cannot disagree.

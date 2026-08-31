@@ -150,7 +150,10 @@ describe('the wrapper in a real browser (D-11)', () => {
       const link = page.locator('[data-app-permanent-link]')
       expect(await link.getAttribute('href')).toBe(permanentLink)
       expect(await link.textContent()).toBe(APP_WRAPPER_PERMANENT_LINK_LABEL)
-      await expect(link).toBeTruthy()
+      // A COUNT, not the locator. `expect(locator).toBeTruthy()` passed for any object a Playwright
+      // API can return — including a locator matching nothing — so it could not go red no matter
+      // what the document held (WR-08). One anchor is the claim: present, and exactly once.
+      expect(await link.count(), 'the permanent link slot is in the document').toBe(1)
     } finally {
       await page.close()
     }
@@ -203,8 +206,15 @@ describe('the wrapper in a real browser (D-11)', () => {
       await page.locator('[data-app-state="live"]').waitFor({ state: 'attached', timeout: 30_000 })
 
       // The embed page's own display rule, mirrored: in `live` the frame is what a person sees and
-      // the banner gets out of the way.
-      await expect(page.locator('[data-app-message]')).toBeTruthy()
+      // the banner gets out of the way. THE PAIRING IS THE CLAIM — the paragraph is PRESENT and not
+      // VISIBLE, which is what the display rule means — so the presence half has to be a count.
+      // The `toBeTruthy()` this replaces was true of a locator matching zero nodes, which made
+      // "hidden" and "absent" the same verdict and left D-11's blank-rectangle prohibition unmeasured
+      // on this arm (WR-08).
+      expect(
+        await page.locator('[data-app-message]').count(),
+        'the message paragraph exists and is HIDDEN in live, not absent',
+      ).toBe(1)
       expect(await page.locator('[data-app-message]').isVisible()).toBe(false)
       expect(await page.locator('[data-app-live-frame]').isVisible()).toBe(true)
       // A single mint needs no picker, so it is not shown — one pane and no chrome.
