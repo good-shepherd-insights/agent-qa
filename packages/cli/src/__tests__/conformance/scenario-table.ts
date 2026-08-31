@@ -193,6 +193,20 @@ export type UnprojectedReasonKey =
   // its `-deferral` spelling because renaming a key rewrites every row and the golden partition
   // that cite it, to record a fact the prose below and `mapping.ts`'s own reason already carry —
   // and the prose is the record here, by this file's own restatement-drifts law.
+  //
+  // DISPOSITION, 2026-09-01 (408-08, the gap round · D-14's bookkeeping again, recorded rather
+  // than silent). The class is RETAINED, unchanged, and one parenthetical above is corrected. The
+  // 2026-08-31 line reads "the token reaches a person only in host-rendered HTML"; whether the
+  // document this server serves is host-rendered HTML or text a model consumes is a property of
+  // the CALLER, not of this server, so that half described the wrong party. What holds is that
+  // the server writes the token into exactly one place — the frame src of the document the
+  // `ui://` read serves — and that door is bounded by the operator-granted `read` scope plus a
+  // bound mint, never by the caller's own capability declaration (road `demote`; the ruling is in
+  // `app-resource.ts`'s header, and `mapping.ts`'s reason carries the same dated addendum). The
+  // class's DEFINING fact is untouched by all of this — the op still hands out a credential, and
+  // that is still why it has no MCP door — so neither the partition nor the signature phrase
+  // moves. Recorded here because a disposition that changes is dated on the record, never edited
+  // away.
   | 'credential-mint-deferral'
   | 'not-mid-flight-write'
   | 'not-mid-flight-read'

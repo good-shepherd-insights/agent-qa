@@ -256,13 +256,39 @@ function carrierRunIdOf(
  * page it names is tokenless by D-08. Masking it anyway costs nothing and means nobody has to
  * remember that this one printed string is exempt — which is how the 396-03 gap happened.
  *
- * `_meta.ui.resourceUri` ATTACHES UNCONDITIONALLY — it is not gated on negotiation, and that is the
- * adjudicated answer rather than an oversight (D-09 + RESEARCH A2). `_meta` is INERT: a host that
- * never negotiated `io.modelcontextprotocol/ui` has no code that reads it, so what it receives is a
- * key it ignores. The ACTING channel is the `ui://` read, and THAT is gated — by
- * `negotiatedAppsExtension`, above every line that could mint (plan 02, clause 3 of the ruling in
- * `app-resource.ts`). Gating the advertisement as well would buy nothing and cost the thing D-09
- * asks for: a host must be able to SEE that an App exists in order to ask for it.
+ * `_meta.ui.resourceUri` ATTACHES UNCONDITIONALLY — it is not gated on negotiation. This is a
+ * RECORDED DEVIATION FROM D-09's LETTER, which says the App reference attaches ONLY when the host
+ * negotiated the Apps extension and explicitly rejected unconditional attachment. It is not an
+ * oversight, and as of 2026-09-01 it is not the planner's or the executor's judgment either — see
+ * the ruling line below. Two grounds were originally recorded; only the first survives:
+ *
+ *   1. `_meta` IS INERT (RESEARCH A2). A host that never negotiated `io.modelcontextprotocol/ui`
+ *      has no code that reads it, so what it receives is a key it ignores. Gating the
+ *      ADVERTISEMENT would buy nothing and cost the thing D-09 actually asks for — a host must be
+ *      able to SEE that an App exists in order to ask for it — and it would also contradict the
+ *      already-shipped tools/list `_meta.ui` TEMPLATE, which is advertised unconditionally too.
+ *   2. SUPERSEDED 2026-09-01. The second ground read "the ACTING channel is the `ui://` read, and
+ *      THAT is gated — by `negotiatedAppsExtension`". The 408 gap round re-adjudicated that gate:
+ *      it reads a value the caller composes in its own per-request `_meta` and the SDK forwards
+ *      unauthenticated, so it is a host-capability signal and not an authorization control
+ *      (`app-resource.ts`'s header, THE 2026-09-01 GAP-ROUND RULING, road `demote`). The clause is
+ *      struck as a ground. What DOES bound the acting channel, and what this ground is replaced
+ *      by: the `ui://` read is reachable only by a caller an operator granted the `read` scope —
+ *      checked by `visibleToCaller` over the registry's OWN declared scopes in
+ *      `registerAppResources` — and only in a composition where the mint is BOUND
+ *      (`bindingStatus === 'bound'`, D-03's floor). Both are facts this server verifies.
+ *
+ * THE RULING, dated 2026-09-01 (408-08 task 1, question 2 — the USER'S answer at that plan's
+ * checkpoint, `d09-retain`, quoted verbatim in `408-08-SUMMARY.md`). The deviation from D-09's
+ * letter is RETAINED by that ruling, not by a better rationale: D-09 is a ratified user decision,
+ * so its letter's fate was the user's to decide and was decided there. Three things this line
+ * exists to keep visible. (i) The ORIGINAL justification rested in part on a gate the 2026-08-31
+ * verification measured and the 2026-09-01 gap round re-adjudicated — that ground is falsified and
+ * struck, above, rather than quietly reworded. (ii) The retention is the user's dated ruling.
+ * (iii) RESEARCH A2 — that a host ignores unknown `_meta` keys gracefully — remains `[ASSUMED]`
+ * and OPEN: no individual host has been measured choking on one, and UAT item 3 (the real-host
+ * App-less leg) is the measurement that would settle it. The code is unchanged by this ruling:
+ * `_meta.ui.resourceUri` still attaches whenever a run id is resolvable.
  *
  * A REFUSAL IS NOT DECORATED. `maskedToolError` results, and the withheld-result arm of
  * `maskedToolResult`, are left exactly as they are: a refusal is not a carrier of a watch

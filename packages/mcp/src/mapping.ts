@@ -682,7 +682,20 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + 'never in tool-result text a model reads. Projecting a mint tool stays REJECTED: a live '
       + 'credential in model context is the T-395-R5-10 shape, and masking it would leave a tool '
       + 'that hands back nothing a host could use. The op therefore STAYS unprojected BY RULING '
-      + 'rather than by deferral — answered on the record, never silently reclassified.',
+      + 'rather than by deferral — answered on the record, never silently reclassified. '
+      + 'RE-GROUNDED (dated 2026-09-01, 408 gap round, road `demote`; the full ruling is in '
+      + "`app-resource.ts`'s header). The answer above STANDS and one half of its stated property "
+      + 'is corrected rather than deleted. Whether the document this server serves is '
+      + 'host-rendered HTML or text a model consumes is a property of the CALLER, not of this '
+      + 'server, so the "never in tool-result text a model reads" half over-claimed. What this '
+      + 'server guarantees is narrower and it is verifiable: it writes the token into exactly one '
+      + 'place, the frame src of the document the `ui://` read serves, and that door is reachable '
+      + 'by any caller an operator granted the `read` scope (`visibleToCaller` over the '
+      + "registry's own declared scopes, plus a bound mint). The op STAYS unprojected on exactly "
+      + 'the same footing, and the reason is unchanged and STRONGER rather than weaker: a '
+      + 'projected mint tool would put the credential on a channel a model consumes BY DEFAULT, '
+      + 'on every call, for every caller, whereas the `ui://` read is an unlisted address a '
+      + 'caller must already know and deliberately ask for.',
     adjudication: '408',
   }),
   Object.freeze({
