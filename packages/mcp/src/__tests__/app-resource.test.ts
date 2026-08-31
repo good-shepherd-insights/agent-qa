@@ -76,8 +76,19 @@ const signer: LiveUrlSigner = {
  * millisecond are byte-identical by construction — a real host separated by network time would
  * differ, and a cell that depended on that would be flaky rather than wrong. Advancing one
  * millisecond per read makes "a second read mints again" observable without inventing a fact.
+ *
+ * WR-07, THIS FILE'S HALF (408-13; the shape 408-12 established). ANCHORED TO THE REAL CLOCK rather
+ * than pinned to the literal `1_800_000_000_000`, which IS 2027-01-15T08:00:00Z: the read handler
+ * renders without an explicit `now`, so `renderAppWrapperPage` falls back to `Date.now()`, and a
+ * fixture clock pinned to a fixed epoch silently becomes an EXPIRED render once real time passes it
+ * — every scan below would then be a scan over a document carrying nothing, which is vacuity rather
+ * than proof. The parameter stays, so a cell that genuinely wants a fixed instant can still ask for
+ * one. THE GATE ON THIS RELATIONSHIP IS `(A10)` IN `token-absence.test.ts` (408-12): it renders
+ * under a stubbed system clock past 2027-01-15 and asserts a minted liveUrl is really in the served
+ * document. If you change a clock here, that is where the alarm lives — a fourth copy of it in this
+ * file would be a redundant cell, not a second guarantee.
  */
-function advancingClock(start = 1_800_000_000_000): { now: () => number; at: () => number } {
+function advancingClock(start = Date.now()): { now: () => number; at: () => number } {
   let current = start
   return { now: () => (current += 1), at: () => current }
 }
@@ -269,8 +280,13 @@ function htmlOf(result: { contents: readonly { text?: string }[] }): string {
  * renderer was handed would assert nothing about the output.
  */
 function liveUrlsIn(html: string): readonly string[] {
+  // IN-03 (408-13): EVERY dot escaped, not the first. `String.prototype.replace` with a string
+  // pattern replaces one occurrence, so `127.0.0.1` left three dots standing as `.` wildcards —
+  // harmless today, and exactly the kind of harmless that stops being harmless quietly. This is now
+  // the same escape the sibling scanner in `app-negotiation.test.ts` uses; two scanners in one
+  // package differing for no reason IS the drift.
   const pattern = new RegExp(
-    `${FIXTURE_ORIGIN.replace('.', '\\.')}/live/${FIXTURE_RUN_ID}#([A-Za-z0-9._-]+)`,
+    `${FIXTURE_ORIGIN.replace(/\./g, '\\.')}/live/${FIXTURE_RUN_ID}#([A-Za-z0-9._-]+)`,
     'g',
   )
   return [...html.matchAll(pattern)].map((match) => match[0])
@@ -307,7 +323,9 @@ function mintingInvoke(origins: readonly string[]): AppResourceInvoke {
       return {
         handle,
         liveUrl: `${origins[handle]!}/live/${FIXTURE_RUN_ID}#token-for-handle-${handle}`,
-        expiresAt: 1_800_000_300_000,
+        // WR-07 applies to a hand-composed mint too: the renderer decides `expired` against its own
+        // `Date.now()`, so a literal here would strip these panes once the calendar passed it.
+        expiresAt: Date.now() + 300_000,
         stream: { kind: 'cdp-screencast' },
       }
     }
@@ -591,6 +609,24 @@ describe('absence is named, never an error surface (D-07/D-11)', () => {
     }
     expect(message).toContain('<masked>')
     expect(message).not.toContain('secrets')
+  })
+})
+
+// ---- The scanner this file's claims are read through --------------------------------------------
+
+describe('liveUrlsIn escapes its fixture origin — EVERY dot, not the first (IN-03)', () => {
+  it('matches on the fixture origin and NOT on a near-miss where a dot stood as a wildcard', () => {
+    const token = 'aaa.bbb-ccc'
+    const positive = `<iframe src="${FIXTURE_ORIGIN}/live/${FIXTURE_RUN_ID}#${token}"></iframe>`
+    // Differs from the fixture origin in exactly ONE character, and it is a character the
+    // single-occurrence escape left standing as a `.` wildcard: the second dot of `127.0.0.1`.
+    // Every claim in this file is read through this scanner, so a scanner that matches an origin
+    // this host never served would let a document naming the wrong origin pass as proof.
+    const negative = `<iframe src="http://127.0x0.1:7777/live/${FIXTURE_RUN_ID}#${token}"></iframe>`
+
+    expect(liveUrlsIn(positive)).toEqual([`${FIXTURE_ORIGIN}/live/${FIXTURE_RUN_ID}#${token}`])
+    expect(liveUrlsIn(negative), 'a near-miss origin matched — a dot is still a wildcard here')
+      .toEqual([])
   })
 })
 

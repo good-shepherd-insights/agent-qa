@@ -306,7 +306,17 @@ function handoff(): CompletedRunHandoff {
  * that the App really is obtainable here.
  */
 function liveRegistry(): FunctionRegistry {
-  let clock = 1_800_000_000_000
+  // WR-07, THIS FILE'S HALF (408-13; the shape 408-12 established). ANCHORED TO THE REAL CLOCK
+  // rather than pinned to the literal `1_800_000_000_000`, which IS 2027-01-15T08:00:00Z: the
+  // `ui://` read renders without an explicit `now`, so `renderAppWrapperPage` falls back to
+  // `Date.now()`, and a fixture clock pinned to a fixed epoch silently becomes an EXPIRED render
+  // once real time passes it. `(C3)`'s positive control would then assert `FIXTURE_ORIGIN` is in a
+  // document that carries nothing at all — and every App-less cell above it would stop being a
+  // statement about NEGOTIATION and become a statement about an empty render, which is the vacuity
+  // this control exists to prevent. THE GATE ON THIS RELATIONSHIP IS `(A10)` IN
+  // `token-absence.test.ts` (408-12), which renders under a stubbed system clock past 2027-01-15;
+  // if you change this clock, that is where the alarm lives.
+  let clock = Date.now()
   const liveView: LiveViewPort = {
     signer: fixtureSigner(),
     origin: () => FIXTURE_ORIGIN,
