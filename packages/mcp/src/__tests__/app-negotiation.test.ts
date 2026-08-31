@@ -61,7 +61,7 @@ import type {
   LiveUrlSigner,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   APP_NEGOTIATION_CLIENT_CAPABILITIES_KEY,
@@ -129,7 +129,13 @@ function fixtureRegistry(handles: readonly number[] = [0, 1]): {
   readonly minted: string[]
 } {
   const { signer, minted } = recordingSigner()
-  let clock = 1_800_000_000_000
+  // WR-07, THIS FILE'S HALF (408-12). ANCHORED TO THE REAL CLOCK rather than pinned to a literal
+  // epoch: the read handler renders without an explicit `now`, so `renderAppWrapperPage` falls back
+  // to `Date.now()` — and a fixture clock pinned to a fixed epoch silently becomes an EXPIRED render
+  // once real time passes it, taking every liveUrl out of the served document and leaving the cells
+  // below asserting over an empty page. The mint's `expiresAt` and the renderer's `now` are now the
+  // same clock.
+  let clock = Date.now()
 
   const liveView: LiveViewPort = {
     signer,
@@ -347,14 +353,17 @@ describe('the negotiation envelope, measured against the shipped SDK (Open Quest
 
 // ---- 2 & 3. The gate, over the wire, on the shipped node handler --------------------------------
 
-async function serveAgentQa(handles?: readonly number[]): Promise<{
+async function serveAgentQa(
+  handles?: readonly number[],
+  grantedScopes?: readonly FunctionScope[],
+): Promise<{
   readonly url: string
   readonly minted: string[]
 }> {
   const { registry, minted } = fixtureRegistry(handles)
   const handler = createAgentQaMcpNodeHandler(() => ({
     registry,
-    caller: caller(),
+    caller: caller(grantedScopes),
     maskText: identity,
   }))
   const url = await serve((req, res) => void handler(req as never, res as never))
@@ -392,8 +401,11 @@ describe('the ui:// read over the shipped node handler (D-09, T-408-01/T-408-06)
     const { signer } = recordingSigner()
     for (const [index, token] of liveUrls.entries()) {
       const verdict = validateLiveUrlToken(signer, token, {
+        // The SAME clock the fixture mints on (WR-07). A literal here would be the fixture clock's
+        // defect one line over: a validation instant pinned to a past epoch reports `expired` for a
+        // token minted a millisecond ago.
         runId: FIXTURE_RUN_ID,
-        now: 1_800_000_000_500,
+        now: Date.now(),
       })
       expect(
         verdict.kind,
@@ -488,5 +500,145 @@ describe('the refusal arm runs before anything is invoked (acceptance: zero mint
     })
 
     expect(invoked).toContain(RUNS_LIVE_URL_FUNCTION_ID)
+  })
+})
+
+// ---- 4. WHO MAY OBTAIN A LIVE-VIEW CREDENTIAL (408-12 · gaps[2] / CR-01 · T-408-01) -------------
+//
+// THE CELLS `408-VERIFICATION.md` NAMES AS MISSING ON BOTH ROADS. Every negative cell above drives
+// `capabilities: {}` — a caller that CHOOSES not to declare — so the adversarial case, a caller that
+// merely declares, walked straight through with nothing asserting what the policy about it even was.
+// Both cells below are about the POLICY (who may obtain the credential), never about the mechanism
+// (what `_meta` member was present), and both make a statement about the CREDENTIAL rather than
+// about a status code.
+//
+// THE ROAD THEY ARE WRITTEN AGAINST. 408-08 task 1 put the T-408-01 checkpoint to the user, who
+// answered road `demote`. The dated ruling is shipped prose in `../app-resource.ts`'s header —
+// "THE 2026-09-01 GAP-ROUND RULING — ROAD `demote`" — and it is cited here rather than transcribed,
+// because in this repository the prose is the record and a second copy is a second thing to keep in
+// step.
+
+describe('who may obtain a live-view credential (408-12; the 2026-09-01 ruling, road `demote`)', () => {
+  it('a caller that merely DECLARES the Apps extension DOES obtain a freshly minted credential — the RECORDED posture, because the declaration is a host-capability signal and never an authorization control', async () => {
+    // THE FORGING CALLER, and it takes no forging at all: `connect(url, { apps: true })` is a stock
+    // `@modelcontextprotocol/client@2.0.0` with ONE added capability member. It renders nothing,
+    // paints nothing, implements no App bridge, and is exactly the shape a model-driven caller can
+    // compose for itself — which is the whole finding gaps[2] recorded.
+    const { url, minted } = await serveAgentQa([0])
+    expect(minted, 'nothing has been minted before this read — the assertion below is not vacuous')
+      .toHaveLength(0)
+
+    const declarer = await connect(url, { apps: true })
+    const result = await declarer.readResource({ uri: APP_URI })
+    const contents = result.contents as readonly { text?: string }[]
+    const html = contents[0]?.text ?? ''
+
+    // THE READ SUCCEEDS, AND THAT IS THE RULING RATHER THAN A DEFECT (2026-09-01, road `demote`).
+    // Asserted at the CREDENTIAL rather than at the status: a token really crossed the mint wall
+    // during THIS read, and its bytes are in the document this declaring caller received.
+    expect(
+      minted,
+      'road `demote` (2026-09-01): a `read`-scoped caller reaching the mint is the recorded posture '
+      + '— if this is now zero, the declaration has been silently re-read as an authorization '
+      + 'control and the ruling in app-resource.ts has been reversed without being argued',
+    ).toHaveLength(1)
+    const signature = minted[0] as string
+    expect(
+      html.includes(signature),
+      'the credential minted during THIS read is in the document the declaring caller received',
+    ).toBe(true)
+  })
+
+  // THE BOUNDARY THIS SERVER CAN ACTUALLY VERIFY (header clause 5, D-02): the operator-granted
+  // `read` scope, checked by `visibleToCaller` over the REGISTRY'S own declared scopes, plus
+  // `bindingStatus === 'bound'`. Until this cell there was no negative pairing a DECLARING caller
+  // with a scope set that omits `read`.
+  //
+  // MUTATION CONTROL — APPLIED AND ITS RED OBSERVED (408-12 task 1 step 3, 2026-09-01, then
+  // restored immediately). Removing the `visibleToCaller` conditions from `registerAppResources`
+  // reds this cell. MEASURED, and the measurement corrected the expectation: removing the MINT
+  // op's condition ALONE does NOT red it, because `runs.events` declares the same `read` scope and
+  // its own `visibleToCaller` line still refuses — the boundary is the PAIR. With both conditions
+  // removed the cell reds, on the registration half first:
+  //   AssertionError: no template for a caller the operator did not grant `read`
+  //   - Expected: []   + Received: [ 'ui://agent-qa/live-run/{runId}' ]
+  // A boundary cell that has never been seen to fail is the class this whole round is closing, so
+  // the leg is recorded here with what it actually costs to break it.
+  it('a DECLARING caller whose granted scopes omit `read` obtains NO App at all — no template, an unreadable address, and zero mints', async () => {
+    // Half one, at the registration seam: the template is never built, so for this caller the
+    // address does not exist rather than existing and refusing.
+    const offered: string[] = []
+    const { registry, minted } = fixtureRegistry([0, 1])
+    const templates = registerAppResources(
+      {
+        registerResource: (name: string) => {
+          offered.push(name)
+          return undefined
+        },
+      },
+      { registry, caller: caller(['run']), maskText: identity },
+    )
+    expect(templates, 'no template for a caller the operator did not grant `read`').toEqual([])
+    expect(offered, 'and nothing was handed to the server to register').toEqual([])
+    expect(minted, 'registration mints nothing either way').toHaveLength(0)
+
+    // Half two, over the wire, with a caller that DECLARES the extension — so the ONE fact that
+    // differs from the cell above is the scope set, and the refusal cannot be read as a refusal
+    // about negotiation.
+    const { url, minted: wireMinted } = await serveAgentQa([0, 1], ['run'])
+    const declarer = await connect(url, { apps: true })
+    const error = await declarer.readResource({ uri: APP_URI }).then(
+      () => undefined,
+      (err: unknown) => err,
+    )
+    expect(error, 'the ui:// address is readable by a caller with no `read` scope').toBeDefined()
+    expect(
+      wireMinted,
+      'a caller without the operator-granted `read` scope minted a live-view credential',
+    ).toHaveLength(0)
+  })
+})
+
+// ---- 5. WR-07: the fixture clock and the renderer clock are ONE clock --------------------------
+
+/**
+ * A wall-clock instant well past 2027-01-15.
+ *
+ * `1_800_000_000_000` — the epoch this file's fixture clock used to be pinned to — IS
+ * 2027-01-15T08:00:00Z. Past that instant the renderer's own `Date.now()` default is greater than
+ * every `expiresAt` the fixture mints, so `renderAppWrapperPage` settles `expired`, strips the
+ * mints and serves a document with no liveUrl in it at all. Roughly six cells across this phase's
+ * suites would have red on that calendar date, for no reason a reader would connect to a clock.
+ */
+const PAST_THE_2027_TIME_BOMB = 2_000_000_000_000
+
+describe('WR-07: the fixture clock cannot expire its own fixtures (408-12)', () => {
+  it('serves a document carrying a liveUrl under a system clock past 2027-01-15', async () => {
+    // The stub goes in BEFORE the fixture is built, because the fixture reads `Date.now()` once at
+    // construction — a stub installed afterwards would measure nothing. A spy rather than fake
+    // timers, deliberately: the read below is a real async round trip over a real socket, and fake
+    // timers would be a second, much larger change to the thing under measurement.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(PAST_THE_2027_TIME_BOMB)
+    try {
+      const { url, minted } = await serveAgentQa([0, 1])
+      const client = await connect(url, { apps: true })
+      const result = await client.readResource({ uri: APP_URI })
+      const contents = result.contents as readonly { text?: string }[]
+      const html = contents[0]?.text ?? ''
+
+      expect(minted, 'the read minted nothing under a future clock').toHaveLength(2)
+      const liveUrls = [
+        ...html.matchAll(
+          new RegExp(`${FIXTURE_ORIGIN.replace(/\./g, '\\.')}/live/${FIXTURE_RUN_ID}#([\\w.-]+)`, 'g'),
+        ),
+      ]
+      expect(
+        liveUrls.length,
+        'the served document carries no liveUrl under a future clock — the fixture clock and the '
+        + "renderer's clock have drifted apart again (WR-07)",
+      ).toBe(2)
+    } finally {
+      clock.mockRestore()
+    }
   })
 })
