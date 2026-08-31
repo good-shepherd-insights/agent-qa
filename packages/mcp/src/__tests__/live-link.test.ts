@@ -15,11 +15,17 @@
 // ops read through (a run document, a run starter and an empty proposals inbox) — the smallest
 // composition in which the two carriers can answer at all.
 //
-// THE MUTATION LEGS THIS FILE IS THE BAR FOR:
+// THE MUTATION LEGS THIS FILE IS THE BAR FOR. Each was APPLIED to the subject and its red
+// observed on 2026-08-31, then the subject was restored — a leg nobody ran is a leg nobody knows
+// the strength of:
 //   C1  the link composed against a trailing-slash base                -> the composition cell
-//   C2  the decoration applied to a NON-carrier                        -> the non-carrier cell
+//   C2  the decoration applied to a NON-carrier                        -> MEASURED: deleting the
+//       `projection.ui === undefined` early return reds `decorates a NON-carrier result with
+//       neither` (1 of 10), by name
 //   C3  a fabricated URL served when no base exists                    -> the absence cells
-//   C4  `runIdFrom` ignored (both carriers read the same source)       -> the routing cells
+//   C4  `runIdFrom` ignored (both carriers read the same source)       -> MEASURED: pinning the
+//       source to `args` reds `reads agent_qa_start_run's runId off the op OUTPUT` (1 of 10).
+//       The two ids in this fixture differ deliberately so that leg cannot pass by coincidence.
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { createMcpHandler } from '@modelcontextprotocol/server'

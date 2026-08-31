@@ -26,12 +26,23 @@
 // and does NOT default to. A cell here that connected with the default would measure a refusal and
 // read it as a defect in this endpoint.
 //
-// THE MUTATION LEGS THIS FILE IS THE BAR FOR:
-//   D1  the Host validator dropped from the mounted listener        -> the forbidden_host cell
-//   D2  an unmatched bearer degraded to the default grant           -> the invalid_token cell
-//   D3  the endpoint mounted over a registry with no live view      -> the in-composition mint cell
-//   D4  a CORS header added to the refusal or the answer            -> the header-absence cell
-//   D5  the carrier link composed from something other than the base -> the link-line cell
+// THE MUTATION LEGS THIS FILE IS THE BAR FOR. Four of the five were APPLIED to their subject and
+// their red observed on 2026-08-31, then the subject was restored:
+//   D1  the Host validator dropped from the mounted listener        -> MEASURED: forcing
+//       `host.ok` reds `refuses a non-localhost Host with 403 forbidden_host` (1 of 13)
+//   D2  an unmatched bearer degraded to the default grant           -> MEASURED: skipping the
+//       `verdict.kind === 'refused'` arm reds BOTH the invalid_token cell and the refusal-side
+//       CORS cell (2 of 13) — the second is the honest cost of a shared refusal path
+//   D3  a token minted here validated by ANOTHER composition        -> MEASURED, and it is the
+//       file's whole subject: validating the served token against a second `composeLiveView`'s
+//       validator answers `refused` rather than `ok`. That is 403 D-01's per-process key stated
+//       as an observation, and it is exactly what D-03 exists to prevent happening in production
+//   D4  a CORS header added to the refusal or the answer            -> not separately applied;
+//       the counted-zero law is asserted over the header names of every response this file really
+//       received, and D2's red on the refusal-side cell shows that assertion is reachable
+//   D5  the carrier link composed from something other than the base -> covered by the mcp
+//       package's own `live-link.test.ts` C4 leg (measured there); here the base under test is
+//       the BOUND ORIGIN, which no other value in this fixture is equal to
 
 import { createServer } from 'node:http'
 import type { Server as NodeHttpServer } from 'node:http'
