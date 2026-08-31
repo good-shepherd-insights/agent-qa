@@ -408,10 +408,12 @@ describe('the partition law (D-03 / D-15)', () => {
     // membership is spelled by op id below, so a later entry stamped `'398'` because it was easier
     // reds here rather than joining a set that has quietly become "any phase number".
     const ADJUDICATED_BY_398 = new Set(['agent.explain'])
-    // 2026-08-25 (403-01 D-03). The same widening for the same reason, one phase later:
-    // `runs.liveurl` arrived in 403 and 397 could not have ruled on it. Membership is still
-    // spelled by op id, so an entry stamped `'403'` because it was easier reds here.
-    const ADJUDICATED_BY_403 = new Set(['runs.liveurl'])
+    // 2026-08-31 (408 D-01). NOT a widening: a RE-STAMP. `runs.liveurl` arrived in 403 and was
+    // stamped `'403'`, but what 403 recorded was a DEFERRAL — "whether an MCP caller may mint one
+    // is Phase 408's question". 408 answered it (internal mint only), so the phase that ruled this
+    // absence is 408 and the stamp moves with the ruling. `'403'` leaves the vocabulary with it,
+    // rather than staying as a member-less literal this pin would pass over in silence.
+    const ADJUDICATED_BY_408 = new Set(['runs.liveurl'])
     // 2026-08-27 (405-01 D-03). The same widening for the same reason, two phases later:
     // `runs.detail` arrived in 405 and 397 could not have ruled on it. Membership is still
     // spelled by op id, so an entry stamped `'405'` because it was easier reds here.
@@ -423,8 +425,8 @@ describe('the partition law (D-03 / D-15)', () => {
     const expectedAdjudicator = (opId: string): string =>
       ADJUDICATED_BY_398.has(opId)
         ? '398'
-        : ADJUDICATED_BY_403.has(opId)
-          ? '403'
+        : ADJUDICATED_BY_408.has(opId)
+          ? '408'
           : ADJUDICATED_BY_405.has(opId)
             ? '405'
             : ADJUDICATED_BY_407.has(opId) ? '407' : '397'
@@ -439,9 +441,14 @@ describe('the partition law (D-03 / D-15)', () => {
       'the 398-adjudicated pin names entries the scoping note does not carry',
     ).toEqual([...ADJUDICATED_BY_398])
     expect(
-      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_403.has(entry.opId)).map((e) => e.opId),
-      'the 403-adjudicated pin names entries the scoping note does not carry',
-    ).toEqual([...ADJUDICATED_BY_403])
+      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_408.has(entry.opId)).map((e) => e.opId),
+      'the 408-adjudicated pin names entries the scoping note does not carry',
+    ).toEqual([...ADJUDICATED_BY_408])
+    // …and the vocabulary really shed `'403'` rather than keeping it as a member-less literal.
+    expect(
+      UNPROJECTED_OPS.map((entry) => entry.adjudication as string).filter((a) => a === '403'),
+      "`'403'` left the adjudicator vocabulary with the ruling it deferred — no entry may carry it",
+    ).toEqual([])
     expect(
       UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_405.has(entry.opId)).map((e) => e.opId),
       'the 405-adjudicated pin names entries the scoping note does not carry',

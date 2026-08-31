@@ -28,6 +28,13 @@
 // token is handing out a credential, and whether an MCP caller may mint one is Phase 408's
 // question (the MCP App embed) rather than a side effect of this phase registering the op.
 //
+// 2026-08-31 (408 D-01): that question is ANSWERED and the partition does not move for it. The
+// ruling is internal mint only — the App-rendering path invokes `runs.liveurl` by reference and
+// the token reaches a person only through host-rendered HTML — so the op stays on the
+// unprojected side, now by RULING rather than by deferral. Recorded here, at the entry, and at
+// the conformance row, because a deferral that quietly becomes a permanent absence is the same
+// untruth as a partition the code stopped having.
+//
 // Protocol grounding: SEP-2567 removed per-connection list variance, so the tool NAMES a caller can
 // see are a property of the caller's grants and of this table — never of a session. SEP-2549 makes
 // those listings cacheable, which is the other half of the same reason the table is static data.
@@ -558,8 +565,16 @@ export interface UnprojectedOp {
    * WIDENED AGAIN on 2026-08-29 (407-01, D-05) for `runs.knowledge`, on exactly that reasoning and
    * for no new one: 397 could not have ruled on an op registered ten phases later. Membership is
    * still spelled by op id in the bump guard, in both directions.
+   *
+   * RE-STAMPED on 2026-08-31 (408 D-01): `'403'` LEAVES this vocabulary and `'408'` enters. This is
+   * not a widening and not a rename — it is the provenance moving with the ruling. `runs.liveurl`
+   * was the ONLY `'403'` entry, and its 403 stamp recorded a DEFERRAL ("Phase 408's question");
+   * 408 D-01 answered that question, so the phase that decided this absence is now 408 and saying
+   * `'403'` would credit 403 with a ruling it explicitly declined to make. Leaving `'403'` in a
+   * closed set with no member would also be exactly the empty literal the bump guard's
+   * non-vacuity check passes silently over, which is the hole that check exists to close.
    */
-  readonly adjudication: '397' | '398' | '403' | '405' | '407'
+  readonly adjudication: '397' | '398' | '405' | '407' | '408'
 }
 
 export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
@@ -659,8 +674,16 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       'D-03 (dated 2026-08-25, 403-01): the op MINTS A CREDENTIAL — a short-lived, view-scoped '
       + 'capability token for a running browser. Whether an agent-origin MCP caller may mint one, '
       + 'and what it may hand it to, is Phase 408\'s question (the MCP App embed); projecting it '
-      + 'here would answer that question by accident. Deferred as its own seam, not omitted.',
-    adjudication: '403',
+      + 'here would answer that question by accident. Deferred as its own seam, not omitted. '
+      + 'ANSWERED (dated 2026-08-31, 408 D-01): the deferral above is discharged, and the ruling '
+      + 'is INTERNAL MINT ONLY. The MCP server invokes this op BY REFERENCE, inside its '
+      + 'App-rendering path and nowhere else, and the minted token lands only in the '
+      + 'host-rendered HTML of the unlisted `ui://agent-qa/live-run/{runId}` App resource — '
+      + 'never in tool-result text a model reads. Projecting a mint tool stays REJECTED: a live '
+      + 'credential in model context is the T-395-R5-10 shape, and masking it would leave a tool '
+      + 'that hands back nothing a host could use. The op therefore STAYS unprojected BY RULING '
+      + 'rather than by deferral — answered on the record, never silently reclassified.',
+    adjudication: '408',
   }),
   Object.freeze({
     opId: 'config.get',

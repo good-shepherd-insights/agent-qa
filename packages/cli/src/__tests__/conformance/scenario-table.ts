@@ -181,6 +181,18 @@ export type UnprojectedReasonKey =
   // hands out a CREDENTIAL, and who may mint one over MCP is Phase 408's question. Filing it under
   // `not-mid-flight-read` was the available shortcut and would have recorded a scoping decision
   // where a deferred security decision was made.
+  //
+  // DISPOSITION, 2026-08-31 (408 D-01 · D-14's bookkeeping): the class is RETAINED and RE-GROUNDED,
+  // not retired and not re-classified. Retained because its DEFINING fact is unchanged — the op
+  // still hands out a credential, and that is still why it has no MCP door; re-grounded because
+  // 408 answered the open question the name once pointed at. The class now names a RECORDED
+  // internal-only ruling (the MCP server mints by reference inside its App-rendering path; the
+  // token reaches a person only in host-rendered HTML) rather than an open deferral. Retiring the
+  // class and folding the row into `not-mid-flight-read` was the available shortcut and is the
+  // same error 403 refused: it would file a credential ruling as a scoping line. The name keeps
+  // its `-deferral` spelling because renaming a key rewrites every row and the golden partition
+  // that cite it, to record a fact the prose below and `mapping.ts`'s own reason already carry —
+  // and the prose is the record here, by this file's own restatement-drifts law.
   | 'credential-mint-deferral'
   | 'not-mid-flight-write'
   | 'not-mid-flight-read'
@@ -1202,6 +1214,12 @@ export const SCENARIO_TABLE = Object.freeze([
   // 388 D-14: a PARSING input for a capability most compositions cannot run.
   // 403-01 (D-03): the mint. Unprojected on MCP because handing an agent-origin caller a live-view
   // CREDENTIAL is Phase 408's question, not a side effect of registering the op.
+  // RESOLVED 2026-08-31 (408 D-01): the question is answered and the row does not move. Internal
+  // mint ONLY — the MCP server invokes this op by reference inside its `ui://agent-qa/live-run/`
+  // App resource read (408 plans 01/03), so the minted token lands in host-rendered HTML and never
+  // in tool-result text; a projected mint tool stays rejected. The op is unprojected BY RULING
+  // now, not by deferral, and the `credential-mint-deferral` key stays because the fact it names —
+  // this door is absent because the op hands out a credential — is exactly what is still true.
   scenario({
     opId: 'runs.liveurl',
     input: { runId: FIXTURE_RUN_ID },

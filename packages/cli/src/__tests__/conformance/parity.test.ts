@@ -1040,6 +1040,45 @@ describe('the parity suite ranges the registry census over every rostered surfac
     )
   })
 
+  it('carries the DATED 408 ruling in the shipped credential-mint reason (408 D-01 / D-14)', () => {
+    // WHY THIS CELL EXISTS. `credential-mint-deferral` was admitted in 403 for one reason: the op
+    // hands out a credential and WHO MAY MINT ONE OVER MCP was left to Phase 408. 408 D-01 answered
+    // it — internal mint only, the token confined to host-rendered App HTML, a projected mint tool
+    // rejected — and D-14 requires that answer RECORDED rather than silently absorbed. The record
+    // lives in the shipped `UNPROJECTED_OPS` prose, which is the artifact a reader actually meets,
+    // so this cell reads it there. A future rewrite that tidies the entry back into a bare
+    // deferral, or drops the date, reds HERE by name instead of leaving a permanent absence
+    // wearing an open question's clothes.
+    const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === 'runs.liveurl')
+    expect(entry, 'runs.liveurl left the unprojected register — re-home this ruling before it does')
+      .toBeDefined()
+    // The class must still DERIVE from the prose: the ruling is an addendum to the 403 reason, not
+    // a replacement of it, so the signature phrase the classifier keys on has to survive the edit.
+    expect(
+      unprojectedReasonKeyOf(entry!.reason),
+      'the 408 ruling must EXTEND the credential reason, not overwrite the phrase its class derives '
+        + 'from — a resolution that changes the class silently re-files a security decision',
+    ).toBe('credential-mint-deferral')
+    expect(entry!.reason, 'the credential fact the class is named for').toContain('MINTS A CREDENTIAL')
+    // …and the ruling itself, dated, with its operative words.
+    expect(entry!.reason, 'the dated 408 ruling marker (D-14: answered, never silently reclassified)')
+      .toContain('408 D-01')
+    expect(entry!.reason, 'the ruling is dated at its own artifact').toContain('2026-08-31')
+    expect(entry!.reason, 'what 408 actually ruled').toContain('INTERNAL MINT ONLY')
+    // The adjudicator column moves with the ruling: 403 deferred, 408 decided.
+    expect(
+      entry!.adjudication,
+      'the provenance column still credits 403 with a ruling it explicitly declined to make',
+    ).toBe('408')
+    // And the row is unchanged in the one way that matters: the op is STILL unprojected. D-01
+    // answered the question with a NO, so a resolution that quietly produced a tool would be the
+    // opposite outcome wearing the same paperwork.
+    expect(
+      scenarioRowFor('runs.liveurl')?.perSurface.mcp,
+      'the ruling keeps runs.liveurl unprojected — a mint tool is rejected, not deferred',
+    ).toEqual({ unprojected: 'credential-mint-deferral' })
+  })
+
   it('control: the reason classifier answers per class, and refuses prose it does not know', () => {
     for (const [key, signature] of UNPROJECTED_REASON_SIGNATURES) {
       expect(
