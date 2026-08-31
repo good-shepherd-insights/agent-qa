@@ -169,6 +169,7 @@ describe('the other restated spec strings are in the official schema (A5)', () =
     { value: 'ui/initialize', spelledIn: 'app-wrapper.ts' },
     { value: 'protocolVersion', spelledIn: 'app-wrapper.ts' },
     { value: 'frameDomains', spelledIn: 'app-resource.ts' },
+    { value: 'connectDomains', spelledIn: 'app-resource.ts' },
     { value: 'resourceUri', spelledIn: 'projection.ts' },
   ]
 
@@ -201,6 +202,7 @@ describe('the other restated spec strings are in the official schema (A5)', () =
     // Enumerated from the table rather than restated as a pair (the 399.1 lesson): whatever the
     // spec's csp record contains, the fields this repository emits must be among them.
     expect(Object.keys(csp.properties)).toContain('frameDomains')
+    expect(Object.keys(csp.properties)).toContain('connectDomains')
   })
 
   it('(4d) the wrapper\'s ui/initialize carries every param the official schema REQUIRES', () => {

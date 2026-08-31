@@ -346,11 +346,19 @@ describe('resources/read mints through the ONE wall and serves the wrapper (D-01
     expect([...handles].sort()).toEqual([0, 1])
   })
 
-  it('names the minted origin as the ONLY allowed frame domain (Pitfall 1, T-408-05)', async () => {
+  it('names the minted origin as the ONLY allowed frame AND connect domain (Pitfall 1, T-408-05)', async () => {
     const { read } = registerAndCapture()
     const result = await read(new URL(`ui://agent-qa/live-run/${FIXTURE_RUN_ID}`))
     expect(result.contents[0]!.mimeType).toBe(APP_RESOURCE_MIME_TYPE)
-    expect(result.contents[0]!._meta).toEqual({ ui: { csp: { frameDomains: [FIXTURE_ORIGIN] } } })
+    // BOTH DIRECTIVES, AND EXACTLY ONE ORIGIN IN EACH (408-06 Task 2). `connectDomains` joined
+    // `frameDomains` when the App-host harness measured what a conformant host does with only the
+    // latter: `connect-src` defaults to `'none'`, the wrapper's origin probe (408-02 D-H) is blocked
+    // before it leaves the document, and a reachable live view renders as `unreachable-origin`.
+    // Asserted as the WHOLE `_meta` object rather than member-by-member, so a third directive
+    // appearing here — anything wider than the one origin this document embeds — reds by name.
+    expect(result.contents[0]!._meta).toEqual({
+      ui: { csp: { frameDomains: [FIXTURE_ORIGIN], connectDomains: [FIXTURE_ORIGIN] } },
+    })
   })
 
   it('mints AGAIN on a second read — fresh-on-render, never a cached token (D-10)', async () => {

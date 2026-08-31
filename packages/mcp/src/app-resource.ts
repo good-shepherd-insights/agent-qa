@@ -457,9 +457,29 @@ export function createAppResourceReadHandler(
           // origin is the minted link's OWN origin rather than a separately configured one, so the
           // allow can never be broader than the document needs (T-408-05); with no mints there is
           // no inner frame, and the block is omitted rather than emitted empty.
+          //
+          // `connectDomains` NAMES THE SAME ONE ORIGIN, AND IT IS NOT OPTIONAL (408 plan 06 Task 2,
+          // MEASURED 2026-08-31). ext-apps' shipped schema documents `connectDomains` as mapping to
+          // `connect-src` with "empty or omitted -> no network connections (secure default)", and
+          // 408-02 D-H gave this wrapper a no-cors probe of the frame's origin — because Chromium
+          // fires `load` for a REFUSED connection, so `load` alone would label an error page `live`.
+          // With only `frameDomains` declared, a conformant host serves the App under
+          // `connect-src 'none'`, the probe is blocked before it leaves the document, and the
+          // wrapper settles in `unreachable-origin` for a live view that is perfectly reachable —
+          // measured in `app-host-harness.test.ts`, with Chromium naming the directive in its own
+          // console. That is not a blank frame, but it is a lie with a sentence attached, which is
+          // worse: it tells a person to go somewhere else while the pixels are right there.
+          //
+          // It is exactly as narrow as the frame allowance — the same single minted origin, never a
+          // wildcard and never a second configured value — so the App can reach the one host it
+          // embeds and nothing else.
           ...(frameDomain === undefined
             ? {}
-            : { _meta: { ui: { csp: { frameDomains: [frameDomain] } } } }),
+            : {
+                _meta: {
+                  ui: { csp: { frameDomains: [frameDomain], connectDomains: [frameDomain] } },
+                },
+              }),
         },
       ],
     }
