@@ -35,6 +35,15 @@
 // the conformance row, because a deferral that quietly becomes a permanent absence is the same
 // untruth as a partition the code stopped having.
 //
+// 2026-09-01 (408-08, the gap round, road `demote`): the partition still does not move, and the
+// em-dashed half above is corrected in the same place it was claimed. "The token reaches a person
+// only through host-rendered HTML" is a statement about what the CALLER does with a document it
+// asked for, not about this server. What this server does is write the token into exactly one
+// place — the frame src of the document the `ui://` read serves — and that door is bounded by the
+// `read` scope an operator granted the caller plus a bound mint, never by the caller's own
+// capability declaration. The entry's own reason carries the full addendum; `app-resource.ts`'s
+// header carries the ruling. The op stays unprojected on the same, stronger footing.
+//
 // Protocol grounding: SEP-2567 removed per-connection list variance, so the tool NAMES a caller can
 // see are a property of the caller's grants and of this table — never of a session. SEP-2549 makes
 // those listings cacheable, which is the other half of the same reason the table is static data.
