@@ -171,6 +171,33 @@ const PINNED_TOOL_OPS: Readonly<Record<string, readonly string[]>> = {
 }
 
 /**
+ * D-05's pin (2026-08-31, Phase 408 plan 01 · MCPA-01): which tools CARRY the live-view App, and
+ * where each one's concrete runId is found.
+ *
+ * THE THIRD RESTATEMENT IN THIS FILE, and it earns its place on the same argument as the first two.
+ * `projection-fidelity.test.ts` censuses the carrier set FROM the projection table, which catches a
+ * carrier planted or dropped — it cannot catch a carrier whose `runIdFrom` was swapped, because
+ * both halves of a derived comparison move together. A swapped `runIdFrom` is a cancelling change
+ * of exactly the M2 class: nothing is added, nothing is removed, and every derived cell stays
+ * green while Plan 03's per-call reference starts decorating a result with a live view of a run
+ * nobody asked about. So the pair is pinned by name here.
+ *
+ * IT IS ALSO THE COUNT THAT MATTERS MOST IN THIS FILE. A carrier is a door onto a channel that
+ * mints a live-view CREDENTIAL, so "which tools carry the App" is not a vocabulary question the way
+ * the name list is — a third entry appearing without a diff in this file is the failure this pin
+ * exists to make impossible.
+ */
+const PINNED_TOOL_UI_CARRIERS: Readonly<
+  Record<string, { readonly resource: string; readonly runIdFrom: string }>
+> = {
+  // The ack carries the runId the run was given, so a per-call reference reads it off the OUTPUT.
+  agent_qa_start_run: { resource: 'live-run', runIdFrom: 'output' },
+  // The watch/status read is ASKED about a run, so its runId is on the INPUT — this is the
+  // late-attach door (D-07): a run started from CLI, CI or the dashboard is watchable through it.
+  agent_qa_get_run_digest: { resource: 'live-run', runIdFrom: 'input' },
+}
+
+/**
  * D-14's pin: every retired v1 name, sorted, with the arm it was ruled onto.
  *
  * The second restatement in this file, and deliberate for the same reason as the first — this IS
@@ -257,6 +284,15 @@ describe('the pinned catalogue (D-04)', () => {
     expect(count).toBe(12)
     expect(count).toBeGreaterThanOrEqual(MCPS_02_MIN_TOOLS)
     expect(count).toBeLessThanOrEqual(MCPS_02_MAX_TOOLS)
+  })
+
+  it('declares exactly the pinned App carriers, with the pinned runId source (408 D-05)', () => {
+    const actual: Record<string, { resource: string; runIdFrom: string }> = {}
+    for (const projection of AGENT_QA_TOOL_PROJECTIONS) {
+      if (projection.ui === undefined) continue
+      actual[projection.name] = { ...projection.ui }
+    }
+    expect(actual).toEqual(PINNED_TOOL_UI_CARRIERS)
   })
 
   it('declares no duplicate tool name', () => {

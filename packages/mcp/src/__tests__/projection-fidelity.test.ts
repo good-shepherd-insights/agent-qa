@@ -59,6 +59,7 @@ import {
   type JsonDocument,
   withoutDialect,
 } from '../conformance-support.js'
+import { APP_RESOURCE_URI_TEMPLATE } from '../app-resource.js'
 import {
   advertisedContracts,
   AGENT_QA_OP_CONTRACTS,
@@ -66,6 +67,9 @@ import {
   compositionOf,
   DEGRADED_OUTPUT_CONTRACTS,
 } from '../mapping.js'
+import type { ToolProjection } from '../mapping.js'
+import { toRegisterToolConfig } from '../projection.js'
+import type { ProjectedOpSpec, RegisterToolConfig } from '../projection.js'
 
 interface AdvertisedTool {
   readonly name: string
@@ -375,5 +379,93 @@ describe('the build is deterministic (idempotency)', () => {
     // A fold containing seven writes is not read-only, and its idempotence follows.
     expect(advertised.get('agent_qa_propose_config_change')!.annotations?.readOnlyHint).toBe(false)
     expect(advertised.get('agent_qa_propose_config_change')!.annotations?.idempotentHint).toBe(false)
+  })
+})
+
+// ---- THE APP CARRIER CENSUS (2026-08-31, Phase 408 plan 01 · D-05 / MCPA-01) --------------------
+//
+// WHY THESE CELLS JOINED THIS FILE AND NOT A NEW ONE. Which tools carry the App is exactly the same
+// KIND of claim as everything above: a property derived from `AGENT_QA_TOOL_PROJECTIONS` and
+// delivered on the advertised document, where the failure that can actually happen is the mapping
+// and the derivation disagreeing. So the pair is asserted the way this file asserts every other
+// pair — the derivation driven directly for the shape it produces, and the real `tools/list` read
+// off the wire for the shape a caller receives.
+//
+// THE 399.1 LESSON, RESTATED (D-05). The carrier set is ENUMERATED from the projection table, never
+// spelled as a pair beside it. A cell that hard-coded two names would agree with a mapping that had
+// silently grown a third carrier — and a third tool quietly advertising a live-view App is a third
+// door onto a credential channel, which is the one thing this phase may not let happen quietly.
+// What IS spelled out here is the expectation the census is compared against, which is the pin.
+
+describe('the App carrier declaration is registry data (408 D-05)', () => {
+  /** The `ProjectedOpSpec` `catalog.ts` builds for one op, assembled the same way it does. */
+  function specsFor(projection: ToolProjection): readonly ProjectedOpSpec[] {
+    const declared = declarations()
+    return projection.ops.map((opId) => {
+      const declaration = declared.get(opId)!
+      const contracts = AGENT_QA_OP_CONTRACTS[opId]!
+      return {
+        id: declaration.id,
+        summary: declaration.summary,
+        requiredScopes: declaration.requiredScopes,
+        risk: declaration.risk,
+        input: contracts.input,
+        output: contracts.output,
+      }
+    })
+  }
+
+  function configFor(name: string): RegisterToolConfig {
+    const projection = AGENT_QA_TOOL_PROJECTIONS.find((entry) => entry.name === name)!
+    return toRegisterToolConfig(
+      projection,
+      specsFor(projection),
+      advertisedContracts(projection)!,
+      (text: string) => text,
+    )
+  }
+
+  // THE BAR: a derivation that attached `_meta` unconditionally, or one that spelled the resource
+  // URI as a second literal, reds here.
+  it('derives _meta.ui.resourceUri for a carrier and NO _meta at all for a non-carrier', () => {
+    expect(configFor('agent_qa_start_run')._meta).toEqual({
+      ui: { resourceUri: APP_RESOURCE_URI_TEMPLATE },
+    })
+    expect(configFor('agent_qa_get_run_digest')._meta).toEqual({
+      ui: { resourceUri: APP_RESOURCE_URI_TEMPLATE },
+    })
+    // ABSENT, never present-and-undefined: the house rule, and the difference a host sees is
+    // between a tool with no App and a tool advertising an App reference of `undefined`.
+    const plain = configFor('agent_qa_list_proposals')
+    expect('_meta' in plain).toBe(false)
+  })
+
+  it('carries the App reference through to the advertised document, on a real build', async () => {
+    const advertised = new Map(
+      (await advertise()).map((tool) => [tool.name, tool as { _meta?: { ui?: unknown } }]),
+    )
+    for (const projection of AGENT_QA_TOOL_PROJECTIONS) {
+      const listed = advertised.get(projection.name)!
+      const expectedUi =
+        projection.ui === undefined ? undefined : { resourceUri: APP_RESOURCE_URI_TEMPLATE }
+      expect(listed._meta?.ui, projection.name).toEqual(expectedUi)
+    }
+  })
+
+  // THE CENSUS. Derived from the table on one side, pinned on the other — a third carrier reds.
+  it('declares exactly two carriers, enumerated FROM the projection table', () => {
+    const carriers = AGENT_QA_TOOL_PROJECTIONS.filter(
+      (projection) => projection.ui !== undefined,
+    ).map((projection) => projection.name)
+    expect([...carriers].sort()).toEqual(['agent_qa_get_run_digest', 'agent_qa_start_run'])
+  })
+
+  // Plan 03's per-call reference reads this datum to find the concrete runId, so a swapped pair
+  // would decorate a result with a reference to a run nobody asked about.
+  it('names where each carrier\'s concrete runId lives', () => {
+    const uiOf = (name: string) =>
+      AGENT_QA_TOOL_PROJECTIONS.find((projection) => projection.name === name)!.ui
+    expect(uiOf('agent_qa_start_run')).toEqual({ resource: 'live-run', runIdFrom: 'output' })
+    expect(uiOf('agent_qa_get_run_digest')).toEqual({ resource: 'live-run', runIdFrom: 'input' })
   })
 })
