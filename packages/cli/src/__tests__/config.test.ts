@@ -273,6 +273,76 @@ describe('resolveConfig', () => {
     await expect(resolveConfig({ configPath })).rejects.toThrow('services.dashboard.enabled was removed')
   })
 
+  // Phase 408 plan 16, W-2 / CR-02. 408-10 refined `services.dashboard.baseUrl` to an absolute
+  // http(s) URL at the parse boundary, which makes two previously-legal values fail EVERY
+  // `agent-qa` command through the one `safeParse` that throws. These cells assert the migration
+  // path an operator reads, and the negative control asserts it attaches to nothing else.
+  it('adds a migration hint when services.dashboard.baseUrl is a schemeless host', async () => {
+    const configPath = join(TMP_DIR, 'baseurl-schemeless.yaml')
+    const { stringify } = await import('yaml')
+    const cfg = makeValidConfig()
+    ;(cfg.services as Record<string, unknown>).dashboard = { baseUrl: 'localhost:3470' }
+    await writeFile(configPath, stringify(cfg))
+
+    try {
+      await resolveConfig({ configPath })
+      throw new Error('expected resolveConfig to reject')
+    } catch (err) {
+      const msg = (err as Error).message
+      expect(msg).toContain('services.dashboard.baseUrl must be an absolute http(s) URL')
+      expect(msg).toContain('Hint:')
+      expect(msg).toContain('http://127.0.0.1:3470')
+      expect(msg).toContain('remove the key')
+    }
+  })
+
+  it('adds the same migration hint when services.dashboard.baseUrl is an empty string', async () => {
+    const configPath = join(TMP_DIR, 'baseurl-empty.yaml')
+    const { stringify } = await import('yaml')
+    const cfg = makeValidConfig()
+    ;(cfg.services as Record<string, unknown>).dashboard = { baseUrl: '' }
+    await writeFile(configPath, stringify(cfg))
+
+    try {
+      await resolveConfig({ configPath })
+      throw new Error('expected resolveConfig to reject')
+    } catch (err) {
+      const msg = (err as Error).message
+      expect(msg).toContain('services.dashboard.baseUrl must be an absolute http(s) URL')
+      expect(msg).toContain('Hint:')
+      expect(msg).toContain('http://127.0.0.1:3470')
+      expect(msg).toContain('remove the key')
+    }
+  })
+
+  // Negative control: the hint is a function of the parse result's issue set, not of the failure.
+  // An unconditional hint reds here rather than shipping.
+  it('does not add the baseUrl hint to an unrelated validation failure', async () => {
+    const configPath = join(TMP_DIR, 'unrelated-invalid.yaml')
+    await writeFile(configPath, 'invalid: true\n')
+
+    try {
+      await resolveConfig({ configPath })
+      throw new Error('expected resolveConfig to reject')
+    } catch (err) {
+      const msg = (err as Error).message
+      expect(msg).toContain('Config validation failed')
+      expect(msg).not.toContain('services.dashboard.baseUrl must now carry a scheme')
+      expect(msg).not.toContain('http://127.0.0.1:3470')
+    }
+  })
+
+  it('still resolves a config whose services.dashboard.baseUrl is an absolute http(s) URL', async () => {
+    const configPath = join(TMP_DIR, 'baseurl-absolute.yaml')
+    const { stringify } = await import('yaml')
+    const cfg = makeValidConfig()
+    ;(cfg.services as Record<string, unknown>).dashboard = { baseUrl: 'http://127.0.0.1:3470' }
+    await writeFile(configPath, stringify(cfg))
+
+    const config = await resolveConfig({ configPath })
+    expect(config.services?.dashboard?.baseUrl).toBe('http://127.0.0.1:3470')
+  })
+
   it('merges env vars into config (services paths)', async () => {
     const configPath = join(TMP_DIR, 'partial.yaml')
     const { stringify } = await import('yaml')
