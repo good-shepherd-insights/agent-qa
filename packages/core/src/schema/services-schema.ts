@@ -6,6 +6,28 @@ import {
 } from '@vostride/agent-qa-schema'
 import { DurationString, SizeString } from './primitives.js'
 
+/**
+ * Whether a configured value is an ABSOLUTE `http:`/`https:` URL (408 D-08, WR-04 — T-408-16).
+ *
+ * FILE-LOCAL, DELIBERATELY, unlike `isLoopbackHost` below. That predicate is exported because TWO
+ * mechanisms decide loopback membership and must not be two spellings; this one has exactly one
+ * decision site — the parse boundary, immediately below. Exporting it would advertise a second
+ * place to make the same check, and the whole point of a parse-time guard is that there is no
+ * second place: nothing downstream should be re-deciding whether the base is safe.
+ *
+ * A RELATIVE VALUE IS REFUSED, not resolved. `new URL(value)` with no base throws for
+ * `/relative/only` and for `not-a-url`, and the scheme test refuses `javascript:` and `mailto:`
+ * — which parse fine and are exactly the shapes that must not reach an `href`.
+ */
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 export const DashboardConfigSchema = z.object({
   port: z.number().optional(),
   dbPath: z.string().optional(),
@@ -18,7 +40,28 @@ export const DashboardConfigSchema = z.object({
   // They live on the EXISTING `services.dashboard` block rather than on a new top-level
   // `dashboard` key: this project already has one dashboard configuration home, and a second
   // one would be two places an operator could reasonably write the same fact.
-  baseUrl: z.string().optional(),
+  //
+  // 2026-09-01 (Phase 408 plan 10, WR-04 — T-408-16): REFINED TO AN ABSOLUTE http(s) URL, because
+  // this value stops being a display string in M5. It composes the tokenless live link
+  // (`live-link.ts`'s `liveRunLinkOf`, which only strips trailing slashes), and that link is
+  // assigned to an `href` INSIDE the served App document — which runs with `allow-scripts` at an
+  // opaque origin — as well as appended verbatim to every carrier tool result's model-readable
+  // text. A `javascript:` base therefore composed a script-executing anchor. The trust boundary is
+  // the operator, so this is not remote-triggerable; the finding is that a URL-shaped value reached
+  // an `href` with no scheme check at any hop, and the guard costs one refinement.
+  //
+  // AT THE PARSE BOUNDARY, so there is exactly one place that decides. The defensive drop at the
+  // anchor itself is the SECOND half of the same finding and lives in `app-wrapper.ts`.
+  //
+  // STILL `.optional()`: an absent base is a real and honest posture — a standalone `agent-qa mcp`
+  // with no dashboard — and the carrier result names that absence rather than fabricating a URL.
+  // An EMPTY STRING is now REFUSED, which is stricter than before: `""` is not an absence an
+  // operator wrote by leaving the key out, it is a value that composes a relative fragment reading
+  // as a link and resolving against nothing.
+  baseUrl: z.string().refine(
+    isAbsoluteHttpUrl,
+    { message: 'services.dashboard.baseUrl must be an absolute http(s) URL' },
+  ).optional(),
   workspace: z.string().optional(),
   // Phase 402 D-05/D-06 (INVK-03): the authed run service's credential declarations, on the
   // EXISTING `services.dashboard` block for the reason stated above — this project already has one
