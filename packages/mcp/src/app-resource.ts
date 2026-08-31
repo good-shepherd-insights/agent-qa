@@ -624,13 +624,58 @@ export function createAppResourceReadHandler(
           uri: `${APP_URI_PREFIX}${runId}`,
           mimeType: APP_RESOURCE_MIME_TYPE,
           text: html,
-          // The host's default is `frame-src 'none'`, so an App that names no frame domain renders
+          // The host's default is `frame-src 'none'`, so an App that names no frame domain paints
           // a BLOCKED inner frame — the blank pane criterion 2 forbids (Pitfall 1). The allowed
           // origin is the minted link's OWN origin rather than a separately configured one, so the
-          // allow can never be broader than the document needs (T-408-05); with no mints there is
-          // no inner frame, and the block is omitted rather than emitted empty. `frameDomain` is
-          // the ONE distinct origin `frameOrigins` above resolved over EVERY mint (IN-02) — not
-          // `mints[0]`'s, which was the same answer only by a fact held in another package.
+          // allow can never be broader than the document needs (T-408-05). `frameDomain` is the ONE
+          // distinct origin `frameOrigins` above resolved over EVERY mint (IN-02) — not `mints[0]`'s,
+          // which was the same answer only by a fact held in another package.
+          //
+          // TWO ABSENCES, NOT ONE (corrected 2026-09-01, 408 gap round; `408-VERIFICATION.md` W-4 /
+          // `408-REVIEW.md` WR-03). This comment used to read "with no mints there is no inner
+          // frame, and the block is omitted rather than emitted empty", which describes only the
+          // FIRST of two conditions that both reach `frameDomain === undefined`. They are different
+          // questions with different served documents, and collapsing them told a reader about a
+          // state the code does not produce:
+          //   - `mints.length` asks whether there is anything to render at all. Zero mints means
+          //     `runLive` is `false`, the wrapper emits no `<iframe data-app-live-frame>`, and the
+          //     omitted `csp` block allows nothing because nothing needs allowing. Honest.
+          //   - `frameOrigins[0]` is the SEPARATE question of whether any surviving mint yielded a
+          //     parseable origin to put in `_meta.ui.csp`. With `mints.length > 0` and every
+          //     `originOf(mint.liveUrl)` answering `undefined`, `runLive` is `true` — the document
+          //     DOES emit the iframe and DOES assign `frame.src` — while the `csp` block is omitted,
+          //     so a conformant host falls back to `frame-src 'none'` and the pane is blocked and
+          //     blank. Not honest, and the sentence above never mentioned it.
+          //   WHY NO SHIPPED PORT REACHES IT: `runs.liveurl` would have to answer a `liveUrl` that
+          //   is not a parseable URL, and no shipped port does. The verifier measured this as
+          //   unreachable and classified W-4 as a documentation finding rather than a gap; the
+          //   wrapper's probe/timeout arm would in any case settle `unreachable-origin` with the
+          //   permanent link rather than leave a blank pane under a progress claim, so SC2 survives
+          //   even on the unreachable path.
+          //
+          // THE INVARIANT IS UNASSERTED, AND THAT IS A DATED DEFERRAL RATHER THAN A SILENCE
+          // (2026-09-01, 408 gap round). "Every mint that survives into `runLive` has a nameable
+          // origin" is asserted nowhere today — not here, not in `renderAppWrapperPage`, not in a
+          // cell. It is the natural candidate and it is NOT taken in this round, because this round
+          // is a gap-closure round whose whole reported gap is documentation integrity.
+          //   THE RULE THAT MAKES THAT CONSISTENT, because the neighbouring round looks
+          //   contradictory and a reader is entitled to it: THIS ROUND CHANGES WHAT THE SYSTEM
+          //   SAYS, NEVER WHAT IT DOES. 408-16 task 1 does edit a runtime file — `config.ts` — but
+          //   it only adds words to an error that was already being thrown on exactly the inputs it
+          //   was already thrown on; no parse outcome moves in either direction and no input that
+          //   succeeded now fails. Asserting the invariant here would add a NEW failure mode to a
+          //   path that currently succeeds. Operator-facing error prose is in scope because it is
+          //   prose; a new runtime invariant is out of scope because it is behaviour. That is the
+          //   whole distinction, and it is what makes W-2 closable in this round and W-4's
+          //   invariant half not.
+          //
+          // AND THE NEW PROSE CENSUS DOES NOT COVER THIS, which is the question the gap brief asks
+          // by name. `__tests__/withdrawn-claim-census.test.ts` gates ONE withdrawn security claim
+          // about the token channel, keyed on a channel cue bound to an exclusivity cue; W-4 is a
+          // different species — a comment that CONFLATES two conditions rather than one that
+          // over-claims a control — and widening that census to "any comment that conflates two
+          // conditions" is not mechanizable, and a vocabulary that tried would red on honest prose,
+          // which this round's own prohibition forbids.
           //
           // `connectDomains` NAMES THE SAME ONE ORIGIN, AND IT IS NOT OPTIONAL (408 plan 06 Task 2,
           // MEASURED 2026-08-31). ext-apps' shipped schema documents `connectDomains` as mapping to
