@@ -447,10 +447,32 @@ export async function resolveConfig(options: {
     const dashboardHint = legacyDashboardEnabled
       ? `\n\nHint: services.dashboard.enabled was removed. Dashboard behavior is enabled by the presence of the services.dashboard block itself. Remove the enabled key and keep fields like port, dbPath, or artifactsDir.`
       : ''
+
+    // Phase 408 plan 16 (W-2 / CR-02). 408-10 refined `services.dashboard.baseUrl` to an absolute
+    // http(s) URL at this same parse boundary, so two previously-legal values now fail EVERY
+    // `agent-qa` command through the one `safeParse` above. This is the migration path that
+    // refinement shipped without, delivered through the same `Hint:` mechanism the branch directly
+    // above already uses.
+    //
+    // WHY THIS BRANCH KEYS ON THE ISSUE SET WHILE THE `enabled` BRANCH KEYS ON THE RAW INPUT, and
+    // the two must not be unified: the `enabled` branch detects a key the schema no longer knows
+    // about, which therefore CANNOT appear in `result.error.issues` at all and has to be found by
+    // walking `merged`. This branch detects a value the schema DOES know and refuses, so the parse
+    // result itself already carries the path that objected — asking it is both narrower and more
+    // honest than re-deriving the answer from the input, and it is what keeps the hint from firing
+    // on failures it has nothing to do with.
+    const baseUrlRefused = result.error.issues.some(
+      (issue: { path: PropertyKey[] }) => issue.path.map(String).join('.') === 'services.dashboard.baseUrl',
+    )
+    const baseUrlHint = baseUrlRefused
+      ? `\n\nHint: services.dashboard.baseUrl must now carry a scheme — write an absolute URL such as http://127.0.0.1:3470 rather than a bare host like localhost:3470, or remove the key entirely. An empty string is not an absence: absence is a legal and deliberate posture here — a standalone \`agent-qa mcp\` with no dashboard has no base, and the carrier tool result then names that absence rather than fabricating a URL. The value is refused because it is assigned to an href inside the served App document and appended verbatim to every carrier tool result, so a schemeless or empty base composes a link that resolves against nothing.`
+      : ''
+
     throw new Error(
       `Config validation failed:\n${messages.join('\n')}\n\n` +
       `Run 'agent-qa init' to generate a complete config file.` +
-      dashboardHint
+      dashboardHint +
+      baseUrlHint
     )
   }
   if (options.loadAuthPlugins !== false) {
