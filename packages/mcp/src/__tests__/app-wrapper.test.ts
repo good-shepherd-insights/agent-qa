@@ -18,10 +18,16 @@
 //   C2  a not-live document that still carries a minted url           -> the run-ended cell
 //   C3  a value reaching the script without the escape helper         -> the hostile-runId cell
 //   C4  the wrapper growing a step list / status line (D-11)          -> the prohibition cell
+//   C5  the link's href/label assigned by the SCRIPT again            -> the markup-anchor cell
+//   C6  a non-http(s) permanentLink reaching an href                 -> the scheme-drop cell
+//   C7  the attribute escape dropped from the href                   -> the attribute-escape cell
+//   C8  a sentence constant changed without a cell (IN-04)           -> the census cell, which
+//                                                                       ranges over APP_WRAPPER_STATES
 
 import { describe, expect, it } from 'vitest'
 
 import {
+  APP_WRAPPER_CONNECTING_HINT,
   APP_WRAPPER_CONNECTING_MESSAGE,
   APP_WRAPPER_EXPIRED_HINT,
   APP_WRAPPER_EXPIRED_MESSAGE,
@@ -33,7 +39,7 @@ import {
   APP_WRAPPER_UNREACHABLE_MESSAGE,
   renderAppWrapperPage,
 } from '../app-wrapper.js'
-import type { AppWrapperInput, AppWrapperMint } from '../app-wrapper.js'
+import type { AppWrapperInput, AppWrapperMint, AppWrapperState } from '../app-wrapper.js'
 
 const RUN_ID = 'run-408-02-wrapper'
 const ORIGIN = 'http://127.0.0.1:7799'
@@ -60,6 +66,33 @@ const render = (overrides: Partial<AppWrapperInput> = {}): string =>
 const stateOf = (html: string): string | undefined =>
   /<main data-app-state="([^"]+)"/.exec(html)?.[1]
 
+/**
+ * The sentence each state shows, and the second line under it — the census's SUBJECT (IN-04).
+ *
+ * Typed `Record<AppWrapperState, string>` on purpose. The old census was a hand-written array of
+ * five sentences that silently omitted `APP_WRAPPER_RUN_ENDED_MESSAGE` while calling itself "every
+ * sentence it can ever show", and would have omitted the connecting hint next. Ranged over
+ * `APP_WRAPPER_STATES` against an exhaustive record, a state added to the wrapper without a cell is
+ * a COMPILE error here rather than an unobserved arm — the record stops type-checking before the
+ * assertion ever gets a chance not to run. Every value is the module's OWN exported constant, never
+ * a transcription.
+ */
+const MESSAGE_OF: Readonly<Record<AppWrapperState, string>> = {
+  connecting: APP_WRAPPER_CONNECTING_MESSAGE,
+  live: APP_WRAPPER_LIVE_MESSAGE,
+  expired: APP_WRAPPER_EXPIRED_MESSAGE,
+  'unreachable-origin': APP_WRAPPER_UNREACHABLE_MESSAGE,
+  'run-ended': APP_WRAPPER_RUN_ENDED_MESSAGE,
+}
+
+const HINT_OF: Readonly<Record<AppWrapperState, string>> = {
+  connecting: APP_WRAPPER_CONNECTING_HINT,
+  live: '',
+  expired: APP_WRAPPER_EXPIRED_HINT,
+  'unreachable-origin': '',
+  'run-ended': '',
+}
+
 describe('the closed state vocabulary (D-11)', () => {
   it('is exactly the five states this wrapper owns', () => {
     expect([...APP_WRAPPER_STATES]).toEqual([
@@ -71,16 +104,30 @@ describe('the closed state vocabulary (D-11)', () => {
     ])
   })
 
-  it('renders every sentence it can ever show, so no state can reach a person as empty text', () => {
+  it('renders every sentence it can ever show, RANGED over the exported state list (IN-04)', () => {
     const html = render()
-    for (const sentence of [
-      APP_WRAPPER_CONNECTING_MESSAGE,
-      APP_WRAPPER_LIVE_MESSAGE,
-      APP_WRAPPER_EXPIRED_MESSAGE,
-      APP_WRAPPER_EXPIRED_HINT,
-      APP_WRAPPER_UNREACHABLE_MESSAGE,
-    ]) {
-      expect(html.includes(sentence), `the document carries "${sentence}"`).toBe(true)
+    // The census covers the vocabulary, not a subset of it a reader has to check by eye.
+    expect(Object.keys(MESSAGE_OF), 'one message per state, no more').toHaveLength(
+      APP_WRAPPER_STATES.length,
+    )
+    expect(Object.keys(HINT_OF), 'one hint slot per state, no more').toHaveLength(
+      APP_WRAPPER_STATES.length,
+    )
+
+    for (const state of APP_WRAPPER_STATES) {
+      expect(
+        html.includes(MESSAGE_OF[state]),
+        `the document carries ${state}'s sentence "${MESSAGE_OF[state]}"`,
+      ).toBe(true)
+      // A hint is optional per state — an EMPTY one is the honest absence of a second line, and the
+      // stylesheet hides `p[data-app-hint]:empty` for exactly that reason. Only the named ones are
+      // claims about bytes.
+      if (HINT_OF[state] !== '') {
+        expect(
+          html.includes(HINT_OF[state]),
+          `the document carries ${state}'s hint "${HINT_OF[state]}"`,
+        ).toBe(true)
+      }
     }
   })
 
@@ -191,6 +238,63 @@ describe('the frame, the picker and the link (D-06/D-08)', () => {
     expect(html.includes('<a data-app-permanent-link')).toBe(false)
   })
 
+  // THE PRIMARY REPRESENTATION IS SERVED, NOT ASSIGNED (D-08, WR-10). The href and the label are in
+  // the markup the server sends, so a host whose CSP never runs this document's script still hands a
+  // person a working way to watch the run. Leg C5: move either back into the script and this reds.
+  it('renders the anchor COMPLETE in markup — href and label, before any script runs', () => {
+    const html = render()
+
+    expect(html).toContain(`href="${PERMANENT_LINK}"`)
+    expect(html).toContain(`>${APP_WRAPPER_PERMANENT_LINK_LABEL}</a>`)
+    expect(html.match(/<a data-app-permanent-link/g) ?? [], 'exactly one anchor').toHaveLength(1)
+    expect(html).toContain('rel="noreferrer"')
+    expect(html).toContain('target="_blank"')
+
+    // And the script no longer touches it at all — the assignment that used to live there is the
+    // mutation this cell is the bar for.
+    expect(html.includes('link.href'), 'the script assigns no href').toBe(false)
+    expect(html.includes('[data-app-permanent-link]'), 'the script does not look the anchor up')
+      .toBe(false)
+  })
+
+  // WR-04's ANCHOR HOP. An operator config value reaches this renderer, and this document runs with
+  // `allow-scripts`, so a `javascript:` base would compose a script-executing anchor. It collapses
+  // into the ALREADY-TESTED absent-link posture rather than into a new arm.
+  it('drops a non-http(s) permanent link entirely — the hostile base renders the absent case', () => {
+    const absent = render({ permanentLink: undefined })
+    for (const hostile of [
+      'javascript:alert(1)',
+      'javascript:alert(1)/runs/x/live',
+      'data:text/html,<script>alert(1)</script>',
+      'file:///etc/passwd',
+      'not a url at all',
+    ]) {
+      const html = render({ permanentLink: hostile })
+      expect(html.includes('<a data-app-permanent-link'), `${hostile} composes no anchor`).toBe(false)
+      expect(html.includes('javascript:'), `${hostile} leaves no javascript: byte`).toBe(false)
+      expect(html, `${hostile} renders the absent-link document`).toBe(absent)
+    }
+
+    // The control: an https base still renders, so the cell is not passing by refusing everything.
+    expect(render({ permanentLink: 'https://dash.example/runs/r/live' }))
+      .toContain('href="https://dash.example/runs/r/live"')
+  })
+
+  // THE SECOND ESCAPE HELPER, in ITS context (leg C7). `scriptLiteral` closes the `</script` hole
+  // for values entering the script; this value enters an ATTRIBUTE, where the hole is the quote.
+  it('escapes a quote and an angle bracket in the href instead of closing the attribute', () => {
+    const hostile = 'http://127.0.0.1:7799/runs/a"><img src=x onerror=alert(1)>/live'
+    const html = render({ permanentLink: hostile })
+
+    expect(html.includes('"><img'), 'the attribute cannot be closed early').toBe(false)
+    expect(html).toContain('&quot;&gt;&lt;img')
+    // One anchor, and the document still parses as one: nothing became a second element.
+    expect(html.match(/<a data-app-permanent-link/g) ?? []).toHaveLength(1)
+    expect(html.match(/<img/g) ?? [], 'no injected element').toHaveLength(0)
+    // An ampersand in a legitimate query string survives as an entity rather than as a bare `&`.
+    expect(render({ permanentLink: 'http://h/live?a=1&b=2' })).toContain('href="http://h/live?a=1&amp;b=2"')
+  })
+
   it('exports the load timeout and puts THAT number in the script', () => {
     expect(APP_WRAPPER_LOAD_TIMEOUT_MS).toBeGreaterThan(0)
     expect(render()).toContain(String(APP_WRAPPER_LOAD_TIMEOUT_MS))
@@ -214,10 +318,17 @@ describe('every value entering the script crosses the escape helper (T-403-09)',
     expect(html).toContain('\\u003c/script')
   })
 
-  it('escapes a hostile permanent link the same way', () => {
+  // AMENDED 2026-09-01 (this plan). The permanent link no longer ENTERS the script — it is rendered
+  // into markup, so `scriptLiteral` is no longer the helper that guards it and asserting on
+  // `\\u003c/script` here would be asserting a byte the document no longer has a reason to hold.
+  // The claim survives, in the context the value actually lands in: the payload cannot close the
+  // script element AND cannot close the attribute.
+  it('escapes a hostile permanent link in ITS OWN context — the attribute, not the script', () => {
     const html = render({ permanentLink: 'http://x/</script><b>' })
-    expect(html.includes('</script><b>')).toBe(false)
-    expect(html).toContain('\\u003c/script')
+    expect(html.includes('</script><b>'), 'the script element cannot be closed early').toBe(false)
+    expect(html).toContain('&lt;/script&gt;&lt;b&gt;')
+    // Exactly one `</script>` in the document: the real one that ends the wrapper's script.
+    expect(html.match(/<\/script>/g) ?? []).toHaveLength(1)
   })
 })
 

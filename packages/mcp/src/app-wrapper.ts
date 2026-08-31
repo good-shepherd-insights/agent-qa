@@ -63,9 +63,27 @@
 //
 // VALUES ENTER THE SCRIPT AS STRING LITERALS AND LAND AS `textContent` (T-403-09). The escape
 // helper is `embed-page.ts`'s, copied because the guard must not be re-derived: `JSON.stringify`
-// plus a `<` escape closes the `</script` hole. Nothing caller-supplied is interpolated into
-// markup, which is why the picker's options, the link's href and the run id are BUILT in the script
-// rather than templated above it. The only prose in the markup is this file's OWN constants.
+// plus a `<` escape closes the `</script` hole. The picker's options and the run id are BUILT in
+// the script rather than templated above it, so nothing caller-supplied has to be trusted to markup.
+//
+// WITH ONE AMENDED EXCEPTION, AMENDED HERE RATHER THAN REVERSED IN SILENCE (2026-09-01; the cells
+// are `app-wrapper.test.ts`'s markup-anchor, scheme-drop and attribute-escape cells, and
+// `app-wrapper-dom.test.ts` cell (7)). THE PERMANENT LINK'S `href` AND LABEL ARE NOW RENDERED INTO
+// MARKUP. The rule above was sound and its conclusion was wrong for exactly this one value. Under
+// D-08 the permanent link is the PRIMARY way to watch a run, and a primary representation produced
+// by the script is unavailable on precisely the host it exists to cover: a host serving this
+// document under `script-src 'none'` (WR-10, RESEARCH assumption A1) runs NONE of this script, so
+// the anchor stayed empty, the frame stayed hidden and the document sat forever under the
+// connecting sentence — the pane with no way out that this header already calls worse than a blank
+// frame. Two guards PAY for the exception rather than relaxing the rule:
+//   (a) a SECOND, separately named escape helper for HTML ATTRIBUTE context (`attributeText`),
+//       used for this one value and nothing else, never for a value entering the script; and
+//   (b) a SCHEME CHECK that DROPS a `permanentLink` which is not `http:` or `https:`, so a hostile
+//       base composes no anchor at all rather than a new kind of one (WR-04's anchor hop — the
+//       parse-time hop is the dashboard config schema's, and this renderer is exported and drivable
+//       directly, so it guards its own input rather than trusting a boundary it cannot see).
+// The connecting state carries a NAMED HINT for the same reason: a server-rendered document that
+// says only "connecting" is making a claim its own script has to keep, and on that host it cannot.
 //
 // Protocol grounding. This module speaks no protocol at all — it returns a string — and the two
 // SEPs that nonetheless shape it are the reason it can. SEP-1730 places extensions outside every
@@ -94,6 +112,20 @@ export type AppWrapperState = (typeof APP_WRAPPER_STATES)[number]
 
 /** What the page says while the inner frame has not painted yet. */
 export const APP_WRAPPER_CONNECTING_MESSAGE = 'connecting to the live view…'
+
+/**
+ * The second line under `connecting`, and the WHOLE of what an initial render says on a host that
+ * never runs this document's script (WR-10, RESEARCH assumption A1; the cell is
+ * `app-wrapper-dom.test.ts` cell (7)).
+ *
+ * Named for the same reason every other absence here is named: a document that says only that it is
+ * connecting has made a promise its own script has to keep, and under a host CSP of
+ * `script-src 'none'` there is no script to keep it. The sentence therefore points at the ONE
+ * useful action available with no script at all — the permanent link rendered directly beneath it,
+ * which is now markup rather than something the script assigns. One useful action, no apology.
+ */
+export const APP_WRAPPER_CONNECTING_HINT
+  = 'if the pane does not appear, open it in your browser'
 
 /** What the page says once the inner frame has loaded on an origin this host can reach. */
 export const APP_WRAPPER_LIVE_MESSAGE = 'live'
@@ -232,11 +264,37 @@ const MESSAGES: Readonly<Record<AppWrapperState, string>> = {
 }
 
 const HINTS: Readonly<Record<AppWrapperState, string>> = {
-  connecting: '',
+  connecting: APP_WRAPPER_CONNECTING_HINT,
   live: '',
   expired: APP_WRAPPER_EXPIRED_HINT,
   'unreachable-origin': '',
   'run-ended': '',
+}
+
+/**
+ * The `permanentLink` this renderer is willing to put in an `href`, or `undefined` (WR-04).
+ *
+ * A URL-shaped OPERATOR config value (`services.dashboard.baseUrl`) reaches this function, and the
+ * document it lands in runs with `allow-scripts` at an opaque origin, so a base of
+ * `javascript:alert(1)` would compose a script-executing anchor. Anything that is not an absolute
+ * `http:`/`https:` URL is therefore treated EXACTLY as an absent link: no anchor at all. That is
+ * deliberate reuse rather than a new arm — absence is already the tested, honest posture for `no
+ * dashboard origin is composable`, so a hostile base collapses into a state this document already
+ * knows how to be in, instead of inventing one nobody has looked at.
+ *
+ * Defensive, not redundant: the config schema refuses the same shape at PARSE time, but
+ * `renderAppWrapperPage` is exported and drivable directly, and it receives its link from a
+ * supplier rather than from a freshly parsed config.
+ */
+function httpPermanentLink(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return undefined
+  }
+  return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? value : undefined
 }
 
 /**
@@ -253,6 +311,24 @@ export function renderAppWrapperPage(input: AppWrapperInput): string {
   // one — including the handle numbers, which enter as literals like everything else so that
   // "every value crosses the helper" is a property a reader can check by grepping for the calls.
   const scriptLiteral = (value: string) => JSON.stringify(value).replaceAll('<', '\\u003c')
+
+  // THE SECOND HELPER, AND THE ONLY ONE FOR HTML ATTRIBUTE CONTEXT. It exists for exactly one
+  // value — the permanent link's `href` and its label — which is the one thing this document renders
+  // into MARKUP rather than assigning from the script (see the header's dated amendment: the link
+  // is the primary representation and must survive a host that runs no script). `&` goes first or
+  // the later replacements would be re-escaped.
+  //
+  // THE TWO HELPERS MUST NEVER BE USED IN EACH OTHER'S CONTEXT. `scriptLiteral` remains the one
+  // helper for EVERY value entering the script and produces a quoted JS literal, which is not an
+  // attribute value; this one produces attribute text and does nothing about the `</script` hole.
+  // Swapping them silently reopens exactly the guard the other one closes.
+  const attributeText = (value: string) =>
+    value
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;')
 
   const now = input.now ?? Date.now()
 
@@ -287,10 +363,17 @@ export function renderAppWrapperPage(input: AppWrapperInput): string {
     )
     .join(',')
 
-  const permanentLinkSlot =
-    typeof input.permanentLink === 'string'
-      ? '<a data-app-permanent-link rel="noreferrer" target="_blank"></a>'
-      : ''
+  // Complete IN THE MARKUP, href and label both, so the way out exists before a single line of
+  // script has run — and absent entirely for a link this renderer will not vouch for.
+  const permanentLink = httpPermanentLink(input.permanentLink)
+  const permanentLinkSlot
+    = permanentLink === undefined
+      ? ''
+      : '<a data-app-permanent-link rel="noreferrer" target="_blank" href="'
+        + attributeText(permanentLink)
+        + '">'
+        + attributeText(APP_WRAPPER_PERMANENT_LINK_LABEL)
+        + '</a>'
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -312,7 +395,6 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
 (function () {
   var mints = [${mintsLiteral}];
   var runId = ${scriptLiteral(input.runId)};
-  var permanentLink = ${scriptLiteral(input.permanentLink ?? '')};
   var expiresInMs = ${String(expiresInMs)};
   var loadTimeoutMs = ${String(APP_WRAPPER_LOAD_TIMEOUT_MS)};
   var messages = {
@@ -323,7 +405,7 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
     'run-ended': ${scriptLiteral(APP_WRAPPER_RUN_ENDED_MESSAGE)}
   };
   var hints = {
-    connecting: '',
+    connecting: ${scriptLiteral(APP_WRAPPER_CONNECTING_HINT)},
     live: '',
     expired: ${scriptLiteral(APP_WRAPPER_EXPIRED_HINT)},
     'unreachable-origin': '',
@@ -335,7 +417,6 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
   var picker = document.querySelector('[data-app-handle-picker]');
   var message = document.querySelector('[data-app-message]');
   var hint = document.querySelector('[data-app-hint]');
-  var link = document.querySelector('[data-app-permanent-link]');
 
   // WHICH RUN, as an attribute rather than as prose. Identity is not run STATE (D-11 forbids the
   // second, not the first), and it enters through setAttribute from an escaped literal, so a run
@@ -349,11 +430,6 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
     root.setAttribute('data-app-state', state);
     message.textContent = messages[state] || '';
     hint.textContent = hints[state] || '';
-  }
-
-  if (link !== null && permanentLink !== '') {
-    link.href = permanentLink;
-    link.textContent = ${scriptLiteral(APP_WRAPPER_PERMANENT_LINK_LABEL)};
   }
 
   // ---- The minimal ui/initialize handshake (ext-apps spec shape) -------------------------------

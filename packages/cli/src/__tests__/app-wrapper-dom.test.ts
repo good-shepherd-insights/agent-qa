@@ -11,9 +11,10 @@
 // WHY A BROWSER IS NOT OPTIONAL FOR THESE CLAIMS. Plan 01 asserted the wrapper's BYTES; the
 // questions left are about behaviour no string can answer — does a dead origin end as a NAMED
 // state rather than a blank rectangle, does the picker swap without touching the network, does a
-// loaded frame actually reach `live`, and once the document has expired does it STAY expired no
-// matter what a person does to it. Each is a property of the browser's event loop, and the last of
-// them is the one `408-VERIFICATION.md` measured going the other way (plan 07, cell (6)).
+// loaded frame actually reach `live`, once the document has expired does it STAY expired no matter
+// what a person does to it, and does a person still have a way out when NONE of the document's
+// script runs. Each is a property of the browser's event loop (or, for the last, of its absence),
+// and the expiry one is what `408-VERIFICATION.md` measured going the other way (plan 07, cell (6)).
 //
 // A MEASURED FACT THAT SHAPED THE WRAPPER, recorded here because it is the reason cell (3) is not
 // a one-liner: in Chromium an iframe pointing at a REFUSED connection still fires `load` (measured
@@ -33,12 +34,18 @@
 //                                                               reads `live` again after the picker
 //                                                               change and the frame carries an
 //                                                               already-aged liveUrl
+//   E5  the permanent link's href/label moved BACK into the   -> cell (7): with scripting disabled
+//       script (the pre-2026-09-01 shape)                        the anchor renders empty, so the
+//                                                               href read answers null and there is
+//                                                               no way out of the document at all
 
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import {
+  APP_WRAPPER_CONNECTING_HINT,
+  APP_WRAPPER_CONNECTING_MESSAGE,
   APP_WRAPPER_EXPIRED_HINT,
   APP_WRAPPER_EXPIRED_MESSAGE,
   APP_WRAPPER_LOAD_TIMEOUT_MS,
@@ -286,6 +293,56 @@ describe('the wrapper in a real browser (D-11)', () => {
       ).not.toBeNull()
     } finally {
       await page.close()
+    }
+  }, 180_000)
+
+  // (7) THE HOST THAT RUNS NONE OF THIS DOCUMENT'S SCRIPT (WR-10, RESEARCH assumption A1, T-408-19).
+  //
+  // THIS IS A PROXY MEASUREMENT AND THE PROXY IS NAMED. A Playwright context created with
+  // `javaScriptEnabled: false` is NOT a host applying `script-src 'none'`: the CSP path also blocks
+  // by directive, reports violations, and can differ per element, and a real host may block only
+  // SOME sources. What the two share is the only thing this cell claims — the document is painted
+  // and none of its inline script ever runs. The real-host measurement stays UAT item 2 in
+  // `408-VERIFICATION.md`, and 408-14 adds the derived-CSP harness leg; this cell converts the
+  // failure mode from an unmeasured assumption into a standing gate in the meantime.
+  //
+  // WHAT IT PROVES. Before this plan the anchor's href and label were assigned BY THE SCRIPT, so on
+  // such a host a person met an empty anchor, a hidden frame and an indefinite `connecting`
+  // sentence — a pane with no way out, which the wrapper's own header calls worse than a blank
+  // frame. The primary representation (D-08's permanent link) is now in the markup the server sends,
+  // and the connecting state carries a named second line saying what to do with it.
+  it('(7) with the script never running, the document still names a state and offers the way out', async () => {
+    const inner = await serveStatic('<!doctype html><title>inner</title>ok', 'text/html')
+    const permanentLink = `${inner}/runs/${RUN_ID}/live`
+    const url = await serveWrapper([mint(0, inner, Date.now() + 300_000)], permanentLink)
+
+    const context = await held().newContext({ javaScriptEnabled: false })
+    const page = await context.newPage()
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded' })
+
+      // The way out, complete and clickable with no script at all.
+      const link = page.locator('[data-app-permanent-link]')
+      expect(await link.count(), 'the anchor is in the served markup').toBe(1)
+      expect(await link.getAttribute('href')).toBe(permanentLink)
+      expect(await link.textContent()).toBe(APP_WRAPPER_PERMANENT_LINK_LABEL)
+      expect(await link.isVisible(), 'and a person can actually see it').toBe(true)
+
+      // A NAMED state with a named second line — not an indefinite progress claim on its own.
+      expect(await page.locator('[data-app-state]').getAttribute('data-app-state')).toBe('connecting')
+      expect(await page.locator('[data-app-message]').textContent()).toBe(
+        APP_WRAPPER_CONNECTING_MESSAGE,
+      )
+      expect(await page.locator('[data-app-hint]').textContent()).toBe(APP_WRAPPER_CONNECTING_HINT)
+      expect(await page.locator('[data-app-hint]').isVisible()).toBe(true)
+
+      // And no dead pane under it: the frame was never handed a src, so there is nothing to mistake
+      // for a stalled one. `hidden` here is the stylesheet's, not the script's.
+      expect(await page.locator('[data-app-live-frame]').getAttribute('src')).toBeNull()
+      expect(await page.locator('[data-app-live-frame]').isVisible()).toBe(false)
+    } finally {
+      await page.close()
+      await context.close()
     }
   }, 180_000)
 })

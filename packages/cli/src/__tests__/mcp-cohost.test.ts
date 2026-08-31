@@ -454,8 +454,10 @@ describe('a served App token validates against THIS composition\'s validator (D-
 
       // Plan 01 shipped this slot ABSENT, because composing the link needs a base and a base is
       // composition territory that plan did not touch. It is composed here, so the anchor exists
-      // AND the script is handed the address it points the anchor at — which is what D-11's
-      // `expired` and `unreachable-origin` states hand a person instead of a dead frame.
+      // and carries the address IN THE SERVED MARKUP (amended 2026-09-01, 408-11: the href used to
+      // be assigned by the wrapper's script, which left it empty on a host that runs no script) —
+      // which is what D-11's `expired` and `unreachable-origin` states hand a person instead of a
+      // dead frame.
       expect(html).toContain('data-app-permanent-link')
       expect(html).toContain(liveRunLinkOf(harness.boundOrigin, RUN_ID))
       // The SAME page the carrier line names — one address for one run, never two.
