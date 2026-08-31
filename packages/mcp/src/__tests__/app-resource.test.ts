@@ -23,6 +23,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 
 import {
   createFunctionRegistry,
+  RUNS_EVENTS_FUNCTION_ID,
+  RUNS_LIVE_URL_FUNCTION_ID,
   validateLiveUrlToken,
   type CreateFunctionRegistryOptions,
   type FunctionDeps,
@@ -41,11 +43,14 @@ import {
   APP_NEGOTIATION_CLIENT_CAPABILITIES_KEY,
   APP_RESOURCE_MIME_TYPE,
   APP_RESOURCE_URI_TEMPLATE,
+  AppResourceOriginSpanError,
   AppResourceUriError,
+  createAppResourceReadHandler,
   MCP_APPS_EXTENSION_ID,
   parseAppUri,
   registerAppResources,
 } from '../app-resource.js'
+import type { AppResourceInvoke } from '../app-resource.js'
 import { APP_WRAPPER_STATES } from '../app-wrapper.js'
 
 // ---- The fixture composition -------------------------------------------------------------------
@@ -96,6 +101,25 @@ const runStartedEnvelope = (handles?: readonly number[]): RunEventEnvelope => ({
 interface FixtureOptions {
   /** The roster the run announces on its own `runStarted`. */
   readonly handles?: readonly number[]
+  /**
+   * Announce NO `handles` FIELD AT ALL on `runStarted` (WR-05).
+   *
+   * Distinct from `handles: []`, and the distinction is the whole point of the two cells below:
+   * `handleRosterOf` answers `undefined` for an absent field and `[]` for a field that really said
+   * "no members", so they are two different bytes on the wire. The claim is that they are one
+   * DOCUMENT. Without this knob the fixture could not even express the unannounced arm — `handles`
+   * left off defaulted to `[0, 1]` and the run announced a two-member roster.
+   */
+  readonly unannounced?: boolean
+  /**
+   * Which handles this host can actually serve a live view for.
+   *
+   * Defaults to the announced roster, which is what every pre-WR-05 cell wants. It has to be
+   * separable for the empty-roster arm: a run that announced `handles: []` is still a run this host
+   * holds a live session for, and the defect being closed is precisely that the handler stopped
+   * believing that.
+   */
+  readonly liveHandles?: readonly number[]
   /** Which run ids this host holds a live session for. Empty = the D-07 not-live path. */
   readonly liveRunIds?: readonly string[]
 }
@@ -104,7 +128,8 @@ function fixtureRegistry(options: FixtureOptions = {}): {
   readonly registry: FunctionRegistry
   readonly clock: { now: () => number; at: () => number }
 } {
-  const handles = options.handles ?? [0, 1]
+  const announced = options.handles ?? [0, 1]
+  const handles = options.liveHandles ?? announced
   const liveRunIds = options.liveRunIds ?? [FIXTURE_RUN_ID]
   const clock = advancingClock()
 
@@ -120,7 +145,9 @@ function fixtureRegistry(options: FixtureOptions = {}): {
 
   const runs = {
     readEvents: async (runId: string, fromSeq: number) =>
-      runId === FIXTURE_RUN_ID && fromSeq <= 1 ? [runStartedEnvelope(options.handles ?? [0, 1])] : [],
+      runId === FIXTURE_RUN_ID && fromSeq <= 1
+        ? [runStartedEnvelope(options.unannounced === true ? undefined : announced)]
+        : [],
   }
 
   const auditSink = {
@@ -251,6 +278,58 @@ function liveUrlsIn(html: string): readonly string[] {
 
 const tokenOf = (liveUrl: string): string => liveUrl.slice(liveUrl.indexOf('#') + 1)
 
+/** The wrapper's declared state, read out of the served bytes rather than out of the input. */
+function stateOf(html: string): string {
+  const match = /data-app-state="([a-z-]+)"/.exec(html)
+  expect(match, 'the served document declares no app state at all').not.toBeNull()
+  return match![1]!
+}
+
+/**
+ * A hand-built `invoke` that mints one pane per ORIGIN, for the multi-origin arm (IN-02).
+ *
+ * Driven through `createAppResourceReadHandler` directly rather than through the fixture registry,
+ * because the composition this guards against is one no shipped registry can build today:
+ * `runs.liveurl` reads `liveView.origin()` once per invocation, so every mint out of the real op
+ * shares an origin. That is the fact the served CSP used to rest on WITHOUT checking, and the only
+ * way to ask what happens when it stops holding is to compose the answer here.
+ */
+function mintingInvoke(origins: readonly string[]): AppResourceInvoke {
+  return async (opId: string, input: unknown): Promise<unknown> => {
+    if (opId === RUNS_EVENTS_FUNCTION_ID) {
+      const roster = origins.map((_origin, index) => index)
+      return (async function* stream() {
+        yield runStartedEnvelope(roster)
+      })()
+    }
+    if (opId === RUNS_LIVE_URL_FUNCTION_ID) {
+      const handle = (input as { handle: number }).handle
+      return {
+        handle,
+        liveUrl: `${origins[handle]!}/live/${FIXTURE_RUN_ID}#token-for-handle-${handle}`,
+        expiresAt: 1_800_000_300_000,
+        stream: { kind: 'cdp-screencast' },
+      }
+    }
+    throw new Error(`the fixture invoke was asked for an op it does not serve: ${opId}`)
+  }
+}
+
+/**
+ * Drive the read handler with no server and no registry at all.
+ *
+ * ONE cast, at ONE seam, and it is the same narrowing the recording registrar already does: the
+ * SDK's `ReadResourceResult` types `contents` as a text-OR-blob union, and this surface only ever
+ * serves text (`htmlOf` asserts exactly that on every result). Narrowing here rather than widening
+ * `htmlOf` keeps the assertion where the claim is.
+ */
+const directRead = (invoke: AppResourceInvoke): ReturnType<RecordedAppRegistration['read']> =>
+  createAppResourceReadHandler({ invoke, maskText: identity })(
+    new URL(`ui://agent-qa/live-run/${FIXTURE_RUN_ID}`),
+    {} as never,
+    negotiatedContext as never,
+  ) as ReturnType<RecordedAppRegistration['read']>
+
 // ---- The codec ---------------------------------------------------------------------------------
 
 describe('parseAppUri — the ONE codec for ui:// app addresses (T-396-08)', () => {
@@ -376,6 +455,96 @@ describe('resources/read mints through the ONE wall and serves the wrapper (D-01
     const { read } = registerAndCapture({ handles: [0, 1, 2] })
     const html = htmlOf(await read(new URL(`ui://agent-qa/live-run/${FIXTURE_RUN_ID}`)))
     expect(liveUrlsIn(html).length).toBe(3)
+  })
+})
+
+// ---- The roster's two arms, and the allowance that covers the document --------------------------
+
+describe('an announced-but-EMPTY roster is the SAME document as an unannounced one (WR-05, T-408-25)',
+  () => {
+    it('renders a live pane for handle 0, never `run-ended`, for a run announcing `handles: []`',
+      async () => {
+        // The run really announces the field, and it really says "no members" — `handleRosterOf`
+        // answers `[]` here, not `undefined`. The host still holds a live session for handle 0,
+        // which is what makes `run-ended` a false claim rather than an arity report.
+        const { read } = registerAndCapture({ handles: [], liveHandles: [0] })
+        const result = await read(new URL(`ui://agent-qa/live-run/${FIXTURE_RUN_ID}`))
+        const html = htmlOf(result)
+
+        expect(
+          liveUrlsIn(html).length,
+          'an announced-but-empty roster minted nothing — `?? [0]` does not fire for `[]`, so the '
+          + 'mint loop ran zero times and the document withdrew a variant that IS available (WR-05)',
+        ).toBe(1)
+        expect(stateOf(html), 'a run this host holds a live session for was rendered as ended')
+          .not.toBe('run-ended')
+      })
+
+    it('agrees with the UNANNOUNCED arm — same state, same pane count, same handle', async () => {
+      // The claim is the collapse itself: two different bytes on the wire, one decision in the
+      // handler, one document out. Compared arm to arm rather than each pinned to a literal, so a
+      // future change that moved BOTH would still have to move them together.
+      const empty = registerAndCapture({ handles: [], liveHandles: [0] })
+      const absent = registerAndCapture({ unannounced: true, liveHandles: [0] })
+
+      const emptyHtml = htmlOf(await empty.read(new URL(`ui://agent-qa/live-run/${FIXTURE_RUN_ID}`)))
+      const absentHtml = htmlOf(
+        await absent.read(new URL(`ui://agent-qa/live-run/${FIXTURE_RUN_ID}`)),
+      )
+
+      expect(stateOf(emptyHtml)).toBe(stateOf(absentHtml))
+      expect(liveUrlsIn(emptyHtml).length).toBe(liveUrlsIn(absentHtml).length)
+
+      // And the pane really is handle 0 on both arms — proven at the token, so "one pane" cannot be
+      // satisfied by a pane for some other member.
+      for (const [label, html, clock] of [
+        ['announced-but-empty', emptyHtml, empty.clock],
+        ['unannounced', absentHtml, absent.clock],
+      ] as const) {
+        const liveUrls = liveUrlsIn(html)
+        expect(liveUrls.length, `${label}: one pane`).toBe(1)
+        const verdict = validateLiveUrlToken(signer, tokenOf(liveUrls[0]!), {
+          runId: FIXTURE_RUN_ID,
+          now: clock.at(),
+        })
+        expect(verdict.kind, `${label}: the shipped validator accepts the mint`).toBe('ok')
+        expect(verdict.kind === 'ok' ? verdict.claims.handle : -1, `${label}: handle 0`).toBe(0)
+      }
+    })
+  })
+
+describe('the served allowance covers EVERY pane the document can show (IN-02, T-408-26)', () => {
+  it('names the shared origin ONCE for a two-handle document — not once per mint', async () => {
+    const { read } = registerAndCapture({ handles: [0, 1] })
+    const result = await read(new URL(`ui://agent-qa/live-run/${FIXTURE_RUN_ID}`))
+
+    expect(liveUrlsIn(htmlOf(result)).length, 'two panes, so the derivation really ran twice').toBe(2)
+    // The whole `_meta` object, so a duplicate entry or a third directive reds by name rather than
+    // by a membership check that a longer array would still satisfy.
+    expect(result.contents[0]!._meta).toEqual({
+      ui: { csp: { frameDomains: [FIXTURE_ORIGIN], connectDomains: [FIXTURE_ORIGIN] } },
+    })
+  })
+
+  it('CONTROL: a hand-composed single-origin document is served, with that origin allowed',
+    async () => {
+      // Without this the refusal below could be passing because `mintingInvoke` cannot serve
+      // anything at all.
+      const result = await directRead(mintingInvoke([FIXTURE_ORIGIN, FIXTURE_ORIGIN]))
+      expect(liveUrlsIn(htmlOf(result)).length, 'the hand-composed flow minted two panes').toBe(2)
+      expect(result.contents[0]!._meta).toEqual({
+        ui: { csp: { frameDomains: [FIXTURE_ORIGIN], connectDomains: [FIXTURE_ORIGIN] } },
+      })
+    })
+
+  it('REFUSES a document whose panes would span two origins, by name', async () => {
+    // The posture chosen in 408-13: refusal, not a widened allowance. A frame allowance is as
+    // narrow as the document needs (T-408-05), and a document needing two origins is one this
+    // server does not know how to serve narrowly — so it says so instead of shipping an allowance
+    // that would blank every pane but the first.
+    const spanning = directRead(mintingInvoke([FIXTURE_ORIGIN, 'http://127.0.0.1:7778']))
+    await expect(spanning).rejects.toThrow(AppResourceOriginSpanError)
+    await expect(spanning).rejects.toThrow(/would span 2 origins/)
   })
 })
 

@@ -359,6 +359,38 @@ export class AppResourceReadError extends Error {
   }
 }
 
+/**
+ * A document whose panes would span more than one origin (IN-02, T-408-26; added 2026-09-01).
+ *
+ * THE INVARIANT THIS SERVES USED TO BE AN ASSUMPTION. The `_meta.ui.csp` block below was derived
+ * from `mints[0]` alone, which is correct today only because `runs.liveurl` reads
+ * `liveView.origin()` once per invocation — a fact held in ANOTHER package, which nothing on that
+ * line checked. A composition that ever minted across origins would have shipped a frame allowance
+ * covering the first pane and blocking every other one: a blank inner frame, which is the exact
+ * failure this milestone exists to remove, arriving silently.
+ *
+ * WHY REFUSAL RATHER THAN A WIDER ALLOWANCE. Naming every origin in `frameDomains` would keep the
+ * document renderable, but it would also make the allowance a function of how many panes happened
+ * to be minted — precisely the "never broader than the document needs" property T-408-05 pins.
+ * This module's own reasoning is that the allow is as narrow as the document needs; a document that
+ * needs two origins is a composition this server does not know how to serve narrowly, and saying so
+ * is honest absence rather than a silent widening.
+ *
+ * ITS MESSAGE CARRIES NO CALLER TEXT AND NO CREDENTIAL. The origins are host-composed and
+ * `originOf` returns an origin only — never the path and never the fragment the token lives in — so
+ * there is nothing here to mask and nothing here to leak.
+ */
+export class AppResourceOriginSpanError extends Error {
+  constructor(origins: readonly string[]) {
+    super(
+      `this App document would span ${origins.length} origins `
+      + `(${[...origins].sort().join(', ')}) and one frame allowance covers one: refusing to serve `
+      + `a document whose panes it could not all reach`,
+    )
+    this.name = 'AppResourceOriginSpanError'
+  }
+}
+
 /** The host-bound `(registry, caller)` closure over `invokeFunction`. */
 export type AppResourceInvoke = (opId: string, input: unknown) => Promise<unknown>
 
@@ -409,6 +441,14 @@ function isNotLiveRefusal(error: unknown): boolean {
  *
  * Answers `undefined` rather than a default, so the CALLER decides what an unannounced roster
  * means; the read handler reads it as handle 0, the single-member case every non-suite run is.
+ *
+ * IT ALSO ANSWERS `[]`, AND THAT IS THE SAME DECISION (WR-05, 2026-09-01). `handleRosterOf` answers
+ * `[]` for a `runStarted` that really announced `handles: []`, and `undefined` only when the field
+ * is absent or malformed — two different bytes on the wire, one question for the caller. The read
+ * handler collapses them at `rosterToMint` below: an announced-but-empty roster is a run that named
+ * no members, not a run that ended, and `run-ended` is a claim about LIVENESS. Kept as two answers
+ * HERE rather than defaulted away, because this function's contract is to report what the envelope
+ * said; deciding what it means is the caller's job, and now there is exactly one place doing it.
  */
 async function announcedRoster(
   invoke: AppResourceInvoke,
@@ -477,9 +517,23 @@ export function createAppResourceReadHandler(
       notLive = true
     }
 
+    // WR-05 (2026-09-01, T-408-25): `undefined` AND `[]` resolve here, once, by name.
+    // `roster ?? [0]` did not fire for `[]` — `??` tests nullishness, not emptiness — so a run whose
+    // `runStarted` announced `handles: []` ran the mint loop ZERO times, produced no mints, and was
+    // rendered `run-ended` by the count below for a run this host IS holding a live session for.
+    // That is not a cosmetic error: under the promoted D-08 model the credentialled embed is one
+    // bounded variant of a representation whose primary form is the permanent link, and `run-ended`
+    // is how this document says the variant is unavailable. Withdrawing it on a false premise is the
+    // same class of dishonesty as labelling a dead pane `live`.
+    //
+    // Both absences mean what the handler already documents as its default: the single member,
+    // handle 0. A named local rather than an expression in the `for` header, because the point is
+    // that three paths became two and a reader has to be able to SEE that.
+    const rosterToMint = roster === undefined || roster.length === 0 ? [0] : roster
+
     const mints: AppWrapperMint[] = []
     if (!notLive) {
-      for (const handle of roster ?? [0]) {
+      for (const handle of rosterToMint) {
         // THE ONE INVOCATION WALL, once per handle (D-06). Fresh on EVERY read, which is D-10's
         // fresh-on-render for free: nothing is cached here, so there is no stale token to serve.
         let minted: RunsLiveUrlResult
@@ -517,6 +571,27 @@ export function createAppResourceReadHandler(
     const permanentLink
       = base === undefined || base.trim() === '' ? undefined : liveRunLinkOf(base.trim(), runId)
 
+    // IN-02 (2026-09-01, T-408-26). THE ALLOWANCE IS DERIVED FROM THE WHOLE DOCUMENT, and the
+    // invariant it rests on is ASSERTED HERE rather than assumed to hold in another package. Every
+    // mint's origin, distinct, in one set: a mint whose `liveUrl` this host cannot name as a URL
+    // contributes nothing (the old `mints[0]`-only form behaved the same way, and that arm is
+    // unchanged), and two identical origins contribute one entry, so a two-handle document names
+    // its shared origin once rather than once per pane.
+    //
+    // POSTURE, RECORDED AS THE COMMENT THIS FILE'S CHOICE IS SUPPOSED TO CARRY: a document whose
+    // panes would span origins is REFUSED, not served with a widened allowance. See
+    // `AppResourceOriginSpanError` for the reasoning. Refused BEFORE the wrapper is composed, so
+    // there is no half-honest document in existence on that path.
+    const frameOrigins = [
+      ...new Set(
+        mints
+          .map((mint) => originOf(mint.liveUrl))
+          .filter((origin): origin is string => origin !== undefined),
+      ),
+    ]
+    if (frameOrigins.length > 1) throw new AppResourceOriginSpanError(frameOrigins)
+    const frameDomain = frameOrigins[0]
+
     const html = renderAppWrapperPage({
       runId,
       mints,
@@ -530,8 +605,6 @@ export function createAppResourceReadHandler(
     // the host's iframe intact. A masked token is a broken embed, so masking here would be the
     // defect rather than the guard. The channel that DOES echo caller text — the refusals above —
     // is masked, and Plan 04's scan cell is the standing gate on every model-readable channel.
-    const frameDomain = mints[0] === undefined ? undefined : originOf(mints[0].liveUrl)
-
     return {
       contents: [
         {
@@ -544,7 +617,9 @@ export function createAppResourceReadHandler(
           // a BLOCKED inner frame — the blank pane criterion 2 forbids (Pitfall 1). The allowed
           // origin is the minted link's OWN origin rather than a separately configured one, so the
           // allow can never be broader than the document needs (T-408-05); with no mints there is
-          // no inner frame, and the block is omitted rather than emitted empty.
+          // no inner frame, and the block is omitted rather than emitted empty. `frameDomain` is
+          // the ONE distinct origin `frameOrigins` above resolved over EVERY mint (IN-02) — not
+          // `mints[0]`'s, which was the same answer only by a fact held in another package.
           //
           // `connectDomains` NAMES THE SAME ONE ORIGIN, AND IT IS NOT OPTIONAL (408 plan 06 Task 2,
           // MEASURED 2026-08-31). ext-apps' shipped schema documents `connectDomains` as mapping to

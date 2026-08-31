@@ -89,6 +89,7 @@ export {
   APP_RESOURCE_NAME,
   APP_RESOURCE_URI_TEMPLATE,
   AppResourceNegotiationError,
+  AppResourceOriginSpanError,
   AppResourceReadError,
   AppResourceUriError,
   MCP_APPS_EXTENSION_ID,
