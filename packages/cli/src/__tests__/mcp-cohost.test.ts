@@ -540,7 +540,7 @@ describe('the shipped dashboard composition mounts and closes the endpoint', () 
   it('mounts it ONLY when services.mcp.tokens is declared', () => {
     expect(DASHBOARD_SOURCE).toContain('resolveMcpTokens(')
     expect(DASHBOARD_SOURCE).toContain('createMcpHttpRequestListener({')
-    expect(DASHBOARD_SOURCE).toContain('if (mcpTokens.length > 0)')
+    expect(DASHBOARD_SOURCE).toContain('if (mcpPlan.mount && mcpTokens.length > 0)')
     expect(DASHBOARD_SOURCE).toContain('NOT MOUNTED WHEN NOTHING IS DECLARED')
   })
 

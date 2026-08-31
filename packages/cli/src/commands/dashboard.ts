@@ -1651,6 +1651,70 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
   }
 }
 
+/**
+ * The co-hosted MCP endpoint's mount decision, as a value (408-09 WR-01 / WR-09).
+ *
+ * `mount` is the whole answer to "does this dashboard bind a second listener at all"; `port` is the
+ * clamped port it would bind; `tokenCount` is how many caller credentials the operator DECLARED —
+ * not how many resolved, which is a different fact that needs `process.env` and therefore stays out
+ * of a pure function.
+ */
+export interface McpCoHostMountPlan {
+  readonly mount: boolean
+  readonly port: number
+  readonly tokenCount: number
+}
+
+/**
+ * Decide whether `agent-qa dashboard` co-hosts an MCP endpoint, from the parsed config alone.
+ *
+ * TWO CONDITIONS, BOTH REQUIRED, and this function is the only place either is spelled.
+ *
+ * 1. `services.mcp.enabled` must not be the literal `false`. **An ABSENT `enabled` means ENABLED** —
+ *    the schema declares it `optional()`, and every project that has ever declared MCP tokens has
+ *    done so without it. Only an operator who writes `enabled: false` turns the surface off, and
+ *    they get to keep their credentials on file while it is off, which is the posture the schema
+ *    already advertises. Say the default out loud here because "absent means on" is the kind of
+ *    default a reader checks twice.
+ * 2. At least one token entry must be DECLARED. A project that has declared no MCP credential gets
+ *    today's dashboard byte for byte; the alternative — mounting with an empty token list — is an
+ *    endpoint that answers the D-07 default grant to anyone who can reach loopback, which on a
+ *    long-running dashboard is a surface nobody asked for.
+ *
+ * Until 408-09 the first condition did not exist: `enabled` was declared in `McpConfigSchema` and
+ * read NOWHERE, so `enabled: false` still bound an authenticated loopback listener with the
+ * live-view registry behind it (WR-01, T-408-18). A knob that reads as a control and controls
+ * nothing is the same class of defect this phase already fixed once — the always-undefined
+ * `services.dashboard.mcp` read of 408-03 — which is why the decision is now a FUNCTION a cell can
+ * drive over a config record rather than four lines a cell could only grep for.
+ *
+ * Reads `unknown` on purpose: the caller holds a parsed record whose static type does not carry
+ * `services.mcp`, and a cell must be able to hand this the shape of a defect as easily as the shape
+ * of a correct config.
+ */
+export function mcpMountPlanFor(config: unknown): McpCoHostMountPlan {
+  const services = (config as { services?: unknown } | null | undefined)?.services
+  const declared = (services as { mcp?: unknown } | null | undefined)?.mcp
+  const block = (typeof declared === 'object' && declared !== null ? declared : {}) as {
+    enabled?: unknown
+    port?: unknown
+    tokens?: unknown
+  }
+
+  const tokenCount = Array.isArray(block.tokens) ? block.tokens.length : 0
+  const enabled = block.enabled !== false
+  // The port clamp lives here so the port decision is drivable too. Anything that is not an integer
+  // inside the schema's own 1..65535 range falls back to the constant the standalone face binds.
+  const port = typeof block.port === 'number'
+    && Number.isInteger(block.port)
+    && block.port >= 1
+    && block.port <= 65535
+    ? block.port
+    : MCP_HTTP_DEFAULT_PORT
+
+  return { mount: enabled && tokenCount > 0, port, tokenCount }
+}
+
 type DashboardCommandOptions = {
   port?: string
   db?: string
@@ -1944,15 +2008,29 @@ async function startDashboardBackedServices(
     // here. Two credential families on one endpoint would be two answers to "who is this", and the
     // MCP scope set is what `visibleToCaller` reads.
     //
-    // NOT MOUNTED WHEN NOTHING IS DECLARED, mirroring the run-service arm above: a project that has
-    // declared no MCP credential gets today's dashboard, byte for byte. The alternative — mounting
-    // with an empty token list — is an endpoint that answers the D-07 default grant to anyone who
-    // can reach loopback, which on a long-running dashboard is a surface nobody asked for.
+    // THE MOUNT DECISION IS `mcpMountPlanFor`, AND IT IS THE ONLY PLACE THE TWO CONDITIONS ARE
+    // SPELLED (408-09, WR-01 / WR-09 · T-408-18). Both must hold:
+    //
+    //   1. `services.mcp.enabled` is not the literal `false`. AN ABSENT `enabled` MEANS ENABLED —
+    //      the schema declares it optional and no project has ever written it, so only an operator
+    //      who explicitly writes `enabled: false` turns the surface off. Before 408-09 that knob was
+    //      declared in `McpConfigSchema` and read nowhere, so an operator who wrote it kept a
+    //      second authenticated loopback listener with the live-view registry behind it.
+    //   2. NOT MOUNTED WHEN NOTHING IS DECLARED, mirroring the run-service arm above: a project that
+    //      has declared no MCP credential gets today's dashboard, byte for byte. The alternative —
+    //      mounting with an empty token list — is an endpoint that answers the D-07 default grant to
+    //      anyone who can reach loopback, which on a long-running dashboard is a surface nobody
+    //      asked for.
+    //
+    // The token RESOLUTION stays here and is a SEPARATE fact: `resolveMcpTokens` reads
+    // `process.env`, so a plan that declared two entries can still resolve zero usable ones, and a
+    // mount with nothing to match a bearer against is the same open door condition 2 refuses.
+    const mcpPlan = mcpMountPlanFor(config)
     const mcpServiceConfig = (config as any).services?.mcp ?? {}
     const mcpTokens = resolveMcpTokens(mcpServiceConfig.tokens ?? [], process.env)
     let mcpMasking: ReturnType<typeof composeMcpMasking> | undefined
     let mcpServer: NodeHttpServer | undefined
-    if (mcpTokens.length > 0) {
+    if (mcpPlan.mount && mcpTokens.length > 0) {
       // The MCP masker, composed exactly as `agent-qa mcp` composes it: `buildRunMaskingContext`
       // seeded with THIS process's declared MCP credentials, because `sensitiveEnvSlice` selects by
       // name suffix and nothing obliges an operator to point `tokenEnvVar` at a name ending in
@@ -1960,11 +2038,8 @@ async function startDashboardBackedServices(
       // endpoint must never echo are its own bearer tokens.
       mcpMasking = composeMcpMasking({ tokens: mcpTokens, env: process.env })
       const mcpMaskText = (text: string): string => mcpMasking!.mask(text)
-      const mcpPort = Number.isInteger(mcpServiceConfig.port)
-        && mcpServiceConfig.port >= 1
-        && mcpServiceConfig.port <= 65535
-        ? (mcpServiceConfig.port as number)
-        : MCP_HTTP_DEFAULT_PORT
+      // Clamped inside `mcpMountPlanFor`, so the port a cell drives is the port this binds.
+      const mcpPort = mcpPlan.port
       mcpServer = createServer(
         createMcpHttpRequestListener({
           // THE LIVE-VIEW-BOUND REGISTRY — the one fact that makes this endpoint different from the
