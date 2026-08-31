@@ -38,6 +38,7 @@ import type {
 import { describe, expect, it } from 'vitest'
 
 import {
+  APP_NEGOTIATION_CLIENT_CAPABILITIES_KEY,
   APP_RESOURCE_MIME_TYPE,
   APP_RESOURCE_URI_TEMPLATE,
   AppResourceUriError,
@@ -149,7 +150,11 @@ interface RecordedAppRegistration {
   readonly uriTemplate: string
   readonly mimeType: string | undefined
   readonly listCallback: unknown
-  readonly read: (uri: URL) => Promise<{
+  readonly read: (
+    uri: URL,
+    variables: Record<string, string>,
+    ctx: unknown,
+  ) => Promise<{
     contents: readonly { uri: string; mimeType?: string; text?: string; _meta?: unknown }[]
   }>
 }
@@ -178,10 +183,37 @@ function recordingServer(): {
   }
 }
 
+/**
+ * The read context a host that DECLARED the Apps extension produces (408 plan 02).
+ *
+ * Not an invention: this is the exact envelope shape measured off a real
+ * `@modelcontextprotocol/client@2.0.0` over the shipped node handler in
+ * `app-negotiation.test.ts`, which is where the claim that this is what the wire looks like is
+ * proven. Here it is restated so these direct-drive cells can keep asking their own questions —
+ * minting, freshness, masking, roster — without every one of them standing up a socket.
+ */
+const negotiatedContext = {
+  mcpReq: {
+    envelope: {
+      [APP_NEGOTIATION_CLIENT_CAPABILITIES_KEY]: {
+        extensions: { [MCP_APPS_EXTENSION_ID]: {} },
+      },
+    },
+  },
+}
+
+/** The captured read, driven the way a negotiated host drives it. */
+type NegotiatedRead = (uri: URL) => ReturnType<RecordedAppRegistration['read']>
+
+const asNegotiated =
+  (read: RecordedAppRegistration['read']): NegotiatedRead =>
+  (uri: URL) =>
+    read(uri, {}, negotiatedContext)
+
 /** Register against the fixture and hand back the ONE read the registration captured. */
 function registerAndCapture(options: FixtureOptions = {}, scopes?: readonly FunctionScope[]): {
   readonly registered: readonly string[]
-  readonly read: RecordedAppRegistration['read']
+  readonly read: NegotiatedRead
   readonly clock: { now: () => number; at: () => number }
 } {
   const { registry, clock } = fixtureRegistry(options)
@@ -192,7 +224,7 @@ function registerAndCapture(options: FixtureOptions = {}, scopes?: readonly Func
     maskText: identity,
   })
   expect(server.calls.length, 'exactly one app template is registered').toBe(1)
-  return { registered, read: server.calls[0]!.read, clock }
+  return { registered, read: asNegotiated(server.calls[0]!.read), clock }
 }
 
 function htmlOf(result: { contents: readonly { text?: string }[] }): string {
@@ -368,7 +400,7 @@ describe('absence is named, never an error surface (D-07/D-11)', () => {
     })
 
     await expect(
-      server.calls[0]!.read(new URL('ui://agent-qa/live-run/../../secrets')),
+      asNegotiated(server.calls[0]!.read)(new URL('ui://agent-qa/live-run/../../secrets')),
     ).rejects.toThrow(AppResourceUriError)
     expect(seen.some((text) => text.includes('secrets')), 'the echo went through the masker').toBe(
       true,
@@ -376,7 +408,7 @@ describe('absence is named, never an error surface (D-07/D-11)', () => {
 
     let message = ''
     try {
-      await server.calls[0]!.read(new URL('ui://agent-qa/live-run/../../secrets'))
+      await asNegotiated(server.calls[0]!.read)(new URL('ui://agent-qa/live-run/../../secrets'))
     } catch (err) {
       message = err instanceof Error ? err.message : String(err)
     }

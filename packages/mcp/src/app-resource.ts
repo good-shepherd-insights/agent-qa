@@ -24,11 +24,41 @@
 // different channel with the opposite answer. The split is by channel, and it is pinned by cells
 // rather than by this paragraph.
 //
-// THE TEMPLATE IS UNLISTED, AND THAT IS A DECISION (Pitfall 2). `{ list: undefined }` means the
-// address never appears in a `resources/list`, so no model-driven enumeration can walk to a minted
-// token by discovery. A caller that already knows a run id can still read it — the disposition of
-// that channel is Plan 02's negotiation gate and Plan 04's scan corpus; what this plan owes is that
-// discovery is not a route.
+// THE `ui://` READ CHANNEL — the full ruling (408 plan 02, adjudicated 2026-08-31; RESEARCH
+// Open Question 2 / Pitfall 2; D-01, D-09, D-14). This is the disposition D-14 requires RECORDED
+// rather than left silent, and all four clauses are load-bearing:
+//
+//   1. THE TOKEN CHANNEL IS HOST-RENDERED HTML (D-01). A minted `liveUrl` reaches a person only
+//      inside the document a host paints in its sandbox. It is never tool-result text, never a
+//      refusal echo, and never a listing.
+//   2. THE TEMPLATE IS UNLISTED. `{ list: undefined }` means the address never appears in a
+//      `resources/list`, so no model-driven enumeration can walk to a minted token by discovery.
+//   3. A NON-NEGOTIATED READ IS REFUSED, BEFORE ANYTHING IS MINTED. Unlistability alone only
+//      closes discovery: a caller that already knows a run id could still read the address and
+//      receive token bytes, which is T-408-01 and the posture D-09 explicitly rejected as sole
+//      protection. So the read now asks the request itself whether it declared
+//      `io.modelcontextprotocol/ui` in its capabilities (`negotiatedAppsExtension`, measured —
+//      see below) and throws
+//      `AppResourceNegotiationError` if it did not. The refusal happens BEFORE the roster read
+//      and before the mint loop, so a refused read mints nothing at all: there is no token in
+//      existence on that path to leak, rather than a token that something remembered to withhold.
+//   4. THE CREDENTIAL STAYS SHORT-LIVED AND VIEW-SCOPED. 403's `LIVE_URL_TTL_MS` is five minutes
+//      and the token authorises watching pixels this caller's `read` scope already reaches — so
+//      even the negotiated channel hands out the narrowest thing that can render a live view.
+//
+// THE NEGOTIATION EVIDENCE IS MEASURED, NOT ASSUMED (RESEARCH Open Question 1 / assumption A3).
+// The envelope member spelling below was measured on 2026-08-31 against a real
+// `@modelcontextprotocol/client@2.0.0` over the shipped node handler — the living record is
+// `src/__tests__/app-negotiation.test.ts`, which drives the wire and would red if the SDK moved
+// it. The measurement also produced a fact worth stating plainly, because it decides who can see
+// this App at all: the per-request capabilities envelope exists ONLY on the modern (2026-07-28)
+// wire era. A client that connects with the SDK's default legacy `initialize` handshake sends no
+// per-request capabilities, and a stateless per-request server instance never saw that handshake,
+// so `getClientCapabilities()` holds nothing there either (the SDK says so itself: "per-request
+// instances that never saw an initialize (stateless legacy) hold nothing, so gates refuse there").
+// This gate therefore fails CLOSED for a 2025-era caller — no evidence of negotiation, no App —
+// which is exactly what D-09 asks for: the App attaches only where the extension was negotiated,
+// and every other host is served by the link-out that rides every carrier result.
 //
 // ONE CODEC, NO SECOND PARSER (T-396-08 / T-408-02). `parseAppUri` is the only thing in this
 // package that reads a `ui://` address, and it defers the run-id question to the MINT OP'S OWN
@@ -46,8 +76,16 @@
 // SEP-2549's cache hints are declined for the same reason the mint is per-read: a cacheable App
 // document would be a cacheable credential.
 
-import { ResourceTemplate } from '@modelcontextprotocol/server'
-import type { ReadResourceResult, ResourceMetadata } from '@modelcontextprotocol/server'
+import { CLIENT_CAPABILITIES_META_KEY, ResourceTemplate } from '@modelcontextprotocol/server'
+import type {
+  ClientCapabilities,
+  ReadResourceResult,
+  ReadResourceTemplateCallback,
+  RequestMetaEnvelope,
+  ResourceMetadata,
+  ServerContext,
+  Variables,
+} from '@modelcontextprotocol/server'
 import {
   invokeFunction,
   FunctionNotBoundError,
@@ -126,6 +164,76 @@ export function parseAppUri(href: string): { readonly runId: string } | undefine
   const parsed = RunsLiveUrlInputSchema.safeParse({ runId: decoded })
   if (!parsed.success) return undefined
   return { runId: parsed.data.runId }
+}
+
+/**
+ * The envelope member carrying the request's declared client capabilities.
+ *
+ * MEASURED, NOT GUESSED, and re-exported from the SDK rather than restated as a literal so a
+ * spelling drift is a compile error instead of a gate that silently answers "never negotiated".
+ * The measurement (2026-08-31, `src/__tests__/app-negotiation.test.ts`) drove a real
+ * `@modelcontextprotocol/client@2.0.0` against `createAgentQaMcpNodeHandler` over a loopback
+ * socket and read the resource-read context back out of the handler:
+ *
+ *   ctx.mcpReq.envelope['io.modelcontextprotocol/clientCapabilities'].extensions['io.modelcontextprotocol/ui']
+ *
+ * That cell is the living record — it asserts the path against the wire, so an SDK that moves the
+ * member reds it rather than quietly turning this gate into a blanket refusal.
+ */
+export const APP_NEGOTIATION_CLIENT_CAPABILITIES_KEY = CLIENT_CAPABILITIES_META_KEY
+
+/**
+ * The ONE member of the SDK's read context this module reads.
+ *
+ * Declared structurally rather than as `Pick<ServerContext, 'mcpReq'>` for a reason a cell feels
+ * immediately: the SDK's context carries a dozen live functions, and a predicate whose input
+ * cannot be written down without them is a predicate only the wire can test. `ServerContext` is
+ * assignable to this, so the production call site still hands over the SDK's own object untouched.
+ */
+export interface AppReadContext {
+  readonly mcpReq?: { readonly envelope?: Partial<RequestMetaEnvelope> }
+}
+
+/**
+ * Did THIS request declare the MCP Apps extension?
+ *
+ * FAIL-CLOSED at every step: no context, no envelope, no capabilities member, no `extensions`
+ * record, or an `extensions` record without our id all answer `false`. The question is "is there
+ * evidence this caller negotiated the extension", and absence of evidence is not evidence — which
+ * matters most for the case the measurement surfaced, where a 2025-era caller carries no envelope
+ * at all and would otherwise be waved through by a predicate written as "not explicitly absent".
+ *
+ * `RequestMetaEnvelope` is an intentionally EMPTY augmentable type in the shipped d.mts, so the
+ * envelope is read through one narrow cast at this single seam rather than by widening the SDK's
+ * types somewhere a second reader would have to find.
+ */
+export function negotiatedAppsExtension(ctx: AppReadContext | undefined): boolean {
+  const envelope = ctx?.mcpReq?.envelope as Record<string, unknown> | undefined
+  if (envelope === undefined) return false
+  const capabilities = envelope[APP_NEGOTIATION_CLIENT_CAPABILITIES_KEY] as
+    | ClientCapabilities
+    | undefined
+  const extensions = capabilities?.extensions
+  if (extensions === undefined) return false
+  return Object.hasOwn(extensions, MCP_APPS_EXTENSION_ID)
+}
+
+/**
+ * A read refused because the request never declared the Apps extension (clause 3 of the ruling
+ * in this file's header; D-09, T-408-01).
+ *
+ * IT NAMES THE EXTENSION AND CARRIES NOTHING ELSE. The message is authored prose plus a constant
+ * this repository owns, so there is nothing caller-supplied in it to mask and — the point of the
+ * whole arm — nothing minted in it to leak, because it is thrown before the first mint.
+ */
+export class AppResourceNegotiationError extends Error {
+  constructor() {
+    super(
+      `this resource is an MCP App: it is served only to a client that declared the `
+      + `${MCP_APPS_EXTENSION_ID} extension in its capabilities`,
+    )
+    this.name = 'AppResourceNegotiationError'
+  }
 }
 
 /** An address the one codec does not recognise. */
@@ -214,8 +322,18 @@ async function announcedRoster(
  */
 export function createAppResourceReadHandler(
   deps: AppResourceReadDeps,
-): (uri: URL) => Promise<ReadResourceResult> {
-  return async (uri: URL): Promise<ReadResourceResult> => {
+): (uri: URL, variables: Variables, ctx: AppReadContext) => Promise<ReadResourceResult> {
+  return async (
+    uri: URL,
+    _variables: Variables,
+    ctx: AppReadContext,
+  ): Promise<ReadResourceResult> => {
+    // CLAUSE 3 OF THE HEADER'S RULING, AND IT IS THE FIRST LINE ON PURPOSE (D-09, T-408-01).
+    // Everything below this point either mints a credential or describes one; a caller that
+    // never declared the Apps extension is turned away before any of it runs, so the refusal
+    // path has no token to withhold rather than a token it remembered not to print.
+    if (!negotiatedAppsExtension(ctx)) throw new AppResourceNegotiationError()
+
     const parsed = parseAppUri(uri.href)
     if (parsed === undefined) {
       // The echoed address is caller-supplied text, so it is masked exactly as `resources.ts`
@@ -321,17 +439,22 @@ function originOf(liveUrl: string): string | undefined {
  * The slice of `McpServer` this module uses.
  *
  * The same narrow structural type `resources.ts` declares, spelled with the SDK's own
- * `ResourceTemplate` / `ResourceMetadata` / `ReadResourceResult` — so a cell can observe the
- * registration without assembling a protocol server while a real `McpServer` still satisfies it.
- * Read that module's note before narrowing any member here: a hand-narrowed config or a
+ * `ResourceTemplate` / `ResourceMetadata` / `ReadResourceTemplateCallback` — so a cell can observe
+ * the registration without assembling a protocol server while a real `McpServer` still satisfies
+ * it. Read that module's note before narrowing any member here: a hand-narrowed config or a
  * `readonly` result array makes `McpServer` unassignable and the compiler names the wrong cause.
+ *
+ * THE READ CALLBACK IS THE SDK'S OWN `ReadResourceTemplateCallback` AND NOT A LOCAL NARROWING, for
+ * the reason 408 plan 02 needed a third argument at all: the negotiation evidence arrives in the
+ * SDK's read CONTEXT, so a slice that spelled the callback `(uri) => …` would have declared the
+ * one parameter the gate reads out of existence.
  */
 export interface AppResourceRegistrar {
   registerResource(
     name: string,
     template: ResourceTemplate,
     config: ResourceMetadata,
-    read: (uri: URL) => Promise<ReadResourceResult>,
+    read: ReadResourceTemplateCallback,
   ): unknown
 }
 

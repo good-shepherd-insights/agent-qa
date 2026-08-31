@@ -84,17 +84,21 @@ export { maskedToolResult } from './masked-result.js'
 // `renderAppWrapperPage` is a pure function of values its caller composed. The constants are on the
 // barrel because Plan 06's census pins them against the ext-apps package from outside this one.
 export {
+  APP_NEGOTIATION_CLIENT_CAPABILITIES_KEY,
   APP_RESOURCE_MIME_TYPE,
   APP_RESOURCE_NAME,
   APP_RESOURCE_URI_TEMPLATE,
+  AppResourceNegotiationError,
   AppResourceReadError,
   AppResourceUriError,
   MCP_APPS_EXTENSION_ID,
   createAppResourceReadHandler,
+  negotiatedAppsExtension,
   parseAppUri,
   registerAppResources,
 } from './app-resource.js'
 export type {
+  AppReadContext,
   AppResourceDeps,
   AppResourceInvoke,
   AppResourceReadDeps,
