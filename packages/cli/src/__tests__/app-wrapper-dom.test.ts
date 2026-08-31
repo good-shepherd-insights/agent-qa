@@ -38,6 +38,11 @@
 //       script (the pre-2026-09-01 shape)                        the anchor renders empty, so the
 //                                                               href read answers null and there is
 //                                                               no way out of the document at all
+//   E6  the reachability memo caching the FAILURE again        -> cell (8): one refused probe pins
+//       (`.catch(function () { return false; })` without           the document to
+//       the `delete`)                                             `unreachable-origin` for its whole
+//                                                                 life, so the swap never reaches
+//                                                                 `live` and no second probe is sent
 
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
@@ -78,6 +83,51 @@ async function serveStatic(body: string, contentType: string): Promise<string> {
   openServers.push(server)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+}
+
+/**
+ * A loopback origin that can REFUSE the wrapper's reachability probe, and then stop refusing.
+ *
+ * The wrapper probes `origin + '/'` and navigates the frame to `origin + '/live/<runId>'`, so the
+ * two are separable by path — and they must be. Refusing "the first request the server sees" would
+ * refuse whichever of the two happened to arrive first, and when that is the FRAME navigation the
+ * document goes straight to `live` (Chromium fires `load` on its own error page, and the probe that
+ * follows succeeds) — the cell would then be measuring a race rather than the memo.
+ *
+ * The refusal is a socket destroy rather than a 5xx because a `no-cors` fetch RESOLVES for any HTTP
+ * status; only a transport failure rejects, which is the shape a restarting dashboard really has.
+ * It is held open until the test has seen the document settle, rather than lifted after exactly one
+ * request, because Chromium may retry a reset connection — a count-based window could be lifted by
+ * a retry and leave the failure unobserved.
+ */
+function refusingOrigin(): {
+  origin: Promise<string>
+  probeCount: () => number
+  stopRefusing: () => void
+} {
+  let probes = 0
+  let refusing = true
+  const server = createServer((req, res) => {
+    if ((req.url ?? '/') === '/') {
+      probes += 1
+      if (refusing) {
+        req.socket.destroy()
+        return
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('ok')
+      return
+    }
+    res.writeHead(200, { 'content-type': 'text/html' })
+    res.end('<!doctype html><title>inner</title>ok')
+  })
+  openServers.push(server)
+  const origin = new Promise<string>((resolve) => {
+    server.listen(0, '127.0.0.1', () =>
+      resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`),
+    )
+  })
+  return { origin, probeCount: () => probes, stopRefusing: () => { refusing = false } }
 }
 
 /** A loopback port with NOTHING listening on it — the unreachable origin, honestly produced. */
@@ -343,6 +393,62 @@ describe('the wrapper in a real browser (D-11)', () => {
     } finally {
       await page.close()
       await context.close()
+    }
+  }, 180_000)
+
+  // (8) ONE BAD MOMENT IS NOT A VERDICT ABOUT SOMEBODY ELSE'S ORIGIN (WR-06, T-408-23).
+  //
+  // The reachability memo used to cache the REJECTED probe, and every mint on a render shares one
+  // origin, so a single refusal — a dashboard restarting, a refusal during the first paint —
+  // answered `false` for the life of the document. Every later handle swap then settled instantly
+  // in `unreachable-origin` with no network call and NO PATH BACK: the document was permanently
+  // wrong about a dashboard that was, by then, up. The memo is now success-only, which costs the
+  // zero-request property nothing (cell (4), immediately above, is that property's gate and probes
+  // an origin that answers first time).
+  //
+  // THE PROBE COUNTER IS THE CELL'S SECOND HALF. Reaching `live` after a refusal could in principle
+  // happen because an answer was reused; asserting the server saw MORE THAN ONE probe proves a
+  // second one was really issued.
+  it('(8) a REFUSED probe is not remembered — a later handle swap probes again and reaches live', async () => {
+    const refusing = refusingOrigin()
+    const inner = await refusing.origin
+    const permanentLink = `${inner}/runs/${RUN_ID}/live`
+    const mints = [mint(0, inner, Date.now() + 300_000), mint(1, inner, Date.now() + 300_000)]
+    const url = await serveWrapper(mints, permanentLink)
+
+    const page = await held().newPage()
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded' })
+
+      // The honest first verdict: nothing answered for that origin, so the document says so by name
+      // rather than showing a pane it cannot vouch for.
+      await page
+        .locator('[data-app-state="unreachable-origin"]')
+        .waitFor({ state: 'attached', timeout: APP_WRAPPER_LOAD_TIMEOUT_MS + 15_000 })
+      expect(await page.locator('[data-app-message]').textContent()).toBe(
+        APP_WRAPPER_UNREACHABLE_MESSAGE,
+      )
+      const probesWhileRefusing = refusing.probeCount()
+      expect(probesWhileRefusing, 'the wrapper really did probe').toBeGreaterThan(0)
+
+      // The dashboard comes back. Nothing about the DOCUMENT changed — only the world it was wrong
+      // about. Settling before the swap so no probe issued during the refusing window is still in
+      // flight when the picker fires (that promise would answer false and mask the recovery).
+      refusing.stopRefusing()
+      await page.waitForTimeout(1_000)
+
+      await page.locator('[data-app-handle-picker]').selectOption('1')
+
+      // THE PATH BACK, which did not exist before this plan.
+      await page.locator('[data-app-state="live"]').waitFor({ state: 'attached', timeout: 30_000 })
+      expect(await page.locator('[data-app-live-frame]').getAttribute('src')).toBe(mints[1]!.liveUrl)
+      expect(
+        refusing.probeCount(),
+        'a SECOND probe was issued — the false was forgotten, not reused',
+      ).toBeGreaterThan(probesWhileRefusing)
+      expect(refusing.probeCount(), 'more than one probe reached the origin').toBeGreaterThan(1)
+    } finally {
+      await page.close()
     }
   }, 180_000)
 })

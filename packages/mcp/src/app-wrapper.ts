@@ -30,6 +30,16 @@
 // `live` requires BOTH the probe answering and the frame loading. The probe is memoised per
 // ORIGIN, so the handle picker (D-06) swaps among panes on one origin with no network call at all.
 //
+// AND THE MEMO IS ASYMMETRIC — SUCCESS ONLY (2026-09-01, WR-06, T-408-23; the cell is
+// `app-wrapper-dom.test.ts` cell (8)). A `true` is a durable fact about an origin that ANSWERED, so
+// it is cached and the zero-request property above depends on it and on nothing else. A `false` is
+// a fact about ONE MOMENT — a dashboard restarting, a refusal during the first paint — and it is
+// discarded, so the next call probes again. Caching it bought nothing the `true` was not already
+// buying, and cost everything: all of a render's mints share one origin, so a single transient
+// failure answered `false` for the LIFE of the document, pinning every later handle swap to
+// `unreachable-origin` instantly, with no network call and no path back. A momentary observation
+// about somebody else's origin does not get to outlive the moment.
+//
 // THE TIMEOUT ARM IS STILL REQUIRED, because the other unreachable shape does not fail fast: an
 // origin that black-holes packets (the cloud-host-versus-loopback case D-11 was written for) leaves
 // both the probe and the frame pending forever. `APP_WRAPPER_LOAD_TIMEOUT_MS` is the bound past
@@ -477,9 +487,12 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
 
   // ---- Reachability, once per ORIGIN (see the header's measured note) ---------------------------
   //
-  // Memoised deliberately: the picker swaps among panes that share one origin, so after the first
-  // pane every swap is answered from this map and issues NO network request at all (D-06/D-10's
-  // "zero re-mints, zero calls", which the DOM cell counts).
+  // Memoised deliberately, and ONLY ON SUCCESS. The picker swaps among panes that share one
+  // origin, so after the first ANSWERING pane every swap is served from this map and issues NO
+  // network request at all (D-06/D-10's zero re-mints, zero calls, which the DOM cell counts) — a
+  // property that rides entirely on caching the true. The catch arm therefore FORGETS the entry
+  // before answering false: a refusal is a fact about one moment, not about the origin, and every
+  // mint on a render shares one origin, so a cached false was total and permanent. See the header.
   var reach = {};
   function reachable(url) {
     var origin;
@@ -487,7 +500,7 @@ ${live && !expired ? '<iframe data-app-live-frame sandbox="allow-scripts" referr
     if (reach[origin] === undefined) {
       reach[origin] = fetch(origin + '/', { mode: 'no-cors', cache: 'no-store' })
         .then(function () { return true; })
-        .catch(function () { return false; });
+        .catch(function () { delete reach[origin]; return false; });
     }
     return reach[origin];
   }
