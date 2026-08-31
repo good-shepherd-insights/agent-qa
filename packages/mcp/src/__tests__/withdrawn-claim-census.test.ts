@@ -594,24 +594,40 @@ describe('the withdrawn host-rendered-channel claim survives nowhere in shipped 
     ).toBeDefined()
   })
 
+  // ANCHORED ON THE CLAUSE HEADINGS, NOT ON THE MARKER TEXT (re-anchored 408-15 task 1b, recorded
+  // rather than silent). This control first anchored clause 3 by searching the file for the literal
+  // `SUPERSEDED IN PART, 2026-09-01`. That was unambiguous only while clause 1 had no marker of its
+  // own — i.e. only in the state task 1a observed. The moment task 1b struck clause 1 in clause 3's
+  // idiom, the search hit clause 1's marker first and the control red for the one reason that is
+  // NOT a segmenter defect. Anchoring on the two clause HEADINGS instead measures the structural
+  // fact this cell is actually about — that rule (d) cuts the enumerated ruling into its own items —
+  // and it holds in both states, before and after any clause carries a marker. The alternative
+  // considered and rejected: wording clause 1's marker so it dodged the literal. That would have
+  // kept this file byte-unchanged and left a control passing for an accidental reason, which is the
+  // exact failure mode this whole plan exists to prevent.
   it('(W2) CONTROL: the segmenter subdivides an enumerated ruling at its own item openers', () => {
     const appResource = readFileSync(join(PACKAGES_ROOT, 'mcp/src/app-resource.ts'), 'utf8')
     const lines = appResource.split('\n')
     const clauseOneLine = lines.findIndex((l) => l.includes('THE TOKEN CHANNEL IS HOST-RENDERED HTML')) + 1
+    const clauseThreeLine = lines.findIndex((l) => l.includes('A NON-NEGOTIATED READ IS REFUSED')) + 1
     const clauseThreeMarkerLine =
-      lines.findIndex((l) => l.includes(`SUPERSEDED IN PART, ${SUPERSESSION_DATE}`)) + 1
+      lines.findIndex(
+        (l, i) => i >= clauseThreeLine && l.includes(`SUPERSEDED IN PART, ${SUPERSESSION_DATE}`),
+      ) + 1
 
     expect(clauseOneLine, 'app-resource.ts clause 1 is gone — re-anchor this control').toBeGreaterThan(0)
+    expect(clauseThreeLine, 'app-resource.ts clause 3 is gone — re-anchor this control').toBeGreaterThan(0)
     expect(clauseThreeMarkerLine, 'app-resource.ts clause 3 lost its marker').toBeGreaterThan(0)
+    expect(clauseOneLine, 'clause 1 must precede clause 3').toBeLessThan(clauseThreeLine)
 
     const units = proseUnitsOf(appResource, 'mcp/src/app-resource.ts')
     const unitOf = (line: number): ProseUnit | undefined =>
       units.find((u) => u.startLine <= line && line <= u.endLine)
 
     const one = unitOf(clauseOneLine)
-    const three = unitOf(clauseThreeMarkerLine)
+    const three = unitOf(clauseThreeLine)
     expect(one, 'clause 1 fell into no unit at all').toBeDefined()
-    expect(three, "clause 3's marker fell into no unit at all").toBeDefined()
+    expect(three, 'clause 3 fell into no unit at all').toBeDefined()
     expect(
       one?.startLine === three?.startLine,
       'the segmenter COARSENED: clause 1 and clause 3 now share a unit, so clause 3 marker would '
@@ -619,10 +635,15 @@ describe('the withdrawn host-rendered-channel claim survives nowhere in shipped 
       + 'passed the first time',
     ).toBe(false)
 
-    // And the marker really is in clause 3's unit rather than merely elsewhere in the file, so the
-    // subdivision is measured in both directions.
-    expect(three?.text.includes(SUPERSESSION_DATE)).toBe(true)
-    expect(one?.text.includes(SUPERSESSION_DATE)).toBe(false)
+    // And clause 3's marker really lives in clause 3's unit rather than merely elsewhere in the
+    // file, so the subdivision is measured in both directions: the unit boundary is what decides
+    // which claim a marker strikes, and a marker in a neighbouring unit strikes nothing.
+    expect(unitOf(clauseThreeMarkerLine)?.startLine, "clause 3's marker left clause 3's unit")
+      .toBe(three?.startLine)
+    expect(
+      one?.endLine ?? Number.MAX_SAFE_INTEGER,
+      "clause 1's unit swallowed clause 3 — the enumerated openers stopped cutting",
+    ).toBeLessThan(clauseThreeLine)
   })
 
   it('(W3) THE LAW: no unit of shipped prose asserts the withdrawn claim without its own dated supersession', () => {

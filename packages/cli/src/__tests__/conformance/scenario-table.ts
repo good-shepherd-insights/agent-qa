@@ -1234,6 +1234,16 @@ export const SCENARIO_TABLE = Object.freeze([
   // in tool-result text; a projected mint tool stays rejected. The op is unprojected BY RULING
   // now, not by deferral, and the `credential-mint-deferral` key stays because the fact it names —
   // this door is absent because the op hands out a credential — is exactly what is still true.
+  // CORRECTED 2026-09-01 (408-08, the gap round, road `demote`; the full class-level DISPOSITION is
+  // thirty rows up at :197-209 and the ruling is in `app-resource.ts`'s header). The line above
+  // reading "the minted token lands in host-rendered HTML and never in tool-result text" is an
+  // over-claim and is struck here rather than reworded away: whether the document this server
+  // serves is host-rendered HTML or text a model consumes is a property of the CALLER, not of this
+  // server. What holds is narrower and verifiable — the server writes the token into exactly one
+  // place, the frame src of the document the `ui://` read serves, and that door is bounded by the
+  // operator-granted `read` scope plus a bound mint. The ROW does not move for any of it: the op
+  // still hands out a credential, so it is still unprojected and still keyed
+  // `credential-mint-deferral`.
   scenario({
     opId: 'runs.liveurl',
     input: { runId: FIXTURE_RUN_ID },

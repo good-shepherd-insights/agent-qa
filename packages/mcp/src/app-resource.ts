@@ -37,6 +37,17 @@
 //   1. THE TOKEN CHANNEL IS HOST-RENDERED HTML (D-01). A minted `liveUrl` reaches a person only
 //      inside the document a host paints in its sandbox. It is never tool-result text, never a
 //      refusal echo, and never a listing.
+//      SUPERSEDED IN PART, 2026-09-01: the WRITE half stands and the REACH half does not. What
+//      stands, exactly as written: this server writes the token into one place and one place only,
+//      the `src` of the frame in the document this read serves — never tool-result text, never a
+//      refusal echo, never a listing, and `token-absence.test.ts` is the standing measurement of
+//      that. What is WITHDRAWN is "reaches a person only inside the document a host paints":
+//      whether the bytes this server serves are painted in a sandbox or consumed some other way is
+//      a property of the CALLER and of what it does with a document it asked for, so that half
+//      described the wrong party — the same over-claim :15-22 above already withdrew by name. See
+//      THE 2026-09-01 GAP-ROUND RULING below, which names what the negotiation check is and what
+//      it is for. Retained here rather than rewritten, because an adjudication in this repository
+//      is re-grounded on the record, never edited away.
 //   2. THE TEMPLATE IS UNLISTED. `{ list: undefined }` means the address never appears in a
 //      `resources/list`, so no model-driven enumeration can walk to a minted token by discovery.
 //   3. A NON-NEGOTIATED READ IS REFUSED, BEFORE ANYTHING IS MINTED. Unlistability alone only

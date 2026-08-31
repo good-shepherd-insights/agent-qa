@@ -1049,6 +1049,18 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // so this cell reads it there. A future rewrite that tidies the entry back into a bare
     // deferral, or drops the date, reds HERE by name instead of leaving a permanent absence
     // wearing an open question's clothes.
+    // CORRECTED 2026-09-01 (408-08, the gap round, road `demote`; the ruling is in
+    // `app-resource.ts`'s header and `mapping.ts`'s reason carries the same dated addendum). The
+    // rationale above summarises D-01 as "the token confined to host-rendered App HTML", and that
+    // half is WITHDRAWN rather than reworded away: whether the document this server serves is
+    // host-rendered HTML or text a model consumes is a property of the CALLER, not of this server.
+    // What holds is that the server writes the token into exactly one place — the frame src of the
+    // document the `ui://` read serves — bounded by the operator-granted `read` scope plus a bound
+    // mint. This is the most load-bearing of the four sites the 408-15 census found, because THIS
+    // cell is the one that gates the shipped ruling prose: a gate whose own stated reason asserts a
+    // withdrawn claim teaches every reader of it the thing the gate exists to stop. The assertions
+    // below are untouched by the correction — the ruling they read is dated 2026-08-31 and is what
+    // 408 actually decided; only this rationale's gloss on its channel was ever wrong.
     const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === 'runs.liveurl')
     expect(entry, 'runs.liveurl left the unprojected register — re-home this ruling before it does')
       .toBeDefined()

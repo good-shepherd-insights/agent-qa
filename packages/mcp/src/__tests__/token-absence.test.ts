@@ -10,6 +10,18 @@
 // stream a model can read, and asserts that no byte of any token the flow REALLY minted appears in
 // any of them.
 //
+// CORRECTED 2026-09-01 (408-08, the gap round, road `demote`; the ruling is in `../app-resource.ts`'s
+// header). The first sentence above is retained as written and one half of it is WITHDRAWN rather
+// than deleted. "Reaches a person only inside the HTML a host paints in its sandbox" describes what
+// the CALLER does with a document it asked for, not what this server does, so that half over-claimed
+// — and it also contradicted the `FLOW_CHANNELS` partition thirty lines below, which since 408-12
+// names `ui://read:text` a CARRYING channel rather than a channel nobody looks at. WHAT THIS FILE
+// ACTUALLY MEASURES IS UNCHANGED AND STRONGER, and it is the second half of that sentence: this
+// server writes the token into exactly ONE place — the frame `src` of the wrapper document the
+// `ui://` read serves — and no OTHER channel it emits carries a byte of it. That is a property of
+// this server, it is what the corpus below drives, and it is what `(A1)` reds on. The channel split
+// stands; only the claim about where the bytes end up afterwards was ever the caller's to make.
+//
 // THE SCAR IT GENERALISES. `masked-serialization.test.ts` is the T-395-R5-10 corpus: a declared
 // credential reaching `content[].text` and `structuredContent` because the masker never saw the
 // escaped spelling. Same shape, different credential — and a harder one, because a minted token is
@@ -35,9 +47,21 @@
 //
 // EXCLUDED — exactly ONE channel, and by the DATED RULING rather than by omission (Pitfall 2):
 //   the `text` of the `ui://` read, i.e. the wrapper HTML document itself. That channel is the
-//   credential's DESTINATION, not a leak: it is the host-rendered payload clause 1 of the four-clause
-//   `ui://` read-channel adjudication in `../app-resource.ts` (adjudicated 2026-08-31, plan 02;
-//   see that file's header, "THE `ui://` READ CHANNEL — the full ruling") reserves for the token.
+//   credential's DESTINATION, not a leak.
+//
+//   RE-GROUNDED 2026-09-01 (408-08, the gap round, road `demote`). This exclusion used to rest on
+//   "the host-rendered payload clause 1 of the four-clause `ui://` read-channel adjudication in
+//   `../app-resource.ts` reserves for the token" — and clause 1 is precisely the clause that was
+//   SUPERSEDED IN PART on 2026-09-01, so the exclusion was standing on a withdrawn half. Recorded
+//   here rather than quietly restated. The ground that HOLDS is a fact about this server rather
+//   than about its caller: the wrapper document is the token's destination because it is the ONE
+//   place this server writes the token, and that door is bounded at REGISTRATION by
+//   `visibleToCaller` over the registry's declared scopes for the mint and roster ops, plus
+//   `mint.bindingStatus === 'bound'` (header clause 5) — never by the caller's own capability
+//   declaration, which clause 3's re-adjudication established this server cannot authenticate.
+//   The exclusion is therefore as narrow as it ever was and is now grounded on something measured.
+//   (adjudicated 2026-08-31, plan 02; see that file's header, "THE `ui://` READ CHANNEL — the full
+//   ruling", and "THE 2026-09-01 GAP-ROUND RULING" beneath it.)
 //   The other three clauses are what make the exclusion narrow enough to be honest: the template is
 //   UNLISTED so no enumeration reaches it (clause 2), a NON-NEGOTIATED read is refused before
 //   anything is minted (clause 3), and the credential is view-scoped with a five-minute TTL
