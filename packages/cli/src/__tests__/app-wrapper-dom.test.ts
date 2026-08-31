@@ -21,7 +21,10 @@
 // necessary-but-not-sufficient. Both halves are cells below.
 //
 // THE MUTATION LEGS THIS FILE IS THE BAR FOR:
-//   E1  `load` alone flipping the wrapper to `live`          -> cell (3)
+//   E1  the origin probe removed, `load` treated as proof     -> cell (3), MEASURED: deleting the
+//                                                                probe makes cell (3) time out at
+//                                                                25 s on Chromium's error page,
+//                                                                which the wrapper then calls live
 //   E2  the picker re-fetching or re-minting on change       -> cell (4)'s request counter
 //   E3  the live state losing its display rule               -> cell (5)
 

@@ -120,11 +120,21 @@ describe('expiry is an honest STATE, decided at render time (D-10)', () => {
     expect(html).not.toContain(String(NOW))
   })
 
-  it('never re-mints from inside the sandbox — the document contains no mint vocabulary at all', () => {
+  it('never re-mints from inside the sandbox, and issues exactly ONE kind of request', () => {
     const html = render()
-    for (const forbidden of ['runs.liveurl', 'fetch(', 'XMLHttpRequest', 'ui/mint', 'remint']) {
+    for (const forbidden of ['runs.liveurl', 'XMLHttpRequest', 'ui/mint', 'remint', 'liveurl']) {
       expect(html.includes(forbidden), `the wrapper must not contain ${forbidden}`).toBe(false)
     }
+
+    // THE ONE NETWORK CALL THIS DOCUMENT MAKES, pinned so a second one cannot appear unnoticed:
+    // a memoised no-cors probe of the frame's ORIGIN. It exists because Chromium fires `load` for
+    // a refused connection (see the wrapper's header), so `load` alone cannot tell a reached
+    // origin from an error page — and a wrapper that called that `live` would be showing the
+    // blank inner frame D-11 forbids. It carries no token (the token is in the FRAGMENT, which is
+    // never sent) and asks for nothing but "did anything answer".
+    expect(html.match(/fetch\(/g) ?? [], 'exactly one fetch call site').toHaveLength(1)
+    expect(html).toContain("mode: 'no-cors'")
+    expect(html.includes('#v1.body0.sig0\', {'), 'the probe never carries a minted url').toBe(false)
   })
 })
 
