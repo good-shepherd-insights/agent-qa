@@ -46,7 +46,30 @@
 //   D6  the App wrapper's permanent-link slot left as plan 01 shipped it -> MEASURED: restoring
 //       `permanentLink: undefined` reds `renders D-08's permanent-link slot` (1 of 15) — AFTER a
 //       rebuild. The first attempt passed against a stale `dist`, which is why cell 0 exists.
+//
+// 408-09's LEGS, all six APPLIED to their subject and their red observed on 2026-09-01, then the
+// subject restored. They exist because the four cells this file used to close with could not fail
+// (WR-09) — see the block comment above section 5:
+//   D7  `mcpMountPlanFor` made to ignore `services.mcp.enabled`  -> MEASURED: reds the row `does
+//       NOT mount when services.mcp.enabled is the literal false` with `expected true to be false`
+//       (1 of 26). This is WR-01 / T-408-18 turned into a standing gate.
+//   D8  `mcpMountPlanFor` made to read `services.dashboard.mcp`  -> MEASURED: reds 6 of 26,
+//       including the load-bearing row `does NOT mount for a token declared under
+//       services.dashboard.mcp` with `expected true to be false`. That is the 408-03 defect's
+//       EXACT shape, and the source cells this block replaced passed over it in both directions.
+//   D9  the scoped `try`/`catch` removed from `mountCoHostedMcp` -> MEASURED: the bind-collision
+//       cell reds with the raw `Error: listen EADDRINUSE: address already in use 127.0.0.1:<port>`
+//       escaping — which in production is the rejection that reached `process.exit(2)` and took a
+//       fully started dashboard down over an OPTIONAL listener (WR-02 / T-408-17).
+//   D10 the `registry:` property assignment removed from the co-host mount -> MEASURED: reds the
+//       registry SOURCE ASSERTION cell (1 of 26). The surviving source assertions can fail.
+//   D11 `mcpServer?.close()` removed from the shutdown closure   -> MEASURED: reds the shutdown
+//       SOURCE ASSERTION cell (1 of 26).
+//   D12 a byte appended to `packages/dashboard-server/package.json` -> MEASURED: reds the SC3
+//       frozen-path cell naming the file. The cell it replaced asserted a module specifier that
+//       could not appear in this workspace under any implementation, so it could not fail at all.
 
+import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import type { Server as NodeHttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -81,7 +104,13 @@ import { composeLiveView } from '../composition/live-view-composition.js'
 import type { ComposedLiveView } from '../composition/live-view-composition.js'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
 import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
-import { composeMcpMasking, createMcpHttpRequestListener } from '../commands/mcp.js'
+import { mcpMountPlanFor, mountCoHostedMcp } from '../commands/dashboard.js'
+import {
+  composeMcpMasking,
+  createMcpHttpRequestListener,
+  MCP_HTTP_BIND_HOST,
+  MCP_HTTP_DEFAULT_PORT,
+} from '../commands/mcp.js'
 
 // ---- The fixture composition — the dashboard's own, minus the database ------------------------
 
@@ -522,42 +551,229 @@ describe('the co-hosted endpoint emits no CORS header, ever (the counted-zero la
   })
 })
 
-// ---- 5. The mount and its shutdown, in the composition that ships ------------------------------
+// ---- 5. The mount DECISION, driven — and the two wiring facts that stay source assertions -------
 //
-// A SOURCE ASSERTION, and it is the honest shape for this one: driving `startDashboardBackedServices`
-// would open a database, a browser-capable execution backend and the whole dashboard-server, to
-// observe two lines. What matters about those two lines is that they EXIST in the shipped
-// composition — the conditional mount and the close in the shutdown path — and that is a fact about
-// the file. The BEHAVIOUR of what they mount is what every cell above measures, over the same
-// exported listener the command binds.
+// WHAT THIS BLOCK USED TO BE, AND WHY IT WAS REPLACED (408-09, WR-09). Until 408-09 the four cells
+// here were `toContain` over `dashboard.ts` read as text, and the verifier's charge was exact: the
+// cell named "mounts it ONLY when services.mcp.tokens is declared" was satisfied by the PREVIOUS,
+// DEFECTIVE version of the mount — `resolveMcpTokens(servicesConfig.mcp?.tokens ?? [], ...)`, where
+// `servicesConfig` was `services.dashboard`, so the mount never fired at all. A cell that passes
+// both before and after the defect it names is not a gate.
+//
+// Worse, one of those four assertions read a COMMENT: `toContain('NOT MOUNTED WHEN NOTHING IS
+// DECLARED')` at the old :544. That banner sentence is not code in any version of `dashboard.ts` —
+// and it is not even unique to the MCP arm, since the RUN-SERVICE door's comment (dashboard.ts
+// :1977) has carried the identical sentence since 402-01. The assertion was therefore true of a
+// file in which the MCP mount had been deleted outright. It was CONVERTED here, never retained: the
+// mount claim is now the `mcpMountPlanFor` table below.
+//
+// The "touches no file under packages/dashboard-server" cell asserted
+// `not.toContain('dashboard-server/src/server')` — a specifier that could never appear in this
+// workspace under any implementation, since imports go through `@vostride/agent-qa-dashboard`. It
+// is replaced by a claim over the working tree's own diff, which CAN fail.
+//
+// TWO SOURCE ASSERTIONS SURVIVE, and each says so in its own comment, names the code CONSTRUCT it
+// reads, and points at the behavioural cell carrying the other half of its claim. Driving them
+// behaviourally would open a database, a browser-capable execution backend and the whole
+// dashboard-server to observe a property assignment and two method calls.
 
 const DASHBOARD_SOURCE = readFileSync(
   resolvePath(dirname(fileURLToPath(import.meta.url)), '../commands/dashboard.ts'),
   'utf8',
 )
 
-describe('the shipped dashboard composition mounts and closes the endpoint', () => {
-  it('mounts it ONLY when services.mcp.tokens is declared', () => {
-    expect(DASHBOARD_SOURCE).toContain('resolveMcpTokens(')
-    expect(DASHBOARD_SOURCE).toContain('createMcpHttpRequestListener({')
-    expect(DASHBOARD_SOURCE).toContain('if (mcpPlan.mount && mcpTokens.length > 0)')
-    expect(DASHBOARD_SOURCE).toContain('NOT MOUNTED WHEN NOTHING IS DECLARED')
+/** The inner `agent-qa` repository root — `packages/cli/src/__tests__` is four levels down. */
+const REPO_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '../../../..')
+
+/** One declared caller credential, in the refs-only shape `McpTokenEntrySchema` accepts. */
+const DECLARED_TOKEN = { name: 'cohost', tokenEnvVar: TOKEN_ENV_VAR, scopes: ['read'] } as const
+
+interface MountRow {
+  readonly claim: string
+  readonly config: unknown
+  readonly mount: boolean
+  readonly port?: number
+}
+
+// Every row is a CONFIG RECORD in, a decision out. This is what makes the block able to detect the
+// two defects the old cells could not: `enabled: false` ignored (WR-01), and the mount keyed off
+// `services.dashboard.mcp` rather than `services.mcp` (the 408-03 defect's exact shape).
+const MOUNT_ROWS: readonly MountRow[] = [
+  {
+    claim: 'mounts when services.mcp declares a token and says nothing about enabled — an ABSENT'
+      + ' enabled means ENABLED',
+    config: { services: { mcp: { tokens: [DECLARED_TOKEN] } } },
+    mount: true,
+    port: MCP_HTTP_DEFAULT_PORT,
+  },
+  {
+    claim: 'does NOT mount when services.mcp.enabled is the literal false, even with a token'
+      + ' declared (WR-01 / T-408-18)',
+    config: { services: { mcp: { enabled: false, tokens: [DECLARED_TOKEN] } } },
+    mount: false,
+  },
+  {
+    claim: 'does NOT mount when enabled is true but no token is declared — an endpoint with nothing'
+      + ' to match a bearer against is the D-07 default grant on loopback',
+    config: { services: { mcp: { enabled: true, tokens: [] } } },
+    mount: false,
+  },
+  {
+    claim: 'does NOT mount for a token declared under services.dashboard.mcp — the shape of the'
+      + ' always-undefined read 408-03 fixed, which the old source cells passed over',
+    config: { services: { dashboard: { mcp: { tokens: [DECLARED_TOKEN] } } } },
+    mount: false,
+  },
+  {
+    claim: 'does NOT mount for a config with no services block, and does not throw',
+    config: {},
+    mount: false,
+  },
+  {
+    claim: 'does NOT mount for an absent config, and does not throw',
+    config: undefined,
+    mount: false,
+  },
+  {
+    claim: 'binds the standalone face\'s default port when no port is declared',
+    config: { services: { mcp: { tokens: [DECLARED_TOKEN] } } },
+    mount: true,
+    port: MCP_HTTP_DEFAULT_PORT,
+  },
+  {
+    claim: 'falls back to the default port when the declared port is outside the schema\'s range',
+    config: { services: { mcp: { tokens: [DECLARED_TOKEN], port: 70_000 } } },
+    mount: true,
+    port: MCP_HTTP_DEFAULT_PORT,
+  },
+  {
+    claim: 'binds the declared port when it is an integer inside the schema\'s range',
+    config: { services: { mcp: { tokens: [DECLARED_TOKEN], port: 9123 } } },
+    mount: true,
+    port: 9123,
+  },
+]
+
+describe('the co-host mount decision is a FUNCTION of the parsed config (WR-01, WR-09)', () => {
+  for (const row of MOUNT_ROWS) {
+    it(row.claim, () => {
+      const plan = mcpMountPlanFor(row.config)
+      expect(plan.mount).toBe(row.mount)
+      if (row.port !== undefined) expect(plan.port).toBe(row.port)
+    })
+  }
+
+  it('counts the DECLARED token entries, never the resolved ones — resolution reads process.env and'
+    + ' is a different fact that stays at the mount site', () => {
+    expect(mcpMountPlanFor({
+      services: { mcp: { tokens: [DECLARED_TOKEN, { ...DECLARED_TOKEN, name: 'second' }] } },
+    }).tokenCount).toBe(2)
+    // A declared entry whose environment variable is UNSET still counts here: the plan is about
+    // what the operator wrote, and `resolveMcpTokens` is about what the process can honour.
+    expect(mcpMountPlanFor({
+      services: { mcp: { tokens: [{ name: 'ghost', tokenEnvVar: 'AGENT_QA_408_09_UNSET', scopes: ['read'] }] } },
+    })).toEqual({ mount: true, port: MCP_HTTP_DEFAULT_PORT, tokenCount: 1 })
+  })
+})
+
+// ---- 6. An occupied MCP port costs a warning, not the dashboard (WR-02 · T-408-17) --------------
+//
+// DRIVEN OVER `mountCoHostedMcp`, THE EXTRACTED PIECE THE MOUNT SITE ITSELF CALLS — not a second
+// spelling of it, and not a mocked rejection. The full dashboard composition needs a database and a
+// browser-capable execution backend to reach this line, so the bind was extracted precisely so a
+// cell could hand it a REAL occupied socket. The port these cells occupy is ephemeral rather than
+// the shipped default, so the suite never fights a developer's own running `agent-qa mcp --http`.
+
+describe('a failed bind on the optional MCP endpoint leaves the primary surface serving (WR-02)', () => {
+  it('answers no server handle and a warning naming the MCP endpoint and the occupied port', async () => {
+    const squatter = createServer(() => {})
+    await new Promise<void>((bound) => squatter.listen(0, MCP_HTTP_BIND_HOST, () => bound()))
+    const occupied = (squatter.address() as AddressInfo).port
+    const warnings: string[] = []
+    try {
+      const outcome = await mountCoHostedMcp({
+        server: createServer(() => {}),
+        port: occupied,
+        warn: (line) => warnings.push(line),
+      })
+      // The handle the command KEEPS. Before 408-09 this path did not exist: the rejection reached
+      // the command's outer catch and `process.exit(2)` took a fully started dashboard with it.
+      expect(outcome.server).toBeUndefined()
+      expect(outcome.boundPort).toBeUndefined()
+      expect(outcome.warning ?? '', 'the warning names the endpoint').toContain('MCP endpoint')
+      expect(outcome.warning ?? '', 'the warning names the port').toContain(String(occupied))
+      expect(warnings.join('\n'), 'and it really reached the operator').toContain('EADDRINUSE')
+    } finally {
+      await new Promise<void>((closed) => squatter.close(() => closed()))
+    }
   })
 
-  it('mounts it over the LIVE-VIEW-BOUND registry — D-03 by composition', () => {
+  it('logs a socket error raised AFTER a successful listen, with exactly one handler left attached', async () => {
+    const warnings: string[] = []
+    const server = createServer(() => {})
+    try {
+      const outcome = await mountCoHostedMcp({ server, port: 0, warn: (line) => warnings.push(line) })
+      expect(outcome.server).toBe(server)
+      expect(outcome.boundPort ?? 0).toBeGreaterThan(0)
+      // EXACTLY ONE. The listen-time handler is removed inside the `listen` callback before the
+      // promise settles, and the durable one is attached in its place — so this count is the
+      // behavioural form of "the rejection handler was detached on success". Two would mean the
+      // old `once('error')` is still armed over a settled promise; zero would mean the emit below
+      // throws, because a Node EventEmitter with no 'error' listener rethrows.
+      expect(server.listenerCount('error')).toBe(1)
+      server.emit('error', new Error('after-listen-boom'))
+      expect(warnings.join('\n')).toContain('after-listen-boom')
+    } finally {
+      await new Promise<void>((closed) => server.close(() => closed()))
+    }
+  })
+})
+
+// ---- 7. The two wiring facts, stated as source assertions and labelled as such -------------------
+
+describe('the shipped dashboard composition wires and closes the endpoint', () => {
+  it('SOURCE ASSERTION: the mount passes the LIVE-VIEW-BOUND registry — the wiring half of D-03,'
+    + ' whose behavioural half is the served-token cell above', () => {
+    // The construct read is a PROPERTY ASSIGNMENT in the `createMcpHttpRequestListener({ … })`
+    // argument: `registry: runHost.registry as FunctionRegistry`. It is code, not prose.
+    //
+    // THE OTHER HALF IS BEHAVIOURAL AND IT IS IN THIS FILE: the cell "serves wrapper HTML whose
+    // liveUrl passes the composition's own validate" reads a token back out of the bytes the host
+    // would render and validates it against the composition's own validator. That cell proves the
+    // CONSEQUENCE of this wiring over an equivalent composition; this line proves the SHIPPED
+    // command really composes it that way. Neither alone is the whole claim.
     expect(DASHBOARD_SOURCE).toContain('registry: runHost.registry as FunctionRegistry')
   })
 
-  it('closes the second server in the shutdown path', () => {
+  it('SOURCE ASSERTION: the shutdown path closes the second server and disposes its masking —'
+    + ' two method calls, in the shutdown closure and nowhere else', () => {
+    // The constructs read are two METHOD CALLS inside `const shutdown = async () => { … }`.
+    // Driving a real shutdown would open a database, a browser-capable execution backend and the
+    // whole dashboard-server to observe them, which is why this stays a wiring assertion — said
+    // out loud rather than implied. Its behavioural sibling is the bind-collision cell above,
+    // which proves the same two handles are safe to leave unset.
     const shutdown = DASHBOARD_SOURCE.slice(DASHBOARD_SOURCE.indexOf('const shutdown = async ()'))
     expect(shutdown).toContain('mcpServer?.close()')
     expect(shutdown).toContain('mcpMasking?.dispose()')
   })
 
-  it('touches no file under packages/dashboard-server (criterion 3, Pitfall 8)', () => {
-    // The co-host is a second loopback listener in THIS command, so the route-order hazard cannot
-    // be reached from here at all. Stated as a cell because the structural avoidance is the whole
-    // reason the mount was written this way.
-    expect(DASHBOARD_SOURCE).not.toContain('dashboard-server/src/server')
+  it('leaves every file under packages/dashboard-server untouched in the working tree'
+    + ' (ROADMAP SC3, criterion 3 / Pitfall 8)', () => {
+    // ASSERTED OVER THE DIFF, NOT OVER A SOURCE SUBSTRING. The cell this replaces asserted
+    // `not.toContain('dashboard-server/src/server')` — a specifier that could never appear in this
+    // workspace under any implementation, so it could not fail. This one can: touch any file under
+    // that package and it reds. Tracked AND untracked, because a new file is a change too.
+    const tracked = execFileSync(
+      'git',
+      ['diff', '--name-only', 'HEAD', '--', 'packages/dashboard-server'],
+      { cwd: REPO_ROOT, encoding: 'utf8' },
+    ).trim()
+    const untracked = execFileSync(
+      'git',
+      ['ls-files', '--others', '--exclude-standard', '--', 'packages/dashboard-server'],
+      { cwd: REPO_ROOT, encoding: 'utf8' },
+    ).trim()
+    expect(tracked, 'a tracked dashboard-server file is modified').toBe('')
+    expect(untracked, 'an untracked dashboard-server file was added').toBe('')
   })
 })
