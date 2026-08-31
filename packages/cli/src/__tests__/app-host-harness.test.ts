@@ -77,6 +77,12 @@
 //       one. A separate mutation would say less than that pair already does.
 //   G3  the App re-read BEFORE the run settles                 -> measured by cell (5) against cell
 //       (7): the same address, the same client, `live` while running and `run-ended` after.
+//   G5  408-11's MARKUP anchor reverted into the script         -> MEASURED 2026-09-01 (plan 408-14):
+//       with the permanent link's href and label assigned by the wrapper's script instead of
+//       rendered into markup, cell (6-noscript) reds by name — `the href is in the MARKUP
+//       (408-11 task 1) — a host that runs no script still has it: expected null to be
+//       'http://127.0.0.1:<port>/runs/<runId>/live'`. Restored immediately. That cell is what makes
+//       408-11's change a measured property rather than a claim.
 //
 // This file is in `packages/cli` because only the CLI may import every package at once — the same
 // rule `live-view-tracer.test.ts` states for itself.
@@ -105,6 +111,10 @@ import {
   APP_RESOURCE_MIME_TYPE,
   APP_RESOURCE_URI_TEMPLATE,
   APP_WRAPPER_APP_NAME,
+  APP_WRAPPER_CONNECTING_HINT,
+  APP_WRAPPER_CONNECTING_MESSAGE,
+  APP_WRAPPER_LOAD_TIMEOUT_MS,
+  APP_WRAPPER_PERMANENT_LINK_LABEL,
   APP_WRAPPER_RUN_ENDED_MESSAGE,
   APP_WRAPPER_UI_PROTOCOL_VERSION,
   MCP_APPS_EXTENSION_ID,
@@ -181,31 +191,139 @@ const UI_INITIALIZE_REQUIRED_PARAMS: readonly string[] = (
   }
 ).properties.params.required
 
+/** The `_meta.ui.csp` block a served App can carry, in the shape this file reads it off the wire. */
+interface ServedCsp {
+  readonly frameDomains?: readonly string[]
+  readonly connectDomains?: readonly string[]
+  readonly resourceDomains?: readonly string[]
+}
+
+/**
+ * Which CSP directives each `McpUiResourceCsp` field governs — READ OUT OF THE SCHEMA'S OWN PROSE,
+ * on this suite's derive-don't-restate law (the same law `UI_INITIALIZE_REQUIRED_PARAMS` obeys).
+ *
+ * ext-apps states the mapping in each property's `description`, one line per property, in the form
+ * "Maps to CSP `img-src`, `script-src`, `style-src`, `font-src`, `media-src` directives". So the
+ * directive names are lifted from the backticked `*-src` tokens on that line rather than transcribed
+ * here, and an upstream schema that adds a directive to a field arrives here without an edit.
+ *
+ * `baseUriDomains` is DELIBERATELY not on this list, and the omission is not laziness: it maps to
+ * `base-uri`, whose documented default is `'self'` and not `'none'`. Folding it in under the
+ * "empty or omitted -> 'none'" rule below would be restating it WRONGLY, which is worse than not
+ * deriving it at all. The `*-src` filter is what draws that line, and it draws it from the token.
+ */
+const CSP_FIELD_DIRECTIVES: Readonly<Record<string, readonly string[]>> = (() => {
+  const properties = (
+    EXT_APPS_SCHEMA.$defs.McpUiResourceCsp as {
+      readonly properties: Record<string, { readonly description?: string }>
+    }
+  ).properties
+  const mapping: Record<string, readonly string[]> = {}
+  for (const [field, property] of Object.entries(properties)) {
+    const line = (property.description ?? '').split('\n').find((entry) => entry.includes('Maps to CSP'))
+    if (line === undefined) continue
+    const directives = [...line.matchAll(/`([a-z-]+-src)`/g)].map((match) => match[1] as string)
+    if (directives.length > 0) mapping[field] = directives
+  }
+  // THE GATE ON THE DERIVATION ITSELF. If a future ext-apps reworded the `resourceDomains`
+  // description, this whole file would silently revert to the blindness WR-10 names — every
+  // directive un-derived and therefore never `'none'`, with no cell going red to say so.
+  const resource = mapping.resourceDomains ?? []
+  for (const required of ['script-src', 'style-src']) {
+    if (!resource.includes(required)) {
+      throw new Error(
+        `ext-apps' schema no longer documents \`resourceDomains\` as mapping to \`${required}\` — `
+        + 'the host CSP derivation in app-host-harness.test.ts has gone blind and must be re-read '
+        + `against the new wording (found: ${JSON.stringify(mapping)})`,
+      )
+    }
+  }
+  return mapping
+})()
+
+/**
+ * Source expressions an emulated host grants BEYOND what the served metadata asked for, by directive.
+ *
+ * A host emulation that quietly supplies a permission the App never requested proves nothing about a
+ * real host — it proves what the test file believes. So every additional grant is a named value with
+ * a comment, and every call site passes one explicitly.
+ */
+type HostAllowances = Readonly<Record<string, readonly string[]>>
+
+/** A host that grants nothing beyond the metadata — the schema's secure default, unembellished. */
+const NO_HOST_ALLOWANCE: HostAllowances = {}
+
+/**
+ * The permissive host cells (5), (6) and (7) drive — AND THIS IS AN ASSUMPTION, recorded 2026-09-01.
+ *
+ * WHAT IS ASSUMED: that a real Apps host lets an App's OWN inline `<script>` and `<style>` run, i.e.
+ * that it adds `'unsafe-inline'` (or a nonce/hash equivalent) to `script-src`/`style-src` on top of
+ * the resource's `resourceDomains`. It is a reasonable belief — an MCP App IS an inline document, so
+ * a host that refused inline would render no App at all — but ext-apps' schema does not say it, and
+ * nobody here has measured a real host saying it either.
+ *
+ * WHY IT IS NAMED RATHER THAN HIDDEN: this is RESEARCH assumption A1, and it is settled only by
+ * `408-VERIFICATION.md` Human Verification item 2 — pointing a real Apps host at a real co-hosted
+ * endpoint and recording the CSP it actually applies. Until then this constant is the boundary
+ * between what this file measured and what it took on faith, and it is one line so that the next
+ * reader can see the whole of the faith in one place.
+ */
+const PERMISSIVE_HOST_ALLOWANCE: HostAllowances = {
+  'script-src': ["'unsafe-inline'"],
+  'style-src': ["'unsafe-inline'"],
+}
+
 /**
  * Build the CSP an Apps host applies to a served App document, from that document's own metadata.
  *
- * THE TWO DIRECTIVES THIS HOST DERIVES ARE THE TWO THE RESOURCE'S METADATA GOVERNS, and they are
- * mapped exactly as ext-apps' schema documents them: `frameDomains` -> `frame-src`, `connectDomains`
- * -> `connect-src`, and for each, "empty or omitted -> no X (secure default)". Everything else is
- * fixed at the App's own inline markup, because an MCP App IS an inline document — its script and
- * style come from the resource, not from a domain, so a host that refused them would refuse every
- * App rather than test anything about this one.
+ * EVERY DIRECTIVE THE RESOURCE'S METADATA GOVERNS IS DERIVED — `frameDomains` -> `frame-src`,
+ * `connectDomains` -> `connect-src`, and `resourceDomains` -> `img-src`/`script-src`/`style-src`/
+ * `font-src`/`media-src` — each under the schema's own "empty or omitted -> no X (secure default)"
+ * rule, with the field->directive mapping lifted from `CSP_FIELD_DIRECTIVES` above rather than
+ * restated. `hostAllowances` names what THIS emulated host grants on top, and defaults to nothing.
+ *
+ * DATED MEASUREMENT NOTE (2026-09-01, plan 408-14 task 1).
+ *   DERIVED: `frame-src`, `connect-src`, and now `script-src`, `style-src`, `img-src`, `font-src`,
+ *     `media-src` — the last five previously HARDCODED here, three of them permissively
+ *     (`script-src 'unsafe-inline'`, `style-src 'unsafe-inline'`, `img-src data: blob:`).
+ *   STILL ASSUMED: that a real host grants inline script and style at all. That assumption now lives
+ *     in `PERMISSIVE_HOST_ALLOWANCE` above, on exactly the three cells that need it, instead of
+ *     being applied invisibly to every cell in the file.
+ *   WHAT SETTLES IT: `408-VERIFICATION.md` Human Verification item 2 (RESEARCH assumption A1) — a
+ *     real host, a real co-hosted endpoint, and the CSP it really applies, recorded.
+ *   AND THIS IS THE SECOND TIME, WHICH MAKES IT A PATTERN AND NOT AN INCIDENT. The first was
+ *     `connect-src`: mutation leg G1 (measured 2026-08-31, plan 408-06) found the served metadata
+ *     declared only `frameDomains`, so a conformant host served the App under `connect-src 'none'`,
+ *     Chromium refused the wrapper's origin probe by name, and a perfectly reachable live view
+ *     settled in `unreachable-origin` in 240 ms. `app-resource.ts` emits `connectDomains` because of
+ *     that measurement. The class is "a directive this harness supplied for itself, so the gate
+ *     could not see the host that withholds it" — if you are about to hardcode a directive here,
+ *     you are about to make it a third time.
  *
  * This is the whole point of leg 2: Pitfall 1 says a host's default is `frame-src 'none'`, so an App
  * that names no frame domain renders a blocked inner pane. A harness that skipped the CSP would
- * paint frames happily and prove nothing about what a real host does.
+ * paint frames happily and prove nothing about what a real host does. Cell (6-noscript) is the same
+ * argument carried to its end: a host whose `script-src` is `'none'` runs no line of this document,
+ * and what a person gets there is a measurement, not a guess.
  */
-function hostCspFor(csp: { readonly frameDomains?: readonly string[]; readonly connectDomains?: readonly string[] } | undefined): string {
-  const directive = (name: string, origins: readonly string[] | undefined): string =>
-    origins === undefined || origins.length === 0 ? `${name} 'none'` : `${name} ${origins.join(' ')}`
-  return [
-    "default-src 'none'",
-    "script-src 'unsafe-inline'",
-    "style-src 'unsafe-inline'",
-    'img-src data: blob:',
-    directive('frame-src', csp?.frameDomains),
-    directive('connect-src', csp?.connectDomains),
-  ].join('; ')
+function hostCspFor(
+  csp: ServedCsp | undefined,
+  hostAllowances: HostAllowances = NO_HOST_ALLOWANCE,
+): string {
+  const directive = (name: string, origins: readonly string[] | undefined): string => {
+    // The schema's rule, applied identically to every field: empty or omitted contributes nothing.
+    const derived = origins === undefined ? [] : origins
+    const granted = hostAllowances[name] ?? []
+    const sources = [...derived, ...granted]
+    return sources.length === 0 ? `${name} 'none'` : `${name} ${sources.join(' ')}`
+  }
+  const directives: string[] = ["default-src 'none'"]
+  for (const [field, names] of Object.entries(CSP_FIELD_DIRECTIVES)) {
+    for (const name of names) {
+      directives.push(directive(name, (csp as Record<string, readonly string[] | undefined> | undefined)?.[field]))
+    }
+  }
+  return directives.join('; ')
 }
 
 // ---- The workspace, copied in shape from the tracer's ------------------------------------------
@@ -532,7 +650,7 @@ async function connectClient(options: { readonly apps: boolean }): Promise<Clien
 interface ServedApp {
   readonly html: string
   readonly mimeType: string
-  readonly csp?: { readonly frameDomains?: readonly string[]; readonly connectDomains?: readonly string[] }
+  readonly csp?: ServedCsp
 }
 
 /** Read the concrete App resource for this run, over the wire, as an Apps-negotiating host would. */
@@ -568,9 +686,13 @@ async function readServedApp(): Promise<ServedApp> {
  * enforcing it is the entire subject of leg 2. The iframe carries `sandbox="allow-scripts"` — the
  * same flags the shipped dashboard gives the embed page — so the App runs at an opaque origin, which
  * is what an Apps host gives it.
+ *
+ * `hostAllowances` IS REQUIRED AND HAS NO DEFAULT HERE, deliberately: every leg in this file must
+ * say out loud which host it is emulating, because that choice is the difference between measuring
+ * a host and measuring this file's beliefs about hosts (WR-10).
  */
-async function appsHost(served: ServedApp): Promise<string> {
-  const csp = hostCspFor(served.csp)
+async function appsHost(served: ServedApp, hostAllowances: HostAllowances): Promise<string> {
+  const csp = hostCspFor(served.csp, hostAllowances)
   const hostPage = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>apps host</title>
 <style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%}</style>
@@ -824,7 +946,10 @@ describe('leg 1 — a negotiating host reaches the App over the wire (D-05, D-09
 describe('leg 2 — the App renders and the frames are CHANGE-DRIVEN (D-12, criterion 1)', () => {
   it('(5) the wrapper reaches `live` in a real sandboxed iframe under its own CSP', async () => {
     const served = await readServedApp()
-    const url = await appsHost(served)
+    // THE PERMISSIVE HOST — see `PERMISSIVE_HOST_ALLOWANCE`: this cell needs the App's own inline
+    // script to run, and that grant is an ASSUMPTION about real hosts, not something the served
+    // metadata asked for. Named here so the cell states its own preconditions.
+    const url = await appsHost(served, PERMISSIVE_HOST_ALLOWANCE)
     const page = await held().browser.newPage()
     try {
       const opened = await openWrapper(page, url)
@@ -833,7 +958,8 @@ describe('leg 2 — the App renders and the frames are CHANGE-DRIVEN (D-12, crit
       expect(
         opened.state,
         `the wrapper settled in \`${opened.state}\` under the CSP its own metadata asked for `
-        + `(${hostCspFor(served.csp)}). Browser console: ${JSON.stringify(opened.console)}`,
+        + `(${hostCspFor(served.csp, PERMISSIVE_HOST_ALLOWANCE)}). `
+        + `Browser console: ${JSON.stringify(opened.console)}`,
       ).toBe('live')
       expect(await wrapper.locator('[data-app-state]').getAttribute('data-app-run-id')).toBe(held().runId)
 
@@ -860,7 +986,9 @@ describe('leg 2 — the App renders and the frames are CHANGE-DRIVEN (D-12, crit
 
   it('(6) frames PAINT through the nested embed while the page changes, and STOP while it is static', async () => {
     const served = await readServedApp()
-    const url = await appsHost(served)
+    // THE PERMISSIVE HOST, for the same reason cell (5) names: the frame counter this arm reads is
+    // maintained by the App's own inline script, so this cell cannot exist on a host that runs none.
+    const url = await appsHost(served, PERMISSIVE_HOST_ALLOWANCE)
     const page = await held().browser.newPage()
     try {
       const opened = await openWrapper(page, url)
@@ -929,6 +1057,85 @@ describe('leg 2 — the App renders and the frames are CHANGE-DRIVEN (D-12, crit
   }, 300_000)
 })
 
+// ---- LEG 2b: the host that runs NONE of the App's script (WR-10, RESEARCH A1, T-408-19) --------
+//
+// THE HOST THIS PHASE NEVER MEASURED. ext-apps' schema documents `resourceDomains` as mapping to
+// `script-src` among others, with "empty or omitted -> no network resources (secure default)". This
+// server emits no `resourceDomains` — it has none to name, its App being wholly inline — so a host
+// that applies that rule literally serves the document under `script-src 'none'`. Not one line of
+// the wrapper's script runs there. Until this cell existed the harness supplied
+// `script-src 'unsafe-inline'` for itself, so the gate could not see that host at all.
+//
+// AND WHAT IT MEASURES IS NOT A DEFECT — it is D-04's designed floor, made observable. The
+// assumption-delta ruling for this round is `promote`: the permanent, tokenless dashboard link is the
+// PRIMARY representation of "watch this run" and the embedded pane is one enriched VARIANT. On a host
+// with no script allowance the variant is unavailable and the primary must still be there. That is
+// only true because 408-11 task 1 moved the anchor's href and label into MARKUP; before that change
+// the link was assigned by the very script this host refuses to run, and this cell would find an
+// empty `href`.
+
+describe("leg 2b — a host running none of the App's script still hands the person the way out (WR-10)", () => {
+  it('(6-noscript) under `script-src \'none\'` the permanent link and a named sentence are still there', async () => {
+    const served = await readServedApp()
+
+    // THE POINT OF THE CELL, asserted before the render: this server names no `resourceDomains`, so
+    // the schema's own rule is what produces `script-src 'none'` — the harness is not inventing a
+    // hostile host, it is applying the documented secure default to the metadata really served.
+    expect(served.csp?.resourceDomains, 'this App is wholly inline and names no resource domains')
+      .toBeUndefined()
+    const policy = hostCspFor(served.csp, NO_HOST_ALLOWANCE)
+    expect(policy, `derived policy: ${policy}`).toContain("script-src 'none'")
+    expect(policy, `derived policy: ${policy}`).toContain("style-src 'none'")
+
+    const url = await appsHost(served, NO_HOST_ALLOWANCE)
+    const page = await held().browser.newPage()
+    const consoleLines: string[] = []
+    page.on('console', (message) => { consoleLines.push(`${message.type()}: ${message.text()}`) })
+    page.on('pageerror', (error) => { consoleLines.push(`pageerror: ${error.message}`) })
+    try {
+      // NOT `openWrapper`: that helper waits for a SETTLED (non-`connecting`) state, and settling is
+      // exactly the thing this document cannot do here. Waiting for it would report a timeout where
+      // the honest reading is "it stayed where the server rendered it".
+      await page.goto(url, { waitUntil: 'domcontentloaded' })
+      const wrapper = await wrapperFrame(page)
+      await wrapper.locator('[data-app-state]').waitFor({ state: 'attached', timeout: 30_000 })
+
+      // (a) THE WAY OUT — one anchor, complete, from markup alone. `liveRunLinkOf` is the composer
+      // the tool-result line uses too, so this is the same tokenless address a person is given in
+      // chat, not a second spelling of it.
+      const links = wrapper.locator('[data-app-permanent-link]')
+      expect(await links.count(), 'exactly one permanent-link anchor, composed by the renderer')
+        .toBe(1)
+      expect(
+        await links.getAttribute('href'),
+        'the href is in the MARKUP (408-11 task 1) — a host that runs no script still has it',
+      ).toBe(liveRunLinkOf(held().origin, held().runId))
+      expect(await links.textContent()).toBe(APP_WRAPPER_PERMANENT_LINK_LABEL)
+
+      // (b) THE SENTENCE — against the exported constants, never a transcription. The hint is what
+      // stops `connecting` from being an indefinite promise made by a script that will never run.
+      expect(await wrapper.locator('[data-app-message]').textContent())
+        .toBe(APP_WRAPPER_CONNECTING_MESSAGE)
+      expect(await wrapper.locator('[data-app-hint]').textContent())
+        .toBe(APP_WRAPPER_CONNECTING_HINT)
+
+      // (c) AND IT DOES NOT REACH `live` — stated as the MEASURED, EXPECTED consequence rather than
+      // as a failure. The document's own load bound is the honest window to wait: if the script were
+      // running it would have resolved one way or the other inside it. This is D-04's floor ("that
+      // host falls to the link-out"), and (a) is the proof the floor holds.
+      await page.waitForTimeout(APP_WRAPPER_LOAD_TIMEOUT_MS + 2_000)
+      expect(
+        await wrapper.locator('[data-app-state]').getAttribute('data-app-state'),
+        `the wrapper under \`${policy}\` should still be in its server-rendered state — `
+        + `console: ${JSON.stringify(consoleLines)}`,
+      ).toBe('connecting')
+      expect(await wrapper.locator('[data-app-state="live"]').count()).toBe(0)
+    } finally {
+      await page.close()
+    }
+  }, 180_000)
+})
+
 // ---- LEG 3: end honesty (D-07, D-11) -----------------------------------------------------------
 //
 // LAST, AND DESTRUCTIVE BY DESIGN: it finishes the run, which every cell above needs live.
@@ -948,7 +1155,9 @@ describe('leg 3 — a late attach to a finished run gets the honest terminal ans
     expect(served.html).not.toContain(`${LIVE_EMBED_PATH_PREFIX}${held().runId}#`)
     expect(served.csp?.frameDomains, 'no inner frame, so no frame allowance is emitted').toBeUndefined()
 
-    const url = await appsHost(served)
+    // THE PERMISSIVE HOST, unchanged in meaning from before `hostAllowances` existed — this cell's
+    // subject is the terminal ANSWER, not the host's script policy, so it keeps the host it had.
+    const url = await appsHost(served, PERMISSIVE_HOST_ALLOWANCE)
     const page = await held().browser.newPage()
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded' })
