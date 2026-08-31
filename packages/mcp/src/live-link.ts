@@ -35,6 +35,11 @@
 // affordance and answers nothing. `LIVE_LINK_ABSENT_LINE` says what is missing and what to do about
 // it, in the vocabulary of the two things that can supply a base, and contains no address at all.
 //
+// AND THERE ARE TWO ABSENCES, NOT ONE (2026-09-01, plan 10, WR-03 · T-408-22). A missing base and a
+// missing run id are different facts with different remedies, so they carry different sentences —
+// `LIVE_LINK_ABSENT_LINE` and `LIVE_LINK_NO_RUN_LINE`. Collapsing them is how a host that HAD a
+// dashboard configured came to be told, on a model-readable channel, to configure it.
+//
 // Protocol grounding. SEP-1730 puts extensions outside every conformance tier — a host owes the
 // Apps extension nothing — which is the protocol-level reason this line exists at all: the ONLY
 // thing every host is obliged to render is a tool result's text, so the affordance that must never
@@ -89,6 +94,28 @@ export const LIVE_LINK_ABSENT_LINE
   = 'no dashboard configured — set services.dashboard.baseUrl or run agent-qa dashboard'
 
 /**
+ * What a carrier result says when a dashboard base EXISTS but this result names no run to link to
+ * (2026-09-01, Phase 408 plan 10, WR-03 · T-408-22).
+ *
+ * A SECOND NAMED ABSENCE, BECAUSE THERE ARE TWO DISTINCT FACTS. `carrierRunIdOf`
+ * (`catalog.ts`) is DEFENSIVE ON BOTH ARMS by design and can honestly answer `undefined` — the
+ * `runIdFrom: 'output'` arm reads an op's own result, which is a `RunStartAcknowledgement` today
+ * and could be a fold's arm tomorrow, and the documented treatment of a shape it cannot read is a
+ * named absence rather than a crash. Until this constant existed, that arm printed
+ * `LIVE_LINK_ABSENT_LINE` — so a host that HAS `services.dashboard.baseUrl` set told the caller,
+ * and the model reading the result, to set a value already set and pointed at the wrong knob. That
+ * is a FALSE STATEMENT on a model-readable channel in a milestone whose law is honest absence, and
+ * a wrong sentence is worse than a vague one because a model will act on it.
+ *
+ * IT NAMES NO CONFIG KNOB, deliberately: there is nothing for the operator to set. The dashboard is
+ * configured; this particular result simply is not about a run. And it CONTAINS NO URL, the same
+ * property `LIVE_LINK_ABSENT_LINE` above is held to — an absence that fabricated an address would
+ * be the dishonesty this file exists to remove.
+ */
+export const LIVE_LINK_NO_RUN_LINE
+  = 'no run to link to — this result names no run id'
+
+/**
  * How a HOST answers "which dashboard is this process pointed at".
  *
  * A FACTORY, NOT A STRING, on `commands/dashboard.ts`'s own reasoning about the same value: the
@@ -114,12 +141,19 @@ export interface LiveLinkSupplier {
  * A BLANK BASE IS AN ABSENT BASE. A configured `baseUrl: ""` (or a whitespace-only one) is somebody
  * who has not pointed this host anywhere, and composing `"/runs/x/live"` from it would produce a
  * relative fragment that reads as a link in a transcript and resolves against nothing.
+ *
+ * THE GUARD ORDER IS THE FIX, NOT AN ACCIDENT (2026-09-01, plan 10, WR-03). The BASE is tested
+ * first: with no base anywhere, "no dashboard configured" is the true and the more actionable
+ * sentence whatever the run id is, so the both-absent case answers with the fact an operator can do
+ * something about. Only with a base PRESENT does a missing run id become the fact worth naming, and
+ * that arm answers `LIVE_LINK_NO_RUN_LINE`. Swapping these two lines back reinstates the false
+ * sentence a configured host used to receive.
  */
 export function liveLinkLineFor(
   base: string | undefined,
   runId: string | undefined,
 ): string {
-  if (runId === undefined || runId === '') return LIVE_LINK_ABSENT_LINE
   if (base === undefined || base.trim() === '') return LIVE_LINK_ABSENT_LINE
+  if (runId === undefined || runId === '') return LIVE_LINK_NO_RUN_LINE
   return liveLinkLine(liveRunLinkOf(base.trim(), runId))
 }

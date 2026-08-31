@@ -133,8 +133,14 @@ export type { AppWrapperInput, AppWrapperMint, AppWrapperState } from './app-wra
 // against the SAME line helpers this surface prints rather than against a transcription of them.
 // Publishing them hands a consumer no capability: three pure functions over strings it already
 // holds, and one constant that is deliberately not an address.
+//
+// 2026-09-01 (plan 10, WR-03): `LIVE_LINK_NO_RUN_LINE` joins them for the SAME reason, and it is
+// the reason rather than a habit — the arm it names (a dashboard configured, no resolvable run id)
+// had no cell at all, and a cell that transcribed its bytes could pass while the shipped sentence
+// said something else. Two constants now, because there are two absences: no base, and no run.
 export {
   LIVE_LINK_ABSENT_LINE,
+  LIVE_LINK_NO_RUN_LINE,
   liveLinkLine,
   liveLinkLineFor,
   liveRunLinkOf,

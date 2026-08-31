@@ -9,7 +9,8 @@
 // `tools/call` result off the wire.
 //
 // WHAT IS PRODUCTION HERE AND WHAT IS SCRIPTED. Production: `buildAgentQaMcpServer`, the projection
-// handler and its decoration, `liveRunLinkOf` / `liveLinkLine` / `LIVE_LINK_ABSENT_LINE`,
+// handler and its decoration, `liveRunLinkOf` / `liveLinkLine` / `liveLinkLineFor` /
+// `LIVE_LINK_ABSENT_LINE` / `LIVE_LINK_NO_RUN_LINE`,
 // `appResourceUriFor`, `createFunctionRegistry`, `invokeFunction`, the `runs.start` / `runs.digest`
 // / `runs.list` ops and the real `@modelcontextprotocol/client`. Scripted: the three host ports the
 // ops read through (a run document, a run starter and an empty proposals inbox) — the smallest
@@ -41,7 +42,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { appResourceUriFor } from '../app-resource.js'
 import { buildAgentQaMcpServer } from '../catalog.js'
-import { LIVE_LINK_ABSENT_LINE, liveLinkLine, liveRunLinkOf } from '../live-link.js'
+import * as barrel from '../index.js'
+import {
+  LIVE_LINK_ABSENT_LINE,
+  LIVE_LINK_NO_RUN_LINE,
+  liveLinkLine,
+  liveLinkLineFor,
+  liveRunLinkOf,
+} from '../live-link.js'
 
 // ---- The fixture composition -------------------------------------------------------------------
 
@@ -255,6 +263,61 @@ describe('with no dashboard anywhere, the line is the NAMED ABSENCE and never a 
       absent: true,
     })
     expect(resourceUriOf(result)).toBe(appResourceUriFor(ASKED_RUN_ID))
+  })
+})
+
+// ---- 3b. TWO absences, two sentences (plan 10, WR-03 · T-408-22) -------------------------------
+
+// The arm that had NO CELL AT ALL until 2026-09-01: a host with `services.dashboard.baseUrl` set,
+// and a result the decoration could not read a run id off. `carrierRunIdOf` is defensive on both
+// arms by design and answers `undefined` for a shape it cannot read, so this is a path production
+// takes rather than a hypothetical. Before the split it printed "no dashboard configured — set
+// services.dashboard.baseUrl", telling a configured host to configure itself, on the channel a
+// model reads. These cells drive `liveLinkLineFor` directly because it is the ONE place the
+// absence decision is implemented, and they assert the SHIPPED constants rather than a
+// transcription of their bytes.
+describe('the two absences are two sentences, and the base is the arm tested first (WR-03)', () => {
+  const BASE = 'http://127.0.0.1:7777'
+
+  it('a base with NO resolvable run id names the missing RUN, not a knob already set', () => {
+    expect(liveLinkLineFor(BASE, undefined)).toBe(LIVE_LINK_NO_RUN_LINE)
+    // The precise regression: it must NOT be the no-dashboard sentence on a configured host.
+    expect(liveLinkLineFor(BASE, undefined)).not.toBe(LIVE_LINK_ABSENT_LINE)
+  })
+
+  it('an EMPTY run id is the same absence as a missing one', () => {
+    expect(liveLinkLineFor(BASE, '')).toBe(LIVE_LINK_NO_RUN_LINE)
+  })
+
+  it('no base with a run id present is still the no-dashboard sentence — now by ORDER', () => {
+    // Pinned by the guard order rather than by accident: the base arm is tested first.
+    expect(liveLinkLineFor(undefined, 'run-1')).toBe(LIVE_LINK_ABSENT_LINE)
+    expect(liveLinkLineFor('   ', 'run-1')).toBe(LIVE_LINK_ABSENT_LINE)
+  })
+
+  it('with BOTH absent the base is the fact reported — it is the actionable one', () => {
+    expect(liveLinkLineFor(undefined, undefined)).toBe(LIVE_LINK_ABSENT_LINE)
+    expect(liveLinkLineFor('', '')).toBe(LIVE_LINK_ABSENT_LINE)
+  })
+
+  it('the composed line is unchanged — the split moved no byte of the present arm', () => {
+    expect(liveLinkLineFor('http://127.0.0.1:7777/', 'run-1')).toBe(
+      'watch live or review: http://127.0.0.1:7777/runs/run-1/live',
+    )
+    expect(liveLinkLineFor(` ${BASE} `, 'run-1')).toBe(liveLinkLine(liveRunLinkOf(BASE, 'run-1')))
+  })
+
+  it('the new absence FABRICATES NO URL — the property both constants are held to', () => {
+    expect(LIVE_LINK_NO_RUN_LINE).not.toContain('://')
+    expect(LIVE_LINK_NO_RUN_LINE).not.toContain('http')
+    // And it names no config knob, because there is nothing here for an operator to set.
+    expect(LIVE_LINK_NO_RUN_LINE).not.toContain('services.dashboard.baseUrl')
+  })
+
+  it('rides the package barrel, so every consumer asserts the SAME sentence', () => {
+    expect(barrel.LIVE_LINK_NO_RUN_LINE).toBe(LIVE_LINK_NO_RUN_LINE)
+    expect(barrel.LIVE_LINK_ABSENT_LINE).toBe(LIVE_LINK_ABSENT_LINE)
+    expect(LIVE_LINK_NO_RUN_LINE).not.toBe(LIVE_LINK_ABSENT_LINE)
   })
 })
 
