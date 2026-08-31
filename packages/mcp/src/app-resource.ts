@@ -12,8 +12,14 @@
 // UNPROJECTED as a callable tool: a projected mint tool would put a live credential into
 // model-readable tool-result text, which is the exact shape of T-395-R5-10, and masking it would
 // make the tool useless. Instead the mint happens HERE, by reference, inside the App-rendering
-// path, and the token lands only in the HTML the HOST renders. That is a structural property of
-// the channel, not an instruction anybody has to remember.
+// path. WHAT THAT BUYS, AT ITS REAL VALUE (corrected 2026-09-01, 408 gap round — see THE
+// 2026-09-01 GAP-ROUND RULING below): this server writes the token into exactly ONE place, the
+// `src` of the frame in the document this read serves, and what a caller does with a document it
+// asked for is outside this server's reach. The earlier sentence here — "the token lands only in
+// the HTML the HOST renders" — described a property of the CALLER as though it were a property of
+// this server, and it is WITHDRAWN rather than deleted. The structural property that DOES hold is
+// the one `token-absence.test.ts` measures: no OTHER channel this server emits — tool-result text,
+// `structuredContent`, a refusal echo, a resource listing, a log line — carries the token.
 //
 // AND THAT IS WHY THIS SURFACE DOES NOT MASK ITS SERVED PAYLOAD — the one deliberate divergence
 // from `resources.ts`, which masks its contents for a measured reason (a card composed from STORED
@@ -42,9 +48,73 @@
 //      `AppResourceNegotiationError` if it did not. The refusal happens BEFORE the roster read
 //      and before the mint loop, so a refused read mints nothing at all: there is no token in
 //      existence on that path to leak, rather than a token that something remembered to withhold.
+//      SUPERSEDED IN PART, 2026-09-01: the PREDICATE and the refusal arm stand exactly as written;
+//      the SECURITY reading of this clause does not. See THE 2026-09-01 GAP-ROUND RULING below,
+//      which names what the check is and what it is for. Retained here rather than rewritten,
+//      because an adjudication in this repository is re-grounded on the record, never edited away.
 //   4. THE CREDENTIAL STAYS SHORT-LIVED AND VIEW-SCOPED. 403's `LIVE_URL_TTL_MS` is five minutes
 //      and the token authorises watching pixels this caller's `read` scope already reaches — so
 //      even the negotiated channel hands out the narrowest thing that can render a live view.
+//   5. THE AUTHORIZATION BOUNDARY IS THE OPERATOR-GRANTED `read` SCOPE, CHECKED AT REGISTRATION
+//      (added 2026-09-01, 408 gap round; D-02). This clause names what THIS SERVER CAN VERIFY, as
+//      distinct from anything a caller says about itself. `registerAppResources` registers the
+//      template only when all three of its conditions hold, and two of them ARE the boundary:
+//      `visibleToCaller(mint.requiredScopes, caller.grantedScopes)` — and the same call for the
+//      roster op — over the scopes the REGISTRY declares for the ops this surface reads through,
+//      plus `mint.bindingStatus === 'bound'`. The scopes a caller holds are OPERATOR
+//      CONFIGURATION: the `read` scope an operator wrote into that credential's entry in
+//      `services.mcp.tokens`, or the unconditional grant the spawning process gets on stdio. This
+//      server authenticates the bearer that carries them, so that is a fact it verifies rather
+//      than a fact it is told. D-02 is the ratified decision that put the boundary there — "The
+//      App rides the existing `read` scope… no new scope in the token vocabulary" — and a
+//      composition failing any condition registers no template at all, so for such a caller this
+//      address does not exist. Clause 3's check is a filter ON TOP of this; it is not this.
+//
+// THE 2026-09-01 GAP-ROUND RULING — ROAD `demote` (408-08 task 1: the user's checkpoint answer,
+// quoted verbatim in `408-08-SUMMARY.md`). `408-VERIFICATION.md` gaps[2] and `408-REVIEW.md` CR-01
+// measured clause 3 against the shipped SDK and found its SECURITY reading false. Three findings,
+// in this file's "measured, not assumed" idiom:
+//
+//   (a) THE CHECK IS A HOST-CAPABILITY SIGNAL, NOT AN AUTHORIZATION CONTROL. On the modern
+//       (2026-07-28) era the SDK's `_inputRequestCapabilityView` returns
+//       `ctx.mcpReq.envelope?.[CLIENT_CAPABILITIES_META_KEY]` VERBATIM, and the 2026 codec's
+//       `checkInboundEnvelope` validates that member's SHAPE and nothing else (the 2025 codec's
+//       is `(_material) => void 0`). Measured 2026-08-31 by the phase verifier against the same
+//       shipped `@modelcontextprotocol/server` this package builds on. The value
+//       `negotiatedAppsExtension` reads is therefore composed by the CALLER in its own
+//       per-request `_meta` and forwarded unauthenticated. This phase's own POSITIVE cell is the
+//       proof: the "negotiating client" in `app-negotiation.test.ts` is a stock SDK client with
+//       one declared capability member and nothing App-shaped about it, and it receives freshly
+//       minted liveUrl tokens in its own JSON-RPC response body.
+//   (b) WHAT IT THEREFORE DOES BUY, and it is not nothing. A host that cannot render an App does
+//       not receive a document it would paint as text — an omitting caller is turned away above
+//       the roster read and above the mint loop, so nothing is minted on that path. And a
+//       2025-era caller cannot obtain this App at all, because there is no per-request
+//       capabilities channel outside the modern era (408-02 D-G). Both are real, and both are
+//       statements about CAPABILITY.
+//   (c) WHAT IT DOES NOT BUY. It does not distinguish an Apps host from any other caller that
+//       adds one `_meta` member to a `resources/read`. It separates cooperative clients from
+//       omitting ones — never Apps hosts from model-driven callers.
+//
+// T-408-01, RE-ADJUDICATED 2026-09-01 — DISPOSITION: `accept`. It was `mitigate`, and 408-02
+// reported it closed; that verdict is withdrawn here. The residual, stated plainly: a caller the
+// operator granted `read` can obtain a live-view credential through this door. BOTH halves of the
+// argument are recorded, because an acceptance that keeps only the comfortable half is the same
+// over-claim in a new coat.
+//   ACCEPTING REASONING (D-02's own, restated). Watching a run IS a read. Per-step decision
+//   screenshots of the same browser already cross the read path as DURABLE artifacts, so live
+//   frames expose the same pixels sooner rather than a new class of thing; the credential is
+//   view-scoped and expires in five minutes (`LIVE_URL_TTL_MS`); and D-02 rejected a dedicated
+//   live-view scope as "config friction guarding a channel `read` already exposes". Nothing this
+//   gap round measured answers that rejection — it found the CLAIM wrong, not the boundary.
+//   COUNTER-ARGUMENT (408-REVIEW.md CR-01, recorded rather than buried). The credential is NOT
+//   strictly scope-equivalent to what a `read` caller already holds: no projected tool yields a
+//   live pixel stream of a running browser, and the minted URL works from any browser on the
+//   machine for its full five-minute TTL. That is a capability, not merely an artifact arriving
+//   sooner, and the acceptance is made in full sight of it.
+// The negative cell the verification asks for — a caller that merely DECLARES, asserting the
+// policy intended rather than the one the gate happens to enforce — is 408-12's subject, and it
+// cites this ruling.
 //
 // THE NEGOTIATION EVIDENCE IS MEASURED, NOT ASSUMED (RESEARCH Open Question 1 / assumption A3).
 // The envelope member spelling below was measured on 2026-08-31 against a real
@@ -223,6 +293,17 @@ export interface AppReadContext {
  * matters most for the case the measurement surfaced, where a 2025-era caller carries no envelope
  * at all and would otherwise be waved through by a predicate written as "not explicitly absent".
  *
+ * WHAT FAILING CLOSED HERE DOES AND DOES NOT PROTECT (dated 2026-09-01, 408 gap round, road
+ * `demote` — the full ruling is in this file's header). The predicate is still fail-closed AS A
+ * PREDICATE, and every clause above is unchanged. What is CORRECTED is the reading that failing
+ * closed here protects the credential. It does not. The value read below is composed by the
+ * caller in its own per-request `_meta` and forwarded by the SDK unauthenticated
+ * (`_inputRequestCapabilityView` returns it verbatim; `checkInboundEnvelope` checks shape only),
+ * so a `false` answer means "this caller did not SAY it can render an App" — a host-capability
+ * fact — and never "this caller is not authorized to hold a live-view credential". The thing
+ * that bounds the credential is the operator-granted `read` scope checked by `visibleToCaller` in
+ * `registerAppResources`, together with `bindingStatus === 'bound'`; see header clause 5.
+ *
  * `RequestMetaEnvelope` is an intentionally EMPTY augmentable type in the shipped d.mts, so the
  * envelope is read through one narrow cast at this single seam rather than by widening the SDK's
  * types somewhere a second reader would have to find.
@@ -362,10 +443,17 @@ export function createAppResourceReadHandler(
     _variables: Variables,
     ctx: AppReadContext,
   ): Promise<ReadResourceResult> => {
-    // CLAUSE 3 OF THE HEADER'S RULING, AND IT IS THE FIRST LINE ON PURPOSE (D-09, T-408-01).
-    // Everything below this point either mints a credential or describes one; a caller that
-    // never declared the Apps extension is turned away before any of it runs, so the refusal
-    // path has no token to withhold rather than a token it remembered not to print.
+    // CLAUSE 3 OF THE HEADER'S RULING, AND IT IS THE FIRST LINE ON PURPOSE (D-09).
+    // A RENDERING-CAPABILITY FILTER, NOT THE AUTHORIZATION CHECK (corrected 2026-09-01, 408 gap
+    // round, road `demote`; T-408-01 re-adjudicated to `accept` — the ruling is in the header).
+    // What this line asks is whether the caller SAID it can render an MCP App. A caller that did
+    // not say so is turned away before anything below runs, so this path has no token to withhold
+    // rather than a token it remembered not to print — and that ordering is still worth keeping.
+    // It is not, however, where authorization happened. Authorization happened at REGISTRATION
+    // time: `registerAppResources` only registered this template because `visibleToCaller` found
+    // the operator-granted scopes on this caller cover the mint's and the roster's declared
+    // `read`, and because the mint is `bound` in this composition. A caller without those never
+    // reaches this handler at all, because the address was never registered for it.
     if (!negotiatedAppsExtension(ctx)) throw new AppResourceNegotiationError()
 
     const parsed = parseAppUri(uri.href)
