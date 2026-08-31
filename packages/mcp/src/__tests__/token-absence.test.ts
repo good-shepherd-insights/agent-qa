@@ -49,6 +49,24 @@
 //   token. If it did not, this file would be green because nothing was minted, which is the one
 //   way a scan of this shape lies.
 //
+//   AND SINCE 408-12 THE EXCLUSION IS ALSO ENUMERATED. `408-VERIFICATION.md` gaps[2] recorded that
+//   this file excluded the `ui://` read BY RULING and then said nothing more about it — and given
+//   what T-408-01 turned out to be, an exclusion a census cannot SHOW is indistinguishable from a
+//   place nobody looked. So the `ui://` read's `text` is now a NAMED channel of this flow, carried
+//   in `FLOW_CHANNELS` and classified `carrying` beside the `scanned` remainder, and `(A2)` asserts
+//   a PARTITION rather than a list with an unstated tail: a channel named without a classification
+//   reds. The difference is between "we ruled this one out, here is the ruling" and "we did not
+//   look here", and after T-408-01 this phase cannot afford the second.
+//
+// WHY `(A10)` EXISTS (408-12, WR-07 · T-408-24). This file's fixture clock used to be pinned to the
+// literal `1_800_000_000_000`, which IS 2027-01-15T08:00:00Z, while `renderAppWrapperPage` defaults
+// its `now` to the real wall clock. Past that instant the renderer settles `expired`, strips every
+// mint and serves a document with no token in it — and `(A1)` would have stayed GREEN over that
+// empty render. That is not a false pass, it is a VACUOUS one: the exact failure `(A0)` was written
+// to prevent, arriving through the calendar instead of through the code. The clock is now anchored
+// to the real clock at fixture construction, and `(A10)` renders under a stubbed system clock past
+// 2027-01-15 so the fix is proven rather than asserted.
+//
 // THE GROUND TRUTH IS WHAT THE FLOW MINTED, NOT A PLANT. Tokens are captured at `LiveViewPort`'s
 // `onMinted` hook — the single registration point `runs.liveurl` calls for every token it ever
 // produces (`ops/runs-live-url.ts`). A planted lookalike would prove the scanner works; capturing
@@ -105,7 +123,7 @@ import type {
   LiveUrlSigner,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MCP_APPS_EXTENSION_ID, appResourceUriFor } from '../app-resource.js'
 import { createAgentQaMcpNodeHandler } from '../http.js'
@@ -240,7 +258,12 @@ function handoff(runId: string): CompletedRunHandoff {
  */
 function fixtureRegistry(): { readonly registry: FunctionRegistry; readonly minted: string[] } {
   const minted: string[] = []
-  let clock = 1_800_000_000_000
+  // WR-07, THIS FILE'S HALF (408-12). ANCHORED TO THE REAL CLOCK rather than pinned to a literal
+  // epoch: the `ui://` read renders without an explicit `now`, so `renderAppWrapperPage` falls back
+  // to `Date.now()` — and a fixture clock pinned to a fixed epoch silently becomes an EXPIRED render
+  // once real time passes it, which would leave `(A1)` green over a document that carries nothing.
+  // The mint's `expiresAt` and the renderer's `now` are now the same clock; `(A10)` is the gate.
+  let clock = Date.now()
 
   const liveView: LiveViewPort = {
     signer: fixtureSigner(),
@@ -528,6 +551,94 @@ async function driveFullFlow(options: { readonly leak?: boolean } = {}): Promise
   return { corpus, tokens: [...minted], wrapperHtml }
 }
 
+// ---- The channel census: every channel of this flow, and what each one is FOR --------------------
+//
+// ADDED 408-12 (T-408-21). Before this, `(A2)` named the channels it scanned and said nothing about
+// the one it did not — the `ui://` read's wrapper HTML — so the exclusion lived only in the header's
+// prose and in a corpus entry's label. A standing security gate whose corpus has an unstated
+// remainder cannot show the difference between a channel it ruled out and a channel nobody thought
+// of, and T-408-01 is what that difference costs.
+//
+// THE PARTITION IS THE ASSERTION. `FLOW_CHANNELS` names every byte stream this flow produces.
+// Each one is classified exactly once, as `scanned` (no minted byte may appear) or as `carrying`
+// (the credential's DESTINATION — a token is SUPPOSED to be there). `(A2)` asserts the partition is
+// total and disjoint, so a channel added to the enumeration without a classification reds by name
+// rather than joining a remainder nobody enumerated.
+
+/**
+ * The ONE channel of this flow that legitimately carries the credential.
+ *
+ * THE RULING, CITED RATHER THAN RESTATED. The disposition is shipped prose in `../app-resource.ts`'s
+ * header — the four-clause `ui://` read-channel adjudication of 2026-08-31, as re-grounded by THE
+ * 2026-09-01 GAP-ROUND RULING, road `demote` (408-08, the user's checkpoint answer). Read it there.
+ * A transcription here would be a second copy of one fact, free to drift from the record while
+ * reading like the record; in this repository the prose IS the record.
+ */
+const CARRYING_CHANNELS: readonly string[] = ['ui://read:text (the wrapper HTML document)']
+
+/** Every channel a MODEL reads, and therefore every channel `(A1)` scans for minted bytes. */
+const SCANNED_CHANNELS: readonly string[] = [
+  'tools/list',
+  'ui://read:envelope (text excluded BY RULING — see header)',
+  'tools/call:agent_qa_start_run:content[].text',
+  'tools/call:agent_qa_start_run:structuredContent',
+  'tools/call:agent_qa_start_run:_meta',
+  'tools/call:agent_qa_get_run_digest:content[].text',
+  'tools/call:agent_qa_get_run_digest:structuredContent',
+  'tools/call:agent_qa_get_run_digest:_meta',
+  'tools/call:agent_qa_list_runs:content[].text',
+  'tools/call:agent_qa_list_runs:structuredContent',
+  'tools/call:agent_qa_list_runs:_meta',
+  'resources/list',
+  'resources/templates/list',
+  `resources/read:${ENTITY_URI}`,
+  'refusal:malformed-ui-uri',
+  'refusal:non-negotiated-ui-read',
+  'tools/call:app-less:agent_qa_get_run_digest:content[].text',
+  'tools/call:app-less:agent_qa_get_run_digest:structuredContent',
+  'tools/call:app-less:agent_qa_get_run_digest:_meta',
+  'console.*',
+]
+
+/**
+ * EVERY channel of this flow, written out rather than composed from the two lists above.
+ *
+ * Composing it would make the partition true by construction and the classification unfalsifiable —
+ * which is the whole defect this census exists to close. Written out, a channel named here and
+ * classified nowhere is an UNCLASSIFIED channel, and `(A2)` says so.
+ */
+const FLOW_CHANNELS: readonly string[] = [
+  'tools/list',
+  'ui://read:text (the wrapper HTML document)',
+  'ui://read:envelope (text excluded BY RULING — see header)',
+  'tools/call:agent_qa_start_run:content[].text',
+  'tools/call:agent_qa_start_run:structuredContent',
+  'tools/call:agent_qa_start_run:_meta',
+  'tools/call:agent_qa_get_run_digest:content[].text',
+  'tools/call:agent_qa_get_run_digest:structuredContent',
+  'tools/call:agent_qa_get_run_digest:_meta',
+  'tools/call:agent_qa_list_runs:content[].text',
+  'tools/call:agent_qa_list_runs:structuredContent',
+  'tools/call:agent_qa_list_runs:_meta',
+  'resources/list',
+  'resources/templates/list',
+  `resources/read:${ENTITY_URI}`,
+  'refusal:malformed-ui-uri',
+  'refusal:non-negotiated-ui-read',
+  'tools/call:app-less:agent_qa_get_run_digest:content[].text',
+  'tools/call:app-less:agent_qa_get_run_digest:structuredContent',
+  'tools/call:app-less:agent_qa_get_run_digest:_meta',
+  'console.*',
+]
+
+/**
+ * A wall-clock instant well past 2027-01-15 — see the header's `(A10)` note.
+ *
+ * `1_800_000_000_000`, the epoch this file's fixture clock used to be pinned to, IS
+ * 2027-01-15T08:00:00Z.
+ */
+const PAST_THE_2027_TIME_BOMB = 2_000_000_000_000
+
 // ---- The law ------------------------------------------------------------------------------------
 
 describe('the minted liveUrl token reaches NO model-readable channel (408 D-01/D-14, T-408-17)', () => {
@@ -570,26 +681,51 @@ describe('the minted liveUrl token reaches NO model-readable channel (408 D-01/D
     const flow = await driveFullFlow()
     const channels = flow.corpus.map((entry) => entry.channel)
 
+    // THE PARTITION FIRST (408-12, T-408-21). Every channel this flow produces is named in
+    // `FLOW_CHANNELS` and classified exactly once — `scanned` or `carrying`. A channel named and
+    // classified nowhere is the shape of defect T-408-01 turned out to be: an exclusion that lives
+    // as silence rather than as a ruling a census can show.
+    const unclassified = FLOW_CHANNELS.filter(
+      (channel) =>
+        !SCANNED_CHANNELS.includes(channel) && !CARRYING_CHANNELS.includes(channel),
+    )
+    expect(
+      unclassified,
+      'a channel of this flow is neither scanned for minted bytes nor named as one that legitimately '
+      + 'carries them — classify it, with its ruling, or this census has an unstated remainder',
+    ).toEqual([])
+
+    // And DISJOINT: a channel that is both scanned and excluded-by-ruling is a contradiction, and
+    // the scan would be asserting the absence of a credential the same table says belongs there.
+    const bothWays = SCANNED_CHANNELS.filter((channel) => CARRYING_CHANNELS.includes(channel))
+    expect(bothWays, 'a channel is classified BOTH carrying and scanned').toEqual([])
+
     // Named individually rather than counted, so a channel that silently stopped being collected
     // reds HERE instead of quietly shrinking (A1)'s corpus to something that cannot fail.
-    for (const required of [
-      'tools/list',
-      'tools/call:agent_qa_start_run:content[].text',
-      'tools/call:agent_qa_start_run:structuredContent',
-      'tools/call:agent_qa_start_run:_meta',
-      'tools/call:agent_qa_get_run_digest:content[].text',
-      'tools/call:agent_qa_get_run_digest:structuredContent',
-      'tools/call:agent_qa_list_runs:structuredContent',
-      'tools/call:app-less:agent_qa_get_run_digest:content[].text',
-      'resources/list',
-      'resources/templates/list',
-      `resources/read:${ENTITY_URI}`,
-      'refusal:malformed-ui-uri',
-      'refusal:non-negotiated-ui-read',
-      'console.*',
-    ]) {
+    for (const required of SCANNED_CHANNELS) {
       expect(channels, `the corpus lost the ${required} channel`).toContain(required)
     }
+
+    // The reverse direction, which is what stops the enumeration drifting behind the flow: a channel
+    // the flow really produced but nobody classified reds here rather than joining (A1)'s corpus
+    // unannounced.
+    const uncensused = channels.filter((channel) => !SCANNED_CHANNELS.includes(channel))
+    expect(
+      uncensused,
+      'the flow produced a channel this census does not name — add it to FLOW_CHANNELS and classify it',
+    ).toEqual([])
+
+    // The CARRYING channel is not in the scanned corpus — the exclusion is real and not merely
+    // written down — and it really answered. `(A0)` is what proves it carries the tokens; this line
+    // proves it is a channel of this flow rather than a name in a table.
+    for (const carrying of CARRYING_CHANNELS) {
+      expect(channels, `${carrying} must be EXCLUDED from the scanned corpus, by ruling`)
+        .not.toContain(carrying)
+    }
+    expect(
+      flow.wrapperHtml.length,
+      'the carrying channel came back empty — the exclusion is protecting nothing',
+    ).toBeGreaterThan(0)
 
     // Every collected channel came back with BYTES, so none of them is an absence asserted over a
     // stream nobody read. The console is the ONE honest exception and it is named rather than
@@ -652,5 +788,41 @@ describe('the minted liveUrl token reaches NO model-readable channel (408 D-01/D
         leaks.map((leak) => leak.channel),
         JSON.stringify(leaks.map((leak) => leak.channel)),
       ).toContain('tools/call:agent_qa_get_run_digest:content[].text')
+    })
+
+  it('(A10) the fixture clock and the renderer clock are ONE clock — a system time past 2027-01-15 still renders a document carrying a liveUrl (WR-07, T-408-24)',
+    async () => {
+      // THE STUB GOES IN FIRST, because the fixture reads `Date.now()` once when it is built — a
+      // stub installed afterwards would measure nothing. A spy rather than fake timers,
+      // deliberately: the flow below is a real async round trip over a real loopback socket, and
+      // fake timers would be a far larger change to the very thing being measured.
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(PAST_THE_2027_TIME_BOMB)
+      try {
+        const flow = await driveFullFlow()
+
+        // Half one: the flow really minted under the future clock.
+        expect(
+          flow.tokens.length,
+          'the flow minted nothing under a system clock past 2027-01-15 — the fixture clock has '
+          + 'drifted away from the renderer clock again (WR-07)',
+        ).toBeGreaterThan(0)
+
+        // Half two: and the credential is IN the document. This is the assertion that would have
+        // failed on 2027-01-15 with the old literal epoch — `renderAppWrapperPage` settles
+        // `expired`, strips the mints, and serves a page with nothing in it, over which `(A1)`
+        // would have reported a pass it did not earn.
+        const carried = flow.tokens.filter((token) => flow.wrapperHtml.includes(token))
+        expect(
+          carried.length,
+          'the served document carries no minted liveUrl under a future clock — (A1) would now be '
+          + 'green over an EMPTY render, which is the vacuity (A0) exists to prevent',
+        ).toBeGreaterThan(0)
+        expect(
+          flow.wrapperHtml.includes(`${FIXTURE_ORIGIN}/live/${FIXTURE_RUN_ID}#`),
+          'the document holds no liveUrl at all',
+        ).toBe(true)
+      } finally {
+        clock.mockRestore()
+      }
     })
 })
