@@ -1,0 +1,282 @@
+// The permanent link-out and the concrete per-run App address, on EVERY carrier result
+// (Phase 408 plan 03 Task 1 · MCPA-01 · D-05 / D-08 / D-09 · RESEARCH Open Question 3).
+//
+// WHAT THIS FILE IS THE BAR FOR. D-09 says the link-out rides every carrier result and the App
+// reference attaches for a host that negotiated the extension — so "never a broken embed" is
+// STRUCTURAL rather than detected. A cell that only asserted the composition helper would have
+// measured a string function; the claim is about what a caller actually receives, so every cell
+// below drives `buildAgentQaMcpServer` through the SDK's own in-process handler and reads the
+// `tools/call` result off the wire.
+//
+// WHAT IS PRODUCTION HERE AND WHAT IS SCRIPTED. Production: `buildAgentQaMcpServer`, the projection
+// handler and its decoration, `liveRunLinkOf` / `liveLinkLine` / `LIVE_LINK_ABSENT_LINE`,
+// `appResourceUriFor`, `createFunctionRegistry`, `invokeFunction`, the `runs.start` / `runs.digest`
+// / `runs.list` ops and the real `@modelcontextprotocol/client`. Scripted: the three host ports the
+// ops read through (a run document, a run starter and an empty proposals inbox) — the smallest
+// composition in which the two carriers can answer at all.
+//
+// THE MUTATION LEGS THIS FILE IS THE BAR FOR:
+//   C1  the link composed against a trailing-slash base                -> the composition cell
+//   C2  the decoration applied to a NON-carrier                        -> the non-carrier cell
+//   C3  a fabricated URL served when no base exists                    -> the absence cells
+//   C4  `runIdFrom` ignored (both carriers read the same source)       -> the routing cells
+
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { createMcpHandler } from '@modelcontextprotocol/server'
+import {
+  createFunctionRegistry,
+  type CreateFunctionRegistryOptions,
+  type FunctionDeps,
+  type FunctionRegistry,
+} from '@vostride/agent-qa-agent'
+import { asRunId } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { appResourceUriFor } from '../app-resource.js'
+import { buildAgentQaMcpServer } from '../catalog.js'
+import { LIVE_LINK_ABSENT_LINE, liveLinkLine, liveRunLinkOf } from '../live-link.js'
+
+// ---- The fixture composition -------------------------------------------------------------------
+
+/** The run the STARTER produces — the id `agent_qa_start_run`'s reference can only come from. */
+const STARTED_RUN_ID = 'run-408-03-started'
+/** A DIFFERENT run, asked about by id — the id `agent_qa_get_run_digest`'s reference comes from. */
+const ASKED_RUN_ID = 'run-408-03-asked'
+
+const FIXTURE_BASE = 'http://localhost:4100'
+
+function handoff(runId: string): CompletedRunHandoff {
+  return {
+    schemaVersion: 5,
+    runId: asRunId(runId),
+    scope: { tier: 'product', key: 'live-link' },
+    buildOrdinal: 1,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'passed',
+    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+    startedAt: 1,
+    endedAt: 2,
+    tests: [
+      {
+        testId: 't_live_link',
+        testName: 'a member this fixture recorded',
+        filePath: 'tests/live-link.yaml',
+        testIndex: 0,
+        outcome: 'passed',
+        steps: [],
+      },
+    ],
+  }
+}
+
+const RECORDED: ReadonlyMap<string, CompletedRunHandoff> = new Map([
+  [STARTED_RUN_ID, handoff(STARTED_RUN_ID)],
+  [ASKED_RUN_ID, handoff(ASKED_RUN_ID)],
+])
+
+/**
+ * The smallest registry in which BOTH carriers answer.
+ *
+ * `runInvocation` binds `runs.start`; `proposalsInbox` binds `runs.digest`; the required `runs`
+ * port serves the two recorded documents both ops read back. Nothing here is a stand-in for the
+ * decoration under test — the ops are the shipped ones and their outputs are the shipped shapes.
+ */
+function fixtureRegistry(): FunctionRegistry {
+  const auditSink = {
+    appendExecutionAudit() {},
+    appendGuardrailAudit() {},
+  } as unknown as CreateFunctionRegistryOptions['auditSink']
+
+  const deps = {
+    runs: {
+      list: () => Promise.resolve([...RECORDED.values()]),
+      get: (runId: string) => Promise.resolve(RECORDED.get(String(runId))),
+      readEvents: () => Promise.resolve([]),
+      readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+    },
+    // The STARTER always answers the same run, whatever it was asked to start — which is what
+    // makes the `runIdFrom: 'output'` cell a statement about the source rather than an accident of
+    // two ids that happened to match.
+    runInvocation: { start: () => Promise.resolve({ runId: asRunId(STARTED_RUN_ID) }) },
+    proposalsInbox: { list: () => Promise.resolve([]) },
+  } as unknown as FunctionDeps
+
+  return createFunctionRegistry({ deps, auditSink })
+}
+
+const CALLER_SCOPES: readonly FunctionScope[] = ['read', 'run']
+
+const caller: FunctionCaller = {
+  surface: 'mcp',
+  grantedScopes: CALLER_SCOPES,
+  safeMode: false,
+  origin: 'agent',
+}
+
+const identity = (text: string): string => text
+
+interface ToolCallResult {
+  readonly content?: readonly { readonly type: string; readonly text?: string }[]
+  readonly isError?: boolean
+  readonly _meta?: Record<string, unknown>
+}
+
+const openClients: Client[] = []
+
+afterEach(async () => {
+  for (const client of openClients.splice(0)) await client.close().catch(() => {})
+})
+
+/**
+ * Call one tool on a real build and answer the result off the wire.
+ *
+ * `base` is what the host's supplier answers; `undefined` is the degenerate case a host with no
+ * dashboard anywhere is in, and `absent: true` drops the `liveLink` member entirely — the two must
+ * be indistinguishable, which is why both are reachable from this one helper.
+ */
+async function callTool(
+  name: string,
+  args: Record<string, unknown>,
+  link: { readonly base?: string; readonly absent?: boolean } = {},
+): Promise<ToolCallResult> {
+  const registry = fixtureRegistry()
+  const handler = createMcpHandler(() =>
+    buildAgentQaMcpServer({
+      registry,
+      caller,
+      maskText: identity,
+      ...(link.absent === true
+        ? {}
+        : { liveLink: { dashboardBaseUrl: () => link.base } }),
+    }),
+  )
+  const client = new Client({ name: 'agent-qa-408-03-live-link', version: '0.0.0' })
+  openClients.push(client)
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL('http://live-link.local/mcp'), {
+      fetch: ((url: URL | string, init?: RequestInit) =>
+        handler.fetch(new Request(url, init))) as typeof fetch,
+    }),
+  )
+  return (await client.callTool({ name, arguments: args })) as unknown as ToolCallResult
+}
+
+const textsOf = (result: ToolCallResult): readonly string[] =>
+  (result.content ?? []).filter((part) => part.type === 'text').map((part) => part.text ?? '')
+
+const resourceUriOf = (result: ToolCallResult): unknown =>
+  (result._meta?.ui as { resourceUri?: unknown } | undefined)?.resourceUri
+
+// ---- 1. The composition (D-08: one composed string) --------------------------------------------
+
+describe('the permanent link is one composed string over the tokenless live page (D-08)', () => {
+  it('composes <base>/runs/<runId>/live', () => {
+    expect(liveRunLinkOf(FIXTURE_BASE, 'run-9')).toBe('http://localhost:4100/runs/run-9/live')
+  })
+
+  it('composes a trailing-slash base without a double slash', () => {
+    expect(liveRunLinkOf('http://localhost:4100/', 'run-9')).toBe(
+      'http://localhost:4100/runs/run-9/live',
+    )
+    expect(liveRunLinkOf('http://localhost:4100///', 'run-9')).toBe(
+      'http://localhost:4100/runs/run-9/live',
+    )
+  })
+
+  it('carries no token and no query of any kind — it is the TOKENLESS page (D-08, T-408-12)', () => {
+    const link = liveRunLinkOf(FIXTURE_BASE, 'run-9')
+    expect(link).not.toContain('?')
+    expect(link).not.toContain('#')
+    expect(new URL(link).search).toBe('')
+  })
+})
+
+// ---- 2. The decoration, on the wire (D-05 / D-09) ----------------------------------------------
+
+describe('every carrier result carries the link AND the concrete App address (D-05, D-09)', () => {
+  it('decorates a carrier result with the link line and _meta.ui.resourceUri', async () => {
+    const result = await callTool('agent_qa_get_run_digest', { runId: ASKED_RUN_ID }, {
+      base: FIXTURE_BASE,
+    })
+
+    expect(result.isError ?? false, JSON.stringify(textsOf(result))).toBe(false)
+    expect(textsOf(result)).toContain(
+      liveLinkLine(liveRunLinkOf(FIXTURE_BASE, ASKED_RUN_ID)),
+    )
+    expect(resourceUriOf(result)).toBe(`ui://agent-qa/live-run/${ASKED_RUN_ID}`)
+    expect(resourceUriOf(result)).toBe(appResourceUriFor(ASKED_RUN_ID))
+  })
+
+  it('decorates a NON-carrier result with neither', async () => {
+    const result = await callTool('agent_qa_list_runs', {}, { base: FIXTURE_BASE })
+
+    expect(result.isError ?? false, JSON.stringify(textsOf(result))).toBe(false)
+    expect(textsOf(result).some((text) => text.includes('/live'))).toBe(false)
+    expect(textsOf(result).some((text) => text.includes(LIVE_LINK_ABSENT_LINE))).toBe(false)
+    expect(result._meta).toBeUndefined()
+    // The op's own answer is untouched: a non-carrier result is exactly one text part, as before.
+    expect(textsOf(result)).toHaveLength(1)
+  })
+})
+
+// ---- 3. The named absence (RESEARCH Open Question 3) -------------------------------------------
+
+describe('with no dashboard anywhere, the line is the NAMED ABSENCE and never a URL', () => {
+  it('carries LIVE_LINK_ABSENT_LINE verbatim when the supplier answers undefined', async () => {
+    const result = await callTool('agent_qa_get_run_digest', { runId: ASKED_RUN_ID }, {
+      base: undefined,
+    })
+
+    expect(result.isError ?? false, JSON.stringify(textsOf(result))).toBe(false)
+    expect(textsOf(result)).toContain(LIVE_LINK_ABSENT_LINE)
+    // The whole point of a NAMED absence: nothing that reads as an address.
+    expect(LIVE_LINK_ABSENT_LINE).not.toContain('http')
+    expect(LIVE_LINK_ABSENT_LINE).toContain('services.dashboard.baseUrl')
+  })
+
+  it('is the same answer when the host supplies no liveLink member at all', async () => {
+    const result = await callTool('agent_qa_get_run_digest', { runId: ASKED_RUN_ID }, {
+      absent: true,
+    })
+
+    expect(result.isError ?? false, JSON.stringify(textsOf(result))).toBe(false)
+    expect(textsOf(result)).toContain(LIVE_LINK_ABSENT_LINE)
+  })
+
+  it('still carries the concrete App address — the absence is the LINK, not the App', async () => {
+    const result = await callTool('agent_qa_get_run_digest', { runId: ASKED_RUN_ID }, {
+      absent: true,
+    })
+    expect(resourceUriOf(result)).toBe(appResourceUriFor(ASKED_RUN_ID))
+  })
+})
+
+// ---- 4. `runIdFrom` routing (D-05) -------------------------------------------------------------
+
+describe('the concrete runId comes from the source the projection DECLARES (D-05)', () => {
+  it("reads agent_qa_start_run's runId off the op OUTPUT", async () => {
+    // Asked to start under one id, the scripted starter answers another. A decoration reading the
+    // INPUT would name the id nobody ran under.
+    const result = await callTool('agent_qa_start_run', { runId: ASKED_RUN_ID }, {
+      base: FIXTURE_BASE,
+    })
+
+    expect(result.isError ?? false, JSON.stringify(textsOf(result))).toBe(false)
+    expect(textsOf(result)).toContain(
+      liveLinkLine(liveRunLinkOf(FIXTURE_BASE, STARTED_RUN_ID)),
+    )
+    expect(resourceUriOf(result)).toBe(appResourceUriFor(STARTED_RUN_ID))
+  })
+
+  it("reads agent_qa_get_run_digest's runId off the validated INPUT", async () => {
+    const result = await callTool('agent_qa_get_run_digest', { runId: ASKED_RUN_ID }, {
+      base: FIXTURE_BASE,
+    })
+
+    expect(textsOf(result)).toContain(
+      liveLinkLine(liveRunLinkOf(FIXTURE_BASE, ASKED_RUN_ID)),
+    )
+    expect(resourceUriOf(result)).toBe(appResourceUriFor(ASKED_RUN_ID))
+  })
+})
