@@ -119,6 +119,39 @@ export interface ToolProjection {
    * than assumed from `ops.length > 1`.
    */
   readonly discriminant?: string
+  /**
+   * This tool CARRIES the live-view MCP App (2026-08-31, Phase 408 plan 01 · D-05 / MCPA-01).
+   *
+   * ITS PRESENCE IS THE SIGNAL, exactly as `discriminant`'s above is. A carrier is a tool whose
+   * declaration references the `ui://` App resource, so a host that negotiated the Apps extension
+   * can render the run's live view beside the result; a tool without this member references
+   * nothing, and `projection.ts` derives an ABSENT `_meta` for it rather than an empty one. Spelled
+   * per entry rather than inferred from a name, a kind or an op id, because the census that
+   * enumerates carriers reads THIS field — and a predicate over names would be a second, unwritten
+   * declaration of which doors reach a credential channel (the 399.1 lesson).
+   *
+   * `resource` names which `ui://` template the reference points at; one template exists today and
+   * the field is spelled anyway, so a second App is an added member here rather than a second
+   * meaning for a boolean.
+   *
+   * `runIdFrom` names where the CONCRETE runId for a per-call reference is found — on the call's
+   * input or in the op's own result. `agent_qa_start_run` answers a `RunStartAcknowledgement`
+   * carrying the id the run was given, so its reference is derivable only from the OUTPUT;
+   * `agent_qa_get_run_digest` is asked about a run by id, so its reference is derivable from the
+   * INPUT, which is what makes it the late-attach door (D-07).
+   *
+   * THE TASK-SHAPE QUESTION D-05 LEFT OPEN IS CLOSED, and closed by measurement rather than by
+   * preference: the task seam is dormant — "It registers nothing, advertises nothing and routes
+   * nothing" (task-seam.ts:21-23, and catalog.ts:34-36 states the matching absence) — so both
+   * carriers are plain tools answering immediate results, and there is no task completion or
+   * status poll for a reference to ride. (2026-08-31; the 2.0.0 core SDK has since grown the Tasks
+   * vocabulary, which makes the seam's own dated deferral stale at the SDK layer and changes
+   * nothing here: registering Tasks is not this phase's job.)
+   */
+  readonly ui?: {
+    readonly resource: 'live-run'
+    readonly runIdFrom: 'input' | 'output'
+  }
 }
 
 /** The composition, read off the entry. See {@link ToolComposition}. */
@@ -286,6 +319,9 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
     name: 'agent_qa_start_run',
     ops: Object.freeze(['runs.start']),
     kind: 'workflow',
+    // 408 D-05: a run starts and is immediately watchable. The ack carries the runId, so the
+    // per-call reference is derived from the OUTPUT.
+    ui: Object.freeze({ resource: 'live-run', runIdFrom: 'output' } as const),
   }),
   Object.freeze({
     name: 'agent_qa_propose_config_change',
@@ -335,6 +371,10 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
     name: 'agent_qa_get_run_digest',
     ops: Object.freeze(['runs.digest']),
     kind: 'read',
+    // 408 D-05/D-07: the watch/status read, and therefore the LATE-ATTACH door — a run started
+    // from the CLI, from CI or from the dashboard is watchable through it exactly as an
+    // MCP-started one is, because a viewer attaches and never owns. Its runId is on the INPUT.
+    ui: Object.freeze({ resource: 'live-run', runIdFrom: 'input' } as const),
   }),
   Object.freeze({
     name: 'agent_qa_list_proposals',

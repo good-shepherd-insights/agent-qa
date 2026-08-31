@@ -34,6 +34,9 @@
 import type { StandardSchemaWithJSON, ToolAnnotations } from '@modelcontextprotocol/server'
 import type { FunctionScope, RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
+// ONE authoritative spelling of the App address: the module that publishes the template is the
+// module that parses it, and this derivation imports it rather than restating the string.
+import { APP_RESOURCE_URI_TEMPLATE } from './app-resource.js'
 import { compositionOf, DEGRADED_OUTPUT_CONTRACTS } from './mapping.js'
 import type { ToolOpContracts, ToolProjection } from './mapping.js'
 
@@ -76,6 +79,23 @@ export interface RegisterToolConfig {
   readonly inputSchema: StandardSchemaWithJSON
   readonly outputSchema?: StandardSchemaWithJSON
   readonly annotations: ToolAnnotations
+  /**
+   * The SDK's own extension slot, carrying the live-view App reference for a CARRIER tool
+   * (2026-08-31, Phase 408 plan 01 · D-05/D-09 · MCPA-01).
+   *
+   * OPTIONAL, and its absence is a decision in the same sense `outputSchema`'s is: a tool that
+   * declares no `ui` member gets no `_meta` KEY at all rather than a `_meta` whose `ui` is
+   * `undefined`, because the two are different documents on the wire and only the first is honest
+   * about a tool that references no App.
+   *
+   * WHAT IT IS ON THE LISTING CHANNEL: inert metadata. Extensions are bilateral opt-in, so a host
+   * that never negotiated `io.modelcontextprotocol/ui` ignores this field by definition — it acts
+   * on nothing here, which is what makes "the App attaches only when the host negotiated" true of
+   * every channel that ACTS without needing a listing that varies per connection (SEP-2567 removed
+   * that, and the per-request factory context carries no client capabilities to key one on). The
+   * channels that act are gated where the capabilities actually arrive: in request handling.
+   */
+  readonly _meta?: Record<string, unknown>
 }
 
 /**
@@ -271,6 +291,21 @@ export function toRegisterToolConfig(
     inputSchema: advertised.input,
     ...(outputSchema === undefined ? {} : { outputSchema }),
     annotations: deriveAnnotations(specs),
+    // 408 D-05: the App reference, DERIVED from the projection's own carrier declaration by the
+    // same pipeline that derives the annotations above — never a pair of tool names written here.
+    // The conditional spread is the house absent-field rule: a non-carrier's config has no `_meta`
+    // key at all.
+    //
+    // NOT MASKED, and it joins the two exemptions the header names for their reason rather than by
+    // analogy. `resourceUri` is the address constant this package publishes — a declared literal in
+    // this repository's own source, exactly like the `title` above it — and a masker that rewrote
+    // it would point every host at an address the resource codec refuses, which is the tool-rename
+    // failure with a URI scheme attached. Nothing interpolated into it comes from a caller, from
+    // storage or from a resolved value; the run id never appears here, because this is the
+    // TEMPLATE and a per-call reference is composed downstream.
+    ...(projection.ui === undefined
+      ? {}
+      : { _meta: { ui: { resourceUri: APP_RESOURCE_URI_TEMPLATE } } }),
   }
 }
 
