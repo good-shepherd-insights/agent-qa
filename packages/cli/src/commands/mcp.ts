@@ -53,6 +53,7 @@ import {
 } from '@modelcontextprotocol/server'
 import type { AuthInfo } from '@modelcontextprotocol/server'
 import { buildAgentQaMcpServer, createAgentQaMcpNodeHandler } from '@vostride/agent-qa-mcp'
+import type { LiveLinkSupplier } from '@vostride/agent-qa-mcp'
 import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
@@ -164,11 +165,24 @@ function mcpServerDeps(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
   grantedScopes: readonly FunctionScope[]
+  /**
+   * Which dashboard this process is pointed at (408 plan 03, D-08/D-09).
+   *
+   * THREADED THROUGH THIS FUNCTION AND NOWHERE ELSE, on this function's own stated law: what a
+   * transport supplies is a scope set, and everything else is the same object. A supplier passed at
+   * one of the two `buildAgentQaMcpServer` call sites and not the other would be a stdio server
+   * whose results carry a working link and an HTTP server whose results do not — which is exactly
+   * the per-transport policy the whole file is written to make impossible.
+   */
+  liveLink?: LiveLinkSupplier
 }) {
   return {
     registry: input.registry,
     caller: mcpFunctionCaller(input.grantedScopes),
     maskText: input.maskText,
+    // Absent stays ABSENT rather than becoming a present `undefined`: the house rule for an
+    // optional member, and the two are the same posture to the builder either way.
+    ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
   }
 }
 
@@ -189,6 +203,16 @@ export function createMcpHttpRequestListener(input: {
   maskText: (text: string) => string
   tokens: readonly ResolvedMcpToken[]
   onRefusal?: (refusal: McpHttpRefusal) => void
+  /**
+   * D-08's base supplier, passed straight through to the deps (408 plan 03).
+   *
+   * EXPORTED SURFACE, and that is the point of putting it here rather than only on the command: the
+   * co-hosted mount inside `agent-qa dashboard` binds THIS listener — the same guard order, the
+   * same factory — and it is the composition that actually knows an origin, because it is the one
+   * that bound a port. A second listener written there to carry a base would be a second reading of
+   * the Host/Origin/bearer discipline this function is exported to prevent (Pitfall 7).
+   */
+  liveLink?: LiveLinkSupplier
 }): (req: IncomingMessage, res: ServerResponse) => void {
   // Resolved ONCE per request and read by the factory the SDK runs for that request. The scope set
   // is carried on `req.auth`, which `toNodeHandler` forwards as `authInfo` — the official route.
@@ -199,6 +223,7 @@ export function createMcpHttpRequestListener(input: {
       // A request that reached the handler HAS a verdict; the fallback is the D-07 default grant,
       // which is what a request with no `Authorization` header resolved to on the line below.
       grantedScopes: (ctx.authInfo?.scopes as FunctionScope[] | undefined) ?? DEFAULT_MCP_SCOPES,
+      ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
     }),
   )
 
@@ -298,6 +323,27 @@ export function createMcpCommand(): Command {
         // credential they just configured.
         const tokens = resolveMcpTokens(config?.services?.mcp?.tokens ?? [], process.env)
 
+        // 408 plan 03 (D-08/D-09 · D-03's floor): WHICH DASHBOARD THIS HOST IS POINTED AT.
+        //
+        // Read exactly as the token block above is read — off this command's own resolved config,
+        // at `services.dashboard.baseUrl`, which is the 387 D-10 knob and the shipped mechanism for
+        // pointing a CLI or MCP host at somebody's dashboard. It is not read through the masked
+        // config reader for the reason that reader exists: masking answers "what may this value be
+        // shown as", and this value is not shown, it is COMPOSED INTO an address a person follows.
+        // (The overlay's own note says the same thing from the other side — the base is
+        // `masked: false` because a base URL is not the operator's secret.)
+        //
+        // ABSENT MEANS ABSENT. A standalone `agent-qa mcp` composes no live view — `runs.liveurl`
+        // is declared-and-unbound here, so no App resource registers at all (plan 01's D-A gate) —
+        // and it binds no HTTP origin worth linking to on stdio. With no configured base there is
+        // nothing to point at, and every carrier result carries the NAMED ABSENCE rather than a
+        // fabricated URL. That is D-03's ratified floor for this process, said in one line.
+        const configuredDashboardBase = typeof config?.services?.dashboard?.baseUrl === 'string'
+          && config.services.dashboard.baseUrl.trim() !== ''
+          ? config.services.dashboard.baseUrl.trim()
+          : undefined
+        const liveLink = { dashboardBaseUrl: () => configuredDashboardBase }
+
         // See `composeMcpMasking` — the seeding of the declared credentials is the load-bearing
         // half, and it is documented there because that is the function a differential drives.
         const masking = composeMcpMasking({ tokens, env: process.env })
@@ -386,6 +432,7 @@ export function createMcpCommand(): Command {
               registry: host.registry,
               maskText,
               tokens,
+              liveLink,
               onServing: () => emitLifecycle('started'),
             })
           } else {
@@ -393,6 +440,7 @@ export function createMcpCommand(): Command {
               registry: host.registry,
               maskText,
               grantConfigWrite: config?.services?.mcp?.stdio?.grantConfigWrite === true,
+              liveLink,
               onServing: () => emitLifecycle('started'),
             })
           }
@@ -431,6 +479,8 @@ async function serveOverStdio(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
   grantConfigWrite: boolean
+  /** D-08's base supplier (408 plan 03) — the same object the HTTP face is handed. */
+  liveLink?: LiveLinkSupplier
   /** Fired once the entry is live — see the lifecycle note at the call site. */
   onServing?: () => void
 }): Promise<void> {
@@ -439,7 +489,12 @@ async function serveOverStdio(input: {
   const grantedScopes = resolveStdioScopes(input.grantConfigWrite)
   const handle = serveStdio(() =>
     buildAgentQaMcpServer(
-      mcpServerDeps({ registry: input.registry, maskText: input.maskText, grantedScopes }),
+      mcpServerDeps({
+        registry: input.registry,
+        maskText: input.maskText,
+        grantedScopes,
+        ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
+      }),
     ),
   )
   // stderr, never stdout — see the file header. Written after the serving entry is live so the line
@@ -459,6 +514,8 @@ async function serveOverHttp(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
   tokens: readonly ResolvedMcpToken[]
+  /** D-08's base supplier (408 plan 03) — the same object the stdio face is handed. */
+  liveLink?: LiveLinkSupplier
   /** Fired once the socket is bound — see the lifecycle note at the call site. */
   onServing?: () => void
 }): Promise<void> {
@@ -467,6 +524,7 @@ async function serveOverHttp(input: {
       registry: input.registry,
       maskText: input.maskText,
       tokens: input.tokens,
+      ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
     }),
   )
   await new Promise<void>((listening, failed) => {

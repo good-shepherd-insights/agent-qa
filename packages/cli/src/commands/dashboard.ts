@@ -1,5 +1,7 @@
 import { Command } from 'commander'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { createServer } from 'node:http'
+import type { Server as NodeHttpServer } from 'node:http'
 import { basename, resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import pc from 'picocolors'
@@ -65,6 +67,19 @@ import {
 } from '../composition/run-service-token-resolution.js'
 import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
 import { resolveConfig } from '../config.js'
+// 408 plan 03 (D-03, Open Question 4): the CO-HOSTED MCP endpoint reuses the standalone command's
+// exported listener, masking composition and constants VERBATIM. A value edge from this command to
+// that one, and the direction was measured before it was written: `commands/mcp.ts` reaches
+// `composition/*` and two other command modules, none of which reaches back here, so nothing closes
+// at module-evaluation time. Reusing them is the whole point of Pitfall 7 — the Host/Origin/bearer
+// order is a security claim, and a second spelling of it here would be a second claim.
+import {
+  composeMcpMasking,
+  createMcpHttpRequestListener,
+  MCP_HTTP_BIND_HOST,
+  MCP_HTTP_DEFAULT_PORT,
+} from './mcp.js'
+import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -1901,6 +1916,99 @@ async function startDashboardBackedServices(
     // matching where this server binds.
     boundOrigin = `http://localhost:${String(listeningPort)}`
 
+    // ---- The CO-HOSTED MCP endpoint (408 plan 03, D-03 / Open Question 4 · MCPA-01) -------------
+    //
+    // WHY IT IS HERE AND NOT IN `packages/dashboard-server`. 403 D-01 gives each process its own
+    // live-view signing key, so a `liveUrl` minted in one process does not validate in another. The
+    // App's whole promise — a host renders the run's live view — therefore holds only where the
+    // mint and the frame proxy share a composition. RESEARCH measured the topology: this command is
+    // the ONLY composition that binds `liveView` (`composeLiveView` above) and serves the embed
+    // route and the frame socket. So the App is mounted where it can be honest, and the standalone
+    // `agent-qa mcp` keeps the shipped floor — `runs.liveurl` unbound, no App registered at all,
+    // and the link-out as its whole answer.
+    //
+    // A SECOND LOOPBACK LISTENER, NOT A DASHBOARD-SERVER ROUTE. `createAgentQaMcpNodeHandler` binds
+    // nothing and returns a request function, so the cheap composition is a `node:http` server of
+    // our own. That also settles criterion 3 structurally rather than carefully: no file under
+    // `packages/dashboard-server/` is touched, so the measured route-order hazard (a new route
+    // registered below the SPA arm renders the React app — 403 Pitfall 10) cannot be reached from
+    // here at all.
+    //
+    // THE GUARD ORDER IS REUSED BY REFERENCE (Pitfall 7). `createMcpHttpRequestListener` is the
+    // exported one — Host, then Origin, then bearer, then the handler — so this endpoint refuses a
+    // rebound DNS name and an unmatched credential by exactly the code the standalone face does,
+    // and emits no CORS header for the same reason it does not.
+    //
+    // ONE CREDENTIAL FAMILY PER SURFACE (Open Question 4, qa-agent-and-surfaces §3.1). The
+    // `services.mcp.tokens` vocabulary is reused verbatim; a run-service bearer is NOT accepted
+    // here. Two credential families on one endpoint would be two answers to "who is this", and the
+    // MCP scope set is what `visibleToCaller` reads.
+    //
+    // NOT MOUNTED WHEN NOTHING IS DECLARED, mirroring the run-service arm above: a project that has
+    // declared no MCP credential gets today's dashboard, byte for byte. The alternative — mounting
+    // with an empty token list — is an endpoint that answers the D-07 default grant to anyone who
+    // can reach loopback, which on a long-running dashboard is a surface nobody asked for.
+    const mcpServiceConfig = (config as any).services?.mcp ?? {}
+    const mcpTokens = resolveMcpTokens(mcpServiceConfig.tokens ?? [], process.env)
+    let mcpMasking: ReturnType<typeof composeMcpMasking> | undefined
+    let mcpServer: NodeHttpServer | undefined
+    if (mcpTokens.length > 0) {
+      // The MCP masker, composed exactly as `agent-qa mcp` composes it: `buildRunMaskingContext`
+      // seeded with THIS process's declared MCP credentials, because `sensitiveEnvSlice` selects by
+      // name suffix and nothing obliges an operator to point `tokenEnvVar` at a name ending in
+      // `_TOKEN`. Separate from the dashboard's own masking context on purpose — the values this
+      // endpoint must never echo are its own bearer tokens.
+      mcpMasking = composeMcpMasking({ tokens: mcpTokens, env: process.env })
+      const mcpMaskText = (text: string): string => mcpMasking!.mask(text)
+      const mcpPort = Number.isInteger(mcpServiceConfig.port)
+        && mcpServiceConfig.port >= 1
+        && mcpServiceConfig.port <= 65535
+        ? (mcpServiceConfig.port as number)
+        : MCP_HTTP_DEFAULT_PORT
+      mcpServer = createServer(
+        createMcpHttpRequestListener({
+          // THE LIVE-VIEW-BOUND REGISTRY — the one fact that makes this endpoint different from the
+          // standalone one. `runHost.registry` is the registry `composeDashboardDoor` built over
+          // `liveView.liveView`, so a by-reference `runs.liveurl` mint on a read of the App resource
+          // is signed by the signer `liveView.validate` checks against, which is the same signer the
+          // frame proxy above binds. D-03's invariant therefore holds BY COMPOSITION rather than by
+          // configuration, and `registerAppResources`' binding gate registers the App here for
+          // exactly that reason.
+          registry: runHost.registry as FunctionRegistry,
+          maskText: mcpMaskText,
+          tokens: mcpTokens,
+          // D-08's overlay law, in the one order it may be written: the operator's configured base
+          // is somebody pointing at a reverse proxy, a tunnel or a path prefix, so it WINS; the
+          // bound origin fills an absence and never replaces a presence. Read per result rather
+          // than captured, because `boundOrigin` is a box (see `overlayDashboardBaseUrl`).
+          liveLink: {
+            dashboardBaseUrl: () => {
+              const configured = servicesConfig.baseUrl
+              return typeof configured === 'string' && configured.trim() !== ''
+                ? configured.trim()
+                : boundOrigin
+            },
+          },
+        }),
+      )
+      await new Promise<void>((listening, failed) => {
+        const server = mcpServer!
+        server.once('error', failed)
+        // The bind address is the CONSTANT the standalone face binds, never a config value — an
+        // operator who could widen this to `0.0.0.0` through configuration would be one typo from
+        // exposing an ungated function registry to their network.
+        server.listen(mcpPort, MCP_HTTP_BIND_HOST, () => listening())
+      })
+      const mcpAddress = mcpServer.address()
+      const mcpBound = typeof mcpAddress === 'object' && mcpAddress !== null
+        ? mcpAddress.port
+        : mcpPort
+      console.log(pc.dim(
+        `MCP endpoint listening on http://${MCP_HTTP_BIND_HOST}:${String(mcpBound)}/ `
+        + `(${String(mcpTokens.length)} declared caller credential(s); live view attached).`,
+      ))
+    }
+
     if (opts.open) {
       const { exec } = await import('node:child_process')
       const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
@@ -1913,6 +2021,11 @@ async function startDashboardBackedServices(
       shuttingDown = true
       console.log(pc.dim(`\nShutting down ${labels.shutdown}...`))
       close()
+      // 408 plan 03: the co-hosted MCP listener is this command's to close, beside the dashboard's
+      // own — it is a socket this process bound, and a shutdown that left it listening would leave
+      // an authed endpoint over a registry whose door is closing underneath it.
+      mcpServer?.close()
+      mcpMasking?.dispose()
       // 402-01: unregister the session observer and drop every retained handle. Without it the
       // run door's observer set keeps a closure alive that keeps this map alive that keeps every
       // finished run's bus alive.
