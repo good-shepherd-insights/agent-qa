@@ -72,6 +72,37 @@
 // claim and whose dated correction sit in DIFFERENT PARAGRAPHS of the SAME comment block — two
 // sites the phase verifier certified as correctly reconciled. Rules (a), (c) and (d) are
 // implemented exactly as written, and rule (d) is the one this whole gate turns on.
+//
+// TIGHTENED 2026-09-01 (WR-12, 408-19). The paragraph above is RETAINED as the correct account of
+// why `proseUnitsOf` does not cut at a blank comment line; what follows is what changed and what
+// did not.
+//
+//   1. THE BLOCK-SCOPED STRIKE WAS A REAL COARSENESS LIMIT, and the 2026-09-01 review named it
+//      (WR-12(a)): `classifyOccurrence` and `STRIKE_MARKERS` both promise a claim is struck only by
+//      a marker in its OWN prose unit and that "a marker written into a neighbouring unit strikes
+//      nothing" — but because a unit is a whole contiguous comment run, ONE dated word anywhere in
+//      a 130-line header struck every claim in it, and the next restatement written into that
+//      header would have passed silently. A guarantee stronger than its mechanism is this phase's
+//      own defect one level up, and it is closed here rather than restated.
+//   2. RULE (b) IS NOW IMPLEMENTED, SECOND-ORDER, IN `(W5)` — `paragraphsOfUnit` over
+//      `proseUnitsOf`'s output — and NOT inside `proseUnitsOf`. `proseUnitsOf` is byte-identical, so
+//      the occurrence set `(W0)` through `(W4)` are quantified over is exactly what it was: the
+//      block-level unit still decides what an occurrence IS, and the paragraph now decides only
+//      whether a marker reaches it. Moving the primary segmenter would have shifted the ground under
+//      four standing controls at once, in the round that is closing a blocker.
+//   3. THE TWO SITES THIS PARAGRAPH PREDICTS WERE REPAIRED AT THEIR OWN SITES, NOT EXEMPTED.
+//      `mapping.ts` and `scenario-table.ts` each had the claim and its dated correction in DIFFERENT
+//      paragraphs of the SAME block; the blank comment line between them was removed so the marker
+//      now sits with the claim it strikes. No claim was reworded, no marker was duplicated, and
+//      neither `KNOWN_CLAIM_SITES` (8) nor `CENSUS_SELF_EXCLUSION` (1) grew — a tightening bought by
+//      growing an exemption would be a gate measuring its own convenience. `(W5)` also named a THIRD
+//      site this paragraph did not predict, `token-absence.test.ts` :4-11, repaired the same way;
+//      that the prediction was a floor rather than the whole set is recorded here rather than
+//      quietly absorbed.
+//   4. `(W5)` WAS WATCHED RED FIRST, over the real shipped separations, before a word of prose
+//      moved, and the red named each paragraph by `rel:line`. A red obtained over the genuine defect
+//      is worth more than a mutation hand-run afterwards, which is the discipline 408-15 row 1a
+//      already set.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'

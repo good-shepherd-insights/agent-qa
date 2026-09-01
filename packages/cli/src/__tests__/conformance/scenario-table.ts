@@ -193,7 +193,6 @@ export type UnprojectedReasonKey =
   // its `-deferral` spelling because renaming a key rewrites every row and the golden partition
   // that cite it, to record a fact the prose below and `mapping.ts`'s own reason already carry —
   // and the prose is the record here, by this file's own restatement-drifts law.
-  //
   // DISPOSITION, 2026-09-01 (408-08, the gap round · D-14's bookkeeping again, recorded rather
   // than silent). The class is RETAINED, unchanged, and one parenthetical above is corrected. The
   // 2026-08-31 line reads "the token reaches a person only in host-rendered HTML"; whether the

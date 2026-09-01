@@ -9,7 +9,6 @@
 // RECORDED LAW rather than one-off proof (D-14): it drives the full flow, collects every byte
 // stream a model can read, and asserts that no byte of any token the flow REALLY minted appears in
 // any of them.
-//
 // CORRECTED 2026-09-01 (408-08, the gap round, road `demote`; the ruling is in `../app-resource.ts`'s
 // header). The first sentence above is retained as written and one half of it is WITHDRAWN rather
 // than deleted. "Reaches a person only inside the HTML a host paints in its sandbox" describes what

@@ -34,7 +34,6 @@
 // unprojected side, now by RULING rather than by deferral. Recorded here, at the entry, and at
 // the conformance row, because a deferral that quietly becomes a permanent absence is the same
 // untruth as a partition the code stopped having.
-//
 // 2026-09-01 (408-08, the gap round, road `demote`): the partition still does not move, and the
 // em-dashed half above is corrected in the same place it was claimed. "The token reaches a person
 // only through host-rendered HTML" is a statement about what the CALLER does with a document it
