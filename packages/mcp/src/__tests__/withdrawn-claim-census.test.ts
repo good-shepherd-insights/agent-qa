@@ -230,6 +230,22 @@ interface ClaimOccurrence {
 }
 
 /**
+ * The ONE place a platform path separator becomes the register's separator (WR-12(b), 408-19).
+ *
+ * `KNOWN_CLAIM_SITES` is written in POSIX literals (`mcp/src/app-resource.ts`) and compared against
+ * `relative(PACKAGES_ROOT, full)`, which yields backslashes on Windows — so `(W0)`'s per-site
+ * `rels.has(site.rel)` and `(W4)`'s both-direction agreement would both red there while every
+ * developer machine stayed green. The shaping happens here, at the single site that produces a
+ * `rel`, so the register matches by CONSTRUCTION rather than because this platform happens to
+ * agree. `(W5)` drives this function directly with a backslash-bearing input, because a cell that
+ * only asserted the swept `rel` values carry no backslash would be vacuous on the platform where
+ * `relative()` never produces one.
+ */
+function toPosixRel(value: string): string {
+  return value.split('\\').join('/')
+}
+
+/**
  * Every `.ts` file under every `SWEEP_ROOTS` entry, produced by walking, never typed out.
  *
  * `node_modules` and `dist` are skipped: build outputs are not shipped source, and `dist` carries
@@ -247,7 +263,11 @@ function sweptProseFiles(): readonly SweptFile[] {
       }
       if (!entry.name.endsWith('.ts')) continue
       if (CENSUS_SELF_EXCLUSION.includes(full)) continue
-      out.push({ path: full, rel: relative(PACKAGES_ROOT, full), text: readFileSync(full, 'utf8') })
+      out.push({
+        path: full,
+        rel: toPosixRel(relative(PACKAGES_ROOT, full)),
+        text: readFileSync(full, 'utf8'),
+      })
     }
   }
   for (const root of SWEEP_ROOTS) walk(root)
@@ -376,6 +396,114 @@ function claimOccurrencesIn(file: SweptFile): readonly ClaimOccurrence[] {
 
 function allClaimOccurrences(): readonly ClaimOccurrence[] {
   return sweptProseFiles().flatMap((file) => claimOccurrencesIn(file))
+}
+
+/**
+ * RULE (b), APPLIED SECOND-ORDER: the paragraphs of one prose unit, cut at its blank comment lines.
+ *
+ * 408-15-PLAN.md's task 1a step 5 listed a rule (b) — "cut at a blank comment line" — that
+ * `proseUnitsOf` deliberately does not implement, for the reason the file header records: the
+ * block-level unit is what decides what an OCCURRENCE IS, every one of `(W0)`-`(W4)` is computed
+ * over its output, and a paragraph-granular PRIMARY unit would change the occurrence set under four
+ * standing controls at once.
+ *
+ * So rule (b) lives HERE instead, over the same units rather than inside them. `proseUnitsOf` still
+ * decides what an occurrence is; this decides whether a dated marker actually REACHES the claim it
+ * is meant to strike. `classifyOccurrence` reads `unit.text`, which is already collapsed to one
+ * line, so the paragraph structure is not recoverable from a `ProseUnit` — the unit's own
+ * `startLine`/`endLine` are used to re-slice the file text.
+ *
+ * The cut is a line whose comment marker, stripped, leaves nothing — a bare `//` or a bare `*` —
+ * and the marker is stripped with the SAME expression `normalizeProse` uses, so there is exactly one
+ * spelling in this file of "what a comment marker is". Chunks that normalise to the empty string are
+ * dropped. When the unit holds no blank comment line the result is a SINGLE paragraph equal to the
+ * unit; `(W5)` asserts that identity, because a splitter that silently returned nothing would make
+ * `(W5)` pass over an empty set — the vacuity this whole census is written against.
+ */
+function paragraphsOfUnit(fileText: string, unit: ProseUnit): readonly ProseUnit[] {
+  const slice = fileText.split('\n').slice(unit.startLine - 1, unit.endLine)
+  const out: ProseUnit[] = []
+  let startIdx = -1
+
+  const flush = (endIdx: number): void => {
+    if (startIdx === -1 || endIdx < startIdx) return
+    const normalized = normalizeProse(slice.slice(startIdx, endIdx + 1).join('\n'))
+    if (normalized !== '') {
+      out.push({
+        rel: unit.rel,
+        startLine: unit.startLine + startIdx,
+        endLine: unit.startLine + endIdx,
+        text: normalized,
+      })
+    }
+    startIdx = -1
+  }
+
+  for (let i = 0; i < slice.length; i += 1) {
+    const line = slice[i] ?? ''
+    const body = line.replace(/^\s*(\/\/+|\/\*+|\*+\/|\*+)\s?/, '')
+    if (body.trim() === '') {
+      flush(i - 1)
+      continue
+    }
+    if (startIdx === -1) startIdx = i
+  }
+  flush(slice.length - 1)
+  return out
+}
+
+/** A struck occurrence whose dated marker sits in the block but NOT in the claim's own paragraph. */
+interface BlockStruckOccurrence {
+  readonly rel: string
+  readonly paragraphStartLine: number
+  readonly paragraphEndLine: number
+  readonly signature: string
+  readonly text: string
+}
+
+/**
+ * The refinement `(W5)` asserts is empty: occurrences the block-level classifier calls `struck`
+ * whose claim-bearing PARAGRAPH carries no dated strike of its own.
+ *
+ * The docstrings on `STRIKE_MARKERS` and `classifyOccurrence` already state the guarantee — struck
+ * only when the claim's OWN unit carries the date AND a strike word, and "a marker written into a
+ * neighbouring unit strikes nothing". Because a unit is a whole contiguous comment run, one dated
+ * word anywhere in a 130-line header today strikes every claim in it. This function measures the
+ * guarantee the docstrings make, at the granularity a reader means by "the claim's own prose": the
+ * paragraph. The predicate is the paragraph-scoped spelling of `classifyOccurrence`'s — a paragraph
+ * is struck only when it carries BOTH the date and a strike marker, so a paragraph missing either
+ * is reported. `SUPERSESSION_DATE` and `STRIKE_MARKERS` are reused rather than restated, so the two
+ * classifiers cannot drift apart.
+ */
+function blockStruckOccurrences(): readonly BlockStruckOccurrence[] {
+  const out: BlockStruckOccurrence[] = []
+  for (const file of sweptProseFiles()) {
+    for (const occurrence of claimOccurrencesIn(file)) {
+      if (occurrence.disposition !== 'struck') continue
+      const unit: ProseUnit = {
+        rel: occurrence.rel,
+        startLine: occurrence.startLine,
+        endLine: occurrence.endLine,
+        text: occurrence.text,
+      }
+      for (const paragraph of paragraphsOfUnit(file.text, unit)) {
+        const signature = claimSignatureOf(paragraph.text)
+        if (signature === undefined) continue
+        const haystack = paragraph.text.toLowerCase()
+        const dated = paragraph.text.includes(SUPERSESSION_DATE)
+        const marked = STRIKE_MARKERS.some((marker) => haystack.includes(marker.toLowerCase()))
+        if (dated && marked) continue
+        out.push({
+          rel: paragraph.rel,
+          paragraphStartLine: paragraph.startLine,
+          paragraphEndLine: paragraph.endLine,
+          signature,
+          text: paragraph.text.slice(0, 200),
+        })
+      }
+    }
+  }
+  return out
 }
 
 interface KnownClaimSite {
@@ -692,5 +820,72 @@ describe('the withdrawn host-rendered-channel claim survives nowhere in shipped 
     ).toEqual([])
 
     expect(KNOWN_CLAIM_SITES.length, 'the register emptied — (W3) would then be vacuous').toBe(8)
+  })
+
+  // THE GUARANTEE THIS CELL MAKES MEASURABLE IS ONE THE FILE ALREADY CLAIMED (WR-12(a), 408-19).
+  // `STRIKE_MARKERS` says a unit is struck "only when it carries BOTH the date and one of these in
+  // its OWN prose unit — a marker written into a neighbouring unit strikes nothing", and
+  // `classifyOccurrence` repeats it. Because `proseUnitsOf` does not cut at a blank comment line, a
+  // "unit" is a whole contiguous comment run, so ONE dated word anywhere in a 130-line header
+  // strikes every claim in it — and the next restatement written into that header passes silently,
+  // which is the one thing (W3) exists to stop. This cell measures the claimed guarantee at the
+  // granularity a reader means by "the claim's own prose", and it leaves (W0)-(W4) computing
+  // exactly what they computed before.
+  it('(W5) THE TIGHTENING: a dated marker strikes only the paragraph it sits in', () => {
+    // WR-12(b), driven rather than assumed. Asserting only that no swept `rel` holds a backslash
+    // would be VACUOUS here, where `relative()` never produces one; the conversion is exercised
+    // directly so the claim can red on the platform that can watch it.
+    expect(toPosixRel('cli\\src\\__tests__\\conformance\\parity.test.ts')).toBe(
+      'cli/src/__tests__/conformance/parity.test.ts',
+    )
+    expect(toPosixRel('mcp/src/app-resource.ts')).toBe('mcp/src/app-resource.ts')
+    expect(
+      sweptProseFiles().filter((f) => f.rel.includes('\\')).map((f) => f.rel),
+      'a swept rel carries a platform separator, so the POSIX register cannot match it',
+    ).toEqual([])
+
+    // The splitter must be total over a unit that holds no blank comment line, or (W5)'s law below
+    // would pass over an empty set rather than over the census.
+    const singleUnit: ProseUnit = {
+      rel: 'fixture.ts',
+      startLine: 1,
+      endLine: 2,
+      text: 'the claim and its dated marker',
+    }
+    const singleText = '// the claim\n// and its dated marker\n'
+    const single = paragraphsOfUnit(singleText, singleUnit)
+    expect(single.length, 'a unit with no blank comment line must split into exactly one paragraph')
+      .toBe(1)
+    expect(single[0]?.startLine).toBe(singleUnit.startLine)
+    expect(single[0]?.endLine).toBe(singleUnit.endLine)
+    expect(single[0]?.text).toBe(singleUnit.text)
+
+    const splitText = '// the claim\n//\n// WITHDRAWN 2026-09-01\n'
+    const split = paragraphsOfUnit(splitText, {
+      rel: 'fixture.ts',
+      startLine: 1,
+      endLine: 3,
+      text: 'the claim WITHDRAWN 2026-09-01',
+    })
+    expect(split.map((p) => [p.startLine, p.endLine]), 'the paragraphs must partition the unit')
+      .toEqual([[1, 1], [3, 3]])
+
+    const blockStruck = blockStruckOccurrences()
+    const report = blockStruck
+      .map(
+        (o) =>
+          `  ${o.rel}:${o.paragraphStartLine}-${o.paragraphEndLine}  [${o.signature}]  ${o.text}`,
+      )
+      .join('\n')
+
+    expect(
+      blockStruck.map((o) => `${o.rel}:${o.paragraphStartLine}`),
+      'a claim is counted STRUCK by a dated marker that sits in a NEIGHBOURING paragraph of the '
+      + 'same comment block, not with the claim itself — the block-scoped strike this file\'s own '
+      + 'docstrings deny making. Repair each site by moving the dated marker INTO the paragraph '
+      + 'that carries the claim (remove the blank comment line that separates them), rather than '
+      + 'leaving it in a neighbouring paragraph. Do not reword the claim and do not duplicate the '
+      + `marker into a second paragraph:\n${report}\n`,
+    ).toEqual([])
   })
 })
