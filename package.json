@@ -26,7 +26,7 @@
     "validate:agents": "node scripts/validate-agent-instructions.mjs",
     "validate:publish": "node scripts/validate-publish-surface.mjs",
     "validate:tools": "pnpm --filter @vostride/agent-qa-runner exec vitest run src/tools/__tests__/validate-tools.test.ts",
-    "validate:arch": "pnpm --filter @vostride/agent-qa-arch exec vitest run src/__tests__/validate-arch.test.ts",
+    "validate:arch": "pnpm --filter @vostride/agent-qa-arch exec vitest run src/__tests__/validate-arch.test.ts src/__tests__/409-issue-slot-deleted.test.ts",
     "validate:safety": "pnpm --filter @vostride/agent-qa-safety exec vitest run src/__tests__/validate-safety.test.ts",
     "validate:router-mutation": "bash scripts/394-router-mutation.sh",
     "validate:repair-screen-mutation": "bash scripts/394-repair-screen-mutation.sh",
