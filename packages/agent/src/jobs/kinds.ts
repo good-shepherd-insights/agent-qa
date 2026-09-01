@@ -133,12 +133,13 @@ function standInHandler(
  * here reaches a model, and nothing here can: what it is given is the failed job, the payload
  * that job was handed, and the reason.
  *
- * "The same successors a successful one would" is now load-bearing rather than incidental
- * (388 D-04). It maps over the PRODUCED set, not the declared one — the shipped 385 version
- * mapped over the declaration, which meant a dead analysis was the one case that enqueued a
- * triage job. That build's issues chip would have read `reserved` while a triage job existed
- * and ran, and the chain-terminal check would have waited on a job D-04 says never exists —
- * on exactly the runs whose analysis had already failed.
+ * "The same successors a successful one would" is true by construction: this fallback maps
+ * over the one successor constant below, the same list the success path's `next`, the scripted
+ * stand-in and the declaration itself all read. Declared equals produced, so a dead analysis
+ * hands on exactly what a live one would and no path can enqueue what the topology never declared.
+ *
+ * 2026-09-01 (Phase 409): the reserved sixth kind left with the Issue-slot cleanup, and 388
+ * D-04's declared/produced split collapsed with it — see `DELETION-INVENTORY.md`.
  *
  * The extra carries the run's identity and posture forward for the same reason the success
  * path does (Pitfall 6): the successor may be claimed by the daemon, which resolves posture
@@ -149,7 +150,7 @@ function standInHandler(
 function analyzeRunFallback(input: FallbackContinuationInput): readonly ChainedJobRequest[] {
   const payload = asRecord(input.payload)
   return successorsOf(
-    { kind: 'analyze-run', allowedSuccessors: ANALYZE_RUN_PRODUCED_SUCCESSORS },
+    { kind: 'analyze-run', allowedSuccessors: ANALYZE_RUN_SUCCESSORS },
     String(input.job.id),
     {
       ...(typeof payload.runId === 'string' ? { runId: payload.runId } : {}),
@@ -162,18 +163,7 @@ function analyzeRunFallback(input: FallbackContinuationInput): readonly ChainedJ
   )
 }
 
-const ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory', 'triage-issues']
-
-/**
- * The successors 388's analyze-run actually PRODUCES (D-04).
- *
- * Deliberately not the same list as the declaration above, and the difference is the whole
- * of D-04: the topology declares what MAY be chained and stays auditable in one place, while
- * the handler returns the instances that exist. `triage-issues` is reserved — declared, so
- * the issue engine can fill it without a topology change, and never enqueued, so the issues
- * chip's `reserved` status is structurally true rather than a promise.
- */
-const ANALYZE_RUN_PRODUCED_SUCCESSORS: readonly JobKind[] = ['curate-memory']
+const ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory']
 
 /**
  * The host powers the two real post-run handlers need, injected by the composition (D-01).
@@ -587,7 +577,7 @@ function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler
       status: 'complete',
       next: [
         ...successorsOf(
-          { kind: 'analyze-run', allowedSuccessors: ANALYZE_RUN_PRODUCED_SUCCESSORS },
+          { kind: 'analyze-run', allowedSuccessors: ANALYZE_RUN_SUCCESSORS },
           String(context.job.id),
           {
             // Pitfall 6: a successor payload without these two is the DAEM-02 bug class — the
@@ -676,8 +666,8 @@ function declarationsFor(capabilities?: PostRunJobCapabilities) {
     handler: standInHandler('chat', [], []),
   },
 
-  // The chain's head. Its verdicts feed curate-memory and triage-issues in parallel, so both
-  // are declared successors, and its permanent failure proceeds with unknown verdicts.
+  // The chain's head. Its verdicts feed curate-memory — the one kind it declares and the one
+  // it produces — and its permanent failure proceeds with unknown verdicts into that same kind.
   'analyze-run': {
     kind: 'analyze-run',
     checkpointed: true,

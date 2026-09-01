@@ -1,16 +1,19 @@
-// The D-04 pin: `triage-issues` is DECLARED and never ENQUEUED (Phase 388).
+// The pin: analyze-run declares exactly what it produces, and it is `['curate-memory']`.
 //
-// Two halves of one decision, and they have to be asserted separately because they live in
-// different places and can drift apart silently. The TOPOLOGY keeps triage-issues among
-// analyze-run's allowed successors, so the issue engine fills the slot later without a
-// topology change and without reopening the engine's successor validation. The INSTANCES the
-// handler returns carry only curate-memory, so nothing ever claims a triage job and the
-// issues chip's `reserved` status is structurally true rather than a promise.
+// Three claims, one list, asserted separately because they are made in different places and
+// can drift apart silently. The DECLARATION's allowedSuccessors is one literal list. The
+// INSTANCES a successful analysis returns are that same list. The INSTANCES a permanently
+// failed analysis hands on — the fallback's — are that same list again. The no-capabilities
+// stand-in control asserts it a fourth time from the scripted path.
 //
 // The failure this file exists to catch is the asymmetric one: a success path narrowed to
-// curate-memory while the PERMANENT-FAILURE fallback still maps over the whole declared list.
-// That build enqueues a triage job precisely on the runs whose analysis died — the chip lies,
-// and the chain-terminal arithmetic waits on a job D-04 says was never enqueued.
+// curate-memory while the PERMANENT-FAILURE fallback still maps over a wider declared list.
+// That build enqueues, precisely on the runs whose analysis died, a successor no live run
+// ever produces — and the chain-terminal arithmetic then waits on a job nothing else knows
+// about. Asserting all three sides by literal list is what makes that drift RED by name.
+//
+// 2026-09-01 (Phase 409): the reserved sixth kind left with the Issue-slot cleanup, and with
+// it 388 D-04's declared/produced split — see `DELETION-INVENTORY.md`.
 //
 // Unit-level on purpose: these are claims about what the registry RETURNS, and proving them
 // through a store and a pump would make the assertion depend on everything between.
@@ -111,14 +114,12 @@ function successorKinds(requests: readonly ChainedJobRequest[]): string[] {
 }
 
 describe('the real post-run kinds (388 D-04)', () => {
-  it('declares triage-issues as an allowed successor of analyze-run', () => {
-    // The half that must NOT change. A topology narrowed to match today's instances would
-    // make filling the slot a contract edit, and the engine's successor validation would
-    // refuse the first triage instance the issue engine ever produced.
-    expect([...analyzeRunDeclaration().allowedSuccessors].sort()).toEqual([
-      'curate-memory',
-      'triage-issues',
-    ])
+  it('declares curate-memory as the one allowed successor of analyze-run', () => {
+    // The topology half — declared equals produced, and the list is asserted literally rather
+    // than counted so the diff says WHAT returned. A second declared successor REDs here by
+    // name, and the engine's successor validation would then admit an instance no handler in
+    // this file ever produces.
+    expect([...analyzeRunDeclaration().allowedSuccessors].sort()).toEqual(['curate-memory'])
   })
 
   it('returns exactly one curate-memory instance from a successful analysis', async () => {
@@ -227,6 +228,6 @@ describe('the real post-run kinds (388 D-04)', () => {
     const outcome = await createRealJobKindRegistry().require('analyze-run').handler(context)
 
     if (outcome.status !== 'complete') throw new Error(`expected complete, got ${outcome.status}`)
-    expect(successorKinds(outcome.next)).toEqual(['curate-memory', 'triage-issues'])
+    expect(successorKinds(outcome.next)).toEqual(['curate-memory'])
   })
 })
