@@ -39,7 +39,6 @@
  *  - Secrets and auth-mutation op classes join the moment such ops exist. 395's config surface
  *    brings the first of them; the rule is decided now so that phase adds a line here instead of
  *    re-deciding whether auth is grantable.
- *  - Issue auto-accept joins per the Issue lifecycle milestone's "no auto-accept, ever".
  *  - Nothing joins by inference, and nothing leaves without the pull request that removes it.
  */
 export const PROTECTED_ACTION_CLASSES = ['fn:proposals.accept', 'fn:grants.revoke'] as const
