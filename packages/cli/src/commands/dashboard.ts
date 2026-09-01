@@ -80,6 +80,7 @@ import {
   MCP_HTTP_DEFAULT_PORT,
 } from './mcp.js'
 import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
+import type { ResolvedMcpToken } from '../composition/mcp-token-resolution.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -1789,6 +1790,51 @@ export async function mountCoHostedMcp(input: {
   return { server, boundPort, warning: undefined }
 }
 
+/**
+ * The co-hosted MCP endpoint's CREDENTIAL answer, as a value (408-17, CR-01).
+ *
+ * `plan` is the decision `mcpMountPlanFor` took from the config alone; `tokens` is what the
+ * environment could actually honour; `shouldMount` is the conjunction the mount site branches on;
+ * `warning` is the operator-visible line when the dereference refused, and `undefined` when there
+ * was nothing to say.
+ */
+export interface McpCoHostCredentials {
+  readonly plan: McpCoHostMountPlan
+  readonly tokens: readonly ResolvedMcpToken[]
+  readonly shouldMount: boolean
+  readonly warning: string | undefined
+}
+
+/**
+ * Decide, then dereference — the co-host's credential path as ONE drivable function (408-17, CR-01).
+ *
+ * STEP A OF THREE, AND IT IS DELIBERATELY NOT A FIX. This body reproduces the shipped ordering at
+ * `dashboard.ts` EXACTLY: the resolution runs first and unguarded, and the mount flag is consulted
+ * after. It is an extraction, not a repair. The repair is the next commit, and the cells that
+ * measure the defect are the commit between them — a red watched against this body is a BEHAVIOUR
+ * red at the seam the shipped command uses, not an undefined-symbol red, which would be evidence
+ * of nothing.
+ *
+ * Reads `unknown` for the same reason `mcpMountPlanFor` does: a cell must be able to hand this the
+ * shape of a defect as easily as the shape of a correct config. `env` is a PARAMETER rather than
+ * `process.env` read inside, so a cell can hand it an environment that records what was read.
+ */
+export function coHostedMcpCredentialsFor(input: {
+  readonly config: unknown
+  readonly env: NodeJS.ProcessEnv
+  readonly warn?: (line: string) => void
+}): McpCoHostCredentials {
+  const plan = mcpMountPlanFor(input.config)
+  const declared = (input.config as any)?.services?.mcp ?? {}
+  const tokens = resolveMcpTokens(declared.tokens ?? [], input.env)
+  return {
+    plan,
+    tokens,
+    shouldMount: plan.mount && tokens.length > 0,
+    warning: undefined,
+  }
+}
+
 type DashboardCommandOptions = {
   port?: string
   db?: string
@@ -2099,12 +2145,11 @@ async function startDashboardBackedServices(
     // The token RESOLUTION stays here and is a SEPARATE fact: `resolveMcpTokens` reads
     // `process.env`, so a plan that declared two entries can still resolve zero usable ones, and a
     // mount with nothing to match a bearer against is the same open door condition 2 refuses.
-    const mcpPlan = mcpMountPlanFor(config)
-    const mcpServiceConfig = (config as any).services?.mcp ?? {}
-    const mcpTokens = resolveMcpTokens(mcpServiceConfig.tokens ?? [], process.env)
+    const mcpCredentials = coHostedMcpCredentialsFor({ config, env: process.env })
+    const mcpTokens = mcpCredentials.tokens
     let mcpMasking: ReturnType<typeof composeMcpMasking> | undefined
     let mcpServer: NodeHttpServer | undefined
-    if (mcpPlan.mount && mcpTokens.length > 0) {
+    if (mcpCredentials.shouldMount) {
       // The MCP masker, composed exactly as `agent-qa mcp` composes it: `buildRunMaskingContext`
       // seeded with THIS process's declared MCP credentials, because `sensitiveEnvSlice` selects by
       // name suffix and nothing obliges an operator to point `tokenEnvVar` at a name ending in
@@ -2113,7 +2158,7 @@ async function startDashboardBackedServices(
       mcpMasking = composeMcpMasking({ tokens: mcpTokens, env: process.env })
       const mcpMaskText = (text: string): string => mcpMasking!.mask(text)
       // Clamped inside `mcpMountPlanFor`, so the port a cell drives is the port this binds.
-      const mcpPort = mcpPlan.port
+      const mcpPort = mcpCredentials.plan.port
       mcpServer = createServer(
         createMcpHttpRequestListener({
           // THE LIVE-VIEW-BOUND REGISTRY — the one fact that makes this endpoint different from the
