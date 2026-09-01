@@ -865,4 +865,76 @@ describe('the co-host resolves credentials without betting the dashboard on them
     expect(honoured.tokens, 'with the declaration honoured').toHaveLength(1)
     expect(honoured.warning, 'and nothing to warn about').toBeUndefined()
   })
+
+  it('services.mcp.enabled: false never reads the environment at all', () => {
+    // WHY A RECORDING ENVIRONMENT AND NOT "IT DID NOT THROW". After the repair above, the catch
+    // would swallow the refusal on EITHER setting — so an assertion that nothing escaped would pass
+    // whether or not the decision precedes the dereference, and 408-09 truth 1 would be discharged
+    // by a cell that cannot tell the two apart. The proxy makes the INERTNESS observable: it
+    // reports which variable names were actually dereferenced, so "the off switch is a control on
+    // this path" becomes a measurement instead of an absence.
+    const record = (reads: string[]): NodeJS.ProcessEnv => new Proxy({} as NodeJS.ProcessEnv, {
+      get: (_target, property) => {
+        reads.push(String(property))
+        return undefined
+      },
+    })
+
+    const offReads: string[] = []
+    const offWarnings: string[] = []
+    const off = coHostedMcpCredentialsFor({
+      config: { services: { mcp: { enabled: false, tokens: [UNSET_ENTRY] } } },
+      env: record(offReads),
+      warn: (line) => offWarnings.push(line),
+    })
+    expect(offReads, 'the off switch is read BEFORE the environment is')
+      .not.toContain('AGENT_QA_408_17_UNSET_TOKEN')
+    // A warning here would mean the dereference ran and was merely caught — inert, not skipped.
+    expect(offWarnings, 'and there is nothing to warn an operator about').toHaveLength(0)
+    expect(off.warning).toBeUndefined()
+    expect(off.tokens).toHaveLength(0)
+    expect(off.shouldMount).toBe(false)
+
+    // THE OTHER SIDE, and it is what stops a recorder that records nothing from satisfying the
+    // assertion above. Identical input, `enabled` absent — which MEANS ENABLED — and the same
+    // variable name now really is dereferenced.
+    const onReads: string[] = []
+    coHostedMcpCredentialsFor({
+      config: { services: { mcp: { tokens: [UNSET_ENTRY] } } },
+      env: record(onReads),
+      warn: () => {},
+    })
+    expect(onReads, 'an ABSENT enabled means ENABLED, and the environment is read')
+      .toContain('AGENT_QA_408_17_UNSET_TOKEN')
+  })
+})
+
+/** The standalone MCP face's own source, read the way `DASHBOARD_SOURCE` above is read. */
+const MCP_COMMAND_SOURCE = readFileSync(
+  resolvePath(dirname(fileURLToPath(import.meta.url)), '../commands/mcp.ts'),
+  'utf8',
+)
+
+describe('one error class, two call sites, two correct answers (CR-01)', () => {
+  it('the standalone agent-qa mcp face still refuses hard on the same entry', () => {
+    // THE BEHAVIOURAL HALF. The repair above belongs to the CO-HOST and to nothing else: at
+    // `agent-qa mcp` the refusal precedes any bind, nothing is serving, the operator asked for
+    // exactly one surface, and a hard failure naming the variable is the honest outcome that
+    // command's own docstring argues for. Weakening `resolveMcpTokens` to return an empty list
+    // would have turned a documented refusal into the quiet degradation it explicitly refuses —
+    // a server that starts while silently dropping the credential its operator just configured.
+    expect(() => resolveMcpTokens([UNSET_ENTRY], {})).toThrow(McpTokenEnvVarUnsetError)
+    expect(() => resolveMcpTokens([UNSET_ENTRY], {})).toThrow('AGENT_QA_408_17_UNSET_TOKEN')
+
+    // THE SOURCE ASSERTION HALF, labelled as such in section 7's idiom. The construct read is a
+    // BARE CALL EXPRESSION in `commands/mcp.ts` — no `try`, no wrapper — and the second clause is
+    // the one that catches the tempting future diff: routing the standalone face through the
+    // co-host's forgiving wrapper would leave both suites green while silently converting that
+    // command's loud refusal into a start with no credentials. Driving it behaviourally would mean
+    // spawning the real command and a real transport to observe a call this file can read.
+    expect(MCP_COMMAND_SOURCE, 'the standalone face still calls the shared resolver bare')
+      .toContain('const tokens = resolveMcpTokens(config?.services?.mcp?.tokens ?? [], process.env)')
+    expect(MCP_COMMAND_SOURCE, 'and is not routed through the co-host wrapper')
+      .not.toContain('coHostedMcpCredentialsFor')
+  })
 })
