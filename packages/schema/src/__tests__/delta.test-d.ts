@@ -7,7 +7,6 @@ import type {
   DeltaEnvelope,
   FactSubtype,
 } from '../delta/envelope'
-import type { IssueDelta } from '../delta/issue-delta'
 import type { ArtifactRef } from '../ids/artifact-ref'
 import type { EvidenceToken, IssueId, RecordId } from '../ids/record-id'
 import type { Anchor } from '../identity/anchor'
@@ -15,8 +14,6 @@ import type { ScopeKey } from '../identity/scope-key'
 
 const recordId = 'record-1' as RecordId
 const victimRecordId = 'record-2' as RecordId
-const issueId = 'issue-1' as IssueId
-const mergedIssueId = 'issue-2' as IssueId
 const evidenceToken = 'evidence-1' as EvidenceToken
 
 const scope: ScopeKey = { tier: 'test', key: 'checkout' }
@@ -71,34 +68,12 @@ const supersedeDelta: Delta = {
   evidenceToken,
 }
 
-const fileIssue: IssueDelta = {
-  ...envelope,
-  kind: 'FileIssue',
-  class: 'app_bug',
-  severity: 'S4',
-  prose: 'The submit button remains disabled after valid card details are entered.',
-  anchors: [anchor],
-}
-
-const mergeIssue: IssueDelta = {
-  ...envelope,
-  kind: 'Merge',
-  survivorId: issueId,
-  victimId: mergedIssueId,
-}
-
 const delta: Delta = confirmDelta
 
 // @ts-expect-error proposal deltas omit status; deterministic code disposes status later.
 delta.status = 'confirmed'
 
 expectTypeOf<Extract<Delta, { kind: 'FileIssue' }>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<IssueDelta, { kind: 'Add' }>>().toEqualTypeOf<never>()
-
-const acceptIssueDelta = (_: IssueDelta) => {}
-
-// @ts-expect-error Add belongs to Delta, not the authored-shelf IssueDelta vocabulary.
-acceptIssueDelta(addDelta)
 
 const acceptIssueId = (_: IssueId) => {}
 
@@ -115,11 +90,9 @@ acceptBundleKind('observed-flow')
 expectTypeOf<BundleDraft['subtype']>().toEqualTypeOf<FactSubtype | undefined>()
 
 // This proof file intentionally covers only proposal types; ServedBrief read-back fields stay in 314-05.
-type ProposalKeys = keyof BundleDraft | keyof Delta | keyof IssueDelta
+type ProposalKeys = keyof BundleDraft | keyof Delta
 expectTypeOf<Extract<ProposalKeys, 'trust' | 'status'>>().toEqualTypeOf<never>()
 
 void addDelta
 void confirmDelta
 void supersedeDelta
-void fileIssue
-void mergeIssue

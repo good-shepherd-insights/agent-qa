@@ -328,7 +328,6 @@ export type {
   Delta,
   DeltaKind,
   DeltaOrigin,
-  IssueDelta,
 } from './delta/index'
 // 387 D-17: runtime projections of the §7.3 discriminant and origin vocabularies, so a
 // proposal boundary can name what a delta is without re-declaring the union.

@@ -24,7 +24,6 @@ import type {
   EvidenceToken,
   ExecutionContext,
   FactSubtype,
-  IssueDelta,
   IssueId,
   MemberTestOutcome,
   OriginStage,
@@ -95,8 +94,6 @@ expectTypeOf<Extract<Delta, { kind: 'Confirm' }>['evidenceToken']>().toEqualType
   EvidenceToken
 >()
 expectTypeOf<Extract<Delta, { kind: 'FileIssue' }>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<IssueDelta, { kind: 'Merge' }>['survivorId']>().toEqualTypeOf<IssueId>()
-expectTypeOf<Extract<IssueDelta, { kind: 'Add' }>>().toEqualTypeOf<never>()
 
 expectTypeOf(computeBriefDigest).parameter(0).toEqualTypeOf<ServedBrief>()
 expectTypeOf(computeBriefDigest).returns.toEqualTypeOf<string>()
