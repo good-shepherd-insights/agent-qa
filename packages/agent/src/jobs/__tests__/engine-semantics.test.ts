@@ -761,7 +761,7 @@ describe('the permanent-failure disposition (D-20)', () => {
   })
 })
 
-describe('the six real kinds, driven through the engine', () => {
+describe('the five real kinds, driven through the engine', () => {
   let harness: Harness
 
   beforeEach(async () => {

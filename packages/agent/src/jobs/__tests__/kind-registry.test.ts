@@ -19,7 +19,7 @@ import { REAL_JOB_KIND_DECLARATIONS, createRealJobKindRegistry } from '../kinds.
  * The kind value array is module-private in the schema package on purpose, so the enum inside
  * the enqueue contract is the one published enumeration of the kind vocabulary. Reading it
  * here is what makes the conformance test below structurally incapable of missing a kind: a
- * seventh kind added to the contract reddens it without anyone remembering to edit a list.
+ * sixth kind added to the contract reddens it without anyone remembering to edit a list.
  */
 const CONTRACT_JOB_KINDS: readonly JobKind[] = jobEnqueueRequestSchema.shape.kind.options
 
@@ -224,25 +224,29 @@ describe('createJobKindRegistry declaration validation', () => {
 
   it('lists declarations in kind order regardless of declaration order', () => {
     const registry = createJobKindRegistry([
-      completeDeclaration({ kind: 'triage-issues' }),
+      completeDeclaration({ kind: 'propose-improvements' }),
       completeDeclaration({ kind: 'chat', checkpointed: false, checkpointSchedule: [] }),
       completeDeclaration({ kind: 'consolidate' }),
     ])
     expect(registry.list().map((entry) => entry.kind)).toEqual([
       'chat',
       'consolidate',
-      'triage-issues',
+      'propose-improvements',
     ])
   })
 })
 
-describe('the six real job kinds', () => {
+describe('the five real job kinds', () => {
   // Positive control for the enumeration itself. An accessor that returned an empty array
   // would make every conformance assertion below pass without examining a single kind.
-  it('reads a non-empty kind vocabulary out of the shipped enqueue contract', () => {
-    expect(CONTRACT_JOB_KINDS.length).toBe(6)
-    expect(CONTRACT_JOB_KINDS).toContain('chat')
-    expect(CONTRACT_JOB_KINDS).toContain('analyze-run')
+  it('reads exactly the five shipped kinds out of the enqueue contract, by sorted list', () => {
+    expect([...CONTRACT_JOB_KINDS].sort()).toEqual([
+      'analyze-run',
+      'chat',
+      'consolidate',
+      'curate-memory',
+      'propose-improvements',
+    ])
   })
 
   it.each(CONTRACT_JOB_KINDS)('declares %s', (kind) => {
@@ -295,8 +299,8 @@ describe('the six real job kinds', () => {
 })
 
 describe('the stand-in handlers', () => {
-  // Six indistinguishable no-ops would satisfy "six kinds are registered" perfectly, and the
-  // kill matrix would then compare six identical histories and prove nothing about any of
+  // Five indistinguishable no-ops would satisfy "five kinds are registered" perfectly, and the
+  // kill matrix would then compare five identical histories and prove nothing about any of
   // them. Each handler must publish its OWN declared schedule with its OWN bytes.
   it.each(REAL_JOB_KIND_DECLARATIONS)(
     'publishes exactly the declared schedule of $kind, in order',

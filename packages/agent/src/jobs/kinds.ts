@@ -1,4 +1,4 @@
-// The six real agent job kinds (Phase 385, D-09 / D-17 / D-18 / D-20).
+// The five real agent job kinds (Phase 385, D-09 / D-17 / D-18 / D-20).
 //
 // The kind set is closed and shipped, and this module declares every member of it. The
 // declarations are the CONTRACT this phase ships; the handler bodies are deterministic
@@ -10,8 +10,8 @@
 // The stand-ins are scripted by payload, in the style of the v51 drain fixture's scripted
 // author: a handler publishes its own declared schedule with its own bytes and then does
 // exactly what the payload asked for. That matters for two separate reasons. Distinguishable
-// bytes mean a matrix comparing six recovered histories is comparing six different things
-// rather than six copies of one. Scriptable outcomes mean the adversarial legs — a chain, a
+// bytes mean a matrix comparing five recovered histories is comparing five different things
+// rather than five copies of one. Scriptable outcomes mean the adversarial legs — a chain, a
 // retryable report, a permanent one — can be driven through the REAL kinds instead of through
 // a synthetic stand-in that a later refactor could leave behind.
 //
@@ -645,7 +645,7 @@ function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandl
  * Every kind, keyed by itself.
  *
  * `satisfies Record<JobKind, JobKindDeclaration>` is the compile-time half of D-09's
- * completeness: a seventh kind added to the shipped vocabulary fails to typecheck here until
+ * completeness: a sixth kind added to the shipped vocabulary fails to typecheck here until
  * it is declared. The registry-driven conformance test is the runtime half, and the two catch
  * different drifts — a missing entry versus an entry whose own `kind` field disagrees with
  * the slot it sits in.
@@ -696,17 +696,6 @@ function declarationsFor(capabilities?: PostRunJobCapabilities) {
       : realCurateMemoryHandler(capabilities),
   },
 
-  'triage-issues': {
-    kind: 'triage-issues',
-    checkpointed: true,
-    checkpointSchedule: ['issues-drafted'],
-    allowedSuccessors: [],
-    maxAttempts: 2,
-    backoff: { kind: 'fixed', delayMs: 5_000 },
-    onPermanentFailure: 'halt-chain',
-    handler: standInHandler('triage-issues', ['issues-drafted'], []),
-  },
-
   consolidate: {
     kind: 'consolidate',
     checkpointed: true,
@@ -732,7 +721,7 @@ function declarationsFor(capabilities?: PostRunJobCapabilities) {
 }
 
 /**
- * The six declarations as a list, in the order the kind vocabulary declares them.
+ * The five declarations as a list, in the order the kind vocabulary declares them.
  *
  * The NO-CAPABILITY set: analyze-run and curate-memory carry their scripted stand-ins here,
  * byte-identically to what 385 shipped. Everything registry-driven that does not compose a
@@ -744,7 +733,7 @@ export const REAL_JOB_KIND_DECLARATIONS: readonly JobKindDeclaration[] = Object.
 )
 
 /**
- * A registry over exactly the six real kinds.
+ * A registry over exactly the five real kinds.
  *
  * A fresh registry per call rather than a module-level singleton: a registry is a small,
  * cheap value, and one shared instance is how a test that registers something extra ends up

@@ -9,7 +9,6 @@ export type JobKind =
   | 'chat'
   | 'analyze-run'
   | 'curate-memory'
-  | 'triage-issues'
   | 'consolidate'
   | 'propose-improvements'
 
@@ -61,7 +60,6 @@ export const jobKindValues = [
   'chat',
   'analyze-run',
   'curate-memory',
-  'triage-issues',
   'consolidate',
   'propose-improvements',
 ] as const satisfies readonly JobKind[]

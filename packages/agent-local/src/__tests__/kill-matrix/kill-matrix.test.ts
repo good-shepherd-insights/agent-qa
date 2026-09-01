@@ -1,10 +1,10 @@
 // The kill matrix (Phase 385 plan 06 — JOBQ-03's acceptance instrument, D-09/D-12).
 //
 // LEG COUNT AND RUNTIME BUDGET, stated because a silently capped matrix reads as full coverage.
-// Every derived crash point runs; nothing is sampled. Today that is 12 legs (5 checkpointed kinds,
-// 6 declared checkpoints, 2 points each), each spawning a crash child and a resume child, plus one
-// control child per checkpointed kind (5, cached across that kind's legs) and one 2-spawn
-// idempotency leg — 31 child processes in total, inside the research budget of ~25-35. The count is
+// Every derived crash point runs; nothing is sampled. Today that is 10 legs (4 checkpointed kinds,
+// 5 declared checkpoints, 2 points each), each spawning a crash child and a resume child, plus one
+// control child per checkpointed kind (4, cached across that kind's legs) and one 2-spawn
+// idempotency leg — 26 child processes in total, inside the research budget of ~25-35. The count is
 // derived from the registry, so a kind reworked in 388/389 changes it with no edit here.
 //
 // WHAT EACH LEG PROVES, and the three ways a leg like this normally proves nothing:
@@ -174,7 +174,7 @@ describe('crash-point derivation', () => {
 
   // A pin on today's shipped kind set, listed rather than counted so a change says WHAT changed.
   // An intentional kind rework in 388/389 updates this list; nothing else in the harness moves.
-  it('derives exactly the twelve crash points the six shipped kinds imply', () => {
+  it('derives exactly the ten crash points the five shipped kinds imply', () => {
     expect(CRASH_POINTS.map((point) => point.selector)).toEqual([
       'analyze-run:verdicts-authored:before-publish',
       'analyze-run:verdicts-authored:after-publish',
@@ -186,10 +186,8 @@ describe('crash-point derivation', () => {
       'curate-memory:bundle-committed:after-publish',
       'propose-improvements:proposals-authored:before-publish',
       'propose-improvements:proposals-authored:after-publish',
-      'triage-issues:issues-drafted:before-publish',
-      'triage-issues:issues-drafted:after-publish',
     ])
-    expect(CRASH_POINTS).toHaveLength(12)
+    expect(CRASH_POINTS).toHaveLength(10)
   })
 
   // The accounting line: chat's absence from the matrix is a declaration, not an oversight.
@@ -495,7 +493,7 @@ describe('kill matrix: every registered kind x declared checkpoint x before/afte
 
 describe('the comparison basis', () => {
   // Every equality assertion above is only as good as this. A projection that answered the same
-  // string whatever it was handed — the phase-384 defect, in its exact shape — would make twelve
+  // string whatever it was handed — the phase-384 defect, in its exact shape — would make ten
   // convergence assertions pass while proving nothing at all. So the instrument is required to
   // MOVE with what it claims to describe, and the split between outcome and history is required to
   // move in each direction independently.
