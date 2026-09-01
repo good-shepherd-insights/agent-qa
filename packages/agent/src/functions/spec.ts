@@ -815,9 +815,13 @@ export interface PostProcessingJobRow {
  * chained yet. Padding either of them with a synthetic row would erase exactly the distinction
  * the projection reads.
  *
- * The chain's THIRD derived id is still passed to `readChain` (see the port below) and is still
- * used by the tail's run-scoped drop-guard, but its absence is no longer a chip-side fact: there
- * is no chip left to report it, so this state stops carrying a member for it.
+ * This state carries exactly one member per chip stage and the chain derives exactly one id per
+ * stage, so the projection and the chain agree member for member: every id handed to `readChain`
+ * has a member here to report its row, and there is no derived id whose absence this state
+ * declines to describe.
+ *
+ * 2026-09-01 (Phase 409): the chain's third derived id left with the Issue-slot cleanup — see
+ * `DELETION-INVENTORY.md`.
  */
 export interface PostProcessingChainState {
   readonly analyzeRun?: PostProcessingJobRow
@@ -848,8 +852,12 @@ export interface PostProcessingReaderPort {
   readonly idSource: JobIdSource
   /**
    * Durable state for the ids given, or `undefined` when this project holds no queue database
-   * at all. `ChainJobIds` stays three-wide — chain identity is the job-kind layer's, and the
-   * reader simply no longer reads a row for the id it has no chip for.
+   * at all. `ChainJobIds` is two-wide and the reader reads a row for every member — chain
+   * identity is still the job-kind layer's to derive, and this port only reads what it is
+   * handed.
+   *
+   * 2026-09-01 (Phase 409): the width dropped from three when the chain's third derived id left
+   * with the Issue-slot cleanup — see `DELETION-INVENTORY.md`.
    *
    * `undefined` is a distinct answer from an empty state and both are honest: the first says
    * nothing has ever been enqueued here, the second says this chain's rows are not among the

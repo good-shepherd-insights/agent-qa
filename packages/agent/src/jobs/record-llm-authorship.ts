@@ -21,9 +21,12 @@
 // failure propagates; this function never hands back a value the store has not taken.
 //
 // The memoization lives HERE and nowhere else. A conditional re-author written into a handler
-// (`if (!checkpoint) …`) is still a re-author, and six kinds each carrying their own copy of
-// that conditional is six chances to get it wrong — which is exactly the anti-pattern the
+// (`if (!checkpoint) …`) is still a re-author, and five kinds each carrying their own copy of
+// that conditional is five chances to get it wrong — which is exactly the anti-pattern the
 // research names.
+//
+// 2026-09-01 (Phase 409): five rather than six — the reserved sixth job kind left with the
+// Issue-slot cleanup — see `DELETION-INVENTORY.md`.
 
 import type { JobId } from '@vostride/agent-qa-schema'
 
