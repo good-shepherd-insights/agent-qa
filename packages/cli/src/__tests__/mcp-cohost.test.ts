@@ -95,6 +95,7 @@ import {
 import { asRunId } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
+  McpTokenEntry,
   RunEventEnvelope,
   RunSession,
 } from '@vostride/agent-qa-schema'
@@ -103,8 +104,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { composeLiveView } from '../composition/live-view-composition.js'
 import type { ComposedLiveView } from '../composition/live-view-composition.js'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
-import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
-import { mcpMountPlanFor, mountCoHostedMcp } from '../commands/dashboard.js'
+import { McpTokenEnvVarUnsetError, resolveMcpTokens } from '../composition/mcp-token-resolution.js'
+import { coHostedMcpCredentialsFor, mcpMountPlanFor, mountCoHostedMcp } from '../commands/dashboard.js'
 import {
   composeMcpMasking,
   createMcpHttpRequestListener,
@@ -777,5 +778,91 @@ describe('the shipped dashboard composition wires and closes the endpoint', () =
     ).trim()
     expect(tracked, 'a tracked dashboard-server file is modified').toBe('')
     expect(untracked, 'an untracked dashboard-server file was added').toBe('')
+  })
+})
+
+// ---- 8. The co-host CREDENTIAL path — decide, then dereference (408-17, CR-01) ------------------
+//
+// WHAT THIS BLOCK EXISTS FOR. 408-09 recorded two claims about the co-host that no cell in this
+// file could reach:
+//
+//   408-09 TRUTH 1 — "`services.mcp.enabled: false` turns the surface off." It was driven over
+//   `mcpMountPlanFor` alone, which is a PURE function of the config. But the shipped command read
+//   `process.env` for the declared credentials BEFORE it consulted that plan, so an operator who
+//   wrote the off switch still paid for a forgotten `export`. The knob was inert on the path that
+//   ran first, and section 5's table could not see it because the table never touches `env`.
+//
+//   408-09 PROHIBITION 2 — "an optional secondary surface must never be able to take down the
+//   primary one it was mounted beside" — was recorded `verification: test, status: resolved`. The
+//   test it named was the BIND cell in section 6. The credential DEREFERENCE three lines earlier
+//   had no cell at all, and it threw `McpTokenEnvVarUnsetError` out of `resolveMcpTokens` into the
+//   command's outer catch and `process.exit(2)` — after the primary listener had already bound, so
+//   an operator lost a fully started dashboard to an optional endpoint's missing variable.
+//
+// Every cell below hands `coHostedMcpCredentialsFor` an EXPLICIT `env` object rather than
+// `process.env`. This suite's own `beforeAll` writes a variable into the real environment, and a
+// cell whose claim rested on an ambient ABSENCE would be exactly the vacuous gate this section
+// exists to remove: it would turn green on a developer's machine for reasons the assertion never
+// stated.
+
+/**
+ * One DECLARED credential whose variable is set nowhere — the input the shipped ordering died on.
+ *
+ * Typed as `McpTokenEntry` so the same value can be driven straight through `resolveMcpTokens` in
+ * cell 4 as well as through a config record here.
+ */
+const UNSET_ENTRY: McpTokenEntry = {
+  name: 'ghost',
+  tokenEnvVar: 'AGENT_QA_408_17_UNSET_TOKEN',
+  scopes: ['read'],
+}
+
+/** The config an operator with one declared MCP credential and no `enabled` key has written. */
+const UNSET_ENTRY_CONFIG = { services: { mcp: { tokens: [UNSET_ENTRY] } } }
+
+describe('the co-host resolves credentials without betting the dashboard on them (CR-01)', () => {
+  it('a declared-but-unset tokenEnvVar costs a warning, not the dashboard', () => {
+    const warnings: string[] = []
+    // THE CALL ITSELF IS THE FIRST ASSERTION. Before this fix it threw `McpTokenEnvVarUnsetError`
+    // out of `resolveMcpTokens`, that throw reached the dashboard command's outer catch at the
+    // bottom of the action, and the process ended at exit code 2 — with a fully started dashboard
+    // still bound and neither `close()` nor `sessions.dispose()` reached. The operator's whole
+    // primary surface, for a forgotten `export` on an OPTIONAL one.
+    const credentials = coHostedMcpCredentialsFor({
+      config: UNSET_ENTRY_CONFIG,
+      env: {},
+      warn: (line) => warnings.push(line),
+    })
+    expect(
+      () => coHostedMcpCredentialsFor({ config: UNSET_ENTRY_CONFIG, env: {} }),
+      'nothing escapes the co-host credential path',
+    ).not.toThrow()
+    expect(credentials.tokens, 'an unhonourable declaration resolves to nothing').toHaveLength(0)
+    expect(credentials.shouldMount, 'and nothing is mounted on it').toBe(false)
+    expect(credentials.warning ?? '', 'the warning names the endpoint').toContain('MCP endpoint')
+    expect(credentials.warning ?? '', 'and the variable the operator forgot')
+      .toContain('AGENT_QA_408_17_UNSET_TOKEN')
+    expect(warnings.join('\n'), 'and it really reached the operator')
+      .toContain('AGENT_QA_408_17_UNSET_TOKEN')
+  })
+
+  it('a refused resolution leaves nothing to mount — the endpoint is never served without'
+    + ' a credential', () => {
+    // THE TWO-SIDED PIN, and it is the reason this cell is separate from the one above. The repair
+    // for "an unset variable must not kill the dashboard" has an obvious wrong shape — carry on and
+    // mount with an empty token list — and that shape is STRICTLY WORSE than the defect: an MCP
+    // endpoint with nothing to match a bearer against answers the D-07 default grant to anything
+    // that can reach loopback. So the refused side asserts `false` and the honoured side asserts
+    // `true`, and neither can be satisfied by a function that always answers the same way.
+    const refused = coHostedMcpCredentialsFor({ config: UNSET_ENTRY_CONFIG, env: {} })
+    expect(refused.shouldMount, 'a refusal mounts nothing').toBe(false)
+
+    const honoured = coHostedMcpCredentialsFor({
+      config: UNSET_ENTRY_CONFIG,
+      env: { AGENT_QA_408_17_UNSET_TOKEN: 'not-a-real-credential-408-17' },
+    })
+    expect(honoured.shouldMount, 'and a credential that resolves still mounts').toBe(true)
+    expect(honoured.tokens, 'with the declaration honoured').toHaveLength(1)
+    expect(honoured.warning, 'and nothing to warn about').toBeUndefined()
   })
 })
