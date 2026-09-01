@@ -371,7 +371,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
     const ids = chainJobIdsForRun(runId, idSource)
     return {
       dedupeKey: runId,
-      candidateJobIds: [ids.analyzeRun, ids.curateMemory, ids.triageIssues],
+      candidateJobIds: [ids.analyzeRun, ids.curateMemory],
       payloadJson: canonicalJson(
         buildChainTerminalNotification({
           runId,

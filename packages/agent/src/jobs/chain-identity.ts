@@ -22,38 +22,26 @@ import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '@vostride/agent-qa-sche
 import type { JobIdSource } from './engine.js'
 
 /**
- * The kinds that belong to a run's post-run chain.
- *
- * `triage-issues` is a member here even though 388 never enqueues one (D-04): membership is
- * about which ids the chain-terminal check must ASK about, and a slot that is declared but
- * empty still has to be asked about, or filling it later would silently make every chain
- * report complete one job early.
- */
-export const POST_RUN_CHAIN_KINDS: readonly JobKind[] = Object.freeze([
-  'analyze-run',
-  'curate-memory',
-  'triage-issues',
-])
-
-/**
  * The kinds whose finish can BE the chain's terminal in this build.
  *
- * Narrower than the membership above, and deliberately so. `triage-issues` is never enqueued
- * in 388, so a build that let it report the terminal would be describing stage outcomes it
- * has no way to know. When the issue engine fills the slot it must extend this set AND the
- * stage derivation below in the same edit — which is exactly the visible change a reserved
- * slot should cost.
+ * Every kind the chain derives an id for is a member, so this list IS the kind set
+ * `chainJobIdsForRun` below asks the id source for — there is no declared-but-empty slot left
+ * to ask about. `__tests__/chain-identity.test.ts` pins the two against each other by name, so
+ * a chain that grows an id without extending this list, or extends this list without deriving
+ * the id, reds there rather than reporting a terminal one job early.
+ *
+ * 2026-09-01 (Phase 409): the third chain id left with the Issue-slot cleanup — see
+ * `DELETION-INVENTORY.md`.
  */
 export const POST_RUN_CHAIN_TERMINAL_KINDS: readonly JobKind[] = Object.freeze([
   'analyze-run',
   'curate-memory',
 ])
 
-/** The three job ids one run's chain addresses, whether or not any of them exists. */
+/** The two job ids one run's chain addresses, whether or not either of them exists. */
 export interface ChainJobIds {
   readonly analyzeRun: JobId
   readonly curateMemory: JobId
-  readonly triageIssues: JobId
 }
 
 /**
@@ -69,7 +57,6 @@ export function chainJobIdsForRun(runId: string, idSource: JobIdSource): ChainJo
   return {
     analyzeRun,
     curateMemory: idSource.jobIdFor('curate-memory', `${String(analyzeRun)}->curate-memory`),
-    triageIssues: idSource.jobIdFor('triage-issues', `${String(analyzeRun)}->triage-issues`),
   }
 }
 

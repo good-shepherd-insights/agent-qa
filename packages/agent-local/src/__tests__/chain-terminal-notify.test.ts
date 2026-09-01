@@ -274,17 +274,22 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       perTest: 1,
     })
 
-    // The chain enqueued curate-memory and NOTHING else (D-04): the triage slot is declared
-    // and never filled, so its deterministically derived id must address no row at all.
+    // The chain enqueued exactly the two kinds it derives ids for, pinned two ways (D-02): the
+    // KEY SET of the derivation and the KINDS of the rows the store actually holds, both against
+    // a sorted literal. A third derived id reds the first line by name and a third enqueued row
+    // reds the second, and each says WHAT arrived rather than that a count moved.
+    //
+    // 2026-09-01 (Phase 409): the third chain id left with the Issue-slot cleanup — see
+    // DELETION-INVENTORY.md.
     const dump = await harness.jobs.store.dumpState()
     const byId = new Map(dump.jobs.map((row) => [row.id, row]))
-    expect(dump.jobs).toHaveLength(2)
+    expect(Object.keys(ids).sort()).toEqual(['analyzeRun', 'curateMemory'])
+    expect(dump.jobs.map((row) => row.kind).sort()).toEqual(['analyze-run', 'curate-memory'])
     expect(byId.get(String(ids.analyzeRun))).toMatchObject({ kind: 'analyze-run', status: 'done' })
     expect(byId.get(String(ids.curateMemory))).toMatchObject({
       kind: 'curate-memory',
       status: 'done',
     })
-    expect(byId.has(String(ids.triageIssues))).toBe(false)
 
     // The successor payload carries what the daemon needs to resolve posture per claimed job
     // (386 D-09/D-12) — a curate-memory payload without executionContext is the DAEM-02 bug.
@@ -538,7 +543,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     // terminal. This is what a recovered host does, expressed without a second process.
     await harness.jobs.store.completeAndChain(ids.curateMemory, [], fence, {
       dedupeKey: RUN_ID,
-      candidateJobIds: [ids.analyzeRun, ids.curateMemory, ids.triageIssues],
+      candidateJobIds: [ids.analyzeRun, ids.curateMemory],
       payloadJson: canonicalJson({ ...before[0]?.payload, outcome: 'failed' }),
     })
 
@@ -550,9 +555,10 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     expect(after[0]?.createdAt).toBe(before[0]?.createdAt)
   })
 
-  // The D-04 narrowing, measured end to end. A fallback that still mapped over the whole
-  // declared successor list would enqueue a triage job HERE — on exactly the runs whose
-  // analysis died — and the chain would then wait on a job that D-04 says never exists.
+  // The fallback path, measured end to end. A permanently failed analysis hands on the SAME
+  // successor list the success path does, so the store ends up holding the same two kinds — and
+  // the cell pins that the same two ways the success cell does, on the derivation's key set and
+  // on the kinds the store holds, so the two paths cannot drift apart unnoticed.
   it('notifies honestly when the analysis died and curation carried on', async () => {
     const harness = await createHarness()
     const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
@@ -573,7 +579,8 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     const dump = await harness.jobs.store.dumpState()
     expect(dump.jobs.find((row) => row.id === String(ids.analyzeRun))?.status).toBe('failed')
     expect(dump.jobs.find((row) => row.id === String(ids.curateMemory))?.status).toBe('done')
-    expect(dump.jobs.some((row) => row.id === String(ids.triageIssues))).toBe(false)
+    expect(Object.keys(ids).sort()).toEqual(['analyzeRun', 'curateMemory'])
+    expect(dump.jobs.map((row) => row.kind).sort()).toEqual(['analyze-run', 'curate-memory'])
     // The successor really was handed the run's identity and posture by the FALLBACK, not
     // only by the success path.
     expect(harness.curateCalls).toEqual([

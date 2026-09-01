@@ -290,8 +290,11 @@ describe('SC1 — the real post-run tail run twice (ANLZ-01, D-03/D-07)', () => 
     const analyzeRows = afterSecond.rows.filter((row) => row.kind === 'analyze-run')
     expect(analyzeRows).toHaveLength(1)
     expect(analyzeRows[0]!.id).toBe(String(ids.analyzeRun))
-    // D-04: the triage slot is declared and never enqueued, so its derived id addresses nothing.
-    expect(afterSecond.rows.some((row) => row.id === String(ids.triageIssues))).toBe(false)
+    // D-02 (2026-09-01, Phase 409): the chain addresses two ids and enqueued exactly those two
+    // kinds — pinned by sorted literal on both, so a third derived id reds the first line and a
+    // third enqueued row reds the second, each by name.
+    expect(Object.keys(ids).sort()).toEqual(['analyzeRun', 'curateMemory'])
+    expect(afterSecond.rows.map((row) => row.kind).sort()).toEqual(['analyze-run', 'curate-memory'])
     expect(f.curateCalls).toEqual([RUN_ID])
 
     // The 385 D-03 comparator, and the strongest form of the claim: the second complete tail

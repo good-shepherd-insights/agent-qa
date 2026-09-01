@@ -605,7 +605,6 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         const ownChainJobIds = [
           String(chainIds.analyzeRun),
           String(chainIds.curateMemory),
-          String(chainIds.triageIssues),
         ]
         /**
          * The ONLY construction site (D-13).
