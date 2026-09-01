@@ -276,7 +276,7 @@ describe('projectPostProcessingChips is total over the durable chain state (D-14
 })
 
 describe('the runs.postProcessing op (D-14/D-15)', () => {
-  it('asks the port for exactly the three ids chainJobIdsForRun derives', async () => {
+  it('asks the port for exactly the two ids chainJobIdsForRun derives', async () => {
     const reader = recordingReader({})
     await invokeFunction(
       registryWith(reader.port),
@@ -288,6 +288,9 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
     expect(reader.asked).toHaveLength(1)
     expect(reader.asked[0]?.runId).toBe(RUN_ID)
     expect(reader.asked[0]?.ids).toEqual(chainJobIdsForRun(RUN_ID, TEST_ID_SOURCE))
+    // Both sides of the line above DERIVE, so on its own it would agree with a chain of any
+    // width. The literal is what makes the cell a pin rather than a tautology.
+    expect(Object.keys(reader.asked[0]!.ids).sort()).toEqual(['analyzeRun', 'curateMemory'])
   })
 
   it('projects a finished chain and attaches the notification the terminal wrote', async () => {

@@ -18,7 +18,7 @@
 //      builds an emitter cannot forget to guard one.
 //   3. RUN-SCOPED. The pump this emitter listens to is a GLOBAL FIFO: it claims the oldest
 //      queued job in the store, which is routinely another run's. A claimed job whose id is not
-//      in `chainJobIds` — the three ids THIS run's chain addresses, derived by the tail through
+//      in `chainJobIds` — the two ids THIS run's chain addresses, derived by the tail through
 //      the one shared derivation the read op also uses — yields ZERO envelopes here. The
 //      membership set is the only scoping input: never the kind, never the payload, never a
 //      pattern over a field of the outcome being guarded. Kind alone cannot answer "whose chain
@@ -59,13 +59,12 @@ interface StageChipKinds {
  * Which job kind speaks through which chip.
  *
  * The table names what a job kind EMITS, so a kind that emits nothing has no row. As of
- * 2026-08-26 (Phase 404 D-01/D-02) that is the reserved `triage-issues` kind: the chip set is
- * `{analysis, curation}` and the three `issues*` event names no longer exist, so the row that
- * used to describe what a triage job "would" emit could only name events the enum does not
- * carry. The kind itself stays in `JOB_KINDS` — retiring it is the Issue-slot cleanup
- * milestone's work, not this one; the chip side simply stops speaking for it. The emitter's
- * run-scoped drop-guard still consults all three chain ids, so a stray triage row observed by
- * this pump is dropped by id rather than mis-attributed.
+ * 2026-08-26 (Phase 404 D-01/D-02) the chip set is `{analysis, curation}` and the three
+ * `issues*` event names no longer exist, so a row describing what a reserved kind "would" emit
+ * could only name events the enum does not carry. 2026-09-01 (Phase 409): the reserved sixth
+ * kind left with the Issue-slot cleanup — see DELETION-INVENTORY.md. The emitter's run-scoped
+ * drop-guard consults the two chain ids, so a row observed by this pump that is not this run's
+ * is dropped by id rather than mis-attributed.
  *
  * `Partial<Record<JobKind, StageChipKinds>>` is what makes an absent kind legal: a kind with no
  * row emits nothing, while a kind WITH a row that grows a chip member is still a compile error.
@@ -119,7 +118,7 @@ export interface CreatePostRunChipEmitterOptions {
   readonly agentQaRoot: string
   readonly runId: string
   /**
-   * The three ids THIS run's chain addresses; anything else is another run's work.
+   * The two ids THIS run's chain addresses; anything else is another run's work.
    *
    * Arrives as DATA rather than as a derivation performed here, and that is the whole shape of
    * the fix: the tail derives it once through `chainJobIdsForRun` — the same function the read
