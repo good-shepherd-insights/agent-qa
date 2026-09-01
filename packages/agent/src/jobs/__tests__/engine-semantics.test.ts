@@ -824,8 +824,16 @@ describe('the six real kinds, driven through the engine', () => {
   })
 
   it('spends the declared bound of a real kind and no more', async () => {
-    await harness.queue.enqueue('triage-issues', { fail: 'retryable' }, 'run-1')
-    const bound = harness.registry.require('triage-issues').maxAttempts
+    await harness.queue.enqueue('consolidate', { fail: 'retryable' }, 'run-1')
+    const bound = harness.registry.require('consolidate').maxAttempts
+    // The derived sequence below says the engine spends whatever bound is declared; these two
+    // literals say WHICH bound consolidate declares. Without them a changed bound re-derives
+    // the expectation and this cell stays green through the change it exists to catch.
+    expect(bound).toBe(2)
+    expect(harness.registry.require('consolidate').backoff).toEqual({
+      kind: 'fixed',
+      delayMs: 5_000,
+    })
 
     const dispositions: string[] = []
     for (let pump = 0; pump < bound + 2; pump += 1) {

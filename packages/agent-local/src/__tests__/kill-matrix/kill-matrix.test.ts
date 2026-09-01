@@ -501,7 +501,7 @@ describe('the comparison basis', () => {
   // move in each direction independently.
   it('varies with the state it describes, and its two halves move independently', async () => {
     const paths = makeRoot('varies')
-    const kind: JobKind = 'triage-issues'
+    const kind: JobKind = 'consolidate'
     const checkpointId = declarationFor(kind).checkpointSchedule[0]!
     const jobId = String(await seedJob(paths.agentQaRoot, kind))
 

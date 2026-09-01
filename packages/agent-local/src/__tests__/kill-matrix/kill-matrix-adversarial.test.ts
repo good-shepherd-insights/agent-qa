@@ -85,12 +85,12 @@ function declarationFor(kind: JobKind): JobKindDeclaration {
 /**
  * The kinds a permanent failure of `kind` actually CONTINUES INTO, asked of the producer.
  *
- * Read from the fallback rather than from `allowedSuccessors`, and 388 D-04 is why: the two
- * are deliberately no longer the same list. The declaration keeps triage-issues so the issue
- * engine can fill the slot without a topology change; the fallback produces only
- * curate-memory, so no triage job is ever enqueued and the issues chip's `reserved` status is
- * structurally true. A matrix that kept expecting the declared set would be asserting a chain
- * the product deliberately does not build.
+ * Read from the fallback rather than from `allowedSuccessors`, because the producer is what
+ * the engine actually runs. Since 2026-09-01 (Phase 409) declared equals produced — analyze-run
+ * declares and produces `['curate-memory']`, the reserved sixth kind having left with the
+ * Issue-slot cleanup (see `DELETION-INVENTORY.md`; 388 D-04 introduced the split this collapsed).
+ * Asking the producer is therefore a choice of instrument rather than a correction: it keeps the
+ * matrix measuring the chain the product builds even if the two lists ever diverge again.
  *
  * MEASURED CONSEQUENCE, recorded rather than papered over: with one continuation, the "a
  * PARTIAL continuation set is never visible" arm of the atomicity claim below is no longer
@@ -271,7 +271,7 @@ describe('verb crash points (the seam plan 07 adds beside the checkpoint points)
 // ---- LEG FAMILY 1: the poison job (D-18, T-385-03) -------------------------------------------------
 
 describe('a poison job that SIGKILLs its host on every attempt (D-18, JOBQ-03)', () => {
-  // `triage-issues` declares maxAttempts 2, which is the cheapest bound that is still a bound.
+  // `consolidate` declares maxAttempts 2, which is the cheapest bound that is still a bound.
   //
   // THE BOUND IS SPENT AT THE CLAIM, so the arithmetic is: claims 1..maxAttempts run the handler,
   // and the claim that arrives as maxAttempts+1 is refused before the handler ever sees the job.
@@ -280,9 +280,13 @@ describe('a poison job that SIGKILLs its host on every attempt (D-18, JOBQ-03)',
   // engine never reaches. What equals maxAttempts is the number of times the handler ran, and that
   // is asserted separately from the durable artifacts.
   it('exhausts its declared bound through claim-time counting and lands failed, never looping', async () => {
-    const kind: JobKind = 'triage-issues'
+    const kind: JobKind = 'consolidate'
     const declaration = declarationFor(kind)
     const maxAttempts = declaration.maxAttempts
+    // Every expectation below is arithmetic over `maxAttempts`, which would re-derive itself
+    // through a changed bound. These two literals are what make a bound change RED here.
+    expect(maxAttempts).toBe(2)
+    expect(declaration.backoff).toEqual({ kind: 'fixed', delayMs: 5_000 })
     const checkpointId = declaration.checkpointSchedule[0]!
     const selector = crashPointSelector(kind, checkpointId, 'before-publish')
 
