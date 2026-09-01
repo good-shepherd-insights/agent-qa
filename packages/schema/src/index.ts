@@ -143,7 +143,6 @@ export {
   BUNDLE_ID_HASH_SUFFIX_LENGTH,
   BUNDLE_SLUG_MAX_LENGTH,
   asRecordId,
-  asIssueId,
   asEvidenceToken,
   bundleSlug,
   computeBundleIdentityHash,
@@ -220,7 +219,6 @@ export type {
   BundleIdentityCore,
   BundleIdentityInput,
   EvidenceToken,
-  IssueId,
   RecordId,
 } from './ids/index'
 export type { Verdict, VerdictClass, VerdictEvidence } from './verdict/index'

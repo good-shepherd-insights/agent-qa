@@ -2,7 +2,6 @@ import { expectTypeOf } from 'vitest'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   asEvidenceToken,
-  asIssueId,
   asRecordId,
   asRunId,
   computeBriefDigest,
@@ -24,7 +23,6 @@ import type {
   EvidenceToken,
   ExecutionContext,
   FactSubtype,
-  IssueId,
   MemberTestOutcome,
   OriginStage,
   PerTestOutcome,
@@ -46,7 +44,6 @@ expectTypeOf(CURRENT_HANDOFF_SCHEMA_VERSION).toMatchTypeOf<number>()
 expectTypeOf(asRunId).parameter(0).toEqualTypeOf<string>()
 expectTypeOf(asRunId).returns.toEqualTypeOf<RunId>()
 expectTypeOf(asRecordId).returns.toEqualTypeOf<RecordId>()
-expectTypeOf(asIssueId).returns.toEqualTypeOf<IssueId>()
 expectTypeOf(asEvidenceToken).returns.toEqualTypeOf<EvidenceToken>()
 expectTypeOf(computeEvidenceToken).returns.toEqualTypeOf<EvidenceToken>()
 

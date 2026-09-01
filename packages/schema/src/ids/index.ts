@@ -1,5 +1,5 @@
-export { asRecordId, asIssueId, asEvidenceToken } from './record-id'
-export type { RecordId, IssueId, EvidenceToken } from './record-id'
+export { asRecordId, asEvidenceToken } from './record-id'
+export type { RecordId, EvidenceToken } from './record-id'
 export type { ArtifactRef } from './artifact-ref'
 export { computeEvidenceToken } from './compute-evidence-token'
 export type { EvidenceTokenInput } from './compute-evidence-token'

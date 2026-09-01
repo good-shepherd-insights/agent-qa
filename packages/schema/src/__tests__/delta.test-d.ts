@@ -8,7 +8,7 @@ import type {
   FactSubtype,
 } from '../delta/envelope'
 import type { ArtifactRef } from '../ids/artifact-ref'
-import type { EvidenceToken, IssueId, RecordId } from '../ids/record-id'
+import type { EvidenceToken, RecordId } from '../ids/record-id'
 import type { Anchor } from '../identity/anchor'
 import type { ScopeKey } from '../identity/scope-key'
 
@@ -74,11 +74,6 @@ const delta: Delta = confirmDelta
 delta.status = 'confirmed'
 
 expectTypeOf<Extract<Delta, { kind: 'FileIssue' }>>().toEqualTypeOf<never>()
-
-const acceptIssueId = (_: IssueId) => {}
-
-// @ts-expect-error RecordId and IssueId are distinct state-machine brands.
-acceptIssueId(recordId)
 
 const acceptBundleKind = (_: BundleKind) => {}
 
