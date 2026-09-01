@@ -1808,30 +1808,67 @@ export interface McpCoHostCredentials {
 /**
  * Decide, then dereference — the co-host's credential path as ONE drivable function (408-17, CR-01).
  *
- * STEP A OF THREE, AND IT IS DELIBERATELY NOT A FIX. This body reproduces the shipped ordering at
- * `dashboard.ts` EXACTLY: the resolution runs first and unguarded, and the mount flag is consulted
- * after. It is an extraction, not a repair. The repair is the next commit, and the cells that
- * measure the defect are the commit between them — a red watched against this body is a BEHAVIOUR
- * red at the seam the shipped command uses, not an undefined-symbol red, which would be evidence
- * of nothing.
+ * THE ORDER IS THE WHOLE POINT, AND UNTIL 408-17 IT WAS THE OTHER WAY ROUND. The shipped mount
+ * site dereferenced `services.mcp.tokens` through `resolveMcpTokens` and consulted the mount plan
+ * TWO LINES LATER — so a declared-but-unset `tokenEnvVar` threw `McpTokenEnvVarUnsetError` past a
+ * dashboard that had ALREADY BOUND, into the command's outer catch, and out at `process.exit(2)`
+ * with neither `close()` nor `sessions.dispose()` reached. An operator met the loss of their whole
+ * primary surface for a forgotten `export` on an OPTIONAL one, and `services.mcp.enabled: false`
+ * prevented none of it, because the flag was read after the dereference rather than before it.
+ *
+ * TWO CONSEQUENCES, AND THEY ARE SEPARATE. (1) When the plan says do not mount, this returns
+ * BEFORE touching `input.env` at all — that is what makes `enabled: false` a control on this path
+ * rather than a control on a path nothing reaches, and a cell drives it with a recording
+ * environment that reports which names were dereferenced. (2) When the plan says mount, the
+ * dereference isolates its own failure exactly the way the bind beside it already does: the
+ * warning is composed from `McpTokenEnvVarUnsetError.message` and NOTHING else — no error object,
+ * no `cause`, no resolved value — because that message names the entry label and the variable name
+ * and carries no credential, which is the reason the class takes the two fields it takes.
+ *
+ * AND A REFUSAL MOUNTS NOTHING. `shouldMount` conjoins the plan's flag with a NON-EMPTY resolved
+ * list, so surviving an unset variable never becomes serving the endpoint with an empty token list
+ * — which would answer the D-07 default grant to anything that can reach loopback, a strictly
+ * worse posture than the defect this repairs.
+ *
+ * THE FIX IS AT THE CALL SITE, NEVER IN `resolveMcpTokens`. At `agent-qa mcp` the refusal precedes
+ * any bind, nothing is serving, and a hard failure naming the variable is the honest outcome its
+ * own docstring argues for. One error class, two call sites, two correct answers.
  *
  * Reads `unknown` for the same reason `mcpMountPlanFor` does: a cell must be able to hand this the
  * shape of a defect as easily as the shape of a correct config. `env` is a PARAMETER rather than
  * `process.env` read inside, so a cell can hand it an environment that records what was read.
  */
-export function coHostedMcpCredentialsFor(input: {
-  readonly config: unknown
-  readonly env: NodeJS.ProcessEnv
-  readonly warn?: (line: string) => void
-}): McpCoHostCredentials {
+export function coHostedMcpCredentialsFor(
+  // Indented deliberately rather than closed at column 0 in `mountCoHostedMcp`'s style: 408-17's
+  // `COHOST-RESOLUTION-CALLED-ONCE-OK` scopes its "exactly one call" clause to the region between
+  // this line and the first brace in column 1, and a `}): T {` signature line would end that
+  // region at the signature and measure an empty body.
+  input: {
+    readonly config: unknown
+    readonly env: NodeJS.ProcessEnv
+    readonly warn?: (line: string) => void
+  },
+): McpCoHostCredentials {
+  const warn = input.warn ?? ((line: string) => console.error(pc.yellow(line)))
   const plan = mcpMountPlanFor(input.config)
+  // THE DECISION, TAKEN FIRST. Nothing below this line runs when the operator turned the surface
+  // off or declared no credential, and `input.env` is not touched at all.
+  if (!plan.mount) {
+    return { plan, tokens: [], shouldMount: false, warning: undefined }
+  }
+
   const declared = (input.config as any)?.services?.mcp ?? {}
-  const tokens = resolveMcpTokens(declared.tokens ?? [], input.env)
-  return {
-    plan,
-    tokens,
-    shouldMount: plan.mount && tokens.length > 0,
-    warning: undefined,
+  try {
+    const tokens = resolveMcpTokens(declared.tokens ?? [], input.env)
+    return { plan, tokens, shouldMount: plan.mount && tokens.length > 0, warning: undefined }
+  } catch (error) {
+    // The same shape `mountCoHostedMcp` uses, deliberately: two failure paths on one optional
+    // surface should speak with one voice, and the closing sentence is copied from it verbatim.
+    const reason = error instanceof Error ? error.message : String(error)
+    const warning = `MCP endpoint not mounted — ${reason} `
+      + 'The dashboard is unaffected and keeps serving.'
+    warn(warning)
+    return { plan, tokens: [], shouldMount: false, warning }
   }
 }
 
@@ -2145,6 +2182,26 @@ async function startDashboardBackedServices(
     // The token RESOLUTION stays here and is a SEPARATE fact: `resolveMcpTokens` reads
     // `process.env`, so a plan that declared two entries can still resolve zero usable ones, and a
     // mount with nothing to match a bearer against is the same open door condition 2 refuses.
+    //
+    // CORRECTED 2026-09-01 (CR-01, 408-17). The three lines directly above are RETAINED and
+    // WITHDRAWN, not rewritten — an adjudication in this repository is re-grounded on the record,
+    // never edited away.
+    //
+    // WHAT IS WITHDRAWN, quoted: "The token RESOLUTION stays here and is a SEPARATE fact". Separate
+    // it was not. Until 408-17 the resolution stood at :2104 and the mount plan's flag was
+    // consulted at :2107 — the dereference ran ABOVE the very condition this comment claimed it was
+    // merely beside, and it ran AFTER `startServer` had already bound the dashboard at :1996. So a
+    // declared-but-unset `tokenEnvVar` threw `McpTokenEnvVarUnsetError` out of `resolveMcpTokens`,
+    // past a fully started dashboard, into this command's outer catch — and what an operator
+    // actually met was `process.exit(2)`, with neither `close()` nor `sessions.dispose()` reached.
+    // `services.mcp.enabled: false`, the off switch 408-09 added for exactly this surface, could
+    // not prevent it: condition 1 above was read two lines too late to be a control at all.
+    //
+    // THE REPLACEMENT RULE: the decision is taken FIRST, and the dereference that follows it
+    // isolates its own failure the way the bind beside it already does. Both halves now live in
+    // `coHostedMcpCredentialsFor`, which is one function a cell can hand a config record and an
+    // environment — and section 8 of `mcp-cohost.test.ts` hands it both, having first watched the
+    // ordering above red at this seam.
     const mcpCredentials = coHostedMcpCredentialsFor({ config, env: process.env })
     const mcpTokens = mcpCredentials.tokens
     let mcpMasking: ReturnType<typeof composeMcpMasking> | undefined
