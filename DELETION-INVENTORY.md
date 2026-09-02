@@ -478,3 +478,148 @@ suite · the whole `@vostride/agent-qa-dashboard-ui` suite · the whole `@vostri
 suite · `pnpm validate:debris-mutation` (four legs, each reddening its named cell, every subject
 restored byte-identically) and its neutered self-test fatal on green. The standing red is
 `tools/embedding-bench` `tau-lex`, which predates this phase (377) and is untouched by it.
+
+---
+
+## 2026-09-02 — the Issue-slot cleanup (Phases 409–412, CLSR-01..05)
+
+**This section deletes nothing.** Phases 409, 410 and 411 did the deleting, and each of them
+hand-measured every closed-shape cell it left behind — one mutation ledger per phase, one row per
+cell, every exit code read from the process. Phase 412 added no deletion and no behaviour: it
+merged the three census cells into one, turned the three ledgers into a script that re-runs them,
+swept the prose the deletions falsified, reconciled `.planning` and `spec/v2`, and wrote this. This
+is the milestone's CLOSING register. It records the verdicts those ledgers reached; it does not
+re-reach them, and it adds no new deletion or retention ruling of its own.
+
+Per D-13 the acceptance is **a grep-clean inventory plus mutation-measured closed-shape cells**,
+which is the 404/405 idiom: a green suite cannot see a removed member returning, because every
+assertion that a shape CONTAINS what it should is satisfied by a shape that contains more.
+
+### The ruling
+
+> **agent-qa is not a bug tracker and does not integrate with one.**
+
+> **When nothing is configured, nothing is filed — and no proposal is minted either.** The
+> record-and-surface `FindingProposal` that v52 shipped as the engine's placeholder goes too.
+
+Both verbatim from `spec/v2/issue-engine-removal.md` §1 (the owner's decision of 2026-08-25). The
+same section declines a tracker integration outright — "considered and **declined as a scope
+multiplier**. Nothing is planned in its place."
+
+> there are no users of this version so no backward compatibility etc.
+
+The owner, 2026-09-02, in the Phase 412 discussion; recorded as D-15's context in
+`.planning/phases/412-closure-the-census-the-mutation-bar-the-register-the-reconci/412-CONTEXT.md`.
+It is quoted here because it is the reason nothing in this milestone carries a compatibility
+shim: what left, left outright.
+
+### How this inventory is measured
+
+| Instrument | What it claims | Where |
+|---|---|---|
+| the merged census | 38 inventory entries over three path-ruled universes — 35 global, one production-scoped, two funnel-scoped — have ZERO occurrences across every workspace package's `src`, tests and comments included. 31 of the 38 are the union the three phases measured (409's nine, 410's seven, 411's fifteen); the other seven are the spellings Phase 412's own prose sweep retired (the five D-15 needles, with the scaffolded shelf pinned in three byte-distinct forms because the scaffold spelled it inside a template literal). Fifteen entries carry a `clsr01` flag and a dedicated cell counts that flag at exactly fifteen: `triage-issues`, `triageIssues`, `issues-drafted`, `ANALYZE_RUN_PRODUCED_SUCCESSORS`, `POST_RUN_CHAIN_KINDS`, `IssueDelta`, `IssueId`, `asIssueId`, the `BUG` entity kind, `BUG-`, `agentqa://bug`, `reserved-kind`, `BugAddressingNotAvailable`, `FindingProposal`, `FindingFailurePoint`. The production-scoped quoted status literal is NOT one of the fifteen — CLSR-01 states it as a separate clause — and carries no flag. **A comment is a hit like any other occurrence.** | `packages/arch/src/__tests__/412-issue-slot-deleted.test.ts` (`pnpm validate:arch`) |
+| the by-name positive control | asserts BOTH halves of D-03 rather than documenting either: the sorted set of NON-production files spelling the quoted retired status literal equals exactly `schema/src/__tests__/run-notification-migration.test.ts` and `agent-local/src/__tests__/post-processing-status.test.ts` — and the third site CLSR-01 excludes, `cli/src/__tests__/conformance/domain-list.ts`, spells the marker only **as a bare key, not the quoted literal**. So D-03's "three sites still spell the literal" is two spellers plus one key, and a reader of D-03 is not misled. A fourth speller REDs the control instead of hiding behind an exclusion list; production scope stays a path rule that names no file. | same file |
+| the mutation bar — plants | one leg per package root discovered from disk (23 today, `PLANT ROOTS 23`): a one-line file spelling exactly one needle is dropped into a real package, the census must RED, and the RED must NAME that package's own file. Twelve plant lines rotate by root ordinal, so coverage of the needle table and coverage of the package tree are proven by one loop. | `scripts/412-issue-slot-mutation.sh` legs `P-<pkg>` (`pnpm validate:issue-slot-mutation`) |
+| the mutation bar — scoped controls | `C-01` plants the quoted status literal OUTSIDE production (410 Row 8 half (b)) and only the by-name control REDs while the production cell stays green; `C-02` plants the side-counter key at a funnel-rule path (411 Row 10, leg IN) and only the funnel cell REDs. | same script, legs `C-01`, `C-02` |
+| the mutation bar — the 409 legs | `J-01` ← 409 Row 1 (JOBK-01, a sixth kind on the enqueue contract; **schema rebuilt only** — the agent must not be rebuilt under a six-member union, because a DTS build failure is not a red cell); `J-02` ← 409 Row 2 (JOBK-02, a second declared successor); `J-03a`/`J-03b`/`J-03c` ← 409 Row 3 (JOBK-03, one mutation read at three distances: agent, agent-local, cli); `V-01` ← 409 Row 4 (the surviving `Delta` union's `never` bar — see the VOCB-01 row below); `V-02` ← 409 Row 5 (the `DELTA_KINDS` cast, the runtime wall beside Row 4); `V-03` ← 409 Rows 10–13 (the whole-vocabulary readmission). | same script |
+| the mutation bar — the 410 legs | `E-01` ← 410 Row 1 (ENTY-03, the sixth kind in the `ENTITY_KINDS` array); `E-02`/`E-03`/`E-04` ← 410 Rows 2–4 (the same kind smuggled onto all five `satisfies`-total tables through an `Object.assign(… as Record<string, unknown>, …)` cast); `E-05` ← 410 Row 5 (the retired no-match resolution reason); `E-06` ← 410 Row 6 (the retired corpus category). Each of the three cast legs runs `pnpm --filter @vostride/agent-qa-schema typecheck` **while the cast is live** and requires exit 0 — 410 D-02's claim that the type wall cannot see a cast-widened table, measured on every run rather than remembered, with its own FATAL if a future `tsc` ever learns to see it. | same script |
+| the mutation bar — the 411 legs | `W-01` ← 411 Row 1 (WTST-09, the runtime exact-list pin) and `W-01t` ← the same row's ALLOWED second instrument (the schema typecheck, which that ledger predicted at 0 and MEASURED at 2 — the prediction was wrong in the safe direction, so the correction rides its own leg); `W-02` ← 411 Row 2 (the loop-outcome vocabulary); `W-03` ← 411 Row 3 (WTST-11, a put re-added on the stopped arm, schema rebuilt before the mutated run and again before the restored one); `W-04` ← 411 Row 4 and `W-05` ← 411 Row 5 (the two `keyof` pins); `W-06` ← 411 Row 8 (the funnel `keyof` pin). A `.test-d.ts` REDs as ONE FAILED SUITE, matched on the suite line plus a `❯ <file>:<line>:<col>` pointer and a `TypeCheckError` block count — never on a test title, because a failed type suite has none. | same script |
+| the rows the bar does NOT encode | named with their reason and their standing instrument, because a bar that silently drops a row measures less than it claims. **410 Rows 9–11** (the three dist-crossing readmissions) are skipped by D-06 — each needs a whole-package rebuild chain to measure what `E-01` already REDs at its source. **409 Rows 6–8** (the eleventh crash point, the poison job's bound, the `consolidate` bound cell) are skipped: they measure engine bounds rather than a set that got smaller. **411 Rows 6–7** keep `pnpm validate:router-mutation` as their instrument — re-encoding them here would give one property two owners. | `pnpm validate:router-mutation` for 411 Rows 6–7 |
+| VOCB-01, as it was actually measured | the requirement is carried by `V-03`, the whole-vocabulary readmission: under it the schema still COMPILES (the leg's coherence gate proves `typecheck` exit 0 before the instrument runs) and the census REDs exactly the four cells that name the deleted vocabulary. `V-01` does NOT carry VOCB-01 — `packages/schema/src/delta/delta.ts` is byte-identical across the whole deletion, so what its retained `never` bars guard is the SURVIVING six-arm union against a future widening. The criterion's "via `typecheck`" names that second instrument. **The requirement is therefore measured as two instruments, and this row says which one carries it.** D-05's wording — "five `git show 9b0c3459:<path>` restores" — is applied as FOUR restores plus a three-line barrel hunk, because `packages/schema/src/index.ts` moved under 410 and 411: a whole-file restore would readmit 411's deleted finding schemas and drop the stop-arm exports, which is a blast radius rather than a measurement. The deviation is recorded in the script's own `# LEG INDEX` block, which is this table's transcription source. | `scripts/412-issue-slot-mutation.sh` legs `V-03` / `V-01` |
+| the bar's own self-test | `ISSUE_SLOT_SELFTEST=neutered` makes `apply_mutation` a no-op, so every leg stays green and the script must then exit NON-ZERO with `FATAL: the suite stayed green under the mutation`. A gate nobody has seen fire is a comment; this one has been seen to fire. CLSR-02's bare `SELFTEST=neutered` is shorthand — the real knob is spelled `ISSUE_SLOT_SELFTEST=neutered`, script-prefixed so chained scripts cannot collide (D-08). | same script |
+| the asymmetry, recorded rather than closed | 409's note (h): the job-kind half of the bar is STRUCTURAL — a sorted-literal `toEqual` REDs under any spelling — while the delta/id half is LEXICAL, nine exact tokens. A readmission under RENAMED tokens therefore passes every instrument this milestone owns. The structural pin that would close it (`expectTypeOf<keyof typeof ids>()` against the two surviving casts) is a new cell, and this phase encodes rather than invents; it is deferred, not done, and this row is where a later reader finds that out. | — |
+
+**Comments count as hits, and that is the point of the design rather than a rough edge in it.** The
+inventory's promise is "this string is not in the shipped tree", not "no code reads it". A
+retirement note that spells the token it retired is indistinguishable, to any later grep, from the
+reappearance the register exists to forbid. Every needle is therefore built from two halves so the
+census file cannot satisfy its own inventory, a last cell asserts that property over the file's own
+bytes, and every dated note this milestone wrote names the CONCEPT and never the token — which is
+why 409–412 left 35 dated "— see `DELETION-INVENTORY.md`" lines in `packages/*/src` pointing here
+instead of restating what left.
+
+**The one exception, stated so it is not mistaken for an oversight: this file.**
+`DELETION-INVENTORY.md` sits at the repository root, outside every package's `src`, and it names
+retired tokens literally because a register whose entries cannot be searched for is not a register.
+The same reasoning covers `scripts/`, which is also outside the census — see the frozen 404 script's
+two rows under "What was RETAINED".
+
+### What was deleted
+
+**Both ends of the derivation, stated so it can be re-run.** Baseline `9b0c3459` — the last commit
+before Phase 409. Closing HEAD `63740043` (`agent-qa`, branch `version-0.2`), the commit that closed
+the mutation bar and the last code commit of the milestone; the super-repo stood at `8902de62`. The
+lists below are DERIVED from `git -C agent-qa diff 9b0c3459..63740043`, keyed by token, not
+transcribed from any plan summary: 42 commits, 112 files, +3259/−1381, with exactly one file deleted
+(`packages/schema/src/delta/issue-delta.ts`) and eight added. The "pre-deletion hits" column is that
+token's occurrence count in the census's own universe (`packages/*/src`, `.ts`/`.tsx`, tests and
+comments included) measured at `9b0c3459`; the "source in the diff" column is where the deletions
+landed, with the per-file count in parentheses. **Where the two columns agree the derivation is
+self-checking** — the baseline count and the diff's deletion count are computed by different means
+and match token for token, with one recorded exception noted under Phase 411.
+
+#### Phase 409 — the job-kind layer and the type vocabulary
+
+Deleted by commits `6f7f3d93`..`fa314aa4`. Ledger:
+`.planning/phases/409-the-job-kind-layer-the-type-vocabulary/409-MUTATION-LEDGER.md`.
+
+| Token / file / line | Pre-deletion hits (census) | Source in the diff | Ledger row |
+|---|---|---|---|
+| `triage-issues` — the reserved sixth job kind | 30 | `agent/src/jobs/kinds.ts` (6) · `agent/src/jobs/__tests__/real-kinds.test.ts` (5) · `agent/src/jobs/chain-identity.ts` (4) · `agent/src/jobs/__tests__/engine-semantics.test.ts` (4) · `agent-local/src/__tests__/kill-matrix/kill-matrix.test.ts` (3) · `agent-local/src/__tests__/kill-matrix/kill-matrix-adversarial.test.ts` (3) · `schema/src/job/job.ts` (2) · `agent/src/jobs/__tests__/kind-registry.test.ts` (2) · `cli/src/curation/post-run-chip-emitter.ts` (1) | Rows 1 / 2 (JOBK-01, JOBK-02) |
+| `issues-drafted` — the reserved kind's checkpoint id | 4 | `agent/src/jobs/kinds.ts` (2) · `agent-local/src/__tests__/kill-matrix/kill-matrix.test.ts` (2) | Row 1 (JOBK-01) |
+| `ANALYZE_RUN_PRODUCED_SUCCESSORS` — the produced-successors constant | 3 | `agent/src/jobs/kinds.ts` (3) | Row 2 (JOBK-02) — 388 D-04's declared/produced split collapsed with it; the survivor is `ANALYZE_RUN_SUCCESSORS` |
+| `triageIssues` — the third derived chain id key | 8 | `agent-local/src/__tests__/chain-terminal-notify.test.ts` (3) · `agent/src/jobs/chain-identity.ts` (2) · `cli/src/curation/post-run-tail.ts` (1) · `cli/src/__tests__/post-run-enqueue-idempotency.test.ts` (1) · `agent/src/jobs/engine.ts` (1) | Row 3 (JOBK-03), read at three distances by legs `J-03a`/`b`/`c` |
+| `POST_RUN_CHAIN_KINDS` — the never-imported chain-kinds list | 1 | `agent/src/jobs/chain-identity.ts` (1) | Row 2; the survivor is `POST_RUN_CHAIN_TERMINAL_KINDS`. `spec/v2/issue-engine-removal.md` §4 called this row `CHAIN_KINDS`, an identifier that never existed — corrected in place by D-21, see Reconciliation |
+| `IssueDelta` — the second delta vocabulary (`export type IssueDelta = FileIssue \| RecordOccurrence \| Reopen \| ProposeResolve \| Merge \| Noop`) | 14 | `schema/src/__tests__/delta.test-d.ts` (8) · `schema/src/__tests__/seam-root.test-d.ts` (3) · `schema/src/index.ts` (1) · `schema/src/delta/issue-delta.ts` (1) · `schema/src/delta/index.ts` (1) | Rows 10 / 13 (VOCB-01) |
+| `issue-delta` — that vocabulary's module specifier | 2 | `schema/src/delta/index.ts` (1) · `schema/src/__tests__/delta.test-d.ts` (1) | Row 13 (VOCB-01). The cell matches file CONTENT only, so it measures "no file IMPORTS the module by name" and is not a file-existence pin — the ledger records that limit and Rows 10/11 are what catch an orphaned readmission |
+| **the file** `packages/schema/src/delta/issue-delta.ts` — the milestone's one deleted file (39 lines) | — | deleted whole; `git show 9b0c3459:packages/schema/src/delta/issue-delta.ts` is the byte authority the `V-03` leg restores from | Rows 10–13 |
+| `IssueId` — the third id brand (`export type IssueId = string & { readonly [issueIdBrand]: 'IssueId' }`) | 23 | `schema/src/__tests__/delta.test-d.ts` (7) · `schema/src/delta/issue-delta.ts` (6) · `schema/src/__tests__/seam-root.test-d.ts` (4) · `schema/src/index.ts` (2) · `schema/src/ids/record-id.ts` (2) · `schema/src/ids/index.ts` (2) | Row 11 (VOCB-02). The brand's private `unique symbol` declaration is caught by NONE of the needles — it is spelled with a lower-case initial and the scan is case-sensitive — so the census pins the EXPORTED brand and its cast, not the symbol they are built from. A symbol-only readmission is inert and is recorded here as out of scope |
+| `asIssueId` — that brand's cast helper (`export const asIssueId = (value: string): IssueId => value as IssueId`) | 5 | `schema/src/__tests__/seam-root.test-d.ts` (2) · `schema/src/index.ts` (1) · `schema/src/ids/record-id.ts` (1) · `schema/src/ids/index.ts` (1) | Row 12 (VOCB-02) — the RUNTIME half; the brand is a type and disappears at build, the cast is an exported value and would reappear in `dist` |
+
+Also deleted, and not needles because they carry no retired token: the barrel re-export lines
+`export { asRecordId, asIssueId, asEvidenceToken } from './record-id'` and
+`export type { RecordId, IssueId, EvidenceToken } from './record-id'` narrowed to two brands each,
+and the `Issue` auto-accept membership line in `packages/schema/src/safety/protected-classes.ts`
+(one line, commit `25da3174`). Two brands survive: `RecordId` and `EvidenceToken`.
+
+#### Phase 410 — the BUG entity kind
+
+Deleted by commits `4629de35`..`f46a4338`. Ledger:
+`.planning/phases/410-the-bug-entity-kind/410-MUTATION-LEDGER.md`.
+
+| Token / file / line | Pre-deletion hits (census) | Source in the diff | Ledger row |
+|---|---|---|---|
+| the retired entity kind, word-bounded (`ENTITY_KINDS` went from `['TST', 'RUN', 'BUG', 'MEM', 'POL', 'TGT']` to five) | 74 | 21 files, widest first: `knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts` (10) · `schema/src/entity/entity-card.ts` (5) · `knowledge-local/src/resolver/resolve.ts` (5) · `knowledge-local/src/addressing/ledger.ts` (5) · `dashboard-ui/src/__tests__/fixtures/entity-cards.ts` (5) · `dashboard-ui/src/__tests__/entity-card.test.ts` (5) · `agent/src/functions/entity-cards/__tests__/card-actions.test.ts` (5) · `knowledge-local/src/resolver/__tests__/resolve-tier-a.test.ts` (4) · `knowledge-local/src/addressing/__tests__/ledger.test.ts` (4) · `schema/src/entity/kinds.ts` (3) · `knowledge-local/src/resolver/__tests__/corpus.test.ts` (3) · `cli/src/__tests__/conformance/scenario-table.ts` (3) · `agent/src/analysis/__tests__/cluster.test.ts` (3) · six files at 2 · two files at 1 | Row 1 (ENTY-03), with Rows 2–4 for the five `satisfies`-total tables |
+| `BUG-` — the retired short-ID prefix | 25 | `knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts` (6) · `knowledge-local/src/addressing/ledger.ts` (4) · `knowledge-local/src/resolver/__tests__/resolve-tier-a.test.ts` (3) · `dashboard-ui/src/__tests__/fixtures/entity-cards.ts` (3) · `agent/src/analysis/__tests__/cluster.test.ts` (3) · `agent/src/analysis/cluster.ts` (2) · four files at 1 | Rows 1 / 5 |
+| `agentqa://bug` — the retired URI scheme | 4 | `mcp/src/__tests__/resources.test.ts` (1) · `knowledge-local/src/resolver/__tests__/resolve-tier-a.test.ts` (1) · `knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts` (1) · `dashboard-ui/src/__tests__/fixtures/entity-cards.ts` (1) | Rows 1 / 9 (the mcp half is one of the three dist-crossing rows the bar skips) |
+| `reserved-kind` — the retired no-match resolution reason | 13 | `knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts` (7) · `knowledge-local/src/resolver/resolve.ts` (3) · `knowledge-local/src/resolver/__tests__/resolve-tier-a.test.ts` (2) · `schema/src/entity/resolution.ts` (1) | Row 5 |
+| `BugAddressingNotAvailableError` — the retired mint refusal | 6 | `knowledge-local/src/addressing/ledger.ts` (3) · `knowledge-local/src/addressing/__tests__/ledger.test.ts` (2) · `knowledge-local/src/index.ts` (1) | Row 1; its law is the numbered gap `ledger.test.ts` now names in its header (law 4) |
+| `BUG_CARD` — the retired dashboard fixture | 6 | `dashboard-ui/src/__tests__/entity-card.test.ts` (4) · `dashboard-ui/src/__tests__/fixtures/entity-cards.ts` (2) | Row 11 (skipped by the bar; `E-01` REDs at the source) |
+| `'reserved'` — the retired status literal, in PRODUCTION | 1 | `schema/src/entity/entity-card.ts` (1, the line `BUG: ['reserved'],` in `ENTITY_STATUSES`) | Row 3; measured today by the production-scoped cell, whose other half is the by-name control |
+| `CORPUS_RESERVED_BUG_MACHINE_IDS`, `BUG_CARD` and the retired corpus category rows | counted above | `knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts`, `dashboard-ui/src/__tests__/fixtures/entity-cards.ts` | Row 6 (leg `E-06`) |
+
+#### Phase 411 — write_test's app-broken branch
+
+Deleted by commits `a4c679a3`..`428fd902`. Ledger:
+`.planning/phases/411-write-test-s-app-broken-branch-report-the-verdict-and-stop/411-MUTATION-LEDGER.md`.
+
+| Token / file / line | Pre-deletion hits (census) | Source in the diff | Ledger row |
+|---|---|---|---|
+| `'finding'` — the retired proposal kind literal (`PROPOSAL_KINDS` went from four to three) | 58 | 21 files, widest first: `agent/src/authoring/router.ts` (8) · `agent/src/authoring/__tests__/router.test.ts` (6) · `schema/src/__tests__/proposal-envelope.test.ts` (5) · `knowledge-local/src/review/__tests__/authoring-proposals-store.test.ts` (5) · `agent/src/authoring/loop.ts` (5) · `agent/src/authoring/__tests__/repair-fence.test.ts` (4) · three files at 3 · six files at 2 · six files at 1 | Row 1 (WTST-09), legs `W-01` and `W-01t` |
+| `FindingProposalV1Schema` / `FindingProposalV1` — the retired proposal schema family | 21 | `knowledge-local/src/review/__tests__/authoring-proposals-store.test.ts` (4) · `agent/src/authoring/loop.ts` (4) · `schema/src/proposal/inbox-ops.ts` (2) · `schema/src/proposal/envelope.ts` (2) · `schema/src/index.ts` (2) · `schema/src/authoring/proposal-arms.ts` (2) · `schema/src/authoring/index.ts` (2) · `agent/src/authoring/__tests__/repair-abandonment-proposal.test.ts` (2) · `schema/src/authoring/suite-stability.ts` (1) | Row 1 |
+| `FindingFailurePointSchema` / `FindingFailurePoint` — the retired failure-point schema | 7 | `schema/src/authoring/proposal-arms.ts` (3) · `schema/src/index.ts` (2) · `schema/src/authoring/index.ts` (2) | Row 1 |
+| `FindingRoute` — the retired route interface (`PostVerifyRoute` narrowed to the stop route) | 25 | `agent/src/authoring/__tests__/router.test-d.ts` (13) · `agent/src/authoring/router.ts` (5) · `agent/src/authoring/loop.ts` (5) · `agent/src/authoring/repair.ts` (1) · `agent/src/authoring/__tests__/repair-abandonment-proposal.test.ts` (1) | Row 4 (leg `W-04`, the `StopRoute` `keyof` pin) |
+| `RouterFindingSignalClass` and `ROUTER_EVIDENCE_CHANNELS` / `RouterEvidenceChannel` | 8 (signal class) | `agent/src/authoring/__tests__/router.test-d.ts` (5) · `agent/src/authoring/router.ts` (3) | Row 4 |
+| `routeRepairOrFinding` — the retired router entry point | 28 | `agent/src/authoring/__tests__/router.test.ts` (10) · `agent/src/authoring/loop.ts` (4) · `agent/src/authoring/__tests__/router.test-d.ts` (3) · `agent/src/authoring/router.ts` (2) · four `__tests__` files at 2 · `schema/src/authoring/proposal-arms.ts` (1) | Row 4; the survivor is the stop route, and `repair-abandonment-proposal.test.ts` was renamed `repair-abandonment-stop.test.ts` in the same commit |
+| `findingRoute` / `findingProposal` / `findingEvidenceFor` — the retired route helper stem, loop carrier and evidence helper | 4 / 5 / 3 | `agent/src/authoring/router.ts` and `loop.ts` (helper and carrier); `router.ts` (3, the evidence helper) | Rows 4 / 5 |
+| `findingDirectionRows` — the retired corpus key | 3 | `agent/src/authoring/__tests__/router.test.ts` (3), plus one deletion in `agent/src/authoring/__tests__/fixtures/router-corpus/expectations.json` | Row 4. **This is the one token whose two columns differ (3 vs 4), and the reason is recorded rather than reconciled away:** the fourth deletion is in a `.json` fixture, which is outside the census's `.ts`/`.tsx` universe. The census measures four fewer file types than the diff does, and that is by design |
+| `ROUTE_FOR_KIND.finding` — the retired accept route key | 1 | `agent/src/functions/ops/proposals-accept.ts` (1) | Row 1 |
+| `finding on ` — the retired digest line | 1 | `agent/src/functions/ops/runs-digest.ts` (1) | Row 1 |
+| `finding-branch` — the retired cell-title stem | 2 | `agent/src/authoring/__tests__/repair-fence.test.ts` (2) | Row 1 |
+| `sideCounters.findings` — the retired side-counter access, FUNNEL-scoped | 2 | `schema/src/authoring/funnel.ts` (2) | Row 8 (leg `W-06`) |
+| `findings:` — the retired side-counter key, FUNNEL-scoped | 10 | `schema/src/authoring/__tests__/funnel.test.ts` (5) · `schema/src/authoring/funnel.ts` (3) · `agent/src/functions/__tests__/authoring-funnel-get.test.ts` (1) · `agent/src/authoring/__tests__/funnel-projection.test.ts` (1) | Row 8. Both funnel needles are scoped by a PATH RULE because those two words are ordinary English elsewhere in the tree; a global needle would accuse twenty homonyms this milestone does not own |
+
+Also deleted in 411, and not needles: the `stopped` arm's `proposal` payload on
+`AuthoringLoopOutcome` (`AUTHORING_LOOP_OUTCOMES` went from five members to four), the finding
+branch of `authoring.draft.write`'s op projection, and six digest rows in the golden capability
+ledger that moved with the retired proposal arm (`3bfd3e61`).
