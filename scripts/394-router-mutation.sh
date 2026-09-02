@@ -37,6 +37,10 @@
 #                                    A mutation script that cannot fail when its mutation does
 #                                    nothing is measuring nothing, and this is how that is checked
 #                                    without hand-editing the file.
+#
+# 2026-09-02 (Phase 411): re-pinned in place — the second route was renamed to stop with the
+# Issue-slot cleanup; the target spellings below follow it and both claims are unchanged — see
+# DELETION-INVENTORY.md.
 
 set -euo pipefail
 
@@ -62,7 +66,7 @@ SIGNATURE_CELL="row clean-definitive-assertion-fail reproduces its frozen route"
 # surprise red is how a differential stops being one.
 # 394-06 MEASURED AND ADDED THE LAST TWO, and they are the differential getting STRONGER rather
 # than the list being widened to quieten a surprise. With stage 5 wired, a router that routes a
-# clean definitive assertion-fail to repair does not merely misclassify: the loop's finding branch
+# clean definitive assertion-fail to repair does not merely misclassify: the loop's stop branch
 # is never taken, `repairDraft` runs, and the call-site cells that measured zero probe starts red
 # too. Every entry here is an assertion about the SAME signature row — a clean fail must not reach
 # repair — observed at the derivation and now also at the call site. Anything else is collateral
@@ -70,28 +74,28 @@ SIGNATURE_CELL="row clean-definitive-assertion-fail reproduces its frozen route"
 ALLOWED_RED_CELLS=(
   "$SIGNATURE_CELL"
   "refs the exact trace and both a11y snapshots at the failure point"
-  "finding-branch-never-repairs answers a finding without starting a single probe"
-  "finding-branch-never-repairs carries the evidence refs the route derived"
+  "stop-branch-never-repairs answers a stop without starting a single probe"
+  "stop-branch-never-repairs carries the evidence refs the route derived"
 )
 
 # ---- MUTATION CELL 2 (394-06) ------------------------------------------------------------------
 #
 # The cell the router's own corpus cannot carry: SC-2's claim is about the CALL SITE, and a
 # derivation proven correct can still be wired to the wrong consumer. The forbidden implementation
-# is `loop.ts`'s finding branch calling `repairDraft` — the app-broken branch reaching the repair
+# is `loop.ts`'s stop branch calling `repairDraft` — the app-broken branch reaching the repair
 # entry point, which is oracle capture one layer out.
 #
 # IT MUST RED IN TWO PLACES, and each covers what the other cannot. The TYPECHECK leg is the whole
 # of the structural claim — `repairDraft` takes a `RepairRoute`, so the call does not compile — and
 # vitest does not typecheck `.test.ts` at all, so nothing in the behavioural suite would notice.
 # The BEHAVIOURAL leg is what says the property survives a build in which somebody reached for a
-# cast: esbuild transpiles the type error away, the finding branch runs, and the cell that measured
+# cast: esbuild transpiles the type error away, the stop branch runs, and the cell that measured
 # zero probe starts reds by name.
-LOOP_SIGNATURE_CELL="finding-branch-never-repairs answers a finding without starting a single probe"
+LOOP_SIGNATURE_CELL="stop-branch-never-repairs answers a stop without starting a single probe"
 
 ALLOWED_RED_CELLS_2=(
   "$LOOP_SIGNATURE_CELL"
-  "finding-branch-never-repairs carries the evidence refs the route derived"
+  "stop-branch-never-repairs carries the evidence refs the route derived"
 )
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/394-router-mutation.XXXXXX")"
@@ -161,10 +165,10 @@ cp "$ROUTER" "$SNAPSHOT"
 
 # The mutation target must be UNIQUE, or `perl -pi` would edit an unknown number of places and the
 # differential would be measuring something nobody wrote down.
-TARGET_COUNT="$(grep -c "'clean-definitive-assertion-fail': 'finding'," "$ROUTER" || true)"
+TARGET_COUNT="$(grep -c "'clean-definitive-assertion-fail': 'stop'," "$ROUTER" || true)"
 [ "$TARGET_COUNT" = "1" ] \
   || fatal "the mutation target appears $TARGET_COUNT time(s) in $ROUTER_REL, expected exactly 1"
-LOOP_TARGET="  if (route.kind === 'finding') {"
+LOOP_TARGET="  if (route.kind === 'stop') {"
 LOOP_TARGET_COUNT="$(grep -cF "$LOOP_TARGET" "$LOOP" || true)"
 [ "$LOOP_TARGET_COUNT" = "1" ] \
   || fatal "the cell-2 mutation target appears $LOOP_TARGET_COUNT time(s) in $LOOP_REL, expected exactly 1"
@@ -240,9 +244,9 @@ banner "MUTATION 1 — the clean-definitive-assertion-fail class routed to REPAI
 if [ "${ROUTER_MUTATION_SELFTEST:-}" = "neutered" ]; then
   printf '!!! ROUTER_MUTATION_SELFTEST=neutered — applying a NO-OP edit instead of the mutation.\n'
   printf '!!! This script MUST now fatal. If it does not, it is measuring nothing.\n'
-  perl -0pi -e "s/'clean-definitive-assertion-fail': 'finding',/'clean-definitive-assertion-fail': 'finding',/" "$ROUTER"
+  perl -0pi -e "s/'clean-definitive-assertion-fail': 'stop',/'clean-definitive-assertion-fail': 'stop',/" "$ROUTER"
 else
-  perl -0pi -e "s/'clean-definitive-assertion-fail': 'finding',/'clean-definitive-assertion-fail': 'repair',/" "$ROUTER"
+  perl -0pi -e "s/'clean-definitive-assertion-fail': 'stop',/'clean-definitive-assertion-fail': 'repair',/" "$ROUTER"
 fi
 RESTORED=0
 
@@ -305,18 +309,18 @@ run_suite recontrol
 RECONTROL_COUNTS="$(suite_counts recontrol)"
 
 # ------------------------------------------------------------------------------------------------
-# MUTATION CELL 2 — the finding branch wired into repairDraft (394-06, SC-2 at the CALL SITE)
+# MUTATION CELL 2 — the stop branch wired into repairDraft (394-06, SC-2 at the CALL SITE)
 # ------------------------------------------------------------------------------------------------
 #
-# THE FORBIDDEN IMPLEMENTATION, exactly: `loop.ts`'s stage-5 finding branch calls `repairDraft`
+# THE FORBIDDEN IMPLEMENTATION, exactly: `loop.ts`'s stage-5 stop branch calls `repairDraft`
 # before answering. That is the app-broken branch reaching the repair entry point — a test whose
 # CLAIM the application did not satisfy, handed to a loop whose job is to change the test until it
 # passes. Cell 1 proves the derivation refuses to route a clean fail to repair; this proves the
 # call site refuses to wire it there, which is a different property and the one SC-2 states.
 
-banner "MUTATION 2 — the finding branch wired into repairDraft"
+banner "MUTATION 2 — the stop branch wired into repairDraft"
 RESTORED=0
-perl -0pi -e "s/\Q  if (route.kind === 'finding') {\E/  if (route.kind === 'finding') {\n    await repairDraft(route, { draft, handoff: handoff as CompletedRunHandoff, shelf: deps.shelf, runs: deps.shelf.runs })/" "$LOOP"
+perl -0pi -e "s/\Q  if (route.kind === 'stop') {\E/  if (route.kind === 'stop') {\n    await repairDraft(route, { draft, handoff: handoff as CompletedRunHandoff, shelf: deps.shelf, runs: deps.shelf.runs })/" "$LOOP"
 
 LOOP_MUTATED_SHA="$(subject_sha "$LOOP")"
 printf 'mutated  %s\n  sha256 %s\n' "$LOOP_REL" "$LOOP_MUTATED_SHA"
@@ -332,29 +336,30 @@ TSC2_RC=$?
 set -e
 printf 'typecheck leg exited %s\n' "$TSC2_RC"
 [ "$TSC2_RC" -ne 0 ] \
-  || fatal "the finding branch compiled while calling repairDraft — the two route arms are assignable"
+  || fatal "the stop branch compiled while calling repairDraft — the two route arms are assignable"
 grep -q "authoring/loop.ts" "$WORK/mutation2-tsc.log" \
   || fatal "the typecheck red does not name $LOOP_REL"
 # THE EXACT SENTENCE SC-2 ASSERTS, required verbatim rather than the token `repairDraft`. Measured
-# at 394-06: tsc reports the call as `Argument of type 'FindingRoute' is not assignable to
-# parameter of type 'RepairRoute'` and never names the callee. Requiring the callee's name would
-# have passed on any unrelated type error in this file that happened to mention it; requiring this
-# sentence passes only on the non-assignability the two route arms exist to have.
-grep -qF "Argument of type 'FindingRoute' is not assignable to parameter of type 'RepairRoute'" \
+# at 394-06 and re-observed by hand at 411-02 under the renamed route: tsc reports the call as
+# `Argument of type 'StopRoute' is not assignable to parameter of type 'RepairRoute'.` and never
+# names the callee. Requiring the callee's name would have passed on any unrelated type error in
+# this file that happened to mention it; requiring this sentence passes only on the
+# non-assignability the two route arms exist to have.
+grep -qF "Argument of type 'StopRoute' is not assignable to parameter of type 'RepairRoute'" \
   "$WORK/mutation2-tsc.log" \
-  || fatal "the typecheck red is not the FindingRoute-to-RepairRoute non-assignability"
+  || fatal "the typecheck red is not the StopRoute-to-RepairRoute non-assignability"
 printf 'typecheck red names %s and the non-assignability:\n' "$LOOP_REL"
 grep -m1 "authoring/loop.ts" "$WORK/mutation2-tsc.log" | sed 's/^/  /'
 
 # LEG B — the behaviour, because a build in which somebody reached for a cast still runs. esbuild
-# transpiles the type error away, the finding branch enters repair, and the cell that measured zero
+# transpiles the type error away, the stop branch enters repair, and the cell that measured zero
 # probe starts reds by name.
 run_suite mutation2
 MUTATION2_RC="$SUITE_RC"
 MUTATION2_COUNTS="$(suite_counts mutation2)"
 printf 'behavioural leg exited %s — %s\n' "$MUTATION2_RC" "$MUTATION2_COUNTS"
 [ "$MUTATION2_RC" -ne 0 ] \
-  || fatal "the suite stayed green with the finding branch wired into repair"
+  || fatal "the suite stayed green with the stop branch wired into repair"
 
 grep -E '^ FAIL ' "$WORK/mutation2.log" >"$WORK/failed2.txt" || true
 sed -E 's/^ FAIL +[^>]*> *//; s/^.*> *//' "$WORK/failed2.txt" | sort -u >"$WORK/failed-cells2.txt"
@@ -411,8 +416,8 @@ printf 'sha256 after      : %s (byte-identical)\n' "$SHA_AFTER"
 printf '\n'
 printf 'CELL 2\n'
 printf 'mutated file      : %s\n' "$LOOP_REL"
-printf 'mutation          : the stage-5 finding branch calling repairDraft\n'
-printf 'typecheck         : exit %s, naming %s and the FindingRoute-to-RepairRoute refusal\n' "$TSC2_RC" "$LOOP_REL"
+printf 'mutation          : the stage-5 stop branch calling repairDraft\n'
+printf 'typecheck         : exit %s, naming %s and the StopRoute-to-RepairRoute refusal\n' "$TSC2_RC" "$LOOP_REL"
 printf 'cell red by name  : %s\n' "$LOOP_SIGNATURE_CELL"
 printf 'under mutation    : %s (exit %s)\n' "$MUTATION2_COUNTS" "$MUTATION2_RC"
 printf 'sha256 before     : %s\n' "$LOOP_SHA_BEFORE"
