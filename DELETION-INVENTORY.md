@@ -623,3 +623,239 @@ Also deleted in 411, and not needles: the `stopped` arm's `proposal` payload on
 `AuthoringLoopOutcome` (`AUTHORING_LOOP_OUTCOMES` went from five members to four), the finding
 branch of `authoring.draft.write`'s op projection, and six digest rows in the golden capability
 ledger that moved with the retired proposal arm (`3bfd3e61`).
+
+### What was RETAINED, and why
+
+Per D-13 this is prose plus the instruments table above, not a second census. No "still there"
+presence assertion is added over any retained item: a frozen literal pinning ~12 retained names
+would move on every refactor, and it would measure prose rather than the deletion. Each row states
+what, where, why it was kept, and what pins it — and where a ledger already ruled the item, the
+ruling is transcribed rather than re-reached.
+
+#### beside 409
+
+| Item | Where (file:line) | Why kept | What pins it |
+|---|---|---|---|
+| the two v1 `RunNotification` migration fixtures, which still spell the quoted retired status literal | `schema/src/__tests__/run-notification-migration.test.ts:37` · `agent-local/src/__tests__/post-processing-status.test.ts:378` | they are the migrate-older walk's INPUT, not debris — deleting them deletes the v1→v2 migration proof. Excluded from CLSR-01 by name (`REQUIREMENTS.md` Out of Scope) | the by-name positive control asserts this exact pair and nothing else, and mutation leg `C-01` proves a third non-production speller REDs it |
+| `POST_RUN_CHAIN_TERMINAL_KINDS` | `agent/src/jobs/chain-identity.ts:36` | the survivor of the chain-kinds pair; it does not contain the deleted `POST_RUN_CHAIN_KINDS` as a substring, so the census's needle is not a false positive on it | the 409 D-03 equivalence cell — "the terminal list equals the derived kind set" — measured by leg `J-03a` |
+| `ANALYZE_RUN_SUCCESSORS` | `agent/src/jobs/kinds.ts:166` (`['curate-memory']`), read at `:153`, `:580`, `:675`, `:680` | the survivor of 388 D-04's declared/produced split, which collapsed when the only kind the two lists disagreed about left. Declared = produced now, and one list is the honest shape | leg `J-02` (409 Row 2) — a second declared successor REDs the real-kinds, engine-semantics and kind-registry cells by name |
+| the two `never` bars on the surviving `Delta` union | `schema/src/__tests__/delta.test-d.ts:76` · `schema/src/__tests__/seam-root.test-d.ts:93` | 409 corrected its own attribution after verification: `delta.ts` is byte-identical across the whole deletion, so these bars never guarded the deleted vocabulary. What they guard is the SURVIVING six-arm union against a future widening, which is real and worth keeping under an honest label | leg `V-01` (409 Row 4), `pnpm --filter @vostride/agent-qa-schema typecheck`, exit 2 with the diagnostic at `delta.test-d.ts(76,55)` |
+| the two surviving id brands, `RecordId` and `EvidenceToken`, and their casts | `schema/src/ids/record-id.ts`, `schema/src/ids/index.ts` | only the third brand left; the pair that addresses records and evidence tokens is untouched | the census's four VOCB cells RED only on the third brand's return (leg `V-03`) |
+
+#### beside 410
+
+| Item | Where (file:line) | Why kept | What pins it |
+|---|---|---|---|
+| the eight-class `Verdict` union | `schema/src/verdict/verdict.ts:40-51` (`VERDICT_CLASSES`), `:60-` (the union) | untouched by decision — memory trust and A3 flake routing still switch on it; only the issue-candidacy consumer left. The verdict class `app_bug` at `:42` is a different spelling from the retired entity kind and is never in this milestone's needle set | `REQUIREMENTS.md` Out of Scope; `issue-engine-removal.md` §1's closing paragraph. The census's kind needle is word-bounded and case-sensitive, so `app_bug` cannot match it |
+| A3 flake detection / quarantine | `knowledge-local/src/quarantine/detection.ts` (`QUARANTINE_ESCALATE_THRESHOLD = 3` at `:106`) | stays exactly as shipped in v52 Phase 390 — the sliding-window recurrence over the derived run-outcome projection and the committed `quarantine.jsonl`. Only the citations moved (see Reconciliation) | its own suite, 72 cells, green at the gate |
+| `buildOrdinal` on the handoff | `schema/src/handoff/completed-run-handoff.ts:13`, `schema/src/reader/reader-inputs.ts:42` | memory decay and the build-pinned permalink key still read it; only the reopen-signal reading left | `REQUIREMENTS.md` Out of Scope; no needle names it |
+| the `analysis` chip and the two-chip set | `schema/src/notification/post-processing-status.ts:9` (Phase 404's dated line) and `:44` | Phase 404's half, already shipped and mutation-proven by `scripts/404-chip-teardown-mutation.sh`. This milestone touches no chip, no bus event and no dashboard page | the frozen 404 script (`pnpm validate:chip-teardown-mutation`) |
+| the `file-bug-report` Class A skill | `spec/v2/skills.md` §3.1 (`:262`) and §7.3 (`:548`) — no code under `packages/*/src` | retained and reworded in the removal ledger's §3: it renders a bug report for a human to paste into *their* tracker. A text-rendering playbook is not a filing mechanism | `REQUIREMENTS.md` Out of Scope; nothing in the census names it |
+
+#### beside 411
+
+| Item | Where (file:line) | Why kept | What pins it |
+|---|---|---|---|
+| `RunEvidenceRef` | declared `schema/src/authoring/proposal-arms.ts:100` (schema) / `:110` (type); consumers `schema/src/functions/authoring.ts:20,241` and `agent/src/authoring/router.ts:69,172,301,303` | 411 D-07's verdict, verbatim: *retained — coordinate type of `authoring.draft.write`'s `stop.evidenceRefs`; consumers: the op output schema and the router.* | the stop arm's own cells; leg `W-03` (411 Row 3, WTST-11) REDs if a put returns to the stopped arm |
+| the surviving three proposal kinds and the four-member `AUTHORING_LOOP_OUTCOMES` | `schema/src/proposal/envelope.ts`, `schema/src/functions/authoring.ts` | only the finding arm and the fifth outcome left; the narrowed sets are the shipped shapes | legs `W-01` / `W-01t` (411 Row 1) and `W-02` (411 Row 2), each on an exact-list pin |
+| the funnel's surviving side counter (`dedupRefusals`) and its `keyof` pin | `schema/src/authoring/funnel.ts` | one counter survives the pair; the pin is what makes the survivor's key set closed | leg `W-06` (411 Row 8) — an optional key added beside it REDs `funnel.test-d.ts:41:56` as one failed suite |
+
+#### beside all three — the frozen sibling script
+
+| Item | Where (file:line) | Why kept | What pins it |
+|---|---|---|---|
+| `scripts/404-chip-teardown-mutation.sh`, byte-identical to `9b0c3459` | `:115` carries a pre-409 cell title inside `ALLOWED_M1` — "asks the port for exactly the three ids chainJobIdsForRun derives", which is now two; `:322-326` is the G-leg's EXCLUDED-BY-NAME prose, whose lines spell the reserved sixth job kind, the retired entity kind, the retired resolution reason and (at `:329`) the third chain id key | 409 D-10: the 404 script is FROZEN — read, never edited. Both spots are inert: `:115` is an ALLOWED entry for a leg whose cell title moved, and `:322-326` is a comment naming what that script deliberately does not measure. Editing a frozen script to tidy prose would break the one property a freeze buys | `git diff --quiet 9b0c3459 -- scripts/404-chip-teardown-mutation.sh` at every gate, plus the same diff against `428fd902` for all five sibling mutation scripts. **Both sit under `scripts/`, outside the census, which is exactly why they need a register entry rather than a grep.** |
+
+### What degrades, stated plainly
+
+**Nothing degrades in behaviour, and that is a measured claim rather than a hope.** No tracker
+adapter, port, config key, MCP tool or dashboard page for issues ever existed — the removal ledger's
+§4 opens by saying so, and Phase 412's runtime-state inventory re-checked every category: no live
+service config, no OS-registered state, no renamed secret or environment variable. The reserved slot
+was declared and never filled: its job kind was minted, its chain id derived and its chip key
+reserved, but no row was ever written to it, so removing the slot removed nothing a user could
+observe. The only surfaces that moved are prose: what a scaffolded README promises, what a growth
+rule anticipates, and what a docstring cites.
+
+**One consequence is known, dated and out of scope, and it is named here rather than left to a
+green suite to imply.** The retired sixth job kind can still be on disk in a store a 385-era build
+wrote, and Phase 409's narrowing turned that row into a poison job. The measured mechanism, from
+`.planning/todos/pending/409-retired-job-kind-row-poisons-the-queue.md`:
+
+- The comment 409 deleted from `agent/src/jobs/kinds.ts` says the row can exist, in its own words
+  (`git show 9b0c3459:packages/agent/src/jobs/kinds.ts`, lines 136-141): the shipped 385 version
+  mapped over the DECLARATION rather than the produced set, "which meant a dead analysis was the one
+  case that enqueued a triage job". So any store written by a 385-era build that ever had an
+  analysis fail permanently holds such a row.
+- `agent-local/src/store/sqlite-job-store.ts:245-250` — `selectClaimable` is kind-agnostic and
+  orders by `created_at ASC, id ASC`. The legacy row is the OLDEST, so it is offered first on
+  every tick.
+- `:512` spends the attempt at the claim; `:518` calls `rowToJob`, which calls `jobSchema.parse`,
+  whose `kind` is now `z.enum(jobKindValues)` over five members. **ZodError.**
+- `:343` — all of that runs inside `inTransaction` (`BEGIN IMMEDIATE`, `ROLLBACK` on throw), so the
+  claim is UNDONE: `attempts` stays 0, `status` stays `queued`, `claimed_at` stays NULL.
+- `AGENT_JOB_STORE_USER_VERSION` is **3** (`sqlite-job-store.ts:70`) and Phase 409 did not bump it.
+  The module's own doctrine at `:55` is "stamp and hard-fail, never migrate" — designed for exactly
+  a database written by another build — but 409 changed the READABLE VOCABULARY without touching the
+  version the gate keys on, so the gate stays silent on precisely the database it exists to refuse.
+- `ClaimNextOptions.excludeKinds` cannot route around it either: the parameter is
+  `readonly JobKind[]`, so a caller cannot even name the retired kind.
+
+⇒ the row is an unlandable poison job at the head of a GLOBAL FIFO, and the D-18 attempt bound can
+never fire for it because the attempt is never spent. **Not fixed here.** This milestone adds no
+behaviour, and both viable fixes are behaviour at the store level: bump the store's user version so
+the open refuses a wider-vocabulary database, or quarantine an out-of-vocabulary `kind` in
+`rowToJob` or in the claimable predicate so the queue drains. **Owner: the phase that owns job-store
+durability and `AGENT_JOB_STORE_USER_VERSION`.** **Pointer:**
+`.planning/todos/pending/409-retired-job-kind-row-poisons-the-queue.md`, filed 2026-09-01 at
+severity high, which also records that a fix written above the store is dead code for this defect —
+the store throws during the claim, so the engine never receives the job at all.
+
+### The instruments that notice a return
+
+- **`pnpm validate:arch`** — the merged census plus `validate-arch.test.ts`. This is the standing
+  lexical instrument and it runs in CI as part of the workspace's `turbo test`, so a re-added token
+  in any package's `src` REDs by name on the commit that adds it.
+- **`pnpm validate:issue-slot-mutation`** — the bar that proves the census and the closed-shape
+  cells are not decoration. It is NOT in CI: no `validate:*-mutation` script is, and adding the
+  family is a workspace-wide decision this phase does not own (recorded as deferred, not skipped).
+  It is a release-gate and phase-gate instrument, run by hand.
+- **`pnpm validate:router-mutation`** — the 394 script, which remains the instrument for 411 Rows
+  6–7. Those two legs are deliberately not re-encoded in the 412 bar; one property, one owner.
+
+### Reconciliation
+
+D-19 owes one shipped, greppable record of what was verified in `.planning` and `spec/v2` — a
+search recorded WITH its result, in the shape of the 2026-08-28 section's "Where this register does
+NOT reach". Nothing under `.planning/` was edited by this milestone's reconciliation: the docs half
+had already landed in `341dfceb`, and the work was to VERIFY it and record the verification.
+
+**(a) `PROJECT.md`'s six "Issue lifecycle engine" pointers, by line, with their dated corrections.**
+`grep -n "Issue lifecycle engine" .planning/PROJECT.md` reports `15 47 65 66 78 104` (and `230`,
+`785`, `811`, `1217`, which mention the engine as history and are outside D-19's six).
+
+| Line | The dated correction it carries |
+|---|---|
+| `:15` | the re-purposing sentence: "Its *Issues* slot was re-purposed on 2026-08-25 when the owner removed the Issue lifecycle engine from v2: agent-qa is not a bug tracker and does not integrate with one … (`spec/v2/issue-engine-removal.md`)." |
+| `:47` | *(2026-08-25: the engine was removed from v2 by owner decision — `spec/v2/issue-engine-removal.md`; Phase 404 took the chip-side half, and the slot is torn out by **v54 Issue-slot cleanup**)* |
+| `:65` | "…with the `triage-issues` slot reserved for the Issue lifecycle engine *(slot retired 2026-08-25 → v54 Issue-slot cleanup)*." |
+| `:66` | A3 flake detection "(pulled forward 2026-07-28 from the Issue lifecycle engine) … No issue store required." — frozen historical attribution, correctly left uncorrected |
+| `:78` | *(2026-08-25: engine removed from v2 — `spec/v2/issue-engine-removal.md`; the reserved slot and the record-and-surface `FindingProposalV1` arm are torn out by v54 Issue-slot cleanup; stage ⑤ app-broken = report the verdict and stop)* |
+| `:104` | "the `issues/` engine → Issue lifecycle engine *(removed from v2 2026-08-25; there is no `issues/` shelf — `knowledge-store.md` §3.2)*" |
+
+Source: `341dfceb` — `docs: start milestone v54 Issue-slot cleanup`, 2026-09-01, `PROJECT.md +41/−11`
+and `STATE.md +30/−16`, those two files and no others. `git diff --quiet HEAD -- .planning/PROJECT.md
+.planning/ROADMAP.md .planning/STATE.md` exited 0 at the reconciliation commit: verified, not
+re-edited.
+
+**(b) The D-18 grep, and its empty result.** Run from the super-repo root:
+
+```
+grep -nE "v54 Issues|milestone: Issues|Current milestone: Issues|Issues milestone" .planning/ROADMAP.md .planning/STATE.md
+```
+
+**Result: empty, exit status 1.** No output line of any kind. The pass state IS the empty result
+read as exit 1 from the process — the check asserts `[ $? -eq 1 ]` rather than testing for absent
+text, so an accidental grep success cannot be mistaken for a pass. `STATE.md`'s front matter
+corroborates: `milestone: v54`, `milestone_name: Issue-slot cleanup`.
+
+The alternation is deliberately shaped on milestone-NAME forms only, because the historical
+2026-07-28 re-sequencing quote `M4 → M5 → Issues → M3 → M6 → M7 → MC` is frozen history — the record
+of how the decision was made, not a claim about today's milestone name. It is asserted by count and
+left byte-identical: **5 occurrences in `.planning/PROJECT.md`** (lines 15, 34, 57, 230, 1217) and
+**1 in `.planning/ROADMAP.md`** (line 20). Re-spelling it would have destroyed the evidence the
+reconciliation exists to preserve.
+
+**(c) The four `spec/v2` edits, by file and section — and why four, not three.** CLSR-05 named
+three; a fourth was added because 409's ledger note (f) found that the 2026-08-25 audit had named
+identifiers which never existed. All four landed as dated one-line edits in super-repo commit
+`e7542495`, with per-file deletion caps (2 / 1 / 2) proving no unrelated line moved under them.
+
+| # | File · section | The edit |
+|---|---|---|
+| 1 | `test-authoring.md` §6, gate 5 (`:243`) | `load-bearing (§10).` → `` load-bearing (§10 — withdrawn 2026-08-25, see `issue-engine-removal.md` §2). `` — the gate's mutant-kill analog no longer dead-ends at a section that was withdrawn out from under it; the pointer lands on the removal ledger's §2 row for `test-authoring.md` |
+| 2 | `test-authoring.md` §7 heading (`:251`) | "— or file a finding" → "**— or stop on a finding**", with one italic dated line beneath it recording the owner ruling. The heading now agrees with its own body two paragraphs down, which already said "Nothing is filed and no proposal is minted" |
+| 3 | `runner.md` §6 (`:404`) | `Post-processing (analysis, curation, flake)` → `Post-processing (analysis, curation)` with the dated note that flake is a verdict value A3 consumes, not a job. Post-processing is two jobs, matching `live-view.md` §4.1's chip set |
+| 4 | `issue-engine-removal.md` §4 (`:70-71`) — **the fourth, D-21** | `JOB_KINDS` → *(the real identifiers are `jobKindValues` / `JobKind`, `packages/schema/src/job/job.ts`)*; `CHAIN_KINDS` → *(`POST_RUN_CHAIN_KINDS`, deleted; survivor `POST_RUN_CHAIN_TERMINAL_KINDS`)*. Both confirmed against the tree: `job.ts:8` and `:59` carry the real names, and `POST_RUN_CHAIN_KINDS` returns zero hits anywhere. An audit row that names an identifier which never existed is a two-hop dead end for the next reader, which is why it was corrected in place rather than left as written |
+
+**(d) The CLSR-04 sweep record.** Fourteen prose sites across eleven files were rewritten so the
+tree's counts and citations describe the tree that ships, in three commits (`90686e16`, `aee3114c`,
+`49b38a6a`) plus the identifier-shaped sweep's three (`b71a861b`, `23bcb342`, `ad2ab58d`).
+
+*The dated correction to CLSR-04, which the requirement's own wording invited.* CLSR-04 speaks of
+the `issues/` shelf, and the tree contains a second, unrelated `issues` spelling: the GitHub support
+URL `https://github.com/vostride/agent-qa/issues/new` in `dashboard-ui/src/lib/support-links.ts`
+and its two tests. **That is a homonym excluded by the needle's CONSTRUCTION, not by a by-name
+filter** — the shelf needles are the backticked shelf spelling, its template-escaped twin and the
+spoken phrase "issues/ shelf", and a URL path segment matches none of the three. No file is named
+anywhere in the census to achieve that, which is what keeps 410 D-04's path-rule doctrine intact:
+the moment an inventory carries a by-name exclusion it stops measuring and starts asserting. The
+support link was verified untouched (`git diff --quiet` exit 0) and is deliberately not re-pointed
+— altering a user-facing surface for a census's convenience is the wrong trade.
+
+*The verifying grep's form.* It is a fixed-string grep, because two of the needles differ from each
+other by exactly one backslash:
+
+```
+grep -rnF -e 'issue-curation' -e 'issues-write' -e 'issues/`' -e 'issues/\`' -e 'issues/ shelf' \
+          -e 'filed issues' -e 'Issue milestone' packages/*/src
+```
+
+The fourth `-e` is the TEMPLATE-ESCAPED shelf spelling, which is how `cli/src/commands/init.ts:570`
+carried it — inside a template literal, where each delimiter takes a backslash. A plain-delimiter
+needle cannot see the escaped form and vice versa, so a single spelling would have left the site
+that actually existed unmeasured. Measured at `428fd902`, before the sweep: `issue-curation` 4,
+`issues-write` 8, the escaped shelf 1, `filed issues` 1, `Issue milestone` 2 — and the
+plain-backticked shelf and the spoken phrase **0 each**, which is the evidence for pinning the shelf
+in three forms rather than one. All seven now return nothing.
+
+*The stale-count hand list, swept by file:line.* These are COUNTS the deletions falsified, not
+tokens; a count cannot be a needle, so this list is a plan-time hand list and its closure is a grep
+for the eight superseded phrases, which exits 1.
+
+| # | Site (post-edit) | Before → after |
+|---|---|---|
+| 1 | `agent/src/index.ts:660-661,663` | "the same three rows" → "the same two rows"; "returns three strings" → "returns two strings" (the paragraph re-wrapped so the pinned phrase lands contiguous) |
+| 2 | `agent/src/functions/ops/runs-post-processing.ts:3-5` | the third-derived-id sentence → the chain derives exactly the two ids the chips read, with Phase 404's chip-set line kept at `:3` |
+| 3 | `schema/src/notification/post-processing-status.ts:13-16` | "the JOB-KIND layer is deliberately NOT touched here … wait for the Issue-slot cleanup milestone" → the chip side stopped reading the third id then, and the job-kind layer has since followed |
+| 4 | `agent-local/src/store/sqlite-job-store.ts:438,442-444` | "lets the reserved triage slot have an id and no row" → "lets a candidate have an id and no row" — the candidates-vs-members rule now stands on its own merit |
+| 5 | `agent-local/src/__tests__/kill-matrix/harness.ts:13` | "The six shipped declarations" → "The five shipped declarations" |
+| 6 | `agent-local/src/__tests__/kill-matrix/kill-matrix-adversarial.test.ts:31` | "on top of plan 06's 32" → "on top of plan 06's 26"; the legs themselves untouched |
+| 7 | `agent/src/functions/entity-cards/key-facts.ts:12` | "a seventh kind is a type error here" → "a sixth kind is a type error here" |
+| 8 | `dashboard-ui/src/chat/entity-card.tsx:83` | "seventh kind is a compile error here" → "sixth kind is a compile error here" |
+| 9 | `knowledge-local/src/resolver/__tests__/resolve-tier-a.test.ts:4` | "Four of the cases are about inputs" → "Three of the cases…" (confirmed against the list beneath) |
+| 10 | `knowledge-local/src/addressing/__tests__/ledger.test.ts:4-6` | the "Four laws" sentence gains a parenthetical naming the gap — numbered 1, 2, 3 and 5, law 4 having left with this milestone. The banners stay numbered 1/2/3/5: renumbering would churn case titles this milestone does not own |
+| 11 | `cli/src/__tests__/post-run-gate-run-exclusion.test.ts:33-38` | "when the engine lands it must read `excludedFromOutcomes` … the placeholder for that fifth exclusion leg" → a dated note saying the engine that note reserved a contract for has left and **no fifth leg is owed**. Kept as prose rather than an `it.skip`, which would claim coverage of a mechanism that does not exist |
+
+Eight dated `2026-09-02 (Phase 412)` lines were added across those sites. Across the whole milestone
+`packages/*/src` now carries **35** dated notes from Phases 409–412 (409: 13, 410: 3, 411: 8, 412:
+11), of which 24 lines in 23 files spell the pointer phrase "— see `DELETION-INVENTORY.md`" and the
+rest wrap it onto a following line. Every one names a concept this section carries.
+
+*Sites VERIFIED, not re-edited — the ordering claim as a measurement.* Four sites an earlier phase
+had already corrected were proven byte-identical to `428fd902` (`git diff --quiet` exit 0) rather
+than re-touched, which is what makes "412 owns only the remainder" a measurement instead of a
+promise: `agent/src/functions/spec.ts` (`:823-824`, `:855-860` — two 2026-09-01 Phase 409 notes and
+"`ChainJobIds` is two-wide"), `agent/src/ports/job-store.ts:220-223` ("derives BOTH of the chain's
+ids", no reserved slot), `agent/src/jobs/record-llm-authorship.ts:24-29` ("five kinds … five chances
+to get it wrong"), and `schema/src/verdict/verdict.ts:70,72` (already clean — only the surviving
+`(§A9 routing)` citation).
+
+*Sites found BEYOND D-17's three lists, recorded rather than silently swept or silently left.*
+
+| Site | What it is | Disposition |
+|---|---|---|
+| `knowledge-local/src/quarantine/__tests__/detection.test.ts:165` | the test title `pins issue-curation §7.3 and …`, coupled to a docstring the sweep was rewriting | swept in the same commit as the prose it pins — a source-prose pin and the prose it pins must never be committed apart |
+| `cli/src/__tests__/conformance/adjudications.test.ts:84` | a doc comment citing "tomorrow's `issues-write`", beside the two cells D-16 re-pins | swept; the control fixture now mints `zzz-write`, scope-shaped and outside the union BY CONSTRUCTION, so the control keeps its non-tautology without keeping a needle alive in a test |
+| `cli/src/__tests__/post-run-gate-run-exclusion.test.ts:33-38` | a reserved consumer contract "for when the engine lands" | folded as a dated note (row 11 above). No `Issue engine` needle was added: it would collide with `post-processing-status.ts:10`'s legitimate 2026-08-25 history line |
+| `agent/src/index.ts:654` | "// 385 plan 04 — the six real kinds. A composition root registers THESE" — genuinely stale present tense (`jobs/kinds.ts:736` says "exactly the five real kinds") | **Recorded, not swept, and ruled here: a prose defect with an owner, not debris.** It spells no needle, no instrument REDs on it, and sweeping it inside 412-03 would have been a twelfth unrecorded edit in the plan whose SUMMARY is this record's own source. It is named here so the next reader finds it in the register rather than rediscovering it; the next pass over the agent barrel's prose owns it |
+| `arch/src/lint/agent-barrel.ts:45` | "385 plan 04 REMOVES that refusal and adds the six real kinds" | **Recorded and ruled INERT.** The sentence narrates what Phase 385 plan 04 *did*, and six was correct then. It is historical narration, not a claim about the shipped tree — the same class as the frozen 404 script's `:115` ALLOWED title, which 409's note (a) deliberately left alone. No edit is owed |
+| `knowledge-local/src/quarantine/detection.ts:98` | the docstring now cites "`memory.md` §9.5's locked trigger, **verbatim**", and §9.5 does not carry that sentence verbatim | **Recorded as a wording mismatch with an owner, not closed here.** D-17 rules §9.5 the surviving rule and the sweep cited it as ruled rather than inventing another section. The two agree in SHAPE — a locked N=3 within an M=5 window, ratified 2026-07-03 — over different subjects: §9.5 counts supersessions per memory anchor and says it "mirrors the issue thrash-guard"; `detection.ts` counts fingerprint recurrences per test. Three closures are available to whoever owns the quarantine prose next: amend §9.5 to carry the fingerprint sentence, drop `verbatim` from the docstring, or state the mirror relationship explicitly. This register picks none of them — choosing would be a new ruling, and the register records |
+| `knowledge-local/src/quarantine/detection.ts:85` and `identity.ts:7` | bare `§7.3` references with no owning document named | **Recorded, not swept.** Neither spells a CLSR-04 needle and neither is on any D-17 list, so no instrument sees them; after `:98`'s rewrite they read as bare section numbers whose owning document is no longer named in the file. Same owner as the row above |
+
+*`docs/`, `skills/` and `README.md`.* Measured clean of all fifteen CLSR-01 names and all seven
+sweep spellings on 2026-09-02, and re-measured at the gate below.
+
+### Gate at the time of writing (2026-09-02)
+
+_(filled by the phase gate — Task 3)_
