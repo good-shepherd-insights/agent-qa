@@ -23,6 +23,22 @@
 # `pnpm --filter <pkg> typecheck` and a type-test suite respectively, which is why this script has
 # three red-parsers rather than one.
 #
+# THE THREE RED-PARSERS, AND WHY ONE GREP CANNOT SERVE ALL THREE.
+#   runtime    a vitest cell prints ` FAIL  <suite> > <describe> > <title>` — the TITLE is the cell
+#              name, and the suite prefix is stripped so REQUIRED/ALLOWED stay substrings.
+#   typecheck  `pnpm --filter <pkg> typecheck` prints tsc's own
+#              `src/<path>(<line>,<col>): error TS<n>` — the FILE AND COLUMN are the cell name,
+#              because an `expectTypeOf<X>().toEqualTypeOf<never>()` whose X is no longer `never`
+#              reds at the column of `toEqualTypeOf` and has no test title at all. pnpm surfaces
+#              tsc's exit 2 here; every leg asserts NON-ZERO and prints the number it observed,
+#              because a `-eq 1` assertion would fail on a correct measurement. The root
+#              `turbo`-driven typecheck is never the instrument: it caches per package and a cache
+#              hit replays a stale green.
+#   testd      a `.test-d.ts` reds as ONE FAILED SUITE — ` FAIL  <suite> [ <suite> ]` plus a
+#              `TypeCheckError` block pointing at `<suite>:<line>:<col>`, with `Tests  no tests`.
+#              A `^ FAIL  <suite> > <title>` grep finds NOTHING there, which is why this mode
+#              exists; "nothing else may be red" is checked by counting TypeCheckError blocks.
+#
 # EACH MUTATION MUST RED A CELL THIS SCRIPT NAMES IN ADVANCE. A red somewhere is not the claim; a
 # red in the cell that exists to catch that specific return is. Each leg therefore carries a
 # REQUIRED set (every fragment must be among the reds) and an ALLOWED set (nothing else may be
@@ -127,6 +143,15 @@ apply_mutation () {
       # One needle, one line, one file — 410 Row 7 showed a line spelling two needles reds two
       # cells, so a plant carries exactly one.
       printf '%s\n' "$PLANT_LINE" > "$REPO_ROOT/$PLANT_PATH" ;;
+    V-01)
+      # 409 Row 4's diff, verbatim: a seventh arm on the SURVIVING six-arm union.
+      perl -0pi -e "s/\Qexport type Delta = Add | Confirm | Supersede | Deprecate | MintUnknown | Noop\E\n/export type Delta = Add | Confirm | Supersede | Deprecate | MintUnknown | Noop | (DeltaEnvelope \& { kind: 'FileIssue' })\n/" \
+        "$REPO_ROOT/packages/schema/src/delta/delta.ts" ;;
+    W-06)
+      # 411 Row 8's diff, verbatim. OPTIONAL on purpose: a required key would red the producers
+      # and the leg would measure the compiler's required-field check instead of the counter bar.
+      perl -0pi -e "s/\Q  readonly dedupRefusals?: number\E\n/  readonly dedupRefusals?: number\n  readonly findings?: number\n/" \
+        "$REPO_ROOT/packages/schema/src/authoring/funnel.ts" ;;
     *) echo "FATAL: unknown leg $1" >&2; exit 1 ;;
   esac
 }
@@ -209,10 +234,20 @@ run_leg () {
   set +e
   case "$mode" in
     runtime)
+      # A runtime cell prints ` FAIL  <suite> > <describe> > <title>`; the title alone is enough to
+      # match on, so the suite prefix is stripped and REQUIRED/ALLOWED stay substrings.
       red="$(grep -oE "^ FAIL  [^ ]+ > .*" "$LOG" | sed -E 's|^ FAIL  [^ ]+ > ||' | sort -u)" ;;
+    typecheck)
+      # tsc's own diagnostic spelling, which is the ledgers' field-8 spelling verbatim:
+      # `src/__tests__/delta.test-d.ts(76,55): error TS2554`. The FILE AND COLUMN are the cell name.
+      red="$(grep -oE '^src/[^ ]+\([0-9]+,[0-9]+\): error TS[0-9]+' "$LOG" | sort -u)" ;;
+    testd)
+      # A `.test-d.ts` reds as ONE FAILED SUITE with a TypeCheckError pointer — there is no test
+      # title to match, so the suite line and the `<file>:<line>:<col>` pointer are the cell name.
+      red="$(grep -oE "^ FAIL  $suite \[ $suite \]|❯ $suite:[0-9]+:[0-9]+" "$LOG" | sort -u)" ;;
     *)
-      echo "FATAL: leg $id asks for mode $mode — mode not implemented" >&2
       set -e
+      echo "FATAL: leg $id asks for mode $mode — mode not implemented" >&2
       restore_current
       for f in $rebuild; do build_package "$f"; done
       exit 1 ;;
@@ -231,6 +266,22 @@ run_leg () {
     restore_current
     for f in $rebuild; do build_package "$f"; done
     exit 1
+  fi
+
+  # A type-test leg's ALLOWED list is "nothing else", and "nothing else" is only checkable by
+  # counting the blocks: the suite line names the file but not how many walls inside it fell.
+  if [ "$mode" = testd ]; then
+    local blocks
+    set +e
+    blocks="$(grep -c 'TypeCheckError' "$LOG" | tr -d '[:space:]')"
+    set -e
+    echo "  TypeCheckError blocks: $blocks"
+    if [ "$blocks" -ne 1 ]; then
+      echo "FATAL: leg $id raised $blocks TypeCheckError blocks — exactly one was predicted" >&2
+      restore_current
+      for f in $rebuild; do build_package "$f"; done
+      exit 1
+    fi
   fi
 
   # Nothing outside the allowed list may be red: a mutation that reds the package is measuring
@@ -358,7 +409,29 @@ echo
 # 412 Row P-arch / CLSR-01 — the census names the package it accuses.
 plant_leg arch '// 412 plant: triage-issues' 'no source or test spells the reserved sixth job kind'
 
+# 411 Row 8 / the funnel keyof pin — the cheapest type wall in the tree (~2 s, no rebuild).
+W06_SUITE="src/authoring/__tests__/funnel.test-d.ts"
+W06_REQUIRED="src/authoring/__tests__/funnel.test-d.ts:41:56"
+W06_ALLOWED="src/authoring/__tests__/funnel.test-d.ts"
+run_leg W-06 "a side-counter key re-added beside the funnel's surviving counter" testd \
+  "$W06_REQUIRED" "$W06_ALLOWED" "$SCHEMA_FILTER" "$W06_SUITE" "" \
+  "packages/schema/src/authoring/funnel.ts" ""
+
+# 409 Row 4 / the Delta guard (NOT VOCB-01; D-05) — the ledger corrected this row's attribution:
+# `delta.ts` is byte-identical across the whole deletion, so what the retained `never` bars guard
+# is the SURVIVING six-arm union against a future widening. VOCB-01 is carried by leg V-03, the
+# whole-vocabulary readmission.
+V01_REQUIRED="src/__tests__/delta.test-d.ts(76,55): error TS2554"
+V01_ALLOWED="src/__tests__/delta.test-d.ts(76,55): error TS2554
+src/__tests__/review-dtos.test-d.ts(31,70): error TS2554
+src/__tests__/seam-root.test-d.ts(93,55): error TS2554"
+run_leg V-01 "a seventh arm widened onto the surviving Delta union" typecheck \
+  "$V01_REQUIRED" "$V01_ALLOWED" "$SCHEMA_FILTER" "" "" \
+  "packages/schema/src/delta/delta.ts" ""
+
 echo "LEGS $LEGS_RUN"
 echo "PASS — a needle planted in a real package REDs the merged census by that package's own file"
-echo "       name, the plant is removed and the tree is byte-clean afterwards, and the census is"
-echo "       green again before the script exits."
+echo "       name, the plant is removed and the tree is byte-clean afterwards, the census is green"
+echo "       again before the script exits, a re-added funnel side-counter key fails the keyof pin"
+echo "       as ONE failed suite with exactly one type error, and a seventh arm widened onto the"
+echo "       surviving Delta union cannot compile past the retained never bar."
