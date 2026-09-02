@@ -81,8 +81,8 @@ interface ScopeBearing {
  * Scopes named by a declaration that the union does not hold — the census red D-16 leans on.
  *
  * A PURE FUNCTION over declarations rather than an inline loop, so the same code that reads the
- * real registry can be driven with a declaration carrying tomorrow's `issues-write`. Without that
- * control the cell would assert that a set the type system already constrains is what the type
+ * real registry can be driven with a declaration carrying a scope the union does not hold. Without
+ * that control the cell would assert that a set the type system already constrains is what the type
  * system says it is, which is a tautology wearing a test's clothes.
  */
 function unknownScopeFindings(declarations: readonly ScopeBearing[]): readonly string[] {
@@ -264,9 +264,9 @@ describe('Phase 397 — the inherited adjudications, discharged at their artifac
         .not.toContain(RETIRED_RESERVATION)
     })
 
-    it('states the growth rule and names issues-write as the anticipated first extension', () => {
+    it('states the growth rule and carries its three lineage dates', () => {
       const source = readSource(SCOPE_SOURCE_PATH)
-      // Both halves of the rule, and the anticipated door. A note that kept the anchor while losing
+      // Both halves of the rule, and the lineage. A note that kept the anchor while losing
       // the rule would be a date with nothing under it.
       expect(source, 'the closure note no longer demands a privilege-conflation argument')
         .toContain('PRIVILEGE CONFLATION')
@@ -274,8 +274,6 @@ describe('Phase 397 — the inherited adjudications, discharged at their artifac
         .toContain('scenario-table row')
       expect(source, 'the closure note no longer demands a golden-registry update')
         .toContain('golden-registry update')
-      expect(source, 'the closure note no longer names issues-write as the expected extension')
-        .toContain('`issues-write`')
       // The lineage, so the three inherited counter-notes cannot be summarised away undated.
       for (const date of ['2026-08-02', '2026-08-07', '2026-08-11']) {
         expect(source, `the ${date} extension's date has left the file`).toContain(date)
@@ -287,14 +285,15 @@ describe('Phase 397 — the inherited adjudications, discharged at their artifac
     })
 
     it('would name an op that minted a scope outside the union', () => {
-      // The control, and the reason the cell above is not a tautology. `issues-write` is the exact
-      // member D-16 anticipates, so this fixture is also a rehearsal of the day it arrives.
+      // The control, and the reason the cell above is not a tautology. `zzz-write` is scope-shaped
+      // and outside the union BY CONSTRUCTION (the 410 D-06 `ZZZ-7` idiom): it was never a member
+      // and never will be, which is what keeps the control from being a rehearsal of any door.
       const findings = unknownScopeFindings([
-        { id: 'control.scope.397.05', requiredScopes: ['read', 'issues-write'] },
+        { id: 'control.scope.397.05', requiredScopes: ['read', 'zzz-write'] },
       ])
       expect(findings.length).toBe(1)
       expect(findings[0]).toContain('control.scope.397.05')
-      expect(findings[0]).toContain('issues-write')
+      expect(findings[0]).toContain('zzz-write')
     })
   })
 

@@ -27,12 +27,8 @@ import { z } from 'zod'
  * a scope this union does not hold, so the ledger enforces itself in that direction. Clause (a) is
  * a discipline a reviewer enforces, and this sentence is where the reviewer is told so.
  *
- * THE ANTICIPATED FIRST EXTENSION IS `issues-write`, minted by the Issue lifecycle engine's own
- * milestone under the rule above — named here so its arrival is an expected door rather than an
- * exception someone must argue is not a precedent. Spending `test-write` on the issue lifecycle
- * would be the same conflation one axis over: a caller granted the power to author tests into this
- * repository would thereby have been granted the power to open, triage and close the defect records
- * those tests produce, and a record of what is broken is not the artifact that broke.
+ * 2026-09-02 (Phase 412): the anticipated first extension left with the Issue-slot cleanup — see
+ * `DELETION-INVENTORY.md`. Nothing is anticipated now; the growth rule above is the whole door.
  *
  * LINEAGE (the three inherit-notes below, folded). The reservation this note replaces is dated
  * 2026-07-28 and rests on spec/v2/qa-agent-and-surfaces.md §6 Q5, which leaves the full scope
