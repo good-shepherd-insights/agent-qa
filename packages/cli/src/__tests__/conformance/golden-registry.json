@@ -342,7 +342,7 @@
       "classifies": true,
       "id": "entities.get",
       "inputSchemaDigest": "d97dc198a21fe0bd3427bda11364557d7470da65643813c469b940fd1539f819",
-      "outputSchemaDigest": "5a26397987080e92ee30f32e33810b69156e8bc7a97897f85ebdb4157cc32679",
+      "outputSchemaDigest": "f6a642c4eb4fc3c9a9e22e4aa6cde994874f5d20e13c53a6e892b3f8585e07cc",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_get_entity"
@@ -362,7 +362,7 @@
       "classifies": true,
       "id": "entities.resolve",
       "inputSchemaDigest": "d97dc198a21fe0bd3427bda11364557d7470da65643813c469b940fd1539f819",
-      "outputSchemaDigest": "eda44f7e144abde75e929851b0aa4e808b8fb89db5fe7b44b9f6f0af25f2bc04",
+      "outputSchemaDigest": "a5fef2a144f2b19de0ec966abb9b9b10db9471ee44e7d48a9abb44d87729a052",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_get_entity"
