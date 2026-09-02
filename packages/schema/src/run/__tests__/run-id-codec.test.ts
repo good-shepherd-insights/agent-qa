@@ -141,6 +141,15 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
       + 'join was, and still is, neutered by `slugBranch`; the codec makes the id refuse to be '
       + 'REWRITTEN there rather than adding a second guard. The plain field is the output row.',
   },
+  'functions/authoring.ts': {
+    hardened: 0,
+    plainString: 1,
+    verdict:
+      'reaches no path join — 2026-09-02 (411-01 D-06) lifts `AuthoringStop.runId` to the stop '
+      + "payload's top level so a NULL failure point still names the run it read. It echoes the "
+      + 'LAST gate run on a receipt the loop itself just executed: an OUTPUT arm of '
+      + '`authoring.draft.write`, named by no caller and resolved against nothing on disk.',
+  },
   'job/job.ts': {
     hardened: 1,
     plainString: 0,
