@@ -567,9 +567,8 @@ learns and everything you author for it lives under this one directory.
   records the agent distills from runs — facts, cautions, selectors, flows.
   Each record is a self-sufficient bundle directory: the fact, its evidence,
   and its provenance travel together.
-- **Authored shelf** (\`policies/\` now; \`issues/\` and \`skills/\` arrive with
-  their features): content humans write or approve — QA rules, filed issues,
-  agent skills.
+- **Authored shelf** (\`policies/\` now; \`skills/\` arrives with its feature):
+  content humans write or approve — QA rules, agent skills.
 
 Only \`policies/\` exists after init; the other directories are created on
 first use.

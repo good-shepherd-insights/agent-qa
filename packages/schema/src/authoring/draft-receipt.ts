@@ -8,9 +8,10 @@
 // object here is `.strict()`, so smuggling a payload in is a typed refusal rather than a field
 // nobody notices until it shows up in a durable file.
 //
-// KEYED, NOT POSITIONAL. `DraftGateResultsSchema` names its gates. Gate 5 (bug-repro anchoring)
-// lands in the Issue milestone and must be able to join without re-minting this DTO or
-// renumbering anything a 394 consumer already reads.
+// KEYED, NOT POSITIONAL. `DraftGateResultsSchema` names its gates, so a later gate can join
+// without re-minting this DTO or renumbering anything a 394 consumer already reads.
+// 2026-09-02 (Phase 412): the bug-repro anchoring gate that was to join here left with the
+// Issue-slot cleanup — see `DELETION-INVENTORY.md`.
 
 import { z } from 'zod'
 
