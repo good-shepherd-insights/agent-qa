@@ -52,13 +52,65 @@ import {
 import type {
   AuthoringDraftWriteInput,
   AuthoringDraftWriteOutput,
+  AuthoringStop,
 } from '@vostride/agent-qa-schema'
 
 import { authoringFanOutBound, runAuthoringLoop } from '../../authoring/loop.js'
+import type { AuthoringLoopOutcome } from '../../authoring/loop.js'
 import { FunctionNotBoundError } from '../spec.js'
 import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const AUTHORING_DRAFT_WRITE_FUNCTION_ID = 'authoring.draft.write'
+
+/**
+ * The `stopped` arm, projected onto the result's `stop` payload (411 D-05/D-06/D-08).
+ *
+ * THE OP PROJECTS; IT NEVER RE-DERIVES EVIDENCE. Every field here is copied from the route the
+ * router derived or from the receipt's own LAST gate run — the same run stage 5 routed on and the
+ * same one the attribution below borrows, so the verdict a caller reads and the evidence the
+ * routing read are one answer rather than two. The abandonment's own error object is NOT read here
+ * — its prose ends in the model's own bytes — and the payload has no prose field for model output
+ * to arrive through at all.
+ *
+ * `String(verdictSource)` is the bridge the retired carrier used: the router's `VerdictSource` is
+ * the run's own enum and the payload keeps the free-string posture, because the runner owns that
+ * vocabulary and grows it.
+ */
+export function projectStop(
+  outcome: Extract<AuthoringLoopOutcome, { kind: 'stopped' }>,
+): AuthoringStop {
+  const last = outcome.receipt.gateRuns.at(-1)
+  if (last === undefined) {
+    throw new Error(
+      'authoring.draft.write: a stopped outcome names no gate run — stage 5 routes on the last '
+        + 'gate run, so this cannot be a stopped outcome',
+    )
+  }
+  const point = outcome.route.failurePoint
+  return {
+    runId: last.runId,
+    memberOutcome: last.memberOutcome,
+    signalClass: outcome.route.signalClass,
+    failurePoint: point === null
+      ? null
+      : {
+          stepIndex: point.stepIndex,
+          stepText: point.stepText,
+          reasoning: point.reasoning,
+          ...(point.verdictSource === undefined
+            ? {}
+            : { verdictSource: String(point.verdictSource) }),
+        },
+    evidenceRefs: outcome.route.evidenceRefs,
+    // ONE SPREAD, so the kind and the spend are present on exactly the same payloads (411 D-08).
+    ...(outcome.abandonment === undefined
+      ? {}
+      : {
+          repairAbandonment: outcome.abandonment.kind,
+          repairIterations: outcome.abandonment.iterations,
+        }),
+  }
+}
 
 export const authoringDraftWriteSpec: FunctionSpec<
   AuthoringDraftWriteInput,
@@ -143,9 +195,11 @@ export const authoringDraftWriteSpec: FunctionSpec<
    * `refused` without one still says `refused` — the status is the claim that must not be lost, and
    * a missing link degrades the sentence rather than the verdict.
    *
-   * THE OTHER THREE ARMS RAN TO COMPLETION. `drafted`, `repaired` and `finding` all end with a draft
-   * and a receipt — a correctly-failing draft is a FINDING about the application, not a failure of
-   * this op — so each is `executed`, and the outcome names the test that was authored.
+   * THE OTHER THREE ARMS RAN TO COMPLETION. `drafted`, `repaired` and `stopped` all end with a draft
+   * and a receipt — a correctly-failing draft is a VERDICT about the application, not a failure of
+   * this op — so each is `executed`, and the outcome names the test that was authored. A `stopped`
+   * invocation therefore renders `stopped <testName> — <fan-out sentence>` under a status chat and
+   * the parity walk already read: a spelling, never a shape (411 D-11).
    *
    * ---- the fan-out, migrated here from `turn-engine.ts` by 399.1-03 -----------------------------
    *
@@ -270,12 +324,20 @@ export const authoringDraftWriteSpec: FunctionSpec<
 
     // THE PROPOSAL IS PERSISTED BEFORE THIS OP ANSWERS (394-18, closing WINDOWS 99).
     //
-    // D-05 says every draft earns a human decision and D-11 says a correctly-failing one does too,
-    // and until this line the loop built both artifacts and dropped them on the floor: the funnel's
-    // `accepted` stage was structurally 0 on every host because nothing ever put an envelope where
-    // a person could decide on it. The refused arm has no proposal and persists nothing, which is
-    // the honest answer rather than an omission — a stage-2 refusal ends the invocation with no
-    // draft, no receipt and no gate-run (D-04).
+    // D-05 says every draft earns a human decision, and until this line the loop built the artifact
+    // and dropped it on the floor: the funnel's `accepted` stage was structurally 0 on every host
+    // because nothing ever put an envelope where a person could decide on it. The refused arm has
+    // no proposal and persists nothing, which is the honest answer rather than an omission — a
+    // stage-2 refusal ends the invocation with no draft, no receipt and no gate-run (D-04).
+    //
+    // THE STOPPED ARM PERSISTS NOTHING EITHER (411 D-10/D-12). A correctly-failing draft is already
+    // on the shelf with its receipt — it IS the regression test for the defect — and its verdict
+    // rides this result's `stop` arm, so there is nothing left to mint and minting one would be a
+    // second place to read one artifact. That the store is empty after such an invocation is
+    // measured ON THE STORE by `authoring-draft-write.stop.test.ts`, never inferred from the return.
+    //
+    // 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the
+    // Issue-slot cleanup — see `DELETION-INVENTORY.md`.
     //
     // A FAILURE HERE LEAVES THIS INVOCATION, and that is the fail-closed direction. Answering
     // `drafted` while the artifact reached no store would tell a person to go and look in an inbox
@@ -287,17 +349,13 @@ export const authoringDraftWriteSpec: FunctionSpec<
     // because an invocation spends up to nine and picking a different one here would make the
     // proposal's attribution and the routing's evidence two answers to one question. It is absent
     // when the receipt names no run at all, which `runs.digest` reads as what it is.
-    if (outcome.kind !== 'refused') {
+    if (outcome.kind === 'drafted' || outcome.kind === 'repaired') {
       const runId = outcome.receipt.gateRuns.at(-1)?.runId
       const attribution = {
         emittedBy: AUTHORING_DRAFT_WRITE_FUNCTION_ID,
         ...(runId === undefined ? {} : { runId }),
       }
-      await proposals.put(
-        outcome.kind === 'finding'
-          ? { kind: 'finding', ...attribution, payload: outcome.proposal }
-          : { kind: 'test-draft', ...attribution, payload: outcome.proposal },
-      )
+      await proposals.put({ kind: 'test-draft', ...attribution, payload: outcome.proposal })
     }
 
     return {
@@ -305,6 +363,7 @@ export const authoringDraftWriteSpec: FunctionSpec<
       fanOut: result.fanOut,
       ...(outcome.draftRef === undefined ? {} : { draftRef: outcome.draftRef }),
       ...(outcome.receipt === undefined ? {} : { receipt: outcome.receipt }),
+      ...(outcome.kind === 'stopped' ? { stop: projectStop(outcome) } : {}),
       ...(dedup.kind === 'duplicate'
         ? {
           refusal: {

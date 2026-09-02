@@ -1,8 +1,8 @@
-// Stage 5 — the frozen repair-vs-finding denominator (Phase 394, D-08 · WTST-04).
+// Stage 5 — the frozen repair-vs-stop denominator (Phase 394 D-08 · WTST-04; 411 D-01/D-03).
 //
 // Ten rows, each the SOLE CATCHER for one property, and each one's rationale in
 // `fixtures/router-corpus/expectations.json` says which. The table is frozen: a row that stops
-// catching what it claims is a finding about the router, never a reason to move the row.
+// catching what it claims is a defect in the router, never a reason to move the row.
 //
 // THE HANDOFF IS PRODUCED, NOT WRITTEN HERE. Every row is an eight-field MEMBER SPEC which this
 // file builds into a real `CompletedRunHandoff` through the shared builders in
@@ -69,7 +69,7 @@ interface MechanicsSpec {
 }
 
 interface ExpectedSpec {
-  readonly route: 'repair' | 'finding' | 'refuse'
+  readonly route: 'repair' | 'stop' | 'refuse'
   readonly signalClass: string
   readonly failingStepIndex: number | null
   readonly verdictSource: VerdictSource | null
@@ -92,7 +92,7 @@ interface Expectations {
   readonly frozenAt: string
   readonly baseRow: string
   readonly memberSpecKeys: readonly string[]
-  readonly findingDirectionRows: readonly string[]
+  readonly stopDirectionRows: readonly string[]
   readonly rows: readonly CorpusRow[]
 }
 
@@ -118,7 +118,7 @@ const DRAFT_REF: DraftRef = {
 /**
  * The two-step sub-action shape every row's member is built over.
  *
- * Step 1 records a `stateAfter` as well as a `stateBefore`, so the finding arm's evidence refs
+ * Step 1 records a `stateAfter` as well as a `stateBefore`, so the stop arm's evidence refs
  * exercise all three channels on the phase's signature cell rather than only the two a step with
  * no observed navigation would produce.
  */
@@ -180,12 +180,12 @@ describe('the frozen router corpus is intact', () => {
     }
   })
 
-  it('names three finding-direction rows, and they are the rows that route to finding', () => {
-    const findingRows = EXPECTATIONS.rows
-      .filter((row) => row.expected.route === 'finding')
+  it('names three stop-direction rows, and they are the rows that route to stop', () => {
+    const stopRows = EXPECTATIONS.rows
+      .filter((row) => row.expected.route === 'stop')
       .map((row) => row.id)
-    expect([...findingRows].sort()).toEqual([...EXPECTATIONS.findingDirectionRows].sort())
-    expect(EXPECTATIONS.findingDirectionRows).toHaveLength(3)
+    expect([...stopRows].sort()).toEqual([...EXPECTATIONS.stopDirectionRows].sort())
+    expect(EXPECTATIONS.stopDirectionRows).toHaveLength(3)
   })
 
   it('every variant declaration is mechanically true against the data', () => {
@@ -219,7 +219,7 @@ describe('the frozen router corpus is intact', () => {
     const byRoute = (route: string) =>
       EXPECTATIONS.rows.filter((row) => row.expected.route === route)
     expect(byRoute('repair').length).toBeGreaterThanOrEqual(3)
-    expect(byRoute('finding').length).toBeGreaterThanOrEqual(3)
+    expect(byRoute('stop').length).toBeGreaterThanOrEqual(3)
     expect(byRoute('refuse').length).toBeGreaterThanOrEqual(1)
 
     // Each of the four STEP-level mechanics signals has a cross-arm partner differing by the one
@@ -234,7 +234,7 @@ describe('the frozen router corpus is intact', () => {
       expect(row.variantOf, `${id} pairs against the signature cell`).toBe(EXPECTATIONS.baseRow)
       expect(row.variesBy).toEqual([field])
       expect(row.expected.route).toBe('repair')
-      expect(rowNamed(EXPECTATIONS.baseRow).expected.route).toBe('finding')
+      expect(rowNamed(EXPECTATIONS.baseRow).expected.route).toBe('stop')
     }
 
     // Both MEMBER-level mechanics outcomes pair against the passing run by `outcome` alone.
@@ -260,7 +260,7 @@ describe('the frozen router corpus is intact', () => {
     expect(onFailingStep.member.failedSteps).toEqual([1])
     expect(onAnotherStep.member.failedSteps).toEqual([1])
     expect(onFailingStep.expected.route).toBe('repair')
-    expect(onAnotherStep.expected.route).toBe('finding')
+    expect(onAnotherStep.expected.route).toBe('stop')
   })
 })
 
@@ -280,7 +280,7 @@ describe('every corpus row builds a run document the load boundary accepts', () 
 
 describe('the router routes every frozen row to its arm, on the signal the row names', () => {
   it.each(EXPECTATIONS.rows.map((row) => row.id))('row %s reproduces its frozen route', async (id) => {
-    const { routeRepairOrFinding, classifyFailureEvidence, AuthoringRouterUnroutableError }
+    const { routeRepairOrStop, classifyFailureEvidence, AuthoringRouterUnroutableError }
       = await loadRouter()
     const row = rowNamed(id)
     const handoff = handoffFor(row)
@@ -291,12 +291,12 @@ describe('the router routes every frozen row to its arm, on the signal the row n
       .toBe(row.expected.signalClass)
 
     if (row.expected.route === 'refuse') {
-      expect(() => routeRepairOrFinding(DRAFT_REF, handoff), row.rationale)
+      expect(() => routeRepairOrStop(DRAFT_REF, handoff), row.rationale)
         .toThrow(AuthoringRouterUnroutableError)
       return
     }
 
-    const route = routeRepairOrFinding(DRAFT_REF, handoff)
+    const route = routeRepairOrStop(DRAFT_REF, handoff)
     expect(route.kind, row.rationale).toBe(row.expected.route)
     expect(route.signalClass, row.rationale).toBe(row.expected.signalClass)
 
@@ -309,7 +309,7 @@ describe('the router routes every frozen row to its arm, on the signal the row n
 
     expect(route.failurePoint?.stepIndex ?? null).toBe(row.expected.failingStepIndex)
     expect(route.failurePoint?.verdictSource ?? null).toBe(row.expected.verdictSource)
-    // The finding carries REFS into the run's own durable records, never copies of them.
+    // The stop carries REFS into the run's own durable records, never copies of them.
     expect(route.evidenceRefs.length).toBeGreaterThan(0)
     for (const ref of route.evidenceRefs) {
       expect(ref.runId).toBe(handoff.runId)
@@ -320,11 +320,11 @@ describe('the router routes every frozen row to its arm, on the signal the row n
   })
 })
 
-describe('the finding arm carries the evidence WTST-04 names', () => {
+describe('the stop arm carries the evidence WTST-04 names', () => {
   it('refs the exact trace and both a11y snapshots at the failure point', async () => {
-    const { routeRepairOrFinding } = await loadRouter()
-    const route = routeRepairOrFinding(DRAFT_REF, handoffFor(rowNamed(EXPECTATIONS.baseRow)))
-    if (route.kind !== 'finding') throw new Error('the signature cell must route to a finding')
+    const { routeRepairOrStop } = await loadRouter()
+    const route = routeRepairOrStop(DRAFT_REF, handoffFor(rowNamed(EXPECTATIONS.baseRow)))
+    if (route.kind !== 'stop') throw new Error('the signature cell must route to a stop')
 
     const channels = route.evidenceRefs.map((ref) => ref.channel)
     expect(new Set(channels)).toEqual(new Set(['step-trace', 'state-before', 'state-after']))
@@ -344,14 +344,14 @@ describe('the finding arm carries the evidence WTST-04 names', () => {
 
 describe('the router is total where it can be and refuses by name where it cannot', () => {
   it('refuses when there is no run evidence at all', async () => {
-    const { classifyFailureEvidence, routeRepairOrFinding, AuthoringRouterUnroutableError }
+    const { classifyFailureEvidence, routeRepairOrStop, AuthoringRouterUnroutableError }
       = await loadRouter()
     // Deliberately NOT the ambiguity arm. `DraftRunPortLike.get` answers `undefined` for a run
     // whose record cannot be read back, and that is a broken precondition rather than conflicting
-    // evidence about a real failure — filing a finding with nothing in it would report an
+    // evidence about a real failure — reporting a stop with nothing in it would name an
     // application bug the run never observed, which is the very error D-08 exists to prevent.
     expect(classifyFailureEvidence(DRAFT_REF, undefined)).toBe('no-run-evidence')
-    expect(() => routeRepairOrFinding(DRAFT_REF, undefined))
+    expect(() => routeRepairOrStop(DRAFT_REF, undefined))
       .toThrow(AuthoringRouterUnroutableError)
   })
 
@@ -378,7 +378,7 @@ describe('the router is total where it can be and refuses by name where it canno
     }
 
     // The draft passed; a neighbour in the same run failed cleanly. Reading the run rather than
-    // the draft's own member would file a finding about the neighbour's application behaviour.
+    // the draft's own member would report a stop about the neighbour's application behaviour.
     const draftPassed = runDocument('r_router-neighbour-failed', [
       memberFixture(passing.member),
       memberFixture(signature.member, strangerIdentity),
@@ -395,11 +395,11 @@ describe('the router is total where it can be and refuses by name where it canno
   })
 
   it('is pure: two calls agree and the run document is not mutated', async () => {
-    const { routeRepairOrFinding } = await loadRouter()
+    const { routeRepairOrStop } = await loadRouter()
     const handoff = handoffFor(rowNamed(EXPECTATIONS.baseRow))
     const before = JSON.stringify(handoff)
-    const first = routeRepairOrFinding(DRAFT_REF, handoff)
-    const second = routeRepairOrFinding(DRAFT_REF, handoff)
+    const first = routeRepairOrStop(DRAFT_REF, handoff)
+    const second = routeRepairOrStop(DRAFT_REF, handoff)
     expect(first).toEqual(second)
     expect(JSON.stringify(handoff)).toBe(before)
   })

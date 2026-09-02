@@ -1,4 +1,4 @@
-// Stage 5's deterministic repair-vs-finding derivation (Phase 394, D-08 · WTST-04).
+// Stage 5's deterministic repair-vs-stop derivation (Phase 394 D-08 · WTST-04; 411 D-01).
 //
 // ONE function decides whether a failing draft is the DRAFT's problem or the APPLICATION's, and
 // this file is the only place that decision is made. The table below is the contract, not an
@@ -16,27 +16,27 @@
 //      records which path produced that verdict, and that step carries no mechanics signal of
 //      its own. Then:
 //        2a. no mechanics signal anywhere in the member
-//            -> `clean-definitive-assertion-fail` -> FINDING, unconditionally.
+//            -> `clean-definitive-assertion-fail` -> STOP, unconditionally.
 //        2b. a mechanics signal somewhere else in the member
-//            -> `mixed-evidence` -> FINDING.
+//            -> `mixed-evidence` -> STOP.
 //   3. A mechanics signal on any step, or a member outcome of timeout or cancelled
 //      -> `execution-mechanics` -> REPAIR.
-//   4. Anything else -> `indefinitive-failure` -> FINDING.
+//   4. Anything else -> `indefinitive-failure` -> STOP.
 //
-// WHY RULE 2 IS EVALUATED BEFORE RULE 3, AND WHY AMBIGUITY LANDS IN THE FINDING ARM. Repairing a
+// WHY RULE 2 IS EVALUATED BEFORE RULE 3, AND WHY AMBIGUITY LANDS IN THE STOP ARM. Repairing a
 // clean assertion-fail can only mean rewriting what the test CLAIMS to match what the application
 // actually showed, which is oracle capture by construction — the draft class gate 4's corpus
 // exists to reject, manufactured by the very loop that is supposed to filter it. So D-08 says a
-// clean definitive assertion-fail routes to a finding ALWAYS, which is only true if the clean-fail
+// clean definitive assertion-fail routes to a stop ALWAYS, which is only true if the clean-fail
 // test is asked first; a mechanics-first table would let one unrelated timed-out step pull a
 // perfectly clean fail into the repair arm. The same asymmetry decides every remaining case: a
 // mis-filed test-wrong costs one human look and is undone by that look, while a mis-routed
 // application bug gets iterated into passing and is then indistinguishable from a test that
 // always worked. Only the second is unrecoverable, so every class this file cannot place with
-// confidence points at the finding arm.
+// confidence points at the stop arm.
 //
 // THE MECHANICS SCAN COVERS THE WHOLE MEMBER, NOT THE FAILING STEP. Rule 2's split between 2a and
-// 2b is what makes mixed evidence land in a finding, and narrowing the scan to the failing step
+// 2b is what makes mixed evidence land in a stop, and narrowing the scan to the failing step
 // collapses that split: a termination on step 0 and a termination on the failing step would
 // classify identically. The frozen corpus carries that exact pair, differing in one integer.
 //
@@ -44,10 +44,11 @@
 // document. Neither takes a model, a prompt, or any string a model produced — `router.test-d.ts`
 // pins both parameter lists as exact tuples, so there is no argument for model output to arrive
 // through, and the identity is a lookup key rather than a decision input: every value that
-// decides is a field of the run's own `PerTestOutcome` or `StepEvidence`. The model writes the
-// finding's evidence-linked explanation, downstream, once the branch is already chosen.
+// decides is a field of the run's own `PerTestOutcome` or `StepEvidence`. The model writes nothing
+// this arm carries: the stop's payload is projected downstream from the route and from typed facts,
+// once the branch is already chosen, and no prose field survives on it (411 D-05).
 //
-// THE FINDING CARRIES REFS, NEVER PAYLOADS (391 D-18, map not territory). WTST-04 asks the finding
+// THE STOP CARRIES REFS, NEVER PAYLOADS (391 D-18, map not territory). WTST-04 asks the stop arm
 // to name the exact trace and the a11y snapshot at the failure point; both already live on the
 // handoff, the snapshots as `SubActionEvidence.stateBefore` and `stateAfter`, so this arm carries
 // coordinates into the run's own durable records. That is also why the loop binds
@@ -65,6 +66,7 @@ import type {
   DraftRef,
   MemberTestOutcome,
   PerTestOutcome,
+  RunEvidenceRef,
   StepEvidence,
   VerdictSource,
 } from '@vostride/agent-qa-schema'
@@ -73,7 +75,7 @@ import type {
  * The closed vocabulary of what one member's failure evidence WAS.
  *
  * Six members, because refusing is a classification too: a router that could only answer `repair`
- * or `finding` would have to invent one of them for a run it should not have been handed, and the
+ * or `stop` would have to invent one of them for a run it should not have been handed, and the
  * two refusing classes are how the caller learns which of its own preconditions broke.
  */
 export const ROUTER_SIGNAL_CLASSES = [
@@ -90,8 +92,8 @@ export type RouterSignalClass = (typeof ROUTER_SIGNAL_CLASSES)[number]
 /** The single class the repair arm may carry. */
 export type RouterRepairSignalClass = 'execution-mechanics'
 
-/** The three classes the finding arm may carry — one definitive, two ambiguous. */
-export type RouterFindingSignalClass =
+/** The three classes the stop arm may carry — one definitive, two ambiguous. */
+export type RouterStopSignalClass =
   | 'clean-definitive-assertion-fail'
   | 'mixed-evidence'
   | 'indefinitive-failure'
@@ -116,32 +118,10 @@ export const ROUTER_MECHANICS_SIGNALS = [
 
 export type RouterMechanicsSignalName = (typeof ROUTER_MECHANICS_SIGNALS)[number]
 
-/** Which durable record an evidence coordinate addresses. */
-export const ROUTER_EVIDENCE_CHANNELS = ['step-trace', 'state-before', 'state-after'] as const
-
-export type RouterEvidenceChannel = (typeof ROUTER_EVIDENCE_CHANNELS)[number]
-
 /** One mechanics signal and where it was found. `stepIndex: null` ⇒ carried by the member. */
 export interface MechanicsSignal {
   readonly stepIndex: number | null
   readonly signal: RouterMechanicsSignalName
-}
-
-/**
- * A COORDINATE into the run's own durable records. Never a payload.
- *
- * `router.test-d.ts` pins this key set by equality, so a screen state, an element tree or a
- * rendered snapshot copied onto a finding is a type error here rather than a surprise inside
- * whatever durable record a later plan writes the finding into.
- */
-export interface RunEvidenceRef {
-  readonly runId: string
-  readonly filePath: string
-  readonly testName: string
-  readonly stepIndex: number
-  /** Absent on the `step-trace` channel, which addresses the whole step. */
-  readonly subActionIndex?: number
-  readonly channel: RouterEvidenceChannel
 }
 
 /** Where the failure was observed, in the run's own words. */
@@ -159,7 +139,7 @@ export interface RouterFailurePoint {
 /**
  * The draft's mechanics need work; nothing here is a claim about the application.
  *
- * Carries `mechanics` and `failingStepIndex`, neither of which exists on {@link FindingRoute}.
+ * Carries `mechanics` and `failingStepIndex`, neither of which exists on {@link StopRoute}.
  * That is deliberate rather than incidental: two records differing only by a `kind` literal are
  * assignable in enough directions to make a type-level unreachability pin decorative, and SC-2's
  * claim is exactly an unreachability claim.
@@ -174,21 +154,25 @@ export interface RepairRoute {
 }
 
 /**
- * The application looks wrong, or the evidence does not say clearly enough to risk repairing.
+ * The application looks wrong, or the evidence does not say clearly enough to risk repairing — so
+ * the loop STOPS here and reports what the run said.
  *
  * Carries `failurePoint` and `evidenceRefs`, neither of which exists on {@link RepairRoute}.
  * `failurePoint` is nullable because rule 4 admits a member that failed at the member level with
- * no step verdict to point at; `evidenceRefs` is not, because a finding a reader cannot trace is
- * not a finding.
+ * no step verdict to point at; `evidenceRefs` is not, because a stop a reader cannot trace is not
+ * a report.
+ *
+ * 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the Issue-slot
+ * cleanup — see `DELETION-INVENTORY.md`.
  */
-export interface FindingRoute {
-  readonly kind: 'finding'
-  readonly signalClass: RouterFindingSignalClass
+export interface StopRoute {
+  readonly kind: 'stop'
+  readonly signalClass: RouterStopSignalClass
   readonly failurePoint: RouterFailurePoint | null
   readonly evidenceRefs: readonly RunEvidenceRef[]
 }
 
-export type PostVerifyRoute = RepairRoute | FindingRoute
+export type PostVerifyRoute = RepairRoute | StopRoute
 
 /**
  * The router was handed something that is not a routing question.
@@ -201,7 +185,7 @@ export class AuthoringRouterUnroutableError extends Error {
   constructor(readonly signalClass: RouterSignalClass) {
     super(
       `authoring router: ${signalClass} is not a routable class; `
-        + 'the router decides repair versus finding for a draft that FAILED, '
+        + 'the router decides repair versus stop for a draft that FAILED, '
         + 'and this evidence poses no such question',
     )
     this.name = 'AuthoringRouterUnroutableError'
@@ -217,12 +201,12 @@ export class AuthoringRouterUnroutableError extends Error {
  */
 const ROUTE_ARM_BY_SIGNAL_CLASS = {
   'execution-mechanics': 'repair',
-  'clean-definitive-assertion-fail': 'finding',
-  'mixed-evidence': 'finding',
-  'indefinitive-failure': 'finding',
+  'clean-definitive-assertion-fail': 'stop',
+  'mixed-evidence': 'stop',
+  'indefinitive-failure': 'stop',
   'no-failure': 'refuse',
   'no-run-evidence': 'refuse',
-} as const satisfies Record<RouterSignalClass, 'repair' | 'finding' | 'refuse'>
+} as const satisfies Record<RouterSignalClass, 'repair' | 'stop' | 'refuse'>
 
 /** Member outcomes that are not a failure. A heal is a pass; a skip never ran. */
 const NON_FAILING_OUTCOMES: readonly MemberTestOutcome[] = ['passed', 'healed', 'skipped']
@@ -327,23 +311,23 @@ function evidenceRefsFor(
 }
 
 /**
- * THE finding arm's evidence, from ONE step of ONE member. One derivation, two callers.
+ * THE stop arm's evidence, from ONE step of ONE member. One derivation, two callers.
  *
- * Both callers below build the same two fields from the same walk: `routeRepairOrFinding`'s finding
- * arm, and {@link findingRouteForAbandonedRepair} for a repair that was abandoned. They are one
- * function rather than two similar blocks because the alternative was measured — the exhausted arm
- * shipped an empty literal (`failurePoint: null`, `evidenceRefs: []`) beside a routed handoff it
- * never read, and every cell over that arm passed (394-VERIFICATION, CR-02). A construction copied
- * into a second module drifts from this one the first time either side is edited.
+ * Both callers below build the same two fields from the same walk: `routeRepairOrStop`'s stop arm,
+ * and {@link stopRouteForAbandonedRepair} for a repair that was abandoned. They are one function
+ * rather than two similar blocks because the alternative was measured — the exhausted arm shipped
+ * an empty literal (`failurePoint: null`, `evidenceRefs: []`) beside a routed handoff it never
+ * read, and every cell over that arm passed (394-VERIFICATION, CR-02). A construction copied into
+ * a second module drifts from this one the first time either side is edited.
  *
  * `undefined` in means the member has no step to point at, which is the ONLY case that yields a
- * null point and no refs — the nullability rule the finding arm has always documented.
+ * null point and no refs — the nullability rule the stop arm has always documented.
  */
-function findingEvidenceFor(
+function stopEvidenceFor(
   runId: string,
   member: PerTestOutcome,
   point: StepEvidence | undefined,
-): Pick<FindingRoute, 'failurePoint' | 'evidenceRefs'> {
+): Pick<StopRoute, 'failurePoint' | 'evidenceRefs'> {
   if (point === undefined) return { failurePoint: null, evidenceRefs: [] }
   return {
     failurePoint: {
@@ -358,13 +342,13 @@ function findingEvidenceFor(
 }
 
 /**
- * The finding arm for a repair the loop ABANDONED, over the run the router already read (CR-02).
+ * The stop arm for a repair the loop ABANDONED, over the run the router already read (CR-02).
  *
  * WHY IT LIVES HERE AND NOT AT THE CALL SITE. An exhausted or prefix-regressed repair produces the
- * same artifact class as a first-pass finding — `routeAfterVerify`'s own header says so — and that
+ * same artifact class as a first-pass stop — `routeAfterVerify`'s own header says so — and that
  * class's evidence is derived in exactly one place. Building it in `loop.ts` would be a second
- * answer to "which step does this finding point at", assembled from the same fields, free to
- * disagree; building it from a literal is what shipped, and a durable finding with no failure point
+ * answer to "which step does this stop point at", assembled from the same fields, free to
+ * disagree; building it from a literal is what shipped, and a durable stop with no failure point
  * and no refs is unauditable by construction (T-394-90).
  *
  * `signalClass` is `indefinitive-failure` and nothing else: the classification the run's own
@@ -372,22 +356,22 @@ function findingEvidenceFor(
  * a fact about the loop rather than a new reading of the run. A repair-prefixed class would be a
  * string outside {@link ROUTER_SIGNAL_CLASSES}, which is the WR-09 defect this file already closed.
  *
- * `failingStepIndex` is the repair route's own — the step the loop tried to fix — so the finding
+ * `failingStepIndex` is the repair route's own — the step the loop tried to fix — so the stop
  * points where the repair was aimed. `null` (a member-level signal) falls back to the first step
  * the verifier rejected, and a member with neither yields a null point rather than a fabricated one.
  */
-export function findingRouteForAbandonedRepair(
+export function stopRouteForAbandonedRepair(
   draftRef: DraftRef,
   handoff: CompletedRunHandoff,
   failingStepIndex: number | null,
-): FindingRoute {
+): StopRoute {
   const member = memberFor(draftRef, handoff)
   if (member === undefined) {
     // Unreachable through the loop — reaching a repair arm at all means this member was found —
     // and answered rather than thrown, because repair has already been spent by the time this is
     // called and a throw here would lose the abandonment the caller is filing.
     return {
-      kind: 'finding',
+      kind: 'stop',
       signalClass: 'indefinitive-failure',
       failurePoint: null,
       evidenceRefs: [],
@@ -397,14 +381,14 @@ export function findingRouteForAbandonedRepair(
     ? undefined
     : member.steps.find((step) => step.stepIndex === failingStepIndex)
   return {
-    kind: 'finding',
+    kind: 'stop',
     signalClass: 'indefinitive-failure',
-    ...findingEvidenceFor(handoff.runId, member, named ?? member.steps.find(isFailedVerdict)),
+    ...stopEvidenceFor(handoff.runId, member, named ?? member.steps.find(isFailedVerdict)),
   }
 }
 
 /**
- * The one deterministic repair-versus-finding derivation (D-08).
+ * The one deterministic repair-versus-stop derivation (D-08).
  *
  * Pure: it reads the run document and mutates nothing. Total over every classification the table
  * produces — the two non-routing classes refuse BY NAME rather than returning an arm, which is
@@ -413,7 +397,7 @@ export function findingRouteForAbandonedRepair(
  * The caller supplies the handoff of the run whose evidence the receipt's gates judged; choosing
  * among an evaluation's several runs is the stage-5 wiring's job, and lands with plan 06.
  */
-export function routeRepairOrFinding(
+export function routeRepairOrStop(
   draftRef: DraftRef,
   handoff: CompletedRunHandoff | undefined,
 ): PostVerifyRoute {
@@ -436,13 +420,13 @@ export function routeRepairOrFinding(
     }
   }
 
-  // The finding points at the step whose CLAIM failed when there is one, and otherwise at the
-  // first step the verifier rejected — never at a step chosen because it carried a mechanics
-  // signal, which would name a symptom of the run rather than the application behaviour.
+  // The stop points at the step whose CLAIM failed when there is one, and otherwise at the first
+  // step the verifier rejected — never at a step chosen because it carried a mechanics signal,
+  // which would name a symptom of the run rather than the application behaviour.
   const point = firstCleanDefinitiveFail(member) ?? failingStep
   return {
-    kind: 'finding',
-    signalClass: signalClass as RouterFindingSignalClass,
-    ...findingEvidenceFor(handoff.runId, member, point),
+    kind: 'stop',
+    signalClass: signalClass as RouterStopSignalClass,
+    ...stopEvidenceFor(handoff.runId, member, point),
   }
 }

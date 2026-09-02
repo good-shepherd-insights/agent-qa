@@ -30,7 +30,7 @@
 // whatever the application happens to do now.
 //
 // THIS FILE CANNOT REACH THE APPLICATION'S OWN BRANCH. `repairDraft` takes a `RepairRoute`, and
-// `RepairRoute` and `FindingRoute` are mutually non-assignable by construction (each carries a
+// `RepairRoute` and `StopRoute` are mutually non-assignable by construction (each carries a
 // required field the other does not have). So wiring the app-broken branch into repair is a
 // COMPILE error rather than a behaviour a corpus has to notice afterwards — T-394-22's mitigation
 // expressed as a type, pinned by the `@ts-expect-error` cell in `router.test-d.ts` and by the
@@ -44,6 +44,7 @@
 // contract, two consumers" property holds through the binding rather than through an import.
 
 import {
+  RUN_EVIDENCE_CHANNELS,
   TestEditPatchSetSchema,
   parseJsonPointer,
 } from '@vostride/agent-qa-schema'
@@ -63,7 +64,6 @@ import type {
 // to "is this a credential", which is the thing `CREDENTIAL_DETECTOR_FAMILIES` exists to have one of.
 import { DraftSecretRefusedError, screenDraftForCredentials } from './loop.js'
 import type { DraftRunPortLike, DraftShelfPortLike, ParsedDraftLike } from './ports.js'
-import { ROUTER_EVIDENCE_CHANNELS } from './router.js'
 import type { RepairRoute } from './router.js'
 import { buildTieredPrompt } from '../prompt/tiered-prompt-builder.js'
 
@@ -450,7 +450,7 @@ function failureBlockBody(route: RepairRoute, member: PerTestOutcome | undefined
     if (step.stepIndex !== route.failingStepIndex) continue
     step.subActions.forEach((subAction, subActionIndex) => {
       lines.push(`  plan: ${subAction.plan}`)
-      for (const channel of ROUTER_EVIDENCE_CHANNELS) {
+      for (const channel of RUN_EVIDENCE_CHANNELS) {
         if (channel === 'step-trace') continue
         if (channel === 'state-after' && subAction.stateAfter === undefined) continue
         lines.push(`  a11y ${channel}: step ${step.stepIndex} sub-action ${subActionIndex}`)

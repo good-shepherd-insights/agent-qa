@@ -44,7 +44,9 @@
     "The three finding-direction cells are named below.",
     "",
     "measured/ rationale on every row records what was actually observed on 2026-08-11 by",
-    "running the row through the shipped classifier, not what the table's author expected."
+    "running the row through the shipped classifier, not what the table's author expected.",
+    "",
+    "2026-09-02 (Phase 411): the second arm was renamed from its v52 spelling to `stop` with the Issue-slot cleanup; every row's classification is byte-identical -- see `DELETION-INVENTORY.md`."
   ],
 
   "schemaVersion": 1,
@@ -62,7 +64,7 @@
     "stagnationSteps"
   ],
 
-  "findingDirectionRows": [
+  "stopDirectionRows": [
     "clean-definitive-assertion-fail",
     "mixed-evidence",
     "indefinitive-failure"
@@ -84,14 +86,14 @@
         "stagnationSteps": []
       },
       "expected": {
-        "route": "finding",
+        "route": "stop",
         "signalClass": "clean-definitive-assertion-fail",
         "failingStepIndex": 1,
         "verdictSource": "assert-value",
         "mechanics": []
       },
       "rationale": "SOLE CATCHER for: a clean definitive assertion-fail NEVER reaches the repair arm. THE PHASE'S SIGNATURE CELL. Step 1's verifier said no, the deterministic assertValue comparator produced that verdict, and no step carries a mechanics signal -- so nothing about this failure is about how the test ACTS, and 'repairing' it could only mean rewriting what it CLAIMS to match what the application showed. That is oracle capture by construction (D-08), and this is the one row that says so.",
-      "measured": "route finding, signalClass clean-definitive-assertion-fail, failurePoint step 1 with verdictSource assert-value; scanned 2 steps and found zero mechanics signals and no member-level one."
+      "measured": "route stop, signalClass clean-definitive-assertion-fail, failurePoint step 1 with verdictSource assert-value; scanned 2 steps and found zero mechanics signals and no member-level one."
     },
     {
       "id": "mechanics-termination",
@@ -252,14 +254,14 @@
         "stagnationSteps": []
       },
       "expected": {
-        "route": "finding",
+        "route": "stop",
         "signalClass": "mixed-evidence",
         "failingStepIndex": 1,
         "verdictSource": "assert-value",
         "mechanics": [{ "stepIndex": 0, "signal": "termination" }]
       },
       "rationale": "SOLE CATCHER for: MIXED evidence is ambiguity, and ambiguity routes to finding. A FINDING-DIRECTION CELL. It differs from mechanics-termination in exactly one integer -- the termination sits on step 0 instead of on the failing step 1 -- and lands on the opposite arm. A router whose mechanics scan is narrowed to the failing step gives these two rows the same class, which is why this pair, and not any single row, is what pins the scan's width.",
-      "measured": "route finding, signalClass mixed-evidence; the clean-fail test accepted step 1 (its own step carries no mechanics) while the all-steps scan found a termination on step 0."
+      "measured": "route stop, signalClass mixed-evidence; the clean-fail test accepted step 1 (its own step carries no mechanics) while the all-steps scan found a termination on step 0."
     },
     {
       "id": "indefinitive-failure",
@@ -276,14 +278,14 @@
         "stagnationSteps": []
       },
       "expected": {
-        "route": "finding",
+        "route": "stop",
         "signalClass": "indefinitive-failure",
         "failingStepIndex": 1,
         "verdictSource": null,
         "mechanics": []
       },
       "rationale": "SOLE CATCHER for: a failure with NEITHER a mechanics signal NOR a definitive verdict source is unclassifiable, and unclassifiable is ambiguity. A FINDING-DIRECTION CELL. It is the signature cell with the verdict source removed and nothing else changed, so it is the row that proves the router actually READS verdictSource rather than treating any failed step as definitive -- a router that skipped that field would classify this identically to the signature cell and no other row would notice.",
-      "measured": "route finding, signalClass indefinitive-failure; step 1's verdict is false and it records no verdictSource, so the definitive test rejects it and the mechanics scan finds nothing."
+      "measured": "route stop, signalClass indefinitive-failure; step 1's verdict is false and it records no verdictSource, so the definitive test rejects it and the mechanics scan finds nothing."
     },
     {
       "id": "passing-run",

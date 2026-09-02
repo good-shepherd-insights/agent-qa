@@ -46,7 +46,7 @@ import {
   screenDraftForCredentials,
 } from '../loop.js'
 import { REPAIR_ITERATION_CAP, repairDraft } from '../repair.js'
-import { routeRepairOrFinding } from '../router.js'
+import { routeRepairOrStop } from '../router.js'
 import type { RepairRoute } from '../router.js'
 import type { DraftRunPortLike, DraftStageOutcome, ParsedDraftLike } from '../ports.js'
 import {
@@ -103,7 +103,7 @@ const BEST_PRIOR_MEMBER: MemberFixture = {
 const BEST_PRIOR_RUN: CompletedRunHandoff = runDocument('r_best-prior', [BEST_PRIOR_MEMBER])
 
 function repairRoute(): RepairRoute {
-  const route = routeRepairOrFinding(DRAFT_REF, BEST_PRIOR_RUN)
+  const route = routeRepairOrStop(DRAFT_REF, BEST_PRIOR_RUN)
   if (route.kind !== 'repair') {
     throw new Error(`the fixture must route to repair, and it routed to ${route.kind}`)
   }

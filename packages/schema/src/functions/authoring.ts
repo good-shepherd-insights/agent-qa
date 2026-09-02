@@ -17,7 +17,7 @@ import { AuthoringFunnelSchema } from '../authoring/funnel'
 import { DraftReceiptSchema, DraftRefSchema } from '../authoring/draft-receipt'
 import { FanOutReportSchema } from '../authoring/fan-out'
 import { PatchOpSchema } from '../authoring/patch-ops'
-import { TestDraftProposalV1Schema } from '../authoring/proposal-arms'
+import { RunEvidenceRefSchema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
 import type { ScopeTier } from '../identity/scope-key'
 
 export const AuthoringVerifyDraftInputSchema = z.object({
@@ -91,13 +91,18 @@ const scopeKeySchema = z.object({
  *   `drafted`  the draft was compiled, staged and verified; the receipt carries the verdict.
  *   `refused`  stage 2 found the intent already covered and ended the invocation (D-04, plan 04).
  *   `repaired` stage 5 routed to bounded repair and a later iteration passed (D-08/D-10, plan 05).
- *   `finding`  stage 5 routed to the app-broken branch: a correctly-failing draft (D-11, plan 06).
+ *   `stopped`  stage 5 routed to the stop arm: the gate run's verdict rides this result's `stop`
+ *              payload and the correctly-failing draft stays on the shelf with its receipt
+ *              (411 D-01/D-05).
+ *
+ * 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the Issue-slot
+ * cleanup — see `DELETION-INVENTORY.md`.
  */
 export const AUTHORING_LOOP_OUTCOMES = [
   'drafted',
   'refused',
   'repaired',
-  'finding',
+  'stopped',
 ] as const
 
 export type AuthoringLoopOutcomeKind = (typeof AUTHORING_LOOP_OUTCOMES)[number]
@@ -165,6 +170,85 @@ export const AuthoringDedupRefusalSchema = z.object({
 }).strict()
 
 export type AuthoringDedupRefusal = z.infer<typeof AuthoringDedupRefusalSchema>
+
+/**
+ * The three classes the stop arm may carry — one definitive, two ambiguous (411 D-06).
+ *
+ * The schema spelling of the router's own `RouterStopSignalClass`. Two files, one vocabulary:
+ * `loop.test-d.ts` pins the two equal by type so neither can drift from the other.
+ */
+export const AUTHORING_STOP_SIGNAL_CLASSES = [
+  'clean-definitive-assertion-fail',
+  'mixed-evidence',
+  'indefinitive-failure',
+] as const
+
+export type AuthoringStopSignalClass = (typeof AUTHORING_STOP_SIGNAL_CLASSES)[number]
+
+/** How a bounded repair gave up, in the repair lane's own two words (411 D-08). */
+export const AUTHORING_REPAIR_ABANDONMENTS = ['exhausted', 'prefix-regressed'] as const
+
+export type AuthoringRepairAbandonment = (typeof AUTHORING_REPAIR_ABANDONMENTS)[number]
+
+/**
+ * Where the failure was observed, in the run's own words.
+ *
+ * No `runId` here: it rides at the payload's top level (411 D-06) so a NULL failure point still
+ * names the run stage 5 routed on.
+ */
+export const AuthoringStopFailurePointSchema = z.object({
+  stepIndex: z.number().int().nonnegative(),
+  /** Pre-interpolation step text — post-interpolation text can carry resolved secrets. */
+  stepText: z.string(),
+  /** The verifier's own reasoning for saying no. */
+  reasoning: z.string(),
+  /**
+   * Which path produced the verdict. A free string rather than an enum: the run's own
+   * `VerdictSource` vocabulary is owned by the handoff schema and grows there, and a second closed
+   * copy here would refuse to report a real stop because the verdict came through a path this file
+   * had not heard of.
+   */
+  verdictSource: z.string().min(1).optional(),
+}).strict()
+
+export type AuthoringStopFailurePoint = z.infer<typeof AuthoringStopFailurePointSchema>
+
+/**
+ * What a `stopped` invocation REPORTS — the gate run's verdict and the router's reading (411 D-05).
+ *
+ * NOTHING A MODEL WROTE IS ON IT. The payload is projected from the route the router derived and
+ * from the receipt's own last gate run, both typed facts; there is no prose field for model output
+ * to arrive through, which is the whole of "the model never makes this decision" expressed as a
+ * shape rather than as an ordering. `.strict()` is the refusal surface for anything else.
+ *
+ * `repairAbandonment` AND `repairIterations` ARE PRESENT EXACTLY TOGETHER (411 D-08, 394-21/WR-09).
+ * The loop carries the kind and the spend as ONE parameter and the op spreads both or neither, so
+ * the two optionals here can never disagree — a kind with no spend, or a spend on a stop repair
+ * never touched, are not states the loop can be in. They are two optionals rather than one nested
+ * object for the reason the retired arm's were: a strict object with no effects, so the MCP
+ * projection and the golden digest see a plain shape.
+ */
+export const AuthoringStopSchema = z.object({
+  /** The LAST gate run on the receipt — the run stage 5 routed on. */
+  runId: z.string().min(1),
+  /** The draft's OWN member outcome, as the receipt's `GateRunRecord` spells it (411 D-06/D-17). */
+  memberOutcome: z.string().min(1),
+  /** The router's reading: which of the three stop classes this evidence was. */
+  signalClass: z.enum(AUTHORING_STOP_SIGNAL_CLASSES),
+  /** Null when the member failed at the member level with no step verdict to point at. */
+  failurePoint: AuthoringStopFailurePointSchema.nullable(),
+  /** Coordinates into the run's own durable records. Never a payload. */
+  evidenceRefs: z.array(RunEvidenceRefSchema).readonly(),
+  /** Present exactly with `repairIterations` — how a bounded repair gave up before this stop. */
+  repairAbandonment: z.enum(AUTHORING_REPAIR_ABANDONMENTS).optional(),
+  /**
+   * Present exactly with `repairAbandonment` — `RepairOutcome.iterations`, INCLUDING iterations a
+   * fence refused, which started nothing and are therefore not derivable from `fanOut`'s run ids.
+   */
+  repairIterations: z.number().int().min(0).optional(),
+}).strict()
+
+export type AuthoringStop = z.infer<typeof AuthoringStopSchema>
 
 /**
  * What a caller hands the loop.
@@ -259,9 +343,10 @@ export type AuthoringDraftWriteInput = z.infer<typeof AuthoringDraftWriteInputSc
  * is the answer to a different question: which draft this call produced, addressable without
  * knowing that a receipt is a thing that has a ref inside it.
  *
- * There is no payload arm per outcome. A finding's evidence and a proposal's diff ride 391's
- * envelope into the inbox (D-05/D-11), so widening this contract with them would mint a second
- * place the same artifact could be read from.
+ * There is no payload arm per outcome. A proposal's diff rides 391's envelope into the inbox
+ * (D-05), so widening this contract with it would mint a second place the same artifact could be
+ * read from; a stop's verdict rides THIS result, because nothing is minted for it (411 D-05) —
+ * see `stop` below.
  *
  * `fanOut` IS THE ONE RECORDED EXCEPTION, AND IT IS AN EXCEPTION TO THAT PARAGRAPH ON PURPOSE
  * (394-14 · WTST-08). WTST-08's owner decision was preview plus honest reporting with NO enforced
@@ -281,7 +366,7 @@ export type AuthoringDraftWriteInput = z.infer<typeof AuthoringDraftWriteInputSc
  * the paragraph above rules out and stays ruled out; this one is the disclosure's other half.
  *
  * BOTH ARE OPTIONAL, AND `outcome` SAYS WHICH TO EXPECT — the `KnowledgeApplyOutcome.forgetReceipt`
- * idiom. A `drafted`, `repaired` or `finding` invocation carries both; a `refused` one ends at
+ * idiom. A `drafted`, `repaired` or `stopped` invocation carries both; a `refused` one ends at
  * stage 2 with no draft compiled and therefore no receipt to mint (D-04, plan 04). Requiring them
  * would have made plan 04's arrival a WIDENING of this op's output contract — the shape change the
  * whole-vocabulary-now discipline exists to avoid — and padding a refusal with an empty receipt
@@ -297,6 +382,12 @@ export const AuthoringDraftWriteOutputSchema = z.object({
    * for why this one payload arm exists where the paragraph above rules the others out.
    */
   refusal: AuthoringDedupRefusalSchema.optional(),
+  /**
+   * Present exactly on a `stopped` invocation (411 D-05): the gate run's verdict, the router's
+   * reading and the evidence coordinates — never a proposal of any class. Same rule as `refusal`:
+   * `outcome` says which to expect.
+   */
+  stop: AuthoringStopSchema.optional(),
   /**
    * What was previewed at the confirm, beside what this invocation actually spent.
    *

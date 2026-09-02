@@ -1,26 +1,31 @@
-// The finding arm an ABANDONED repair produces (394-21, WR-09 · D-11).
+// The STOPPED outcome an ABANDONED repair produces (394-21, WR-09 · 411 D-05/D-08).
 //
 // WHAT WENT WRONG AND WHY IT IS THIS FILE'S SUBJECT. `routeAfterVerify`'s exhausted route built a
-// `FindingRoute` carrying `signalClass: 'indefinitive-failure'` and then spread over the result of
-// `findingProposal`, overwriting two fields: `signalClass` became `repair-${abandonment.kind}` — a
+// stop route carrying `signalClass: 'indefinitive-failure'` and then spread over the result of the
+// arm's carrier, overwriting two fields: `signalClass` became `repair-${abandonment.kind}` — a
 // string outside `ROUTER_SIGNAL_CLASSES`, so the one closed vocabulary a reader can rely on was
-// open on exactly one path — and `explanation` became `abandonment.error.message`, which on the
+// open on exactly one path — and a prose field became `abandonment.error.message`, which on the
 // exhausted arm ENDS IN THE MODEL'S OWN BYTES (`RepairExhaustedError` carries `lastRefusal`, and
-// two of its three assignment sites are model-emitted text). `findingProposal`'s doc states the
-// ordering law that spread broke: the arm is built from the ROUTE and from nothing a model wrote.
+// two of its three assignment sites are model-emitted text). The law that spread broke survives
+// the Issue-slot cleanup: the arm is built from the ROUTE and from nothing a model wrote.
+//
+// THE MARKER LAW SURVIVES, WITH NOWHERE LEFT TO LAND. Nothing is minted for a stop now (411 D-10),
+// so what a person reads is the op's `stop` payload — projected by `projectStop` from the route and
+// the receipt's own last gate run, with no prose field on it at all. These cells therefore measure
+// the PAYLOAD a durable reader would see, and the marker-absence half asserts over both the payload
+// and the route it was projected from.
 //
 // THE MARKER IS PRODUCED, NEVER ASSERTED INTO PLACE. The bench plants a distinctive string in the
 // text the fake model emits, and the integrity cell below drives `repairDraft` directly to show
 // that string really does reach `abandonment.error.message`. Only then does the absence cell mean
-// anything: without it, "the marker is not in the proposal" would pass just as happily against a
+// anything: without it, "the marker is not on the payload" would pass just as happily against a
 // channel that never carried it.
 
 import {
-  CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
+  AuthoringStopSchema,
   CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
   DRAFT_STABILITY_RUNS_N,
   DraftReceiptSchema,
-  FindingProposalV1Schema,
   TestEditPatchSetSchema,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -35,9 +40,10 @@ import { memberOutcome, runDocument, shelfPathForDigest } from './evidence-fixtu
 import type { MemberFixture } from './evidence-fixtures.js'
 import { runAuthoringLoop } from '../loop.js'
 import { repairDraft, REPAIR_ITERATION_CAP } from '../repair.js'
-import { ROUTER_SIGNAL_CLASSES, routeRepairOrFinding } from '../router.js'
-import type { AuthoringLoopDeps, AuthoringLoopInput } from '../loop.js'
-import type { RepairRoute } from '../router.js'
+import { ROUTER_SIGNAL_CLASSES, routeRepairOrStop } from '../router.js'
+import { projectStop } from '../../functions/ops/authoring-draft-write.js'
+import type { AuthoringLoopDeps, AuthoringLoopInput, AuthoringLoopOutcome } from '../loop.js'
+import type { RepairRoute, StopRoute } from '../router.js'
 import type { DraftStageOutcome, ParsedDraftLike } from '../ports.js'
 
 const DRAFT_PATH = 'tests/.agent-qa-drafts/repair-abandonment-fixture.yaml'
@@ -92,7 +98,7 @@ function prefixRegressedMember(): MemberFixture {
   }
 }
 
-/** The draft failed on its ASSERTION, cleanly — the ordinary routed finding, with no repair at all. */
+/** The draft failed on its ASSERTION, cleanly — the ordinary routed stop, with no repair at all. */
 function definitiveAssertionFailMember(): MemberFixture {
   return {
     filePath: DRAFT_PATH,
@@ -191,7 +197,7 @@ interface Bench {
  * The loop's host, scripted to the abandonment paths.
  *
  * `gateMember` is the evidence the evaluation's gate runs carry, which is what decides whether the
- * router hands the draft to repair at all — so the ordinary-finding cell changes only that.
+ * router hands the draft to repair at all — so the ordinary-stop cell changes only that.
  */
 function bench(input: {
   readonly emissions: readonly string[]
@@ -304,12 +310,25 @@ const LOOP_INPUT: AuthoringLoopInput = {
   scope: { tier: 'product', key: 'local-form' },
 }
 
-/** The finding proposal the loop persisted, as JSON — which is how a durable reader sees it. */
-async function findingThrough(harness: Bench): Promise<Record<string, unknown>> {
+interface Stopped {
+  readonly outcome: AuthoringLoopOutcome
+  readonly route: StopRoute
+  readonly abandonment: unknown
+  /** The op's `stop` payload as JSON — which is how a durable reader sees it. */
+  readonly payload: Record<string, unknown>
+}
+
+/** The stopped outcome the loop answered, beside the payload the op projects from it. */
+async function stoppedThrough(harness: Bench): Promise<Stopped> {
   const result = await runAuthoringLoop(LOOP_INPUT, harness.deps)
-  expect(result.outcome.kind).toBe('finding')
-  const proposal = (result.outcome as { proposal: unknown }).proposal
-  return JSON.parse(JSON.stringify(proposal)) as Record<string, unknown>
+  expect(result.outcome.kind).toBe('stopped')
+  const outcome = result.outcome as Extract<AuthoringLoopOutcome, { kind: 'stopped' }>
+  return {
+    outcome,
+    route: outcome.route,
+    abandonment: (outcome as { abandonment?: unknown }).abandonment,
+    payload: JSON.parse(JSON.stringify(projectStop(outcome))) as Record<string, unknown>,
+  }
 }
 
 // ---- integrity: the fixture reaches the paths it claims to, and the marker channel is live -----
@@ -357,32 +376,32 @@ describe('the fixture reaches the paths it claims to', () => {
 
 // ---- the arm ------------------------------------------------------------------------------------
 
-describe('an abandoned repair produces a finding built from the route and typed facts only', () => {
+describe('an abandoned repair produces a stopped outcome built from the route and typed facts only', () => {
   it('EXHAUSTED: the signal class stays inside ROUTER_SIGNAL_CLASSES', async () => {
     const harness = bench({
       emissions: [MODEL_DOCUMENT, REFUSAL_MARKER, REFUSAL_MARKER, REFUSAL_MARKER],
     })
-    const proposal = await findingThrough(harness)
+    const { payload } = await stoppedThrough(harness)
 
     // Every iteration was spent on an unparsable emission, so no probe ever started.
     expect(harness.startedRunIds).toHaveLength(0)
-    expect(ROUTER_SIGNAL_CLASSES).toContain(proposal.signalClass)
-    expect(proposal.signalClass).toBe('indefinitive-failure')
+    expect(ROUTER_SIGNAL_CLASSES).toContain(payload.signalClass)
+    expect(payload.signalClass).toBe('indefinitive-failure')
   })
 
   it('EXHAUSTED: the abandonment kind rides a typed field, and the model marker rides nothing', async () => {
     const harness = bench({
       emissions: [MODEL_DOCUMENT, REFUSAL_MARKER, REFUSAL_MARKER, REFUSAL_MARKER],
     })
-    const proposal = await findingThrough(harness)
+    const { payload, route } = await stoppedThrough(harness)
 
     // THE CHANNEL, CLOSED, and asserted FIRST so this is the failure a pre-fix run reports rather
-    // than a missing field masking it. Not `explanation` alone — the WHOLE serialized proposal,
-    // because a reader's question is "can model-emitted text reach this record", not "can it reach
-    // the field it reached last time".
-    expect(JSON.stringify(proposal)).not.toContain(REFUSAL_MARKER)
-    expect(proposal.explanation).toBe('')
-    expect(proposal.repairAbandonment).toBe('exhausted')
+    // than a missing field masking it. The WHOLE serialized payload AND the whole route it was
+    // projected from, because a reader's question is "can model-emitted text reach this record",
+    // not "can it reach the field it reached last time".
+    expect(JSON.stringify(payload)).not.toContain(REFUSAL_MARKER)
+    expect(JSON.stringify(route)).not.toContain(REFUSAL_MARKER)
+    expect(payload.repairAbandonment).toBe('exhausted')
   })
 
   it('PREFIX-REGRESSED: the second abandonment kind carries its own name', async () => {
@@ -390,16 +409,16 @@ describe('an abandoned repair produces a finding built from the route and typed 
       emissions: [MODEL_DOCUMENT, JSON.stringify(OUTSIDE_PREFIX)],
       probes: [[prefixRegressedMember()]],
     })
-    const proposal = await findingThrough(harness)
+    const { payload, route } = await stoppedThrough(harness)
 
     expect(harness.startedRunIds).toHaveLength(1)
-    expect(ROUTER_SIGNAL_CLASSES).toContain(proposal.signalClass)
-    expect(proposal.repairAbandonment).toBe('prefix-regressed')
-    expect(proposal.explanation).toBe('')
+    expect(ROUTER_SIGNAL_CLASSES).toContain(payload.signalClass)
+    expect(payload.repairAbandonment).toBe('prefix-regressed')
+    expect(JSON.stringify(route)).not.toContain(REFUSAL_MARKER)
   })
 
-  it('the ORDINARY routed finding carries NO repairAbandonment key at all — absent, not defaulted', async () => {
-    // THE CONTROL. A field defaulted onto every finding would satisfy the two cells above and tell
+  it('the ORDINARY routed stop carries NO abandonment at all — absent, not defaulted', async () => {
+    // THE CONTROL. A field defaulted onto every stop would satisfy the two cells above and tell
     // a reader nothing: `repairAbandonment` present means bounded repair abandoned THIS draft, so
     // its absence has to be observable through JSON rather than through an `undefined` a serializer
     // happens to drop.
@@ -407,14 +426,16 @@ describe('an abandoned repair produces a finding built from the route and typed 
       emissions: [MODEL_DOCUMENT],
       gateMember: definitiveAssertionFailMember,
     })
-    const proposal = await findingThrough(harness)
+    const { payload, outcome } = await stoppedThrough(harness)
 
     expect(harness.startedRunIds).toHaveLength(0)
-    expect(proposal.signalClass).toBe('clean-definitive-assertion-fail')
-    expect(Object.keys(proposal)).not.toContain('repairAbandonment')
+    expect(payload.signalClass).toBe('clean-definitive-assertion-fail')
+    expect('repairAbandonment' in payload).toBe(false)
+    // And the LOOP arm it was projected from carries no abandonment key either.
+    expect('abandonment' in outcome).toBe(false)
   })
 
-  it('every one of these proposals is one the SHIPPED strict schema accepts', async () => {
+  it('every stopped outcome projects to a payload the strict stop schema accepts', async () => {
     // The arm is `.strict()`, so this is the cell that would red if `repairAbandonment` were added
     // to the loop and not to the contract — or spelled differently in the two places.
     for (const harness of [
@@ -425,9 +446,8 @@ describe('an abandoned repair produces a finding built from the route and typed 
       }),
       bench({ emissions: [MODEL_DOCUMENT], gateMember: definitiveAssertionFailMember }),
     ]) {
-      const proposal = await findingThrough(harness)
-      expect(proposal.schemaVersion).toBe(CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION)
-      expect(FindingProposalV1Schema.safeParse(proposal).success).toBe(true)
+      const { payload } = await stoppedThrough(harness)
+      expect(AuthoringStopSchema.safeParse(payload).success).toBe(true)
     }
   })
 })
@@ -440,9 +460,9 @@ describe('an abandoned repair produces a finding built from the route and typed 
 // above this line passed against that literal, because each of them asked what the arm does NOT
 // carry (a signal class outside the vocabulary, model bytes) and none asked what it DOES.
 //
-// A durable finding with no evidence and no failure point is unauditable by construction (T-394-90),
-// and the module's own `AuthoringLoopUnroutableEvidenceError` doc calls filing one "the cardinal
-// error pointed the other way". The evidence assertion sits at the HEAD of each cell so the RED a
+// A stop with no evidence and no failure point is unauditable by construction (T-394-90), and the
+// module's own `AuthoringLoopUnroutableEvidenceError` doc calls reporting one "the cardinal error
+// pointed the other way". The evidence assertion sits at the HEAD of each cell so the RED a
 // pre-fix run reports is the missing evidence rather than a later field masking it.
 
 interface EvidenceRefRow {
@@ -453,43 +473,47 @@ interface EvidenceRefRow {
   readonly channel: string
 }
 
-function evidenceRefsOf(proposal: Record<string, unknown>): readonly EvidenceRefRow[] {
-  return proposal.evidenceRefs as readonly EvidenceRefRow[]
+function evidenceRefsOf(payload: Record<string, unknown>): readonly EvidenceRefRow[] {
+  return payload.evidenceRefs as readonly EvidenceRefRow[]
 }
 
-/** The routed run's finding evidence as the ORDINARY arm derives it, for the same step of the same run. */
+/** The routed run's stop evidence as the ORDINARY arm derives it, for the same step of the same run. */
 function ordinaryArmEvidence(): { failurePoint: unknown; evidenceRefs: readonly EvidenceRefRow[] } {
-  const route = routeRepairOrFinding(
+  const route = routeRepairOrStop(
     DRAFT_REF,
     runAt(ROUTED_RUN_ID, 102, [definitiveAssertionFailMember()]),
   )
-  if (route.kind !== 'finding') throw new Error(`the control must route to a finding, not ${route.kind}`)
+  if (route.kind !== 'stop') throw new Error(`the control must route to a stop, not ${route.kind}`)
   return { failurePoint: route.failurePoint, evidenceRefs: route.evidenceRefs as readonly EvidenceRefRow[] }
 }
 
-describe('an abandoned repair files a finding a person can trace (CR-02)', () => {
-  it('EXHAUSTED: the finding carries evidence refs and a failure point naming the routed run', async () => {
+describe('an abandoned repair stops with evidence a person can trace (CR-02)', () => {
+  it('EXHAUSTED: the stop carries evidence refs and a failure point naming the routed run', async () => {
     const harness = bench({
       emissions: [MODEL_DOCUMENT, REFUSAL_MARKER, REFUSAL_MARKER, REFUSAL_MARKER],
     })
-    const proposal = await findingThrough(harness)
+    const { payload } = await stoppedThrough(harness)
 
     // FIRST, so the pre-fix RED is this one: `expected 0 to be greater than 0`.
-    expect(evidenceRefsOf(proposal).length).toBeGreaterThan(0)
-    const failurePoint = proposal.failurePoint as Record<string, unknown> | null
+    expect(evidenceRefsOf(payload).length).toBeGreaterThan(0)
+    const failurePoint = payload.failurePoint as Record<string, unknown> | null
     expect(failurePoint).not.toBeNull()
-    expect(failurePoint?.runId).toBe(ROUTED_RUN_ID)
+    // The RUN rides the payload's top level (411 D-06), so a null failure point still names it —
+    // and the failure point itself carries no `runId` of its own.
+    expect(payload.runId).toBe(ROUTED_RUN_ID)
+    expect(payload.memberOutcome).toBe('failed')
+    expect('runId' in (failurePoint as Record<string, unknown>)).toBe(false)
     // The step the ROUTE named — the mechanics member's third step, the one that could not be
     // carried out — not a step chosen by this cell.
     expect(failurePoint?.stepIndex).toBe(2)
-    for (const ref of evidenceRefsOf(proposal)) {
+    for (const ref of evidenceRefsOf(payload)) {
       expect(ref.runId).toBe(ROUTED_RUN_ID)
       expect(ref.stepIndex).toBe(2)
     }
   })
 
   it('EXHAUSTED: that evidence is the ORDINARY arm\'s derivation, not a second walk', async () => {
-    // ONE DERIVATION, TWO CALLERS. The ordinary finding arm's `failurePoint`/`evidenceRefs` over the
+    // ONE DERIVATION, TWO CALLERS. The ordinary stop arm's `failurePoint`/`evidenceRefs` over the
     // SAME run and the SAME step are computed here through the shipped router, and the exhausted
     // arm's must equal them field for field. A copy of the construction into `loop.ts` drifts from
     // this the first time either side is edited; a shared derivation cannot.
@@ -500,16 +524,17 @@ describe('an abandoned repair files a finding a person can trace (CR-02)', () =>
     const harness = bench({
       emissions: [MODEL_DOCUMENT, REFUSAL_MARKER, REFUSAL_MARKER, REFUSAL_MARKER],
     })
-    const proposal = await findingThrough(harness)
+    const { payload } = await stoppedThrough(harness)
 
-    expect(evidenceRefsOf(proposal)).toEqual(JSON.parse(JSON.stringify(control.evidenceRefs)))
+    expect(evidenceRefsOf(payload)).toEqual(JSON.parse(JSON.stringify(control.evidenceRefs)))
     // The control's member records a `verdictSource` and the mechanics member does not, so the two
     // failure points agree on the coordinates rather than on the whole record.
-    const failurePoint = proposal.failurePoint as Record<string, unknown> | null
+    const failurePoint = payload.failurePoint as Record<string, unknown> | null
     const controlPoint = control.failurePoint as Record<string, unknown>
-    expect(failurePoint?.runId).toBe(controlPoint.runId)
+    expect(payload.runId).toBe(controlPoint.runId)
     expect(failurePoint?.stepIndex).toBe(controlPoint.stepIndex)
     expect(failurePoint?.stepText).toBe(controlPoint.stepText)
+    expect(failurePoint?.reasoning).toBe(controlPoint.reasoning)
   })
 
   it('PREFIX-REGRESSED: that arm carries the routed run\'s evidence too', async () => {
@@ -517,11 +542,11 @@ describe('an abandoned repair files a finding a person can trace (CR-02)', () =>
       emissions: [MODEL_DOCUMENT, JSON.stringify(OUTSIDE_PREFIX)],
       probes: [[prefixRegressedMember()]],
     })
-    const proposal = await findingThrough(harness)
+    const { payload } = await stoppedThrough(harness)
 
-    expect(evidenceRefsOf(proposal).length).toBeGreaterThan(0)
-    const failurePoint = proposal.failurePoint as Record<string, unknown> | null
-    expect(failurePoint?.runId).toBe(ROUTED_RUN_ID)
+    expect(evidenceRefsOf(payload).length).toBeGreaterThan(0)
+    const failurePoint = payload.failurePoint as Record<string, unknown> | null
+    expect(payload.runId).toBe(ROUTED_RUN_ID)
     expect(failurePoint?.stepIndex).toBe(2)
   })
 })
@@ -538,16 +563,16 @@ describe('an abandoned repair files a finding a person can trace (CR-02)', () =>
 // above are what keep it. So the fields read here are `iterations`, `stepIndex` and `runId`, all
 // three minted by this package, and never a sentence.
 
-describe('the abandonment\'s typed facts reach the durable arm', () => {
+describe('the abandonment\'s typed facts reach the reported stop', () => {
   it('EXHAUSTED: repairIterations equals the iterations the harness drove', async () => {
     const harness = bench({
       emissions: [MODEL_DOCUMENT, REFUSAL_MARKER, REFUSAL_MARKER, REFUSAL_MARKER],
     })
-    const proposal = await findingThrough(harness)
+    const { payload } = await stoppedThrough(harness)
 
     // Every iteration was spent on an unparsable emission, so the sequence reached K.
-    expect(proposal.repairIterations).toBe(REPAIR_ITERATION_CAP)
-    expect(proposal.repairAbandonment).toBe('exhausted')
+    expect(payload.repairIterations).toBe(REPAIR_ITERATION_CAP)
+    expect(payload.repairAbandonment).toBe('exhausted')
   })
 
   it('PREFIX-REGRESSED: the probe that showed the regression rides evidenceRefs as a coordinate', async () => {
@@ -555,21 +580,21 @@ describe('the abandonment\'s typed facts reach the durable arm', () => {
       emissions: [MODEL_DOCUMENT, JSON.stringify(OUTSIDE_PREFIX)],
       probes: [[prefixRegressedMember()]],
     })
-    const proposal = await findingThrough(harness)
+    const { payload } = await stoppedThrough(harness)
 
     // The probe the loop actually started — read off the harness, not typed as a literal here.
     const probeRunId = harness.startedRunIds[0]
     expect(probeRunId).toBeDefined()
     // Step 1 is the regression: it passed in the gate run and fails in this probe. `stepIndex` and
     // `runId` are `PassingPrefixRegressedError`'s own typed fields, which is the whole read.
-    const probeRef = evidenceRefsOf(proposal)
+    const probeRef = evidenceRefsOf(payload)
       .find((ref) => ref.runId === probeRunId)
     expect(probeRef).toBeDefined()
     expect(probeRef?.stepIndex).toBe(1)
     expect(probeRef?.channel).toBe('step-trace')
     // Beside the routed run's own refs rather than instead of them.
-    expect(evidenceRefsOf(proposal).some((ref) => ref.runId === ROUTED_RUN_ID)).toBe(true)
-    expect(proposal.repairIterations).toBe(1)
+    expect(evidenceRefsOf(payload).some((ref) => ref.runId === ROUTED_RUN_ID)).toBe(true)
+    expect(payload.repairIterations).toBe(1)
 
     // THE COORDINATE JOINS THE RUN IT NAMES (CR-01). A `RunEvidenceRef` is read as the four-tuple
     // (runId, filePath, testName, stepIndex), so naming the probe run while carrying the PRE-repair
@@ -583,17 +608,18 @@ describe('the abandonment\'s typed facts reach the durable arm', () => {
     expect(probeRef?.testName).toBe(DRAFT_NAME)
   })
 
-  it('the ORDINARY routed finding carries NEITHER key — absent, not defaulted', async () => {
+  it('the ORDINARY routed stop carries NEITHER key — absent, not defaulted', async () => {
     const harness = bench({
       emissions: [MODEL_DOCUMENT],
       gateMember: definitiveAssertionFailMember,
     })
-    const proposal = await findingThrough(harness)
+    const { payload, outcome } = await stoppedThrough(harness)
 
-    expect(Object.keys(proposal)).not.toContain('repairIterations')
-    expect(Object.keys(proposal)).not.toContain('repairAbandonment')
-    // Not a finding that skipped repair for want of a route: this one WAS routed, to the app-broken
+    expect('repairIterations' in payload).toBe(false)
+    expect('repairAbandonment' in payload).toBe(false)
+    expect('abandonment' in outcome).toBe(false)
+    // Not a stop that skipped repair for want of a route: this one WAS routed, to the app-broken
     // arm, so a zero here would read as "repair was tried and spent nothing".
-    expect(proposal.signalClass).toBe('clean-definitive-assertion-fail')
+    expect(payload.signalClass).toBe('clean-definitive-assertion-fail')
   })
 })

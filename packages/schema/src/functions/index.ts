@@ -157,9 +157,13 @@ export type {
 export {
   AUTHORING_DEDUP_CONTINUATIONS,
   AUTHORING_LOOP_OUTCOMES,
+  AUTHORING_REPAIR_ABANDONMENTS,
+  AUTHORING_STOP_SIGNAL_CLASSES,
   AuthoringDedupRefusalSchema,
   AuthoringDraftWriteInputSchema,
   AuthoringDraftWriteOutputSchema,
+  AuthoringStopFailurePointSchema,
+  AuthoringStopSchema,
 } from './authoring'
 export type {
   AuthoringDedupContinuation,
@@ -167,6 +171,10 @@ export type {
   AuthoringDraftWriteInput,
   AuthoringDraftWriteOutput,
   AuthoringLoopOutcomeKind,
+  AuthoringRepairAbandonment,
+  AuthoringStop,
+  AuthoringStopFailurePoint,
+  AuthoringStopSignalClass,
 } from './authoring'
 // 394-07 D-12/D-13: `authoring.funnel.get`'s contracts. The output IS the funnel the ONE
 // computation produces (see ../authoring/funnel.ts) rather than a re-shaping of it, so the

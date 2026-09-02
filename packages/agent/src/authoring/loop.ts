@@ -61,7 +61,6 @@ import type {
   DraftRef,
   FanOutBound,
   FanOutReport,
-  FindingProposalV1,
   ScopeKey,
   TestDraftProposalV1,
 } from '@vostride/agent-qa-schema'
@@ -89,10 +88,10 @@ import { REPAIR_ITERATION_CAP, repairDraft } from './repair.js'
 import type { RepairAbandonment, RepairOutcome } from './repair.js'
 import {
   AuthoringRouterUnroutableError,
-  findingRouteForAbandonedRepair,
-  routeRepairOrFinding,
+  routeRepairOrStop,
+  stopRouteForAbandonedRepair,
 } from './router.js'
-import type { FindingRoute } from './router.js'
+import type { StopRoute } from './router.js'
 import { buildTieredPrompt } from '../prompt/tiered-prompt-builder.js'
 
 /**
@@ -131,6 +130,9 @@ export const AUTHORING_COMPILE_AGENT_CONTEXT =
  * tracer even though only `drafted` is reachable from it. See the vocabulary's own doc block: a
  * union that grew an arm per plan would make plans 04-06 changes to the shape every consumer
  * branches on rather than new cases behind a discriminant they already read.
+ *
+ * The `stopped` arm carries the ROUTE and the abandonment facts and never a proposal — the op
+ * projects the result's `stop` payload from it (411 D-05).
  */
 export type AuthoringLoopOutcome =
   | {
@@ -147,10 +149,23 @@ export type AuthoringLoopOutcome =
       readonly proposal: TestDraftProposalV1
     }
   | {
-      readonly kind: 'finding'
+      readonly kind: 'stopped'
       readonly draftRef: DraftRef
       readonly receipt: DraftReceipt
-      readonly proposal: FindingProposalV1
+      readonly route: StopRoute
+      /**
+       * ITS KIND AND ITS SPEND ARE ONE PARAMETER, so `repairAbandonment` and `repairIterations`
+       * land on the op's payload together or not at all (394-21, WR-09). Present as one object or
+       * absent — never two independent optionals, which could disagree: a kind with no spend, or a
+       * spend on a stop repair never touched, which reads as "repair was tried and cost nothing".
+       *
+       * `iterations` is `RepairOutcome.iterations` INCLUDING iterations a fence refused, which
+       * started nothing — which is why it is not derivable from the run ids `fanOut` counts (D-08).
+       */
+      readonly abandonment?: {
+        readonly kind: RepairAbandonment['kind']
+        readonly iterations: number
+      }
     }
 
 export interface AuthoringLoopInput {
@@ -308,7 +323,7 @@ export class AuthoringDraftUnconfiguredTargetError extends Error {
  *
  * The honest answer for the one case stage 5 genuinely cannot decide: the gates said no, and the
  * run record the receipt names is not readable, or holds no member with this draft's identity. That
- * is a broken precondition rather than an ambiguous signal — filing an evidence-less finding would
+ * is a broken precondition rather than an ambiguous signal — reporting an evidence-less stop would
  * report an application bug nobody observed, which is the cardinal error pointed the other way.
  */
 /**
@@ -455,7 +470,7 @@ export class AuthoringLoopUnroutableEvidenceError extends Error {
  * `unverified` joins the two that were here in the tracer, and the reason is D-05 rather than
  * convenience: it is what a DRAFT-MODE evaluation is forced to (rule 1 of the disposition table),
  * and a draft-mode run is a caller deliberately asking for one cheap run. Such a draft is not a
- * finding — no run said the application is wrong — and it is not repairable — no mechanics evidence
+ * stop — no run said the application is wrong — and it is not repairable — no mechanics evidence
  * exists to repair against. It is a draft nobody has verified, which is exactly what the test-draft
  * arm's `disposition` field says out loud, so it proposes and a human decides. `rejected` is the
  * only disposition that routes, because it is the only one a gate actually refused.
@@ -505,58 +520,6 @@ function testDraftProposal(
     runsConsumed: fanOut.consumedTotal,
     repairIterations,
     summaryLine: `${draftRef.testName} — ${receipt.disposition}`,
-  }
-}
-
-/**
- * The finding envelope arm (D-11), built from the ROUTE and from nothing a model wrote.
- *
- * `explanation` is left empty here and filled by the model downstream, once the branch is already
- * chosen. That ordering is the whole of "the LLM writes the finding's evidence-linked explanation;
- * it never makes the routing decision" — a prose field populated before the arm is picked would be
- * a channel through which model output could reach a branch it may not influence.
- *
- * `abandonment` is a PARAMETER rather than something a caller spreads over the result (394-21,
- * WR-09). The exhausted route used to be assembled by spreading `{ signalClass, explanation }` on
- * top of this call, which put a repair-prefixed string outside `ROUTER_SIGNAL_CLASSES` and a model-
- * emitted refusal onto a durable field — both of the things the paragraph above forbids, arriving
- * through the one shape that cannot be forbidden at the type level. Taking the fact as an argument
- * keeps the arm built here, from the route and from typed facts.
- *
- * ITS KIND AND ITS SPEND ARE ONE PARAMETER, so `repairAbandonment` and `repairIterations` are
- * present on exactly the same proposals. Two independent optionals could disagree — a kind with no
- * spend, or a spend on a finding repair never touched, which reads as "repair was tried and cost
- * nothing" — and neither is a state the loop can be in.
- */
-function findingProposal(
-  draftRef: DraftRef,
-  route: FindingRoute,
-  abandonment?: {
-    readonly kind: NonNullable<FindingProposalV1['repairAbandonment']>
-    /** `RepairOutcome.iterations` — including iterations a fence refused, which started nothing. */
-    readonly iterations: number
-  },
-): FindingProposalV1 {
-  return {
-    schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
-    draftRef,
-    signalClass: route.signalClass,
-    ...(abandonment === undefined
-      ? {}
-      : { repairAbandonment: abandonment.kind, repairIterations: abandonment.iterations }),
-    failurePoint: route.failurePoint === null
-      ? null
-      : {
-          runId: route.failurePoint.runId,
-          stepIndex: route.failurePoint.stepIndex,
-          stepText: route.failurePoint.stepText,
-          reasoning: route.failurePoint.reasoning,
-          ...(route.failurePoint.verdictSource === undefined
-            ? {}
-            : { verdictSource: String(route.failurePoint.verdictSource) }),
-        },
-    evidenceRefs: route.evidenceRefs,
-    explanation: '',
   }
 }
 
@@ -706,7 +669,7 @@ async function consumedProbeRuns(
 /**
  * The run whose evidence stage 5 routes on: the LAST gate run the receipt names.
  *
- * ONE ANSWER TO A QUESTION THE DERIVATION DELIBERATELY DOES NOT OWN. `routeRepairOrFinding` takes
+ * ONE ANSWER TO A QUESTION THE DERIVATION DELIBERATELY DOES NOT OWN. `routeRepairOrStop` takes
  * a single run document because a routing rule that also chose its own evidence would be two rules
  * in one function. Which of an evaluation's several runs supplies that document is a fact about
  * the EVALUATION, and it is answered here: the last one taken, because gate 2 early-stops on a
@@ -728,7 +691,7 @@ async function routingHandoff(
  * A prefix-regressed abandonment means a PROBE run showed a step that used to pass now failing, and
  * `PassingPrefixRegressedError` carries the whole coordinate: which run, which member of it, and
  * which step. That is an addressable, replayable coordinate into a durable record — the same thing
- * every other `evidenceRefs` entry is — so the finding a person reads can reach the run that ended
+ * every other `evidenceRefs` entry is — so the stop a person reads can reach the run that ended
  * the repair instead of merely stating that one did. Appended BESIDE the routed run's own refs: the
  * routed run says why the draft failed, this says why repair stopped, and they are different runs.
  *
@@ -737,24 +700,24 @@ async function routingHandoff(
  * probe runs the candidate `applyPatches` just staged, and staging addresses a draft by the digest
  * of its new bytes, so the two paths differ by construction on every iteration that reached a run.
  * The persisted coordinate named a real run and a file that run never opened, and a reader joining
- * on the four-tuple found nothing — a durable finding nobody can audit. The error is built at the
+ * on the four-tuple found nothing — a stop nobody can audit. The error is built at the
  * one site that held the probed member, which is also why this stays a read of typed facts and not
  * a second walk of the run store (394-24's one-derivation law).
  *
  * WHAT IS DELIBERATELY NOT READ: `error.message`, and through it `RepairExhaustedError.lastRefusal`,
- * which ends in the model's own bytes. Prose about a decision is `explanation`'s job and the model
- * writes it downstream, once the branch is already chosen (WR-09's closure).
+ * which ends in the model's own bytes. There is no prose field on the stop payload for it to reach
+ * (411 D-05), and this read stays a read of typed coordinates.
  *
  * The exhausted arm gets no such ref because it has no such coordinate — its last iteration may have
  * been a fenced patch or an unparsable emission, neither of which started a run.
  */
 function withRegressedProbeEvidence(
-  route: FindingRoute,
+  route: StopRoute,
   abandonment: RepairAbandonment,
-): FindingRoute {
+): StopRoute {
   if (abandonment.kind !== 'prefix-regressed') return route
   return {
-    kind: 'finding',
+    kind: 'stop',
     signalClass: route.signalClass,
     failurePoint: route.failurePoint,
     evidenceRefs: [
@@ -771,25 +734,30 @@ function withRegressedProbeEvidence(
 }
 
 /**
- * Stage 5 — the receipt becomes an outcome, and both terminal outcomes carry their envelope arm.
+ * Stage 5 — the receipt becomes an outcome; the drafted and repaired ones carry their envelope arm.
+ *
+ * The stopped outcome carries the ROUTE the loop derived and nothing is minted for it (411 D-10).
+ *
+ * 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the Issue-slot
+ * cleanup — see `DELETION-INVENTORY.md`.
  *
  * TWO DERIVATIONS, ASKED IN ORDER, NEITHER RE-IMPLEMENTED HERE. The first is
  * `computeDraftDisposition`'s, already stored on the receipt: did the gates say no. The second is
- * `routeRepairOrFinding`'s, over the run's own evidence: is a rejection the DRAFT's problem or the
+ * `routeRepairOrStop`'s, over the run's own evidence: is a rejection the DRAFT's problem or the
  * APPLICATION's. This function asks them; it answers neither. The two are separate functions
  * rather than one because they read different things — a disposition reads four booleans and two
  * counts, a route reads per-step execution evidence — and a single function taking both would be
  * a parameter list through which a gate verdict could influence the branch.
  *
- * THE REPAIR ARM IS ENTERED ONLY THROUGH A `RepairRoute`. `repairDraft` cannot be handed the
- * finding arm — the two route types are mutually non-assignable — so the app-broken branch is
- * structurally unable to reach repair rather than merely not wired to it (SC-2, T-394-22).
+ * THE REPAIR ARM IS ENTERED ONLY THROUGH A `RepairRoute`. `repairDraft` cannot be handed the stop
+ * arm — the two route types are mutually non-assignable — so the app-broken branch is structurally
+ * unable to reach repair rather than merely not wired to it (SC-2, T-394-22).
  *
- * A REPAIR THAT DID NOT SUCCEED BECOMES A FINDING, not a silent failure. The draft failed, repair
- * was allowed K attempts and none produced a passing probe, and the honest thing to hand a person
- * is the evidence plus what was tried. The route's own evidence refs are what the finding carries,
- * so an exhausted repair and a first-pass finding are the same artifact class differing only in
- * how much was spent before it was filed.
+ * A REPAIR THAT DID NOT SUCCEED BECOMES A STOP, not a silent failure. The draft failed, repair was
+ * allowed K attempts and none produced a passing probe, and the honest thing to hand a person is
+ * the evidence plus what was tried. The route's own evidence refs are what the stop carries, so an
+ * exhausted repair and a first-pass stop are the same artifact class differing only in how much was
+ * spent before the loop stopped.
  */
 export async function routeAfterVerify(
   draft: ParsedDraftLike,
@@ -828,15 +796,15 @@ export async function routeAfterVerify(
   const handoff = await routingHandoff(receipt, deps.shelf.runs)
   let route
   try {
-    route = routeRepairOrFinding(draftRef, handoff)
+    route = routeRepairOrStop(draftRef, handoff)
   } catch (error) {
     if (!(error instanceof AuthoringRouterUnroutableError)) throw error
     throw new AuthoringLoopUnroutableEvidenceError(receipt.disposition, error)
   }
 
-  if (route.kind === 'finding') {
+  if (route.kind === 'stop') {
     return {
-      outcome: { kind: 'finding', draftRef, receipt, proposal: findingProposal(draftRef, route) },
+      outcome: { kind: 'stopped', draftRef, receipt, route },
       fanOut: buildFanOutReport({ previewed, runs: gateRuns }),
     }
   }
@@ -888,24 +856,22 @@ export async function routeAfterVerify(
 
   // THE ABANDONED ARM READS THE RUN IT WAS ROUTED ON (CR-02). It used to be an empty literal —
   // `failurePoint: null`, `evidenceRefs: []` — built with `handoff` and `route.failingStepIndex`
-  // both in scope, so a person was handed a durable finding naming no step, no run and no trace. The
-  // derivation is the router's, shared with the ordinary finding arm rather than repeated here: an
-  // exhausted repair and a first-pass finding are the same artifact class, and this function's own
+  // both in scope, so a person was handed a durable stop naming no step, no run and no trace. The
+  // derivation is the router's, shared with the ordinary stop arm rather than repeated here: an
+  // exhausted repair and a first-pass stop are the same artifact class, and this function's own
   // header says so. `handoff` is defined for the reason given at the repair call above — the router
   // refuses `no-run-evidence` by name and that refusal was already converted.
-  const exhaustedRoute: FindingRoute = withRegressedProbeEvidence(
-    findingRouteForAbandonedRepair(draftRef, handoff as CompletedRunHandoff, route.failingStepIndex),
+  const exhaustedRoute: StopRoute = withRegressedProbeEvidence(
+    stopRouteForAbandonedRepair(draftRef, handoff as CompletedRunHandoff, route.failingStepIndex),
     repaired.abandonment,
   )
   return {
     outcome: {
-      kind: 'finding',
+      kind: 'stopped',
       draftRef,
       receipt,
-      proposal: findingProposal(draftRef, exhaustedRoute, {
-        kind: repaired.abandonment.kind,
-        iterations: repaired.iterations,
-      }),
+      route: exhaustedRoute,
+      abandonment: { kind: repaired.abandonment.kind, iterations: repaired.iterations },
     },
     fanOut: buildFanOutReport({ previewed, runs: [...gateRuns, ...probes] }),
   }

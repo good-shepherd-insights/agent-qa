@@ -887,6 +887,11 @@ export {
   // 394 D-04: the stage-2 dedup refusal's payload and its two named continuations.
   AUTHORING_DEDUP_CONTINUATIONS,
   AuthoringDedupRefusalSchema,
+  // 411 D-05..D-08: the stop payload a `stopped` invocation reports its verdict on.
+  AUTHORING_REPAIR_ABANDONMENTS,
+  AUTHORING_STOP_SIGNAL_CLASSES,
+  AuthoringStopFailurePointSchema,
+  AuthoringStopSchema,
   // 394-09 D-21: the authoring.draft.edit op contracts — the patch contract's second consumer.
   AuthoringDraftEditInputSchema,
   AuthoringDraftEditOutputSchema,
@@ -963,6 +968,10 @@ export type {
   AuthoringLoopOutcomeKind,
   AuthoringDedupContinuation,
   AuthoringDedupRefusal,
+  AuthoringRepairAbandonment,
+  AuthoringStop,
+  AuthoringStopFailurePoint,
+  AuthoringStopSignalClass,
   AuthoringDraftEditInput,
   AuthoringDraftEditOutput,
   AuthoringFunnelGetInput,

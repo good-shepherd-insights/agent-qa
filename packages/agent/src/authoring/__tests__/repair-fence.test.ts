@@ -48,7 +48,7 @@ import { describe, expect, it } from 'vitest'
 
 import { memberOutcome, runDocument, shelfPathForDigest } from './evidence-fixtures.js'
 import type { MemberFixture } from './evidence-fixtures.js'
-import { routeRepairOrFinding } from '../router.js'
+import { routeRepairOrStop } from '../router.js'
 import type { RepairRoute } from '../router.js'
 import type {
   DraftRunPortLike,
@@ -109,7 +109,7 @@ const BEST_PRIOR_RUN: CompletedRunHandoff = runDocument('r_best-prior', [BEST_PR
 
 /** The route repair is entered through — PRODUCED by the shipped router, never a literal. */
 function repairRoute(): RepairRoute {
-  const route = routeRepairOrFinding(DRAFT_REF, BEST_PRIOR_RUN)
+  const route = routeRepairOrStop(DRAFT_REF, BEST_PRIOR_RUN)
   if (route.kind !== 'repair') {
     throw new Error(`the fixture must route to repair, and it routed to ${route.kind}`)
   }
@@ -714,7 +714,7 @@ describe('the repair prompt carries the run evidence at the failure point', () =
   })
 })
 
-// ---- SC-2 at the CALL SITE: the finding branch never enters repair -----------------------------
+// ---- SC-2 at the CALL SITE: the stop branch never enters repair -------------------------------
 //
 // The type-level half lives in `router.test-d.ts` and says the call does not compile. This is the
 // BEHAVIOURAL half, and it is what `scripts/394-router-mutation.sh` cell 2 reds: a differential
@@ -752,9 +752,9 @@ const REJECTED_RECEIPT: DraftReceipt = DraftReceiptSchema.parse({
 })
 
 describe('stage 5: the app-broken branch cannot reach repair', () => {
-  it('finding-branch-never-repairs answers a finding without starting a single probe', async () => {
+  it('stop-branch-never-repairs answers a stop without starting a single probe', async () => {
     const { routeAfterVerify } = await import('../loop.js')
-    // Nothing is scripted for the model or for probes. If the finding branch reached repair, the
+    // Nothing is scripted for the model or for probes. If the stop branch reached repair, the
     // very first thing it would do is ask for a patch — so this harness has nothing to give it.
     const bench = harness([], { probes: [] }, { [ROUTING_RUN_ID]: [CLEAN_FAIL_MEMBER] })
 
@@ -771,8 +771,8 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
       shelf: bench.deps.shelf as never,
     })
 
-    expect(outcome.kind).toBe('finding')
-    // MEASURED, not described: no probe was started and no patch was ever asked for. A finding
+    expect(outcome.kind).toBe('stopped')
+    // MEASURED, not described: no probe was started and no patch was ever asked for. A stop
     // branch wired into `repairDraft` spends a child process against the user's application in
     // order to "fix" a test whose claim the application simply did not satisfy — which is oracle
     // capture by construction, the one implementation D-08 exists to forbid.
@@ -781,7 +781,7 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
     expect(bench.appliedSets).toEqual([])
   })
 
-  it('finding-branch-never-repairs carries the evidence refs the route derived', async () => {
+  it('stop-branch-never-repairs carries the evidence refs the route derived', async () => {
     const { routeAfterVerify } = await import('../loop.js')
     const bench = harness([], { probes: [] }, { [ROUTING_RUN_ID]: [CLEAN_FAIL_MEMBER] })
 
@@ -798,10 +798,11 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
       shelf: bench.deps.shelf as never,
     })
 
-    expect(outcome.kind === 'finding' && outcome.proposal.signalClass)
+    expect(outcome.kind === 'stopped' && outcome.route.signalClass)
       .toBe('clean-definitive-assertion-fail')
-    expect(outcome.kind === 'finding' && outcome.proposal.evidenceRefs.length).toBeGreaterThan(0)
-    // The MODEL fills this downstream, once the branch is already chosen — never before.
-    expect(outcome.kind === 'finding' && outcome.proposal.explanation).toBe('')
+    expect(outcome.kind === 'stopped' && outcome.route.evidenceRefs.length).toBeGreaterThan(0)
+    // An ORDINARY stop carries no abandonment key and no prose field — nothing a model wrote
+    // survives on this arm, which is the key set rather than a value (411 D-05).
+    expect(Object.keys(outcome).sort()).toEqual(['draftRef', 'kind', 'receipt', 'route'])
   })
 })

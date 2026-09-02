@@ -33,7 +33,7 @@ import {
 import type { MemberFixture } from './evidence-fixtures.js'
 import { evaluateDraft } from '../verify-draft.js'
 import { repairDraft } from '../repair.js'
-import { routeRepairOrFinding } from '../router.js'
+import { routeRepairOrStop } from '../router.js'
 import type { RepairRoute } from '../router.js'
 import type { DraftRunPortLike, DraftStageOutcome, ParsedDraftLike } from '../ports.js'
 
@@ -173,7 +173,7 @@ const BEST_PRIOR_MEMBER: MemberFixture = {
 const BEST_PRIOR_RUN: CompletedRunHandoff = runDocument('r_best-prior', [BEST_PRIOR_MEMBER])
 
 function repairRoute(): RepairRoute {
-  const route = routeRepairOrFinding(
+  const route = routeRepairOrStop(
     {
       filePath: REPAIR_DRAFT.filePath,
       testId: REPAIR_DRAFT.testId,
