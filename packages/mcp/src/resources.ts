@@ -2,7 +2,7 @@
 //
 // WHY THIS FILE EXISTS. 387 gave every entity a published address — `agentqa://memory/MEM-001` —
 // and tool results carry those addresses as `resource_link`s. A link nothing can dereference is a
-// decoration, so this module registers the six templates that make them resolvable, and resolves
+// decoration, so this module registers the five templates that make them resolvable, and resolves
 // them the only way this package is allowed to resolve anything: `invokeFunction` on `entities.get`.
 // There is no second data path here, no store, no cache and no card rendering — `entities.get`
 // already answers "render the thing at this address" for every surface, and a resources handler
@@ -10,7 +10,7 @@
 //
 // THE TEMPLATES ARE DERIVED, NEVER RESTATED. They are built by iterating the kind vocabulary and
 // reading `ENTITY_URI_SEGMENTS`, which is the same table the codec parses with. A hand-written list
-// of six strings here would be a second vocabulary that agrees with the first until somebody
+// of five strings here would be a second vocabulary that agrees with the first until somebody
 // renames a segment — and the failure mode of that disagreement is a template advertising an
 // address the parser refuses, i.e. a door that 404s by construction.
 //
@@ -98,7 +98,7 @@ function templateFor(kind: EntityKind): EntityResourceTemplate {
 }
 
 /**
- * The six templates, derived once at module load.
+ * The five templates, derived once at module load.
  *
  * Iterating `ENTITY_KINDS` and indexing `ENTITY_URI_SEGMENTS` is how `kinds.ts` builds its own
  * reverse table, so the listing ORDER here is the vocabulary's canonical order rather than an
@@ -135,8 +135,8 @@ export class EntityResourceReadError extends Error {
 /**
  * Build the read handler every template shares.
  *
- * ONE handler for all six, because the kind is already in the URI and the codec already read it:
- * a per-kind handler would be six copies of one function differing in a value it does not use.
+ * ONE handler for all five, because the kind is already in the URI and the codec already read it:
+ * a per-kind handler would be five copies of one function differing in a value it does not use.
  *
  * Exported so a cell can drive it without a server, and so the parse/refuse behaviour is observable
  * independently of registration — the two halves of D-13 fail in different directions.
@@ -229,7 +229,7 @@ export interface EntityResourceDeps {
  * Register the entity resource templates this caller may use, and answer which those were.
  *
  * Returns the registered templates rather than nothing, so the gate below is observable from the
- * outside: "registered none" and "registered six" are the two halves of D-05's claim, and a caller
+ * outside: "registered none" and "registered five" are the two halves of D-05's claim, and a caller
  * that had to inspect a server to tell them apart could only ever test one of them.
  *
  * A composition that never registered `entities.get` gets NO templates and no error, which is the

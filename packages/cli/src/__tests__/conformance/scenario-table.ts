@@ -364,17 +364,17 @@ export interface EntityCardRenderCase {
  * The card's ALWAYS-PRESENT contract fields, sorted — the same derived-then-reviewed rule
  * {@link RenderExpectation} states, applied to the card contract instead of to an op's output.
  *
- * `keyFacts` and `actions` are deliberately absent: they are arrays a kind may legally answer with
- * empty (`BUG` advertises no actions at all, by D-03), so requiring them per kind would demand of
- * one kind a thing the contract says it need not have.
+ * `keyFacts` and `actions` are deliberately absent: they are arrays the contract lets a kind answer
+ * with empty, so requiring them per kind would demand of one kind a thing the contract says it
+ * need not have.
  */
 const ENTITY_CARD_MARKERS = ['id', 'kind', 'status', 'title', 'uri'] as const
 
 /**
- * THE per-kind card-render cases — one denominator, six kinds, no fallback.
+ * THE per-kind card-render cases — one denominator, five kinds, no fallback.
  *
  * TOTAL OVER `EntityKind`, and the totality is the point rather than tidiness. The unrouted kinds
- * are the arm a happy-path suite never drives: `MEM`, `POL` and `BUG` are exactly the cards that
+ * are the arm a happy-path suite never drives: `MEM` and `POL` are exactly the cards that
  * carry a `url` (400-01 D-16 overlays a base for any conversation the dashboard serves) and must
  * STILL render no link, because this build serves no page for them. A set listing only the routed
  * three would state the claim it was already going to pass.
@@ -389,13 +389,13 @@ function entityCardRenderCase(kind: EntityKind): EntityCardRenderCase {
 }
 
 /**
- * WRITTEN AS SIX NAMED ARMS RATHER THAN AN `Object.fromEntries` WALK (400-09 deviation).
+ * WRITTEN AS FIVE NAMED ARMS RATHER THAN AN `Object.fromEntries` WALK (400-09 deviation).
  *
  * The walk read better and did not typecheck: `Object.fromEntries` answers with an index signature,
  * and the `as Record<EntityKind, …>` needed to recover the total type is a TS2352 that `vitest` does
  * not see and `tsc --noEmit` does. Widening the cast through `unknown` would have silenced the
  * compiler by removing the only check that matters here — that the record is TOTAL. Naming the arms
- * moves that check from a runtime census to the type annotation: a seventh member of `EntityKind`
+ * moves that check from a runtime census to the type annotation: a sixth member of `EntityKind`
  * fails to compile at this literal. The census cell in `entity-card-parity.test.ts` still asserts
  * the key set against `ENTITY_KINDS`, and every VALUE is still spread from the shipped contract by
  * the helper above rather than restated here.
@@ -404,7 +404,6 @@ export const ENTITY_CARD_RENDER_CASES: Readonly<Record<EntityKind, EntityCardRen
   Object.freeze({
     TST: entityCardRenderCase('TST'),
     RUN: entityCardRenderCase('RUN'),
-    BUG: entityCardRenderCase('BUG'),
     MEM: entityCardRenderCase('MEM'),
     POL: entityCardRenderCase('POL'),
     TGT: entityCardRenderCase('TGT'),

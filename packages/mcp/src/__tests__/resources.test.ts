@@ -4,12 +4,12 @@
 // dereferenceable, which means it turns an UNTRUSTED URI into an entity read. Two properties carry
 // that weight and neither is observable from a passing end-to-end read: that the module does no
 // parsing of its own (so a URI whose segment and id disagree is refused by the schema package's one
-// codec, not by whatever pattern this file happened to write), and that the six templates are
+// codec, not by whatever pattern this file happened to write), and that the five templates are
 // DERIVED from the kind vocabulary rather than restated beside it.
 //
 // TWO RECIPES, ON PURPOSE. The derivation cell computes its expectation from
 // `ENTITY_URI_SEGMENTS` — the same source the implementation reads — so it catches a template
-// planted or dropped in `resources.ts`. The literal cell spells the six URI strings out by hand, so
+// planted or dropped in `resources.ts`. The literal cell spells the five URI strings out by hand, so
 // it catches a SEGMENT RENAME, which the derivation cell cannot see because both halves would move
 // together. Either alone is half a pin.
 //
@@ -152,7 +152,7 @@ function recordingInvoke(answer: unknown = { kind: 'MEM', shortId: 'MEM-001' }):
   }
 }
 
-describe('the six templates are derived, not restated (D-13)', () => {
+describe('the five templates are derived, not restated (D-13)', () => {
   // THE BAR: R2. Recipe one — computed from the same table the module reads, so a planted or
   // dropped template reds here.
   it('is exactly one template per entity kind, in the vocabulary order', () => {
@@ -161,13 +161,12 @@ describe('the six templates are derived, not restated (D-13)', () => {
     )
   })
 
-  // Recipe two — the six strings spelled out by hand. A renamed segment moves the implementation
+  // Recipe two — the five strings spelled out by hand. A renamed segment moves the implementation
   // AND the cell above together and neither notices; this one reds. The pair is the discrimination.
-  it('pins the six URI templates literally', () => {
+  it('pins the five URI templates literally', () => {
     expect(ENTITY_RESOURCE_TEMPLATES.map((template) => template.uriTemplate)).toEqual([
       'agentqa://test/{id}',
       'agentqa://run/{id}',
-      'agentqa://bug/{id}',
       'agentqa://memory/{id}',
       'agentqa://policy/{id}',
       'agentqa://target/{id}',
@@ -312,7 +311,7 @@ describe('registration is gated by the visibility law (D-05)', () => {
   // THE BAR: R3. Entity reads are `['read']`-scoped, so they survive safe mode — but a caller
   // granted nothing at all must not see the templates, for the same reason it must not see the
   // tools: a listed door that answers refusals is worse than an absent one (D-08).
-  it('registers all six templates for a caller granted read', () => {
+  it('registers all five templates for a caller granted read', () => {
     const server = recordingServer()
 
     const registered = registerEntityResources(server, {
@@ -321,7 +320,7 @@ describe('registration is gated by the visibility law (D-05)', () => {
       maskText: identity,
     })
 
-    expect(registered).toHaveLength(6)
+    expect(registered).toHaveLength(5)
     expect(server.calls.map((call) => call.uriTemplate)).toEqual(
       ENTITY_RESOURCE_TEMPLATES.map((template) => template.uriTemplate),
     )
@@ -378,7 +377,7 @@ describe('a real v2 McpServer accepts this registration (the SDK cell)', () => {
   // took from documentation; this cell converts them into a measurement, and it is also the
   // compile-time proof that plan 04 can hand `buildAgentQaMcpServer`'s own `McpServer` straight
   // through to `registerEntityResources` — a narrower parameter accepting the wider argument.
-  it('registers all six templates on a real McpServer without adaptation', () => {
+  it('registers all five templates on a real McpServer without adaptation', () => {
     const server = new McpServer(
       { name: 'agent-qa', version: '2.0.0' },
       { capabilities: { resources: {} } },
@@ -390,7 +389,7 @@ describe('a real v2 McpServer accepts this registration (the SDK cell)', () => {
       maskText: identity,
     })
 
-    expect(registered).toHaveLength(6)
+    expect(registered).toHaveLength(5)
   })
 })
 

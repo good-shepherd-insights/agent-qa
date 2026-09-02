@@ -1,4 +1,4 @@
-// The ONE card producer, over all six kinds (Phase 387 plan 07, ENTY-02 / D-04 / D-10 / D-12).
+// The ONE card producer, over all five kinds (Phase 387 plan 07, ENTY-02 / D-04 / D-10 / D-12).
 //
 // The gates here are shaped against the failure this phase keeps finding — a check whose LOGIC
 // is sound but whose INPUT DOMAIN never contains a case it could reject. Three of them are
@@ -50,11 +50,10 @@ import { ForgetReceiptKindError, produceEntityCard } from '../produce-card.js'
 
 // ---- fixtures ---------------------------------------------------------------------------
 
-/** A short-ID in each kind's own address FORM (D-03): five ordinal, `TGT` slug. */
+/** A short-ID in each kind's own address FORM (D-03): four ordinal, `TGT` slug. */
 const SHORT_IDS = {
   TST: 'TST-001',
   RUN: 'RUN-002',
-  BUG: 'BUG-003',
   MEM: 'MEM-004',
   POL: 'POL-005',
   TGT: 'TGT-checkout',
@@ -63,7 +62,6 @@ const SHORT_IDS = {
 const MACHINE_IDS = {
   TST: 'tests/checkout.spec.ts::adds to cart',
   RUN: 'run-2026-08-02-a',
-  BUG: 'issue-not-yet-available',
   MEM: 'shop.cart.fact.0001',
   POL: 'policy.retry.flaky',
   TGT: 'checkout',
@@ -150,7 +148,7 @@ describe('every kind renders through the one producer (D-12)', () => {
         value: MACHINE_IDS[kind],
       })
     }
-    // The labels are six DISTINCT nouns — a table that answered `machine id` six times would
+    // The labels are five DISTINCT nouns — a table that answered `machine id` five times would
     // satisfy every per-kind assertion above and tell a reader nothing.
     expect(new Set(Object.values(ENTITY_IDENTITY_FACT_LABELS)).size).toBe(ENTITY_KINDS.length)
   })

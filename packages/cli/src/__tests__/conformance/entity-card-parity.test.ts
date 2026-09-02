@@ -127,7 +127,7 @@ describe('the card expectation is a column on the ONE table', () => {
     const unrouted = ENTITY_KINDS
       .filter((kind) => ENTITY_CARD_RENDER_CASES[kind].dashboardRoute === null)
       .sort()
-    expect(unrouted).toEqual(['BUG', 'MEM', 'POL'])
+    expect(unrouted).toEqual(['MEM', 'POL'])
     // `MEM` is the only kind any shipped composition mints today, which is what makes the unrouted
     // arm the one a real reader reaches rather than a hypothetical.
     expect(unrouted).toContain('MEM')
@@ -163,7 +163,7 @@ for (const row of CARD_ROWS) {
       expect(formatEntityUri(kind, parsed?.shortId ?? '')).toBe(reference)
 
       // The segment vocabulary is per-kind and the codec REFUSES a mismatched pair, which is what
-      // makes the template a per-kind claim rather than six spellings of one.
+      // makes the template a per-kind claim rather than five spellings of one.
       const otherKind = ENTITY_KINDS.find((candidate) => candidate !== kind) ?? kind
       const crossed = `agentqa://${ENTITY_URI_SEGMENTS[otherKind]}/${parsed?.shortId ?? ''}`
       expect(parseEntityUri(crossed)).toBeUndefined()
@@ -199,7 +199,6 @@ describe('the route each case names is one this build can actually serve', () =>
       TST: 'machine-id',
       RUN: 'machine-id',
       TGT: 'no-parameter',
-      BUG: 'unrouted',
       MEM: 'unrouted',
       POL: 'unrouted',
     })

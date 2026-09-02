@@ -100,7 +100,6 @@ export type EntityRouteResolver = (address: EntityRouteAddress) => string | unde
 export const ENTITY_KIND_ROUTES = {
   TST: ({ machineId }) => (machineId === undefined ? undefined : routes.testView(machineId)),
   RUN: ({ machineId }) => (machineId === undefined ? undefined : routes.runDetail(machineId)),
-  BUG: null,
   MEM: null,
   POL: null,
   TGT: () => routes.config,

@@ -29,7 +29,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import { ADVERTISED_FUNCTION_IDS, ENTITY_ACTION_TABLES, actionsForKind } from '../actions.js'
+import { ADVERTISED_FUNCTION_IDS, actionsForKind } from '../actions.js'
 import { entitiesGetSpec } from '../../ops/entities-get.js'
 import { entitiesResolveSpec } from '../../ops/entities-resolve.js'
 import { createFunctionRegistry } from '../../registry.js'
@@ -39,7 +39,6 @@ import type { FunctionDeps } from '../../spec.js'
 const SHORT_IDS = {
   TST: 'TST-001',
   RUN: 'RUN-002',
-  BUG: 'BUG-003',
   MEM: 'MEM-004',
   POL: 'POL-005',
   TGT: 'TGT-checkout',
@@ -52,7 +51,7 @@ function descriptorFor(kind: EntityKind): EntityDescriptor {
     uri: `agentqa://${ENTITY_URI_SEGMENTS[kind]}/${SHORT_IDS[kind]}`,
     machineId: `machine-${kind.toLowerCase()}`,
     title: `The ${kind} entity`,
-    statusSource: kind === 'MEM' ? 'active' : kind === 'RUN' ? 'passed' : 'reserved',
+    statusSource: kind === 'MEM' ? 'active' : kind === 'RUN' ? 'passed' : 'active',
   } as EntityDescriptor
 }
 
@@ -172,12 +171,10 @@ describe('cards advertise only what the registry contains (D-11)', () => {
     }
   })
 
-  it('advertises an EMPTY array for a reserved family, not a placeholder (D-03)', () => {
-    expect(ENTITY_ACTION_TABLES.BUG()).toEqual([])
-    expect(actionsForKind(descriptorFor('BUG'))).toEqual([])
-    // The empty arm is the honest one, so the OTHER kinds must not be empty — otherwise this
-    // case is satisfied by a table that advertises nothing at all.
-    for (const kind of ENTITY_KINDS.filter((candidate) => candidate !== 'BUG')) {
+  it('advertises at least one action for every kind, so a table that advertises nothing cannot pass', () => {
+    // The surviving positive control from the deleted reserved-family cell: no filter, so a
+    // table that answered with an empty array for ANY kind reds here by name.
+    for (const kind of ENTITY_KINDS) {
       expect(actionsForKind(descriptorFor(kind)).length, kind).toBeGreaterThan(0)
     }
   })

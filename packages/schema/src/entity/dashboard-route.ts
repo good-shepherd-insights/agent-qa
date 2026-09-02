@@ -54,19 +54,18 @@ export interface EntityDashboardRoute {
  * THE per-kind table, total over `EntityKind`.
  *
  * `as const satisfies Record<EntityKind, …>` is the completeness guarantee every other per-kind
- * table in this directory carries: a seventh kind is a compile error here rather than a kind whose
+ * table in this directory carries: a sixth kind is a compile error here rather than a kind whose
  * card silently renders whichever arm a lookup happened to miss. There is deliberately no fallback.
  *
- * The three routed paths are the ones `dashboard-ui/src/app.tsx` registers today. The three `null`
- * arms are not placeholders: `BUG` is a reserved family (D-03) with no entity behind the address,
- * and `MEM`/`POL` have no page in this build. They are also the arms that matter most to measure —
+ * The three routed paths are the ones `dashboard-ui/src/app.tsx` registers today. The two `null`
+ * arms are not placeholders: `MEM`/`POL` have no page in this build. They are also the arms that
+ * matter most to measure —
  * a `MEM` card in dashboard chat DOES carry a `url` (400-01's D-16 overlays a base for any
  * conversation the dashboard serves) and must still offer nothing to click.
  */
 export const ENTITY_DASHBOARD_ROUTES = {
   TST: { route: '/test/:t_id', keyedBy: 'machine-id' },
   RUN: { route: '/runs/:id', keyedBy: 'machine-id' },
-  BUG: { route: null, keyedBy: 'unrouted' },
   MEM: { route: null, keyedBy: 'unrouted' },
   POL: { route: null, keyedBy: 'unrouted' },
   TGT: { route: '/config', keyedBy: 'no-parameter' },

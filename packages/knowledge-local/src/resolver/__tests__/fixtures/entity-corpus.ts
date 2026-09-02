@@ -63,9 +63,7 @@ export interface CorpusEntity {
  * array front to back — so an entity's ordinal is its position among its own kind here, and a
  * short-ID in an expectation below is a fact about this list rather than about a run.
  *
- * Five mintable kinds are present. `BUG` is deliberately absent from the population and
- * present only in the query cases: D-03 reserves the family and refuses to mint into it, so an
- * entity of that kind cannot exist in a corpus this build could have produced.
+ * All five mintable kinds are present in the population.
  */
 export const CORPUS_ENTITIES: readonly CorpusEntity[] = [
   // ---- TST: the checkout family (near-twins by design) ----
@@ -197,26 +195,13 @@ export const CORPUS_ENTITIES: readonly CorpusEntity[] = [
   { kind: 'TGT', machineId: 'analytics-warehouse', title: 'Analytics warehouse', family: 'fam-warehouse' },
 ]
 
-/**
- * Machine ids a BUG sighting source recognises but the ledger refuses to mint (D-03).
- *
- * They are NOT entities: the reserved family exists in the kind union and in the URI scheme,
- * and a build without an issue engine must say so by name rather than report a well-formed
- * `BUG-` reference as merely unknown.
- */
-export const CORPUS_RESERVED_BUG_MACHINE_IDS: readonly string[] = [
-  'issue-3417',
-  'issue-8802',
-]
-
-/** The five locked query-case categories, plus the reserved-family family of cases. */
+/** The five locked query-case categories. */
 export const CORPUS_CATEGORIES = [
   'exact',
   'typo',
   'semantic',
   'near-twin',
   'miss',
-  'reserved',
 ] as const
 
 export type CorpusCategory = (typeof CORPUS_CATEGORIES)[number]
@@ -231,7 +216,7 @@ export type CorpusRef =
 export type CorpusExpectation =
   | { readonly outcome: 'resolved'; readonly target: string; readonly exact?: true }
   | { readonly outcome: 'ambiguous'; readonly mustContain: readonly string[] }
-  | { readonly outcome: 'none'; readonly reason: 'no-match' | 'unknown-address' | 'reserved-kind' }
+  | { readonly outcome: 'none'; readonly reason: 'no-match' | 'unknown-address' }
 
 export interface CorpusCase {
   readonly id: string
@@ -279,9 +264,8 @@ const PAIR_EVEN = 0.7071067811865476
 /**
  * The authored query cases.
  *
- * Five locked categories (D-08) plus `reserved`, which carries the `BUG-` family that exists in
- * the kind union and refuses to mint (D-03). Every `full`/`floor` pair below was derived from
- * the fusion arithmetic in this file's header before the corpus was executed.
+ * Five locked categories (D-08). Every `full`/`floor` pair below was derived from the fusion
+ * arithmetic in this file's header before the corpus was executed.
  */
 export const CORPUS_CASES: readonly CorpusCase[] = [
   // ================= exact: tier (a), posture-independent by construction =================
@@ -307,14 +291,6 @@ export const CORPUS_CASES: readonly CorpusCase[] = [
   { id: 'exact-machine-ci-budget', category: 'exact', ref: { form: 'machine-id', entity: 'pol_budget_ci_minutes' }, full: { outcome: 'resolved', target: 'pol_budget_ci_minutes', exact: true }, floor: { outcome: 'resolved', target: 'pol_budget_ci_minutes', exact: true } },
   { id: 'exact-machine-support-desk', category: 'exact', ref: { form: 'machine-id', entity: 'support-desk' }, full: { outcome: 'resolved', target: 'support-desk', exact: true }, floor: { outcome: 'resolved', target: 'support-desk', exact: true } },
   { id: 'exact-machine-locale-matrix', category: 'exact', ref: { form: 'machine-id', entity: 'r_locale_matrix' }, full: { outcome: 'resolved', target: 'r_locale_matrix', exact: true }, floor: { outcome: 'resolved', target: 'r_locale_matrix', exact: true } },
-
-  // ================= reserved: the BUG family is addressable and unmintable (D-03) =========
-  { id: 'reserved-shortid-007', category: 'reserved', ref: { form: 'literal', text: 'BUG-007' }, full: { outcome: 'none', reason: 'reserved-kind' }, floor: { outcome: 'none', reason: 'reserved-kind' } },
-  { id: 'reserved-shortid-unpadded', category: 'reserved', ref: { form: 'literal', text: 'BUG-1' }, full: { outcome: 'none', reason: 'reserved-kind' }, floor: { outcome: 'none', reason: 'reserved-kind' } },
-  { id: 'reserved-shortid-042', category: 'reserved', ref: { form: 'literal', text: 'BUG-042' }, full: { outcome: 'none', reason: 'reserved-kind' }, floor: { outcome: 'none', reason: 'reserved-kind' } },
-  { id: 'reserved-uri-001', category: 'reserved', ref: { form: 'literal', text: 'agentqa://bug/BUG-001' }, full: { outcome: 'none', reason: 'reserved-kind' }, floor: { outcome: 'none', reason: 'reserved-kind' } },
-  { id: 'reserved-sighted-3417', category: 'reserved', ref: { form: 'literal', text: 'issue-3417' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'none', reason: 'reserved-kind' }, floor: { outcome: 'none', reason: 'reserved-kind' }, note: 'a BUG source SIGHTS this id; the refusal comes before any mint' },
-  { id: 'reserved-sighted-8802', category: 'reserved', ref: { form: 'literal', text: 'issue-8802' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'none', reason: 'reserved-kind' }, floor: { outcome: 'none', reason: 'reserved-kind' } },
 
   // ================= semantic: no shared word at all, so only meaning can answer ===========
   // Twelve point at one entity's own axis (0.866 on it, 0.25 on a sibling — below tau_dense),

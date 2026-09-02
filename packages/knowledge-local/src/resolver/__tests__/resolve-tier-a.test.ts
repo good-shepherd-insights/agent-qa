@@ -3,7 +3,7 @@
 // The spine test proves tier (a) works through the whole stack; this file proves it works at
 // the edges, where the stack has nothing to say. Four of the cases are about inputs a user
 // really types and a resolver really has to refuse: an address that is well formed and names
-// nothing, an address in a reserved family, an unpadded ordinal, and free text.
+// nothing, an unpadded ordinal, and free text.
 //
 // The sighting source is supplied by the case rather than read off a knowledge root, which is
 // what lets a TGT chain be exercised at all — target slugs come from configuration, and the
@@ -101,15 +101,6 @@ describe('resolver tier (a)', () => {
     // A rejected promise is not a throw, so the never-throw half is asserted on the
     // settled value: this path answers, it does not fail.
     await expect(resolveEntityRef('MEM-002', deps)).resolves.toBeDefined()
-  })
-
-  it('parses a BUG address and reports the family as reserved (D-03)', async () => {
-    // The distinction that matters: `BUG-7` is not malformed and it is not merely unknown. It
-    // is an address in a family this build reserves, and saying so is what stops a user
-    // hunting for a bug the ledger has simply not seen yet.
-    expect(await resolveEntityRef('BUG-7', deps)).toEqual({ kind: 'none', reason: 'reserved-kind' })
-    expect(await resolveEntityRef('agentqa://bug/BUG-7', deps))
-      .toEqual({ kind: 'none', reason: 'reserved-kind' })
   })
 
   it('refuses free text rather than offering the entity it is nearest to', async () => {

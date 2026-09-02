@@ -11,7 +11,6 @@ export {
   ADDRESSING_LEDGER_DB_FILE,
   ADDRESSING_LEDGER_USER_VERSION,
   AddressingLedgerSchemaVersionError,
-  BugAddressingNotAvailableError,
   openAddressingLedger,
 } from './addressing/ledger.js'
 export type {

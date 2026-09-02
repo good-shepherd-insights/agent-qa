@@ -39,15 +39,13 @@ export const ENTITY_RESOLUTION_MAX_CANDIDATES = 3
 export const ENTITY_EXACT_MATCH_SCORE = 1
 
 /**
- * Why a reference resolved to nothing. A bare `none` would have collapsed three genuinely
- * different situations — a well-formed address for an entity that was never minted, an
- * address in a family this build reserves but cannot mint (D-03), and text that matched no
- * addressing rule at all — into one answer, and a surface cannot phrase a useful message
- * without knowing which one it holds.
+ * Why a reference resolved to nothing. A bare `none` would have collapsed two genuinely
+ * different situations — a well-formed address for an entity that was never minted, and text
+ * that matched no addressing rule at all — into one answer, and a surface cannot phrase a
+ * useful message without knowing which one it holds.
  */
 export const ENTITY_NO_MATCH_REASONS = [
   'unknown-address',
-  'reserved-kind',
   'no-match',
 ] as const
 

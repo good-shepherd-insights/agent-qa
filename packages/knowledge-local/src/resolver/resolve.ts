@@ -142,11 +142,6 @@ function resolveMintedAddress(
   kind: EntityKind,
   deps: ResolveEntityRefDeps,
 ): EntityResolution {
-  // Reserved before unknown: `BUG-7` is a well-formed address in a family this build cannot
-  // mint (D-03), and reporting it as merely unknown would send a caller looking for a bug the
-  // ledger simply has not seen yet.
-  if (kind === 'BUG') return { kind: 'none', reason: 'reserved-kind' }
-
   const address = deps.ledger.lookupByShortId(shortId)
   if (address === undefined) return { kind: 'none', reason: 'unknown-address' }
 
@@ -181,7 +176,6 @@ function resolveMintedAddress(
  */
 export function describeAllEntities(deps: ResolveEntityRefDeps): EntityDescriptor[] {
   return deps.ledger.listAddresses().flatMap((address) => {
-    if (address.kind === 'BUG') return []
     const sighting = sourceFor(deps.sources, address.kind)?.hydrate(address.machineId)
     return sighting === undefined
       ? []
@@ -198,10 +192,7 @@ export function describeAllEntities(deps: ResolveEntityRefDeps): EntityDescripto
  * the fourth would be a second place where "first sighting mints" could stop being true, with
  * nothing comparing them.
  *
- * `undefined` means no registered source recognises the id at all; the `reserved-kind` arm is
- * the `BUG` refusal (D-03), which is a REFUSAL and not a miss — the address family exists and
- * minting into it is not yet available, and reporting that as merely unknown would send a
- * caller looking for a bug that is not there.
+ * `undefined` means no registered source recognises the id at all.
  *
  * EXACT equality, always. A prefix or case-insensitive comparison here would be tier (b)
  * smuggled in below the never-guess contract. Sources are consulted in registered order so
@@ -214,8 +205,6 @@ export function sightEntity(
   for (const source of deps.sources) {
     const sighting = source.sight(machineId)
     if (sighting === undefined) continue
-    if (source.kind === 'BUG') return { kind: 'none', reason: 'reserved-kind' }
-
     // First sighting mints (D-01). Idempotent in the ledger, so a re-sighting returns the
     // address that is already published rather than a second one.
     const address = deps.ledger.mint(source.kind, sighting.machineId)

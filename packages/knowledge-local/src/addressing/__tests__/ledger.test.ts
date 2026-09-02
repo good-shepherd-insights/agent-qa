@@ -1,6 +1,6 @@
 // The addressing ledger's laws (Phase 387, plan 01 Task 2 — ENTY-01 / D-02 / D-03 / D-04).
 //
-// Five laws, and each case is written against the thing that could actually break it rather
+// Four laws, and each case is written against the thing that could actually break it rather
 // than against a restatement of the law:
 //
 //   idempotent   two mints of one key are one row, and the SECOND mint returns the FIRST
@@ -13,8 +13,6 @@
 //                assertion, not a contains check), and no writer at all can — the BEFORE
 //                DELETE / BEFORE UPDATE triggers are probed with a RAW connection that never
 //                touches this module's exports.
-//   BUG reserved refuses by name, and the address family still PARSES so a reference to it
-//                can be answered honestly instead of looking malformed.
 //   TGT rename   both slugs keep their own permanent addresses and the link between them
 //                exists only because something recorded it.
 //
@@ -35,7 +33,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   ADDRESSING_LEDGER_USER_VERSION,
-  BugAddressingNotAvailableError,
   openAddressingLedger,
 } from '../ledger.js'
 import type { AddressingLedger } from '../ledger.js'
@@ -227,16 +224,6 @@ describe('the addressing ledger', () => {
 
     expect(rawRows(path)).toHaveLength(1)
     expect(ledger.lookup('MEM', 'bundle-a')?.shortId).toBe('MEM-001')
-  })
-
-  // ---- law 4: BUG is reserved, not fake ----------------------------------------------------
-
-  it('refuses to mint a BUG address by name (D-03)', () => {
-    expect(() => ledger.mint('BUG', 'anything at all'))
-      .toThrow(BugAddressingNotAvailableError)
-    // Refused, and refused WITHOUT a trace: a reserved family that quietly wrote a row would
-    // be a published address nothing can resolve.
-    expect(rawRows(path)).toHaveLength(0)
   })
 
   // ---- law 5: the TGT rename chain ---------------------------------------------------------

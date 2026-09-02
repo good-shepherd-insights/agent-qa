@@ -52,7 +52,7 @@ function meaningWords(descriptor: EntityDescriptor): string[] {
  *
  * The kind word comes from the URI-segment table rather than a second vocabulary spelled here:
  * `memory` is already the word this system uses for `MEM` in a path a human reads, and two
- * tables naming the same six kinds is two tables to keep in step.
+ * tables naming the same five kinds is two tables to keep in step.
  *
  * The status is deliberately absent. Nearly every entity is `active`, so embedding it would
  * add one high-frequency token to every vector in the corpus — carrying no signal while

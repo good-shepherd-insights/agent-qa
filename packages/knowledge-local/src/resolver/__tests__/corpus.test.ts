@@ -57,7 +57,6 @@ import {
   CORPUS_CASES,
   CORPUS_CATEGORIES,
   CORPUS_ENTITIES,
-  CORPUS_RESERVED_BUG_MACHINE_IDS,
   corpusVector,
   entityAxes,
   type CorpusCase,
@@ -144,15 +143,6 @@ function sightingSources(): EntitySightingSource[] {
     const sight = (machineId: string): EntitySighting | undefined => own.get(machineId)
     return { kind, sight, hydrate: sight }
   })
-
-  // The reserved family, which SIGHTS but never mints (D-03). Registered like any other source
-  // so the refusal is produced by the resolver's own ladder rather than by this test's absence.
-  const bugs = new Map(CORPUS_RESERVED_BUG_MACHINE_IDS.map((machineId): [string, EntitySighting] => [
-    machineId,
-    { machineId, title: `reserved issue ${machineId}`, statusSource: 'reserved' },
-  ]))
-  const sightBug = (machineId: string): EntitySighting | undefined => bugs.get(machineId)
-  sources.push({ kind: 'BUG', sight: sightBug, hydrate: sightBug })
   return sources
 }
 
@@ -363,10 +353,6 @@ describe('D-08 the corpus is a committed population, not a handful of examples',
     for (const [kind, count] of byKind) {
       expect({ kind, atLeastFive: count >= 5 }).toEqual({ kind, atLeastFive: true })
     }
-    // The reserved family is present as REFERENCES and absent as entities: a build that cannot
-    // mint a BUG address cannot have produced a BUG entity either (D-03).
-    expect(CORPUS_ENTITIES.some((entity) => entity.kind === 'BUG')).toBe(false)
-    expect(CORPUS_RESERVED_BUG_MACHINE_IDS.length).toBeGreaterThan(0)
   })
 
   it('holds at least a hundred query cases with five or more in every category', () => {

@@ -172,23 +172,6 @@ export const RUN_CARD: EntityCard = card({
   ]
 })
 
-/** A reserved family (D-03): no actions, and no dashboard route. */
-export const BUG_CARD: EntityCard = card({
-  "kind": "BUG",
-  "status": "reserved",
-  "id": "BUG-001",
-  "uri": "agentqa://bug/BUG-001",
-  "title": "reserved address",
-  "url": "http://127.0.0.1:3470/t/demo/bug/BUG-001/reserved-address",
-  "keyFacts": [
-    {
-      "label": "reserved address",
-      "value": "bug-reserved-001"
-    }
-  ],
-  "actions": []
-})
-
 /** The only kind any shipped composition mints today — and an UNROUTED one. */
 export const MEM_CARD: EntityCard = card({
   "kind": "MEM",
@@ -317,7 +300,6 @@ export const PRODUCED_ENTITY_CARDS = {
   TST_QUARANTINED: TST_QUARANTINED_CARD,
   TST_NO_URL: TST_NO_URL_CARD,
   RUN: RUN_CARD,
-  BUG: BUG_CARD,
   MEM: MEM_CARD,
   POL: POL_CARD,
   TGT: TGT_CARD,

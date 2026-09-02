@@ -10,7 +10,7 @@
 //      minted from `ENTITY_KIND_ROUTES` over the card's own address — never from the card's `url`
 //      string, which is an address for a DIFFERENT surface and, being op-result content, is exactly
 //      the value a hostile card would put a payload in (T-400-27).
-//   3. An unrouted kind (MEM, POL, BUG) renders NO link element. Not a disabled one, not a `#`
+//   3. An unrouted kind (MEM, POL) renders NO link element. Not a disabled one, not a `#`
 //      href, not a span styled like a link — nothing. That is D-10's own law: a card never shows a
 //      link to a page nothing serves, and MEM is the case where the temptation is real, because
 //      400-01's D-16 overlay means a MEM card in dashboard chat DOES carry a `url`.
@@ -60,7 +60,6 @@ import {
   type ChatTranscriptState,
 } from '@/chat/use-chat-turn'
 import {
-  BUG_CARD,
   MEM_CARD,
   POL_CARD,
   PRODUCED_ENTITY_CARDS,
@@ -215,7 +214,7 @@ describe('unrouted kinds render honestly — no link, no placeholder pretending 
     expect(host.querySelector('[data-entity-url-text]')?.textContent).toBe(MEM_CARD.url)
   })
 
-  it('holds for EVERY unrouted kind and only for those — the complete six-kind set', () => {
+  it('holds for EVERY unrouted kind and only for those — the complete five-kind set', () => {
     const linkCountByKind: Record<string, number> = {}
     for (const kind of ENTITY_KINDS) {
       const card = FIXTURE_BY_KIND[kind]
@@ -226,7 +225,7 @@ describe('unrouted kinds render honestly — no link, no placeholder pretending 
       root = undefined
       container = undefined
     }
-    expect(linkCountByKind).toEqual({ TST: 1, RUN: 1, TGT: 1, BUG: 0, MEM: 0, POL: 0 })
+    expect(linkCountByKind).toEqual({ TST: 1, RUN: 1, TGT: 1, MEM: 0, POL: 0 })
   })
 })
 
@@ -234,7 +233,6 @@ describe('unrouted kinds render honestly — no link, no placeholder pretending 
 const FIXTURE_BY_KIND = {
   TST: TST_CARD,
   RUN: RUN_CARD,
-  BUG: BUG_CARD,
   MEM: MEM_CARD,
   POL: POL_CARD,
   TGT: TGT_CARD,
@@ -265,9 +263,10 @@ describe('card actions are gated invokes through the chat door', () => {
     ).toEqual(MEM_CARD.actions.map((action) => action.label))
   })
 
-  it('renders no action row at all for a kind that advertises none', () => {
-    const host = mountCard(BUG_CARD)
-    expect(BUG_CARD.actions).toEqual([])
+  it('renders no action row at all when a card carries no actions', () => {
+    // A render-only shape built HERE, not a produced fixture: the fixture file's
+    // produced-not-literal law is about fixtures, and the claim under test is the render's.
+    const host = mountCard({ ...MEM_CARD, actions: [] })
     expect(host.querySelectorAll('[data-entity-action]')).toHaveLength(0)
   })
 
@@ -315,7 +314,7 @@ describe('the kind -> route map is total', () => {
     )
     expect(shape).toEqual({
       TST: 'routed', RUN: 'routed', TGT: 'routed',
-      BUG: 'unrouted', MEM: 'unrouted', POL: 'unrouted',
+      MEM: 'unrouted', POL: 'unrouted',
     })
   })
 
@@ -543,7 +542,7 @@ describe('the dashboard render answers the shipped card-route contract', () => {
  * case's `markers`, and the same rule: the card contract's always-present fields, sorted.
  *
  * `keyFacts` and `actions` are deliberately absent, on the table's own stated reasoning: they are
- * arrays a kind may legally answer with empty (`BUG` advertises no actions at all, by D-03), so
- * requiring them per kind would demand of one kind a thing the contract says it need not have.
+ * arrays the contract lets a kind answer with empty, so requiring them per kind would demand of
+ * one kind a thing the contract says it need not have.
  */
 const CARD_RENDER_MARKERS = ['id', 'kind', 'status', 'title', 'uri'] as const

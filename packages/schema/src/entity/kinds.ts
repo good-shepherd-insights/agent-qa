@@ -1,6 +1,6 @@
 // The entity kind vocabulary and the `KIND-NNN` short-ID codec (Phase 387, ENTY-01 / D-03).
 //
-// Six kinds, closed, and the closure is load-bearing rather than tidy: a short-ID is a
+// Five kinds, closed, and the closure is load-bearing rather than tidy: a short-ID is a
 // PUBLISHED address that ends up in verdict sentences, receipts and CI logs, so the set of
 // things one can name has to be something a reader can enumerate — not whatever a regex
 // happened to accept that day. Every derived table below is built OVER the one array, and
@@ -8,14 +8,14 @@
 // forgot to give it a URI segment" a type error instead of a hole nobody notices until a
 // card renders a broken link.
 //
-// Two address FORMS, not one. Five kinds are ordinal-addressed (`MEM-001`) because their
+// Two address FORMS, not one. Four kinds are ordinal-addressed (`MEM-001`) because their
 // machine ids are opaque digests and word-ids no human would type. `TGT` is slug-addressed
 // (`TGT-checkout`) because a target's machine id ALREADY is the human name the config gave
 // it (D-03) — minting an ordinal for it would invent a second name for something that
 // already had a good one, and every later surface would have to decide which one to print.
 
 /** The complete kind vocabulary (ENTY-01, spec §4.4). Order is the canonical listing order. */
-export const ENTITY_KINDS = ['TST', 'RUN', 'BUG', 'MEM', 'POL', 'TGT'] as const
+export const ENTITY_KINDS = ['TST', 'RUN', 'MEM', 'POL', 'TGT'] as const
 
 export type EntityKind = (typeof ENTITY_KINDS)[number]
 
@@ -30,7 +30,6 @@ export type EntityKind = (typeof ENTITY_KINDS)[number]
 export const ENTITY_URI_SEGMENTS = {
   TST: 'test',
   RUN: 'run',
-  BUG: 'bug',
   MEM: 'memory',
   POL: 'policy',
   TGT: 'target',
@@ -53,7 +52,6 @@ const SEGMENT_TO_KIND = new Map<string, EntityKind>(
 export const SLUG_ADDRESSED_ENTITY_KINDS = {
   TST: false,
   RUN: false,
-  BUG: false,
   MEM: false,
   POL: false,
   TGT: true,
@@ -113,7 +111,7 @@ const ENTITY_ORDINAL_RE = /^[0-9]+$/u
 const ENTITY_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 
 /**
- * Built OVER `ENTITY_KINDS` rather than restating the six prefixes, so the parser and the
+ * Built OVER `ENTITY_KINDS` rather than restating the five prefixes, so the parser and the
  * union cannot disagree about what a kind is. The body capture is deliberately loose — which
  * FORM is legal is a per-kind question the table above answers, not something a single
  * pattern should try to encode.
@@ -130,7 +128,7 @@ export type ParsedShortId =
  * Absence is a RESULT here, never a throw: the resolver hands this every free-text reference
  * a user types, and "that bundle about checkout" is an ordinary input, not an error
  * condition. The typed refusal belongs to the resolver, which knows whether a well-formed
- * address that names nothing is a miss or a reserved family.
+ * address names an entity nobody minted or matches nothing at all.
  */
 export function parseShortId(value: string): ParsedShortId | undefined {
   const match = SHORT_ID_RE.exec(value.trim())

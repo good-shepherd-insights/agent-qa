@@ -87,7 +87,6 @@ export const ENTITY_ACTION_TABLES = {
       inputSeed: { runId: descriptor.machineId },
     },
   ],
-  BUG: () => [],
   MEM: (descriptor) => [
     openCard(descriptor),
     {

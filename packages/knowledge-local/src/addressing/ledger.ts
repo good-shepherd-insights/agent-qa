@@ -63,26 +63,6 @@ export const ADDRESSING_LEDGER_BUSY_TIMEOUT_MS = 2000
 /** The ledger's own file name under the agent-qa root, beside `agent-jobs.db` (D-02). */
 export const ADDRESSING_LEDGER_DB_FILE = 'entity-addresses.db'
 
-/**
- * `BUG-` is RESERVED, not fake (D-03).
- *
- * The kind is in the union, the URI scheme addresses it, and tier (a) parses `BUG-7` as a
- * well-formed reference. What does not exist yet is the issue store behind it, so minting
- * refuses BY NAME rather than handing out an ordinal for a row nothing will ever back. A
- * silently-minted `BUG-001` would be a published address that resolves to nothing, which is
- * the one thing D-04 promises can never happen.
- */
-export class BugAddressingNotAvailableError extends Error {
-  constructor(readonly machineId: string) {
-    super(
-      'BUG- addressing is reserved until the issue engine lands (387 D-03). The kind stays '
-      + 'in the entity union and the URI scheme so references parse and refuse honestly, '
-      + `but no address is minted for ${machineId}.`,
-    )
-    this.name = 'BugAddressingNotAvailableError'
-  }
-}
-
 /** A ledger file this build cannot read. Refused before a single schema statement runs. */
 export class AddressingLedgerSchemaVersionError extends Error {
   constructor(
@@ -307,7 +287,6 @@ export function openAddressingLedger(options: OpenAddressingLedgerOptions): Addr
   }
 
   function mintAddress(kind: EntityKind, machineId: string): EntityAddress {
-    if (kind === 'BUG') throw new BugAddressingNotAvailableError(machineId)
     if (machineId.trim() === '') {
       throw new TypeError(`an empty machine id has no ${kind} address`)
     }

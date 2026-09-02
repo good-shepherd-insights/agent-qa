@@ -249,7 +249,7 @@ type KeyFactProjection = (input: KeyFactInput) => KeyFact[]
 /**
  * THE per-kind projection table.
  *
- * `satisfies Record<EntityKind, …>` is the completeness guarantee: adding a seventh kind and
+ * `satisfies Record<EntityKind, …>` is the completeness guarantee: adding a sixth kind and
  * forgetting to say what its card shows is a type error, not a card that renders whatever the
  * fallback happened to be. There is deliberately no fallback.
  */
@@ -259,9 +259,6 @@ export const KEY_FACT_PROJECTIONS = {
     ...quarantineFacts(quarantineEntry),
   ],
   RUN: ({ descriptor }) => [identityFact(descriptor)],
-  // A reserved family (D-03) has no entity behind the address, so the address itself under its
-  // own label is the whole honest content.
-  BUG: ({ descriptor }) => [identityFact(descriptor)],
   MEM: ({ descriptor, forgetReceipt }) => [
     identityFact(descriptor),
     ...(forgetReceipt === undefined ? [] : forgetReceiptKeyFacts(forgetReceipt)),
