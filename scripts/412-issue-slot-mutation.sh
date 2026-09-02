@@ -274,6 +274,48 @@ apply_mutation () {
       # also catch a category silently EMPTIED, not only one silently added.
       perl -0pi -e "s/\Q  'miss',\E\n\Q] as const\E\n/  'miss',\n  'reserved',\n] as const\n/" \
         "$REPO_ROOT/packages/knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts" ;;
+    W-01|W-01t)
+      # 411 Row 1's diff, verbatim: the fourth kind back at the index Phase 411 removed it from.
+      # ONE edit, TWO instruments — the runtime exact-list pin (W-01) and the schema typecheck
+      # (W-01t), which the row recorded as OBSERVED (exit 2, exactly one diagnostic) rather than
+      # predicted. Two legs rather than one because this script's ALLOWED sets are per-instrument.
+      perl -0pi -e "s/\Qexport const PROPOSAL_KINDS = ['knowledge', 'test-draft', 'config'] as const\E/export const PROPOSAL_KINDS = ['knowledge', 'test-draft', 'finding', 'config'] as const/" \
+        "$REPO_ROOT/packages/schema/src/proposal/envelope.ts" ;;
+    W-02)
+      # 411 Row 2's diff, verbatim. The added word is `'halted'` — a word this phase never shipped —
+      # ON PURPOSE: D-04's pin is an ORDERED EXACT LIST, so any fifth member reds it, and a word
+      # from outside the retired vocabulary proves the pin is about cardinality and order rather
+      # than about one remembered token.
+      perl -0pi -e "s/\Q  'stopped',\E\n\Q] as const\E\n/  'stopped',\n  'halted',\n] as const\n/" \
+        "$REPO_ROOT/packages/schema/src/functions/authoring.ts" ;;
+    W-03)
+      # 411 Row 3's fenced diff, transcribed byte for byte — the thirteen-line block inserted
+      # directly after the narrowed `drafted`/`repaired` put block. The attribution is RE-DERIVED
+      # inside the new guard because the shipped one is block-scoped to the narrowed `if`; the
+      # payload is cast `as never` so the mutation stays a one-block edit vitest transpiles without
+      # argument (a type-correct payload would need a whole fixture and would measure the fixture).
+      # The guard's `if (outcome.kind === 'stopped') {` shape is load-bearing: the ledger says a
+      # transcription matches on it. THE ONLY dist-CROSSING ROW OF THE FIVE — the cell reads schema
+      # through `packages/schema/dist`, so the schema build runs before the mutated run AND again
+      # before the restored one (unchanged content, rebuilt to prove the read is current).
+      perl -0pi -e "s/\Q      await proposals.put({ kind: 'test-draft', ...attribution, payload: outcome.proposal })\E\n\Q    }\E\n/      await proposals.put({ kind: 'test-draft', ...attribution, payload: outcome.proposal })\n    }\n\n    if (outcome.kind === 'stopped') {\n      const stopRunId = outcome.receipt.gateRuns.at(-1)?.runId\n      const stopAttribution = {\n        emittedBy: AUTHORING_DRAFT_WRITE_FUNCTION_ID,\n        ...(stopRunId === undefined ? {} : { runId: stopRunId }),\n      }\n      await proposals.put({\n        kind: 'test-draft',\n        ...stopAttribution,\n        payload: { draftRef: outcome.draftRef } as never,\n      })\n    }\n/" \
+        "$REPO_ROOT/packages/agent/src/functions/ops/authoring-draft-write.ts" ;;
+    W-04)
+      # 411 Row 4's diff, verbatim. THE KEY IS OPTIONAL ON PURPOSE (411 note (a)): a required
+      # `proposal` would red every construction site in `router.ts` and `loop.ts`, and the leg
+      # would then measure "the compiler noticed a required field" rather than "the keyof pin
+      # noticed a new key". With `?` every site still compiles and the ONLY red is the pin.
+      perl -0pi -e "s/\Q  readonly evidenceRefs: readonly RunEvidenceRef[]\E\n\Q}\E\n/  readonly evidenceRefs: readonly RunEvidenceRef[]\n  readonly proposal?: unknown\n}\n/" \
+        "$REPO_ROOT/packages/agent/src/authoring/router.ts" ;;
+    W-05)
+      # 411 Row 5's diff, verbatim — the SIBLING of the `abandonment?` block, not a member of it.
+      # The pin is `keyof Extract<AuthoringLoopOutcome, { kind: 'stopped' }>`, so a key added
+      # INSIDE `abandonment` would change a nested shape the pin never reads and the leg would
+      # report a green. The anchor therefore spans the abandonment block's closing brace, and the
+      # new line lands at the arm's own indentation. Optional for Row 4's reason: `loop.ts` builds
+      # the stopped arm at two sites and neither supplies a `proposal`.
+      perl -0pi -e "s/\Q        readonly iterations: number\E\n\Q      }\E\n\Q    }\E\n/        readonly iterations: number\n      }\n      readonly proposal?: unknown\n    }\n/" \
+        "$REPO_ROOT/packages/agent/src/authoring/loop.ts" ;;
     *) echo "FATAL: unknown leg $1" >&2; exit 1 ;;
   esac
 }
@@ -892,6 +934,81 @@ run_leg E-06 "the retired corpus category re-added to CORPUS_CATEGORIES" runtime
   "$E06_REQUIRED" "$E06_ALLOWED" "@vostride/agent-qa-knowledge-local" \
   "src/resolver/__tests__/corpus.test.ts" "" \
   "packages/knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts" ""
+
+# ── The 411 legs ──────────────────────────────────────────────────────────────────────────────
+#
+# Every REQUIRED and ALLOWED string below is TRANSCRIBED VERBATIM from the row that measured it
+# (411-MUTATION-LEDGER.md). W-06 (Row 8) already ran above, with the cheap type walls — it is
+# defined ONCE and is not repeated here. Rows 6-7 keep their own standing instrument,
+# `pnpm validate:router-mutation`, and are deliberately not re-encoded; Rows 9-10 are subsumed by
+# the P-agent plant (`FindingRoute`) and by C-02.
+#
+# Order: the two schema-local runtime pins, then the ONE type-wall reading of Row 1, then the two
+# `keyof` pins, then the single dist-crossing leg last — cheapest first, as everywhere else here.
+
+# 411 Row 2 / AUTHORING_LOOP_OUTCOMES — the suite holds exactly one cell, which is what keeps an
+# unrelated red from masquerading as the pin.
+W02_REQUIRED='has exactly four outcomes, in declaration order'
+W02_ALLOWED="$W02_REQUIRED"
+run_leg W-02 "a fifth outcome word added to AUTHORING_LOOP_OUTCOMES" runtime \
+  "$W02_REQUIRED" "$W02_ALLOWED" "$SCHEMA_FILTER" \
+  "src/functions/__tests__/authoring-loop-outcomes.test.ts" "" \
+  "packages/schema/src/functions/authoring.ts" ""
+
+# 411 Row 1 / WTST-09 — the runtime exact-list pin. vitest TRANSPILES WITHOUT TYPECHECKING, so the
+# `Record<ProposalKind, …>` sites in the agent never enter this leg: the runtime pin is the whole
+# wall here, which is exactly why WTST-09 needed one.
+W01_REQUIRED='has exactly three kinds, and the predicate matches them exactly'
+W01_ALLOWED="$W01_REQUIRED"
+run_leg W-01 "a fourth proposal kind re-added to PROPOSAL_KINDS" runtime \
+  "$W01_REQUIRED" "$W01_ALLOWED" "$SCHEMA_FILTER" "src/__tests__/proposal-envelope.test.ts" "" \
+  "packages/schema/src/proposal/envelope.ts" ""
+
+# 411 Row 1 / WTST-09 — the ALLOWED SECOND INSTRUMENT (D-06), and the row's own correction: the
+# prediction was exit 0 and the measurement was exit 2 with EXACTLY ONE diagnostic — the
+# `ExactlyEqual<z.infer<typeof ProposalEnvelopeSchema>, ProposalEnvelope>` parity pin at
+# `inbox-ops.ts:81-84` reddening because the DTO gained a kind the union's three arms do not carry.
+# The prediction was wrong in the SAFE direction (an extra instrument, not a missing one), so 412
+# carries it as its own leg rather than asserting a green. pnpm surfaces tsc's exit as 2; the leg
+# asserts NON-ZERO and prints the number it observed.
+W01T_REQUIRED='src/proposal/inbox-ops.ts(82,7): error TS2322'
+W01T_ALLOWED="$W01T_REQUIRED"
+run_leg W-01t "the same fourth kind, read by the schema typecheck's parity pin" typecheck \
+  "$W01T_REQUIRED" "$W01T_ALLOWED" "$SCHEMA_FILTER" "" "" \
+  "packages/schema/src/proposal/envelope.ts" ""
+
+# 411 Row 4 / the StopRoute keyof pin. A `.test-d.ts` reds as ONE FAILED SUITE with one
+# TypeCheckError block — there is no test title to match, so the suite line and the
+# `<file>:<line>:<col>` pointer are the cell name (Pitfall 8), and "nothing else may be red" is the
+# block count `run_leg` already checks in `testd` mode.
+W04_SUITE="src/authoring/__tests__/router.test-d.ts"
+W04_REQUIRED="src/authoring/__tests__/router.test-d.ts:85:3"
+W04_ALLOWED="src/authoring/__tests__/router.test-d.ts"
+run_leg W-04 "an optional proposal key re-added to StopRoute" testd \
+  "$W04_REQUIRED" "$W04_ALLOWED" "$AGENT_FILTER" "$W04_SUITE" "" \
+  "packages/agent/src/authoring/router.ts" ""
+
+# 411 Row 5 / the stopped-arm keyof pin. Rows 4 and 5 are THE PAIR: the route shape and the outcome
+# arm are two different places a smuggled proposal could land, each with its own `keyof` wall, so
+# both are transcribed rather than one treated as covering the other.
+W05_SUITE="src/authoring/__tests__/loop.test-d.ts"
+W05_REQUIRED="src/authoring/__tests__/loop.test-d.ts:38:3"
+W05_ALLOWED="src/authoring/__tests__/loop.test-d.ts"
+run_leg W-05 "an optional proposal key re-added to the loop's stopped arm" testd \
+  "$W05_REQUIRED" "$W05_ALLOWED" "$AGENT_FILTER" "$W05_SUITE" "" \
+  "packages/agent/src/authoring/loop.ts" ""
+
+# 411 Row 3 / WTST-11 — a put re-added on the stopped arm. The smuggled envelope wears
+# `kind: 'test-draft'` because after the narrowing that is the only kind left to smuggle, and the
+# cell counts ANY envelope rather than a kind — the property that lets it survive a later widening
+# of the vocabulary. THE ONE REBUILD IN THIS SECTION: the cell reads schema through `dist`, so
+# `run_leg` builds the schema before the mutated run and again after the restore.
+W03_REQUIRED='a stop writes NO envelope of any kind — the proposals store is read after the invocation, never the loop'"'"'s return'
+W03_ALLOWED="$W03_REQUIRED"
+run_leg W-03 "an envelope smuggled onto the stopped arm of the draft-write op" runtime \
+  "$W03_REQUIRED" "$W03_ALLOWED" "$AGENT_FILTER" \
+  "src/functions/__tests__/authoring-draft-write.stop.test.ts" "$SCHEMA_FILTER" \
+  "packages/agent/src/functions/ops/authoring-draft-write.ts" ""
 
 echo "LEGS $LEGS_RUN"
 echo "PASS — a needle planted in EVERY package with a src/ REDs the merged census by that package's"
