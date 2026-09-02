@@ -80,7 +80,7 @@ export type EntityRouteResolver = (address: EntityRouteAddress) => string | unde
  *
  * `as const satisfies Record<EntityKind, …>` is the completeness guarantee, and it is the same move
  * `ENTITY_STATUSES`, `KEY_FACT_PROJECTIONS` and `ENTITY_ACTION_TABLES` make on the producer side: a
- * seventh kind is a compile error here rather than a card that silently renders whichever arm the
+ * sixth kind is a compile error here rather than a card that silently renders whichever arm the
  * lookup happened to miss. There is deliberately no fallback and no default.
  *
  * `null` — not an absent key — is how a kind says it has no page here. An absent key would make an

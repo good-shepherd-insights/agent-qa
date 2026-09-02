@@ -1,7 +1,7 @@
 // Tier (a) of the resolver, on its own (Phase 387, plan 01 Task 2 — ENTY-01 / D-03 / D-09).
 //
 // The spine test proves tier (a) works through the whole stack; this file proves it works at
-// the edges, where the stack has nothing to say. Four of the cases are about inputs a user
+// the edges, where the stack has nothing to say. Three of the cases are about inputs a user
 // really types and a resolver really has to refuse: an address that is well formed and names
 // nothing, an unpadded ordinal, and free text.
 //

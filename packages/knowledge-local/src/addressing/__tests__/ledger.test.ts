@@ -1,7 +1,9 @@
 // The addressing ledger's laws (Phase 387, plan 01 Task 2 — ENTY-01 / D-02 / D-03 / D-04).
 //
 // Four laws, and each case is written against the thing that could actually break it rather
-// than against a restatement of the law:
+// than against a restatement of the law
+// (numbered 1, 2, 3 and 5 — law 4 left with the Issue-slot cleanup on 2026-09-02, Phase 412 —
+// see `DELETION-INVENTORY.md`):
 //
 //   idempotent   two mints of one key are one row, and the SECOND mint returns the FIRST
 //                ordinal — not merely "an ordinal".

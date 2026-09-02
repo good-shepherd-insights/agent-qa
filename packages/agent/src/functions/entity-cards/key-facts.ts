@@ -9,7 +9,7 @@
 // kind of claim that is easy to state and easy to stop being true.
 //
 // WHAT A KIND MAY SAY IS A TABLE, not a switch — `KEY_FACT_PROJECTIONS` is written
-// `satisfies Record<EntityKind, …>`, so a seventh kind is a type error here rather than a
+// `satisfies Record<EntityKind, …>`, so a sixth kind is a type error here rather than a
 // card that silently renders the generic facts. That table is also the SEAM the phase's
 // stubs land on: today an `EntityDescriptor` carries the identity a store reported, the title,
 // the status and (for a renamed target) the successor, and nothing else, because only the
