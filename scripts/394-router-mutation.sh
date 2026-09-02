@@ -71,11 +71,25 @@ SIGNATURE_CELL="row clean-definitive-assertion-fail reproduces its frozen route"
 # too. Every entry here is an assertion about the SAME signature row — a clean fail must not reach
 # repair — observed at the derivation and now also at the call site. Anything else is collateral
 # and is fatal.
+# 411-02 MEASURED AND ADDED THE LAST THREE. They are not new assertions and they are not this list
+# being widened to quieten a surprise: the abandonment bench arrived at 394-21..394-33, AFTER this
+# list was last measured at 394-06, so it has carried an incomplete list ever since. Each of the
+# three drives the SIGNATURE ROW's own member (`definitiveAssertionFailMember`) through the shipped
+# router and states that a clean definitive assertion-fail stops. Measured under the mutation on
+# 2026-09-02, the three reds are, verbatim: `expected 'indefinitive-failure' to be
+# 'clean-definitive-assertion-fail'` (the clean fail went to bounded repair and the eventual stop
+# carries a different class), `Error: the control must route to a stop, not repair` (thrown by name
+# by the bench's own control derivation), and `expected true to be false` (`repairAbandonment` is
+# now present, because repair ran on a draft it must never have reached). All three name the
+# property; none is collateral.
 ALLOWED_RED_CELLS=(
   "$SIGNATURE_CELL"
   "refs the exact trace and both a11y snapshots at the failure point"
   "stop-branch-never-repairs answers a stop without starting a single probe"
   "stop-branch-never-repairs carries the evidence refs the route derived"
+  "EXHAUSTED: that evidence is the ORDINARY arm's derivation, not a second walk"
+  "the ORDINARY routed stop carries NO abandonment at all — absent, not defaulted"
+  "the ORDINARY routed stop carries NEITHER key — absent, not defaulted"
 )
 
 # ---- MUTATION CELL 2 (394-06) ------------------------------------------------------------------
@@ -93,9 +107,19 @@ ALLOWED_RED_CELLS=(
 # zero probe starts reds by name.
 LOOP_SIGNATURE_CELL="stop-branch-never-repairs answers a stop without starting a single probe"
 
+# 411-02 MEASURED AND ADDED THE LAST THREE, for the same reason as cell 1's list and with the same
+# discipline: every cell here drives a STOPPED outcome through stage 5, so with `repairDraft` wired
+# under the stop branch every one of them enters the repair entry point the branch must never
+# reach. Measured on 2026-09-02, all three red with the same sentence — `TypeError: Cannot read
+# properties of undefined (reading 'map')` — raised inside `repairDraft` when it walks a route that
+# carries no `mechanics`. That crash IS the property: it can only be reached by a stop that called
+# repair. Nothing outside the stopped path reds.
 ALLOWED_RED_CELLS_2=(
   "$LOOP_SIGNATURE_CELL"
   "stop-branch-never-repairs carries the evidence refs the route derived"
+  "every stopped outcome projects to a payload the strict stop schema accepts"
+  "the ORDINARY routed stop carries NO abandonment at all — absent, not defaulted"
+  "the ORDINARY routed stop carries NEITHER key — absent, not defaulted"
 )
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/394-router-mutation.XXXXXX")"
