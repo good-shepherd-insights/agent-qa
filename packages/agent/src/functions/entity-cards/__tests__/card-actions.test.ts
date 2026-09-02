@@ -141,7 +141,7 @@ describe('cards advertise only what the registry contains (D-11)', () => {
       }
     }
     // The count is pinned so a table that quietly stopped advertising cannot pass by
-    // iterating nothing: 6 kinds, one `Open card` each except BUG, plus 1 TST, 2 RUN, 2 MEM
+    // iterating nothing: 5 kinds, one `Open card` each, plus 1 TST, 2 RUN, 2 MEM
     // (387-08 completes the MEM row with `knowledge.forget.propose` — D-11's table completion).
     expect(asserted).toBe(10)
 

@@ -30,7 +30,7 @@
 // this same app whether or not any base URL is configured; conditioning the link on `url` would
 // suppress a working link on the ordinary posture, because the shipped dashboard composition
 // overlays `services.dashboard.baseUrl` and leaves `services.dashboard.workspace` unset, which
-// makes `url` ABSENT on most real cards. So: MEM, POL and BUG render zero link affordance — not a
+// makes `url` ABSENT on most real cards. So: MEM and POL render zero link affordance — not a
 // disabled anchor, not a `#`, not a span dressed as one — and TST, RUN and TGT link into the routes
 // `app.tsx` actually registers.
 //

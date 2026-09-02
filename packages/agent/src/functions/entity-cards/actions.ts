@@ -53,13 +53,8 @@ function openCard(descriptor: EntityDescriptor): ActionRef {
 /**
  * THE per-kind action table.
  *
- * `satisfies Record<EntityKind, …>` for the same reason the fact projections are: a seventh
+ * `satisfies Record<EntityKind, …>` for the same reason the fact projections are: a sixth
  * kind must answer what it offers rather than inheriting a fallback. There is no fallback.
- *
- * `BUG` advertises NOTHING, and the empty array is the honest answer rather than an oversight:
- * D-03 reserves the family and the ledger refuses to mint into it, so there is no entity
- * behind the address for any capability to act on. A placeholder action would have promised a
- * next move that cannot exist.
  */
 export const ENTITY_ACTION_TABLES = {
   TST: (descriptor) => [
