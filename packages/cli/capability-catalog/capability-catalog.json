@@ -1631,7 +1631,6 @@
             "enum": [
               "knowledge",
               "test-draft",
-              "finding",
               "config"
             ],
             "type": "string"
@@ -2235,5 +2234,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "8f78a984f7a7ff4144275960b943b335bb31eddc33b31c1488f7709a06d88c05"
+  "rowsDigest": "68ebc811e1ebc7ccc61dfee8df5e35be2426f93db57040be32b9b5aedbdd25d0"
 }

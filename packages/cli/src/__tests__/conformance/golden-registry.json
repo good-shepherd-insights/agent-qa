@@ -119,7 +119,7 @@
       "discloses": true,
       "id": "authoring.draft.write",
       "inputSchemaDigest": "2d98bde1d977b1e9928d3613fa0fa97b7e3d765a6e9b1c43bf23214e8adf03ed",
-      "outputSchemaDigest": "7e50b7c81f52f0cce26cfe1b863541d54766a53d4f9f34f75f156e04ae669b7c",
+      "outputSchemaDigest": "54bdc9c8568d4cb33f6c8dbc39b1d24e9189620fe55b35ec320ecaeb1bb3f1a6",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_write_test"
@@ -141,7 +141,7 @@
       "classifies": true,
       "id": "authoring.funnel.get",
       "inputSchemaDigest": "cc347d50015ae652d1ee0c6b32e14745bff5afaab2ec7be8631d7d059baffb12",
-      "outputSchemaDigest": "fd20800eafdc77364f114fd7216d4cc0cc9ac396f93503b676e580a68a7850c1",
+      "outputSchemaDigest": "f00b2b7f370fae1cc3241c655e0b8389a970f6c2051e597df0c474e48169454f",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
@@ -605,7 +605,7 @@
       "classifies": true,
       "id": "proposals.accept",
       "inputSchemaDigest": "5b5b489fc085becee74396ff4acbd351c41986518402afe0e024f057ea45824a",
-      "outputSchemaDigest": "f0848e309ba92c9a5f1867245d6eddb5cd05ac6619446ccb895d44d6631337e6",
+      "outputSchemaDigest": "85e8a481b072094d1ba008c4674a7033e32b2f816e1dcabb73c9e3f7898d42b1",
       "partition": {
         "kind": "unprojected",
         "reason": "requires-human-origin"
@@ -627,8 +627,8 @@
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "proposals.list",
-      "inputSchemaDigest": "3420dd10ab5186e194efec4c0175c45d6497f5585b57abb2d1e25c1a39667743",
-      "outputSchemaDigest": "afb49bf82b5ed20d0109d532c2b6e6a98a347f47e6e5e01659bc012dbb95e777",
+      "inputSchemaDigest": "012cc84b061f0892ac1067e97d8135fcc4f5a59a1ecdb575383b8914719a4401",
+      "outputSchemaDigest": "ddfedcdf0ededc58aff729949bd1b1b0014a9b2bfbc1906e21e230eb7c92d606",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_list_proposals"
@@ -648,7 +648,7 @@
       "classifies": true,
       "id": "proposals.reject",
       "inputSchemaDigest": "f6ca5100a80ae14b0d11df3452fb0faf0ca7ac53e4da300bd06872a20809eda6",
-      "outputSchemaDigest": "1abe60ba49d7d5bb4edb738c5b9de32ae7ca87f855acd5a330d8f09f3800e81c",
+      "outputSchemaDigest": "6be6d8a97ff0a12be635f0e5b9f33b023e38b003882409f1dcef86754fb5b30d",
       "partition": {
         "kind": "unprojected",
         "reason": "requires-human-origin"
@@ -669,7 +669,7 @@
       "classifies": true,
       "id": "proposals.show",
       "inputSchemaDigest": "22ab6f6276b4e60e27758f591e47bb2890bf8ee64c4a0e6e861a97d93e0ae980",
-      "outputSchemaDigest": "0d0e52ccddb1d5ea430f0021826cfd0ca876da88ecb60307e32f6c2e3c0e81df",
+      "outputSchemaDigest": "a84d51c2f06900d6e9c86df7f4d87395c7a7d8ab89becdd2649b69c330795954",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_show_proposal"
