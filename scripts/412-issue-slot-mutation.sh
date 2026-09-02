@@ -64,6 +64,67 @@
 #       apply a NO-OP edit in place of every mutation. The script must then FATAL with "the suite
 #       stayed green under the mutation" — a gate nobody has seen fire is a comment.
 
+# LEG INDEX — every leg, the ledger row it transcribes, the instrument that reads it, and whether
+# it crosses a `dist`. This block is the register's transcription source (CLSR-03): the instruments
+# table is copied from here rather than re-derived from the ledgers, so the bar and the register
+# cannot drift into two accounts of the same measurement.
+#
+#   <id>  <phase> Row N / <requirement or wall>  <instrument>  <rebuild or none>
+#
+#   P-<pkg>  412 D-04 / CLSR-01, one leg per package root discovered from disk (23 today)  arch census  none
+#            twelve plant lines rotated by root ordinal: triage-issues · issue-curation · issues-write ·
+#            filed issues · the backticked issues shelf · the template-escaped issues shelf · the spoken
+#            issues shelf · Issue milestone · the BUG kind · the quoted status literal (production cell) ·
+#            FindingRoute · IssueId — each spelling exactly ONE needle (410 Row 7)
+#   C-01  410 Row 8 half (b) / the D-03 by-name control, planted OUTSIDE production  arch census  none
+#   C-02  411 Row 10 leg IN / the funnel path rule  arch census  none
+#   W-06  411 Row 8 / the funnel keyof pin  schema funnel.test-d.ts (testd)  none
+#   V-01  409 Row 4 / the SURVIVING Delta union's never bar (NOT VOCB-01 — D-05)  schema typecheck  none
+#   V-02  409 Row 5 / the DELTA_KINDS cast, the runtime wall beside Row 4  schema delta-kinds.test.ts  none
+#   V-03  409 Rows 10-13 / VOCB-01 + VOCB-02, the whole-vocabulary readmission  arch census  none
+#   J-02  409 Row 2 / JOBK-02, a second declared successor  agent real-kinds + engine-semantics + kind-registry  none
+#   J-01  409 Row 1 / JOBK-01, a sixth kind on the enqueue contract  agent kind-registry.test.ts  schema ONLY (agent MUST NOT be rebuilt)
+#   J-03a  409 Row 3 / JOBK-03 instrument (a)  agent chain-identity + runs-post-processing  agent then agent-local
+#   J-03b  409 Row 3 / JOBK-03 instrument (b)  agent-local chain-terminal-notify.test.ts  agent then agent-local
+#   J-03c  409 Row 3 / JOBK-03 instrument (c)  cli post-run-enqueue-idempotency.test.ts  agent then agent-local
+#   E-01  410 Row 1 / ENTY-03, the sixth kind in the ARRAY  schema 410-five-entity-kinds.test.ts  none
+#   E-02  410 Row 2 / the cast smuggle on the two kinds.ts tables  same suite + a live schema typecheck (exit 0)  none
+#   E-03  410 Row 3 / the cast smuggle on the two entity-card.ts tables  same suite + a live schema typecheck (exit 0)  none
+#   E-04  410 Row 4 / the cast smuggle on ENTITY_DASHBOARD_ROUTES  same suite + a live schema typecheck (exit 0)  none
+#   E-05  410 Row 5 / the retired no-match reason  same suite  none
+#   E-06  410 Row 6 / the retired corpus category  knowledge-local corpus.test.ts  none
+#   W-02  411 Row 2 / the loop outcome vocabulary  schema authoring-loop-outcomes.test.ts  none
+#   W-01  411 Row 1 / WTST-09, the runtime exact-list pin  schema proposal-envelope.test.ts  none
+#   W-01t  411 Row 1 / WTST-09, the ALLOWED second instrument (D-06)  schema typecheck  none
+#   W-04  411 Row 4 / the StopRoute keyof pin  agent router.test-d.ts (testd)  none
+#   W-05  411 Row 5 / the stopped-arm keyof pin  agent loop.test-d.ts (testd)  none
+#   W-03  411 Row 3 / WTST-11, a put re-added on the stopped arm  agent authoring-draft-write.stop.test.ts  schema, before the mutated run AND before the restored run
+#
+# THE ROWS THIS SCRIPT DOES NOT ENCODE, AND WHAT STANDS IN THEIR PLACE. A bar that silently drops a
+# row is a bar that measures less than it claims, so each omission is named with its reason and its
+# standing instrument:
+#
+#   410 Rows 9-11  the three dist-crossing readmissions of the sixth kind — mcp's five-template
+#                  pins, cli's parity URL-ABSENT arm across TWO dist boundaries, the dashboard's
+#                  unrouted-kind link count — SKIPPED by D-06 (each needs a whole-package rebuild
+#                  chain to measure what E-01 already REDs at its source).
+#   409 Rows 6-8   the eleventh crash point (the kill matrix), the poison job's bound and the
+#                  engine-semantics bound cell over consolidate — SKIPPED: they measure engine
+#                  bounds rather than a set that got smaller, which is what this bar is for.
+#   411 Rows 6-7   legs A and B of the 394 script — `pnpm validate:router-mutation` REMAINS their
+#                  instrument (23 s, PASS at the 411 gate). Re-encoding them here would give one
+#                  property two owners.
+#
+# D-05'S TWO-INSTRUMENT READING OF VOCB-01, AS MEASURED. The requirement is carried by V-03, the
+# whole-vocabulary readmission: under it the schema still compiles (the coherence gate proves exit
+# 0) and the census REDs exactly the four cells that name the deleted vocabulary. V-01 does NOT
+# carry VOCB-01 — `delta.ts` is byte-identical across the whole deletion, so what its retained
+# `never` bars guard is the SURVIVING six-arm union against a future widening. And D-05's wording
+# ("five `git show 9b0c3459:<path>` restores") is applied as FOUR restores plus a three-line barrel
+# hunk, because `packages/schema/src/index.ts` moved under 410 and 411: a whole-file restore would
+# readmit 411's deleted finding schemas and drop the stop-arm exports — a blast radius rather than
+# a measurement. That deviation is recorded here because the register transcribes this block.
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1010,6 +1071,16 @@ run_leg W-03 "an envelope smuggled onto the stopped arm of the draft-write op" r
   "src/functions/__tests__/authoring-draft-write.stop.test.ts" "$SCHEMA_FILTER" \
   "packages/agent/src/functions/ops/authoring-draft-write.ts" ""
 
+# D-09's last gate: a leg that silently did not run is a green script that measured LESS than it
+# claims, and nothing above would notice. The expected count is RECOMPUTED from the roots
+# discovered on disk plus the 23 named legs of the LEG INDEX above — never a pinned number, which
+# would drift the day a package is added and read the drift as a pass.
+EXPECTED_LEGS=$((ROOTS + 23))
+if [ "$LEGS_RUN" -ne "$EXPECTED_LEGS" ]; then
+  echo "FATAL: leg count drifted — expected $EXPECTED_LEGS, ran $LEGS_RUN" >&2
+  exit 1
+fi
+
 echo "LEGS $LEGS_RUN"
 echo "PASS — a needle planted in EVERY package with a src/ REDs the merged census by that package's"
 echo "       own file name, each plant is removed and the tree is byte-clean afterwards, the census"
@@ -1027,3 +1098,16 @@ echo "       the registry; a sixth kind re-added to the enqueue contract REDs th
 echo "       with the schema alone rebuilt; and a third derived chain id REDs by name at all three"
 echo "       distances — in the agent, across the agent-local dist, and through both dists in the"
 echo "       cli — with every subject restored byte-identically after each cycle."
+echo "       And of the 410 ledger: a sixth entity kind REDs the array cell by name, and the same"
+echo "       kind cast-smuggled onto all five satisfies-total tables REDs their key-set cells while"
+echo "       the compiler stays at exit 0 under every cast — the asymmetry 410 measured, proven on"
+echo "       this run rather than remembered; the retired no-match reason and the retired corpus"
+echo "       category RED their own cells and nothing beside them. And of the 411 ledger: a fourth"
+echo "       proposal kind REDs both the runtime exact-list pin and the ExactlyEqual parity wall the"
+echo "       schema typecheck carries; a fifth loop outcome REDs the ordered-list pin; a put"
+echo "       re-added on the stopped arm REDs the zero-envelope store read with the schema rebuilt"
+echo "       before the mutated run and before the restored one; and each optional key added to a"
+echo "       keyof-pinned shape REDs as ONE failed suite with exactly one type error. Every subject"
+echo "       was restored byte-identically after every leg, the leg count was asserted against the"
+echo "       package roots discovered on disk, and under ISSUE_SLOT_SELFTEST=neutered this same"
+echo "       script FATALs on its first leg rather than passing — the gate has been seen to fire."
