@@ -7,10 +7,11 @@
 // 390 plan 02), so 390's recurrence window and this presentation cannot disagree about what "the
 // same failure" means — not by convention, but because there is a single spelling of each.
 //
-// D-16 — clusters mint NO identity. A cluster carries the fingerprint VALUE, its occurrence
-// count and member refs, and nothing else: no short-ID, no `agentqa://` address, no `BUG-`.
-// Durable problem identity belongs to the issue engine's identity-key model, and `BUG-` stays
-// reserved for it (387 D-03).
+// D-16 — clusters mint NO identity. A cluster carries the fingerprint VALUE, its
+// occurrence count and member refs, and nothing else:
+// a cluster or verdict has no short-ID and no `agentqa://` address.
+// 2026-09-02 (Phase 410): the sixth entity kind left with the Issue-slot cleanup — see
+// `DELETION-INVENTORY.md`.
 
 import {
   errorTextOf,

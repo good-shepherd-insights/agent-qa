@@ -3,8 +3,8 @@
 // The ANLZ-04 story at the unit level: 40 red tests sharing one anchor and one class are ONE
 // problem — exactly one cluster, count 40, forty member refs. Everything here is a total,
 // deterministic pure function of (resolved verdicts, handoff): nothing persisted, no ports,
-// no identity minted (D-16 — the fingerprint VALUE is the only key a cluster carries; durable
-// problem identity belongs to the issue engine, and `BUG-` stays reserved per 387 D-03).
+// no identity minted (D-16 — the fingerprint VALUE is the only key a cluster carries;
+// a cluster or verdict has no short-ID and no `agentqa://` address).
 
 import { canonicalJson, resolveRunVerdicts } from '@vostride/agent-qa-schema'
 import type { Verdict } from '@vostride/agent-qa-schema'
@@ -144,8 +144,7 @@ describe('deterministic presentation (D-14)', () => {
     ])
     expect(Object.keys(cluster.representative).sort()).toEqual(['testIndex'])
     expect(Object.keys(cluster.members[0]!).sort()).toEqual(['testId', 'testIndex'])
-    // No short-ID, no address, no BUG- — the fingerprint value is the only key (387 D-03).
+    // No short-ID, no address — the fingerprint value is the only key (D-16).
     expect(canonicalJson(clusters)).not.toContain('agentqa://')
-    expect(canonicalJson(clusters)).not.toContain('BUG-')
   })
 })

@@ -11,9 +11,10 @@ import type { Verdict } from '../verdict/verdict'
 // expand a cluster (D-15) — every verdict still carries its sentence (ANLZ-03), the
 // presentation dedupes (ANLZ-04).
 //
-// Clusters mint NO identity (D-16): fingerprint value, count, member refs and a
-// representative — no short-ID, no `agentqa://` address, no `BUG-`. Durable problem
-// identity belongs to the issue engine's identity-key model (387 D-03).
+// Clusters mint NO identity (D-16): fingerprint value, count, member refs and a representative —
+// a cluster or verdict has no short-ID and no `agentqa://` address.
+// 2026-09-02 (Phase 410): the sixth entity kind left with the Issue-slot cleanup — see
+// `DELETION-INVENTORY.md`.
 //
 // EVIDENCE ON THE WIRE (Phase 406, D-01). A verdict said what it CONCLUDED and never what it
 // READ, so a page wanting "jump to the step this is about" or "open the screenshot it looked at"

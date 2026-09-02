@@ -563,10 +563,12 @@ export type {
 
 // 389 D-13..D-16: render-time pure clustering over the one fingerprint vocabulary. A total
 // deterministic function of (resolved verdicts, handoff) — no store, no port, no minted
-// identity (the cluster DTO carries the fingerprint value, count and member refs ONLY; a
-// short-ID or an address here would be a second problem-identity vocabulary beside the issue
-// engine's, which is exactly what D-16 forbids). Published so plan 07's CLI block and every
-// later surface fold through ONE function rather than re-deriving groups.
+// identity: the cluster DTO carries the fingerprint value, count and member refs ONLY, and
+// a cluster or verdict has no short-ID and no `agentqa://` address (D-16). Published so plan
+// 07's CLI block and every later surface fold through ONE function rather than re-deriving
+// groups.
+// 2026-09-02 (Phase 410): the sixth entity kind left with the Issue-slot cleanup — see
+// `DELETION-INVENTORY.md`.
 export { clusterVerdicts } from './analysis/cluster.js'
 export type { AnalysisCluster, AnalysisClusterMember } from './analysis/cluster.js'
 
