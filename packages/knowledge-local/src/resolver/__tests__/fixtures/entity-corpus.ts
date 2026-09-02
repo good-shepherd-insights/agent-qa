@@ -390,10 +390,10 @@ export const CORPUS_CASES: readonly CorpusCase[] = [
   { id: 'typo-account-erasure', category: 'typo', ref: { form: 'text', text: 'acount erasure' }, axes: { 'account-erasure': 1 }, full: { outcome: 'resolved', target: 'account-erasure' }, floor: { outcome: 'none', reason: 'no-match' } },
   { id: 'typo-screenshot-redaction', category: 'typo', ref: { form: 'text', text: 'scrensot redaction' }, axes: { 'pol_screenshot_redaction': 1 }, full: { outcome: 'resolved', target: 'pol_screenshot_redaction' }, floor: { outcome: 'none', reason: 'no-match' } },
 
-  // ================= miss: the never-guess floor, in four shapes =========================
-  // Ten name nothing at all, four are well-formed addresses nobody minted, four are made of
-  // words the corpus is full of but name no entity, and two are degenerate input. Not one of
-  // them may come back as a confident answer.
+  // ================= miss: the never-guess floor, in five shapes =========================
+  // Ten name nothing at all, four are well-formed addresses nobody minted, one is address-shaped
+  // in a prefix that was never a kind, four are made of words the corpus is full of but name no
+  // entity, and two are degenerate input. Not one of them may come back as a confident answer.
   { id: 'miss-quantum', category: 'miss', ref: { form: 'text', text: 'quantum entanglement harness' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'none', reason: 'no-match' }, floor: { outcome: 'none', reason: 'no-match' } },
   { id: 'miss-submarine', category: 'miss', ref: { form: 'text', text: 'submarine periscope alignment' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'none', reason: 'no-match' }, floor: { outcome: 'none', reason: 'no-match' } },
   { id: 'miss-volcano', category: 'miss', ref: { form: 'text', text: 'volcano eruption forecast' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'none', reason: 'no-match' }, floor: { outcome: 'none', reason: 'no-match' } },
@@ -409,6 +409,7 @@ export const CORPUS_CASES: readonly CorpusCase[] = [
   { id: 'miss-address-tst-999', category: 'miss', ref: { form: 'literal', text: 'TST-999' }, full: { outcome: 'none', reason: 'unknown-address' }, floor: { outcome: 'none', reason: 'unknown-address' } },
   { id: 'miss-address-uri-pol', category: 'miss', ref: { form: 'literal', text: 'agentqa://policy/POL-777' }, full: { outcome: 'none', reason: 'unknown-address' }, floor: { outcome: 'none', reason: 'unknown-address' } },
   { id: 'miss-address-uri-tgt', category: 'miss', ref: { form: 'literal', text: 'agentqa://target/TGT-nowhere' }, full: { outcome: 'none', reason: 'unknown-address' }, floor: { outcome: 'none', reason: 'unknown-address' } },
+  { id: 'miss-address-shaped-never-a-kind', category: 'miss', ref: { form: 'literal', text: 'ZZZ-7' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'none', reason: 'no-match' }, floor: { outcome: 'none', reason: 'no-match' }, note: 'address-shaped in a prefix outside the vocabulary: parses as nothing and falls through to free text (410 D-05/D-06)' },
 
   { id: 'miss-noise-elephant', category: 'miss', ref: { form: 'text', text: 'the flaky elephant migration' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'ambiguous', mustContain: [] }, floor: { outcome: 'ambiguous', mustContain: [] }, note: 'common words, no entity: a disambiguation card is the honest answer' },
   { id: 'miss-noise-production', category: 'miss', ref: { form: 'text', text: 'every page production' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'ambiguous', mustContain: [] }, floor: { outcome: 'ambiguous', mustContain: [] } },
