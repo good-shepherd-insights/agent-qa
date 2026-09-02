@@ -21,9 +21,9 @@
  * the merged successor of the three sibling censuses those phases shipped; their bytes moved here
  * and `validate:arch` now names this one file (D-01). One inventory, one place to widen.
  *
- * THE THREE UNIVERSES, BY PATH RULE. Twenty-eight needles have ZERO occurrences across
+ * THE THREE UNIVERSES, BY PATH RULE. Thirty-five needles have ZERO occurrences across
  * `packages/<pkg>/src` for every workspace package — `.ts`/`.tsx`, with only `dist`,
- * `node_modules`, `.turbo` and `coverage` pruned. A twenty-ninth, the quoted status literal of the
+ * `node_modules`, `.turbo` and `coverage` pruned. A thirty-sixth, the quoted status literal of the
  * roadmap's criterion 2, is scoped to the PRODUCTION subset of that same universe, built by a PATH
  * RULE — no `__tests__` path segment and no `.test.ts` / `.test.tsx` / `.test-d.ts` suffix — and
  * never by naming a file (D-03 widens 410's rule to the type-test suffix). The last two, the
@@ -54,6 +54,18 @@
  * exclusion list. The reasons are the assertion messages: the v1 three-stage row the migrate-older
  * walk exists to read is load-bearing input rather than debris, and a dated reservation marker on a
  * domain-list member is a different concept that happens to share a word.
+ *
+ * THE SWEEP'S IDENTIFIER-SHAPED SPELLINGS ARE IN THE INVENTORY TOO. This phase's prose sweep
+ * removed the last citations of the retired curation spec, of the extension a growth rule once
+ * anticipated, of the scaffolded shelf and of the milestone attribution. Those spellings join the
+ * inventory here so a later re-citation REDs BY NAME instead of passing unnoticed — a one-time
+ * grep closes nothing, because nothing notices a return. The shelf is pinned in THREE forms
+ * because the scaffold spelled it inside a template literal, where the delimiter is escaped: a
+ * plain-delimiter needle cannot see the escaped form, and the spoken phrase is neither. Two of the
+ * seven labels carry an apostrophe and are therefore built from two pieces, so every table entry
+ * stays single-quoted on one line; in full those two read
+ * `the deleted curation spec's citation`
+ * and `the scaffolded README's filed-issues promise`.
  *
  * THIS FILE CANNOT MATCH ITSELF. Every needle is assembled at run time from two halves, so no whole
  * token is ever spelled in this source — the header prose included, which is why it names concepts
@@ -102,7 +114,7 @@ const CHAIN_KINDS_NEEDLE = 'POST_RUN_CHAIN_' + 'KINDS'
 
 /**
  * The global needle set: 409's nine, then 410's six, then 411's thirteen, in the order the three
- * phases measured them.
+ * phases measured them, then the seven spellings Phase 412's own sweep retired.
  *
  * Every needle is built from two halves so this file cannot satisfy its own inventory, and each
  * split is chosen so NEITHER half is itself a needle: the dashboard fixture splits before its last
@@ -143,6 +155,14 @@ const FORBIDDEN: NeedleEntry[] = [
   { label: 'the retired accept route key', needle: 'ROUTE_FOR_KIND.f' + 'inding' },
   { label: 'the retired digest line', needle: 'find' + 'ing on ' },
   { label: 'the retired cell-title stem', needle: 'finding-' + 'branch' },
+  // The sweep's spellings (D-15), added once Plan 02 removed their sites. None is a CLSR-01 name.
+  { label: 'the deleted curation spec' + "'s citation", needle: 'issue-' + 'curation' },
+  { label: 'the anticipated scope door', needle: 'issues-' + 'write' },
+  { label: 'the scaffolded README' + "'s filed-issues promise", needle: 'filed ' + 'issues' },
+  { label: 'the scaffolded issues shelf, backticked', needle: 'issues/' + '`' },
+  { label: 'the scaffolded issues shelf, template-escaped', needle: 'issues/\\' + '`' },
+  { label: 'the scaffolded issues shelf, spoken', needle: 'issues/ ' + 'shelf' },
+  { label: 'the Issue-milestone attribution', needle: 'Issue ' + 'milestone' },
 ]
 
 /**
