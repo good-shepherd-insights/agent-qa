@@ -435,10 +435,13 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
    * between "the last job became terminal" and "the run was notified" for a crash to land in.
    *
    * The rule is stated over the candidates that EXIST rather than over a membership list,
-   * which is what lets the reserved triage slot have an id and no row without making every
+   * which is what lets a candidate have an id and no row without making every
    * chain look incomplete (D-04). Its head must exist, though: a chain-member job that arrived
    * with a run id but whose analyze-run row was never written is not a run's chain at all, and
    * notifying for it would mint a dedupe key nothing else in the system agrees with.
+   *
+   * 2026-09-02 (Phase 412): the reserved sixth job kind that first motivated the rule left
+   * with the Issue-slot cleanup — see `DELETION-INVENTORY.md`.
    */
   function recordChainTerminal(chainTerminal: ChainTerminalRecord, now: string): void {
     let headExists = false

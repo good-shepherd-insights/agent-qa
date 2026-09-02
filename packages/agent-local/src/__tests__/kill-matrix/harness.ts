@@ -10,7 +10,7 @@
 //    call, and an interrupted history calls a different number of them — which would make the
 //    comparison differ for a reason that has nothing to do with recovery.
 //
-// 2. The AUTHORING KINDS. The six shipped declarations with one field replaced: their handlers.
+// 2. The AUTHORING KINDS. The five shipped declarations with one field replaced: their handlers.
 //    The registry contract — schedules, successors, bounds, backoff, dispositions — is read from
 //    `REAL_JOB_KIND_DECLARATIONS` and never restated, so a kind reworked in 388/389 changes the
 //    matrix with no harness edit. The handler has to be substituted because the shipped stand-ins
@@ -18,6 +18,8 @@
 //    on resume" over handlers that never invoke a model is satisfied by doing nothing at all. The
 //    substitute derives its work from the declaration it was handed, so it too has no list of its
 //    own; a test asserts the substitution changed the handler and nothing else.
+//    2026-09-02 (Phase 412): five rather than six — the reserved sixth job kind left with the
+//    Issue-slot cleanup — see `DELETION-INVENTORY.md`.
 //
 // 3. The COMPARISON BASIS. `dumpLogicalState()` is the D-03 instrument and it is exact — which
 //    means it also carries the three facts that MUST differ between an interrupted history and an

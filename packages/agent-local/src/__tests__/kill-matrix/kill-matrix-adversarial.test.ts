@@ -28,8 +28,10 @@
 // reaching for the real lease here would couple the two phases at exactly the point their ordering
 // exists to keep apart.
 //
-// SPAWN BUDGET: 14 children across 6 legs, on top of plan 06's 32. Nothing is sampled — every leg
+// SPAWN BUDGET: 14 children across 6 legs, on top of plan 06's 26. Nothing is sampled — every leg
 // family described above runs in full, and every host in each family is a real OS process.
+// 2026-09-02 (Phase 412): 26 rather than 32 — the retired kind's legs left with the Issue-slot
+// cleanup; the legs here are untouched — see `DELETION-INVENTORY.md`.
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'

@@ -30,12 +30,12 @@
 // only thing in the tree that would red. A leg that can only red together with its sibling today
 // but can red alone tomorrow is worth its own name; see the SUMMARY for the measurement.
 //
-// ISSUE CANDIDACY — STRUCTURAL NOTE, NOT AN ASSERTION (D-20). There is no Issue engine yet, so
-// there is nothing here to exclude and nothing to test. The consumer contract is RESERVED: when
-// the engine lands it must read `excludedFromOutcomes` at candidacy time, from the handoff or
-// from the payload field leg 5 pins, and a gate-run must produce zero issue candidates. This
-// comment is the placeholder for that fifth exclusion leg; it is written as prose rather than a
-// skipped test because a `it.skip` would claim coverage of a mechanism that does not exist.
+// ISSUE CANDIDACY — STRUCTURAL NOTE, NOT AN ASSERTION (D-20). 2026-09-02 (Phase 412): the Issue
+// engine this note once reserved a consumer contract for left with the Issue-slot cleanup — see
+// `DELETION-INVENTORY.md`. Nothing reads `excludedFromOutcomes` at candidacy time because there
+// is no candidacy; the gate-run exclusion is complete in the legs above and no fifth leg is owed.
+// Kept as prose rather than a skipped test because an `it.skip` would claim coverage of a
+// mechanism that does not exist.
 
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
