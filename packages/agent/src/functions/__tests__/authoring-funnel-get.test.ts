@@ -195,7 +195,7 @@ describe(`${AUTHORING_FUNNEL_GET_FUNCTION_ID} — the honesty funnel's one read`
           : '',
         decision: 'applied' as const,
       })),
-      sideCounters: { findings: 0 },
+      sideCounters: {},
     })
 
     expect(answered).toEqual(expected)

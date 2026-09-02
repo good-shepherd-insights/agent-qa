@@ -119,11 +119,12 @@ export function scopeReceiptsToWindow(
 /**
  * Project the funnel over one window.
  *
- * The `findings` side counter reads the inbox's `finding` envelopes. `dedupRefusals` is
- * deliberately left ABSENT: a stage-2 refusal ends the invocation with nothing authored — no
- * draft, no receipt, no gate-run and no envelope (D-04) — so nothing on this host durably records
- * one, and reporting `0` would say "no author was ever refused" about something nothing counts.
- * The render says so in words rather than printing a number it cannot support.
+ * The inbox is read for `test-draft` acceptances and for nothing else — no side counter is folded
+ * out of it. `dedupRefusals` is deliberately left ABSENT: a stage-2 refusal ends the invocation
+ * with nothing authored — no draft, no receipt, no gate-run and no envelope (D-04) — so nothing on
+ * this host durably records one, and reporting `0` would say "no author was ever refused" about
+ * something nothing counts. The render says so in words rather than printing a number it cannot
+ * support.
  */
 export async function projectAuthoringFunnel(
   window: AuthoringFunnelWindow,
@@ -137,12 +138,7 @@ export async function projectAuthoringFunnel(
   // not narrow the array's element type — so reading `payload.draftRef` off the result would need
   // a cast, which is the second classification of one value that correlation exists to abolish.
   const acceptances: AuthoringAcceptance[] = []
-  let findings = 0
   for (const envelope of envelopes) {
-    if (envelope.kind === 'finding') {
-      findings += 1
-      continue
-    }
     if (envelope.kind !== 'test-draft') continue
     const decision = envelope.decision
     if (decision === undefined) continue
@@ -152,7 +148,7 @@ export async function projectAuthoringFunnel(
     })
   }
 
-  return computeAuthoringFunnel({ receipts, acceptances, sideCounters: { findings } })
+  return computeAuthoringFunnel({ receipts, acceptances, sideCounters: {} })
 }
 
 /**

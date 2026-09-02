@@ -29,12 +29,13 @@
 // `passedStably`. Re-basing each stage on the previous one would hide exactly the independence
 // the gates were built to demonstrate.
 //
-// REFUSALS AND FINDINGS ARE NAMED SIDE COUNTERS, BESIDE THE FUNNEL AND NEVER FOLDED INTO A STAGE
+// THE DEDUP REFUSAL IS A NAMED SIDE COUNTER, BESIDE THE FUNNEL AND NEVER FOLDED INTO A STAGE
 // (D-15). A stage-2 dedup refusal is the loop WORKING — the intent was already covered and
 // nothing was authored — so folding refusals into `built` and then into the filtered-out
 // remainder would let working-as-intended refusals inflate the filter rate, and the resulting
-// number could not be compared against the reference distribution at all. Findings are the same
-// argument from the other end: an application defect found is not a draft filtered out.
+// number could not be compared against the reference distribution at all. A draft the loop
+// stopped on because the application looks broken needs no counter of its own: it reached
+// authoring, so it is already a `built` nobody kept, counted in the stages themselves.
 //
 // THE FLAG IS COMPUTED ON EXACT INTEGERS, NEVER ON THE ROUNDED PERCENTAGE THE RENDER SHOWS. The
 // rendered percentage is a display concern computed separately and deliberately downstream of the
@@ -103,17 +104,24 @@ export const KEEP_RATE_CEILING = { num: 9, den: 10 } as const
 export const FUNNEL_MIN_DRAFTS_FLOOR = 10
 
 /**
- * The counters that sit BESIDE the funnel (D-15). Never stages; see the header.
+ * The ONE counter that sits BESIDE the funnel (D-15). Never a stage; see the header.
  *
  * `dedupRefusals` is OPTIONAL, and its absence is a true statement rather than a gap. A stage-2
  * refusal ends the invocation with nothing authored — no draft, no receipt, no gate-run and no
  * envelope (D-04) — so on a host where nothing durably records one, the honest answer is that it
  * is not recorded. Reporting `0` would say "no author was ever refused" about something nothing
  * counts, which is the same wrong answer the absent keep rate exists to refuse.
+ *
+ * NOTHING ELSE SITS BESIDE THE FUNNEL, and the keep rate stays honest without it. A draft the
+ * loop stopped on because the application looks broken reached authoring, so it is a `built`;
+ * nobody applied it, so it never reached `accepted`. It is already a built-but-not-kept draft in
+ * the stages, over the same denominator — a second counter for it would describe the same event
+ * twice and answer no question the stages do not.
+ * 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the Issue-slot
+ * cleanup — see `DELETION-INVENTORY.md`.
  */
 export interface FunnelSideCounters {
   readonly dedupRefusals?: number
-  readonly findings: number
 }
 
 /**
@@ -153,7 +161,6 @@ export const AuthoringFunnelSchema = z.object({
   }).strict(),
   sideCounters: z.object({
     dedupRefusals: z.number().int().nonnegative().optional(),
-    findings: z.number().int().nonnegative(),
   }).strict(),
   /** The EXACT ratio, absent when nothing was built. Never the flag's input. */
   keepRate: z.number().min(0).max(1).optional(),
@@ -286,7 +293,7 @@ export function renderFunnelLine(parts: FunnelRenderParts): string {
   const refusals = sideCounters.dedupRefusals === undefined
     ? FUNNEL_PHRASES.refusalsUnrecorded
     : `${sideCounters.dedupRefusals} dedup refusals`
-  segments.push(`Beside the funnel: ${refusals}, ${sideCounters.findings} findings.`)
+  segments.push(`Beside the funnel: ${refusals}.`)
 
   const line = segments.join(' ')
   const violations = successFramingViolations(line)
@@ -336,7 +343,6 @@ export function computeAuthoringFunnel(input: AuthoringFunnelInput): AuthoringFu
       ...(input.sideCounters.dedupRefusals === undefined
         ? {}
         : { dedupRefusals: input.sideCounters.dedupRefusals }),
-      findings: input.sideCounters.findings,
     },
     // ABSENT rather than 0 when nothing was built — see the header.
     ...(built === 0 ? {} : { keepRate: accepted / built }),

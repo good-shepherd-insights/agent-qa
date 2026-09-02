@@ -95,7 +95,7 @@ function corpus(count: number, accepted: number): {
   return { receipts, acceptances }
 }
 
-const NO_SIDE_COUNTERS = { findings: 0 } as const
+const NO_SIDE_COUNTERS = {} as const
 
 describe('the frozen four-stage funnel', () => {
   it('counts one `built` per receipt', async () => {
@@ -192,19 +192,20 @@ describe('the frozen four-stage funnel', () => {
     expect(funnel.stages.addedValue).toBe(1)
   })
 
-  it('reports the side counters BESIDE the stages, never folded into one', async () => {
+  it('reports the dedup-refusal counter BESIDE the stages, never folded into one', async () => {
     const { computeAuthoringFunnel } = await loadFunnel()
     const { receipts, acceptances } = corpus(4, 1)
     const funnel = computeAuthoringFunnel({
       receipts,
       acceptances,
-      sideCounters: { dedupRefusals: 7, findings: 2 },
+      sideCounters: { dedupRefusals: 7 },
     })
 
-    expect(funnel.sideCounters).toEqual({ dedupRefusals: 7, findings: 2 })
-    // The stages are exactly the four receipts; the seven refusals authored nothing and the two
-    // findings are already receipts among them, so neither moves a stage count.
+    expect(funnel.sideCounters).toEqual({ dedupRefusals: 7 })
+    // The stages are exactly the four receipts: the seven refusals authored nothing at all, so
+    // not one of them moves a stage count.
     expect(funnel.stages).toEqual({ built: 4, passedStably: 4, addedValue: 4, accepted: 1 })
+    expect(funnel.line).toContain('Beside the funnel: 7 dedup refusals.')
   })
 
   it('reports an ABSENT dedup-refusal counter rather than 0 when nothing records one', async () => {
@@ -212,11 +213,14 @@ describe('the frozen four-stage funnel', () => {
     const funnel = computeAuthoringFunnel({
       receipts: [receipt({ digest: 'a' })],
       acceptances: [],
-      sideCounters: { findings: 1 },
+      sideCounters: {},
     })
 
     expect(funnel.sideCounters.dedupRefusals).toBeUndefined()
-    expect(funnel.line).toContain('dedup refusals not recorded')
+    // The empty object is a VALID input and a valid output: nothing else sits beside the funnel,
+    // and the one counter nothing records is said in words rather than printed as a 0.
+    expect(funnel.sideCounters).toEqual({})
+    expect(funnel.line).toContain('Beside the funnel: dedup refusals not recorded on this host.')
   })
 })
 
@@ -352,7 +356,7 @@ describe('the no-success-framing prohibition', () => {
       const funnel = computeAuthoringFunnel({
         receipts,
         acceptances,
-        sideCounters: { dedupRefusals: 1, findings: 1 },
+        sideCounters: { dedupRefusals: 1 },
       })
       expect(successFramingViolations(funnel.line), `${built}/${accepted}`).toEqual([])
     }

@@ -31,13 +31,14 @@ expectTypeOf<typeof AUTHORING_FUNNEL_STAGES>().toEqualTypeOf<
 // Not merely "has these four": the record is keyed BY the vocabulary, so the two cannot drift.
 expectTypeOf<keyof AuthoringFunnel['stages']>().toEqualTypeOf<AuthoringFunnelStage>()
 
-// ---- 3. The side counters are NOT stages -------------------------------------------------------
+// ---- 3. The side counter is NOT a stage --------------------------------------------------------
 //
 // Stated as an exact key set, because that is what makes folding a refusal into a stage a
 // compile error rather than something a reviewer has to notice. D-15's whole argument is that
 // working-as-intended refusals inflating the filter rate would break comparison against the
-// reference distribution.
-expectTypeOf<keyof FunnelSideCounters>().toEqualTypeOf<'dedupRefusals' | 'findings'>()
+// reference distribution. The equality is two-sided on purpose: it also refuses a SECOND key
+// beside the funnel, which is how a retired counter comes back under a new name (411 D-09).
+expectTypeOf<keyof FunnelSideCounters>().toEqualTypeOf<'dedupRefusals'>()
 expectTypeOf<AuthoringFunnelStage>().not.toMatchTypeOf<keyof FunnelSideCounters>()
 
 // ---- 4. The keep rate is OPTIONAL — absence is a value the type can express --------------------

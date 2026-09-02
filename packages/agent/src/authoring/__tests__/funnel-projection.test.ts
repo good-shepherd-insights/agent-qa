@@ -147,24 +147,27 @@ function testDraftEnvelope(digest: string, decision?: 'applied' | 'rejected'): P
   }
 }
 
-function findingEnvelope(digest: string): ProposalEnvelope {
+/**
+ * An inbox envelope of a kind the fold must IGNORE — the two-sided control on the discriminant.
+ *
+ * A projection that folded every envelope would pass a suite driven on `test-draft` rows alone,
+ * so the inbox always carries one row of another kind. It contributes no acceptance and no
+ * counter beside the funnel; the only thing it may move is nothing.
+ */
+function knowledgeEnvelope(digest: string): ProposalEnvelope {
   return {
     id: `prop_${digest}`,
     status: 'pending',
     evidenceRefs: [],
-    kind: 'finding',
+    kind: 'knowledge',
     payload: {
       schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-      draftRef: {
-        filePath: `tests/.agent-qa-drafts/${digest}.yaml`,
-        testId: `t_${digest}`,
-        testName: `draft ${digest}`,
-        contentDigest: digest,
-      },
-      signalClass: 'clean-definitive-assertion-fail',
-      failurePoint: null,
-      evidenceRefs: [],
-      explanation: '',
+      proposalId: `prop_${digest}`,
+      verb: 'accept',
+      targetRef: { grain: 'record', recordId: `rec_${digest}` },
+      deltas: [],
+      proposedAt: 1_700_000_000_000,
+      status: 'pending',
     },
   }
 }
@@ -317,20 +320,25 @@ describe('projectAuthoringFunnel', () => {
     expect(funnel.stages).toEqual({ built: 3, passedStably: 3, addedValue: 3, accepted: 1 })
   })
 
-  it('counts findings as a SIDE counter and leaves dedup refusals absent', async () => {
+  it('leaves dedup refusals absent and folds no side counter from the inbox', async () => {
     const funnel = await projectAuthoringFunnel(
       { scope: 'all-time' },
       port({
         receipts: [receipt('a'), receipt('b')],
-        envelopes: [testDraftEnvelope('a', 'applied'), findingEnvelope('b')],
+        envelopes: [testDraftEnvelope('a', 'applied'), knowledgeEnvelope('b')],
       }),
     )
 
-    expect(funnel.sideCounters).toEqual({ findings: 1 })
-    // The finding's own draft is still a `built` — it reached authoring — but it is not folded
-    // into the funnel as a fifth stage, and the refusal counter nothing records stays absent.
+    // NOTHING sits beside the funnel here. The inbox is read for `test-draft` acceptances alone,
+    // so the envelope of another kind moves no counter; and the refusal counter nothing on this
+    // host records stays honestly absent rather than reporting a 0 nothing counted.
+    expect(funnel.sideCounters).toEqual({})
+    expect(funnel.sideCounters.dedupRefusals).toBeUndefined()
+    // Both drafts still count as `built` — they reached authoring — and only the applied one is
+    // accepted, so the second kind changed no stage either.
     expect(funnel.stages.built).toBe(2)
-    expect(funnel.line).toContain('dedup refusals not recorded')
+    expect(funnel.stages.accepted).toBe(1)
+    expect(funnel.line).toContain('Beside the funnel: dedup refusals not recorded on this host.')
   })
 
   it('answers the zero-receipts posture on an empty store', async () => {
