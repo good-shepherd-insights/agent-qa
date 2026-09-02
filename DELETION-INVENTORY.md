@@ -858,4 +858,60 @@ sweep spellings on 2026-09-02, and re-measured at the gate below.
 
 ### Gate at the time of writing (2026-09-02)
 
-_(filled by the phase gate — Task 3)_
+Run on 2026-09-02 from `agent-qa/` at `b4ff1add` — the tree of the closing code HEAD `63740043`
+plus this section's own two commits, which touch `DELETION-INVENTORY.md` and nothing else. Super-repo
+`8902de62`. Every exit code below was read from the process, never inferred from output text, and no
+command was run through a pipe that could swallow it.
+
+| Command | Observed | Exit |
+|---|---|---|
+| `pnpm typecheck --force` | 44 successful, 44 total; 0 cached — the `--force` is what stops turbo replaying a stale green, and no leg ever uses the root typecheck as an instrument | **0** · 36.0 s |
+| `pnpm --filter @vostride/agent-qa-schema test` | Test Files 125 passed (125) · Tests 1310 passed (1310) | **0** · 5.4 s |
+| `pnpm --filter @vostride/agent-qa-agent test` | Test Files 99 passed (99) · Tests 1657 passed (1657) | **0** · 8.7 s |
+| `pnpm --filter @vostride/agent-qa-mcp test` | Test Files 18 passed (18) · Tests 372 passed (372) | **0** · 4.1 s |
+| `pnpm --filter @vostride/agent-qa-arch test` | Test Files 15 passed (15) · Tests 218 passed (218) | **0** · 5.8 s |
+| `pnpm build --force` | 22 successful, 22 total; 0 cached. Run IMMEDIATELY before the cli suite, which compares `dist` mtimes and reds on a stale artifact — the 409/410/411 gates each learned this the same way | **0** · 21.8 s |
+| `pnpm --filter agent-qa test` (the cli conformance suite) | Test Files 203 passed (203) · Tests 2878 passed, 18 skipped (2896). The 18 skips are pre-existing and conditional — `.live.test.ts` suites gated on an env var and `it.skipIf(platform === 'win32')` guards — and none is in a file this milestone touched | **0** · 182.2 s |
+| `pnpm validate:arch` | Test Files 2 passed (2) · Tests 89 passed (89) — `validate-arch.test.ts` plus the merged census, which is 46 of the 89. Census universe at this gate: 23 package roots, 2492 scanned files, 1251 production files, 6 funnel files | **0** · 6.3 s |
+| `pnpm validate:issue-slot-mutation` | `PREFLIGHT OK (18 instruments)` · `PLANT ROOTS 23` · `LEGS 46` (23 plant roots + 23 named legs, the count asserted against roots recomputed from disk) · `PASS` · zero `FATAL` lines · every subject sha256-identical to `HEAD` after the run | **0** · 435.8 s |
+| `ISSUE_SLOT_SELFTEST=neutered bash scripts/412-issue-slot-mutation.sh` | `FATAL: the suite stayed green under the mutation — leg P-agent-local measures nothing`. The gate has been seen to fire on the closing tree, which is the only thing that makes the 46 green legs mean anything | **1** (non-zero, as required) · 45.3 s |
+| `pnpm validate:router-mutation` | `394-router-mutation: PASS`, subject byte-identical before and after — the standing instrument for 411 Rows 6–7, which the 412 bar deliberately does not re-encode | **0** · 24.0 s |
+| `pnpm validate:funnel-mutation` | `PASS — the acceptance-failure flag is proven able to fire, and proven to disappear under …` | **0** · 3.9 s |
+| the fifteen CLSR-01 greps over `packages/*/src` (`.ts`/`.tsx`, tests and comments included) | `triage-issues`, `triageIssues`, `issues-drafted`, `IssueDelta`, `IssueId`, `asIssueId`, `FindingProposal`, `FindingFailurePoint`, `BUG-`, `agentqa://bug`, `reserved-kind`, `BugAddressingNotAvailable`, `ANALYZE_RUN_PRODUCED_SUCCESSORS`, `POST_RUN_CHAIN_KINDS` — zero hits each; and the entity-kind needle re-run as the census spells it, lookbehind and all, over the same 2492 files — zero hits | **1** each (grep's no-match code, read from the process) |
+| the production-scoped quoted status literal | `grep -rn "'reserved'" packages/*/src` minus the `__tests__` segment and the `.test`/`.test-d` suffixes — zero hits. The two retained migration fixtures and the domain-list marker key are outside production by the path rule, not by a name | **1** |
+| the CLSR-04 identifier-shaped grep (`grep -rnF`, seven `-e` needles including both shelf spellings) | zero hits across `packages/*/src` | **1** |
+| the CLSR-04 stale-count grep (eight superseded phrases) | zero hits across `packages/*/src` | **1** |
+| `docs/`, `skills/`, `README.md` | re-measured clean at this gate for the sweep spellings AND for all fifteen CLSR-01 names | **1** each |
+| the D-18 grep over `.planning/ROADMAP.md` and `.planning/STATE.md` (super-repo root) | empty — no output line of any kind | **1** |
+| the four `spec/v2` edits | `or stop on a finding` 1 · `withdrawn 2026-08-25, see` 1 · `(analysis, curation)` in `runner.md` 1 · `jobKindValues` and `POST_RUN_CHAIN_TERMINAL_KINDS` in `issue-engine-removal.md` 1 each | **0** each |
+| `git diff --quiet 428fd902 -- <the five sibling mutation scripts>` | unchanged: `404-chip-teardown-mutation.sh`, `394-router-mutation.sh`, `394-funnel-mutation.sh`, `399.1-render-mutation.sh`, `405-debris-mutation.sh`. Re-checked across all 36 scripts: every one is byte-identical to `428fd902` except `412-issue-slot-mutation.sh`, which this milestone wrote | **0** |
+| `git diff --quiet 9b0c3459 -- scripts/404-chip-teardown-mutation.sh` | unchanged since before Phase 409 — the freeze 409 D-10 asked for, held across four phases | **0** |
+| the "— see `DELETION-INVENTORY.md`" pointers | 24 lines in 23 files carry the pointer phrase; 35 dated notes from Phases 409–412 point here in all (409: 13, 410: 3, 411: 8, 412: 11). Each was hand-read against this section: every concept they name — the reserved sixth job kind, the declared/produced split, the third derived chain id, the second delta vocabulary, the third id brand, the sixth entity kind, its law in the addressing ledger, the retired proposal arm, the anticipated scope door, the bug-repro anchoring gate, the retired curation spec's citations — has a subsection here | — |
+
+**The clean claim is SCOPED, and its exclusions are named rather than implied.**
+`git status --porcelain` over `packages/schema`, `packages/agent`, `packages/agent-local`,
+`packages/arch`, `packages/cli/src`, `packages/knowledge-local/src/{quarantine,resolver,addressing}`,
+`packages/dashboard-ui/src`, `packages/mcp`, `scripts`, `package.json` and this file prints nothing,
+before and after the mutation bar; no `412-plant.ts` survives either run. A BARE `git status` does
+not print nothing, and saying so is the honest form of the claim: this working tree carries
+pre-existing, unrelated, in-flight work that predates the milestone and that no plan in it touched —
+in `agent-qa`, `.gitattributes`, `.github/workflows/embedding-bench.yml`,
+`packages/knowledge-local/src/embedder-acquire.ts`, `embedder-native.ts` and their two tests,
+`tools/embedding-bench/**`, and an untracked `packages/cli/agent-qa-knowledge/`; in the super-repo,
+deleted `demo/init/.agent-qa/**` fixtures, a modified `.planning/state.json`, unrelated edits to
+`spec/v2/GSD-MILESTONES.md`, `spec/v2/README.md` and `spec/v3/README.md`, and untracked `spec/v2.1/`.
+Every commit in Phases 409–412 staged its files by explicit path; no `git add -A`, no `git add .`,
+no `git commit -a`. The super-repo's own scoped status over the three edited `spec/v2` files and
+over `PROJECT.md` / `ROADMAP.md` is likewise empty.
+
+**The standing pre-existing red, named so the green above is not read as more than it is.**
+`tools/embedding-bench`'s `tau-lex` failure predates this milestone (it is recorded as standing at
+the 2026-08-27 and 2026-08-28 gates) and is untouched by it. It was NOT re-measured here: that
+package's tree carries the uncommitted in-flight work listed above, so any run there would measure
+someone else's work in progress rather than the shipped tree — which is exactly the kind of claim
+this register exists not to make.
+
+**Toolchain:** node 24.15.0 · pnpm 10.6.1 · vitest 4.1.5 · tsc 6.0.3 · bash 3.2.57(1) (arm64
+apple-darwin25). The mutation script is written to the bash 3.2 subset — indexed arrays and `i % n`
+rotation, no associative arrays, no `mapfile` — because that is what `/bin/bash` is on this platform
+and a script that needs a newer shell is a gate that will not run.
