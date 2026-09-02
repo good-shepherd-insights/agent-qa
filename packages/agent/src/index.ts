@@ -657,10 +657,12 @@ export type {
 export { createRealJobKindRegistry, REAL_JOB_KIND_DECLARATIONS } from './jobs/kinds.js'
 export type { PostRunJobCapabilities, StandInJobScript } from './jobs/kinds.js'
 // 388 Pattern 2: THE post-run chain's id derivation. A value rather than a type because the
-// chip projection, the chain-terminal check and every later reader must ADDRESS the same
-// three rows from a runId alone — two copies of this hash input would be two chains that look
+// chip projection, the chain-terminal check and every later reader must ADDRESS the
+// same two rows from a runId alone — two copies of this hash input would be two chains that look
 // identical in review. It reaches no storage and holds no capability: given a runId and an id
-// source it returns three strings, which is why publishing it opens nothing.
+// source it returns two strings, which is why publishing it opens nothing.
+// 2026-09-02 (Phase 412): two rather than three — the chain's third derived id left with the
+// Issue-slot cleanup — see `DELETION-INVENTORY.md`.
 export { chainJobIdsForRun } from './jobs/chain-identity.js'
 export type { ChainJobIds } from './jobs/chain-identity.js'
 export {

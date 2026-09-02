@@ -1,8 +1,8 @@
 // `runs.postprocessing` — one run's chip truth, read from durable job state (Phase 388, D-14).
 //
-// 2026-08-26 (Phase 404, D-01): the chip set is exactly two — `{analysis, curation}`. The
-// projection stopped reading the chain's third derived id; the id itself is still derived and
-// still handed to the reader, because the JOB-KIND layer is the Issue-slot cleanup milestone's.
+// 2026-08-26 (Phase 404, D-01): the chip set is exactly two — `{analysis, curation}`.
+// 2026-09-02 (Phase 412): the chain now derives exactly the two ids the chips read; the third
+// derived id left with the Issue-slot cleanup — see `DELETION-INVENTORY.md`.
 //
 // THE single producer of a post-processing chip status. The CLI's exit summary line (plan 04),
 // any later status verb, 392's chat and M5's dashboard all call this op; none of them opens
