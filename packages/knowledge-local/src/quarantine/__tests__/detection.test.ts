@@ -162,7 +162,7 @@ function evaluate(input: {
 }
 
 describe('detection ladder constants', () => {
-  it('pins issue-curation §7.3 and D-06/D-10/D-11 defaults verbatim', () => {
+  it('pins the memory.md §9.5 trigger and the D-06/D-10/D-11 defaults verbatim', () => {
     expect(QUARANTINE_FLAG_FLOOR).toBe(2)
     expect(QUARANTINE_ESCALATE_THRESHOLD).toBe(3)
     expect(QUARANTINE_WINDOW_ORDINALS).toBe(5)

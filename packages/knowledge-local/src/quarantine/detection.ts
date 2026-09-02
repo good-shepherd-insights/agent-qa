@@ -19,7 +19,8 @@
 // INPUT DOMAIN is enumerated, not just its outputs.
 //
 //  - DISPOSITION answers "may this class ever auto-quarantine". Only the three classes
-//    issue-curation §6.4 routes to A3 may. The other five escalate LOUDLY and append nothing.
+//    `eval-and-core-types.md` §A9 routes to A3 may. The other five escalate LOUDLY and append
+//    nothing.
 //  - FLOOR ELIGIBILITY answers the axis the class set alone cannot express: is the EVIDENCE behind
 //    the class about THIS TEST, or about the run? It is one of TWO conjuncts on the floor arm
 //    (390-19): the class answers whether the floor may decide this KIND of thing at all, and the
@@ -62,6 +63,10 @@
 // SERIALIZATION and EGRESS belong to the caller. This module returns events as data; the fold
 // appends them through `appendQuarantineEvents`, inside the writer-lease scope, after the
 // projection transaction has committed.
+//
+// 2026-09-02 (Phase 412): the curation spec these notes once cited left with the Issue-slot cleanup;
+// the A3 routing lives in `eval-and-core-types.md` §A9 and the trigger in `memory.md` §9.5 — see
+// `DELETION-INVENTORY.md`.
 
 import {
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
@@ -95,7 +100,7 @@ export { QUARANTINE_WINDOW_ORDINALS } from '../projection/fingerprint-window-rea
 export const QUARANTINE_FLAG_FLOOR = 2
 
 /**
- * issue-curation §7.3's locked trigger, verbatim: the same fingerprint at three distinct ordinals
+ * `memory.md` §9.5's locked trigger, verbatim: the same fingerprint at three distinct ordinals
  * inside the window escalates. Pinned constant with no config key (386 D-15) — retune it here.
  */
 export const QUARANTINE_ESCALATE_THRESHOLD = 3
@@ -210,8 +215,8 @@ export const QUARANTINE_CLASS_DISPOSITIONS = {
 } as const satisfies Record<VerdictClass, QuarantineDisposition>
 
 /**
- * Exactly issue-curation §6.4's A3 routing, DERIVED from the disposition table rather than spelled
- * a second time (388 C13) — the set and the table can never disagree about a class.
+ * Exactly `eval-and-core-types.md` §A9's A3 routing, DERIVED from the disposition table rather
+ * than spelled a second time (388 C13) — the set and the table can never disagree about a class.
  */
 export const AUTO_QUARANTINE_CLASSES: readonly VerdictClass[] = VERDICT_CLASSES.filter(
   (name) => QUARANTINE_CLASS_DISPOSITIONS[name] === 'auto-quarantine',
