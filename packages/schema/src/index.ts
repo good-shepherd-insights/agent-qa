@@ -1033,22 +1033,18 @@ export type {
   TestEditPatchSet,
 } from './authoring/index'
 
-// 394-06 (WTST-01/WTST-04, D-05/D-11): the two envelope payload arms — a verified draft awaiting a
-// human decision, and a correctly-failing draft filed as a finding — plus the ONE run-evidence
-// coordinate vocabulary the router builds and a finding carries.
+// 394-06 (WTST-01, D-05): the ONE envelope payload arm — a verified draft awaiting a human
+// decision — plus the ONE run-evidence coordinate vocabulary the router builds and the stop arm
+// carries.
 export {
   AUTHORED_SUITE_SLUG_MAX_LENGTH,
   CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
-  FindingFailurePointSchema,
-  FindingProposalV1Schema,
   RUN_EVIDENCE_CHANNELS,
   RunEvidenceRefSchema,
   TestDraftProposalV1Schema,
   authoredSuiteTargetPath,
 } from './authoring/index'
 export type {
-  FindingFailurePoint,
-  FindingProposalV1,
   RunEvidenceChannel,
   RunEvidenceRef,
   TestDraftProposalV1,

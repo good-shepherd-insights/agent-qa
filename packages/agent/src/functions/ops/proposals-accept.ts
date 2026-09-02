@@ -76,7 +76,7 @@ export const PROPOSALS_ACCEPT_FUNCTION_ID = 'proposals.accept'
 
 /**
  * This verb's own gate-seen action name, spelled once and read by the spec below AND by the
- * `finding` route — so the two cannot drift into naming different classes for the same op.
+ * `test-draft` route — so the two cannot drift into naming different classes for the same op.
  */
 const PROPOSALS_ACCEPT_ACTION_CLASS = `fn:${PROPOSALS_ACCEPT_FUNCTION_ID}`
 
@@ -184,22 +184,11 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
       }
     },
   },
-  // 394 D-11: ACKNOWLEDGE-ONLY. Accepting a finding records the decision and does nothing else —
-  // no file, no commit, no issue filed. The decision trail 391 already keeps is the entire effect,
-  // which is what "record-and-surface" means, and it is why this arm needs no port at all.
-  //
-  // ITS COVERED CLASS IS THIS VERB'S OWN, AND THAT IS THE DECISION RATHER THAN A CONVENIENCE.
-  // There is no committing op to read a class off, so the only honest answer to "what would a
-  // standing approval over acknowledging findings cover" is the accept itself — and
-  // `fn:proposals.accept` is a PROTECTED class, so such a grant can never be minted. Nobody may
-  // pre-approve acknowledging what the loop says is an application defect: an acknowledgement is
-  // a person having looked, and a standing one is a person having stopped looking. The mint
-  // refuses as DATA beside a successful apply, so the decision is still recorded.
   // 395 D-01/D-02 · CFGM-03: accepting a config proposal makes ONE commit in the person's own
   // repository containing exactly the files the proposal names.
   //
   // ITS COVERED CLASS IS THE COMMITTING OP'S, READ OFF `risk.name` — the KNOWLEDGE shape rather than
-  // the two 394 arms', and the difference is a decision. `config.proposal.apply` is a REGISTERED op
+  // the 394 arm's, and the difference is a decision. `config.proposal.apply` is a REGISTERED op
   // carrying its own class, so a gate really does evaluate that name, so a standing approval over it
   // is a grant that can match something. `fn:config.proposal.apply` is deliberately NOT in the
   // closed protected set: D-02 puts the protection on the PROPOSAL — the per-value `crossBoundary`
@@ -251,17 +240,6 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
       return { kind: 'config', outcome }
     },
   },
-  finding: {
-    actionClass: PROPOSALS_ACCEPT_ACTION_CLASS,
-    async apply(deps: FunctionDeps, proposalId: string): Promise<ProposalsAcceptApplied> {
-      // THE RECORDING IS THE WHOLE EFFECT HERE (394-18). Acknowledging a finding writes no file
-      // and makes no commit, so if this call did nothing the acknowledgement would leave no trace
-      // anywhere and the inbox would keep asking for a decision a person had already made. The arm
-      // that "needs no port at all" needed exactly this one.
-      await recordDecision(deps, proposalId)
-      return { kind: 'finding', outcome: { acknowledged: true } }
-    },
-  },
 })
 
 /**
@@ -311,8 +289,6 @@ function applyEnvelope(
       return ROUTE_FOR_KIND.knowledge.apply(deps, proposalId, envelope.payload, envelope.origin)
     case 'test-draft':
       return ROUTE_FOR_KIND['test-draft'].apply(deps, proposalId, envelope.payload, envelope.origin)
-    case 'finding':
-      return ROUTE_FOR_KIND.finding.apply(deps, proposalId, envelope.payload, envelope.origin)
     case 'config':
       return ROUTE_FOR_KIND.config.apply(deps, proposalId, envelope.payload, envelope.origin)
     default: {
@@ -333,10 +309,9 @@ function applyEnvelope(
  * matches nothing forever. It also pins WHICH entries are members of the closed protected set.
  *
  * The partition is per kind and it is a decision at each row. `knowledge` reads its class off the
- * registered apply op and is grantable. `finding` and `test-draft` both carry this verb's own
- * class — the first because acknowledging an application defect has no committing op at all, the
- * second because its write rides a port that is never gate-evaluated — and both are therefore
- * protected, so neither can be pre-approved.
+ * registered apply op and is grantable. `test-draft` carries this verb's own class, because its
+ * write rides a port that is never gate-evaluated, and is therefore protected — no standing
+ * approval over draft accepts can be minted.
  */
 export const APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND: Readonly<Record<ProposalKind, string>> =
   Object.freeze(
@@ -371,8 +346,8 @@ const GRANT_NOT_APPLIED: ProposalsAcceptGrantOutcome = { kind: 'not-applied' }
  * (`resolveApply` answers `not-applyable` above), and it carries no flag to read; narrowing here
  * rather than assuming that is what keeps the two classifications from being two.
  *
- * ANSWERS `undefined` FOR EVERY OTHER KIND, which is the honest shape: knowledge, test-draft and
- * finding proposals have no per-value boundary flag, and inventing `false` for them would be this
+ * ANSWERS `undefined` FOR EVERY OTHER KIND, which is the honest shape: knowledge and test-draft
+ * proposals have no per-value boundary flag, and inventing `false` for them would be this
  * function claiming to have classified something it never looked at.
  */
 function crossBoundaryRefusal(

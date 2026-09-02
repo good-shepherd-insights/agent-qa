@@ -19,7 +19,7 @@
 
 import { z } from 'zod'
 
-import { FindingProposalV1Schema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
+import { TestDraftProposalV1Schema } from '../authoring/proposal-arms'
 import { ConfigProposalV1Schema } from '../config-mutation/proposal'
 import { KnowledgeProposalV1Schema, ProposalIdSchema } from '../knowledge/proposal'
 
@@ -38,16 +38,19 @@ export const CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION = 1
  * arm plus a member here — not a change to any consumer. 395 adds config, 396 projects the same
  * shape over MCP.
  *
- * 394 LANDED TWO OF THEM, and the choice of two rather than one is the interesting part.
- * `test-draft` is a verified draft awaiting the human decision D-05 says every draft gets, even a
- * keep-eligible one. `finding` is a draft that failed for the RIGHT reason — the application looks
- * wrong — and accepting it is an acknowledgement with no side effect (D-11). They are separate
- * KINDS rather than one kind with a flag because this vocabulary feeds two exhaustive
- * `Record<ProposalKind, …>` sites, so a discriminated kind gets compile-time coverage at both for
- * free while a field would get none: an unhandled flag routes to the test-draft apply and renders
- * the test-draft's decision line, and nothing anywhere fails to compile.
+ * 394 LANDED THE AUTHORING ARM AS A KIND rather than as a flag, and that choice is the interesting
+ * part. `test-draft` is a verified draft awaiting the human decision D-05 says every draft gets,
+ * even a keep-eligible one. It is a separate KIND rather than a field on another arm because this
+ * vocabulary feeds two exhaustive `Record<ProposalKind, …>` sites, so a discriminated kind gets
+ * compile-time coverage at both for free while a field would get none: an unhandled flag routes to
+ * the knowledge apply and renders the knowledge proposal's decision line, and nothing anywhere
+ * fails to compile.
+ *
+ * 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the Issue-slot
+ * cleanup — see `DELETION-INVENTORY.md`. Three kinds, and the loop reports that verdict on its own
+ * result rather than minting an envelope for it.
  */
-export const PROPOSAL_KINDS = ['knowledge', 'test-draft', 'finding', 'config'] as const
+export const PROPOSAL_KINDS = ['knowledge', 'test-draft', 'config'] as const
 
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number]
 
@@ -205,14 +208,6 @@ export const ProposalRecordSchema = z.discriminatedUnion('kind', [
     kind: z.literal('test-draft'),
     origin: ProposalOriginSchema,
     payload: TestDraftProposalV1Schema,
-  }).strict(),
-  // 394 D-11: the app-broken branch, recorded and surfaced rather than filed.
-  z.object({
-    schemaVersion: z.literal(CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION),
-    id: ProposalIdSchema,
-    kind: z.literal('finding'),
-    origin: ProposalOriginSchema,
-    payload: FindingProposalV1Schema,
   }).strict(),
   // 395 D-01/D-17 · CFGM-01: the config editor's one artifact. Accepting it makes ONE git commit
   // in the person's own repository, which is why its payload carries bytes rather than refs — see

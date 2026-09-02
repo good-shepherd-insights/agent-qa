@@ -1,20 +1,25 @@
-// The two envelope payload arms 394 lands (D-05 / D-11 · WTST-01, WTST-04).
+// The ONE envelope payload arm 394 lands, and the ONE evidence-ref vocabulary (D-05 · WTST-01).
 //
-// EVERY LOOP OUTCOME BECOMES SOMETHING A HUMAN DECIDES ON. D-05 is blunt about it: keep-eligible
-// never auto-writes, so a verified draft is a PROPOSAL, and D-11 says a correctly-failing draft is
-// a proposal too — a different kind, carrying the evidence that the application rather than the
-// test is what looks wrong. Both ride 391's envelope, so the inbox, the digest, the decision trail,
-// accept-with-always and expiry all come free and none of them learns anything new.
+// A KEEP-ELIGIBLE DRAFT BECOMES SOMETHING A HUMAN DECIDES ON. D-05 is blunt about it: keep-eligible
+// never auto-writes, so a verified draft is a PROPOSAL. It rides 391's envelope, so the inbox, the
+// digest, the decision trail, accept-with-always and expiry all come free and none of them learns
+// anything new.
 //
-// WHY `finding` IS A KIND AND NOT A FIELD ON THE TEST-DRAFT ARM. `PROPOSAL_KINDS` feeds two
+// WHY `test-draft` IS A KIND AND NOT A FIELD ON THE KNOWLEDGE ARM. `PROPOSAL_KINDS` feeds two
 // exhaustive `Record<ProposalKind, …>` sites — the accept verb's apply routes and the digest's
 // required-decision strings — so a discriminated kind gets compile-time coverage at both of them
 // for free. A boolean or an enum FIELD on one payload gets none: the accept route would be the
-// test-draft route, the digest line would read as a test-draft's, and nothing would fail to
-// compile. The two artifacts also want opposite decisions — one is applied, the other is
-// acknowledged — which is a difference in what accepting MEANS rather than in what is attached.
+// knowledge route, the digest line would read as a knowledge proposal's, and nothing would fail to
+// compile. The artifacts also want different decisions — one is applied to a knowledge store, the
+// other writes a file — which is a difference in what accepting MEANS rather than in what is
+// attached.
 //
-// MAP, NOT TERRITORY (391 D-18). Both arms carry refs and one-liners. The draft bytes stay on the
+// 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the Issue-slot
+// cleanup — see `DELETION-INVENTORY.md`. What it used to carry is now reported on the op's own
+// result and nothing is minted; the run-evidence coordinate vocabulary below survives it, because
+// that result carries the same coordinates.
+//
+// MAP, NOT TERRITORY (391 D-18). The arm carries refs and one-liners. The draft bytes stay on the
 // shelf, the receipt stays in the receipts store, and the run evidence stays in the run's own
 // durable records — an envelope is what a person reads before deciding, not a copy of everything
 // the decision is about.
@@ -69,17 +74,17 @@ export function authoredSuiteTargetPath(draftShelfPath: string, testName: string
   return suiteDirectory.length > 0 ? `${suiteDirectory}/${name}` : name
 }
 
-/** Version 1: the first shape of both arms. No envelope of either kind exists on disk yet. */
+/** Version 1: the first shape of the arm. No envelope of this kind exists on disk yet. */
 export const CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION = 1
 
 /**
  * Which durable record an evidence coordinate addresses.
  *
- * THE ONE CHANNEL VOCABULARY. The router builds these coordinates and the finding arm carries
- * them, and the two are the same thing seen from either side of a store — so the words are spelled
- * here, in `schema`, and the router imports them. A second spelling inside `agent` would be free to
- * drift from the one a stored finding was written with, which is the drift a wire projection can
- * never detect because both halves would parse.
+ * THE ONE CHANNEL VOCABULARY. The router builds these coordinates and `authoring.draft.write`'s
+ * `stop` arm carries them (411 D-07), and the two are the same thing seen from either side of the
+ * result — so the words are spelled here, in `schema`, and the router imports them. A second
+ * spelling inside `agent` would be free to drift from the one a caller was answered with, which is
+ * the drift a wire projection can never detect because both halves would parse.
  */
 export const RUN_EVIDENCE_CHANNELS = ['step-trace', 'state-before', 'state-after'] as const
 
@@ -89,8 +94,8 @@ export type RunEvidenceChannel = (typeof RUN_EVIDENCE_CHANNELS)[number]
  * A COORDINATE into a run's own durable records. Never a payload.
  *
  * `.strict()` is the refusal surface: a screen state, an element tree or a rendered snapshot
- * copied onto a finding fails to parse here rather than becoming a durable record nobody meant to
- * write. The key set is additionally pinned by equality in `router.test-d.ts`.
+ * copied onto a stop payload fails to parse here rather than becoming a durable record nobody meant
+ * to write. The key set is additionally pinned by equality in `router.test-d.ts`.
  */
 export const RunEvidenceRefSchema = z.object({
   runId: z.string().min(1),
@@ -103,29 +108,6 @@ export const RunEvidenceRefSchema = z.object({
 }).strict()
 
 export type RunEvidenceRef = z.infer<typeof RunEvidenceRefSchema>
-
-/**
- * The verdict path that produced a definitive answer, as the run recorded it.
- *
- * Kept as a free string rather than an enum: the run's own `VerdictSource` vocabulary is owned by
- * the handoff schema and grows there, and a second closed copy here would refuse to store a
- * finding produced by a newer runner — refusing to record a real application defect because the
- * verdict came through a path this file had not heard of.
- */
-const VerdictSourceTextSchema = z.string().min(1)
-
-/** Where the failure was observed, in the run's own words. */
-export const FindingFailurePointSchema = z.object({
-  runId: z.string().min(1),
-  stepIndex: z.number().int().nonnegative(),
-  /** Pre-interpolation step text — post-interpolation text can carry resolved secrets. */
-  stepText: z.string(),
-  /** The verifier's own reasoning for saying no. */
-  reasoning: z.string(),
-  verdictSource: VerdictSourceTextSchema.optional(),
-}).strict()
-
-export type FindingFailurePoint = z.infer<typeof FindingFailurePointSchema>
 
 /**
  * A draft that earned a decision: the loop verified it and a human says whether it joins the suite.
@@ -182,66 +164,3 @@ export const TestDraftProposalV1Schema = z.object({
 }).strict()
 
 export type TestDraftProposalV1 = z.infer<typeof TestDraftProposalV1Schema>
-
-/**
- * A draft that failed for the right reason: the application looks wrong, and here is the evidence.
- *
- * ACCEPTING ONE IS AN ACKNOWLEDGEMENT (D-11, record-and-surface). There is no issue filed and no
- * file written; the decision trail 391 already keeps is the whole of what accepting does. That is
- * deliberate rather than unfinished — the Issue lifecycle engine supersedes this artifact class
- * and consumes it, and filing into a system that does not exist yet would be inventing a second
- * half of a contract nobody can honour.
- *
- * THE RETAINED DRAFT IS THE POINT, so a later reader does not garbage-collect it: a correctly
- * failing test IS the regression test for the defect it found, and `draftRef` is what the Issue
- * engine later anchors a bug-repro to. Deleting the draft because "it failed" would throw away the
- * most valuable artifact the loop produced.
- */
-export const FindingProposalV1Schema = z.object({
-  schemaVersion: z.literal(CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION),
-  /** The correctly-failing draft, retained as the regression-test seed. */
-  draftRef: DraftRefSchema,
-  /** The router's own class, so a reader knows whether this was definitive or ambiguous. */
-  signalClass: z.string().min(1),
-  /**
-   * Set only when BOUNDED REPAIR ABANDONED this draft, and carrying which of its two ways out.
-   *
-   * The kind is the router-independent fact — repair either spent its cap without a passing probe
-   * or broke a step that already passed — so it is a typed closed enum rather than a sentence.
-   * Prose stays out of it per D-11's evidence-linked-explanation law: `explanation` is the one
-   * field a model writes, and it is written downstream once the branch is already chosen.
-   */
-  repairAbandonment: z.enum(['exhausted', 'prefix-regressed']).optional(),
-  /**
-   * The repair spend the abandonment above refers to — present exactly when it is.
-   *
-   * The same field `TestDraftProposalV1` carries for a repair that SUCCEEDED, so the two arms state
-   * the cost of a repair in one vocabulary: a reader comparing a kept draft against an abandoned one
-   * is comparing the same number. It is `RepairOutcome.iterations` — the count the loop spent,
-   * including iterations a fence refused, which is why it is not derivable from the run ids the
-   * fan-out report counts.
-   *
-   * ADDITIVE AND OPTIONAL ON A `.strict()` SCHEMA, AND THE VERSION CONSTANT IS NOT BUMPED. The
-   * 394-21/394-19 precedent: every finding file retained on disk still parses, because a strict
-   * schema refuses UNKNOWN keys rather than requiring new ones, and a bump would invalidate records
-   * whose shape is unchanged in every field they carry. THE REVERSE DIRECTION — an OLDER reader
-   * meeting a record carrying this key — is unreachable rather than tolerated: no earlier reader is
-   * deployed anywhere, because the v2 rewrite ships nothing between milestones, so the only readers
-   * that will ever see a finding file are built from this schema (WR-06).
-   */
-  repairIterations: z.number().int().min(0).optional(),
-  /** `null` for a member-level failure with no step to point at. */
-  failurePoint: FindingFailurePointSchema.nullable(),
-  /** The exact trace and the a11y snapshots at the failure point, as coordinates. */
-  evidenceRefs: z.array(RunEvidenceRefSchema).readonly(),
-  /**
-   * The LLM's evidence-linked explanation of what the application appears to be doing wrong.
-   *
-   * The MODEL writes this and never decides the branch — the routing is `routeRepairOrFinding`'s,
-   * over run evidence alone. Prose about a decision already taken is the one thing a model is
-   * genuinely better at here, and it is stored as prose so nothing downstream parses it.
-   */
-  explanation: z.string(),
-}).strict()
-
-export type FindingProposalV1 = z.infer<typeof FindingProposalV1Schema>

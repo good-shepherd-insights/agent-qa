@@ -204,7 +204,7 @@ function rejectedPath(agentQaRoot: string, proposalId: string): string {
  *
  * Three on-disk shapes reach this type and all three are legitimate. 387 wrote a bare
  * `KnowledgeProposalV1` document; 391 writes the envelope's `ProposalRecord` around it when the
- * mint knows who emitted it; 394-18 writes that same wrapper for the two authoring kinds. `origin`
+ * mint knows who emitted it; 394-18 writes that same wrapper for the authoring kind. `origin`
  * absent means the file is one of the first — a fact about the file, never a value this module
  * invents. A bare document is `knowledge` because that is the only kind 387 could write.
  *
@@ -276,8 +276,8 @@ export function extractStoredProposal(raw: unknown): StoredProposal {
  * The refusal that lives here is about the PATH rather than about the store: `claimPendingProposal`
  * and the 387-era apply publish an `AppliedProposalRecord`, whose `proposal` field IS
  * `KnowledgeProposalV1Schema`, so handing that machinery a draft would produce a document the next
- * reader could not parse. Accepting a `test-draft` or a `finding` goes through `proposals.accept`'s
- * own routes and {@link decidePendingProposal} below, which is what the message names.
+ * reader could not parse. Accepting a `test-draft` goes through `proposals.accept`'s own routes
+ * and {@link decidePendingProposal} below, which is what the message names.
  */
 export function extractStoredKnowledgeProposal(raw: unknown): StoredKnowledgeProposal {
   const stored = extractStoredProposal(raw)
@@ -846,7 +846,7 @@ export type DecideProposalOutcome =
 /**
  * Close a pending proposal of ANY kind with a human's decision (394-18 · D-05 / D-11 / D-12).
  *
- * THE ONE DECISION PATH FOR THE TWO KINDS 394 MINTS, and the generalisation of 391's reject rather
+ * THE ONE DECISION PATH FOR THE KIND 394 MINTS, and the generalisation of 391's reject rather
  * than a second mechanism beside it: the same claim rename resolves the race, the same durable name
  * shapes record the answer, and the durable file lands BEFORE the claim marker is retired, so this
  * verb inherits `resolveClaim`'s single-retirement-totality property instead of needing a new
@@ -859,8 +859,8 @@ export type DecideProposalOutcome =
  * is exactly the half-applied state the two-step design exists to prevent. Rejecting a knowledge
  * proposal is unaffected, because a rejection commits nothing by definition.
  *
- * THE KNOWLEDGE REJECTION KEEPS ITS 391 SHAPE, byte for byte. A `test-draft` or a `finding` has no
- * `KnowledgeProposalV1` to put in that wrapper's `proposal` field, so those land as
+ * THE KNOWLEDGE REJECTION KEEPS ITS 391 SHAPE, byte for byte. A `test-draft` has no
+ * `KnowledgeProposalV1` to put in that wrapper's `proposal` field, so it lands as
  * {@link DecidedProposalRecordSchema} — and the classifier tells the two apart structurally.
  */
 export function decidePendingProposal(
@@ -1144,8 +1144,8 @@ export function listProposalEnvelopes(
  * WHEN a proposal was made, for every kind — the ordering key AND the expiry input, spelled once.
  *
  * A knowledge proposal records its own `proposedAt` and has since 387, including in the bare files
- * that carry no origin at all; the two kinds 394 mints record theirs on the envelope's `origin.at`,
- * which their durable record REQUIRES. One function so the sort and the lifecycle rule cannot come
+ * that carry no origin at all; the kind 394 mints records its own on the envelope's `origin.at`,
+ * which its durable record REQUIRES. One function so the sort and the lifecycle rule cannot come
  * to different conclusions about the same file — the failure the envelope's own `status` note
  * describes, arriving through the ordering instead.
  */
@@ -1247,12 +1247,12 @@ function proposedAtOf(stored: StoredProposal): number {
  * the same two words `KnowledgeTargetRef` discriminates on, so a surface resolving a ref out of
  * the inbox resolves it the same way it resolves one out of the verb that proposed it.
  *
- * THE TWO AUTHORING KINDS ADDRESS RUNS AND NOTHING ELSE (394-18), which is a fact about the grain
- * vocabulary rather than a gap: a draft's evidence is the runs the gates took and the finding's own
- * coordinates, and neither a shelf file nor a step index is a `record`, a `bundle` or a `run`.
- * Inventing a fourth grain so these arms could have more refs would put an address in an inbox that
- * no surface in this build can resolve. The draft's bytes stay one `proposals.show` away, which is
- * the arms' own map-not-territory posture.
+ * THE AUTHORING KIND ADDRESSES RUNS AND NOTHING ELSE (394-18), which is a fact about the grain
+ * vocabulary rather than a gap: a draft's evidence is the runs the gates took, and neither a shelf
+ * file nor a step index is a `record`, a `bundle` or a `run`. Inventing a fourth grain so this arm
+ * could have more refs would put an address in an inbox that no surface in this build can resolve.
+ * The draft's bytes stay one `proposals.show` away, which is the arm's own map-not-territory
+ * posture.
  */
 function evidenceRefsFor(stored: StoredProposal): readonly ProposalEvidenceRef[] {
   if (stored.kind === 'knowledge') {
@@ -1264,14 +1264,11 @@ function evidenceRefsFor(stored: StoredProposal): readonly ProposalEvidenceRef[]
     if (stored.origin?.runId !== undefined) refs.push({ grain: 'run', ref: stored.origin.runId })
     return refs
   }
-  // DISTINCT run ids, in the order they were recorded. A finding's evidence refs address several
-  // channels of ONE step, so the same run id appears repeatedly; listing it once per channel would
-  // hand a reader the same thing to go and look at three times.
+  // DISTINCT run ids, kept a SET rather than reduced to the one field left after 411 removed the
+  // second contributor: the mint records at most one attributable run per non-knowledge envelope
+  // today, and the set is what keeps a second contributor from re-introducing the duplicate this
+  // fold was written to collapse.
   const runIds = new Set<string>()
   if (stored.origin?.runId !== undefined) runIds.add(stored.origin.runId)
-  if (stored.kind === 'finding') {
-    if (stored.payload.failurePoint !== null) runIds.add(stored.payload.failurePoint.runId)
-    for (const ref of stored.payload.evidenceRefs) runIds.add(ref.runId)
-  }
   return [...runIds].map((ref) => ({ grain: 'run', ref }))
 }

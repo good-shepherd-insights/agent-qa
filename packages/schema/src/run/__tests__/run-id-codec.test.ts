@@ -183,8 +183,12 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
   },
   'authoring/proposal-arms.ts': {
     hardened: 0,
-    plainString: 2,
-    verdict: 'reaches no path join — run attribution on a proposal arm.',
+    plainString: 1,
+    verdict:
+      'reaches no path join, and is NOT caller-supplied — `RunEvidenceRef.runId` is a COORDINATE '
+      + 'into a run\'s own durable records, built by the router from the run it just read. The '
+      + 'second row this file counted here was the retired arm\'s failure point, which left with '
+      + 'the Issue-slot cleanup (411); the surviving field is the same kind of output echo.',
   },
   'authoring/fan-out.ts': {
     hardened: 0,

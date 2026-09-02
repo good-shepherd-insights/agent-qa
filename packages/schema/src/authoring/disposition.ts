@@ -64,8 +64,9 @@ export interface DraftGateBooleans {
    * flag and no recorded step termination on any step. A `failed` member carrying a termination
    * is indefinitive, and 9 of 9 failed members surveyed in the demo run store carry one, so on
    * current builds this gate effectively admits passing runs only. The app-broken branch — a
-   * draft that fails because the application is wrong — becomes a proposal-with-receipts finding
-   * in Phase 394, which owns it, rather than a keep here.
+   * draft that fails because the application is wrong — ends the invocation as a reported stop:
+   * the gate run's verdict on the op result, the draft retained on the shelf (411), rather than a
+   * keep here.
    */
   readonly executesDefinitive: boolean
   /** Gate 2: the verdict did not flip across the stability runs. */

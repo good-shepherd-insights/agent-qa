@@ -391,13 +391,18 @@ export interface AuthoringProposalsWritePortLike {
  * One proposal to persist: its kind, its correlated payload, and its attribution.
  *
  * DISCRIMINATED AND CORRELATED, following {@link ProposalRecord}'s own mapped-type idiom, so a
- * binder that narrowed on `kind` learns what `payload` is. `knowledge` is deliberately NOT a member
- * — a knowledge proposal is minted by the review verbs with their own targets and deltas, and a
- * second door into that store from the authoring loop would be a second answer to what a knowledge
- * proposal is.
+ * binder that narrowed on `kind` learns what `payload` is. It is kept in the mapped form over a
+ * ONE-MEMBER key set rather than flattened, because the correlation between `kind` and `payload` is
+ * the property being stated and a flattened pair would state it by hand. `knowledge` is
+ * deliberately NOT a member — a knowledge proposal is minted by the review verbs with their own
+ * targets and deltas, and a second door into that store from the authoring loop would be a second
+ * answer to what a knowledge proposal is.
+ *
+ * 2026-09-02 (Phase 411): the proposal arm for a correctly-failing draft left with the Issue-slot
+ * cleanup — see `DELETION-INVENTORY.md`. The loop writes exactly one kind of proposal now.
  */
 export type AuthoringProposalWrite = {
-  [K in 'test-draft' | 'finding']: {
+  [K in 'test-draft']: {
     readonly kind: K
     /** The emitting op's bare id — provenance for a person reading an inbox, never a match key. */
     readonly emittedBy: string
@@ -415,7 +420,7 @@ export type AuthoringProposalWrite = {
     readonly runId?: string
     readonly payload: Extract<ProposalRecord, { kind: K }>['payload']
   }
-}['test-draft' | 'finding']
+}['test-draft']
 
 /**
  * The one-commit apply (394-10, D-06 · WTST-01), as a host capability this package cannot name.

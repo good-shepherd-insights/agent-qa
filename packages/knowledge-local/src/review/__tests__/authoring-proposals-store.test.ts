@@ -1,11 +1,11 @@
-// The two kinds 394 mints, in the store that refused them by name (394-18 · WTST-05).
+// The kind 394 mints, in the store that refused it by name (394-18 · WTST-05).
 //
-// THE DEFECT THIS FILE WAS WRITTEN AGAINST. `ProposalRecordSchema` has carried three kinds since
-// 394-06, and this store could hold exactly one of them: `writePendingProposal` took a
+// THE DEFECT THIS FILE WAS WRITTEN AGAINST. `ProposalRecordSchema` has carried more than one kind
+// since 394-06, and this store could hold exactly one of them: `writePendingProposal` took a
 // `KnowledgeProposalV1`, and `extractStoredProposal` threw a named `TypeError` at every other kind
 // with the sentence "that kind is stored elsewhere" — while nothing anywhere else stored one. So a
-// verified draft and a finding were artifacts the loop could produce and no host could keep, which
-// is why the funnel's `accepted` stage was structurally 0 on every host (WINDOWS 99 / 102).
+// verified draft was an artifact the loop could produce and no host could keep, which is why the
+// funnel's `accepted` stage was structurally 0 on every host (WINDOWS 99 / 102).
 //
 // EVERY STORED DOCUMENT HERE IS PRODUCED, NEVER WRITTEN (gap_round_contract point 4). Not one file
 // in this file's fixtures is hand-assembled JSON: the store's own write verbs mint them and the
@@ -23,7 +23,6 @@ import { join } from 'node:path'
 
 import {
   ConfigProposalApplyableV1Schema,
-  FindingProposalV1Schema,
   KnowledgeProposalV1Schema,
   ProposalRecordSchema,
   TestDraftProposalV1Schema,
@@ -33,7 +32,6 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   ConfigProposalApplyableV1,
-  FindingProposalV1,
   KnowledgeProposalV1,
   ProposalRecord,
   TestDraftProposalV1,
@@ -67,7 +65,6 @@ function bytesOf(name: string): string {
 }
 
 const TEST_DRAFT_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9a'
-const FINDING_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9b'
 const KNOWLEDGE_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9c'
 const CONFIG_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9d'
 
@@ -87,36 +84,6 @@ function testDraftPayload(overrides: Partial<TestDraftProposalV1> = {}): TestDra
     runsConsumed: 3,
     repairIterations: 0,
     summaryLine: 'The coupon banner appears after a code is applied — keep-eligible',
-    ...overrides,
-  })
-}
-
-function findingPayload(overrides: Partial<FindingProposalV1> = {}): FindingProposalV1 {
-  return FindingProposalV1Schema.parse({
-    schemaVersion: 1,
-    draftRef: {
-      filePath: 'tests/.agent-qa-drafts/cafebabe.yaml',
-      testId: 't_cafebabe',
-      testName: 'Applying an expired coupon shows an error',
-      contentDigest: 'cafebabe',
-    },
-    signalClass: 'definitive-failure',
-    failurePoint: {
-      runId: 'run_finding_1',
-      stepIndex: 2,
-      stepText: 'Verify the error banner is visible',
-      reasoning: 'the banner never rendered',
-    },
-    evidenceRefs: [
-      {
-        runId: 'run_finding_1',
-        filePath: 'tests/.agent-qa-drafts/cafebabe.yaml',
-        testName: 'Applying an expired coupon shows an error',
-        stepIndex: 2,
-        channel: 'step-trace',
-      },
-    ],
-    explanation: 'the application accepted an expired coupon',
     ...overrides,
   })
 }
@@ -187,16 +154,6 @@ function configRecord(id = CONFIG_ID, at = 4_000): ProposalRecord {
   })
 }
 
-function findingRecord(id = FINDING_ID, at = 3_000): ProposalRecord {
-  return ProposalRecordSchema.parse({
-    schemaVersion: 1,
-    id,
-    kind: 'finding',
-    origin: { emittedBy: 'authoring.draft.write', at },
-    payload: findingPayload(),
-  })
-}
-
 describe('the store extracts every kind the envelope discriminates (394-18)', () => {
   it('reads a test-draft record back as a test-draft, rather than refusing it by name', () => {
     // THE RED. Before this plan the line below threw
@@ -213,14 +170,6 @@ describe('the store extracts every kind the envelope discriminates (394-18)', ()
       runId: 'run_gate_3',
       at: 2_000,
     })
-  })
-
-  it('reads a finding record back as a finding', () => {
-    const stored = extractStoredProposal(findingRecord())
-
-    expect(stored.kind).toBe('finding')
-    expect(stored.id).toBe(FINDING_ID)
-    expect(stored.payload).toEqual(findingPayload())
   })
 
   it('still reads a wrapped KNOWLEDGE record, and a bare 387-era document, through one extractor', () => {
@@ -291,7 +240,7 @@ describe('the store extracts every kind the envelope discriminates (394-18)', ()
   })
 })
 
-describe('the two authoring kinds PERSIST and read back through the shipped inbox (394-18)', () => {
+describe('the authoring kind PERSISTS and reads back through the shipped inbox (394-18)', () => {
   it('round-trips a test-draft record: written by the store verb, read by the store listing', () => {
     writePendingProposalRecord(agentQaRoot, testDraftRecord())
 
@@ -312,20 +261,8 @@ describe('the two authoring kinds PERSIST and read back through the shipped inbo
     expect(envelope?.evidenceRefs).toEqual([{ grain: 'run', ref: 'run_gate_3' }])
   })
 
-  it('round-trips a finding record, addressing every DISTINCT run its evidence names', () => {
-    writePendingProposalRecord(agentQaRoot, findingRecord())
-
-    const entry = showProposalEnvelope(agentQaRoot, FINDING_ID, { now: 3_100 })
-
-    expect(entry?.envelope.kind).toBe('finding')
-    expect(entry?.envelope.payload).toEqual(findingPayload())
-    // The failure point and the evidence ref name the SAME run; it is offered once.
-    expect(entry?.envelope.evidenceRefs).toEqual([{ grain: 'run', ref: 'run_finding_1' }])
-  })
-
-  it('lists all THREE kinds out of one directory, in minted-at order', () => {
+  it('lists exactly two kinds out of one directory, in minted-at order', () => {
     // Every document here is written through a store verb; not one is assembled as JSON.
-    writePendingProposalRecord(agentQaRoot, findingRecord())
     writePendingProposalRecord(agentQaRoot, testDraftRecord())
     writePendingProposal(agentQaRoot, knowledgePayload())
 
@@ -334,7 +271,6 @@ describe('the two authoring kinds PERSIST and read back through the shipped inbo
     expect(entries.map((entry) => entry.envelope.kind)).toEqual([
       'knowledge', // proposedAt 1_000
       'test-draft', // origin.at 2_000
-      'finding', // origin.at 3_000
     ])
     expect(entries.every((entry) => entry.envelope.status === 'pending')).toBe(true)
   })
@@ -358,18 +294,17 @@ describe('the two authoring kinds PERSIST and read back through the shipped inbo
     expect(bytesOf(`${legacy.proposalId}.json`)).toBe(before)
   })
 
-  it("the inbox DTO is already total over the widened kinds — proved, not assumed", () => {
+  it('the inbox DTO is total over the surviving kinds — proved, not assumed', () => {
     // The plan's own instruction: if `toDto` maps envelope-generically, prove it with a cell
     // rather than asserting it. This drives the SHIPPED port, not the store.
     writePendingProposalRecord(agentQaRoot, testDraftRecord())
-    writePendingProposalRecord(agentQaRoot, findingRecord())
     const inbox = createProposalsInbox({
       resolveAgentQaRoot: () => agentQaRoot,
       now: () => 4_000,
     })
 
     return inbox.list().then((rows) => {
-      expect(rows.map((row) => row.envelope.kind)).toEqual(['test-draft', 'finding'])
+      expect(rows.map((row) => row.envelope.kind)).toEqual(['test-draft'])
       expect(rows.every((row) => row.applyInFlight === false)).toBe(true)
     })
   })
@@ -400,20 +335,26 @@ describe('a decision on an authoring proposal is durable (394-18)', () => {
       .toEqual({ decision: 'applied', at: 5_000 })
   })
 
-  it('records a REJECTED decision on a finding, through the same durable name shapes', () => {
-    writePendingProposalRecord(agentQaRoot, findingRecord())
+  it('records a REJECTED decision with its reason, through the same durable name shapes', () => {
+    // RE-FIXTURED ONTO THE SURVIVING AUTHORING KIND rather than deleted with the retired one (411).
+    // The cell above measures the APPLIED half; this is the file's only measurement of the rejected
+    // half and of the `reason` field surviving the round trip, so dropping it with the fixture
+    // would have left the rejection path unmeasured on an authoring envelope.
+    writePendingProposalRecord(agentQaRoot, testDraftRecord())
 
-    const decided = decidePendingProposal(agentQaRoot, FINDING_ID, {
+    const decided = decidePendingProposal(agentQaRoot, TEST_DRAFT_ID, {
       decision: 'rejected',
       at: 5_000,
       reason: 'known issue',
     })
 
     expect(decided.kind).toBe('decided')
-    const entry = showProposalEnvelope(agentQaRoot, FINDING_ID, { now: 5_100 })
+    const entry = showProposalEnvelope(agentQaRoot, TEST_DRAFT_ID, { now: 5_100 })
     expect(entry?.envelope.status).toBe('rejected')
     expect(entry?.envelope.decision)
       .toEqual({ decision: 'rejected', at: 5_000, reason: 'known issue' })
+    // …and the payload survived the rejection, because rejection and apply are both retention.
+    expect(entry?.envelope.payload).toEqual(testDraftPayload())
   })
 
   it('refuses to record a knowledge APPLY here by name — that path commits deltas', () => {

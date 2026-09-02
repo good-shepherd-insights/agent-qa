@@ -50,7 +50,7 @@ export type NeighbourInstabilityReason = (typeof NEIGHBOUR_INSTABILITY_REASONS)[
  * One existing test in the target suite, with what the project already knows about it.
  *
  * `outcomes` are recorded MEMBER outcomes, newest last, in the run store's own words — a free
- * string rather than an enum for the reason `FindingProposalV1.verdictSource` is one: the runner
+ * string rather than an enum for the reason `GateRunRecord.memberOutcome` is one: the runner
  * owns that vocabulary and grows it, and a closed copy here would read a newer runner's outcome
  * as unknown. More than one DISTINCT value is a flip; the values themselves are never compared
  * against a member list this file maintains.

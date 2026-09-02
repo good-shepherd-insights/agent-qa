@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 
-import { FindingProposalV1Schema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
+import { TestDraftProposalV1Schema } from '../authoring/proposal-arms'
 import { ConfigApplyOutcomeSchema } from '../config-mutation/actions'
 import { CROSS_BOUNDARY_REASONS } from '../config-mutation/constants'
 import { ConfigProposalV1Schema } from '../config-mutation/proposal'
@@ -62,14 +62,13 @@ const proposalEnvelopeArm = <K extends string, P extends z.ZodType>(kind: K, pay
  * A DISCRIMINATED UNION since 394-06, mirroring the DTO's own correlation.
  *
  * A flat `kind: z.enum(PROPOSAL_KINDS)` beside `payload: z.union([...])` would parse an envelope
- * whose kind said `finding` and whose payload was a knowledge proposal — nine combinations for
+ * whose kind said `test-draft` and whose payload was a knowledge proposal — nine combinations for
  * three legal ones, all of them valid on the wire. The discriminated form admits the three, and
  * the parity pin below then carries that same guarantee into the DTO.
  */
 export const ProposalEnvelopeSchema = z.discriminatedUnion('kind', [
   proposalEnvelopeArm('knowledge', KnowledgeProposalV1Schema),
   proposalEnvelopeArm('test-draft', TestDraftProposalV1Schema),
-  proposalEnvelopeArm('finding', FindingProposalV1Schema),
   proposalEnvelopeArm('config', ConfigProposalV1Schema),
 ])
 
@@ -229,14 +228,6 @@ export const ProposalsAcceptAppliedSchema = z.discriminatedUnion('kind', [
       /** The one commit D-06 makes for that file, or absent when the apply is not yet wired. */
       commit: z.string().min(1).optional(),
     }).strict(),
-  }).strict(),
-  // 394 D-11: record-and-surface. Accepting a finding is an ACKNOWLEDGEMENT — the decision trail
-  // is the whole of what happens, so this arm carries no target and no receipt of a change. It is
-  // a distinct arm rather than an omitted one so a surface can render "acknowledged" instead of
-  // having to infer it from a missing field.
-  z.object({
-    kind: z.literal('finding'),
-    outcome: z.object({ acknowledged: z.literal(true) }).strict(),
   }).strict(),
   // 395 D-01/D-03 · CFGM-03: the apply that COMMITS the config change. `already-applied` rides the
   // same outcome union rather than a sibling arm here, because a person who accepted twice is owed
@@ -428,16 +419,16 @@ export interface ProposalsInboxPort {
 }
 
 /**
- * The APPLIED half of the decision trail, for the kinds whose apply is not itself a commit
+ * The APPLIED half of the decision trail, for the kind whose apply is not itself a commit
  * (394-18).
  *
  * IT IS THE SYMMETRIC HALF OF `reject`, and its absence was the reason `accepted` could not be a
  * real number. A knowledge accept commits deltas and `publishAppliedProposal` records the decision
- * as part of committing them, so the knowledge arm needs nothing here. The two kinds 394 mints have
- * no such commit: a `test-draft` writes a file through a port that is not this store, and a
- * `finding` is an acknowledgement with no side effect at all — so without a verb that says "a
- * person decided this", both would sit `pending` forever and the funnel's `accepted` stage would be
- * structurally 0 on every host, which is exactly the state WINDOWS 102 recorded.
+ * as part of committing them, so the knowledge arm needs nothing here. The kind 394 mints has no
+ * such commit: a `test-draft` writes a file through a port that is not this store — so without a
+ * verb that says "a person decided this", it would sit `pending` forever and the funnel's
+ * `accepted` stage would be structurally 0 on every host, which is exactly the state WINDOWS 102
+ * recorded.
  *
  * A PORT VERB RATHER THAN A SECOND PORT, on this port's own stated reasoning: the read/write
  * asymmetry is declared where it is ENFORCED — `proposals.accept` carries `approval-write`,

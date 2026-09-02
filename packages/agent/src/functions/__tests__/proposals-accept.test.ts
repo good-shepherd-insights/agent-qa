@@ -140,40 +140,6 @@ function testDraftEntry(
   }
 }
 
-/**
- * The FINDING arm (D-11), for the acknowledge-only route.
- *
- * Narrowed the same way its two siblings are: the payload is correlated with the kind, so a route
- * that read this envelope as a test-draft's would not typecheck rather than render the wrong line.
- */
-function findingEntry(
-  overrides: Partial<Extract<ProposalInboxEntryDto['envelope'], { kind: 'finding' }>> = {},
-): ProposalInboxEntryDto {
-  return {
-    applyInFlight: false,
-    envelope: {
-      id: PROPOSAL_ID,
-      kind: 'finding',
-      status: 'pending',
-      evidenceRefs: [],
-      payload: {
-        schemaVersion: 1,
-        draftRef: {
-          filePath: 'tests/.agent-qa-drafts/def456.yaml',
-          testId: 't_expired_coupon',
-          testName: 'Applying an expired coupon shows an error',
-          contentDigest: 'def456',
-        },
-        signalClass: 'definitive-failure',
-        failurePoint: null,
-        evidenceRefs: [],
-        explanation: 'the application accepted an expired coupon',
-      },
-      ...overrides,
-    },
-  }
-}
-
 /** Records every one-commit apply, so "the write really happened" is observable. */
 function recordingDraftApply(): { port: DraftApplyPortLike; calls: TestDraftApplyRequestLike[] } {
   const calls: TestDraftApplyRequestLike[] = []
@@ -502,19 +468,6 @@ describe('the decision is RECORDED where the apply is not itself a commit (394-1
     // person already made, and `projectAuthoringFunnel` reads no `decision` — which is exactly why
     // `accepted` was structurally 0 on every host (WINDOWS 102).
     expect(built.recordedApplied).toEqual([PROPOSAL_ID])
-  })
-
-  it('closes a FINDING proposal too — the acknowledgement is the whole of what accepting does', async () => {
-    const built = host({ entry: findingEntry() })
-
-    const answer = await accept(built, { proposalId: PROPOSAL_ID })
-
-    expect(answer.apply).toMatchObject({
-      applied: { kind: 'finding', outcome: { acknowledged: true } },
-    })
-    expect(built.recordedApplied).toEqual([PROPOSAL_ID])
-    // No file and no commit: D-11's record-and-surface, with the record being the whole effect.
-    expect(built.draftApply.calls).toEqual([])
   })
 
   it('does NOT record for a KNOWLEDGE accept — that apply publishes its own decision', async () => {

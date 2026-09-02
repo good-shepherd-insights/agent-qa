@@ -119,8 +119,6 @@ function payloadHeadline(envelope: ProposalInboxEntryDto['envelope']): string {
       return envelope.payload.verb
     case 'test-draft':
       return `${envelope.payload.draftRef.testName} (${envelope.payload.disposition})`
-    case 'finding':
-      return `${envelope.payload.draftRef.testName} (${envelope.payload.signalClass})`
     case 'config':
       // 395-01. REFS AND COUNTS, and this arm is the one where that rule earns its keep: the config
       // payload carries the rendered diff's bytes and the new file content, so a headline that

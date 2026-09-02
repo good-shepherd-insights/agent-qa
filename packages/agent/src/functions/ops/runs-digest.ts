@@ -86,10 +86,6 @@ const REQUIRED_DECISION: Record<ProposalKind, string> = {
   // the repository rather than about the knowledge store — and the line says so, because "accept
   // or reject" would read identically for two decisions with very different consequences.
   'test-draft': 'add this test to the suite, or reject it',
-  // 394 D-11: an acknowledgement, and the wording refuses to promise anything else. Accepting a
-  // finding files nothing and fixes nothing; it records that a person looked at what the loop
-  // found. A line reading "accept or reject" here would imply an apply that does not exist.
-  finding: 'acknowledge this application finding, or reject it',
   // 395 CFGM-03: accepting COMMITS the change to the repository, so the line says commit rather
   // than "accept or reject" — the same distinction the test-draft row above draws, and for the same
   // reason: two decisions with very different consequences would otherwise read identically.
@@ -129,8 +125,8 @@ function knowledgeSummaryLine(payload: KnowledgeProposalV1): string {
  * use and for the same reason: a fall-through would render a test draft wearing a knowledge
  * proposal's summary.
  *
- * Every arm is REFS AND COUNTS (D-18). The draft's steps, the finding's explanation and the run's
- * evidence all stay one `proposals.show` away.
+ * Every arm is REFS AND COUNTS (D-18). The draft's steps and the run's evidence all stay one
+ * `proposals.show` away.
  */
 function summaryLineFor(envelope: ProposalEnvelope): string {
   switch (envelope.kind) {
@@ -143,9 +139,6 @@ function summaryLineFor(envelope: ProposalEnvelope): string {
       return `test draft ${envelope.payload.draftRef.testName}, `
         + `${envelope.payload.disposition}, ${envelope.payload.runsConsumed} run(s) `
         + `of up to ${envelope.payload.runsPreviewed} previewed`
-    case 'finding':
-      return `finding on ${envelope.payload.draftRef.testName}, `
-        + `${envelope.payload.signalClass}, ${envelope.payload.evidenceRefs.length} evidence ref(s)`
     case 'config':
       // THE ONE-LINER AND THE FILE COUNT, AND NOTHING FROM INSIDE THE PAYLOAD. This arm is the one
       // that could most easily leak: the config payload carries the rendered diff's bytes and the

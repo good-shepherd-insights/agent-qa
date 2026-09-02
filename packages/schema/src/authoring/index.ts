@@ -45,21 +45,17 @@ export type {
   TestEditPatchSet,
 } from './patch-ops'
 
-// 394-06 (WTST-01/WTST-04, D-05/D-11): the two envelope payload arms, and the ONE evidence-ref
-// vocabulary the router builds and a finding carries.
+// 394-06 (WTST-01, D-05): the ONE envelope payload arm, and the ONE evidence-ref vocabulary the
+// router builds and the stop arm carries.
 export {
   AUTHORED_SUITE_SLUG_MAX_LENGTH,
   CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
-  FindingFailurePointSchema,
   authoredSuiteTargetPath,
-  FindingProposalV1Schema,
   RUN_EVIDENCE_CHANNELS,
   RunEvidenceRefSchema,
   TestDraftProposalV1Schema,
 } from './proposal-arms'
 export type {
-  FindingFailurePoint,
-  FindingProposalV1,
   RunEvidenceChannel,
   RunEvidenceRef,
   TestDraftProposalV1,

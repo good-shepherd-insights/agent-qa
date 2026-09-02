@@ -137,9 +137,9 @@ export const DraftGateResultsSchema = z.object({
    * failure or as a run record that cannot be read back at all.
    *
    * The app-broken branch — a draft that fails because the APPLICATION is wrong — is therefore
-   * not a keep on this gate; it becomes a proposal-with-receipts finding in Phase 394, which owns
-   * that behaviour (393-VERIFICATION.md defers WR-04's behavioural arm there). Read this field as
-   * "the run answered", never as "a failing draft can be kept".
+   * not a keep on this gate; it ends the invocation as a reported stop — the gate run's verdict on
+   * the op result, the draft retained on the shelf (411). Read this field as "the run answered",
+   * never as "a failing draft can be kept".
    */
   executesDefinitive: z.object({
     pass: z.boolean(),

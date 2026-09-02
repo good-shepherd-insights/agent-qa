@@ -211,14 +211,14 @@ describe('the published apply-class table is evaluable — every entry is a clas
 
   it('partitions the kinds by whether their apply class is protected — the decision, not a default', () => {
     // `knowledge` is the only grantable kind, and that is the whole shape of the resolution.
-    // `finding` acknowledges (no committing op, so its class is the accept's own, which is
-    // protected). `test-draft` commits through the draftApply PORT with no gate evaluation of its
-    // own, so the only class a grant over it could truthfully cover is likewise the accept's — and
-    // the accept is protected, so no standing approval over draft accepts exists today.
+    // `test-draft` commits through the draftApply PORT with no gate evaluation of its own, so the
+    // only class a grant over it could truthfully cover is the accept's — and the accept is
+    // protected, so no standing approval over draft accepts exists today. The list is LITERAL and
+    // exact: a kind rejoining the protected partition, or leaving it, REDs this cell by name.
     const protectedKinds = PROPOSAL_KINDS.filter((kind) =>
       isProtectedActionClass(APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND[kind]),
     )
-    expect(protectedKinds).toEqual(['test-draft', 'finding'])
+    expect(protectedKinds).toEqual(['test-draft'])
   })
 })
 

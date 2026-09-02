@@ -101,9 +101,9 @@ export function createProposalsInbox(options: ProposalsInboxOptions): ProposalsI
       input: ProposalsRecordAppliedInput,
     ): Promise<ProposalsRecordAppliedOutput> {
       // THE DECISION IS RECORDED, NOT THE APPLY PERFORMED (394-18). What accepting a `test-draft`
-      // DOES is a git commit through a different port entirely, and what accepting a `finding` does
-      // is nothing at all (D-11). This verb closes the proposal's own lifecycle so the inbox stops
-      // asking for a decision somebody already made — and so the funnel can count it.
+      // DOES is a git commit through a different port entirely. This verb closes the proposal's own
+      // lifecycle so the inbox stops asking for a decision somebody already made — and so the
+      // funnel can count it.
       //
       // The store refuses a knowledge APPLY here by name, which is the boundary this thin adapter
       // deliberately does not restate: applying a knowledge proposal commits deltas and produces a

@@ -20,6 +20,15 @@ import {
 } from '../index'
 import type { ProposalRecord } from '../index'
 
+/**
+ * The kind Phase 411 removed, spelled in TWO HALVES so this file cannot match its own census.
+ *
+ * Plan 05's `411-issue-slot-deleted.test.ts` scans every package source tree — tests and comments
+ * included — for the retired spelling, so a negative probe written as a bare literal would RED the
+ * census it is meant to survive.
+ */
+const RETIRED = 'find' + 'ing'
+
 const knowledgePayload = {
   schemaVersion: 1 as const,
   proposalId: 'prop_aaaaaaaa-bbbb',
@@ -44,19 +53,22 @@ describe('the envelope vocabulary is closed and spelled once', () => {
   // TO COMPILE. What no compiler can catch is a kind added and then never decided about here, or
   // one silently removed — a `.toEqual` over a literal list is the only cell that reds for that,
   // and it is the site 394-06 had to update by hand when the list went from one member to three,
-  // and 395-01 when `config` joined as the fourth.
-  it('has exactly four kinds, and the predicate matches them exactly', () => {
-    expect(PROPOSAL_KINDS).toEqual(['knowledge', 'test-draft', 'finding', 'config'])
+  // 395-01 when `config` joined as the fourth, and 411 when the app-broken arm left and the list
+  // went from four to three.
+  it('has exactly three kinds, and the predicate matches them exactly', () => {
+    expect(PROPOSAL_KINDS).toEqual(['knowledge', 'test-draft', 'config'])
     expect(isProposalKind('knowledge')).toBe(true)
     expect(isProposalKind('test-draft')).toBe(true)
-    expect(isProposalKind('finding')).toBe(true)
     expect(isProposalKind('config')).toBe(true)
-    // The rejected half of the pair, kept as a value the vocabulary does not carry.
+    // The rejected half of the pair, kept as values the vocabulary does not carry. RETIRED is the
+    // word this phase removed, and it is spelled in two halves on purpose: Plan 05's census scans
+    // this file, and a cell naming the retired word outright would match itself.
+    expect(isProposalKind(RETIRED)).toBe(false)
     expect(isProposalKind('scaffold')).toBe(false)
     expect(isProposalKind(undefined)).toBe(false)
   })
 
-  it('parses a test-draft record and a finding record on the same envelope (394 D-05/D-11)', () => {
+  it('parses a test-draft record on the envelope (394 D-05)', () => {
     const testDraft = ProposalRecordSchema.parse({
       schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
       id: 'prop_cccccccc-dddd',
@@ -83,49 +95,17 @@ describe('the envelope vocabulary is closed and spelled once', () => {
       },
     })
     expect(testDraft.kind).toBe('test-draft')
-
-    const finding = ProposalRecordSchema.parse({
-      schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-      id: 'prop_eeeeeeee-ffff',
-      kind: 'finding',
-      origin: { emittedBy: 'authoring.draft.write', at: 3_000 },
-      payload: {
-        schemaVersion: 1,
-        draftRef: {
-          filePath: 'tests/.agent-qa-drafts/def.yaml',
-          testId: 't_def',
-          testName: 'Confirm the saved banner',
-          contentDigest: 'def',
-        },
-        signalClass: 'clean-definitive-assertion-fail',
-        failurePoint: {
-          runId: 'r_1',
-          stepIndex: 2,
-          stepText: 'Verify the banner says "Saved"',
-          reasoning: 'the banner said "Error"',
-        },
-        evidenceRefs: [
-          {
-            runId: 'r_1',
-            filePath: 'tests/.agent-qa-drafts/def.yaml',
-            testName: 'Confirm the saved banner',
-            stepIndex: 2,
-            channel: 'step-trace',
-          },
-        ],
-        explanation: 'the application shows an error where the test expects a confirmation',
-      },
-    })
-    expect(finding.kind).toBe('finding')
   })
 
   it('refuses a payload wearing the wrong kind — the discriminated union is the guard', () => {
     // Nine kind/payload combinations exist for three legal ones. A flat `kind` enum beside a
-    // payload union would have admitted all nine, and every one of them would parse forever.
+    // payload union would have admitted all nine, and every one of them would parse forever. The
+    // probe wears `test-draft` over a knowledge payload: a surviving kind, so the cell measures the
+    // correlation itself rather than an unknown discriminant being rejected.
     expect(ProposalRecordSchema.safeParse({
       schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
       id: 'prop_aaaaaaaa-bbbb',
-      kind: 'finding',
+      kind: 'test-draft',
       origin: { emittedBy: 'knowledge.accept.propose', at: 1 },
       payload: knowledgePayload,
     }).success).toBe(false)
