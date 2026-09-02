@@ -391,17 +391,74 @@ plant_leg () {
 }
 
 # ── PREFLIGHT ─────────────────────────────────────────────────────────────────────────────────
+#
+# Every instrument any leg will drive, run once on the committed tree. Two failures this catches
+# that no leg could: a suite that was ALREADY red, whose red a leg would then read as its own
+# measurement; and a stale `dist` between a subject and a cell, which turns a live mutation into a
+# green. The dists are rebuilt in dependency order first — schema, then agent, then agent-local —
+# because each resolves its predecessor through built output.
+PREFLIGHT_COUNT=0
+
+preflight_suite () {
+  local filter="$1" suite="$2"
+  set +e
+  pnpm --filter "$filter" exec vitest run "$suite" > "$LOG" 2>&1
+  local rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "FATAL: already red before any mutation: $suite (filter $filter, exit $rc)" >&2
+    exit 1
+  fi
+  echo "  preflight green: $filter $suite"
+  PREFLIGHT_COUNT=$((PREFLIGHT_COUNT + 1))
+}
+
+preflight_typecheck () {
+  local filter="$1"
+  set +e
+  pnpm --filter "$filter" typecheck > "$LOG" 2>&1
+  local rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "FATAL: already red before any mutation: typecheck (filter $filter, exit $rc)" >&2
+    exit 1
+  fi
+  echo "  preflight green: $filter typecheck"
+  PREFLIGHT_COUNT=$((PREFLIGHT_COUNT + 1))
+}
+
 echo "=== PREFLIGHT — every instrument must be green before any subject is touched"
-set +e
-pnpm --filter "$ARCH_FILTER" exec vitest run "$CENSUS" > "$LOG" 2>&1
-PREFLIGHT_RC=$?
-set -e
-echo "  $CENSUS exited $PREFLIGHT_RC"
-grep -E '^      Tests' "$LOG" || true
-if [ "$PREFLIGHT_RC" -ne 0 ]; then
-  echo "FATAL: already red before any mutation: $CENSUS" >&2
-  exit 1
-fi
+build_package "$SCHEMA_FILTER"
+build_package "$AGENT_FILTER"
+build_package "$LOCAL_FILTER"
+echo "  dists rebuilt in dependency order: schema, agent, agent-local"
+
+preflight_suite "$ARCH_FILTER" "$CENSUS"
+
+preflight_suite "$AGENT_FILTER" "src/jobs/__tests__/kind-registry.test.ts"
+preflight_suite "$AGENT_FILTER" "src/jobs/__tests__/real-kinds.test.ts"
+preflight_suite "$AGENT_FILTER" "src/jobs/__tests__/engine-semantics.test.ts"
+preflight_suite "$AGENT_FILTER" "src/jobs/__tests__/chain-identity.test.ts"
+preflight_suite "$AGENT_FILTER" "src/functions/ops/__tests__/runs-post-processing.test.ts"
+preflight_suite "$AGENT_FILTER" "src/functions/__tests__/authoring-draft-write.stop.test.ts"
+preflight_suite "$AGENT_FILTER" "src/authoring/__tests__/router.test-d.ts"
+preflight_suite "$AGENT_FILTER" "src/authoring/__tests__/loop.test-d.ts"
+
+preflight_suite "$LOCAL_FILTER" "src/__tests__/chain-terminal-notify.test.ts"
+
+preflight_suite "$CLI_FILTER" "src/__tests__/post-run-enqueue-idempotency.test.ts"
+
+preflight_suite "$SCHEMA_FILTER" "src/__tests__/delta-kinds.test.ts"
+preflight_suite "$SCHEMA_FILTER" "src/__tests__/proposal-envelope.test.ts"
+preflight_suite "$SCHEMA_FILTER" "src/entity/__tests__/410-five-entity-kinds.test.ts"
+preflight_suite "$SCHEMA_FILTER" "src/functions/__tests__/authoring-loop-outcomes.test.ts"
+preflight_suite "$SCHEMA_FILTER" "src/authoring/__tests__/funnel.test-d.ts"
+
+preflight_suite "@vostride/agent-qa-knowledge-local" "src/resolver/__tests__/corpus.test.ts"
+
+preflight_typecheck "$SCHEMA_FILTER"
+
+echo "PREFLIGHT OK ($PREFLIGHT_COUNT instruments)"
 echo
 
 # ── The legs, cheapest first ──────────────────────────────────────────────────────────────────
