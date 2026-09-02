@@ -224,6 +224,56 @@ apply_mutation () {
       # and the leg would measure the compiler's required-field check instead of the counter bar.
       perl -0pi -e "s/\Q  readonly dedupRefusals?: number\E\n/  readonly dedupRefusals?: number\n  readonly findings?: number\n/" \
         "$REPO_ROOT/packages/schema/src/authoring/funnel.ts" ;;
+    E-01)
+      # 410 Row 1's diff, verbatim: the sixth kind back in its pre-phase position, between 'RUN'
+      # and 'MEM'. The five `satisfies`-total tables are UNTOUCHED, so their key sets are still
+      # exactly five and the ARRAY cell is the only red. The type wall the row recorded beside
+      # this edit — schema `typecheck` exit 2 with 14 `error TS` lines, five of them TS1360 at
+      # kinds.ts:36, kinds.ts:58, entity-card.ts:41, entity-card.ts:83 and dashboard-route.ts:72 —
+      # is an OBSERVATION WITH A COUNT in the ledger, not a per-diagnostic ALLOWED set, so it is
+      # recorded in this comment and not encoded as a second instrument (D-07).
+      perl -0pi -e "s/\Qexport const ENTITY_KINDS = ['TST', 'RUN', 'MEM', 'POL', 'TGT'] as const\E/export const ENTITY_KINDS = ['TST', 'RUN', 'BUG', 'MEM', 'POL', 'TGT'] as const/" \
+        "$REPO_ROOT/packages/schema/src/entity/kinds.ts" ;;
+    E-02)
+      # 410 Row 2's diff, verbatim — one `Object.assign` line appended directly after each table's
+      # closing `satisfies` line, the array left untouched. `as Record<string, unknown>` is a legal
+      # widening and `Object.assign` is a legal call, so the compiler has NO OPINION about the
+      # smuggled row: `assert_schema_typecheck_green` runs while this is live and requires exit 0.
+      # The assign sits after the table and before `SEGMENT_TO_KIND`, which maps over the
+      # still-five-member `ENTITY_KINDS`, so no derived table reds.
+      perl -0pi -e "s/\Q} as const satisfies Record<EntityKind, string>\E\n/} as const satisfies Record<EntityKind, string>\nObject.assign(ENTITY_URI_SEGMENTS as Record<string, unknown>, { BUG: 'bug' })\n/" \
+        "$REPO_ROOT/packages/schema/src/entity/kinds.ts"
+      perl -0pi -e "s/\Q} as const satisfies Record<EntityKind, boolean>\E\n/} as const satisfies Record<EntityKind, boolean>\nObject.assign(SLUG_ADDRESSED_ENTITY_KINDS as Record<string, unknown>, { BUG: false })\n/" \
+        "$REPO_ROOT/packages/schema/src/entity/kinds.ts" ;;
+    E-03)
+      # 410 Row 3's diff, verbatim. The same idiom on a table whose value type is a NON-EMPTY
+      # TUPLE rather than a primitive — worth its own leg because the cast erases the tuple
+      # constraint exactly as completely as it erases `string`, and the compiler stays green.
+      perl -0pi -e "s/\Q} as const satisfies Record<EntityKind, readonly [string, ...string[]]>\E\n/} as const satisfies Record<EntityKind, readonly [string, ...string[]]>\nObject.assign(ENTITY_STATUSES as Record<string, unknown>, { BUG: ['reserved'] })\n/" \
+        "$REPO_ROOT/packages/schema/src/entity/entity-card.ts"
+      perl -0pi -e "s/\Q} as const satisfies Record<EntityKind, string>\E\n/} as const satisfies Record<EntityKind, string>\nObject.assign(ENTITY_IDENTITY_FACT_LABELS as Record<string, unknown>, { BUG: 'reserved address' })\n/" \
+        "$REPO_ROOT/packages/schema/src/entity/entity-card.ts" ;;
+    E-04)
+      # 410 Row 4's diff, verbatim — the most pointed of the three cast rows: the smuggled value is
+      # a whole `EntityDashboardRoute`-shaped object, so the row is not merely type-erased, it is a
+      # fully plausible sixth route the compiler has no opinion about at all.
+      perl -0pi -e "s/\Q} as const satisfies Record<EntityKind, EntityDashboardRoute>\E\n/} as const satisfies Record<EntityKind, EntityDashboardRoute>\nObject.assign(ENTITY_DASHBOARD_ROUTES as Record<string, unknown>, { BUG: { route: null, keyedBy: 'unrouted' } })\n/" \
+        "$REPO_ROOT/packages/schema/src/entity/dashboard-route.ts" ;;
+    E-05)
+      # 410 Row 5's diff, verbatim — and Row 5's RECORDED TRAP, obeyed: the anchor spans two lines,
+      # so each line is quoted separately and the `\n` sits OUTSIDE `\Q…\E`. A `\Q…\E` that quotes
+      # the newline never matches, the file is left untouched, and the leg would read a green that
+      # measures the ABSENCE of the mutation (the landed gate above is the other half of that
+      # lesson). The enum only WIDENS here, so there is no compile wall in either direction and the
+      # runtime cell is the only instrument that exists.
+      perl -0pi -e "s/\Q  'unknown-address',\E\n\Q  'no-match',\E\n/  'unknown-address',\n  'reserved-kind',\n  'no-match',\n/" \
+        "$REPO_ROOT/packages/schema/src/entity/resolution.ts" ;;
+    E-06)
+      # 410 Row 6's diff, verbatim. The re-added category contributes ZERO cases, so the census
+      # cell reds on `atLeastFive: false` — which is why this row proves the corpus census would
+      # also catch a category silently EMPTIED, not only one silently added.
+      perl -0pi -e "s/\Q  'miss',\E\n\Q] as const\E\n/  'miss',\n  'reserved',\n] as const\n/" \
+        "$REPO_ROOT/packages/knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts" ;;
     *) echo "FATAL: unknown leg $1" >&2; exit 1 ;;
   esac
 }
@@ -761,6 +811,87 @@ run_leg J-03c "the same third id, read by the cli through both dists" runtime \
   "$J03C_REQUIRED" "$J03C_ALLOWED" "$CLI_FILTER" \
   "src/__tests__/post-run-enqueue-idempotency.test.ts" \
   "$J03_REBUILD" "$J03_SUBJECT" ""
+
+# ── The 410 legs ──────────────────────────────────────────────────────────────────────────────
+#
+# Every REQUIRED and ALLOWED string below is TRANSCRIBED VERBATIM from the row that measured it
+# (410-MUTATION-LEDGER.md). All six read `src` through relative imports, so NO leg here crosses a
+# `dist` and no rebuild filter is encoded (410 D-01) — encoding one would be a claim the ledger
+# does not make. Rows 7-8 are subsumed by the plant legs and C-01 above; Rows 9-11 (the three
+# dist-crossing readmissions) are skipped by D-06.
+#
+# ROWS 2-4 ARE THE ASYMMETRY THIS PHASE EXISTS TO PIN. Row 1 mutates the ARRAY and the compiler
+# screams (exit 2, 14 diagnostics); Rows 2-4 smuggle the same sixth kind into the five tables
+# through `Object.assign` + `as Record<string, unknown>` and the compiler says NOTHING — exit 0,
+# zero `error TS`. So for a table row the runtime key-set cell is the ONLY wall standing between
+# this repo and a sixth-kind row, which is 410 D-02's whole reason to exist. That must be PROVEN
+# on every run rather than remembered, so each cast leg runs a schema typecheck WHILE THE CAST IS
+# LIVE through `run_leg`'s POST_RUN_CHECK hook and requires exit 0. A future `tsc` that learns to
+# see the cast changes the measurement LOUDLY instead of silently.
+assert_schema_typecheck_green () {
+  set +e
+  pnpm --filter "$SCHEMA_FILTER" typecheck > "$WORK/cast-typecheck.log" 2>&1
+  local rc=$?
+  set -e
+  echo "  schema typecheck under the cast exited $rc"
+  if [ "$rc" -ne 0 ]; then
+    echo "FATAL: the cast became visible to typecheck — re-measure 410 Row 2" >&2
+    echo "       (see $WORK/cast-typecheck.log)" >&2
+    exit 1
+  fi
+}
+
+ENTITY_SUITE="src/entity/__tests__/410-five-entity-kinds.test.ts"
+
+# 410 Row 1 / ENTY-03 — the sixth kind re-added to the array itself.
+E01_REQUIRED='spells exactly the five kinds in declaration order'
+E01_ALLOWED="$E01_REQUIRED"
+run_leg E-01 "the sixth entity kind re-added to ENTITY_KINDS" runtime \
+  "$E01_REQUIRED" "$E01_ALLOWED" "$SCHEMA_FILTER" "$ENTITY_SUITE" "" \
+  "packages/schema/src/entity/kinds.ts" ""
+
+# 410 Row 2 / the cast smuggle on the two kinds.ts tables.
+E02_REQUIRED="ENTITY_URI_SEGMENTS has exactly the five kinds as keys
+SLUG_ADDRESSED_ENTITY_KINDS has exactly the five kinds as keys"
+E02_ALLOWED="$E02_REQUIRED"
+POST_RUN_CHECK=assert_schema_typecheck_green
+run_leg E-02 "a sixth-kind row cast-smuggled onto both kinds.ts tables" runtime \
+  "$E02_REQUIRED" "$E02_ALLOWED" "$SCHEMA_FILTER" "$ENTITY_SUITE" "" \
+  "packages/schema/src/entity/kinds.ts" ""
+
+# 410 Row 3 / the cast smuggle on the two entity-card.ts tables.
+E03_REQUIRED="ENTITY_STATUSES has exactly the five kinds as keys
+ENTITY_IDENTITY_FACT_LABELS has exactly the five kinds as keys"
+E03_ALLOWED="$E03_REQUIRED"
+POST_RUN_CHECK=assert_schema_typecheck_green
+run_leg E-03 "a sixth-kind row cast-smuggled onto both entity-card.ts tables" runtime \
+  "$E03_REQUIRED" "$E03_ALLOWED" "$SCHEMA_FILTER" "$ENTITY_SUITE" "" \
+  "packages/schema/src/entity/entity-card.ts" ""
+
+# 410 Row 4 / the cast smuggle on ENTITY_DASHBOARD_ROUTES.
+E04_REQUIRED='ENTITY_DASHBOARD_ROUTES has exactly the five kinds as keys'
+E04_ALLOWED="$E04_REQUIRED"
+POST_RUN_CHECK=assert_schema_typecheck_green
+run_leg E-04 "a whole plausible sixth route cast-smuggled onto ENTITY_DASHBOARD_ROUTES" runtime \
+  "$E04_REQUIRED" "$E04_ALLOWED" "$SCHEMA_FILTER" "$ENTITY_SUITE" "" \
+  "packages/schema/src/entity/dashboard-route.ts" ""
+
+# 410 Row 5 / the resolution-reason vocabulary.
+E05_REQUIRED='resolves to nothing for exactly two reasons, in declaration order'
+E05_ALLOWED="$E05_REQUIRED"
+run_leg E-05 "the retired no-match reason re-added between the two survivors" runtime \
+  "$E05_REQUIRED" "$E05_ALLOWED" "$SCHEMA_FILTER" "$ENTITY_SUITE" "" \
+  "packages/schema/src/entity/resolution.ts" ""
+
+# 410 Row 6 / the corpus category (the planner's call — cheap, crosses no dist, and the only leg
+# here that drives a real resolver rather than reading a table). The clean gate is scoped to the
+# fixture path, which is what lets this leg run inside a package that carries unrelated dirt.
+E06_REQUIRED='holds at least a hundred query cases with five or more in every category'
+E06_ALLOWED="$E06_REQUIRED"
+run_leg E-06 "the retired corpus category re-added to CORPUS_CATEGORIES" runtime \
+  "$E06_REQUIRED" "$E06_ALLOWED" "@vostride/agent-qa-knowledge-local" \
+  "src/resolver/__tests__/corpus.test.ts" "" \
+  "packages/knowledge-local/src/resolver/__tests__/fixtures/entity-corpus.ts" ""
 
 echo "LEGS $LEGS_RUN"
 echo "PASS — a needle planted in EVERY package with a src/ REDs the merged census by that package's"
