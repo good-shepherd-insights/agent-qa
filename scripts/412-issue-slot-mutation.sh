@@ -139,9 +139,10 @@ apply_mutation () {
     neutered) return 0 ;;
   esac
   case "$1" in
-    P-*)
+    P-*|C-01|C-02)
       # One needle, one line, one file — 410 Row 7 showed a line spelling two needles reds two
-      # cells, so a plant carries exactly one.
+      # cells, so a plant carries exactly one. The two controls plant the same way; only WHERE
+      # they land differs, and where is the whole claim (a path rule, never a by-name filter).
       printf '%s\n' "$PLANT_LINE" > "$REPO_ROOT/$PLANT_PATH" ;;
     V-01)
       # 409 Row 4's diff, verbatim: a seventh arm on the SURVIVING six-arm union.
@@ -379,6 +380,50 @@ plant_names_the_file () {
   fi
 }
 
+# The twelve plant lines and the census cell each one must RED, rotated by root ordinal so every
+# D-15 sweep needle, the production-scoped status literal, the kind needle and three 409/411
+# needles each get at least one plant in a REAL package. Each line spells exactly ONE needle
+# (410 Row 7: a line spelling two reds two cells), so ALLOWED equals REQUIRED for every plant.
+#
+# Entries 5 and 6 are the two shelf spellings and must reach the plant file as EXACT BYTES:
+# entry 5 carries a bare delimiter either side of `issues/`, entry 6 carries a BACKSLASH before
+# each delimiter (the form the scaffold spelled inside a template literal). Inside single quotes
+# bash treats both the backslash and the delimiter literally, so neither entry may ever be
+# rewritten as a double-quoted string and neither backslash may ever be doubled — the two needles
+# are distinguished by exactly that one byte, and a plain-delimiter needle cannot see the escaped
+# form.
+PLANT_LINES=(
+  '// 412 plant: triage-issues'
+  '// 412 plant: issue-curation'
+  '// 412 plant: issues-write'
+  '// 412 plant: filed issues'
+  '// 412 plant: `issues/`'
+  '// 412 plant: \`issues/\`'
+  '// 412 plant: the issues/ shelf'
+  '// 412 plant: Issue milestone'
+  '// 412 plant: the BUG kind'
+  "const planted = 'reserved'"
+  '// 412 plant: FindingRoute'
+  '// 412 plant: IssueId'
+)
+
+PLANT_TITLES=(
+  'no source or test spells the reserved sixth job kind'
+  "no source or test spells the deleted curation spec's citation"
+  'no source or test spells the anticipated scope door'
+  "no source or test spells the scaffolded README's filed-issues promise"
+  'no source or test spells the scaffolded issues shelf, backticked'
+  'no source or test spells the scaffolded issues shelf, template-escaped'
+  'no source or test spells the scaffolded issues shelf, spoken'
+  'no source or test spells the Issue-milestone attribution'
+  'no source or test spells the retired entity kind'
+  'no production source spells the retired status literal'
+  'no source or test spells the retired route interface'
+  'no source or test spells the third id brand'
+)
+
+PLANT_ROTATION=12
+
 # plant_leg <pkg> <plant line> <census cell title>
 plant_leg () {
   PLANT_PKG="$1"
@@ -463,8 +508,53 @@ echo
 
 # ── The legs, cheapest first ──────────────────────────────────────────────────────────────────
 
-# 412 Row P-arch / CLSR-01 — the census names the package it accuses.
-plant_leg arch '// 412 plant: triage-issues' 'no source or test spells the reserved sixth job kind'
+# 412 Rows P-<pkg> / CLSR-01 — the census names the package it accuses, in EVERY package.
+#
+# The roots are discovered FROM DISK by the census's own rule (a package with a `src/`), never a
+# pinned list: a list drifts the day a package is added, and the leg that would have proved the
+# census reaches that package silently would not exist. Legs run strictly sequentially — one plant
+# file exists at a time, `run_leg`'s pre-existence gate FATALs if the path is already there, and
+# the EXIT trap removes any plant on an abnormal exit. Two concurrent runs are NOT supported; that
+# gate is what makes the collision visible instead of silent.
+ROOTS=0
+for dir in packages/*/; do
+  [ -d "$dir/src" ] || continue
+  ROOTS=$((ROOTS + 1))
+done
+if [ "$ROOTS" -lt "$PLANT_ROTATION" ]; then
+  echo "FATAL: $ROOTS package roots with a src/, fewer than the $PLANT_ROTATION plant lines —" >&2
+  echo "       a rotation shorter than its table leaves a needle with no real-tree plant" >&2
+  exit 1
+fi
+echo "PLANT ROOTS $ROOTS"
+echo
+
+PLANT_ORDINAL=0
+for dir in packages/*/; do
+  [ -d "$dir/src" ] || continue
+  PLANT_INDEX=$((PLANT_ORDINAL % PLANT_ROTATION))
+  plant_leg "$(basename "$dir")" "${PLANT_LINES[$PLANT_INDEX]}" "${PLANT_TITLES[$PLANT_INDEX]}"
+  PLANT_ORDINAL=$((PLANT_ORDINAL + 1))
+done
+
+# D-03 positive control / 410 Row 8 half (b) — the plant lands under `__tests__`, so it is IN
+# `SOURCES` and OUT of `PRODUCTION_SOURCES`. The by-name control REDs on a third non-production
+# speller while the production cell stays GREEN, and that the blast radius is exactly one cell is
+# what proves the split is a path rule rather than a filter that measures nothing.
+C01_CELL='names exactly the two migration fixtures that spell the retired status literal outside production'
+PLANT_PATH="packages/schema/src/__tests__/412-plant.ts"
+PLANT_LINE="const planted = 'reserved'"
+run_leg C-01 "the retired status literal planted OUTSIDE production" runtime \
+  "$C01_CELL" "$C01_CELL" "$ARCH_FILTER" "$CENSUS" "" "" "$PLANT_PATH"
+
+# 411 Row 10 / the funnel path rule, leg IN — the plant path matches `FUNNEL_RULE`
+# (`…/src/authoring/funnel*`), so the funnel-scoped cell REDs. The same key in any other file is
+# ordinary English the rule refuses, which is the other direction 411 Row 10 measured.
+C02_CELL='no funnel file spells the retired side-counter key'
+PLANT_PATH="packages/schema/src/authoring/funnel-412-plant.ts"
+PLANT_LINE="// findings: 0"
+run_leg C-02 "a side-counter key planted in a funnel-scoped file" runtime \
+  "$C02_CELL" "$C02_CELL" "$ARCH_FILTER" "$CENSUS" "" "" "$PLANT_PATH"
 
 # 411 Row 8 / the funnel keyof pin — the cheapest type wall in the tree (~2 s, no rebuild).
 W06_SUITE="src/authoring/__tests__/funnel.test-d.ts"
@@ -487,8 +577,11 @@ run_leg V-01 "a seventh arm widened onto the surviving Delta union" typecheck \
   "packages/schema/src/delta/delta.ts" ""
 
 echo "LEGS $LEGS_RUN"
-echo "PASS — a needle planted in a real package REDs the merged census by that package's own file"
-echo "       name, the plant is removed and the tree is byte-clean afterwards, the census is green"
-echo "       again before the script exits, a re-added funnel side-counter key fails the keyof pin"
-echo "       as ONE failed suite with exactly one type error, and a seventh arm widened onto the"
-echo "       surviving Delta union cannot compile past the retained never bar."
+echo "PASS — a needle planted in EVERY package with a src/ REDs the merged census by that package's"
+echo "       own file name, each plant is removed and the tree is byte-clean afterwards, the census"
+echo "       is green again before the next leg starts, the retired status literal planted outside"
+echo "       production REDs the by-name control alone while the production cell stays green, a"
+echo "       side-counter key planted in a funnel-scoped file REDs the funnel cell alone, a re-added"
+echo "       funnel side-counter key fails the keyof pin as ONE failed suite with exactly one type"
+echo "       error, and a seventh arm widened onto the surviving Delta union cannot compile past"
+echo "       the retained never bar."
