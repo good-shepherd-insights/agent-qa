@@ -134,6 +134,37 @@ build_package () {
   fi
 }
 
+# The V-03 coherence gate, run while the mutation is live and BEFORE the instrument.
+#
+# A PARTIAL readmission is not a measurement. 409 Row 10 measured the trap: restoring
+# `issue-delta.ts` without the id brand makes `pnpm --filter <schema> typecheck` exit 2 on
+# `TS2305: Module '"../ids/record-id"' has no exported member` — a BROKEN IMPORT, not a wall
+# firing — and a census RED read off a tree that does not compile says nothing about the tree the
+# codebase would really be in. So the gate asserts both halves of coherence: the schema typecheck
+# exits 0 under the whole readmission (409 Rows 10-13 measured exactly that), and the barrel
+# carries EXACTLY the three insertions the 409 diff records. The second half is Pitfall 1's guard:
+# a whole-file restore of `src/index.ts` would readmit 411's deletions, drop the stop-arm exports
+# and RED cells outside this leg's allowed set — a blast radius, not a property.
+v03_coherence_gate () {
+  set +e
+  pnpm --filter "$SCHEMA_FILTER" typecheck > "$WORK/v03-typecheck.log" 2>&1
+  local rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "FATAL: partial readmission — measures nothing (schema typecheck exited $rc under the" >&2
+    echo "       V-03 mutation; see $WORK/v03-typecheck.log)" >&2
+    exit 1
+  fi
+  local ins
+  ins="$(git diff --numstat -- packages/schema/src/index.ts | awk '{print $1}')"
+  if [ "${ins:-0}" != "3" ]; then
+    echo "FATAL: partial readmission — measures nothing (the barrel took ${ins:-0} insertions;" >&2
+    echo "       the 409 diff records exactly 3, and a whole-file restore is Pitfall 1)" >&2
+    exit 1
+  fi
+  echo "  V-03 coherence gate: schema typecheck exit 0, packages/schema/src/index.ts +3"
+}
+
 apply_mutation () {
   case "${ISSUE_SLOT_SELFTEST:-}" in
     neutered) return 0 ;;
@@ -148,6 +179,46 @@ apply_mutation () {
       # 409 Row 4's diff, verbatim: a seventh arm on the SURVIVING six-arm union.
       perl -0pi -e "s/\Qexport type Delta = Add | Confirm | Supersede | Deprecate | MintUnknown | Noop\E\n/export type Delta = Add | Confirm | Supersede | Deprecate | MintUnknown | Noop | (DeltaEnvelope \& { kind: 'FileIssue' })\n/" \
         "$REPO_ROOT/packages/schema/src/delta/delta.ts" ;;
+    V-02)
+      # 409 Row 5's diff, verbatim. The cast is the point: a plain append under
+      # `as const satisfies readonly Delta['kind'][]` is a compile error at the constant itself,
+      # so the leg would FATAL on the build instead of reaching the runtime cell. `as unknown as`
+      # is what lets the widening REACH the assertion — and the schema typecheck stays GREEN under
+      # this exact mutation, which is the whole claim: a type wall cannot see a cast-widened
+      # projection and the runtime cell is the only instrument that can.
+      perl -0pi -e "s/\Q  'Noop',\E\n\Q] as const satisfies readonly Delta['kind'][]\E/  'Noop',\n  'Reopen',\n] as unknown as readonly Delta['kind'][]/" \
+        "$REPO_ROOT/packages/schema/src/delta/delta.ts" ;;
+    V-03)
+      # 409 Rows 10-13's diff, applied as it must be applied TODAY. Four whole-file restores from
+      # the phase-baseline commit (the byte authority) plus the THREE barrel insertions the 409
+      # diff records — never a whole-file restore of `src/index.ts`, which moved under 410/411.
+      git show 9b0c3459:packages/schema/src/delta/issue-delta.ts > "$REPO_ROOT/packages/schema/src/delta/issue-delta.ts"
+      git show 9b0c3459:packages/schema/src/delta/index.ts       > "$REPO_ROOT/packages/schema/src/delta/index.ts"
+      git show 9b0c3459:packages/schema/src/ids/record-id.ts     > "$REPO_ROOT/packages/schema/src/ids/record-id.ts"
+      git show 9b0c3459:packages/schema/src/ids/index.ts         > "$REPO_ROOT/packages/schema/src/ids/index.ts"
+      perl -0pi -e 's/  asRecordId,\n  asEvidenceToken,/  asRecordId,\n  asIssueId,\n  asEvidenceToken,/;
+                    s/  EvidenceToken,\n  RecordId,\n\} from \x27\.\/ids\/index\x27/  EvidenceToken,\n  IssueId,\n  RecordId,\n} from \x27.\/ids\/index\x27/;
+                    s/  DeltaOrigin,\n\} from \x27\.\/delta\/index\x27/  DeltaOrigin,\n  IssueDelta,\n} from \x27.\/delta\/index\x27/' \
+        "$REPO_ROOT/packages/schema/src/index.ts"
+      v03_coherence_gate ;;
+    J-02)
+      # 409 Row 2's diff, verbatim. `consolidate` is chosen deliberately: it is a REGISTERED kind,
+      # so the registry's own `declares only successors that are themselves registered` validation
+      # stays out of the blast and the reds that remain are the successor-list cells.
+      perl -0pi -e "s/\Qconst ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory']\E/const ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory', 'consolidate']/" \
+        "$REPO_ROOT/packages/agent/src/jobs/kinds.ts" ;;
+    J-01)
+      # 409 Row 1's diff, verbatim — TWO lines, because both declarations spell the one set and
+      # re-adding the member to `jobKindValues` alone violates `satisfies readonly JobKind[]`.
+      perl -0pi -e "s/\Q  | 'curate-memory'\E\n/  | 'curate-memory'\n  | 'triage-issues'\n/; s/\Q  'curate-memory',\E\n/  'curate-memory',\n  'triage-issues',\n/" \
+        "$REPO_ROOT/packages/schema/src/job/job.ts" ;;
+    J-03a|J-03b|J-03c)
+      # 409 Row 3's diff, verbatim — one mutation measured at three distances, the Row 7/8
+      # precedent. The interface widening and the derivation must move together or the object
+      # literal no longer satisfies `ChainJobIds`.
+      perl -0pi -e 's/\n  readonly curateMemory: JobId\n/\n  readonly curateMemory: JobId\n  readonly consolidate: JobId\n/;
+                    s/^(    curateMemory: idSource\.jobIdFor\(.*\n)/$1    consolidate: idSource.jobIdFor(\x27consolidate\x27, `\${String(analyzeRun)}->consolidate`),\n/m' \
+        "$REPO_ROOT/packages/agent/src/jobs/chain-identity.ts" ;;
     W-06)
       # 411 Row 8's diff, verbatim. OPTIONAL on purpose: a required key would red the producers
       # and the leg would measure the compiler's required-field check instead of the counter bar.
@@ -576,6 +647,121 @@ run_leg V-01 "a seventh arm widened onto the surviving Delta union" typecheck \
   "$V01_REQUIRED" "$V01_ALLOWED" "$SCHEMA_FILTER" "" "" \
   "packages/schema/src/delta/delta.ts" ""
 
+# ── The 409 legs ──────────────────────────────────────────────────────────────────────────────
+#
+# Every REQUIRED and ALLOWED string below is TRANSCRIBED VERBATIM from the row that measured it
+# (409-MUTATION-LEDGER.md). Two transcription rules the ledger states explicitly and this script
+# obeys: an ALLOWED set is a MEASUREMENT, not a prediction — a red the ledger recorded without
+# predicting it stays in the set, and a red RESEARCH predicted but the ledger measured GREEN stays
+# out; and a title that exists only UNDER the mutation (J-01's generated `it.each` row) stays in
+# ALLOWED as a literal string even though the kind it names is not in the tree. This script's
+# ALLOWED means "the whole permitted red set", so where a ledger row writes "ALLOWED: none" the
+# list here is the REQUIRED set itself — nothing besides the named cells may be red.
+
+# 409 Row 5 / the DELTA_KINDS cast (the runtime wall beside Row 4).
+V02_REQUIRED='declares exactly the six §7.3 delta kinds, in declaration order'
+V02_ALLOWED="$V02_REQUIRED"
+run_leg V-02 "a seventh DELTA_KINDS member smuggled past the satisfies clause by a cast" runtime \
+  "$V02_REQUIRED" "$V02_ALLOWED" "$SCHEMA_FILTER" "src/__tests__/delta-kinds.test.ts" "" \
+  "packages/schema/src/delta/delta.ts" ""
+
+# 409 Rows 10-13 / VOCB-01 + VOCB-02 — the whole-vocabulary readmission (D-05).
+#
+# D-05 words this as "five `git show 9b0c3459:<path>` restores". It is applied here as FOUR
+# restores plus a three-line barrel hunk, because `packages/schema/src/index.ts` moved under 410
+# and 411: a whole-file restore would readmit 411's deleted finding schemas and drop the stop-arm
+# exports, which is a broken tree and a blast radius rather than a measurement (Pitfall 1). The
+# four subjects are still byte-identical to the 409 baseline, so their restores are verbatim.
+#
+# THIS is the leg that carries VOCB-01. V-01 above widens the SURVIVING six-arm `Delta` and guards
+# it — the 409 ledger corrected that attribution after verification, and under this complete
+# readmission both of Row 4's `never` bars stay GREEN.
+V03_REQUIRED="no source or test spells the second delta vocabulary
+no source or test spells the second delta vocabulary's module
+no source or test spells the third id brand
+no source or test spells the third id brand's cast helper"
+V03_ALLOWED="$V03_REQUIRED"
+run_leg V-03 "the whole deleted delta vocabulary and id brand readmitted from the phase baseline" runtime \
+  "$V03_REQUIRED" "$V03_ALLOWED" "$ARCH_FILTER" "$CENSUS" "" \
+  "packages/schema/src/delta/index.ts
+packages/schema/src/ids/record-id.ts
+packages/schema/src/ids/index.ts
+packages/schema/src/index.ts" \
+  "packages/schema/src/delta/issue-delta.ts"
+
+# 409 Row 2 / JOBK-02 — the successor list. Declared now equals produced, so one second successor
+# moves all six cells the row recorded; RESEARCH predicted a seventh (kind-registry's topology
+# cell) and the ledger measured it GREEN, so it is deliberately absent from ALLOWED.
+J02_REQUIRED="declares curate-memory as the one allowed successor of analyze-run
+chains analyze-run into its declared successors"
+J02_ALLOWED="$J02_REQUIRED
+keeps the scripted stand-ins when no capabilities are bound
+returns exactly one curate-memory instance from a successful analysis
+returns exactly one curate-memory continuation from a permanently failed analysis
+proceeds with unknown verdicts, and only into curate-memory, when analyze-run permanently fails"
+run_leg J-02 "a second successor declared for analyze-run" runtime \
+  "$J02_REQUIRED" "$J02_ALLOWED" "$AGENT_FILTER" \
+  "src/jobs/__tests__/real-kinds.test.ts src/jobs/__tests__/engine-semantics.test.ts src/jobs/__tests__/kind-registry.test.ts" \
+  "" "packages/agent/src/jobs/kinds.ts" ""
+
+# 409 Row 1 / JOBK-01 — schema-only rebuild; the AGENT MUST NOT BE REBUILT.
+#
+# The rebuild rule is load-bearing in BOTH directions and is the one row in the ledger where a
+# rebuild is FORBIDDEN rather than required (409 note (d)): schema must be rebuilt because
+# `CONTRACT_JOB_KINDS` reads the enqueue contract through `schema/dist`, and agent must not be,
+# because `kinds.ts`'s `satisfies Record<JobKind, JobKindDeclaration>` would fail the agent DTS
+# build under a six-member union and FATAL the leg before any cell runs — a build failure is not a
+# red cell. vitest transforms the agent test sources without typechecking them, so the runtime
+# cells are reached.
+#
+# `declares triage-issues` is an `it.each` row GENERATED from the MUTATED contract at run time; it
+# stays in ALLOWED as a literal string even though the kind is not in the tree (D-07).
+J01_REQUIRED='reads exactly the five shipped kinds out of the enqueue contract, by sorted list'
+J01_ALLOWED="$J01_REQUIRED
+declares triage-issues
+registers every contract kind and nothing else"
+run_leg J-01 "a sixth kind re-added to the enqueue contract" runtime \
+  "$J01_REQUIRED" "$J01_ALLOWED" "$AGENT_FILTER" "src/jobs/__tests__/kind-registry.test.ts" \
+  "$SCHEMA_FILTER" "packages/schema/src/job/job.ts" ""
+
+# 409 Row 3 / JOBK-03 — one mutation, three instruments, three independent cycles (the Row 7/8
+# precedent). `tsc` is SILENT on a third key — both rebuild filters exited 0 under the mutation,
+# so the widening reaches every cell as a runtime change and these are the only wall there is.
+#
+# The rebuild order is load-bearing twice over: agent-local resolves the agent through `dist` and
+# the cli resolves BOTH through `dist`, so leg (c) reads a stale derivation if either build is
+# skipped. Agent then agent-local, in that order, before the mutated run and again after the
+# restore. `$CLI_FILTER` is `agent-qa`, not `@vostride/agent-qa-cli` — a filter that matches no
+# project exits 0 without running anything, which is a green that measures nothing (407-25 D-5).
+J03_SUBJECT="packages/agent/src/jobs/chain-identity.ts"
+J03_REBUILD="$AGENT_FILTER $LOCAL_FILTER"
+
+J03A_REQUIRED="derives exactly two chain ids, keyed analyzeRun and curateMemory
+lets every derived chain kind land the terminal — the terminal list equals the derived kind set"
+# The port cell is recorded ALLOWED but the ledger calls it a valid optional REQUIRED, promotable
+# without re-measuring (409 note (e)); it is left where the row put it.
+J03A_ALLOWED="$J03A_REQUIRED
+derives two distinct ids whose successor key is built from the head id
+asks the port for exactly the two ids chainJobIdsForRun derives"
+run_leg J-03a "a third derived chain id, read in the agent package" runtime \
+  "$J03A_REQUIRED" "$J03A_ALLOWED" "$AGENT_FILTER" \
+  "src/jobs/__tests__/chain-identity.test.ts src/functions/ops/__tests__/runs-post-processing.test.ts" \
+  "$J03_REBUILD" "$J03_SUBJECT" ""
+
+J03B_REQUIRED="drives enqueue -> analyze-run -> curate-memory -> exactly one notification row
+notifies honestly when the analysis died and curation carried on"
+J03B_ALLOWED="$J03B_REQUIRED"
+run_leg J-03b "the same third id, read across the agent -> agent-local dist boundary" runtime \
+  "$J03B_REQUIRED" "$J03B_ALLOWED" "$LOCAL_FILTER" "src/__tests__/chain-terminal-notify.test.ts" \
+  "$J03_REBUILD" "$J03_SUBJECT" ""
+
+J03C_REQUIRED='produces exactly one analyze-run job, and the second run dedupes rather than errors'
+J03C_ALLOWED="$J03C_REQUIRED"
+run_leg J-03c "the same third id, read by the cli through both dists" runtime \
+  "$J03C_REQUIRED" "$J03C_ALLOWED" "$CLI_FILTER" \
+  "src/__tests__/post-run-enqueue-idempotency.test.ts" \
+  "$J03_REBUILD" "$J03_SUBJECT" ""
+
 echo "LEGS $LEGS_RUN"
 echo "PASS — a needle planted in EVERY package with a src/ REDs the merged census by that package's"
 echo "       own file name, each plant is removed and the tree is byte-clean afterwards, the census"
@@ -584,4 +770,12 @@ echo "       production REDs the by-name control alone while the production cell
 echo "       side-counter key planted in a funnel-scoped file REDs the funnel cell alone, a re-added"
 echo "       funnel side-counter key fails the keyof pin as ONE failed suite with exactly one type"
 echo "       error, and a seventh arm widened onto the surviving Delta union cannot compile past"
-echo "       the retained never bar."
+echo "       the retained never bar. And of the 409 ledger: a seventh delta kind smuggled past the"
+echo "       satisfies clause by a cast REDs the runtime projection cell the type wall cannot see;"
+echo "       the WHOLE deleted delta vocabulary and id brand, readmitted from the phase baseline"
+echo "       into a tree that still compiles, REDs exactly the four census cells that name them;"
+echo "       a second declared successor for analyze-run REDs the successor cells and nothing in"
+echo "       the registry; a sixth kind re-added to the enqueue contract REDs the sorted-list cell"
+echo "       with the schema alone rebuilt; and a third derived chain id REDs by name at all three"
+echo "       distances — in the agent, across the agent-local dist, and through both dists in the"
+echo "       cli — with every subject restored byte-identically after each cycle."
