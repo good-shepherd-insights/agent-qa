@@ -178,6 +178,14 @@ same_bytes () {
   [ -n "$a" ] && [ "$a" = "$b" ]
 }
 
+# required_line_match <fragment> <red-blob> — is this named cell among the reds?
+required_line_match () {
+  case "$2" in
+    *"$1"*) return 0 ;;
+  esac
+  return 1
+}
+
 # Newline-separated, never associative arrays: /bin/bash here is 3.2.57.
 CURRENT_SUBJECTS=""
 CURRENT_CREATED=""
@@ -723,6 +731,16 @@ plant_leg () {
     "$ARCH_FILTER" "$CENSUS" "" "" "$PLANT_PATH"
 }
 
+# Leg V-03's four named census cells, defined HERE rather than beside the leg because the startup
+# control below drives the REQUIRED comparator with this exact set. A second copy of these titles
+# next to the control would drift out of sync with the leg the day one cell is re-titled, and the
+# control would then be proving something about a string that exists nowhere else. The leg's
+# ALLOWED set and its `run_leg` invocation stay where they always were.
+V03_REQUIRED="no source or test spells the second delta vocabulary
+no source or test spells the second delta vocabulary's module
+no source or test spells the third id brand
+no source or test spells the third id brand's cast helper"
+
 # ── INSTRUMENT SELF-CHECK ─────────────────────────────────────────────────────────────────────
 #
 # A gate nobody has seen fire is a comment. This phase's whole thesis is that a property nothing
@@ -803,7 +821,70 @@ instrument_self_check () {
   fi
   echo "  control: restore path FATALs on a failed copy, a mismatched digest and a surviving created path"
 
-  echo "INSTRUMENT SELF-CHECK OK (2 controls)"
+  # Control 3 — the REQUIRED comparator, driven with the EXACT 2-of-4 case the verifier reproduced
+  # in bash: leg V-03 named four census cells and passed when only the two longer ones reddened,
+  # because the two shorter titles are strict prefixes of them. The fixture is DERIVED from
+  # V03_REQUIRED rather than transcribed, so a re-titled cell cannot leave this control pointing at
+  # a string that no longer exists anywhere else.
+  local v03_a v03_b sc_shadowed="" sc_shadowing=""
+  while IFS= read -r v03_a; do
+    [ -z "$v03_a" ] && continue
+    while IFS= read -r v03_b; do
+      [ -z "$v03_b" ] && continue
+      case "$v03_b" in
+        "$v03_a"?*)
+          sc_shadowed="${sc_shadowed}${v03_a}
+"
+          sc_shadowing="${sc_shadowing}${v03_b}
+" ;;
+      esac
+    done <<< "$V03_REQUIRED"
+  done <<< "$V03_REQUIRED"
+  sc_shadowed="$(echo "$sc_shadowed" | grep -v '^$' | sort -u)" || true
+  sc_shadowing="$(echo "$sc_shadowing" | grep -v '^$' | sort -u)" || true
+  if [ -z "$sc_shadowed" ]; then
+    echo "FATAL: the V-03 REQUIRED set no longer contains a strict-prefix pair — the negative control is vacuous, re-point it" >&2
+    exit 1
+  fi
+
+  # Two blobs, each line carrying a SYNTHETIC describe prefix — synthetic on purpose: the property
+  # under test is about the suffix, and that the real red line has this shape is proven separately
+  # by the full run's own `named cell red:` output over the live census.
+  local sc_partial="" sc_whole=""
+  while IFS= read -r v03_a; do
+    [ -z "$v03_a" ] && continue
+    sc_partial="${sc_partial}412 self-check synthetic describe > ${v03_a}
+"
+  done <<< "$sc_shadowing"
+  while IFS= read -r v03_a; do
+    [ -z "$v03_a" ] && continue
+    sc_whole="${sc_whole}412 self-check synthetic describe > ${v03_a}
+"
+  done <<< "$V03_REQUIRED"
+
+  local sc_long=0 sc_short=0 sc_every=0 sc_wrong=0
+  while IFS= read -r v03_a; do
+    [ -z "$v03_a" ] && continue
+    sc_long=$((sc_long + 1))
+    if required_line_match "$v03_a" "$sc_partial"; then :; else sc_wrong=$((sc_wrong + 1)); fi
+  done <<< "$sc_shadowing"
+  while IFS= read -r v03_a; do
+    [ -z "$v03_a" ] && continue
+    sc_short=$((sc_short + 1))
+    if required_line_match "$v03_a" "$sc_partial"; then sc_wrong=$((sc_wrong + 1)); fi
+  done <<< "$sc_shadowed"
+  while IFS= read -r v03_a; do
+    [ -z "$v03_a" ] && continue
+    sc_every=$((sc_every + 1))
+    if required_line_match "$v03_a" "$sc_whole"; then :; else sc_wrong=$((sc_wrong + 1)); fi
+  done <<< "$V03_REQUIRED"
+  if [ "$sc_wrong" -ne 0 ]; then
+    echo "FATAL: the REQUIRED comparator cannot tell a named cell from a longer cell that merely starts with it — leg V-03 measures half its claim" >&2
+    exit 1
+  fi
+  echo "  comparator: required-line-exact — $sc_long longer cells matched their own red, $sc_short shorter cells REFUSED that same red, $sc_every of $sc_every matched when every named cell is red"
+
+  echo "INSTRUMENT SELF-CHECK OK (3 controls)"
   echo
 }
 
@@ -979,10 +1060,6 @@ run_leg V-02 "a seventh DELTA_KINDS member smuggled past the satisfies clause by
 # THIS is the leg that carries VOCB-01. V-01 above widens the SURVIVING six-arm `Delta` and guards
 # it — the 409 ledger corrected that attribution after verification, and under this complete
 # readmission both of Row 4's `never` bars stay GREEN.
-V03_REQUIRED="no source or test spells the second delta vocabulary
-no source or test spells the second delta vocabulary's module
-no source or test spells the third id brand
-no source or test spells the third id brand's cast helper"
 V03_ALLOWED="$V03_REQUIRED"
 run_leg V-03 "the whole deleted delta vocabulary and id brand readmitted from the phase baseline" runtime \
   "$V03_REQUIRED" "$V03_ALLOWED" "$ARCH_FILTER" "$CENSUS" "" \
