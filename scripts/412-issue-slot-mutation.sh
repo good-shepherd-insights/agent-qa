@@ -50,10 +50,15 @@
 #
 # EXIT CODES ARE READ FROM THE PROCESS, NEVER THROUGH A PIPE.
 #
-# FAIL-FAST, AND THE TREE IS NEVER LEFT DIRTY. The first FATAL restores every subject from its byte
-# snapshot, removes every path the leg created, rebuilds the same filters and exits 1; the EXIT
-# trap does the same on any other exit path. There is no LEG selector and no run-all-and-report
-# mode: a selector that runs nothing is a green script (D-09).
+# FAIL-FAST, AND THE TREE IS NEVER LEFT DIRTY. Every FATAL exits through ONE `fatal` helper, and
+# that helper does the same four things in the same order every time: it restores every subject
+# from its byte snapshot, PROVES the restore by comparing the full sha256 digest of each subject
+# against its snapshot, proves every path the leg created is gone, rebuilds the same filters and
+# exits 1. The proof runs on the abnormal exit exactly as it runs on success — CLSR-02 states that
+# guarantee unconditionally, and a guarantee that holds only when the leg passed is the one that is
+# absent at the single moment it is needed: a leg that failed with retired vocabulary live on disk.
+# The EXIT trap does the same on any other exit path. There is no LEG selector and no
+# run-all-and-report mode: a selector that runs nothing is a green script (D-09).
 #
 # USAGE
 #   pnpm validate:issue-slot-mutation                   # from the agent-qa root
@@ -153,9 +158,27 @@ POST_RUN_CHECK=""
 
 snapshot_path () { echo "$WORK/$(echo "$1" | tr '/' '_').snapshot"; }
 
+# Byte-identity, and nothing weaker. The criterion says sha256 by name, so this compares the FULL
+# hex digest of both files, hashed at call time — never a size, never an mtime, never a truncated
+# digest, and never `cmp` (which the landed gate already uses for a different question). Two files
+# that differ by one byte must compare non-equal, and the self-check below drives exactly that.
+# A missing file hashes to the empty string; the `-n` guard stops two missing files comparing equal.
+same_bytes () {
+  local a b
+  a="$(shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1)" || true
+  b="$(shasum -a 256 "$2" 2>/dev/null | cut -d' ' -f1)" || true
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
+
 # Newline-separated, never associative arrays: /bin/bash here is 3.2.57.
 CURRENT_SUBJECTS=""
 CURRENT_CREATED=""
+# The leg's rebuild filters, readable from `fatal` — a FATAL rebuilds the same filters the success
+# path rebuilds, and it cannot read `run_leg`'s locals.
+CURRENT_REBUILD=""
+# `fatal`'s re-entry guard: a failure DURING cleanup, or a second interrupt, must exit rather than
+# start the cleanup over.
+FATAL_ACTIVE=0
 
 restore_current () {
   local p
@@ -167,6 +190,49 @@ restore_current () {
     [ -z "$p" ] && continue
     rm -f "$REPO_ROOT/$p"
   done <<< "$CURRENT_CREATED"
+}
+
+# The byte-identity proof, hoisted out of the success path so the six FATAL paths reach the same
+# implementation. One implementation, two callers: a success and a failure cannot diverge into two
+# accounts of the same guarantee. It prints its own FATAL and exits DIRECTLY rather than calling
+# `fatal` — `fatal` calls this, so a call back would recurse.
+verify_restored () {
+  local p restored
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    if ! same_bytes "$REPO_ROOT/$p" "$(snapshot_path "$p")"; then
+      restored="$(shasum -a 256 "$REPO_ROOT/$p" 2>/dev/null | cut -d' ' -f1)" || true
+      echo "FATAL: $p was not restored byte-identically ($restored)" >&2
+      exit 1
+    fi
+  done <<< "$CURRENT_SUBJECTS"
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    if [ -e "$REPO_ROOT/$p" ]; then
+      echo "FATAL: $p survived the leg — a created path was not removed" >&2
+      exit 1
+    fi
+  done <<< "$CURRENT_CREATED"
+  echo "  every subject restored byte-identically (sha256 compared); every created path removed"
+}
+
+# THE ONE FATAL EXIT. Message first (a reader of the log sees the reason before the cleanup),
+# then restore, then PROVE the restore, then rebuild, then exit 1. Restore-then-verify-then-rebuild
+# is deliberate and differs from the old success-path order: byte-identity is asserted before
+# anything else runs, so a rebuild failure cannot mask an unrestored subject.
+# `build_package` keeps its own inline failure handling and must NOT be routed through here —
+# this helper calls `build_package`.
+fatal () {
+  echo "FATAL: $1" >&2
+  if [ "$FATAL_ACTIVE" = 1 ]; then
+    exit 1
+  fi
+  FATAL_ACTIVE=1
+  restore_current
+  verify_restored
+  local f
+  for f in $CURRENT_REBUILD; do build_package "$f"; done
+  exit 1
 }
 
 trap 'restore_current; rm -rf "$WORK"' EXIT
@@ -393,6 +459,7 @@ run_leg () {
   local id="$1" label="$2" mode="$3" required="$4" allowed="$5" filter="$6" suite="$7" rebuild="$8"
   CURRENT_SUBJECTS="$9"
   CURRENT_CREATED="${10}"
+  CURRENT_REBUILD="$8"
 
   echo "=== LEG $id — $label"
 
@@ -449,10 +516,7 @@ run_leg () {
   grep -E '^      Tests' "$LOG" || true
 
   if [ "$rc" -eq 0 ]; then
-    echo "FATAL: the suite stayed green under the mutation — leg $id measures nothing" >&2
-    restore_current
-    for f in $rebuild; do build_package "$f"; done
-    exit 1
+    fatal "the suite stayed green under the mutation — leg $id measures nothing"
   fi
 
   local red
@@ -545,27 +609,12 @@ run_leg () {
     POST_RUN_CHECK=""
   fi
 
+  # The same three steps `fatal` takes, in the same order, through the same implementation:
+  # restore, PROVE the restore, rebuild. Success and failure cannot diverge because there is only
+  # one `verify_restored`.
   restore_current
+  verify_restored
   for f in $rebuild; do build_package "$f"; done
-
-  while IFS= read -r p; do
-    [ -z "$p" ] && continue
-    local restored baseline
-    restored="$(shasum -a 256 "$REPO_ROOT/$p" | cut -d' ' -f1)"
-    baseline="$(shasum -a 256 "$(snapshot_path "$p")" | cut -d' ' -f1)"
-    if [ "$restored" != "$baseline" ]; then
-      echo "FATAL: $p was not restored byte-identically ($restored)" >&2
-      exit 1
-    fi
-  done <<< "$CURRENT_SUBJECTS"
-  while IFS= read -r p; do
-    [ -z "$p" ] && continue
-    if [ -e "$REPO_ROOT/$p" ]; then
-      echo "FATAL: $p survived the leg — a created path was not removed" >&2
-      exit 1
-    fi
-  done <<< "$CURRENT_CREATED"
-  echo "  every subject restored byte-identically (sha256 compared); every created path removed"
 
   # D-09: the instrument must be green again before the next leg starts.
   set +e
@@ -583,6 +632,7 @@ run_leg () {
 
   CURRENT_SUBJECTS=""
   CURRENT_CREATED=""
+  CURRENT_REBUILD=""
   LEGS_RUN=$((LEGS_RUN + 1))
   echo
 }
@@ -658,6 +708,41 @@ plant_leg () {
   run_leg "P-$1" "a needle planted in $1" runtime "$title" "$title" \
     "$ARCH_FILTER" "$CENSUS" "" "" "$PLANT_PATH"
 }
+
+# ── INSTRUMENT SELF-CHECK ─────────────────────────────────────────────────────────────────────
+#
+# A gate nobody has seen fire is a comment. This phase's whole thesis is that a property nothing
+# can fail on is not a property, and the gates the criterion rests on are subject to that thesis
+# too — so each of them is DRIVEN IN ITS FAILING DIRECTION here, on every invocation, before any
+# subject is touched. It costs milliseconds, writes nothing into a tracked path, and turns each
+# repaired branch from one that has been READ into one that has been SEEN to fire.
+#
+# It deliberately does NOT increment `PREFLIGHT_COUNT`: that line counts INSTRUMENTS, and a control
+# is not one.
+instrument_self_check () {
+  echo "=== INSTRUMENT SELF-CHECK — the gates the criterion rests on, driven in their failing direction"
+
+  # Control 1 — the sha256 comparator, in BOTH directions. If it cannot tell two different files
+  # apart, every restore verification in this script is vacuous and every FATAL path lies.
+  local sc_a="$WORK/selfcheck-same-a" sc_b="$WORK/selfcheck-same-b" sc_c="$WORK/selfcheck-different"
+  printf 'the same bytes\n' > "$sc_a"
+  printf 'the same bytes\n' > "$sc_b"
+  printf 'the same bytes.\n' > "$sc_c"
+  local accepts_identical=0 rejects_differing=0
+  if same_bytes "$sc_a" "$sc_b"; then accepts_identical=1; fi
+  if same_bytes "$sc_a" "$sc_c"; then :; else rejects_differing=1; fi
+  rm -f "$sc_a" "$sc_b" "$sc_c"
+  if [ "$accepts_identical" -ne 1 ] || [ "$rejects_differing" -ne 1 ]; then
+    echo "FATAL: the sha256 comparator cannot tell two different files apart — the restore verification is vacuous" >&2
+    exit 1
+  fi
+  echo "  comparator: sha256 rejects differing bytes and accepts identical bytes"
+
+  echo "INSTRUMENT SELF-CHECK OK (1 controls)"
+  echo
+}
+
+instrument_self_check
 
 # ── PREFLIGHT ─────────────────────────────────────────────────────────────────────────────────
 #
