@@ -15,10 +15,13 @@ import { DELTA_KINDS } from '../delta/delta'
  * half of D-04 changes state when the deleted vocabulary returns. That is measured rather than
  * argued: under a complete readmission this suite exits 0 with "Type Errors no errors", recorded
  * in 409-MUTATION-LEDGER.md Rows 10-13. The instrument that carries VOCB-01/VOCB-02 is the
- * lexical deletion census, `packages/arch/src/__tests__/409-issue-slot-deleted.test.ts`, whose
+ * lexical deletion census, `packages/arch/src/__tests__/412-issue-slot-deleted.test.ts`, whose
  * four vocabulary/brand cells RED by name under that same mutation.
  *
  * 2026-09-01 (Phase 409): the second delta vocabulary left with the Issue-slot cleanup — see
+ * `DELETION-INVENTORY.md`.
+ *
+ * 2026-09-03 (Phase 412): the three per-phase census cells merged into one — see
  * `DELETION-INVENTORY.md`.
  */
 

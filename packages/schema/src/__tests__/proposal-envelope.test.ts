@@ -23,9 +23,13 @@ import type { ProposalRecord } from '../index'
 /**
  * The kind Phase 411 removed, spelled in TWO HALVES so this file cannot match its own census.
  *
- * Plan 05's `411-issue-slot-deleted.test.ts` scans every package source tree — tests and comments
- * included — for the retired spelling, so a negative probe written as a bare literal would RED the
- * census it is meant to survive.
+ * The merged census `packages/arch/src/__tests__/412-issue-slot-deleted.test.ts` — Phase 412's,
+ * authored by plan 412-01 and widened by 412-05 — scans every package source tree, tests and
+ * comments included, for the retired spelling, so a negative probe written as a bare literal would
+ * RED the census it is meant to survive.
+ *
+ * 2026-09-03 (Phase 412): the three per-phase census cells merged into one — see
+ * `DELETION-INVENTORY.md`.
  */
 const RETIRED = 'find' + 'ing'
 
