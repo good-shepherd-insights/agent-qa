@@ -1,8 +1,23 @@
-# Executed on the pbackup fork until the v2 release; never a PR gate (D-05).
 name: Embedding Bench
 
 on:
   workflow_dispatch:
+    inputs:
+      candidate:
+        description: Optional candidate ID; blank runs all (policy anchors auto-included)
+        required: false
+        default: ''
+        type: string
+      accuracy_only:
+        description: Skip hardware-dependent performance constants
+        required: false
+        default: false
+        type: boolean
+      offline:
+        description: Require selected native model revisions to exist in the restored cache
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -15,10 +30,15 @@ jobs:
   bench:
     name: Bench (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            report: ubuntu-latest
+          - os: windows-latest
+            report: windows-latest
     env:
       AGENT_QA_MODEL_CACHE_DIR: ${{ github.workspace }}/.cache/agent-qa/models
 
@@ -38,7 +58,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.AGENT_QA_MODEL_CACHE_DIR }}
-          key: hf-models-${{ hashFiles('tools/embedding-bench/candidates.json') }}
+          key: embedding-models-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/embedding-bench/package.json', 'tools/embedding-bench/benchmark.config.json', 'tools/embedding-bench/candidates.json') }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -46,8 +66,29 @@ jobs:
       - name: Build benchmark dependencies
         run: pnpm --filter embedding-bench... --if-present build
 
+      - name: Validate benchmark inputs and runtime
+        run: pnpm --filter embedding-bench bench:validate
+
       - name: Run embedding benchmark
-        run: pnpm --filter embedding-bench bench -- --report bench-report-${{ runner.os }}.json
+        shell: bash
+        env:
+          BENCH_CANDIDATE: ${{ inputs.candidate }}
+          BENCH_ACCURACY_ONLY: ${{ inputs.accuracy_only }}
+          BENCH_OFFLINE: ${{ inputs.offline }}
+          BENCH_REPORT: ${{ runner.temp }}/embedding-bench/bench-report-${{ matrix.report }}.json
+        run: |
+          set -euo pipefail
+          args=(--report "$BENCH_REPORT")
+          if [[ -n "$BENCH_CANDIDATE" ]]; then
+            args+=(--candidate "$BENCH_CANDIDATE")
+          fi
+          if [[ "$BENCH_ACCURACY_ONLY" == "true" ]]; then
+            args+=(--accuracy-only)
+          fi
+          if [[ "$BENCH_OFFLINE" == "true" ]]; then
+            args+=(--offline)
+          fi
+          pnpm --filter embedding-bench bench -- "${args[@]}"
 
       - name: Upload benchmark report
         if: always()
@@ -55,6 +96,6 @@ jobs:
         with:
           name: embedding-bench-${{ runner.os }}
           path: |
-            tools/embedding-bench/bench-report-${{ runner.os }}.json
-            tools/embedding-bench/REPORT.md
+            ${{ runner.temp }}/embedding-bench/bench-report-${{ matrix.report }}.json
+            ${{ runner.temp }}/embedding-bench/REPORT.md
           if-no-files-found: error

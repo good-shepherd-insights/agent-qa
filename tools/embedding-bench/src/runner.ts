@@ -13,11 +13,32 @@ export interface BenchCandidate {
   revision: string
   dtype: 'q8'
   dim: number
-  pooling: 'mean'
+  pooling: 'mean' | 'cls'
   normalize: true
-  max_tokens: number
+  max_tokens: number | null
   query_prefix: string
   doc_prefix: string
+}
+
+/**
+ * Benchmark profile used by the local Transformers.js adapter.
+ *
+ * Production currently locks pooling to `mean`, while the benchmark must honor
+ * each candidate model's published contract (for example, GTE and Granite use
+ * CLS pooling). All other profile fields intentionally stay aligned with the
+ * production schema.
+ */
+export interface BenchEmbeddingProfile {
+  model_id: EmbeddingProfile['model_id']
+  revision: EmbeddingProfile['revision']
+  dim: EmbeddingProfile['dim']
+  dtype: EmbeddingProfile['dtype']
+  pooling: BenchCandidate['pooling']
+  normalize: EmbeddingProfile['normalize']
+  query_prefix: EmbeddingProfile['query_prefix']
+  doc_prefix: EmbeddingProfile['doc_prefix']
+  backend: EmbeddingProfile['backend']
+  session_options: EmbeddingProfile['session_options']
 }
 
 export interface BenchDocument {
@@ -64,7 +85,7 @@ export interface SliceMetrics {
 export interface CandidateBenchSuccess {
   candidateId: string
   status: 'ok'
-  profile: EmbeddingProfile
+  profile: BenchEmbeddingProfile
   slices: {
     recorded: SliceMetrics
     authored: SliceMetrics
@@ -99,9 +120,10 @@ export interface RunBenchOptions {
   candidates: readonly BenchCandidate[]
   corpus: BenchCorpus
   authored: AuthoredQueries
+  allowDownload?: boolean
   createEmbedder?: (
     candidate: BenchCandidate,
-    profile: EmbeddingProfile,
+    profile: BenchEmbeddingProfile,
   ) => Promise<BenchEmbedder>
 }
 
@@ -123,7 +145,7 @@ interface EmbeddedDocument extends BenchDocument {
 
 const NORMALIZATION_TOLERANCE = 1e-3
 
-export function candidateProfile(candidate: BenchCandidate): EmbeddingProfile {
+export function candidateProfile(candidate: BenchCandidate): BenchEmbeddingProfile {
   return {
     model_id: candidate.model_id,
     revision: candidate.revision,
@@ -138,25 +160,150 @@ export function candidateProfile(candidate: BenchCandidate): EmbeddingProfile {
       candidate.backend === 'node'
         ? DEFAULT_EMBEDDING_PROFILE.session_options
         : {},
-    // D-03 proposes the calibrated value from the recorded distribution after the run.
-    tau_dense: DEFAULT_EMBEDDING_PROFILE.tau_dense,
   }
 }
 
-/** Construct candidates only through the public knowledge-local runtime surfaces. */
+function recordAt(value: unknown, path: string): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError(`${path} must be an object`)
+  }
+  return value as Record<string, unknown>
+}
+
+function stringAt(value: unknown, path: string, allowEmpty = false): string {
+  if (typeof value !== 'string' || (!allowEmpty && value.length === 0)) {
+    throw new TypeError(`${path} must be ${allowEmpty ? 'a string' : 'a nonempty string'}`)
+  }
+  return value
+}
+
+function uniqueStringsAt(
+  value: unknown,
+  path: string,
+  options: { allowEmptyArray?: boolean } = {},
+): string[] {
+  if (!Array.isArray(value) || (!options.allowEmptyArray && value.length === 0)) {
+    throw new TypeError(`${path} must be a${options.allowEmptyArray ? '' : ' nonempty'} string array`)
+  }
+  const strings = value.map((entry, index) => stringAt(entry, `${path}[${index}]`))
+  if (new Set(strings).size !== strings.length) {
+    throw new TypeError(`${path} must not contain duplicates`)
+  }
+  return strings
+}
+
+function validateQuery(value: unknown, path: string, recorded: boolean): void {
+  const query = recordAt(value, path)
+  if (recorded) {
+    stringAt(query.id, `${path}.id`)
+    stringAt(query.sourceCassetteId, `${path}.sourceCassetteId`)
+    stringAt(query.sourcePath, `${path}.sourcePath`)
+  } else {
+    if (query.id !== undefined) stringAt(query.id, `${path}.id`)
+    stringAt(query.category, `${path}.category`)
+  }
+  stringAt(query.app, `${path}.app`)
+  stringAt(query.query, `${path}.query`)
+  uniqueStringsAt(query.goldDocIds, `${path}.goldDocIds`)
+}
+
+/** Validate decoded corpus input before any model work or child-process attribution. */
+export function assertBenchCorpus(value: unknown): asserts value is BenchCorpus {
+  const corpus = recordAt(value, 'corpus')
+  if (!Array.isArray(corpus.documents)) {
+    throw new TypeError('corpus.documents must be an array')
+  }
+  if (corpus.documents.length === 0) {
+    throw new TypeError('corpus.documents must contain at least one document')
+  }
+  const documentIds = new Set<string>()
+  corpus.documents.forEach((value, index) => {
+    const path = `corpus.documents[${index}]`
+    const document = recordAt(value, path)
+    const id = stringAt(document.id, `${path}.id`)
+    if (documentIds.has(id)) throw new TypeError(`${path}.id duplicates ${id}`)
+    documentIds.add(id)
+    if (document.kind !== 'element' && document.kind !== 'page') {
+      throw new TypeError(`${path}.kind must be "element" or "page"`)
+    }
+    stringAt(document.text, `${path}.text`, true)
+    uniqueStringsAt(document.apps, `${path}.apps`)
+    uniqueStringsAt(document.sourcePaths, `${path}.sourcePaths`)
+  })
+  if (!Array.isArray(corpus.recordedQueries)) {
+    throw new TypeError('corpus.recordedQueries must be an array')
+  }
+  if (corpus.recordedQueries.length === 0) {
+    throw new TypeError('corpus.recordedQueries must contain at least one query')
+  }
+  const recordedIds = new Set<string>()
+  corpus.recordedQueries.forEach((value, index) => {
+    validateQuery(value, `corpus.recordedQueries[${index}]`, true)
+    const id = (value as { id: string }).id
+    if (recordedIds.has(id)) {
+      throw new TypeError(`corpus.recordedQueries[${index}].id duplicates ${id}`)
+    }
+    recordedIds.add(id)
+  })
+}
+
+/** Validate the independently reported authored-query slice. */
+export function assertAuthoredQueries(value: unknown): asserts value is AuthoredQueries {
+  const authored = recordAt(value, 'authoredQueries')
+  const provenance = recordAt(authored.provenance, 'authoredQueries.provenance')
+  for (const [key, entry] of Object.entries(provenance)) {
+    stringAt(entry, `authoredQueries.provenance.${key}`, true)
+  }
+  if (!Array.isArray(authored.queries)) {
+    throw new TypeError('authoredQueries.queries must be an array')
+  }
+  authored.queries.forEach((query, index) => {
+    validateQuery(query, `authoredQueries.queries[${index}]`, false)
+  })
+}
+
+/** Cross-check every query against the exact validated document population. */
+export function assertBenchRelationships(
+  corpus: BenchCorpus,
+  authored: AuthoredQueries,
+): void {
+  const documents = new Map(corpus.documents.map((document) => [document.id, document]))
+  for (const [slice, queries] of [
+    ['recorded', corpus.recordedQueries],
+    ['authored', authored.queries],
+  ] as const) {
+    queries.forEach((query, index) => {
+      for (const goldId of query.goldDocIds) {
+        const gold = documents.get(goldId)
+        if (gold === undefined) {
+          throw new TypeError(`${slice} query ${index} references unknown gold ${goldId}`)
+        }
+        if (!gold.apps.includes(query.app)) {
+          throw new TypeError(
+            `${slice} query ${index} gold ${goldId} does not belong to app ${query.app}`,
+          )
+        }
+      }
+    })
+  }
+}
+
+/** Construct candidates with the bench-owned latest Transformers.js runtime or bundled floor. */
 export async function createCandidateEmbedder(
   candidate: BenchCandidate,
   profile = candidateProfile(candidate),
+  options: { allowDownload?: boolean } = {},
 ): Promise<BenchEmbedder> {
-  const { createFloorEmbedder, createNativeEmbedder } =
-    await import('@vostride/agent-qa-knowledge-local')
-  return candidate.backend === 'static'
-    ? createFloorEmbedder({ maxTokens: candidate.max_tokens })
-    : createNativeEmbedder({
-        profile,
-        allowDownload: true,
-        maxTokens: candidate.max_tokens,
-      })
+  if (candidate.backend === 'static') {
+    const { createFloorEmbedder } = await import('@vostride/agent-qa-knowledge-local')
+    return createFloorEmbedder(
+      candidate.max_tokens === null ? {} : { maxTokens: candidate.max_tokens },
+    )
+  }
+  const { createTransformersJsEmbedder } = await import('./transformers-js-backend.ts')
+  return createTransformersJsEmbedder(candidate, profile, {
+    allowDownload: options.allowDownload ?? true,
+  })
 }
 
 function errorEntry(candidate: BenchCandidate, error: unknown): CandidateBenchError {
@@ -254,7 +401,7 @@ async function scoreSlice(
   documentsByApp: ReadonlyMap<string, readonly EmbeddedDocument[]>,
   allDocuments: ReadonlyMap<string, EmbeddedDocument>,
   embedder: BenchEmbedder,
-  profile: EmbeddingProfile,
+  profile: BenchEmbeddingProfile,
 ): Promise<{
   metrics: SliceMetrics
   goldPairCosines: number[]
@@ -306,7 +453,7 @@ async function scoreSlice(
     accumulators.set(query.app, accumulator)
   }
 
-  const perApp: Record<string, HitRates> = {}
+  const perApp = Object.create(null) as Record<string, HitRates>
   for (const app of [...accumulators.keys()].sort()) {
     perApp[app] = toHitRates(accumulators.get(app)!)
   }
@@ -322,7 +469,12 @@ async function runCandidate(
   options: RunBenchOptions,
 ): Promise<CandidateBenchSuccess> {
   const profile = candidateProfile(candidate)
-  const embedder = await (options.createEmbedder ?? createCandidateEmbedder)(candidate, profile)
+  const embedder =
+    options.createEmbedder === undefined
+      ? await createCandidateEmbedder(candidate, profile, {
+          allowDownload: options.allowDownload,
+        })
+      : await options.createEmbedder(candidate, profile)
   const embeddedDocuments: EmbeddedDocument[] = []
   const documentIds = new Set<string>()
   for (const document of options.corpus.documents) {
@@ -383,6 +535,9 @@ async function runCandidate(
 }
 
 export async function runBench(options: RunBenchOptions): Promise<BenchRunResult> {
+  assertBenchCorpus(options.corpus)
+  assertAuthoredQueries(options.authored)
+  assertBenchRelationships(options.corpus, options.authored)
   const results: CandidateBenchResult[] = []
   for (const candidate of options.candidates) {
     try {

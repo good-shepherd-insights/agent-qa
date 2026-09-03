@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -18,7 +18,14 @@ import {
 } from '../embedder-native.js'
 
 const transformers = vi.hoisted(() => ({
-  env: { cacheDir: '' },
+  env: {
+    allowRemoteModels: true,
+    cacheDir: '',
+    remotePathTemplate: '{model}/resolve/{revision}/',
+  },
+  AutoTokenizer: { from_pretrained: vi.fn() },
+  AutoModel: { from_pretrained: vi.fn() },
+  FeatureExtractionPipeline: vi.fn(),
   pipeline: vi.fn(),
 }))
 
@@ -40,6 +47,33 @@ function profile(overrides: Partial<EmbeddingProfile> = {}): EmbeddingProfile {
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name]
   else process.env[name] = value
+}
+
+function installPipeline(options: {
+  data?: Float32Array
+  tokenizerConfig?: Record<string, unknown> | null
+} = {}) {
+  const tokenizer = {
+    _tokenizerConfig:
+      options.tokenizerConfig === undefined
+        ? { model_max_length: 8_192 }
+        : options.tokenizerConfig,
+  }
+  const model = { dispose: vi.fn(async () => undefined) }
+  const extractor = Object.assign(
+    vi.fn().mockResolvedValue({ data: options.data ?? new Float32Array([1, 0]) }),
+    { tokenizer },
+  )
+  const construction: { options?: unknown } = {}
+  transformers.AutoTokenizer.from_pretrained.mockResolvedValue(tokenizer)
+  transformers.AutoModel.from_pretrained.mockResolvedValue(model)
+  transformers.FeatureExtractionPipeline.mockImplementation(
+    function FakeFeatureExtractionPipeline(pipelineOptions: unknown) {
+      construction.options = pipelineOptions
+      return extractor
+    },
+  )
+  return { construction, extractor, model, tokenizer }
 }
 
 describe('resolveModelCacheDir', () => {
@@ -68,8 +102,13 @@ describe('resolveModelCacheDir', () => {
 
 describe('createNativeEmbedder', () => {
   beforeEach(() => {
+    transformers.AutoTokenizer.from_pretrained.mockReset()
+    transformers.AutoModel.from_pretrained.mockReset()
+    transformers.FeatureExtractionPipeline.mockReset()
     transformers.pipeline.mockReset()
+    transformers.env.allowRemoteModels = true
     transformers.env.cacheDir = ''
+    transformers.env.remotePathTemplate = '{model}/resolve/{revision}/'
     process.env[MODEL_CACHE_DIR_ENV_VAR] = join('tmp', 'native-model-cache')
   })
 
@@ -78,8 +117,7 @@ describe('createNativeEmbedder', () => {
   })
 
   it('holds one pipeline for repeated acquisitions of the same profile', async () => {
-    const extractor = vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) })
-    transformers.pipeline.mockResolvedValue(extractor)
+    const { extractor } = installPipeline()
     const selectedProfile = profile({ dim: 2 })
 
     const [first, second] = await Promise.all([
@@ -90,13 +128,25 @@ describe('createNativeEmbedder', () => {
     await first.embedDocument('first')
     await second.embedDocument('second')
 
-    expect(transformers.pipeline).toHaveBeenCalledTimes(1)
+    expect(transformers.AutoTokenizer.from_pretrained).toHaveBeenCalledTimes(1)
+    expect(transformers.AutoModel.from_pretrained).toHaveBeenCalledTimes(1)
+    expect(transformers.FeatureExtractionPipeline).toHaveBeenCalledTimes(1)
+    expect(transformers.pipeline).not.toHaveBeenCalled()
+    expect(extractor).toHaveBeenCalledTimes(2)
     expect(transformers.env.cacheDir).toBe(join('tmp', 'native-model-cache'))
   })
 
-  it('passes the pinned CPU construction options to transformers v4 verbatim', async () => {
-    const extractor = vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) })
-    transformers.pipeline.mockResolvedValue(extractor)
+  it('pins the online metadata URL and passes CPU construction options verbatim', async () => {
+    const { construction, model, tokenizer } = installPipeline()
+    const observedTemplates: string[] = []
+    transformers.AutoTokenizer.from_pretrained.mockImplementation(async () => {
+      observedTemplates.push(transformers.env.remotePathTemplate)
+      return tokenizer
+    })
+    transformers.AutoModel.from_pretrained.mockImplementation(async () => {
+      observedTemplates.push(transformers.env.remotePathTemplate)
+      return model
+    })
     const sessionOptions = {
       intraOpNumThreads: 3,
       extra: { session: { intra_op: { allow_spinning: '0' } } },
@@ -109,8 +159,18 @@ describe('createNativeEmbedder', () => {
 
     await createNativeEmbedder({ profile: selectedProfile, allowDownload: true })
 
-    expect(transformers.pipeline).toHaveBeenCalledWith(
-      'feature-extraction',
+    expect(observedTemplates).toEqual([
+      `{model}/resolve/${selectedProfile.revision}/`,
+      `{model}/resolve/${selectedProfile.revision}/`,
+    ])
+    expect(transformers.AutoTokenizer.from_pretrained).toHaveBeenCalledWith(
+      selectedProfile.model_id,
+      expect.objectContaining({
+        revision: selectedProfile.revision,
+        local_files_only: false,
+      }),
+    )
+    expect(transformers.AutoModel.from_pretrained).toHaveBeenCalledWith(
       selectedProfile.model_id,
       expect.objectContaining({
         device: 'cpu',
@@ -120,38 +180,169 @@ describe('createNativeEmbedder', () => {
         local_files_only: false,
       }),
     )
-    expect(transformers.pipeline.mock.calls[0]?.[2]?.session_options).toBe(sessionOptions)
+    expect(transformers.AutoModel.from_pretrained.mock.calls[0]?.[1]?.session_options).toBe(
+      sessionOptions,
+    )
+    expect(construction.options).toEqual({
+      task: 'feature-extraction',
+      model,
+      tokenizer,
+    })
+    expect(transformers.pipeline).not.toHaveBeenCalled()
+    expect(transformers.env.allowRemoteModels).toBe(true)
+    expect(transformers.env.remotePathTemplate).toBe('{model}/resolve/{revision}/')
   })
 
-  it('disables downloads for local-only acquisitions', async () => {
-    transformers.pipeline.mockResolvedValue(
-      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
+  it('serializes first acquisitions so different revisions cannot race global URL state', async () => {
+    const { model, tokenizer } = installPipeline()
+    const firstProfile = profile({
+      dim: 2,
+      revision: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    })
+    const secondProfile = profile({
+      dim: 2,
+      revision: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    })
+    const observations: Array<{ source: string; template: string }> = []
+    let releaseFirstModel!: () => void
+    const firstModelGate = new Promise<void>((resolvePending) => {
+      releaseFirstModel = resolvePending
+    })
+    let modelCallCount = 0
+    transformers.AutoTokenizer.from_pretrained.mockImplementation(async (source: string) => {
+      observations.push({ source, template: transformers.env.remotePathTemplate })
+      return tokenizer
+    })
+    transformers.AutoModel.from_pretrained.mockImplementation(async (source: string) => {
+      observations.push({ source, template: transformers.env.remotePathTemplate })
+      modelCallCount += 1
+      if (modelCallCount === 1) await firstModelGate
+      return model
+    })
+
+    const first = createNativeEmbedder({
+      profile: firstProfile,
+      allowDownload: true,
+    })
+    await vi.waitFor(() =>
+      expect(transformers.AutoModel.from_pretrained).toHaveBeenCalledTimes(1),
     )
+    const second = createNativeEmbedder({
+      profile: secondProfile,
+      allowDownload: true,
+    })
+    await new Promise<void>((resolvePending) => setImmediate(resolvePending))
+
+    expect(transformers.AutoTokenizer.from_pretrained).toHaveBeenCalledTimes(1)
+    expect(transformers.AutoModel.from_pretrained).toHaveBeenCalledTimes(1)
+    expect(transformers.env.remotePathTemplate).toBe(
+      `{model}/resolve/${firstProfile.revision}/`,
+    )
+
+    releaseFirstModel()
+    await Promise.all([first, second])
+
+    expect(observations).toEqual([
+      {
+        source: firstProfile.model_id,
+        template: `{model}/resolve/${firstProfile.revision}/`,
+      },
+      {
+        source: firstProfile.model_id,
+        template: `{model}/resolve/${firstProfile.revision}/`,
+      },
+      {
+        source: secondProfile.model_id,
+        template: `{model}/resolve/${secondProfile.revision}/`,
+      },
+      {
+        source: secondProfile.model_id,
+        template: `{model}/resolve/${secondProfile.revision}/`,
+      },
+    ])
+    expect(transformers.env.remotePathTemplate).toBe('{model}/resolve/{revision}/')
+  })
+
+  it('loads the exact local revision directory with remote access disabled', async () => {
+    const { model, tokenizer } = installPipeline()
+    const observedRemoteFlags: boolean[] = []
+    transformers.AutoTokenizer.from_pretrained.mockImplementation(async () => {
+      observedRemoteFlags.push(transformers.env.allowRemoteModels)
+      return tokenizer
+    })
+    transformers.AutoModel.from_pretrained.mockImplementation(async () => {
+      observedRemoteFlags.push(transformers.env.allowRemoteModels)
+      return model
+    })
     const selectedProfile = profile({ dim: 2 })
+    const cacheDir = join('tmp', 'native-model-cache')
+    const expectedSource = resolve(
+      cacheDir,
+      selectedProfile.model_id,
+      selectedProfile.revision,
+    )
 
     await createNativeEmbedder({ profile: selectedProfile, allowDownload: false })
 
-    expect(transformers.pipeline).toHaveBeenCalledWith(
-      'feature-extraction',
-      selectedProfile.model_id,
-      expect.objectContaining({ local_files_only: true }),
+    expect(observedRemoteFlags).toEqual([false, false])
+    expect(transformers.AutoTokenizer.from_pretrained).toHaveBeenCalledWith(
+      expectedSource,
+      expect.objectContaining({
+        cache_dir: cacheDir,
+        local_files_only: true,
+        revision: selectedProfile.revision,
+      }),
     )
+    expect(transformers.AutoModel.from_pretrained).toHaveBeenCalledWith(
+      expectedSource,
+      expect.objectContaining({
+        cache_dir: cacheDir,
+        device: 'cpu',
+        dtype: 'q8',
+        local_files_only: true,
+        revision: selectedProfile.revision,
+      }),
+    )
+    expect(transformers.pipeline).not.toHaveBeenCalled()
+    expect(transformers.env.allowRemoteModels).toBe(true)
+    expect(transformers.env.remotePathTemplate).toBe('{model}/resolve/{revision}/')
+  })
+
+  it('restores Transformers.js globals and disposes a model after partial loading fails', async () => {
+    const { model } = installPipeline()
+    const failure = new Error('tokenizer failed')
+    transformers.AutoTokenizer.from_pretrained.mockRejectedValue(failure)
+    transformers.env.allowRemoteModels = true
+    transformers.env.remotePathTemplate = 'original/{model}/'
+
+    await expect(
+      createNativeEmbedder({ profile: profile({ dim: 2 }), allowDownload: false }),
+    ).rejects.toBe(failure)
+
+    expect(model.dispose).toHaveBeenCalledTimes(1)
+    expect(transformers.env.allowRemoteModels).toBe(true)
+    expect(transformers.env.remotePathTemplate).toBe('original/{model}/')
+  })
+
+  it('disposes a loaded model when pipeline construction fails', async () => {
+    const { model } = installPipeline()
+    const failure = new Error('pipeline construction failed')
+    transformers.FeatureExtractionPipeline.mockImplementation(function FailingPipeline() {
+      throw failure
+    })
+
+    await expect(
+      createNativeEmbedder({ profile: profile({ dim: 2 }), allowDownload: true }),
+    ).rejects.toBe(failure)
+
+    expect(model.dispose).toHaveBeenCalledTimes(1)
+    expect(transformers.env.allowRemoteModels).toBe(true)
+    expect(transformers.env.remotePathTemplate).toBe('{model}/resolve/{revision}/')
   })
 
   it('holds one pipeline when uncapped and capped callers conflict for the same profile', async () => {
     const tokenizerConfig = { model_max_length: 8_192 }
-    const extractor = Object.assign(
-      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
-      {
-        tokenizer: {
-          get model_max_length() {
-            return tokenizerConfig.model_max_length
-          },
-          _tokenizerConfig: tokenizerConfig,
-        },
-      },
-    )
-    transformers.pipeline.mockResolvedValue(extractor)
+    const { extractor } = installPipeline({ tokenizerConfig })
     const selectedProfile = profile({
       dim: 2,
       doc_prefix: 'document: ',
@@ -172,7 +363,7 @@ describe('createNativeEmbedder', () => {
     expect(failure).toMatchObject({
       message: `Native embedding pipeline budget conflict for ${selectedProfile.model_id}@${selectedProfile.revision}:${selectedProfile.dtype}: existing maxTokens=uncapped, requested maxTokens=512; one process-lifetime session per model identity permits only the first budget`,
     })
-    expect(transformers.pipeline).toHaveBeenCalledTimes(1)
+    expect(transformers.FeatureExtractionPipeline).toHaveBeenCalledTimes(1)
     expect(extractor.tokenizer._tokenizerConfig).toBe(tokenizerConfig)
     expect(tokenizerConfig.model_max_length).toBe(8_192)
 
@@ -196,11 +387,7 @@ describe('createNativeEmbedder', () => {
 
   it('shares one bounded pipeline for repeated callers with the same token budget', async () => {
     const tokenizerConfig = { model_max_length: 8_192 }
-    const extractor = Object.assign(
-      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
-      { tokenizer: { _tokenizerConfig: tokenizerConfig } },
-    )
-    transformers.pipeline.mockResolvedValue(extractor)
+    const { extractor } = installPipeline({ tokenizerConfig })
     const selectedProfile = profile({ dim: 2 })
 
     const first = await createNativeEmbedder({
@@ -227,35 +414,34 @@ describe('createNativeEmbedder', () => {
       third.embedQuery('third'),
     ])
 
-    expect(transformers.pipeline).toHaveBeenCalledTimes(1)
+    expect(transformers.FeatureExtractionPipeline).toHaveBeenCalledTimes(1)
     expect(extractor).toHaveBeenCalledTimes(3)
-    expect(extractor.tokenizer._tokenizerConfig.model_max_length).toBe(512)
+    expect(extractor.tokenizer._tokenizerConfig).toMatchObject({ model_max_length: 512 })
   })
 
   it('constructs one pipeline under concurrent conflicting acquisitions', async () => {
     const tokenizerConfig = { model_max_length: 8_192 }
-    const extractor = Object.assign(
-      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
-      { tokenizer: { _tokenizerConfig: tokenizerConfig } },
-    )
-    let resolvePipeline!: (value: typeof extractor) => void
-    const pendingPipeline = new Promise<typeof extractor>((resolve) => {
-      resolvePipeline = resolve
+    const { extractor, model } = installPipeline({ tokenizerConfig })
+    let resolveModel!: (value: typeof model) => void
+    const pendingModel = new Promise<typeof model>((resolvePending) => {
+      resolveModel = resolvePending
     })
-    transformers.pipeline.mockReturnValue(pendingPipeline)
+    transformers.AutoModel.from_pretrained.mockReturnValue(pendingModel)
     const selectedProfile = profile({ dim: 2 })
 
     const acceptedPromise = createNativeEmbedder({
       profile: selectedProfile,
       allowDownload: false,
     })
-    await vi.waitFor(() => expect(transformers.pipeline).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() =>
+      expect(transformers.AutoModel.from_pretrained).toHaveBeenCalledTimes(1),
+    )
     const conflictPromise = createNativeEmbedder({
       profile: selectedProfile,
       allowDownload: false,
       maxTokens: 512,
     })
-    resolvePipeline(extractor)
+    resolveModel(model)
     const [accepted, conflict] = await Promise.allSettled([
       acceptedPromise,
       conflictPromise,
@@ -267,7 +453,8 @@ describe('createNativeEmbedder', () => {
       name: 'RangeError',
       message: expect.stringContaining('existing maxTokens=uncapped, requested maxTokens=512'),
     })
-    expect(transformers.pipeline).toHaveBeenCalledTimes(1)
+    expect(transformers.AutoModel.from_pretrained).toHaveBeenCalledTimes(1)
+    expect(transformers.FeatureExtractionPipeline).toHaveBeenCalledTimes(1)
     expect(extractor.tokenizer._tokenizerConfig).toBe(tokenizerConfig)
     expect(tokenizerConfig.model_max_length).toBe(8_192)
   })
@@ -275,17 +462,9 @@ describe('createNativeEmbedder', () => {
   it('allows different profile identities to select independent token budgets', async () => {
     const uncappedTokenizerConfig = { model_max_length: 8_192 }
     const cappedTokenizerConfig = { model_max_length: 8_192 }
-    const uncappedExtractor = Object.assign(
-      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
-      { tokenizer: { _tokenizerConfig: uncappedTokenizerConfig } },
-    )
-    const cappedExtractor = Object.assign(
-      vi.fn().mockResolvedValue({ data: new Float32Array([0, 1]) }),
-      { tokenizer: { _tokenizerConfig: cappedTokenizerConfig } },
-    )
-    transformers.pipeline
-      .mockResolvedValueOnce(uncappedExtractor)
-      .mockResolvedValueOnce(cappedExtractor)
+    const { extractor: uncappedExtractor } = installPipeline({
+      tokenizerConfig: uncappedTokenizerConfig,
+    })
     const uncappedProfile = profile({ dim: 2 })
     const cappedProfile = {
       ...uncappedProfile,
@@ -295,6 +474,10 @@ describe('createNativeEmbedder', () => {
     const uncapped = await createNativeEmbedder({
       profile: uncappedProfile,
       allowDownload: false,
+    })
+    const { extractor: cappedExtractor } = installPipeline({
+      data: new Float32Array([0, 1]),
+      tokenizerConfig: cappedTokenizerConfig,
     })
     const capped = await createNativeEmbedder({
       profile: cappedProfile,
@@ -306,19 +489,17 @@ describe('createNativeEmbedder', () => {
       new Float32Array([1, 0]),
     )
     await expect(capped.embedDocument('capped')).resolves.toEqual(new Float32Array([0, 1]))
-    expect(transformers.pipeline).toHaveBeenCalledTimes(2)
+    expect(transformers.FeatureExtractionPipeline).toHaveBeenCalledTimes(2)
     expect(uncappedExtractor).toHaveBeenCalledTimes(1)
     expect(cappedExtractor).toHaveBeenCalledTimes(1)
     expect(uncappedExtractor.tokenizer._tokenizerConfig).toBe(uncappedTokenizerConfig)
-    expect(cappedExtractor.tokenizer._tokenizerConfig.model_max_length).toBe(512)
+    expect(cappedExtractor.tokenizer._tokenizerConfig).toMatchObject({
+      model_max_length: 512,
+    })
   })
 
   it('initializes a missing tokenizer config when applying the token budget', async () => {
-    const extractor = Object.assign(
-      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
-      { tokenizer: { _tokenizerConfig: null as Record<string, unknown> | null } },
-    )
-    transformers.pipeline.mockResolvedValue(extractor)
+    const { extractor } = installPipeline({ tokenizerConfig: null })
 
     await createNativeEmbedder({
       profile: profile({ dim: 2 }),
@@ -330,8 +511,7 @@ describe('createNativeEmbedder', () => {
   })
 
   it('applies document and query prefixes inside the frozen port', async () => {
-    const extractor = vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) })
-    transformers.pipeline.mockResolvedValue(extractor)
+    const { extractor } = installPipeline()
     const selectedProfile = profile({
       dim: 2,
       doc_prefix: 'document: ',
@@ -356,9 +536,7 @@ describe('createNativeEmbedder', () => {
   })
 
   it('throws a typed error that names actual and expected dimensions', async () => {
-    transformers.pipeline.mockResolvedValue(
-      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0, 0]) }),
-    )
+    installPipeline({ data: new Float32Array([1, 0, 0]) })
     const selectedProfile = profile({ dim: 2 })
     const embedder = await createNativeEmbedder({
       profile: selectedProfile,

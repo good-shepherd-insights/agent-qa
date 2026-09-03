@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  candidateProfile,
   runBench,
   type AuthoredQueries,
   type BenchCandidate,
@@ -89,6 +90,10 @@ function successful(result: Awaited<ReturnType<typeof runBench>>): CandidateBenc
 }
 
 describe('runBench', () => {
+  it('keeps uncalibrated candidates free of the production baseline tau', () => {
+    expect(candidateProfile(candidate())).not.toHaveProperty('tau_dense')
+  })
+
   it('scores a nearest gold document as hit@1, hit@3, and hit@5', async () => {
     const result = await runBench({
       candidates: [candidate()],
@@ -119,6 +124,37 @@ describe('runBench', () => {
       hitAt3: 0,
       hitAt5: 1,
     })
+  })
+
+  it('rejects duplicate document app membership before model work', async () => {
+    const invalid = fixtureCorpus('doc-1')
+    invalid.documents[0]!.apps = ['fixture-app', 'fixture-app']
+
+    await expect(
+      runBench({
+        candidates: [candidate()],
+        corpus: invalid,
+        authored,
+        createEmbedder: async () => fixtureEmbedder(),
+      }),
+    ).rejects.toThrow('corpus.documents[0].apps must not contain duplicates')
+  })
+
+  it('records prototype-named apps without mutating the per-app accumulator', async () => {
+    const corpus = fixtureCorpus('doc-1')
+    for (const document of corpus.documents) document.apps = ['__proto__']
+    corpus.recordedQueries[0]!.app = '__proto__'
+
+    const result = await runBench({
+      candidates: [candidate()],
+      corpus,
+      authored,
+      createEmbedder: async () => fixtureEmbedder(),
+    })
+    const perApp = successful(result).slices.recorded.perApp
+
+    expect(Object.keys(perApp)).toEqual(['__proto__'])
+    expect(perApp['__proto__']?.queries).toBe(1)
   })
 
   it('records a candidate failure without aborting the remaining candidates', async () => {

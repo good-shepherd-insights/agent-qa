@@ -34,15 +34,15 @@
     "revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
     "dtype": "q8",
     "dim": 768,
-    "pooling": "mean",
+    "pooling": "cls",
     "normalize": true,
-    "max_tokens": 512,
+    "max_tokens": 8192,
     "query_prefix": "",
     "doc_prefix": "",
     "prefixValidation": {
       "status": "confirmed",
       "source": "https://huggingface.co/Alibaba-NLP/gte-modernbert-base",
-      "finding": "The model card embeds raw query and document strings without prefixes."
+      "finding": "The model card embeds raw query and document strings without prefixes and its Transformers.js example uses CLS pooling."
     },
     "dtypePrevalidation": {
       "status": "available",
@@ -61,15 +61,15 @@
     "revision": "1dc7835ba0cb9c76a3618d0bf0c427c97671b3c8",
     "dtype": "q8",
     "dim": 384,
-    "pooling": "mean",
+    "pooling": "cls",
     "normalize": true,
-    "max_tokens": 512,
+    "max_tokens": 8192,
     "query_prefix": "",
     "doc_prefix": "",
     "prefixValidation": {
       "status": "confirmed",
       "source": "https://huggingface.co/onnx-community/granite-embedding-small-english-r2-ONNX",
-      "finding": "The model card tokenizes raw query and passage strings together without prefixes."
+      "finding": "The model card tokenizes raw query and passage strings together without prefixes; the published pooling config enables CLS and disables mean pooling."
     },
     "dtypePrevalidation": {
       "status": "available",
@@ -90,7 +90,7 @@
     "dim": 512,
     "pooling": "mean",
     "normalize": true,
-    "max_tokens": 512,
+    "max_tokens": null,
     "query_prefix": "",
     "doc_prefix": "",
     "prefixValidation": {

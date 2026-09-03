@@ -18,7 +18,9 @@ import {
   type EmbedderProbes,
 } from '../embedder-acquire.js'
 import { ensureEmbedCacheTable } from '../embed-cache.js'
+import { createNativeEmbedder } from '../embedder-native.js'
 import type { EmbedderPort } from '../embedder-port.js'
+import { MODEL_CACHE_DIR_ENV_VAR } from '../model-cache-dir.js'
 import { makeFakeEmbedder } from './fixtures/fake-embedder.js'
 
 const HEALTHY_MEMORY = EMBEDDER_MIN_AVAILABLE_BYTES + 1
@@ -211,6 +213,58 @@ describe('acquireEmbedder', () => {
 
     expect(outcome).toEqual({ kind: 'deferred', reason: 'cold-artifact' })
     expect(createFloorEmbedder).not.toHaveBeenCalled()
+  })
+
+  it('classifies the Transformers.js missing-file wording as a cold artifact offline', async () => {
+    const createFloorEmbedder = vi.fn().mockReturnValue(makeFakeEmbedder(512))
+    const outcome = await acquireEmbedder({
+      preferredProfile: DEFAULT_EMBEDDING_PROFILE,
+      allowDownload: false,
+      probes: probes({
+        createNativeEmbedder: vi.fn().mockRejectedValue(
+          new Error('Could not locate file at the pinned local revision directory'),
+        ),
+        createFloorEmbedder,
+      }),
+    })
+
+    expect(outcome).toEqual({ kind: 'deferred', reason: 'cold-artifact' })
+    expect(createFloorEmbedder).not.toHaveBeenCalled()
+  })
+
+  it('classifies a real empty pinned Transformers.js cache as a cold artifact', async () => {
+    const emptyCache = mkdtempSync(join(tmpdir(), 'agent-qa-empty-model-cache-'))
+    const originalModelCache = process.env[MODEL_CACHE_DIR_ENV_VAR]
+    const selectedProfile: EmbeddingProfile = {
+      ...DEFAULT_EMBEDDING_PROFILE,
+      model_id: 'test/empty-pinned-cache',
+      revision: 'cccccccccccccccccccccccccccccccccccccccc',
+    }
+    let observedError: unknown
+    const nativeFactory = async (options: Parameters<typeof createNativeEmbedder>[0]) => {
+      try {
+        return await createNativeEmbedder(options)
+      } catch (error) {
+        observedError = error
+        throw error
+      }
+    }
+
+    try {
+      process.env[MODEL_CACHE_DIR_ENV_VAR] = emptyCache
+      const outcome = await acquireEmbedder({
+        preferredProfile: selectedProfile,
+        allowDownload: false,
+        probes: probes({ createNativeEmbedder: nativeFactory }),
+      })
+
+      expect(String(observedError)).toContain('file was not found locally')
+      expect(outcome).toEqual({ kind: 'deferred', reason: 'cold-artifact' })
+    } finally {
+      if (originalModelCache === undefined) delete process.env[MODEL_CACHE_DIR_ENV_VAR]
+      else process.env[MODEL_CACHE_DIR_ENV_VAR] = originalModelCache
+      rmSync(emptyCache, { recursive: true, force: true })
+    }
   })
 
   it('defers a non-file native construction failure instead of trying the floor', async () => {

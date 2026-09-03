@@ -1,5 +1,10 @@
 # Embedding Benchmark Report
 
+> **Legacy schema-v1 evidence — do not use for current model selection.** These July 2026 runs
+> forced mean pooling for GTE ModernBERT and Granite, whose published contracts require CLS
+> pooling. Regenerate schema-v2 reports with the current harness before comparing or adopting
+> either candidate.
+
 Generated: 2026-07-13T21:43:01.999Z
 
 Platform: merged evidence — macos-arm64 informative; ubuntu-latest/linux-x64 and windows-latest/win-x64 canonical

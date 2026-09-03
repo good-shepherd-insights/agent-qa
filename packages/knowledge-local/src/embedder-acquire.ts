@@ -248,6 +248,7 @@ function isColdArtifact(error: unknown, allowDownload: boolean): boolean {
     || message.includes('not found locally')
     || message.includes('not present in the local cache')
     || message.includes('not found in the local cache')
+    || message.includes('could not locate file')
 }
 
 function cacheFor(probes: EmbedderProbes | undefined): Map<string, Promise<CapabilityOutcome>> {
