@@ -42,9 +42,16 @@
 # EACH MUTATION MUST RED A CELL THIS SCRIPT NAMES IN ADVANCE. A red somewhere is not the claim; a
 # red in the cell that exists to catch that specific return is. Each leg therefore carries a
 # REQUIRED set (every fragment must be among the reds) and an ALLOWED set (nothing else may be
-# red) — a mutation that reds half the package is measuring blast radius, not the property. Both
-# are matched as SUBSTRINGS of the FAIL title, never against a test COUNT: several mutations grow
-# the total by generating cells that exist only under the mutation.
+# red) — a mutation that reds half the package is measuring blast radius, not the property. Neither
+# is ever matched against a test COUNT: several mutations grow the total by generating cells that
+# exist only under the mutation.
+#
+# ALLOWED is a per-line SUBSTRING match — deliberately, because three legs name a bare file path
+# that must cover both a suite line and a pointer line. REQUIRED is a per-line match ANCHORED AT
+# THE LINE END, which is stricter and must be: matched as a substring of the whole multi-line red
+# blob, a cell whose title is a strict PREFIX of another cell's title is satisfied by that other
+# cell's red, and a leg naming four cells passes when two redden. The comparator is exercised
+# against leg V-03's own four titles at startup, in both directions.
 #
 # A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS.
 #
@@ -179,10 +186,25 @@ same_bytes () {
 }
 
 # required_line_match <fragment> <red-blob> — is this named cell among the reds?
+#
+# PER RED LINE, AND ANCHORED AT THE LINE END. A substring match against the whole multi-line blob
+# reports MATCHED for a fragment that is a strict PREFIX of some other cell's title, so a leg naming
+# four cells passes when only the two longer ones redden — the defect 412-VERIFICATION reproduced
+# against leg V-03, whose set holds two such pairs.
+#
+# The suffix is the right anchor, not full-line equality: the runtime red-parser strips the
+# ` FAIL  <suite> > ` prefix but leaves the describe block, so a red line reads `<describe> > <title>`
+# while a REQUIRED fragment is the title alone. It is also correct for the other two parsers, whose
+# fragments are whole `grep -oE` outputs — the typecheck diagnostic and the testd pointer — and
+# therefore already whole lines, which an end anchor with a left wildcard still matches.
 required_line_match () {
-  case "$2" in
-    *"$1"*) return 0 ;;
-  esac
+  local fragment="$1" line
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "$line" in
+      *"$fragment") return 0 ;;
+    esac
+  done <<< "$2"
   return 1
 }
 
@@ -619,13 +641,17 @@ run_leg () {
     fi
   done <<< "$red"
 
-  # …and every cell this mutation EXISTS to red must be among them.
+  # …and every cell this mutation EXISTS to red must be among them — matched PER RED LINE and
+  # anchored at the line end, so a cell whose title is a strict prefix of another cell's title
+  # cannot be satisfied by that other cell's red. An empty fragment is skipped, never treated as a
+  # satisfied match.
   while IFS= read -r fragment; do
     [ -z "$fragment" ] && continue
-    case "$red" in
-      *"$fragment"*) echo "  named cell red: $fragment" ;;
-      *) fatal "leg $id did not red its named cell: $fragment" ;;
-    esac
+    if required_line_match "$fragment" "$red"; then
+      echo "  named cell red: $fragment"
+    else
+      fatal "leg $id did not red its named cell: $fragment"
+    fi
   done <<< "$required"
 
   # The mid-leg hook — the mutation is still live and the red set has been accepted.
@@ -996,7 +1022,12 @@ done
 # `SOURCES` and OUT of `PRODUCTION_SOURCES`. The by-name control REDs on a third non-production
 # speller while the production cell stays GREEN, and that the blast radius is exactly one cell is
 # what proves the split is a path rule rather than a filter that measures nothing.
-C01_CELL='names exactly the two migration fixtures that spell the retired status literal outside production'
+# The title is transcribed WHOLE. It was carried here truncated at "outside production" from 412-01
+# onwards, and the old whole-blob substring match reported it MATCHED against the longer real title
+# — the same defect as leg V-03's, in its second form: a REQUIRED fragment that is a strict prefix
+# of the RED LINE rather than of a sibling fragment. The end-anchored comparator refuses it, which
+# is how it was found. Naming the cell in full is what the leg always claimed to do.
+C01_CELL='names exactly the two migration fixtures that spell the retired status literal outside production, and the domain-list marker that spells only the bare key'
 PLANT_PATH="packages/schema/src/__tests__/412-plant.ts"
 PLANT_LINE="const planted = 'reserved'"
 run_leg C-01 "the retired status literal planted OUTSIDE production" runtime \
@@ -1060,6 +1091,9 @@ run_leg V-02 "a seventh DELTA_KINDS member smuggled past the satisfies clause by
 # THIS is the leg that carries VOCB-01. V-01 above widens the SURVIVING six-arm `Delta` and guards
 # it — the 409 ledger corrected that attribution after verification, and under this complete
 # readmission both of Row 4's `never` bars stay GREEN.
+#
+# `V03_REQUIRED` is defined above the startup self-check, which derives its REQUIRED-comparator
+# control from this exact set; ALLOWED equals it, as it always has.
 V03_ALLOWED="$V03_REQUIRED"
 run_leg V-03 "the whole deleted delta vocabulary and id brand readmitted from the phase baseline" runtime \
   "$V03_REQUIRED" "$V03_ALLOWED" "$ARCH_FILTER" "$CENSUS" "" \
