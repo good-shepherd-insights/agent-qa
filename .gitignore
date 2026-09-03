@@ -41,3 +41,6 @@ blob-report/
 .DS_Store
 .idea/
 .vscode/
+
+# Stray knowledge root created when the CLI or a test runs with packages/cli as cwd
+packages/cli/agent-qa-knowledge/
