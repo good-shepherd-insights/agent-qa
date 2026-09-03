@@ -57,8 +57,10 @@
 # exits 1. The proof runs on the abnormal exit exactly as it runs on success — CLSR-02 states that
 # guarantee unconditionally, and a guarantee that holds only when the leg passed is the one that is
 # absent at the single moment it is needed: a leg that failed with retired vocabulary live on disk.
-# The EXIT trap does the same on any other exit path. There is no LEG selector and no
-# run-all-and-report mode: a selector that runs nothing is a green script (D-09).
+# A SIGINT, SIGTERM or SIGHUP routes into that same helper — the trap is on INT/TERM/HUP — so a
+# Ctrl-C mid-run is restored, proved and rebuilt exactly as a FATAL is, rather than abandoning a
+# mutated tree; the EXIT trap remains behind both as the last-resort cleanup. There is no LEG
+# selector and no run-all-and-report mode: a selector that runs nothing is a green script (D-09).
 #
 # USAGE
 #   pnpm validate:issue-slot-mutation                   # from the agent-qa root
@@ -68,6 +70,12 @@
 #   ISSUE_SLOT_SELFTEST=neutered
 #       apply a NO-OP edit in place of every mutation. The script must then FATAL with "the suite
 #       stayed green under the mutation" — a gate nobody has seen fire is a comment.
+#
+# AND EVERY GATE THE CRITERION RESTS ON IS DRIVEN IN ITS FAILING DIRECTION AT STARTUP, before any
+# subject is touched — the sha256 comparator, the line-exact REQUIRED comparator and the three
+# restore/verify failure branches. Each prints the refusal it just performed, and the run FATALs
+# if any of them has stopped being able to fail. The knob above is the same doctrine applied to
+# the bar as a whole; this is it applied to the bar's own instruments.
 
 # LEG INDEX — every leg, the ledger row it transcribes, the instrument that reads it, and whether
 # it crosses a `dist`. This block is the register's transcription source (CLSR-03): the instruments
@@ -180,11 +188,22 @@ CURRENT_REBUILD=""
 # start the cleanup over.
 FATAL_ACTIVE=0
 
+# A COPY THAT DID NOT HAPPEN MUST NEVER BE REPORTED AS ONE THAT DID. `cp`'s own diagnostic reaches
+# stderr and a non-zero status is FATAL: the whole guarantee rests on this copy, and the moment it
+# is most needed is the moment a leg failed with retired vocabulary live on disk. The created paths
+# are only `rm -f`'d here; a path that survives the leg is caught by the byte-identity proof below.
+#
+# This function exits DIRECTLY rather than through the `fatal` helper, because that helper calls
+# this one and a call back would recurse forever. An `exit` taken from inside the EXIT trap does
+# not re-enter the trap, so exiting directly is safe on the trap path too.
 restore_current () {
   local p
   while IFS= read -r p; do
     [ -z "$p" ] && continue
-    cp "$(snapshot_path "$p")" "$REPO_ROOT/$p" 2>/dev/null || true
+    if ! cp "$(snapshot_path "$p")" "$REPO_ROOT/$p"; then
+      echo "FATAL: could not restore $p from its byte snapshot" >&2
+      exit 1
+    fi
   done <<< "$CURRENT_SUBJECTS"
   while IFS= read -r p; do
     [ -z "$p" ] && continue
@@ -216,26 +235,40 @@ verify_restored () {
   echo "  every subject restored byte-identically (sha256 compared); every created path removed"
 }
 
-# THE ONE FATAL EXIT. Message first (a reader of the log sees the reason before the cleanup),
-# then restore, then PROVE the restore, then rebuild, then exit 1. Restore-then-verify-then-rebuild
-# is deliberate and differs from the old success-path order: byte-identity is asserted before
-# anything else runs, so a rebuild failure cannot mask an unrestored subject.
+# THE LEG'S CLOSE-OUT, and there is exactly one of it. Restore, PROVE the restore, then rebuild —
+# in that order, which differs from the old success-path order deliberately: byte-identity is
+# asserted before anything else runs, so a rebuild failure cannot mask an unrestored subject.
+# Both callers — the success path and the FATAL path — come through here, so a leg that passed and
+# a leg that failed cannot diverge into two accounts of the same guarantee.
+close_leg () {
+  restore_current
+  verify_restored
+  local f
+  for f in $CURRENT_REBUILD; do build_package "$f"; done
+}
+
+# THE ONE FATAL EXIT. Message first (a reader of the log sees the reason before the cleanup), then
+# the same close-out the success path takes, then exit 1.
 # `build_package` keeps its own inline failure handling and must NOT be routed through here —
-# this helper calls `build_package`.
+# the close-out calls `build_package`.
 fatal () {
   echo "FATAL: $1" >&2
   if [ "$FATAL_ACTIVE" = 1 ]; then
     exit 1
   fi
   FATAL_ACTIVE=1
-  restore_current
-  verify_restored
-  local f
-  for f in $CURRENT_REBUILD; do build_package "$f"; done
+  close_leg
   exit 1
 }
 
 trap 'restore_current; rm -rf "$WORK"' EXIT
+# AN INTERRUPT IS AN EXIT PATH LIKE ANY OTHER. A Ctrl-C at minute six of the ~435 s run would
+# otherwise abandon a mutated tree, so the signal routes into the SAME helper a FATAL takes: the
+# same restore, the same sha256 proof, the same rebuild. That makes the first interrupt
+# deliberately slow — it restores and rebuilds before it goes — and a second interrupt hits the
+# re-entry guard and exits at once. Bash defers a trap until the foreground child returns, so an
+# interrupt during a build or a suite lands when that child finishes rather than instantly.
+trap 'fatal "interrupted by signal — restoring every subject from its byte snapshot before exit"' INT TERM HUP
 
 # SCOPED to the subject path, never a bare `git status`: this working tree carries pre-existing
 # unrelated dirt under `packages/knowledge-local/src` and `tools/embedding-bench` that predates
@@ -536,10 +569,7 @@ run_leg () {
       red="$(grep -oE "^ FAIL  $suite \[ $suite \]|❯ $suite:[0-9]+:[0-9]+" "$LOG" | sort -u)" ;;
     *)
       set -e
-      echo "FATAL: leg $id asks for mode $mode — mode not implemented" >&2
-      restore_current
-      for f in $rebuild; do build_package "$f"; done
-      exit 1 ;;
+      fatal "leg $id asks for mode $mode — mode not implemented" ;;
   esac
   set -e
 
@@ -551,10 +581,7 @@ run_leg () {
   done <<< "$red"
 
   if [ -z "$red" ]; then
-    echo "FATAL: leg $id did not red its named cell — the log carries no parseable red" >&2
-    restore_current
-    for f in $rebuild; do build_package "$f"; done
-    exit 1
+    fatal "leg $id did not red its named cell — the log carries no parseable red"
   fi
 
   # A type-test leg's ALLOWED list is "nothing else", and "nothing else" is only checkable by
@@ -566,10 +593,7 @@ run_leg () {
     set -e
     echo "  TypeCheckError blocks: $blocks"
     if [ "$blocks" -ne 1 ]; then
-      echo "FATAL: leg $id raised $blocks TypeCheckError blocks — exactly one was predicted" >&2
-      restore_current
-      for f in $rebuild; do build_package "$f"; done
-      exit 1
+      fatal "leg $id raised $blocks TypeCheckError blocks — exactly one was predicted"
     fi
   fi
 
@@ -583,10 +607,7 @@ run_leg () {
       case "$line" in *"$fragment"*) ok=1 ;; esac
     done <<< "$allowed"
     if [ "$ok" -eq 0 ]; then
-      echo "FATAL: leg $id red a cell outside its allowed list: $line" >&2
-      restore_current
-      for f in $rebuild; do build_package "$f"; done
-      exit 1
+      fatal "leg $id red a cell outside its allowed list: $line"
     fi
   done <<< "$red"
 
@@ -595,11 +616,7 @@ run_leg () {
     [ -z "$fragment" ] && continue
     case "$red" in
       *"$fragment"*) echo "  named cell red: $fragment" ;;
-      *)
-        echo "FATAL: leg $id did not red its named cell: $fragment" >&2
-        restore_current
-        for f in $rebuild; do build_package "$f"; done
-        exit 1 ;;
+      *) fatal "leg $id did not red its named cell: $fragment" ;;
     esac
   done <<< "$required"
 
@@ -609,12 +626,9 @@ run_leg () {
     POST_RUN_CHECK=""
   fi
 
-  # The same three steps `fatal` takes, in the same order, through the same implementation:
-  # restore, PROVE the restore, rebuild. Success and failure cannot diverge because there is only
-  # one `verify_restored`.
-  restore_current
-  verify_restored
-  for f in $rebuild; do build_package "$f"; done
+  # The same close-out `fatal` takes, through the same implementation: restore, PROVE the restore,
+  # rebuild. Success and failure cannot diverge because there is only one of it.
+  close_leg
 
   # D-09: the instrument must be green again before the next leg starts.
   set +e
@@ -738,7 +752,58 @@ instrument_self_check () {
   fi
   echo "  comparator: sha256 rejects differing bytes and accepts identical bytes"
 
-  echo "INSTRUMENT SELF-CHECK OK (1 controls)"
+  # Control 2 — the restore path's THREE failure branches, driven. A loud copy and two verify
+  # branches checked only by a static grep would be exactly the shape this phase exists to reject,
+  # so each is made to fire here. Every one runs in a SUBSHELL used as an `if` condition: `set -e`
+  # cannot abort the run, the callee's `exit 1` ends only the subshell, and — this is the
+  # load-bearing part — the assignments below never touch the parent shell. A parent-shell
+  # `CURRENT_CREATED=package.json` would be `rm -f`'d by the EXIT trap and would DELETE a tracked
+  # file at process exit. Output goes under $WORK, so no FATAL of a control reaches the run log.
+  local sc_log="$WORK/selfcheck-restore.log"
+  local copy_loud=0 digest_loud=0 created_loud=0
+
+  # (a) the failed copy. `.selfcheck-no-snapshot` was never snapshotted, so `cp` fails on a MISSING
+  # SOURCE and nothing is ever written into the repository. It is driven through the `fatal` helper
+  # rather than by calling the restore helper directly, because the number of call sites that
+  # helper has is ITSELF a gate (exactly four, none of them a self-check); driving the real exit
+  # path also proves the helper reaches the restore before it reaches anything else.
+  if (
+    CURRENT_SUBJECTS=".selfcheck-no-snapshot"
+    CURRENT_CREATED=""
+    CURRENT_REBUILD=""
+    fatal "self-check control: driving the failed-copy branch"
+  ) > "$sc_log" 2>&1; then :; else copy_loud=1; fi
+  grep -q 'FATAL: could not restore .selfcheck-no-snapshot from its byte snapshot' "$sc_log" || copy_loud=0
+
+  # (b) the mismatched digest. `package.json` always exists and is never a leg subject, so its
+  # snapshot name cannot collide with a real one; the bogus snapshot is removed immediately.
+  local sc_snapshot
+  sc_snapshot="$(snapshot_path "package.json")"
+  printf 'these are not the bytes of package.json\n' > "$sc_snapshot"
+  if (
+    CURRENT_SUBJECTS="package.json"
+    CURRENT_CREATED=""
+    verify_restored
+  ) > "$sc_log" 2>&1; then :; else digest_loud=1; fi
+  rm -f "$sc_snapshot"
+  grep -q 'FATAL: package.json was not restored byte-identically' "$sc_log" || digest_loud=0
+
+  # (c) the surviving created path. Writes nothing at all: it names a path that already exists.
+  if (
+    CURRENT_SUBJECTS=""
+    CURRENT_CREATED="package.json"
+    verify_restored
+  ) > "$sc_log" 2>&1; then :; else created_loud=1; fi
+  grep -q 'FATAL: package.json survived the leg' "$sc_log" || created_loud=0
+
+  rm -f "$sc_log"
+  if [ "$copy_loud" -ne 1 ] || [ "$digest_loud" -ne 1 ] || [ "$created_loud" -ne 1 ]; then
+    echo "FATAL: the restore path cannot fail — a failed copy, a mismatched digest or a surviving created path would pass unnoticed" >&2
+    exit 1
+  fi
+  echo "  control: restore path FATALs on a failed copy, a mismatched digest and a surviving created path"
+
+  echo "INSTRUMENT SELF-CHECK OK (2 controls)"
   echo
 }
 
