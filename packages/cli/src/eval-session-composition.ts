@@ -50,6 +50,7 @@ import type {
   ScoredBatchEntry,
 } from '@vostride/agent-qa-eval'
 import {
+  COMMITTED_CASSETTES_DIR,
   DEFAULT_EVAL_CASSETTES_SUBDIR,
   DEFAULT_EVAL_REPLAYS_SUBDIR,
   FsCassetteStore,
@@ -335,6 +336,39 @@ function bumpCounter(counters: Record<string, number>, key: string): void {
   counters[key] = (counters[key] ?? 0) + 1
 }
 
+// ---- the cassette source (413-06, D-08) -------------------------------------------------------
+
+/**
+ * 413 D-08: which cassette population a batch replays or reports over.
+ *
+ * `staged` is `.agent-qa/eval/cassettes/` — whatever the last `eval extract` put on this machine.
+ * `committed` is `<configDir>/agent-qa-eval/cassettes/` — the REVIEWED corpus: the legacy entries
+ * plus every freshly seeded cassette, which is the only population a whole-corpus baseline may be
+ * measured over (the legacy cassettes are never re-extracted, so a staged sweep silently omits
+ * them and the number would cover a different corpus than Phase 415's floor will).
+ *
+ * The replay RECORDS root is unaffected by either value: replay output is runtime staging (D-07)
+ * and never lands inside the write-once committed root.
+ */
+export type EvalCorpusSource = 'staged' | 'committed'
+
+/** Resolve the sweep root for a cassette source — the ONE place the two roots are spelled. */
+function resolveCassettesRoot(
+  session: EvalSession,
+  source: EvalCorpusSource,
+): { cassettesRoot: string; notice?: string } {
+  if (source === 'committed') {
+    const cassettesRoot = join(
+      resolve(session.configDir, 'agent-qa-eval'),
+      COMMITTED_CASSETTES_DIR,
+    )
+    return { cassettesRoot, notice: `cassette source: committed root ${cassettesRoot}` }
+  }
+  return {
+    cassettesRoot: join(resolve(session.configDir, '.agent-qa'), DEFAULT_EVAL_CASSETTES_SUBDIR),
+  }
+}
+
 // ---- the replay verb (372-06, D-02/D-06/D-07/D-08) --------------------------------------------
 
 /** D-04 judge honesty counters folded from the PERSISTED score records, never recomputed. */
@@ -366,6 +400,8 @@ export interface ReplayVerbResult {
   judge: ReplayJudgeCounters
   /** The staged replay-records root the persisted outcomes landed under. */
   replaysRoot: string
+  /** 413 D-08: which cassette population this batch swept — 'staged' unless asked otherwise. */
+  source: EvalCorpusSource
   /** Stderr-destined notices: no-judge / family-preflight warnings, harness errors, empty sweep. */
   notices: string[]
 }
@@ -387,10 +423,16 @@ export async function runReplayVerb(
   opts: {
     plannerOverrides?: ModelProviderOverrides
     judgeOverrides?: ModelProviderOverrides
+    /** 413 D-08: sweep the committed corpus instead of the staging root. Defaults to 'staged'. */
+    source?: EvalCorpusSource
   } = {},
 ): Promise<ReplayVerbResult> {
   const agentQaRoot = resolve(session.configDir, '.agent-qa')
-  const cassettesRoot = join(agentQaRoot, DEFAULT_EVAL_CASSETTES_SUBDIR)
+  const source: EvalCorpusSource = opts.source ?? 'staged'
+  const sourceRoot = resolveCassettesRoot(session, source)
+  const cassettesRoot = sourceRoot.cassettesRoot
+  // D-07: replay output is runtime staging under .agent-qa/, whichever population was swept —
+  // the write-once committed root never receives a replay record.
   const replaysRoot = join(agentQaRoot, DEFAULT_EVAL_REPLAYS_SUBDIR)
 
   // (1)+(2) sweep + load: every bundle dir enters; refusals fold by reason (D-02/D-08).
@@ -432,6 +474,7 @@ export async function runReplayVerb(
   selected.sort((a, b) => (a.cassette.id < b.cassette.id ? -1 : a.cassette.id > b.cassette.id ? 1 : 0))
 
   const notices: string[] = []
+  if (sourceRoot.notice !== undefined) notices.push(sourceRoot.notice)
   const zeroJudge = (configured: boolean): ReplayJudgeCounters => ({
     configured,
     invoked: 0,
@@ -443,7 +486,7 @@ export async function runReplayVerb(
 
   // (4) empty batch: exit-0 data, no planner/judge resolution spend (D-02).
   if (selected.length === 0) {
-    notices.push('empty sweep — no staged cassette bundles matched')
+    notices.push(`empty sweep — no ${source} cassette bundles matched`)
     return {
       batchKey: 'empty',
       swept: bundleDirs.length,
@@ -453,6 +496,7 @@ export async function runReplayVerb(
       scored: 0,
       judge: zeroJudge(session.evalConfig.judge !== undefined),
       replaysRoot,
+      source,
       notices,
     }
   }
@@ -543,6 +587,7 @@ export async function runReplayVerb(
     scored,
     judge,
     replaysRoot,
+    source,
     notices,
   }
 }
@@ -952,6 +997,8 @@ export interface ReportVerbResult {
   committed?: CommitEvalReportOutcome
   /** Batch-level judge identity: consistent blocks pass through; mixed/absent surface honestly. */
   judgeIdentity: 'present' | 'absent' | 'mixed'
+  /** 413 D-08: which cassette population supplied the label join — 'staged' unless asked. */
+  source: EvalCorpusSource
   /** Stderr-destined notices: read refusals, missing bundles, judge identity honesty. */
   notices: string[]
 }
@@ -970,12 +1017,15 @@ export interface ReportVerbResult {
 export async function runReportVerb(
   session: EvalSession,
   filters: { run?: string; cassette?: string; product?: string } = {},
-  opts: { commit?: boolean } = {},
+  opts: { commit?: boolean; source?: EvalCorpusSource } = {},
 ): Promise<ReportVerbResult> {
   const agentQaRoot = resolve(session.configDir, '.agent-qa')
   const replaysRoot = join(agentQaRoot, DEFAULT_EVAL_REPLAYS_SUBDIR)
-  const cassettesRoot = join(agentQaRoot, DEFAULT_EVAL_CASSETTES_SUBDIR)
+  const source: EvalCorpusSource = opts.source ?? 'staged'
+  const sourceRoot = resolveCassettesRoot(session, source)
+  const cassettesRoot = sourceRoot.cassettesRoot
   const notices: string[] = []
+  if (sourceRoot.notice !== undefined) notices.push(sourceRoot.notice)
 
   // (1) Label join index from the staged bundles: cassette id → label leg + product partition.
   // Bundle load refusals are notices — the report still assembles from the replay records.
@@ -986,7 +1036,7 @@ export async function runReportVerb(
   for (const bundleDir of listCassetteBundleDirs(cassettesRoot)) {
     const load = loadCassetteBundle(bundleDir)
     if (load.kind === 'refused') {
-      notices.push(`staged bundle read refused under ${bundleDir}: ${load.refusal.detail}`)
+      notices.push(`${source} bundle read refused under ${bundleDir}: ${load.refusal.detail}`)
       continue
     }
     if (load.cassette.granularity === 'leaf') {
@@ -1029,7 +1079,7 @@ export async function runReportVerb(
   }
   if (missingBundleCount > 0) {
     notices.push(
-      `${missingBundleCount} replay record(s) have no staged cassette bundle — label legs absent`,
+      `${missingBundleCount} replay record(s) have no ${source} cassette bundle — label legs absent`,
     )
   }
 
@@ -1107,6 +1157,7 @@ export async function runReportVerb(
     stagedFile: staged.file,
     ...(committed !== undefined ? { committed } : {}),
     judgeIdentity,
+    source,
     notices,
   }
 }

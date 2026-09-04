@@ -9,6 +9,7 @@ import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import type {
   CensusVerbResult,
+  EvalCorpusSource,
   ExtractVerbResult,
   ReplayVerbResult,
   ReportVerbResult,
@@ -32,6 +33,25 @@ function parseIntegerFlag(flagName: string): (value: string) => number {
   }
 }
 
+/**
+ * Typed `--source` parser (413 D-08, the parseIntegerFlag idiom): anything but the two literals is
+ * a loud InvalidArgumentError.
+ *
+ * It is applied inside the ACTION rather than as commander's own option parser, because commander
+ * maps a parser throw to `Command.error()` → `process.exit(1)`, and this family's D-08 contract is
+ * `process.exitCode = 1` with the message on stderr — never `process.exit` (which would also take
+ * the whole vitest worker down with it).
+ */
+function parseSourceFlag(value: string | undefined): EvalCorpusSource | undefined {
+  if (value === undefined) return undefined
+  if (value !== 'staged' && value !== 'committed') {
+    throw new InvalidArgumentError(
+      `--source must be "staged" or "committed", got "${value}".`,
+    )
+  }
+  return value
+}
+
 /** Render a Record counter as `reason=count …`, honest 'none' when empty (D-04). */
 function renderCounters(counters: Record<string, number>): string {
   const rendered = Object.entries(counters)
@@ -46,6 +66,7 @@ function renderReplaySummary(result: ReplayVerbResult): void {
     pc.bold(`replay: batch ${result.batchKey}`)
       + pc.dim(` (swept ${result.swept}, replayed ${result.replayed}, scored ${result.scored})`),
   )
+  console.log(`source: ${result.source}`)
   console.log(`load refusals: ${renderCounters(result.loadRefusals)}`)
   console.log(`replay refusals: ${renderCounters(result.replayRefusals)}`)
   const judge = result.judge
@@ -150,6 +171,7 @@ function renderReportSummary(result: ReportVerbResult): void {
       + `${sumCounts(judge.notInvoked)} not-invoked`,
   )
   console.log(`judge identity: ${result.judgeIdentity}`)
+  console.log(`source: ${result.source}`)
   for (const notice of result.notices) {
     console.log(pc.dim(notice))
   }
@@ -315,6 +337,11 @@ export function createEvalCommand(): Command {
       .option('--judge <name>', 'override the eval.judge named LLM config')
       .option('--k <n>', 'sample budget per cassette', parseIntegerFlag('--k'))
       .option('--seed <n>', 'replay sampling seed', parseIntegerFlag('--seed'))
+      .option(
+        '--source <source>',
+        'cassette source: staged (default) or committed (the whole agent-qa-eval corpus, D-08)',
+        'staged',
+      )
       .option('--json', 'emit the typed result DTO to stdout')
       .action(
         async (
@@ -325,11 +352,13 @@ export function createEvalCommand(): Command {
             judge?: string
             k?: number
             seed?: number
+            source?: string
             json?: boolean
           },
           command: Command,
         ) => {
           try {
+            const source = parseSourceFlag(opts.source)
             const configPath = getGlobalConfigPath(command)
             const { resolveEvalSession, runReplayVerb } = await import(
               '../eval-session-composition.js'
@@ -344,11 +373,15 @@ export function createEvalCommand(): Command {
                 ...(opts.seed === undefined ? {} : { seed: opts.seed }),
               },
             })
-            const result = await runReplayVerb(session, {
-              ...(opts.run === undefined ? {} : { run: opts.run }),
-              ...(opts.cassette === undefined ? {} : { cassette: opts.cassette }),
-              ...(opts.product === undefined ? {} : { product: opts.product }),
-            })
+            const result = await runReplayVerb(
+              session,
+              {
+                ...(opts.run === undefined ? {} : { run: opts.run }),
+                ...(opts.cassette === undefined ? {} : { cassette: opts.cassette }),
+                ...(opts.product === undefined ? {} : { product: opts.product }),
+              },
+              { ...(source === undefined ? {} : { source }) },
+            )
             if (opts.json) {
               // D-04/Pitfall 11: exactly one JSON document on stdout — refusal counters, judge
               // dispositions, and notices are DATA inside the DTO; progress already rode stderr.
@@ -419,6 +452,11 @@ export function createEvalCommand(): Command {
       .option('--cassette <id>', 'report over exactly one persisted record by cassette id')
       .option('--product <slug>', 'narrow by product scope')
       .option('--commit', 'also write report.json + report.md into the committed root (D-13)')
+      .option(
+        '--source <source>',
+        'cassette source: staged (default) or committed (the whole agent-qa-eval corpus, D-08)',
+        'staged',
+      )
       .option('--json', 'emit the typed result DTO to stdout')
       .action(
         async (
@@ -427,11 +465,13 @@ export function createEvalCommand(): Command {
             cassette?: string
             product?: string
             commit?: boolean
+            source?: string
             json?: boolean
           },
           command: Command,
         ) => {
           try {
+            const source = parseSourceFlag(opts.source)
             const configPath = getGlobalConfigPath(command)
             const { resolveEvalSession, runReportVerb } = await import(
               '../eval-session-composition.js'
@@ -446,7 +486,10 @@ export function createEvalCommand(): Command {
                 ...(opts.cassette === undefined ? {} : { cassette: opts.cassette }),
                 ...(opts.product === undefined ? {} : { product: opts.product }),
               },
-              { ...(opts.commit === undefined ? {} : { commit: opts.commit }) },
+              {
+                ...(opts.commit === undefined ? {} : { commit: opts.commit }),
+                ...(source === undefined ? {} : { source }),
+              },
             )
             if (opts.json) {
               // D-04/Pitfall 11: exactly one JSON document on stdout — the committed outcome
