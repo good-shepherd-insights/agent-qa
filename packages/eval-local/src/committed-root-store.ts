@@ -32,6 +32,8 @@ export const COMMITTED_CONTRACTS_DIR = 'contracts'
 export const COMMITTED_REPORTS_DIR = 'reports'
 /** 413 D-19: baseline pointers live one level under reports/, beside the batchKey dirs. */
 export const COMMITTED_BASELINES_SUBDIR = 'baselines'
+/** 413 D-15: the corpus census lives one level under reports/, beside the batchKey dirs. */
+export const COMMITTED_CENSUS_SUBDIR = 'census'
 
 export const COMMITTED_ROOT_MARKER_FILE = 'eval-root.json'
 export const COMMITTED_ROOT_SCHEMA_VERSION = 1
@@ -107,6 +109,22 @@ export function committedContractPath(fileName: string): string {
  */
 export function committedReportPath(batchKey: string, fileName: string): string {
   return [COMMITTED_REPORTS_DIR, slugBranch(batchKey), slugBranch(fileName)].join('/')
+}
+
+/**
+ * Phase 413 D-15: the census commits one dir per CORPUS DIGEST, the reports/<batchKey>/ shape
+ * applied to the population rather than to a replay batch — a grown corpus hashes to a fresh
+ * digest and therefore gets a fresh dir under write-once, while re-running the census over an
+ * unchanged corpus byte-compares 'unchanged' and is an idempotent no-op. Every segment slugged,
+ * so a crafted digest cannot escape the committed root (T-368-10 / T-413-18).
+ */
+export function committedCensusPath(corpusDigest: string, fileName: string): string {
+  return [
+    COMMITTED_REPORTS_DIR,
+    COMMITTED_CENSUS_SUBDIR,
+    slugBranch(corpusDigest),
+    slugBranch(fileName),
+  ].join('/')
 }
 
 /**

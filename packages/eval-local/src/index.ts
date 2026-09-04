@@ -73,8 +73,16 @@ export type {
 } from './baseline-pointer.js'
 
 export {
+  COMMITTED_CENSUS_JSON_FILE,
+  COMMITTED_CENSUS_MARKDOWN_FILE,
+  commitCensus,
+} from './census-committing.js'
+export type { CommitCensusInput, CommitCensusOutcome } from './census-committing.js'
+
+export {
   COMMITTED_BASELINES_SUBDIR,
   COMMITTED_CASSETTES_DIR,
+  COMMITTED_CENSUS_SUBDIR,
   COMMITTED_CONTRACTS_DIR,
   COMMITTED_CORPUS_DIR,
   COMMITTED_GITIGNORE_TEXT,
@@ -88,6 +96,7 @@ export {
   committedCassettePath,
   committedContractPath,
   committedBaselinePointerPath,
+  committedCensusPath,
   committedCorpusPath,
   committedLabelPath,
   committedReportPath,
