@@ -88,3 +88,15 @@ export type {
   CommittedRootStoreConfig,
   CommittedWriteOutcome,
 } from './committed-root-store.js'
+
+export {
+  listBaselinePointers,
+  listCommittedReports,
+  readCommittedCorpus,
+} from './committed-corpus-source.js'
+export type {
+  BaselinePointerEntry,
+  CommittedCorpusRead,
+  CommittedReadRefusal,
+  CommittedReportEntry,
+} from './committed-corpus-source.js'

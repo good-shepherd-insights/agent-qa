@@ -3,10 +3,16 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { buildEvalReport, buildSeedingPlan, committedFileText, extractRunCassettes } from '@vostride/agent-qa-eval'
+import {
+  buildEvalReport,
+  buildSeedingPlan,
+  committedFileText,
+  extractRunCassettes,
+} from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
-import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, Decision, SubActionEvidence } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { BLOBS_SUBDIR } from '../cassette-store.js'
@@ -36,6 +42,19 @@ function fullArtifacts(): ArtifactSource {
   return { getBlob: (sha) => entries.get(sha) }
 }
 
+function decisionFor(subAction: SubActionEvidence): Decision {
+  return {
+    plan: subAction.plan,
+    plannedAction: structuredClone(subAction.plannedAction),
+    result: structuredClone(subAction.result),
+  }
+}
+
+/**
+ * The seeding-composition fixture verbatim: test 0 seeds one silver case and test 1 a resolvable
+ * self-heal pair, so the root carries THREE cases — enough for the malformed-bytes cell to prove
+ * that well-formed siblings still load. Timestamps are Luhn-proofed the same way.
+ */
 function sourceHandoff(): CompletedRunHandoff {
   const handoff = makeLocalV2Handoff()
   for (const test of handoff.tests) {
@@ -45,6 +64,37 @@ function sourceHandoff(): CompletedRunHandoff {
       }
     }
   }
+  const silverTest = handoff.tests[0]!
+  const pairTest = structuredClone(silverTest)
+  pairTest.testId = 'eval-local::self-heal'
+  pairTest.testIndex = 1
+  pairTest.steps = [structuredClone(silverTest.steps[0]!)]
+  const step = pairTest.steps[0]!
+  const failedSub = step.subActions[0]!
+  const continueRef2 = asRef('e-continue-2')
+  const primaryElement = failedSub.stateBefore.elements[0]!
+  failedSub.stateBefore.elements = [
+    primaryElement,
+    {
+      ...structuredClone(primaryElement),
+      ref: continueRef2,
+      name: 'Continue again',
+      nameNormalized: 'continue again',
+      labels: { ariaLabel: 'Continue again' },
+    },
+  ]
+  failedSub.stateBefore.refMap = {
+    ...failedSub.stateBefore.refMap,
+    [continueRef2]: structuredClone(failedSub.stateBefore.refMap[primaryElement.ref]!),
+  }
+  const recoveringSub = structuredClone(failedSub)
+  recoveringSub.plannedAction = { type: 'click', ref: continueRef2 }
+  step.subActions = [failedSub, recoveringSub]
+  step.selfHeal = {
+    failedDecision: decisionFor(failedSub),
+    recoveringDecision: decisionFor(recoveringSub),
+  }
+  handoff.tests = [silverTest, pairTest]
   return handoff
 }
 
@@ -52,7 +102,10 @@ function extract(handoff: CompletedRunHandoff): ExtractedCassette[] {
   return extractRunCassettes({ handoff, artifacts: fullArtifacts() }).cassettes
 }
 
-function planFor(handoff: CompletedRunHandoff, cassettes: readonly ExtractedCassette[]): SeedingPlan {
+function planFor(
+  handoff: CompletedRunHandoff,
+  cassettes: readonly ExtractedCassette[],
+): SeedingPlan {
   return buildSeedingPlan({ handoff, cassettes, handoffPath: HANDOFF_PATH })
 }
 
@@ -122,27 +175,39 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
   })
 
   it('folds malformed entry and cassette bytes into typed refusals without throwing', () => {
-    const [firstCase, secondCase] = plan.cases
-    const corpusFile = join(root, committedCorpusPath(PRODUCT, firstCase!.cassetteId))
+    expect(plan.cases.length).toBeGreaterThanOrEqual(3)
+    const brokenEntryCase = plan.cases[0]!
+    const corpusFile = join(root, committedCorpusPath(PRODUCT, brokenEntryCase.cassetteId))
     writeFileSync(corpusFile, '{"schemaVersion":1}\n', 'utf8')
-    const bundle = bundleDirs(root)[0]!
-    writeFileSync(join(bundle, 'cassette.json'), 'not json', 'utf8')
+
+    const brokenBundle = bundleDirs(root)[0]!
+    const brokenBundleId = (
+      JSON.parse(readFileSync(join(brokenBundle, 'cassette.json'), 'utf8')) as { id: string }
+    ).id
+    writeFileSync(join(brokenBundle, 'cassette.json'), 'not json', 'utf8')
 
     const read = readCommittedCorpus(root)
 
     expect(read.refusals.length).toBeGreaterThanOrEqual(2)
     expect(read.refusals.some((refusal) => refusal.path === corpusFile)).toBe(true)
+    expect(
+      read.refusals.some((refusal) => refusal.path === join(brokenBundle, 'cassette.json')),
+    ).toBe(true)
     for (const refusal of read.refusals) expect(refusal.reason.length).toBeGreaterThan(0)
-    if (secondCase !== undefined) {
-      expect(
-        read.snapshot.entries.some((entry) => entry.cassetteId === secondCase.cassetteId),
-      ).toBe(true)
-    }
+
+    // The two broken files dropped out; every well-formed sibling still loaded.
+    expect(read.snapshot.entries).toHaveLength(plan.cases.length - 1)
+    expect(
+      read.snapshot.entries.some((entry) => entry.cassetteId === brokenEntryCase.cassetteId),
+    ).toBe(false)
+    expect(read.snapshot.cassettesById.has(brokenBundleId)).toBe(false)
+    expect(read.snapshot.cassettesById.size).toBe(plan.cases.length - 1)
   })
 
   it('reports a cassette whose blobs dir was removed as blob-absent but still loaded', async () => {
     const bundle = bundleDirs(root)[0]!
-    const id = (JSON.parse(readFileSync(join(bundle, 'cassette.json'), 'utf8')) as { id: string }).id
+    const id = (JSON.parse(readFileSync(join(bundle, 'cassette.json'), 'utf8')) as { id: string })
+      .id
     await rm(join(bundle, BLOBS_SUBDIR), { recursive: true, force: true })
 
     const read = readCommittedCorpus(root)
