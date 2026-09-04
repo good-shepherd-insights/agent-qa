@@ -1143,6 +1143,7 @@ export async function runReportVerb(
   // 'mixed' and the report carries NO judge block — an identity is never synthesized.
   let judgeIdentity: ReportVerbResult['judgeIdentity']
   let judgeForReport: JudgeIdentityBlock | undefined
+  let mixedIdentity: { judgeIdentity: 'mixed'; judgeModelIds: readonly string[] } | undefined
   if (judgeBlocks.length === 0) {
     judgeIdentity = 'absent'
     notices.push('no judge identity on any persisted score record — the report carries no judge block')
@@ -1153,6 +1154,13 @@ export async function runReportVerb(
       judgeForReport = judgeBlocks[0]
     } else {
       judgeIdentity = 'mixed'
+      // 413-15: the report carries the mixture as DATA — the distinct persisted ids, sorted —
+      // so `assertBaselineComparator` can refuse it instead of reading it as abstention. Still
+      // no synthesized block: a list of the ids actually seen is not an identity (T-372-20).
+      mixedIdentity = {
+        judgeIdentity: 'mixed',
+        judgeModelIds: [...new Set(judgeBlocks.map(block => block.judgeModelId))].sort(),
+      }
       notices.push(
         'mixed judge identities across persisted score records — the report carries no judge '
           + 'block (never fabricated)',
@@ -1162,7 +1170,7 @@ export async function runReportVerb(
 
   // (5) Exactly ONE buildEvalReport call — one batch, one report, one headline (D-14). The CLI
   // never sums scores; every counter and rate is the aggregator's.
-  const report = buildEvalReport(entries, judgeForReport)
+  const report = buildEvalReport(entries, judgeForReport, mixedIdentity)
 
   // (6) The staged report ALWAYS lands (uncommitted runtime staging, batchKey-derived filename).
   const staged = new FsReportStore({ root: agentQaRoot }).save(report)

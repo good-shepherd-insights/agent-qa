@@ -41,7 +41,16 @@ export function renderEvalReportMarkdown(report: EvalBatchReport): string {
   lines.push('## Provenance', '')
   lines.push(`- batchKey: ${report.batchKey}`)
   lines.push(`- matcherVersion: ${report.matcherVersion}`)
-  if (report.judge === undefined) {
+  if (report.judgeIdentity === 'mixed') {
+    // 413-15: the batch DID invoke judges, under differing identities — saying none were invoked
+    // would be the untruth the `refuse-mixed-identity` decision removes. The ids are projected
+    // verbatim from the DTO, already sorted and deduped by buildEvalReport.
+    lines.push(
+      '- judge: mixed identities across score records '
+        + `(${(report.mixedJudgeModelIds ?? []).join(', ')}) `
+        + '— no judge block, not a gate comparator',
+    )
+  } else if (report.judge === undefined) {
     lines.push('- judge: no judge invoked')
   } else {
     lines.push(
