@@ -280,7 +280,7 @@ describe('pumpAgentJobs — the kind-filtered, lease-holding drain (413 D-04/D-0
     expect(analyze?.runId).toBe('r_fixture')
 
     const sortKey = (row: { status: string; kind: string; id: string }): string =>
-      `${row.status}${row.kind}${row.id}`
+      `${row.status} ${row.kind} ${row.id}`
     expect(listed.jobs.map(sortKey)).toEqual([...listed.jobs.map(sortKey)].sort())
 
     const successor = listed.jobs.find((row) => row.kind === 'curate-memory')
