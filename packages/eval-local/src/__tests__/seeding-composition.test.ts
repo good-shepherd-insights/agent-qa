@@ -5,14 +5,25 @@ import { join } from 'node:path'
 
 import {
   buildSeedingPlan,
+  committedFileText,
   extractRunCassettes,
   projectJudgeConfigContract,
   projectMatcherConfigContract,
 } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
-import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
-import { asRef } from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff, Decision, SubActionEvidence } from '@vostride/agent-qa-schema'
+import {
+  createMaskingContext,
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+} from '@vostride/agent-qa-safety'
+import { asRef, computeBriefDigest } from '@vostride/agent-qa-schema'
+import type {
+  CompletedRunHandoff,
+  Decision,
+  LosslessServedBriefProofV1,
+  ServedPromptTurn,
+  SubActionEvidence,
+} from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -367,5 +378,167 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
       if (planCase.cassetteId === missingCase.cassetteId) continue
       expect(existsSync(join(root, casePaths(planCase.cassetteId).cassette))).toBe(true)
     }
+  })
+})
+
+/**
+ * 413 SC2 / T-413-01: the growth campaign records `ServedBrief.proof` — the exact model-visible
+ * prompt material of every turn — and the seeder commits it. That is NEW committed prose, so the
+ * D-10 obligation is to prove the SHIPPED checkpoint already covers it: no new detector, no new
+ * channel, no new masking seam. Both cells mirror the precedents on `stateBefore.url`
+ * (`:219` here, `committed-root-proof.test.ts:260` and `:342`) with the plant moved into
+ * `proof.promptTurns`.
+ */
+function losslessProof(text: string): LosslessServedBriefProofV1 {
+  const turn: ServedPromptTurn = {
+    ordinal: 0,
+    turnOrdinal: 0,
+    runDate: '2026-09-04',
+    policyL0: 'Prefer the recorded Continue button.',
+    learnedL1: text,
+    learnedL2: '',
+    contextTier: '',
+    volatileTier: '',
+    policyDigest: 'a'.repeat(64),
+    contextTierDigest: 'b'.repeat(64),
+    volatileTierDigest: 'c'.repeat(64),
+  }
+  return {
+    schemaVersion: 1,
+    completeness: 'lossless',
+    recordCap: 8,
+    combinedBudget: 4_096,
+    admissionEvents: [],
+    promptTurns: [turn],
+  }
+}
+
+describe('413 SC2 — lossless proof text passes the eval-seeding checkpoint (D-10, T-413-01)', () => {
+  let root: string
+  let outDir: string
+  let handoff: CompletedRunHandoff
+
+  function seed(
+    plan: SeedingPlan,
+    seedCassettes: readonly ExtractedCassette[],
+  ): SeedingReport {
+    return seedCommittedCorpus({
+      plan,
+      cassettes: seedCassettes,
+      committedRoot: root,
+      seedingOutputBaseDir: outDir,
+      policy,
+    })
+  }
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'eval-local-sc2-root-'))
+    outDir = await mkdtemp(join(tmpdir(), 'eval-local-sc2-out-'))
+    handoff = seedingHandoff()
+  })
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+    await rm(outDir, { recursive: true, force: true })
+  })
+
+  it("refuses the WHOLE case when a secret rides in proof.promptTurns, and the batch continues", async () => {
+    const cassettes = extract(handoff)
+    const plan = planFor(handoff, cassettes)
+    const blockedCase = plan.cases.find(
+      (planCase) => planCase.labelRecord.label.pairing?.relation === 'contrastive-negative',
+    )!
+    const staged = structuredClone(cassettes) as ExtractedCassette[]
+    const target = staged.find((entry) => entry.cassette.id === blockedCase.cassetteId)!
+    if (target.cassette.granularity !== 'leaf') throw new Error('fixture pair member must be a leaf')
+    target.cassette.input.servedBrief = {
+      ...target.cassette.input.servedBrief,
+      proof: losslessProof(`Remember the checkout key ${AWS_KEY} for the next turn.`),
+    }
+
+    // Positive control FIRST: the committed text the seeder would write DOES carry the key,
+    // so the refusal below cannot pass vacuously (T-371-19).
+    expect(committedFileText(target.cassette)).toContain(AWS_KEY)
+
+    const report = seed(plan, staged)
+
+    expect(report.refusals).toHaveLength(1)
+    const refusal = report.refusals[0]!
+    expect(refusal.cassetteId).toBe(blockedCase.cassetteId)
+    expect(refusal.kind).toBe('egress-blocked')
+    if (refusal.kind !== 'egress-blocked') throw new Error('expected egress-blocked refusal')
+    expect(
+      refusal.detections.some(
+        (detection) =>
+          detection.detector === 'awsKey' &&
+          detection.label === `cassette:${blockedCase.cassetteId}`,
+      ),
+    ).toBe(true)
+
+    // Whole-unit atomicity: none of the blocked case's four files landed.
+    const blockedPaths = casePaths(blockedCase.cassetteId)
+    expect(existsSync(join(root, blockedPaths.cassette))).toBe(false)
+    expect(existsSync(join(root, blockedPaths.label))).toBe(false)
+    expect(existsSync(join(root, blockedPaths.corpus))).toBe(false)
+    expect(
+      existsSync(
+        join(root, committedBlobPath(PRODUCT, blockedCase.cassetteId, LOCAL_FIXTURE_BLOB_SHA)),
+      ),
+    ).toBe(false)
+
+    // Per-case, not per-batch: the clean siblings landed.
+    expect(report.seededCount).toBe(2)
+    for (const planCase of plan.cases) {
+      if (planCase.cassetteId === blockedCase.cassetteId) continue
+      expect(existsSync(join(root, casePaths(planCase.cassetteId).cassette))).toBe(true)
+    }
+
+    const auditRaw = await readFile(join(outDir, 'guardrail_audit.jsonl'), 'utf8')
+    const rows = auditRaw
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { channel: string; detector: string; action: string })
+    expect(
+      rows.some(
+        (row) =>
+          row.channel === `${SEEDING_EGRESS_CHANNEL}:cassette:${blockedCase.cassetteId}` &&
+          row.detector === 'awsKey' &&
+          row.action === 'block',
+      ),
+    ).toBe(true)
+  })
+
+  it('commits a masking-registered value in proof.promptTurns as its placeholder, never raw', () => {
+    const REGISTERED = 'melon-proof-turn-registered-secret-4k2v'
+    const context = createMaskingContext()
+    context.register(REGISTERED)
+
+    const rawTurnText = `Reuse the checkout token ${REGISTERED} on the next turn.`
+    // Positive controls: the unmasked prose carries the value and the mask rewrites it.
+    expect(rawTurnText).toContain(REGISTERED)
+    const maskedTurnText = context.mask(rawTurnText)
+    expect(maskedTurnText).not.toContain(REGISTERED)
+    expect(maskedTurnText).toContain('<SECRET_0>')
+
+    // Apply the mask at the RECORD boundary — upstream of extraction, exactly as live recording
+    // masks evidence before anything is staged (committed-root-proof.test.ts:342 idiom). The
+    // brief digest is recomputed because the proof participates in it.
+    for (const test of handoff.tests) {
+      for (const step of test.steps) {
+        const brief = { ...step.servedBrief, proof: losslessProof(maskedTurnText) }
+        step.servedBrief = { ...brief, briefDigest: computeBriefDigest(brief) }
+      }
+    }
+    const cassettes = extract(handoff)
+    const plan = planFor(handoff, cassettes)
+
+    const report = seed(plan, cassettes)
+
+    expect(report.refusals).toEqual([])
+    expect(report.seededCount).toBe(3)
+
+    const committed = readFileSync(join(root, casePaths(plan.cases[0]!.cassetteId).cassette), 'utf8')
+    expect(committed).toContain('<SECRET_0>')
+    expect(committed).not.toContain(REGISTERED)
   })
 })
