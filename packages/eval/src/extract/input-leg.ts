@@ -35,6 +35,7 @@ export function projectInputLeg({
     stateBefore: subAction.stateBefore,
     servedBrief: step.servedBrief,
     ...(step.workingMemory === undefined ? {} : { workingMemory: step.workingMemory }),
+    ...(step.retrievalRung === undefined ? {} : { retrievalRung: step.retrievalRung }),
     exchanges: [...subAction.exchanges],
     ...(step.modelProfile === undefined ? {} : { modelProfile: step.modelProfile }),
     ...(subAction.decisionScreenshotRef === undefined

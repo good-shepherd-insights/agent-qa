@@ -1,6 +1,7 @@
 import type {
   ArtifactRef,
   DeclaredModelProfile,
+  RecordedRetrievalRung,
   ScreenState,
   ServedBrief,
   ToolExchangeEvidence,
@@ -25,6 +26,13 @@ export interface CassetteInputLeg {
   servedBrief: ServedBrief
   /** Run-scoped planner memory served beside, never merged into, the brief (D-03/A11). */
   workingMemory?: WorkingMemoryEntry[]
+  /**
+   * Run-constant retrieval rung recorded beside — never inside — the brief (413 D-07,
+   * 407 D-13), so `briefDigest` and §A11's exactly-three channels stay untouched. Absent on
+   * legacy cassettes and on runs with no knowledge reader bound; the census counts those as
+   * `legacy-no-rung` rather than hiding them.
+   */
+  retrievalRung?: RecordedRetrievalRung
   /**
    * Ordered non-action exchanges from the live turn (D-03/T-367-03). They are opaque
    * evidence data; consumers must never execute their model-authored arguments or results.

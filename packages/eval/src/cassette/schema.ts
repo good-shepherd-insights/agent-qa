@@ -1,4 +1,4 @@
-import { workingMemoryEntrySchema } from '@vostride/agent-qa-schema'
+import { RecordedRetrievalRungSchema, workingMemoryEntrySchema } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 import { actionWireSchema } from './action-wire-schema'
 import { CASSETTE_SCHEMA_VERSION } from './cassette'
@@ -322,6 +322,7 @@ const inputLegSchema = z
     stateBefore: screenStateSchema,
     servedBrief: servedBriefSchema,
     workingMemory: z.array(workingMemoryEntrySchema).optional(),
+    retrievalRung: RecordedRetrievalRungSchema.optional(),
     exchanges: z.array(toolExchangeSchema),
     modelProfile: declaredModelProfileSchema.optional(),
     decisionScreenshotRef: artifactRefSchema.optional(),
