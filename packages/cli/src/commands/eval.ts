@@ -8,6 +8,7 @@
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import type {
+  CensusVerbResult,
   ExtractVerbResult,
   ReplayVerbResult,
   ReportVerbResult,
@@ -152,6 +153,75 @@ function renderReportSummary(result: ReportVerbResult): void {
   }
 }
 
+/**
+ * Compact census summary rendered from the DTO fields only — a faithful projection (D-04).
+ *
+ * D-16 discipline: every number here is copied out of the census, nothing is summed, rated or
+ * interpreted at the console, and no threshold or minimum-n line exists to print. The cross-check
+ * reconciliation lines and any comparator refusal ride in `notices`, so a same-family report is
+ * disclosed on EVERY census run to the person actually reading the output (D-20, T-413-22).
+ */
+function renderCensusSummary(result: CensusVerbResult): void {
+  const census = result.census
+  const products = Object.keys(census.products).sort()
+  console.log(
+    pc.bold(`census: corpus ${result.corpusDigest}`)
+      + pc.dim(
+        ` (${result.entryCount} entries, products ${products.length === 0 ? 'none' : products.join(', ')})`,
+      ),
+  )
+  for (const product of products) {
+    const block = census.products[product]!
+    console.log(
+      `${product}: total=${block.total} `
+        + `tier1=${block.scorableByTier.tier1} tier2=${block.scorableByTier.tier2} `
+        + `tier3=${block.scorableByTier.tier3} goldEvidence=${block.goldEvidence} `
+        + `proof=${block.proofCoverage.numerator}/${block.proofCoverage.denominator} `
+        + `populatedBrief=${block.briefContent['populated-brief']} `
+        + `blobsLocal=${block.blobsPresentLocally.numerator}/${block.blobsPresentLocally.denominator} `
+        + `runsExcluded=${renderCounters(block.runsExcluded)} `
+        + `rungs=${renderCounters(block.rungMix)}`,
+    )
+  }
+  const campaign = census.campaign
+  if (!campaign.present) {
+    console.log('campaign: none supplied')
+  } else {
+    console.log(
+      `campaign: legs=${campaign.legs} seeded=${campaign.runsSeeded} `
+        + `excluded=${campaign.runsExcluded} modelCalls=${campaign.modelCalls} `
+        + `promptTokens=${campaign.promptTokens} completionTokens=${campaign.completionTokens} `
+        + `wallClockMs=${campaign.wallClockMs}`,
+    )
+  }
+  for (const notice of result.notices) {
+    // A comparator refusal is the one notice that must not read like housekeeping (ROOT-11).
+    console.log(
+      notice.startsWith('baseline comparator refused') ? pc.red(notice) : pc.dim(notice),
+    )
+  }
+  if (result.committed !== undefined) {
+    // 372 D-08: egress blocks and write conflicts are DATA — rendered loudly, never exit 1.
+    if (result.committed.kind === 'committed') {
+      console.log(
+        `committed: json ${result.committed.json}, markdown ${result.committed.markdown}`,
+      )
+      console.log(pc.dim(`census dir: ${result.committed.censusDir}`))
+    } else if (result.committed.kind === 'egress-blocked') {
+      console.log(
+        pc.red(
+          'commit egress-blocked: '
+            + result.committed.detections
+              .map(detection => `${detection.label} (${detection.detector})`)
+              .join(', '),
+        ),
+      )
+    } else {
+      console.log(pc.red(`commit write-conflict: ${result.committed.path}`))
+    }
+  }
+}
+
 /** Compact picocolors summary rendered from the DTO fields only — a faithful projection (D-04). */
 function renderExtractSummary(result: ExtractVerbResult): void {
   console.log(
@@ -171,7 +241,7 @@ function renderExtractSummary(result: ExtractVerbResult): void {
 
 export function createEvalCommand(): Command {
   const cmd = new Command('eval')
-    .description('Offline eval substrate: extract, replay, seed, report (Phase 372, D-01)')
+    .description('Offline eval substrate: extract, replay, seed, report, census (Phase 372 D-01; 413 D-13)')
 
   cmd.addCommand(
     new Command('extract')
@@ -365,6 +435,54 @@ export function createEvalCommand(): Command {
           } catch (err) {
             // D-08: typed named-input/config errors are the only failure modes — egress-blocked
             // and write-conflict committed outcomes are data and never reach this catch.
+            console.error(pc.red(err instanceof Error ? err.message : String(err)))
+            process.exitCode = 1
+          }
+        },
+      ),
+  )
+
+  cmd.addCommand(
+    new Command('census')
+      .description(
+        'Derive the static per-product corpus census from the committed root (D-13/D-14)',
+      )
+      .option(
+        '--commit',
+        'also write census.json + census.md under reports/census/<corpus-digest>/ (D-15)',
+      )
+      .option(
+        '--campaign <path>',
+        'fold a guarded campaign manifest (excluded runs, repeats, cost line) into the census (D-16)',
+      )
+      .option('--json', 'emit the typed result DTO to stdout')
+      .action(
+        async (
+          opts: { commit?: boolean; campaign?: string; json?: boolean },
+          command: Command,
+        ) => {
+          try {
+            const configPath = getGlobalConfigPath(command)
+            const { resolveEvalSession, runCensusVerb } = await import(
+              '../eval-session-composition.js'
+            )
+            const session = await resolveEvalSession(
+              configPath === undefined ? {} : { configPath },
+            )
+            const result = await runCensusVerb(session, {
+              ...(opts.commit === undefined ? {} : { commit: opts.commit }),
+              ...(opts.campaign === undefined ? {} : { campaign: opts.campaign }),
+            })
+            if (opts.json) {
+              // D-04/Pitfall 11: exactly one JSON document on stdout — cross-check refusals and
+              // read refusals are DATA inside the DTO, never separate stream noise.
+              console.log(JSON.stringify(result, null, 2))
+            } else {
+              renderCensusSummary(result)
+            }
+          } catch (err) {
+            // D-08: a rejected --campaign manifest and a config/session failure are the only
+            // failure modes — egress-blocked and write-conflict outcomes are data (T-413-21/24).
             console.error(pc.red(err instanceof Error ? err.message : String(err)))
             process.exitCode = 1
           }

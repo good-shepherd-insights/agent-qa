@@ -98,6 +98,13 @@ import type { RunExecutionContext, RunMaskingContext } from '@vostride/agent-qa-
 // that consumes record loads. Erased at build — no runtime coupling.
 export type { ReplayRecordLoad } from '@vostride/agent-qa-eval-local'
 
+// FUNC-02 surface firewall (Phase 384 D-01/D-03): this composition root is the ledgered edge to
+// `@vostride/agent-qa-eval`, and the ledger only ever SHRINKS — a surface file written after
+// 2026-07-28 may not join it. The census renderer beside this module is such a file, so it types
+// against the census DTO through the composition root rather than minting a second edge of its
+// own, exactly as `commands/eval.ts` types against the verb DTOs. Type-only, erased at build.
+export type { CensusCrossCheckLine, CorpusCensus } from '@vostride/agent-qa-eval'
+
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */
 export interface EvalCliConfig {
   judge?: string

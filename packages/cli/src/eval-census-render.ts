@@ -15,7 +15,11 @@
 // campaign prints '- none supplied' rather than a row of zeros that reads like a campaign that
 // measured nothing.
 
-import type { CorpusCensus, CensusCrossCheckLine } from '@vostride/agent-qa-eval'
+// FUNC-02 surface firewall (384 D-01/D-03): the census DTO types arrive through the ledgered
+// composition root beside this file, never through a second direct edge to `@vostride/agent-qa-eval`
+// — the ledger only shrinks, and a file written now may not join it. Type-only, erased at build,
+// so the value edge stays one-way (composition imports this renderer, not the reverse).
+import type { CensusCrossCheckLine, CorpusCensus } from './eval-session-composition.js'
 
 /** Sorted-key counter group as markdown bullets — honest '- none' when empty (D-04). */
 function counterLines(title: string, counts: Readonly<Record<string, number>>): string[] {

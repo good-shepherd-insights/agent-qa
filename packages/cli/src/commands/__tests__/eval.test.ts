@@ -57,6 +57,7 @@ import {
   runSeedVerb,
 } from '../../eval-session-composition.js'
 import type {
+  CensusVerbResult,
   EvalSession,
   ExtractVerbResult,
   ReplayVerbResult,
@@ -986,10 +987,11 @@ function captureConsole(): { logs: string[]; errors: string[] } {
 }
 
 describe('createEvalCommand — family skeleton and registration shape (D-01)', () => {
-  it('names the family "eval" with exactly the four D-01 verbs: extract, replay, seed, report', () => {
+  it('names the family "eval" with the four D-01 verbs plus the 413 D-13 census sibling', () => {
     const cmd = createEvalCommand()
     expect(cmd.name()).toBe('eval')
-    expect(cmd.commands.map(sub => sub.name())).toEqual(['extract', 'replay', 'seed', 'report'])
+    const verbs = ['extract', 'replay', 'seed', 'report', 'census']
+    expect(cmd.commands.map(sub => sub.name())).toEqual(verbs)
   })
 
   it('declares the D-02 filter vocabulary on extract: --run, --product, --json', () => {
@@ -1028,6 +1030,12 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
     expect(flags).toEqual(
       expect.arrayContaining(['--run', '--cassette', '--product', '--commit', '--json']),
     )
+  })
+
+  it('declares the census flag vocabulary: --commit, --campaign, --json (413 D-13/D-15/D-16)', () => {
+    const census = createEvalCommand().commands.find(sub => sub.name() === 'census')
+    const flags = census?.options.map(option => option.long) ?? []
+    expect(flags).toEqual(expect.arrayContaining(['--commit', '--campaign', '--json']))
   })
 })
 
@@ -1605,5 +1613,68 @@ describe('runCensusVerb — static census over the committed root (413 D-13/D-14
     const second = await runCensusVerb(session, { commit: true })
     expect(second.committed).toMatchObject({ json: 'unchanged', markdown: 'unchanged' })
     expect(second.corpusDigest).toBe(first.corpusDigest)
+  })
+})
+
+// ---- 413-05 Task 3: the census subcommand — rendering and exit semantics (D-04/D-08) ----------
+
+describe('agent-qa eval census — rendering and exit semantics (413-05, D-04/D-08)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('--json emits exactly one JSON DTO on stdout and nothing else (Pitfall 11)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+    await runSeedVerb(session)
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'census', '--json'], {
+      from: 'user',
+    })
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    expect(logs).toHaveLength(1)
+    const dto = JSON.parse(logs[0] ?? '') as CensusVerbResult
+    expect(dto.corpusDigest).toMatch(/^[0-9a-f]{64}$/)
+    expect(dto.entryCount).toBe(1)
+    expect(dto.census.corpusDigest).toBe(dto.corpusDigest)
+  })
+
+  it('renders the per-product line and the honest campaign absence from the DTO only (D-04)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+    await runSeedVerb(session)
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'census'], { from: 'user' })
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    const rendered = logs.join('\n')
+    expect(rendered).toContain('default: total=1')
+    expect(rendered).toContain('campaign: none supplied')
+    expect(rendered).toContain('rungs=legacy-no-rung=1')
+    expect(() => JSON.parse(rendered)).toThrow()
+  })
+
+  it('a --campaign path that names nothing sets exitCode 1 with the message on stderr (D-08)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+    await runSeedVerb(session)
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(
+      ['--config', configPath, 'eval', 'census', '--campaign', join(dir, 'no-such-campaign.json')],
+      { from: 'user' },
+    )
+
+    expect(process.exitCode).toBe(1)
+    expect(errors.join('\n')).toContain('no-such-campaign.json')
+    expect(logs).toEqual([])
   })
 })
