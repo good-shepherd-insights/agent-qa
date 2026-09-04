@@ -1,0 +1,370 @@
+// The agent job queue's operator ops: a kind-filtered drain, a listing, and a cancel.
+//
+// Phase 413 D-04 ("analyze-run drained before seeding") and D-06 ("curator jobs enqueued but NOT
+// drained; analyze-run still drains") both assume a mechanism RESEARCH F15 measured absent: every
+// shipped host pumps the GLOBAL FIFO, so draining `analyze-run` for a run also claims the
+// `curate-memory` successor its completion enqueues, and the inline tail then folds candidates
+// into the git-tracked knowledge root. Nothing in the CLI could drain one kind and stop.
+//
+// RESEARCH OQ-4 named two ways to close that gap and called (b) the one faithful to both
+// decisions. This file IS option (b), implemented outright rather than assumed away: the queue is
+// re-composed here with `unclaimableKinds` (the 388-09 CONSTRUCTION option) set to every declared
+// kind except `--only`, so an excluded row is never claimed — its status, its claim and its
+// attempt count are untouched, because the exclusion lives in the store's SELECTION rather than in
+// a filter this loop applies after the fact. No new agent-local surface, no new job kind.
+//
+// Why outright rather than assumed: seeding is a write-once, costly-reversibility door, and healed
+// runs are exactly the class only `analyze-run` classifies (F13). A campaign that seeded before its
+// verdicts existed would commit a corpus nobody can un-commit.
+//
+// The lease bracket is `knowledge-maintain.ts`'s `withWriterLease` and the pump loop is
+// `post-run-tail.ts`'s, both deliberately: two drainers under one fence is the tampering threat
+// (T-413-46), and "never sleep on a backoff" is the tail's own rule (T-413-48).
+
+import { dirname, join, resolve } from 'node:path'
+
+import { createAgentJobQueue } from '@vostride/agent-qa-agent'
+import type {
+  AgentJobQueue,
+  ClockPort,
+  JobStoreFence,
+  RunNextJobOutcome,
+} from '@vostride/agent-qa-agent'
+import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import type { LocalAgentJobs } from '@vostride/agent-qa-agent-local'
+import { asJobId } from '@vostride/agent-qa-schema'
+import type { JobKind, JobStatus } from '@vostride/agent-qa-schema'
+
+import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
+import { resolvePostRunJobModel } from '../curation/post-run-tail.js'
+import { composeCliLocalAgent } from './local-agent-host.js'
+
+/**
+ * How many jobs one pump will run before it stops.
+ *
+ * Equal to `JOB_RECOVERY_MAX_RESUMED_JOBS` and chosen for the same reason: it is more iterations
+ * than any campaign leg can legitimately queue for one kind, so reaching it is a bug — a chain
+ * feeding itself, or a queue this process is not the only writer of — and not a long drain. A loop
+ * that trusted the queue to empty would be an unbounded claim under a lease (T-413-48).
+ */
+export const AGENT_JOBS_PUMP_BOUND = 64
+
+/**
+ * The heartbeat cadence the pump refreshes its lease on.
+ *
+ * Declared locally, exactly as `knowledge-maintain.ts` declares it: the constant lives in
+ * `knowledge-local`, which a firewalled surface may not name (FUNC-02), and the value a CLI
+ * command heartbeats at is the CLI's own decision anyway.
+ */
+const WRITER_LEASE_HEARTBEAT_INTERVAL_MS = 5_000
+
+/** The store-owned facts about one row that an operator may read. Never a payload body. */
+export interface AgentJobRow {
+  readonly id: string
+  readonly kind: string
+  readonly status: string
+  readonly attempts: number
+  readonly claimed: boolean
+  readonly cancelRequested: boolean
+  /** Present only when the payload names a run as a string — see `runIdOf`. */
+  readonly runId?: string
+}
+
+/** One thing the pump durably did, reported as data rather than as a log line. */
+export interface AgentJobOutcomeRow {
+  readonly jobId: string
+  readonly kind: JobKind
+  readonly runId?: string
+  readonly disposition: 'completed' | 'retry-scheduled' | 'failed' | 'cancelled'
+  readonly attempt: number
+}
+
+/**
+ * How the pump loop ended.
+ *
+ * `unexpected-kind` is unreachable by construction — the queue's own exclusion is the guard — and
+ * is here so the loop RECORDS that rather than trusting it. A pump that silently ran a kind it was
+ * not asked for is the elevation threat (T-413-45), and a value nobody can observe is not a guard.
+ */
+export type AgentJobsPumpStop = 'empty' | 'bound' | 'retry-scheduled' | 'unexpected-kind'
+
+export type PumpAgentJobsOutcome =
+  | {
+      readonly kind: 'pumped'
+      readonly only: JobKind
+      readonly ran: number
+      readonly outcomes: readonly AgentJobOutcomeRow[]
+      readonly stoppedOn: AgentJobsPumpStop
+      readonly excludedKinds: readonly JobKind[]
+    }
+  | AgentJobsRefusal
+
+export interface AgentJobsRefusal {
+  readonly kind: 'refused'
+  readonly reason: string
+  readonly holder?: { readonly pid: number; readonly leaseId: string; readonly epoch: number }
+  readonly message?: string
+}
+
+export type CancelAgentJobOutcome =
+  | { readonly kind: 'cancelled' }
+  | { readonly kind: 'cancel-requested' }
+  | { readonly kind: 'already-terminal'; readonly status: JobStatus }
+  | AgentJobsRefusal
+
+export interface ListAgentJobsOutcome {
+  readonly epoch: number
+  readonly jobs: readonly AgentJobRow[]
+}
+
+/** The durable half these ops operate on, plus the close that gives the database back. */
+export interface ComposedAgentJobs {
+  readonly jobs: Pick<LocalAgentJobs, 'store' | 'kinds' | 'queue' | 'model' | 'idSource'>
+  close(): Promise<void>
+}
+
+type MaintenanceCapabilities = typeof LOCAL_CURATION_CAPABILITIES.maintenance
+
+export interface AgentJobsOpsDeps {
+  composeJobs(): Promise<ComposedAgentJobs>
+  knowledgeRoot(): Promise<string>
+  readonly clock: ClockPort
+  readonly acquireWriterLease: MaintenanceCapabilities['acquireWriterLease']
+  readonly releaseLease: MaintenanceCapabilities['releaseLease']
+  readonly refreshWriterLeaseAuthority: MaintenanceCapabilities['refreshWriterLeaseAuthority']
+}
+
+/**
+ * The run a claimed job's payload names, if it names one as a string.
+ *
+ * The `job-dispatcher.ts` idiom verbatim, and the ONLY thing read out of a payload anywhere in
+ * this module (T-413-47). The payload is `unknown` by construction and every kind spells its own,
+ * so an id-shaped string under `runId` is the whole contract; anything else yields `undefined` and
+ * the key is omitted rather than emitted empty.
+ */
+function runIdOf(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined
+  const candidate = (payload as { runId?: unknown }).runId
+  return typeof candidate === 'string' ? candidate : undefined
+}
+
+export function defaultAgentJobsOpsDeps(configPath: string): AgentJobsOpsDeps {
+  const configDir = dirname(resolve(configPath))
+  const { acquireWriterLease, releaseLease, refreshWriterLeaseAuthority }
+    = LOCAL_CURATION_CAPABILITIES.maintenance
+
+  return {
+    composeJobs: async () => {
+      // Composed with NO `postRun`, deliberately. The shipped posture table folds an undeclared
+      // posture to `'no-masker'`, whose exclusion already names `curate-memory` — so the host's own
+      // queue could not claim the curator kind even if this file's exclusion vanished. Belt beside
+      // the braces below; the braces are what make the guarantee hold for the OTHER three kinds.
+      const host = composeCliLocalAgent({
+        agentQaRoot: join(configDir, '.agent-qa'),
+        configPath,
+        model: () => resolvePostRunJobModel(configPath),
+      })
+      const jobs = await host.jobs()
+      return { jobs, close: () => host.close() }
+    },
+    knowledgeRoot: async () => {
+      const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+      return resolveConfiguredKnowledgeRoot(config, configDir)
+    },
+    clock: { now: () => new Date().toISOString() },
+    acquireWriterLease,
+    releaseLease,
+    refreshWriterLeaseAuthority,
+  }
+}
+
+interface HeldLease {
+  readonly leaseId: string
+  readonly epoch: number
+}
+
+/**
+ * Acquire, heartbeat, run, release — `knowledge-maintain.ts`'s `withWriterLease` shape.
+ *
+ * The release is in a `finally` on every path, including the one where the composed host's own
+ * close throws: a leaked lease wedges every later leg of the campaign behind a `held` refusal that
+ * names a process which is no longer running.
+ */
+async function withWriterLease<T>(
+  deps: AgentJobsOpsDeps,
+  operation: (lease: HeldLease, composed: ComposedAgentJobs) => Promise<T>,
+): Promise<T | AgentJobsRefusal> {
+  const knowledgeRoot = await deps.knowledgeRoot()
+  const acquired = deps.acquireWriterLease(knowledgeRoot)
+  if (acquired.kind === 'held') {
+    return {
+      kind: 'refused',
+      reason: 'writer-lease-held',
+      holder: {
+        pid: acquired.holder.pid,
+        leaseId: acquired.holder.leaseId,
+        epoch: acquired.holder.epoch,
+      },
+    }
+  }
+  if (acquired.kind === 'refused') {
+    return { kind: 'refused', reason: acquired.reason, message: acquired.error.message }
+  }
+
+  const authority = { knowledgeRoot, leaseId: acquired.leaseId, epoch: acquired.epoch }
+  let heartbeatError: unknown
+  const heartbeatTimer = setInterval(() => {
+    if (heartbeatError !== undefined) return
+    try {
+      deps.refreshWriterLeaseAuthority(authority)
+    } catch (error) {
+      heartbeatError = error
+    }
+  }, WRITER_LEASE_HEARTBEAT_INTERVAL_MS)
+  heartbeatTimer.unref()
+
+  const composed = await deps.composeJobs()
+  try {
+    const value = await operation({ leaseId: acquired.leaseId, epoch: acquired.epoch }, composed)
+    if (heartbeatError !== undefined) throw heartbeatError
+    return value
+  } finally {
+    clearInterval(heartbeatTimer)
+    try {
+      await composed.close()
+    } finally {
+      deps.releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })
+    }
+  }
+}
+
+function outcomeRow(outcome: Extract<RunNextJobOutcome, { ran: true }>): AgentJobOutcomeRow {
+  const runId = runIdOf(outcome.payload)
+  return {
+    jobId: String(outcome.job.id),
+    kind: outcome.job.kind,
+    ...(runId === undefined ? {} : { runId }),
+    disposition: outcome.disposition,
+    attempt: outcome.job.attempts,
+  }
+}
+
+/**
+ * Drain `only`, and nothing else, under the writer lease.
+ *
+ * The exclusion is spelled ONCE, in the `createAgentJobQueue` call below. That is the whole
+ * mechanism: `unclaimableKinds` is frozen into the queue at construction and becomes the store's
+ * `claimNext(fence, { excludeKinds })` option, so an excluded row is never OFFERED. There is no
+ * "claimed then put back" window for a curator job to slip through, which is what makes D-06's
+ * "enqueued but NOT drained" a property of the selection rather than of this loop's discipline.
+ */
+export async function pumpAgentJobs(
+  { only }: { only: JobKind },
+  deps: AgentJobsOpsDeps,
+): Promise<PumpAgentJobsOutcome> {
+  return withWriterLease(deps, async (lease, { jobs }): Promise<PumpAgentJobsOutcome> => {
+    const excludedKinds: readonly JobKind[] = jobs.kinds
+      .list()
+      .map((declaration) => declaration.kind)
+      .filter((kind) => kind !== only)
+
+    // THE ONE PLACE THE D-06 KIND FILTER IS SPELLED (braces to the posture table's belt).
+    const onlyQueue: AgentJobQueue = createAgentJobQueue({
+      store: jobs.store,
+      registry: jobs.kinds,
+      clock: deps.clock,
+      idSource: jobs.idSource,
+      model: jobs.model,
+      unclaimableKinds: excludedKinds,
+    })
+
+    // The daemon's sequence verbatim (post-run-tail.ts, Pitfall 7): adopt the epoch the lease just
+    // minted, THEN return rows a dead holder left claimed. Safe here for the same reason it is safe
+    // there — exactly one fence-holder exists at a time, and this process is it.
+    const fence: JobStoreFence = await jobs.store.adoptEpoch(lease.epoch)
+    await onlyQueue.recoverAbandonedClaims({ fence })
+
+    const outcomes: AgentJobOutcomeRow[] = []
+    let stoppedOn: AgentJobsPumpStop = 'bound'
+    for (let pumped = 0; pumped < AGENT_JOBS_PUMP_BOUND; pumped += 1) {
+      const outcome = await onlyQueue.runNextJob({ fence })
+      if (!outcome.ran) {
+        stoppedOn = 'empty'
+        break
+      }
+      outcomes.push(outcomeRow(outcome))
+      if (outcome.job.kind !== only) {
+        // Unreachable by construction. Recorded rather than trusted: if it ever fires, the
+        // exclusion is not doing what this file claims and the operator must be told before the
+        // pump goes on claiming.
+        stoppedOn = 'unexpected-kind'
+        break
+      }
+      if (outcome.disposition === 'retry-scheduled') {
+        // Never sleep on a backoff. The row stays queued and whoever holds the lease next — the
+        // daemon, or the next campaign leg — picks it up.
+        stoppedOn = 'retry-scheduled'
+        break
+      }
+    }
+
+    return { kind: 'pumped', only, ran: outcomes.length, outcomes, stoppedOn, excludedKinds }
+  })
+}
+
+/**
+ * Every row the agent job store holds, in a deterministic order, with no payload body.
+ *
+ * Read-only, so no lease is taken: a listing that had to wait behind a running daemon would be
+ * useless in exactly the situation an operator reaches for it.
+ */
+export async function listAgentJobs(deps: AgentJobsOpsDeps): Promise<ListAgentJobsOutcome> {
+  const composed = await deps.composeJobs()
+  try {
+    const dump = await composed.jobs.store.dumpState()
+    const jobs: AgentJobRow[] = dump.jobs.map((row) => {
+      const runId = runIdOf(row.payload)
+      return {
+        id: row.id,
+        kind: row.kind,
+        status: row.status,
+        attempts: row.attempts,
+        claimed: row.claimed,
+        cancelRequested: row.cancelRequested,
+        ...(runId === undefined ? {} : { runId }),
+      }
+    })
+    jobs.sort((a, b) =>
+      a.status !== b.status
+        ? a.status.localeCompare(b.status)
+        : a.kind !== b.kind
+          ? a.kind.localeCompare(b.kind)
+          : a.id.localeCompare(b.id),
+    )
+    return { epoch: dump.epoch, jobs }
+  } finally {
+    await composed.close()
+  }
+}
+
+/**
+ * Ask the engine to cancel one job, under the same lease bracket the pump uses.
+ *
+ * Under the lease because a cancel is a WRITE against rows a drainer may be claiming, and the three
+ * outcomes it can have depend on the row's state at the instant of that write. This is the D-06
+ * disposal step's discard arm, and it operates on the agent job queue — the run queue's
+ * `agent-qa queue cancel` addresses a different store entirely (docs/queues.md).
+ */
+export async function cancelAgentJob(
+  jobId: string,
+  deps: AgentJobsOpsDeps,
+): Promise<CancelAgentJobOutcome> {
+  return withWriterLease(deps, async (lease, { jobs }): Promise<CancelAgentJobOutcome> => {
+    const fence = await jobs.store.adoptEpoch(lease.epoch)
+    const outcome = await jobs.queue.cancel({ jobId: asJobId(jobId), fence })
+    if (outcome.outcome === 'already-terminal') {
+      return { kind: 'already-terminal', status: outcome.status }
+    }
+    return { kind: outcome.outcome }
+  })
+}
