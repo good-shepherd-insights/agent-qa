@@ -11,7 +11,13 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { computeBatchKey, deriveCensus } from '@vostride/agent-qa-eval'
+import {
+  buildEvalReport,
+  committedFileText,
+  computeBatchKey,
+  computeCorpusDigest,
+  deriveCensus,
+} from '@vostride/agent-qa-eval'
 import type { CorpusCensus, JudgeIdentityBlock } from '@vostride/agent-qa-eval'
 import type { createModel, ModelProviderOverrides } from '@vostride/agent-qa-model'
 import {
@@ -35,12 +41,18 @@ import type {
   ServedBrief,
   StepEvidence,
 } from '@vostride/agent-qa-schema'
-import { committedCassettePath, committedLabelPath } from '@vostride/agent-qa-eval-local'
+import {
+  commitEvalReport,
+  committedCassettePath,
+  committedLabelPath,
+  readCommittedCorpus,
+} from '@vostride/agent-qa-eval-local'
 import {
   EvalNamedInputError,
   resolveEvalSession,
   runExtractVerb,
   runReplayVerb,
+  runCensusVerb,
   runReportVerb,
   runSeedVerb,
 } from '../../eval-session-composition.js'
@@ -1361,5 +1373,237 @@ describe('renderCensusMarkdown — byte-deterministic, counts-only projection (4
     expect(rendered).not.toMatch(/\d\s*%/)
     expect(rendered.toLowerCase()).not.toContain('threshold')
     expect(rendered.toLowerCase()).not.toContain('makes no claim')
+  })
+})
+
+// ---- 413-05 Task 2: runCensusVerb — the ONE census pipeline (D-13/D-14/D-15/D-16) -------------
+
+/**
+ * Byte-copied from the committed D-18 fixture's `judge` block (the same constant Plan 02's
+ * comparator cell carries):
+ * demo/init/agent-qa-eval/reports/358327d21294f77b91645e3cefde46ad12fe065422757372835447a41865a71e/report.json
+ *
+ * The in-place proof against the real file is the Task 3 real-root check; this fixture cell
+ * proves the cross-check WIRING, so the two can never drift without one of them reddening.
+ */
+const FIXTURE_JUDGE_BLOCK: JudgeIdentityBlock = {
+  confidenceThreshold: 'high',
+  familyOverride: 'same-family-allowed',
+  judgeFamily: 'openai',
+  judgeModelId: 'gpt-5.6-sol',
+  judgeVersion: 1,
+}
+
+const FIXTURE_BATCH_KEY = '358327d21294f77b91645e3cefde46ad12fe065422757372835447a41865a71e'
+const NO_JUDGE_BATCH_KEY = 'f'.repeat(64)
+
+/** A seeded committed root holding exactly the two fixture cassettes (the census's corpus). */
+async function seededCorpusFixture(): Promise<{
+  dir: string
+  configPath: string
+  session: EvalSession
+}> {
+  const { dir, configPath } = await writeFixture()
+  saveSeedRun(dir, 'run-alpha')
+  saveSeedRun(dir, 'run-beta')
+  const session = await sessionFor(configPath)
+  const seeded = await runSeedVerb(session)
+  expect(seeded.seededCount).toBe(2)
+  return { dir, configPath, session }
+}
+
+/** Commit one report into the fixture committed root under an explicit batchKey. */
+function commitFixtureReport(
+  dir: string,
+  batchKey: string,
+  judge: JudgeIdentityBlock | undefined,
+): void {
+  const report = { ...buildEvalReport([], judge), batchKey }
+  const outcome = commitEvalReport({
+    report,
+    markdown: `# fixture report ${batchKey}\n`,
+    committedRoot: resolve(dir, 'agent-qa-eval'),
+    reportOutputBaseDir: join(dir, '.agent-qa', 'eval', 'audit', 'report', batchKey),
+  })
+  expect(outcome.kind).toBe('committed')
+}
+
+function campaignManifest(): unknown {
+  return {
+    schemaVersion: 1,
+    phase: '413',
+    submoduleHead: 'c'.repeat(40),
+    legs: [
+      {
+        testId: 'growth::alpha',
+        testFile: 'tests/growth-alpha.yaml',
+        product: 'default',
+        runSlug: 'run-growth-alpha',
+        repeat: 0,
+        exitCode: 0,
+        aggregateVerdict: 'passed',
+        verdicts: [{ class: 'unknown', producer: 'analyze-run' }],
+        excluded: false,
+        seeded: true,
+        wallClockMs: 54_000,
+        modelCalls: 4,
+        promptTokens: 900,
+        completionTokens: 40,
+        steps: 3,
+        proofSteps: 3,
+      },
+      {
+        testId: 'growth::beta',
+        testFile: 'tests/growth-beta.yaml',
+        product: 'default',
+        runSlug: 'run-growth-beta',
+        repeat: 0,
+        exitCode: 1,
+        aggregateVerdict: 'failed',
+        verdicts: [{ class: 'flake', producer: 'deterministic-classifier' }],
+        excluded: true,
+        seeded: false,
+        wallClockMs: 449_000,
+        modelCalls: 3,
+        promptTokens: 334,
+        completionTokens: 16,
+        steps: 2,
+        proofSteps: 0,
+      },
+    ],
+  }
+}
+
+describe('runCensusVerb — static census over the committed root (413 D-13/D-14/D-15/D-16)', () => {
+  it('derives the per-product triple from a legacy-shaped committed root with no campaign', async () => {
+    const { dir, session } = await seededCorpusFixture()
+
+    const result = await runCensusVerb(session)
+
+    expect(result.entryCount).toBe(2)
+    expect(result.census.entryCount).toBe(2)
+    expect(result.census.products.default?.total).toBe(2)
+    // Proof coverage denominator is the loaded-cassette count; the fixture briefs carry no proof.
+    expect(result.census.products.default?.proofCoverage.denominator).toBe(2)
+    expect(result.census.products.default?.proofCoverage.numerator).toBe(0)
+    // The fixture handoff carries no retrieval rung — counted as legacy, never folded away (D-07).
+    expect(result.census.products.default?.rungMix['legacy-no-rung']).toBe(2)
+    expect(result.census.crossCheck).toEqual([])
+    expect(result.census.campaign).toEqual({ present: false })
+    expect(result.committed).toBeUndefined()
+    // The digest NAMES the corpus the census was derived from (D-15).
+    const read = readCommittedCorpus(resolve(dir, 'agent-qa-eval'))
+    expect(result.corpusDigest).toBe(computeCorpusDigest(read.snapshot.entries))
+    expect(result.census.corpusDigest).toBe(result.corpusDigest)
+    expect(result.productsSeen).toContain('default')
+  })
+
+  it('cross-checks EVERY committed report and prints the same-family refusal (D-18/D-20, SC3)', async () => {
+    const { dir, session } = await seededCorpusFixture()
+    commitFixtureReport(dir, FIXTURE_BATCH_KEY, FIXTURE_JUDGE_BLOCK)
+    commitFixtureReport(dir, NO_JUDGE_BATCH_KEY, undefined)
+
+    const result = await runCensusVerb(session)
+
+    const lines = result.census.crossCheck
+    expect(lines.map(line => line.batchKey)).toEqual([FIXTURE_BATCH_KEY, NO_JUDGE_BATCH_KEY])
+    for (const line of lines) {
+      // RESEARCH F7: a report carries a batchKey, never its cassette-id list — the two
+      // populations are PRINTED side by side and never asserted equal.
+      expect(line.membershipComparable).toBe(false)
+      expect(line.corpusCassetteCount).toBe(2)
+      expect(line.designatedBy).toEqual([])
+    }
+    const sameFamily = lines[0]!
+    expect(sameFamily.comparator.ok).toBe(false)
+    expect(sameFamily.comparator.ok === false && sameFamily.comparator.refusal.judgeModelId).toBe(
+      'gpt-5.6-sol',
+    )
+    expect(lines[1]!.comparator).toEqual({ ok: true })
+
+    // The refusal and BOTH reconciliation lines are visible notices — never a silent omission.
+    expect(
+      result.notices.some(notice => notice.startsWith('baseline comparator refused: same-family-override')),
+    ).toBe(true)
+    for (const batchKey of [FIXTURE_BATCH_KEY, NO_JUDGE_BATCH_KEY]) {
+      expect(result.notices).toContain(
+        `cross-check ${batchKey}: report decisions 0 vs corpus cassettes 2 `
+          + '— batch membership differs (batchKey only)',
+      )
+    }
+
+    // A committed pointer naming a report designates it (D-19); the census states who.
+    const baselinesDir = join(dir, 'agent-qa-eval', 'reports', 'baselines')
+    await mkdir(baselinesDir, { recursive: true })
+    await writeFile(
+      join(baselinesDir, 'fixture-profile.json'),
+      `${JSON.stringify(
+        { schemaVersion: 1, profileKey: 'fixture-profile', batchKey: NO_JUDGE_BATCH_KEY },
+        null,
+        2,
+      )}\n`,
+    )
+
+    const designated = await runCensusVerb(session)
+    const designatedLine = designated.census.crossCheck.find(
+      line => line.batchKey === NO_JUDGE_BATCH_KEY,
+    )!
+    expect(designatedLine.designatedBy).toEqual(['fixture-profile'])
+  })
+
+  it('folds a guarded --campaign manifest and rejects a widened one as a typed error (D-16)', async () => {
+    const { dir, session } = await seededCorpusFixture()
+    const manifestPath = join(dir, 'campaign.json')
+    await writeFile(manifestPath, `${JSON.stringify(campaignManifest(), null, 2)}\n`)
+
+    const result = await runCensusVerb(session, { campaign: manifestPath })
+
+    expect(result.campaignManifest).toBe(manifestPath)
+    const campaign = result.census.campaign
+    expect(campaign.present).toBe(true)
+    expect(campaign.present === true && campaign.legs).toBe(2)
+    expect(campaign.present === true && campaign.runsSeeded).toBe(1)
+    expect(campaign.present === true && campaign.runsExcluded).toBe(1)
+    expect(campaign.present === true && campaign.modelCalls).toBe(7)
+    const block = result.census.products.default!
+    expect(block.runsExcluded.flake).toBe(1)
+    expect(block.runsExcludedByProducer['deterministic-classifier']).toBe(1)
+    expect(block.runsSeeded).toBe(1)
+    expect(block.repeatCounts['growth::alpha']).toBe(1)
+    expect(block.repeatCounts['growth::beta']).toBe(1)
+
+    // T-413-21: a widened manifest is a TypeError, never a silently dropped tally.
+    const widened = { ...(campaignManifest() as Record<string, unknown>), smuggled: true }
+    const widenedPath = join(dir, 'campaign-widened.json')
+    await writeFile(widenedPath, `${JSON.stringify(widened, null, 2)}\n`)
+    await expect(runCensusVerb(session, { campaign: widenedPath })).rejects.toThrow(
+      /^campaign manifest rejected:/,
+    )
+  })
+
+  it('--commit writes census.json + census.md once and reports unchanged on re-derivation (D-15)', async () => {
+    const { dir, session } = await seededCorpusFixture()
+
+    const first = await runCensusVerb(session, { commit: true })
+
+    expect(first.committed?.kind).toBe('committed')
+    expect(first.committed).toMatchObject({ json: 'written', markdown: 'written' })
+    const censusDir = join(
+      dir,
+      'agent-qa-eval',
+      'reports',
+      'census',
+      slugBranch(first.corpusDigest),
+    )
+    expect(existsSync(join(censusDir, 'census.json'))).toBe(true)
+    expect(existsSync(join(censusDir, 'census.md'))).toBe(true)
+    // census.json is eval core's ONE serializer over the DTO — nothing re-serialises it here.
+    expect(await readFile(join(censusDir, 'census.json'), 'utf-8')).toBe(
+      committedFileText(first.census),
+    )
+
+    const second = await runCensusVerb(session, { commit: true })
+    expect(second.committed).toMatchObject({ json: 'unchanged', markdown: 'unchanged' })
+    expect(second.corpusDigest).toBe(first.corpusDigest)
   })
 })
