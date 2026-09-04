@@ -36,10 +36,13 @@ import {
 import type {
   ArtifactRef,
   CompletedRunHandoff,
+  MemberTestOutcome,
+  RunAnalysisArtifact,
   ScopeKey,
   ScreenState,
   ServedBrief,
   StepEvidence,
+  Verdict,
 } from '@vostride/agent-qa-schema'
 import {
   commitEvalReport,
@@ -213,6 +216,10 @@ function buildHandoff(input: {
   withCachedStep?: boolean
   schemaVersion?: number
   stepText?: string
+  /** 413-06 D-04: the member outcome the deterministic floor keys its verdict domain off. */
+  outcome?: MemberTestOutcome
+  /** 413-06 D-04: the persisted deterministic classification (a passed+retry member reads flake). */
+  rootCause?: Verdict
 }): CompletedRunHandoff {
   const scope = input.scope ?? SUITE_SCOPE
   const steps = [
@@ -231,7 +238,7 @@ function buildHandoff(input: {
     scope,
     buildOrdinal: 11,
     executionContext: 'ci',
-    aggregateVerdict: 'passed',
+    aggregateVerdict: input.outcome === 'failed' ? 'failed' : 'passed',
     configDigests: { suiteConfigDigest: 'd'.repeat(64), testConfigDigest: 'e'.repeat(64) },
     startedAt: 1_725_000_000_000,
     endedAt: 1_725_000_001_000,
@@ -241,7 +248,8 @@ function buildHandoff(input: {
         testName: 'Eval CLI extract fixture',
         filePath: 'eval-cli.spec.yaml',
         testIndex: 0,
-        outcome: 'passed',
+        outcome: input.outcome ?? 'passed',
+        ...(input.rootCause === undefined ? {} : { rootCause: input.rootCause }),
         steps,
       },
     ],
@@ -857,11 +865,20 @@ describe('runReportVerb — one batch, one report, one headline (D-13/D-14)', ()
 function saveSeedRun(
   dir: string,
   runId: string,
-  options: { withPairSkipStep?: boolean } = {},
+  options: {
+    withPairSkipStep?: boolean
+    outcome?: MemberTestOutcome
+    rootCause?: Verdict
+  } = {},
 ): void {
   const root = join(dir, '.agent-qa')
   const ref = new FsEvidenceArtifactStore({ root, runId }).persistDecisionScreenshot(BLOB_BYTES)
-  const handoff = buildHandoff({ runId, screenshotRef: ref })
+  const handoff = buildHandoff({
+    runId,
+    screenshotRef: ref,
+    ...(options.outcome === undefined ? {} : { outcome: options.outcome }),
+    ...(options.rootCause === undefined ? {} : { rootCause: options.rootCause }),
+  })
   for (const test of handoff.tests) {
     for (const testStep of test.steps) {
       for (const subAction of testStep.subActions) {
@@ -887,6 +904,83 @@ function saveSeedRun(
     }
   }
   new FsHandoffStore({ root, runId }).save(handoff)
+}
+
+/**
+ * 413-06 D-04 fixtures: the run's persisted analysis artifact (389 D-09) beside its handoff, and
+ * the deterministic classification a retried-but-passed member carries on the handoff itself.
+ */
+function analysisArtifactFixture(
+  runId: string,
+  verdict: { class: Verdict['class']; producer: Verdict['producer'] },
+): RunAnalysisArtifact {
+  return {
+    schemaVersion: 1,
+    runId,
+    verdicts: [
+      {
+        class: verdict.class,
+        producer: verdict.producer,
+        confidence: 0.9,
+        evidence: {
+          citedSteps: [],
+          citedAnchors: [],
+          citedArtifacts: [],
+          rationale: 'fixture analysis verdict',
+        },
+        memoryMisdirectionRuledOut: true,
+        perTest: 0,
+      },
+    ],
+    parts: [
+      {
+        perTest: 0,
+        groundingQuote: { source: 'test-outcome', quote: 'fixture' },
+        discriminator: 'fixture discriminator',
+        nextAction: 'fixture next action',
+        links: [],
+      },
+    ],
+  }
+}
+
+function flakeRootCause(): Verdict {
+  return {
+    class: 'flake',
+    producer: 'deterministic-classifier',
+    confidence: 0.5,
+    evidence: {
+      citedSteps: [0],
+      citedAnchors: [],
+      citedArtifacts: [],
+      rationale: 'passed on retry',
+    },
+    memoryMisdirectionRuledOut: true,
+    perTest: 0,
+  }
+}
+
+function testBugRootCause(): Verdict {
+  return {
+    class: 'test_bug',
+    producer: 'deterministic-classifier',
+    confidence: 0.7,
+    evidence: {
+      citedSteps: [0],
+      citedAnchors: [],
+      citedArtifacts: [],
+      rationale: 'assertion never matched',
+    },
+    memoryMisdirectionRuledOut: true,
+    perTest: 0,
+  }
+}
+
+/** Write `analysis.json` beside the run's handoff — raw text so a corrupt file is expressible. */
+async function saveAnalysis(dir: string, runId: string, text: string): Promise<void> {
+  const runDir = join(dir, '.agent-qa', RUNS_SUBDIR, slugBranch(runId))
+  await mkdir(runDir, { recursive: true })
+  await writeFile(join(runDir, 'analysis.json'), text)
 }
 
 describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/D-16/D-17)', () => {
@@ -960,6 +1054,122 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     // The selfHeal step's decision belongs to the pair channel, so silver excludes it too.
     expect(result.seededCount).toBe(0)
     expect(result.silverExclusions).toBeGreaterThan(0)
+  })
+
+  // ---- 413-06 Task 1: D-09 forward relative paths + the D-04 verdict filter -------------------
+
+  it('writes run_links.handoffPath config-relative for every fresh entry (D-09 forward)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    saveSeedRun(dir, 'run-beta')
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session)
+    expect(result.seededCount).toBe(2)
+
+    const read = readCommittedCorpus(resolve(dir, 'agent-qa-eval'))
+    expect(read.snapshot.entries).toHaveLength(2)
+    for (const entry of read.snapshot.entries) {
+      // T-413-27: the ONE seeding site relativises against the config dir, so no home-directory
+      // path can ever be re-seeded into the committed root (the L1 hygiene leg's forward half).
+      expect(entry.run_links.handoffPath).toBe(
+        `.agent-qa/runs/${entry.run_links.runSlug}/${HANDOFF_FILE}`,
+      )
+      expect(entry.run_links.handoffPath.startsWith('/')).toBe(false)
+      expect(entry.run_links.handoffPath).not.toContain(dir)
+    }
+  })
+
+  it('excludes a deterministic flake run with typed verdicts and seeds nothing for it (D-04)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-flaky', { rootCause: flakeRootCause() })
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session)
+
+    expect(result.seededCount).toBe(0)
+    expect(result.handoffsSeeded).toBe(0)
+    expect(result.runsAdmitted).toEqual([])
+    expect(result.runsExcluded).toEqual([
+      {
+        runSlug: slugBranch('run-flaky'),
+        product: 'default',
+        verdicts: [{ class: 'flake', producer: 'deterministic-classifier' }],
+      },
+    ])
+    // The exclusion runs BEFORE the write-once root is touched: nothing landed for the run.
+    const read = readCommittedCorpus(resolve(dir, 'agent-qa-eval'))
+    expect(read.snapshot.entries).toEqual([])
+  })
+
+  it('excludes an analyze-run environment verdict read from analysis.json (D-04/389 D-10)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-env')
+    await saveAnalysis(
+      dir,
+      'run-env',
+      `${JSON.stringify(analysisArtifactFixture('run-env', {
+        class: 'environment',
+        producer: 'analyze-run',
+      }), null, 2)}\n`,
+    )
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session)
+
+    expect(result.seededCount).toBe(0)
+    expect(result.runsExcluded).toEqual([
+      {
+        runSlug: slugBranch('run-env'),
+        product: 'default',
+        verdicts: [{ class: 'environment', producer: 'analyze-run' }],
+      },
+    ])
+  })
+
+  it('admits a clean run and a test_bug run, listing each admitted runs verdict producer (D-04)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-clean')
+    saveSeedRun(dir, 'run-testbug', { outcome: 'failed', rootCause: testBugRootCause() })
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session)
+
+    expect(result.runsExcluded).toEqual([])
+    // D-04 excludes EXACTLY three classes — test_bug is an attributable failure and stays in.
+    expect(result.runsAdmitted).toEqual([
+      {
+        runSlug: slugBranch('run-clean'),
+        product: 'default',
+        verdicts: [],
+      },
+      {
+        runSlug: slugBranch('run-testbug'),
+        product: 'default',
+        verdicts: [{ class: 'test_bug', producer: 'deterministic-classifier' }],
+      },
+    ])
+    // The clean run still seeds its single verified-pass silver case, exactly as before.
+    expect(result.seededCount).toBe(1)
+  })
+
+  it('treats an unreadable analysis.json as artifact-absent with a notice, never a skip (T-413-26)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    await saveAnalysis(dir, 'run-alpha', 'not json')
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session)
+
+    // The deterministic floor answers instead — the run seeds and is never skipped.
+    expect(result.runsSkipped).toEqual([])
+    expect(result.seededCount).toBe(1)
+    expect(result.runsAdmitted).toHaveLength(1)
+    expect(
+      result.notices.some(
+        notice => notice.includes(slugBranch('run-alpha')) && notice.includes('analysis.json'),
+      ),
+    ).toBe(true)
   })
 })
 
