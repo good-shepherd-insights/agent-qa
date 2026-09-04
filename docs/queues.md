@@ -49,8 +49,9 @@ the disposal step, which lists it with `agent-qa agent-jobs list` and discards i
 `agent-qa agent-jobs cancel <jobId>`).
 
 `agent-qa agent-jobs requeue <jobId>` returns a `done`, `failed` or `cancelled` row to `queued` with
-its attempts reset and its checkpoint records forgotten in BOTH media — the sqlite rows and the
-checkpoint files. The forget is the point, not a tidy-up. A resumed job reads the latest checkpoint
+its attempts reset and everything its last attempt recorded forgotten in ALL THREE durable media —
+the checkpoint rows, the checkpoint files, and the chain-terminal notification that attempt minted
+for the run the job's payload names. The forget is the point, not a tidy-up. A resumed job reads the latest checkpoint
 it recorded across attempts, so a reset that kept them would replay whatever the previous attempt
 claimed to have authored: that is exactly how 19 `analyze-run` rows in the Phase 413 campaign
 reported `completed` while writing no analysis at all, and a status-only requeue would have

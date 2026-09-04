@@ -203,6 +203,23 @@ const SCHEMA_STATEMENTS = [
 /** The statuses a job never leaves. A cancel arriving at one of them moves nothing. */
 const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['done', 'failed', 'cancelled']
 
+/**
+ * The run a job's payload column names, if it names one as a non-empty string.
+ *
+ * `chainTerminalFor`'s predicate verbatim (`engine.ts`), and it has to be verbatim: the key that
+ * function derives IS the `notifications.run_id` a terminal writes, because `dedupeKey` is the
+ * run id and nothing else. A looser reader here would disown a receipt no requeue is entitled to
+ * disown; a stricter one would leave behind a receipt `ON CONFLICT (run_id) DO NOTHING` can never
+ * replace. The column is bytes this store's own `enqueue` wrote with `JSON.stringify`, read the
+ * same way `dumpRow` reads it.
+ */
+function runIdOfPayloadColumn(payload: unknown): string | undefined {
+  const record = JSON.parse(String(payload)) as unknown
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) return undefined
+  const runId = (record as { runId?: unknown }).runId
+  return typeof runId === 'string' && runId !== '' ? runId : undefined
+}
+
 function toNumber(value: unknown): number {
   return typeof value === 'bigint' ? Number(value) : Number(value)
 }
@@ -356,6 +373,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   const selectNotifications = db.prepare(
     'SELECT run_id, payload, created_at FROM notifications ORDER BY run_id ASC',
   )
+  const deleteNotificationForRun = db.prepare('DELETE FROM notifications WHERE run_id = ?')
 
   function inTransaction<T>(body: () => T): T {
     db.exec('BEGIN IMMEDIATE')
@@ -668,6 +686,18 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
           .all(String(jobId))
           .map((checkpoint) => String(checkpoint.checkpoint_id))
         deleteCheckpointsForJob.run(String(jobId))
+        // The THIRD medium, and the one that cannot be corrected later. If this row's last
+        // attempt landed the chain terminal, `recordChainTerminal` wrote a `notifications` row
+        // keyed on the run this payload names — and `insertNotification` is
+        // `ON CONFLICT (run_id) DO NOTHING`, so a receipt left here wins forever: the re-run's
+        // real handler chains a successor, which makes `chainTerminalFor` answer `undefined`
+        // and offer no replacement at all. Leaving it would publish "this run's chain
+        // terminated with these values" over an attempt whose every other trace this very
+        // transaction is deleting. Inside the transaction with the rows for the same reason
+        // they are: the three media are one disowning, or the crash between them is a state
+        // recovery has no vocabulary for.
+        const requeuedRun = runIdOfPayloadColumn(row.payload)
+        if (requeuedRun !== undefined) deleteNotificationForRun.run(requeuedRun)
         markRequeued.run(now, String(jobId))
         return { outcome: 'requeued', discard }
       })

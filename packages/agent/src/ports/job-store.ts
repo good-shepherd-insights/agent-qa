@@ -180,12 +180,17 @@ export type JobCancelOutcome =
  * rows reached `done` with a checkpoint recorded and nothing authored — a completion the
  * queue has no vocabulary to disown.
  *
- * `requeued` returns the row to `queued` with its attempts reset AND its checkpoint history
- * FORGOTTEN in both media, because the two halves are one remedy. `readCheckpoint` resolves
- * the LATEST recorded value across attempts, so a reset that kept the stand-in's
- * `verdicts-authored` row would hand the real handler the stand-in's value on the next
- * attempt and it would report completion having written nothing — the very substitution the
- * requeue exists to undo, performed a second time by the recovery path.
+ * `requeued` returns the row to `queued` with its attempts reset AND everything its last
+ * attempt recorded FORGOTTEN in all three durable media, because they are one remedy rather
+ * than three tidy-ups. The checkpoint rows and the checkpoint files go because `readCheckpoint`
+ * resolves the LATEST recorded value across attempts, so a reset that kept the stand-in's
+ * `verdicts-authored` row would hand the real handler the stand-in's value on the next attempt
+ * and it would report completion having written nothing — the very substitution the requeue
+ * exists to undo, performed a second time by the recovery path. The chain-terminal notification
+ * the attempt minted for the run this job's payload names goes for a stronger reason: the
+ * store's insert dedupes on the run (`ON CONFLICT (run_id) DO NOTHING`), so a receipt that
+ * survives a requeue can never be replaced by the re-run — it would keep publishing an outcome
+ * for an attempt whose every other trace the same transaction just deleted.
  *
  * What the requeue does NOT touch is the row's identity: the id and the
  * `(kind, idempotencyKey)` pair survive, so the chain identity `chainJobIdsForRun` derives

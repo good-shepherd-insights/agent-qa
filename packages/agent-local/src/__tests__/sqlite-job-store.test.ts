@@ -26,7 +26,13 @@ import type {
   JobInsert,
   JobStoreFence,
 } from '@vostride/agent-qa-agent'
-import { asJobId, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import {
+  asJobId,
+  canonicalJson,
+  CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  sha256hex,
+} from '@vostride/agent-qa-schema'
+import type { RunNotification } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
@@ -82,6 +88,25 @@ function checkpointRecord(
 
 interface SqliteJobStoreTestHooks {
   readonly beforeCheckpointFilePublish?: () => void
+}
+
+/**
+ * A `RunNotification` shaped exactly as `buildChainTerminalNotification` shapes one.
+ *
+ * Written out here rather than imported because the store is the boundary under test and it
+ * receives this record as OPAQUE bytes from the engine: a fixture built by the builder would
+ * assert the store against the same code that produced the input. The guard on the way back out
+ * of `listNotifications` is what pins the shape.
+ */
+function notification(runId: string, outcome: 'done' | 'failed'): RunNotification {
+  const status = outcome === 'done' ? ('done' as const) : ('failed' as const)
+  return {
+    schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+    runId,
+    outcome,
+    verdictSummary: { total: 0, byClass: {} },
+    stages: { analysis: { status }, curation: { status } },
+  }
 }
 
 function openStore(
@@ -1250,6 +1275,76 @@ describe('agent job store: requeueTerminal (413-13, the stand-in forget)', () =>
       claimed: true,
       job: { id: 'job_a', status: 'queued', attempts: 1 },
     })
+  })
+
+  // CR-01. The stand-in's attempt was recorded in THREE durable media, not two: the checkpoint
+  // rows, the checkpoint files, and the `notifications` row its chain terminal minted. The cell
+  // above asserts the first two. This one asserts the third, and it is the one the other cells
+  // structurally cannot see — they call `completeAndChain(id, [], fence)` with no `chainTerminal`
+  // argument, so no notification is ever written in their fixture and a store that never deleted
+  // one would satisfy every expectation they make.
+  //
+  // The third medium is also the only one that cannot be corrected afterwards, which is why
+  // leaving it is worse than leaving a checkpoint. `insertNotification` is
+  // `ON CONFLICT (run_id) DO NOTHING` — by design, so a crash-replayed terminal dedupes — and the
+  // re-run's REAL analyze-run handler chains a successor, so `chainTerminalFor` returns
+  // `undefined` and never offers a replacement record at all. A receipt left behind therefore
+  // wins forever, naming an attempt whose every other trace the operator just deleted, on a
+  // surface that renders it (`post-processing-reader.ts` -> the dashboard and CLI status).
+  it('requeueTerminal forgets the chain-terminal notification, the third durable medium', async () => {
+    const run = 'r_notified'
+    await store.enqueue(insert('job_n', run, { runId: run }))
+    await store.claimNext(fence) // `job_a`, enqueued first by the fixture
+    await store.claimNext(fence) // `job_n`
+    await store.publishCheckpoint(
+      asJobId('job_n'),
+      'verdicts-authored',
+      checkpointRecord(asJobId('job_n'), 'verdicts-authored', { verdicts: ['stand-in'] }),
+      fence,
+    )
+    // The chain terminal the stand-in's completion minted. `dedupeKey` IS the run id, which is
+    // what makes the payload's `runId` the key this requeue has to address (engine.ts's
+    // `chainTerminalFor`); the absent successor is skipped by `recordChainTerminal`'s candidate
+    // walk, and the head exists and is terminal, so the row is written.
+    await store.completeAndChain(asJobId('job_n'), [], fence, {
+      dedupeKey: run,
+      candidateJobIds: [asJobId('job_n'), asJobId('job_n->curate-memory')],
+      payloadJson: canonicalJson(notification(run, 'failed')),
+    })
+
+    // The precondition, asserted rather than assumed.
+    expect(await store.listNotifications()).toMatchObject([{ runId: run }])
+
+    // The forget is in the SAME fenced transaction as the status reset and the checkpoint-row
+    // delete, so a writer that lost its lease moves this medium no more than it moves the others.
+    const current = await store.adoptEpoch(2)
+    await expect(store.requeueTerminal(asJobId('job_n'), fence)).rejects.toBeInstanceOf(
+      StaleJobStoreEpochError,
+    )
+    expect(await store.listNotifications()).toMatchObject([{ runId: run }])
+
+    expect(await store.requeueTerminal(asJobId('job_n'), current)).toEqual({ outcome: 'requeued' })
+    expect(await store.listNotifications()).toEqual([])
+
+    // And the receipt is genuinely REPLACEABLE now, which is the point rather than a bonus: the
+    // insert that `ON CONFLICT (run_id) DO NOTHING` would otherwise have swallowed forever writes
+    // the re-run's record instead.
+    await store.claimNext(current)
+    await store.completeAndChain(asJobId('job_n'), [], current, {
+      dedupeKey: run,
+      candidateJobIds: [asJobId('job_n'), asJobId('job_n->curate-memory')],
+      payloadJson: canonicalJson(notification(run, 'done')),
+    })
+    expect(await store.listNotifications()).toMatchObject([
+      { runId: run, payload: { outcome: 'done' } },
+    ])
+
+    // The paired control, and the reason the delete is keyed on the PAYLOAD rather than on the
+    // job id: `job_a` names no run, so requeueing it disowns nothing. A delete that swept by job
+    // would pass every assertion above and destroy an unrelated run's receipt here.
+    await store.failAndChain(asJobId('job_a'), { kind: 'permanent', reason: 'gave up' }, [], current)
+    expect(await store.requeueTerminal(asJobId('job_a'), current)).toEqual({ outcome: 'requeued' })
+    expect(await store.listNotifications()).toMatchObject([{ runId: run }])
   })
 
   it('requeueTerminal refuses a queued or claimed row as not-terminal and moves nothing', async () => {

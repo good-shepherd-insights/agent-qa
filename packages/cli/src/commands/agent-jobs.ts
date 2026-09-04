@@ -130,9 +130,11 @@ function renderCancel(jobId: string, result: CancelAgentJobOutcome): string {
  * What a requeue did, in the operator's words.
  *
  * `not-terminal` is DATA and exits 0: a driver that read "this row is queued" as a command failure
- * would abort a campaign over a row somebody else legitimately owns. The requeued line names both
- * halves of what changed — the attempts and the checkpoints — because forgetting the second is the
- * defect this verb exists to undo, and it points at the pump rather than performing one.
+ * would abort a campaign over a row somebody else legitimately owns. The requeued line names every
+ * medium the forget touched — the attempts, the checkpoints and the run's chain-terminal
+ * notification — because a line that named fewer than the verb clears is how an operator learns
+ * about the third one from a stale dashboard receipt instead of from here. It points at the pump
+ * rather than performing one.
  */
 function renderRequeue(jobId: string, result: RequeueAgentJobOutcome): string {
   if (result.kind === 'not-terminal') {
@@ -140,7 +142,8 @@ function renderRequeue(jobId: string, result: RequeueAgentJobOutcome): string {
       + '\u2014 only a done, failed or cancelled agent job can be requeued'
   }
   return `agent job queue: ${jobId} requeued `
-    + '(attempts reset, checkpoints forgotten; pump --only <kind> to run it)'
+    + '(attempts reset, checkpoints and run notification forgotten; '
+    + 'pump --only <kind> to run it)'
 }
 
 function reportError(verb: string, error: unknown): void {
