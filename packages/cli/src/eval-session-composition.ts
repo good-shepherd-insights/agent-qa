@@ -18,7 +18,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import {
   HANDOFF_FILE,
   RUNS_SUBDIR,
@@ -82,7 +82,18 @@ import type {
   ModelProviderOverrides,
   ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
-import { sha256hex } from '@vostride/agent-qa-schema'
+import {
+  ANALYSIS_FILE,
+  admitAnalysisArtifactForRun,
+  guardRunAnalysisArtifact,
+  resolveRunVerdicts,
+  sha256hex,
+} from '@vostride/agent-qa-schema'
+import type {
+  CompletedRunHandoff,
+  RunAnalysisArtifact,
+  Verdict,
+} from '@vostride/agent-qa-schema'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { resolveConfig } from './config.js'
 import { renderCensusMarkdown } from './eval-census-render.js'
@@ -655,7 +666,32 @@ export async function resolveReplayPlanner(
   return resolveNamedProfile(plannerName, session.configPath)
 }
 
-// ---- the seed verb (372-07, D-01/D-12/D-16/D-17) -----------------------------------------------
+// ---- the seed verb (372-07, D-01/D-12/D-16/D-17; 413-06, D-04/D-09) ---------------------------
+
+/**
+ * 413 D-04: the three verdict classes that keep a run OUT of the measurement corpus. A run whose
+ * failure is not attributable to the product under test — an overlay-interrupted or app-drifted
+ * environment, a timeout, a retry-passed flake — measures the harness, not the planner, so it is
+ * excluded and COUNTED rather than quietly admitted. Spelled locally on purpose: the same set
+ * exists as `NON_ATTRIBUTABLE_FAILURES` in the agent package's canary fold
+ * (`packages/agent/src/.../emit-canary-outcomes.ts`), and importing across that boundary would
+ * mint an edge the arch contract forbids — the two spellings are the same closed vocabulary.
+ */
+const EXCLUDED_VERDICT_CLASSES: ReadonlySet<Verdict['class']> = new Set<Verdict['class']>([
+  'flake',
+  'environment',
+  'timeout',
+])
+
+/** One run's resolved verdicts flattened to the two fields the DTO and the census print (D-04). */
+export interface SeedRunVerdictRow {
+  /** The run dir name the sweep visited. */
+  runSlug: string
+  /** The run's resolved product partition — the same key `--product` narrows on. */
+  product: string
+  /** Every resolved verdict's class and PRODUCER, so a floor answer is never mistaken for one. */
+  verdicts: { class: Verdict['class']; producer: Verdict['producer'] }[]
+}
 
 /** The seed verb's one DTO — per-handoff SeedingReports aggregated field-wise (D-04). */
 export interface SeedVerbResult {
@@ -665,6 +701,20 @@ export interface SeedVerbResult {
   runsSkipped: { runSlug: string; reason: string }[]
   /** Runs whose product partition differed from `--product`. */
   runsFiltered: number
+  /**
+   * 413 D-04: runs kept OUT of the corpus because a resolved verdict fell in
+   * {@link EXCLUDED_VERDICT_CLASSES}. Each row names the run, its product and EVERY resolved
+   * verdict's class + producer — the census prints these, so an exclusion is never a silent drop.
+   */
+  runsExcluded: SeedRunVerdictRow[]
+  /**
+   * 413 D-04: runs the filter admitted, carrying the verdicts they were admitted WITH — an empty
+   * array is an honest clean run, and a present producer discloses whether the classification
+   * came from `analyze-run` or the deterministic floor.
+   */
+  runsAdmitted: SeedRunVerdictRow[]
+  /** Stderr-destined honesty lines: an unreadable analysis.json folded to the floor (T-413-26). */
+  notices: string[]
   /** Handoffs whose SeedingPlan executed against the committed root. */
   handoffsSeeded: number
   /** Cases with at least one newly written file, summed across reports. */
@@ -723,6 +773,9 @@ export async function runSeedVerb(
     runsSwept: runSlugs.length,
     runsSkipped: [],
     runsFiltered: 0,
+    runsExcluded: [],
+    runsAdmitted: [],
+    notices: [],
     handoffsSeeded: 0,
     seededCount: 0,
     unchangedCount: 0,
@@ -741,13 +794,27 @@ export async function runSeedVerb(
       const handoffPath = resolve(runsRoot, runSlug, HANDOFF_FILE)
       // The version-guarded loader is the ONE handoff read path (D-02 typed per-run skips).
       const handoff = loadCompletedRunHandoff(handoffPath)
-      if (
-        filters.product !== undefined
-        && resolveProductPartition(handoff.scope) !== filters.product
-      ) {
+      const product = resolveProductPartition(handoff.scope)
+      // The product filter runs BEFORE the verdict read so `--product` still narrows the sweep
+      // and a partition nobody asked about costs no artifact read.
+      if (filters.product !== undefined && product !== filters.product) {
         result.runsFiltered++
         continue
       }
+      // 413 D-04: resolve this run's verdicts and decide admission BEFORE anything touches the
+      // write-once root — an admitted run cannot be un-seeded without a reviewed deletion, so the
+      // filter can only ever run in front of the commit, never after it.
+      const artifact = readRunAnalysisArtifact(runsRoot, runSlug, handoff.runId, result.notices)
+      const row: SeedRunVerdictRow = {
+        runSlug,
+        product,
+        verdicts: resolveSeedVerdictRows(artifact, handoff),
+      }
+      if (row.verdicts.some(verdict => EXCLUDED_VERDICT_CLASSES.has(verdict.class))) {
+        result.runsExcluded.push(row)
+        continue
+      }
+      result.runsAdmitted.push(row)
       const extraction = extractRunCassettes({
         handoff,
         artifacts: new FsRunArtifactSource({ root: agentQaRoot, runId: handoff.runId }),
@@ -756,7 +823,10 @@ export async function runSeedVerb(
       const plan = buildSeedingPlan({
         handoff,
         cassettes: extraction.cassettes,
-        handoffPath,
+        // 413 D-09 forward: the committed entry records a CONFIG-RELATIVE handoff location. The
+        // absolute path above is what this process loads; the string that lands in the write-once
+        // root can never carry a home directory across a machine boundary (T-413-27, hygiene L1).
+        handoffPath: relative(session.configDir, handoffPath),
         params: {
           ...(silverPerTestCap !== undefined ? { silverPerTestCap } : {}),
         },
@@ -792,6 +862,78 @@ export async function runSeedVerb(
   }
 
   return result
+}
+
+/**
+ * One run's persisted analysis artifact, loaded from its run dir through the ONE schema guard
+ * (389 D-09). Absence is the deterministic floor and costs no notice. A PRESENT file recording
+ * ANOTHER run's id is refused by identity (`admitAnalysisArtifactForRun`, G-389-3A) so a copied
+ * run directory can never flip this run's admission off someone else's verdicts.
+ *
+ * A file that cannot be read, parsed or guarded is a NOTICE plus the floor — never a per-run skip
+ * (T-413-26). Skipping would let a single hand-edited byte remove a run from the corpus silently,
+ * which is precisely the tampering the guard exists to surface.
+ */
+function readRunAnalysisArtifact(
+  runsRoot: string,
+  runSlug: string,
+  runId: string,
+  notices: string[],
+): RunAnalysisArtifact | undefined {
+  const path = join(runsRoot, runSlug, ANALYSIS_FILE)
+  if (!existsSync(path)) return undefined
+  try {
+    const admission = admitAnalysisArtifactForRun(
+      guardRunAnalysisArtifact(JSON.parse(readFileSync(path, 'utf8'))),
+      runId,
+    )
+    if (admission.kind === 'admitted') return admission.artifact
+    notices.push(
+      `${ANALYSIS_FILE} for ${runSlug} records run ${admission.recordedRunId}, not `
+        + `${admission.resolvingRunId} — deterministic floor used`,
+    )
+    return undefined
+  } catch (err) {
+    notices.push(
+      `${ANALYSIS_FILE} unreadable for ${runSlug}: `
+        + `${err instanceof Error ? err.message : String(err)} — deterministic floor used`,
+    )
+    return undefined
+  }
+}
+
+/**
+ * The run's resolved verdict rows, in the exact two-layer order `emit-canary-outcomes.ts` reads
+ * them (389 D-10):
+ *
+ *   1. Members OUTSIDE the accessor's domain first — the runner's one PASS-mintable class is
+ *      `flake` (a member that passed only after a retry), and D-04 must see it. `resolveRunVerdicts`
+ *      never serves a verdict for a passed member, so reading it here cannot contradict the accessor.
+ *   2. THE one supersedable-verdict read — `resolveRunVerdicts`: the artifact's authored verdicts
+ *      when one is present, the deterministic floor when it is absent. It OVERWRITES layer 1 for
+ *      every member it governs, so an `unknown` → `environment` upgrade excludes the run here
+ *      rather than leaving two consumers deriving supersession differently.
+ *
+ * Sorted by `perTest` so the DTO (and the census that prints it) is order-deterministic.
+ */
+function resolveSeedVerdictRows(
+  artifact: RunAnalysisArtifact | undefined,
+  handoff: CompletedRunHandoff,
+): SeedRunVerdictRow['verdicts'] {
+  const byPerTest = new Map<number, SeedRunVerdictRow['verdicts'][number]>()
+  for (const member of handoff.tests) {
+    if (member.rootCause === undefined) continue
+    byPerTest.set(member.testIndex, {
+      class: member.rootCause.class,
+      producer: member.rootCause.producer,
+    })
+  }
+  for (const verdict of resolveRunVerdicts(artifact, handoff)) {
+    byPerTest.set(verdict.perTest, { class: verdict.class, producer: verdict.producer })
+  }
+  return [...byPerTest.entries()]
+    .sort(([first], [second]) => first - second)
+    .map(([, verdict]) => verdict)
 }
 
 // ---- the report verb (372-07, D-13/D-14) -------------------------------------------------------

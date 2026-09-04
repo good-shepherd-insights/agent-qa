@@ -79,6 +79,29 @@ function renderSeedSummary(result: SeedVerbResult): void {
   for (const skip of result.runsSkipped) {
     console.log(pc.yellow(`  skipped ${skip.runSlug}: ${skip.reason}`))
   }
+  // 413 D-04: an excluded run is COUNTED and named with the verdicts that excluded it, and every
+  // admitted run discloses the producer it was admitted under — never a silent filter.
+  const excludedByClass: Record<string, number> = {}
+  for (const excluded of result.runsExcluded) {
+    for (const verdict of excluded.verdicts) {
+      excludedByClass[verdict.class] = (excludedByClass[verdict.class] ?? 0) + 1
+    }
+  }
+  console.log(
+    `excluded: ${result.runsExcluded.length} (${renderCounters(excludedByClass)}), `
+      + `admitted: ${result.runsAdmitted.length}`,
+  )
+  for (const excluded of result.runsExcluded) {
+    console.log(
+      pc.dim(
+        `  excluded ${excluded.runSlug} [${excluded.product}]: `
+          + excluded.verdicts.map(verdict => `${verdict.class}/${verdict.producer}`).join(' '),
+      ),
+    )
+  }
+  for (const notice of result.notices) {
+    console.log(pc.dim(notice))
+  }
   console.log(`cases: ${result.seededCount} seeded, ${result.unchangedCount} unchanged`)
   const refusalsByKind: Record<string, number> = {}
   for (const refusal of result.refusals) {
