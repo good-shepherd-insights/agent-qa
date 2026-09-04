@@ -49,7 +49,12 @@ function proseOf(help: string): string {
 
 function qualifiersIn(prose: string): string[] {
   const found = new Set<string>()
-  const singular = /queue(?![\w-])/g
+  // Both boundaries, not just the trailing one. The trailing lookahead alone made the relation
+  // fire inside `requeue` — a VERB whose last five letters happen to spell the noun — and would
+  // have forced the 413-14 subcommand to be named something other than what it does. A compound
+  // word is not an unqualified use of the noun; a bare "the queue" still is, and the control cell
+  // below still reddens on it.
+  const singular = /(?<![\w-])queue(?![\w-])/g
   for (let m = singular.exec(prose); m !== null; m = singular.exec(prose)) {
     const before = prose.slice(0, m.index)
     const qualifier = QUALIFIERS.find((q) => before.endsWith(`${q} `))
@@ -210,5 +215,35 @@ describe('agent-qa agent-jobs list --json', () => {
     // The disclosure boundary asserted on the BYTES, not on a key name: a payload field added
     // anywhere in the DTO would carry this string onto an operator's terminal.
     expect(stdout).not.toContain('must-never-be-printed')
+  })
+})
+
+describe('agent-qa agent-jobs requeue <jobId>', () => {
+  it('prints the not-terminal DTO for a queued row and does not fail the process', async () => {
+    const harness = harnessDeps()
+    await harness.seed({ runId: 'r_list' })
+
+    let stdout = ''
+    const log = vi.spyOn(console, 'log').mockImplementation((value: unknown) => {
+      stdout += String(value)
+    })
+
+    // The id is read off the shipped listing rather than reached for inside the store, so this
+    // cell exercises the same two verbs an operator types in sequence.
+    await createAgentJobsCommand({ opsFor: async () => harness.deps })
+      .parseAsync(['list', '--json'], { from: 'user' })
+    const jobId = (JSON.parse(stdout) as { jobs: { id: string }[] }).jobs[0]?.id
+    expect(jobId).toBeDefined()
+
+    stdout = ''
+    process.exitCode = undefined
+    await createAgentJobsCommand({ opsFor: async () => harness.deps })
+      .parseAsync(['requeue', jobId!, '--json'], { from: 'user' })
+    log.mockRestore()
+
+    // A queued row is DATA about what the store found, not a command failure: an operator who
+    // requeues a row a drainer already owns must be told, and must not have their driver abort.
+    expect(stdout).toBe('{"kind":"not-terminal","status":"queued"}')
+    expect(process.exitCode).not.toBe(1)
   })
 })

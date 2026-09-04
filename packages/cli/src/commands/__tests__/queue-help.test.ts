@@ -53,7 +53,12 @@ function proseOf(help: string): string {
 
 function qualifiersIn(prose: string): string[] {
   const found = new Set<string>()
-  const singular = /queue(?![\w-])/g
+  // Both boundaries, not just the trailing one. The trailing lookahead alone made the relation
+  // fire inside `requeue` — a VERB whose last five letters happen to spell the noun — and would
+  // have forced the 413-14 subcommand to be named something other than what it does. A compound
+  // word is not an unqualified use of the noun; a bare "the queue" still is, and the control cell
+  // below still reddens on it.
+  const singular = /(?<![\w-])queue(?![\w-])/g
   for (let m = singular.exec(prose); m !== null; m = singular.exec(prose)) {
     const before = prose.slice(0, m.index)
     const qualifier = QUALIFIERS.find((q) => before.endsWith(`${q} `))

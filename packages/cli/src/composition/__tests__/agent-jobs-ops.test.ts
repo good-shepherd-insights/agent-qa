@@ -25,6 +25,7 @@ import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   ANALYSIS_FILE,
+  asJobId,
   asRunId,
   canonicalJson,
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -40,6 +41,7 @@ import {
   defaultAgentJobsOpsDeps,
   listAgentJobs,
   pumpAgentJobs,
+  requeueAgentJob,
 } from '../agent-jobs-ops.js'
 import type { AgentJobsOpsDeps } from '../agent-jobs-ops.js'
 
@@ -524,6 +526,105 @@ describe('defaultAgentJobsOpsDeps — the composition the shipped pump runs (413
       })
     } finally {
       reader.close()
+    }
+  })
+})
+
+// ————— requeueAgentJob — the operator's explicit forget (413-14) —————
+//
+// The 413-08 campaign left 19 `analyze-run` rows `done` with nothing authored, and the store dedups
+// on `(kind, idempotencyKey)`, so a second enqueue for the same run is impossible — and would be
+// wrong anyway, because `chainJobIdsForRun` derives chain identity from that pair. `requeue` is the
+// only way back: the row itself returns to `queued`, and the checkpoints its last attempt recorded
+// are forgotten in both media.
+//
+// The forget is the load-bearing half, and the first cell asserts it directly rather than trusting
+// the status. `selectLatestCheckpoint` is `ORDER BY attempt DESC LIMIT 1`, so a status-only reset
+// would hand the REAL handler the stand-in's empty `verdicts-authored` payload as recorded
+// authorship — it would author nothing and report `completed`, reproducing the defect exactly.
+
+describe('requeueAgentJob — returning a terminal agent job to the queue (413-14)', () => {
+  it('a requeued analyze-run runs its author again and re-chains its successor exactly once', async () => {
+    const harness = makeHarness()
+    await harness.enqueue('analyze-run', { runId: 'r_requeue', chain: true }, 'r_requeue')
+
+    const first = await pumpAgentJobs({ only: 'analyze-run' }, harness.deps)
+    expect(first.kind).toBe('pumped')
+    if (first.kind !== 'pumped') return
+    expect(first.ran).toBe(1)
+    const analyzeId = first.outcomes[0]?.jobId
+    expect(analyzeId).toBeDefined()
+    if (analyzeId === undefined) return
+
+    const before = await harness.dump()
+    expect(before.filter((row) => row.kind === 'curate-memory')).toHaveLength(1)
+    expect(before.find((row) => row.kind === 'analyze-run')?.status).toBe('done')
+
+    const requeued = await requeueAgentJob(analyzeId, harness.deps)
+    expect(requeued).toEqual({ kind: 'requeued' })
+
+    // THE FORGET, read through the same store the next attempt will read. A `found: true` here is
+    // the state that replays a stand-in's authorship as though a handler had produced it.
+    const composed = await harness.deps.composeJobs()
+    try {
+      const read = await composed.jobs.store.readCheckpoint(asJobId(analyzeId), 'verdicts-authored')
+      expect(read).toEqual({ found: false })
+    } finally {
+      await composed.close()
+    }
+
+    const second = await pumpAgentJobs({ only: 'analyze-run' }, harness.deps)
+    expect(second.kind).toBe('pumped')
+    if (second.kind !== 'pumped') return
+    expect(second.ran).toBe(1)
+    expect(second.outcomes[0]).toMatchObject({
+      jobId: analyzeId,
+      kind: 'analyze-run',
+      runId: 'r_requeue',
+      disposition: 'completed',
+      // Attempts were reset to 0 by the requeue, so the claim that ran this body is attempt 1
+      // again — not attempt 2 of a row that never had a first.
+      attempt: 1,
+    })
+    expect(second.stoppedOn).toBe('empty')
+
+    const after = await harness.dump()
+    expect(after.find((row) => row.id === analyzeId)?.status).toBe('done')
+
+    // D-06 HELD TWICE. The successor key `${id}->curate-memory` is derived from a row id the
+    // requeue deliberately preserved, so the re-chain dedupes onto the existing slot instead of
+    // doubling it — and the row it dedupes onto is still queued, unclaimed, attempts 0.
+    const successors = after.filter((row) => row.kind === 'curate-memory')
+    expect(successors).toHaveLength(1)
+    expect(successors[0]).toMatchObject({ status: 'queued', attempts: 0, claimed: false })
+  })
+
+  it('requeue answers not-terminal for a queued row and refuses under a held lease', async () => {
+    const harness = makeHarness()
+    await harness.enqueue('analyze-run', { runId: 'r_queued' }, 'r_queued')
+
+    const rows = await harness.dump()
+    const queuedId = rows[0]?.id
+    expect(queuedId).toBeDefined()
+    if (queuedId === undefined) return
+
+    // A queued row belongs to whoever claims it next. Resetting its attempts out from under a
+    // running handler is the two-writers-under-one-fence tampering the fence exists to exclude.
+    const notTerminal = await requeueAgentJob(queuedId, harness.deps)
+    expect(notTerminal).toEqual({ kind: 'not-terminal', status: 'queued' })
+    expect(await harness.dump()).toEqual(rows)
+
+    const holder = acquireWriterLease(harness.knowledgeRoot)
+    expect(holder.kind).toBe('acquired')
+    if (holder.kind !== 'acquired') return
+    try {
+      const refused = await requeueAgentJob(queuedId, harness.deps)
+      expect(refused).toMatchObject({ kind: 'refused', reason: 'writer-lease-held' })
+      if (refused.kind !== 'refused') return
+      expect(refused.holder).toMatchObject({ pid: process.pid, epoch: holder.epoch })
+      expect(await harness.dump()).toEqual(rows)
+    } finally {
+      releaseLease({ knowledgeRoot: harness.knowledgeRoot, leaseId: holder.leaseId })
     }
   })
 })
