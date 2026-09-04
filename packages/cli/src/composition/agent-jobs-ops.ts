@@ -148,6 +148,29 @@ function runIdOf(payload: unknown): string | undefined {
   return typeof candidate === 'string' ? candidate : undefined
 }
 
+/**
+ * The `curateRun` this host declares it will never run.
+ *
+ * REQUIRED by `postRun`'s type (388-10) — the posture is a review of the binding it describes, so
+ * there is no `postRun` without one — and UNREACHABLE by construction: `'no-masker'` makes
+ * `curate-memory` unclaimable on the composed host's own queue, and `--only` makes it unclaimable
+ * again on the queue that actually drains. Supplied so the OTHER half of the capability bundle,
+ * `persistAnalysis`, exists at all.
+ *
+ * It THROWS rather than answering `{curated: 0, deprecated: 0, complete: true}`, and the
+ * difference is the same one WR-03 is about: a fold that never ran must never let
+ * `bundle-committed` be published, because that receipt names an event that did not happen. A
+ * silent no-op would be a second masked fallback in the file written to remove the first. If this
+ * ever executes, both exclusions failed and the operator must be told rather than reassured.
+ */
+const PUMP_NEVER_CURATES = (): Promise<never> => {
+  throw new Error(
+    'agent-jobs pump composed a host that may not claim curate-memory (unclaimableKinds, twice: '
+    + "the host's own 'no-masker' posture and the pump's --only exclusion), yet the curation fold "
+    + 'was reached. Both exclusions failed; no candidate was folded and no receipt was written.',
+  )
+}
+
 export function defaultAgentJobsOpsDeps(configPath: string): AgentJobsOpsDeps {
   const configDir = dirname(resolve(configPath))
   const { acquireWriterLease, releaseLease, refreshWriterLeaseAuthority }
@@ -155,14 +178,32 @@ export function defaultAgentJobsOpsDeps(configPath: string): AgentJobsOpsDeps {
 
   return {
     composeJobs: async () => {
-      // Composed with NO `postRun`, deliberately. The shipped posture table folds an undeclared
-      // posture to `'no-masker'`, whose exclusion already names `curate-memory` — so the host's own
-      // queue could not claim the curator kind even if this file's exclusion vanished. Belt beside
-      // the braces below; the braces are what make the guarantee hold for the OTHER three kinds.
+      // Composed WITH a `postRun`, and the shape of it is the whole point.
+      //
+      // `postRunCapabilities()` is all-or-nothing: `if (postRun === undefined) return undefined`
+      // drops the ENTIRE bundle, so a host that withholds `curateRun` also withholds
+      // `persistAnalysis` — the analyze-run artifact writer riding the same object — and
+      // `createRealJobKindRegistry(undefined)` then hands analyze-run its scripted STAND-IN, which
+      // publishes `verdicts-authored` and reports `complete` having written nothing. Composing
+      // with no `postRun` here did not merely stop this host claiming the curator; it silently
+      // disarmed the kind the pump exists to drain. The 413-08 campaign measured the consequence:
+      // 19/19 legs `completed`, 0/19 `analysis.json`, D-04's exclusion filter reading a
+      // deterministic floor it was never meant to see, and every leg row asserting an analysis
+      // that did not exist — the masked fallback 413-07 named as this phase's defect class.
+      //
+      // What holds `curate-memory` back is NOT the absence of a binding, and never was. It is
+      // `unclaimableKinds`, twice: `'no-masker'` folds through `UNCLAIMABLE_BY_PROSE_POSTURE` to
+      // exactly `['curate-memory']` on this host's own queue (the belt), and `pumpAgentJobs`
+      // re-composes with every declared kind but `--only` excluded (the braces). Both live in the
+      // store's SELECTION rather than in a binding, so the row is never OFFERED — a guarantee no
+      // capability object can weaken. The posture is also the honest one rather than a lever: this
+      // host holds no masking context, and a host that cannot say its fold redacts may not claim
+      // the kind that folds.
       const host = composeCliLocalAgent({
         agentQaRoot: join(configDir, '.agent-qa'),
         configPath,
         model: () => resolvePostRunJobModel(configPath),
+        postRun: { curateRun: PUMP_NEVER_CURATES, candidateProse: 'no-masker' },
       })
       const jobs = await host.jobs()
       return { jobs, close: () => host.close() }
