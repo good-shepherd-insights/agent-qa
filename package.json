@@ -41,6 +41,7 @@
     "validate:failure-banner-mutation": "bash scripts/405-failure-banner-mutation.sh",
     "validate:failure-view-mutation": "bash scripts/406-failure-view-mutation.sh",
     "validate:issue-slot-mutation": "bash scripts/412-issue-slot-mutation.sh",
+    "validate:eval-root-hygiene": "bash scripts/413-eval-root-hygiene.sh",
     "release:docker": "node scripts/release/docker.mjs",
     "release:docker:check": "node scripts/release/docker.mjs --check-local",
     "release:dry-run": "node scripts/release/dry-run.mjs",
