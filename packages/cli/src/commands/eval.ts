@@ -8,6 +8,7 @@
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import type {
+  BaselineComparatorRefusal,
   CensusVerbResult,
   EvalCorpusSource,
   ExtractVerbResult,
@@ -144,8 +145,20 @@ function sumCounts(counts: Record<string, number>): number {
   return Object.values(counts).reduce((total, count) => total + count, 0)
 }
 
-/** Compact report summary rendered from the DTO fields only — a faithful projection (D-04). */
-function renderReportSummary(result: ReportVerbResult): void {
+/**
+ * Compact report summary rendered from the DTO fields only — a faithful projection (D-04).
+ *
+ * `renderBaselineComparatorRefusal` arrives as a PARAMETER rather than a module import: eval
+ * core reaches this surface only through the ledgered composition root (FUNC-02, and that ledger
+ * only ever shrinks), and the root is imported lazily per action so `agent-qa --help` never pays
+ * for the eval stack. The refusal is printed red on the surface a person actually reads, because
+ * a same-family report silently failing to become the comparator is exactly the repudiation
+ * D-20 exists to prevent (ROOT-11).
+ */
+function renderReportSummary(
+  result: ReportVerbResult,
+  renderBaselineComparatorRefusal: (refusal: BaselineComparatorRefusal) => string,
+): void {
   const report = result.report
   console.log(
     pc.bold(`report: batch ${result.batchKey}`) + pc.dim(` (${result.entries} entries)`),
@@ -194,6 +207,26 @@ function renderReportSummary(result: ReportVerbResult): void {
       )
     } else {
       console.log(pc.red(`commit write-conflict: ${result.committed.path}`))
+    }
+  }
+  const baseline = result.baseline
+  if (baseline !== undefined) {
+    // D-08/D-19: every designation outcome is DATA — loud where it must be, exit 0 throughout.
+    if (baseline.kind === 'written' || baseline.kind === 'unchanged') {
+      console.log(`baseline: ${baseline.kind} ${baseline.path}`)
+    } else if (baseline.kind === 'refused') {
+      console.log(pc.red(renderBaselineComparatorRefusal(baseline.refusal)))
+    } else if (baseline.kind === 'egress-blocked') {
+      console.log(
+        pc.red(
+          'baseline egress-blocked: '
+            + baseline.detections
+              .map(detection => `${detection.label} (${detection.detector})`)
+              .join(', '),
+        ),
+      )
+    } else {
+      console.log(pc.red(`baseline write-conflict: ${baseline.path}`))
     }
   }
 }
@@ -457,6 +490,11 @@ export function createEvalCommand(): Command {
         'cassette source: staged (default) or committed (the whole agent-qa-eval corpus, D-08)',
         'staged',
       )
+      .option(
+        '--baseline',
+        'after --commit, designate this report as the per-profile baseline pointer under '
+          + 'reports/baselines/ (D-19); refused for same-family reports (ROOT-11)',
+      )
       .option('--json', 'emit the typed result DTO to stdout')
       .action(
         async (
@@ -466,6 +504,7 @@ export function createEvalCommand(): Command {
             product?: string
             commit?: boolean
             source?: string
+            baseline?: boolean
             json?: boolean
           },
           command: Command,
@@ -473,9 +512,8 @@ export function createEvalCommand(): Command {
           try {
             const source = parseSourceFlag(opts.source)
             const configPath = getGlobalConfigPath(command)
-            const { resolveEvalSession, runReportVerb } = await import(
-              '../eval-session-composition.js'
-            )
+            const { resolveEvalSession, runReportVerb, renderBaselineComparatorRefusal } =
+              await import('../eval-session-composition.js')
             const session = await resolveEvalSession(
               configPath === undefined ? {} : { configPath },
             )
@@ -489,6 +527,7 @@ export function createEvalCommand(): Command {
               {
                 ...(opts.commit === undefined ? {} : { commit: opts.commit }),
                 ...(source === undefined ? {} : { source }),
+                ...(opts.baseline === undefined ? {} : { baseline: opts.baseline }),
               },
             )
             if (opts.json) {
@@ -496,7 +535,7 @@ export function createEvalCommand(): Command {
               // (incl. egress blocks and write conflicts) is DATA inside the DTO (D-08).
               console.log(JSON.stringify(result, null, 2))
             } else {
-              renderReportSummary(result)
+              renderReportSummary(result, renderBaselineComparatorRefusal)
             }
           } catch (err) {
             // D-08: typed named-input/config errors are the only failure modes — egress-blocked

@@ -34,11 +34,13 @@ import {
   deriveCensus,
   extractRunCassettes,
   guardCampaignManifest,
+  projectBaselinePointer,
   renderBaselineComparatorRefusal,
   resolveJudgeFamily,
   resolveProductPartition,
 } from '@vostride/agent-qa-eval'
 import type {
+  BaselineComparatorRefusal,
   Cassette,
   CassetteLabelLeg,
   CassetteScore,
@@ -70,12 +72,14 @@ import {
   readCommittedCorpus,
   runCassetteReplay,
   seedCommittedCorpus,
+  writeBaselinePointer,
 } from '@vostride/agent-qa-eval-local'
 import type {
   CassetteBundleLoad,
   CommitCensusOutcome,
   CommitEvalReportOutcome,
   SeedingRefusal,
+  WriteBaselinePointerOutcome,
 } from '@vostride/agent-qa-eval-local'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
@@ -115,7 +119,17 @@ export type { ReplayRecordLoad } from '@vostride/agent-qa-eval-local'
 // 2026-07-28 may not join it. The census renderer beside this module is such a file, so it types
 // against the census DTO through the composition root rather than minting a second edge of its
 // own, exactly as `commands/eval.ts` types against the verb DTOs. Type-only, erased at build.
-export type { CensusCrossCheckLine, CorpusCensus } from '@vostride/agent-qa-eval'
+export type {
+  BaselineComparatorRefusal,
+  CensusCrossCheckLine,
+  CorpusCensus,
+} from '@vostride/agent-qa-eval'
+
+// 413-06 D-20: the ONE refusal renderer, re-exported so `commands/eval.ts` can print a refused
+// baseline designation WITHOUT minting a second surface-firewall edge of its own — the command
+// layer receives it through this ledgered root exactly as it receives the verb pipelines.
+export { renderBaselineComparatorRefusal } from '@vostride/agent-qa-eval'
+export type { WriteBaselinePointerOutcome } from '@vostride/agent-qa-eval-local'
 
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */
 export interface EvalCliConfig {
@@ -999,6 +1013,14 @@ export interface ReportVerbResult {
   judgeIdentity: 'present' | 'absent' | 'mixed'
   /** 413 D-08: which cassette population supplied the label join — 'staged' unless asked. */
   source: EvalCorpusSource
+  /**
+   * 413 D-19/D-20: the typed baseline-designation outcome when `--baseline` ran. Written,
+   * unchanged, REFUSED (a same-family report is not a gate comparator), egress-blocked or a
+   * write-conflict — all five are DATA, and the verb's exit code is unaffected by any of them.
+   */
+  baseline?: WriteBaselinePointerOutcome
+  /** 413 D-19: the profile key the designation was composed under, present whenever it ran. */
+  profileKey?: string
   /** Stderr-destined notices: read refusals, missing bundles, judge identity honesty. */
   notices: string[]
 }
@@ -1017,8 +1039,16 @@ export interface ReportVerbResult {
 export async function runReportVerb(
   session: EvalSession,
   filters: { run?: string; cassette?: string; product?: string } = {},
-  opts: { commit?: boolean; source?: EvalCorpusSource } = {},
+  opts: { commit?: boolean; source?: EvalCorpusSource; baseline?: boolean } = {},
 ): Promise<ReportVerbResult> {
+  // D-19: a pointer designates a COMMITTED report. Designating a staged-only report would name a
+  // batch nobody else can read, so the combination is refused before any work happens (D-08 typed
+  // error — the command layer maps it to exit 1).
+  if (opts.baseline === true && opts.commit !== true) {
+    throw new Error(
+      '--baseline requires --commit: the pointer designates a COMMITTED report (413 D-19)',
+    )
+  }
   const agentQaRoot = resolve(session.configDir, '.agent-qa')
   const replaysRoot = join(agentQaRoot, DEFAULT_EVAL_REPLAYS_SUBDIR)
   const source: EvalCorpusSource = opts.source ?? 'staged'
@@ -1140,14 +1170,51 @@ export async function runReportVerb(
   // (7) `--commit`: render the deterministic markdown projection and route BOTH parts through
   // commitEvalReport's egress checkpoint into the committed root (D-13) — the typed outcome
   // (committed / egress-blocked / write-conflict) folds into the DTO as data (D-08).
+  const committedRoot = resolve(session.configDir, 'agent-qa-eval')
+  const reportOutputBaseDir = evalAuditDir(session.configDir, 'report', report.batchKey)
   let committed: CommitEvalReportOutcome | undefined
   if (opts.commit === true) {
     committed = commitEvalReport({
       report,
       markdown: renderEvalReportMarkdown(report),
-      committedRoot: resolve(session.configDir, 'agent-qa-eval'),
-      reportOutputBaseDir: evalAuditDir(session.configDir, 'report', report.batchKey),
+      committedRoot,
+      reportOutputBaseDir,
     })
+  }
+
+  // (8) `--baseline`: designate this committed report as THE comparator for its profile (D-19).
+  // The writer refuses first through the ONE comparator predicate (D-20), so a report judged
+  // under the same-family override can never become a gate comparator — and the refusal rides
+  // the DTO and the notices rather than an exit code, because the report itself is still valid
+  // history (D-18). The pointer is per-PROFILE: a number produced by one planner under one
+  // matcher and one judge only compares against the same combination.
+  let baseline: WriteBaselinePointerOutcome | undefined
+  let profileKey: string | undefined
+  if (opts.baseline === true) {
+    if (committed?.kind !== 'committed') {
+      notices.push(
+        `baseline pointer skipped: report commit outcome was ${committed?.kind ?? 'absent'}`,
+      )
+    } else {
+      const pointer = projectBaselinePointer({
+        plannerModelId: await resolvePlannerModelId(session),
+        matcherVersion: report.matcherVersion,
+        ...(report.judge === undefined
+          ? {}
+          : {
+              judgeModelId: report.judge.judgeModelId,
+              ...(report.judge.judgeVersion === undefined
+                ? {}
+                : { judgeVersion: report.judge.judgeVersion }),
+            }),
+        batchKey: report.batchKey,
+      })
+      profileKey = pointer.profileKey
+      baseline = writeBaselinePointer({ report, pointer, committedRoot, reportOutputBaseDir })
+      if (baseline.kind === 'refused') {
+        notices.push(renderBaselineComparatorRefusal(baseline.refusal))
+      }
+    }
   }
 
   return {
@@ -1158,8 +1225,32 @@ export async function runReportVerb(
     ...(committed !== undefined ? { committed } : {}),
     judgeIdentity,
     source,
+    ...(baseline !== undefined ? { baseline } : {}),
+    ...(profileKey !== undefined ? { profileKey } : {}),
     notices,
   }
+}
+
+/**
+ * The replay planner's resolved MODEL ID for the D-19 profile key — config only, no credential.
+ *
+ * `resolveReplayPlanner` resolves auth and throws without a credential, which would make baseline
+ * designation impossible on a machine that merely READS a committed report. The profile key needs
+ * the declared model id and nothing else, so this reads the named registry entry directly through
+ * the same `resolveNamedConfig` leg and stops there. An absent `use.llm` is the same typed error
+ * `resolveReplayPlanner` raises — the planner identity is not optional for a comparator.
+ */
+async function resolvePlannerModelId(session: EvalSession): Promise<string> {
+  const plannerName = session.config.use?.llm
+  if (!plannerName) {
+    throw new Error(
+      'use.llm is not set in the config — the baseline profile key is keyed on the replay '
+      + 'planner, the named use.llm registry entry. Set use.llm in agent-qa.config.yaml.',
+    )
+  }
+  const { resolveNamedConfig } = await import('./llm-utils.js')
+  const { config } = await resolveNamedConfig(plannerName, session.configPath)
+  return config.model
 }
 
 // ---- the census verb (413-05, D-13/D-14/D-15/D-16) ---------------------------------------------
