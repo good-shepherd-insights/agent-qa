@@ -15,7 +15,7 @@
 // The CLI is a surface / composition root with full host access (spec §4), so this module uses
 // node builtins directly.
 
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -26,11 +26,15 @@ import {
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
 import {
+  assertBaselineComparator,
   buildEvalReport,
   buildSeedingPlan,
   canonicalJson,
   computeBatchKey,
+  deriveCensus,
   extractRunCassettes,
+  guardCampaignManifest,
+  renderBaselineComparatorRefusal,
   resolveJudgeFamily,
   resolveProductPartition,
 } from '@vostride/agent-qa-eval'
@@ -38,7 +42,9 @@ import type {
   Cassette,
   CassetteLabelLeg,
   CassetteScore,
+  CorpusCensus,
   DecisionScoreEntry,
+  DeriveCensusInput,
   EvalBatchReport,
   JudgeIdentityBlock,
   ScoredBatchEntry,
@@ -51,17 +57,22 @@ import {
   FsReportStore,
   FsRunArtifactSource,
   FsScoreStore,
+  commitCensus,
   commitEvalReport,
+  listBaselinePointers,
   listCassetteBundleDirs,
+  listCommittedReports,
   listReplayRecordDirs,
   loadCassetteBundle,
   loadReplayRecord,
   loadScoreRecord,
+  readCommittedCorpus,
   runCassetteReplay,
   seedCommittedCorpus,
 } from '@vostride/agent-qa-eval-local'
 import type {
   CassetteBundleLoad,
+  CommitCensusOutcome,
   CommitEvalReportOutcome,
   SeedingRefusal,
 } from '@vostride/agent-qa-eval-local'
@@ -71,8 +82,10 @@ import type {
   ModelProviderOverrides,
   ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
+import { sha256hex } from '@vostride/agent-qa-schema'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { resolveConfig } from './config.js'
+import { renderCensusMarkdown } from './eval-census-render.js'
 import { renderEvalReportMarkdown } from './eval-report-render.js'
 import {
   buildRunMaskingContext,
@@ -945,6 +958,124 @@ export async function runReportVerb(
     stagedFile: staged.file,
     ...(committed !== undefined ? { committed } : {}),
     judgeIdentity,
+    notices,
+  }
+}
+
+// ---- the census verb (413-05, D-13/D-14/D-15/D-16) ---------------------------------------------
+
+/** The census verb's one DTO — the console renders FROM this, never around it (D-04). */
+export interface CensusVerbResult {
+  /** sha256hex over the canonical cassetteId-sorted committed entry set — names the corpus (D-15). */
+  corpusDigest: string
+  /** Committed corpus entries the read leg loaded; the census's population. */
+  entryCount: number
+  /** Product partition dirs seen under `corpus/` — a dir with no admitted entry still shows. */
+  productsSeen: readonly string[]
+  /** The ONE pure deriveCensus fold — the CLI never re-sums or re-rates anything (D-16). */
+  census: CorpusCensus
+  /** Absolute path of the guarded `--campaign` manifest when one was supplied. */
+  campaignManifest?: string
+  /** The typed commitCensus outcome when `--commit` ran — egress blocks are DATA (372 D-08). */
+  committed?: CommitCensusOutcome
+  /** Stderr-destined honesty lines: read refusals, cross-check reconciliations, comparator refusals. */
+  notices: string[]
+}
+
+/**
+ * The census verb pipeline (D-13/D-14): the corpus census is a property of the COMMITTED CORPUS,
+ * not of a replay batch, so this verb reads the committed root directly through eval-local's read
+ * leg and folds it with ONE `deriveCensus` call. Three legs feed that fold:
+ *
+ *   (a) the corpus itself — entries, label records, cassette bundles and local blob presence;
+ *   (b) the optional `--campaign` manifest, whose run-level tallies (excluded runs, repeats, the
+ *       model-call and token cost line) the committed root cannot state because an excluded run
+ *       leaves no committed entry behind (D-16);
+ *   (c) every committed `reports/<batchKey>/report.json`, cross-checked — the two populations are
+ *       PRINTED side by side and never reconciled (RESEARCH F7: a report carries a batchKey, never
+ *       its cassette-id list), and each report is run through the ONE comparator predicate so a
+ *       same-family report can never be mistaken for a gate comparator (D-18/D-20, ROOT-11).
+ *
+ * Refusal posture: an unreadable committed file is a NOTICE, never a throw — the verb completes
+ * and prints what it could not read (T-413-24). The single typed error is a rejected `--campaign`
+ * manifest (T-413-21): the command layer maps it to exit 1. No console output lives here (D-04).
+ */
+export async function runCensusVerb(
+  session: EvalSession,
+  opts: { commit?: boolean; campaign?: string } = {},
+): Promise<CensusVerbResult> {
+  const committedRoot = resolve(session.configDir, 'agent-qa-eval')
+  const notices: string[] = []
+
+  // (1) The committed root read leg — refusals are data, an absent root is an empty census.
+  const read = readCommittedCorpus(committedRoot)
+  notices.push(...read.notices)
+  for (const refusal of read.refusals) {
+    notices.push(`committed read refused ${refusal.path}: ${refusal.reason}`)
+  }
+
+  // (2) The optional campaign manifest. `guardCampaignManifest` is STRICT and its TypeError
+  // propagates deliberately — a widened or misspelt manifest is a typed input error, never a
+  // silently dropped tally (T-413-21). Its digest is stamped into the committed census bytes.
+  let campaign: DeriveCensusInput['campaign']
+  let campaignManifest: string | undefined
+  if (opts.campaign !== undefined) {
+    campaignManifest = resolve(process.cwd(), opts.campaign)
+    const manifest = guardCampaignManifest(JSON.parse(readFileSync(campaignManifest, 'utf8')))
+    campaign = { legs: manifest.legs, manifestDigest: sha256hex(canonicalJson(manifest)) }
+  }
+
+  // (3) Cross-check EVERY committed report: the reconciliation line, the comparator verdict from
+  // the ONE predicate, and the D-19 pointer designations that name it.
+  const reportList = listCommittedReports(committedRoot)
+  const pointerList = listBaselinePointers(committedRoot)
+  for (const refusal of [...reportList.refusals, ...pointerList.refusals]) {
+    notices.push(`committed read refused ${refusal.path}: ${refusal.reason}`)
+  }
+
+  const reports: NonNullable<DeriveCensusInput['reports']>[number][] = []
+  for (const entry of reportList.reports) {
+    const comparator = assertBaselineComparator(entry.report)
+    const designatedBy = pointerList.pointers
+      .filter(pointer => pointer.batchKey === entry.batchKey)
+      .map(pointer => pointer.profileKey)
+      .sort()
+    notices.push(
+      `cross-check ${entry.batchKey}: report decisions `
+        + `${entry.report.headline.perDecisionCost.decisionCount} vs corpus cassettes `
+        + `${read.snapshot.entries.length} — batch membership differs (batchKey only)`,
+    )
+    if (!comparator.ok) notices.push(renderBaselineComparatorRefusal(comparator.refusal))
+    reports.push({ report: entry.report, comparator, designatedBy })
+  }
+
+  // (4) The ONE pure fold — every counter, rate and tally in the DTO is the derivation's.
+  const census = deriveCensus({
+    snapshot: read.snapshot,
+    ...(campaign === undefined ? {} : { campaign }),
+    reports,
+  })
+
+  // (5) `--commit`: render the deterministic markdown projection and route BOTH parts through
+  // commitCensus's egress checkpoint into `reports/census/<corpus-digest>/` (D-15). The typed
+  // outcome (committed / egress-blocked / write-conflict) folds into the DTO as data (372 D-08).
+  let committed: CommitCensusOutcome | undefined
+  if (opts.commit === true) {
+    committed = commitCensus({
+      census,
+      markdown: renderCensusMarkdown(census),
+      committedRoot,
+      censusOutputBaseDir: evalAuditDir(session.configDir, 'census', census.corpusDigest),
+    })
+  }
+
+  return {
+    corpusDigest: census.corpusDigest,
+    entryCount: census.entryCount,
+    productsSeen: read.productsSeen,
+    census,
+    ...(campaignManifest !== undefined ? { campaignManifest } : {}),
+    ...(committed !== undefined ? { committed } : {}),
     notices,
   }
 }
