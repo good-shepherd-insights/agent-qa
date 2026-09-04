@@ -30,6 +30,8 @@ export const COMMITTED_CORPUS_DIR = 'corpus'
 export const COMMITTED_LABELS_DIR = 'labels'
 export const COMMITTED_CONTRACTS_DIR = 'contracts'
 export const COMMITTED_REPORTS_DIR = 'reports'
+/** 413 D-19: baseline pointers live one level under reports/, beside the batchKey dirs. */
+export const COMMITTED_BASELINES_SUBDIR = 'baselines'
 
 export const COMMITTED_ROOT_MARKER_FILE = 'eval-root.json'
 export const COMMITTED_ROOT_SCHEMA_VERSION = 1
@@ -105,6 +107,17 @@ export function committedContractPath(fileName: string): string {
  */
 export function committedReportPath(batchKey: string, fileName: string): string {
   return [COMMITTED_REPORTS_DIR, slugBranch(batchKey), slugBranch(fileName)].join('/')
+}
+
+/**
+ * Phase 413 D-19: baseline designation is a committed pointer, one file per profile key, so
+ * moving a baseline is a reviewed git edit of that file rather than a silent overwrite. The
+ * key is a single path segment and every segment is slugged (T-368-10).
+ */
+export function committedBaselinePointerPath(profileKey: string): string {
+  return [COMMITTED_REPORTS_DIR, COMMITTED_BASELINES_SUBDIR, `${slugBranch(profileKey)}.json`].join(
+    '/',
+  )
 }
 
 function byteSha(bytes: Uint8Array): string {

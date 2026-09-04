@@ -283,6 +283,13 @@ export type {
   BaselineComparatorVerdict,
 } from './baseline/comparator'
 
+export {
+  BASELINE_POINTER_SCHEMA_VERSION,
+  composeBaselineProfileKey,
+  projectBaselinePointer,
+} from './baseline/profile-key'
+export type { BaselinePointer, BaselineProfileKeyInput } from './baseline/profile-key'
+
 export { computeCorpusDigest } from './census/corpus-digest'
 export {
   CENSUS_SCHEMA_VERSION,
