@@ -1,6 +1,7 @@
 import { Command } from 'commander'
 import { VERSION } from './index.js'
 import {
+  createAgentJobsCommand,
   createAuthCommand,
   createAuthStateCommand,
   createCacheCommand,
@@ -77,6 +78,10 @@ program.addCommand(createChatCommand())
 program.addCommand(createProposalsCommand())
 program.addCommand(createDigestCommand())
 program.addCommand(createDaemonCommand())
+// 413 D-06: the agent job queue's operator verbs, registered beside the daemon that is its
+// resident drainer — `pump --only <kind>` is the in-process drain for a host that must run one
+// kind and leave the rest queued.
+program.addCommand(createAgentJobsCommand())
 
 program.parse()
 

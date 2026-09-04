@@ -12,7 +12,7 @@ Wherever all three are listed — help text, logs, docs — they are listed in t
 | **Introduced** | v1 | v51 | v52 (Phase 385) |
 | **Lifecycle owner** | the dashboard server's `JobQueue`, with a concurrency-slot dispatcher | the writer lease — one drainer at a time | the agent job engine (`agent`), driven by a host that holds a fencing epoch |
 | **Storage medium** | the dashboard database | files under `<knowledgeRoot>/memory/queue/` (`queued/`, `claimed/`, `jobs/`) | sqlite at `.agent-qa/agent-jobs.db` for lifecycle, plus one checkpoint file per publish under `.agent-qa/agent-jobs/checkpoints/<jobId>/` |
-| **CLI surface** | `agent-qa queue list`, `agent-qa queue cancel` | none of its own; drained at the tail of a run, with related maintenance under `agent-qa knowledge maintain` | none yet — the daemon and job ops are later phases |
+| **CLI surface** | `agent-qa queue list`, `agent-qa queue cancel` | none of its own; drained at the tail of a run, with related maintenance under `agent-qa knowledge maintain` | `agent-qa agent-jobs list`, `agent-qa agent-jobs pump --only <kind>`, `agent-qa agent-jobs cancel <jobId>` |
 
 ## run queue
 
@@ -40,8 +40,13 @@ bounded retry, declared chaining, cooperative cancel, and crash recovery that ne
 model. Job lifecycle rows live in sqlite; each checkpoint is published as its own file so that a
 checkpoint is durable in the same medium as the side effect it guards.
 
-Nothing in the CLI drives it yet. Phase 385 ships the engine, the store and the composition root;
-the daemon that drains it, and the job operations that expose it, arrive in later phases.
+`agent-qa daemon` is the resident drainer: a standing host adopts a fencing epoch and pumps every
+kind in arrival order. `agent-qa agent-jobs pump --only <kind>` is the other drain — in-process,
+holding the writer lease for its whole run, and composed so that every declared kind except the one
+named is unclaimable, so a host can run one kind and leave the rest queued untouched (413 D-04 /
+D-06: `analyze-run` per campaign leg, with the `curate-memory` successor it enqueues held back for
+the disposal step, which lists it with `agent-qa agent-jobs list` and discards it with
+`agent-qa agent-jobs cancel <jobId>`).
 
 ## What is deliberately *not* renamed
 

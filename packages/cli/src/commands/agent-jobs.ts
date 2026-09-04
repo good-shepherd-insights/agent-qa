@@ -1,0 +1,219 @@
+// `agent-qa agent-jobs` operates the AGENT JOB QUEUE — the v52 durable background-job substrate in
+// `.agent-qa/agent-jobs.db`. It is not the run queue (v1 test executions, `agent-qa queue`) and not
+// the curation queue (v51 knowledge curation, drained under the writer lease). D-21's three names
+// are load-bearing here for one concrete reason: the D-06 disposal step discards CURATOR jobs, and
+// an operator who reached for `agent-qa queue cancel` would be cancelling rows in a different
+// store entirely.
+//
+// 413 D-04 / D-06: `pump --only <kind>` is the in-process, writer-lease-holding, kind-filtered
+// drain. The campaign driver pumps `analyze-run` per leg so seeding reads real verdicts, and the
+// `curate-memory` successor that drain enqueues stays queued for the disposal step to list and
+// cancel. See `../composition/agent-jobs-ops.ts` for why the filter is a construction option on the
+// queue rather than a check in a loop.
+
+import { Command, InvalidArgumentError } from 'commander'
+import pc from 'picocolors'
+
+import type { JobKind } from '@vostride/agent-qa-schema'
+
+import type {
+  AgentJobsOpsDeps,
+  CancelAgentJobOutcome,
+  ListAgentJobsOutcome,
+  PumpAgentJobsOutcome,
+} from '../composition/agent-jobs-ops.js'
+
+/**
+ * The five declared kinds, spelled as a total `Record` rather than an array.
+ *
+ * `jobKindValues` is deliberately not on the schema barrel (its own comment says publishing it
+ * would invite a parallel registry), so the vocabulary is restated here — but as a total record,
+ * so a sixth kind added to `JobKind` fails to COMPILE here instead of silently becoming an
+ * `--only` value this parser rejects.
+ */
+const JOB_KIND_DECLARED: Record<JobKind, true> = Object.freeze({
+  chat: true,
+  'analyze-run': true,
+  'curate-memory': true,
+  consolidate: true,
+  'propose-improvements': true,
+})
+
+const AGENT_JOB_KINDS = Object.freeze(Object.keys(JOB_KIND_DECLARED) as JobKind[])
+
+function parseOnlyKind(value: string): JobKind {
+  if (!(value in JOB_KIND_DECLARED)) {
+    throw new InvalidArgumentError(
+      `--only must name one agent job kind, got "${value}". `
+      + `Declared kinds: ${AGENT_JOB_KINDS.join(', ')}.`,
+    )
+  }
+  return value as JobKind
+}
+
+export interface AgentJobsCommandDeps {
+  /**
+   * The ops dependencies for a config path, resolved lazily.
+   *
+   * Async so the production binding can defer `import('../composition/agent-jobs-ops.js')` into the
+   * action: that module reaches the local composition root, and `agent-qa --help` must never
+   * compose a host to print a usage line.
+   */
+  opsFor(configPath: string): Promise<AgentJobsOpsDeps>
+}
+
+const DEFAULT_DEPS: AgentJobsCommandDeps = {
+  opsFor: async (configPath) => {
+    const ops = await import('../composition/agent-jobs-ops.js')
+    return ops.defaultAgentJobsOpsDeps(configPath)
+  },
+}
+
+function configPathFor(command: Command): string {
+  let root = command
+  while (root.parent !== null) root = root.parent
+  const globalOpts = root.opts<{ config?: string }>()
+  return globalOpts.config ?? 'agent-qa.config.yaml'
+}
+
+/** The refusal render both write verbs share. `held` names the holder an operator must wait on. */
+function renderRefusal(refusal: Extract<PumpAgentJobsOutcome, { kind: 'refused' }>): string {
+  const detail = refusal.holder === undefined
+    ? refusal.message ?? 'the agent job queue could not be claimed'
+    : `writer lease is held by pid ${refusal.holder.pid}, `
+      + `lease ${refusal.holder.leaseId}, epoch ${refusal.holder.epoch}`
+  return pc.red(`agent job queue: refusal [${refusal.reason}]: ${detail}`)
+}
+
+function renderList(result: ListAgentJobsOutcome): string {
+  if (result.jobs.length === 0) return 'agent job queue: empty'
+  const header = ['id', 'kind', 'status', 'attempts', 'claimed', 'cancel-requested', 'run']
+  const rows = result.jobs.map((job) => [
+    job.id,
+    job.kind,
+    job.status,
+    String(job.attempts),
+    String(job.claimed),
+    String(job.cancelRequested),
+    job.runId ?? '-',
+  ])
+  const widths = header.map((cell, column) =>
+    Math.max(cell.length, ...rows.map((row) => row[column]?.length ?? 0)),
+  )
+  const line = (cells: string[]): string =>
+    cells.map((cell, column) => cell.padEnd(widths[column] ?? 0)).join('  ').trimEnd()
+  return [line(header), ...rows.map(line)].join('\n')
+}
+
+function renderPump(result: Extract<PumpAgentJobsOutcome, { kind: 'pumped' }>): string {
+  const lines = result.outcomes.map(
+    (outcome) =>
+      `agent job ${outcome.kind} ${outcome.jobId} run=${outcome.runId ?? '-'} `
+      + `-> ${outcome.disposition} (attempt ${outcome.attempt})`,
+  )
+  lines.push(
+    `agent job queue: pumped ${result.ran} ${result.only} job(s), `
+    + `stopped on ${result.stoppedOn}, excluded kinds: ${result.excludedKinds.join(', ')}`,
+  )
+  return lines.join('\n')
+}
+
+function renderCancel(jobId: string, result: CancelAgentJobOutcome): string {
+  const word = result.kind === 'already-terminal'
+    ? `already-terminal (${result.status})`
+    : result.kind
+  return `agent job queue: ${jobId} ${word}`
+}
+
+function reportError(verb: string, error: unknown): void {
+  console.error(
+    pc.red(`agent job queue ${verb} error: ${error instanceof Error ? error.message : String(error)}`),
+  )
+  process.exitCode = 1
+}
+
+export function createAgentJobsCommand(deps: AgentJobsCommandDeps = DEFAULT_DEPS): Command {
+  const cmd = new Command('agent-jobs')
+    .description('Inspect and pump the agent job queue (.agent-qa/agent-jobs.db)')
+    .addHelpText(
+      'after',
+      '\nagent-qa runs three separate queues; this command manages the third only:\n' +
+        '  run queue        test executions dispatched by the dashboard server (never served here)\n' +
+        '  curation queue   knowledge curation work drained under the writer lease (not this one)\n' +
+        '  agent job queue  durable background agent jobs in .agent-qa/agent-jobs.db (this command)\n' +
+        '\nSee docs/queues.md.\n',
+    )
+
+  cmd
+    .command('list')
+    .description('Show every row of the agent job queue, without any payload body')
+    .option('--json', 'emit the typed result DTO to stdout')
+    .action(async (opts: { json?: boolean }, command: Command) => {
+      try {
+        const ops = await import('../composition/agent-jobs-ops.js')
+        const result = await ops.listAgentJobs(await deps.opsFor(configPathFor(command)))
+        if (opts.json === true) console.log(JSON.stringify(result))
+        else console.log(renderList(result))
+      } catch (error) {
+        reportError('list', error)
+      }
+    })
+
+  cmd
+    .command('pump')
+    .description('Drain one kind under the writer lease, leaving every other kind queued')
+    .requiredOption('--only <kind>', 'the one agent job kind this pump may claim', parseOnlyKind)
+    .option('--json', 'emit the typed result DTO to stdout')
+    .action(async (opts: { only: JobKind; json?: boolean }, command: Command) => {
+      try {
+        const ops = await import('../composition/agent-jobs-ops.js')
+        const result = await ops.pumpAgentJobs(
+          { only: opts.only },
+          await deps.opsFor(configPathFor(command)),
+        )
+        if (opts.json === true) {
+          console.log(JSON.stringify(result))
+          if (result.kind === 'refused') process.exitCode = 1
+          return
+        }
+        if (result.kind === 'refused') {
+          console.error(renderRefusal(result))
+          process.exitCode = 1
+          return
+        }
+        // A pumped outcome always exits 0. A failed or retry-scheduled disposition is DATA about
+        // what the queue durably did — a driver that read it as a command failure would abort a
+        // campaign leg over a job the queue has already scheduled to retry.
+        console.log(renderPump(result))
+      } catch (error) {
+        reportError('pump', error)
+      }
+    })
+
+  cmd
+    .command('cancel')
+    .description('Request cancellation of one agent job queue row')
+    .argument('<jobId>', 'the agent job id to cancel')
+    .option('--json', 'emit the typed result DTO to stdout')
+    .action(async (jobId: string, opts: { json?: boolean }, command: Command) => {
+      try {
+        const ops = await import('../composition/agent-jobs-ops.js')
+        const result = await ops.cancelAgentJob(jobId, await deps.opsFor(configPathFor(command)))
+        if (opts.json === true) {
+          console.log(JSON.stringify(result))
+          if (result.kind === 'refused') process.exitCode = 1
+          return
+        }
+        if (result.kind === 'refused') {
+          console.error(renderRefusal(result))
+          process.exitCode = 1
+          return
+        }
+        console.log(renderCancel(jobId, result))
+      } catch (error) {
+        reportError('cancel', error)
+      }
+    })
+
+  return cmd
+}

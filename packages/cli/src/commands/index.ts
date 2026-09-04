@@ -24,3 +24,5 @@ export { createFnCommand } from './fn.js'
 export { createProposalsCommand } from './proposals.js'
 export { createDigestCommand } from './digest.js'
 export { createDaemonCommand } from './daemon.js'
+// 413 D-06: the agent job queue's operator verbs — list, the kind-filtered pump, cancel.
+export { createAgentJobsCommand } from './agent-jobs.js'
