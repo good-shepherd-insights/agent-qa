@@ -81,7 +81,10 @@ function entryFor(cassetteId: string, product: string): CorpusEntry {
   }
 }
 
-function labelFor(cassetteId: string, tier: 'gold' | 'near-gold' | 'silver'): StandaloneLabelRecord {
+function labelFor(
+  cassetteId: string,
+  tier: 'gold' | 'near-gold' | 'silver',
+): StandaloneLabelRecord {
   const label = structuredClone(FIXTURE_LEAF.label)
   return {
     schemaVersion: 1,
@@ -116,7 +119,10 @@ function snapshotOf(
     const product = options.products?.get(cassette.id) ?? 'example-web'
     entries.push(entryFor(cassette.id, product))
     if (options.omitLabelFor?.has(cassette.id) !== true) {
-      labelsById.set(cassette.id, labelFor(cassette.id, options.tiers?.get(cassette.id) ?? 'silver'))
+      labelsById.set(
+        cassette.id,
+        labelFor(cassette.id, options.tiers?.get(cassette.id) ?? 'silver'),
+      )
     }
     if (options.omitCassetteFor?.has(cassette.id) !== true) {
       cassettesById.set(cassette.id, cassette)

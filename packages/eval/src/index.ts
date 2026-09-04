@@ -275,3 +275,21 @@ export {
   projectMatcherConfigContract,
 } from './contracts/projection'
 export type { ContractProjection } from './contracts/projection'
+
+export { computeCorpusDigest } from './census/corpus-digest'
+export {
+  CENSUS_SCHEMA_VERSION,
+  classifyStaticScorability,
+  deriveCensus,
+} from './census/derive-census'
+export type {
+  CensusCampaignInput,
+  CensusCampaignSummary,
+  CensusCrossCheckLine,
+  CensusProductBlock,
+  CensusRung,
+  CommittedCorpusSnapshot,
+  CorpusCensus,
+  DeriveCensusInput,
+  StaticScorability,
+} from './census/derive-census'
