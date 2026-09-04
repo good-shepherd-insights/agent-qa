@@ -10,7 +10,7 @@
 // throws" by a store that refuses every open; the paired success is the only thing that
 // separates the two.
 
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -37,7 +37,7 @@ import {
   createSqliteJobStore,
 } from '../store/sqlite-job-store.js'
 import type { SqliteJobStore } from '../store/sqlite-job-store.js'
-import { JobStoreSchemaVersionError } from '../store/store-errors.js'
+import { JobStoreSchemaVersionError, UnknownJobRowError } from '../store/store-errors.js'
 
 const KIND = 'analyze-run' as const
 
@@ -1173,5 +1173,163 @@ describe('agent job store: cancellation (D-19)', () => {
       ['job_a', true],
       ['job_b', false],
     ])
+  })
+})
+
+// The 413-13 gap closure. Phase 413's `agent-jobs pump` composed with no post-run capability
+// set, so the kind registry selected the STAND-IN analyze-run handler: nineteen rows reached
+// `done` with a `verdicts-authored` checkpoint recorded and nothing authored. Returning those
+// rows to the queue is only half a remedy, and the smaller half — `readCheckpoint` resolves
+// through `selectLatestCheckpoint`'s `ORDER BY attempt DESC`, so a row reset that KEPT the
+// stand-in's checkpoint would hand the real handler the stand-in's recorded value and it
+// would report `completed` having written nothing, a second time. So the cells below assert
+// the forget in BOTH media, and assert that the row's identity survives it.
+describe('agent job store: requeueTerminal (413-13, the stand-in forget)', () => {
+  let root: string
+  let store: SqliteJobStore
+  let fence: JobStoreFence
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-requeue-'))
+    store = openStore(root)
+    fence = await store.adoptEpoch(1)
+    await store.enqueue(insert('job_a', 'r_requeue'))
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  /** The file path the store's own checkpoint store would use — asserted on directly. */
+  function checkpointFile(jobId: string, checkpointId: string): string {
+    return createJobCheckpointStore({ root }).checkpointPath(jobId, checkpointId)
+  }
+
+  it('requeueTerminal forgets a terminal job: queued, attempts 0, no checkpoint row, no checkpoint file, same id and key', async () => {
+    await store.claimNext(fence)
+    await store.publishCheckpoint(
+      asJobId('job_a'),
+      'verdicts-authored',
+      checkpointRecord(asJobId('job_a'), 'verdicts-authored', { verdicts: ['stand-in'] }),
+      fence,
+    )
+    await store.completeAndChain(asJobId('job_a'), [], fence)
+
+    const file = checkpointFile('job_a', 'verdicts-authored')
+    // The precondition, asserted rather than assumed: without it a store that never wrote a
+    // checkpoint at all would satisfy every "it is gone" expectation below.
+    expect(rawRow(root, 'job_a')).toMatchObject({ status: 'done', attempts: 1 })
+    expect(await store.readCheckpoint(asJobId('job_a'), 'verdicts-authored')).toMatchObject({
+      found: true,
+    })
+    expect(existsSync(file)).toBe(true)
+
+    expect(await store.requeueTerminal(asJobId('job_a'), fence)).toEqual({ outcome: 'requeued' })
+
+    // Same id, same key: the derived chain identity `chainJobIdsForRun` addresses is intact,
+    // so the re-run's successor dedupes on the existing slot instead of duplicating it.
+    expect((await store.dumpState()).jobs).toMatchObject([
+      {
+        id: 'job_a',
+        idempotencyKey: 'r_requeue',
+        status: 'queued',
+        attempts: 0,
+        claimed: false,
+        cancelRequested: false,
+      },
+    ])
+    expect(await store.readCheckpoint(asJobId('job_a'), 'verdicts-authored')).toEqual({
+      found: false,
+    })
+    expect(rawCheckpointRows(root)).toEqual([])
+    expect(existsSync(file)).toBe(false)
+
+    // And it is genuinely back in the queue, on a fresh attempt.
+    expect(await store.claimNext(fence)).toMatchObject({
+      claimed: true,
+      job: { id: 'job_a', status: 'queued', attempts: 1 },
+    })
+  })
+
+  it('requeueTerminal refuses a queued or claimed row as not-terminal and moves nothing', async () => {
+    const queuedBefore = JSON.stringify(await store.dumpState())
+    expect(await store.requeueTerminal(asJobId('job_a'), fence)).toEqual({
+      outcome: 'not-terminal',
+      status: 'queued',
+    })
+    expect(JSON.stringify(await store.dumpState())).toBe(queuedBefore)
+
+    // A claimed row keeps the published status `queued` and holds its claim — the store owns
+    // the claim in a column, not in the status vocabulary — so the refusal reports `queued`
+    // and the claim and the attempt it spent both survive it.
+    await store.claimNext(fence)
+    const claimedBefore = JSON.stringify(await store.dumpState())
+    expect(await store.requeueTerminal(asJobId('job_a'), fence)).toEqual({
+      outcome: 'not-terminal',
+      status: 'queued',
+    })
+    expect(JSON.stringify(await store.dumpState())).toBe(claimedBefore)
+    expect((await store.dumpState()).jobs[0]).toMatchObject({ claimed: true, attempts: 1 })
+
+    // The paired successes, one per remaining terminal status: the verb works on `failed`
+    // and on `cancelled` too, and clears the columns that recorded how they got there.
+    await store.enqueue(insert('job_f', 'r_failed'))
+    await store.claimNext(fence)
+    await store.failAndChain(asJobId('job_f'), { kind: 'permanent', reason: 'gave up' }, [], fence)
+    expect(rawRow(root, 'job_f')).toMatchObject({
+      status: 'failed',
+      last_failure_kind: 'permanent',
+    })
+    expect(await store.requeueTerminal(asJobId('job_f'), fence)).toEqual({ outcome: 'requeued' })
+    expect(rawRow(root, 'job_f')).toMatchObject({
+      status: 'queued',
+      attempts: 0,
+      claimed_at: null,
+      last_failure_kind: null,
+      last_failure_reason: null,
+      cancel_requested_at: null,
+    })
+
+    await store.enqueue(insert('job_c', 'r_cancelled'))
+    await store.requestCancel(asJobId('job_c'), fence)
+    expect(rawRow(root, 'job_c')?.status).toBe('cancelled')
+    expect(await store.requeueTerminal(asJobId('job_c'), fence)).toEqual({ outcome: 'requeued' })
+    expect(
+      (await store.dumpState()).jobs.find((row) => row.id === 'job_c'),
+    ).toMatchObject({ status: 'queued', attempts: 0, cancelRequested: false })
+  })
+
+  it('requeueTerminal is fenced, and refuses an id no row answers to', async () => {
+    await store.claimNext(fence)
+    await store.publishCheckpoint(
+      asJobId('job_a'),
+      'verdicts-authored',
+      checkpointRecord(asJobId('job_a'), 'verdicts-authored', { verdicts: ['stand-in'] }),
+      fence,
+    )
+    await store.completeAndChain(asJobId('job_a'), [], fence)
+
+    const current = await store.adoptEpoch(2)
+    const before = JSON.stringify(await store.dumpState())
+
+    await expect(store.requeueTerminal(asJobId('job_a'), fence)).rejects.toBeInstanceOf(
+      StaleJobStoreEpochError,
+    )
+    expect(JSON.stringify(await store.dumpState())).toBe(before)
+    // The forget is inside the same refused transaction, so the checkpoint survives too.
+    expect(await store.readCheckpoint(asJobId('job_a'), 'verdicts-authored')).toMatchObject({
+      found: true,
+    })
+
+    // A mismatched id is a caller bug, not a third outcome arm (413-02 D-4).
+    await expect(store.requeueTerminal(asJobId('job_missing'), current)).rejects.toBeInstanceOf(
+      UnknownJobRowError,
+    )
+
+    // The paired success: the verb works, it just will not work for a writer that lost its lease.
+    expect(await store.requeueTerminal(asJobId('job_a'), current)).toEqual({
+      outcome: 'requeued',
+    })
   })
 })
