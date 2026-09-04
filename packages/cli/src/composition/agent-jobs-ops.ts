@@ -9,9 +9,16 @@
 // RESEARCH OQ-4 named two ways to close that gap and called (b) the one faithful to both
 // decisions. This file IS option (b), implemented outright rather than assumed away: the queue is
 // re-composed here with `unclaimableKinds` (the 388-09 CONSTRUCTION option) set to every declared
-// kind except `--only`, so an excluded row is never claimed — its status, its claim and its
-// attempt count are untouched, because the exclusion lives in the store's SELECTION rather than in
-// a filter this loop applies after the fact. No new agent-local surface, no new job kind.
+// kind except `--only`, UNIONED with the kinds the composed host itself may not claim, so an
+// excluded row is never claimed — its status, its claim and its attempt count are untouched,
+// because the exclusion lives in the store's SELECTION rather than in a filter this loop applies
+// after the fact. No new agent-local surface, no new job kind.
+//
+// The union is a CORRECTION, not decoration. This file asserted the exclusion twice over from the
+// day it was written and only ever composed it once: the host's posture-derived set sat on
+// `host.jobs().queue`, which this pump does not drain, and `ComposedAgentJobs` published a `Pick`
+// that dropped the very field a re-composer needs to honour it. A safety claim that overstates its
+// guarantee is the same defect class as the hole it describes, so both are fixed here.
 //
 // Why outright rather than assumed: seeding is a write-once, costly-reversibility door, and healed
 // runs are exactly the class only `analyze-run` classifies (F13). A campaign that seeded before its
@@ -122,9 +129,19 @@ export interface ListAgentJobsOutcome {
   readonly jobs: readonly AgentJobRow[]
 }
 
-/** The durable half these ops operate on, plus the close that gives the database back. */
+/**
+ * The durable half these ops operate on, plus the close that gives the database back.
+ *
+ * `unclaimableKinds` is on this list because a `Pick` that drops it makes the host's own exclusion
+ * STRUCTURALLY unreachable to the one caller that has to re-state it. `pumpAgentJobs` builds a
+ * fresh queue rather than draining `jobs.queue`, so the posture-derived set has to travel as DATA
+ * or it does not travel at all — and `LocalAgentJobs` publishes the field for exactly this.
+ */
 export interface ComposedAgentJobs {
-  readonly jobs: Pick<LocalAgentJobs, 'store' | 'kinds' | 'queue' | 'model' | 'idSource'>
+  readonly jobs: Pick<
+    LocalAgentJobs,
+    'store' | 'kinds' | 'queue' | 'model' | 'idSource' | 'unclaimableKinds'
+  >
   close(): Promise<void>
 }
 
@@ -158,9 +175,11 @@ function runIdOf(payload: unknown): string | undefined {
  *
  * REQUIRED by `postRun`'s type (388-10) — the posture is a review of the binding it describes, so
  * there is no `postRun` without one — and UNREACHABLE by construction: `'no-masker'` makes
- * `curate-memory` unclaimable on the composed host's own queue, and `--only` makes it unclaimable
- * again on the queue that actually drains. Supplied so the OTHER half of the capability bundle,
- * `persistAnalysis`, exists at all.
+ * `curate-memory` unclaimable on the composed host, `pumpAgentJobs` UNIONS that set into the
+ * `unclaimableKinds` of the queue it actually drains, and `--only` excludes it there a second time.
+ * The union is what makes the second sentence true; before it, the posture governed a queue this
+ * verb never touched. Supplied so the OTHER half of the capability bundle, `persistAnalysis`,
+ * exists at all.
  *
  * It THROWS rather than answering `{curated: 0, deprecated: 0, complete: true}`, and the
  * difference is the same one WR-03 is about: a fold that never ran must never let
@@ -170,9 +189,10 @@ function runIdOf(payload: unknown): string | undefined {
  */
 const PUMP_NEVER_CURATES = (): Promise<never> => {
   throw new Error(
-    'agent-jobs pump composed a host that may not claim curate-memory (unclaimableKinds, twice: '
-    + "the host's own 'no-masker' posture and the pump's --only exclusion), yet the curation fold "
-    + 'was reached. Both exclusions failed; no candidate was folded and no receipt was written.',
+    'agent-jobs pump composed a host that may not claim curate-memory (unclaimableKinds, twice '
+    + "on ONE queue: the host's own 'no-masker' posture, unioned into the queue this pump "
+    + 'constructs, and that queue\'s --only exclusion), yet the curation fold was reached. Both '
+    + 'exclusions failed; no candidate was folded and no receipt was written.',
   )
 }
 
@@ -197,10 +217,13 @@ export function defaultAgentJobsOpsDeps(configPath: string): AgentJobsOpsDeps {
       // that did not exist — the masked fallback 413-07 named as this phase's defect class.
       //
       // What holds `curate-memory` back is NOT the absence of a binding, and never was. It is
-      // `unclaimableKinds`, twice: `'no-masker'` folds through `UNCLAIMABLE_BY_PROSE_POSTURE` to
-      // exactly `['curate-memory']` on this host's own queue (the belt), and `pumpAgentJobs`
-      // re-composes with every declared kind but `--only` excluded (the braces). Both live in the
-      // store's SELECTION rather than in a binding, so the row is never OFFERED — a guarantee no
+      // `unclaimableKinds`, twice — but twice on ONE queue, which is the part this file used to
+      // get wrong. `'no-masker'` folds through `UNCLAIMABLE_BY_PROSE_POSTURE` to exactly
+      // `['curate-memory']` on the composed host (the belt), and `pumpAgentJobs` UNIONS that
+      // published set into the queue it constructs, where every declared kind but `--only` is
+      // excluded as well (the braces). A belt that stayed on `host.jobs().queue` would be a belt
+      // on a queue this command never drains, which is what it was. Both live in the store's
+      // SELECTION rather than in a binding, so the row is never OFFERED — a guarantee no
       // capability object can weaken. The posture is also the honest one rather than a lever: this
       // host holds no masking context, and a host that cannot say its fold redacts may not claim
       // the kind that folds.
@@ -298,23 +321,36 @@ function outcomeRow(outcome: Extract<RunNextJobOutcome, { ran: true }>): AgentJo
 /**
  * Drain `only`, and nothing else, under the writer lease.
  *
- * The exclusion is spelled ONCE, in the `createAgentJobQueue` call below. That is the whole
- * mechanism: `unclaimableKinds` is frozen into the queue at construction and becomes the store's
- * `claimNext(fence, { excludeKinds })` option, so an excluded row is never OFFERED. There is no
- * "claimed then put back" window for a curator job to slip through, which is what makes D-06's
- * "enqueued but NOT drained" a property of the selection rather than of this loop's discipline.
+ * The exclusion is APPLIED once, in the `createAgentJobQueue` call below, over a set assembled
+ * from two sources. That is the whole mechanism: `unclaimableKinds` is frozen into the queue at
+ * construction and becomes the store's `claimNext(fence, { excludeKinds })` option, so an excluded
+ * row is never OFFERED. There is no "claimed then put back" window for a curator job to slip
+ * through, which is what makes D-06's "enqueued but NOT drained" a property of the selection
+ * rather than of this loop's discipline.
+ *
+ * `--only` therefore cannot WIDEN what this host may claim. Naming a kind the host's own posture
+ * excludes yields a pump that claims nothing and says so — `ran: 0`, `stoppedOn: 'empty'`, and the
+ * named kind present in the `excludedKinds` the outcome reports, so the operator reads a refusal
+ * rather than an empty queue.
  */
 export async function pumpAgentJobs(
   { only }: { only: JobKind },
   deps: AgentJobsOpsDeps,
 ): Promise<PumpAgentJobsOutcome> {
   return withWriterLease(deps, async (lease, { jobs }): Promise<PumpAgentJobsOutcome> => {
-    const excludedKinds: readonly JobKind[] = jobs.kinds
-      .list()
-      .map((declaration) => declaration.kind)
-      .filter((kind) => kind !== only)
+    // The braces: every declared kind but the one named. The belt: the kinds the composed host
+    // itself may not claim, derived from its prose posture and published on `LocalAgentJobs` so a
+    // re-composer can carry it. UNION, never replace — a host that may not claim a kind may not
+    // claim it because an operator named it in `--only` either, and this pump drains a queue it
+    // built rather than the host's, so a belt left behind protects nothing.
+    const excludedKinds: readonly JobKind[] = [
+      ...new Set([
+        ...jobs.kinds.list().map((declaration) => declaration.kind).filter((kind) => kind !== only),
+        ...jobs.unclaimableKinds,
+      ]),
+    ]
 
-    // THE ONE PLACE THE D-06 KIND FILTER IS SPELLED (braces to the posture table's belt).
+    // THE ONE PLACE THE D-06 KIND FILTER IS APPLIED (braces and belt, on one queue).
     const onlyQueue: AgentJobQueue = createAgentJobQueue({
       store: jobs.store,
       registry: jobs.kinds,

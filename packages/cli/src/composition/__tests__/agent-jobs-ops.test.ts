@@ -107,6 +107,11 @@ function makeHarness(): Harness {
           queue: host.queue,
           model: NEVER_AUTHORS,
           idSource: DIGEST_JOB_ID_SOURCE,
+          // The composed host's belt, as DATA. `composeJobRecovery` builds no posture, so this
+          // double states the empty set explicitly rather than omitting the field: an omission
+          // would make every cell below silently measure the braces alone, which is exactly the
+          // hole CR-02 was.
+          unclaimableKinds: [],
         },
         close: async () => {
           host.close()
@@ -528,6 +533,75 @@ describe('defaultAgentJobsOpsDeps — the composition the shipped pump runs (413
       reader.close()
     }
   })
+  // CR-02. The file claimed the curator was held back "twice over" — the host's own
+  // posture-derived belt plus the pump's `--only` braces. Only the braces existed. `pumpAgentJobs`
+  // builds a FRESH `createAgentJobQueue` over the raw `jobs.store`, so the belt the cell above
+  // measures governs a queue that never drains, and `ComposedAgentJobs.jobs` was a `Pick<…>` that
+  // dropped `unclaimableKinds` — the one published field on `LocalAgentJobs` that exists so a
+  // re-composer can honour it. The claim was not merely unused; it was unreachable.
+  //
+  // `--only curate-memory` is a parser-accepted operator command, so the hole was reachable by
+  // typing a valid flag value. With one exclusion the curator became claimable, the real handler
+  // ran, `curateRun` = `PUMP_NEVER_CURATES` threw, and the engine's handler-throw path had already
+  // spent the attempt at claim (D-18): `retry-scheduled`, then `failed` at the bound — which is a
+  // chain terminal, minting a `failed` receipt for a curation nobody ever attempted.
+  //
+  // This cell asserts the union, not the refusal: the row a `--only curate-memory` pump names must
+  // come out of it exactly as it went in.
+  it('will not claim curate-memory even when --only names it, because the belt is unioned in', async () => {
+    const fixture = composedFixture()
+    const enqueuer = fixture.open()
+    try {
+      await enqueuer.queue.enqueue(
+        'curate-memory',
+        { runId: PUMPED_RUN_ID, executionContext: 'local-headless' },
+        `${PUMPED_RUN_ID}->curate-memory`,
+      )
+    } finally {
+      enqueuer.close()
+    }
+
+    const outcome = await pumpAgentJobs(
+      { only: 'curate-memory' },
+      defaultAgentJobsOpsDeps(fixture.configPath),
+    )
+
+    expect(outcome.kind).toBe('pumped')
+    if (outcome.kind !== 'pumped') return
+    expect(outcome.ran).toBe(0)
+    expect(outcome.stoppedOn).toBe('empty')
+    // The belt, VISIBLE in the DTO the operator reads: the kind they named is excluded, so the
+    // empty drain is reported rather than looking like an empty queue.
+    expect([...outcome.excludedKinds].sort()).toEqual(
+      ['analyze-run', 'chat', 'consolidate', 'curate-memory', 'propose-improvements'],
+    )
+
+    // The row, untouched. `attempts: 0` is the load-bearing one: the engine spends an attempt at
+    // CLAIM, so a curator that was claimed and then threw reads `attempts: 1` here even though
+    // nothing was folded.
+    const reader = fixture.open()
+    try {
+      const dump = await reader.store.dumpState()
+      expect(dump.jobs).toHaveLength(1)
+      expect(dump.jobs[0]).toMatchObject({
+        kind: 'curate-memory',
+        status: 'queued',
+        claimed: false,
+        attempts: 0,
+      })
+    } finally {
+      reader.close()
+    }
+
+    // And no receipt was minted for a fold that never ran.
+    const notifier = fixture.open()
+    try {
+      expect(await notifier.store.listNotifications()).toEqual([])
+    } finally {
+      notifier.close()
+    }
+  })
+
 })
 
 // ————— requeueAgentJob — the operator's explicit forget (413-14) —————

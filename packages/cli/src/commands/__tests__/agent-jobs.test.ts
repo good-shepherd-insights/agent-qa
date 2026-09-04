@@ -101,6 +101,9 @@ function harnessDeps(): { deps: AgentJobsOpsDeps; seed: (payload: unknown) => Pr
             queue: host.queue,
             model: NEVER_AUTHORS,
             idSource: DIGEST_JOB_ID_SOURCE,
+            // Stated, not omitted: this double composes no posture, and the empty set is a fact
+            // about it rather than a field nobody got round to (CR-02).
+            unclaimableKinds: [],
           },
           close: async () => {
             host.close()
