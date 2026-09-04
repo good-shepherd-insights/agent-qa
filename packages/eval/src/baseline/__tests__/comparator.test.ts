@@ -4,6 +4,11 @@ import { buildEvalReport } from '../../match/metrics'
 import type { EvalBatchReport } from '../../match/metrics'
 import type { JudgeIdentityBlock } from '../../match/score'
 import { assertBaselineComparator, renderBaselineComparatorRefusal } from '../comparator'
+import {
+  BASELINE_POINTER_SCHEMA_VERSION,
+  composeBaselineProfileKey,
+  projectBaselinePointer,
+} from '../profile-key'
 
 /**
  * Byte-copied from the committed D-18 fixture's `judge` block:
@@ -87,5 +92,59 @@ describe('assertBaselineComparator (D-20, ROOT-11)', () => {
         batchKey: FIXTURE_BATCH_KEY,
       },
     })
+  })
+})
+
+describe('baseline profile key (D-19)', () => {
+  it('composes the key from the fields the report already stamps', () => {
+    expect(
+      composeBaselineProfileKey({
+        plannerModelId: 'gpt-5.6-terra',
+        matcherVersion: 1,
+        judgeModelId: 'claude-sonnet-4-6',
+        judgeVersion: 1,
+      }),
+    ).toBe('planner=gpt-5.6-terra|matcher=1|judge=claude-sonnet-4-6|judgeVersion=1')
+
+    // Honest abstention has its own key: a no-judge profile is a different profile.
+    expect(
+      composeBaselineProfileKey({ plannerModelId: 'gpt-5.6-terra', matcherVersion: 1 }),
+    ).toBe('planner=gpt-5.6-terra|matcher=1|judge=none|judgeVersion=none')
+  })
+
+  it('projects a byte-stable pointer carrying no undefined key and no wall-clock field', () => {
+    const withJudge = projectBaselinePointer({
+      plannerModelId: 'gpt-5.6-terra',
+      matcherVersion: 1,
+      judgeModelId: 'claude-sonnet-4-6',
+      judgeVersion: 1,
+      batchKey: 'abc',
+    })
+
+    expect(withJudge).toEqual({
+      schemaVersion: BASELINE_POINTER_SCHEMA_VERSION,
+      profileKey: 'planner=gpt-5.6-terra|matcher=1|judge=claude-sonnet-4-6|judgeVersion=1',
+      batchKey: 'abc',
+      plannerModelId: 'gpt-5.6-terra',
+      matcherVersion: 1,
+      judgeModelId: 'claude-sonnet-4-6',
+      judgeVersion: 1,
+    })
+
+    const abstained = projectBaselinePointer({
+      plannerModelId: 'gpt-5.6-terra',
+      matcherVersion: 1,
+      batchKey: 'abc',
+    })
+
+    // Optional-spread, not undefined-valued keys: committedFileText must stay byte-stable.
+    expect(Object.keys(abstained).sort()).toEqual([
+      'batchKey',
+      'matcherVersion',
+      'plannerModelId',
+      'profileKey',
+      'schemaVersion',
+    ])
+    expect(JSON.stringify(abstained)).not.toContain('designatedAt')
   })
 })
