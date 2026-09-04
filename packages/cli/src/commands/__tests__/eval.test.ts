@@ -439,10 +439,16 @@ const REPLAY_CONFIG_YAML = [
 
 async function writeReplayFixture(
   secretsContent = '',
+  plannerModelId: string = REPLAY_STUB_MODEL_ID,
 ): Promise<{ dir: string; configPath: string }> {
   const dir = await mkdtemp(join(tmpRoot, 'replay-fixture-'))
   const configPath = join(dir, 'agent-qa.config.yaml')
-  await writeFile(configPath, REPLAY_CONFIG_YAML)
+  // 413-06: the registry model id is what the D-19 profile key is composed FROM, so a baseline
+  // cell swaps it while keeping every other fixture property (localhost baseURL, no credential).
+  await writeFile(
+    configPath,
+    REPLAY_CONFIG_YAML.replace(`model: ${REPLAY_STUB_MODEL_ID}`, `model: ${plannerModelId}`),
+  )
   await writeFile(join(dir, '.env.secrets.local'), secretsContent)
   return { dir, configPath }
 }
@@ -666,17 +672,19 @@ describe('runReplayVerb — offline sweep through the sanctioned composition (D-
 // ---- 372-07 Task 2: runReportVerb — whole-corpus assembly from persisted records (D-13/D-14) --
 
 /** Extract + replay one recorded run so real replay.json/score.json records exist on disk. */
-async function scoredRecordsFixture(): Promise<{
+async function scoredRecordsFixture(
+  plannerModelId: string = REPLAY_STUB_MODEL_ID,
+): Promise<{
   dir: string
   configPath: string
   session: EvalSession
   ids: string[]
 }> {
-  const { dir, configPath } = await writeReplayFixture()
+  const { dir, configPath } = await writeReplayFixture('', plannerModelId)
   saveRun(dir, 'run-alpha')
   const session = await sessionFor(configPath)
   await runExtractVerb(session)
-  await runReplayVerb(session, {}, { plannerOverrides: replayStub().overrides })
+  await runReplayVerb(session, {}, { plannerOverrides: replayStub(plannerModelId).overrides })
   const ids = await stagedCassetteIds(dir)
   // The host replay clock is intentionally real in this composition test. Pin its persisted
   // timing fields before report assembly so arbitrary performance.now() decimals cannot form a
@@ -2052,5 +2060,102 @@ describe('agent-qa eval census — rendering and exit semantics (413-05, D-04/D-
     expect(process.exitCode).toBe(1)
     expect(errors.join('\n')).toContain('no-such-campaign.json')
     expect(logs).toEqual([])
+  })
+})
+
+// ---- 413-06 Task 3: report --commit --baseline — the refusing per-profile pointer (D-19/D-20) --
+
+/**
+ * The D-19 profile key composed from what the report already stamps. The fixture registry entry
+ * named by `use.llm` resolves to this model id, the matcher constitution is version 1, and an
+ * abstention batch carries NO judge block — which gets its OWN key rather than sharing a judged
+ * profile's slot, because a no-judge measurement is a different measurement, not a missing one.
+ */
+const BASELINE_PLANNER_MODEL_ID = 'gpt-4o'
+const BASELINE_PROFILE_KEY = 'planner=gpt-4o|matcher=1|judge=none|judgeVersion=none'
+
+describe('runReportVerb --commit --baseline — designation through the refusing writer (D-19/D-20)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('writes the per-profile pointer after a committed abstention report (D-19)', async () => {
+    const { dir, session } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+
+    const result = await runReportVerb(session, {}, { commit: true, baseline: true })
+
+    expect(result.committed?.kind).toBe('committed')
+    expect(result.profileKey).toBe(BASELINE_PROFILE_KEY)
+    const pointerPath = `reports/baselines/${slugBranch(BASELINE_PROFILE_KEY)}.json`
+    expect(result.baseline).toEqual({ kind: 'written', path: pointerPath })
+
+    // The committed body carries ONLY stamped fields — no wall clock, so re-designation
+    // byte-compares instead of churning the write-once root (D-19).
+    const body = JSON.parse(
+      await readFile(join(dir, 'agent-qa-eval', pointerPath), 'utf-8'),
+    ) as Record<string, unknown>
+    expect(body).toEqual({
+      schemaVersion: 1,
+      profileKey: BASELINE_PROFILE_KEY,
+      batchKey: result.batchKey,
+      plannerModelId: BASELINE_PLANNER_MODEL_ID,
+      matcherVersion: 1,
+    })
+  })
+
+  it('refuses a same-family report as a comparator, keeps the report as history (D-18/D-20)', async () => {
+    const { dir, configPath, session, ids } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+    for (const id of ids) await setScoreJudgeBlock(dir, id, FIXTURE_JUDGE_BLOCK)
+
+    const result = await runReportVerb(session, {}, { commit: true, baseline: true })
+
+    expect(result.judgeIdentity).toBe('present')
+    // The report itself still commits — the v50 39/45 artefact stays history (D-18).
+    expect(result.committed?.kind).toBe('committed')
+    expect(result.baseline?.kind).toBe('refused')
+    expect(
+      result.baseline?.kind === 'refused' && result.baseline.refusal.kind,
+    ).toBe('same-family-override')
+    // A refused designation leaves NO file behind — the refusal precedes every write.
+    expect(existsSync(join(dir, 'agent-qa-eval', 'reports', 'baselines'))).toBe(false)
+
+    // ROOT-11: the refusal is disclosed on the surface a person actually reads, and exit stays 0.
+    const { logs } = captureConsole()
+    await buildProgram().parseAsync(
+      ['--config', configPath, 'eval', 'report', '--commit', '--baseline'],
+      { from: 'user' },
+    )
+    expect(process.exitCode).not.toBe(1)
+    expect(logs.join('\n')).toContain('baseline comparator refused: same-family-override')
+  })
+
+  it('--baseline without --commit is a typed error the command maps to exit 1 (D-19)', async () => {
+    const { configPath, session } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+
+    await expect(runReportVerb(session, {}, { baseline: true })).rejects.toThrow(
+      /--baseline requires --commit/,
+    )
+
+    const { logs, errors } = captureConsole()
+    await buildProgram().parseAsync(
+      ['--config', configPath, 'eval', 'report', '--baseline'],
+      { from: 'user' },
+    )
+    expect(process.exitCode).toBe(1)
+    expect(errors.join('\n')).toContain('--baseline requires --commit')
+    expect(logs).toEqual([])
+  })
+
+  it('re-designating the same batch is an idempotent unchanged pointer (D-17/D-19)', async () => {
+    const { session } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+
+    const first = await runReportVerb(session, {}, { commit: true, baseline: true })
+    expect(first.baseline?.kind).toBe('written')
+
+    const second = await runReportVerb(session, {}, { commit: true, baseline: true })
+    expect(second.baseline).toEqual({
+      kind: 'unchanged',
+      path: `reports/baselines/${slugBranch(BASELINE_PROFILE_KEY)}.json`,
+    })
   })
 })
