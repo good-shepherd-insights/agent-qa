@@ -37,10 +37,12 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
   let report: EvalBatchReport
   let pointer: BaselinePointer
 
-  function write(overrides: {
-    report?: EvalBatchReport
-    pointer?: BaselinePointer
-  } = {}): WriteBaselinePointerOutcome {
+  function write(
+    overrides: {
+      report?: EvalBatchReport
+      pointer?: BaselinePointer
+    } = {},
+  ): WriteBaselinePointerOutcome {
     return writeBaselinePointer({
       report: overrides.report ?? report,
       pointer: overrides.pointer ?? pointer,
@@ -118,9 +120,9 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
       },
     })
 
-    expect(
-      existsSync(join(root, committedBaselinePointerPath(sameFamilyPointer.profileKey))),
-    ).toBe(false)
+    expect(existsSync(join(root, committedBaselinePointerPath(sameFamilyPointer.profileKey)))).toBe(
+      false,
+    )
     // The checkpoint was never reached: refusing first means no guardrail row exists at all.
     expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
   })

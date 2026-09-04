@@ -66,7 +66,14 @@ export type {
   CommitEvalReportOutcome,
 } from './report-committing.js'
 
+export { writeBaselinePointer } from './baseline-pointer.js'
+export type {
+  WriteBaselinePointerInput,
+  WriteBaselinePointerOutcome,
+} from './baseline-pointer.js'
+
 export {
+  COMMITTED_BASELINES_SUBDIR,
   COMMITTED_CASSETTES_DIR,
   COMMITTED_CONTRACTS_DIR,
   COMMITTED_CORPUS_DIR,
@@ -80,6 +87,7 @@ export {
   committedBlobPath,
   committedCassettePath,
   committedContractPath,
+  committedBaselinePointerPath,
   committedCorpusPath,
   committedLabelPath,
   committedReportPath,

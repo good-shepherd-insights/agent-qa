@@ -55,7 +55,14 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // assertCommittedEgressSafe (fail-closed, JsonlAuditSink-audited, channel 'eval-report'),
   // JSON + markdown as ONE atomic checkpoint unit, write-once (identical regen ⇒ 'unchanged',
   // divergent bytes ⇒ typed 'write-conflict', never an overwrite).
-  'the single egress-checked committed-report writer placing report JSON and markdown under reports/ write-once',
+  // Phase 413 D-15/D-19/D-20 (ROOT-05/ROOT-11): the committed census and per-profile baseline
+  // pointer join the reports/ family under the SAME 'eval-report' checkpoint channel — never a
+  // new channel — and the same write-once refusal (identical regen ⇒ 'unchanged', a key already
+  // pointing elsewhere ⇒ 'write-conflict', so moving a baseline stays a reviewed git edit). The
+  // pointer writer additionally consults eval core's ONE comparator predicate BEFORE any write,
+  // so a same-family-judged report is refused rather than designated. Paired with the read leg
+  // that loads the committed root back for derivation; every derivation stays in eval core.
+  'the write-once committed census and baseline-pointer writers under agent-qa-eval/reports/ behind the eval-report checkpoint, and the committed-root read leg',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single
