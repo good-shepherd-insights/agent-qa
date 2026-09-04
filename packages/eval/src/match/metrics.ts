@@ -147,6 +147,19 @@ export interface EvalBatchReport {
   totalCost: TotalCost
   /** D-16 report-level judge identity receipt; absent when no judge existed for the batch. */
   judge?: JudgeIdentityBlock
+  /**
+   * 413-15 mixed-identity marker — the D-16 receipt's sibling for the case where one report's
+   * persisted score records carried canonically DIFFERING judge identity blocks. Present ONLY
+   * then; every non-mixed report carries neither this nor `mixedJudgeModelIds`, so already
+   * committed report bytes are unchanged. A mixed batch has no single identity to receipt, and
+   * one is never synthesized (T-372-20) — so `judge` is absent whenever this is present.
+   */
+  judgeIdentity?: 'mixed'
+  /**
+   * The distinct `judgeModelId`s actually seen across the batch's persisted score records,
+   * sorted and deduped. Data copied off the blocks, never a fabricated single identity.
+   */
+  mixedJudgeModelIds?: readonly string[]
 }
 
 function isReplayRefusal(outcome: ReplayCassetteOutcome): outcome is ReplayRefusal {
@@ -221,10 +234,18 @@ export function computeBatchKey(cassetteIds: readonly string[]): string {
   return sha256hex(canonicalJson([...cassetteIds].sort()))
 }
 
-/** Aggregate a scored replay batch without recomputing score, drift, or agreement signals. */
+/**
+ * Aggregate a scored replay batch without recomputing score, drift, or agreement signals.
+ *
+ * `identity` (413-15) states that the batch mixed judge identities. A caller may not supply both
+ * `judge` and `identity` — a mixed batch by definition has no single block — and if both arrive
+ * the identity wins and `judge` is dropped, so the report can never claim one identity while
+ * disclosing several.
+ */
 export function buildEvalReport(
   entries: readonly ScoredBatchEntry[],
   judge?: JudgeIdentityBlock,
+  identity?: { judgeIdentity: 'mixed'; judgeModelIds: readonly string[] },
 ): EvalBatchReport {
   const tieCounts: Counts<TieCause> = {
     'partial-identity': 0,
@@ -479,6 +500,12 @@ export function buildEvalReport(
     axisDistributions,
     recovery,
     totalCost,
-    ...(judge === undefined ? {} : { judge }),
+    ...(judge === undefined || identity !== undefined ? {} : { judge }),
+    ...(identity === undefined
+      ? {}
+      : {
+          judgeIdentity: identity.judgeIdentity,
+          mixedJudgeModelIds: [...new Set(identity.judgeModelIds)].sort(),
+        }),
   }
 }

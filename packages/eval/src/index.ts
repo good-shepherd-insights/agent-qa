@@ -281,6 +281,8 @@ export type {
   BaselineComparatorRefusal,
   BaselineComparatorRefusalKind,
   BaselineComparatorVerdict,
+  MixedJudgeIdentityRefusal,
+  SameFamilyOverrideRefusal,
 } from './baseline/comparator'
 
 export {

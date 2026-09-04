@@ -113,11 +113,23 @@ export interface CensusCrossCheckLine {
   membershipComparable: false
   unscorableIdentityCounts: Readonly<Record<string, number>>
   refusalCounts: Readonly<Record<string, number>>
+  /**
+   * The refusal is restated STRUCTURALLY, not imported: 413-15 widened the comparator's kind
+   * union to two members whose payloads differ (`same-family-override` names one judge and its
+   * family; `mixed-judge-identity` names the list of distinct ids), so every payload field but
+   * `kind` and `batchKey` is optional here. The census still never imports from `../baseline`.
+   */
   comparator:
     | { ok: true }
     | {
         ok: false
-        refusal: { kind: string; judgeModelId: string; judgeFamily: string; batchKey: string }
+        refusal: {
+          kind: string
+          batchKey: string
+          judgeModelId?: string
+          judgeFamily?: string
+          judgeModelIds?: readonly string[]
+        }
       }
   designatedBy: readonly string[]
 }
