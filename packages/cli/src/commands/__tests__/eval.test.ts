@@ -9,7 +9,7 @@ import { Command } from 'commander'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   buildEvalReport,
@@ -482,12 +482,14 @@ function clickGenerateResult(): StubGenerateResult {
  * injected through createModel's overrides so every doGenerate params object is captured POST the
  * pinned-last mask/guardrail middleware — the exact provider boundary.
  */
-function replayStub(): { captured: CapturedCallOptions[]; overrides: ModelProviderOverrides } {
+function replayStub(
+  modelId: string = REPLAY_STUB_MODEL_ID,
+): { captured: CapturedCallOptions[]; overrides: ModelProviderOverrides } {
   const captured: CapturedCallOptions[] = []
   const stub: StubLanguageModel = {
     specificationVersion: 'v3',
     provider: 'replay-cli-stub-provider',
-    modelId: REPLAY_STUB_MODEL_ID,
+    modelId,
     supportedUrls: {},
     async doGenerate(params) {
       captured.push(params)
@@ -497,7 +499,7 @@ function replayStub(): { captured: CapturedCallOptions[]; overrides: ModelProvid
       return { stream: new ReadableStream() }
     },
   }
-  return { captured, overrides: { languageModels: { [REPLAY_STUB_MODEL_ID]: stub } } }
+  return { captured, overrides: { languageModels: { [modelId]: stub } } }
 }
 
 /** Read every staged cassette id back from the bundle documents, sorted. */
@@ -722,6 +724,19 @@ async function writeRefusalReplayRecord(dir: string, cassetteId: string): Promis
   )
 }
 
+/** Stamp a contrastive pairing onto a bundle document at an explicit path (D-08 exclusion input). */
+async function setBundlePairingAt(
+  bundleFile: string,
+  relation: 'contrastive-negative' | 'contrastive-positive',
+  pairedCassetteId: string,
+): Promise<void> {
+  const document = JSON.parse(await readFile(bundleFile, 'utf-8')) as {
+    label: Record<string, unknown>
+  }
+  document.label = { ...document.label, pairing: { pairedCassetteId, relation } }
+  await writeFile(bundleFile, `${JSON.stringify(document, null, 2)}\n`)
+}
+
 /** Stamp a contrastive pairing onto a staged bundle's label leg (the D-08 exclusion input). */
 async function setStagedLabelPairing(
   dir: string,
@@ -729,19 +744,18 @@ async function setStagedLabelPairing(
   relation: 'contrastive-negative' | 'contrastive-positive',
   pairedCassetteId: string,
 ): Promise<void> {
-  const bundleFile = join(
-    dir,
-    '.agent-qa',
-    'eval',
-    'cassettes',
-    ...cassetteId.split('/').map(segment => slugBranch(segment)),
-    'cassette.json',
+  await setBundlePairingAt(
+    join(
+      dir,
+      '.agent-qa',
+      'eval',
+      'cassettes',
+      ...cassetteId.split('/').map(segment => slugBranch(segment)),
+      'cassette.json',
+    ),
+    relation,
+    pairedCassetteId,
   )
-  const document = JSON.parse(await readFile(bundleFile, 'utf-8')) as {
-    label: Record<string, unknown>
-  }
-  document.label = { ...document.label, pairing: { pairedCassetteId, relation } }
-  await writeFile(bundleFile, `${JSON.stringify(document, null, 2)}\n`)
 }
 
 /** Set or clear the persisted ScoreRecord judge identity block (D-16 receipt). */
@@ -1173,6 +1187,149 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
   })
 })
 
+// ---- 413-06 Task 2: --source committed on replay and report (D-08) ---------------------------
+
+/** Extract, replay and seed one run so the fixture COMMITTED root holds real cassette bundles. */
+async function committedCorpusFixture(): Promise<{
+  dir: string
+  configPath: string
+  session: EvalSession
+  committedRoot: string
+  leafId: string
+  procedureId: string
+}> {
+  const { dir, configPath } = await writeReplayFixture()
+  saveSeedRun(dir, 'run-alpha')
+  const session = await sessionFor(configPath)
+  await runExtractVerb(session)
+  const seeded = await runSeedVerb(session)
+  expect(seeded.seededCount).toBe(1)
+  const ids = await stagedCassetteIds(dir)
+  const leafId = ids.find(id => id.endsWith('-leaf'))
+  const procedureId = ids.find(id => !id.endsWith('-leaf'))
+  if (leafId === undefined || procedureId === undefined) {
+    throw new Error('expected one staged leaf and one staged procedure cassette')
+  }
+  return { dir, configPath, session, committedRoot: resolve(dir, 'agent-qa-eval'), leafId, procedureId }
+}
+
+/** The committed bundle dir for one seeded leaf under the fixture's product partition. */
+function committedBundleDir(committedRoot: string, cassetteId: string): string {
+  return dirname(join(committedRoot, committedCassettePath('default', cassetteId)))
+}
+
+describe('eval --source committed — the whole committed corpus in ONE batch (413 D-08)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('replay sweeps the committed root under the committed source and reports it', async () => {
+    const { dir, session, leafId } = await committedCorpusFixture()
+
+    const result = await runReplayVerb(
+      session,
+      {},
+      { source: 'committed', plannerOverrides: replayStub().overrides },
+    )
+
+    // Only the seeded leaf lives in the committed root — the whole corpus, not the staging root.
+    expect(result.source).toBe('committed')
+    expect(result.swept).toBe(1)
+    expect(result.replayed).toBe(1)
+    expect(result.loadRefusals).toEqual({})
+    expect(result.replayRefusals).toEqual({})
+    expect(result.batchKey).toBe(computeBatchKey([leafId]))
+    // D-07: replay records stay runtime staging even when the cassettes came from the committed root.
+    expect(result.replaysRoot).toBe(join(dir, '.agent-qa', 'eval', 'replays'))
+    expect(existsSync(join(replayDirFor(dir, leafId), 'replay.json'))).toBe(true)
+    expect(result.notices.some(notice => notice.includes('committed root'))).toBe(true)
+  })
+
+  it('counts a blob-less committed cassette as a missing-blob refusal under the committed source', async () => {
+    const { dir, session, committedRoot, leafId } = await committedCorpusFixture()
+    // The committed root gitignores blobs/, so a fresh clone replays cassettes whose bytes are
+    // absent locally. That entry is a COUNTED refusal — never dropped from the denominator.
+    await rm(join(committedBundleDir(committedRoot, leafId), 'blobs'), {
+      recursive: true,
+      force: true,
+    })
+
+    const result = await runReplayVerb(
+      session,
+      {},
+      { source: 'committed', plannerOverrides: replayStub().overrides },
+    )
+
+    expect(result.source).toBe('committed')
+    expect(result.swept).toBe(1)
+    expect(result.replayRefusals['missing-blob']).toBe(1)
+    expect(result.loadRefusals).toEqual({})
+    // A refusal IS an outcome: the record is persisted so the report counts the entry (Pitfall 4).
+    expect(existsSync(join(replayDirFor(dir, leafId), 'replay.json'))).toBe(true)
+  })
+
+  it('leaves the default staged source unchanged when no source is supplied', async () => {
+    const { dir, session } = await committedCorpusFixture()
+
+    const result = await runReplayVerb(session, {}, { plannerOverrides: replayStub().overrides })
+
+    expect(result.source).toBe('staged')
+    // Both staged bundles (leaf + procedure) entered — the staging root, not the committed one.
+    expect(result.swept).toBe(2)
+    expect(result.replayed).toBe(2)
+    expect(existsSync(join(dir, '.agent-qa', 'eval', 'cassettes'))).toBe(true)
+  })
+
+  it('report joins label legs from the committed source and reports the source', async () => {
+    const { session, committedRoot, leafId, procedureId } = await committedCorpusFixture()
+    await runReplayVerb(session, {}, { plannerOverrides: replayStub().overrides })
+    // The pairing lands ONLY on the committed bundle: a negative decision in the report is proof
+    // the label leg was joined from the committed root and not from staging.
+    await setBundlePairingAt(
+      join(committedBundleDir(committedRoot, leafId), 'cassette.json'),
+      'contrastive-negative',
+      procedureId,
+    )
+
+    const committed = await runReportVerb(session, {}, { source: 'committed' })
+    expect(committed.source).toBe('committed')
+    expect(committed.entries).toBe(2)
+    expect(committed.report.recovery.negativeDecisionCount).toBe(1)
+
+    const staged = await runReportVerb(session)
+    expect(staged.source).toBe('staged')
+    expect(staged.report.recovery.negativeDecisionCount).toBe(0)
+  })
+
+  it('accepts --source committed and rejects an unknown source with exit 1 on both verbs', async () => {
+    const { configPath } = await committedCorpusFixture()
+
+    const accepted = captureConsole()
+    await buildProgram().parseAsync(
+      ['--config', configPath, 'eval', 'replay', '--source', 'committed', '--json'],
+      { from: 'user' },
+    )
+    expect(process.exitCode).not.toBe(1)
+    const dto = JSON.parse(accepted.logs.join('\n')) as ReplayVerbResult
+    expect(dto.source).toBe('committed')
+    vi.restoreAllMocks()
+
+    const rejected = captureConsole()
+    await buildProgram().parseAsync(
+      ['--config', configPath, 'eval', 'replay', '--source', 'bogus'],
+      { from: 'user' },
+    )
+    expect(process.exitCode).toBe(1)
+    expect(rejected.errors.join('\n')).toContain('--source')
+    expect(rejected.logs).toEqual([])
+
+    const flagsFor = (verb: string): (string | undefined)[] =>
+      createEvalCommand().commands.find(sub => sub.name() === verb)?.options.map(o => o.long) ?? []
+    expect(flagsFor('replay')).toEqual(expect.arrayContaining(['--source']))
+    expect(flagsFor('report')).toEqual(expect.arrayContaining(['--source']))
+  })
+})
+
 // ---- Task 2: the commander family, D-04 rendering purity, D-08 exit codes ---------------------
 
 /** Mirror of cli.ts: the global --config option on the program, eval as a direct child. */
@@ -1210,7 +1367,7 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
     expect(flags).toEqual(expect.arrayContaining(['--run', '--product', '--json']))
   })
 
-  it('declares the full replay flag vocabulary: --run, --cassette, --product, --judge, --k, --seed, --json', () => {
+  it('declares the full replay flag vocabulary: --run, --cassette, --product, --judge, --k, --seed, --source, --json', () => {
     const replay = createEvalCommand().commands.find(sub => sub.name() === 'replay')
     const flags = replay?.options.map(option => option.long) ?? []
     expect(flags).toEqual(
@@ -1221,6 +1378,7 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
         '--judge',
         '--k',
         '--seed',
+        '--source',
         '--json',
       ]),
     )
@@ -1234,11 +1392,19 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
     )
   })
 
-  it('declares the report flag vocabulary: --run, --cassette, --product, --commit, --json', () => {
+  it('declares the report flag vocabulary: --run, --cassette, --product, --commit, --source, --baseline, --json', () => {
     const report = createEvalCommand().commands.find(sub => sub.name() === 'report')
     const flags = report?.options.map(option => option.long) ?? []
     expect(flags).toEqual(
-      expect.arrayContaining(['--run', '--cassette', '--product', '--commit', '--json']),
+      expect.arrayContaining([
+        '--run',
+        '--cassette',
+        '--product',
+        '--commit',
+        '--source',
+        '--baseline',
+        '--json',
+      ]),
     )
   })
 
