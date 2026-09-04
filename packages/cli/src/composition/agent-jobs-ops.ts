@@ -112,6 +112,11 @@ export type CancelAgentJobOutcome =
   | { readonly kind: 'already-terminal'; readonly status: JobStatus }
   | AgentJobsRefusal
 
+export type RequeueAgentJobOutcome =
+  | { readonly kind: 'requeued' }
+  | { readonly kind: 'not-terminal'; readonly status: JobStatus }
+  | AgentJobsRefusal
+
 export interface ListAgentJobsOutcome {
   readonly epoch: number
   readonly jobs: readonly AgentJobRow[]
@@ -407,5 +412,41 @@ export async function cancelAgentJob(
       return { kind: 'already-terminal', status: outcome.status }
     }
     return { kind: outcome.outcome }
+  })
+}
+
+/**
+ * Return one FINISHED agent job to the queue, forgetting what its last attempt recorded.
+ *
+ * Why this verb exists at all. The 413-08 campaign pumped 19 `analyze-run` rows to `done` against a
+ * host composed with no `postRun`, so the kind registry handed every one of them its scripted
+ * STAND-IN: each row recorded a `verdicts-authored` checkpoint carrying no verdicts and reported
+ * `completed` having written no `analysis.json`. The pump is fixed forward, but the rows are not
+ * re-runnable by enqueueing again — the store dedups on `(kind, idempotencyKey)`, so a second
+ * enqueue for the same run is refused, and a fresh key would break the chain identity
+ * `chainJobIdsForRun` derives from the run id. The row itself has to go back.
+ *
+ * Why the checkpoint forget is not a detail. A resumed job reads its LATEST recorded checkpoint
+ * across attempts (`ORDER BY attempt DESC LIMIT 1`), so a reset that moved only the status would
+ * hand the real handler the stand-in's empty authorship as though a handler had produced it: it
+ * would author nothing and report `completed` a second time. `requeueTerminal` makes the lifecycle
+ * reset and the checkpoint forget one fenced transaction for exactly that reason.
+ *
+ * Under the writer lease, and in the same bracket the pump uses, because this is a WRITE against
+ * rows a drainer may be claiming (T-413-46). And it deliberately does NOT pump: the operator runs
+ * `agent-jobs pump --only <kind>` next, so the forget and the re-run stay two visible steps that a
+ * driver records separately rather than one verb whose failure mode is ambiguous.
+ */
+export async function requeueAgentJob(
+  jobId: string,
+  deps: AgentJobsOpsDeps,
+): Promise<RequeueAgentJobOutcome> {
+  return withWriterLease(deps, async (lease, { jobs }): Promise<RequeueAgentJobOutcome> => {
+    const fence = await jobs.store.adoptEpoch(lease.epoch)
+    const outcome = await jobs.store.requeueTerminal(asJobId(jobId), fence)
+    if (outcome.outcome === 'not-terminal') {
+      return { kind: 'not-terminal', status: outcome.status }
+    }
+    return { kind: 'requeued' }
   })
 }

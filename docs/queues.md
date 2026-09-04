@@ -12,7 +12,7 @@ Wherever all three are listed — help text, logs, docs — they are listed in t
 | **Introduced** | v1 | v51 | v52 (Phase 385) |
 | **Lifecycle owner** | the dashboard server's `JobQueue`, with a concurrency-slot dispatcher | the writer lease — one drainer at a time | the agent job engine (`agent`), driven by a host that holds a fencing epoch |
 | **Storage medium** | the dashboard database | files under `<knowledgeRoot>/memory/queue/` (`queued/`, `claimed/`, `jobs/`) | sqlite at `.agent-qa/agent-jobs.db` for lifecycle, plus one checkpoint file per publish under `.agent-qa/agent-jobs/checkpoints/<jobId>/` |
-| **CLI surface** | `agent-qa queue list`, `agent-qa queue cancel` | none of its own; drained at the tail of a run, with related maintenance under `agent-qa knowledge maintain` | `agent-qa agent-jobs list`, `agent-qa agent-jobs pump --only <kind>`, `agent-qa agent-jobs cancel <jobId>` |
+| **CLI surface** | `agent-qa queue list`, `agent-qa queue cancel` | none of its own; drained at the tail of a run, with related maintenance under `agent-qa knowledge maintain` | `agent-qa agent-jobs list`, `agent-qa agent-jobs pump --only <kind>`, `agent-qa agent-jobs cancel <jobId>`, `agent-qa agent-jobs requeue <jobId>` |
 
 ## run queue
 
@@ -47,6 +47,19 @@ named is unclaimable, so a host can run one kind and leave the rest queued untou
 D-06: `analyze-run` per campaign leg, with the `curate-memory` successor it enqueues held back for
 the disposal step, which lists it with `agent-qa agent-jobs list` and discards it with
 `agent-qa agent-jobs cancel <jobId>`).
+
+`agent-qa agent-jobs requeue <jobId>` returns a `done`, `failed` or `cancelled` row to `queued` with
+its attempts reset and its checkpoint records forgotten in BOTH media — the sqlite rows and the
+checkpoint files. The forget is the point, not a tidy-up. A resumed job reads the latest checkpoint
+it recorded across attempts, so a reset that kept them would replay whatever the previous attempt
+claimed to have authored: that is exactly how 19 `analyze-run` rows in the Phase 413 campaign
+reported `completed` while writing no analysis at all, and a status-only requeue would have
+reproduced it. Anything not terminal answers `not-terminal` and moves nothing — a queued or claimed
+row belongs to a drainer, and resetting its attempt count out from under a running handler is the
+two-writers-under-one-fence case the fence exists to exclude. The row keeps its id and its
+`(kind, idempotency key)` pair, so the successor it re-chains on the next run dedupes onto the
+existing slot through the unique index instead of doubling it. The verb does not pump: the operator
+runs `agent-qa agent-jobs pump --only <kind>` next, so the forget and the re-run stay two steps.
 
 ## What is deliberately *not* renamed
 

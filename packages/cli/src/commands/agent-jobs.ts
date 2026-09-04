@@ -21,6 +21,7 @@ import type {
   CancelAgentJobOutcome,
   ListAgentJobsOutcome,
   PumpAgentJobsOutcome,
+  RequeueAgentJobOutcome,
 } from '../composition/agent-jobs-ops.js'
 
 /**
@@ -125,6 +126,23 @@ function renderCancel(jobId: string, result: CancelAgentJobOutcome): string {
   return `agent job queue: ${jobId} ${word}`
 }
 
+/**
+ * What a requeue did, in the operator's words.
+ *
+ * `not-terminal` is DATA and exits 0: a driver that read "this row is queued" as a command failure
+ * would abort a campaign over a row somebody else legitimately owns. The requeued line names both
+ * halves of what changed — the attempts and the checkpoints — because forgetting the second is the
+ * defect this verb exists to undo, and it points at the pump rather than performing one.
+ */
+function renderRequeue(jobId: string, result: RequeueAgentJobOutcome): string {
+  if (result.kind === 'not-terminal') {
+    return `agent job queue: ${jobId} not-terminal (${result.status}) `
+      + '\u2014 only a done, failed or cancelled agent job can be requeued'
+  }
+  return `agent job queue: ${jobId} requeued `
+    + '(attempts reset, checkpoints forgotten; pump --only <kind> to run it)'
+}
+
 function reportError(verb: string, error: unknown): void {
   console.error(
     pc.red(`agent job queue ${verb} error: ${error instanceof Error ? error.message : String(error)}`),
@@ -134,7 +152,7 @@ function reportError(verb: string, error: unknown): void {
 
 export function createAgentJobsCommand(deps: AgentJobsCommandDeps = DEFAULT_DEPS): Command {
   const cmd = new Command('agent-jobs')
-    .description('Inspect and pump the agent job queue (.agent-qa/agent-jobs.db)')
+    .description('Inspect, pump and requeue rows of the agent job queue (.agent-qa/agent-jobs.db)')
     .addHelpText(
       'after',
       '\nagent-qa runs three separate queues; this command manages the third only:\n' +
@@ -212,6 +230,31 @@ export function createAgentJobsCommand(deps: AgentJobsCommandDeps = DEFAULT_DEPS
         console.log(renderCancel(jobId, result))
       } catch (error) {
         reportError('cancel', error)
+      }
+    })
+
+  cmd
+    .command('requeue')
+    .description('Return one done, failed or cancelled row to the agent job queue')
+    .argument('<jobId>', 'the agent job id to return to the agent job queue')
+    .option('--json', 'emit the typed result DTO to stdout')
+    .action(async (jobId: string, opts: { json?: boolean }, command: Command) => {
+      try {
+        const ops = await import('../composition/agent-jobs-ops.js')
+        const result = await ops.requeueAgentJob(jobId, await deps.opsFor(configPathFor(command)))
+        if (opts.json === true) {
+          console.log(JSON.stringify(result))
+          if (result.kind === 'refused') process.exitCode = 1
+          return
+        }
+        if (result.kind === 'refused') {
+          console.error(renderRefusal(result))
+          process.exitCode = 1
+          return
+        }
+        console.log(renderRequeue(jobId, result))
+      } catch (error) {
+        reportError('requeue', error)
       }
     })
 
