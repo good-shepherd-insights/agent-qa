@@ -276,6 +276,13 @@ export {
 } from './contracts/projection'
 export type { ContractProjection } from './contracts/projection'
 
+export { assertBaselineComparator, renderBaselineComparatorRefusal } from './baseline/comparator'
+export type {
+  BaselineComparatorRefusal,
+  BaselineComparatorRefusalKind,
+  BaselineComparatorVerdict,
+} from './baseline/comparator'
+
 export { computeCorpusDigest } from './census/corpus-digest'
 export {
   CENSUS_SCHEMA_VERSION,
