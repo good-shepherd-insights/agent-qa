@@ -292,6 +292,13 @@ export type { BaselinePointer, BaselineProfileKeyInput } from './baseline/profil
 
 export { computeCorpusDigest } from './census/corpus-digest'
 export {
+  CAMPAIGN_MANIFEST_SCHEMA_VERSION,
+  campaignLegSchema,
+  campaignManifestSchema,
+  guardCampaignManifest,
+} from './census/campaign-manifest'
+export type { CampaignLeg, CampaignManifest } from './census/campaign-manifest'
+export {
   CENSUS_SCHEMA_VERSION,
   classifyStaticScorability,
   deriveCensus,
