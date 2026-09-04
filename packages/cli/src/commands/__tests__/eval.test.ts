@@ -846,6 +846,8 @@ describe('runReportVerb — one batch, one report, one headline (D-13/D-14)', ()
     expect(mixed.judgeIdentity).toBe('mixed')
     expect(mixed.report.judge).toBeUndefined()
     expect(mixed.notices.some(notice => notice.includes('mixed'))).toBe(true)
+    // 413-15: the mixture is stamped on the report as data, so the comparator can see it.
+    expect(mixed.report.judgeIdentity).toBe('mixed')
   })
 
   it('--commit routes through commitEvalReport; an identical regeneration reports unchanged (D-13/D-17)', async () => {
@@ -2127,6 +2129,59 @@ describe('runReportVerb --commit --baseline — designation through the refusing
     )
     expect(process.exitCode).not.toBe(1)
     expect(logs.join('\n')).toContain('baseline comparator refused: same-family-override')
+  })
+
+  /**
+   * 413-15 (decision `refuse-mixed-identity`, 2026-09-04): the end-to-end slice for the case
+   * 413-02 D-1 left open — persisted score records carrying DIFFERING judge blocks → the mixed
+   * arm of `runReportVerb` → `buildEvalReport`'s third argument → `writeBaselinePointer` → the
+   * ONE predicate → a printed refusal and NO pointer. Before this plan such a batch was
+   * designated under the `judge=none|judgeVersion=none` key that D-2 reserved for an honestly
+   * judge-less measurement.
+   */
+  it('refuses a mixed-judge-identity batch as a comparator, keeps the report as history (413-15 decision: refuse)', async () => {
+    const { dir, configPath, session, ids } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+    await setScoreJudgeBlock(dir, ids[0]!, JUDGE_BLOCK_A)
+    await setScoreJudgeBlock(dir, ids[1]!, JUDGE_BLOCK_B)
+
+    const result = await runReportVerb(session, {}, { commit: true, baseline: true })
+
+    expect(result.judgeIdentity).toBe('mixed')
+    // No single identity is fabricated (T-372-20) — the mixture rides as data instead.
+    expect(result.report.judge).toBeUndefined()
+    expect(result.report.judgeIdentity).toBe('mixed')
+    expect(result.report.mixedJudgeModelIds).toEqual(['judge-fixture-a', 'judge-fixture-b'])
+
+    // The report still commits: a refused comparator is still honest history (D-18's posture).
+    expect(result.committed?.kind).toBe('committed')
+    expect(result.baseline?.kind).toBe('refused')
+    expect(result.baseline?.kind === 'refused' && result.baseline.refusal.kind).toBe(
+      'mixed-judge-identity',
+    )
+    expect(
+      result.baseline?.kind === 'refused'
+      && result.baseline.refusal.kind === 'mixed-judge-identity'
+      && result.baseline.refusal.judgeModelIds,
+    ).toEqual(['judge-fixture-a', 'judge-fixture-b'])
+    // A refused designation leaves NO file behind — the refusal precedes every write.
+    expect(existsSync(join(dir, 'agent-qa-eval', 'reports', 'baselines'))).toBe(false)
+
+    // The committed projection discloses the mixture instead of claiming no judge was invoked.
+    const markdown = await readFile(
+      join(dir, 'agent-qa-eval', 'reports', slugBranch(result.batchKey), 'report.md'),
+      'utf-8',
+    )
+    expect(markdown).toContain('mixed identities across score records')
+    expect(markdown).not.toContain('judge: no judge invoked')
+
+    // ROOT-11: the refusal is disclosed on the surface a person reads, and exit stays 0.
+    const { logs } = captureConsole()
+    await buildProgram().parseAsync(
+      ['--config', configPath, 'eval', 'report', '--commit', '--baseline'],
+      { from: 'user' },
+    )
+    expect(process.exitCode).not.toBe(1)
+    expect(logs.join('\n')).toContain('baseline comparator refused: mixed-judge-identity')
   })
 
   it('--baseline without --commit is a typed error the command maps to exit 1 (D-19)', async () => {
