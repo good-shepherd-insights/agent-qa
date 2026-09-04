@@ -11,8 +11,8 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { computeBatchKey } from '@vostride/agent-qa-eval'
-import type { JudgeIdentityBlock } from '@vostride/agent-qa-eval'
+import { computeBatchKey, deriveCensus } from '@vostride/agent-qa-eval'
+import type { CorpusCensus, JudgeIdentityBlock } from '@vostride/agent-qa-eval'
 import type { createModel, ModelProviderOverrides } from '@vostride/agent-qa-model'
 import {
   FsEvidenceArtifactStore,
@@ -51,6 +51,7 @@ import type {
   ReportVerbResult,
   SeedVerbResult,
 } from '../../eval-session-composition.js'
+import { renderCensusMarkdown } from '../../eval-census-render.js'
 import { createEvalCommand } from '../eval.js'
 
 const BLOB_BYTES = Uint8Array.from(Buffer.from('agent-qa eval extract fixture blob\n', 'utf8'))
@@ -1248,5 +1249,117 @@ describe('agent-qa eval replay — rendering and exit semantics (372-06, D-04/D-
     expect(dto.swept).toBe(1)
     expect(dto.loadRefusals).toEqual({ 'parse-failed': 1 })
     expect(dto.replayed).toBe(0)
+  })
+})
+
+// ---- 413-05 Task 1: the deterministic census markdown projection (D-15/D-16) ------------------
+
+/** A fully-populated CorpusCensus DTO: one product, a campaign, one refused cross-check line. */
+function censusFixture(): CorpusCensus {
+  return {
+    schemaVersion: 1,
+    corpusDigest: 'a'.repeat(64),
+    entryCount: 2,
+    products: {
+      default: {
+        total: 2,
+        scorableByTier: { tier1: 2, tier2: 1, tier3: 0 },
+        goldEvidence: 1,
+        staticScorability: {
+          'no-gold-evidence': 1,
+          'tier2-anchor': 1,
+          'tier3-annotation': 0,
+        },
+        labelTiers: { gold: 0, 'near-gold': 0, silver: 2 },
+        proofCoverage: { numerator: 0, denominator: 2, rate: 0 },
+        rungMix: { 'legacy-no-rung': 2 } as CorpusCensus['products'][string]['rungMix'],
+        briefContent: { 'empty-brief': 2, 'populated-brief': 0 },
+        blobsPresentLocally: { numerator: 2, denominator: 2, rate: 1 },
+        missingLabelRecord: 0,
+        missingCassette: 0,
+        runsSeeded: 1,
+        runsExcluded: { environment: 0, flake: 1, timeout: 0 },
+        runsExcludedByProducer: { 'analyze-run': 0, 'deterministic-classifier': 1 },
+        seededByProducer: {
+          'analyze-run': 1,
+          'deterministic-classifier': 0,
+          'no-verdict': 0,
+        },
+        repeatCounts: { 'eval-cli::extract-fixture': 2 },
+      },
+    },
+    campaign: {
+      present: true,
+      manifestDigest: 'b'.repeat(64),
+      legs: 2,
+      runsSeeded: 1,
+      runsExcluded: 1,
+      modelCalls: 7,
+      promptTokens: 1_234,
+      completionTokens: 56,
+      wallClockMs: 449_000,
+    },
+    crossCheck: [
+      {
+        batchKey: '358327d21294f77b91645e3cefde46ad12fe065422757372835447a41865a71e',
+        decisionCount: 86,
+        corpusCassetteCount: 2,
+        membershipComparable: false,
+        unscorableIdentityCounts: { 'no-gold-evidence': 41 },
+        refusalCounts: {},
+        comparator: {
+          ok: false,
+          refusal: {
+            kind: 'same-family-override',
+            judgeModelId: 'gpt-5.6-sol',
+            judgeFamily: 'openai',
+            batchKey: '358327d21294f77b91645e3cefde46ad12fe065422757372835447a41865a71e',
+          },
+        },
+        designatedBy: [],
+      },
+    ],
+  }
+}
+
+describe('renderCensusMarkdown — byte-deterministic, counts-only projection (413 D-15/D-16)', () => {
+  it('renders the same DTO to byte-identical text under the locked section structure', () => {
+    const census = censusFixture()
+
+    const first = renderCensusMarkdown(census)
+    const second = renderCensusMarkdown(census)
+
+    // Byte-determinism is what makes commitCensus's write-once re-compare meaningful (D-15).
+    expect(first).toBe(second)
+    expect(first).toContain('# Corpus Census')
+    expect(first).toContain('## Provenance')
+    expect(first).toContain('## Cross-check')
+    // The D-16 triple and the refused comparator both land verbatim from the DTO.
+    expect(first).toContain('- scorableByTier: tier1=2 tier2=1 tier3=0')
+    expect(first).toContain('comparator=refused:same-family-override')
+    // No clock, no locale: nothing in the output can move between two renders of one DTO.
+    expect(first).not.toMatch(/\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('states absence honestly and publishes no interpretation for an empty corpus (D-04/D-16)', () => {
+    const empty = deriveCensus({
+      snapshot: {
+        entries: [],
+        labelsById: new Map(),
+        cassettesById: new Map(),
+        blobPresentById: new Map(),
+      },
+    })
+
+    const rendered = renderCensusMarkdown(empty)
+
+    expect(Object.keys(empty.products)).toEqual([])
+    expect(rendered).toContain('## Campaign\n\n- none supplied')
+    expect(rendered).toContain('## Cross-check\n\n- none')
+    // D-16 forbids a percentage, a threshold and a minimum-n claim alike — the census is counts.
+    expect(rendered).not.toContain('%')
+    expect(rendered).not.toMatch(/\d\s*%/)
+    expect(rendered.toLowerCase()).not.toContain('threshold')
+    expect(rendered.toLowerCase()).not.toContain('makes no claim')
   })
 })
