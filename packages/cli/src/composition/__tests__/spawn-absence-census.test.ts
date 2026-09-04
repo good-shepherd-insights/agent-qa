@@ -288,6 +288,7 @@ const RUN_PATH_ROOTS = [
   'cli/src/commands/run.ts',
   'cli/src/commands/dashboard.ts',
   'cli/src/commands/mcp.ts',
+  'cli/src/commands/agent-jobs.ts',
   'cli/src/daemon/host.ts',
   'dashboard-server/src/server/server.ts',
   'cli/src/composition/run-assembly.ts',
