@@ -829,6 +829,8 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'JobModelRequest',
   'JobPermanentFailureDisposition',
   'JobRecordedValueOutcome',
+  // 413-13: the requeue outcome — a TYPE over data, pinned beside the store port it belongs to
+  'JobRequeueOutcome',
   'JobStoreDump',
   'JobStoreDumpRow',
   'JobStoreFence',

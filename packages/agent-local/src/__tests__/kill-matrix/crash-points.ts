@@ -30,6 +30,7 @@ import type {
   JobInsert,
   JobKindDeclaration,
   JobKindRegistry,
+  JobRequeueOutcome,
   JobStoreDump,
   JobStoreFence,
   JobStorePort,
@@ -163,6 +164,7 @@ export const JOB_STORE_VERBS = [
   'recordFailure',
   'requestCancel',
   'recordCancellation',
+  'requeueTerminal',
   'publishCheckpoint',
   'readCheckpoint',
   'dumpState',
@@ -338,6 +340,11 @@ export function instrumentJobStore(store: JobStorePort, hook: JobStoreCrashHook)
     recordCancellation: (jobId: JobId, fence: JobStoreFence): Promise<void> =>
       around({ verb: 'recordCancellation', jobId: String(jobId) }, () =>
         store.recordCancellation(jobId, fence),
+      ),
+
+    requeueTerminal: (jobId: JobId, fence: JobStoreFence): Promise<JobRequeueOutcome> =>
+      around({ verb: 'requeueTerminal', jobId: String(jobId) }, () =>
+        store.requeueTerminal(jobId, fence),
       ),
 
     publishCheckpoint: (

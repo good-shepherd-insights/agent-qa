@@ -106,6 +106,20 @@ export const REAL_JOB_CHECKPOINT_FS: JobCheckpointFs = Object.freeze({
 export interface JobCheckpointStore {
   publish(jobId: string, checkpointId: string, payload: unknown): void
   read(jobId: string, checkpointId: string): { found: false } | { found: true; payload: unknown }
+  /**
+   * Remove one published checkpoint file (413-13).
+   *
+   * The file is a CACHE of the fenced sqlite record, and this verb exists only so the cache
+   * cannot outlive the record it caches: an operator requeue deletes the authoritative rows,
+   * and a file left behind would keep answering the logical dump's digest with a checkpoint
+   * no row backs. It never affects recovery in either direction — `readCheckpoint` finds no
+   * row and answers `found: false` before it ever consults a file — so a discard that failed
+   * to happen would be a dump artifact, not a resumed stand-in.
+   *
+   * Exactly one file, never a directory and never recursively. An empty per-job directory is
+   * harmless and keeping it that way keeps the filesystem facade as narrow as it is.
+   */
+  discard(jobId: string, checkpointId: string): void
   /** Exposed so a test can assert on the real file, not on a reader that could agree. */
   checkpointPath(jobId: string, checkpointId: string): string
   /** The directory the deterministic logical dump digests (D-03). */
@@ -216,6 +230,12 @@ export function createJobCheckpointStoreOn(
         if (fd !== undefined) fs.closeSync(fd)
         fs.rmSync(temporary, { force: true })
       }
+    },
+
+    discard(jobId, checkpointId) {
+      // `pathFor` validates BOTH segments against `SAFE_PATH_SEGMENT` before they are joined,
+      // so a crafted id is refused by name rather than reaching `rmSync` as a traversal.
+      fs.rmSync(pathFor(jobId, checkpointId), { force: true })
     },
 
     read(jobId, checkpointId) {

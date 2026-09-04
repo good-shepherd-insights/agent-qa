@@ -36,6 +36,7 @@ import type {
   JobEnqueueOutcome,
   JobFailureDisposition,
   JobInsert,
+  JobRequeueOutcome,
   JobStoreDump,
   JobStoreDumpRow,
   JobStoreFence,
@@ -307,6 +308,22 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
      SET status = 'cancelled', claimed_at = NULL, updated_at = ?
      WHERE id = ?`,
   )
+  // The operator requeue's three statements (413-13). The UPDATE clears every column that
+  // recorded HOW the row finished as well as the status itself — a requeued job that kept its
+  // failure reason or its cancel request would be a queued row still carrying the verdict of
+  // an attempt that no longer exists, and the next drainer would read it as its own.
+  const markRequeued = db.prepare(
+    `UPDATE jobs
+     SET status = 'queued', claimed_at = NULL, attempts = 0, last_failure_kind = NULL,
+         last_failure_reason = NULL, cancel_requested_at = NULL, updated_at = ?
+     WHERE id = ?`,
+  )
+  // DISTINCT because the checkpoint key carries the attempt: one checkpoint id published
+  // across two attempts is two rows and one file, and the file is discarded once.
+  const selectCheckpointIdsForJob = db.prepare(
+    'SELECT DISTINCT checkpoint_id FROM job_checkpoints WHERE job_id = ?',
+  )
+  const deleteCheckpointsForJob = db.prepare('DELETE FROM job_checkpoints WHERE job_id = ?')
   const selectFence = db.prepare('SELECT epoch FROM job_store_fence WHERE id = 1')
   const upsertFence = db.prepare(
     `INSERT INTO job_store_fence (id, epoch) VALUES (1, ?)
@@ -624,6 +641,48 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         }
         markCancelHonoured.run(now, String(jobId))
       })
+    },
+
+    // The 413-13 gap closure, and the checkpoint forget is its load-bearing half.
+    //
+    // Phase 413's pump composed with no post-run capabilities, so the kind registry selected
+    // the STAND-IN analyze-run handler: nineteen rows recorded a `verdicts-authored`
+    // checkpoint and reached `done` with nothing authored. Resetting the status alone would
+    // not undo that, it would REPEAT it — `selectLatestCheckpoint` reads
+    // `ORDER BY attempt DESC`, so the real handler's next attempt would resume on the
+    // stand-in's recorded value, author nothing again, and report completion again. So the
+    // rows go with the status, inside the same transaction, and the files follow the rows.
+    async requeueTerminal(jobId: JobId, fence: JobStoreFence): Promise<JobRequeueOutcome> {
+      const now = clock.now()
+      const decided = inTransaction((): JobRequeueOutcome & { readonly discard?: string[] } => {
+        requireFence(fence)
+        const row = requireRow(String(jobId))
+        const status = String(row.status) as JobStatus
+        // Read and written in ONE transaction for the same reason a cancel is: whether this
+        // row is a drainer's is a fact about the instant of the write, and a status read
+        // taken outside would let a claim land in between and be reset out from under it.
+        if (!TERMINAL_JOB_STATUSES.includes(status)) {
+          return { outcome: 'not-terminal', status }
+        }
+        const discard = selectCheckpointIdsForJob
+          .all(String(jobId))
+          .map((checkpoint) => String(checkpoint.checkpoint_id))
+        deleteCheckpointsForJob.run(String(jobId))
+        markRequeued.run(now, String(jobId))
+        return { outcome: 'requeued', discard }
+      })
+      // Files AFTER the authoritative rows commit — `publishCheckpoint`'s ordering, run
+      // backwards, and for the same reason. The row decides what recovery believes, so a
+      // crash between the commit and these removals leaves stale FILES behind a row that no
+      // longer exists, which `readCheckpoint` already ignores; the opposite order would leave
+      // a live row whose file is gone, and that is a real loss.
+      if (decided.outcome === 'requeued') {
+        for (const checkpointId of decided.discard ?? []) {
+          checkpoints.discard(String(jobId), checkpointId)
+        }
+        return { outcome: 'requeued' }
+      }
+      return decided
     },
 
     async publishCheckpoint(

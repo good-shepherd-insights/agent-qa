@@ -172,6 +172,37 @@ export type JobCancelOutcome =
   | { readonly outcome: 'already-terminal'; readonly status: JobStatus }
 
 /**
+ * What returning a finished job to the queue actually did (413 D-04/D-06 gap closure).
+ *
+ * A requeue is an OPERATOR's explicit act under the fence, not a lifecycle transition any
+ * handler can reach. It exists because Phase 413's pump composed without the post-run
+ * capabilities, the kind registry selected the STAND-IN analyze-run handler, and nineteen
+ * rows reached `done` with a checkpoint recorded and nothing authored — a completion the
+ * queue has no vocabulary to disown.
+ *
+ * `requeued` returns the row to `queued` with its attempts reset AND its checkpoint history
+ * FORGOTTEN in both media, because the two halves are one remedy. `readCheckpoint` resolves
+ * the LATEST recorded value across attempts, so a reset that kept the stand-in's
+ * `verdicts-authored` row would hand the real handler the stand-in's value on the next
+ * attempt and it would report completion having written nothing — the very substitution the
+ * requeue exists to undo, performed a second time by the recovery path.
+ *
+ * What the requeue does NOT touch is the row's identity: the id and the
+ * `(kind, idempotencyKey)` pair survive, so the chain identity `chainJobIdsForRun` derives
+ * from the run id still addresses this row and a re-chained successor dedupes onto the
+ * existing slot instead of doubling it. Enqueueing a fresh job under a new key would have
+ * been the easier remedy and the wrong one.
+ *
+ * `not-terminal` is a refusal, and it carries the status it found. A queued or claimed job
+ * belongs to a drainer: requeueing one would reset the attempt count out from under a
+ * handler that is running, which is the two-writers-under-one-fence tampering the fence
+ * exists to exclude.
+ */
+export type JobRequeueOutcome =
+  | { readonly outcome: 'requeued' }
+  | { readonly outcome: 'not-terminal'; readonly status: JobStatus }
+
+/**
  * Refusal when a driver tries to land a job cancelled that nobody asked to cancel.
  *
  * `cancelled` is reachable through exactly one path — a request, then either an immediate
@@ -362,6 +393,21 @@ export interface JobStorePort {
    * what keeps `cancelled` unreachable except through the two-step path.
    */
   recordCancellation(jobId: JobId, fence: JobStoreFence): Promise<void>
+
+  /**
+   * Return a FINISHED job to the queue, forgetting what its last attempt recorded.
+   *
+   * Terminal is exactly `done | failed | cancelled` — the store's own `TERMINAL_JOB_STATUSES`
+   * — and anything else answers `not-terminal` having moved nothing. The lifecycle reset and
+   * the checkpoint forget are ONE fenced transaction, because a row that reads `queued` while
+   * its checkpoints still exist is precisely the state that replays a stand-in's recorded
+   * authorship as though a handler had produced it.
+   *
+   * An id no row answers to raises the store's existing not-found error rather than gaining a
+   * third outcome arm (413-02 D-4): the outcome union describes what the store found a JOB
+   * to be, and a mismatched id is a caller bug, not data.
+   */
+  requeueTerminal(jobId: JobId, fence: JobStoreFence): Promise<JobRequeueOutcome>
 
   /**
    * Read-side: no fence, because reading claims no authority.

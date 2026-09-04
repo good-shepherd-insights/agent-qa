@@ -629,6 +629,7 @@ export type {
   JobEnqueueOutcome,
   JobFailureDisposition,
   JobInsert,
+  JobRequeueOutcome,
   JobStoreDump,
   JobStoreDumpRow,
   JobStoreFence,

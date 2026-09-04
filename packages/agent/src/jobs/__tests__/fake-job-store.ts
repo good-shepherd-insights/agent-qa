@@ -22,6 +22,7 @@ import type {
   JobFailAndChainOutcome,
   JobFailureDisposition,
   JobInsert,
+  JobRequeueOutcome,
   JobStoreDump,
   JobStoreFence,
   JobStorePort,
@@ -242,6 +243,29 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
       row.status = 'cancelled'
       row.claimed = false
       row.updatedAt = clock.now()
+    },
+
+    // 413-13. The fake answers the requeue in the same terms the sqlite store does, because
+    // the engine's unit seam has to be able to stand a job up twice; forgetting the published
+    // checkpoints is not an optimisation here either — a fake that kept them would let a
+    // resumed handler read a value from an attempt the row no longer remembers.
+    async requeueTerminal(jobId: JobId, fence: JobStoreFence): Promise<JobRequeueOutcome> {
+      requireFence(fence)
+      const row = requireRow(jobId)
+      if (!TERMINAL_STATUSES.includes(row.status)) {
+        return { outcome: 'not-terminal', status: row.status }
+      }
+      row.status = 'queued'
+      row.claimed = false
+      row.attempts = 0
+      row.cancelRequested = false
+      delete row.lastFailureKind
+      delete row.lastFailureReason
+      row.updatedAt = clock.now()
+      for (let index = published.length - 1; index >= 0; index -= 1) {
+        if (published[index]?.jobId === String(jobId)) published.splice(index, 1)
+      }
+      return { outcome: 'requeued' }
     },
 
     async publishCheckpoint(

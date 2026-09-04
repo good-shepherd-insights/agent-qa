@@ -1295,9 +1295,11 @@ describe('agent job store: requeueTerminal (413-13, the stand-in forget)', () =>
     await store.requestCancel(asJobId('job_c'), fence)
     expect(rawRow(root, 'job_c')?.status).toBe('cancelled')
     expect(await store.requeueTerminal(asJobId('job_c'), fence)).toEqual({ outcome: 'requeued' })
-    expect(
-      (await store.dumpState()).jobs.find((row) => row.id === 'job_c'),
-    ).toMatchObject({ status: 'queued', attempts: 0, cancelRequested: false })
+    expect((await store.dumpState()).jobs.find((row) => row.id === 'job_c')).toMatchObject({
+      status: 'queued',
+      attempts: 0,
+      cancelRequested: false,
+    })
   })
 
   it('requeueTerminal is fenced, and refuses an id no row answers to', async () => {

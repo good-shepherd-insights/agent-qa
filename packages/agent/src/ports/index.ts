@@ -16,6 +16,7 @@ export type {
   JobFailAndChainOutcome,
   JobFailureDisposition,
   JobInsert,
+  JobRequeueOutcome,
   JobStoreDump,
   JobStoreDumpRow,
   JobStoreFence,
