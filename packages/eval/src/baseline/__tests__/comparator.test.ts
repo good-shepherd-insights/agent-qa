@@ -75,6 +75,64 @@ describe('assertBaselineComparator (D-20, ROOT-11)', () => {
     expect(line).not.toContain('\n')
   })
 
+  /**
+   * 413-15 (2026-09-04): a batch whose persisted score records carried DIFFERING judge identity
+   * blocks. `runReportVerb` never fabricates a single identity (T-372-20), so before this plan
+   * such a report reached the predicate carrying no judge block at all — indistinguishable from
+   * honest abstention, and admitted. The decision `refuse-mixed-identity` stamps the mixture on
+   * the report from the batch's own blocks and refuses it here, in the ONE predicate.
+   */
+  it('refuses a report whose batch mixed judge identities with the verbatim ids (413-15 decision: refuse)', () => {
+    const mixed = buildEvalReport([], undefined, {
+      judgeIdentity: 'mixed',
+      judgeModelIds: ['judge-fixture-b', 'judge-fixture-a', 'judge-fixture-a'],
+    })
+
+    // The ids are the distinct persisted judgeModelIds, sorted and deduped — never synthesized.
+    expect(mixed.judgeIdentity).toBe('mixed')
+    expect(mixed.mixedJudgeModelIds).toEqual(['judge-fixture-a', 'judge-fixture-b'])
+    expect(Object.keys(mixed)).not.toContain('judge')
+
+    expect(assertBaselineComparator({ ...mixed, batchKey: FIXTURE_BATCH_KEY })).toEqual({
+      ok: false,
+      refusal: {
+        kind: 'mixed-judge-identity',
+        judgeModelIds: ['judge-fixture-a', 'judge-fixture-b'],
+        batchKey: FIXTURE_BATCH_KEY,
+      },
+    })
+  })
+
+  it('renders the mixed-identity refusal on one line naming both ids and the batch key (413-15)', () => {
+    const mixed = buildEvalReport([], undefined, {
+      judgeIdentity: 'mixed',
+      judgeModelIds: ['judge-fixture-b', 'judge-fixture-a'],
+    })
+    const verdict = assertBaselineComparator({ ...mixed, batchKey: FIXTURE_BATCH_KEY })
+    expect(verdict.ok).toBe(false)
+    if (verdict.ok) return
+
+    const line = renderBaselineComparatorRefusal(verdict.refusal)
+
+    expect(line).toContain('mixed-judge-identity')
+    expect(line).toContain('judge-fixture-a')
+    expect(line).toContain('judge-fixture-b')
+    expect(line).toContain(FIXTURE_BATCH_KEY)
+    expect(line).toContain('not a gate comparator')
+    expect(line).not.toContain('\n')
+  })
+
+  it('leaves a non-mixed report carrying neither judgeIdentity nor mixedJudgeModelIds (413-15)', () => {
+    // Optional-spread, not undefined-valued keys: every already-committed report keeps its bytes.
+    const keys = Object.keys(buildEvalReport([]))
+    expect(keys).not.toContain('judgeIdentity')
+    expect(keys).not.toContain('mixedJudgeModelIds')
+
+    const judged = buildEvalReport([], FIXTURE_JUDGE_BLOCK)
+    expect(Object.keys(judged)).not.toContain('judgeIdentity')
+    expect(Object.keys(judged)).not.toContain('mixedJudgeModelIds')
+  })
+
   it('never throws — an explicitly undefined judge and an unknown extra key both verdict', () => {
     const explicitlyUndefined = { ...buildEvalReport([]), judge: undefined }
     expect(assertBaselineComparator(explicitlyUndefined)).toEqual({ ok: true })
