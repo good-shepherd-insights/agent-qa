@@ -18,6 +18,7 @@ import {
   committedFileText,
   computeBatchKey,
   computeCorpusDigest,
+  countGateSet,
   deriveCensus,
   guardPartitionManifest,
   guardRunExclusionRecord,
@@ -2239,9 +2240,15 @@ describe('agent-qa eval replay — rendering and exit semantics (372-06, D-04/D-
 // ---- 413-05 Task 1: the deterministic census markdown projection (D-15/D-16) ------------------
 
 /** A fully-populated CorpusCensus DTO: one product, a campaign, one refused cross-check line. */
+/**
+ * The raw partition salt behind the fixture's `saltDigest`. It exists ONLY so the render cell can
+ * assert the markdown does not contain it — the DTO itself never carries a raw salt (T-414-29).
+ */
+const CENSUS_FIXTURE_SALT = 'a3f'.repeat(21).concat('b')
+
 function censusFixture(): CorpusCensus {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     corpusDigest: 'a'.repeat(64),
     entryCount: 2,
     products: {
@@ -2270,8 +2277,27 @@ function censusFixture(): CorpusCensus {
           'no-verdict': 0,
         },
         repeatCounts: { 'eval-cli::extract-fixture': 2 },
+        splits: { natural: 1, heldOutShared: 1, heldOutPrivate: 0, adversarial: 0 },
+        fieldCoverage: {
+          capturedAt: { numerator: 2, denominator: 2, rate: 1 },
+          targetEnvironment: { numerator: 1, denominator: 2, rate: 0.5 },
+        },
+        exclusions: {
+          total: 1,
+          byClass: { environment: 0, flake: 1, timeout: 0 },
+          byProducer: { 'analyze-run': 0, 'deterministic-classifier': 1 },
+        },
       },
     },
+    partition: {
+      default: {
+        saltDigest: createHash('sha256').update(CENSUS_FIXTURE_SALT).digest('hex'),
+        heldOutFraction: 0.5,
+        privateFraction: 0.5,
+        partitionVersion: 1,
+      },
+    },
+    schemaVersionsSeen: { '1': 1, '2': 1 },
     campaign: {
       present: true,
       manifestDigest: 'b'.repeat(64),
@@ -2340,11 +2366,58 @@ describe('renderCensusMarkdown — byte-deterministic, counts-only projection (4
     expect(Object.keys(empty.products)).toEqual([])
     expect(rendered).toContain('## Campaign\n\n- none supplied')
     expect(rendered).toContain('## Cross-check\n\n- none')
+    // 414 D-17: an unpartitioned root states its absence rather than printing a fabricated row.
+    expect(rendered).toContain('## Partition\n\n- none')
+    expect(rendered).toContain('- schemaVersionsSeen:\n  - none')
     // D-16 forbids a percentage, a threshold and a minimum-n claim alike — the census is counts.
     expect(rendered).not.toContain('%')
     expect(rendered).not.toMatch(/\d\s*%/)
     expect(rendered.toLowerCase()).not.toContain('threshold')
     expect(rendered.toLowerCase()).not.toContain('makes no claim')
+  })
+
+  it('names the partition, splits, D-04 coverage and exclusions as counts only (414 D-17)', () => {
+    const census = censusFixture()
+
+    const first = renderCensusMarkdown(census)
+    const second = renderCensusMarkdown(census)
+    expect(first).toBe(second)
+
+    // The locked section order: Partition sits immediately after Provenance, before any product.
+    expect(first.split('\n').filter(line => line.startsWith('## '))).toEqual([
+      '## Provenance',
+      '## Partition',
+      '## default',
+      '## Campaign',
+      '## Cross-check',
+    ])
+
+    // Provenance names which entry schema versions the committed BYTES still declare.
+    expect(first).toContain('- schemaVersionsSeen:\n  - v1: 1\n  - v2: 1')
+
+    // The partition echo: the salt DIGEST and the three re-derivable parameters, nothing else.
+    expect(first).toContain(
+      `- default: saltDigest=${createHash('sha256').update(CENSUS_FIXTURE_SALT).digest('hex')} `
+        + 'heldOutFraction=0.5 privateFraction=0.5 partitionVersion=1',
+    )
+    // T-414-29: the raw salt is a partition secret and never reaches committed prose.
+    expect(first).not.toContain(CENSUS_FIXTURE_SALT)
+
+    // Per product: the four split arms, the two D-04 rates, and the exclusion tallies.
+    expect(first).toContain(
+      '### Splits\n\n- adversarial: 0\n- heldOutPrivate: 0\n- heldOutShared: 1\n- natural: 1',
+    )
+    expect(first).toContain(
+      '### Field coverage\n\n- capturedAt: 2/2 (rate: 1)\n- targetEnvironment: 1/2 (rate: 0.5)',
+    )
+    expect(first).toContain('### Exclusions\n\n- total: 1')
+    expect(first).toContain('### By class\n\n- environment: 0\n- flake: 1\n- timeout: 0')
+    expect(first).toContain('### By producer\n\n- analyze-run: 0\n- deterministic-classifier: 1')
+
+    // D-16 stands over every value this plan added: counts and pairs, never an interpretation.
+    expect(first).not.toContain('%')
+    expect(first.toLowerCase()).not.toContain('threshold')
+    expect(first.toLowerCase()).not.toContain('minimum')
   })
 })
 
@@ -2577,6 +2650,69 @@ describe('runCensusVerb — static census over the committed root (413 D-13/D-14
     const second = await runCensusVerb(session, { commit: true })
     expect(second.committed).toMatchObject({ json: 'unchanged', markdown: 'unchanged' })
     expect(second.corpusDigest).toBe(first.corpusDigest)
+  })
+
+  it('folds committed manifests, exclusions and schemaVersionsSeen, refusing a broken document by path (414 D-02/D-05/D-17)', async () => {
+    const { dir, session } = await seededCorpusFixture()
+    const committedRoot = resolve(dir, 'agent-qa-eval')
+
+    // Plant an analysis that makes run-alpha a flake; the re-seed's phase (A) commits its record.
+    await saveAnalysis(
+      dir,
+      'run-alpha',
+      `${JSON.stringify(
+        analysisArtifactFixture('run-alpha', { class: 'flake', producer: 'analyze-run' }),
+        null,
+        2,
+      )}\n`,
+    )
+    const reseeded = await runSeedVerb(session)
+    expect(reseeded.exclusionsWritten).toHaveLength(1)
+
+    const result = await runCensusVerb(session)
+
+    const manifest = guardPartitionManifest(
+      JSON.parse(await readFile(join(committedRoot, 'contracts', 'partition-default.json'), 'utf8')),
+    )
+    expect(result.census.partition.default).toEqual({
+      saltDigest: createHash('sha256').update(manifest.salt).digest('hex'),
+      heldOutFraction: TEST_FRACTIONS.heldOutFraction,
+      privateFraction: TEST_FRACTIONS.privateFraction,
+      partitionVersion: 1,
+    })
+    expect(result.census.partition.default?.saltDigest).toMatch(/^[0-9a-f]{64}$/)
+    // T-414-29: only the digest may leave the manifest file, in the DTO as in the markdown.
+    expect(JSON.stringify(result)).not.toContain(manifest.salt)
+
+    expect(result.census.products.default?.exclusions).toEqual({
+      total: 1,
+      byClass: { environment: 0, flake: 1, timeout: 0 },
+      byProducer: { 'analyze-run': 1, 'deterministic-classifier': 0 },
+    })
+    // Every seeded entry is v2, so the byte-version census names exactly that.
+    expect(result.census.schemaVersionsSeen).toEqual({ '2': 2 })
+    expect(result.census.products.default?.splits).toEqual(
+      countGateSet(readCommittedCorpus(committedRoot).snapshot.entries),
+    )
+
+    // T-414-41: a refused manifest or exclusion is NAMED, never silently missing from the counts.
+    await writeFile(join(committedRoot, 'contracts', 'partition-broken.json'), '{ not json')
+    await writeFile(join(committedRoot, 'exclusions', 'default', 'broken.json'), '{ not json')
+
+    const refused = await runCensusVerb(session)
+    for (const suffix of [
+      join('contracts', 'partition-broken.json'),
+      join('exclusions', 'default', 'broken.json'),
+    ]) {
+      expect(
+        refused.notices.some(
+          notice => notice.startsWith('committed read refused ') && notice.includes(suffix),
+        ),
+      ).toBe(true)
+    }
+    // The refusal changed no count: the partition echo and the exclusion tally are untouched.
+    expect(refused.census.partition).toEqual(result.census.partition)
+    expect(refused.census.products.default?.exclusions.total).toBe(1)
   })
 })
 
