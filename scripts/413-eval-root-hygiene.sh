@@ -15,7 +15,8 @@
 #   L3  the same-family judge override is not enabled in the demo cfg -> PASS L3 / FAIL L3
 #   L4  the v50 39/45 same-family report is still in place, still     -> PASS L4 / FAIL L4
 #       carrying its familyOverride marker (D-18 refusal fixture)
-#   L5  no noise-floor artefact under reports/                        -> PASS L5 / FAIL L5
+#   L5  valid noise-floor artefacts (415, 2026-09-05)                 -> PASS L5 / FAIL L5
+#       — schemaVersion 1, explanation for every exact-zero floor, no literal noise-floor.json
 #   L6  no schemaVersion 1 entry under corpus/                        -> PASS L6 / FAIL L6
 #       — the 414 D-03 reviewed migration rewrote all 155 committed entries to schemaVersion 2
 #       (414-10). A v1 entry reappearing under `corpus/` means an unmigrated re-seed slipped in
@@ -32,7 +33,7 @@
 # (FLOOR-05, plus the suite's known contention flake). So each of these six is a property of
 # BYTES ON DISK OUTSIDE THE SUITE'S REACH: a home-directory path re-seeded into a corpus entry, a
 # threshold constant smuggled onto a gate path, the override flipped back on, the refusal fixture
-# quietly regenerated, or a floor published a phase early — none of them turn a single existing
+# quietly regenerated, or an invalid floor published — none of them turn a single existing
 # test red. This script is the instrument that sees them.
 #
 # A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS. `--selftest` plants a
@@ -40,7 +41,9 @@
 # the same copy, then a home-directory path under `exclusions/`, then one inside a
 # `contracts/partition-*.json`, then a threshold literal into a throwaway gate file, and finally a
 # `{"schemaVersion": 1}` entry under `corpus/`, and REQUIRES L1 four times, L2 once and L6 once to
-# red under those six plants. Every plant uses a literal or a path that never appears in the
+# red under those six plants. Phase 415 adds an unexplained zero floor and the forbidden literal
+# noise-floor.json path (both must FAIL L5), plus an explained zero floor (must PASS L5).
+# Every invalid plant uses a literal or a path that never appears in the
 # shipped tree, and each is removed before the next so no plant can mask another. A leg that stays
 # green under its own plant exits 1 with SELFTEST FAILED.
 #
@@ -55,8 +58,9 @@
 # because a test may legitimately cite the inherited number as a fixture. The fixture report's own
 # `0.8666666666666667` does not match the anchored pattern and must not.
 #
-# L5 IS PHASE-SCOPED. Phase 413 publishes no floor (SC4). Phase 415 (FLOOR-01..06) is the phase
-# that publishes one — when it does, it relaxes or retires L5 and says so in its own plan.
+# L5 IS THE VALIDITY LEG (Phase 415, 2026-09-05). The phase-scoped no-floor leg is retired.
+# Phase 413 publishes none; 415 owns schema-version and zero-floor explanation validation, and
+# forbids the literal reports/**/noise-floor.json path in favor of reports/noise-floor/<key>.json.
 #
 # ENV OVERRIDES exist for the self-test only:
 #   EVAL_ROOT             the committed eval root to scan
@@ -89,9 +93,11 @@ gate_paths() {
     return 0
   fi
   echo "$EVAL_ROOT/reports"
+  # eval/src/gate and eval/src/stats are already inside packages/eval/src.
   echo "$ROOT/packages/eval/src"
   echo "$ROOT/packages/eval-local/src"
   echo "$ROOT/packages/cli/src/commands/eval.ts"
+  [ -e "$ROOT/scripts/m3-release-gate.sh" ] && echo "$ROOT/scripts/m3-release-gate.sh"
   for file in "$ROOT/packages/cli/src/"eval-*.ts; do
     [ -e "$file" ] && echo "$file"
   done
@@ -163,15 +169,76 @@ run_legs() {
     fi
   fi
 
-  # ---- L5: no noise-floor artefact under reports/ -------------------------------------------
+  # ---- L5: noise-floor validity (415, 2026-09-05) ------------------------------------------
+  local floor_dir="$EVAL_ROOT/reports/noise-floor" floor_file reason floor_count=0 l5_failed=0
   if [ ! -d "$EVAL_ROOT/reports" ]; then
     fail L5 "reports/ not found under $EVAL_ROOT"
   else
-    hits=$(find "$EVAL_ROOT/reports" -name 'noise-floor.json')
-    if [ -n "$hits" ]; then
-      fail L5 "a noise floor left this phase (413 publishes none; 415 owns it): $(echo "$hits" | tr '\n' ' ')"
+    status=0
+    hits=$(find "$EVAL_ROOT/reports" -name 'noise-floor.json') || status=$?
+    if [ "$status" -ne 0 ]; then
+      fail L5 "find could not scan reports/ (exit $status)"
+    elif [ -n "$hits" ]; then
+      fail "L5 ${hits%%$'\n'*}" "literal noise-floor.json is forbidden; use reports/noise-floor/<profile-key>.json"
+    elif [ ! -e "$floor_dir" ]; then
+      pass "L5 (no floor committed yet)"
+    elif [ ! -d "$floor_dir" ]; then
+      fail "L5 $floor_dir" "expected a noise-floor directory"
     else
-      pass L5
+      status=0
+      hits=$(find "$floor_dir" -name '*.json') || status=$?
+      if [ "$status" -ne 0 ]; then
+        fail "L5 $floor_dir" "find could not scan floor artefacts (exit $status)"
+      else
+        while IFS= read -r floor_file; do
+          [ -n "$floor_file" ] || continue
+          floor_count=$((floor_count + 1))
+          status=0
+          reason=$(node -e '
+            let floor
+            try {
+              floor = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
+            } catch (error) {
+              console.error("cannot parse floor JSON: " + error.message)
+              process.exit(1)
+            }
+            if (floor?.schemaVersion !== 1) {
+              console.error("schemaVersion must be 1")
+              process.exit(1)
+            }
+            const groups = [
+              ["axes", floor.axes],
+              ...Object.entries(floor.products ?? {}).map(([name, product]) =>
+                ["products." + name + ".axes", product?.axes]),
+              ...Object.entries(floor.splits ?? {}).map(([name, split]) =>
+                ["splits." + name + ".axes", split?.axes]),
+            ]
+            const explained = typeof floor.explanation === "string" &&
+              floor.explanation.trim().length > 0
+            for (const [location, axes] of groups) {
+              for (const [name, axis] of Object.entries(axes ?? {})) {
+                if (axis?.aggregateFloor === 0 && !explained) {
+                  console.error(location + "." + name +
+                    ".aggregateFloor is 0 without a non-empty explanation")
+                  process.exit(1)
+                }
+              }
+            }
+          ' "$floor_file" 2>&1) || status=$?
+          if [ "$status" -ne 0 ]; then
+            fail "L5 $floor_file" "$reason"
+            l5_failed=1
+            break
+          fi
+        done < <(printf '%s\n' "$hits")
+        if [ "$l5_failed" -eq 0 ]; then
+          if [ "$floor_count" -eq 0 ]; then
+            pass "L5 (noise-floor directory empty; no floor committed yet)"
+          else
+            pass "L5 ($floor_count noise-floor artefacts valid)"
+          fi
+        fi
+      fi
     fi
   fi
 
@@ -274,6 +341,43 @@ selftest() {
   fi
   grep '^FAIL L6' "$stderr_file" >&2
   rm -f "$tmp_root/corpus/selftest/v1.json"
+
+  echo "SELFTEST plant 1f: a zero noise floor without explanation (415)" >&2
+  mkdir -p "$tmp_root/reports/noise-floor"
+  printf '{"schemaVersion":1,"axes":{"headline":{"n":10,"aggregateFloor":0}}}\n' > "$tmp_root/reports/noise-floor/planted.json"
+  status=0
+  EVAL_ROOT="$tmp_root" DEMO_CONFIG="$DEMO_CONFIG" "$0" 2>"$stderr_file" || status=$?
+  if [ "$status" -eq 0 ] || ! grep -q '^FAIL L5' "$stderr_file"; then
+    echo "SELFTEST FAILED: L5 stayed green under an unexplained zero noise floor" >&2
+    cat "$stderr_file" >&2
+    return 1
+  fi
+  grep '^FAIL L5' "$stderr_file" >&2
+  rm -f "$tmp_root/reports/noise-floor/planted.json"
+
+  echo "SELFTEST plant 1g: an explained zero noise floor must pass L5 (415)" >&2
+  printf '{"schemaVersion":1,"axes":{"headline":{"n":10,"aggregateFloor":0}},"explanation":"stubbed identical decisions"}\n' > "$tmp_root/reports/noise-floor/planted.json"
+  status=0
+  EVAL_ROOT="$tmp_root" DEMO_CONFIG="$DEMO_CONFIG" "$0" 2>"$stderr_file" || status=$?
+  if [ "$status" -ne 0 ] || grep -q '^FAIL L5' "$stderr_file" || ! grep -q '^PASS L5' "$stderr_file"; then
+    echo "SELFTEST FAILED: the explained zero noise floor did not pass L5" >&2
+    cat "$stderr_file" >&2
+    return 1
+  fi
+  grep '^PASS L5' "$stderr_file" >&2
+  rm -f "$tmp_root/reports/noise-floor/planted.json"
+
+  echo "SELFTEST plant 1h: the literal reports/noise-floor.json path is forbidden (415)" >&2
+  printf '{"schemaVersion":1,"axes":{"headline":{"n":10,"aggregateFloor":0}},"explanation":"stubbed identical decisions"}\n' > "$tmp_root/reports/noise-floor.json"
+  status=0
+  EVAL_ROOT="$tmp_root" DEMO_CONFIG="$DEMO_CONFIG" "$0" 2>"$stderr_file" || status=$?
+  if [ "$status" -eq 0 ] || ! grep -q '^FAIL L5' "$stderr_file"; then
+    echo "SELFTEST FAILED: L5 stayed green under the forbidden noise-floor.json path" >&2
+    cat "$stderr_file" >&2
+    return 1
+  fi
+  grep '^FAIL L5' "$stderr_file" >&2
+  rm -f "$tmp_root/reports/noise-floor.json"
 
   echo "SELFTEST plant 2: an inherited-threshold literal on a throwaway gate path" >&2
   printf 'export const THRESHOLD = 0.867\n' > "$tmp_gate/gate.ts"
