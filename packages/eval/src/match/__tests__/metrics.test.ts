@@ -185,6 +185,78 @@ describe('buildEvalReport', () => {
     expect(report.seedHonored).toBe(false)
   })
 
+  it.each([0, 11])('reports seedHonored true for declared seed %i with no unsupported seed', declaredSeed => {
+    const report = buildEvalReport([
+      scoredEntry('no-warning', settledScore()),
+      scoredEntry('other-feature', settledScore(), {
+        samples: [{ ...sample(0, 10), unsupportedFeatures: ['temperature'] }],
+      }),
+    ], undefined, undefined, { declaredSeed })
+
+    expect(report.seedHonored).toBe(true)
+  })
+
+  it('omits seedHonored without a declared seed even when a sample lists seed', () => {
+    const report = buildEvalReport([
+      scoredEntry('seed-warning', settledScore(), {
+        samples: [{ ...sample(0, 10), unsupportedFeatures: ['seed'] }],
+      }),
+    ])
+
+    expect(report).not.toHaveProperty('seedHonored')
+  })
+
+  it('folds seed warnings and sorted distinct providerFingerprints across leaf and procedure samples', () => {
+    const report = buildEvalReport([
+      {
+        cassetteId: 'leaf',
+        outcome: leafOutcome('leaf', {
+          samples: [
+            { ...sample(0, 10), providerFingerprint: 'fp_b' },
+            { ...sample(1, 10), providerFingerprint: 'fp_a' },
+          ],
+        }),
+      },
+      {
+        cassetteId: 'procedure',
+        outcome: {
+          granularity: 'procedure',
+          cassetteId: 'procedure',
+          steps: [
+            { kind: 'decision', stepIndex: 0, decisionOrdinal: 0,
+              result: leafOutcome('procedure') },
+            { kind: 'skipped', stepIndex: 1, reason: 'cache-served' },
+            { kind: 'skipped', stepIndex: 2, reason: 'synthesized' },
+            {
+              kind: 'decision', stepIndex: 3, decisionOrdinal: 0,
+              result: leafOutcome('procedure', {
+                samples: [{
+                  ...sample(0, 10),
+                  outcome: { kind: 'planner-failure', reason: 'no_action_tool_called', message: 'no action' },
+                  unsupportedFeatures: ['seed'],
+                  providerFingerprint: 'fp_b',
+                }],
+              }),
+            },
+          ],
+          endState: { outcome: 'passed' },
+          totalDurationMs: 20,
+        },
+      },
+      refusalEntry('refused', 'missing-blob'),
+    ], undefined, undefined, { declaredSeed: 11 })
+
+    expect(report.providerFingerprints).toEqual(['fp_a', 'fp_b'])
+    expect(report.seedHonored).toBe(false)
+  })
+
+  it('omits providerFingerprints when no sample reported one', () => {
+    expect(buildEvalReport([])).not.toHaveProperty('providerFingerprints')
+    expect(buildEvalReport([
+      scoredEntry('no-fingerprint', settledScore()),
+    ])).not.toHaveProperty('providerFingerprints')
+  })
+
   it('uses an explicit settled-decision denominator and keeps ties/exclusions separate', () => {
     const harnessSample: ReplaySample = {
       sampleIndex: 0,

@@ -109,6 +109,63 @@ describe('executePlanningTurn', () => {
     expect(res.callRecord).not.toHaveProperty('unsupportedFeatures')
   })
 
+  it('sorts and deduplicates unsupported features across two tool-loop rounds', async () => {
+    const note = fakeNonActionTool()
+    await scriptResponses([
+      {
+        toolCalls: [nonActionCall('fake_note', { q: 'a' })],
+        usage: USAGE,
+        warnings: [
+          { type: 'unsupported', feature: 'temperature' },
+          { type: 'unsupported', feature: 'seed' },
+        ],
+      },
+      {
+        toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })],
+        usage: USAGE,
+        warnings: [
+          { type: 'unsupported', feature: 'topP' },
+          { type: 'unsupported', feature: 'seed' },
+        ],
+      },
+    ])
+
+    const res = await executePlanningTurn(turnOptions({ nonActionTools: { fake_note: note } }))
+
+    expect(res.ok).toBe(true)
+    expect(note.execute).toHaveBeenCalledTimes(1)
+    expect(await generateTextCalls()).toHaveLength(2)
+    expect(res.callRecord?.unsupportedFeatures).toEqual(['seed', 'temperature', 'topP'])
+  })
+
+  it('ignores other and compatibility warnings even when they mention seed', async () => {
+    await scriptResponses([{
+      toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })],
+      usage: USAGE,
+      warnings: [
+        { type: 'other', message: 'seed is mentioned here' },
+        { type: 'compatibility', feature: 'seed' },
+      ],
+    }])
+
+    const res = await executePlanningTurn(turnOptions({ sampling: { seed: 11 } }))
+
+    expect(res.ok).toBe(true)
+    expect(res.callRecord).not.toHaveProperty('unsupportedFeatures')
+  })
+
+  it('preserves an earlier unsupported seed warning on a later structured failure', async () => {
+    await scriptResponses([
+      { toolCalls: [], warnings: [{ type: 'unsupported', feature: 'seed' }] },
+      { toolCalls: [], warnings: [] },
+    ])
+
+    const res = await executePlanningTurn(turnOptions({ sampling: { seed: 11 } }))
+
+    expect(res).toMatchObject({ ok: false, reason: 'no_action_tool_called' })
+    expect(res.callRecord?.unsupportedFeatures).toEqual(['seed'])
+  })
+
   it('Test 1: an immediate action call returns the plan with zero exchanges (v1 one-shot path)', async () => {
     await scriptResponses([{ toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })], usage: USAGE }])
 

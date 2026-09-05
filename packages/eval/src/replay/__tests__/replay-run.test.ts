@@ -3,6 +3,7 @@ import { asRecordId, sha256hex } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import type { ArtifactSource } from '../../ports'
 import type { ArtifactRef } from '@vostride/agent-qa-schema'
+import { buildEvalReport } from '../../match/metrics'
 import { UnservableDivergenceError } from '../exchange-server'
 import type { DecisionReplayResult, ReplayRefusal } from '../result'
 import { replayCassette } from '../replay-run'
@@ -60,6 +61,8 @@ describe('replayCassette — single sample', () => {
     expect(sample.outcome.identity.target).toEqual({ role: 'button', nameNormalized: 'log in', ordinal: 0 })
     expect(sample.tokenUsage).toEqual({ promptTokens: 1, completionTokens: 2, totalTokens: 3 })
     expect(sample.durationMs).toBeGreaterThan(0)
+    expect(sample).not.toHaveProperty('unsupportedFeatures')
+    expect(sample).not.toHaveProperty('providerFingerprint')
     expect(probe.createCount()).toBe(1)
   })
 
@@ -79,7 +82,43 @@ describe('replayCassette — single sample', () => {
       kind: 'planner-failure',
       reason: 'no_action_tool_called',
     })
+    expect(result.samples[0]).not.toHaveProperty('unsupportedFeatures')
+    expect(result.samples[0]).not.toHaveProperty('providerFingerprint')
   })
+
+  it.each(['decision', 'planner-failure'] as const)(
+    'carries observed call metadata through a %s sample into the report',
+    async kind => {
+      const callRecord = { unsupportedFeatures: ['seed'], fingerprint: 'fp_abc' }
+      const probe = makeFactory(() => {
+        if (kind === 'planner-failure') {
+          throw new PlanningTurnError('no_action_tool_called', 'no action', [], callRecord)
+        }
+        return { ...decisionPlan({ type: 'click', ref: 'e2' }), callRecord }
+      })
+      const cassette = leafCassette()
+      const outcome = await replayCassette({
+        cassette,
+        artifacts: emptyArtifacts,
+        plannerFactory: probe.factory,
+        actionToolNames: new Set(),
+        clock: fixedIncrementClock(),
+      })
+      if (!('granularity' in outcome) || outcome.granularity !== 'leaf') {
+        throw new Error('expected a leaf replay result')
+      }
+
+      expect(outcome.samples).toHaveLength(1)
+      expect(outcome.samples[0].outcome.kind).toBe(kind)
+      expect(outcome.samples[0].unsupportedFeatures).toEqual(['seed'])
+      expect(outcome.samples[0].providerFingerprint).toBe('fp_abc')
+      const report = buildEvalReport([
+        { cassetteId: cassette.id, outcome },
+      ], undefined, undefined, { declaredSeed: 11 })
+      expect(report.seedHonored).toBe(false)
+      expect(report.providerFingerprints).toEqual(['fp_abc'])
+    },
+  )
 
   it('Test 4: an UnservableDivergenceError throw yields an unservable-divergence sample', async () => {
     const probe = makeFactory(() => {
