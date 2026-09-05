@@ -46,7 +46,18 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
-const HANDOFF_PATH = '.agent-qa/runs/run---eval-local-standalone/handoff.json'
+/**
+ * The 414-05 shared partition vector (Plan 01 replaced buildSeedingPlan's old
+ * `handoffPath` input with `partition` DATA). Same salt and fractions as
+ * `committed-corpus-source.test.ts`: a 64-lowercase-hex salt, and a
+ * `heldOutFraction` above the fixture silver leaf's bucket fraction under that
+ * salt so the seeded root carries a held-out entry.
+ */
+const TEST_PARTITION = {
+  saltHex: 'a3f'.repeat(21).concat('b'),
+  heldOutFraction: 0.95,
+  privateFraction: 0.5,
+} as const
 // AKIA + 16 uppercase-alphanumerics — the exact shape the awsKey PATTERN detector
 // catches (an arbitrary random string would NOT be detected — Research Pitfall 4).
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
@@ -253,7 +264,7 @@ function extract(handoff: CompletedRunHandoff): ExtractedCassette[] {
 }
 
 function planFor(handoff: CompletedRunHandoff, cassettes: readonly ExtractedCassette[]): SeedingPlan {
-  return buildSeedingPlan({ handoff, cassettes, handoffPath: HANDOFF_PATH })
+  return buildSeedingPlan({ handoff, cassettes, partition: TEST_PARTITION })
 }
 
 /** Plant the AWS-key-shaped secret in ONE staged cassette's text evidence. */

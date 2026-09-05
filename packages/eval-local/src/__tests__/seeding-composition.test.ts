@@ -41,7 +41,18 @@ import {
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
 
-const HANDOFF_PATH = '.agent-qa/runs/run---eval-local-standalone/handoff.json'
+/**
+ * The 414-05 shared partition vector (Plan 01 replaced buildSeedingPlan's old
+ * `handoffPath` input with `partition` DATA). Same salt and fractions as
+ * `committed-corpus-source.test.ts`: a 64-lowercase-hex salt, and a
+ * `heldOutFraction` above the fixture silver leaf's bucket fraction under that
+ * salt so the seeded root carries a held-out entry.
+ */
+const TEST_PARTITION = {
+  saltHex: 'a3f'.repeat(21).concat('b'),
+  heldOutFraction: 0.95,
+  privateFraction: 0.5,
+} as const
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const PRODUCT = 'default'
 
@@ -118,7 +129,7 @@ function extract(handoff: CompletedRunHandoff): ExtractedCassette[] {
 }
 
 function planFor(handoff: CompletedRunHandoff, cassettes: readonly ExtractedCassette[]): SeedingPlan {
-  return buildSeedingPlan({ handoff, cassettes, handoffPath: HANDOFF_PATH })
+  return buildSeedingPlan({ handoff, cassettes, partition: TEST_PARTITION })
 }
 
 function casePaths(cassetteId: string): { cassette: string; label: string; corpus: string } {
@@ -318,12 +329,11 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
 
     const mutated = structuredClone(plan)
     const target = mutated.cases[0]!
+    // 414 D-13 removed run_links.handoffPath, so the divergence this cell needs
+    // now comes from the runSlug — any byte difference is the same refusal.
     target.corpusEntry = {
       ...target.corpusEntry,
-      run_links: {
-        ...target.corpusEntry.run_links,
-        handoffPath: '.agent-qa/runs/elsewhere/handoff.json',
-      },
+      run_links: { ...target.corpusEntry.run_links, runSlug: 'run---seeded-elsewhere' },
     }
 
     const report = seed({ plan: mutated })
