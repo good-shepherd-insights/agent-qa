@@ -32,6 +32,7 @@ import {
   buildSeedingPlan,
   canonicalJson,
   computeBatchKey,
+  computeCorpusDigest,
   deriveCensus,
   EXCLUSION_CLASSES,
   extractRunCassettes,
@@ -54,6 +55,7 @@ import type {
   ExclusionClass,
   JudgeIdentityBlock,
   PartitionManifest,
+  SeedPolicy,
   TargetEnvironment,
 } from '@vostride/agent-qa-eval'
 import {
@@ -71,6 +73,7 @@ import {
   commitEvalReport,
   committedExclusionPath,
   committedPartitionManifestPath,
+  computeReplayProfileFingerprintFor,
   listBaselinePointers,
   listCommittedReports,
   loadCassetteBundles,
@@ -1321,7 +1324,13 @@ export interface ReportVerbResult {
 export async function runReportVerb(
   session: EvalSession,
   filters: { run?: string; cassette?: string; product?: string } = {},
-  opts: { commit?: boolean; source?: EvalCorpusSource; baseline?: boolean } = {},
+  opts: {
+    commit?: boolean
+    source?: EvalCorpusSource
+    baseline?: boolean
+    /** No model call: overrides only name the fingerprint shared with a stub-measured floor. */
+    plannerOverrides?: ModelProviderOverrides
+  } = {},
 ): Promise<ReportVerbResult> {
   // D-19: a pointer designates a COMMITTED report. Designating a staged-only report would name a
   // batch nobody else can read, so the combination is refused before any work happens (D-08 typed
@@ -1445,8 +1454,16 @@ export async function runReportVerb(
         `baseline pointer skipped: report commit outcome was ${committed?.kind ?? 'absent'}`,
       )
     } else {
+      const seedPolicy: SeedPolicy = session.evalConfig.seed !== undefined ? 'declared' : 'none'
+      const read = readCommittedCorpus(committedRoot)
+      notices.push(...read.notices)
+      for (const refusal of read.refusals) {
+        notices.push(`committed read refused ${refusal.path}: ${refusal.reason}`)
+      }
       const pointer = projectBaselinePointer({
         plannerModelId: await resolvePlannerModelId(session),
+        fingerprint: await resolveReplayProfileFingerprint(session, seedPolicy, opts.plannerOverrides),
+        corpusDigest: computeCorpusDigest(read.snapshot.entries),
         matcherVersion: report.matcherVersion,
         ...(report.judge === undefined
           ? {}
@@ -1462,6 +1479,12 @@ export async function runReportVerb(
       baseline = writeBaselinePointer({ report, pointer, committedRoot, reportOutputBaseDir })
       if (baseline.kind === 'refused') {
         notices.push(renderBaselineComparatorRefusal(baseline.refusal))
+      }
+      if (seedPolicy === 'none' && (baseline.kind === 'written' || baseline.kind === 'unchanged')) {
+        notices.push(
+          'baseline designated under seed policy none — eval gate compares against a declared-policy '
+          + "pointer; re-designate with --from-committed --seed-policy declared once Plan 17's flag exists",
+        )
       }
     }
   }
@@ -1490,6 +1513,32 @@ export async function runReportVerb(
  * `resolveReplayPlanner` raises — the planner identity is not optional for a comparator.
  */
 async function resolvePlannerModelId(session: EvalSession): Promise<string> {
+  return (await resolveBaselinePlannerConfig(session)).model
+}
+
+/**
+ * D-11: config declaration only, with no credential resolution or model creation. The auth
+ * declaration mirrors toAuthDeclaration's unresolved/missing case; resolveCapabilities ignores
+ * it. Provider transport options are also irrelevant to the resolved replay capabilities.
+ */
+export async function resolveReplayProfileFingerprint(
+  session: EvalSession,
+  seedPolicy: SeedPolicy,
+  modelOverrides?: ModelProviderOverrides,
+): Promise<string> {
+  const config = await resolveBaselinePlannerConfig(session)
+  const profile: ModelProfile = {
+    provider: config.provider,
+    model: config.model,
+    ...(config.baseURL !== undefined ? { baseURL: config.baseURL } : {}),
+    ...(config.providerHeaders !== undefined ? { headers: config.providerHeaders } : {}),
+    auth: { mode: 'none' },
+  }
+  return computeReplayProfileFingerprintFor({ profile, seedPolicy, modelOverrides })
+}
+
+/** The model-id and fingerprint readers share the same named-config validation. */
+async function resolveBaselinePlannerConfig(session: EvalSession) {
   const plannerName = session.config.use?.llm
   if (!plannerName) {
     throw new Error(
@@ -1499,7 +1548,7 @@ async function resolvePlannerModelId(session: EvalSession): Promise<string> {
   }
   const { resolveNamedConfig } = await import('./llm-utils.js')
   const { config } = await resolveNamedConfig(plannerName, session.configPath)
-  return config.model
+  return config
 }
 
 // ---- the census verb (413-05, D-13/D-14/D-15/D-16) ---------------------------------------------
