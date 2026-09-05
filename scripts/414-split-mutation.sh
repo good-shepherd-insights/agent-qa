@@ -399,7 +399,7 @@ run_leg () {
   done <<< "$subjects"
   while IFS= read -r p; do
     [ -z "$p" ] && continue
-    if [ -e "$REPO_ROOT/$p" ]; then
+    if [ -e "$REPO_ROOT/$p" ] || [ -L "$REPO_ROOT/$p" ]; then
       echo "FATAL: $p already exists — leg $id would overwrite a real file" >&2
       exit 1
     fi
@@ -687,7 +687,7 @@ instrument_self_check () {
   # what we must observe. Never use a tracked file here; Control 2(c) can name package.json only
   # because verify_restored removes nothing, while this control drives the destructive path.
   local sc_preexisting=".selfcheck-already-exists" sc_bytes="$WORK/selfcheck-already-exists.bytes"
-  if [ -e "$REPO_ROOT/$sc_preexisting" ]; then
+  if [ -e "$REPO_ROOT/$sc_preexisting" ] || [ -L "$REPO_ROOT/$sc_preexisting" ]; then
     echo "FATAL: $sc_preexisting already exists — this control needs a path it can create; re-point it or remove the leftover by hand" >&2
     exit 1
   fi
