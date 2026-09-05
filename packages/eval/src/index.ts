@@ -443,6 +443,15 @@ export type {
   ClassifierSweep,
 } from './gate/classifier-repeatability'
 
+export { GATE_INCONCLUSIVE_REASONS, computeGateVerdict, renderGateLines } from './gate/release-gate'
+export type {
+  GateExit,
+  GateInconclusiveReason,
+  GateRegression,
+  GateVerdict,
+  ComputeGateVerdictInput,
+} from './gate/release-gate'
+
 export {
   countGateSet,
   emptyGateSetCounts,
