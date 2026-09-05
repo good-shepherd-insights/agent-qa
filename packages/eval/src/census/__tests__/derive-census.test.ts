@@ -67,7 +67,7 @@ function cassetteWith(id: string, mutate: (draft: LeafCassette) => void = () => 
 
 function entryFor(cassetteId: string, product: string): CorpusEntry {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     cassetteId,
     product,
     split: 'natural',
@@ -75,7 +75,6 @@ function entryFor(cassetteId: string, product: string): CorpusEntry {
     run_links: {
       runId: `run-${product}`,
       runSlug: `run-${product}`,
-      handoffPath: `.agent-qa/runs/run-${product}/handoff.json`,
     },
     receiptDigest: 'd'.repeat(64),
   }

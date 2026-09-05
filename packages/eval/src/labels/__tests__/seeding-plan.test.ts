@@ -14,6 +14,7 @@ import { extractRunCassettes, type ExtractedCassette } from '../../extract/extra
 import type { ArtifactSource } from '../../ports'
 import { collectSelfHealPairs } from '../pair-matching'
 import { buildSeedingPlan, type SeedingPlan } from '../seeding-plan'
+import { assignSplit, bucketOf, type PartitionParams } from '../split-assignment'
 import { DEFAULT_SILVER_PER_TEST_CAP, selectSilverCassettes } from '../silver-sampling'
 
 const SILVER_STEP0_ID = 'run---checkout-suite-42/test-00-step-00-d00-leaf'
@@ -23,7 +24,17 @@ const PAIR_RECOVERING_ID = 'run---checkout-suite-42/test-01-step-00-d01-leaf'
 const NON_MEMBER_LEAF_ID = 'run---checkout-suite-42/test-01-step-02-d00-leaf'
 const TEST0_PROCEDURE_ID = 'run---checkout-suite-42/test-00-procedure'
 const TEST1_PROCEDURE_ID = 'run---checkout-suite-42/test-01-procedure'
-const HANDOFF_PATH = '.agent-qa/runs/run---checkout-suite-42/handoff.json'
+/**
+ * 414 D-07 partition fixture. These fractions are TEST VECTOR inputs, not a
+ * default: they are chosen so that BOTH pair members would bucket held-out
+ * without the D-08 exemption, one silver leaf lands held-out/shared and the
+ * other held-out/private — so the cells below can see every arm.
+ */
+const PARTITION: PartitionParams = {
+  saltHex: '0'.repeat(64),
+  heldOutFraction: 0.9,
+  privateFraction: 0.4,
+}
 
 function fullArtifacts(): ArtifactSource {
   const entries = new Map<string, Uint8Array>([
@@ -78,7 +89,7 @@ function buildPlan(
   cassettes: readonly ExtractedCassette[],
   params?: { silverPerTestCap?: number },
 ): SeedingPlan {
-  return buildSeedingPlan({ handoff, cassettes, handoffPath: HANDOFF_PATH, params })
+  return buildSeedingPlan({ handoff, cassettes, partition: PARTITION, params })
 }
 
 /** The D-11 order contract, computed independently of the implementation. */
@@ -112,11 +123,9 @@ describe('buildSeedingPlan (D-16 corpus-seeding planner)', () => {
       expect(planCase.labelRecord.cassetteId).toBe(planCase.cassetteId)
       expect(planCase.corpusEntry.cassetteId).toBe(planCase.cassetteId)
       expect(planCase.corpusEntry.product).toBe('default')
-      expect(planCase.corpusEntry.split).toBe('natural')
       expect(planCase.corpusEntry.run_links).toEqual({
         runId: handoff.runId,
         runSlug: 'run---checkout-suite-42',
-        handoffPath: HANDOFF_PATH,
       })
     }
 
@@ -257,5 +266,72 @@ describe('buildSeedingPlan (D-16 corpus-seeding planner)', () => {
         reason: 'cap-exceeded',
       },
     ])
+  })
+})
+
+describe('buildSeedingPlan — the split is an INPUT to the projection (414 D-07/D-08/D-13)', () => {
+  it('exempts both pair members and buckets silver leaves, reproducibly', () => {
+    const handoff = compositionHandoff()
+    const cassettes = extract(handoff)
+
+    const plan = buildPlan(handoff, cassettes)
+    const caseFor = (id: string) => plan.cases.find((planCase) => planCase.cassetteId === id)!
+
+    // D-08: both members stay natural even though their own buckets fall
+    // inside held-out under this partition — assert the counterfactual so the
+    // exemption cannot pass vacuously.
+    for (const pairId of [PAIR_FAILED_ID, PAIR_RECOVERING_ID]) {
+      expect(caseFor(pairId).corpusEntry.split).toBe('natural')
+      expect(
+        assignSplit({ ...PARTITION, cassetteId: pairId, isPairMember: false }).split,
+      ).toBe('held-out')
+    }
+
+    // At least one silver leaf is genuinely held-out, and recomputing the
+    // assignment for its id reproduces the visibility the plan stamped.
+    const heldOutSilver = [SILVER_STEP0_ID, SILVER_STEP1_ID]
+      .map(caseFor)
+      .filter((planCase) => planCase.corpusEntry.split === 'held-out')
+    expect(heldOutSilver.length).toBeGreaterThan(0)
+    for (const planCase of heldOutSilver) {
+      const recomputed = assignSplit({
+        ...PARTITION,
+        cassetteId: planCase.cassetteId,
+        isPairMember: false,
+      })
+      expect(recomputed).toEqual({
+        split: 'held-out',
+        heldOutVisibility:
+          planCase.corpusEntry.split === 'held-out'
+            ? planCase.corpusEntry.heldOutVisibility
+            : undefined,
+      })
+      expect(bucketOf(PARTITION.saltHex, planCase.cassetteId)).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  it('never stamps a path field, and carries the D-04 fields iff supplied', () => {
+    const handoff = compositionHandoff()
+    const cassettes = extract(handoff)
+
+    const bare = buildPlan(handoff, cassettes)
+    for (const planCase of bare.cases) {
+      expect(Object.keys(planCase.corpusEntry.run_links)).toEqual(['runId', 'runSlug'])
+      expect(Object.keys(planCase.corpusEntry)).not.toContain('captured_at')
+      expect(Object.keys(planCase.corpusEntry)).not.toContain('targetEnvironment')
+    }
+
+    const stamped = buildSeedingPlan({
+      handoff,
+      cassettes,
+      partition: PARTITION,
+      capturedAt: '2026-09-04T16:25:54.000Z',
+      targetEnvironment: 'local',
+    })
+    expect(stamped.cases.length).toBeGreaterThan(0)
+    for (const planCase of stamped.cases) {
+      expect(planCase.corpusEntry.captured_at).toBe('2026-09-04T16:25:54.000Z')
+      expect(planCase.corpusEntry.targetEnvironment).toBe('local')
+    }
   })
 })
