@@ -81,6 +81,7 @@ import {
   loadScoreRecord,
   readCommittedCorpus,
   readPartitionManifests,
+  readRunExclusions,
   runCassetteReplay,
   seedCommittedCorpus,
   writeBaselinePointer,
@@ -137,6 +138,8 @@ export type {
   BaselineComparatorRefusal,
   CensusCrossCheckLine,
   CorpusCensus,
+  ExclusionCensusBlock,
+  PartitionCensusBlock,
 } from '@vostride/agent-qa-eval'
 
 // 413-06 D-20: the ONE refusal renderer, re-exported so `commands/eval.ts` can print a refused
@@ -1620,7 +1623,7 @@ export interface CensusVerbResult {
 /**
  * The census verb pipeline (D-13/D-14): the corpus census is a property of the COMMITTED CORPUS,
  * not of a replay batch, so this verb reads the committed root directly through eval-local's read
- * leg and folds it with ONE `deriveCensus` call. Three legs feed that fold:
+ * leg and folds it with ONE `deriveCensus` call. Four legs feed that fold:
  *
  *   (a) the corpus itself — entries, label records, cassette bundles and local blob presence;
  *   (b) the optional `--campaign` manifest, whose run-level tallies (excluded runs, repeats, the
@@ -1630,6 +1633,10 @@ export interface CensusVerbResult {
  *       PRINTED side by side and never reconciled (RESEARCH F7: a report carries a batchKey, never
  *       its cassette-id list), and each report is run through the ONE comparator predicate so a
  *       same-family report can never be mistaken for a gate comparator (D-18/D-20, ROOT-11).
+ *   (d) 414 D-17: the committed `contracts/partition-<product>.json` manifests and the
+ *       `exclusions/<product>/<runSlug>.json` records, plus the read leg's `schemaVersionsSeen`.
+ *       The manifest travels into the census as `sha256hex(salt)` only — the fold does the
+ *       digesting, so the raw salt never reaches a DTO the console or a committed file can print.
  *
  * Refusal posture: an unreadable committed file is a NOTICE, never a throw — the verb completes
  * and prints what it could not read (T-413-24). The single typed error is a rejected `--campaign`
@@ -1643,9 +1650,18 @@ export async function runCensusVerb(
   const notices: string[] = []
 
   // (1) The committed root read leg — refusals are data, an absent root is an empty census.
+  //
+  // 414 D-02/D-05: the two committed document kinds this phase introduced are read HERE, in the
+  // one file the surface-firewall ledger clears for `@vostride/agent-qa-eval-local`, and handed to
+  // `deriveCensus` as DATA. Every refusal from either read becomes a notice: a manifest or an
+  // exclusion the guard rejects must be NAMED, because silently dropped it reads as "this product
+  // is unpartitioned" or "this run was never excluded" — a false count, not a missing one
+  // (T-414-41).
   const read = readCommittedCorpus(committedRoot)
-  notices.push(...read.notices)
-  for (const refusal of read.refusals) {
+  const manifestRead = readPartitionManifests(committedRoot)
+  const exclusionRead = readRunExclusions(committedRoot)
+  notices.push(...read.notices, ...manifestRead.notices)
+  for (const refusal of [...read.refusals, ...manifestRead.refusals, ...exclusionRead.refusals]) {
     notices.push(`committed read refused ${refusal.path}: ${refusal.reason}`)
   }
 
@@ -1689,6 +1705,9 @@ export async function runCensusVerb(
     snapshot: read.snapshot,
     ...(campaign === undefined ? {} : { campaign }),
     reports,
+    manifests: manifestRead.manifests,
+    exclusions: exclusionRead.exclusions,
+    schemaVersionsSeen: read.schemaVersionsSeen,
   })
 
   // (5) `--commit`: render the deterministic markdown projection and route BOTH parts through

@@ -21,17 +21,25 @@
 // so the value edge stays one-way (composition imports this renderer, not the reverse).
 import type { CensusCrossCheckLine, CorpusCensus } from './eval-session-composition.js'
 
+/** The bullet body of a counter group, sorted — honest '- none' when empty (D-04). */
+function counterBullets(counts: Readonly<Record<string, number>>): string[] {
+  const keys = Object.keys(counts).sort()
+  if (keys.length === 0) return ['- none']
+  return keys.map(key => `- ${key}: ${counts[key]}`)
+}
+
+/**
+ * A counter group under a heading spelled IN FULL at the call site. The 414 sections below use
+ * this form so the locked heading text is greppable in this file's raw source, not assembled from
+ * a fragment at render time.
+ */
+function countedSection(heading: string, counts: Readonly<Record<string, number>>): string[] {
+  return [heading, '', ...counterBullets(counts), '']
+}
+
 /** Sorted-key counter group as markdown bullets — honest '- none' when empty (D-04). */
 function counterLines(title: string, counts: Readonly<Record<string, number>>): string[] {
-  const lines = [`### ${title}`, '']
-  const keys = Object.keys(counts).sort()
-  if (keys.length === 0) {
-    lines.push('- none')
-  } else {
-    for (const key of keys) lines.push(`- ${key}: ${counts[key]}`)
-  }
-  lines.push('')
-  return lines
+  return countedSection(`### ${title}`, counts)
 }
 
 function rateLine(
@@ -70,6 +78,36 @@ export function renderCensusMarkdown(census: CorpusCensus): string {
   lines.push(`- corpusDigest: ${census.corpusDigest}`)
   lines.push(`- entryCount: ${census.entryCount}`)
   lines.push(`- schemaVersion: ${census.schemaVersion}`)
+  // 414 D-17: which entry schema versions the committed BYTES still declare. Every entry is the
+  // v2 shape in memory, so this sub-list is the only place a reader learns a v1 file is still on
+  // disk. Sorted keys; '- none' when the read leg admitted no entry at all.
+  lines.push('- schemaVersionsSeen:')
+  const versionKeys = Object.keys(census.schemaVersionsSeen).sort()
+  if (versionKeys.length === 0) {
+    lines.push('  - none')
+  } else {
+    for (const key of versionKeys) lines.push(`  - v${key}: ${census.schemaVersionsSeen[key]}`)
+  }
+  lines.push('')
+
+  // 414 D-17: the committed partition parameters, per PARTITIONED product, immediately after
+  // Provenance — they name how every split below was decided. The salt itself is a partition
+  // secret (a public salt lets a proposer compute the held-out set for itself), so only its
+  // digest is printed; an unpartitioned root says '- none' rather than inventing a row.
+  lines.push('## Partition', '')
+  const partitionKeys = Object.keys(census.partition).sort()
+  if (partitionKeys.length === 0) {
+    lines.push('- none')
+  } else {
+    for (const product of partitionKeys) {
+      const block = census.partition[product]!
+      lines.push(
+        `- ${product}: saltDigest=${block.saltDigest} `
+          + `heldOutFraction=${block.heldOutFraction} privateFraction=${block.privateFraction} `
+          + `partitionVersion=${block.partitionVersion}`,
+      )
+    }
+  }
   lines.push('')
 
   // One section per product, sorted — the D-16 triple first, then every counter group.
@@ -96,6 +134,25 @@ export function renderCensusMarkdown(census: CorpusCensus): string {
     lines.push(...counterLines('runsExcludedByProducer', block.runsExcludedByProducer))
     lines.push(...counterLines('seededByProducer', block.seededByProducer))
     lines.push(...counterLines('repeatCounts', block.repeatCounts))
+
+    // 414 D-17. Splits: the four split x visibility arms as raw integers. Field coverage: how
+    // many entries carry each OPTIONAL D-04 field, as numerator/denominator. Exclusions: what the
+    // committed exclusions/** records say. Counts and pairs only — D-16 stands, and Phase 415 is
+    // where a number becomes a claim.
+    // Spread rather than passed straight through: `GateSetCounts` is an interface, and an
+    // interface carries no implicit index signature, so the anonymous spread is what makes the
+    // shared counter group typecheck. A fifth arm joining the type still flows through unchanged.
+    const splits: Readonly<Record<string, number>> = { ...block.splits }
+    lines.push(...countedSection('### Splits', splits))
+    lines.push('### Field coverage', '')
+    lines.push(rateLine('capturedAt', block.fieldCoverage.capturedAt))
+    lines.push(rateLine('targetEnvironment', block.fieldCoverage.targetEnvironment))
+    lines.push('')
+    lines.push('### Exclusions', '')
+    lines.push(`- total: ${block.exclusions.total}`)
+    lines.push('')
+    lines.push(...counterLines('By class', block.exclusions.byClass))
+    lines.push(...counterLines('By producer', block.exclusions.byProducer))
   }
 
   // Campaign: an absent manifest states its absence rather than printing zeros (D-04).
