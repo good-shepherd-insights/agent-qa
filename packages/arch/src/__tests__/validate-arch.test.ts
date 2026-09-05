@@ -35,6 +35,11 @@ import {
   READER_CARVEOUT_SCANNED_DIRS,
 } from '../lint/reader-carveout.js'
 import {
+  EVAL_LOCAL_MAIN_ENTRY_ALLOWLIST,
+  findEvalLocalAllowanceUnusedOffenders,
+  findEvalLocalMainEntryOffenders,
+} from '../lint/eval-local-reader-carveout.js'
+import {
   COMPOSITION_CARVEOUT_PACKAGE_DIR,
   findCompositionCarveoutOffenders,
   findCompositionCarveoutUnusedAllowances,
@@ -194,6 +199,10 @@ describe('validate:arch (LINT-01..05)', () => {
     // "Exactly one importer" is a property of the workspace, not of any one package, so the
     // reader-scanned hits are accumulated and judged once after the loop.
     const readerScannedHits: SpecifierHit[] = []
+    // 414 D-20. The eval-local main-entry allowance is likewise a workspace property: "used by
+    // nobody" cannot be decided from one package's slice, so every contract's source hits are
+    // accumulated here and the unused-allowance direction is judged once after the loop.
+    const evalLocalHits: SpecifierHit[] = []
 
     for (const contract of contracts) {
       pinSources.push(...pinSourcesFor(contract.packageDir))
@@ -233,9 +242,16 @@ describe('validate:arch (LINT-01..05)', () => {
         surfaceScans.push({ packageDir: contract.packageDir, hits: sourceHits })
       }
       offenders.push(...findKnowledgeLocalWallOffenders(contract, sourceHits))
+      // 414 D-20 / ROOT-10 SC5: over EVERY contract, not the reader carve-out's scanned-dirs
+      // slice — the packages this rule exists to hold (`agent`, `agent-local`,
+      // `knowledge-local`) are not in that list, and a rule that never sees them would pass
+      // forever while reading like proof.
+      offenders.push(...findEvalLocalMainEntryOffenders(contract, sourceHits))
+      evalLocalHits.push(...sourceHits)
     }
 
     offenders.push(...findKnowledgeWriterSingletonOffenders(readerScannedHits))
+    offenders.push(...findEvalLocalAllowanceUnusedOffenders(evalLocalHits))
     offenders.push(...findSurfaceFirewallOffenders(surfaceScans, SURFACE_FIREWALL_LEDGER))
     offenders.push(...findSurfaceClassGoldenSetOffenders(contracts))
     offenders.push(...findEvaluatePinOffenders(pinSources))
@@ -721,6 +737,8 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
     expect(aggregate).toContain('findCompositionCarveoutUnusedAllowances(contract, sourceHits)')
     expect(aggregate).toContain('findReaderCarveoutOffenders(sourceHits)')
     expect(aggregate).toContain('findKnowledgeWriterSingletonOffenders(readerScannedHits)')
+    expect(aggregate).toContain('findEvalLocalMainEntryOffenders(contract, sourceHits)')
+    expect(aggregate).toContain('findEvalLocalAllowanceUnusedOffenders(evalLocalHits)')
     expect(aggregate).toContain(
       'findResumePathModelFreeOffenders(resumePathModules(contract.packageDir, repoRoot))',
     )
@@ -750,6 +768,26 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
       expect(
         READER_CARVEOUT_SCANNED_DIRS.some(dir => entry.startsWith(`${dir}/`)),
       ).toBe(true)
+    }
+  })
+
+  // 414 D-20 / ROOT-10 SC5, and the same shape hazard one rule over. A prefix naming a directory
+  // that does not exist — or one no contract-bearing package owns, so the aggregate never walks
+  // it — matches nothing: the offender direction could never fire on the real tree, and the
+  // unused-allowance direction would fire on every run, which is the pressure that gets a rule
+  // deleted rather than fixed. Both halves are asserted, because either alone is satisfiable by a
+  // wrong value.
+  it('the eval-local main-entry allowance is one prefix, and it points inside a contract-bearing package that exists', () => {
+    expect([...EVAL_LOCAL_MAIN_ENTRY_ALLOWLIST]).toEqual(['packages/cli/'])
+
+    for (const entry of EVAL_LOCAL_MAIN_ENTRY_ALLOWLIST) {
+      expect(existsSync(join(repoRoot, entry))).toBe(true)
+      // Spelled through the shipped prefix rather than repeating 'packages/cli', so a future
+      // widening cannot leave this cell asserting about a package the rule no longer names.
+      const owner = ARCH_MANIFEST.packages.find(
+        contract => entry === `${contract.packageDir}/`,
+      )
+      expect(owner).toBeDefined()
     }
   })
 
