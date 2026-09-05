@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,6 +22,7 @@ import {
 } from '../census-committing.js'
 import type { CommitCensusOutcome } from '../census-committing.js'
 import { REPORT_EGRESS_CHANNEL } from '../report-committing.js'
+import { listCommittedReports } from '../committed-corpus-source.js'
 
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const MARKDOWN = '# Corpus Census\n\nentries: 0\n'
@@ -85,6 +86,12 @@ describe('commitCensus (413 D-15/D-16)', () => {
     const paths = censusFilePaths()
     expect(readFileSync(paths.json, 'utf8')).toBe(committedFileText(census))
     expect(readFileSync(paths.markdown, 'utf8')).toBe(MARKDOWN)
+  })
+
+  it('commits a census over a root with noise-floor without a report.json absent notice', () => {
+    mkdirSync(join(root, 'reports/noise-floor'), { recursive: true })
+    expect(commit().kind).toBe('committed')
+    expect(listCommittedReports(root)).toEqual({ reports: [], refusals: [] })
   })
 
   it('re-committing the byte-identical census is an idempotent no-op (D-15)', () => {

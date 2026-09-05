@@ -16,19 +16,23 @@ import {
   buildSeedingPlan,
   committedFileText,
   extractRunCassettes,
+  foldNoiseFloorArtefact,
+  guardNoiseFloorArtefact,
   projectBaselinePointer,
+  projectDecisionVectorsDocument,
   projectPartitionManifest,
   projectRunExclusion,
 } from '@vostride/agent-qa-eval'
 import type {
   ArtifactSource,
+  DecisionCorrectnessVector,
   ExtractedCassette,
   PartitionManifest,
   RunExclusionRecord,
   SeedingPlan,
 } from '@vostride/agent-qa-eval'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
-import { asRef } from '@vostride/agent-qa-schema'
+import { asRef, slugBranch } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, Decision, SubActionEvidence } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -40,15 +44,19 @@ import {
   buildRootMarkerValue,
   committedCorpusPath,
   committedExclusionPath,
+  committedNoiseFloorPath,
   committedPartitionManifestPath,
   committedReportPath,
 } from '../committed-root-store.js'
 import {
   listBaselinePointers,
   listCommittedReports,
+  listNoiseFloorArtefacts,
   readCommittedCorpus,
+  readCommittedDecisionVectors,
   readPartitionManifests,
   readRunExclusions,
+  resolveMinimumGateSet,
 } from '../committed-corpus-source.js'
 import { seedCommittedCorpus } from '../seeding-composition.js'
 import {
@@ -184,6 +192,30 @@ function writeCommitted(root: string, relPath: string, value: unknown): string {
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, committedFileText(value), 'utf8')
   return file
+}
+
+function floorFixture(profileKey: string, populated = true) {
+  const vectors: DecisionCorrectnessVector[] = populated ? [{
+    key: 'synthetic-cassette#-#0',
+    cassetteId: 'synthetic-cassette',
+    decisionOrdinal: 0,
+    product: 'example-web',
+    briefSource: 'proof',
+    axes: {
+      headline: 'correct', elementIdentity: 'correct', value: 'not-applicable',
+      opClass: 'correct', sideEffect: 'correct', loop: 'not-applicable',
+    },
+  }] : []
+  return foldNoiseFloorArtefact({
+    profile: { profileKey, fingerprint: 'fixture', plannerModelId: 'fixture', matcherVersion: 1 },
+    corpusDigest: 'fixture-corpus', partitionVersion: 1,
+    seeds: [11, 29], repeats: 3, bootstrapSeed: 19,
+    runs: [11, 11, 11, 29].map((seed, index) => ({
+      seed, index, report: buildEvalReport([]), vectors, wallClockMs: 1,
+    })),
+    splitByCassetteId: new Map([['synthetic-cassette', 'natural']]),
+    censusByProduct: { 'example-web': { natural: vectors.length, heldOutShared: 0, heldOutPrivate: 0 } },
+  })
 }
 
 function v1FixtureBytes(): Record<string, unknown> {
@@ -562,5 +594,80 @@ describe('the v2 read leg on committed bytes (414 D-03/D-13/D-02/D-05, ROOT-06)'
     const exclusions = readRunExclusions(absent)
     expect(exclusions.exclusions).toEqual([])
     expect(exclusions.refusals).toEqual([])
+  })
+})
+
+describe('noise-floor and paired-decision read legs (415 D-04/D-16)', () => {
+  let root: string
+  beforeEach(() => { root = markedRoot() })
+  afterEach(async () => { await rm(root, { recursive: true, force: true }) })
+
+  it('reserves the noise-floor dir without refusing a missing report.json', () => {
+    const report = buildEvalReport([])
+    writeCommitted(root, committedReportPath(report.batchKey, 'report.json'), report)
+    writeCommitted(root, 'reports/noise-floor/fixture.json', floorFixture('fixture'))
+    const read = listCommittedReports(root)
+    expect(read.refusals).toEqual([])
+    expect(read.reports.map(entry => entry.report)).toEqual([report])
+  })
+
+  it('lists guarded artefacts sorted by profileKey, with attributable refusals', () => {
+    const a = floorFixture('a-profile')
+    const z = floorFixture('z-profile')
+    expect(guardNoiseFloorArtefact(a).kind).toBe('ok')
+    const zPath = writeCommitted(root, 'reports/noise-floor/a.json', z)
+    const aPath = writeCommitted(root, 'reports/noise-floor/z.json', a)
+    const invalid = writeCommitted(root, 'reports/noise-floor/invalid.json', { schemaVersion: 3 })
+    const broken = writeCommitted(root, 'reports/noise-floor/broken.json', {})
+    writeFileSync(broken, 'not json', 'utf8')
+    const stray = writeCommitted(root, 'reports/noise-floor.json', a)
+    const read = listNoiseFloorArtefacts(root)
+    expect(read.artefacts).toEqual([
+      { profileKey: a.profileKey, artefact: a, path: aPath },
+      { profileKey: z.profileKey, artefact: z, path: zPath },
+    ])
+    expect(read.refusals).toHaveLength(3)
+    for (const path of [invalid, broken, stray]) {
+      expect(read.refusals).toContainEqual({ path, reason: expect.any(String) })
+      expect(read.refusals.find(row => row.path === path)?.reason.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('loads decision documents and distinguishes absent, malformed and foreign batches', () => {
+    const document = projectDecisionVectorsDocument({ batchKey: 'fixture', matcherVersion: 1, vectors: [] })
+    const path = join(root, committedReportPath('fixture', 'decisions.json'))
+    expect(readCommittedDecisionVectors(root, 'fixture')).toEqual({ kind: 'absent', path })
+    writeCommitted(root, committedReportPath('fixture', 'decisions.json'), document)
+    expect(readCommittedDecisionVectors(root, 'fixture')).toEqual({ kind: 'loaded', document, path })
+    for (const value of [{ ...document, schemaVersion: 3 }, { ...document, batchKey: 'foreign' }]) {
+      writeFileSync(path, committedFileText(value), 'utf8')
+      expect(readCommittedDecisionVectors(root, 'fixture')).toEqual({
+        kind: 'refused', refusal: { path, reason: expect.any(String) },
+      })
+    }
+    writeFileSync(path, 'not json', 'utf8')
+    expect(readCommittedDecisionVectors(root, 'fixture')).toMatchObject({ kind: 'refused', refusal: { path } })
+  })
+
+  it('resolves the matching minimum, preserving no-floor and no-value outcomes', () => {
+    expect(listNoiseFloorArtefacts(root)).toEqual({ artefacts: [], refusals: [] })
+    expect(resolveMinimumGateSet({ committedRoot: root, profileKey: 'fixture' })).toEqual({ kind: 'no-floor' })
+    const floor = floorFixture('fixture')
+    expect(floor.minimumGateSet.value).toBeGreaterThanOrEqual(3)
+    const path = writeCommitted(root, 'reports/noise-floor/fixture.json', floor)
+    expect(resolveMinimumGateSet({ committedRoot: root, profileKey: 'fixture' })).toEqual({
+      kind: 'resolved', minimumGateSet: floor.minimumGateSet.value, path,
+    })
+    const noValue = floorFixture('empty', false)
+    expect(noValue.minimumGateSet).not.toHaveProperty('value')
+    const emptyPath = writeCommitted(root, 'reports/noise-floor/empty.json', noValue)
+    expect(resolveMinimumGateSet({ committedRoot: root, profileKey: 'empty' })).toEqual({ kind: 'no-value', path: emptyPath })
+  })
+
+  it('slugs the entire floor profile key as one safe path segment', () => {
+    const key = 'planner=a|fingerprint=b|matcher=1|judge=none|judgeVersion=none'
+    expect(committedNoiseFloorPath(key)).toBe(`reports/noise-floor/${slugBranch(key)}.json`)
+    expect(committedNoiseFloorPath('../../escape').split('/')).toHaveLength(3)
+    expect(committedNoiseFloorPath('../../escape')).not.toContain('..')
   })
 })

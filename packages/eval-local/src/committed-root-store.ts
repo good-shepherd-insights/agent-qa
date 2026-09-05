@@ -142,6 +142,10 @@ export function committedBaselinePointerPath(profileKey: string): string {
   )
 }
 
+export function committedNoiseFloorPath(_profileKey: string): string {
+  throw new Error('noise-floor path contract not implemented')
+}
+
 /**
  * Phase 414 D-05: one partition manifest per product, under contracts/ rather than beside the
  * entries it governs. Two reasons. (1) The recursive corpus/ walk parses every *.json it finds,

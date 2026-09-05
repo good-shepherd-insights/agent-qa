@@ -24,8 +24,10 @@ import {
 import type {
   CommittedCorpusSnapshot,
   CorpusEntry,
+  DecisionVectorsDocument,
   EvalBatchReport,
   LeafCassette,
+  NoiseFloorArtefact,
   PartitionManifest,
   RunExclusionRecord,
   StandaloneLabelRecord,
@@ -143,6 +145,43 @@ export interface BaselinePointerEntry {
   fingerprint?: string
   corpusDigest?: string
   path: string
+}
+
+export interface NoiseFloorArtefactEntry {
+  profileKey: string
+  artefact: NoiseFloorArtefact
+  path: string
+}
+
+export type CommittedDecisionVectorsLoad =
+  | { kind: 'loaded'; document: DecisionVectorsDocument; path: string }
+  | { kind: 'absent'; path: string }
+  | { kind: 'refused'; refusal: CommittedReadRefusal }
+
+export type ResolveMinimumGateSetOutcome =
+  | { kind: 'resolved'; minimumGateSet: number; path: string }
+  | { kind: 'no-floor' }
+  | { kind: 'no-value'; path: string }
+
+export function listNoiseFloorArtefacts(_committedRoot: string): {
+  artefacts: NoiseFloorArtefactEntry[]
+  refusals: CommittedReadRefusal[]
+} {
+  throw new Error('noise-floor read contract not implemented')
+}
+
+export function readCommittedDecisionVectors(
+  _committedRoot: string,
+  _batchKey: string,
+): CommittedDecisionVectorsLoad {
+  throw new Error('decision read contract not implemented')
+}
+
+export function resolveMinimumGateSet(_input: {
+  committedRoot: string
+  profileKey: string
+}): ResolveMinimumGateSetOutcome {
+  throw new Error('minimum read contract not implemented')
 }
 
 function listDirNames(dir: string): string[] {
