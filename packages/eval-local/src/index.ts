@@ -54,8 +54,8 @@ export type {
 export { FsScoreStore, SCORE_FILE } from './score-store.js'
 export type { FsScoreStoreConfig, ScoreRecord, WrittenScoreRecord } from './score-store.js'
 
-export { DEFAULT_EVAL_REPORTS_SUBDIR, FsReportStore } from './report-store.js'
-export type { FsReportStoreConfig, WrittenReport } from './report-store.js'
+export { DEFAULT_EVAL_REPORTS_SUBDIR, FsReportStore, loadStagedReport } from './report-store.js'
+export type { FsReportStoreConfig, StagedReportLoad, WrittenReport } from './report-store.js'
 
 export {
   SEEDING_EGRESS_CHANNEL,
@@ -75,6 +75,7 @@ export type {
 
 export {
   REPORT_EGRESS_CHANNEL,
+  COMMITTED_REPORT_DECISIONS_FILE,
   COMMITTED_REPORT_JSON_FILE,
   COMMITTED_REPORT_MARKDOWN_FILE,
   commitEvalReport,
@@ -89,6 +90,12 @@ export type {
   WriteBaselinePointerInput,
   WriteBaselinePointerOutcome,
 } from './baseline-pointer.js'
+
+export { writeNoiseFloorArtefact } from './noise-floor-writer.js'
+export type {
+  WriteNoiseFloorArtefactInput,
+  WriteNoiseFloorArtefactOutcome,
+} from './noise-floor-writer.js'
 
 export {
   COMMITTED_CENSUS_JSON_FILE,
@@ -106,6 +113,7 @@ export {
   COMMITTED_EXCLUSIONS_DIR,
   COMMITTED_GITIGNORE_TEXT,
   COMMITTED_LABELS_DIR,
+  COMMITTED_NOISE_FLOOR_SUBDIR,
   COMMITTED_REPORTS_DIR,
   COMMITTED_ROOT_MARKER_FILE,
   COMMITTED_ROOT_SCHEMA_VERSION,
@@ -120,6 +128,7 @@ export {
   committedCorpusPath,
   committedExclusionPath,
   committedLabelPath,
+  committedNoiseFloorPath,
   committedPartitionManifestPath,
   committedReportPath,
 } from './committed-root-store.js'
@@ -137,15 +146,21 @@ export type {
 export {
   listBaselinePointers,
   listCommittedReports,
+  listNoiseFloorArtefacts,
   readCommittedCorpus,
+  readCommittedDecisionVectors,
   readPartitionManifests,
   readRunExclusions,
+  resolveMinimumGateSet,
 } from './committed-corpus-source.js'
 export type {
   BaselinePointerEntry,
   CommittedCorpusRead,
+  CommittedDecisionVectorsLoad,
   CommittedReadRefusal,
   CommittedReportEntry,
+  NoiseFloorArtefactEntry,
   PartitionManifestRead,
+  ResolveMinimumGateSetOutcome,
   RunExclusionRead,
 } from './committed-corpus-source.js'

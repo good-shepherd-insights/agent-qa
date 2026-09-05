@@ -63,6 +63,12 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // so a same-family-judged report is refused rather than designated. Paired with the read leg
   // that loads the committed root back for derivation; every derivation stays in eval core.
   'the write-once committed census and baseline-pointer writers under agent-qa-eval/reports/ behind the eval-report checkpoint, and the committed-root read leg',
+  // Phase 415 D-04/D-16: per-profile floors and the report's optional decisions part share
+  // eval-report. The per-repeat reports stay local because every whole-corpus replay shares
+  // the designated baseline's batchKey; committing another body would be a write-conflict.
+  // Retargeted sweep/assembly and the gate/floor compositions bind the existing ports;
+  // measurement, scoring and verdict derivations remain in eval core.
+  'the write-once noise-floor artefact writer under agent-qa-eval/reports/noise-floor/ and the decisions.json third part of the report commit, both behind the eval-report checkpoint — never a third channel; the per-repeat retargeted replay sweep and batch assembly; the gate-side release-gate and floor compositions over the committed-root read leg',
   // Phase 414 D-02/D-05/D-15 (ROOT-07/ROOT-08/ROOT-10): the partition manifest and the run
   // exclusion are two more committed documents, so they join the SEEDING family under the SAME
   // 'eval-seeding' checkpoint channel seedCommittedCorpus already owns — never a third channel,
