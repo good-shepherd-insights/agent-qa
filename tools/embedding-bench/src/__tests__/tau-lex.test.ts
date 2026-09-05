@@ -73,13 +73,19 @@ function scoreWithProductionMatch(
     })
     const query = fixture.recordedQueries.find(({ id }) => id === queryId)
     const rowid = fixture.documents.findIndex(({ id }) => id === goldId) + 1
-    if (query === undefined || rowid === 0) throw new Error('invalid syntax fixture identity')
-    const row = db.prepare(`
-      SELECT -bm25(fts_records, 10, 5, 1) AS bm25_positive
+    if (query === undefined || rowid === 0) throw new Error('invalid fixture identity')
+    if (!fixture.documents[rowid - 1]!.apps.includes(query.app)) {
+      throw new Error(`fixture gold document ${goldId} is not in app ${query.app}`)
+    }
+    // Score the full MATCH set before selecting the gold row. A rowid-constrained
+    // FTS scan can return a different candidate on SQLite 3.51.3.
+    const rows = db.prepare(`
+      SELECT rowid AS record_rowid, -bm25(fts_records, 10, 5, 1) AS bm25_positive
       FROM fts_records
-      WHERE fts_records MATCH ? AND rowid = ?
-    `).get(buildMatch(query.query), rowid)
-    if (row === undefined) throw new Error('production MATCH did not recall the syntax fixture')
+      WHERE fts_records MATCH ?
+    `).all(buildMatch(query.query))
+    const row = rows.find((candidate) => Number(candidate.record_rowid) === rowid)
+    if (row === undefined) throw new Error('production MATCH did not recall the fixture gold')
     return Number(Number(row.bm25_positive).toFixed(12))
   } finally {
     db.close()
