@@ -378,26 +378,37 @@ apply_mutation () {
 #   created   newline-separated paths this leg brings into existence (must not exist beforehand)
 run_leg () {
   local id="$1" label="$2" mode="$3" required="$4" allowed="$5" filter="$6" suite="$7"
-  CURRENT_SUBJECTS="$8"
-  CURRENT_CREATED="$9"
+  local subjects="$8" created="$9"
 
   echo "=== LEG $id — $label"
 
+  # Refuse first: the restore lists only ever name a created path proven absent, or a subject
+  # snapshotted, at the moment it joined. A refusing exit's trap can therefore remove nothing
+  # that was on disk before the leg. 414-VERIFICATION.md gap 1 makes this order load-bearing:
+  # populating CURRENT_CREATED before the already-exists refusal deleted the refused file.
+  # Refusals exit directly, not through fatal: fatal runs close_leg, whose verify_restored would
+  # print the restored-and-proven line for a leg that never started. Empty lists make exit honest.
   local p
   while IFS= read -r p; do
     [ -z "$p" ] && continue
     clean_gate "$p"
-    cp "$REPO_ROOT/$p" "$(snapshot_path "$p")"
-    echo "  subject $p sha256 $(shasum -a 256 "$REPO_ROOT/$p" | cut -d' ' -f1)"
-  done <<< "$CURRENT_SUBJECTS"
+  done <<< "$subjects"
   while IFS= read -r p; do
     [ -z "$p" ] && continue
     if [ -e "$REPO_ROOT/$p" ]; then
       echo "FATAL: $p already exists — leg $id would overwrite a real file" >&2
       exit 1
     fi
-  done <<< "$CURRENT_CREATED"
+  done <<< "$created"
 
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    cp "$REPO_ROOT/$p" "$(snapshot_path "$p")"
+    echo "  subject $p sha256 $(shasum -a 256 "$REPO_ROOT/$p" | cut -d' ' -f1)"
+  done <<< "$subjects"
+
+  CURRENT_SUBJECTS="$subjects"
+  CURRENT_CREATED="$created"
   apply_mutation "$id"
 
   # 412's landed gate: an edit that no longer matches its anchor changes nothing and the leg would
