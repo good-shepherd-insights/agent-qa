@@ -1,3 +1,4 @@
+import { assembleBriefTiers } from '@vostride/agent-qa-runner'
 import {
   servingRecordMetadata,
   type BriefBlock,
@@ -60,14 +61,6 @@ function renderSovereignLine(entry: IndexEntry): { briefLine: BriefLine; cost: n
       tier: 'L0',
     },
   }
-}
-
-function appendVerbatimLines(base: string, lines: readonly string[]): string {
-  if (lines.length === 0) return base
-
-  const suffix = lines.join('\n')
-  if (base.length === 0 || base.endsWith('\n')) return `${base}${suffix}`
-  return `${base}\n${suffix}`
 }
 
 function normalizedRecordCap(value: number): number {
@@ -178,19 +171,17 @@ export function assembleRunBrief(input: AssembleRunBriefInput): AssembledRunBrie
   })
   const selected = selectedEntries.map(({ record }) => record)
   const rendered = selected.map(renderBriefLine)
-  const cautions = rendered.filter(({ briefLine }) => briefLine.tier === 'L1')
-  const learned = rendered.filter(({ briefLine }) => briefLine.tier === 'L2')
   const sovereignLines = userFacts.map((record) => ({
     record,
     rendered: renderSovereignLine(record),
   }))
 
   const brief: BriefBlock = {
-    tiers: {
-      L0: appendVerbatimLines(input.policy.text, userFacts.map(({ summary }) => summary)),
-      L1: cautions.map(({ line }) => line).join('\n'),
-      L2: learned.map(({ line }) => line).join('\n'),
-    },
+    tiers: assembleBriefTiers(
+      input.policy.text,
+      userFacts.map(({ summary }) => summary),
+      rendered.map(({ line, briefLine }) => ({ line, tier: briefLine.tier })),
+    ),
     lines: [
       ...sovereignLines.map(({ rendered: { briefLine } }) => briefLine),
       ...rendered.map(({ briefLine }) => briefLine),
