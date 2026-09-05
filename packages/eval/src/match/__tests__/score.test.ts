@@ -113,7 +113,7 @@ function decisionResult(
     samples,
     agreement,
     ...(modal === undefined ? {} : { modalDecision: modal.identity }),
-    promptDrift: { drift: false, recordedHash: 'hash', recomputedHash: 'hash' },
+    promptDrift: { drift: false, harnessDrift: false, recordedHash: 'hash', recomputedHash: 'hash' },
     replayedModel: { provider: 'test', modelId: 'model-1' },
     unconsumedExchanges: [],
     totalDurationMs: samples.length * 10,

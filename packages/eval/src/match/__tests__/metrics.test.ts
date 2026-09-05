@@ -47,6 +47,7 @@ interface ReplayOptions {
   samples?: ReplaySample[]
   briefSource?: DecisionReplayResult['briefSource']
   promptDrift?: boolean
+  harnessDrift?: boolean
   agreementRate?: number
   noConsensus?: boolean
   recordedModel?: ModelIdentity
@@ -69,6 +70,7 @@ function leafOutcome(cassetteId: string, options: ReplayOptions = {}): LeafRepla
     },
     promptDrift: {
       drift: options.promptDrift ?? false,
+      harnessDrift: options.harnessDrift ?? options.promptDrift ?? false,
       recordedHash: 'recorded-hash',
       recomputedHash: options.promptDrift ? 'different-hash' : 'recorded-hash',
     },
@@ -174,6 +176,24 @@ function refusalEntry(cassetteId: string, reason: ReplayRefusal['reason']): Scor
 }
 
 describe('buildEvalReport', () => {
+  it('uses harnessDrift with a legacy drift fallback, preserving explicit false and unknown metadata', () => {
+    const legacy = leafOutcome('legacy', { promptDrift: true })
+    // Mirrors historical persisted JSON accepted by the replay reader.
+    Reflect.deleteProperty(legacy.promptDrift, 'harnessDrift')
+    Reflect.deleteProperty(legacy, 'briefSource')
+    const declared = leafOutcome('declared', { promptDrift: true, harnessDrift: false })
+    const current = leafOutcome('current', { promptDrift: true, harnessDrift: true })
+    const entries = [legacy, declared, current, leafOutcome('unchanged')]
+      .map(outcome => ({ cassetteId: outcome.cassetteId, outcome }))
+    const before = structuredClone(entries)
+    const report = buildEvalReport(entries)
+    expect(report.promptDriftRate).toEqual({ numerator: 2, denominator: 4, rate: 0.5 })
+    expect(report.briefSourceCounts).toEqual({ proof: 0, rendered: 0, empty: 3 })
+    expect(report).not.toHaveProperty('seedHonored')
+    expect(report).not.toHaveProperty('providerFingerprints')
+    expect(entries).toEqual(before)
+  })
+
   it('reports seedHonored false when any replay sample warns that seed is unsupported', () => {
     const report = buildEvalReport([
       scoredEntry('no-warning', settledScore()),

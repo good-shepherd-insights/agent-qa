@@ -51,6 +51,7 @@ function leafOutcome(cassetteId: string, samples?: ReplaySample[]): LeafReplayRe
     },
     promptDrift: {
       drift: false,
+      harnessDrift: false,
       recordedHash: 'recorded-hash',
       recomputedHash: 'recorded-hash',
     },

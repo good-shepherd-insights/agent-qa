@@ -47,6 +47,7 @@ function decisionResult(outcome: ReplaySampleOutcome): DecisionReplayResult {
     ...(modal === undefined ? {} : { modalDecision: modal.identity }),
     promptDrift: {
       drift: true,
+      harnessDrift: true,
       recordedHash: 'recorded-hash',
       recomputedHash: 'recomputed-hash',
     },

@@ -18,6 +18,7 @@ import type { CassetteReceipt } from '../cassette/receipt-leg'
 import type { CassetteSidecarLeg } from '../cassette/sidecar-leg'
 import type { ArtifactSource } from '../ports'
 import { computeReplayDrift } from './drift'
+import type { DeclaredBriefDelta } from './brief-delta'
 import { UnrenderableBriefError } from './brief-tiers'
 import type { BriefSource, TurnMatch } from './brief-tiers'
 import { computeDecisionIdentity, decisionIdentityKey } from './identity'
@@ -58,6 +59,7 @@ import type {
  * recorded exchange may never shadow.
  */
 export interface ReplayCassetteInput {
+  declaredBriefDelta?: DeclaredBriefDelta
   cassette: Cassette
   artifacts: ArtifactSource
   plannerFactory: ReplayPlannerFactory
