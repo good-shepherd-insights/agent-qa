@@ -114,6 +114,11 @@ export interface EvalBatchReport {
   briefSourceCounts: Counts<BriefSource>
   /** Present only for a declared seed; false iff any sample of any decision listed seed. */
   seedHonored?: boolean
+  /**
+   * Sorted distinct provider-reported fingerprints across every sample of every decision.
+   * Absent when none were reported. Disclosure only (D-11); never keys a profile.
+   */
+  providerFingerprints?: readonly string[]
   kEscalation: {
     decisionCount: number
     escalatedCount: number
@@ -402,6 +407,7 @@ export function buildEvalReport(
   let escalatedAgreementTotal = 0
   let modelMismatchCount = 0
   let seedUnsupported = false
+  const providerFingerprints = new Set<string>()
 
   for (const result of replayDecisions) {
     if (BRIEF_SOURCES.includes(result.briefSource)) briefSourceCounts[result.briefSource]++
@@ -422,6 +428,9 @@ export function buildEvalReport(
 
     for (const replaySample of result.samples) {
       if (replaySample.unsupportedFeatures?.includes('seed')) seedUnsupported = true
+      if (replaySample.providerFingerprint !== undefined) {
+        providerFingerprints.add(replaySample.providerFingerprint)
+      }
       totalCost.sampleCount++
       totalCost.durationMs += replaySample.durationMs
       if (replaySample.tokenUsage === undefined) {
@@ -504,6 +513,9 @@ export function buildEvalReport(
     promptDriftRate: rateMetric(driftedCount, decisionCount),
     briefSourceCounts,
     ...(opts.declaredSeed !== undefined ? { seedHonored: !seedUnsupported } : {}),
+    ...(providerFingerprints.size > 0
+      ? { providerFingerprints: [...providerFingerprints].sort() }
+      : {}),
     kEscalation: {
       decisionCount,
       escalatedCount,

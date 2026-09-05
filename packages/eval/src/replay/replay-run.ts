@@ -314,6 +314,9 @@ async function runSample(context: DecisionReplayContext, sampleIndex: number): P
     ...(outcome.unsupportedFeatures !== undefined
       ? { unsupportedFeatures: outcome.unsupportedFeatures }
       : {}),
+    ...(outcome.providerFingerprint !== undefined
+      ? { providerFingerprint: outcome.providerFingerprint }
+      : {}),
   }
   return {
     kind: 'sample',
@@ -333,6 +336,7 @@ async function classifyPlan(
   outcome: ReplaySampleOutcome
   tokenUsage?: ReplaySample['tokenUsage']
   unsupportedFeatures?: ReplaySample['unsupportedFeatures']
+  providerFingerprint?: ReplaySample['providerFingerprint']
 }> {
   try {
     const planResult = await handle.plan(
@@ -349,11 +353,24 @@ async function classifyPlan(
       ...(planResult.callRecord?.unsupportedFeatures !== undefined
         ? { unsupportedFeatures: planResult.callRecord.unsupportedFeatures }
         : {}),
+      ...(planResult.callRecord?.fingerprint !== undefined
+        ? { providerFingerprint: planResult.callRecord.fingerprint }
+        : {}),
     }
   } catch (error) {
     // Classification by instanceof identity ONLY — never by message string (D-09).
     if (error instanceof PlanningTurnError) {
-      return { outcome: { kind: 'planner-failure', reason: error.reason, message: error.message } }
+      return {
+        outcome: { kind: 'planner-failure', reason: error.reason, message: error.message },
+        // A structured failure still carries observed call metadata; dropping it would erase
+        // an unsupported-seed warning and incorrectly change the batch's seed regime.
+        ...(error.callRecord?.unsupportedFeatures !== undefined
+          ? { unsupportedFeatures: error.callRecord.unsupportedFeatures }
+          : {}),
+        ...(error.callRecord?.fingerprint !== undefined
+          ? { providerFingerprint: error.callRecord.fingerprint }
+          : {}),
+      }
     }
     if (error instanceof UnservableDivergenceError) {
       return { outcome: { kind: 'unservable-divergence', tool: error.tool, args: error.canonicalArgs } }

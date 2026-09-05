@@ -39,6 +39,8 @@ export interface ReplaySample {
   tokenUsage?: TokenUsage
   /** Typed-absent when no unsupported provider feature was reported for this sample. */
   unsupportedFeatures?: readonly string[]
+  /** Provider-reported identifier, absent when unreported. Disclosure only; never keys a profile. */
+  providerFingerprint?: string
   durationMs: number
 }
 
