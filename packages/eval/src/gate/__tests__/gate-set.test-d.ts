@@ -18,9 +18,11 @@ import type {
 import { EXCLUSION_REASONS } from '../gate-set'
 
 // ROOT-08 SC3, structurally: three keys, no path, no fourth key of any name.
-expectTypeOf<keyof CandidateProvenance>().toEqualTypeOf<
-  'runIds' | 'receiptDigests' | 'capturedAtOrdinals'
->()
+// Kept on ONE line under prettier-ignore: Plan 08's mutation script and this
+// plan's acceptance criterion both match the assertion as a literal string, so
+// a format pass that wrapped it would silently break the bar's red-parser.
+// prettier-ignore
+expectTypeOf<keyof CandidateProvenance>().toEqualTypeOf<'runIds' | 'receiptDigests' | 'capturedAtOrdinals'>()
 
 // Every reason the type names is named by the array (the reverse of `satisfies`).
 expectTypeOf<Exclude<ExclusionReason, (typeof EXCLUSION_REASONS)[number]>>().toEqualTypeOf<never>()

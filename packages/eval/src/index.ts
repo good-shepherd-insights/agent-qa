@@ -320,6 +320,22 @@ export {
 } from './baseline/profile-key'
 export type { BaselinePointer, BaselineProfileKeyInput } from './baseline/profile-key'
 
+export {
+  countGateSet,
+  emptyGateSetCounts,
+  EXCLUSION_REASONS,
+  selectGateSet,
+} from './gate/gate-set'
+export type {
+  CandidateProvenance,
+  ExclusionReason,
+  GateSetCountPair,
+  GateSetCounts,
+  GateSetExclusion,
+  GateSetVerdict,
+  SelectGateSetInput,
+} from './gate/gate-set'
+
 export { computeCorpusDigest } from './census/corpus-digest'
 export {
   CAMPAIGN_MANIFEST_SCHEMA_VERSION,
