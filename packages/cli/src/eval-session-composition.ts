@@ -57,6 +57,7 @@ import type {
   JudgeIdentityBlock,
   PartitionManifest,
   ScoredBatchEntry,
+  TargetEnvironment,
 } from '@vostride/agent-qa-eval'
 import {
   COMMITTED_CASSETTES_DIR,
@@ -113,6 +114,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { resolveConfig } from './config.js'
+import { listTargets, resolveTarget } from './targets.js'
 import { renderCensusMarkdown } from './eval-census-render.js'
 import { renderEvalReportMarkdown } from './eval-report-render.js'
 import {
@@ -1033,6 +1035,10 @@ export async function runSeedVerb(
         handoff,
         artifacts: new FsRunArtifactSource({ root: agentQaRoot, runId: handoff.runId }),
       })
+      // 414 D-04: the two optional provenance fields are resolved by the CALLER and stamped only
+      // when they resolve. `endedAt` is the run's own clock — the cli may read a Date, eval core
+      // may not — and the environment is a property of the target registry, never of the handoff.
+      const targetEnvironment = resolveTargetEnvironmentForProduct(session.config, product)
       // eval core is the ONLY decision-maker (D-16); the CLI executes the plan verbatim.
       const plan = buildSeedingPlan({
         handoff,
@@ -1040,6 +1046,8 @@ export async function runSeedVerb(
         // 414 D-07: the split comes from the product's COMMITTED manifest params — the cli adds
         // no selection or relabel logic of its own.
         partition: partitionParamsOf(manifest),
+        capturedAt: new Date(handoff.endedAt).toISOString(),
+        ...(targetEnvironment === undefined ? {} : { targetEnvironment }),
         params: {
           ...(silverPerTestCap !== undefined ? { silverPerTestCap } : {}),
         },
@@ -1188,6 +1196,31 @@ function partitionRow(
     privateFraction: manifest.privateFraction,
     partitionVersion: manifest.partitionVersion,
   }
+}
+
+/**
+ * 414 D-04: the target environment for one product, or `undefined` when it does not resolve.
+ *
+ * A `CompletedRunHandoff` carries no target — the environment is a property of the target
+ * REGISTRY. Exactly one distinct DECLARED value across the targets whose resolved product equals
+ * `product` stamps the field; zero matching targets, an undeclared `environment`, and a mixed set
+ * all OMIT it. Never a sentinel, never a guess from the product name, never a majority vote: a
+ * fabricated provenance field is worse than an absent one, because only the absent one is honest
+ * about what is unknown. `resolveTarget` is the ONE place a target's product is decided (it falls
+ * back to the target name), so this reads through it rather than the raw registry record.
+ */
+export function resolveTargetEnvironmentForProduct(
+  config: AgentQaConfig,
+  product: string,
+): TargetEnvironment | undefined {
+  const declared = new Set<TargetEnvironment>()
+  for (const summary of listTargets(config)) {
+    const target = resolveTarget(config, summary.name)
+    if (target.product !== product) continue
+    if (target.environment === undefined) continue
+    declared.add(target.environment)
+  }
+  return declared.size === 1 ? [...declared][0] : undefined
 }
 
 /**
