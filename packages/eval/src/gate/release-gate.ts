@@ -5,7 +5,7 @@ import { canonicalJson } from '../canonical-json'
 import type { DecisionVectorsDocument } from '../match/decision-vectors'
 import type { EvalBatchReport } from '../match/metrics'
 import { REPLAY_REFUSAL_REASONS } from '../replay/result'
-import { axisVectors } from '../stats/decision-vector'
+import { FLOOR_AXES, axisVectors } from '../stats/decision-vector'
 import type { DecisionCorrectnessVector, FloorAxis } from '../stats/decision-vector'
 import { pairedDecisionDiff } from '../stats/paired'
 import type { NoiseFloorArtefact } from './floor-artefact'
@@ -59,10 +59,40 @@ const designate = 'eval report --baseline --from-committed <batchKey> --seed-pol
 const measureFloor = 'eval floor --commit'
 
 function refusalCounts(report: EvalBatchReport | undefined): Record<string, number> {
-  if (report === undefined) return {}
+  if (!isCounts(report?.honesty?.refusalCounts)) return {}
   return Object.fromEntries(
-    REPLAY_REFUSAL_REASONS.map(reason => [reason, report.honesty.refusalCounts[reason] ?? 0]),
+    REPLAY_REFUSAL_REASONS.map(reason => [reason, report!.honesty.refusalCounts[reason] ?? 0]),
   )
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+function isCounts(value: unknown): value is Record<string, number> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) &&
+    Object.values(value).every(isCount)
+}
+
+function hasNeverScoredEvidence(value: unknown): boolean {
+  if (!isCounts(value)) return false
+  // These existing report counters are required evidence, unlike historical refusal keys.
+  return ['all-samples-harness-error', 'modal-representative-missing', 'missing-cassette-decision']
+    .every(key => isCount(value[key]))
+}
+
+function describeCounts(value: unknown): string {
+  return value === undefined ? 'absent' : JSON.stringify(value)
+}
+
+function duplicateKeys(vectors: readonly DecisionCorrectnessVector[]): string[] {
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+  for (const vector of vectors) {
+    if (seen.has(vector.key)) duplicates.add(vector.key)
+    seen.add(vector.key)
+  }
+  return [...duplicates].sort()
 }
 
 /** Pure comparison over loaded evidence. Only caller-contract failures throw. */
@@ -88,6 +118,11 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
         `re-designate with ${designate}; re-measure a differing floor with ${measureFloor}`,
       )
     }
+  }
+  // An absent judge block on a mixed current batch is not honest judge abstention.
+  const currentComparator = assertBaselineComparator(current.report)
+  if (!currentComparator.ok) {
+    add('incomparable-baseline', `current: ${renderBaselineComparatorRefusal(currentComparator.refusal)}`)
   }
 
   if (loaded.kind === 'absent') {
@@ -146,22 +181,38 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
     }
   }
 
-  const baselineErrors = baseline?.report.honesty.harnessErrorCount
-  const currentErrors = current.report.honesty.harnessErrorCount
-  if ((baselineErrors ?? 0) > 0 || currentErrors > 0) {
+  const baselineErrors = baseline?.report.honesty?.harnessErrorCount
+  const currentErrors = current.report.honesty?.harnessErrorCount
+  if ((baseline !== undefined && !isCount(baselineErrors)) || !isCount(currentErrors)) {
+    add('harness-errors',
+      `missing or invalid harnessErrorCount evidence: baseline=${baselineErrors ?? 'absent'} current=${currentErrors ?? 'absent'}`,
+    )
+  }
+  if ((isCount(baselineErrors) && baselineErrors > 0) || (isCount(currentErrors) && currentErrors > 0)) {
     add('harness-errors', `baseline=${baselineErrors ?? 'absent'} current=${currentErrors}`)
   }
-  const baselineNeverScored = baseline?.report.honesty.neverScoredCounts
-  const currentNeverScored = current.report.honesty.neverScoredCounts
-  if (Object.values(baselineNeverScored ?? {}).some(count => count !== 0) ||
-      Object.values(currentNeverScored).some(count => count !== 0)) {
+  const baselineNeverScored = baseline?.report.honesty?.neverScoredCounts
+  const currentNeverScored = current.report.honesty?.neverScoredCounts
+  if ((baseline !== undefined && !hasNeverScoredEvidence(baselineNeverScored)) ||
+      !hasNeverScoredEvidence(currentNeverScored)) {
     add('never-scored',
-      `baseline=${baselineNeverScored === undefined ? 'absent' : canonicalJson(baselineNeverScored)} ` +
-      `current=${canonicalJson(currentNeverScored)}`,
+      `missing or invalid neverScoredCounts evidence: baseline=${describeCounts(baselineNeverScored)} current=${describeCounts(currentNeverScored)}`,
+    )
+  }
+  if ((isCounts(baselineNeverScored) && Object.values(baselineNeverScored).some(count => count !== 0)) ||
+      (isCounts(currentNeverScored) && Object.values(currentNeverScored).some(count => count !== 0))) {
+    add('never-scored',
+      `baseline=${describeCounts(baselineNeverScored)} current=${describeCounts(currentNeverScored)}`,
     )
   }
   const refusals = { baseline: refusalCounts(baseline?.report), current: refusalCounts(current.report) }
-  if (baseline !== undefined) {
+  for (const [side, report] of [['baseline', baseline?.report], ['current', current.report]] as const) {
+    if (report !== undefined && !isCounts(report.honesty?.refusalCounts)) {
+      add('refusal-population-differs', `${side}: refusalCounts missing or invalid: ${describeCounts(report.honesty?.refusalCounts)}`)
+    }
+  }
+  if (baseline !== undefined && isCounts(baseline.report.honesty?.refusalCounts) &&
+      isCounts(current.report.honesty?.refusalCounts)) {
     for (const reason of REPLAY_REFUSAL_REASONS) {
       const b = baseline.report.honesty.refusalCounts[reason] ?? 0
       const c = current.report.honesty.refusalCounts[reason] ?? 0
@@ -183,7 +234,13 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
   const baselineVectors = baselineDocument?.vectors.filter(vector => vector.briefSource !== 'rendered')
   const currentVectors = current.vectors.filter(vector => vector.briefSource !== 'rendered')
   const renderedExcluded = current.vectors.length - currentVectors.length
-  const paired = baselineVectors === undefined ? undefined : pairedDecisionDiff(
+  const baselineDuplicates = duplicateKeys(baselineDocument?.vectors ?? [])
+  const currentDuplicates = duplicateKeys(current.vectors)
+  for (const [side, keys] of [['baseline', baselineDuplicates], ['current', currentDuplicates]] as const) {
+    if (keys.length > 0) add('no-decision-vector', `${side}: duplicate decision keys: ${keys.join(', ')}; cannot pair without changing the recorded population`)
+  }
+  const canPair = baselineVectors !== undefined && baselineDuplicates.length === 0 && currentDuplicates.length === 0
+  const paired = !canPair ? undefined : pairedDecisionDiff(
     axisVectors(baselineVectors, 'headline'), axisVectors(currentVectors, 'headline'),
   )
   const pairing = {
@@ -192,6 +249,20 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
     baselineOnly: paired?.aUnpaired ?? 0,
     currentOnly: paired?.bUnpaired ?? 0,
     renderedExcluded,
+  }
+  // Collect empty-population evidence even when another integrity check already failed.
+  if (baselineVectors?.length === 0) {
+    add('no-decision-vector', `baseline: zero decision vectors (current has ${currentVectors.length})`)
+  }
+  if (currentVectors.length === 0) {
+    add('no-decision-vector',
+      `current: zero decision vectors to pair (rendered excluded: ${renderedExcluded}; baseline has ${baselineVectors?.length ?? 0})`,
+    )
+  }
+  if (baselineVectors !== undefined && baselineVectors.length > 0 && currentVectors.length > 0 && paired?.n === 0) {
+    add('no-decision-vector',
+      'no paired keys: ' + `baseline ${baselineVectors.length}, current ${currentVectors.length}, shared 0`,
+    )
   }
   const seed: GateVerdict['seed'] = {
     ...(current.report.seedHonored === undefined ? {} : { current: current.report.seedHonored }),
@@ -203,11 +274,37 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
     const messages = details[reason]
     return messages === undefined ? [] : [{ reason, detail: messages.join('; ') }]
   })
+  const regressions: GateRegression[] = []
+  const skippedAxes: { axis: FloorAxis; reason: string }[] = []
+  if (inconclusive.length === 0 && floor !== undefined && baselineVectors !== undefined) {
+    for (const axis of FLOOR_AXES) {
+      const axisFloor = floor.axes[axis].aggregateFloor
+      if (axisFloor === undefined) {
+        skippedAxes.push({ axis, reason: 'no applicable decisions in the floor' })
+        continue
+      }
+      const diff = axis === 'headline' ? paired! : pairedDecisionDiff(
+        axisVectors(baselineVectors, axis), axisVectors(currentVectors, axis),
+      )
+      if (diff.n === 0) {
+        skippedAxes.push({ axis, reason: 'no paired decisions' })
+        continue
+      }
+      const baselineRate = (diff.both + diff.aOnly) / diff.n
+      const currentRate = (diff.both + diff.bOnly) / diff.n
+      // The stats DTO deltaAcc runs the other way. Use counts to avoid cancellation
+      // rounding a change exactly at the floor into a strictly-beyond regression.
+      const delta = (diff.bOnly - diff.aOnly) / diff.n
+      if (delta < -axisFloor) {
+        regressions.push({ axis, baseline: baselineRate, current: currentRate, delta, floor: axisFloor, n: diff.n })
+      }
+    }
+  }
   return {
-    exit: inconclusive.length > 0 ? 2 : 0,
+    exit: inconclusive.length > 0 ? 2 : regressions.length > 0 ? 1 : 0,
     inconclusive,
-    regressions: [],
-    skippedAxes: [],
+    regressions,
+    skippedAxes,
     refusals,
     pairing,
     seed,
@@ -219,6 +316,22 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
   }
 }
 
-export function renderGateLines(_verdict: GateVerdict): string[] {
-  throw new TypeError('release gate renderer contract not implemented')
+export function renderGateLines(verdict: GateVerdict): string[] {
+  const messages = ['no regression beyond the floor', 'regression beyond the floor', 'inconclusive']
+  const { pairing, seed, population } = verdict
+  return [
+    `release-gate: exit ${verdict.exit} — ${messages[verdict.exit]}`,
+    ...verdict.inconclusive.map(entry => `inconclusive: ${entry.reason}: ${entry.detail}`),
+    ...verdict.regressions.map(entry =>
+      `regression: ${entry.axis} baseline=${entry.baseline} current=${entry.current} ` +
+      `delta=${entry.delta} floor=${entry.floor} n=${entry.n}`,
+    ),
+    ...verdict.skippedAxes.map(entry => `skipped: ${entry.axis}: ${entry.reason}`),
+    `refusals: baseline ${canonicalJson(verdict.refusals.baseline)}`,
+    `refusals: current ${canonicalJson(verdict.refusals.current)}`,
+    `pairing: n=${pairing.n} discordant=${pairing.discordant} baselineOnly=${pairing.baselineOnly} ` +
+      `currentOnly=${pairing.currentOnly} renderedExcluded=${pairing.renderedExcluded}`,
+    `seed: current=${seed.current ?? 'absent'} floor=${seed.floor ?? 'absent'} regime=${seed.regime}`,
+    `population: proof=${population.proof} empty=${population.empty} rendered=${population.rendered}`,
+  ]
 }

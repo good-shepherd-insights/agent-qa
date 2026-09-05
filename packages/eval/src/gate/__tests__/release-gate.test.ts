@@ -524,6 +524,17 @@ describe('release gate paired regressions', () => {
     expect(reason(input, 'refusal-population-differs')).toContain('current')
   })
 
+  it('refuses current mixed judge identity even when both reports omit a single judge block', () => {
+    const input = comparisonFixture()
+    input.current.report.judgeIdentity = 'mixed'
+    input.current.report.mixedJudgeModelIds = ['current-judge-a', 'current-judge-b']
+    const detail = reason(input, 'incomparable-baseline')
+    expect(detail).toContain('current:')
+    expect(detail).toContain('mixed-judge-identity')
+    expect(detail).toContain('current-judge-a')
+    expect(detail).toContain('current-judge-b')
+  })
+
   it('does not mutate reports, vectors, pointers, or floors', () => {
     const input = comparisonFixture()
     const before = structuredClone(input)
