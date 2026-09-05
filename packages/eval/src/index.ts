@@ -287,6 +287,33 @@ export {
 export type { CorpusEntryParse } from './labels/corpus-entry-guard'
 export { assignSplit, BUCKET_BITS, bucketOf, PARTITION_VERSION } from './labels/split-assignment'
 export type { AssignSplitInput, PartitionParams } from './labels/split-assignment'
+export {
+  guardPartitionManifest,
+  PARTITION_MANIFEST_SCHEMA_VERSION,
+  partitionManifestSchema,
+  partitionParamsOf,
+  projectPartitionManifest,
+} from './labels/partition-manifest'
+export type {
+  PartitionManifest,
+  ProjectPartitionManifestInput,
+} from './labels/partition-manifest'
+export {
+  EXCLUSION_CLASSES,
+  guardRunExclusionRecord,
+  projectRunExclusion,
+  RUN_EXCLUSION_SCHEMA_VERSION,
+  runExclusionCore,
+  runExclusionRecordSchema,
+  VERDICT_PRODUCERS,
+} from './labels/run-exclusion'
+export type {
+  ExclusionClass,
+  ProjectRunExclusionInput,
+  RunExclusionBackfill,
+  RunExclusionRecord,
+  VerdictProducer,
+} from './labels/run-exclusion'
 export { committedFileText } from './labels/committed-file'
 export { buildSeedingPlan } from './labels/seeding-plan'
 export type {

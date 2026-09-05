@@ -20,6 +20,8 @@ import type { CassetteSidecarLeg } from '../cassette/sidecar-leg'
 import type { LabelTier } from '../cassette/label-leg'
 import type { CorpusEntry } from '../labels/corpus-entry'
 import type { StandaloneLabelRecord } from '../labels/label-record'
+import { EXCLUSION_CLASSES, VERDICT_PRODUCERS } from '../labels/run-exclusion'
+import type { ExclusionClass, VerdictProducer } from '../labels/run-exclusion'
 import type { EvalBatchReport } from '../match/metrics'
 import { computeCorpusDigest } from './corpus-digest'
 
@@ -34,13 +36,10 @@ interface RateMetric {
   rate?: number
 }
 
-/** Verdict classes D-04 excludes a growth run for; every other class seeds. */
-const EXCLUSION_CLASSES = ['environment', 'flake', 'timeout'] as const
-type ExclusionClass = (typeof EXCLUSION_CLASSES)[number]
-
-/** The two producers that can author a run verdict (D-04, RESEARCH F13). */
-const VERDICT_PRODUCERS = ['analyze-run', 'deterministic-classifier'] as const
-type VerdictProducer = (typeof VERDICT_PRODUCERS)[number]
+// 414 D-02: the two verdict vocabularies now live beside the committed
+// run-exclusion document that admits them, and the census imports them back.
+// The list the census COUNTS and the list a committed exclusion may NAME are
+// therefore one spelling that cannot drift.
 
 /**
  * The tier a cassette can reach from its committed bytes alone, mirroring the `runMatchTiers`
