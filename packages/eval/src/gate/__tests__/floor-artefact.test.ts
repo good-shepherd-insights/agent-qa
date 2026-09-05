@@ -115,7 +115,11 @@ describe('committed noise floor document', () => {
         walk(child, path)
       }
       if (value.items) walk(value.items, `${prefix}[]`)
-      if (typeof value.additionalProperties === 'object') walk(value.additionalProperties, `${prefix}.*`)
+      if (typeof value.additionalProperties === 'object') {
+        for (const key of value.propertyNames?.enum ?? ['*']) {
+          walk(value.additionalProperties, `${prefix}.${key}`)
+        }
+      }
     }
     walk(z.toJSONSchema(noiseFloorArtefactSchema))
     expect(paths).toContain('bootstrap.seed')

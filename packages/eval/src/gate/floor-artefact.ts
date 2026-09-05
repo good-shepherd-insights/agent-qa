@@ -1,8 +1,8 @@
 /** Pure committed evidence: no wall-clock identity field; repeat folds must remain byte-stable. */
 import { z } from 'zod'
 
-import type { FloorAxis } from '../stats/decision-vector'
-import type { GeneralizationVerdict } from '../stats/generalization'
+import { FLOOR_AXES, type FloorAxis } from '../stats/decision-vector'
+import { GENERALIZATION_VERDICTS, type GeneralizationVerdict } from '../stats/generalization'
 
 export const NOISE_FLOOR_SCHEMA_VERSION = 1 as const
 export const NOISE_FLOOR_METHOD = 'aa-repeat-spread-plus-wilson' as const
@@ -119,20 +119,213 @@ export type FloorRefusal =
   | { kind: 'zero-floor-without-explanation'; axes: readonly string[] }
   | { kind: 'below-protocol-minimum'; repeats: number; seeds: number }
 
-export const noiseFloorArtefactSchema = z.object({}).strict()
+const count = z.number().int().nonnegative()
+const rate = z.number().min(0).max(1)
+const delta = z.number().min(-1).max(1)
+const counts = z.record(z.string(), count)
+const correctness = z
+  .object({ correct: count, n: count })
+  .strict()
+  .refine(value => value.correct <= value.n, {
+    path: ['correct'],
+    message: 'correct must not exceed n',
+  })
+
+const runCostRecordSchema = z
+  .object({
+    modelCalls: count.optional(),
+    promptTokens: count.optional(),
+    completionTokens: count.optional(),
+    wallClockMs: z.number().nonnegative(),
+  })
+  .strict()
+
+const axisFloorRecordSchema = z
+  .object({
+    n: count,
+    reference: correctness.optional(),
+    sameSeedSpread: rate.optional(),
+    twoSeedSpread: rate.optional(),
+    wilsonHalfWidth: rate.optional(),
+    aggregateFloor: rate.optional(),
+    pairs: z.array(
+      z
+        .object({
+          a: count,
+          b: count,
+          kind: z.enum(['same-seed', 'two-seed']),
+          n: count,
+          aOnly: count,
+          bOnly: count,
+          deltaAcc: delta.optional(),
+          flipRate: rate.optional(),
+          mcnemarP: rate,
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.n !== 0) return
+    for (const key of [
+      'reference',
+      'sameSeedSpread',
+      'twoSeedSpread',
+      'wilsonHalfWidth',
+      'aggregateFloor',
+    ] as const) {
+      if (value[key] !== undefined) {
+        ctx.addIssue({ code: 'custom', path: [key], message: 'must be absent when n is 0' })
+      }
+    }
+  })
+
+const axisFloorSetSchema = z.record(z.enum(FLOOR_AXES), axisFloorRecordSchema)
+const minimumGateSetSchema = z
+  .object({
+    lowerBound: z.literal(3),
+    baselineRate: correctness,
+    baselineRateSource: z.enum(['designated-baseline', 'reference-run']),
+    baselineBatchKey: z.string().min(1).optional(),
+    floor: rate.optional(),
+    value: z.number().int().min(3).optional(),
+    derivation: z.string().min(1),
+    searchedUpTo: count,
+  })
+  .strict()
+
+const liftSchema = z.object({ n: count, deltaAcc: delta.optional() }).strict()
+const nullLiftSchema = z
+  .object({
+    pair: z.object({ a: count, b: count }).strict(),
+    optimizeLift: liftSchema,
+    heldOutLift: liftSchema,
+    verdict: z.enum(GENERALIZATION_VERDICTS),
+    ratio: z.number().nonnegative().optional(),
+    bootstrapCI: z
+      .object({ lower: delta, upper: delta, B: z.number().int().positive() })
+      .strict()
+      .optional(),
+  })
+  .strict()
+
+export const noiseFloorArtefactSchema = z
+  .object({
+    schemaVersion: z.literal(NOISE_FLOOR_SCHEMA_VERSION),
+    method: z.literal(NOISE_FLOOR_METHOD),
+    profileKey: z.string().min(1),
+    fingerprint: z.string().min(1),
+    plannerModelId: z.string().min(1),
+    matcherVersion: count,
+    judgeModelId: z.string().min(1).optional(),
+    judgeVersion: count.optional(),
+    corpusDigest: z.string().min(1),
+    partitionVersion: count,
+    seeds: z.array(z.number().int()),
+    repeats: count,
+    seedHonored: z.boolean(),
+    bootstrap: z.object({ B: z.number().int().positive(), seed: z.number().int() }).strict(),
+    population: z
+      .object({
+        included: z.object({ proof: count, empty: count }).strict(),
+        excludedRendered: count,
+        refusals: counts,
+        unpartitioned: count,
+      })
+      .strict(),
+    axes: axisFloorSetSchema,
+    products: z.record(
+      z.string(),
+      z
+        .object({
+          axes: axisFloorSetSchema,
+          minimumGateSet: minimumGateSetSchema,
+          census: z
+            .object({ natural: count, heldOutShared: count, heldOutPrivate: count })
+            .strict(),
+          populatedBriefs: count,
+        })
+        .strict(),
+    ),
+    splits: z.record(
+      z.enum(FLOOR_SPLITS),
+      z.object({ axes: axisFloorSetSchema, nullLift: z.array(nullLiftSchema).optional() }).strict(),
+    ),
+    minimumGateSet: minimumGateSetSchema,
+    runs: z.array(
+      z
+        .object({
+          index: count,
+          seed: z.number().int(),
+          seedHonored: z.boolean().optional(),
+          headline: correctness,
+          axes: z.record(z.enum(FLOOR_AXES), correctness),
+          refusalCounts: counts,
+          briefSourceCounts: counts,
+          harnessErrorCount: count,
+          cost: runCostRecordSchema,
+          reportDigest: z.string().min(1),
+        })
+        .strict(),
+    ),
+    cost: runCostRecordSchema,
+    classifierRepeatability: z.unknown().optional(),
+    explanation: z.string().optional(),
+  })
+  .strict()
 
 export function guardNoiseFloorArtefact(
-  _value: unknown,
+  value: unknown,
 ): { kind: 'ok'; artefact: NoiseFloorArtefact } | { kind: 'rejected'; reason: string } {
-  return { kind: 'rejected', reason: 'RED contract skeleton' }
+  const parsed = noiseFloorArtefactSchema.safeParse(value)
+  if (!parsed.success) {
+    return {
+      kind: 'rejected',
+      reason: parsed.error.issues
+        .map(issue => `${issue.path.length ? issue.path.map(String).join('.') : '<root>'}: ${issue.message}`)
+        .join('; '),
+    }
+  }
+  return { kind: 'ok', artefact: parsed.data }
 }
 
 export function assertFloorArtefactCommittable(
-  _artefact: NoiseFloorArtefact,
+  artefact: NoiseFloorArtefact,
 ): { ok: true } | { ok: false; refusal: FloorRefusal } {
+  const seeds = new Set(artefact.seeds).size
+  if (
+    artefact.repeats < FLOOR_PROTOCOL_MINIMUM.repeats ||
+    seeds < FLOOR_PROTOCOL_MINIMUM.seeds
+  ) {
+    return {
+      ok: false,
+      refusal: { kind: 'below-protocol-minimum', repeats: artefact.repeats, seeds },
+    }
+  }
+  const axes: string[] = []
+  function collect(set: AxisFloorSet, prefix = ''): void {
+    for (const axis of FLOOR_AXES) {
+      if (set[axis].aggregateFloor === 0) axes.push(`${prefix}${axis}`)
+    }
+  }
+  collect(artefact.axes)
+  for (const product of Object.keys(artefact.products).sort()) {
+    collect(artefact.products[product]!.axes, `products.${product}.`)
+  }
+  for (const split of FLOOR_SPLITS) collect(artefact.splits[split].axes, `splits.${split}.`)
+  if (axes.length > 0 && !artefact.explanation?.trim()) {
+    return { ok: false, refusal: { kind: 'zero-floor-without-explanation', axes } }
+  }
   return { ok: true }
 }
 
-export function renderFloorRefusal(_refusal: FloorRefusal): string {
-  return 'RED contract skeleton'
+export function renderFloorRefusal(refusal: FloorRefusal): string {
+  if (refusal.kind === 'zero-floor-without-explanation') {
+    return `noise floor refused: ${refusal.kind} — ${refusal.axes.join(', ')}`
+  }
+  return (
+    `noise floor refused: ${refusal.kind} — repeats ${refusal.repeats}, distinct seeds ` +
+    `${refusal.seeds}; require ${FLOOR_PROTOCOL_MINIMUM.repeats} repeats and ` +
+    `${FLOOR_PROTOCOL_MINIMUM.seeds} distinct seeds`
+  )
 }
