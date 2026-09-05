@@ -287,6 +287,26 @@ export {
 export type { CorpusEntryParse } from './labels/corpus-entry-guard'
 export { assignSplit, BUCKET_BITS, bucketOf, PARTITION_VERSION } from './labels/split-assignment'
 export type { AssignSplitInput, PartitionParams } from './labels/split-assignment'
+
+export { createSeededRng, xoshiroFromState } from './stats/prng'
+export type { SeededRng } from './stats/prng'
+export { Z_95, wilsonInterval } from './stats/wilson'
+export { pairedDecisionDiff, mcnemarExactP } from './stats/paired'
+export type { DecisionVector, PairedDecisionDiff } from './stats/paired'
+export { BOOTSTRAP_B, pairedBootstrapCI } from './stats/bootstrap'
+export type { BootstrapPair } from './stats/bootstrap'
+export {
+  HELD_OUT_GENERALIZATION_MIN,
+  MIN_LIFT_DECISIONS,
+  GENERALIZATION_VERDICTS,
+  generalizationRatio,
+} from './stats/generalization'
+export type { GeneralizationRatioInput, GeneralizationVerdict } from './stats/generalization'
+export { computeNoiseFloor } from './stats/noise-floor'
+export type { AxisNoiseFloor, NoiseFloorPairKind } from './stats/noise-floor'
+export { FLOOR_AXES, axisVectors } from './stats/decision-vector'
+export type { FloorAxis, AxisCorrectness, DecisionCorrectnessVector } from './stats/decision-vector'
+
 export {
   guardPartitionManifest,
   PARTITION_MANIFEST_SCHEMA_VERSION,
