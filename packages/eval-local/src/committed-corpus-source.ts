@@ -85,7 +85,13 @@ const reportSchema = z
   .passthrough()
 
 const baselinePointerSchema = z
-  .object({ schemaVersion: z.literal(1), profileKey: z.string(), batchKey: z.string() })
+  .object({
+    schemaVersion: z.union([z.literal(1), z.literal(2)]),
+    profileKey: z.string(),
+    batchKey: z.string(),
+    fingerprint: z.string().optional(),
+    corpusDigest: z.string().optional(),
+  })
   .passthrough()
 
 /** One unreadable or unadmittable committed file, attributable by path (D-08). */
@@ -131,8 +137,11 @@ export interface CommittedReportEntry {
 
 /** One committed per-profile baseline designation (D-19). */
 export interface BaselinePointerEntry {
+  schemaVersion: 1 | 2
   profileKey: string
   batchKey: string
+  fingerprint?: string
+  corpusDigest?: string
   path: string
 }
 
@@ -459,7 +468,14 @@ export function listBaselinePointers(committedRoot: string): {
       refusals.push({ path, reason: `baseline pointer rejected: ${issueText(parsed.error)}` })
       continue
     }
-    pointers.push({ profileKey: parsed.data.profileKey, batchKey: parsed.data.batchKey, path })
+    pointers.push({
+      schemaVersion: parsed.data.schemaVersion,
+      profileKey: parsed.data.profileKey,
+      batchKey: parsed.data.batchKey,
+      ...(parsed.data.fingerprint === undefined ? {} : { fingerprint: parsed.data.fingerprint }),
+      ...(parsed.data.corpusDigest === undefined ? {} : { corpusDigest: parsed.data.corpusDigest }),
+      path,
+    })
   }
 
   pointers.sort((first, second) =>

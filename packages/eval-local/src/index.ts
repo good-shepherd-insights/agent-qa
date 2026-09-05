@@ -26,7 +26,7 @@ export {
 } from './replay-read.js'
 export type { ReplayRecordLoad, ScoreRecordLoad } from './replay-read.js'
 
-export { runCassetteReplay } from './replay-composition.js'
+export { computeReplayProfileFingerprintFor, runCassetteReplay } from './replay-composition.js'
 export type { RunCassetteReplayInput } from './replay-composition.js'
 
 export { loadCassetteBundles, sweepCassetteReplays } from './replay-sweep.js'

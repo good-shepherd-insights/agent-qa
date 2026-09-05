@@ -25,6 +25,7 @@ import {
   adjudicateCassetteScore,
   assessJudgeEligibility,
   buildDecisionDiff,
+  computeReplayProfileFingerprint,
   neverEscalate,
   replayCassette,
   scoreCassetteReplay,
@@ -41,6 +42,7 @@ import type {
   ReplayPlannerFactory,
   ReplayPlannerHandle,
   ReplayResult,
+  SeedPolicy,
 } from '@vostride/agent-qa-eval'
 import {
   createModel,
@@ -227,6 +229,36 @@ function decisionDiffs(
 }
 
 /**
+ * Name the resolved temperature-zero replay profile without auth resolution or model creation.
+ * D-11: keep these inputs aligned with the single createModel site below. Override names are
+ * the injected provider identities; seed values and provider disclosures never enter the key.
+ */
+export function computeReplayProfileFingerprintFor(input: {
+  profile: ModelProfile
+  seedPolicy: SeedPolicy
+  modelOverrides?: ModelProviderOverrides
+}): string {
+  const profileCopy: ModelProfile = {
+    ...input.profile,
+    ...(input.profile.capabilities !== undefined
+      ? { capabilities: { ...input.profile.capabilities } }
+      : {}),
+  }
+  const capabilities = resolveCapabilities(profileCopy)
+  return computeReplayProfileFingerprint({
+    provider: input.profile.provider,
+    modelId: input.profile.model,
+    temperature: 0,
+    seedPolicy: input.seedPolicy,
+    capabilities: {
+      vision: capabilities.vision,
+      ...(capabilities.maxOutput !== undefined ? { maxOutputTokens: capabilities.maxOutput } : {}),
+    },
+    modelOverrideKeys: Object.keys(input.modelOverrides?.languageModels ?? {}).sort(),
+  })
+}
+
+/**
  * Run one loaded cassette through the pure replay engine bound to the production planner/model/
  * safety stack, optionally persisting the typed outcome. The one sanctioned model+runner
  * composition in eval-local (D-04).
@@ -256,6 +288,7 @@ export async function runCassetteReplay(
 
   // The ONLY createModel call site and the ONLY egress path. The handle is shared across samples
   // (RESEARCH A3); per-sample freshness is confined to accounting + planner + exchange server.
+  // D-11: computeReplayProfileFingerprintFor must read these same resolved profile values.
   const model = createModel(profileCopy, input.auth, input.modelOverrides ?? {})
   const replayedModel = { provider: input.profile.provider, modelId: input.profile.model }
 

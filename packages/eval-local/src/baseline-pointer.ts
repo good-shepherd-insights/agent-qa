@@ -37,7 +37,7 @@ import { REPORT_EGRESS_CHANNEL } from './report-committing.js'
 export interface WriteBaselinePointerInput {
   /** The report being designated — its judge provenance decides comparator eligibility. */
   report: EvalBatchReport
-  /** The projected pointer body; its batchKey must name the same report. */
+  /** The v2 pointer, including fingerprint and corpusDigest; batchKey names the same report. */
   pointer: BaselinePointer
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the CLI. */
   committedRoot: string
