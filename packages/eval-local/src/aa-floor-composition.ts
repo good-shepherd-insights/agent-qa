@@ -1,25 +1,47 @@
 // The ONE whole-corpus run composition in 415: the floor calls it for each repeat and the
 // release gate calls it once. Reports and decisions stay in caller-owned local run roots.
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
   buildEvalReport,
   canonicalJson,
+  composeBaselineProfileKey,
+  computeCorpusDigest,
   decisionCorrectnessVectors,
+  FLOOR_PROTOCOL_MINIMUM,
+  foldNoiseFloorArtefact,
+  guardBaselinePointer,
   projectDecisionVectorsDocument,
 } from '@vostride/agent-qa-eval'
 import type {
   DecisionCorrectnessVector,
   EvalBatchReport,
   JudgeIdentityBlock,
+  ClassifierRepeatability,
+  FloorRunInput,
+  FloorSplit,
+  FoldNoiseFloorInput,
+  NoiseFloorArtefact,
 } from '@vostride/agent-qa-eval'
 import type { ModelProfile, ModelProviderOverrides, ResolvedModelAuth } from '@vostride/agent-qa-model'
+import { slugBranch } from '@vostride/agent-qa-schema'
+
+import {
+  listBaselinePointers,
+  listCommittedReports,
+  readCommittedCorpus,
+  readPartitionManifests,
+} from './committed-corpus-source.js'
+import type { CommittedReadRefusal } from './committed-corpus-source.js'
+import { writeNoiseFloorArtefact } from './noise-floor-writer.js'
+import type { WriteNoiseFloorArtefactOutcome } from './noise-floor-writer.js'
 
 import { assembleScoredBatch } from './replay-batch-assembly.js'
 import { computeReplayProfileFingerprintFor } from './replay-composition.js'
 import type { RunCassetteReplayInput } from './replay-composition.js'
 import { FsReplayRecordStore } from './replay-record-store.js'
-import { sweepCassetteReplays } from './replay-sweep.js'
+import { loadCassetteBundles, sweepCassetteReplays } from './replay-sweep.js'
 import type { LoadedCassetteBundle, SweepCassetteReplaysResult } from './replay-sweep.js'
 import { FsReportStore } from './report-store.js'
 import { FsScoreStore } from './score-store.js'
@@ -42,6 +64,201 @@ export interface ReplayCorpusOnceInput {
   corpusDigest?: string
   clock?: () => number
   onProgress?: (cassetteId: string) => void
+}
+
+export interface RunNoiseFloorMeasurementInput {
+  committedRoot: string
+  cassettesRoot: string
+  agentQaRoot: string
+  profile: ModelProfile
+  auth: ResolvedModelAuth
+  modelOverrides?: ModelProviderOverrides
+  judge?: RunCassetteReplayInput['judge']
+  maskingContextFactory: RunCassetteReplayInput['maskingContextFactory']
+  profileKeyInputs: {
+    plannerModelId: string
+    matcherVersion: number
+    judgeModelId?: string
+    judgeVersion?: number
+  }
+  seeds: readonly number[]
+  repeats: number
+  bootstrapSeed: number
+  classifierRepeatability?: ClassifierRepeatability
+  explanation?: string
+  commit: boolean
+  reportOutputBaseDir: string
+  clock?: () => number
+  onProgress?: (line: string) => void
+}
+
+export interface RunNoiseFloorMeasurementResult {
+  artefact: NoiseFloorArtefact
+  profileKey: string
+  fingerprint: string
+  runRoots: readonly string[]
+  committed?: WriteNoiseFloorArtefactOutcome
+  notices: string[]
+  refusals: readonly CommittedReadRefusal[]
+}
+
+export class FloorProtocolError extends Error {
+  readonly code = 'FLOOR_PROTOCOL_MINIMUM'
+
+  constructor() {
+    super(`FLOOR_PROTOCOL_MINIMUM: require at least ${FLOOR_PROTOCOL_MINIMUM.repeats} ` +
+      `whole-corpus repeats and ${FLOOR_PROTOCOL_MINIMUM.seeds} distinct integer seeds`)
+    this.name = 'FloorProtocolError'
+  }
+}
+
+/** Whole-corpus repetitions, then the pure floor fold and the existing write-once checkpoint. */
+export async function runNoiseFloorMeasurement(
+  input: RunNoiseFloorMeasurementInput,
+): Promise<RunNoiseFloorMeasurementResult> {
+  const seeds = [...new Set(input.seeds)]
+  if (!Number.isSafeInteger(input.repeats) || input.repeats < FLOOR_PROTOCOL_MINIMUM.repeats ||
+    seeds.length < FLOOR_PROTOCOL_MINIMUM.seeds || !seeds.every(Number.isSafeInteger)) {
+    throw new FloorProtocolError()
+  }
+  const fingerprint = computeReplayProfileFingerprintFor({
+    profile: input.profile, modelOverrides: input.modelOverrides, seedPolicy: 'declared',
+  })
+  const profileKey = composeBaselineProfileKey({ ...input.profileKeyInputs, fingerprint })
+  const corpus = readCommittedCorpus(input.committedRoot)
+  const partitions = readPartitionManifests(input.committedRoot)
+  const notices = [...corpus.notices, ...partitions.notices]
+  const refusals = [...corpus.refusals, ...partitions.refusals]
+  const corpusDigest = computeCorpusDigest(corpus.snapshot.entries)
+  const partitionVersions = [...new Set(partitions.manifests.map(manifest => manifest.partitionVersion))]
+  const partitionVersion = partitionVersions.length === 1 ? partitionVersions[0]! : 1
+  if (partitionVersions.length !== 1) {
+    notices.push('partition manifests have no common version; using partitionVersion 1')
+  }
+  const splitByCassetteId = new Map<string, FloorSplit>()
+  const census = new Map<string, { natural: number; heldOutShared: number; heldOutPrivate: number }>()
+  for (const entry of corpus.snapshot.entries) {
+    let counts = census.get(entry.product)
+    if (counts === undefined) {
+      counts = { natural: 0, heldOutShared: 0, heldOutPrivate: 0 }
+      census.set(entry.product, counts)
+    }
+    if (entry.split === 'natural') {
+      counts.natural++
+      splitByCassetteId.set(entry.cassetteId, 'natural')
+    } else if (entry.split === 'held-out') {
+      if (entry.heldOutVisibility === 'shared') {
+        counts.heldOutShared++
+        splitByCassetteId.set(entry.cassetteId, 'held-out-shared')
+      } else {
+        counts.heldOutPrivate++
+        splitByCassetteId.set(entry.cassetteId, 'held-out-private')
+      }
+    }
+  }
+  const baselineRate = readDesignatedBaselineRate(input, notices, refusals)
+  const loaded = loadCassetteBundles(input.cassettesRoot)
+  for (const [reason, count] of Object.entries(loaded.loadRefusals)) {
+    notices.push(`cassette bundle load refused: ${reason}=${count}`)
+  }
+  const selected = loaded.loaded.sort((a, b) =>
+    a.cassette.id < b.cassette.id ? -1 : a.cassette.id > b.cassette.id ? 1 : 0)
+  const runSeeds = [...Array<number>(input.repeats).fill(seeds[0]!), ...seeds.slice(1)]
+  const runs: FloorRunInput[] = []
+  const runRoots: string[] = []
+  for (const [index, seed] of runSeeds.entries()) {
+    const runRoot = join(input.agentQaRoot, 'eval', 'floor', slugBranch(profileKey), `r${index}-seed${seed}`)
+    runRoots.push(runRoot)
+    const run = await replayCorpusOnce({
+      selected,
+      cassettesRoot: input.cassettesRoot,
+      agentQaRoot: input.agentQaRoot,
+      runRoot,
+      profile: input.profile,
+      auth: input.auth,
+      modelOverrides: input.modelOverrides,
+      judge: input.judge,
+      maskingContextFactory: input.maskingContextFactory,
+      seed,
+      k: 1,
+      replayOutputBaseDir: join(input.reportOutputBaseDir, `r${index}`),
+      source: 'committed',
+      corpusDigest,
+      clock: input.clock,
+      onProgress: input.onProgress,
+    })
+    runs.push({ index, seed, report: run.report, vectors: run.vectors,
+      wallClockMs: run.wallClockMs, modelCalls: run.modelCalls })
+    notices.push(...run.notices)
+    const cost = run.report.totalCost
+    const judgeCost = run.report.honesty.judge.cost
+    const missingUsage = cost.samplesMissingTokenUsage > 0 || judgeCost.outcomesMissingUsage > 0
+      ? ` samplesMissingTokenUsage=${cost.samplesMissingTokenUsage} judgeOutcomesMissingUsage=${judgeCost.outcomesMissingUsage}`
+      : ''
+    input.onProgress?.(`floor r${index} seed=${seed}: decisions=${run.vectors.length} ` +
+      `modelCalls=${run.modelCalls} promptTokens=${cost.promptTokens + judgeCost.inputTokens} ` +
+      `completionTokens=${cost.completionTokens + judgeCost.outputTokens} ` +
+      `wallClock=${run.wallClockMs}ms seedHonored=${run.report.seedHonored}${missingUsage}`)
+  }
+  const artefact = foldNoiseFloorArtefact({
+    profile: { profileKey, fingerprint, ...input.profileKeyInputs },
+    corpusDigest, partitionVersion, seeds, repeats: input.repeats, bootstrapSeed: input.bootstrapSeed,
+    runs, splitByCassetteId, censusByProduct: Object.fromEntries(census),
+    ...(baselineRate === undefined ? {} : { baselineRate }),
+    ...(input.classifierRepeatability === undefined ? {} : { classifierRepeatability: input.classifierRepeatability }),
+    ...(input.explanation === undefined ? {} : { explanation: input.explanation }),
+  })
+  return {
+    artefact, profileKey, fingerprint, runRoots, notices, refusals,
+    ...(input.commit ? { committed: writeNoiseFloorArtefact({
+      artefact, committedRoot: input.committedRoot, reportOutputBaseDir: input.reportOutputBaseDir,
+    }) } : {}),
+  }
+}
+
+/** Read actual pointer bodies: the census listing deliberately projects only index fields. */
+function readDesignatedBaselineRate(
+  input: RunNoiseFloorMeasurementInput,
+  notices: string[],
+  refusals: CommittedReadRefusal[],
+): FoldNoiseFloorInput['baselineRate'] {
+  const pointers = listBaselinePointers(input.committedRoot)
+  const reports = listCommittedReports(input.committedRoot)
+  refusals.push(...pointers.refusals, ...reports.refusals)
+  for (const entry of pointers.pointers) {
+    let value: unknown
+    try {
+      value = JSON.parse(readFileSync(entry.path, 'utf8'))
+    } catch (error) {
+      refusals.push({ path: entry.path, reason: `baseline pointer unreadable: ${String(error)}` })
+      continue
+    }
+    const guarded = guardBaselinePointer(value)
+    if (guarded.kind === 'rejected') {
+      refusals.push({ path: entry.path, reason: guarded.reason })
+      continue
+    }
+    const pointer = guarded.pointer
+    if (pointer.plannerModelId !== input.profileKeyInputs.plannerModelId) continue
+    const found = reports.reports.find(report => report.batchKey === pointer.batchKey)
+    if (found === undefined) {
+      notices.push(`designated baseline report absent for ${pointer.batchKey}`)
+      continue
+    }
+    if (found.report.batchKey !== pointer.batchKey) {
+      refusals.push({ path: found.path, reason: 'report body batchKey does not match designated baseline directory' })
+      continue
+    }
+    const rate = found.report.headline.firstAttemptDecisionAccuracy
+    if (rate === undefined || !Number.isSafeInteger(rate.numerator) || !Number.isSafeInteger(rate.denominator) ||
+      rate.numerator < 0 || rate.denominator < rate.numerator) {
+      refusals.push({ path: found.path, reason: 'baseline decision accuracy counts are invalid' })
+      continue
+    }
+    return { correct: rate.numerator, n: rate.denominator, batchKey: pointer.batchKey }
+  }
+  notices.push('no usable designated baseline for this planner; minimum gate set uses reference-run rate')
+  return undefined
 }
 
 export interface ReplayCorpusOnceResult {

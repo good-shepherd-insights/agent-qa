@@ -72,7 +72,10 @@ export function writeFloorLeaves(
 }
 
 /** Two products and all measured splits, projected through canonical corpus/partition helpers. */
-export function writeCommittedFloorFixture(root: string) {
+export function writeCommittedFloorFixture(
+  root: string,
+  configure?: (handoff: CompletedRunHandoff, index: number) => void,
+) {
   const committedRoot = join(root, 'committed')
   const bundles = writeFloorLeaves(committedRoot, 3, (handoff, index) => {
     const scope = { tier: 'product', key: index === 2 ? 'beta' : 'alpha' } as const
@@ -80,15 +83,16 @@ export function writeCommittedFloorFixture(root: string) {
     const brief = handoff.tests[0]!.steps[0]!.servedBrief!
     brief.scope = scope
     brief.briefDigest = computeBriefDigest(brief)
+    configure?.(handoff, index)
   })
   const store = new FsCommittedRootStore({ committedRoot })
   store.scaffold(COMMITTED_GITIGNORE_TEXT, committedFileText(buildRootMarkerValue()))
   for (const { cassette } of bundles.selected) {
     if (cassette.granularity !== 'leaf') throw new Error('expected fixture leaf')
-    const index = RUN_IDS.findIndex(id => cassette.receipt.runId === id)
+    const index = RUN_IDS.findIndex(id => cassette.runId === id)
     const product = index === 2 ? 'beta' : 'alpha'
     const entry = projectCorpusEntry({
-      cassette, product, runId: cassette.receipt.runId,
+      cassette, product, runId: cassette.runId,
       assignment: index === 0 ? { split: 'natural' } : {
         split: 'held-out', heldOutVisibility: index === 1 ? 'shared' : 'private',
       },

@@ -5,11 +5,11 @@ import { join } from 'node:path'
 
 import {
   committedFileText,
+  buildEvalReport,
   computeBatchKey,
   computeCorpusDigest,
   computeGateVerdict,
   extractRunCassettes,
-  MATCHER_CONFIG,
   projectBaselinePointer,
 } from '@vostride/agent-qa-eval'
 import { resolveCapabilities } from '@vostride/agent-qa-model'
@@ -64,10 +64,10 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function measurementFixture() {
+async function measurementFixture(configure?: Parameters<typeof writeCommittedFloorFixture>[1]) {
   const root = await mkdtemp(join(tmpdir(), 'aa-measurement-'))
   roots.push(root)
-  const corpus = writeCommittedFloorFixture(root)
+  const corpus = writeCommittedFloorFixture(root, configure)
   const stub = warningStub()
   return {
     root, stub, corpus,
@@ -79,7 +79,7 @@ async function measurementFixture() {
       auth: noneAuth,
       modelOverrides: { languageModels: stub.languageModels },
       maskingContextFactory: createMaskingContext,
-      profileKeyInputs: { plannerModelId: stubProfile().model, matcherVersion: MATCHER_CONFIG.matcherVersion },
+      profileKeyInputs: { plannerModelId: stubProfile().model, matcherVersion: buildEvalReport([]).matcherVersion },
       seeds: [11, 29],
       repeats: 3,
       bootstrapSeed: 97,
@@ -174,6 +174,56 @@ describe('runNoiseFloorMeasurement', () => {
       baselineRateSource: 'designated-baseline', baselineBatchKey: baseline.report.batchKey,
       baselineRate: { correct: 3, n: 3 },
     })
+  })
+
+  it('refuses a designated report body with a different batch key and uses the reference rate', async () => {
+    const { input } = await measurementFixture()
+    const pointer = projectBaselinePointer({ ...input.profileKeyInputs,
+      fingerprint: 'historical', corpusDigest: 'historical', batchKey: 'designated-directory' })
+    const store = new evalLocal.FsCommittedRootStore({ committedRoot: input.committedRoot })
+    store.writeText(evalLocal.committedBaselinePointerPath(pointer.profileKey), committedFileText(pointer))
+    const reportPath = evalLocal.committedReportPath(pointer.batchKey, 'report.json')
+    store.writeText(reportPath, committedFileText(buildEvalReport([])))
+    const result = await evalLocal.runNoiseFloorMeasurement(input)
+    expect(result.artefact.minimumGateSet.baselineRateSource).toBe('reference-run')
+    expect(result.refusals).toContainEqual({
+      path: join(input.committedRoot, reportPath),
+      reason: 'report body batchKey does not match designated baseline directory',
+    })
+  })
+
+  it('records all planner and judge calls while printing total known tokens from both components', async () => {
+    const { input } = await measurementFixture(handoff => {
+      const step = handoff.tests[0]!.steps[0]!
+      step.modelProfile!.modelId = 'gemini-recorded-fixture'
+      const sub = step.subActions[0]!
+      sub.plannedAction = { type: 'fill', ref: sub.stateBefore.elements[0]!.ref,
+        text: 'hello world foo', clearMode: 'replace', submit: false }
+    })
+    const planner = capturingStub(() => ({
+      ...actionGenerateResult(),
+      content: [{ type: 'tool-call', toolCallId: 'fill-action', toolName: 'web_fill',
+        input: JSON.stringify({ ref: 'e-continue', text: 'hello world bar', reasoning: 'fill',
+          confidence: 0.95, stepComplete: true, doesActionAdvanceUsTowardsGoal: true }) }],
+    }), 'gpt-replay-stub')
+    const judge = capturingStub(() => judgeGenerateResult('equivalent', 'high'), 'claude-judge-stub')
+    const lines: string[] = []
+    const result = await evalLocal.runNoiseFloorMeasurement({ ...input,
+      profile: familyStubProfile('gpt-replay-stub'),
+      profileKeyInputs: { ...input.profileKeyInputs, plannerModelId: 'gpt-replay-stub', judgeModelId: 'claude-judge-stub' },
+      modelOverrides: { languageModels: planner.languageModels },
+      judge: { profile: familyStubProfile('claude-judge-stub'), auth: noneAuth,
+        modelOverrides: { languageModels: judge.languageModels } },
+      onProgress: line => lines.push(line),
+    })
+    expect(planner.captured).toHaveLength(12)
+    expect(judge.captured).toHaveLength(24)
+    expect(result.artefact.runs.map(run => run.cost.modelCalls)).toEqual([9, 9, 9, 9])
+    expect(result.artefact.cost.modelCalls).toBe(36)
+    expect(result.artefact.cost.promptTokens).toBe(120)
+    expect(result.artefact.cost.judgeCost?.inputTokens).toBe(240)
+    expect(lines.filter(line => line.startsWith('floor r'))).toHaveLength(4)
+    expect(lines).toContainEqual(expect.stringContaining('modelCalls=9 promptTokens=90 completionTokens=18'))
   })
 })
 
