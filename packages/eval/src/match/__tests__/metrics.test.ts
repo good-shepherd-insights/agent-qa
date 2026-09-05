@@ -174,6 +174,17 @@ function refusalEntry(cassetteId: string, reason: ReplayRefusal['reason']): Scor
 }
 
 describe('buildEvalReport', () => {
+  it('reports seedHonored false when any replay sample warns that seed is unsupported', () => {
+    const report = buildEvalReport([
+      scoredEntry('no-warning', settledScore()),
+      scoredEntry('seed-warning', settledScore(), {
+        samples: [sample(0, 10), { ...sample(1, 10), unsupportedFeatures: ['seed'] }],
+      }),
+    ], undefined, undefined, { declaredSeed: 11 })
+
+    expect(report.seedHonored).toBe(false)
+  })
+
   it('uses an explicit settled-decision denominator and keeps ties/exclusions separate', () => {
     const harnessSample: ReplaySample = {
       sampleIndex: 0,

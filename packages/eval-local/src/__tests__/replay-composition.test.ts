@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { JUDGE_CONFIG, extractRunCassettes } from '@vostride/agent-qa-eval'
+import { JUDGE_CONFIG, buildEvalReport, extractRunCassettes } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, Cassette, DecisionScore, LeafReplayResult } from '@vostride/agent-qa-eval'
 import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
@@ -270,6 +270,43 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     expect(JSON.parse(readFileSync(records[0]!, 'utf8'))).toMatchObject({
       granularity: 'leaf', briefSource: 'proof', turnMatch: 'exact',
     })
+  })
+
+  it('persists unsupported seed evidence from the provider boundary through the report', async () => {
+    const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
+    const stub = capturingStub(() => ({
+      ...actionGenerateResult(),
+      warnings: [{ type: 'unsupported', feature: 'seed' }],
+    }))
+    const replayDir = await tempRoot('replay-comp-seed-warning-')
+
+    const outcome = await runCassetteReplay({
+      cassette,
+      artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      seed: 11,
+      modelOverrides: { languageModels: stub.languageModels },
+      replayOutputBaseDir: replayDir,
+      recordStore: new FsReplayRecordStore({ root: replayDir }),
+    })
+
+    if (!('granularity' in outcome) || outcome.granularity !== 'leaf') {
+      throw new Error('expected a leaf replay result')
+    }
+    expect(outcome.samples).toHaveLength(1)
+    expect(outcome.samples[0]!.outcome.kind).toBe('decision')
+    expect(stub.captured).toHaveLength(1)
+    expect(stub.captured[0]!.seed).toBe(11)
+    expect(outcome.samples[0]!.unsupportedFeatures).toEqual(['seed'])
+    const records = findReplayRecords(replayDir)
+    expect(records).toHaveLength(1)
+    const persisted = JSON.parse(readFileSync(records[0]!, 'utf8')) as LeafReplayResult
+    expect(persisted.samples[0]!.unsupportedFeatures).toEqual(['seed'])
+    const report = buildEvalReport([
+      { cassetteId: cassette.id, outcome: persisted },
+    ], undefined, undefined, { declaredSeed: 11 })
+    expect(report.seedHonored).toBe(false)
   })
 
   it('stamps recorded and replayed model ids; a mismatch is data, not an error (D-03)', async () => {

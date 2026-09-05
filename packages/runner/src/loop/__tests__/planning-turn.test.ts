@@ -81,6 +81,34 @@ describe('executePlanningTurn', () => {
     expect(DEFAULT_NON_ACTION_TOOL_BUDGET).toBe(4)
   })
 
+  it('records the provider unsupported seed warning on the call record', async () => {
+    await scriptResponses([{
+      toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })],
+      usage: USAGE,
+      warnings: [{ type: 'unsupported', feature: 'seed' }],
+    }])
+
+    const res = await executePlanningTurn(turnOptions({ sampling: { seed: 11 } }))
+
+    expect(res.ok).toBe(true)
+    expect(res.callRecord?.unsupportedFeatures).toEqual(['seed'])
+    const { generateText } = await import('ai')
+    expect(vi.mocked(generateText).mock.calls[0]![0].seed).toBe(11)
+  })
+
+  it.each([[], undefined])('omits unsupported features when warnings are %j', async warnings => {
+    await scriptResponses([{
+      toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })],
+      usage: USAGE,
+      ...(warnings !== undefined ? { warnings } : {}),
+    }])
+
+    const res = await executePlanningTurn(turnOptions({ sampling: { seed: 11 } }))
+
+    expect(res.ok).toBe(true)
+    expect(res.callRecord).not.toHaveProperty('unsupportedFeatures')
+  })
+
   it('Test 1: an immediate action call returns the plan with zero exchanges (v1 one-shot path)', async () => {
     await scriptResponses([{ toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })], usage: USAGE }])
 
