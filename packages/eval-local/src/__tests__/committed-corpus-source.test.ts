@@ -16,6 +16,7 @@ import {
   buildSeedingPlan,
   committedFileText,
   extractRunCassettes,
+  projectBaselinePointer,
   projectPartitionManifest,
   projectRunExclusion,
 } from '@vostride/agent-qa-eval'
@@ -372,6 +373,43 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
     expect(pointers.pointers).toHaveLength(1)
     expect(pointers.pointers[0]?.profileKey).toBe('p')
     expect(pointers.pointers[0]?.batchKey).toBe(report.batchKey)
+    expect(pointers.pointers[0]?.schemaVersion).toBe(1)
+    expect(pointers.pointers[0]).not.toHaveProperty('fingerprint')
+    expect(pointers.pointers[0]).not.toHaveProperty('corpusDigest')
+  })
+
+  it('surfaces the v2 fingerprint and corpus digest beside a v1 historical pointer', () => {
+    const pointer = projectBaselinePointer({
+      plannerModelId: 'gpt-5.6-terra',
+      matcherVersion: 1,
+      fingerprint: 'fp-fixture',
+      corpusDigest: 'digest-fixture',
+      batchKey: 'batch-fixture',
+    })
+    const path = writeCommitted(root, 'reports/baselines/v2.json', pointer)
+    writeCommitted(root, 'reports/baselines/v1.json', {
+      schemaVersion: 1, profileKey: 'historical', batchKey: 'old-batch',
+    })
+    const read = listBaselinePointers(root)
+    expect(read.refusals).toEqual([])
+    expect(read.pointers).toHaveLength(2)
+    expect(read.pointers.find(entry => entry.schemaVersion === 2)).toEqual({
+      schemaVersion: 2,
+      profileKey: pointer.profileKey,
+      batchKey: pointer.batchKey,
+      fingerprint: 'fp-fixture',
+      corpusDigest: 'digest-fixture',
+      path,
+    })
+  })
+
+  it('reports a schemaVersion 3 baseline as a refusal row', () => {
+    const path = writeCommitted(root, 'reports/baselines/future.json', {
+      schemaVersion: 3, profileKey: 'future', batchKey: 'batch-fixture',
+    })
+    const read = listBaselinePointers(root)
+    expect(read.pointers).toEqual([])
+    expect(read.refusals).toEqual([{ path, reason: expect.stringContaining('baseline pointer rejected') }])
   })
 })
 

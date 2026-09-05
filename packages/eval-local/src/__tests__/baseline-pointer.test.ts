@@ -58,6 +58,8 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
     report = buildEvalReport([])
     pointer = projectBaselinePointer({
       plannerModelId: 'gpt-5.6-terra',
+      fingerprint: 'fp-fixture',
+      corpusDigest: 'digest-fixture',
       matcherVersion: 1,
       batchKey: report.batchKey,
     })
@@ -71,10 +73,11 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
   it('designates the baseline at reports/baselines/<slug(profileKey)>.json (happy path)', () => {
     const relPath = committedBaselinePointerPath(pointer.profileKey)
     expect(relPath).toBe(
-      'reports/baselines/planner-gpt-5.6-terra-matcher-1-judge-none-judgeVersion-none.json',
+      'reports/baselines/planner-gpt-5.6-terra-fingerprint-fp-fixture-matcher-1-judge-none-judgeVersion-none.json',
     )
 
     expect(write()).toEqual({ kind: 'written', path: relPath })
+    expect(pointer.schemaVersion).toBe(2)
     expect(readFileSync(join(root, relPath), 'utf8')).toBe(committedFileText(pointer))
   })
 
@@ -104,6 +107,8 @@ describe('writeBaselinePointer (D-19/D-20, ROOT-11)', () => {
     }
     const sameFamilyPointer = projectBaselinePointer({
       plannerModelId: 'gpt-5.6-terra',
+      fingerprint: 'fp-fixture',
+      corpusDigest: 'digest-fixture',
       matcherVersion: 1,
       judgeModelId: FIXTURE_JUDGE_BLOCK.judgeModelId,
       judgeVersion: FIXTURE_JUDGE_BLOCK.judgeVersion,
