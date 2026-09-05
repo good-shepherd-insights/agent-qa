@@ -77,19 +77,19 @@ import {
   listCommittedReports,
   listReplayRecordDirs,
   loadCassetteBundle,
+  loadCassetteBundles,
   loadReplayRecord,
   loadScoreRecord,
   readCommittedCorpus,
   readPartitionManifests,
   readRunExclusions,
-  runCassetteReplay,
   seedCommittedCorpus,
+  sweepCassetteReplays,
   writeBaselinePointer,
   writePartitionManifest,
   writeRunExclusion,
 } from '@vostride/agent-qa-eval-local'
 import type {
-  CassetteBundleLoad,
   CommitCensusOutcome,
   CommitEvalReportOutcome,
   SeedingRefusal,
@@ -467,17 +467,7 @@ export async function runReplayVerb(
   const replaysRoot = join(agentQaRoot, DEFAULT_EVAL_REPLAYS_SUBDIR)
 
   // (1)+(2) sweep + load: every bundle dir enters; refusals fold by reason (D-02/D-08).
-  const bundleDirs = listCassetteBundleDirs(cassettesRoot)
-  const loadRefusals: Record<string, number> = {}
-  const loaded: Extract<CassetteBundleLoad, { kind: 'loaded' }>[] = []
-  for (const bundleDir of bundleDirs) {
-    const load = loadCassetteBundle(bundleDir)
-    if (load.kind === 'refused') {
-      bumpCounter(loadRefusals, load.refusal.reason)
-      continue
-    }
-    loaded.push(load)
-  }
+  const { swept, loaded, loadRefusals } = loadCassetteBundles(cassettesRoot)
 
   // (3) filters on the LOADED set — the ONE D-02 vocabulary; a named miss is the only throw.
   let selected = loaded
@@ -520,7 +510,7 @@ export async function runReplayVerb(
     notices.push(`empty sweep — no ${source} cassette bundles matched`)
     return {
       batchKey: 'empty',
-      swept: bundleDirs.length,
+      swept,
       replayed: 0,
       loadRefusals,
       replayRefusals: {},
@@ -544,56 +534,31 @@ export async function runReplayVerb(
   const replayBaseDir = evalAuditDir(session.configDir, 'replay', batchKey)
   const recordStore = new FsReplayRecordStore({ root: agentQaRoot })
   const scoreStore = new FsScoreStore({ root: agentQaRoot })
-  const replayRefusals: Record<string, number> = {}
-  const replayedDirs: string[] = []
-  let replayed = 0
-
-  for (const entry of selected) {
-    // Progress ALWAYS rides stderr — stdout stays reserved for the rendered DTO.
-    process.stderr.write(`replay: ${entry.cassette.id}\n`)
-    let outcome: Awaited<ReturnType<typeof runCassetteReplay>>
-    try {
-      outcome = await runCassetteReplay({
-        cassette: entry.cassette,
-        artifacts: entry.artifacts,
-        profile: planner.profile,
-        auth: planner.auth,
-        ...(opts.plannerOverrides !== undefined ? { modelOverrides: opts.plannerOverrides } : {}),
-        ...(session.evalConfig.k !== undefined ? { k: session.evalConfig.k } : {}),
-        ...(session.evalConfig.seed !== undefined ? { seed: session.evalConfig.seed } : {}),
-        ...(judgeResolution.judge !== undefined
-          ? {
-              judge: {
-                ...judgeResolution.judge,
-                ...(opts.judgeOverrides !== undefined
-                  ? { modelOverrides: opts.judgeOverrides }
-                  : {}),
-              },
-            }
-          : {}),
-        maskingContextFactory: session.maskingContextFactory,
-        replayOutputBaseDir: replayBaseDir,
-        recordStore,
-        scoreStore,
-      })
-    } catch (err) {
-      // A helper-thrown harness error on one cassette is DATA — the loop continues (D-08,
-      // the 368 never-batch-abort law extended to the CLI batch).
-      bumpCounter(replayRefusals, 'harness-error')
-      notices.push(
-        `harness error replaying ${entry.cassette.id}: ${err instanceof Error ? err.message : String(err)}`,
-      )
-      continue
-    }
-    if (!('granularity' in outcome)) {
-      bumpCounter(replayRefusals, outcome.reason)
-      continue
-    }
-    replayed++
-    replayedDirs.push(
-      join(replaysRoot, ...entry.cassette.id.split('/').map(segment => slugBranch(segment))),
-    )
-  }
+  const { replayed, replayRefusals, replayedDirs, notices: replayNotices } =
+    await sweepCassetteReplays({
+      selected,
+      profile: planner.profile,
+      auth: planner.auth,
+      ...(opts.plannerOverrides !== undefined ? { modelOverrides: opts.plannerOverrides } : {}),
+      ...(session.evalConfig.k !== undefined ? { k: session.evalConfig.k } : {}),
+      ...(session.evalConfig.seed !== undefined ? { seed: session.evalConfig.seed } : {}),
+      ...(judgeResolution.judge !== undefined
+        ? {
+            judge: {
+              ...judgeResolution.judge,
+              ...(opts.judgeOverrides !== undefined ? { modelOverrides: opts.judgeOverrides } : {}),
+            },
+          }
+        : {}),
+      maskingContextFactory: session.maskingContextFactory,
+      replayOutputBaseDir: replayBaseDir,
+      recordStore,
+      scoreStore,
+      replaysRoot,
+      // Progress ALWAYS rides stderr — stdout stays reserved for the rendered DTO.
+      onProgress: id => process.stderr.write(`replay: ${id}\n`),
+    })
+  notices.push(...replayNotices)
 
   // (7) fold judge dispositions FROM the persisted score records — never recomputed (D-04).
   const judge = zeroJudge(judgeResolution.judge !== undefined)
@@ -611,7 +576,7 @@ export async function runReplayVerb(
 
   return {
     batchKey,
-    swept: bundleDirs.length,
+    swept,
     replayed,
     loadRefusals,
     replayRefusals,

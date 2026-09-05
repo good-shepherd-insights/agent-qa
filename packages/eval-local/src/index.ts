@@ -29,6 +29,13 @@ export type { ReplayRecordLoad, ScoreRecordLoad } from './replay-read.js'
 export { runCassetteReplay } from './replay-composition.js'
 export type { RunCassetteReplayInput } from './replay-composition.js'
 
+export { loadCassetteBundles, sweepCassetteReplays } from './replay-sweep.js'
+export type {
+  LoadedCassetteBundle,
+  SweepCassetteReplaysInput,
+  SweepCassetteReplaysResult,
+} from './replay-sweep.js'
+
 export { bindJudgePort } from './judge-binding.js'
 export type { JudgeBindingInput } from './judge-binding.js'
 
