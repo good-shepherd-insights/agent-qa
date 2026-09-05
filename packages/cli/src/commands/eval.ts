@@ -53,6 +53,27 @@ function parseSourceFlag(value: string | undefined): EvalCorpusSource | undefine
   return value
 }
 
+/**
+ * Typed fraction flag reader (414 D-07, the parseSourceFlag idiom — validated inside the ACTION,
+ * never as a commander option parser, so a bad value sets `process.exitCode = 1` rather than
+ * calling `process.exit`).
+ *
+ * Only NUMBER-ness is decided here. RANGE is the partition manifest guard's job: it already pins
+ * both fractions strictly inside (0, 1) for the committed document, and its TypeError lands in
+ * the same catch. Re-deciding the range here would mint a second, drift-prone spelling of the
+ * bound that actually governs the bytes.
+ */
+function parseFractionFlag(flagName: string, value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) {
+    throw new Error(
+      `${flagName} must be a number strictly between 0 and 1, got "${value}".`,
+    )
+  }
+  return parsed
+}
+
 /** Render a Record counter as `reason=count …`, honest 'none' when empty (D-04). */
 function renderCounters(counters: Record<string, number>): string {
   const rendered = Object.entries(counters)
@@ -135,6 +156,27 @@ function renderSeedSummary(result: SeedVerbResult): void {
       + `${result.pairCounts.differingState} differing-state), ${result.pairSkips} pair skips`,
   )
   console.log(`silver exclusions: ${result.silverExclusions}`)
+  // 414 D-06/D-17: one line per product partition, carrying the salt DIGEST only — the raw salt
+  // never leaves the committed manifest file. `- none` when empty, never a silent omission.
+  console.log('partitions:')
+  if (result.partitions.length === 0) {
+    console.log(pc.dim('  - none'))
+  }
+  for (const partition of result.partitions) {
+    console.log(
+      `  ${partition.product}: held-out ${partition.heldOutFraction}, `
+        + `private ${partition.privateFraction}, salt sha256 ${partition.saltDigest} `
+        + `(${partition.outcome}, ${partition.path})`,
+    )
+  }
+  // 414 D-02: every run the D-04 filter dropped left a committed provenance file — echo each.
+  console.log('exclusions written:')
+  if (result.exclusionsWritten.length === 0) {
+    console.log(pc.dim('  - none'))
+  }
+  for (const exclusion of result.exclusionsWritten) {
+    console.log(`  ${exclusion.path} (${exclusion.outcome})`)
+  }
   console.log(`contracts: ${renderCounters(result.contracts)}`)
   console.log(`scaffold: ${renderCounters(result.scaffold)}`)
   console.log(pc.dim(`committed root: ${result.committedRoot}`))
@@ -438,13 +480,33 @@ export function createEvalCommand(): Command {
       .option('--run <slug>', 'narrow to one recorded run')
       .option('--product <slug>', 'narrow by product scope')
       .option('--silver-cap <n>', 'per-test silver cap override', parseIntegerFlag('--silver-cap'))
+      // 414 D-07: both fractions are plain STRINGS here and are validated inside the action
+      // (413-06 house rule — a parser throw routes to process.exit(1), bypassing the D-08 catch).
+      .option(
+        '--held-out-fraction <f>',
+        "share of the product's cassettes leaving natural — REQUIRED on a product's first "
+          + 'partition (414 D-07)',
+      )
+      .option(
+        '--private-fraction <f>',
+        'share OF the held-out portion that is private — REQUIRED on first partition (414 D-07)',
+      )
       .option('--json', 'emit the typed result DTO to stdout')
       .action(
         async (
-          opts: { run?: string; product?: string; silverCap?: number; json?: boolean },
+          opts: {
+            run?: string
+            product?: string
+            silverCap?: number
+            heldOutFraction?: string
+            privateFraction?: string
+            json?: boolean
+          },
           command: Command,
         ) => {
           try {
+            const heldOutFraction = parseFractionFlag('--held-out-fraction', opts.heldOutFraction)
+            const privateFraction = parseFractionFlag('--private-fraction', opts.privateFraction)
             const configPath = getGlobalConfigPath(command)
             const { resolveEvalSession, runSeedVerb } = await import(
               '../eval-session-composition.js'
@@ -457,10 +519,17 @@ export function createEvalCommand(): Command {
                 ...(opts.silverCap === undefined ? {} : { silverCap: opts.silverCap }),
               },
             })
-            const result = await runSeedVerb(session, {
-              ...(opts.run === undefined ? {} : { run: opts.run }),
-              ...(opts.product === undefined ? {} : { product: opts.product }),
-            })
+            const result = await runSeedVerb(
+              session,
+              {
+                ...(opts.run === undefined ? {} : { run: opts.run }),
+                ...(opts.product === undefined ? {} : { product: opts.product }),
+              },
+              {
+                ...(heldOutFraction === undefined ? {} : { heldOutFraction }),
+                ...(privateFraction === undefined ? {} : { privateFraction }),
+              },
+            )
             if (opts.json) {
               // D-04/Pitfall 11: exactly one JSON document on stdout — refusals and skips are
               // DATA inside the DTO, never separate stream noise.

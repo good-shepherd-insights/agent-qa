@@ -15,6 +15,7 @@
 // The CLI is a surface / composition root with full host access (spec §4), so this module uses
 // node builtins directly.
 
+import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
@@ -32,9 +33,13 @@ import {
   canonicalJson,
   computeBatchKey,
   deriveCensus,
+  EXCLUSION_CLASSES,
   extractRunCassettes,
   guardCampaignManifest,
+  partitionParamsOf,
   projectBaselinePointer,
+  projectPartitionManifest,
+  projectRunExclusion,
   renderBaselineComparatorRefusal,
   resolveJudgeFamily,
   resolveProductPartition,
@@ -48,7 +53,9 @@ import type {
   DecisionScoreEntry,
   DeriveCensusInput,
   EvalBatchReport,
+  ExclusionClass,
   JudgeIdentityBlock,
+  PartitionManifest,
   ScoredBatchEntry,
 } from '@vostride/agent-qa-eval'
 import {
@@ -62,6 +69,8 @@ import {
   FsScoreStore,
   commitCensus,
   commitEvalReport,
+  committedExclusionPath,
+  committedPartitionManifestPath,
   listBaselinePointers,
   listCassetteBundleDirs,
   listCommittedReports,
@@ -70,9 +79,12 @@ import {
   loadReplayRecord,
   loadScoreRecord,
   readCommittedCorpus,
+  readPartitionManifests,
   runCassetteReplay,
   seedCommittedCorpus,
   writeBaselinePointer,
+  writePartitionManifest,
+  writeRunExclusion,
 } from '@vostride/agent-qa-eval-local'
 import type {
   CassetteBundleLoad,
@@ -736,11 +748,79 @@ export async function resolveReplayPlanner(
  * (`packages/agent/src/.../emit-canary-outcomes.ts`), and importing across that boundary would
  * mint an edge the arch contract forbids — the two spellings are the same closed vocabulary.
  */
-const EXCLUDED_VERDICT_CLASSES: ReadonlySet<Verdict['class']> = new Set<Verdict['class']>([
-  'flake',
-  'environment',
-  'timeout',
-])
+const EXCLUDED_VERDICT_CLASSES: ReadonlySet<Verdict['class']> = new Set<Verdict['class']>(
+  // 414 D-02: the local literal triplet is gone. `EXCLUSION_CLASSES` is the SAME closed
+  // vocabulary, and it now also decides what the committed exclusion record admits — a second
+  // spelling here could let the seeder drop a run the record schema would refuse to describe.
+  EXCLUSION_CLASSES,
+)
+
+/** True for exactly the classes the committed exclusion record admits (414 D-02). */
+function isExclusionVerdict(
+  verdict: SeedRunVerdictRow['verdicts'][number],
+): verdict is { class: ExclusionClass; producer: Verdict['producer'] } {
+  return EXCLUDED_VERDICT_CLASSES.has(verdict.class)
+}
+
+/**
+ * 414 D-07: a product's FIRST partition needs both fraction flags, and there is no default
+ * anywhere to fall back on — a threshold is chosen after the floor is measured, so guessing one
+ * here would silently pick the corpus's held-out set.
+ */
+export class EvalPartitionFlagsRequiredError extends Error {
+  readonly products: readonly string[]
+
+  constructor(products: readonly string[]) {
+    super(
+      `partition of ${products.join(', ')} requires --held-out-fraction and --private-fraction `
+        + 'on its first seed (414 D-07); no default exists',
+    )
+    this.name = 'EvalPartitionFlagsRequiredError'
+    this.products = products
+  }
+}
+
+/**
+ * 414 D-05: the committed manifest disagrees with the supplied fractions. The writer answered
+ * `write-conflict` and nothing was touched.
+ */
+export class EvalPartitionManifestConflictError extends Error {
+  readonly product: string
+  readonly path: string
+
+  constructor(product: string, path: string) {
+    super(
+      `partition manifest for ${product} at ${path}: write-conflict — the committed manifest `
+        + 'disagrees with the supplied fractions; changing a manifest is a reviewed git edit and '
+        + 'a named migration (414 D-05)',
+    )
+    this.name = 'EvalPartitionManifestConflictError'
+    this.product = product
+    this.path = path
+  }
+}
+
+/** One product's partition manifest as the seed DTO echoes it — the DIGEST, never the salt (D-17). */
+export interface SeedPartitionRow {
+  product: string
+  /** Committed-root-relative manifest path. */
+  path: string
+  outcome: 'written' | 'unchanged'
+  /** sha256hex over the committed salt — the raw salt never leaves the manifest file (D-17). */
+  saltDigest: string
+  heldOutFraction: number
+  privateFraction: number
+  partitionVersion: number
+}
+
+/** One excluded run's committed provenance file, as the seed DTO echoes it (414 D-02). */
+export interface SeedExclusionRow {
+  runSlug: string
+  product: string
+  /** Committed-root-relative exclusion path. */
+  path: string
+  outcome: 'written' | 'unchanged' | 'write-conflict' | 'egress-blocked'
+}
 
 /** One run's resolved verdicts flattened to the two fields the DTO and the census print (D-04). */
 export interface SeedRunVerdictRow {
@@ -792,6 +872,17 @@ export interface SeedVerbResult {
   contracts: Record<string, number>
   /** D-15 scaffold outcomes (gitignore + root marker) folded by kind. */
   scaffold: Record<string, number>
+  /**
+   * 414 D-05/D-06/D-07: one row per admitted product's partition manifest — minted on the
+   * product's first seed, echoed `unchanged` on every later one. `saltDigest` is the ONLY salt
+   * fact that leaves the manifest file (D-17).
+   */
+  partitions: SeedPartitionRow[]
+  /**
+   * 414 D-02: one row per excluded run's committed provenance file. An exclusion that leaves no
+   * committed trace is an unauditable deletion, so every row the D-04 filter drops writes one.
+   */
+  exclusionsWritten: SeedExclusionRow[]
   /** ALWAYS `<configDir>/agent-qa-eval` (spec §B7 target-project posture, D-12). */
   committedRoot: string
 }
@@ -809,7 +900,13 @@ export interface SeedVerbResult {
 export async function runSeedVerb(
   session: EvalSession,
   filters: { run?: string; product?: string } = {},
-  params: { silverPerTestCap?: number } = {},
+  params: {
+    silverPerTestCap?: number
+    /** 414 D-07: REQUIRED on a product's first partition; no default exists anywhere. */
+    heldOutFraction?: number
+    /** 414 D-07: REQUIRED on a product's first partition; no default exists anywhere. */
+    privateFraction?: number
+  } = {},
 ): Promise<SeedVerbResult> {
   const agentQaRoot = resolve(session.configDir, '.agent-qa')
   const runsRoot = resolve(agentQaRoot, RUNS_SUBDIR)
@@ -844,11 +941,22 @@ export async function runSeedVerb(
     pairCounts: { total: 0, sameState: 0, differingState: 0 },
     contracts: {},
     scaffold: {},
+    partitions: [],
+    exclusionsWritten: [],
     committedRoot,
   }
 
+  // ---- (A) admission: every run's verdicts decided, every exclusion COMMITTED ------------------
+  //
+  // 414 D-02: an excluded run's provenance is written HERE, before and independently of the
+  // partition pre-pass below. A dropped run's committed trace does not wait on a partition
+  // decision that has nothing to do with why it was dropped: the writer is write-once (an
+  // identical regen answers `unchanged`), and a phase-(B) EvalPartitionFlagsRequiredError leaves
+  // the exclusion files in place ON PURPOSE — the operator learns what was excluded from the very
+  // invocation that refused to partition. Never reorder (A) after (B).
+  const admitted: { runSlug: string; handoff: CompletedRunHandoff; product: string }[] = []
+
   for (const runSlug of runSlugs) {
-    let report: ReturnType<typeof seedCommittedCorpus>
     try {
       const handoffPath = resolve(runsRoot, runSlug, HANDOFF_FILE)
       // The version-guarded loader is the ONE handoff read path (D-02 typed per-run skips).
@@ -863,17 +971,64 @@ export async function runSeedVerb(
       // 413 D-04: resolve this run's verdicts and decide admission BEFORE anything touches the
       // write-once root — an admitted run cannot be un-seeded without a reviewed deletion, so the
       // filter can only ever run in front of the commit, never after it.
-      const artifact = readRunAnalysisArtifact(runsRoot, runSlug, handoff.runId, result.notices)
+      const analysis = readRunAnalysisArtifact(runsRoot, runSlug, handoff.runId, result.notices)
       const row: SeedRunVerdictRow = {
         runSlug,
         product,
-        verdicts: resolveSeedVerdictRows(artifact, handoff),
+        verdicts: resolveSeedVerdictRows(analysis.artifact, handoff),
       }
-      if (row.verdicts.some(verdict => EXCLUDED_VERDICT_CLASSES.has(verdict.class))) {
+      const excluding = row.verdicts.filter(isExclusionVerdict)
+      if (excluding.length > 0) {
         result.runsExcluded.push(row)
+        // The digest names the EVIDENCE the decision was read from: the analysis bytes when an
+        // artifact decided it, else the canonical resolved verdict rows the deterministic floor
+        // produced. Never a digest of something that did not decide anything.
+        const record = projectRunExclusion({
+          runId: handoff.runId,
+          runSlug,
+          product,
+          verdicts: excluding,
+          analysisDigest:
+            analysis.text === undefined
+              ? sha256hex(canonicalJson(row.verdicts))
+              : sha256hex(analysis.text),
+        })
+        const outcome = writeRunExclusion({
+          record,
+          committedRoot,
+          seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', runSlug),
+        })
+        // egress-blocked and write-conflict are DATA rows on the DTO, never throws (D-08).
+        result.exclusionsWritten.push({
+          runSlug,
+          product,
+          path: committedExclusionPath(product, runSlug),
+          outcome: outcome.kind,
+        })
         continue
       }
       result.runsAdmitted.push(row)
+      admitted.push({ runSlug, handoff, product })
+    } catch (err) {
+      result.runsSkipped.push({
+        runSlug,
+        reason: err instanceof Error ? err.message : String(err),
+      })
+      continue
+    }
+  }
+
+  // ---- (B) the partition pre-pass: one committed manifest per admitted product ----------------
+  const manifests = ensurePartitionManifests(session, admitted, committedRoot, result, params)
+
+  // ---- (C) seeding: eval core assigns every split from the committed manifest ------------------
+  for (const { runSlug, handoff, product } of admitted) {
+    let report: ReturnType<typeof seedCommittedCorpus>
+    try {
+      const manifest = manifests.get(product)
+      if (manifest === undefined) {
+        throw new Error(`no committed partition manifest for product ${product}`)
+      }
       const extraction = extractRunCassettes({
         handoff,
         artifacts: new FsRunArtifactSource({ root: agentQaRoot, runId: handoff.runId }),
@@ -882,10 +1037,9 @@ export async function runSeedVerb(
       const plan = buildSeedingPlan({
         handoff,
         cassettes: extraction.cassettes,
-        // 413 D-09 forward: the committed entry records a CONFIG-RELATIVE handoff location. The
-        // absolute path above is what this process loads; the string that lands in the write-once
-        // root can never carry a home directory across a machine boundary (T-413-27, hygiene L1).
-        handoffPath: relative(session.configDir, handoffPath),
+        // 414 D-07: the split comes from the product's COMMITTED manifest params — the cli adds
+        // no selection or relabel logic of its own.
+        partition: partitionParamsOf(manifest),
         params: {
           ...(silverPerTestCap !== undefined ? { silverPerTestCap } : {}),
         },
@@ -924,6 +1078,151 @@ export async function runSeedVerb(
 }
 
 /**
+ * Phase (B) of the seed verb: every admitted product ends this call with exactly one committed
+ * partition manifest, and the DTO echoes what happened to each.
+ *
+ * D-07 ↔ D-05, reconciled. D-07 says a later seed "accepts no fraction flags"; D-05 says a later
+ * invocation whose flags DISAGREE with the committed manifest is refused as a write-conflict.
+ * Read together: after a product's first partition, a fraction flag can never CHANGE anything.
+ * Flags that agree byte-for-byte with the committed manifest are tolerated — they re-derive the
+ * IDENTICAL manifest (same committed salt, same fractions), the write-once writer answers
+ * `unchanged`, and an operator may therefore keep one invocation in a runbook forever. Flags that
+ * disagree are refused. No flag ever writes a second manifest. "Accepts no fraction flags" is
+ * enforced as "no fraction flag has any effect after the first partition", which is the only
+ * reading consistent with D-05's write-conflict clause.
+ *
+ * The salt is 32 bytes from `randomBytes` minted HERE, once per product, and committed hex-encoded
+ * (D-06). It is never derived from the product slug, a config value or a clock, and no flag can
+ * supply one — a predictable salt lets a proposer pre-compute the held-out buckets.
+ */
+function ensurePartitionManifests(
+  session: EvalSession,
+  admitted: readonly { product: string }[],
+  committedRoot: string,
+  result: SeedVerbResult,
+  params: { heldOutFraction?: number; privateFraction?: number },
+): Map<string, PartitionManifest> {
+  const byProduct = new Map<string, PartitionManifest>()
+  const read = readPartitionManifests(committedRoot)
+  for (const manifest of read.manifests) byProduct.set(manifest.product, manifest)
+  // Never silent: a mismatched file name or a refused manifest is a notice, and a product whose
+  // manifest was refused reads as unpartitioned below — which the write-once preview then refuses
+  // rather than overwriting.
+  result.notices.push(...read.notices)
+  for (const refusal of read.refusals) {
+    result.notices.push(`partition manifest refused at ${refusal.path}: ${refusal.reason}`)
+  }
+
+  const products = [...new Set(admitted.map(entry => entry.product))].sort()
+  const { heldOutFraction, privateFraction } = params
+  const unpartitioned = products.filter(product => !byProduct.has(product))
+  if (
+    unpartitioned.length > 0
+    && (heldOutFraction === undefined || privateFraction === undefined)
+  ) {
+    throw new EvalPartitionFlagsRequiredError(unpartitioned)
+  }
+
+  for (const product of products) {
+    const committed = byProduct.get(product)
+    const relPath = committedPartitionManifestPath(product)
+
+    if (committed === undefined) {
+      // First partition: mint the salt (D-06) and commit the manifest once (D-05).
+      const saltHex = randomBytes(32).toString('hex')
+      const manifest = projectPartitionManifest({
+        product,
+        saltHex,
+        heldOutFraction: heldOutFraction as number,
+        privateFraction: privateFraction as number,
+      })
+      const outcome = writePartitionManifest({
+        manifest,
+        committedRoot,
+        seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', `partition-${product}`),
+      })
+      byProduct.set(product, manifest)
+      result.partitions.push(partitionRow(manifest, relPath, requireManifestWritten(outcome, product, relPath)))
+      continue
+    }
+
+    if (heldOutFraction === undefined || privateFraction === undefined) {
+      // A later seed with no fraction flags: echo the committed manifest, write nothing.
+      result.partitions.push(partitionRow(committed, relPath, 'unchanged'))
+      continue
+    }
+
+    // A later seed WITH flags: re-derive from the COMMITTED salt. Agreeing flags round-trip to
+    // `unchanged`; disagreeing ones reach the write-once preview and refuse (D-05).
+    const reprojected = projectPartitionManifest({
+      product,
+      saltHex: committed.salt,
+      heldOutFraction,
+      privateFraction,
+    })
+    const outcome = writePartitionManifest({
+      manifest: reprojected,
+      committedRoot,
+      seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', `partition-${product}`),
+    })
+    result.partitions.push(
+      partitionRow(committed, relPath, requireManifestWritten(outcome, product, relPath)),
+    )
+  }
+
+  return byProduct
+}
+
+/** The DTO row for one manifest — `saltDigest`, never the salt (D-17). */
+function partitionRow(
+  manifest: PartitionManifest,
+  path: string,
+  outcome: 'written' | 'unchanged',
+): SeedPartitionRow {
+  return {
+    product: manifest.product,
+    path,
+    outcome,
+    saltDigest: sha256hex(manifest.salt),
+    heldOutFraction: manifest.heldOutFraction,
+    privateFraction: manifest.privateFraction,
+    partitionVersion: manifest.partitionVersion,
+  }
+}
+
+/**
+ * The manifest writer's four outcomes narrowed to the two a partition row can carry. A
+ * write-conflict is D-05's refusal; an egress block on a document that is a product slug, a hex
+ * salt and two numbers means the guardrail policy caught something the operator must look at.
+ */
+function requireManifestWritten(
+  outcome: ReturnType<typeof writePartitionManifest>,
+  product: string,
+  path: string,
+): 'written' | 'unchanged' {
+  if (outcome.kind === 'write-conflict') {
+    throw new EvalPartitionManifestConflictError(product, path)
+  }
+  if (outcome.kind === 'egress-blocked') {
+    throw new Error(
+      `partition manifest for ${product} at ${path} was egress-blocked: `
+        + outcome.detections.map(detection => `${detection.label}/${detection.detector}`).join(' '),
+    )
+  }
+  return outcome.kind
+}
+
+
+/**
+ * An admitted analysis artifact AND the exact bytes it was parsed from (414 D-02). Both absent
+ * means the deterministic floor decided: no artifact, and therefore no artifact digest.
+ */
+interface RunAnalysisRead {
+  artifact?: RunAnalysisArtifact
+  text?: string
+}
+
+/**
  * One run's persisted analysis artifact, loaded from its run dir through the ONE schema guard
  * (389 D-09). Absence is the deterministic floor and costs no notice. A PRESENT file recording
  * ANOTHER run's id is refused by identity (`admitAnalysisArtifactForRun`, G-389-3A) so a copied
@@ -938,26 +1237,30 @@ function readRunAnalysisArtifact(
   runSlug: string,
   runId: string,
   notices: string[],
-): RunAnalysisArtifact | undefined {
+): RunAnalysisRead {
   const path = join(runsRoot, runSlug, ANALYSIS_FILE)
-  if (!existsSync(path)) return undefined
+  if (!existsSync(path)) return {}
   try {
+    const text = readFileSync(path, 'utf8')
     const admission = admitAnalysisArtifactForRun(
-      guardRunAnalysisArtifact(JSON.parse(readFileSync(path, 'utf8'))),
+      guardRunAnalysisArtifact(JSON.parse(text)),
       runId,
     )
-    if (admission.kind === 'admitted') return admission.artifact
+    // 414 D-02: the EXACT bytes are carried out beside the parsed artifact, because the committed
+    // exclusion record digests the evidence that decided the exclusion — re-serialising the
+    // parsed shape would digest this process's formatting, not the file anyone can re-read.
+    if (admission.kind === 'admitted') return { artifact: admission.artifact, text }
     notices.push(
       `${ANALYSIS_FILE} for ${runSlug} records run ${admission.recordedRunId}, not `
         + `${admission.resolvingRunId} — deterministic floor used`,
     )
-    return undefined
+    return {}
   } catch (err) {
     notices.push(
       `${ANALYSIS_FILE} unreadable for ${runSlug}: `
         + `${err instanceof Error ? err.message : String(err)} — deterministic floor used`,
     )
-    return undefined
+    return {}
   }
 }
 
