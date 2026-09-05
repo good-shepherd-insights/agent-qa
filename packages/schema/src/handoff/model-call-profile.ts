@@ -43,4 +43,9 @@ export interface ModelCallRecord {
   fingerprint?: string
   effectiveMaxOutputTokens?: number
   effectiveSampling?: SamplingParams
+  /**
+   * Sorted, deduplicated feature names from typed unsupported provider warnings across the
+   * planning turn. Absent when the provider warned about no unsupported feature.
+   */
+  unsupportedFeatures?: readonly string[]
 }

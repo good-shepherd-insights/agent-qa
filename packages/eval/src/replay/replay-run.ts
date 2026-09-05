@@ -311,6 +311,9 @@ async function runSample(context: DecisionReplayContext, sampleIndex: number): P
     outcome: outcome.outcome,
     durationMs,
     ...(outcome.tokenUsage !== undefined ? { tokenUsage: outcome.tokenUsage } : {}),
+    ...(outcome.unsupportedFeatures !== undefined
+      ? { unsupportedFeatures: outcome.unsupportedFeatures }
+      : {}),
   }
   return {
     kind: 'sample',
@@ -326,7 +329,11 @@ async function classifyPlan(
   context: DecisionReplayContext,
   handle: ReturnType<ReplayPlannerFactory['create']>,
   reconstructed: ReturnType<typeof reconstructDecisionContext>,
-): Promise<{ outcome: ReplaySampleOutcome; tokenUsage?: ReplaySample['tokenUsage'] }> {
+): Promise<{
+  outcome: ReplaySampleOutcome
+  tokenUsage?: ReplaySample['tokenUsage']
+  unsupportedFeatures?: ReplaySample['unsupportedFeatures']
+}> {
   try {
     const planResult = await handle.plan(
       context.leg.stepText,
@@ -339,6 +346,9 @@ async function classifyPlan(
     return {
       outcome: { kind: 'decision', action, identity },
       ...(planResult.tokenUsage !== undefined ? { tokenUsage: planResult.tokenUsage } : {}),
+      ...(planResult.callRecord?.unsupportedFeatures !== undefined
+        ? { unsupportedFeatures: planResult.callRecord.unsupportedFeatures }
+        : {}),
     }
   } catch (error) {
     // Classification by instanceof identity ONLY — never by message string (D-09).

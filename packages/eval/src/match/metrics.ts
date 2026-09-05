@@ -112,6 +112,8 @@ export interface EvalBatchReport {
   promptDriftRate: RateMetric
   /** Counts recorded stamps only; historical unstamped replays retain unknown provenance. */
   briefSourceCounts: Counts<BriefSource>
+  /** Present only for a declared seed; false iff any sample of any decision listed seed. */
+  seedHonored?: boolean
   kEscalation: {
     decisionCount: number
     escalatedCount: number
@@ -250,6 +252,7 @@ export function buildEvalReport(
   entries: readonly ScoredBatchEntry[],
   judge?: JudgeIdentityBlock,
   identity?: { judgeIdentity: 'mixed'; judgeModelIds: readonly string[] },
+  opts: { declaredSeed?: number } = {},
 ): EvalBatchReport {
   const tieCounts: Counts<TieCause> = {
     'partial-identity': 0,
@@ -398,6 +401,7 @@ export function buildEvalReport(
   let noConsensusCount = 0
   let escalatedAgreementTotal = 0
   let modelMismatchCount = 0
+  let seedUnsupported = false
 
   for (const result of replayDecisions) {
     if (BRIEF_SOURCES.includes(result.briefSource)) briefSourceCounts[result.briefSource]++
@@ -417,6 +421,7 @@ export function buildEvalReport(
     }
 
     for (const replaySample of result.samples) {
+      if (replaySample.unsupportedFeatures?.includes('seed')) seedUnsupported = true
       totalCost.sampleCount++
       totalCost.durationMs += replaySample.durationMs
       if (replaySample.tokenUsage === undefined) {
@@ -498,6 +503,7 @@ export function buildEvalReport(
     },
     promptDriftRate: rateMetric(driftedCount, decisionCount),
     briefSourceCounts,
+    ...(opts.declaredSeed !== undefined ? { seedHonored: !seedUnsupported } : {}),
     kEscalation: {
       decisionCount,
       escalatedCount,

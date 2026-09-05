@@ -255,6 +255,7 @@ export async function executePlanningTurn(
   let completionTokens = 0
   let usageSeen = false
   let lastResponseModelId: string | undefined
+  const unsupported = new Set<string>()
   let rePromptedForNoTool = false
   let budgetErrorInjected = false
   // D-09 turn-local one-shot: a boolean, never a counter (LOOP-02). Once a grounding
@@ -273,6 +274,7 @@ export async function executePlanningTurn(
       ? { effectiveMaxOutputTokens: options.maxOutputTokens }
       : {}),
     ...(effectiveSampling !== undefined ? { effectiveSampling } : {}),
+    ...(unsupported.size > 0 ? { unsupportedFeatures: [...unsupported].sort() } : {}),
   })
 
   // Iteration backstop: at most K executed non-action calls, plus the exhaustion
@@ -303,6 +305,9 @@ export async function executePlanningTurn(
     })
 
     lastResponseModelId = result.response?.modelId
+    for (const w of result.warnings ?? []) {
+      if (w.type === 'unsupported') unsupported.add(w.feature)
+    }
 
     if (result.usage) {
       usageSeen = true

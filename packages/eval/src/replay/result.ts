@@ -37,6 +37,8 @@ export interface ReplaySample {
   outcome: ReplaySampleOutcome
   /** Typed-absent when the provider omits usage; never fabricated. */
   tokenUsage?: TokenUsage
+  /** Typed-absent when no unsupported provider feature was reported for this sample. */
+  unsupportedFeatures?: readonly string[]
   durationMs: number
 }
 
