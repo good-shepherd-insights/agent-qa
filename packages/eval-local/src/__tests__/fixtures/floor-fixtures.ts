@@ -16,6 +16,13 @@ import {
 
 export { noneAuth, stubProfile }
 
+// Generated with packages/ids' generateRunId; frozen so independent fixture rebuilds pair.
+const RUN_IDS = [
+  'r_proper-ewer-rud-ignore-ula-junk-may-effect-eva-ada',
+  'r_unset-dirty-hop-axon-awn-folder-crete-bases-enable-client',
+  'r_exit-amma-social-two-polis-block-gree-urge-inez-sip',
+] as const
+
 export function warningStub() {
   return capturingStub(() => ({
     ...actionGenerateResult(),
@@ -34,7 +41,9 @@ export function writeFloorLeaves(root: string, count = 3) {
   const store = new FsCassetteStore({ root, outputDir: cassettesRoot })
   for (let index = 0; index < count; index++) {
     const handoff = makeReplayHandoff({ vision: false })
-    handoff.runId = asRunId(`floor-fixture-${index}`)
+    const runId = RUN_IDS[index]
+    if (runId === undefined) throw new Error('floor fixture supports at most three leaves')
+    handoff.runId = asRunId(runId)
     const leaf = extractRunCassettes({ handoff, artifacts: memArtifacts() }).cassettes
       .find(entry => entry.cassette.granularity === 'leaf')
     if (leaf === undefined) throw new Error('expected extracted floor leaf')

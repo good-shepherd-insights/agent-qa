@@ -107,6 +107,7 @@ describe('sweepCassetteReplays', () => {
       replayed: 2,
       replayRefusals: {},
       replayedDirs: ids.map(id => join(replaysRoot, ...id.split('/').map(slugBranch))),
+      recordedDirs: ids.map(id => join(replaysRoot, ...id.split('/').map(slugBranch))),
       notices: [],
     })
     expect(progress).toEqual(ids)

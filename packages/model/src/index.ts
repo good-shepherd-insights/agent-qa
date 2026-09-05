@@ -36,7 +36,7 @@ export { stripUnsupportedParamsMiddleware } from './middleware/strip-unsupported
 export { clearProviderRegistry, getProvider, listProviders, registerProvider } from './providers/registry'
 export type { ProviderAuthMode, ProviderDescriptor } from './providers/registry'
 export { createModel } from './registry'
-export type { ModelProviderOverrides } from './registry'
+export type { ModelCallObservation, ModelProviderOverrides } from './registry'
 export { validateProfile } from './validate'
 export { resolveVisionConfig } from './vision/resolve-config'
 export type { VisionSizingConfig } from './vision/resolve-config'

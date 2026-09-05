@@ -96,6 +96,8 @@ export interface ScoredBatchEntry {
 export interface EvalBatchReport {
   matcherVersion: number
   batchKey: string
+  /** Actual fresh-run inputs, never reconstructed from a later profile or corpus snapshot. */
+  runIdentity?: { fingerprint: string; corpusDigest: string }
   headline: {
     firstAttemptDecisionAccuracy: RateMetric
     perDecisionCost: PerDecisionCost
@@ -267,8 +269,17 @@ export function buildEvalReport(
   entries: readonly ScoredBatchEntry[],
   judge?: JudgeIdentityBlock,
   identity?: { judgeIdentity: 'mixed'; judgeModelIds: readonly string[] },
-  opts: { declaredSeed?: number } = {},
+  opts: {
+    declaredSeed?: number
+    /** Observed failures outside replay outcomes; these do not invent samples or refusals. */
+    additionalHarnessErrorCount?: number
+    runIdentity?: EvalBatchReport['runIdentity']
+  } = {},
 ): EvalBatchReport {
+  const additionalHarnessErrorCount = opts.additionalHarnessErrorCount ?? 0
+  if (!Number.isSafeInteger(additionalHarnessErrorCount) || additionalHarnessErrorCount < 0) {
+    throw new TypeError('additional harness error count must be a nonnegative safe integer')
+  }
   const tieCounts: Counts<TieCause> = {
     'partial-identity': 0,
     'value-mid-band': 0,
@@ -410,7 +421,7 @@ export function buildEvalReport(
   const briefSourceCounts = Object.fromEntries(
     BRIEF_SOURCES.map(source => [source, 0]),
   ) as Counts<BriefSource>
-  let harnessErrorCount = 0
+  let harnessErrorCount = additionalHarnessErrorCount
   let driftedCount = 0
   let escalatedCount = 0
   let noConsensusCount = 0
@@ -501,6 +512,7 @@ export function buildEvalReport(
   return {
     matcherVersion: MATCHER_CONFIG.matcherVersion,
     batchKey: computeBatchKey(entries.map(entry => entry.cassetteId)),
+    ...(opts.runIdentity === undefined ? {} : { runIdentity: { ...opts.runIdentity } }),
     headline: {
       firstAttemptDecisionAccuracy: rateMetric(accuracyNumerator, accuracyDenominator),
       perDecisionCost: {

@@ -3,6 +3,7 @@ import {
   createProviderRegistry,
   customProvider,
   extractJsonMiddleware,
+  wrapProvider,
 } from 'ai'
 
 import type { LanguageModelMiddleware } from 'ai'
@@ -56,10 +57,16 @@ export interface ModelProviderOverrides {
   languageModels?: Record<string, LanguageModelV3>
 }
 
+/** Invocation-only observation: no prompt, credentials, parameters or response are exposed. */
+export interface ModelCallObservation {
+  onProviderCall?: () => void
+}
+
 export function createModel(
   profile: ModelProfile,
   auth: ResolvedModelAuth,
   overrides: ModelProviderOverrides = {},
+  observation: ModelCallObservation = {},
 ): LanguageModelV3 {
   validateProfile(profile)
 
@@ -78,6 +85,31 @@ export function createModel(
     languageModels: overrides.languageModels ?? {},
     fallbackProvider: baseProvider,
   })
+  // Wrap BOTH explicit overrides and adapter fallbacks before the central middleware stack.
+  // A retry reaches this boundary again; a safety refusal never does. The SDK calls the raw
+  // model's methods with their receiver intact and leaves streaming results untouched.
+  const onProviderCall = observation.onProviderCall
+  const observe = () => {
+    try {
+      onProviderCall?.()
+    } catch {
+      // Observation cannot prevent a call or replace its original result/error.
+    }
+  }
+  const observedProvider = onProviderCall === undefined ? provider : wrapProvider({
+    provider,
+    languageModelMiddleware: {
+      specificationVersion: 'v3',
+      wrapGenerate: ({ doGenerate }) => {
+        observe()
+        return doGenerate()
+      },
+      wrapStream: ({ doStream }) => {
+        observe()
+        return doStream()
+      },
+    },
+  })
   // The provider-scoped strip is prepended into the per-model array (never appended to
   // MIDDLEWARE) so the safety seam stays the pinned-LAST element (validate:safety).
   const middleware = [
@@ -88,7 +120,7 @@ export function createModel(
     ...MIDDLEWARE,
   ]
   const registry = createProviderRegistry(
-    { [profile.provider]: provider },
+    { [profile.provider]: observedProvider },
     { languageModelMiddleware: middleware },
   )
 

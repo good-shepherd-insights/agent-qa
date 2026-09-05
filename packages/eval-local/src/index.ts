@@ -38,6 +38,9 @@ export type {
 
 export { assembleScoredBatch, cassetteProductPartition } from './replay-batch-assembly.js'
 
+export { replayCorpusOnce } from './aa-floor-composition.js'
+export type { ReplayCorpusOnceInput, ReplayCorpusOnceResult } from './aa-floor-composition.js'
+
 export { bindJudgePort } from './judge-binding.js'
 export type { JudgeBindingInput } from './judge-binding.js'
 

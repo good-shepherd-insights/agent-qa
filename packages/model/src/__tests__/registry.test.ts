@@ -1,6 +1,6 @@
 import { APICallError } from '@ai-sdk/provider'
 import { simulateReadableStream } from 'ai'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LanguageModelV3, LanguageModelV3CallOptions } from '@ai-sdk/provider'
 import type { ModelCapabilities, ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
@@ -13,6 +13,7 @@ import {
 import { capabilityKey, overrideStore } from '../capability/override-store.js'
 import { resolveCapabilities } from '../capability/resolve.js'
 import { createModel } from '../registry.js'
+import { getProvider } from '../providers/registry.js'
 import type { ResolvedModelAuth } from '../auth.js'
 
 interface RegistryCase {
@@ -138,6 +139,7 @@ async function collectStreamText(stream: ReadableStream<StreamPart>): Promise<st
 }
 
 describe('createModel', () => {
+  afterEach(() => vi.restoreAllMocks())
   beforeEach(() => {
     overrideStore.clear()
     setActiveMaskingContextResolver(() => undefined)
@@ -165,6 +167,32 @@ describe('createModel', () => {
 
     expect(attempts).toBe(2)
     expect(onProviderCall.mock.calls).toEqual([[], []])
+  })
+
+  it('observes adapter fallbacks and leaves no-observer calls unchanged', async () => {
+    const onProviderCall = vi.fn()
+    const providerCall = vi.fn()
+    const raw = fakeLanguageModel(providerCall)
+    vi.spyOn(getProvider('openai-compatible')!, 'adapter').mockReturnValue(raw)
+    const observed = createModel(overrideProfile(), noneAuth, {}, { onProviderCall })
+    const ordinary = createModel(overrideProfile(), noneAuth)
+    const params: LanguageModelV3CallOptions = { prompt: promptWithUserText('hello') }
+    expect(await observed.doGenerate(params)).toEqual(await ordinary.doGenerate(params))
+    expect(providerCall).toHaveBeenCalledTimes(2)
+    expect(onProviderCall).toHaveBeenCalledTimes(1)
+    expect(observed.modelId).toBe(ordinary.modelId)
+    expect(observed.provider).toBe(ordinary.provider)
+  })
+
+  it('keeps an observer failure from changing provider results or errors', async () => {
+    const onProviderCall = () => { throw new Error('observation failed') }
+    const raw = fakeLanguageModel(() => {})
+    const model = createModel(overrideProfile(), noneAuth,
+      { languageModels: { 'override-model': raw } }, { onProviderCall })
+    expect((await model.doGenerate({ prompt: [] })).finishReason.unified).toBe('stop')
+    const failure = apiError('provider failure')
+    raw.doGenerate = () => { throw failure }
+    await expect(model.doGenerate({ prompt: [] })).rejects.toBe(failure)
   })
 
   it('preserves provider binding and streaming while observing each invocation once', async () => {

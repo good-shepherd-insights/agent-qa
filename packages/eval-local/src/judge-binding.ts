@@ -19,6 +19,7 @@ import type {
 } from '@vostride/agent-qa-eval'
 import { createModel } from '@vostride/agent-qa-model'
 import type {
+  ModelCallObservation,
   ModelProfile,
   ModelProviderOverrides,
   ResolvedModelAuth,
@@ -31,6 +32,7 @@ export interface JudgeBindingInput {
   auth: ResolvedModelAuth
   /** Optional provider overrides — the captured-boundary stub seam for tests (createModel passthrough). */
   modelOverrides?: ModelProviderOverrides
+  modelCallObservation?: ModelCallObservation
 }
 
 // The closed D-09 verdict schema: forced explicit-unsure vocabulary + categorical confidence.
@@ -61,7 +63,7 @@ export function bindJudgePort(input: JudgeBindingInput): JudgePort {
       : {}),
   }
   // The ONLY createModel call site for the judge leg and its ONLY egress path (JUDGE-03).
-  const model = createModel(profileCopy, input.auth, input.modelOverrides ?? {})
+  const model = createModel(profileCopy, input.auth, input.modelOverrides ?? {}, input.modelCallObservation)
 
   return {
     judgeModelId: input.profile.model,

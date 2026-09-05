@@ -40,6 +40,8 @@ export function assembleScoredBatch(input: {
   replaysRoot: string
   cassettesRoot: string
   source: string
+  /** Fresh-run callers supply only completed writes; absence retains the generic disk sweep. */
+  recordDirs?: readonly string[]
 }): {
   entries: ScoredBatchEntry[]
   judgeBlocks: JudgeIdentityBlock[]
@@ -68,7 +70,7 @@ export function assembleScoredBatch(input: {
   const entries: ScoredBatchEntry[] = []
   const judgeBlocks: JudgeIdentityBlock[] = []
   let missingBundleCount = 0
-  for (const recordDir of listReplayRecordDirs(replaysRoot)) {
+  for (const recordDir of input.recordDirs ?? listReplayRecordDirs(replaysRoot)) {
     const load = loadReplayRecord(recordDir)
     const outcome = load.kind === 'loaded' ? load.outcome : load.refusal
     if (load.kind === 'refused') {

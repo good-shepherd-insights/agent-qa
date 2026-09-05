@@ -41,6 +41,8 @@ export interface SweepCassetteReplaysInput {
   profile: ModelProfile
   auth: ResolvedModelAuth
   modelOverrides?: ModelProviderOverrides
+  modelCallObservation?: RunCassetteReplayInput['modelCallObservation']
+  clock?: RunCassetteReplayInput['clock']
   k?: number
   seed?: number
   judge?: RunCassetteReplayInput['judge']
@@ -57,6 +59,8 @@ export interface SweepCassetteReplaysResult {
   replayed: number
   replayRefusals: Record<string, number>
   replayedDirs: string[]
+  /** Only invocations that returned and persisted this time, including typed refusals. */
+  recordedDirs: string[]
   notices: string[]
 }
 
@@ -70,6 +74,7 @@ export async function sweepCassetteReplays(
 ): Promise<SweepCassetteReplaysResult> {
   const replayRefusals: Record<string, number> = {}
   const replayedDirs: string[] = []
+  const recordedDirs: string[] = []
   const notices: string[] = []
   let replayed = 0
 
@@ -83,6 +88,8 @@ export async function sweepCassetteReplays(
         profile: input.profile,
         auth: input.auth,
         ...(input.modelOverrides !== undefined ? { modelOverrides: input.modelOverrides } : {}),
+        ...(input.modelCallObservation !== undefined ? { modelCallObservation: input.modelCallObservation } : {}),
+        ...(input.clock !== undefined ? { clock: input.clock } : {}),
         ...(input.k !== undefined ? { k: input.k } : {}),
         ...(input.seed !== undefined ? { seed: input.seed } : {}),
         ...(input.judge !== undefined ? { judge: input.judge } : {}),
@@ -98,17 +105,17 @@ export async function sweepCassetteReplays(
       )
       continue
     }
+    const recordDir = join(input.replaysRoot, ...entry.cassette.id.split('/').map(segment => slugBranch(segment)))
+    recordedDirs.push(recordDir)
     if (!('granularity' in outcome)) {
       bumpCounter(replayRefusals, outcome.reason)
       continue
     }
     replayed++
-    replayedDirs.push(
-      join(input.replaysRoot, ...entry.cassette.id.split('/').map(segment => slugBranch(segment))),
-    )
+    replayedDirs.push(recordDir)
   }
 
-  return { replayed, replayRefusals, replayedDirs, notices }
+  return { replayed, replayRefusals, replayedDirs, recordedDirs, notices }
 }
 
 function bumpCounter(counters: Record<string, number>, reason: string): void {

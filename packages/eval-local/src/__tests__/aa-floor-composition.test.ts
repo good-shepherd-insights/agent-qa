@@ -3,7 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { computeBatchKey, computeGateVerdict } from '@vostride/agent-qa-eval'
+import { computeBatchKey, computeGateVerdict, extractRunCassettes } from '@vostride/agent-qa-eval'
+import { resolveCapabilities } from '@vostride/agent-qa-model'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -15,6 +16,15 @@ import {
   warningStub,
   writeFloorLeaves,
 } from './fixtures/floor-fixtures.js'
+import {
+  actionGenerateResult,
+  capturingStub,
+  familyStubProfile,
+  judgeGenerateResult,
+  makeReplayHandoff,
+  memArtifacts,
+  nonActionGenerateResult,
+} from './fixtures/replay-fixtures.js'
 
 const roots: string[] = []
 async function fixture() {
@@ -60,7 +70,7 @@ describe('replayCorpusOnce', () => {
       kind: 'loaded', report: { runIdentity: { fingerprint, corpusDigest } },
     })
     const second = await evalLocal.replayCorpusOnce({ ...input, corpusDigest: 'b'.repeat(64),
-      profile: { ...input.profile, capabilities: { vision: true } },
+      profile: { ...input.profile, capabilities: { ...resolveCapabilities(input.profile), vision: true } },
     })
     expect(second.report.runIdentity?.fingerprint).not.toBe(fingerprint)
     expect(second.report.runIdentity?.corpusDigest).toBe('b'.repeat(64))
@@ -113,7 +123,7 @@ describe('replayCorpusOnce', () => {
     expect(first.vectors).toHaveLength(3)
     const failedId = input.selected[1]!.cassette.id
     const save = evalLocal.FsReplayRecordStore.prototype.save
-    vi.spyOn(evalLocal.FsReplayRecordStore.prototype, 'save').mockImplementation(function(outcome) {
+    vi.spyOn(evalLocal.FsReplayRecordStore.prototype, 'save').mockImplementation(function(this: evalLocal.FsReplayRecordStore, outcome) {
       if (outcome.cassetteId === failedId) throw new Error('current record write failed')
       return save.call(this, outcome)
     })
@@ -131,5 +141,87 @@ describe('replayCorpusOnce', () => {
     })
     expect(verdict.exit).toBe(2)
     expect(verdict.inconclusive).toContainEqual({ reason: 'harness-errors', detail: expect.any(String) })
+  })
+
+  it('counts multiple provider rounds for one sample and leaves fingerprinting unchanged', async () => {
+    const { input, root } = await fixture()
+    const handoff = makeReplayHandoff({ vision: false,
+      exchanges: [{ tool: 'lookup_note', args: {}, result: 'continue' }] })
+    const leaf = extractRunCassettes({ handoff, artifacts: memArtifacts() }).cassettes
+      .find(entry => entry.cassette.granularity === 'leaf')!
+    new evalLocal.FsCassetteStore({ root, outputDir: input.cassettesRoot }).write(leaf)
+    const selected = evalLocal.loadCassetteBundles(input.cassettesRoot).loaded
+      .filter(entry => entry.cassette.id === leaf.cassette.id)
+    const stub = capturingStub(call => call === 0
+      ? nonActionGenerateResult('lookup_note') : actionGenerateResult())
+    const modelOverrides = { languageModels: stub.languageModels }
+    const before = evalLocal.computeReplayProfileFingerprintFor({
+      profile: input.profile, modelOverrides, seedPolicy: 'declared',
+    })
+    const result = await evalLocal.replayCorpusOnce({ ...input, selected, modelOverrides })
+    expect(result.report.totalCost.sampleCount).toBe(1)
+    expect(result.modelCalls).toBe(2)
+    expect(stub.captured).toHaveLength(2)
+    expect(result.report.totalCost.promptTokens).toBe(18)
+    expect(evalLocal.computeReplayProfileFingerprintFor({
+      profile: input.profile, modelOverrides, seedPolicy: 'declared',
+    })).toBe(before)
+  })
+
+  it('includes fresh typed refusals but no stale success when every selected replay is refused', async () => {
+    const { input, root, stub } = await fixture()
+    await evalLocal.replayCorpusOnce(input)
+    expect(stub.captured).toHaveLength(3)
+    const handoff = makeReplayHandoff({ vision: true })
+    const leaf = extractRunCassettes({ handoff, artifacts: { getBlob: () => undefined } }).cassettes
+      .find(entry => entry.cassette.granularity === 'leaf')!
+    new evalLocal.FsCassetteStore({ root, outputDir: input.cassettesRoot }).write(leaf)
+    const selected = evalLocal.loadCassetteBundles(input.cassettesRoot).loaded
+      .filter(entry => entry.cassette.id === leaf.cassette.id)
+    const result = await evalLocal.replayCorpusOnce({ ...input, selected })
+    expect(result.modelCalls).toBe(0)
+    expect(stub.captured).toHaveLength(3)
+    expect(result.sweep.replayedDirs).toHaveLength(0)
+    expect(result.sweep.recordedDirs).toHaveLength(1)
+    expect(result.report.honesty.refusalCounts.completeness).toBe(1)
+    expect(result.report.totalCost.sampleCount).toBe(0)
+    expect(result.vectors).toEqual([])
+  })
+
+  it('includes judge provider calls and preserves their separate usage and identity', async () => {
+    const { input, root } = await fixture()
+    const handoff = makeReplayHandoff({ vision: false })
+    const step = handoff.tests[0]!.steps[0]!
+    step.modelProfile!.modelId = 'gemini-recorded-fixture'
+    const sub = step.subActions[0]!
+    sub.plannedAction = { type: 'fill', ref: sub.stateBefore.elements[0]!.ref,
+      text: 'hello world foo', clearMode: 'replace', submit: false }
+    const leaf = extractRunCassettes({ handoff, artifacts: memArtifacts() }).cassettes
+      .find(entry => entry.cassette.granularity === 'leaf')!
+    new evalLocal.FsCassetteStore({ root, outputDir: input.cassettesRoot }).write(leaf)
+    const selected = evalLocal.loadCassetteBundles(input.cassettesRoot).loaded
+      .filter(entry => entry.cassette.id === leaf.cassette.id)
+    const planner = capturingStub(() => ({
+      ...actionGenerateResult(),
+      content: [{ type: 'tool-call', toolCallId: 'fill-action', toolName: 'web_fill',
+        input: JSON.stringify({ ref: 'e-continue', text: 'hello world bar', reasoning: 'fill',
+          confidence: 0.95, stepComplete: true, doesActionAdvanceUsTowardsGoal: true }) }],
+    }), 'gpt-replay-stub')
+    const judge = capturingStub(() => judgeGenerateResult('equivalent', 'high'), 'claude-judge-stub')
+    const result = await evalLocal.replayCorpusOnce({ ...input, selected,
+      profile: familyStubProfile('gpt-replay-stub'),
+      modelOverrides: { languageModels: planner.languageModels },
+      judge: { profile: familyStubProfile('claude-judge-stub'), auth: noneAuth,
+        modelOverrides: { languageModels: judge.languageModels } },
+    })
+    expect(planner.captured).toHaveLength(1)
+    expect(judge.captured).toHaveLength(2)
+    expect(result.modelCalls).toBe(3)
+    expect(result.report.totalCost.sampleCount).toBe(1)
+    expect(result.report.totalCost.promptTokens).toBe(10)
+    expect(result.report.honesty.judge.cost).toEqual({
+      calls: 2, inputTokens: 20, outputTokens: 4, outcomesMissingUsage: 0,
+    })
+    expect(result.report.judge?.judgeModelId).toBe('claude-judge-stub')
   })
 })

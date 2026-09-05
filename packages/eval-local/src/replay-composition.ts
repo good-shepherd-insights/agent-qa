@@ -50,6 +50,7 @@ import {
   resolveCapabilities,
 } from '@vostride/agent-qa-model'
 import type {
+  ModelCallObservation,
   ModelProfile,
   ModelProviderOverrides,
   ResolvedModelAuth,
@@ -74,6 +75,10 @@ export interface RunCassetteReplayInput {
   auth: ResolvedModelAuth
   /** Optional provider overrides — the captured-boundary stub seam for tests (createModel passthrough). */
   modelOverrides?: ModelProviderOverrides
+  /** Whole-run counter shared by planner and judge, including provider retries. */
+  modelCallObservation?: ModelCallObservation
+  /** Optional deterministic timing port for repeatable measurement fixtures. */
+  clock?: ReplayClock
   /** Sample budget (D-10). Defaults to the engine's k=1. */
   k?: number
   /** Optional replay seed applied through the 366 sampling seam when the provider supports it. */
@@ -289,7 +294,7 @@ export async function runCassetteReplay(
   // The ONLY createModel call site and the ONLY egress path. The handle is shared across samples
   // (RESEARCH A3); per-sample freshness is confined to accounting + planner + exchange server.
   // D-11: computeReplayProfileFingerprintFor must read these same resolved profile values.
-  const model = createModel(profileCopy, input.auth, input.modelOverrides ?? {})
+  const model = createModel(profileCopy, input.auth, input.modelOverrides ?? {}, input.modelCallObservation)
   const replayedModel = { provider: input.profile.provider, modelId: input.profile.model }
 
   const plannerFactory: ReplayPlannerFactory = {
@@ -324,7 +329,7 @@ export async function runCassetteReplay(
   )
 
   // Host wall-clock behind the eval-core ReplayClock port (eval core bans host time APIs).
-  const clock: ReplayClock = { now: () => performance.now() }
+  const clock: ReplayClock = input.clock ?? { now: () => performance.now() }
 
   // D-06 safety scope: factory-or-default masking (empty-seeded pass-through by default,
   // CLI-seeded via the 372 maskingContextFactory seam; guardrails still scan every replayed
@@ -380,7 +385,9 @@ export async function runCassetteReplay(
         : {}),
     })
     const port =
-      eligibility.eligible && input.judge !== undefined ? bindJudgePort(input.judge) : undefined
+      eligibility.eligible && input.judge !== undefined
+        ? bindJudgePort({ ...input.judge, modelCallObservation: input.modelCallObservation })
+        : undefined
 
     // The judge safety scope (Pitfall 1): the replay scope closed before scoring, so adjudication
     // gets its OWN fresh masking context and a replay-scoped JsonlAuditSink — the ALS-resolved
