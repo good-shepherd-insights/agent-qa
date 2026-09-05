@@ -407,6 +407,43 @@ export type {
 } from './baseline/profile-key'
 
 export {
+  NOISE_FLOOR_SCHEMA_VERSION,
+  NOISE_FLOOR_METHOD,
+  FLOOR_SPLITS,
+  FLOOR_PROTOCOL_MINIMUM,
+  noiseFloorArtefactSchema,
+  guardNoiseFloorArtefact,
+  assertFloorArtefactCommittable,
+  renderFloorRefusal,
+} from './gate/floor-artefact'
+export type {
+  NoiseFloorArtefact,
+  AxisFloorRecord,
+  AxisFloorSet,
+  FloorSplit,
+  FloorRunRecord,
+  RunCostRecord,
+  MinimumGateSetRecord,
+  NullLiftRecord,
+  ProductFloorRecord,
+  SplitFloorRecord,
+  FloorRefusal,
+} from './gate/floor-artefact'
+export { foldNoiseFloorArtefact, deriveMinimumGateSet } from './gate/floor-fold'
+export type { FloorRunInput, FoldNoiseFloorInput } from './gate/floor-fold'
+export {
+  CLASSIFIER_REPEATABILITY_SCHEMA_VERSION,
+  classifierRepeatabilitySchema,
+  foldClassifierRepeatability,
+  guardClassifierRepeatability,
+} from './gate/classifier-repeatability'
+export type {
+  ClassifierRepeatability,
+  ClassifierRunInput,
+  ClassifierSweep,
+} from './gate/classifier-repeatability'
+
+export {
   countGateSet,
   emptyGateSetCounts,
   EXCLUSION_REASONS,

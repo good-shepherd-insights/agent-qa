@@ -3,6 +3,8 @@ import { z } from 'zod'
 
 import { FLOOR_AXES, type FloorAxis } from '../stats/decision-vector'
 import { GENERALIZATION_VERDICTS, type GeneralizationVerdict } from '../stats/generalization'
+import { classifierRepeatabilitySchema, runCostRecordSchema } from './classifier-repeatability'
+import type { ClassifierRepeatability } from './classifier-repeatability'
 
 export const NOISE_FLOOR_SCHEMA_VERSION = 1 as const
 export const NOISE_FLOOR_METHOD = 'aa-repeat-spread-plus-wilson' as const
@@ -122,7 +124,7 @@ export interface NoiseFloorArtefact {
   minimumGateSet: MinimumGateSetRecord
   runs: readonly FloorRunRecord[]
   cost: RunCostRecord
-  classifierRepeatability?: unknown
+  classifierRepeatability?: ClassifierRepeatability
   explanation?: string
 }
 
@@ -141,23 +143,6 @@ const correctness = z
     path: ['correct'],
     message: 'correct must not exceed n',
   })
-
-const runCostRecordSchema = z
-  .object({
-    modelCalls: count.optional(),
-    sampleCount: count.optional(),
-    samplesMissingTokenUsage: count.optional(),
-    promptTokens: count.optional(),
-    completionTokens: count.optional(),
-    totalTokens: count.optional(),
-    durationMs: z.number().nonnegative().optional(),
-    judgeCost: z
-      .object({ calls: count, inputTokens: count, outputTokens: count, outcomesMissingUsage: count })
-      .strict()
-      .optional(),
-    wallClockMs: z.number().nonnegative(),
-  })
-  .strict()
 
 const axisFloorRecordSchema = z
   .object({
@@ -288,7 +273,7 @@ export const noiseFloorArtefactSchema = z
         .strict(),
     ),
     cost: runCostRecordSchema,
-    classifierRepeatability: z.unknown().optional(),
+    classifierRepeatability: classifierRepeatabilitySchema.optional(),
     explanation: z.string().optional(),
   })
   .strict()

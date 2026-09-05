@@ -12,6 +12,7 @@ import { mcnemarExactP, pairedDecisionDiff } from '../stats/paired'
 import type { DecisionVector, PairedDecisionDiff } from '../stats/paired'
 import { createSeededRng } from '../stats/prng'
 import { wilsonInterval } from '../stats/wilson'
+import type { ClassifierRepeatability } from './classifier-repeatability'
 import {
   FLOOR_PROTOCOL_MINIMUM,
   FLOOR_SPLITS,
@@ -60,7 +61,7 @@ export interface FoldNoiseFloorInput {
   splitByCassetteId: ReadonlyMap<string, FloorSplit>
   censusByProduct: Readonly<Record<string, { natural: number; heldOutShared: number; heldOutPrivate: number }>>
   baselineRate?: { correct: number; n: number; batchKey: string }
-  classifierRepeatability?: unknown
+  classifierRepeatability?: ClassifierRepeatability
   explanation?: string
 }
 
