@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { generateRunId } from '@vostride/agent-qa-ids'
 import {
   assignSplit,
   buildEvalReport,
@@ -21,13 +22,22 @@ import {
   computeCorpusDigest,
   countGateSet,
   deriveCensus,
+  foldClassifierRepeatability,
+  foldNoiseFloorArtefact,
   guardDecisionVectorsDocument,
+  guardNoiseFloorArtefact,
   guardPartitionManifest,
   guardRunExclusionRecord,
   partitionParamsOf,
   projectRunExclusion,
 } from '@vostride/agent-qa-eval'
-import type { CorpusCensus, JudgeIdentityBlock, SeedPolicy } from '@vostride/agent-qa-eval'
+import type {
+  ClassifierRepeatability,
+  CorpusCensus,
+  DecisionCorrectnessVector,
+  JudgeIdentityBlock,
+  SeedPolicy,
+} from '@vostride/agent-qa-eval'
 import type { createModel, ModelProfile, ModelProviderOverrides } from '@vostride/agent-qa-model'
 import {
   FsEvidenceArtifactStore,
@@ -2502,6 +2512,156 @@ async function seededCorpusFixture(): Promise<{
   return { dir, configPath, session }
 }
 
+/** Pure synthetic repeats over fixture cassette identities, serialized with the committed law. */
+async function writeFloorFixture(
+  fixture: { dir: string; session: EvalSession },
+  plannerModelId: string,
+  options: { empty?: boolean; classifierRepeatability?: ClassifierRepeatability } = {},
+) {
+  const committedRoot = join(fixture.dir, 'agent-qa-eval')
+  const corpus = readCommittedCorpus(committedRoot)
+  const fingerprint = await resolveReplayProfileFingerprint(fixture.session, 'declared')
+  const profile = {
+    plannerModelId, fingerprint, matcherVersion: 1,
+    profileKey: composeBaselineProfileKey({ plannerModelId, fingerprint, matcherVersion: 1 }),
+  }
+  const vectors: DecisionCorrectnessVector[] = options.empty ? [] : corpus.snapshot.entries.map(
+    entry => ({
+      key: `${entry.cassetteId}#-#0`, cassetteId: entry.cassetteId,
+      decisionOrdinal: 0, product: entry.product, briefSource: 'empty',
+      axes: {
+        headline: 'correct', elementIdentity: 'correct', opClass: 'correct',
+        value: 'not-applicable', sideEffect: 'correct', loop: 'not-applicable',
+      },
+    }),
+  )
+  const artefact = foldNoiseFloorArtefact({
+    profile, corpusDigest: computeCorpusDigest(corpus.snapshot.entries), partitionVersion: 1,
+    seeds: [11, 29], repeats: 3, bootstrapSeed: 19,
+    runs: [11, 11, 11, 29].map((seed, index) => ({
+      index, seed, vectors, wallClockMs: 10,
+      report: buildEvalReport([], undefined, undefined, { declaredSeed: seed }),
+    })),
+    splitByCassetteId: new Map(corpus.snapshot.entries.map(entry => [entry.cassetteId, 'natural'])),
+    censusByProduct: { default: { natural: vectors.length, heldOutShared: 0, heldOutPrivate: 0 } },
+    ...(options.classifierRepeatability === undefined
+      ? {} : { classifierRepeatability: options.classifierRepeatability }),
+  })
+  expect(guardNoiseFloorArtefact(artefact).kind).toBe('ok')
+  const path = join(committedRoot, 'reports', 'noise-floor', `${slugBranch(profile.profileKey)}.json`)
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, committedFileText(artefact))
+  return { path, artefact }
+}
+
+function classifierDisclosureFixture(): ClassifierRepeatability {
+  return foldClassifierRepeatability({
+    k: 3,
+    runs: [['unknown', 'flake', 'unknown'], ['unknown', 'unknown', 'unknown']].map(classes => ({
+      runSlug: generateRunId(), product: 'default',
+      sweeps: classes.map(cls => ({
+        analysisDigest: createHash('sha256').update(cls).digest('hex'),
+        verdicts: [{ class: cls as 'unknown' | 'flake' }],
+      })),
+    })),
+  })
+}
+
+describe('runCensusVerb — committed floor disclosure without a census schema change (415 D-14)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('projects every floor sorted by profileKey with measured minima and repeatability rates', async () => {
+    const fixture = await seededCorpusFixture()
+    const repeatability = classifierDisclosureFixture()
+    expect(repeatability).toMatchObject({ n: 2, k: 3, classFlipRate: 0.5, admitExcludeFlipRate: 0.5 })
+    const z = await writeFloorFixture(fixture, 'z-planner')
+    const a = await writeFloorFixture(fixture, 'a-planner', { classifierRepeatability: repeatability })
+    expect(a.artefact.minimumGateSet.value).toBeGreaterThanOrEqual(3)
+    const before = await snapshotTree(dirname(a.path))
+    const result = await runCensusVerb(fixture.session)
+    expect(result).toHaveProperty('noiseFloor', [
+      {
+        profileKey: a.artefact.profileKey, path: a.path,
+        minimumGateSet: a.artefact.minimumGateSet.value,
+        minimumGateSetDerivation: a.artefact.minimumGateSet.derivation,
+        classifierRepeatability: { n: 2, k: 3, classFlipRate: 0.5, admitExcludeFlipRate: 0.5 },
+      },
+      {
+        profileKey: z.artefact.profileKey, path: z.path,
+        minimumGateSet: z.artefact.minimumGateSet.value,
+        minimumGateSetDerivation: z.artefact.minimumGateSet.derivation,
+      },
+    ])
+    const { logs, errors } = captureConsole()
+    await buildProgram().parseAsync(['--config', fixture.configPath, 'eval', 'census'], { from: 'user' })
+    expect(errors).toEqual([])
+    expect(logs.filter(line => line.startsWith('floor '))).toEqual([
+      `floor ${a.artefact.profileKey}: minimumGateSet=${a.artefact.minimumGateSet.value} `
+        + 'classifierRepeatability=n:2 k:3 classFlipRate=0.5 admitExcludeFlipRate=0.5',
+      `floor ${z.artefact.profileKey}: minimumGateSet=${z.artefact.minimumGateSet.value} `
+        + 'classifierRepeatability=undefined',
+    ])
+    expect(await snapshotTree(dirname(a.path))).toEqual(before)
+  })
+
+  it('retains the actual missing-minimum derivation and undefined rates instead of inventing zeroes', async () => {
+    const fixture = await seededCorpusFixture()
+    const floor = await writeFloorFixture(fixture, 'empty-planner', {
+      empty: true, classifierRepeatability: foldClassifierRepeatability({ k: 3, runs: [] }),
+    })
+    expect(floor.artefact.minimumGateSet).not.toHaveProperty('value')
+    const result = await runCensusVerb(fixture.session)
+    expect(result).toHaveProperty('noiseFloor', [{
+      profileKey: floor.artefact.profileKey, path: floor.path,
+      minimumGateSetDerivation: floor.artefact.minimumGateSet.derivation,
+      classifierRepeatability: { n: 0, k: 3 },
+    }])
+    const { logs, errors } = captureConsole()
+    await buildProgram().parseAsync(['--config', fixture.configPath, 'eval', 'census'], { from: 'user' })
+    expect(errors).toEqual([])
+    expect(logs).toContain(
+      `floor ${floor.artefact.profileKey}: minimumGateSet=undefined (${floor.artefact.minimumGateSet.derivation}) `
+        + 'classifierRepeatability=n:0 k:3 classFlipRate=undefined admitExcludeFlipRate=undefined',
+    )
+  })
+
+  it('omits the floor field and all console floor lines when no artefact exists', async () => {
+    const fixture = await seededCorpusFixture()
+    expect(await runCensusVerb(fixture.session)).not.toHaveProperty('noiseFloor')
+    const { logs } = captureConsole()
+    await buildProgram().parseAsync(['--config', fixture.configPath, 'eval', 'census'], { from: 'user' })
+    expect(logs.some(line => line.startsWith('floor '))).toBe(false)
+  })
+
+  it('turns floor read refusals into named notices alongside valid artefacts', async () => {
+    const fixture = await seededCorpusFixture()
+    const floor = await writeFloorFixture(fixture, 'valid-planner')
+    const broken = join(dirname(floor.path), 'broken.json')
+    const stray = join(dirname(dirname(floor.path)), 'noise-floor.json')
+    await writeFile(broken, '{')
+    await writeFile(stray, committedFileText(floor.artefact))
+    const result = await runCensusVerb(fixture.session)
+    for (const path of [broken, stray]) {
+      expect(result.notices.some(notice => notice.startsWith(`committed read refused ${path}:`))).toBe(true)
+    }
+    expect(result).toHaveProperty('noiseFloor.0.profileKey', floor.artefact.profileKey)
+  })
+
+  it('preserves committed census JSON and markdown byte-for-byte after a floor is added', async () => {
+    const fixture = await seededCorpusFixture()
+    const first = await runCensusVerb(fixture.session, { commit: true })
+    expect(first.committed?.kind).toBe('committed')
+    const censusDir = join(fixture.dir, 'agent-qa-eval', 'reports', 'census', first.corpusDigest)
+    const before = await snapshotTree(censusDir)
+    await writeFloorFixture(fixture, 'measured-planner', { classifierRepeatability: classifierDisclosureFixture() })
+    const second = await runCensusVerb(fixture.session, { commit: true })
+    expect(second).toHaveProperty('noiseFloor')
+    expect(second.census).toEqual(first.census)
+    expect(second.committed).toMatchObject({ kind: 'committed', json: 'unchanged', markdown: 'unchanged' })
+    expect(await snapshotTree(censusDir)).toEqual(before)
+  })
+})
+
 /** Commit one report into the fixture committed root under an explicit batchKey. */
 function commitFixtureReport(
   dir: string,
@@ -3040,6 +3200,79 @@ async function baselineProfileKey(session: EvalSession, seedPolicy: SeedPolicy =
     matcherVersion: 1,
   })
 }
+
+describe('runReportVerb — console decisions and baseline outcomes (415 D-11/D-14)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('prints the projected vector count and profile key for written then unchanged parts', async () => {
+    const { dir, configPath, session, ids } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+    const batchKey = computeBatchKey(ids)
+    const profileKey = await baselineProfileKey(session)
+    const { logs, errors } = captureConsole()
+    const args = ['--config', configPath, 'eval', 'report', '--commit', '--baseline']
+    await buildProgram().parseAsync(args, { from: 'user' })
+    const document = JSON.parse(await readFile(
+      join(dir, 'agent-qa-eval', 'reports', batchKey, 'decisions.json'), 'utf8',
+    ))
+    expect(document.vectors.length).toBeGreaterThan(0)
+    expect(logs).toContain(`decisions: ${document.vectors.length} vectors (written)`)
+    expect(logs).toContain(`baseline: ${profileKey} (written)`)
+    logs.length = 0
+    await buildProgram().parseAsync(args, { from: 'user' })
+    expect(logs).toContain(`decisions: ${document.vectors.length} vectors (unchanged)`)
+    expect(logs).toContain(`baseline: ${profileKey} (unchanged)`)
+    expect(errors).toEqual([])
+  })
+
+  it('prints zero vectors for an all-refusal commit', async () => {
+    const { dir, configPath, ids } = await scoredRecordsFixture()
+    const store = new FsReplayRecordStore({ root: join(dir, '.agent-qa') })
+    for (const cassetteId of ids) {
+      store.save({ kind: 'integrity-refusal', cassetteId, reason: 'missing-blob', detail: 'fixture' })
+    }
+    const { logs, errors } = captureConsole()
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'report', '--commit'], { from: 'user' })
+    expect(logs).toContain('decisions: 0 vectors (written)')
+    expect(errors).toEqual([])
+  })
+
+  it('names the committed read and refused key while keeping comparator details visible', async () => {
+    const { configPath, session, batchKey, reportFile } = await committedReportFixture(FIXTURE_JUDGE_BLOCK)
+    const options = { baseline: true, fromCommitted: batchKey, seedPolicy: 'declared' as const }
+    const result = await runReportVerb(session, {}, options)
+    expect(result.baseline?.kind).toBe('refused')
+    const { logs, errors } = captureConsole()
+    await buildProgram().parseAsync([
+      '--config', configPath, 'eval', 'report', '--baseline',
+      '--from-committed', batchKey, '--seed-policy', 'declared',
+    ], { from: 'user' })
+    expect(logs).toContain(`baseline: ${result.profileKey} (refused)`)
+    expect(logs.join('\n')).toContain('baseline comparator refused: same-family-override')
+    expect(logs.join('\n')).toContain(`committed file: ${reportFile}`)
+    expect(logs.join('\n')).toContain('(committed report)')
+    expect(logs.join('\n')).not.toContain('(0 entries)')
+    expect(logs.join('\n')).not.toContain('staged file:')
+    expect(logs.some(line => line.startsWith('decisions:'))).toBe(false)
+    expect(errors).toEqual([])
+  })
+
+  it('prints the profile key and conflict path when a committed designation already names another batch', async () => {
+    const { configPath, session, dir, batchKey } = await committedReportFixture()
+    const options = { baseline: true, fromCommitted: batchKey, seedPolicy: 'declared' as const }
+    const first = await runReportVerb(session, {}, options)
+    expect(first.baseline?.kind).toBe('written')
+    const otherBatchKey = computeBatchKey([])
+    commitFixtureReport(dir, otherBatchKey, undefined)
+    const { logs, errors } = captureConsole()
+    await buildProgram().parseAsync([
+      '--config', configPath, 'eval', 'report', '--baseline',
+      '--from-committed', otherBatchKey, '--seed-policy', 'declared',
+    ], { from: 'user' })
+    expect(logs).toContain(`baseline: ${first.profileKey} (write-conflict)`)
+    expect(logs.join('\n')).toContain(`reports/baselines/${slugBranch(first.profileKey!)}.json`)
+    expect(errors).toEqual([])
+  })
+})
 
 describe('resolveReplayProfileFingerprint — credential-free profile identity (415 D-11)', () => {
   afterEach(() => {
