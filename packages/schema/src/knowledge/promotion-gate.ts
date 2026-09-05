@@ -7,6 +7,19 @@ import type { BundleStatus } from './trust-fold'
 
 export type PromotionGateObservation = Pick<DistilledObservation, 'element' | 'error'>
 
+/**
+ * 414 D-14. What the host can say about the anti-Goodhart gate set for THIS candidate:
+ * whether a replay gate exists here at all, and whether a separable gate set survives
+ * provenance-keyed exclusion (`spec/v2/memory.md` §12.4(c)-(d)).
+ *
+ * Phase 416 (PROM-04) widens this posture; 414 takes only the two booleans the
+ * empty-gate-set hold reads.
+ */
+export interface PromotionGatePosture {
+  gateSetNonEmpty: boolean
+  replayGateAvailable: boolean
+}
+
 /** Bundle-derivable evidence only; callers assemble this view from canonical bundle truth. */
 export interface PromotionGateInput {
   kind: BundleKind
@@ -23,6 +36,12 @@ export interface PromotionGateInput {
   confirmedOutcomeEvidenceTokens: readonly EvidenceToken[]
   hasUserDeprecateInLineage: boolean
   memoryOffForAnchorGroup: boolean
+  /**
+   * 414 D-14: OPTIONAL and additive. Absent means "no replay gate exists on this host" — the
+   * v51 BYOM floor of `spec/v2/memory.md` §12.2, whose verdicts must stay byte-identical — so
+   * a caller that knows nothing about gate sets keeps the pre-414 answer for every input.
+   */
+  gatePosture?: PromotionGatePosture
 }
 
 export type PromotionGateHoldReason =
@@ -37,6 +56,35 @@ export type PromotionGateHoldReason =
   | 'missing-root-cause'
   | 'memory-off-anchor'
   | 'user-deprecated'
+  | 'empty-gate-set'
+
+/**
+ * The v54 deletion bar on the hold-reason vocabulary (414 D-14 / D-22).
+ *
+ * This is a PROJECTION of the union above, not a second declaration of it: the `satisfies`
+ * clause makes an entry that names no member a compile error, and the reverse direction (a
+ * member no entry names) is pinned by the never-bar in `__tests__/promotion-gate.test-d.ts`.
+ * The hand-spelled runtime cell in `__tests__/promotion-gate-hold-reasons.test.ts` catches the
+ * third case — a member widened in through a cast, which satisfies both compile-time halves.
+ *
+ * `promotionHoldReason` is a PERSISTED value in knowledge-local commit outcomes and in CLI
+ * output, so a member joining or leaving this list is a coordinated change, never a local
+ * edit. Phase 416 (PROM-04) extends the vocabulary THROUGH this bar rather than creating it.
+ */
+export const PROMOTION_GATE_HOLD_REASONS = [
+  'kind-excluded',
+  'not-candidate',
+  'window-closed',
+  'withheld',
+  'needs-enrichment',
+  'evidence-incomplete',
+  'no-confirmed-evidence',
+  'no-element-observation',
+  'missing-root-cause',
+  'memory-off-anchor',
+  'user-deprecated',
+  'empty-gate-set',
+] as const satisfies readonly PromotionGateHoldReason[]
 
 export type PromotionGateVerdict =
   | { verdict: 'promote' }
@@ -77,6 +125,10 @@ export function evaluatePromotionGate(input: PromotionGateInput): PromotionGateV
   if (input.kind !== 'fact' && input.kind !== 'caution') return hold('kind-excluded')
   if (input.status !== 'candidate') return hold('not-candidate')
   if (!input.validityOpen) return hold('window-closed')
+  const posture = input.gatePosture
+  if (posture?.replayGateAvailable === true && posture.gateSetNonEmpty === false) {
+    return hold('empty-gate-set')
+  }
   if (input.withheld) return hold('withheld')
   if (input.needsEnrichment) return hold('needs-enrichment')
   if (input.evidenceIncomplete) return hold('evidence-incomplete')
