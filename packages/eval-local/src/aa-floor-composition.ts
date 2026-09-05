@@ -48,6 +48,8 @@ import { FsScoreStore } from './score-store.js'
 
 export interface ReplayCorpusOnceInput {
   selected: readonly LoadedCassetteBundle[]
+  /** Bundle-load refusals excluded from selected; never include returned replay refusals. */
+  loadRefusals?: Readonly<Partial<EvalBatchReport['honesty']['refusalCounts']>>
   cassettesRoot: string
   agentQaRoot: string
   runRoot: string
@@ -171,6 +173,7 @@ export async function runNoiseFloorMeasurement(
     runRoots.push(runRoot)
     const run = await replayCorpusOnce({
       selected,
+      loadRefusals: loaded.loadRefusals,
       cassettesRoot: input.cassettesRoot,
       agentQaRoot: input.agentQaRoot,
       runRoot,
@@ -332,6 +335,7 @@ export async function replayCorpusOnce(
   const report = buildEvalReport(entries, judge, identity, {
     declaredSeed: input.seed,
     additionalHarnessErrorCount: sweep.replayRefusals['harness-error'] ?? 0,
+    ...(input.loadRefusals === undefined ? {} : { additionalRefusalCounts: input.loadRefusals }),
     ...(runIdentity === undefined ? {} : { runIdentity }),
   })
   const vectors = decisionCorrectnessVectors(entries, partitionsById)

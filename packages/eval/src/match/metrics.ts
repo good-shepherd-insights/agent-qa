@@ -4,6 +4,7 @@ import { canonicalJson } from '../canonical-json'
 import type { CassetteLabelLeg } from '../cassette/label-leg'
 import { BRIEF_SOURCES } from '../replay/brief-tiers'
 import type { BriefSource } from '../replay/brief-tiers'
+import { REPLAY_REFUSAL_REASONS } from '../replay/result'
 import type {
   DecisionReplayResult,
   ReplayCassetteOutcome,
@@ -273,6 +274,8 @@ export function buildEvalReport(
     declaredSeed?: number
     /** Observed failures outside replay outcomes; these do not invent samples or refusals. */
     additionalHarnessErrorCount?: number
+    /** Observed load refusals excluded from entries; returned replay refusals stay in entries. */
+    additionalRefusalCounts?: Readonly<Partial<EvalBatchReport['honesty']['refusalCounts']>>
     runIdentity?: EvalBatchReport['runIdentity']
   } = {},
 ): EvalBatchReport {
@@ -306,6 +309,13 @@ export function buildEvalReport(
     'unsupported-brief': 0,
     'unrenderable-brief': 0,
     'parse-failed': 0,
+  }
+  for (const [reason, count] of Object.entries(opts.additionalRefusalCounts ?? {})) {
+    const canonicalReason = REPLAY_REFUSAL_REASONS.find(candidate => candidate === reason)
+    if (canonicalReason === undefined || !Number.isSafeInteger(count) || count < 0) {
+      throw new TypeError('additional refusal count requires a canonical reason and a nonnegative safe integer')
+    }
+    refusalCounts[canonicalReason] = count
   }
   const neverScoredCounts: Counts<NeverScoredReason> = {
     'all-samples-harness-error': 0,
