@@ -80,6 +80,12 @@ const LOWER_HEX_64 = /^[0-9a-f]{64}$/
 const TARGET_ENVIRONMENTS = new Set(['shared', 'local'])
 /** The tier whose members are self-heal pair members and therefore exempt from bucketing (D-08). */
 const PAIR_MEMBER_TIER = 'near-gold'
+/** Mirror of packages/eval/src/labels/run-exclusion.ts `EXCLUSION_CLASSES` (D-02/D-04). */
+const EXCLUSION_CLASSES = new Set(['environment', 'flake', 'timeout'])
+/** Mirror of `VERDICT_PRODUCERS`: the two producers that can author a run verdict. */
+const VERDICT_PRODUCERS = new Set(['analyze-run', 'deterministic-classifier'])
+/** Stamped verbatim into every backfilled record's `recordedBy`. */
+const BACKFILL_RECORDED_BY = '414 D-02 backfill'
 
 /** Known-answer vectors — the SAME literals packages/eval/src/labels/__tests__/split-assignment.test.ts pins. */
 const ZERO_SALT = '0'.repeat(64)
@@ -517,17 +523,135 @@ function countExclusions(exclusionsDir) {
 }
 
 // ---------------------------------------------------------------------------
+// D-02 backfill: one exclusion record per excluded campaign leg
+// ---------------------------------------------------------------------------
+
+/**
+ * Write `exclusions/<product>/<runSlug>.json` for every `excluded: true` leg of a growth
+ * campaign manifest — the path `committedExclusionPath` builds.
+ *
+ * 413's campaign dropped runs whose verdict class was `environment`, `flake` or `timeout`
+ * before anything was committed, so an excluded run left NO trace in the root. These records
+ * are that trace, written after the fact.
+ *
+ * `analysisDigest` is taken over the REAL `<runs-root>/<runSlug>/analysis.json` bytes and is
+ * never fabricated: a missing analysis is a refusal, not a zero digest. Write-once holds —
+ * an existing record with identical bytes is `unchanged`, a differing one is a refusal.
+ */
+function runBackfill(args, evalRoot, runsRoot) {
+  const manifest = readJson(args.backfill, 'campaign manifest')
+  if (!Array.isArray(manifest.legs)) refuse(`${args.backfill}: campaign manifest has no legs array`)
+
+  const deletionCommits = args.deletionCommits ?? {}
+  for (const [runSlug, value] of Object.entries(deletionCommits)) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      refuse(`--deletion-commits.${runSlug} must be an object`)
+    }
+    if (!Number.isInteger(value.entriesRemoved) || value.entriesRemoved < 0) {
+      refuse(`--deletion-commits.${runSlug}.entriesRemoved must be a non-negative integer`)
+    }
+    if (
+      value.deletionCommit !== undefined &&
+      (typeof value.deletionCommit !== 'string' || value.deletionCommit === '')
+    ) {
+      refuse(`--deletion-commits.${runSlug}.deletionCommit must be a non-empty string`)
+    }
+  }
+
+  const excluded = manifest.legs.filter(leg => leg?.excluded === true)
+  let written = 0
+  let unchanged = 0
+
+  for (const leg of excluded) {
+    const runSlug = leg.runSlug
+    if (typeof runSlug !== 'string' || !runSlug.startsWith('r_')) {
+      refuse(
+        `${args.backfill}: excluded leg runSlug ${JSON.stringify(runSlug)} does not start with 'r_'; ` +
+          'the 413 slugs equal their runIds and this record would carry a fabricated runId',
+      )
+    }
+    const product = leg.product
+    if (typeof product !== 'string' || product === '') {
+      refuse(`${args.backfill}: excluded leg ${runSlug} has no product`)
+    }
+
+    const verdicts = (Array.isArray(leg.verdicts) ? leg.verdicts : []).filter(verdict =>
+      EXCLUSION_CLASSES.has(verdict?.class),
+    )
+    if (verdicts.length === 0) {
+      refuse(
+        `${args.backfill}: excluded leg ${runSlug} carries no verdict in ` +
+          `{${[...EXCLUSION_CLASSES].join(', ')}}; an exclusion with no excluding verdict is a ` +
+          'deletion with no reason',
+      )
+    }
+    for (const verdict of verdicts) {
+      if (!VERDICT_PRODUCERS.has(verdict.producer)) {
+        refuse(
+          `${args.backfill}: excluded leg ${runSlug} verdict producer ` +
+            `${JSON.stringify(verdict.producer)} is outside the closed set`,
+        )
+      }
+    }
+
+    const analysisFile = join(runsRoot, runSlug, 'analysis.json')
+    if (!existsSync(analysisFile)) {
+      refuse(
+        `${analysisFile}: no analysis for excluded run ${runSlug}; a backfill digest is never fabricated`,
+      )
+    }
+    const analysisDigest = sha256hex(readFileSync(analysisFile, 'utf8'))
+
+    const deletion = deletionCommits[runSlug]
+    const record = {
+      schemaVersion: 1,
+      runId: runSlug,
+      runSlug,
+      product,
+      verdicts: verdicts.map(verdict => ({ class: verdict.class, producer: verdict.producer })),
+      analysisDigest,
+      reason: 'excluded-verdict-class',
+      backfill: {
+        ...(deletion?.deletionCommit === undefined
+          ? {}
+          : { deletionCommit: deletion.deletionCommit }),
+        entriesRemoved: deletion?.entriesRemoved ?? 0,
+        recordedBy: BACKFILL_RECORDED_BY,
+      },
+    }
+
+    const file = join(evalRoot, 'exclusions', product, `${runSlug}.json`)
+    const text = committedFileText(record)
+    if (existsSync(file)) {
+      if (readFileSync(file, 'utf8') === text) {
+        unchanged += 1
+        console.log(`unchanged ${file}`)
+        continue
+      }
+      refuse(
+        `${file}: an exclusion record already exists with different bytes; the committed root is ` +
+          'write-once and this script does not overwrite a recorded exclusion',
+      )
+    }
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, text)
+    written += 1
+    console.log(
+      `wrote ${file} analysisDigest ${analysisDigest} entriesRemoved ${record.backfill.entriesRemoved}` +
+        `${record.backfill.deletionCommit === undefined ? '' : ` deletionCommit ${record.backfill.deletionCommit}`}`,
+    )
+  }
+
+  console.log(`backfill: written ${written}, unchanged ${unchanged}, excluded legs ${excluded.length}`)
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.selfcheck) runSelfcheck()
-
-  if (args.backfill !== undefined) {
-    console.error('--backfill is not implemented yet (414-09 Task 2)')
-    process.exit(2)
-  }
 
   const scriptDir = dirname(fileURLToPath(import.meta.url))
   const evalRoot = args.root ?? join(scriptDir, '..', '..', 'demo', 'init', 'agent-qa-eval')
@@ -574,6 +698,13 @@ function main() {
     if (unpartitioned.length > 0) console.log(`unpartitioned: ${unpartitioned.join(', ')}`)
     if (v1Remaining > 0 || unpartitioned.length > 0) process.exit(1)
     console.log('check ok')
+    process.exit(0)
+  }
+
+  // A backfill with NO fraction form supplied is a backfill-ONLY invocation: corpus/ and
+  // contracts/ are left exactly as they stand.
+  if (args.backfill !== undefined && !fractionFormSupplied) {
+    runBackfill(args, evalRoot, runsRoot)
     process.exit(0)
   }
 
@@ -783,6 +914,8 @@ function main() {
       `heldOutPrivate ${totals.heldOutPrivate}, pairForcedNatural ${totals.pairForcedNatural}, ` +
       `manifestsMinted ${totals.manifestsMinted}`,
   )
+
+  if (args.backfill !== undefined) runBackfill(args, evalRoot, runsRoot)
   process.exit(0)
 }
 
