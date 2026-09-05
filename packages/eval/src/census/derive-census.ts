@@ -12,21 +12,40 @@
  * partition — RESEARCH F5). The label tier is read from the committed label record, never from
  * the cassette's embedded label leg (which reads `silver` on all 24 while the record carries
  * `near-gold` for the self-heal pairs — RESEARCH F8).
+ *
+ * 414 D-17 widened the document to schema version 2: per product the four split x visibility
+ * counts, the two D-04 field-coverage rates and the committed-exclusion tallies; top level the
+ * per-product `partition` echo and `schemaVersionsSeen`. The two census directories committed at
+ * version 1 stay exactly as they are — a committed census is write-once history, so a schema bump
+ * lands as a NEW directory rather than a rewrite of the old ones.
+ *
+ * ROOT-10 stands over the partition echo: the manifest's salt decides which split every cassette
+ * in a product lands in, so only `sha256hex(salt)` may appear here. A product with no committed
+ * manifest is ABSENT from `partition` — a fabricated row would read as parameters nobody chose.
+ *
+ * D-16 still forbids interpretation: every number below is an integer count or a
+ * numerator/denominator pair. No threshold, no minimum-n, no verdict — 415 prices the floor.
  */
-import { RETRIEVAL_RUNGS } from '@vostride/agent-qa-schema'
+import { RETRIEVAL_RUNGS, sha256hex } from '@vostride/agent-qa-schema'
 import type { RetrievalRung } from '@vostride/agent-qa-schema'
 import type { LeafCassette } from '../cassette/cassette'
 import type { CassetteSidecarLeg } from '../cassette/sidecar-leg'
 import type { LabelTier } from '../cassette/label-leg'
+import { countGateSet } from '../gate/gate-set'
+import type { GateSetCounts } from '../gate/gate-set'
 import type { CorpusEntry } from '../labels/corpus-entry'
 import type { StandaloneLabelRecord } from '../labels/label-record'
+import type { PartitionManifest } from '../labels/partition-manifest'
 import { EXCLUSION_CLASSES, VERDICT_PRODUCERS } from '../labels/run-exclusion'
-import type { ExclusionClass, VerdictProducer } from '../labels/run-exclusion'
+import type { ExclusionClass, RunExclusionRecord, VerdictProducer } from '../labels/run-exclusion'
 import type { EvalBatchReport } from '../match/metrics'
 import { computeCorpusDigest } from './corpus-digest'
 
-/** Single version gate for the census document (D-15). */
-export const CENSUS_SCHEMA_VERSION = 1 as const
+/**
+ * Single version gate for the census document (D-15), bumped to 2 by 414 D-17. The two census
+ * directories already committed under version 1 are write-once history and stay at 1.
+ */
+export const CENSUS_SCHEMA_VERSION = 2 as const
 
 type Counts<T extends string> = { [K in T]: number }
 
@@ -34,6 +53,28 @@ interface RateMetric {
   numerator: number
   denominator: number
   rate?: number
+}
+
+/**
+ * One product's committed partition parameters, echoed as counts a reader can re-derive from
+ * (414 D-17). `saltDigest` is `sha256hex` over the manifest's salt — never the salt itself.
+ */
+export interface PartitionCensusBlock {
+  saltDigest: string
+  heldOutFraction: number
+  privateFraction: number
+  partitionVersion: number
+}
+
+/**
+ * What the committed `exclusions/**` records say about one product (414 D-02). Every class and
+ * every producer is present at zero, seeded from the closed vocabularies rather than from the
+ * records, so a class nothing excluded reads as `0` instead of vanishing.
+ */
+export interface ExclusionCensusBlock {
+  total: number
+  byClass: Readonly<Record<ExclusionClass, number>>
+  byProducer: Readonly<Record<VerdictProducer, number>>
 }
 
 // 414 D-02: the two verdict vocabularies now live beside the committed
@@ -97,6 +138,12 @@ export interface CensusProductBlock {
   runsExcludedByProducer: Counts<VerdictProducer>
   seededByProducer: Counts<VerdictProducer | 'no-verdict'>
   repeatCounts: Readonly<Record<string, number>>
+  /** The four split x visibility arms, counted by the ONE shared counter (414 D-03/D-17). */
+  splits: GateSetCounts
+  /** How many entries carry each OPTIONAL D-04 field, over the product total. */
+  fieldCoverage: { capturedAt: RateMetric; targetEnvironment: RateMetric }
+  /** What the committed exclusion records say about this product (414 D-02). */
+  exclusions: ExclusionCensusBlock
 }
 
 /**
@@ -146,14 +193,22 @@ export interface CensusCampaignSummary {
   wallClockMs: number
 }
 
-/** The committed census document (D-15/D-16). */
+/** The committed census document (D-15/D-16, widened by 414 D-17). */
 export interface CorpusCensus {
-  schemaVersion: 1
+  schemaVersion: 2
   corpusDigest: string
   entryCount: number
   products: Readonly<Record<string, CensusProductBlock>>
   campaign: CensusCampaignSummary | { present: false }
   crossCheck: readonly CensusCrossCheckLine[]
+  /** One entry per PARTITIONED product, sorted; an unpartitioned product is absent (D-17). */
+  partition: Readonly<Record<string, PartitionCensusBlock>>
+  /**
+   * How many committed corpus FILES declared each entry schema version, echoed verbatim from the
+   * read leg. Every entry is the v2 shape in memory, so this is the only place the byte version
+   * survives into a report a reader can cite.
+   */
+  schemaVersionsSeen: Readonly<Record<string, number>>
 }
 
 export interface DeriveCensusInput {
@@ -164,6 +219,12 @@ export interface DeriveCensusInput {
     comparator: CensusCrossCheckLine['comparator']
     designatedBy: readonly string[]
   }[]
+  /** Committed partition manifests, read by eval-local and handed in as DATA (414 D-05). */
+  manifests?: readonly PartitionManifest[]
+  /** Committed run-exclusion records, read by eval-local and handed in as DATA (414 D-02). */
+  exclusions?: readonly RunExclusionRecord[]
+  /** The read leg's byte-version census; absent means an empty record, never a guess. */
+  schemaVersionsSeen?: Readonly<Record<string, number>>
 }
 
 function rateMetric(numerator: number, denominator: number): RateMetric {
@@ -206,8 +267,30 @@ function zeroRungMix(): Counts<CensusRung> {
   return mix
 }
 
+/**
+ * Seed the exclusion zeros from the CLOSED VOCABULARIES, never from the records in hand — a class
+ * or producer nothing excluded must read as `0` rather than vanish from the block (D-04).
+ */
+function zeroExclusionClasses(): Counts<ExclusionClass> {
+  const counts = {} as Counts<ExclusionClass>
+  for (const value of EXCLUSION_CLASSES) counts[value] = 0
+  return counts
+}
+
+function zeroVerdictProducers(): Counts<VerdictProducer> {
+  const counts = {} as Counts<VerdictProducer>
+  for (const value of VERDICT_PRODUCERS) counts[value] = 0
+  return counts
+}
+
 interface ProductAccumulator {
   total: number
+  entries: CorpusEntry[]
+  capturedAtPresent: number
+  targetEnvironmentPresent: number
+  exclusionTotal: number
+  exclusionByClass: Counts<ExclusionClass>
+  exclusionByProducer: Counts<VerdictProducer>
   staticScorability: Counts<StaticScorability>
   labelTiers: Counts<LabelTier>
   proofCarrying: number
@@ -228,6 +311,12 @@ interface ProductAccumulator {
 function newAccumulator(): ProductAccumulator {
   return {
     total: 0,
+    entries: [],
+    capturedAtPresent: 0,
+    targetEnvironmentPresent: 0,
+    exclusionTotal: 0,
+    exclusionByClass: zeroExclusionClasses(),
+    exclusionByProducer: zeroVerdictProducers(),
     staticScorability: { 'no-gold-evidence': 0, 'tier2-anchor': 0, 'tier3-annotation': 0 },
     labelTiers: { gold: 0, 'near-gold': 0, silver: 0 },
     proofCarrying: 0,
@@ -342,7 +431,59 @@ function projectBlock(accumulator: ProductAccumulator): CensusProductBlock {
     runsExcludedByProducer: accumulator.runsExcludedByProducer,
     seededByProducer: accumulator.seededByProducer,
     repeatCounts: sortedCounts(accumulator.repeatCounts),
+    splits: countGateSet(accumulator.entries),
+    fieldCoverage: {
+      capturedAt: rateMetric(accumulator.capturedAtPresent, accumulator.total),
+      targetEnvironment: rateMetric(accumulator.targetEnvironmentPresent, accumulator.total),
+    },
+    exclusions: {
+      total: accumulator.exclusionTotal,
+      byClass: accumulator.exclusionByClass,
+      byProducer: accumulator.exclusionByProducer,
+    },
   }
+}
+
+/**
+ * Fold the committed exclusion records into their products. A record for a product with no
+ * committed entry still mints its accumulator — that IS the D-02 point: a run excluded before
+ * anything was seeded leaves no entry behind, and the census must still be able to count it.
+ */
+function foldExclusions(
+  accumulators: Map<string, ProductAccumulator>,
+  exclusions: readonly RunExclusionRecord[],
+): void {
+  for (const record of exclusions) {
+    const accumulator = accumulatorFor(accumulators, record.product)
+    accumulator.exclusionTotal += 1
+    for (const verdict of record.verdicts) {
+      accumulator.exclusionByClass[verdict.class] += 1
+      accumulator.exclusionByProducer[verdict.producer] += 1
+    }
+  }
+}
+
+/**
+ * Echo the committed partition parameters per product, salt DIGEST only (ROOT-10 / T-414-29).
+ * Only products that actually carry a manifest appear; keys are sorted so two folds over the same
+ * manifests serialise identically.
+ */
+function foldPartition(
+  manifests: readonly PartitionManifest[],
+): Readonly<Record<string, PartitionCensusBlock>> {
+  const byProduct = new Map<string, PartitionCensusBlock>()
+  for (const manifest of manifests) {
+    byProduct.set(manifest.product, {
+      saltDigest: sha256hex(manifest.salt),
+      heldOutFraction: manifest.heldOutFraction,
+      privateFraction: manifest.privateFraction,
+      partitionVersion: manifest.partitionVersion,
+    })
+  }
+
+  const partition: Record<string, PartitionCensusBlock> = {}
+  for (const product of [...byProduct.keys()].sort()) partition[product] = byProduct.get(product)!
+  return partition
 }
 
 /** Fold the loaded committed root into the D-16 per-product census. */
@@ -353,6 +494,9 @@ export function deriveCensus(input: DeriveCensusInput): CorpusCensus {
   for (const entry of snapshot.entries) {
     const accumulator = accumulatorFor(accumulators, entry.product)
     accumulator.total += 1
+    accumulator.entries.push(entry)
+    if (entry.captured_at !== undefined) accumulator.capturedAtPresent += 1
+    if (entry.targetEnvironment !== undefined) accumulator.targetEnvironmentPresent += 1
 
     const label = snapshot.labelsById.get(entry.cassetteId)
     if (label === undefined) accumulator.missingLabelRecord += 1
@@ -375,6 +519,8 @@ export function deriveCensus(input: DeriveCensusInput): CorpusCensus {
     accumulator.blobDenominator += 1
     if (snapshot.blobPresentById.get(entry.cassetteId) === true) accumulator.blobsPresent += 1
   }
+
+  foldExclusions(accumulators, input.exclusions ?? [])
 
   const campaign =
     input.campaign === undefined
@@ -404,5 +550,9 @@ export function deriveCensus(input: DeriveCensusInput): CorpusCensus {
     products,
     campaign,
     crossCheck,
+    partition: foldPartition(input.manifests ?? []),
+    schemaVersionsSeen: sortedCounts(
+      new Map(Object.entries(input.schemaVersionsSeen ?? {})),
+    ),
   }
 }

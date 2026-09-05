@@ -395,5 +395,7 @@ export type {
   CommittedCorpusSnapshot,
   CorpusCensus,
   DeriveCensusInput,
+  ExclusionCensusBlock,
+  PartitionCensusBlock,
   StaticScorability,
 } from './census/derive-census'
