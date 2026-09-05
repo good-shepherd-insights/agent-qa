@@ -63,6 +63,19 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // so a same-family-judged report is refused rather than designated. Paired with the read leg
   // that loads the committed root back for derivation; every derivation stays in eval core.
   'the write-once committed census and baseline-pointer writers under agent-qa-eval/reports/ behind the eval-report checkpoint, and the committed-root read leg',
+  // Phase 414 D-02/D-05/D-15 (ROOT-07/ROOT-08/ROOT-10): the partition manifest and the run
+  // exclusion are two more committed documents, so they join the SEEDING family under the SAME
+  // 'eval-seeding' checkpoint channel seedCommittedCorpus already owns — never a third channel,
+  // for the reason D-15 gave on the report side: a new channel is a new policy surface no
+  // reviewed policy covers. Both are write-once (a manifest whose salt or fractions disagree
+  // with the committed one ⇒ 'write-conflict', because changing them re-partitions a corpus that
+  // has already been gated against; an exclusion compares runExclusionCore so a later backfill
+  // block never reads as a new decision). Neither writer mints a salt — it arrives as data from
+  // the seed verb. Beside them, the gate-side posture composition folds the committed-root read
+  // leg and the manifests into eval core's pure readGatePosture; the derivation stays in eval
+  // core, and the symbol lives on the MAIN entry because private held-out entries gate (D-09)
+  // and the proposer's reader port must never count them.
+  'the write-once partition-manifest and run-exclusion writers under agent-qa-eval/contracts/ and agent-qa-eval/exclusions/ behind the eval-seeding checkpoint, and the gate-side posture composition over the committed-root read leg',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single
