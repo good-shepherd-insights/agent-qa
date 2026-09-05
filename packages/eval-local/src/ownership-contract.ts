@@ -76,6 +76,16 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // core, and the symbol lives on the MAIN entry because private held-out entries gate (D-09)
   // and the proposer's reader port must never count them.
   'the write-once partition-manifest and run-exclusion writers under agent-qa-eval/contracts/ and agent-qa-eval/exclusions/ behind the eval-seeding checkpoint, and the gate-side posture composition over the committed-root read leg',
+  // Phase 414 D-18/D-19/D-20 (ROOT-10 SC5): the proposer-side /reader subpath — a SECOND package
+  // entry, published beside the main one for the reason knowledge-local's reader entry exists:
+  // an entry is the only boundary a rule can key on. The main entry is the GATE side (the root as
+  // an fs path, the seeding and exclusion writers, the baseline pointer, the posture); this one
+  // opens nothing, writes nothing and holds no lease — it reads the committed root once and hands
+  // back the visibility-filtered slice. Its return types CANNOT carry a private held-out entry,
+  // its cassette or its label, and a private cassetteId answers byte-identically to an id that
+  // does not exist, so the port leaks neither the content nor the EXISTENCE of the unseen set.
+  // Filtering only: the visibility predicate is eval core's, and no derivation happens here.
+  'the proposer-side /reader subpath — visibility-filtered reads over the committed root whose return types cannot carry a private held-out entry, its cassette or its label',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single
