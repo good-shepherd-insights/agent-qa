@@ -16,6 +16,7 @@ import {
   buildEvalReport,
   canonicalJson,
   committedFileText,
+  composeBaselineProfileKey,
   computeBatchKey,
   computeCorpusDigest,
   countGateSet,
@@ -25,8 +26,8 @@ import {
   partitionParamsOf,
   projectRunExclusion,
 } from '@vostride/agent-qa-eval'
-import type { CorpusCensus, JudgeIdentityBlock } from '@vostride/agent-qa-eval'
-import type { createModel, ModelProviderOverrides } from '@vostride/agent-qa-model'
+import type { CorpusCensus, JudgeIdentityBlock, SeedPolicy } from '@vostride/agent-qa-eval'
+import type { createModel, ModelProfile, ModelProviderOverrides } from '@vostride/agent-qa-model'
 import {
   FsEvidenceArtifactStore,
   FsHandoffStore,
@@ -55,6 +56,7 @@ import {
   commitEvalReport,
   committedCassettePath,
   committedLabelPath,
+  computeReplayProfileFingerprintFor,
   readCommittedCorpus,
 } from '@vostride/agent-qa-eval-local'
 import {
@@ -62,6 +64,7 @@ import {
   EvalPartitionFlagsRequiredError,
   EvalPartitionManifestConflictError,
   resolveEvalSession,
+  resolveReplayProfileFingerprint,
   resolveTargetEnvironmentForProduct,
   runExtractVerb,
   runReplayVerb,
@@ -2788,7 +2791,60 @@ describe('agent-qa eval census — rendering and exit semantics (413-05, D-04/D-
  * profile's slot, because a no-judge measurement is a different measurement, not a missing one.
  */
 const BASELINE_PLANNER_MODEL_ID = 'gpt-4o'
-const BASELINE_PROFILE_KEY = 'planner=gpt-4o|matcher=1|judge=none|judgeVersion=none'
+
+async function baselineProfileKey(session: EvalSession, seedPolicy: SeedPolicy = 'none'): Promise<string> {
+  return composeBaselineProfileKey({
+    plannerModelId: BASELINE_PLANNER_MODEL_ID,
+    fingerprint: await resolveReplayProfileFingerprint(session, seedPolicy),
+    matcherVersion: 1,
+  })
+}
+
+describe('resolveReplayProfileFingerprint — credential-free profile identity (415 D-11)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('matches the shared helper for the named config without auth resolution or model creation', async () => {
+    const { configPath } = await writeReplayFixture()
+    const session = await sessionFor(configPath)
+    const llmUtils = await import('../../llm-utils.js')
+    const model = await import('@vostride/agent-qa-model')
+    const auth = vi.spyOn(llmUtils, 'resolveModelAuth').mockRejectedValue(new Error('auth forbidden'))
+    const create = vi.spyOn(model, 'createModel').mockImplementation(() => {
+      throw new Error('model creation forbidden')
+    })
+    const profile: ModelProfile = {
+      provider: 'openai-compatible',
+      model: REPLAY_STUB_MODEL_ID,
+      baseURL: 'http://localhost:9999/v1',
+      auth: { mode: 'none' },
+    }
+    expect(await resolveReplayProfileFingerprint(session, 'declared')).toBe(
+      computeReplayProfileFingerprintFor({ profile, seedPolicy: 'declared' }),
+    )
+    expect(auth).not.toHaveBeenCalled()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('passes the same stub override names to the shared helper without invoking the stub', async () => {
+    const { configPath } = await writeReplayFixture()
+    const session = await sessionFor(configPath)
+    const stub = replayStub()
+    const profile: ModelProfile = {
+      provider: 'openai-compatible',
+      model: REPLAY_STUB_MODEL_ID,
+      baseURL: 'http://localhost:9999/v1',
+      auth: { mode: 'none' },
+    }
+    const fingerprint = await resolveReplayProfileFingerprint(session, 'declared', stub.overrides)
+    expect(fingerprint).toBe(computeReplayProfileFingerprintFor({
+      profile, seedPolicy: 'declared', modelOverrides: stub.overrides,
+    }))
+    expect(fingerprint).not.toBe(await resolveReplayProfileFingerprint(session, 'declared'))
+    expect(stub.captured).toEqual([])
+  })
+})
 
 describe('runReportVerb --commit --baseline — designation through the refusing writer (D-19/D-20)', () => {
   afterEach(() => {
@@ -2797,12 +2853,18 @@ describe('runReportVerb --commit --baseline — designation through the refusing
 
   it('writes the per-profile pointer after a committed abstention report (D-19)', async () => {
     const { dir, session } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+    saveSeedRun(dir, 'run-seed')
+    await runSeedVerb(session, { run: 'run-seed' }, TEST_FRACTIONS)
+    const corpus = readCommittedCorpus(join(dir, 'agent-qa-eval'))
+    expect(corpus.snapshot.entries.length).toBeGreaterThan(0)
 
     const result = await runReportVerb(session, {}, { commit: true, baseline: true })
 
     expect(result.committed?.kind).toBe('committed')
-    expect(result.profileKey).toBe(BASELINE_PROFILE_KEY)
-    const pointerPath = `reports/baselines/${slugBranch(BASELINE_PROFILE_KEY)}.json`
+    const profileKey = await baselineProfileKey(session)
+    expect(result.profileKey).toBe(profileKey)
+    expect(profileKey).toMatch(/^planner=gpt-4o\|fingerprint=[0-9a-f]{64}\|matcher=1\|/)
+    const pointerPath = `reports/baselines/${slugBranch(profileKey)}.json`
     expect(result.baseline).toEqual({ kind: 'written', path: pointerPath })
 
     // The committed body carries ONLY stamped fields — no wall clock, so re-designation
@@ -2811,12 +2873,63 @@ describe('runReportVerb --commit --baseline — designation through the refusing
       await readFile(join(dir, 'agent-qa-eval', pointerPath), 'utf-8'),
     ) as Record<string, unknown>
     expect(body).toEqual({
-      schemaVersion: 1,
-      profileKey: BASELINE_PROFILE_KEY,
+      schemaVersion: 2,
+      profileKey,
       batchKey: result.batchKey,
       plannerModelId: BASELINE_PLANNER_MODEL_ID,
       matcherVersion: 1,
+      fingerprint: await resolveReplayProfileFingerprint(session, 'none'),
+      corpusDigest: computeCorpusDigest(corpus.snapshot.entries),
     })
+    expect(result.notices).toContain(
+      'baseline designated under seed policy none — eval gate compares against a declared-policy '
+      + "pointer; re-designate with --from-committed --seed-policy declared once Plan 17's flag exists",
+    )
+  })
+
+  it('designates declared seed policy with identical keys for two seed values', async () => {
+    const { dir, session } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+    session.evalConfig.seed = 17
+    const first = await runReportVerb(session, {}, { commit: true, baseline: true })
+    expect(first.baseline?.kind).toBe('written')
+    expect(first.profileKey).toBe(await baselineProfileKey(session, 'declared'))
+    expect(first.profileKey).not.toBe(await baselineProfileKey(session, 'none'))
+    expect(first.notices.some(notice => notice.includes('seed policy none'))).toBe(false)
+    const pointerPath = `reports/baselines/${slugBranch(first.profileKey!)}.json`
+    const body = JSON.parse(await readFile(join(dir, 'agent-qa-eval', pointerPath), 'utf8'))
+    expect(body.fingerprint).toBe(await resolveReplayProfileFingerprint(session, 'declared'))
+
+    session.evalConfig.seed = 29
+    const second = await runReportVerb(session, {}, { commit: true, baseline: true })
+    expect(second.profileKey).toBe(first.profileKey)
+    expect(second.baseline?.kind).toBe('unchanged')
+  })
+
+  it('uses planner overrides only to fingerprint a report designation', async () => {
+    const { session } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+    const stub = replayStub(BASELINE_PLANNER_MODEL_ID)
+    const result = await runReportVerb(session, {}, {
+      commit: true, baseline: true, plannerOverrides: stub.overrides,
+    })
+    expect(result.baseline?.kind).toBe('written')
+    expect(result.profileKey).toBe(composeBaselineProfileKey({
+      plannerModelId: BASELINE_PLANNER_MODEL_ID,
+      fingerprint: await resolveReplayProfileFingerprint(session, 'none', stub.overrides),
+      matcherVersion: 1,
+    }))
+    expect(result.profileKey).not.toBe(await baselineProfileKey(session))
+    expect(stub.captured).toEqual([])
+  })
+
+  it('discloses committed-corpus read refusals during designation', async () => {
+    const { dir, session } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
+    const corpusDir = join(dir, 'agent-qa-eval', 'corpus', 'default')
+    await mkdir(corpusDir, { recursive: true })
+    const brokenPath = join(corpusDir, 'broken.json')
+    await writeFile(brokenPath, '{')
+    const result = await runReportVerb(session, {}, { commit: true, baseline: true })
+    expect(result.baseline?.kind).toBe('written')
+    expect(result.notices.some(notice => notice.startsWith(`committed read refused ${brokenPath}:`))).toBe(true)
   })
 
   it('refuses a same-family report as a comparator, keeps the report as history (D-18/D-20)', async () => {
@@ -2924,7 +3037,7 @@ describe('runReportVerb --commit --baseline — designation through the refusing
     const second = await runReportVerb(session, {}, { commit: true, baseline: true })
     expect(second.baseline).toEqual({
       kind: 'unchanged',
-      path: `reports/baselines/${slugBranch(BASELINE_PROFILE_KEY)}.json`,
+      path: `reports/baselines/${slugBranch(await baselineProfileKey(session))}.json`,
     })
   })
 })
