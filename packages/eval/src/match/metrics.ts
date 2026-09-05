@@ -184,7 +184,7 @@ function decisionResults(outcome: ReplayCassetteOutcome): readonly DecisionRepla
   return outcome.steps.flatMap(step => (step.kind === 'decision' ? [step.result] : []))
 }
 
-function scoreEntries(score: CassetteScore | undefined): readonly DecisionScoreEntry[] {
+export function scoreEntries(score: CassetteScore | undefined): readonly DecisionScoreEntry[] {
   if (score === undefined || score.kind === 'replay-refusal' || score.kind === 'shape-mismatch') {
     return []
   }
@@ -195,10 +195,19 @@ function decisionScores(score: CassetteScore | undefined): readonly DecisionScor
   return scoreEntries(score).flatMap(entry => (entry.kind === 'decision' ? [entry.score] : []))
 }
 
-function breakdownFor(score: DecisionScore): DecisionPartialBreakdown | undefined {
+export function breakdownFor(score: DecisionScore): DecisionPartialBreakdown | undefined {
   if (score.kind === 'scored') return score
   if (score.kind === 'unresolved-tie') return score.partial
   return undefined
+}
+
+/** One headline denominator rule for reports and pairing: unresolved ties remain excluded. */
+export function isHeadlineApplicable(score: DecisionScore, isContrastiveNegative: boolean): boolean {
+  return (
+    !isContrastiveNegative &&
+    (score.kind === 'miss-by-failure' ||
+      (score.kind === 'scored' && score.axes.elementIdentity.kind !== 'unscorable'))
+  )
 }
 
 function addJudgeUsage(cost: JudgeCost, usage: JudgeTokenUsage | undefined): void {
@@ -368,7 +377,7 @@ export function buildEvalReport(
           judgeHonesty.invoked[settledStamp.cause]++
           addJudgeUsage(judgeHonesty.cost, settledStamp.usage)
         }
-        if (score.axes.elementIdentity.kind !== 'unscorable') {
+        if (isHeadlineApplicable(score, false)) {
           if (isContrastiveNegative) {
             negativeDecisionCount++
             if (isDecisionFullMatch(score)) negativeFullMatchCount++

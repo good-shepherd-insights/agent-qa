@@ -86,6 +86,7 @@ export function assembleScoredBatch(input: {
     }
 
     const label = labelsById.get(cassetteId)
+    const product = partitionsById.get(cassetteId)
     if (!partitionsById.has(cassetteId)) missingBundleCount++
 
     entries.push({
@@ -93,6 +94,7 @@ export function assembleScoredBatch(input: {
       outcome,
       ...(score !== undefined ? { score } : {}),
       ...(label !== undefined ? { label } : {}),
+      ...(product !== undefined ? { product } : {}),
     })
   }
 
