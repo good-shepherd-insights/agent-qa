@@ -30,6 +30,24 @@ const identity = {
 } as const
 const action = { type: 'click', ref: asRef('e2') } as const
 
+it('preserves observed outer harness errors without inventing replay decisions or refusals', () => {
+  const report = buildEvalReport([], undefined, undefined, { additionalHarnessErrorCount: 2 })
+  expect(report.honesty.harnessErrorCount).toBe(2)
+  expect(Object.values(report.honesty.refusalCounts).every(count => count === 0)).toBe(true)
+  expect(report.headline.perDecisionCost.decisionCount).toBe(0)
+  expect(report.totalCost.sampleCount).toBe(0)
+  expect(buildEvalReport([]).honesty.harnessErrorCount).toBe(0)
+  expect(() => buildEvalReport([], undefined, undefined, { additionalHarnessErrorCount: -1 }))
+    .toThrow(/harness.*count/i)
+})
+
+it('copies declared run identity without changing legacy report metadata', () => {
+  const runIdentity = { fingerprint: 'a'.repeat(64), corpusDigest: 'b'.repeat(64) }
+  const report = buildEvalReport([], undefined, undefined, { runIdentity })
+  expect(report.runIdentity).toEqual(runIdentity)
+  expect(buildEvalReport([])).not.toHaveProperty('runIdentity')
+})
+
 function sample(
   sampleIndex: number,
   durationMs: number,

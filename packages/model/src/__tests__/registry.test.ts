@@ -1,6 +1,6 @@
 import { APICallError } from '@ai-sdk/provider'
 import { simulateReadableStream } from 'ai'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LanguageModelV3, LanguageModelV3CallOptions } from '@ai-sdk/provider'
 import type { ModelCapabilities, ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
@@ -141,6 +141,73 @@ describe('createModel', () => {
   beforeEach(() => {
     overrideStore.clear()
     setActiveMaskingContextResolver(() => undefined)
+  })
+
+  it('observes actual provider attempts beneath retries, without receiving provider data', async () => {
+    const onProviderCall = vi.fn()
+    let attempts = 0
+    const raw = fakeLanguageModel(() => {
+      if (++attempts === 1) {
+        throw new APICallError({
+          message: 'temporary provider failure',
+          url: 'http://localhost/v1',
+          requestBodyValues: {},
+          statusCode: 503,
+          responseHeaders: { 'retry-after-ms': '0' },
+          isRetryable: true,
+        })
+      }
+    })
+    const model = createModel(overrideProfile(), noneAuth,
+      { languageModels: { 'override-model': raw } }, { onProviderCall })
+
+    await model.doGenerate({ prompt: promptWithUserText('hello') })
+
+    expect(attempts).toBe(2)
+    expect(onProviderCall.mock.calls).toEqual([[], []])
+  })
+
+  it('preserves provider binding and streaming while observing each invocation once', async () => {
+    const onProviderCall = vi.fn()
+    const raw = fakeLanguageModel(() => {}, [textDelta('streamed')])
+    const generate = raw.doGenerate
+    const stream = raw.doStream
+    raw.doGenerate = function (params) {
+      expect(this).toBe(raw)
+      return generate.call(this, params)
+    }
+    raw.doStream = function (params) {
+      expect(this).toBe(raw)
+      return stream.call(this, params)
+    }
+    const model = createModel(overrideProfile(), noneAuth,
+      { languageModels: { 'override-model': raw } }, { onProviderCall })
+    await model.doGenerate({ prompt: [] })
+    const result = await model.doStream({ prompt: [] })
+    expect(await collectStreamText(result.stream)).toBe('streamed')
+    expect(onProviderCall).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not count a safety refusal before the provider', async () => {
+    const onProviderCall = vi.fn()
+    const providerCall = vi.fn()
+    const model = createModel(overrideProfile(), noneAuth,
+      { languageModels: { 'override-model': fakeLanguageModel(providerCall) } },
+      { onProviderCall })
+    await expect(model.doGenerate({ prompt: promptWithUserText(AWS_KEY) }))
+      .rejects.toBeInstanceOf(GuardrailBlockError)
+    expect(providerCall).not.toHaveBeenCalled()
+    expect(onProviderCall).not.toHaveBeenCalled()
+  })
+
+  it('observes a failed invocation and preserves the original error', async () => {
+    const onProviderCall = vi.fn()
+    const failure = apiError('permanent failure')
+    const model = createModel(overrideProfile(), noneAuth,
+      { languageModels: { 'override-model': fakeLanguageModel(() => { throw failure }) } },
+      { onProviderCall })
+    await expect(model.doGenerate({ prompt: [] })).rejects.toBe(failure)
+    expect(onProviderCall).toHaveBeenCalledTimes(1)
   })
 
   it('resolves a v3 model for each built-in provider through the registry', () => {
