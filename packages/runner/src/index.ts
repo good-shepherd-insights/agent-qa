@@ -124,6 +124,18 @@ export {
   estimateTokens,
 } from './loop/prompts.js'
 export {
+  CHARS_PER_TOKEN_ESTIMATE,
+  OBSERVATION_LINE_PREFIX,
+  assembleBriefTiers,
+  estimateRenderedServingCost,
+  renderBriefLine,
+  renderCautionLine,
+  renderCautionSummary,
+  renderObservationLine,
+  tierForEntry,
+} from './knowledge-brief-render.js'
+export type { RenderedCautionLine } from './knowledge-brief-render.js'
+export {
   EvidenceRecorder,
   collapseAnnotation,
   makeEmptyServedBrief,
