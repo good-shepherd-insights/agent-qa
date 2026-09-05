@@ -13,22 +13,31 @@
  * in the committed corpus, by construction. Every non-member is accounted
  * for by a typed pair skip or silver exclusion carried forward verbatim.
  *
- * handoffPath is caller-supplied DATA: eval core imports no runner-local
- * path constants — the seeding helper and the CLI compose the real location
- * and pass it in (ROOT-03 run_links provenance).
+ * Partition law (414 D-07): the split is decided BEFORE the entry is
+ * projected. `assignSplit` runs inside the admit closure and its result is
+ * handed to `projectCorpusEntry` as an INPUT, so no post-hoc relabel path
+ * exists anywhere in the seeder — a split can only change by re-deriving the
+ * whole entry from a changed manifest, which is a named migration.
+ *
+ * The partition parameters and the D-04 fields are caller-supplied DATA:
+ * eval core imports no runner-local constants, and module discipline bans
+ * clock APIs here — the CLI and eval-local resolve the committed manifest,
+ * the ISO capture time and the target environment and pass them in.
  */
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import type { LeafCassette } from '../cassette/cassette'
 import type { ExtractedCassette } from '../extract/extract-run'
 import { deriveRunSlug } from '../extract/ids'
 import { projectCorpusEntry, resolveProductPartition } from './corpus-entry'
-import type { CorpusEntry } from './corpus-entry'
+import type { CorpusEntry, TargetEnvironment } from './corpus-entry'
 import { projectPairLabelRecords, projectSilverLabelRecord } from './label-record'
 import type { StandaloneLabelRecord } from './label-record'
 import { collectSelfHealPairs } from './pair-matching'
 import type { PairSkip } from './pair-matching'
 import { DEFAULT_SILVER_PER_TEST_CAP, selectSilverCassettes } from './silver-sampling'
 import type { SilverExclusion } from './silver-sampling'
+import { assignSplit } from './split-assignment'
+import type { PartitionParams } from './split-assignment'
 
 /** Caller-suppliable curation policy (D-11) — NOT frozen-config measurement. */
 export interface SeedingParams {
@@ -63,8 +72,18 @@ export interface SeedingPlan {
 export interface BuildSeedingPlanInput {
   handoff: CompletedRunHandoff
   cassettes: readonly ExtractedCassette[]
-  /** Location of the source run handoff, passed through as data (ROOT-03). */
-  handoffPath: string
+  /**
+   * The product's committed partition parameters (414 D-05/D-07). REQUIRED:
+   * no default fraction exists anywhere on the eval side.
+   */
+  partition: PartitionParams
+  /**
+   * D-04 ISO wall-clock capture time, resolved by the caller. Omitted when
+   * it does not resolve — never fabricated.
+   */
+  capturedAt?: string
+  /** D-04 target environment, resolved by the caller. Omitted when unknown. */
+  targetEnvironment?: TargetEnvironment
   params?: SeedingParams
 }
 
@@ -91,7 +110,7 @@ function requireLeaf(
  * channel-purity invariant broke upstream.
  */
 export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan {
-  const { handoff, cassettes, handoffPath, params } = input
+  const { handoff, cassettes, partition, capturedAt, targetEnvironment, params } = input
   const product = resolveProductPartition(handoff.scope)
   const runId = handoff.runId
   const runSlug = deriveRunSlug(runId)
@@ -112,17 +131,29 @@ export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan {
 
   const admittedIds = new Set<string>()
   const cases: SeedingPlanCase[] = []
-  const admit = (cassette: LeafCassette, labelRecord: StandaloneLabelRecord): void => {
+  const admit = (
+    cassette: LeafCassette,
+    labelRecord: StandaloneLabelRecord,
+    isPairMember: boolean,
+  ): void => {
     if (admittedIds.has(cassette.id)) {
       throw new Error(
         `duplicate seeding case for cassette ${cassette.id} — channel purity broke upstream`,
       )
     }
     admittedIds.add(cassette.id)
+    const assignment = assignSplit({ ...partition, cassetteId: cassette.id, isPairMember })
     cases.push({
       cassetteId: cassette.id,
       labelRecord,
-      corpusEntry: projectCorpusEntry({ cassette, product, runId, handoffPath }),
+      corpusEntry: projectCorpusEntry({
+        cassette,
+        product,
+        runId,
+        assignment,
+        capturedAt,
+        targetEnvironment,
+      }),
     })
   }
 
@@ -137,13 +168,13 @@ export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan {
       recoveringCassette,
       runId,
     })
-    admit(failedCassette, failedRecord)
-    admit(recoveringCassette, recoveringRecord)
+    admit(failedCassette, failedRecord, true)
+    admit(recoveringCassette, recoveringRecord, true)
   }
 
   for (const cassetteId of selected) {
     const cassette = requireLeaf(leavesById, cassetteId)
-    admit(cassette, projectSilverLabelRecord({ cassette, runId }))
+    admit(cassette, projectSilverLabelRecord({ cassette, runId }), false)
   }
 
   cases.sort((a, b) => {
