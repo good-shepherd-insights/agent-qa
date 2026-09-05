@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -91,6 +91,47 @@ async function measurementFixture(configure?: Parameters<typeof writeCommittedFl
 }
 
 describe('runNoiseFloorMeasurement', () => {
+  it('preserves corrupt-bundle load refusals despite unchanged corpus membership and digest', async () => {
+    const { input, corpus } = await measurementFixture()
+    const healthy = await evalLocal.runNoiseFloorMeasurement(input)
+    expect(healthy.artefact.runs.every(run => run.refusalCounts['parse-failed'] === 0)).toBe(true)
+    const brokenId = corpus.selected[0]!.cassette.id
+    const brokenDir = evalLocal.listCassetteBundleDirs(input.cassettesRoot).find(dir => {
+      const load = evalLocal.loadCassetteBundle(dir)
+      return load.kind === 'loaded' && load.cassette.id === brokenId
+    })
+    if (brokenDir === undefined) throw new Error('expected fixture bundle directory')
+    writeFileSync(join(brokenDir, 'cassette.json'), '{invalid')
+    const loaded = evalLocal.loadCassetteBundles(input.cassettesRoot)
+    expect(loaded.loadRefusals).toEqual({ 'parse-failed': 1 })
+    expect(evalLocal.readCommittedCorpus(input.committedRoot).snapshot.entries).toHaveLength(3)
+    const broken = await evalLocal.runNoiseFloorMeasurement({ ...input, clock: incrementingClock() })
+    expect(broken.artefact.corpusDigest).toBe(healthy.artefact.corpusDigest)
+    expect(broken.refusals).toContainEqual(expect.objectContaining({ reason: expect.stringContaining('parse-failed') }))
+    expect(broken.artefact.runs.map(run => run.refusalCounts['parse-failed'])).toEqual([1, 1, 1, 1])
+    expect(broken.artefact.population.refusals['parse-failed']).toBe(1)
+    expect(broken.artefact.runs.map(run => run.cost.modelCalls)).toEqual([2, 2, 2, 2])
+    const current = await evalLocal.replayCorpusOnce({ ...input,
+      selected: loaded.loaded, loadRefusals: loaded.loadRefusals,
+      runRoot: join(input.agentQaRoot, 'gate'), seed: 11, source: 'committed',
+      corpusDigest: healthy.artefact.corpusDigest, replayOutputBaseDir: input.reportOutputBaseDir,
+    })
+    expect(current.report.honesty.refusalCounts['parse-failed']).toBe(1)
+    expect(current.vectors).toHaveLength(2)
+    expect(current.vectors.some(vector => vector.cassetteId === brokenId)).toBe(false)
+    const baseline = evalLocal.loadStagedReport(input.agentQaRoot,
+      computeBatchKey(corpus.selected.map(entry => entry.cassette.id)),
+      join(healthy.runRoots[0]!, 'reports'))
+    if (baseline.kind !== 'loaded') throw new Error('expected healthy staged baseline')
+    const verdict = computeGateVerdict({ expectedProfileKey: healthy.profileKey,
+      pointer: { kind: 'absent', others: [] }, baseline: { report: baseline.report },
+      current: { report: current.report, vectors: current.vectors,
+        fingerprint: healthy.fingerprint, corpusDigest: healthy.artefact.corpusDigest },
+    })
+    expect(verdict.exit).toBe(2)
+    expect(verdict.inconclusive).toContainEqual({ reason: 'refusal-population-differs', detail: expect.any(String) })
+  })
+
   it('folds four isolated whole-corpus runs with seed, split, census and actual call disclosures', async () => {
     expect(evalLocal.runNoiseFloorMeasurement).toBeTypeOf('function')
     const { input, stub, corpus } = await measurementFixture()

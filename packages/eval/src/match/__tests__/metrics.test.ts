@@ -48,6 +48,32 @@ it('copies declared run identity without changing legacy report metadata', () =>
   expect(buildEvalReport([])).not.toHaveProperty('runIdentity')
 })
 
+it('adds observed bundle-load refusals without inventing outcomes or double-counting replay refusals', () => {
+  const outcome: ReplayRefusal = {
+    kind: 'integrity-refusal', cassetteId: 'refused-replay', reason: 'completeness', detail: 'missing evidence',
+  }
+  const entries = [{ cassetteId: outcome.cassetteId, outcome }]
+  const report = buildEvalReport(entries, undefined, undefined, {
+    additionalRefusalCounts: { 'parse-failed': 2 },
+  })
+  expect(report.honesty.refusalCounts['parse-failed']).toBe(2)
+  expect(report.honesty.refusalCounts.completeness).toBe(1)
+  expect(report.totalCost.sampleCount).toBe(0)
+  expect(report.headline.perDecisionCost.decisionCount).toBe(0)
+  expect(report.batchKey).toBe(computeBatchKey([outcome.cassetteId]))
+  expect(buildEvalReport(entries, undefined, undefined, { additionalRefusalCounts: {} }))
+    .toEqual(buildEvalReport(entries))
+  for (const count of [-1, 0.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(() => buildEvalReport([], undefined, undefined, {
+      additionalRefusalCounts: { 'parse-failed': count },
+    })).toThrow(/refusal.*count/i)
+  }
+  const unknownReason: Record<string, number> = { 'unknown-reason': 1 }
+  expect(() => buildEvalReport([], undefined, undefined, {
+    additionalRefusalCounts: unknownReason,
+  })).toThrow(/refusal.*count/i)
+})
+
 function sample(
   sampleIndex: number,
   durationMs: number,
