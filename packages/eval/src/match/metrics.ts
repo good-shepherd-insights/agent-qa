@@ -83,6 +83,7 @@ interface JudgeHonesty {
 /** One replay outcome plus its optional matcher and label projections (D-14/D-15). */
 export interface ScoredBatchEntry {
   cassetteId: string
+  product?: string
   outcome: ReplayCassetteOutcome
   score?: CassetteScore
   label?: CassetteLabelLeg

@@ -6,6 +6,27 @@ export { computeReplayDrift } from './replay/drift'
 export type { ReplayDrift } from './replay/drift'
 
 export {
+  rebuildKnowledgeTiers,
+  UnrenderableBriefError,
+  BRIEF_SOURCES,
+  TURN_MATCHES,
+} from './replay/brief-tiers'
+export type { BriefSource, TurnMatch, RebuiltKnowledgeTiers } from './replay/brief-tiers'
+export { REPLAY_REFUSAL_REASONS } from './replay/result'
+export {
+  BRIEF_DELTA_KINDS,
+  applyBriefDelta,
+  reverseBriefDelta,
+  locateBriefLine,
+} from './replay/brief-delta'
+export type {
+  BriefDeltaKind,
+  BriefTier,
+  DeclaredBriefDelta,
+  LocateBriefLineOutcome,
+} from './replay/brief-delta'
+
+export {
   computeDecisionIdentity,
   decisionIdentityKey,
   normalizeIdentityValue,
@@ -110,6 +131,15 @@ export type {
 export { tiersSettlePredicate } from './match/predicate'
 export { buildEvalReport, computeBatchKey } from './match/metrics'
 export type { EvalBatchReport, ScoredBatchEntry } from './match/metrics'
+
+export {
+  decisionCorrectnessVectors,
+  DECISION_VECTORS_SCHEMA_VERSION,
+  decisionVectorsDocumentSchema,
+  guardDecisionVectorsDocument,
+  projectDecisionVectorsDocument,
+} from './match/decision-vectors'
+export type { DecisionVectorsDocument } from './match/decision-vectors'
 
 export type {
   JudgeCallRequest,

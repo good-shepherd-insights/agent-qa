@@ -3,7 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { buildEvalReport, extractRunCassettes, resolveProductPartition } from '@vostride/agent-qa-eval'
+import {
+  buildEvalReport, decisionCorrectnessVectors, extractRunCassettes,
+  guardDecisionVectorsDocument, projectDecisionVectorsDocument, resolveProductPartition,
+} from '@vostride/agent-qa-eval'
 import type { JudgeIdentityBlock, LeafReplayResult } from '@vostride/agent-qa-eval'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -42,7 +45,7 @@ function leafOutcome(cassetteId: string): LeafReplayResult {
     cassetteId,
     samples: [],
     agreement: { k: 0, agreementRate: 0, noConsensus: true, harnessErrorCount: 0 },
-    promptDrift: { drift: false, recordedHash: 'a'.repeat(64), recomputedHash: 'a'.repeat(64) },
+    promptDrift: { drift: false, harnessDrift: false, recordedHash: 'a'.repeat(64), recomputedHash: 'a'.repeat(64) },
     replayedModel: { provider: 'null', modelId: 'null-adapter' },
     unconsumedExchanges: [],
     totalDurationMs: 0,
@@ -55,11 +58,22 @@ describe('assembleScoredBatch', () => {
     const replaysRoot = join(root, 'replays')
     const store = new evalLocal.FsReplayRecordStore({ root, outputDir: replaysRoot })
     const legacy = leafOutcome('legacy-leaf')
+    legacy.promptDrift.drift = true
     const written = store.save(legacy)
     const { briefSource, ...unstamped } = legacy
+    Reflect.deleteProperty(unstamped.promptDrift, 'harnessDrift')
     expect(briefSource).toBe('empty')
     writeFileSync(written.file, JSON.stringify(unstamped))
-    store.save(leafOutcome('current-leaf'))
+    const current = leafOutcome('current-leaf')
+    current.promptDrift.drift = true
+    store.save(current)
+    for (const cassetteId of [legacy.cassetteId, current.cassetteId]) {
+      new evalLocal.FsScoreStore({ root, outputDir: replaysRoot }).save({
+        cassetteId, matcherVersion: 1, diffs: [],
+        score: { kind: 'leaf', cassetteId, entry: { kind: 'decision', decisionOrdinal: 0,
+          score: { kind: 'miss-by-failure', reason: 'no action', matcherVersion: 1 } } },
+      })
+    }
     store.save({
       kind: 'integrity-refusal', cassetteId: 'historical-refusal',
       reason: 'unsupported-brief', detail: 'recorded before brief rendering',
@@ -73,6 +87,16 @@ describe('assembleScoredBatch', () => {
     expect(report.briefSourceCounts).toEqual({ proof: 0, rendered: 0, empty: 1 })
     expect(report.headline.perDecisionCost.decisionCount).toBe(2)
     expect(report.honesty.refusalCounts['unsupported-brief']).toBe(1)
+    expect(report.promptDriftRate).toEqual({ numerator: 1, denominator: 2, rate: 0.5 })
+    expect(report.headline.firstAttemptDecisionAccuracy).toEqual({ numerator: 0, denominator: 2, rate: 0 })
+    const vectors = decisionCorrectnessVectors(batch.entries, batch.partitionsById)
+    expect(vectors.map(vector => [vector.key, vector.briefSource]))
+      .toEqual([['current-leaf#-#0', 'empty']])
+    const document = projectDecisionVectorsDocument({
+      batchKey: report.batchKey, matcherVersion: report.matcherVersion, vectors,
+    })
+    expect(guardDecisionVectorsDocument(JSON.parse(JSON.stringify(document))))
+      .toEqual({ kind: 'ok', document })
   })
 
   it('joins labels and persisted scores while retaining a corrupt replay as a refusal entry', async () => {
@@ -121,6 +145,7 @@ describe('assembleScoredBatch', () => {
       outcome: scoredOutcome,
       score: record.score,
       label: leaf.cassette.label,
+      product: resolveProductPartition(leaf.cassette.input.servedBrief.scope),
     })
     expect(result.entries.find(entry => entry.cassetteId === unscoredOutcome.cassetteId)).toEqual({
       cassetteId: unscoredOutcome.cassetteId,

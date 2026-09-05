@@ -23,7 +23,7 @@ function leafOutcome(overrides: Partial<LeafReplayResult> = {}): LeafReplayResul
     cassetteId: CASSETTE_ID,
     samples: [],
     agreement: { k: 0, agreementRate: 0, noConsensus: true, harnessErrorCount: 0 },
-    promptDrift: { drift: false, recordedHash: 'a'.repeat(64), recomputedHash: 'a'.repeat(64) },
+    promptDrift: { drift: false, harnessDrift: false, recordedHash: 'a'.repeat(64), recomputedHash: 'a'.repeat(64) },
     replayedModel: { provider: 'null', modelId: 'null-adapter' },
     unconsumedExchanges: [],
     totalDurationMs: 0,
