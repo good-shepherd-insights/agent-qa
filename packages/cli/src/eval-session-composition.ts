@@ -79,6 +79,7 @@ import {
   computeReplayProfileFingerprintFor,
   listBaselinePointers,
   listCommittedReports,
+  listNoiseFloorArtefacts,
   loadCassetteBundles,
   loadScoreRecord,
   readCommittedCorpus,
@@ -1652,6 +1653,23 @@ export interface CensusVerbResult {
   campaignManifest?: string
   /** The typed commitCensus outcome when `--commit` ran — egress blocks are DATA (372 D-08). */
   committed?: CommitCensusOutcome
+  /**
+   * Read-only floor artefact disclosure, sorted by profileKey (415 D-14). This field never
+   * enters deriveCensus or the committed census schema; absent when no guarded floor exists.
+   */
+  noiseFloor?: {
+    profileKey: string
+    path: string
+    minimumGateSet?: number
+    /** The measured artefact's own explanation, including why a value may be absent. */
+    minimumGateSetDerivation: string
+    classifierRepeatability?: {
+      n: number
+      k: number
+      classFlipRate?: number
+      admitExcludeFlipRate?: number
+    }
+  }[]
   /** Stderr-destined honesty lines: read refusals, cross-check reconciliations, comparator refusals. */
   notices: string[]
 }
@@ -1736,6 +1754,32 @@ export async function runCensusVerb(
     reports.push({ report: entry.report, comparator, designatedBy })
   }
 
+  // D-14: disclose each guarded floor beside the census, without changing the census input.
+  const floorList = listNoiseFloorArtefacts(committedRoot)
+  for (const refusal of floorList.refusals) {
+    notices.push(`committed read refused ${refusal.path}: ${refusal.reason}`)
+  }
+  const noiseFloor = floorList.artefacts.map(({ profileKey, path, artefact }) => {
+    const repeatability = artefact.classifierRepeatability
+    return {
+      profileKey,
+      path,
+      ...(artefact.minimumGateSet.value === undefined
+        ? {} : { minimumGateSet: artefact.minimumGateSet.value }),
+      minimumGateSetDerivation: artefact.minimumGateSet.derivation,
+      ...(repeatability === undefined ? {} : {
+        classifierRepeatability: {
+          n: repeatability.n,
+          k: repeatability.k,
+          ...(repeatability.classFlipRate === undefined
+            ? {} : { classFlipRate: repeatability.classFlipRate }),
+          ...(repeatability.admitExcludeFlipRate === undefined
+            ? {} : { admitExcludeFlipRate: repeatability.admitExcludeFlipRate }),
+        },
+      }),
+    }
+  })
+
   // (4) The ONE pure fold — every counter, rate and tally in the DTO is the derivation's.
   const census = deriveCensus({
     snapshot: read.snapshot,
@@ -1766,6 +1810,7 @@ export async function runCensusVerb(
     census,
     ...(campaignManifest !== undefined ? { campaignManifest } : {}),
     ...(committed !== undefined ? { committed } : {}),
+    ...(noiseFloor.length === 0 ? {} : { noiseFloor }),
     notices,
   }
 }

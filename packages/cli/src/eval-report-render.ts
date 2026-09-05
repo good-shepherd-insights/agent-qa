@@ -6,6 +6,33 @@
 // per-decision diff renderer stays JSON-DTO territory (369 D-16).
 
 import type { EvalBatchReport } from '@vostride/agent-qa-eval'
+import type { CensusVerbResult, ReportVerbResult } from './eval-session-composition.js'
+
+/** Console-only evidence disclosure; committed report markdown below remains byte-stable. */
+export function renderReportEvidenceLines(result: ReportVerbResult): string[] {
+  const lines: string[] = []
+  if (result.committed?.kind === 'committed'
+    && result.committed.decisions !== undefined && result.decisionVectorCount !== undefined) {
+    lines.push(`decisions: ${result.decisionVectorCount} vectors (${result.committed.decisions})`)
+  }
+  if (result.baseline !== undefined && result.profileKey !== undefined) {
+    lines.push(`baseline: ${result.profileKey} (${result.baseline.kind})`)
+  }
+  return lines
+}
+
+/** Values are copied from guarded artefacts, including their measured absence explanations. */
+export function renderCensusFloorLines(result: CensusVerbResult): string[] {
+  return (result.noiseFloor ?? []).map(floor => {
+    const minimum = floor.minimumGateSet === undefined
+      ? `undefined (${floor.minimumGateSetDerivation})` : String(floor.minimumGateSet)
+    const classifier = floor.classifierRepeatability
+    const repeatability = classifier === undefined ? 'undefined'
+      : `n:${classifier.n} k:${classifier.k} classFlipRate=${classifier.classFlipRate ?? 'undefined'} `
+        + `admitExcludeFlipRate=${classifier.admitExcludeFlipRate ?? 'undefined'}`
+    return `floor ${floor.profileKey}: minimumGateSet=${minimum} classifierRepeatability=${repeatability}`
+  })
+}
 
 /** Sorted-key counter group as markdown bullets — honest '- none' when empty (D-04). */
 function counterLines(title: string, counts: Readonly<Record<string, number>>): string[] {

@@ -7,6 +7,7 @@
 
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
+import { renderCensusFloorLines, renderReportEvidenceLines } from '../eval-report-render.js'
 import type {
   BaselineComparatorRefusal,
   CensusVerbResult,
@@ -268,11 +269,12 @@ function renderReportSummary(
       console.log(pc.red(`commit write-conflict: ${result.committed.path}`))
     }
   }
+  for (const line of renderReportEvidenceLines(result)) console.log(line)
   const baseline = result.baseline
   if (baseline !== undefined) {
     // D-08/D-19: every designation outcome is DATA — loud where it must be, exit 0 throughout.
     if (baseline.kind === 'written' || baseline.kind === 'unchanged') {
-      console.log(`baseline: ${baseline.kind} ${baseline.path}`)
+      console.log(pc.dim(`baseline file: ${baseline.path}`))
     } else if (baseline.kind === 'refused') {
       console.log(pc.red(renderBaselineComparatorRefusal(baseline.refusal)))
     } else if (baseline.kind === 'egress-blocked') {
@@ -293,8 +295,8 @@ function renderReportSummary(
 /**
  * Compact census summary rendered from the DTO fields only — a faithful projection (D-04).
  *
- * D-16 discipline: every number here is copied out of the census, nothing is summed, rated or
- * interpreted at the console, and no threshold or minimum-n line exists to print. The cross-check
+ * D-16 discipline: every number is copied from the census or the committed floor disclosure;
+ * nothing is summed, rated or derived at the console. The cross-check
  * reconciliation lines and any comparator refusal ride in `notices`, so a same-family report is
  * disclosed on EVERY census run to the person actually reading the output (D-20, T-413-22).
  */
@@ -331,6 +333,7 @@ function renderCensusSummary(result: CensusVerbResult): void {
         + `wallClockMs=${campaign.wallClockMs}`,
     )
   }
+  for (const line of renderCensusFloorLines(result)) console.log(line)
   for (const notice of result.notices) {
     // A comparator refusal is the one notice that must not read like housekeeping (ROOT-11).
     console.log(
