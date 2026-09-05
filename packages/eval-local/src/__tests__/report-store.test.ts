@@ -1,13 +1,13 @@
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { buildEvalReport, computeBatchKey } from '@vostride/agent-qa-eval'
+import { buildEvalReport, computeBatchKey, projectDecisionVectorsDocument } from '@vostride/agent-qa-eval'
 import type { EvalBatchReport } from '@vostride/agent-qa-eval'
 import { slugBranch } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { DEFAULT_EVAL_REPORTS_SUBDIR, FsReportStore } from '../report-store.js'
+import { DEFAULT_EVAL_REPORTS_SUBDIR, FsReportStore, loadStagedReport } from '../report-store.js'
 
 function report(batchKey?: string): EvalBatchReport {
   // A real eval-core report DTO — the store persists it verbatim (F9: no aggregation here).
@@ -89,4 +89,136 @@ describe('FsReportStore (D-13/D-14)', () => {
     expect(written.file).toBe(join(outputDir, `${slugBranch('batch-gamma')}.json`))
     expect(await exists(join(root, DEFAULT_EVAL_REPORTS_SUBDIR))).toBe(false)
   })
+
+  function decisions(batchReport: EvalBatchReport) {
+    return projectDecisionVectorsDocument({
+      batchKey: batchReport.batchKey, matcherVersion: batchReport.matcherVersion, vectors: [],
+    })
+  }
+
+  it('round-trips a report and staged decisions without dropping seed, honesty, judge or cost', async () => {
+    const batchReport = buildEvalReport([], {
+      judgeModelId: 'fixture-judge', judgeFamily: 'fixture-family', judgeVersion: 1,
+      confidenceThreshold: 'high',
+    }, undefined, { declaredSeed: 11 })
+    batchReport.seedHonored = false
+    batchReport.totalCost.promptTokens = 17
+    batchReport.honesty.harnessErrorCount = 2
+    batchReport.honesty.judge.cost.calls = 1
+    const document = decisions(batchReport)
+    const written = new FsReportStore({ root }).save(batchReport, document)
+    expect(written.decisionsFile).toBe(join(root, DEFAULT_EVAL_REPORTS_SUBDIR,
+      `${slugBranch(batchReport.batchKey)}.decisions.json`))
+    expect(await readFile(written.decisionsFile!, 'utf8')).toBe(`${JSON.stringify(document, null, 2)}\n`)
+    expect(loadStagedReport(root, batchReport.batchKey)).toEqual({
+      kind: 'loaded', report: batchReport, decisions: document, file: written.file,
+    })
+  })
+
+  it('loads historical reports without a sidecar and names an absent report exactly', () => {
+    const batchReport = report('historical')
+    const file = join(root, DEFAULT_EVAL_REPORTS_SUBDIR, 'historical.json')
+    expect(loadStagedReport(root, batchReport.batchKey)).toEqual({ kind: 'absent', file })
+    expect(new FsReportStore({ root }).save(batchReport)).not.toHaveProperty('decisionsFile')
+    expect(loadStagedReport(root, batchReport.batchKey)).toEqual({ kind: 'loaded', report: batchReport, file })
+  })
+
+  it('probes only the chosen directory, with no fallback to another report or sidecar', () => {
+    const batchReport = report('retargeted')
+    const document = decisions(batchReport)
+    const defaultWrite = new FsReportStore({ root }).save(batchReport, document)
+    const outputDir = join(root, 'chosen')
+    const file = join(outputDir, 'retargeted.json')
+    expect(loadStagedReport(root, batchReport.batchKey, outputDir)).toEqual({ kind: 'absent', file })
+    const retargeted = { ...batchReport, modelMismatchCount: 9 }
+    new FsReportStore({ root, outputDir }).save(retargeted)
+    expect(loadStagedReport(root, batchReport.batchKey, outputDir)).toEqual({
+      kind: 'loaded', report: retargeted, file,
+    })
+    expect(loadStagedReport(root, batchReport.batchKey)).toEqual({
+      kind: 'loaded', report: batchReport, decisions: document, file: defaultWrite.file,
+    })
+  })
+
+  it('removes only a stale owned sidecar when the same batch is saved without decisions', async () => {
+    const store = new FsReportStore({ root })
+    const first = report('repeated')
+    const old = store.save(first, decisions(first))
+    const sidecar = join(root, DEFAULT_EVAL_REPORTS_SUBDIR, 'repeated.decisions.json')
+    expect(await exists(sidecar)).toBe(true)
+    const sibling = report('sibling')
+    const siblingWrite = store.save(sibling, decisions(sibling))
+    const sentinel = join(root, DEFAULT_EVAL_REPORTS_SUBDIR, 'keep.txt')
+    await writeFile(sentinel, 'owned fixture sentinel')
+    const updated = { ...first, modelMismatchCount: 3 }
+    const saved = store.save(updated)
+    expect(saved).not.toHaveProperty('decisionsFile')
+    expect(await exists(sidecar)).toBe(false)
+    expect(loadStagedReport(root, first.batchKey)).toEqual({
+      kind: 'loaded', report: updated, file: old.file,
+    })
+    expect(await exists(siblingWrite.decisionsFile!)).toBe(true)
+    expect(await readFile(sentinel, 'utf8')).toBe('owned fixture sentinel')
+  })
+
+  it.each(['batchKey', 'matcherVersion'] as const)(
+    'refuses a sidecar with a foreign %s on read', async field => {
+      const batchReport = report('paired')
+      const document = decisions(batchReport)
+      const written = new FsReportStore({ root }).save(batchReport)
+      if (field === 'batchKey') document.batchKey = 'foreign'
+      else document.matcherVersion += 1
+      const file = join(root, DEFAULT_EVAL_REPORTS_SUBDIR, 'paired.decisions.json')
+      await writeFile(file, JSON.stringify(document))
+      expect(loadStagedReport(root, batchReport.batchKey)).toEqual({
+        kind: 'refused', file, reason: expect.stringContaining(field),
+      })
+      expect(await readFile(written.file, 'utf8')).toBe(`${JSON.stringify(batchReport, null, 2)}\n`)
+    },
+  )
+
+  it('refuses a report whose identity differs from the requested staging key', async () => {
+    const requested = report('requested')
+    const written = new FsReportStore({ root }).save(requested)
+    await writeFile(written.file, JSON.stringify(report('foreign')))
+    expect(loadStagedReport(root, requested.batchKey)).toEqual({
+      kind: 'refused', file: written.file, reason: expect.stringContaining('batchKey'),
+    })
+  })
+
+  it.each(['not json', '{"batchKey":"invalid"}'])(
+    'refuses malformed staged report bytes %s without throwing', async raw => {
+      const written = new FsReportStore({ root }).save(report('invalid'))
+      await writeFile(written.file, raw)
+      expect(loadStagedReport(root, 'invalid')).toEqual({
+        kind: 'refused', file: written.file, reason: expect.any(String),
+      })
+    },
+  )
+
+  it.each(['not json', '{"schemaVersion":3}'])(
+    'refuses malformed staged decisions bytes %s without throwing', async raw => {
+      const batchReport = report('invalid-sidecar')
+      new FsReportStore({ root }).save(batchReport)
+      const file = join(root, DEFAULT_EVAL_REPORTS_SUBDIR, 'invalid-sidecar.decisions.json')
+      await writeFile(file, raw)
+      expect(loadStagedReport(root, batchReport.batchKey)).toEqual({
+        kind: 'refused', file, reason: expect.any(String),
+      })
+    },
+  )
+
+  it.each(['batchKey', 'matcherVersion'] as const)(
+    'rejects a foreign decisions %s on save without changing the existing pair', async field => {
+      const store = new FsReportStore({ root })
+      const batchReport = report('paired')
+      const document = decisions(batchReport)
+      const original = store.save(batchReport, document)
+      if (field === 'batchKey') document.batchKey = 'foreign'
+      else document.matcherVersion += 1
+      expect(() => store.save({ ...batchReport, modelMismatchCount: 7 }, document)).toThrow(TypeError)
+      expect(await readFile(original.file, 'utf8')).toBe(`${JSON.stringify(batchReport, null, 2)}\n`)
+      expect(JSON.parse(await readFile(original.decisionsFile!, 'utf8'))).toEqual(decisions(batchReport))
+    },
+  )
 })

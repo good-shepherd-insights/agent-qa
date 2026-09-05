@@ -21,7 +21,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import type { EvalBatchReport } from '@vostride/agent-qa-eval'
+import type { DecisionVectorsDocument, EvalBatchReport } from '@vostride/agent-qa-eval'
 import { slugBranch } from '@vostride/agent-qa-schema'
 
 export const DEFAULT_EVAL_REPORTS_SUBDIR = 'eval/reports'
@@ -36,6 +36,20 @@ export interface FsReportStoreConfig {
 export interface WrittenReport {
   batchKey: string
   file: string
+  decisionsFile?: string
+}
+
+export type StagedReportLoad =
+  | { kind: 'loaded'; report: EvalBatchReport; decisions?: DecisionVectorsDocument; file: string }
+  | { kind: 'absent'; file: string }
+  | { kind: 'refused'; file: string; reason: string }
+
+export function loadStagedReport(
+  _root: string,
+  _batchKey: string,
+  _outputDir?: string,
+): StagedReportLoad {
+  throw new Error('staged report read contract not implemented')
 }
 
 export class FsReportStore {
@@ -45,7 +59,7 @@ export class FsReportStore {
     this.outputRoot = config.outputDir ?? join(config.root, DEFAULT_EVAL_REPORTS_SUBDIR)
   }
 
-  save(report: EvalBatchReport): WrittenReport {
+  save(report: EvalBatchReport, _decisions?: DecisionVectorsDocument): WrittenReport {
     const file = join(this.outputRoot, `${slugBranch(report.batchKey)}.json`)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`, 'utf8')

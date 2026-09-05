@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { buildEvalReport, committedFileText } from '@vostride/agent-qa-eval'
-import type { EvalBatchReport } from '@vostride/agent-qa-eval'
+import { buildEvalReport, committedFileText, projectDecisionVectorsDocument } from '@vostride/agent-qa-eval'
+import type { DecisionVectorsDocument, EvalBatchReport } from '@vostride/agent-qa-eval'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { slugBranch } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -16,6 +16,7 @@ import {
 } from '../committed-root-store.js'
 import {
   COMMITTED_REPORT_JSON_FILE,
+  COMMITTED_REPORT_DECISIONS_FILE,
   COMMITTED_REPORT_MARKDOWN_FILE,
   REPORT_EGRESS_CHANNEL,
   commitEvalReport,
@@ -35,10 +36,12 @@ describe('commitEvalReport (D-13, BASE-02)', () => {
   function commit(overrides: {
     report?: EvalBatchReport
     markdown?: string
+    decisions?: DecisionVectorsDocument
   } = {}): CommitEvalReportOutcome {
     return commitEvalReport({
       report: overrides.report ?? report,
       markdown: overrides.markdown ?? MARKDOWN,
+      ...(overrides.decisions === undefined ? {} : { decisions: overrides.decisions }),
       committedRoot: root,
       reportOutputBaseDir: outDir,
       policy,
@@ -70,6 +73,8 @@ describe('commitEvalReport (D-13, BASE-02)', () => {
     if (outcome.kind !== 'committed') throw new Error('expected committed outcome')
     expect(outcome.json).toBe('written')
     expect(outcome.markdown).toBe('written')
+    expect(outcome).not.toHaveProperty('decisions')
+    expect(existsSync(join(root, committedReportPath(report.batchKey, 'decisions.json')))).toBe(false)
 
     const paths = reportFilePaths(report.batchKey)
     expect(existsSync(paths.json)).toBe(true)
@@ -146,4 +151,73 @@ describe('commitEvalReport (D-13, BASE-02)', () => {
       ),
     ).toBe(true)
   })
+
+  function decisions(): DecisionVectorsDocument {
+    return projectDecisionVectorsDocument({
+      batchKey: report.batchKey, matcherVersion: report.matcherVersion, vectors: [],
+    })
+  }
+
+  it('commits decisions as a write-once third part beside unchanged report bytes', () => {
+    expect(COMMITTED_REPORT_DECISIONS_FILE).toBe('decisions.json')
+    const document = decisions()
+    expect(commit({ decisions: document })).toMatchObject({
+      kind: 'committed', json: 'written', markdown: 'written', decisions: 'written',
+    })
+    const path = join(root, committedReportPath(report.batchKey, COMMITTED_REPORT_DECISIONS_FILE))
+    expect(readFileSync(path, 'utf8')).toBe(committedFileText(document))
+    const paths = reportFilePaths(report.batchKey)
+    expect(readFileSync(paths.json, 'utf8')).toBe(committedFileText(report))
+    expect(readFileSync(paths.markdown, 'utf8')).toBe(MARKDOWN)
+    expect(commit({ decisions: document })).toMatchObject({
+      kind: 'committed', json: 'unchanged', markdown: 'unchanged', decisions: 'unchanged',
+    })
+    expect(commit()).not.toHaveProperty('decisions')
+    expect(readFileSync(path, 'utf8')).toBe(committedFileText(document))
+  })
+
+  it('a conflicting decisions part refuses the whole preview set without any other write', () => {
+    const path = committedReportPath(report.batchKey, COMMITTED_REPORT_DECISIONS_FILE)
+    const oldBytes = 'previous decisions\n'
+    new FsCommittedRootStore({ committedRoot: root }).writeText(path, oldBytes)
+    expect(commit({ decisions: decisions() })).toEqual({ kind: 'write-conflict', path })
+    const paths = reportFilePaths(report.batchKey)
+    expect(existsSync(paths.json)).toBe(false)
+    expect(existsSync(paths.markdown)).toBe(false)
+    expect(readFileSync(join(root, path), 'utf8')).toBe(oldBytes)
+  })
+
+  it('a planted secret in decisions blocks all three parts on eval-report', () => {
+    const document = decisions()
+    document.vectors = [{
+      key: `${AWS_KEY}#-#0`, cassetteId: AWS_KEY, decisionOrdinal: 0,
+      product: 'fixture', briefSource: 'proof',
+      axes: {
+        headline: 'correct', elementIdentity: 'correct', value: 'not-applicable',
+        opClass: 'correct', sideEffect: 'correct', loop: 'not-applicable',
+      },
+    }]
+    expect(commit({ decisions: document })).toEqual({
+      kind: 'egress-blocked',
+      detections: [{ label: `report-decisions:${report.batchKey}`, detector: 'awsKey' }],
+    })
+    expect(existsSync(join(root, 'reports'))).toBe(false)
+    const rows = readFileSync(join(outDir, 'guardrail_audit.jsonl'), 'utf8')
+      .trim().split('\n').map(line => JSON.parse(line))
+    expect(rows).toContainEqual(expect.objectContaining({
+      channel: `${REPORT_EGRESS_CHANNEL}:report-decisions:${report.batchKey}`,
+      detector: 'awsKey', action: 'block',
+    }))
+  })
+
+  it.each(['batchKey', 'matcherVersion'] as const)(
+    'rejects a foreign decisions %s as a caller bug before any output', field => {
+      const document = decisions()
+      if (field === 'batchKey') document.batchKey = 'foreign'
+      else document.matcherVersion += 1
+      expect(() => commit({ decisions: document })).toThrow(TypeError)
+      expect(existsSync(join(root, 'reports'))).toBe(false)
+      expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
+    },
+  )
 })

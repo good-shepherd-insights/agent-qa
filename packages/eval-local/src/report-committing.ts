@@ -18,7 +18,7 @@
 import { join } from 'node:path'
 
 import { committedFileText } from '@vostride/agent-qa-eval'
-import type { EvalBatchReport } from '@vostride/agent-qa-eval'
+import type { DecisionVectorsDocument, EvalBatchReport } from '@vostride/agent-qa-eval'
 import {
   CommittedEgressBlockedError,
   assertCommittedEgressSafe,
@@ -40,10 +40,12 @@ export const REPORT_EGRESS_CHANNEL = 'eval-report'
 
 export const COMMITTED_REPORT_JSON_FILE = 'report.json'
 export const COMMITTED_REPORT_MARKDOWN_FILE = 'report.md'
+export const COMMITTED_REPORT_DECISIONS_FILE = 'decisions.json'
 
 export interface CommitEvalReportInput {
   /** The pure eval-core report DTO — batchKey names the committed dir. */
   report: EvalBatchReport
+  decisions?: DecisionVectorsDocument
   /** The rendered markdown projection; byte-determinism is the renderer's contract. */
   markdown: string
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the 372 CLI. */
@@ -59,6 +61,7 @@ export type CommitEvalReportOutcome =
       kind: 'committed'
       json: 'written' | 'unchanged'
       markdown: 'written' | 'unchanged'
+      decisions?: 'written' | 'unchanged'
       reportDir: string
     }
   | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
