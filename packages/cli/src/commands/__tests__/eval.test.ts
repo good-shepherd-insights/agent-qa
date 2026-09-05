@@ -61,6 +61,7 @@ import {
   EvalPartitionFlagsRequiredError,
   EvalPartitionManifestConflictError,
   resolveEvalSession,
+  resolveTargetEnvironmentForProduct,
   runExtractVerb,
   runReplayVerb,
   runCensusVerb,
@@ -1507,6 +1508,141 @@ describe('runSeedVerb — partition manifest and run exclusions (414 D-02/D-05/D
     expect(rendered).toContain('partitions:')
     expect(rendered).toContain('exclusions written:')
     expect(rendered).toContain('- none')
+  })
+})
+
+// ---- 414-07 Task 2: the two optional D-04 provenance fields ----------------------------------
+
+/**
+ * 414 D-04: a fixture whose `registry.targets` block is supplied by the cell.
+ *
+ * The environment is a property of the TARGET REGISTRY — a `CompletedRunHandoff` carries no
+ * target at all — so every D-04 environment case has to be expressed here and nowhere else.
+ */
+async function writeTargetsFixture(
+  targetLines: readonly string[],
+): Promise<{ dir: string; configPath: string }> {
+  const dir = await mkdtemp(join(tmpRoot, 'fixture-'))
+  const configPath = join(dir, 'agent-qa.config.yaml')
+  await writeFile(
+    configPath,
+    CONFIG_YAML.replace('use:\n', `${['  targets:', ...targetLines, 'use:'].join('\n')}\n`),
+  )
+  await writeFile(join(dir, '.env.secrets.local'), '')
+  return { dir, configPath }
+}
+
+function webTarget(
+  name: string,
+  fields: { product?: string; environment?: 'local' | 'shared' },
+): string[] {
+  return [
+    `    ${name}:`,
+    '      platform: web',
+    `      url: https://${name}.example.test`,
+    ...(fields.product === undefined ? [] : [`      product: ${fields.product}`]),
+    ...(fields.environment === undefined ? [] : [`      environment: ${fields.environment}`]),
+  ]
+}
+
+/** The fixture run's own clock — the ONLY source captured_at may come from (D-04). */
+async function handoffEndedAt(dir: string, runId: string): Promise<number> {
+  const raw = await readFile(
+    join(dir, '.agent-qa', RUNS_SUBDIR, slugBranch(runId), HANDOFF_FILE),
+    'utf8',
+  )
+  return (JSON.parse(raw) as { endedAt: number }).endedAt
+}
+
+describe('runSeedVerb — captured_at and targetEnvironment stamping (414 D-04)', () => {
+  it('stamps both fields when exactly one declared environment resolves for the product', async () => {
+    const { dir, configPath } = await writeTargetsFixture(
+      webTarget('checkout', { product: 'default', environment: 'shared' }),
+    )
+    saveSeedRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
+    expect(result.seededCount).toBe(1)
+
+    const expectedCapturedAt = new Date(await handoffEndedAt(dir, 'run-alpha')).toISOString()
+    const read = readCommittedCorpus(resolve(dir, 'agent-qa-eval'))
+    expect(read.snapshot.entries).toHaveLength(1)
+    for (const entry of read.snapshot.entries) {
+      expect(entry.targetEnvironment).toBe('shared')
+      expect(entry.captured_at).toBe(expectedCapturedAt)
+    }
+  })
+
+  it('OMITS targetEnvironment for a MIXED target set, keeping captured_at (D-04)', async () => {
+    const { dir, configPath } = await writeTargetsFixture([
+      ...webTarget('checkout', { product: 'default', environment: 'shared' }),
+      ...webTarget('staging', { product: 'default', environment: 'local' }),
+    ])
+    saveSeedRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+
+    await runSeedVerb(session, {}, TEST_FRACTIONS)
+
+    const read = readCommittedCorpus(resolve(dir, 'agent-qa-eval'))
+    expect(read.snapshot.entries).toHaveLength(1)
+    for (const entry of read.snapshot.entries) {
+      // A mixed set has no single answer, and a majority vote would be a fabricated one. The KEY
+      // is absent — asserting `toBe(undefined)` would pass on a key present with value undefined.
+      expect(Object.keys(entry)).not.toContain('targetEnvironment')
+      expect(Object.keys(entry)).toContain('captured_at')
+    }
+  })
+
+  it('OMITS targetEnvironment when no target, or an undeclared one, resolves (D-04)', async () => {
+    const cases: readonly string[][] = [
+      // No target resolves to the run's product at all.
+      webTarget('otherapp', { product: 'somewhere-else', environment: 'shared' }),
+      // The only matching target declares no environment — silence stays silence.
+      webTarget('checkout', { product: 'default' }),
+    ]
+    for (const targetLines of cases) {
+      const { dir, configPath } = await writeTargetsFixture(targetLines)
+      saveSeedRun(dir, 'run-alpha')
+      const session = await sessionFor(configPath)
+
+      await runSeedVerb(session, {}, TEST_FRACTIONS)
+
+      const read = readCommittedCorpus(resolve(dir, 'agent-qa-eval'))
+      expect(read.snapshot.entries).toHaveLength(1)
+      for (const entry of read.snapshot.entries) {
+        expect(Object.keys(entry)).not.toContain('targetEnvironment')
+        expect(Object.keys(entry)).toContain('captured_at')
+      }
+    }
+  })
+
+  it('resolveTargetEnvironmentForProduct answers shared, undefined, undefined (D-04)', async () => {
+    const single = await writeTargetsFixture(
+      webTarget('checkout', { product: 'default', environment: 'shared' }),
+    )
+    const mixed = await writeTargetsFixture([
+      ...webTarget('checkout', { product: 'default', environment: 'shared' }),
+      ...webTarget('staging', { product: 'default', environment: 'local' }),
+    ])
+    const undeclared = await writeTargetsFixture(webTarget('checkout', { product: 'default' }))
+
+    expect(
+      resolveTargetEnvironmentForProduct((await sessionFor(single.configPath)).config, 'default'),
+    ).toBe('shared')
+    expect(
+      resolveTargetEnvironmentForProduct((await sessionFor(mixed.configPath)).config, 'default'),
+    ).toBeUndefined()
+    expect(
+      resolveTargetEnvironmentForProduct(
+        (await sessionFor(undeclared.configPath)).config,
+        'default',
+      ),
+    ).toBeUndefined()
+    // A target the registry knows nothing about never invents a class for itself.
+    expect(
+      resolveTargetEnvironmentForProduct((await sessionFor(single.configPath)).config, 'nobody'),
+    ).toBeUndefined()
   })
 })
 
