@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -263,7 +270,7 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
     expect(ids).toEqual([...ids].sort())
   })
 
-  it('reads every seeded v2 entry back through eval\'s guard and censuses the versions seen', () => {
+  it('reads every seeded v2 entry back through the one guard, censusing versions', () => {
     const read = readCommittedCorpus(root)
 
     expect(read.refusals).toEqual([])
@@ -274,7 +281,9 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
 
     // Typed round-trip: the read leg returns exactly what the seeder committed,
     // including the non-natural arm the pre-414 local zod could not admit.
-    const seededById = new Map(plan.cases.map((planCase) => [planCase.cassetteId, planCase.corpusEntry]))
+    const seededById = new Map(
+      plan.cases.map((planCase) => [planCase.cassetteId, planCase.corpusEntry]),
+    )
     for (const entry of read.snapshot.entries) {
       expect(entry).toEqual(seededById.get(entry.cassetteId))
     }
@@ -377,7 +386,7 @@ describe('the v2 read leg on committed bytes (414 D-03/D-13/D-02/D-05, ROOT-06)'
     await rm(root, { recursive: true, force: true })
   })
 
-  it('admits v1 bytes as a natural entry beside a v2 private held-out entry, censusing both (D-13)', () => {
+  it('admits v1 bytes as natural beside a v2 private held-out entry, censusing both (D-13)', () => {
     const v1 = v1FixtureBytes()
     const v1CassetteId = v1.cassetteId as string
     writeCommitted(root, committedCorpusPath(V1_PRODUCT, v1CassetteId), v1)

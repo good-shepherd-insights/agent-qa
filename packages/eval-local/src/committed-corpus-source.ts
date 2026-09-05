@@ -16,11 +16,18 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 
+import {
+  parseCorpusEntry,
+  partitionManifestSchema,
+  runExclusionRecordSchema,
+} from '@vostride/agent-qa-eval'
 import type {
   CommittedCorpusSnapshot,
   CorpusEntry,
   EvalBatchReport,
   LeafCassette,
+  PartitionManifest,
+  RunExclusionRecord,
   StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
 import { z } from 'zod'
@@ -29,28 +36,18 @@ import { loadCassetteBundle } from './cassette-loader.js'
 import { BLOBS_SUBDIR } from './cassette-store.js'
 import {
   COMMITTED_CASSETTES_DIR,
+  COMMITTED_CONTRACTS_DIR,
   COMMITTED_CORPUS_DIR,
+  COMMITTED_EXCLUSIONS_DIR,
   COMMITTED_LABELS_DIR,
   COMMITTED_REPORTS_DIR,
+  PARTITION_MANIFEST_FILE_PREFIX,
+  committedPartitionManifestPath,
 } from './committed-root-store.js'
 import { listCassetteBundleDirs } from './replay-read.js'
 
 /** Reports dirs that are NOT batch reports: the census and the baseline pointer set (D-15/D-19). */
 const RESERVED_REPORT_DIRS = new Set(['census', 'baselines'])
-
-const corpusEntrySchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    cassetteId: z.string(),
-    product: z.string(),
-    split: z.literal('natural'),
-    captured_at_ordinal: z.number(),
-    run_links: z
-      .object({ runId: z.string(), runSlug: z.string(), handoffPath: z.string() })
-      .strict(),
-    receiptDigest: z.string(),
-  })
-  .strict()
 
 const labelRecordSchema = z
   .object({
@@ -102,6 +99,26 @@ export interface CommittedCorpusRead {
   snapshot: CommittedCorpusSnapshot
   productsSeen: readonly string[]
   notices: string[]
+  refusals: readonly CommittedReadRefusal[]
+  /**
+   * 414 D-03/D-13: how many committed FILES declared each schemaVersion, keyed by the declared
+   * version as a string. `entry` is always the v2 shape in memory, so this is the only place the
+   * byte version survives — Plan 07's census prints it and Plan 09's `--check` exits non-zero
+   * while any `1` remains in a live root. An absent version key means zero files declared it.
+   */
+  schemaVersionsSeen: Record<string, number>
+}
+
+/** Every committed partition manifest under contracts/, and what the read refused (D-05). */
+export interface PartitionManifestRead {
+  manifests: readonly PartitionManifest[]
+  notices: string[]
+  refusals: readonly CommittedReadRefusal[]
+}
+
+/** Every committed run-exclusion record under exclusions/, and what the read refused (D-02). */
+export interface RunExclusionRead {
+  exclusions: readonly RunExclusionRecord[]
   refusals: readonly CommittedReadRefusal[]
 }
 
@@ -174,6 +191,22 @@ function issueText(error: z.ZodError): string {
     .join('; ')
 }
 
+/** Every `*.json` file directly under dir (no recursion), sorted; ENOENT is an empty list. */
+function listJsonFilesShallow(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .map((entry) => entry.name)
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+function bumpCounter(counter: Record<string, number>, key: string): void {
+  counter[key] = (counter[key] ?? 0) + 1
+}
+
 /** A blobs/ dir counts as present only when it exists AND holds at least one file (F6). */
 function blobsPresent(bundleDir: string): boolean {
   const blobsDir = join(bundleDir, BLOBS_SUBDIR)
@@ -194,6 +227,7 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
   const notices: string[] = []
   const refusals: CommittedReadRefusal[] = []
   const entries: CorpusEntry[] = []
+  const schemaVersionsSeen: Record<string, number> = {}
   const labelsById = new Map<string, StandaloneLabelRecord>()
   const cassettesById = new Map<string, LeafCassette>()
   const blobPresentById = new Map<string, boolean>()
@@ -205,6 +239,7 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
       productsSeen: [],
       notices,
       refusals,
+      schemaVersionsSeen,
     }
   }
 
@@ -218,17 +253,21 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
         refusals.push({ path, reason: read.reason })
         continue
       }
-      const parsed = corpusEntrySchema.safeParse(read.value)
-      if (!parsed.success) {
-        refusals.push({ path, reason: `corpus entry rejected: ${issueText(parsed.error)}` })
+      // 414 D-03: the ONE guard in eval core, not a second zod shape here. It admits v1 bytes
+      // and hands back the v2 shape in memory, so a v1 and a v2 entry for one cassetteId are
+      // one shape and merge rather than collide (D-13).
+      const parsed = parseCorpusEntry(read.value)
+      if (!parsed.ok) {
+        refusals.push({ path, reason: `corpus entry rejected: ${parsed.issues}` })
         continue
       }
-      if (parsed.data.product !== product) {
+      if (parsed.entry.product !== product) {
         notices.push(
-          `corpus dir '${product}' holds an entry declaring product '${parsed.data.product}' (${parsed.data.cassetteId}); the entry field is authoritative`,
+          `corpus dir '${product}' holds an entry declaring product '${parsed.entry.product}' (${parsed.entry.cassetteId}); the entry field is authoritative`,
         )
       }
-      entries.push(parsed.data as CorpusEntry)
+      entries.push(parsed.entry)
+      bumpCounter(schemaVersionsSeen, String(parsed.schemaVersion))
     }
   }
 
@@ -275,7 +314,81 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
     productsSeen,
     notices,
     refusals,
+    schemaVersionsSeen,
   }
+}
+
+/**
+ * Load every committed partition manifest under `contracts/` (414 D-05).
+ *
+ * Manifests are found by file-name prefix, not by parsing every contract: the dir also holds the
+ * D-04 matcher and judge constitution projections, and asking the manifest guard about those would
+ * manufacture refusals for documents that are not manifests. An absent `contracts/` is an empty
+ * list with no refusal — a root that has never been partitioned is a legitimate root.
+ */
+export function readPartitionManifests(committedRoot: string): PartitionManifestRead {
+  const contractsRoot = join(committedRoot, COMMITTED_CONTRACTS_DIR)
+  const manifests: PartitionManifest[] = []
+  const notices: string[] = []
+  const refusals: CommittedReadRefusal[] = []
+
+  for (const name of listJsonFilesShallow(contractsRoot)) {
+    if (!name.startsWith(PARTITION_MANIFEST_FILE_PREFIX)) continue
+    const path = join(contractsRoot, name)
+    const read = readJson(path)
+    if (!read.ok) {
+      refusals.push({ path, reason: read.reason })
+      continue
+    }
+    const parsed = partitionManifestSchema.safeParse(read.value)
+    if (!parsed.success) {
+      refusals.push({ path, reason: `partition manifest rejected: ${issueText(parsed.error)}` })
+      continue
+    }
+    const expected = committedPartitionManifestPath(parsed.data.product)
+    if (expected !== `${COMMITTED_CONTRACTS_DIR}/${name}`) {
+      notices.push(
+        `partition manifest '${name}' declares product '${parsed.data.product}', whose committed path is '${expected}'; the manifest field is authoritative`,
+      )
+    }
+    manifests.push(parsed.data)
+  }
+
+  manifests.sort((first, second) =>
+    first.product < second.product ? -1 : first.product > second.product ? 1 : 0,
+  )
+  return { manifests, notices, refusals }
+}
+
+/**
+ * Load every committed run-exclusion record under `exclusions/<product>/` (414 D-02).
+ *
+ * Same posture as the corpus walk: a committed root is hand-editable, so an unparseable or
+ * unadmittable record is a refusal row naming its path, never a throw. An absent `exclusions/`
+ * dir is an empty list with no refusal — a root with nothing excluded is the common case.
+ */
+export function readRunExclusions(committedRoot: string): RunExclusionRead {
+  const exclusionsRoot = join(committedRoot, COMMITTED_EXCLUSIONS_DIR)
+  const exclusions: RunExclusionRecord[] = []
+  const refusals: CommittedReadRefusal[] = []
+
+  for (const product of listDirNames(exclusionsRoot)) {
+    for (const path of listJsonFiles(join(exclusionsRoot, product))) {
+      const read = readJson(path)
+      if (!read.ok) {
+        refusals.push({ path, reason: read.reason })
+        continue
+      }
+      const parsed = runExclusionRecordSchema.safeParse(read.value)
+      if (!parsed.success) {
+        refusals.push({ path, reason: `run exclusion rejected: ${issueText(parsed.error)}` })
+        continue
+      }
+      exclusions.push(parsed.data)
+    }
+  }
+
+  return { exclusions, refusals }
 }
 
 /**

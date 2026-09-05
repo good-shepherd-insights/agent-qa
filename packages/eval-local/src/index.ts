@@ -85,12 +85,14 @@ export {
   COMMITTED_CENSUS_SUBDIR,
   COMMITTED_CONTRACTS_DIR,
   COMMITTED_CORPUS_DIR,
+  COMMITTED_EXCLUSIONS_DIR,
   COMMITTED_GITIGNORE_TEXT,
   COMMITTED_LABELS_DIR,
   COMMITTED_REPORTS_DIR,
   COMMITTED_ROOT_MARKER_FILE,
   COMMITTED_ROOT_SCHEMA_VERSION,
   FsCommittedRootStore,
+  PARTITION_MANIFEST_FILE_PREFIX,
   buildRootMarkerValue,
   committedBlobPath,
   committedCassettePath,
@@ -98,7 +100,9 @@ export {
   committedBaselinePointerPath,
   committedCensusPath,
   committedCorpusPath,
+  committedExclusionPath,
   committedLabelPath,
+  committedPartitionManifestPath,
   committedReportPath,
 } from './committed-root-store.js'
 export type {
@@ -110,10 +114,14 @@ export {
   listBaselinePointers,
   listCommittedReports,
   readCommittedCorpus,
+  readPartitionManifests,
+  readRunExclusions,
 } from './committed-corpus-source.js'
 export type {
   BaselinePointerEntry,
   CommittedCorpusRead,
   CommittedReadRefusal,
   CommittedReportEntry,
+  PartitionManifestRead,
+  RunExclusionRead,
 } from './committed-corpus-source.js'

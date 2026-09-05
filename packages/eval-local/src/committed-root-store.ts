@@ -30,6 +30,10 @@ export const COMMITTED_CORPUS_DIR = 'corpus'
 export const COMMITTED_LABELS_DIR = 'labels'
 export const COMMITTED_CONTRACTS_DIR = 'contracts'
 export const COMMITTED_REPORTS_DIR = 'reports'
+/** 414 D-02: one committed file per excluded run, product-partitioned. */
+export const COMMITTED_EXCLUSIONS_DIR = 'exclusions'
+/** 414 D-05: the file-name prefix that makes a partition manifest findable under contracts/. */
+export const PARTITION_MANIFEST_FILE_PREFIX = 'partition-'
 /** 413 D-19: baseline pointers live one level under reports/, beside the batchKey dirs. */
 export const COMMITTED_BASELINES_SUBDIR = 'baselines'
 /** 413 D-15: the corpus census lives one level under reports/, beside the batchKey dirs. */
@@ -136,6 +140,30 @@ export function committedBaselinePointerPath(profileKey: string): string {
   return [COMMITTED_REPORTS_DIR, COMMITTED_BASELINES_SUBDIR, `${slugBranch(profileKey)}.json`].join(
     '/',
   )
+}
+
+/**
+ * Phase 414 D-05: one partition manifest per product, under contracts/ rather than beside the
+ * entries it governs. Two reasons. (1) The recursive corpus/ walk parses every *.json it finds,
+ * so a manifest under corpus/ would be handed to the corpus-entry guard and refused as a corpus
+ * entry — putting it under contracts/ means the walk never sees it (T-414-20). (2) contracts/ is
+ * already where this root keeps its reviewed constitution documents, and a manifest IS one: a
+ * change to its salt or fractions re-partitions a committed corpus, so it lands as a reviewed git
+ * edit and a named migration, never a silent rewrite. Every segment slugged (T-368-10).
+ */
+export function committedPartitionManifestPath(product: string): string {
+  return committedContractPath(`${PARTITION_MANIFEST_FILE_PREFIX}${slugBranch(product)}.json`)
+}
+
+/**
+ * Phase 414 D-02: one committed file per excluded run, so corpus membership becomes a function of
+ * a committed list rather than a fact about whoever ran the growth campaign. 413 dropped excluded
+ * runs before anything was committed and they left no trace; a record per run lets the census
+ * count what never arrived and 422's curator ask why a run is missing. Every segment slugged, so a
+ * crafted product or runSlug cannot escape the committed root (T-368-10 / T-414-16).
+ */
+export function committedExclusionPath(product: string, runSlug: string): string {
+  return [COMMITTED_EXCLUSIONS_DIR, slugBranch(product), `${slugBranch(runSlug)}.json`].join('/')
 }
 
 function byteSha(bytes: Uint8Array): string {
