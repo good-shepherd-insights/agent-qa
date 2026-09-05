@@ -12,11 +12,17 @@ import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
+  assignSplit,
   buildEvalReport,
+  canonicalJson,
   committedFileText,
   computeBatchKey,
   computeCorpusDigest,
   deriveCensus,
+  guardPartitionManifest,
+  guardRunExclusionRecord,
+  partitionParamsOf,
+  projectRunExclusion,
 } from '@vostride/agent-qa-eval'
 import type { CorpusCensus, JudgeIdentityBlock } from '@vostride/agent-qa-eval'
 import type { createModel, ModelProviderOverrides } from '@vostride/agent-qa-model'
@@ -52,6 +58,8 @@ import {
 } from '@vostride/agent-qa-eval-local'
 import {
   EvalNamedInputError,
+  EvalPartitionFlagsRequiredError,
+  EvalPartitionManifestConflictError,
   resolveEvalSession,
   runExtractVerb,
   runReplayVerb,
@@ -72,6 +80,10 @@ import { createEvalCommand } from '../eval.js'
 
 const BLOB_BYTES = Uint8Array.from(Buffer.from('agent-qa eval extract fixture blob\n', 'utf8'))
 const SUITE_SCOPE: ScopeKey = { tier: 'suite', key: 'eval-cli' }
+
+// 414 D-07 — a TEST fixture value, not a plan-authored production default; production has no
+// default and every fresh test root is its own first partition.
+const TEST_FRACTIONS = { heldOutFraction: 0.5, privateFraction: 0.5 } as const
 
 let tmpRoot: string
 let savedXdgDataHome: string | undefined
@@ -1018,7 +1030,7 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     const leafIds = ids.filter(id => id.endsWith('-leaf'))
     expect(leafIds).toHaveLength(2)
 
-    const result = await runSeedVerb(session)
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
 
     // The committedRoot is ALWAYS <configDir>/agent-qa-eval (spec §B7, D-12) — no flag retargets it.
     expect(result.committedRoot).toBe(resolve(dir, 'agent-qa-eval'))
@@ -1043,7 +1055,7 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     saveSeedRun(dir, 'run-beta')
     const session = await sessionFor(configPath)
 
-    const first = await runSeedVerb(session)
+    const first = await runSeedVerb(session, {}, TEST_FRACTIONS)
     expect(first.seededCount).toBe(2)
     expect(first.refusals).toEqual([])
 
@@ -1051,6 +1063,11 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     expect(second.unchangedCount).toBe(first.seededCount)
     expect(second.seededCount).toBe(0)
     expect(second.refusals).toEqual([])
+    // 414 D-07 read with D-05: a later seed accepts no fraction flags and re-derives nothing —
+    // the committed manifest is echoed back unchanged, never rewritten.
+    expect(second.partitions).toHaveLength(1)
+    expect(second.partitions[0]?.outcome).toBe('unchanged')
+    expect(second.partitions[0]?.saltDigest).toBe(first.partitions[0]?.saltDigest)
   })
 
   it('threads params.silverPerTestCap into buildSeedingPlan — cap 0 admits nothing (D-11)', async () => {
@@ -1058,7 +1075,7 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     saveSeedRun(dir, 'run-alpha')
     const session = await sessionFor(configPath)
 
-    const capped = await runSeedVerb(session, {}, { silverPerTestCap: 0 })
+    const capped = await runSeedVerb(session, {}, { silverPerTestCap: 0, ...TEST_FRACTIONS })
     expect(capped.seededCount).toBe(0)
     // The excluded candidate is a typed 'cap-exceeded' exclusion, never silently dropped.
     expect(capped.silverExclusions).toBeGreaterThan(0)
@@ -1072,7 +1089,7 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     saveSeedRun(dir, 'run-skips', { withPairSkipStep: true })
     const session = await sessionFor(configPath)
 
-    const result = await runSeedVerb(session)
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
 
     expect(result.pairSkips).toBe(1)
     // The selfHeal step's decision belongs to the pair channel, so silver excludes it too.
@@ -1082,25 +1099,27 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
 
   // ---- 413-06 Task 1: D-09 forward relative paths + the D-04 verdict filter -------------------
 
-  it('writes run_links.handoffPath config-relative for every fresh entry (D-09 forward)', async () => {
+  it('writes run_links as exactly { runId, runSlug } — the machine path is gone (414 D-13)', async () => {
     const { dir, configPath } = await writeFixture()
     saveSeedRun(dir, 'run-alpha')
     saveSeedRun(dir, 'run-beta')
     const session = await sessionFor(configPath)
 
-    const result = await runSeedVerb(session)
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
     expect(result.seededCount).toBe(2)
 
     const read = readCommittedCorpus(resolve(dir, 'agent-qa-eval'))
     expect(read.snapshot.entries).toHaveLength(2)
     for (const entry of read.snapshot.entries) {
-      // T-413-27: the ONE seeding site relativises against the config dir, so no home-directory
-      // path can ever be re-seeded into the committed root (the L1 hygiene leg's forward half).
-      expect(entry.run_links.handoffPath).toBe(
-        `.agent-qa/runs/${entry.run_links.runSlug}/${HANDOFF_FILE}`,
-      )
-      expect(entry.run_links.handoffPath.startsWith('/')).toBe(false)
-      expect(entry.run_links.handoffPath).not.toContain(dir)
+      // 414 D-13 superseded 413's T-413-27 relativisation by DELETING the field: a committed
+      // entry names the run, and the run dir is a machine-local fact nobody else can resolve.
+      // Deep equality (not a key probe) is what keeps a path from creeping back in.
+      expect(entry.run_links).toEqual({
+        runId: entry.run_links.runId,
+        runSlug: entry.run_links.runSlug,
+      })
+      expect(Object.keys(entry.run_links).sort()).toEqual(['runId', 'runSlug'])
+      expect(JSON.stringify(entry.run_links)).not.toContain(dir)
     }
   })
 
@@ -1109,7 +1128,7 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     saveSeedRun(dir, 'run-flaky', { rootCause: flakeRootCause() })
     const session = await sessionFor(configPath)
 
-    const result = await runSeedVerb(session)
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
 
     expect(result.seededCount).toBe(0)
     expect(result.handoffsSeeded).toBe(0)
@@ -1139,7 +1158,7 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     )
     const session = await sessionFor(configPath)
 
-    const result = await runSeedVerb(session)
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
 
     expect(result.seededCount).toBe(0)
     expect(result.runsExcluded).toEqual([
@@ -1157,7 +1176,7 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     saveSeedRun(dir, 'run-testbug', { outcome: 'failed', rootCause: testBugRootCause() })
     const session = await sessionFor(configPath)
 
-    const result = await runSeedVerb(session)
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
 
     expect(result.runsExcluded).toEqual([])
     // D-04 excludes EXACTLY three classes — test_bug is an attributable failure and stays in.
@@ -1183,7 +1202,7 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
     await saveAnalysis(dir, 'run-alpha', 'not json')
     const session = await sessionFor(configPath)
 
-    const result = await runSeedVerb(session)
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
 
     // The deterministic floor answers instead — the run seeds and is never skipped.
     expect(result.runsSkipped).toEqual([])
@@ -1194,6 +1213,300 @@ describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/
         notice => notice.includes(slugBranch('run-alpha')) && notice.includes('analysis.json'),
       ),
     ).toBe(true)
+  })
+})
+
+// ---- 414-07 Task 1: the partition manifest and the committed run exclusions -------------------
+
+describe('runSeedVerb — partition manifest and run exclusions (414 D-02/D-05/D-06/D-07)', () => {
+  it('mints a 32-byte salt and commits the product manifest on the FIRST seed (D-05/D-06)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    saveSeedRun(dir, 'run-beta')
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
+
+    const manifestPath = join(dir, 'agent-qa-eval', 'contracts', 'partition-default.json')
+    const manifest = guardPartitionManifest(
+      JSON.parse(await readFile(manifestPath, 'utf8')),
+    )
+    expect(manifest.salt).toMatch(/^[0-9a-f]{64}$/)
+    expect(result.partitions).toEqual([
+      {
+        product: 'default',
+        path: 'contracts/partition-default.json',
+        outcome: 'written',
+        saltDigest: createHash('sha256').update(manifest.salt).digest('hex'),
+        heldOutFraction: TEST_FRACTIONS.heldOutFraction,
+        privateFraction: TEST_FRACTIONS.privateFraction,
+        partitionVersion: 1,
+      },
+    ])
+    // D-17: the raw salt is a partition secret. Only its digest may leave the manifest file.
+    expect(JSON.stringify(result)).not.toContain(manifest.salt)
+
+    // D-07: every entry's split is assignSplit over the COMMITTED params — the cli relabels nothing.
+    const read = readCommittedCorpus(resolve(dir, 'agent-qa-eval'))
+    expect(read.snapshot.entries).toHaveLength(2)
+    // D-08: a self-heal pair member is never bucketed and is always natural. This fixture mints
+    // no pair cases at all (asserted, so the `false` below can never go quietly vacuous), so
+    // every seeded entry is a bucketed silver leaf.
+    expect(result.pairCounts.total).toBe(0)
+    for (const entry of read.snapshot.entries) {
+      const expected = assignSplit({
+        ...partitionParamsOf(manifest),
+        cassetteId: entry.cassetteId,
+        isPairMember: false,
+      })
+      expect(entry.split).toBe(expected.split)
+      if (entry.split === 'held-out' && expected.split === 'held-out') {
+        expect(entry.heldOutVisibility).toBe(expected.heldOutVisibility)
+      }
+    }
+  })
+
+  it('re-seeds with no fraction flags: the manifest is echoed unchanged, bytes untouched (D-07)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+    const first = await runSeedVerb(session, {}, TEST_FRACTIONS)
+    const manifestPath = join(dir, 'agent-qa-eval', 'contracts', 'partition-default.json')
+    const before = await readFile(manifestPath, 'utf8')
+
+    const second = await runSeedVerb(session)
+
+    expect(second.partitions).toHaveLength(1)
+    expect(second.partitions[0]?.outcome).toBe('unchanged')
+    expect(second.partitions[0]?.saltDigest).toBe(first.partitions[0]?.saltDigest)
+    expect(second.unchangedCount).toBeGreaterThan(0)
+    expect(await readFile(manifestPath, 'utf8')).toBe(before)
+  })
+
+  it('refuses a later seed whose fractions DISAGREE with the committed manifest (D-05)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+    await runSeedVerb(session, {}, TEST_FRACTIONS)
+    const manifestPath = join(dir, 'agent-qa-eval', 'contracts', 'partition-default.json')
+    const before = await readFile(manifestPath, 'utf8')
+    const entriesBefore = readCommittedCorpus(resolve(dir, 'agent-qa-eval')).snapshot.entries.length
+
+    await expect(
+      runSeedVerb(session, {}, { ...TEST_FRACTIONS, heldOutFraction: 0.25 }),
+    ).rejects.toThrow(EvalPartitionManifestConflictError)
+    await expect(
+      runSeedVerb(session, {}, { ...TEST_FRACTIONS, heldOutFraction: 0.25 }),
+    ).rejects.toThrow(/default[\s\S]*contracts\/partition-default\.json|contracts\/partition-default\.json/)
+
+    // Nothing moved: a disagreeing manifest is refused, never merged over the committed one.
+    expect(await readFile(manifestPath, 'utf8')).toBe(before)
+    expect(readCommittedCorpus(resolve(dir, 'agent-qa-eval')).snapshot.entries).toHaveLength(
+      entriesBefore,
+    )
+  })
+
+  it('requires BOTH flags on a first partition — but the exclusion is already committed (D-02/D-07)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    saveSeedRun(dir, 'run-flaky', { rootCause: flakeRootCause() })
+    const session = await sessionFor(configPath)
+
+    await expect(runSeedVerb(session)).rejects.toThrow(EvalPartitionFlagsRequiredError)
+    await expect(runSeedVerb(session)).rejects.toThrow(/default/)
+
+    const committedRoot = resolve(dir, 'agent-qa-eval')
+    expect(existsSync(join(committedRoot, 'corpus'))).toBe(false)
+    expect(existsSync(join(committedRoot, 'contracts', 'partition-default.json'))).toBe(false)
+    // D-02: provenance for a dropped run is written in phase (A), before and independently of the
+    // partition check — the operator learns what was excluded from the invocation that refused.
+    const exclusionPath = join(
+      committedRoot,
+      'exclusions',
+      'default',
+      `${slugBranch('run-flaky')}.json`,
+    )
+    expect(existsSync(exclusionPath)).toBe(true)
+
+    const retried = await runSeedVerb(session, {}, TEST_FRACTIONS)
+    expect(retried.exclusionsWritten).toEqual([
+      {
+        runSlug: slugBranch('run-flaky'),
+        product: 'default',
+        path: `exclusions/default/${slugBranch('run-flaky')}.json`,
+        outcome: 'unchanged',
+      },
+    ])
+    expect(retried.partitions[0]?.outcome).toBe('written')
+  })
+
+  it('commits an exclusion digesting the analysis.json bytes that decided it (D-02)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const analysisText = `${JSON.stringify(
+      analysisArtifactFixture('run-alpha', { class: 'flake', producer: 'analyze-run' }),
+      null,
+      2,
+    )}\n`
+    await saveAnalysis(dir, 'run-alpha', analysisText)
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
+
+    expect(result.runsExcluded).toEqual([
+      {
+        runSlug: 'run-alpha',
+        product: 'default',
+        verdicts: [{ class: 'flake', producer: 'analyze-run' }],
+      },
+    ])
+    expect(result.exclusionsWritten).toEqual([
+      {
+        runSlug: 'run-alpha',
+        product: 'default',
+        path: 'exclusions/default/run-alpha.json',
+        outcome: 'written',
+      },
+    ])
+
+    const record = guardRunExclusionRecord(
+      JSON.parse(
+        await readFile(join(dir, 'agent-qa-eval', 'exclusions', 'default', 'run-alpha.json'), 'utf8'),
+      ),
+    )
+    expect(record.runSlug).toBe('run-alpha')
+    expect(record.reason).toBe('excluded-verdict-class')
+    expect(record.verdicts[0]?.producer).toBe('analyze-run')
+    expect(record.analysisDigest).toBe(
+      createHash('sha256').update(analysisText).digest('hex'),
+    )
+
+    // Write-once: an identical regeneration is `unchanged`, never a second decision.
+    const again = await runSeedVerb(session)
+    expect(again.exclusionsWritten[0]?.outcome).toBe('unchanged')
+  })
+
+  it('commits an exclusion for a deterministic-floor flake, digesting the verdict rows (D-02)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-flaky', { rootCause: flakeRootCause() })
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
+
+    const record = guardRunExclusionRecord(
+      JSON.parse(
+        await readFile(
+          join(dir, 'agent-qa-eval', 'exclusions', 'default', `${slugBranch('run-flaky')}.json`),
+          'utf8',
+        ),
+      ),
+    )
+    // No analysis.json exists, so the digest covers the canonical resolved verdict rows the
+    // deterministic classifier produced — the evidence that actually decided the exclusion.
+    expect(record.verdicts).toEqual([{ class: 'flake', producer: 'deterministic-classifier' }])
+    expect(record.analysisDigest).toBe(
+      createHash('sha256')
+        .update(canonicalJson(result.runsExcluded[0]?.verdicts ?? []))
+        .digest('hex'),
+    )
+  })
+
+  it('renders one summary line per partition and per written exclusion, none when empty (D-04)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    saveSeedRun(dir, 'run-flaky', { rootCause: flakeRootCause() })
+    const session = await sessionFor(configPath)
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(
+      [
+        '--config',
+        configPath,
+        'eval',
+        'seed',
+        '--held-out-fraction',
+        String(TEST_FRACTIONS.heldOutFraction),
+        '--private-fraction',
+        String(TEST_FRACTIONS.privateFraction),
+      ],
+      { from: 'user' },
+    )
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    const rendered = logs.join('\n')
+    const manifest = guardPartitionManifest(
+      JSON.parse(
+        await readFile(join(dir, 'agent-qa-eval', 'contracts', 'partition-default.json'), 'utf8'),
+      ),
+    )
+    const digest = createHash('sha256').update(manifest.salt).digest('hex')
+    expect(rendered).toContain(
+      `  default: held-out ${TEST_FRACTIONS.heldOutFraction}, `
+        + `private ${TEST_FRACTIONS.privateFraction}, salt sha256 ${digest}`,
+    )
+    expect(rendered).toContain(`exclusions/default/${slugBranch('run-flaky')}.json (written)`)
+    // D-17: the raw salt never reaches an operator's terminal.
+    expect(rendered).not.toContain(manifest.salt)
+  })
+
+  it('reports a diverging committed exclusion as a write-conflict DATA row, never a throw (D-02)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    saveSeedRun(dir, 'run-flaky', { rootCause: flakeRootCause() })
+    const session = await sessionFor(configPath)
+    // Plant a VALID exclusion record for the same run whose core disagrees (a different
+    // analysisDigest): the write-once writer must refuse it rather than overwrite.
+    const planted = join(
+      dir,
+      'agent-qa-eval',
+      'exclusions',
+      'default',
+      `${slugBranch('run-flaky')}.json`,
+    )
+    await mkdir(dirname(planted), { recursive: true })
+    await writeFile(
+      planted,
+      committedFileText(
+        projectRunExclusion({
+          runId: 'run-flaky',
+          runSlug: slugBranch('run-flaky'),
+          product: 'default',
+          verdicts: [{ class: 'flake', producer: 'deterministic-classifier' }],
+          analysisDigest: 'a'.repeat(64),
+        }),
+      ),
+    )
+    const before = await readFile(planted, 'utf8')
+
+    const result = await runSeedVerb(session, {}, TEST_FRACTIONS)
+
+    // A refused write is DATA on the DTO — the sweep still partitions and still seeds run-alpha.
+    expect(result.exclusionsWritten).toEqual([
+      {
+        runSlug: slugBranch('run-flaky'),
+        product: 'default',
+        path: `exclusions/default/${slugBranch('run-flaky')}.json`,
+        outcome: 'write-conflict',
+      },
+    ])
+    expect(await readFile(planted, 'utf8')).toBe(before)
+    expect(result.partitions[0]?.outcome).toBe('written')
+    expect(result.seededCount).toBe(1)
+  })
+
+  it('prints "- none" for both blocks when a sweep partitions and excludes nothing (D-04)', async () => {
+    const { configPath } = await writeFixture()
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'seed'], { from: 'user' })
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    const rendered = logs.join('\n')
+    expect(rendered).toContain('partitions:')
+    expect(rendered).toContain('exclusions written:')
+    expect(rendered).toContain('- none')
   })
 })
 
@@ -1212,7 +1525,7 @@ async function committedCorpusFixture(): Promise<{
   saveSeedRun(dir, 'run-alpha')
   const session = await sessionFor(configPath)
   await runExtractVerb(session)
-  const seeded = await runSeedVerb(session)
+  const seeded = await runSeedVerb(session, {}, TEST_FRACTIONS)
   expect(seeded.seededCount).toBe(1)
   const ids = await stagedCassetteIds(dir)
   const leafId = ids.find(id => id.endsWith('-leaf'))
@@ -1398,7 +1711,15 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
     const seed = createEvalCommand().commands.find(sub => sub.name() === 'seed')
     const flags = seed?.options.map(option => option.long) ?? []
     expect(flags).toEqual(
-      expect.arrayContaining(['--run', '--product', '--silver-cap', '--json']),
+      expect.arrayContaining([
+        '--run',
+        '--product',
+        '--silver-cap',
+        // 414 D-07: the two REQUIRED-on-first-partition fraction flags.
+        '--held-out-fraction',
+        '--private-fraction',
+        '--json',
+      ]),
     )
   })
 
@@ -1435,9 +1756,20 @@ describe('agent-qa eval seed / report — rendering and exit semantics (372-07, 
     saveSeedRun(dir, 'run-alpha')
     const { logs, errors } = captureConsole()
 
-    await buildProgram().parseAsync(['--config', configPath, 'eval', 'seed', '--json'], {
-      from: 'user',
-    })
+    await buildProgram().parseAsync(
+      [
+        '--config',
+        configPath,
+        'eval',
+        'seed',
+        '--held-out-fraction',
+        String(TEST_FRACTIONS.heldOutFraction),
+        '--private-fraction',
+        String(TEST_FRACTIONS.privateFraction),
+        '--json',
+      ],
+      { from: 'user' },
+    )
 
     expect(process.exitCode).not.toBe(1)
     expect(errors).toEqual([])
@@ -1453,7 +1785,19 @@ describe('agent-qa eval seed / report — rendering and exit semantics (372-07, 
     saveSeedRun(dir, 'run-alpha')
     const { logs, errors } = captureConsole()
 
-    await buildProgram().parseAsync(['--config', configPath, 'eval', 'seed'], { from: 'user' })
+    await buildProgram().parseAsync(
+      [
+        '--config',
+        configPath,
+        'eval',
+        'seed',
+        '--held-out-fraction',
+        String(TEST_FRACTIONS.heldOutFraction),
+        '--private-fraction',
+        String(TEST_FRACTIONS.privateFraction),
+      ],
+      { from: 'user' },
+    )
 
     expect(process.exitCode).not.toBe(1)
     expect(errors).toEqual([])
@@ -1498,6 +1842,104 @@ describe('agent-qa eval seed / report — rendering and exit semantics (372-07, 
     })
     expect(process.exitCode).not.toBe(1)
     expect(second.logs.join('\n')).toContain('committed: json unchanged, markdown unchanged')
+  })
+
+  // ---- 414-07 Task 1 Test 7: the fraction flags are validated in the ACTION (D-07/D-08) -------
+
+  it('a non-numeric --held-out-fraction sets exitCode 1 naming the flag — never process.exit', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const { logs, errors } = captureConsole()
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit must never be called by the eval family (D-08)')
+    }) as never)
+
+    await buildProgram().parseAsync(
+      [
+        '--config',
+        configPath,
+        'eval',
+        'seed',
+        '--held-out-fraction',
+        'abc',
+        '--private-fraction',
+        '0.5',
+      ],
+      { from: 'user' },
+    )
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    expect(process.exitCode).toBe(1)
+    expect(errors.join('\n')).toContain('--held-out-fraction')
+    expect(logs).toEqual([])
+    // Nothing was partitioned on the way to the refusal.
+    expect(existsSync(join(dir, 'agent-qa-eval', 'contracts', 'partition-default.json'))).toBe(false)
+  })
+
+  it('an out-of-range --held-out-fraction sets exitCode 1 from the manifest guard (D-05/D-08)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const { logs, errors } = captureConsole()
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit must never be called by the eval family (D-08)')
+    }) as never)
+
+    await buildProgram().parseAsync(
+      [
+        '--config',
+        configPath,
+        'eval',
+        'seed',
+        '--held-out-fraction',
+        '1.5',
+        '--private-fraction',
+        '0.5',
+      ],
+      { from: 'user' },
+    )
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    expect(process.exitCode).toBe(1)
+    // The RANGE is the committed manifest guard's bound, and its TypeError names the flag's own
+    // field — one spelling of the bound that governs the bytes, surfaced through the D-08 catch.
+    expect(errors.join('\n')).toContain('heldOutFraction')
+    expect(logs).toEqual([])
+    expect(existsSync(join(dir, 'agent-qa-eval', 'contracts', 'partition-default.json'))).toBe(false)
+  })
+
+  it('a valid fraction pair reaches runSeedVerb as NUMBERS and partitions the product (D-07)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(
+      [
+        '--config',
+        configPath,
+        'eval',
+        'seed',
+        '--held-out-fraction',
+        '0.25',
+        '--private-fraction',
+        '0.5',
+        '--json',
+      ],
+      { from: 'user' },
+    )
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    const dto = JSON.parse(logs[0] ?? '') as SeedVerbResult
+    expect(dto.partitions).toHaveLength(1)
+    expect(dto.partitions[0]?.heldOutFraction).toBe(0.25)
+    expect(dto.partitions[0]?.privateFraction).toBe(0.5)
+    const manifest = guardPartitionManifest(
+      JSON.parse(
+        await readFile(join(dir, 'agent-qa-eval', 'contracts', 'partition-default.json'), 'utf8'),
+      ),
+    )
+    expect(manifest.heldOutFraction).toBe(0.25)
+    expect(manifest.privateFraction).toBe(0.5)
   })
 })
 
@@ -1801,7 +2243,7 @@ async function seededCorpusFixture(): Promise<{
   saveSeedRun(dir, 'run-alpha')
   saveSeedRun(dir, 'run-beta')
   const session = await sessionFor(configPath)
-  const seeded = await runSeedVerb(session)
+  const seeded = await runSeedVerb(session, {}, TEST_FRACTIONS)
   expect(seeded.seededCount).toBe(2)
   return { dir, configPath, session }
 }
@@ -2013,7 +2455,7 @@ describe('agent-qa eval census — rendering and exit semantics (413-05, D-04/D-
     const { dir, configPath } = await writeFixture()
     saveSeedRun(dir, 'run-alpha')
     const session = await sessionFor(configPath)
-    await runSeedVerb(session)
+    await runSeedVerb(session, {}, TEST_FRACTIONS)
     const { logs, errors } = captureConsole()
 
     await buildProgram().parseAsync(['--config', configPath, 'eval', 'census', '--json'], {
@@ -2033,7 +2475,7 @@ describe('agent-qa eval census — rendering and exit semantics (413-05, D-04/D-
     const { dir, configPath } = await writeFixture()
     saveSeedRun(dir, 'run-alpha')
     const session = await sessionFor(configPath)
-    await runSeedVerb(session)
+    await runSeedVerb(session, {}, TEST_FRACTIONS)
     const { logs, errors } = captureConsole()
 
     await buildProgram().parseAsync(['--config', configPath, 'eval', 'census'], { from: 'user' })
@@ -2051,7 +2493,7 @@ describe('agent-qa eval census — rendering and exit semantics (413-05, D-04/D-
     const { dir, configPath } = await writeFixture()
     saveSeedRun(dir, 'run-alpha')
     const session = await sessionFor(configPath)
-    await runSeedVerb(session)
+    await runSeedVerb(session, {}, TEST_FRACTIONS)
     const { logs, errors } = captureConsole()
 
     await buildProgram().parseAsync(
