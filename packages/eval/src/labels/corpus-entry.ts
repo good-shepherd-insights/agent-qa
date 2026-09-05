@@ -1,6 +1,6 @@
 /**
  * ROOT-03 corpus membership entries (D-02/D-03) — the corpus/ unit of the
- * D-09 pure label factory.
+ * D-09 pure label factory, widened to schema version 2 by phase 414.
  *
  * Store law (D-02): one file per entry — append-only corpus by
  * construction. Adding a case never rewrites another entry, git diffs show
@@ -9,8 +9,32 @@
  *
  * Provenance law (ROOT-03): every entry carries provenance sufficient for
  * M3's "no run that bred a candidate may gate it" exclusion — the source
- * run identity, its build ordinal, its handoff location, and the receipt
- * digest binding the entry to the exact captured decision.
+ * run identity, its build ordinal, and the receipt digest binding the entry
+ * to the exact captured decision.
+ *
+ * 414 D-13: `run_links.handoffPath` is GONE. The handoff location was
+ * always a convention of the slug (`.agent-qa/runs/<runSlug>/handoff.json`),
+ * so a strict v2 schema cannot carry a path at all — absolute or relative.
+ * That is ROOT-08's "the committed entry schema forbids absolute paths" in
+ * its strongest, structural form rather than as a regex.
+ *
+ * 414 D-03/D-21: the entry is now a discriminated union on `split`. A
+ * held-out arm carries `heldOutVisibility`, the adversarial arm carries
+ * `generator`, and each is present ONLY on its own arm — D-21's presence
+ * rule holds in both directions by construction, not by a runtime check.
+ *
+ * 414 D-04: `captured_at` and `targetEnvironment` are OPTIONAL and never
+ * fabricated. They arrive as DATA (module discipline bans clock APIs in
+ * eval core, so no caller can synthesize them here); the seeder
+ * and the migration derive them where they resolve and omit them otherwise.
+ *
+ * 414 D-22 (the v54 deletion bar): every closed set below is projected into
+ * a `satisfies`-pinned literal list declared directly beneath its type. The
+ * `satisfies` clause makes an entry naming no member a compile error; the
+ * reverse direction (a member no entry names) is pinned by the runtime
+ * cells in `__tests__/corpus-splits.test.ts` and the never-bars in
+ * `__tests__/corpus-entry.test-d.ts`. Widening or narrowing any of the
+ * three sets therefore REDs a test that names what joined or left.
  */
 import { sha256hex } from '@vostride/agent-qa-schema'
 import type { ScopeKey } from '@vostride/agent-qa-schema'
@@ -18,40 +42,95 @@ import { canonicalJson } from '../canonical-json'
 import type { LeafCassette } from '../cassette/cassette'
 import { deriveRunSlug } from '../extract/ids'
 
-/** Single version gate for the corpus-entry document (D-02). */
-export const CORPUS_ENTRY_SCHEMA_VERSION = 1
+/** Single version gate for the corpus-entry document (D-02, bumped by 414 D-03). */
+export const CORPUS_ENTRY_SCHEMA_VERSION = 2
 
 /**
- * The only v50 split value. Adversarial/held-out splits are M3 curator
- * territory and deliberately NOT in the union yet — adding them later is an
- * additive union widening.
+ * The three corpus splits (414 D-03). `natural` is the optimise set,
+ * `held-out` the gated set the proposer may not train on, `adversarial` the
+ * generated set 422 will populate.
  */
-export type CorpusSplit = 'natural'
+export type CorpusSplit = 'natural' | 'held-out' | 'adversarial'
 
-/** Links back to the source run for ROOT-03's exclusion enforcement. */
+/** Declaration-order projection of `CorpusSplit` (D-22). */
+export const CORPUS_SPLITS = [
+  'natural',
+  'held-out',
+  'adversarial',
+] as const satisfies readonly CorpusSplit[]
+
+/**
+ * Visibility of a held-out entry (414 D-18/D-19). `shared` is a validation
+ * set the proposer may read; `private` is the unseen test set that is
+ * unlistable, unloadable and uncountable through the `/reader` port.
+ */
+export type HeldOutVisibility = 'shared' | 'private'
+
+/** Declaration-order projection of `HeldOutVisibility` (D-22). */
+export const HELD_OUT_VISIBILITIES = [
+  'shared',
+  'private',
+] as const satisfies readonly HeldOutVisibility[]
+
+/**
+ * How an adversarial entry was generated (414 D-21). The vocabulary takes
+ * its full shape now — zero values persist until 422 — so that 422 adds a
+ * member through the bar rather than creating the bar.
+ */
+export type GeneratorKind =
+  | 'fuzz-selector'
+  | 'fuzz-label'
+  | 'fuzz-error'
+  | 'injection-name'
+  | 'optimized-trigger'
+  | 'judge-targeted'
+
+/** Declaration-order projection of `GeneratorKind` (D-22). */
+export const GENERATOR_KINDS = [
+  'fuzz-selector',
+  'fuzz-label',
+  'fuzz-error',
+  'injection-name',
+  'optimized-trigger',
+  'judge-targeted',
+] as const satisfies readonly GeneratorKind[]
+
+/**
+ * Which environment the source run executed against (414 D-04). Optional
+ * and never fabricated; 418 reads it for validity down-weighting.
+ */
+export type TargetEnvironment = 'shared' | 'local'
+
+/** Adversarial provenance: which generator minted this entry, from what seed (D-21). */
+export interface CorpusGenerator {
+  /** Closed-set generator family (D-21/D-22). */
+  kind: GeneratorKind
+  /** The natural cassette the generator perturbed. */
+  seedCassetteId: string
+  /** Version of that generator's recipe; a change is a named migration. */
+  generatorVersion: number
+}
+
+/**
+ * Links back to the source run for ROOT-03's exclusion enforcement.
+ *
+ * 414 D-13: exactly two fields. No path of any kind may appear here.
+ */
 export interface CorpusRunLinks {
   /** Source run identity as a plain wire string. */
   runId: string
   /** Traversal-safe slug derived from the run id. */
   runSlug: string
-  /**
-   * Caller-supplied location of the source run handoff. Eval core cannot
-   * import runner-local path constants — the seeding helper and the CLI
-   * compose this value and pass it in as data.
-   */
-  handoffPath: string
 }
 
-/** One corpus membership unit — the exact bytes committed per case (D-02). */
-export interface CorpusEntry {
-  /** Version gate (D-02). */
-  schemaVersion: 1
+/** Fields every split arm carries (414 D-03). */
+export interface CorpusEntryBase {
+  /** Version gate (D-02, 414 D-03). */
+  schemaVersion: 2
   /** Deterministic cassette identity this entry admits (D-02). */
   cassetteId: string
   /** Resolved product-partition name (D-03). */
   product: string
-  /** Corpus split; 'natural' is the only v50 value. */
-  split: CorpusSplit
   /**
    * Requirement-verbatim key from ROOT-03 (captured_at_ordinal); kept
    * verbatim so the committed JSON greps against the requirement text —
@@ -65,13 +144,74 @@ export interface CorpusEntry {
   run_links: CorpusRunLinks
   /** Digest of the canonical-serialized cassette receipt. */
   receiptDigest: string
+  /** ISO wall-clock capture time (414 D-04). Omitted when it does not resolve. */
+  captured_at?: string
+  /** Environment the source run executed against (414 D-04). Omitted when unknown. */
+  targetEnvironment?: TargetEnvironment
 }
+
+/** The optimise set: the proposer may read and train on these (D-19). */
+export interface NaturalCorpusEntry extends CorpusEntryBase {
+  split: 'natural'
+}
+
+/** A visible validation entry: readable by the proposer, still gated on (D-19). */
+export interface SharedHeldOutCorpusEntry extends CorpusEntryBase {
+  split: 'held-out'
+  heldOutVisibility: 'shared'
+}
+
+/** The unseen test set: gates, but is unreachable through `/reader` (D-18/D-19). */
+export interface PrivateHeldOutCorpusEntry extends CorpusEntryBase {
+  split: 'held-out'
+  heldOutVisibility: 'private'
+}
+
+/** A generated entry (D-21); 422 mints these, 414 only types them. */
+export interface AdversarialCorpusEntry extends CorpusEntryBase {
+  split: 'adversarial'
+  generator: CorpusGenerator
+}
+
+/** One corpus membership unit — the exact bytes committed per case (D-02/D-03). */
+export type CorpusEntry =
+  | NaturalCorpusEntry
+  | SharedHeldOutCorpusEntry
+  | PrivateHeldOutCorpusEntry
+  | AdversarialCorpusEntry
+
+/**
+ * What the proposer's read port may return (414 D-18/D-19). DERIVED from
+ * `CorpusEntry` by exclusion, never declared a second time — that is what
+ * keeps the `/reader` never-bar non-vacuous when a new arm joins.
+ */
+export type ProposerVisibleCorpusEntry = Exclude<CorpusEntry, PrivateHeldOutCorpusEntry>
+
+/** Narrow an entry to the proposer-visible set: private held-out is the only exclusion. */
+export function isProposerVisibleEntry(entry: CorpusEntry): entry is ProposerVisibleCorpusEntry {
+  return !(entry.split === 'held-out' && entry.heldOutVisibility === 'private')
+}
+
+/**
+ * The split-carrying half of an entry, supplied to `projectCorpusEntry` as
+ * an INPUT (414 D-07/T-414-03). The split is decided BEFORE the entry is
+ * projected, so no post-hoc relabel path exists anywhere.
+ */
+export type SplitAssignment =
+  | { split: 'natural' }
+  | { split: 'held-out'; heldOutVisibility: HeldOutVisibility }
+  | { split: 'adversarial'; generator: CorpusGenerator }
 
 export interface ProjectCorpusEntryInput {
   cassette: LeafCassette
   product: string
   runId: string
-  handoffPath: string
+  /** Decided by `assignSplit` (or by the migration) before projection. */
+  assignment: SplitAssignment
+  /** D-04 ISO capture time as DATA; omitted when the caller cannot derive it. */
+  capturedAt?: string
+  /** D-04 target environment as DATA; omitted when the caller cannot derive it. */
+  targetEnvironment?: TargetEnvironment
 }
 
 /** Project one admitted cassette into its committed corpus entry (D-02/ROOT-03). */
@@ -79,21 +219,27 @@ export function projectCorpusEntry({
   cassette,
   product,
   runId,
-  handoffPath,
+  assignment,
+  capturedAt,
+  targetEnvironment,
 }: ProjectCorpusEntryInput): CorpusEntry {
-  return {
+  const base: CorpusEntryBase = {
     schemaVersion: CORPUS_ENTRY_SCHEMA_VERSION,
     cassetteId: cassette.id,
     product,
-    split: 'natural',
     captured_at_ordinal: cassette.receipt.buildOrdinal,
     run_links: {
       runId,
       runSlug: deriveRunSlug(runId),
-      handoffPath,
     },
     receiptDigest: sha256hex(canonicalJson(cassette.receipt)),
+    // Optional-spread, never an undefined key: committedFileText is
+    // canonical and a committed document must not carry a key it has no
+    // value for (D-04).
+    ...(capturedAt === undefined ? {} : { captured_at: capturedAt }),
+    ...(targetEnvironment === undefined ? {} : { targetEnvironment }),
   }
+  return { ...base, ...assignment }
 }
 
 /**
