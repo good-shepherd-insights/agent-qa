@@ -38,6 +38,8 @@ export const PARTITION_MANIFEST_FILE_PREFIX = 'partition-'
 export const COMMITTED_BASELINES_SUBDIR = 'baselines'
 /** 413 D-15: the corpus census lives one level under reports/, beside the batchKey dirs. */
 export const COMMITTED_CENSUS_SUBDIR = 'census'
+/** 415 D-04: one floor artefact per profile, beside the baseline-pointer set. */
+export const COMMITTED_NOISE_FLOOR_SUBDIR = 'noise-floor'
 
 export const COMMITTED_ROOT_MARKER_FILE = 'eval-root.json'
 export const COMMITTED_ROOT_SCHEMA_VERSION = 1
@@ -142,8 +144,9 @@ export function committedBaselinePointerPath(profileKey: string): string {
   )
 }
 
-export function committedNoiseFloorPath(_profileKey: string): string {
-  throw new Error('noise-floor path contract not implemented')
+/** 415 D-04: the entire profile key is one slugged segment, never a batch report dir. */
+export function committedNoiseFloorPath(profileKey: string): string {
+  return [COMMITTED_REPORTS_DIR, COMMITTED_NOISE_FLOOR_SUBDIR, `${slugBranch(profileKey)}.json`].join('/')
 }
 
 /**

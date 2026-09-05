@@ -17,6 +17,8 @@ import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 
 import {
+  guardDecisionVectorsDocument,
+  guardNoiseFloorArtefact,
   parseCorpusEntry,
   partitionManifestSchema,
   runExclusionRecordSchema,
@@ -42,14 +44,16 @@ import {
   COMMITTED_CORPUS_DIR,
   COMMITTED_EXCLUSIONS_DIR,
   COMMITTED_LABELS_DIR,
+  COMMITTED_NOISE_FLOOR_SUBDIR,
   COMMITTED_REPORTS_DIR,
   PARTITION_MANIFEST_FILE_PREFIX,
   committedPartitionManifestPath,
+  committedReportPath,
 } from './committed-root-store.js'
 import { listCassetteBundleDirs } from './replay-read.js'
 
-/** Reports dirs that are NOT batch reports: the census and the baseline pointer set (D-15/D-19). */
-const RESERVED_REPORT_DIRS = new Set(['census', 'baselines'])
+/** Census, baseline pointers and per-profile floors are not batch reports (415 D-04). */
+const RESERVED_REPORT_DIRS = new Set(['census', 'baselines', 'noise-floor'])
 
 const labelRecordSchema = z
   .object({
@@ -163,25 +167,74 @@ export type ResolveMinimumGateSetOutcome =
   | { kind: 'no-floor' }
   | { kind: 'no-value'; path: string }
 
-export function listNoiseFloorArtefacts(_committedRoot: string): {
+/** Read only the per-profile files; the former literal reports/noise-floor.json is invalid. */
+export function listNoiseFloorArtefacts(committedRoot: string): {
   artefacts: NoiseFloorArtefactEntry[]
   refusals: CommittedReadRefusal[]
 } {
-  throw new Error('noise-floor read contract not implemented')
+  const reportsRoot = join(committedRoot, COMMITTED_REPORTS_DIR)
+  const floorRoot = join(reportsRoot, COMMITTED_NOISE_FLOOR_SUBDIR)
+  const artefacts: NoiseFloorArtefactEntry[] = []
+  const refusals: CommittedReadRefusal[] = []
+  const strayPath = join(reportsRoot, 'noise-floor.json')
+  if (existsSync(strayPath)) {
+    refusals.push({ path: strayPath, reason: 'noise floor must live under reports/noise-floor/<profile-key>.json' })
+  }
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(floorRoot, { withFileTypes: true })
+  } catch {
+    return { artefacts, refusals }
+  }
+  for (const entry of entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+    const path = join(floorRoot, entry.name)
+    const read = readJson(path)
+    if (!read.ok) {
+      refusals.push({ path, reason: read.reason })
+      continue
+    }
+    const guarded = guardNoiseFloorArtefact(read.value)
+    if (guarded.kind === 'rejected') {
+      refusals.push({ path, reason: `noise floor rejected: ${guarded.reason}` })
+      continue
+    }
+    artefacts.push({ profileKey: guarded.artefact.profileKey, artefact: guarded.artefact, path })
+  }
+  artefacts.sort((a, b) => a.profileKey < b.profileKey ? -1 : a.profileKey > b.profileKey ? 1 : 0)
+  return { artefacts, refusals }
 }
 
 export function readCommittedDecisionVectors(
-  _committedRoot: string,
-  _batchKey: string,
+  committedRoot: string,
+  batchKey: string,
 ): CommittedDecisionVectorsLoad {
-  throw new Error('decision read contract not implemented')
+  const path = join(committedRoot, committedReportPath(batchKey, 'decisions.json'))
+  if (!existsSync(path)) return { kind: 'absent', path }
+  const read = readJson(path)
+  if (!read.ok) return { kind: 'refused', refusal: { path, reason: read.reason } }
+  const guarded = guardDecisionVectorsDocument(read.value)
+  if (guarded.kind === 'rejected') {
+    return { kind: 'refused', refusal: { path, reason: `decisions rejected: ${guarded.reason}` } }
+  }
+  if (guarded.document.batchKey !== batchKey) {
+    return { kind: 'refused', refusal: { path, reason: 'decisions batchKey does not match the requested batchKey' } }
+  }
+  return { kind: 'loaded', document: guarded.document, path }
 }
 
-export function resolveMinimumGateSet(_input: {
+/** 414 D-15 → 417 handoff: resolve the measured integer without changing the pure posture port. */
+export function resolveMinimumGateSet(input: {
   committedRoot: string
   profileKey: string
 }): ResolveMinimumGateSetOutcome {
-  throw new Error('minimum read contract not implemented')
+  const entry = listNoiseFloorArtefacts(input.committedRoot).artefacts.find(
+    candidate => candidate.profileKey === input.profileKey,
+  )
+  if (entry === undefined) return { kind: 'no-floor' }
+  const minimumGateSet = entry.artefact.minimumGateSet.value
+  if (minimumGateSet === undefined) return { kind: 'no-value', path: entry.path }
+  return { kind: 'resolved', minimumGateSet, path: entry.path }
 }
 
 function listDirNames(dir: string): string[] {
@@ -441,7 +494,7 @@ export function readRunExclusions(committedRoot: string): RunExclusionRead {
 
 /**
  * List every committed batch report under `reports/`, one per batchKey dir. The reserved `census/`
- * and `baselines/` dirs are NOT batch reports and are skipped by name.
+ * and `baselines/` and `noise-floor/` dirs are NOT batch reports and are skipped by name.
  */
 export function listCommittedReports(committedRoot: string): {
   reports: CommittedReportEntry[]
