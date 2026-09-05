@@ -363,9 +363,18 @@ export type {
 export {
   BASELINE_POINTER_SCHEMA_VERSION,
   composeBaselineProfileKey,
+  computeReplayProfileFingerprint,
+  guardBaselinePointer,
   projectBaselinePointer,
+  SEED_POLICIES,
 } from './baseline/profile-key'
-export type { BaselinePointer, BaselineProfileKeyInput } from './baseline/profile-key'
+export type {
+  BaselinePointer,
+  BaselinePointerLoad,
+  BaselineProfileKeyInput,
+  ReplayProfileFingerprintInput,
+  SeedPolicy,
+} from './baseline/profile-key'
 
 export {
   countGateSet,

@@ -163,11 +163,17 @@ describe('baseline profile key (D-19)', () => {
         judgeModelId: 'claude-sonnet-4-6',
         judgeVersion: 1,
       }),
-    ).toBe('planner=gpt-5.6-terra|fingerprint=abc|matcher=1|judge=claude-sonnet-4-6|judgeVersion=1')
+    ).toBe(
+      'planner=gpt-5.6-terra|fingerprint=abc|matcher=1|judge=claude-sonnet-4-6|judgeVersion=1',
+    )
 
     // Honest abstention has its own key: a no-judge profile is a different profile.
     expect(
-      composeBaselineProfileKey({ plannerModelId: 'gpt-5.6-terra', fingerprint: 'abc', matcherVersion: 1 }),
+      composeBaselineProfileKey({
+        plannerModelId: 'gpt-5.6-terra',
+        fingerprint: 'abc',
+        matcherVersion: 1,
+      }),
     ).toBe('planner=gpt-5.6-terra|fingerprint=abc|matcher=1|judge=none|judgeVersion=none')
   })
 
