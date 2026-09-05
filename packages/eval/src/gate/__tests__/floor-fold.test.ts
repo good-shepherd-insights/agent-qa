@@ -56,6 +56,12 @@ function inputFixture(): FoldNoiseFloorInput {
       }
       report.honesty.refusalCounts['unrenderable-brief'] = index + 1
       report.honesty.harnessErrorCount = index
+      report.honesty.judge.cost = {
+        calls: index + 1,
+        inputTokens: 10 + index,
+        outputTokens: 2 + index,
+        outcomesMissingUsage: index,
+      }
       report.briefSourceCounts = { proof: 6, empty: 4, rendered: 1 }
       return {
         index,
@@ -283,15 +289,33 @@ describe('pure noise-floor fold', () => {
       totalTokens: 540,
       durationMs: 2006,
       wallClockMs: 2806,
+      judgeCost: { calls: 10, inputTokens: 46, outputTokens: 14, outcomesMissingUsage: 6 },
     })
     for (const [i, run] of artefact.runs.entries()) {
-      expect(run.cost).toEqual({ ...input.runs[i]!.report.totalCost, wallClockMs: 700 + i })
+      expect(run.cost).toEqual({
+        ...input.runs[i]!.report.totalCost,
+        judgeCost: input.runs[i]!.report.honesty.judge.cost,
+        wallClockMs: 700 + i,
+      })
       expect(run.cost).not.toHaveProperty('modelCalls')
       expect(run.reportDigest).toBe(sha256hex(canonicalJson(input.runs[i]!.report)))
       expect(run.harnessErrorCount).toBe(i)
       expect(run.briefSourceCounts).toEqual(input.runs[i]!.report.briefSourceCounts)
       expect(run.refusalCounts).toEqual(input.runs[i]!.report.honesty.refusalCounts)
     }
+  })
+
+  it('copies observed model calls including zero and sums only fully observed repeats', () => {
+    const input = inputFixture()
+    for (const [i, run] of input.runs.entries()) run.modelCalls = i
+    const complete = foldNoiseFloorArtefact(input)
+    expect(complete.runs.map(run => run.cost.modelCalls)).toEqual([0, 1, 2, 3])
+    expect(complete.cost.modelCalls).toBe(6)
+    delete input.runs[3]!.modelCalls
+    const partial = foldNoiseFloorArtefact(input)
+    expect(partial.runs[0]!.cost.modelCalls).toBe(0)
+    expect(partial.runs[3]!.cost).not.toHaveProperty('modelCalls')
+    expect(partial.cost).not.toHaveProperty('modelCalls')
   })
 
   it('does not mutate or retain mutable input records', () => {

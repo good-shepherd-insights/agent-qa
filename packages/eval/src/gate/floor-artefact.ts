@@ -13,8 +13,19 @@ export const FLOOR_PROTOCOL_MINIMUM = { repeats: 3, seeds: 2 } as const
 
 export interface RunCostRecord {
   modelCalls?: number
+  /** Report sample counts are distinct from model calls, which may span planning rounds. */
+  sampleCount?: number
+  samplesMissingTokenUsage?: number
   promptTokens?: number
   completionTokens?: number
+  totalTokens?: number
+  durationMs?: number
+  judgeCost?: {
+    calls: number
+    inputTokens: number
+    outputTokens: number
+    outcomesMissingUsage: number
+  }
   wallClockMs: number
 }
 
@@ -134,8 +145,16 @@ const correctness = z
 const runCostRecordSchema = z
   .object({
     modelCalls: count.optional(),
+    sampleCount: count.optional(),
+    samplesMissingTokenUsage: count.optional(),
     promptTokens: count.optional(),
     completionTokens: count.optional(),
+    totalTokens: count.optional(),
+    durationMs: z.number().nonnegative().optional(),
+    judgeCost: z
+      .object({ calls: count, inputTokens: count, outputTokens: count, outcomesMissingUsage: count })
+      .strict()
+      .optional(),
     wallClockMs: z.number().nonnegative(),
   })
   .strict()
