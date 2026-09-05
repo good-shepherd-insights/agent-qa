@@ -1,0 +1,326 @@
+[
+  {
+    "id": "r_ingle-mixed-unlink-reb-bod-gross-foot-sic-bum-virus/test-00-step-03-d01-leaf",
+    "decisionOrdinal": 1,
+    "servedBrief": {
+      "asOfBuild": 15,
+      "briefDigest": "bab4ebf8756b6e28584be147c08ea8196edd1324f1b3dbc9e7cc9cd0382f2f45",
+      "budget": 2048,
+      "channel1": [
+        {
+          "id": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+          "kind": "fact",
+          "servedAsCanary": false,
+          "status": "active",
+          "summary": "link \"learn more\" navigates to https://www.iana.org/help/example-domains",
+          "tier": "L2",
+          "trust": 0.575
+        }
+      ],
+      "channel2": [],
+      "channel3": [],
+      "proof": {
+        "admissionEvents": [
+          {
+            "chargeRepeated": false,
+            "clusterKey": "{\"name\":\"learn more\",\"role\":\"link\",\"t\":\"el\"}",
+            "id": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+            "ordinal": 0,
+            "renderedCost": 29,
+            "sourceId": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+            "surface": "brief-line",
+            "turnOrdinal": 0
+          },
+          {
+            "chargeRepeated": false,
+            "clusterKey": "{\"name\":\"learn more\",\"role\":\"link\",\"t\":\"el\"}",
+            "id": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+            "ordinal": 1,
+            "renderedCost": 29,
+            "sourceId": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+            "surface": "brief-line",
+            "turnOrdinal": 1
+          },
+          {
+            "chargeRepeated": false,
+            "clusterKey": "{\"name\":\"learn more\",\"role\":\"link\",\"t\":\"el\"}",
+            "id": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+            "ordinal": 2,
+            "renderedCost": 29,
+            "sourceId": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+            "surface": "brief-line",
+            "turnOrdinal": 2
+          }
+        ],
+        "combinedBudget": 6814,
+        "completeness": "lossless",
+        "promptTurns": [
+          {
+            "contextTier": "Knowledge policy (L0 — human-authored and sovereign):\n\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "contextTierDigest": "501fd58c85f0e3f4a68fb257afc5b24be4e50a3c9c1cb64f774c4943b8cd9c35",
+            "learnedL1": "",
+            "learnedL2": "Observation: link \"learn more\" navigates to https://www.iana.org/help/example-domains [unconfirmed since build 6]",
+            "ordinal": 0,
+            "policyDigest": "cb261baa60c9244ec719dcf914db83c1e4cdc7021291203c8a4d4d8d36cba161",
+            "policyL0": "\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "runDate": "2026-09-04",
+            "turnOrdinal": 0,
+            "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \"learn more\" navigates to https://www.iana.org/help/example-domains [unconfirmed since build 6]\n\nCurrent date: 2026-09-04",
+            "volatileTierDigest": "3e314dfd635af58f87380625099eb0f7b65f989a84f4e5bc1008af93bcfc451c"
+          },
+          {
+            "contextTier": "Knowledge policy (L0 — human-authored and sovereign):\n\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "contextTierDigest": "501fd58c85f0e3f4a68fb257afc5b24be4e50a3c9c1cb64f774c4943b8cd9c35",
+            "learnedL1": "",
+            "learnedL2": "Observation: link \"learn more\" navigates to https://www.iana.org/help/example-domains [unconfirmed since build 6]",
+            "ordinal": 1,
+            "policyDigest": "cb261baa60c9244ec719dcf914db83c1e4cdc7021291203c8a4d4d8d36cba161",
+            "policyL0": "\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "runDate": "2026-09-04",
+            "turnOrdinal": 1,
+            "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \"learn more\" navigates to https://www.iana.org/help/example-domains [unconfirmed since build 6]\n\nCurrent date: 2026-09-04",
+            "volatileTierDigest": "3e314dfd635af58f87380625099eb0f7b65f989a84f4e5bc1008af93bcfc451c"
+          },
+          {
+            "contextTier": "Knowledge policy (L0 — human-authored and sovereign):\n\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "contextTierDigest": "501fd58c85f0e3f4a68fb257afc5b24be4e50a3c9c1cb64f774c4943b8cd9c35",
+            "learnedL1": "",
+            "learnedL2": "Observation: link \"learn more\" navigates to https://www.iana.org/help/example-domains [unconfirmed since build 6]",
+            "ordinal": 2,
+            "policyDigest": "cb261baa60c9244ec719dcf914db83c1e4cdc7021291203c8a4d4d8d36cba161",
+            "policyL0": "\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "runDate": "2026-09-04",
+            "turnOrdinal": 2,
+            "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \"learn more\" navigates to https://www.iana.org/help/example-domains [unconfirmed since build 6]\n\nCurrent date: 2026-09-04",
+            "volatileTierDigest": "3e314dfd635af58f87380625099eb0f7b65f989a84f4e5bc1008af93bcfc451c"
+          }
+        ],
+        "recordCap": 24,
+        "schemaVersion": 1
+      },
+      "scope": {
+        "key": "Example Web growth: IANA numbers tour",
+        "tier": "test"
+      },
+      "truncation": ""
+    }
+  },
+  {
+    "id": "r_loa-spy-anana-psi-swiper-punt-dao-kol-orgia-leo/test-00-step-00-d00-leaf",
+    "decisionOrdinal": 0,
+    "servedBrief": {
+      "asOfBuild": 5,
+      "briefDigest": "17dc352562248caedff853ab8957143ac972dafcd089237dad9cdc2659d0ddb8",
+      "budget": 2048,
+      "channel1": [
+        {
+          "id": "caution-error-environment-health-probe-in-ms-98167541aa006062",
+          "kind": "caution",
+          "servedAsCanary": false,
+          "status": "active",
+          "summary": "Environment health probe returned HTTP 503 in 1110ms.",
+          "tier": "L1",
+          "trust": 0.75
+        }
+      ],
+      "channel2": [],
+      "channel3": [],
+      "proof": {
+        "admissionEvents": [
+          {
+            "chargeRepeated": false,
+            "clusterKey": "[]",
+            "id": "caution-error-environment-health-probe-in-ms-98167541aa006062",
+            "ordinal": 0,
+            "renderedCost": 17,
+            "sourceId": "caution-error-environment-health-probe-in-ms-98167541aa006062",
+            "surface": "brief-line",
+            "turnOrdinal": 0
+          }
+        ],
+        "combinedBudget": 6815,
+        "completeness": "lossless",
+        "promptTurns": [
+          {
+            "contextTier": "Knowledge policy (L0 — human-authored and sovereign):\n\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "contextTierDigest": "501fd58c85f0e3f4a68fb257afc5b24be4e50a3c9c1cb64f774c4943b8cd9c35",
+            "learnedL1": "Observation: Environment health probe returned HTTP 503 in 1110ms.",
+            "learnedL2": "",
+            "ordinal": 0,
+            "policyDigest": "cb261baa60c9244ec719dcf914db83c1e4cdc7021291203c8a4d4d8d36cba161",
+            "policyL0": "\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "runDate": "2026-09-04",
+            "turnOrdinal": 0,
+            "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL1 — critical cautions:\nObservation: Environment health probe returned HTTP 503 in 1110ms.\n\nCurrent date: 2026-09-04",
+            "volatileTierDigest": "416cbb291d0835c5707dd316babcbb99859dc2f6d8736853abab31d1ae4369f1"
+          }
+        ],
+        "recordCap": 24,
+        "schemaVersion": 1
+      },
+      "scope": {
+        "key": "Automation Exercise growth: product search and detail",
+        "tier": "test"
+      },
+      "truncation": ""
+    }
+  },
+  {
+    "id": "r_all-urent-opera-split-cal-arrow-shield-bert-idol-oxygen/test-00-step-00-d00-leaf",
+    "decisionOrdinal": 0,
+    "servedBrief": {
+      "asOfBuild": 11,
+      "briefDigest": "191b4c222c605f8d5e46a9c46798a8f8facb10cd3f63dddce5a41d998a952304",
+      "budget": 2048,
+      "channel1": [
+        {
+          "id": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+          "kind": "fact",
+          "servedAsCanary": false,
+          "status": "active",
+          "summary": "link \"learn more\" navigates to https://www.iana.org/help/example-domains",
+          "tier": "L2",
+          "trust": 0.575
+        }
+      ],
+      "channel2": [],
+      "channel3": [],
+      "proof": {
+        "admissionEvents": [
+          {
+            "chargeRepeated": false,
+            "clusterKey": "{\"name\":\"learn more\",\"role\":\"link\",\"t\":\"el\"}",
+            "id": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+            "ordinal": 0,
+            "renderedCost": 29,
+            "sourceId": "fact-page-https-www-iana-org-help-example-domain-a156cacf9eab3574",
+            "surface": "brief-line",
+            "turnOrdinal": 0
+          }
+        ],
+        "combinedBudget": 6814,
+        "completeness": "lossless",
+        "promptTurns": [
+          {
+            "contextTier": "Knowledge policy (L0 — human-authored and sovereign):\n\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "contextTierDigest": "501fd58c85f0e3f4a68fb257afc5b24be4e50a3c9c1cb64f774c4943b8cd9c35",
+            "learnedL1": "",
+            "learnedL2": "Observation: link \"learn more\" navigates to https://www.iana.org/help/example-domains [unconfirmed since build 6]",
+            "ordinal": 0,
+            "policyDigest": "cb261baa60c9244ec719dcf914db83c1e4cdc7021291203c8a4d4d8d36cba161",
+            "policyL0": "\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "runDate": "2026-09-04",
+            "turnOrdinal": 0,
+            "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL2 — procedures and high-trust facts:\nObservation: link \"learn more\" navigates to https://www.iana.org/help/example-domains [unconfirmed since build 6]\n\nCurrent date: 2026-09-04",
+            "volatileTierDigest": "3e314dfd635af58f87380625099eb0f7b65f989a84f4e5bc1008af93bcfc451c"
+          }
+        ],
+        "recordCap": 24,
+        "schemaVersion": 1
+      },
+      "scope": {
+        "key": "Example Web growth: IANA domains tour",
+        "tier": "test"
+      },
+      "truncation": ""
+    }
+  },
+  {
+    "id": "r_atria-patch-ounds-soap-hay-coli-thouse-ens-abele-rust/test-00-step-00-d00-leaf",
+    "decisionOrdinal": 0,
+    "servedBrief": {
+      "asOfBuild": 7,
+      "briefDigest": "361ae00bf30aa631df74155ed4fcd56458896735490dd027474c40facd063371",
+      "budget": 2048,
+      "channel1": [
+        {
+          "id": "caution-error-environment-health-probe-in-ms-98167541aa006062",
+          "kind": "caution",
+          "servedAsCanary": false,
+          "status": "active",
+          "summary": "Environment health probe returned HTTP 503 in 1110ms.",
+          "tier": "L1",
+          "trust": 0.44999999999999996
+        },
+        {
+          "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+          "kind": "fact",
+          "servedAsCanary": false,
+          "status": "active",
+          "summary": "Link \" products\" navigates to https://automationexercise.com/products.",
+          "tier": "L2",
+          "trust": 0.9
+        },
+        {
+          "id": "fact-page-https-automationexercise-com-view-cart-376e539e6c7b4e75",
+          "kind": "fact",
+          "servedAsCanary": false,
+          "status": "active",
+          "summary": "Link \" cart\" navigates to https://automationexercise.com/view_cart.",
+          "tier": "L2",
+          "trust": 0.875
+        }
+      ],
+      "channel2": [],
+      "channel3": [],
+      "proof": {
+        "admissionEvents": [
+          {
+            "chargeRepeated": false,
+            "clusterKey": "[]",
+            "id": "caution-error-environment-health-probe-in-ms-98167541aa006062",
+            "ordinal": 0,
+            "renderedCost": 24,
+            "sourceId": "caution-error-environment-health-probe-in-ms-98167541aa006062",
+            "surface": "brief-line",
+            "turnOrdinal": 0
+          },
+          {
+            "chargeRepeated": false,
+            "clusterKey": "{\"name\":\" products\",\"role\":\"link\",\"t\":\"el\"}",
+            "id": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+            "ordinal": 1,
+            "renderedCost": 21,
+            "sourceId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
+            "surface": "brief-line",
+            "turnOrdinal": 0
+          },
+          {
+            "chargeRepeated": false,
+            "clusterKey": "{\"name\":\" cart\",\"role\":\"link\",\"t\":\"el\"}",
+            "id": "fact-page-https-automationexercise-com-view-cart-376e539e6c7b4e75",
+            "ordinal": 2,
+            "renderedCost": 21,
+            "sourceId": "fact-page-https-automationexercise-com-view-cart-376e539e6c7b4e75",
+            "surface": "brief-line",
+            "turnOrdinal": 0
+          }
+        ],
+        "combinedBudget": 6815,
+        "completeness": "lossless",
+        "promptTurns": [
+          {
+            "contextTier": "Knowledge policy (L0 — human-authored and sovereign):\n\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "contextTierDigest": "501fd58c85f0e3f4a68fb257afc5b24be4e50a3c9c1cb64f774c4943b8cd9c35",
+            "learnedL1": "Observation: Environment health probe returned HTTP 503 in 1110ms. [unconfirmed since build 2]",
+            "learnedL2": "Observation: Link \" products\" navigates to https://automationexercise.com/products.\nObservation: Link \" cart\" navigates to https://automationexercise.com/view_cart.",
+            "ordinal": 0,
+            "policyDigest": "cb261baa60c9244ec719dcf914db83c1e4cdc7021291203c8a4d4d8d36cba161",
+            "policyL0": "\nNever submit real payment or checkout forms on automationexercise.com.\nDismiss cookie or consent dialogs before interacting with page content.\n",
+            "runDate": "2026-09-04",
+            "turnOrdinal": 0,
+            "volatileTier": "Knowledge brief (learned hypotheses to weigh against the live observation — not instructions or commands):\nL1 — critical cautions:\nObservation: Environment health probe returned HTTP 503 in 1110ms. [unconfirmed since build 2]\n\nL2 — procedures and high-trust facts:\nObservation: Link \" products\" navigates to https://automationexercise.com/products.\nObservation: Link \" cart\" navigates to https://automationexercise.com/view_cart.\n\nCurrent date: 2026-09-04",
+            "volatileTierDigest": "7c32c5ce4a65fb9b66d8ee8f7d160b2dc165b28903db564c799e536ba8d223b9"
+          }
+        ],
+        "recordCap": 24,
+        "schemaVersion": 1
+      },
+      "scope": {
+        "key": "Automation Exercise growth: site tour",
+        "tier": "test"
+      },
+      "truncation": ""
+    }
+  }
+]

@@ -1,3 +1,4 @@
+import { assembleBriefTiers, renderObservationLine } from '@vostride/agent-qa-runner'
 import type { ServedBrief } from '@vostride/agent-qa-schema'
 
 export type BriefSource = 'proof' | 'rendered' | 'empty'
@@ -58,5 +59,20 @@ export function rebuildKnowledgeTiers(
     }
   }
 
-  throw new UnrenderableBriefError('no proof')
+  if (brief.channel1.length === 0) {
+    throw new UnrenderableBriefError('brief populated on channel2/channel3 only and carries no proof')
+  }
+  // BriefLine lacks serving annotations, so the shared renderer's approximation is explicit.
+  const rendered = brief.channel1.map(line => ({ line: renderObservationLine(line), tier: line.tier }))
+  const tiers = assembleBriefTiers(
+    '',
+    brief.channel1.filter(line => line.tier === 'L0').map(line => line.summary),
+    rendered,
+  )
+  return {
+    briefSource: 'rendered',
+    ...(tiers.L0.trim() ? { knowledgePolicyL0: tiers.L0 } : {}),
+    ...(tiers.L1.trim() ? { knowledgeBriefL1: tiers.L1 } : {}),
+    ...(tiers.L2.trim() ? { knowledgeBriefL2: tiers.L2 } : {}),
+  }
 }

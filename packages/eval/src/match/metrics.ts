@@ -110,6 +110,7 @@ export interface EvalBatchReport {
     judge: JudgeHonesty
   }
   promptDriftRate: RateMetric
+  /** Counts recorded stamps only; historical unstamped replays retain unknown provenance. */
   briefSourceCounts: Counts<BriefSource>
   kEscalation: {
     decisionCount: number
@@ -399,7 +400,7 @@ export function buildEvalReport(
   let modelMismatchCount = 0
 
   for (const result of replayDecisions) {
-    briefSourceCounts[result.briefSource]++
+    if (BRIEF_SOURCES.includes(result.briefSource)) briefSourceCounts[result.briefSource]++
     harnessErrorCount += result.agreement.harnessErrorCount
     if (result.promptDrift.drift) driftedCount++
     if (result.agreement.k > 1) {

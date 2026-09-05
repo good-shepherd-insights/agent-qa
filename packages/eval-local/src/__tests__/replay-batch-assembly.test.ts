@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { extractRunCassettes, resolveProductPartition } from '@vostride/agent-qa-eval'
+import { buildEvalReport, extractRunCassettes, resolveProductPartition } from '@vostride/agent-qa-eval'
 import type { JudgeIdentityBlock, LeafReplayResult } from '@vostride/agent-qa-eval'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -50,6 +50,31 @@ function leafOutcome(cassetteId: string): LeafReplayResult {
 }
 
 describe('assembleScoredBatch', () => {
+  it('reads historical unstamped replays without inventing brief provenance or NaN counters', async () => {
+    const root = await tempRoot()
+    const replaysRoot = join(root, 'replays')
+    const store = new evalLocal.FsReplayRecordStore({ root, outputDir: replaysRoot })
+    const legacy = leafOutcome('legacy-leaf')
+    const written = store.save(legacy)
+    const { briefSource, ...unstamped } = legacy
+    expect(briefSource).toBe('empty')
+    writeFileSync(written.file, JSON.stringify(unstamped))
+    store.save(leafOutcome('current-leaf'))
+    store.save({
+      kind: 'integrity-refusal', cassetteId: 'historical-refusal',
+      reason: 'unsupported-brief', detail: 'recorded before brief rendering',
+    })
+    const batch = evalLocal.assembleScoredBatch({
+      replaysRoot, cassettesRoot: join(root, 'cassettes'), source: 'history',
+    })
+    const report = buildEvalReport(batch.entries)
+    expect(batch.entries.find(entry => entry.cassetteId === legacy.cassetteId)!.outcome)
+      .not.toHaveProperty('briefSource')
+    expect(report.briefSourceCounts).toEqual({ proof: 0, rendered: 0, empty: 1 })
+    expect(report.headline.perDecisionCost.decisionCount).toBe(2)
+    expect(report.honesty.refusalCounts['unsupported-brief']).toBe(1)
+  })
+
   it('joins labels and persisted scores while retaining a corrupt replay as a refusal entry', async () => {
     expect(evalLocal.assembleScoredBatch).toBeTypeOf('function')
     const root = await tempRoot()

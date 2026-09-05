@@ -83,6 +83,10 @@ function proofBrief(promptTurns: ServedPromptTurn[]): ServedBrief {
   }
 }
 
+const proofFixtures = JSON.parse(
+  readFileSync(new URL('./fixtures/proof-briefs.json', import.meta.url), 'utf8'),
+) as { id: string; decisionOrdinal: number; servedBrief: ServedBrief }[]
+
 describe('reconstructDecisionContext', () => {
   it('omits the screenshot key entirely for a textOnly capture', () => {
     const { stepContext } = reconstructDecisionContext({
@@ -217,4 +221,109 @@ describe('reconstructDecisionContext', () => {
     expect(thrown).toBeInstanceOf(UnrenderableBriefError)
     expect(thrown).toMatchObject({ name: 'UnrenderableBriefError' })
   })
+
+  it.each(proofFixtures)('reconstructs the committed proof verbatim: $id', fixture => {
+    const turns = fixture.servedBrief.proof!.promptTurns
+    const matchedTurn = turns.find(turn => turn.turnOrdinal === fixture.decisionOrdinal)!
+    expect(matchedTurn).toBeDefined()
+    const reconstructed = reconstructDecisionContext({
+      leg: makeLeg({ decisionOrdinal: fixture.decisionOrdinal, servedBrief: fixture.servedBrief }),
+      captureMode: 'textOnly',
+      artifacts: artifactSource({}),
+      model: 'planner-model',
+    })
+    expect(reconstructed).toMatchObject({ briefSource: 'proof', turnMatch: 'exact' })
+    const { stepContext } = reconstructed
+    expect(sha256hex(stepContext.knowledgePolicyL0 ?? '')).toBe(matchedTurn.policyDigest)
+    expect(stepContext.knowledgePolicyL0).toBe(matchedTurn.policyL0)
+    expect('knowledgeBriefL1' in stepContext).toBe(matchedTurn.learnedL1.trim().length > 0)
+    expect('knowledgeBriefL2' in stepContext).toBe(matchedTurn.learnedL2.trim().length > 0)
+    expect(stepContext.knowledgeBriefL1 ?? '').toBe(matchedTurn.learnedL1)
+    expect(stepContext.knowledgeBriefL2 ?? '').toBe(matchedTurn.learnedL2)
+  })
+
+  it('pins the four fixture tier combinations and the multi-turn decision', () => {
+    expect(proofFixtures).toHaveLength(4)
+    expect(proofFixtures[0].decisionOrdinal).toBe(1)
+    expect(proofFixtures[0].servedBrief.proof!.promptTurns).toHaveLength(3)
+    expect(proofFixtures.slice(1).map(fixture => {
+      const turn = fixture.servedBrief.proof!.promptTurns[0]
+      return [turn.learnedL1.length > 0, turn.learnedL2.length > 0]
+    })).toEqual([[true, false], [false, true], [true, true]])
+  })
+
+  it('refuses a non-uniform proof with no matching decision and names the available turn ordinals', () => {
+    const servedBrief = proofBrief([proofTurn(), proofTurn({ ordinal: 1, turnOrdinal: 1, learnedL2: 'different' })])
+    let thrown: unknown
+    try {
+      reconstructDecisionContext({
+        leg: makeLeg({ decisionOrdinal: 5, servedBrief }),
+        captureMode: 'textOnly',
+        artifacts: artifactSource({}),
+        model: 'planner-model',
+      })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(UnrenderableBriefError)
+    expect((thrown as UnrenderableBriefError).detail).toContain('decisionOrdinal 5')
+    expect((thrown as UnrenderableBriefError).detail).toContain('turnOrdinals 0,1')
+  })
+
+  it('uses a uniform proof fallback only when all three tier strings agree', () => {
+    const first = proofTurn()
+    const servedBrief = proofBrief([first, proofTurn({ ordinal: 1, turnOrdinal: 1, contextTier: 'different context' })])
+    const reconstructed = reconstructDecisionContext({
+      leg: makeLeg({ decisionOrdinal: 5, servedBrief }),
+      captureMode: 'textOnly',
+      artifacts: artifactSource({}),
+      model: 'planner-model',
+    })
+    expect(reconstructed).toMatchObject({ briefSource: 'proof', turnMatch: 'uniform' })
+    expect(reconstructed.stepContext).toMatchObject({
+      knowledgePolicyL0: first.policyL0,
+      knowledgeBriefL1: first.learnedL1,
+      knowledgeBriefL2: first.learnedL2,
+    })
+  })
+
+  it('renders a channel1 L2 line without a proof and stamps rendered with no turnMatch', () => {
+    const summary = 'recorded observation'
+    const servedBrief: ServedBrief = {
+      ...emptyBrief(),
+      channel1: [{
+        id: asRecordId('rendered-observation'), kind: 'fact', summary,
+        trust: 1, status: 'active', servedAsCanary: false, tier: 'L2',
+      }],
+    }
+    const reconstructed = reconstructDecisionContext({
+      leg: makeLeg({ servedBrief }),
+      captureMode: 'textOnly',
+      artifacts: artifactSource({}),
+      model: 'planner-model',
+    })
+    expect(reconstructed).toMatchObject({ briefSource: 'rendered' })
+    expect(reconstructed).not.toHaveProperty('turnMatch')
+    expect(reconstructed.stepContext.knowledgeBriefL2).toBe('Observation: ' + summary)
+    expect(reconstructed.stepContext).not.toHaveProperty('knowledgePolicyL0')
+    expect(reconstructed.stepContext).not.toHaveProperty('knowledgeBriefL1')
+  })
 })
+/*
+ * Regenerate the four proof fixtures from agent-qa/ (read-only corpus projection):
+ * node -e '
+ * const fs = require("node:fs"), path = require("node:path");
+ * const dirs = [
+ *   "example-web/r_ingle-mixed-unlink-reb-bod-gross-foot-sic-bum-virus/test-00-step-03-d01-leaf",
+ *   "automation-exercise/r_loa-spy-anana-psi-swiper-punt-dao-kol-orgia-leo/test-00-step-00-d00-leaf",
+ *   "example-web/r_all-urent-opera-split-cal-arrow-shield-bert-idol-oxygen/test-00-step-00-d00-leaf",
+ *   "automation-exercise/r_atria-patch-ounds-soap-hay-coli-thouse-ens-abele-rust/test-00-step-00-d00-leaf"
+ * ];
+ * const fixtures = dirs.map(dir => {
+ *   const c = JSON.parse(fs.readFileSync(path.join("../demo/init/agent-qa-eval/cassettes", dir, "cassette.json"), "utf8"));
+ *   return { id: c.id, decisionOrdinal: c.input.decisionOrdinal, servedBrief: c.input.servedBrief };
+ * });
+ * fs.writeFileSync("packages/eval/src/replay/__tests__/fixtures/proof-briefs.json", JSON.stringify(fixtures, null, 2) + "\n");
+ * '
+ */
+import { readFileSync } from 'node:fs'
