@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# 413-eval-root-hygiene.sh — validate:eval-root-hygiene (413 D-12; SC2, SC4, D-18).
+# 413-eval-root-hygiene.sh — validate:eval-root-hygiene (413 D-12; SC2, SC4, D-18; 414 D-03).
 #
-# WHAT THIS PROVES. Five properties of the committed measurement substrate that must hold for
+# WHAT THIS PROVES. Six properties of the committed measurement substrate that must hold for
 # every later v55 phase, not just for the commit that introduced them:
 #
 #   L1  no absolute machine path anywhere in the committed eval root  -> PASS L1 / FAIL L1
@@ -16,11 +16,20 @@
 #   L4  the v50 39/45 same-family report is still in place, still     -> PASS L4 / FAIL L4
 #       carrying its familyOverride marker (D-18 refusal fixture)
 #   L5  no noise-floor artefact under reports/                        -> PASS L5 / FAIL L5
+#   L6  no schemaVersion 1 entry under corpus/                        -> PASS L6 / FAIL L6
+#       — the 414 D-03 reviewed migration rewrote all 155 committed entries to schemaVersion 2
+#       (414-10). A v1 entry reappearing under `corpus/` means an unmigrated re-seed slipped in
+#       behind the one-way partition, so its `split` was never assigned by a committed manifest.
+#       The scope is `corpus/` ONLY, and deliberately so: `schemaVersion: 1` is the CURRENT and
+#       correct version of `eval-root.json`, of every `contracts/*.json` and of every
+#       `cassettes/**/cassette.json`, and the v1 guard fixture that proves the one v1|v2 guard
+#       lives in `packages/eval/src/labels/__tests__/fixtures/`. A whole-root scan would red on
+#       all of them. Only `corpus/` entries were migrated by 414 D-03, so only `corpus/` is law.
 #
 # WHY A GREEN SUITE DOES NOT PROVE IT. The workspace vitest suite never reads the committed eval
 # root and never reads the demo config — `packages/eval` is pure by construction (its own
 # module-discipline cell forbids runtime IO) and every gate is deliberately kept out of vitest
-# (FLOOR-05, plus the suite's known contention flake). So each of these five is a property of
+# (FLOOR-05, plus the suite's known contention flake). So each of these six is a property of
 # BYTES ON DISK OUTSIDE THE SUITE'S REACH: a home-directory path re-seeded into a corpus entry, a
 # threshold constant smuggled onto a gate path, the override flipped back on, the refusal fixture
 # quietly regenerated, or a floor published a phase early — none of them turn a single existing
@@ -29,13 +38,14 @@
 # A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS. `--selftest` plants a
 # home-directory path into a throwaway copy of the eval root, then a Windows drive-letter path into
 # the same copy, then a home-directory path under `exclusions/`, then one inside a
-# `contracts/partition-*.json`, then a threshold literal into a throwaway gate file, and REQUIRES
-# L1 four times and L2 once to red under those five plants. Every plant uses a literal that never
-# appears in the shipped tree, and each is removed before the next so no plant can mask another. A
-# leg that stays green under its own plant exits 1 with SELFTEST FAILED.
+# `contracts/partition-*.json`, then a threshold literal into a throwaway gate file, and finally a
+# `{"schemaVersion": 1}` entry under `corpus/`, and REQUIRES L1 four times, L2 once and L6 once to
+# red under those six plants. Every plant uses a literal or a path that never appears in the
+# shipped tree, and each is removed before the next so no plant can mask another. A leg that stays
+# green under its own plant exits 1 with SELFTEST FAILED.
 #
 # EXIT CODES ARE READ FROM THE PROCESS, NEVER THROUGH A PIPE. `grep` returns 1 for "no match",
-# which is this script's success condition on four of five legs, so every grep's status is captured
+# which is this script's success condition on five of six legs, so every grep's status is captured
 # with `|| status=$?` and read as 0=hit / 1=clean / >=2=grep itself failed (also a FAIL — a leg
 # that could not run has not passed).
 #
@@ -165,6 +175,23 @@ run_legs() {
     fi
   fi
 
+  # ---- L6: no schemaVersion 1 entry remains under corpus/ (414 D-03) -----------------------
+  # Same shape as L1: a leg that scanned nothing has not passed, so the corpus dir's existence
+  # is asserted before the scan rather than inferred from grep's "no match" exit.
+  if [ ! -d "$EVAL_ROOT/corpus" ]; then
+    fail L6 "no committed corpus at $EVAL_ROOT/corpus — the scan would cover nothing"
+  else
+    status=0
+    hits=$(grep -rl '"schemaVersion": 1' "$EVAL_ROOT/corpus") || status=$?
+    if [ "$status" -eq 0 ]; then
+      fail L6 "$(echo "$hits" | wc -l | tr -d ' ') v1 corpus entries remain (414 D-03): $(echo "$hits" | head -5 | tr '\n' ' ')"
+    elif [ "$status" -eq 1 ]; then
+      pass L6
+    else
+      fail L6 "grep could not scan $EVAL_ROOT/corpus (exit $status)"
+    fi
+  fi
+
   return "$fail_count"
 }
 
@@ -234,6 +261,19 @@ selftest() {
   fi
   grep '^FAIL L1' "$stderr_file" >&2
   rm -f "$tmp_root/contracts/partition-selftest.json"
+
+  echo "SELFTEST plant 1e: a schemaVersion 1 entry under corpus/ (414 D-03)" >&2
+  mkdir -p "$tmp_root/corpus/selftest"
+  printf '{"schemaVersion": 1}\n' > "$tmp_root/corpus/selftest/v1.json"
+  status=0
+  EVAL_ROOT="$tmp_root" DEMO_CONFIG="$DEMO_CONFIG" "$0" 2>"$stderr_file" || status=$?
+  if [ "$status" -eq 0 ] || ! grep -q '^FAIL L6' "$stderr_file"; then
+    echo "SELFTEST FAILED: L6 stayed green under a planted schemaVersion 1 corpus entry" >&2
+    cat "$stderr_file" >&2
+    return 1
+  fi
+  grep '^FAIL L6' "$stderr_file" >&2
+  rm -f "$tmp_root/corpus/selftest/v1.json"
 
   echo "SELFTEST plant 2: an inherited-threshold literal on a throwaway gate path" >&2
   printf 'export const THRESHOLD = 0.867\n' > "$tmp_gate/gate.ts"
