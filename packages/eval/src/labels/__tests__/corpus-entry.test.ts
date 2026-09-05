@@ -20,7 +20,6 @@ import {
 const RUN_ID = 'run / checkout suite 42'
 const RUN_SLUG = 'run---checkout-suite-42'
 const LEAF_ID = `${RUN_SLUG}/test-00-step-00-d00-leaf`
-const HANDOFF_PATH = `.agent-qa/runs/${RUN_SLUG}/handoff.json`
 
 function fullArtifacts(): ArtifactSource {
   const entries = new Map<string, Uint8Array>([
@@ -42,15 +41,15 @@ function fixtureLeaf(): LeafCassette {
   return found
 }
 
-describe('projectCorpusEntry (D-02/ROOT-03)', () => {
-  it('projects the full membership shape with requirement-verbatim provenance keys', () => {
+describe('projectCorpusEntry (D-02/ROOT-03, 414 D-03/D-04/D-13)', () => {
+  it('projects the full v2 membership shape with requirement-verbatim provenance keys', () => {
     const cassette = fixtureLeaf()
 
     const entry = projectCorpusEntry({
       cassette,
       product: 'demo-app',
       runId: RUN_ID,
-      handoffPath: HANDOFF_PATH,
+      assignment: { split: 'natural' },
     })
 
     expect(entry).toEqual({
@@ -59,14 +58,61 @@ describe('projectCorpusEntry (D-02/ROOT-03)', () => {
       product: 'demo-app',
       split: 'natural',
       captured_at_ordinal: cassette.receipt.buildOrdinal,
-      run_links: { runId: RUN_ID, runSlug: RUN_SLUG, handoffPath: HANDOFF_PATH },
+      run_links: { runId: RUN_ID, runSlug: RUN_SLUG },
       receiptDigest: sha256hex(canonicalJson(cassette.receipt)),
     })
     expect(entry.captured_at_ordinal).toBe(37)
+    expect(Object.keys(entry.run_links)).toEqual(['runId', 'runSlug'])
 
     const serialized = committedFileText(entry)
     expect(serialized).toContain('"captured_at_ordinal"')
     expect(serialized).toContain('"run_links"')
+  })
+
+  it('carries the assignment arm through, and only that arm', () => {
+    const cassette = fixtureLeaf()
+
+    const heldOut = projectCorpusEntry({
+      cassette,
+      product: 'demo-app',
+      runId: RUN_ID,
+      assignment: { split: 'held-out', heldOutVisibility: 'private' },
+    })
+    expect(heldOut.split).toBe('held-out')
+    expect(heldOut).toMatchObject({ split: 'held-out', heldOutVisibility: 'private' })
+
+    const natural = projectCorpusEntry({
+      cassette,
+      product: 'demo-app',
+      runId: RUN_ID,
+      assignment: { split: 'natural' },
+    })
+    expect(Object.keys(natural)).not.toContain('heldOutVisibility')
+    expect(Object.keys(natural)).not.toContain('generator')
+  })
+
+  it('stamps the D-04 fields iff they were supplied, never as undefined keys', () => {
+    const cassette = fixtureLeaf()
+
+    const stamped = projectCorpusEntry({
+      cassette,
+      product: 'demo-app',
+      runId: RUN_ID,
+      assignment: { split: 'natural' },
+      capturedAt: '2026-09-04T16:25:54.000Z',
+      targetEnvironment: 'local',
+    })
+    expect(stamped.captured_at).toBe('2026-09-04T16:25:54.000Z')
+    expect(stamped.targetEnvironment).toBe('local')
+
+    const bare = projectCorpusEntry({
+      cassette,
+      product: 'demo-app',
+      runId: RUN_ID,
+      assignment: { split: 'natural' },
+    })
+    expect(Object.keys(bare)).not.toContain('captured_at')
+    expect(Object.keys(bare)).not.toContain('targetEnvironment')
   })
 
   it('recomputes to the same receiptDigest independently', () => {
@@ -76,7 +122,7 @@ describe('projectCorpusEntry (D-02/ROOT-03)', () => {
       cassette,
       product: 'demo-app',
       runId: RUN_ID,
-      handoffPath: HANDOFF_PATH,
+      assignment: { split: 'natural' },
     })
 
     const independent = sha256hex(JSON.stringify(sortKeysDeep(cassette.receipt)))
