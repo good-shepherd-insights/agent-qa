@@ -4,6 +4,7 @@ import type { ProcedureEndState } from '../cassette/cassette'
 import type { CompletenessStatus } from '../cassette/completeness'
 import type { ReplayDrift } from './drift'
 import type { DecisionIdentity } from './identity'
+import type { BriefSource, TurnMatch } from './brief-tiers'
 
 /**
  * A recorded exchange the replayed planner never consumed — a D-07 divergence signal.
@@ -60,6 +61,10 @@ export interface DecisionReplayResult {
   /** Absent on no consensus (mirrors agreement.noConsensus). */
   modalDecision?: DecisionIdentity
   promptDrift: ReplayDrift
+  /** Recorded proof, approximate rendering, or an empty brief; counted per decision. */
+  briefSource: BriefSource
+  /** Proof-turn selection is explicit, including the uniform-tier fallback. */
+  turnMatch?: TurnMatch
   /** Recorded model identity from the receipt (declared/resolvedModelId); typed-absent, never fabricated. */
   recordedModel?: ModelIdentity
   /** The model actually invoked this replay (D-03 id stamp). */
@@ -107,10 +112,14 @@ export interface ReplayRefusal {
     | 'missing-blob'
     | 'action-tool-collision'
     | 'unsupported-brief'
+    | 'unrenderable-brief'
     | 'parse-failed'
   detail: string
   completenessStatus?: CompletenessStatus
 }
+
+// prettier-ignore
+export const REPLAY_REFUSAL_REASONS = ['guard-failed', 'completeness', 'missing-blob', 'action-tool-collision', 'unsupported-brief', 'unrenderable-brief', 'parse-failed'] as const satisfies readonly ReplayRefusal['reason'][]
 
 /** The per-cassette replay outcome: a replay result or a typed refusal. */
 export type ReplayCassetteOutcome = ReplayResult | ReplayRefusal

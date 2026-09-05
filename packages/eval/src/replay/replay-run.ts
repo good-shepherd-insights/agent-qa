@@ -18,6 +18,8 @@ import type { CassetteReceipt } from '../cassette/receipt-leg'
 import type { CassetteSidecarLeg } from '../cassette/sidecar-leg'
 import type { ArtifactSource } from '../ports'
 import { computeReplayDrift } from './drift'
+import { UnrenderableBriefError } from './brief-tiers'
+import type { BriefSource, TurnMatch } from './brief-tiers'
 import { computeDecisionIdentity, decisionIdentityKey } from './identity'
 import type { DecisionIdentity } from './identity'
 import {
@@ -27,7 +29,6 @@ import {
 } from './exchange-server'
 import {
   MissingDecisionBlobError,
-  UnsupportedBriefError,
   reconstructDecisionContext,
 } from './reconstruct'
 import { neverEscalate } from './ports'
@@ -86,6 +87,8 @@ type SampleRun =
       kind: 'sample'
       sample: ReplaySample
       replayedModel: { provider: string; modelId: string }
+      briefSource: BriefSource
+      turnMatch?: TurnMatch
       unconsumed: () => UnconsumedExchange[]
     }
   | { kind: 'refusal'; refusal: ReplayRefusal }
@@ -247,6 +250,8 @@ async function replayDecision(
     agreement,
     ...(agreement.modal !== undefined ? { modalDecision: agreement.modal.identity } : {}),
     promptDrift,
+    briefSource: first.briefSource,
+    ...(first.turnMatch !== undefined ? { turnMatch: first.turnMatch } : {}),
     ...(recordedModel !== undefined ? { recordedModel } : {}),
     // replayedModel is stamped by every sample identically; the loop guarantees at least one ran.
     replayedModel: replayedModel as { provider: string; modelId: string },
@@ -290,8 +295,8 @@ async function runSample(context: DecisionReplayContext, sampleIndex: number): P
     if (error instanceof MissingDecisionBlobError) {
       return { kind: 'refusal', refusal: refusal(context.cassetteId, 'missing-blob', error.message) }
     }
-    if (error instanceof UnsupportedBriefError) {
-      return { kind: 'refusal', refusal: refusal(context.cassetteId, 'unsupported-brief', error.message) }
+    if (error instanceof UnrenderableBriefError) {
+      return { kind: 'refusal', refusal: refusal(context.cassetteId, 'unrenderable-brief', error.message) }
     }
     throw error
   }
@@ -307,7 +312,14 @@ async function runSample(context: DecisionReplayContext, sampleIndex: number): P
     durationMs,
     ...(outcome.tokenUsage !== undefined ? { tokenUsage: outcome.tokenUsage } : {}),
   }
-  return { kind: 'sample', sample, replayedModel: handle.replayedModel, unconsumed: server.unconsumed }
+  return {
+    kind: 'sample',
+    sample,
+    replayedModel: handle.replayedModel,
+    unconsumed: server.unconsumed,
+    briefSource: reconstructed.briefSource,
+    ...(reconstructed.turnMatch !== undefined ? { turnMatch: reconstructed.turnMatch } : {}),
+  }
 }
 
 async function classifyPlan(

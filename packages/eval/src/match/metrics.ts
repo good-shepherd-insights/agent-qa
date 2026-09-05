@@ -2,6 +2,8 @@ import { sha256hex } from '@vostride/agent-qa-schema'
 
 import { canonicalJson } from '../canonical-json'
 import type { CassetteLabelLeg } from '../cassette/label-leg'
+import { BRIEF_SOURCES } from '../replay/brief-tiers'
+import type { BriefSource } from '../replay/brief-tiers'
 import type {
   DecisionReplayResult,
   ReplayCassetteOutcome,
@@ -108,6 +110,7 @@ export interface EvalBatchReport {
     judge: JudgeHonesty
   }
   promptDriftRate: RateMetric
+  briefSourceCounts: Counts<BriefSource>
   kEscalation: {
     decisionCount: number
     escalatedCount: number
@@ -271,6 +274,7 @@ export function buildEvalReport(
     'missing-blob': 0,
     'action-tool-collision': 0,
     'unsupported-brief': 0,
+    'unrenderable-brief': 0,
     'parse-failed': 0,
   }
   const neverScoredCounts: Counts<NeverScoredReason> = {
@@ -384,6 +388,9 @@ export function buildEvalReport(
   }
 
   const replayDecisions = entries.flatMap(entry => decisionResults(entry.outcome))
+  const briefSourceCounts = Object.fromEntries(
+    BRIEF_SOURCES.map(source => [source, 0]),
+  ) as Counts<BriefSource>
   let harnessErrorCount = 0
   let driftedCount = 0
   let escalatedCount = 0
@@ -392,6 +399,7 @@ export function buildEvalReport(
   let modelMismatchCount = 0
 
   for (const result of replayDecisions) {
+    briefSourceCounts[result.briefSource]++
     harnessErrorCount += result.agreement.harnessErrorCount
     if (result.promptDrift.drift) driftedCount++
     if (result.agreement.k > 1) {
@@ -488,6 +496,7 @@ export function buildEvalReport(
       judge: judgeHonesty,
     },
     promptDriftRate: rateMetric(driftedCount, decisionCount),
+    briefSourceCounts,
     kEscalation: {
       decisionCount,
       escalatedCount,

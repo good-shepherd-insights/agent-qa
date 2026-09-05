@@ -15,6 +15,7 @@ import {
 function leafResult(overrides: Partial<LeafReplayResult> = {}): LeafReplayResult {
   return {
     granularity: 'leaf',
+    briefSource: 'empty',
     cassetteId: 'run / eval-local::standalone/leaf',
     samples: [],
     agreement: { k: 0, agreementRate: 0, noConsensus: true, harnessErrorCount: 0 },

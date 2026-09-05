@@ -19,6 +19,7 @@ const CASSETTE_ID = 'run / eval-local::standalone/leaf'
 function leafOutcome(overrides: Partial<LeafReplayResult> = {}): LeafReplayResult {
   return {
     granularity: 'leaf',
+    briefSource: 'empty',
     cassetteId: CASSETTE_ID,
     samples: [],
     agreement: { k: 0, agreementRate: 0, noConsensus: true, harnessErrorCount: 0 },

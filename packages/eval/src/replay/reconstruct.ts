@@ -15,11 +15,13 @@ import type { ArtifactRef, ScreenState } from '@vostride/agent-qa-schema'
 import type { StepContext } from '@vostride/agent-qa-runner'
 import type { CassetteInputLeg } from '../cassette/input-leg'
 import type { ArtifactSource } from '../ports'
+import { rebuildKnowledgeTiers } from './brief-tiers'
+import type { BriefSource, TurnMatch } from './brief-tiers'
 
 /**
  * A full-capture leg whose decision-screenshot blob is absent from the ArtifactSource.
  * Completeness normally refuses this upstream; this is the defense-in-depth path. Distinct
- * from {@link UnsupportedBriefError} so the engine maps it to the 'missing-blob' refusal.
+ * from brief reconstruction refusals so the engine maps it to 'missing-blob'.
  */
 export class MissingDecisionBlobError extends Error {
   readonly sha: string | undefined
@@ -31,10 +33,8 @@ export class MissingDecisionBlobError extends Error {
 }
 
 /**
- * A served brief carrying content on any channel. Phase M2 must choose a faithful brief
- * rendering deliberately (RESEARCH Open Q3) — replay never inherits a silent lossy one, so
- * a non-empty brief is refused loudly here. The engine maps it to the 'unsupported-brief'
- * refusal. An empty-but-structured brief is legal and yields an omitted knowledge brief.
+ * Historical error retained for callers reading pre-rendering replay evidence. New replays
+ * rebuild populated briefs or produce UnrenderableBriefError; nothing constructs this class.
  */
 export class UnsupportedBriefError extends Error {
   readonly channel: string
@@ -56,13 +56,8 @@ export interface ReconstructDecisionContextInput {
 export interface ReconstructedDecisionContext {
   screenState: ScreenState
   stepContext: StepContext
-}
-
-function firstNonEmptyChannel(brief: CassetteInputLeg['servedBrief']): string | undefined {
-  if (brief.channel1.length > 0) return 'channel1'
-  if (brief.channel2.length > 0) return 'channel2'
-  if (brief.channel3.length > 0) return 'channel3'
-  return undefined
+  briefSource: BriefSource
+  turnMatch?: TurnMatch
 }
 
 export function reconstructDecisionContext(
@@ -70,10 +65,7 @@ export function reconstructDecisionContext(
 ): ReconstructedDecisionContext {
   const { leg, captureMode, screenshotRef, artifacts, model } = input
 
-  const populatedChannel = firstNonEmptyChannel(leg.servedBrief)
-  if (populatedChannel !== undefined) {
-    throw new UnsupportedBriefError(populatedChannel)
-  }
+  const tiers = rebuildKnowledgeTiers(leg.servedBrief, leg.decisionOrdinal)
 
   const workingMemory =
     leg.workingMemory !== undefined && leg.workingMemory.length > 0
@@ -102,7 +94,18 @@ export function reconstructDecisionContext(
     verifierModel: model,
     ...(workingMemory !== undefined ? { workingMemory } : {}),
     ...(screenshot !== undefined ? { screenshot } : {}),
+    ...(tiers.knowledgePolicyL0 !== undefined ? { knowledgePolicyL0: tiers.knowledgePolicyL0 } : {}),
+    ...(tiers.knowledgeBriefL1 !== undefined ? { knowledgeBriefL1: tiers.knowledgeBriefL1 } : {}),
+    ...(tiers.knowledgeBriefL2 !== undefined ? { knowledgeBriefL2: tiers.knowledgeBriefL2 } : {}),
+    ...(leg.servedBrief.truncation.length > 0
+      ? { knowledgeBriefTruncation: leg.servedBrief.truncation }
+      : {}),
   }
 
-  return { screenState: leg.stateBefore, stepContext }
+  return {
+    screenState: leg.stateBefore,
+    stepContext,
+    briefSource: tiers.briefSource,
+    ...(tiers.turnMatch !== undefined ? { turnMatch: tiers.turnMatch } : {}),
+  }
 }

@@ -38,6 +38,7 @@ function leafFixture() {
 function leafOutcome(cassetteId: string): LeafReplayResult {
   return {
     granularity: 'leaf',
+    briefSource: 'empty',
     cassetteId,
     samples: [],
     agreement: { k: 0, agreementRate: 0, noConsensus: true, harnessErrorCount: 0 },

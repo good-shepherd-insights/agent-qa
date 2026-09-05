@@ -35,6 +35,7 @@ function decisionResult(outcome: ReplaySampleOutcome): DecisionReplayResult {
       : undefined
   return {
     cassetteId: 'cassette-diff',
+    briefSource: 'empty',
     samples: [{ sampleIndex: 0, outcome, durationMs: 12 }],
     agreement: {
       k: 1,

@@ -1,4 +1,5 @@
 import { PlanningTurnError } from '@vostride/agent-qa-runner'
+import { asRecordId, sha256hex } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import type { ArtifactSource } from '../../ports'
 import type { ArtifactRef } from '@vostride/agent-qa-schema'
@@ -182,10 +183,10 @@ describe('replayCassette — single sample', () => {
     expect((outcome as ReplayRefusal).reason).toBe('missing-blob')
   })
 
-  it('Test 7c: a served brief maps to a typed unsupported-brief refusal', async () => {
+  it('Test 7c: a channel3-only brief maps to a typed unrenderable-brief refusal', async () => {
     const probe = actionsFactory([{ type: 'click', ref: 'e2' }])
     const brief = { ...leafCassette().input.servedBrief }
-    brief.channel1 = [{ id: 'c1', anchors: [], summary: 'a hint' }] as unknown as typeof brief.channel1
+    brief.channel3 = [{ id: asRecordId('caution'), anchors: [], summary: 'a hint' }]
     const outcome = await replayCassette({
       cassette: leafCassette({ leg: { servedBrief: brief } }),
       artifacts: emptyArtifacts,
@@ -194,6 +195,44 @@ describe('replayCassette — single sample', () => {
       clock: fixedIncrementClock(),
     })
     expect(isRefusal(outcome)).toBe(true)
-    expect((outcome as ReplayRefusal).reason).toBe('unsupported-brief')
+    expect((outcome as ReplayRefusal).reason).toBe('unrenderable-brief')
+  })
+
+  it('stamps briefSource proof and turnMatch exact through replayCassette', async () => {
+    const cassette = leafCassette()
+    cassette.input.servedBrief.channel3 = [
+      { id: asRecordId('proof-caution'), anchors: [], summary: 'a caution' },
+    ]
+    const policyL0 = 'recorded policy'
+    cassette.input.servedBrief.proof = {
+      schemaVersion: 1,
+      completeness: 'lossless',
+      recordCap: 10,
+      combinedBudget: 100,
+      admissionEvents: [],
+      promptTurns: [{
+        ordinal: 0,
+        turnOrdinal: cassette.input.decisionOrdinal,
+        runDate: '2026-09-05',
+        policyL0,
+        learnedL1: '',
+        learnedL2: 'recorded observation',
+        contextTier: '',
+        volatileTier: '',
+        policyDigest: sha256hex(policyL0),
+        contextTierDigest: sha256hex(''),
+        volatileTierDigest: sha256hex(''),
+      }],
+    }
+    const probe = actionsFactory([{ type: 'click', ref: 'e2' }])
+    const outcome = await replayCassette({
+      cassette,
+      artifacts: emptyArtifacts,
+      plannerFactory: probe.factory,
+      actionToolNames: new Set(),
+      clock: fixedIncrementClock(),
+    })
+    expect(outcome).toMatchObject({ granularity: 'leaf', briefSource: 'proof', turnMatch: 'exact' })
+    expect((outcome as DecisionReplayResult).samples[0].outcome.kind).toBe('decision')
   })
 })

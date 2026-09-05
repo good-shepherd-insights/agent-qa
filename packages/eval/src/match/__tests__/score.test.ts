@@ -109,6 +109,7 @@ function decisionResult(
 
   return {
     cassetteId: 'cassette-score',
+    briefSource: 'empty',
     samples,
     agreement,
     ...(modal === undefined ? {} : { modalDecision: modal.identity }),

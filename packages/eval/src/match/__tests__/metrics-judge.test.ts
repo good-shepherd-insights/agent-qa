@@ -40,6 +40,7 @@ function leafOutcome(cassetteId: string, samples?: ReplaySample[]): LeafReplayRe
   const resolved = samples ?? [sample(0, 10)]
   return {
     granularity: 'leaf',
+    briefSource: 'empty',
     cassetteId,
     samples: resolved,
     agreement: {

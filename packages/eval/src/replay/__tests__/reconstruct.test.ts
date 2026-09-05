@@ -1,15 +1,17 @@
 import { makeScreenState } from '@vostride/agent-qa-runner'
+import { asRecordId, sha256hex } from '@vostride/agent-qa-schema'
 import type {
   ArtifactRef,
   ServedBrief,
+  ServedPromptTurn,
   WorkingMemoryEntry,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import type { ArtifactSource } from '../../ports'
 import type { CassetteInputLeg } from '../../cassette/input-leg'
+import { UnrenderableBriefError } from '../brief-tiers'
 import {
   MissingDecisionBlobError,
-  UnsupportedBriefError,
   reconstructDecisionContext,
 } from '../reconstruct'
 
@@ -45,6 +47,41 @@ function artifactSource(blobs: Record<string, Uint8Array>): ArtifactSource {
 }
 
 const screenshotRef: ArtifactRef = { id: 'decision-shot', sha: 'a'.repeat(64) }
+
+function proofTurn(overrides: Partial<ServedPromptTurn> = {}): ServedPromptTurn {
+  const policyL0 = overrides.policyL0 ?? '  sovereign policy\n'
+  const contextTier = overrides.contextTier ?? 'recorded context'
+  const volatileTier = overrides.volatileTier ?? 'recorded volatile'
+  return {
+    ordinal: 0,
+    turnOrdinal: 0,
+    runDate: '2026-09-05',
+    policyL0,
+    learnedL1: '  caution\n',
+    learnedL2: '\nlearned observation  ',
+    contextTier,
+    volatileTier,
+    policyDigest: sha256hex(policyL0),
+    contextTierDigest: sha256hex(contextTier),
+    volatileTierDigest: sha256hex(volatileTier),
+    ...overrides,
+  }
+}
+
+function proofBrief(promptTurns: ServedPromptTurn[]): ServedBrief {
+  return {
+    ...emptyBrief(),
+    channel3: [{ id: asRecordId('proof-caution'), anchors: [], summary: 'a caution' }],
+    proof: {
+      schemaVersion: 1,
+      completeness: 'lossless',
+      recordCap: 10,
+      combinedBudget: 100,
+      admissionEvents: [],
+      promptTurns,
+    },
+  }
+}
 
 describe('reconstructDecisionContext', () => {
   it('omits the screenshot key entirely for a textOnly capture', () => {
@@ -108,17 +145,60 @@ describe('reconstructDecisionContext', () => {
     expect(stepContext.workingMemory).toEqual(workingMemory)
   })
 
-  it('omits knowledgeBrief for an empty-but-structured brief', () => {
-    const { stepContext } = reconstructDecisionContext({
+  it('stamps an empty brief and omits all knowledge tier keys', () => {
+    const reconstructed = reconstructDecisionContext({
       leg: makeLeg(),
       captureMode: 'textOnly',
       artifacts: artifactSource({}),
       model: 'planner-model',
     })
-    expect('knowledgeBrief' in stepContext).toBe(false)
+    expect(reconstructed).toMatchObject({ briefSource: 'empty' })
+    expect(reconstructed).not.toHaveProperty('turnMatch')
+    for (const field of ['knowledgeBrief', 'knowledgePolicyL0', 'knowledgeBriefL1', 'knowledgeBriefL2']) {
+      expect(reconstructed.stepContext).not.toHaveProperty(field)
+    }
   })
 
-  it('throws UnsupportedBriefError naming the channel for a non-empty brief', () => {
+  it('copies the matching proof turn verbatim and stamps exact, independent of prompt ordinal', () => {
+    const selected = proofTurn({ ordinal: 7, turnOrdinal: 1, learnedL2: '\nselected L2  ' })
+    const reconstructed = reconstructDecisionContext({
+      leg: makeLeg({ decisionOrdinal: 1, servedBrief: proofBrief([proofTurn(), selected]) }),
+      captureMode: 'textOnly',
+      artifacts: artifactSource({}),
+      model: 'planner-model',
+    })
+    expect(reconstructed).toMatchObject({ briefSource: 'proof', turnMatch: 'exact' })
+    expect(reconstructed.stepContext.knowledgePolicyL0).toBe(selected.policyL0)
+    expect(reconstructed.stepContext.knowledgeBriefL1).toBe(selected.learnedL1)
+    expect(reconstructed.stepContext.knowledgeBriefL2).toBe(selected.learnedL2)
+  })
+
+  it('omits a whitespace-only learnedL1 from StepContext', () => {
+    const reconstructed = reconstructDecisionContext({
+      leg: makeLeg({ servedBrief: proofBrief([proofTurn({ learnedL1: ' \n\t' })]) }),
+      captureMode: 'textOnly',
+      artifacts: artifactSource({}),
+      model: 'planner-model',
+    })
+    expect(reconstructed.stepContext).not.toHaveProperty('knowledgeBriefL1')
+    expect(reconstructed.stepContext.knowledgeBriefL2).toBe('\nlearned observation  ')
+  })
+
+  it.each(['recorded clipping\n', ''])('copies only a non-empty truncation string: %j', truncation => {
+    const reconstructed = reconstructDecisionContext({
+      leg: makeLeg({ servedBrief: { ...emptyBrief(), truncation } }),
+      captureMode: 'textOnly',
+      artifacts: artifactSource({}),
+      model: 'planner-model',
+    })
+    if (truncation.length > 0) {
+      expect(reconstructed.stepContext.knowledgeBriefTruncation).toBe(truncation)
+    } else {
+      expect(reconstructed.stepContext).not.toHaveProperty('knowledgeBriefTruncation')
+    }
+  })
+
+  it('a channel3-only brief with no proof throws UnrenderableBriefError', () => {
     const brief = emptyBrief()
     brief.channel3 = [
       { id: 'c1', anchors: [], summary: 'a caution' },
@@ -134,7 +214,7 @@ describe('reconstructDecisionContext', () => {
     } catch (err) {
       thrown = err
     }
-    expect(thrown).toBeInstanceOf(UnsupportedBriefError)
-    expect((thrown as Error).message).toContain('channel3')
+    expect(thrown).toBeInstanceOf(UnrenderableBriefError)
+    expect(thrown).toMatchObject({ name: 'UnrenderableBriefError' })
   })
 })

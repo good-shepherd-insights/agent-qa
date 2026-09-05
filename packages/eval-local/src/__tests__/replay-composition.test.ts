@@ -7,7 +7,7 @@ import { JUDGE_CONFIG, extractRunCassettes } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, Cassette, DecisionScore, LeafReplayResult } from '@vostride/agent-qa-eval'
 import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
-import { asRef } from '@vostride/agent-qa-schema'
+import { asRecordId, asRef, sha256hex } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -203,6 +203,73 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
     // The 366 sampling seam applied: the captured provider-boundary request pins temperature 0.
     expect(stub.captured).toHaveLength(1)
     expect(stub.captured[0]!.temperature).toBe(0)
+  })
+
+  it('persists briefSource proof with verbatim L0 and L2 in the captured system prompt', async () => {
+    const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
+    if (cassette.granularity !== 'leaf') throw new Error('expected a leaf fixture')
+    const policyL0 = '  replay-proof-marker-L0\n'
+    const learnedL2 = '\nreplay-proof-marker-L2  '
+    cassette.input.servedBrief = {
+      ...cassette.input.servedBrief,
+      channel1: [{
+        id: asRecordId('proof-observation'),
+        kind: 'fact',
+        summary: 'channel summary must not replace the proof',
+        trust: 1,
+        status: 'active',
+        servedAsCanary: false,
+        tier: 'L2',
+      }],
+      proof: {
+        schemaVersion: 1,
+        completeness: 'lossless',
+        recordCap: 10,
+        combinedBudget: 100,
+        admissionEvents: [],
+        promptTurns: [{
+          ordinal: 0,
+          turnOrdinal: cassette.input.decisionOrdinal,
+          runDate: '2026-09-05',
+          policyL0,
+          learnedL1: '',
+          learnedL2,
+          contextTier: '',
+          volatileTier: '',
+          policyDigest: sha256hex(policyL0),
+          contextTierDigest: sha256hex(''),
+          volatileTierDigest: sha256hex(''),
+        }],
+      },
+    }
+    const stub = capturingStub(() => actionGenerateResult())
+    const replayDir = await tempRoot('replay-comp-proof-')
+    const outcome = await runCassetteReplay({
+      cassette,
+      artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: stub.languageModels },
+      replayOutputBaseDir: replayDir,
+      recordStore: new FsReplayRecordStore({ root: replayDir }),
+    })
+
+    expect(outcome).toMatchObject({ granularity: 'leaf', briefSource: 'proof', turnMatch: 'exact' })
+    expect(stub.captured).toHaveLength(1)
+    const system = stub.captured[0]!.prompt
+      .filter(message => message.role === 'system')
+      .map(message => message.content)
+      .join('\n')
+    expect(system).toContain(policyL0)
+    expect(system).toContain(learnedL2)
+    expect(system).toContain('replay-proof-marker-L0')
+    expect(system).toContain('replay-proof-marker-L2')
+    expect(system).not.toContain('channel summary must not replace the proof')
+    const records = findReplayRecords(replayDir)
+    expect(records).toHaveLength(1)
+    expect(JSON.parse(readFileSync(records[0]!, 'utf8'))).toMatchObject({
+      granularity: 'leaf', briefSource: 'proof', turnMatch: 'exact',
+    })
   })
 
   it('stamps recorded and replayed model ids; a mismatch is data, not an error (D-03)', async () => {

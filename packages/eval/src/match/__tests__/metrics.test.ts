@@ -45,6 +45,7 @@ function sample(
 
 interface ReplayOptions {
   samples?: ReplaySample[]
+  briefSource?: DecisionReplayResult['briefSource']
   promptDrift?: boolean
   agreementRate?: number
   noConsensus?: boolean
@@ -57,6 +58,7 @@ function leafOutcome(cassetteId: string, options: ReplayOptions = {}): LeafRepla
   const harnessErrorCount = samples.filter(item => item.outcome.kind === 'harness-error').length
   return {
     granularity: 'leaf',
+    briefSource: options.briefSource ?? 'empty',
     cassetteId,
     samples,
     agreement: {
@@ -222,6 +224,7 @@ describe('buildEvalReport', () => {
       'missing-blob',
       'action-tool-collision',
       'unsupported-brief',
+      'unrenderable-brief',
       'parse-failed',
     ]
     const entries: ScoredBatchEntry[] = [
@@ -275,12 +278,49 @@ describe('buildEvalReport', () => {
       'missing-blob': 1,
       'action-tool-collision': 1,
       'unsupported-brief': 1,
+      'unrenderable-brief': 1,
       'parse-failed': 1,
     })
     expect(report.honesty.missByFailureCounts).toEqual({
       step_failed: 1,
       'unservable-divergence:lookup': 1,
     })
+  })
+
+  it('counts briefSource once per leaf or procedure decision, excluding refusals and skipped steps', () => {
+    const report = buildEvalReport([
+      {
+        cassetteId: 'proof-leaf',
+        outcome: leafOutcome('proof-leaf', {
+          briefSource: 'proof',
+          samples: [sample(0, 10), sample(1, 20), sample(2, 30)],
+        }),
+      },
+      {
+        cassetteId: 'procedure',
+        outcome: {
+          granularity: 'procedure',
+          cassetteId: 'procedure',
+          steps: [
+            { kind: 'decision', stepIndex: 0, decisionOrdinal: 0,
+              result: leafOutcome('procedure', { briefSource: 'rendered' }) },
+            { kind: 'skipped', stepIndex: 1, reason: 'cache-served' },
+            { kind: 'skipped', stepIndex: 2, reason: 'synthesized' },
+            { kind: 'decision', stepIndex: 3, decisionOrdinal: 0,
+              result: leafOutcome('procedure') },
+          ],
+          endState: { outcome: 'passed' },
+          totalDurationMs: 20,
+        },
+      },
+      refusalEntry('unrenderable', 'unrenderable-brief'),
+      refusalEntry('history', 'unsupported-brief'),
+    ])
+
+    expect(report.briefSourceCounts).toEqual({ proof: 1, rendered: 1, empty: 1 })
+    expect(report.honesty.refusalCounts['unrenderable-brief']).toBe(1)
+    expect(report.honesty.refusalCounts['unsupported-brief']).toBe(1)
+    expect(buildEvalReport([]).briefSourceCounts).toEqual({ proof: 0, rendered: 0, empty: 0 })
   })
 
   it('aggregates sample cost and upstream replay statistics without fabricating usage', () => {
