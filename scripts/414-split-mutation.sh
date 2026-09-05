@@ -81,6 +81,9 @@
 # Ctrl-C mid-run is restored and proved rather than abandoning a mutated tree; the EXIT trap remains
 # behind both as the last-resort cleanup. There is no LEG selector and no run-all-and-report mode: a
 # selector that runs nothing is a green script.
+# A path a leg would CREATE that already exists is refused BEFORE the leg's restore list is
+# populated, so the refusing exit's trap has nothing to remove and the file survives — the list
+# only ever names paths proven absent when they joined it.
 #
 # USAGE
 #   pnpm validate:split-mutation                     # from the agent-qa root
@@ -93,9 +96,10 @@
 #       comment.
 #
 # AND EVERY GATE THE CRITERION RESTS ON IS DRIVEN IN ITS FAILING DIRECTION AT STARTUP, before any
-# subject is touched — the sha256 comparator, the line-exact REQUIRED comparator and the three
-# restore/verify failure branches. Each prints the refusal it just performed, and the run FATALs if
-# any of them has stopped being able to fail.
+# subject is touched — the sha256 comparator, the line-exact REQUIRED comparator, the three
+# restore/verify failure branches AND the already-exists refusal, which must leave the file it
+# refuses untouched. Each prints the refusal it just performed, and the run FATALs if any of them
+# has stopped being able to fail.
 
 # LEG INDEX — every leg, the widening it un-does, the cell it must RED, and the instrument.
 #
@@ -674,7 +678,36 @@ instrument_self_check () {
   fi
   echo "  comparator: required-line-exact — S-01's whole cell matched its own red, and the truncation '$S01_TRUNCATED' REFUSED that same red"
 
-  echo "INSTRUMENT SELF-CHECK OK (3 controls)"
+  # Control 4 — the already-exists refusal, through run_leg itself and the real cleanup helper.
+  # Measured on bash 3.2.57: a subshell does NOT run the parent's EXIT trap; a trap set INSIDE it
+  # does fire, and subshell assignments never reach the parent. Control 2 relies on that isolation;
+  # this control must RE-ARM restore_current or the destructive step is never driven. Do not re-arm
+  # the process trap's rm -rf "$WORK" half — the remaining self-check bookkeeping still needs WORK.
+  # The path MUST be a throwaway this control creates: a regression deletes it, which is exactly
+  # what we must observe. Never use a tracked file here; Control 2(c) can name package.json only
+  # because verify_restored removes nothing, while this control drives the destructive path.
+  local sc_preexisting=".selfcheck-already-exists" sc_bytes="$WORK/selfcheck-already-exists.bytes"
+  if [ -e "$REPO_ROOT/$sc_preexisting" ]; then
+    echo "FATAL: $sc_preexisting already exists — this control needs a path it can create; re-point it or remove the leftover by hand" >&2
+    exit 1
+  fi
+  printf 'self-check bytes that must survive the already-exists refusal\n' > "$REPO_ROOT/$sc_preexisting"
+  cp "$REPO_ROOT/$sc_preexisting" "$sc_bytes"
+  local refused_loud=0 survived=0
+  if (
+    trap 'restore_current' EXIT
+    run_leg SC-4 "self-check control: a created path that already exists" runtime "" "" "$EVAL_FILTER" "" "" "$sc_preexisting"
+  ) > "$sc_log" 2>&1; then :; else refused_loud=1; fi
+  grep -qF "FATAL: $sc_preexisting already exists — leg SC-4 would overwrite a real file" "$sc_log" || refused_loud=0
+  if same_bytes "$REPO_ROOT/$sc_preexisting" "$sc_bytes"; then survived=1; fi
+  rm -f "$REPO_ROOT/$sc_preexisting" "$sc_bytes" "$sc_log"
+  if [ "$refused_loud" -ne 1 ] || [ "$survived" -ne 1 ]; then
+    echo "FATAL: the already-exists refusal is not safe — it did not refuse loudly, or the EXIT trap removed the file it refused to overwrite (414-VERIFICATION gap 1)" >&2
+    exit 1
+  fi
+  echo "  control: the already-exists refusal FATALs with the restore list still empty — the pre-existing file survived the EXIT trap byte-identically (sha256 compared)"
+
+  echo "INSTRUMENT SELF-CHECK OK (4 controls)"
   echo
 }
 
