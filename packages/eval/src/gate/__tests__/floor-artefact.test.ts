@@ -72,6 +72,24 @@ export function floorFixture(): NoiseFloorArtefact {
 }
 
 describe('committed noise floor document', () => {
+  it('rejects unknown keys in the classifier repeatability block', () => {
+    const result = guardNoiseFloorArtefact({
+      ...floorFixture(),
+      classifierRepeatability: {
+        schemaVersion: 1,
+        k: 3,
+        n: 0,
+        incomplete: [],
+        classFlips: 0,
+        admitExcludeFlips: 0,
+        perRun: [],
+        extra: true,
+      },
+    })
+    expect(result.kind).toBe('rejected')
+    if (result.kind === 'rejected') expect(result.reason).toContain('classifierRepeatability')
+  })
+
   it('round-trips all document levels without changing raw doubles', () => {
     const artefact = floorFixture()
     artefact.axes.headline = { n: 48, aggregateFloor: 1 / 48, pairs: [] }
