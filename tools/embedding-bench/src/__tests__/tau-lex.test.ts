@@ -227,16 +227,16 @@ describe('tau lexical calibration', () => {
       expect(first.receipt.pairs.every(({ bm25Positive }) => bm25Positive > 0)).toBe(true)
       expect(production.buildLexicalMatchExpression('literal literal a"b OR AND NOT NEAR'))
         .toBe('"literal" OR "a""b" OR "OR" OR "AND" OR "NOT" OR "NEAR"')
-      expect(
-        first.receipt.pairs.find(({ queryId }) => queryId === 'query-syntax')?.bm25Positive,
-      ).toBe(
-        scoreWithProductionMatch(
-          corpus,
-          'query-syntax',
-          'doc-syntax-gold',
-          production.buildLexicalMatchExpression,
-        ),
-      )
+      for (const pair of first.receipt.pairs) {
+        expect(pair.bm25Positive).toBe(
+          scoreWithProductionMatch(
+            corpus,
+            pair.queryId,
+            pair.goldId,
+            production.buildLexicalMatchExpression,
+          ),
+        )
+      }
       expect(receiptV2.servingReplay.matchedGoldPairs).toBeGreaterThan(0)
       expect(receiptV2.servingReplay.goldRecall).toBeGreaterThan(0)
       expect(receiptV2.servingReplay.admittedCandidates).toBeGreaterThan(0)
@@ -254,6 +254,49 @@ describe('tau lexical calibration', () => {
       expect(firstMarkdown).toContain('2026-07-15')
       expect(firstMarkdown).toContain('quoted-token-or-v1')
       expect(firstMarkdown).toContain('Serving Replay')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('scores overlapping background golds independently without changing the indexed corpus', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'tau-lex-background-'))
+    try {
+      const backgroundGolds: TauLexCorpus = {
+        ...corpus,
+        recordedQueries: corpus.recordedQueries.map((query) => ({
+          ...query,
+          goldDocIds: [
+            ...query.goldDocIds,
+            query.app === 'syntax' ? 'doc-syntax-background' : 'doc-background',
+          ],
+        })),
+      }
+      const production = await productionMatchModule()
+      const { receipt } = await calibrateTauLex({
+        corpus: backgroundGolds,
+        corpusPath: 'fixture/corpus.json',
+        jsonPath: join(directory, 'tau-lex-receipt.json'),
+        markdownPath: join(directory, 'TAU-LEX-RECEIPT.md'),
+      })
+
+      expect(receipt.pairs).toEqual(
+        backgroundGolds.recordedQueries.flatMap((query) =>
+          [...query.goldDocIds].sort().map((goldId) => ({
+            queryId: query.id,
+            goldId,
+            bm25Positive: scoreWithProductionMatch(
+              backgroundGolds,
+              query.id,
+              goldId,
+              production.buildLexicalMatchExpression,
+            ),
+          })),
+        ),
+      )
+      expect(receipt.servingReplay.matchedCandidates).toBe(6)
+      expect(receipt.servingReplay.evaluatedCandidates).toBe(6)
+      expect(receipt.unmatchedPairs).toEqual([])
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
