@@ -231,9 +231,10 @@ describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 S
     expect(sharedIds.length).toBeGreaterThan(0)
     expect(naturalIds).toHaveLength(2)
     for (const cassetteId of privateIds) {
-      expect(
-        assignSplit({ ...READER_PARTITION, cassetteId, isPairMember: false }),
-      ).toEqual({ split: 'held-out', heldOutVisibility: 'private' })
+      expect(assignSplit({ ...READER_PARTITION, cassetteId, isPairMember: false })).toEqual({
+        split: 'held-out',
+        heldOutVisibility: 'private',
+      })
     }
 
     const listed = openCorpusReader(root)
@@ -243,11 +244,14 @@ describe('openCorpusReader on the /reader subpath (414 D-18/D-19/D-20, ROOT-10 S
     expect(listed).toEqual([...naturalIds, ...sharedIds].sort())
     for (const cassetteId of privateIds) expect(listed).not.toContain(cassetteId)
     // Structural, not just by id: nothing carrying the private marker survives the filter.
-    expect(
-      openCorpusReader(root)
-        .listEntries()
-        .filter((entry) => 'heldOutVisibility' in entry && entry.heldOutVisibility === 'private'),
-    ).toEqual([])
+    // The static type is deliberately ERASED here — `ProposerVisibleCorpusEntry` already makes
+    // `heldOutVisibility === 'private'` a type error, so a cell written against the declared
+    // type would be restating the never-bar in `reader.test-d.ts` rather than measuring the
+    // filter. What must hold at RUNTIME is that no such object comes back, whatever the types say.
+    const erased = openCorpusReader(root).listEntries() as readonly {
+      heldOutVisibility?: string
+    }[]
+    expect(erased.filter((entry) => entry.heldOutVisibility === 'private')).toEqual([])
   })
 
   it('filters by product over the visible set, and a private-only product lists nothing', () => {
