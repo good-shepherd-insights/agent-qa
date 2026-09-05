@@ -939,8 +939,8 @@ describe('a failing member with no analysis budget can still be quarantined (G-3
 // multi-cycle characterization leg at the bottom of this block pins that loop directly.
 
 describe('the expiry lapse: what one lapsed deadline buys (D-11)', () => {
-  // The crossing is driven at a `now` far enough in the past that the stamped 30-day deadline is
-  // already behind BOTH the injected run-start instant and the composition's real system clock.
+  // The crossing's 30-day deadline is behind both the run-start instant and the
+  // composition's injected clock, independent of the date this test is executed.
   const PAST_NOW = '2026-06-01T12:00:00.000Z'
   const LAPSED_EXPIRY = '2026-07-01T12:00:00.000Z'
 
@@ -959,9 +959,11 @@ describe('the expiry lapse: what one lapsed deadline buys (D-11)', () => {
     expect(entered).toHaveLength(1)
     expect(entered[0]).toMatchObject({ kind: 'entered', expiresAt: LAPSED_EXPIRY })
 
+    let sentenceNow = NOW
     const host = composeLocalAgent({
       mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: env.agentQaRoot,
+      clock: { now: () => sentenceNow },
       config: { getMasked: () => Promise.reject(new Error('no config in this fixture')) },
       knowledgeRoot: () => env.knowledgeRoot,
       model: () => { throw new Error('no model in this fixture') },
@@ -1023,6 +1025,13 @@ describe('the expiry lapse: what one lapsed deadline buys (D-11)', () => {
     // fact about the ledger rather than a string somebody remembered to print.
     expect(await sentenceFor('run-expiry-3')).toContain('quarantined until Sep 4')
     expect(await sentenceFor('run-expiry-3')).not.toContain('quarantine expired')
+
+    // Advancing only the read clock expires that same re-entry without changing its ledger.
+    sentenceNow = EXPECTED_EXPIRY
+    expect(await sentenceFor('run-expiry-3'))
+      .toContain('quarantine expired Sep 4 — failures count again')
+    expect(await sentenceFor('run-expiry-3')).not.toContain('quarantined until')
+    expect(ledgerLines(env)).toEqual(afterReentry)
   }, 120_000)
 
   // ---- CHARACTERIZATION: the loop, over four full cycles ---------------------------------------
