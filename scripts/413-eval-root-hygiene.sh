@@ -6,6 +6,11 @@
 # every later v55 phase, not just for the commit that introduced them:
 #
 #   L1  no absolute machine path anywhere in the committed eval root  -> PASS L1 / FAIL L1
+#       — the scan is the WHOLE root, so it covers `corpus/`, `labels/`, `cassettes/`,
+#       `contracts/`, `exclusions/` and `reports/` BY CONSTRUCTION rather than by a dir list
+#       (414 D-02). `contracts/partition-<product>.json` and `exclusions/<product>/<runSlug>.json`
+#       are the two dirs Phase 414 adds; the self-test plants under both, because "covered by
+#       construction" is exactly the kind of claim that is true until someone narrows the scan.
 #   L2  no inherited-threshold literal on any gate path               -> PASS L2 / FAIL L2
 #   L3  the same-family judge override is not enabled in the demo cfg -> PASS L3 / FAIL L3
 #   L4  the v50 39/45 same-family report is still in place, still     -> PASS L4 / FAIL L4
@@ -23,9 +28,11 @@
 #
 # A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS. `--selftest` plants a
 # home-directory path into a throwaway copy of the eval root, then a Windows drive-letter path into
-# the same copy, then a threshold literal into a throwaway gate file, and REQUIRES L1, L1 again and
-# L2 to red under those three plants. Every plant uses a literal that never appears in the shipped
-# tree. A leg that stays green under its own plant exits 1 with SELFTEST FAILED.
+# the same copy, then a home-directory path under `exclusions/`, then one inside a
+# `contracts/partition-*.json`, then a threshold literal into a throwaway gate file, and REQUIRES
+# L1 four times and L2 once to red under those five plants. Every plant uses a literal that never
+# appears in the shipped tree, and each is removed before the next so no plant can mask another. A
+# leg that stays green under its own plant exits 1 with SELFTEST FAILED.
 #
 # EXIT CODES ARE READ FROM THE PROCESS, NEVER THROUGH A PIPE. `grep` returns 1 for "no match",
 # which is this script's success condition on four of five legs, so every grep's status is captured
@@ -197,6 +204,36 @@ selftest() {
   fi
   grep '^FAIL L1' "$stderr_file" >&2
   rm -f "$tmp_root/corpus/selftest/planted.json"
+
+  # Plants 1c and 1d — the two dirs Phase 414 adds to the root anatomy (414 D-02). L1 greps the
+  # WHOLE root, so both are covered by construction; these plants are what makes "by construction"
+  # a measured claim rather than a reading of the grep. Each uses a literal that appears nowhere in
+  # the shipped tree, and each is removed before the next leg so the plants cannot mask each other.
+  echo "SELFTEST plant 1c: a home-directory path under exclusions/ (414 D-02)" >&2
+  mkdir -p "$tmp_root/exclusions/selftest"
+  printf '{"reason":"/Users/selftest/analysis.json"}\n' > "$tmp_root/exclusions/selftest/planted.json"
+  status=0
+  EVAL_ROOT="$tmp_root" DEMO_CONFIG="$DEMO_CONFIG" "$0" 2>"$stderr_file" || status=$?
+  if [ "$status" -eq 0 ] || ! grep -q '^FAIL L1' "$stderr_file"; then
+    echo "SELFTEST FAILED: L1 stayed green under an absolute path planted under exclusions/" >&2
+    cat "$stderr_file" >&2
+    return 1
+  fi
+  grep '^FAIL L1' "$stderr_file" >&2
+  rm -rf "$tmp_root/exclusions/selftest"
+
+  echo "SELFTEST plant 1d: a home-directory path in contracts/partition-selftest.json (414 D-02)" >&2
+  mkdir -p "$tmp_root/contracts"
+  printf '{"salt":"/home/selftest"}\n' > "$tmp_root/contracts/partition-selftest.json"
+  status=0
+  EVAL_ROOT="$tmp_root" DEMO_CONFIG="$DEMO_CONFIG" "$0" 2>"$stderr_file" || status=$?
+  if [ "$status" -eq 0 ] || ! grep -q '^FAIL L1' "$stderr_file"; then
+    echo "SELFTEST FAILED: L1 stayed green under an absolute path planted in a partition manifest" >&2
+    cat "$stderr_file" >&2
+    return 1
+  fi
+  grep '^FAIL L1' "$stderr_file" >&2
+  rm -f "$tmp_root/contracts/partition-selftest.json"
 
   echo "SELFTEST plant 2: an inherited-threshold literal on a throwaway gate path" >&2
   printf 'export const THRESHOLD = 0.867\n' > "$tmp_gate/gate.ts"
