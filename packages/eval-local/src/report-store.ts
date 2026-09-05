@@ -56,6 +56,17 @@ const stagedReportSchema = z.object({
   headline: z.object({
     perDecisionCost: z.object({ decisionCount: z.number() }).passthrough(),
   }).passthrough(),
+  // Optional historical provenance remains optional; malformed mixed identities must never
+  // reach the comparator's renderer as though its judge-id list were a string array.
+  judgeIdentity: z.literal('mixed').optional(),
+  mixedJudgeModelIds: z.array(z.string()).optional(),
+  judge: z.object({
+    judgeModelId: z.string(),
+    judgeFamily: z.string(),
+    judgeVersion: z.number(),
+    confidenceThreshold: z.string(),
+    familyOverride: z.literal('same-family-allowed').optional(),
+  }).passthrough().optional(),
 }).passthrough()
 
 /** Probe exactly one directory; callers own the gate-root-first search order. */

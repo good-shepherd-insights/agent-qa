@@ -68,6 +68,8 @@ const reportSchema = z
   .object({
     batchKey: z.string(),
     matcherVersion: z.number(),
+    judgeIdentity: z.literal('mixed').optional(),
+    mixedJudgeModelIds: z.array(z.string()).optional(),
     headline: z
       .object({ perDecisionCost: z.object({ decisionCount: z.number() }).passthrough() })
       .passthrough(),
