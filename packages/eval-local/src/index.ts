@@ -36,6 +36,8 @@ export type {
   SweepCassetteReplaysResult,
 } from './replay-sweep.js'
 
+export { assembleScoredBatch, cassetteProductPartition } from './replay-batch-assembly.js'
+
 export { bindJudgePort } from './judge-binding.js'
 export type { JudgeBindingInput } from './judge-binding.js'
 

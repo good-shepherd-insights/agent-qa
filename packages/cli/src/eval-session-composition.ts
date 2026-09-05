@@ -46,8 +46,6 @@ import {
 } from '@vostride/agent-qa-eval'
 import type {
   BaselineComparatorRefusal,
-  Cassette,
-  CassetteLabelLeg,
   CassetteScore,
   CorpusCensus,
   DecisionScoreEntry,
@@ -56,7 +54,6 @@ import type {
   ExclusionClass,
   JudgeIdentityBlock,
   PartitionManifest,
-  ScoredBatchEntry,
   TargetEnvironment,
 } from '@vostride/agent-qa-eval'
 import {
@@ -68,17 +65,15 @@ import {
   FsReportStore,
   FsRunArtifactSource,
   FsScoreStore,
+  assembleScoredBatch,
+  cassetteProductPartition,
   commitCensus,
   commitEvalReport,
   committedExclusionPath,
   committedPartitionManifestPath,
   listBaselinePointers,
-  listCassetteBundleDirs,
   listCommittedReports,
-  listReplayRecordDirs,
-  loadCassetteBundle,
   loadCassetteBundles,
-  loadReplayRecord,
   loadScoreRecord,
   readCommittedCorpus,
   readPartitionManifests,
@@ -586,23 +581,6 @@ export async function runReplayVerb(
     source,
     notices,
   }
-}
-
-/**
- * Resolve the D-02 `--product` partition key from a cassette's recorded scope — the served
- * brief's ScopeKey is the one scope stamp every cassette carries (a procedure reads its first
- * decision record). A cassette with no decision entry maps to the typed 'default' partition.
- */
-function cassetteProductPartition(cassette: Cassette): string {
-  if (cassette.granularity === 'leaf') {
-    return resolveProductPartition(cassette.input.servedBrief.scope)
-  }
-  for (const step of cassette.steps) {
-    if (step.kind === 'decision') {
-      return resolveProductPartition(step.record.input.servedBrief.scope)
-    }
-  }
-  return 'default'
 }
 
 /**
@@ -1361,56 +1339,15 @@ export async function runReportVerb(
   const notices: string[] = []
   if (sourceRoot.notice !== undefined) notices.push(sourceRoot.notice)
 
-  // (1) Label join index from the staged bundles: cassette id → label leg + product partition.
-  // Bundle load refusals are notices — the report still assembles from the replay records.
-  // Only LEAF cassettes carry a label leg (pair members are leaves, D-08); procedures join
-  // with partition only.
-  const labelsById = new Map<string, CassetteLabelLeg>()
-  const partitionsById = new Map<string, string>()
-  for (const bundleDir of listCassetteBundleDirs(cassettesRoot)) {
-    const load = loadCassetteBundle(bundleDir)
-    if (load.kind === 'refused') {
-      notices.push(`${source} bundle read refused under ${bundleDir}: ${load.refusal.detail}`)
-      continue
-    }
-    if (load.cassette.granularity === 'leaf') {
-      labelsById.set(load.cassette.id, load.cassette.label)
-    }
-    partitionsById.set(load.cassette.id, cassetteProductPartition(load.cassette))
-  }
-
-  // (2) Every persisted replay record is an entry: a loaded outcome verbatim, or — for an
-  // unreadable record — the typed read refusal itself (a ReplayRefusal IS a ReplayCassetteOutcome).
-  const assembled: ScoredBatchEntry[] = []
-  const judgeBlocks: JudgeIdentityBlock[] = []
-  let missingBundleCount = 0
-  for (const recordDir of listReplayRecordDirs(replaysRoot)) {
-    const load = loadReplayRecord(recordDir)
-    const outcome = load.kind === 'loaded' ? load.outcome : load.refusal
-    if (load.kind === 'refused') {
-      notices.push(`replay record read refused under ${recordDir}: ${load.refusal.detail}`)
-    }
-    const cassetteId = outcome.cassetteId
-
-    let score: CassetteScore | undefined
-    const scoreLoad = loadScoreRecord(recordDir)
-    if (scoreLoad.kind === 'loaded') {
-      score = scoreLoad.record.score
-      if (scoreLoad.record.judge !== undefined) judgeBlocks.push(scoreLoad.record.judge)
-    } else if (scoreLoad.kind === 'refused') {
-      notices.push(`score read refused under ${recordDir}: ${scoreLoad.refusal.detail}`)
-    }
-
-    const label = labelsById.get(cassetteId)
-    if (!partitionsById.has(cassetteId)) missingBundleCount++
-
-    assembled.push({
-      cassetteId,
-      outcome,
-      ...(score !== undefined ? { score } : {}),
-      ...(label !== undefined ? { label } : {}),
-    })
-  }
+  // (1)+(2) Join every persisted replay record to its score, judge identity, and cassette label.
+  const {
+    entries: assembled,
+    judgeBlocks,
+    partitionsById,
+    missingBundleCount,
+    notices: assemblyNotices,
+  } = assembleScoredBatch({ replaysRoot, cassettesRoot, source })
+  notices.push(...assemblyNotices)
   if (missingBundleCount > 0) {
     notices.push(
       `${missingBundleCount} replay record(s) have no ${source} cassette bundle — label legs absent`,
