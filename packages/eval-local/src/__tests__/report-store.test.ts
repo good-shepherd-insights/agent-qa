@@ -123,6 +123,29 @@ describe('FsReportStore (D-13/D-14)', () => {
     expect(loadStagedReport(root, batchReport.batchKey)).toEqual({ kind: 'loaded', report: batchReport, file })
   })
 
+  it.each([
+    { judgeIdentity: 'mixed', mixedJudgeModelIds: 'malformed-list' },
+    { judgeIdentity: 'mixed', mixedJudgeModelIds: ['valid', null] },
+    { judgeIdentity: 'unknown' },
+    { judge: 'malformed-block' },
+    { judge: { judgeModelId: 'judge-only' } },
+  ])('refuses malformed optional judge metadata without stripping it: %j', async metadata => {
+    const batchReport = report()
+    const { file } = new FsReportStore({ root }).save(batchReport)
+    await writeFile(file, JSON.stringify({ ...batchReport, ...metadata }))
+    expect(loadStagedReport(root, batchReport.batchKey)).toMatchObject({
+      kind: 'refused', file, reason: expect.stringContaining('report rejected'),
+    })
+  })
+
+  it('preserves valid mixed judge history and its absent judge block', async () => {
+    const batchReport = buildEvalReport([], undefined, {
+      judgeIdentity: 'mixed', judgeModelIds: ['judge-a', 'judge-b'],
+    })
+    const { file } = new FsReportStore({ root }).save(batchReport)
+    expect(loadStagedReport(root, batchReport.batchKey)).toEqual({ kind: 'loaded', file, report: batchReport })
+  })
+
   it('probes only the chosen directory, with no fallback to another report or sidecar', () => {
     const batchReport = report('retargeted')
     const document = decisions(batchReport)

@@ -435,6 +435,28 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
     })
   })
 
+  it.each([
+    { judgeIdentity: 'mixed', mixedJudgeModelIds: 'malformed-list' },
+    { judgeIdentity: 'mixed', mixedJudgeModelIds: ['valid', null] },
+    { judgeIdentity: 'unknown' },
+  ])('refuses malformed committed mixed judge metadata: %j', metadata => {
+    const report = buildEvalReport([])
+    const path = writeCommitted(root, committedReportPath(report.batchKey, 'report.json'), {
+      ...report, ...metadata,
+    })
+    const read = listCommittedReports(root)
+    expect(read.reports).toEqual([])
+    expect(read.refusals).toEqual([{ path, reason: expect.stringContaining('report rejected') }])
+  })
+
+  it('retains valid committed mixed judge metadata as history for the comparator', () => {
+    const report = buildEvalReport([], undefined, {
+      judgeIdentity: 'mixed', judgeModelIds: ['judge-a', 'judge-b'],
+    })
+    const path = writeCommitted(root, committedReportPath(report.batchKey, 'report.json'), report)
+    expect(listCommittedReports(root)).toEqual({ reports: [{ batchKey: report.batchKey, path, report }], refusals: [] })
+  })
+
   it('reports a schemaVersion 3 baseline as a refusal row', () => {
     const path = writeCommitted(root, 'reports/baselines/future.json', {
       schemaVersion: 3, profileKey: 'future', batchKey: 'batch-fixture',
