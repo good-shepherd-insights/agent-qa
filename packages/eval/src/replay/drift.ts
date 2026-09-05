@@ -2,6 +2,7 @@ import { sha256hex } from '@vostride/agent-qa-schema'
 import type { CassetteInputLeg } from '../cassette/input-leg'
 import { canonicalizeInputLeg } from '../extract/receipt'
 import type { BriefDeltaKind, DeclaredBriefDelta } from './brief-delta'
+import { reverseBriefDelta } from './brief-delta'
 
 /**
  * D-02 receipt-drift result. `drift` is a stamped, reported signal — it is NEVER a gate on
@@ -26,12 +27,17 @@ export interface ReplayDrift {
 export function computeReplayDrift(
   leg: CassetteInputLeg,
   recordedHash: string,
-  _opts: { declaredBriefDelta?: DeclaredBriefDelta } = {},
+  opts: { declaredBriefDelta?: DeclaredBriefDelta } = {},
 ): ReplayDrift {
   const recomputedHash = sha256hex(canonicalizeInputLeg(leg))
+  const delta = opts.declaredBriefDelta
+  const baseHash = delta === undefined
+    ? recomputedHash
+    : sha256hex(canonicalizeInputLeg(reverseBriefDelta(leg, delta)))
   return {
     drift: recomputedHash !== recordedHash,
-    harnessDrift: recomputedHash !== recordedHash,
+    harnessDrift: baseHash !== recordedHash,
+    ...(delta === undefined ? {} : { declaredDelta: { kind: delta.kind, id: delta.line.id } }),
     recordedHash,
     recomputedHash,
   }

@@ -70,6 +70,7 @@ export interface ReplayCassetteInput {
 }
 
 interface DecisionReplayContext {
+  declaredBriefDelta?: DeclaredBriefDelta
   cassetteId: string
   decisionOrdinal: number
   stepIndex?: number
@@ -146,6 +147,7 @@ async function replayLeaf(
     clock: input.clock,
     k: input.k ?? 1,
     escalationPredicate: input.escalationPredicate ?? neverEscalate,
+    ...(input.declaredBriefDelta === undefined ? {} : { declaredBriefDelta: input.declaredBriefDelta }),
   })
   if (isReplayRefusal(outcome)) return outcome
   return { granularity: 'leaf', ...outcome }
@@ -175,6 +177,7 @@ async function replayProcedure(
         clock: input.clock,
         k: input.k ?? 1,
         escalationPredicate: input.escalationPredicate ?? neverEscalate,
+        ...(input.declaredBriefDelta === undefined ? {} : { declaredBriefDelta: input.declaredBriefDelta }),
       })
       if (isReplayRefusal(decision)) return decision
       steps.push({
@@ -242,7 +245,8 @@ async function replayDecision(
 
   const totalDurationMs = context.clock.now() - decisionStart
   const agreement = aggregateAgreement(samples)
-  const promptDrift = computeReplayDrift(context.leg, context.receipt.promptInputHash)
+  const promptDrift = computeReplayDrift(context.leg, context.receipt.promptInputHash,
+    context.declaredBriefDelta === undefined ? {} : { declaredBriefDelta: context.declaredBriefDelta })
   const recordedModel = deriveRecordedModel(context.receipt)
   const unconsumedExchanges = lastUnconsumed !== undefined ? lastUnconsumed() : []
 

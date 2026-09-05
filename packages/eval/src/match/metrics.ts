@@ -412,7 +412,8 @@ export function buildEvalReport(
   for (const result of replayDecisions) {
     if (BRIEF_SOURCES.includes(result.briefSource)) briefSourceCounts[result.briefSource]++
     harnessErrorCount += result.agreement.harnessErrorCount
-    if (result.promptDrift.drift) driftedCount++
+    // Historical persisted replays predate harnessDrift; an explicit false still wins.
+    if (result.promptDrift.harnessDrift ?? result.promptDrift.drift) driftedCount++
     if (result.agreement.k > 1) {
       escalatedCount++
       escalatedAgreementTotal += result.agreement.agreementRate
