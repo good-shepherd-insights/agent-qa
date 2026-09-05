@@ -203,6 +203,7 @@ describe('writePartitionManifest / writeRunExclusion (414 D-02/D-05/D-06, ROOT-0
       ).toBe(true)
     }
     // The seeding channel, never the report channel — one audit trail per surface.
-    expect(rows.every((row) => row.channel.startsWith(`${SEEDING_EGRESS_CHANNEL}:`))).toBe(true)
+    expect(SEEDING_EGRESS_CHANNEL).toBe('eval-seeding')
+    expect(rows.every((row) => row.channel.startsWith('eval-seeding:'))).toBe(true)
   })
 })

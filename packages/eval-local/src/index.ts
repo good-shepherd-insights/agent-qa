@@ -48,11 +48,20 @@ export type { FsScoreStoreConfig, ScoreRecord, WrittenScoreRecord } from './scor
 export { DEFAULT_EVAL_REPORTS_SUBDIR, FsReportStore } from './report-store.js'
 export type { FsReportStoreConfig, WrittenReport } from './report-store.js'
 
-export { SEEDING_EGRESS_CHANNEL, seedCommittedCorpus } from './seeding-composition.js'
+export {
+  SEEDING_EGRESS_CHANNEL,
+  seedCommittedCorpus,
+  writePartitionManifest,
+  writeRunExclusion,
+} from './seeding-composition.js'
 export type {
   SeedCommittedCorpusInput,
   SeedingRefusal,
   SeedingReport,
+  WritePartitionManifestInput,
+  WritePartitionManifestOutcome,
+  WriteRunExclusionInput,
+  WriteRunExclusionOutcome,
 } from './seeding-composition.js'
 
 export {

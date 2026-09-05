@@ -25,15 +25,23 @@
 //   - The helper makes ZERO model calls and opens no safety scope: the audit sink goes to the
 //     checkpoint opts directly.
 
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import {
+  canonicalJson,
   committedFileText,
   contractFileName,
   projectJudgeConfigContract,
   projectMatcherConfigContract,
+  runExclusionCore,
+  runExclusionRecordSchema,
 } from '@vostride/agent-qa-eval'
 import type {
   ExtractedCassette,
   PairSkip,
+  PartitionManifest,
+  RunExclusionRecord,
   SeedingPlan,
   SilverExclusion,
 } from '@vostride/agent-qa-eval'
@@ -54,7 +62,9 @@ import {
   committedCassettePath,
   committedContractPath,
   committedCorpusPath,
+  committedExclusionPath,
   committedLabelPath,
+  committedPartitionManifestPath,
 } from './committed-root-store.js'
 import type { CommittedWriteOutcome } from './committed-root-store.js'
 
@@ -246,4 +256,157 @@ export function seedCommittedCorpus(input: SeedCommittedCorpusInput): SeedingRep
       marker: scaffoldOutcomes.rootMarker.kind,
     },
   }
+}
+
+// ---------------------------------------------------------------------------
+// The two committed PARTITION documents (414 D-02/D-05/D-06).
+//
+// Both are the ONE-part writer recipe from `baseline-pointer.ts` — checkpoint,
+// preview, write-once — pointed at this file's `eval-seeding` channel rather than
+// the report channel. That channel choice is the whole reason they live here and
+// not in a module of their own: a manifest and an exclusion are seeding-side
+// committed bytes, and minting a third channel would fragment the audit trail
+// this checkpoint exists to keep (the D-15 argument, applied to seeding).
+//
+// Neither writer mints a salt. The salt is 32 random bytes minted ONCE per product
+// upstream (the Plan 07 seed verb) and handed here inside an already-guarded
+// manifest — eval-local has no business deciding a partition parameter, and a
+// derived salt would be a public salt.
+// ---------------------------------------------------------------------------
+
+/** Both writers answer with the same four outcomes; only the label differs. */
+type CommittedDocumentOutcome =
+  | { kind: 'written' | 'unchanged'; path: string }
+  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
+  | { kind: 'write-conflict'; path: string }
+
+export interface WritePartitionManifestInput {
+  /** An already-guarded manifest; its `product` names the committed file. */
+  manifest: PartitionManifest
+  /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the CLI. */
+  committedRoot: string
+  /** Seeding-scoped audit-sink base dir (the JsonlAuditSink lands guardrail rows here). */
+  seedingOutputBaseDir: string
+  /** Guardrail policy; defaults to the shipped default input, injectable for tests. */
+  policy?: GuardrailPolicy
+}
+
+export type WritePartitionManifestOutcome = CommittedDocumentOutcome
+
+export interface WriteRunExclusionInput {
+  /** An already-guarded exclusion record; its product + runSlug name the file. */
+  record: RunExclusionRecord
+  committedRoot: string
+  seedingOutputBaseDir: string
+  policy?: GuardrailPolicy
+}
+
+export type WriteRunExclusionOutcome = CommittedDocumentOutcome
+
+/** A block becomes the typed outcome; anything else the checkpoint raises is a real error. */
+function blockedOutcome(err: unknown): CommittedDocumentOutcome {
+  if (err instanceof CommittedEgressBlockedError) {
+    return {
+      kind: 'egress-blocked',
+      detections: err.blocked.map(({ label, detector }) => ({ label, detector })),
+    }
+  }
+  throw err
+}
+
+/** Preview-then-write against the write-once store, mapping the outcome (371 D-17). */
+function previewThenWrite(
+  committedRoot: string,
+  relPath: string,
+  text: string,
+): CommittedDocumentOutcome {
+  const store = new FsCommittedRootStore({ committedRoot })
+  if (store.previewText(relPath, text) === 'conflict') {
+    return { kind: 'write-conflict', path: relPath }
+  }
+  const outcome = store.writeText(relPath, text)
+  if (outcome.kind === 'write-conflict') return { kind: 'write-conflict', path: outcome.path }
+  return { kind: outcome.kind, path: relPath }
+}
+
+/**
+ * Commit one product's partition manifest (414 D-05).
+ *
+ * Write-once is the entire point. The salt and the two fractions decide which split every
+ * cassette in the product lands in, so a second manifest whose flags disagree with the committed
+ * one is not an update — it silently re-partitions a corpus that has already been gated against.
+ * That is refused as a `write-conflict` with the committed bytes untouched; changing a live
+ * partition is a reviewed git edit plus a named migration, never a rewrite through this function.
+ */
+export function writePartitionManifest(
+  input: WritePartitionManifestInput,
+): WritePartitionManifestOutcome {
+  const relPath = committedPartitionManifestPath(input.manifest.product)
+  const text = committedFileText(input.manifest)
+  const label = `partition-manifest:${input.manifest.product}`
+
+  // (1) ONE checkpoint call on the SEEDING channel — never the report channel (D-15's argument).
+  try {
+    assertCommittedEgressSafe([{ label, text }], {
+      policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
+      channel: SEEDING_EGRESS_CHANNEL,
+      auditSink: new JsonlAuditSink(input.seedingOutputBaseDir),
+    })
+  } catch (err) {
+    return blockedOutcome(err)
+  }
+
+  // (2) Write-once: preview, then write.
+  return previewThenWrite(input.committedRoot, relPath, text)
+}
+
+/**
+ * Commit one excluded run's record (414 D-02).
+ *
+ * Identical-regen is decided on `runExclusionCore` — the record WITHOUT its `backfill` block —
+ * rather than on the bytes. `backfill` records a LATER act (entries deleted from the root after
+ * the fact); the rest of the record is the original exclusion decision. Comparing bytes would
+ * make re-recording an unchanged decision beside a newly-added backfill look like a conflicting
+ * exclusion, and would equally refuse the mirror case. Anything that differs in the CORE — a
+ * different verdict class, a different analysisDigest — still falls through to the write-once
+ * preview and refuses.
+ */
+export function writeRunExclusion(input: WriteRunExclusionInput): WriteRunExclusionOutcome {
+  const relPath = committedExclusionPath(input.record.product, input.record.runSlug)
+  const text = committedFileText(input.record)
+  const label = `exclusion:${input.record.product}/${input.record.runSlug}`
+
+  // (1) ONE checkpoint call on the SEEDING channel — same surface, same audit trail.
+  try {
+    assertCommittedEgressSafe([{ label, text }], {
+      policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
+      channel: SEEDING_EGRESS_CHANNEL,
+      auditSink: new JsonlAuditSink(input.seedingOutputBaseDir),
+    })
+  } catch (err) {
+    return blockedOutcome(err)
+  }
+
+  // (2) The CORE comparison, before the byte preview.
+  const committedFile = join(input.committedRoot, relPath)
+  if (existsSync(committedFile)) {
+    let existing: unknown
+    try {
+      existing = JSON.parse(readFileSync(committedFile, 'utf8'))
+    } catch {
+      // Unparseable committed bytes are not this writer's to repair: fall through to the
+      // write-once preview, which refuses them as a conflict naming the path.
+      existing = undefined
+    }
+    const parsed = runExclusionRecordSchema.safeParse(existing)
+    if (
+      parsed.success &&
+      canonicalJson(runExclusionCore(parsed.data)) === canonicalJson(runExclusionCore(input.record))
+    ) {
+      return { kind: 'unchanged', path: relPath }
+    }
+  }
+
+  // (3) Write-once for everything the core comparison did not settle.
+  return previewThenWrite(input.committedRoot, relPath, text)
 }
