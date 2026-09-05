@@ -255,10 +255,38 @@ export type {
 } from './labels/label-record'
 export {
   CORPUS_ENTRY_SCHEMA_VERSION,
+  CORPUS_SPLITS,
+  GENERATOR_KINDS,
+  HELD_OUT_VISIBILITIES,
+  isProposerVisibleEntry,
   projectCorpusEntry,
   resolveProductPartition,
 } from './labels/corpus-entry'
-export type { CorpusEntry, CorpusRunLinks, CorpusSplit } from './labels/corpus-entry'
+export type {
+  AdversarialCorpusEntry,
+  CorpusEntry,
+  CorpusEntryBase,
+  CorpusGenerator,
+  CorpusRunLinks,
+  CorpusSplit,
+  GeneratorKind,
+  HeldOutVisibility,
+  NaturalCorpusEntry,
+  PrivateHeldOutCorpusEntry,
+  ProjectCorpusEntryInput,
+  ProposerVisibleCorpusEntry,
+  SharedHeldOutCorpusEntry,
+  SplitAssignment,
+  TargetEnvironment,
+} from './labels/corpus-entry'
+export {
+  corpusEntrySchema,
+  guardCorpusEntry,
+  parseCorpusEntry,
+} from './labels/corpus-entry-guard'
+export type { CorpusEntryParse } from './labels/corpus-entry-guard'
+export { assignSplit, BUCKET_BITS, bucketOf, PARTITION_VERSION } from './labels/split-assignment'
+export type { AssignSplitInput, PartitionParams } from './labels/split-assignment'
 export { committedFileText } from './labels/committed-file'
 export { buildSeedingPlan } from './labels/seeding-plan'
 export type {
