@@ -33,17 +33,20 @@ import {
   canonicalJson,
   computeBatchKey,
   computeCorpusDigest,
+  decisionCorrectnessVectors,
   deriveCensus,
   EXCLUSION_CLASSES,
   extractRunCassettes,
   guardCampaignManifest,
   partitionParamsOf,
   projectBaselinePointer,
+  projectDecisionVectorsDocument,
   projectPartitionManifest,
   projectRunExclusion,
   renderBaselineComparatorRefusal,
   resolveJudgeFamily,
   resolveProductPartition,
+  SEED_POLICIES,
 } from '@vostride/agent-qa-eval'
 import type {
   BaselineComparatorRefusal,
@@ -143,7 +146,8 @@ export type {
 // 413-06 D-20: the ONE refusal renderer, re-exported so `commands/eval.ts` can print a refused
 // baseline designation WITHOUT minting a second surface-firewall edge of its own — the command
 // layer receives it through this ledgered root exactly as it receives the verb pipelines.
-export { renderBaselineComparatorRefusal } from '@vostride/agent-qa-eval'
+export { renderBaselineComparatorRefusal, SEED_POLICIES } from '@vostride/agent-qa-eval'
+export type { SeedPolicy } from '@vostride/agent-qa-eval'
 export type { WriteBaselinePointerOutcome } from '@vostride/agent-qa-eval-local'
 
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */
@@ -221,9 +225,13 @@ export class EvalNamedInputError extends Error {
   readonly inputName: string
   readonly searchRoot: string
 
-  constructor(inputKind: string, inputName: string, searchRoot: string, verb = 'extract') {
+  constructor(
+    inputKind: string, inputName: string, searchRoot: string, verb = 'extract', detail?: string,
+  ) {
     super(
-      `No recorded ${inputKind} named "${inputName}" under ${searchRoot} — nothing to ${verb}.`,
+      detail === undefined
+        ? `No recorded ${inputKind} named "${inputName}" under ${searchRoot} — nothing to ${verb}.`
+        : `Cannot ${verb} ${inputKind} "${inputName}" at ${searchRoot}: ${detail}`,
     )
     this.name = 'EvalNamedInputError'
     this.inputKind = inputKind
@@ -1286,12 +1294,16 @@ function resolveSeedVerdictRows(
 export interface ReportVerbResult {
   /** sha256hex over the sorted assembled cassette ids — minted by buildEvalReport (D-13). */
   batchKey: string
-  /** Persisted replay records that entered the ONE batch (refusal outcomes included). */
+  /** Records assembled this invocation, including refusals; zero for committed-history reads. */
   entries: number
   /** The ONE whole-corpus EvalBatchReport — one buildEvalReport call, one headline (D-14). */
   report: EvalBatchReport
-  /** The staged report file FsReportStore derived from the batchKey. */
-  stagedFile: string
+  /** The staged file, present only when this invocation assembled and saved a report. */
+  stagedFile?: string
+  /** Actual report read for --from-committed; no staged file or run receipt is fabricated. */
+  committedFile?: string
+  /** Decision vectors actually projected for this invocation's report, including an empty set. */
+  decisionVectorCount?: number
   /** The typed commitEvalReport outcome when `--commit` ran — egress blocks are DATA (D-08). */
   committed?: CommitEvalReportOutcome
   /** Batch-level judge identity: consistent blocks pass through; mixed/absent surface honestly. */
@@ -1328,6 +1340,10 @@ export async function runReportVerb(
     commit?: boolean
     source?: EvalCorpusSource
     baseline?: boolean
+    /** Re-designate this exact committed batch without reading replay records or staging. */
+    fromCommitted?: string
+    /** Required explicit policy for a reviewed --from-committed designation. */
+    seedPolicy?: SeedPolicy
     /** No model call: overrides only name the fingerprint shared with a stub-measured floor. */
     plannerOverrides?: ModelProviderOverrides
   } = {},
@@ -1335,6 +1351,56 @@ export async function runReportVerb(
   // D-19: a pointer designates a COMMITTED report. Designating a staged-only report would name a
   // batch nobody else can read, so the combination is refused before any work happens (D-08 typed
   // error — the command layer maps it to exit 1).
+  if (opts.fromCommitted !== undefined) {
+    if (opts.baseline !== true) throw new TypeError('--from-committed requires --baseline')
+    if (opts.seedPolicy === undefined) {
+      throw new TypeError('--from-committed requires --seed-policy <none|declared>')
+    }
+    if (opts.commit === true) throw new TypeError('--from-committed cannot be combined with --commit')
+    if (!/^[0-9a-f]{64}$/.test(opts.fromCommitted)) {
+      throw new TypeError('--from-committed requires a batchKey of 64 lowercase hexadecimal characters')
+    }
+    if (!SEED_POLICIES.includes(opts.seedPolicy)) {
+      throw new TypeError('--seed-policy must be "none" or "declared"')
+    }
+
+    const committedRoot = resolve(session.configDir, 'agent-qa-eval')
+    const reportList = listCommittedReports(committedRoot)
+    const requestedFile = join(committedRoot, 'reports', opts.fromCommitted, 'report.json')
+    const entry = reportList.reports.find(candidate => candidate.batchKey === opts.fromCommitted)
+    if (entry === undefined) {
+      const refusal = reportList.refusals.find(candidate => candidate.path === requestedFile)
+      throw new EvalNamedInputError(
+        'batchKey', opts.fromCommitted, refusal?.path ?? join(committedRoot, 'reports'),
+        'designate', refusal?.reason,
+      )
+    }
+    // The list's key comes from the directory; the light report guard preserves its body.
+    // Require all three identities before projecting a pointer to the named history (T-415-42).
+    if (entry.path !== requestedFile || entry.report.batchKey !== opts.fromCommitted) {
+      throw new EvalNamedInputError(
+        'batchKey', opts.fromCommitted, entry.path, 'designate',
+        `report batchKey "${entry.report.batchKey}" does not match the requested directory`,
+      )
+    }
+    const notices = reportList.refusals.map(
+      refusal => `committed read refused ${refusal.path}: ${refusal.reason}`,
+    )
+    const designation = await designateReportBaseline(
+      session, entry.report, opts.seedPolicy, opts.plannerOverrides, notices,
+    )
+    return {
+      batchKey: entry.report.batchKey,
+      entries: 0,
+      report: entry.report,
+      committedFile: entry.path,
+      judgeIdentity: entry.report.judgeIdentity === 'mixed'
+        ? 'mixed' : entry.report.judge === undefined ? 'absent' : 'present',
+      source: 'committed',
+      ...designation,
+      notices,
+    }
+  }
   if (opts.baseline === true && opts.commit !== true) {
     throw new Error(
       '--baseline requires --commit: the pointer designates a COMMITTED report (413 D-19)',
@@ -1421,11 +1487,15 @@ export async function runReportVerb(
   // (5) Exactly ONE buildEvalReport call — one batch, one report, one headline (D-14). The CLI
   // never sums scores; every counter and rate is the aggregator's.
   const report = buildEvalReport(entries, judgeForReport, mixedIdentity)
+  const vectors = decisionCorrectnessVectors(entries, partitionsById)
+  const decisions = projectDecisionVectorsDocument({
+    batchKey: report.batchKey, matcherVersion: report.matcherVersion, vectors,
+  })
 
   // (6) The staged report ALWAYS lands (uncommitted runtime staging, batchKey-derived filename).
-  const staged = new FsReportStore({ root: agentQaRoot }).save(report)
+  const staged = new FsReportStore({ root: agentQaRoot }).save(report, decisions)
 
-  // (7) `--commit`: render the deterministic markdown projection and route BOTH parts through
+  // (7) `--commit`: render the deterministic markdown projection and route all THREE parts through
   // commitEvalReport's egress checkpoint into the committed root (D-13) — the typed outcome
   // (committed / egress-blocked / write-conflict) folds into the DTO as data (D-08).
   const committedRoot = resolve(session.configDir, 'agent-qa-eval')
@@ -1434,6 +1504,7 @@ export async function runReportVerb(
   if (opts.commit === true) {
     committed = commitEvalReport({
       report,
+      decisions,
       markdown: renderEvalReportMarkdown(report),
       committedRoot,
       reportOutputBaseDir,
@@ -1455,37 +1526,11 @@ export async function runReportVerb(
       )
     } else {
       const seedPolicy: SeedPolicy = session.evalConfig.seed !== undefined ? 'declared' : 'none'
-      const read = readCommittedCorpus(committedRoot)
-      notices.push(...read.notices)
-      for (const refusal of read.refusals) {
-        notices.push(`committed read refused ${refusal.path}: ${refusal.reason}`)
-      }
-      const pointer = projectBaselinePointer({
-        plannerModelId: await resolvePlannerModelId(session),
-        fingerprint: await resolveReplayProfileFingerprint(session, seedPolicy, opts.plannerOverrides),
-        corpusDigest: computeCorpusDigest(read.snapshot.entries),
-        matcherVersion: report.matcherVersion,
-        ...(report.judge === undefined
-          ? {}
-          : {
-              judgeModelId: report.judge.judgeModelId,
-              ...(report.judge.judgeVersion === undefined
-                ? {}
-                : { judgeVersion: report.judge.judgeVersion }),
-            }),
-        batchKey: report.batchKey,
-      })
-      profileKey = pointer.profileKey
-      baseline = writeBaselinePointer({ report, pointer, committedRoot, reportOutputBaseDir })
-      if (baseline.kind === 'refused') {
-        notices.push(renderBaselineComparatorRefusal(baseline.refusal))
-      }
-      if (seedPolicy === 'none' && (baseline.kind === 'written' || baseline.kind === 'unchanged')) {
-        notices.push(
-          'baseline designated under seed policy none — eval gate compares against a declared-policy '
-          + "pointer; re-designate with --from-committed --seed-policy declared once Plan 17's flag exists",
-        )
-      }
+      const designation = await designateReportBaseline(
+        session, report, seedPolicy, opts.plannerOverrides, notices,
+      )
+      profileKey = designation.profileKey
+      baseline = designation.baseline
     }
   }
 
@@ -1494,6 +1539,7 @@ export async function runReportVerb(
     entries: entries.length,
     report,
     stagedFile: staged.file,
+    decisionVectorCount: decisions.vectors.length,
     ...(committed !== undefined ? { committed } : {}),
     judgeIdentity,
     source,
@@ -1501,6 +1547,45 @@ export async function runReportVerb(
     ...(profileKey !== undefined ? { profileKey } : {}),
     notices,
   }
+}
+
+/** Both report paths share the same v2 projection and comparator-first write-once writer. */
+async function designateReportBaseline(
+  session: EvalSession,
+  report: EvalBatchReport,
+  seedPolicy: SeedPolicy,
+  plannerOverrides: ModelProviderOverrides | undefined,
+  notices: string[],
+): Promise<{ profileKey: string; baseline: WriteBaselinePointerOutcome }> {
+  const committedRoot = resolve(session.configDir, 'agent-qa-eval')
+  const read = readCommittedCorpus(committedRoot)
+  notices.push(...read.notices)
+  for (const refusal of read.refusals) {
+    notices.push(`committed read refused ${refusal.path}: ${refusal.reason}`)
+  }
+  const pointer = projectBaselinePointer({
+    plannerModelId: await resolvePlannerModelId(session),
+    fingerprint: await resolveReplayProfileFingerprint(session, seedPolicy, plannerOverrides),
+    corpusDigest: computeCorpusDigest(read.snapshot.entries),
+    matcherVersion: report.matcherVersion,
+    ...(report.judge === undefined ? {} : {
+      judgeModelId: report.judge.judgeModelId,
+      ...(report.judge.judgeVersion === undefined ? {} : { judgeVersion: report.judge.judgeVersion }),
+    }),
+    batchKey: report.batchKey,
+  })
+  const baseline = writeBaselinePointer({
+    report, pointer, committedRoot,
+    reportOutputBaseDir: evalAuditDir(session.configDir, 'report', report.batchKey),
+  })
+  if (baseline.kind === 'refused') notices.push(renderBaselineComparatorRefusal(baseline.refusal))
+  if (seedPolicy === 'none' && (baseline.kind === 'written' || baseline.kind === 'unchanged')) {
+    notices.push(
+      'baseline designated under seed policy none — eval gate compares against a declared-policy '
+      + 'pointer; re-designate with eval report --baseline --from-committed <batchKey> --seed-policy declared',
+    )
+  }
+  return { profileKey: pointer.profileKey, baseline }
 }
 
 /**

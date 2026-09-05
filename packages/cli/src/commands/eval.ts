@@ -14,6 +14,7 @@ import type {
   ExtractVerbResult,
   ReplayVerbResult,
   ReportVerbResult,
+  SeedPolicy,
   SeedVerbResult,
 } from '../eval-session-composition.js'
 
@@ -51,6 +52,20 @@ function parseSourceFlag(value: string | undefined): EvalCorpusSource | undefine
     )
   }
   return value
+}
+
+/** Validate inside the action against the lazily imported canonical vocabulary (D-08). */
+function parseSeedPolicyFlag(
+  value: string | undefined, policies: readonly SeedPolicy[],
+): SeedPolicy | undefined {
+  if (value === undefined) return undefined
+  const policy = policies.find(candidate => candidate === value)
+  if (policy === undefined) {
+    throw new InvalidArgumentError(
+      `--seed-policy must be "none" or "declared", got "${value}".`,
+    )
+  }
+  return policy
 }
 
 /**
@@ -203,7 +218,8 @@ function renderReportSummary(
 ): void {
   const report = result.report
   console.log(
-    pc.bold(`report: batch ${result.batchKey}`) + pc.dim(` (${result.entries} entries)`),
+    pc.bold(`report: batch ${result.batchKey}`)
+      + pc.dim(result.committedFile === undefined ? ` (${result.entries} entries)` : ' (committed report)'),
   )
   const accuracy = report.headline.firstAttemptDecisionAccuracy
   console.log(
@@ -230,7 +246,8 @@ function renderReportSummary(
   for (const notice of result.notices) {
     console.log(pc.dim(notice))
   }
-  console.log(pc.dim(`staged file: ${result.stagedFile}`))
+  if (result.stagedFile !== undefined) console.log(pc.dim(`staged file: ${result.stagedFile}`))
+  if (result.committedFile !== undefined) console.log(pc.dim(`committed file: ${result.committedFile}`))
   if (result.committed !== undefined) {
     // D-08: egress blocks and write conflicts are DATA — rendered loudly, never exit 1.
     if (result.committed.kind === 'committed') {
@@ -549,11 +566,11 @@ export function createEvalCommand(): Command {
 
   cmd.addCommand(
     new Command('report')
-      .description('Assemble the whole-corpus baseline report from persisted replay records')
+      .description('Assemble a replay report or designate an already-committed baseline')
       .option('--run <slug>', 'narrow to records extracted from one recorded run')
       .option('--cassette <id>', 'report over exactly one persisted record by cassette id')
       .option('--product <slug>', 'narrow by product scope')
-      .option('--commit', 'also write report.json + report.md into the committed root (D-13)')
+      .option('--commit', 'also write report.json + report.md + decisions.json into the committed root (D-13)')
       .option(
         '--source <source>',
         'cassette source: staged (default) or committed (the whole agent-qa-eval corpus, D-08)',
@@ -561,9 +578,11 @@ export function createEvalCommand(): Command {
       )
       .option(
         '--baseline',
-        'after --commit, designate this report as the per-profile baseline pointer under '
+        'with --commit or --from-committed, designate the per-profile baseline pointer under '
           + 'reports/baselines/ (D-19); refused for same-family reports (ROOT-11)',
       )
+      .option('--from-committed <batchKey>', 'designate this committed report without replay assembly; requires --baseline and --seed-policy')
+      .option('--seed-policy <none|declared>', 'explicit policy for --from-committed designation')
       .option('--json', 'emit the typed result DTO to stdout')
       .action(
         async (
@@ -574,6 +593,8 @@ export function createEvalCommand(): Command {
             commit?: boolean
             source?: string
             baseline?: boolean
+            fromCommitted?: string
+            seedPolicy?: string
             json?: boolean
           },
           command: Command,
@@ -581,8 +602,9 @@ export function createEvalCommand(): Command {
           try {
             const source = parseSourceFlag(opts.source)
             const configPath = getGlobalConfigPath(command)
-            const { resolveEvalSession, runReportVerb, renderBaselineComparatorRefusal } =
+            const { resolveEvalSession, runReportVerb, renderBaselineComparatorRefusal, SEED_POLICIES } =
               await import('../eval-session-composition.js')
+            const seedPolicy = parseSeedPolicyFlag(opts.seedPolicy, SEED_POLICIES)
             const session = await resolveEvalSession(
               configPath === undefined ? {} : { configPath },
             )
@@ -597,6 +619,8 @@ export function createEvalCommand(): Command {
                 ...(opts.commit === undefined ? {} : { commit: opts.commit }),
                 ...(source === undefined ? {} : { source }),
                 ...(opts.baseline === undefined ? {} : { baseline: opts.baseline }),
+                ...(opts.fromCommitted === undefined ? {} : { fromCommitted: opts.fromCommitted }),
+                ...(seedPolicy === undefined ? {} : { seedPolicy }),
               },
             )
             if (opts.json) {

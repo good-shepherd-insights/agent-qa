@@ -54,6 +54,7 @@ import type {
   Verdict,
 } from '@vostride/agent-qa-schema'
 import {
+  FsReplayRecordStore,
   commitEvalReport,
   committedCassettePath,
   committedLabelPath,
@@ -837,7 +838,8 @@ describe('runReportVerb — one batch, one report, one headline (D-13/D-14)', ()
     expect(result.stagedFile).toBe(
       join(dir, '.agent-qa', 'eval', 'reports', `${slugBranch(result.batchKey)}.json`),
     )
-    expect(existsSync(result.stagedFile)).toBe(true)
+    expect(result.stagedFile).toBeDefined()
+    expect(existsSync(result.stagedFile!)).toBe(true)
   })
 
   it('threads judge identity honestly: present / absent / mixed, never fabricated (Pitfall 4)', async () => {
@@ -911,8 +913,15 @@ describe('runReportVerb — one batch, one report, one headline (D-13/D-14)', ()
 
   it('--commit still writes a guarded empty decisions document when every entry is refused', async () => {
     const { dir, session, ids } = await scoredRecordsFixture()
-    for (const id of ids) await writeRefusalReplayRecord(dir, id)
+    const store = new FsReplayRecordStore({ root: join(dir, '.agent-qa') })
+    for (const cassetteId of ids) {
+      store.save({
+        kind: 'integrity-refusal', cassetteId, reason: 'missing-blob',
+        detail: 'fixture: blob absent from bundle',
+      })
+    }
     const result = await runReportVerb(session, {}, { commit: true })
+    expect(result.entries).toBe(ids.length)
     expect(result.report.honesty.refusalCounts['missing-blob']).toBe(ids.length)
     expect(result.committed).toMatchObject({ kind: 'committed', decisions: 'written' })
     const document = JSON.parse(await readFile(
