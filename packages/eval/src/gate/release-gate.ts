@@ -218,3 +218,7 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
     },
   }
 }
+
+export function renderGateLines(_verdict: GateVerdict): string[] {
+  throw new TypeError('release gate renderer contract not implemented')
+}
