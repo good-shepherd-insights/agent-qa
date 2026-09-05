@@ -1,12 +1,13 @@
 // The ONE egress-checked committed-report writer (Phase 372 D-13, BASE-02) — sibling of
 // seedCommittedCorpus, same recipe. It places the aggregated EvalBatchReport JSON DTO plus its
-// rendered markdown projection under reports/<slug(batchKey)>/ inside the committed root.
+// rendered markdown projection, plus optional decisions.json pairing evidence (415 D-16),
+// under reports/<slug(batchKey)>/ inside the committed root.
 //
 // Composition law (ROOT-02 discipline extended):
 //   - Every committed byte passes `assertCommittedEgressSafe` (fail-closed) on the 'eval-report'
 //     channel with a JsonlAuditSink BEFORE any write; a detection refuses the WHOLE report as a
-//     typed outcome — JSON and markdown are ONE checkpoint unit, never half-committed.
-//   - Write-once (D-17): both relPaths are PREVIEWED before either write; a conflict on ANY part
+//     typed outcome — every supplied part is ONE checkpoint unit, never half-committed.
+//   - Write-once (D-17): all relPaths are PREVIEWED before any write; a conflict on ANY part
 //     refuses the whole report writing nothing. A byte-identical regen reports 'unchanged'
 //     everywhere; a changed corpus produces a different batchKey and therefore a fresh dir —
 //     the committed baseline can never be silently rewritten (T-372-07).
@@ -45,6 +46,7 @@ export const COMMITTED_REPORT_DECISIONS_FILE = 'decisions.json'
 export interface CommitEvalReportInput {
   /** The pure eval-core report DTO — batchKey names the committed dir. */
   report: EvalBatchReport
+  /** Optional pairing evidence for this same batch and matcher, never a separate channel. */
   decisions?: DecisionVectorsDocument
   /** The rendered markdown projection; byte-determinism is the renderer's contract. */
   markdown: string
@@ -69,10 +71,19 @@ export type CommitEvalReportOutcome =
 
 /**
  * Commit the baseline report beside the corpus/contracts that produced it: ONE checkpoint call
- * over both parts, then preview BOTH paths, then write — checkpoint-then-preview-then-write,
+ * over every supplied part, then preview ALL paths, then write — checkpoint-then-preview-then-write,
  * one atomic unit (D-13/D-17).
  */
 export function commitEvalReport(input: CommitEvalReportInput): CommitEvalReportOutcome {
+  // Same-report identity is a caller contract, like the baseline-pointer writer's contract.
+  // Check before constructing an audit sink or touching any committed output.
+  if (input.decisions !== undefined) {
+    for (const field of ['batchKey', 'matcherVersion'] as const) {
+      if (input.decisions[field] !== input.report[field]) {
+        throw new TypeError(`decisions ${field} does not match the report ${field}`)
+      }
+    }
+  }
   const store = new FsCommittedRootStore({ committedRoot: input.committedRoot })
   const checkpointOpts = {
     policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
@@ -93,8 +104,15 @@ export function commitEvalReport(input: CommitEvalReportInput): CommitEvalReport
       text: input.markdown,
     },
   ]
+  if (input.decisions !== undefined) {
+    parts.push({
+      relPath: committedReportPath(batchKey, COMMITTED_REPORT_DECISIONS_FILE),
+      label: 'report-decisions:' + batchKey,
+      text: committedFileText(input.decisions),
+    })
+  }
 
-  // (1) ONE checkpoint call covering BOTH parts — a block refuses the whole report with the
+  // (1) ONE checkpoint call covering ALL parts — a block refuses the whole report with the
   // detector labels, nothing half-commits.
   try {
     assertCommittedEgressSafe(
@@ -111,7 +129,7 @@ export function commitEvalReport(input: CommitEvalReportInput): CommitEvalReport
     throw err
   }
 
-  // (2) Preview BOTH paths before writing EITHER — a conflict on one part leaves even the
+  // (2) Preview ALL paths before writing ANY — a conflict on one part leaves even the
   // non-conflicting part unwritten (D-17 atomicity).
   const conflicting = parts.find(
     (part) => store.previewText(part.relPath, part.text) === 'conflict',
@@ -120,7 +138,7 @@ export function commitEvalReport(input: CommitEvalReportInput): CommitEvalReport
     return { kind: 'write-conflict', path: conflicting.relPath }
   }
 
-  // (3) Write both; after preview a conflict cannot occur here, but map it defensively.
+  // (3) Write all; after preview a conflict cannot occur here, but map it defensively.
   const outcomes = parts.map((part) => store.writeText(part.relPath, part.text))
   for (const outcome of outcomes) {
     if (outcome.kind === 'write-conflict') return { kind: 'write-conflict', path: outcome.path }
@@ -130,6 +148,9 @@ export function commitEvalReport(input: CommitEvalReportInput): CommitEvalReport
     kind: 'committed',
     json: outcomes[0]!.kind === 'written' ? 'written' : 'unchanged',
     markdown: outcomes[1]!.kind === 'written' ? 'written' : 'unchanged',
+    ...(outcomes[2] === undefined ? {} : {
+      decisions: outcomes[2].kind === 'written' ? 'written' as const : 'unchanged' as const,
+    }),
     reportDir: join(input.committedRoot, COMMITTED_REPORTS_DIR, slugBranch(batchKey)),
   }
 }
