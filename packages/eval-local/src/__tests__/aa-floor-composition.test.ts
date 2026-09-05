@@ -3,7 +3,15 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { computeBatchKey, computeGateVerdict, extractRunCassettes } from '@vostride/agent-qa-eval'
+import {
+  committedFileText,
+  computeBatchKey,
+  computeCorpusDigest,
+  computeGateVerdict,
+  extractRunCassettes,
+  MATCHER_CONFIG,
+  projectBaselinePointer,
+} from '@vostride/agent-qa-eval'
 import { resolveCapabilities } from '@vostride/agent-qa-model'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +22,7 @@ import {
   noneAuth,
   stubProfile,
   warningStub,
+  writeCommittedFloorFixture,
   writeFloorLeaves,
 } from './fixtures/floor-fixtures.js'
 import {
@@ -53,6 +62,119 @@ async function fixture() {
 afterEach(async () => {
   vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
+
+async function measurementFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'aa-measurement-'))
+  roots.push(root)
+  const corpus = writeCommittedFloorFixture(root)
+  const stub = warningStub()
+  return {
+    root, stub, corpus,
+    input: {
+      committedRoot: corpus.committedRoot,
+      cassettesRoot: corpus.cassettesRoot,
+      agentQaRoot: join(root, '.agent-qa'),
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: stub.languageModels },
+      maskingContextFactory: createMaskingContext,
+      profileKeyInputs: { plannerModelId: stubProfile().model, matcherVersion: MATCHER_CONFIG.matcherVersion },
+      seeds: [11, 29],
+      repeats: 3,
+      bootstrapSeed: 97,
+      commit: false,
+      reportOutputBaseDir: join(root, 'audit'),
+      clock: incrementingClock(),
+    },
+  }
+}
+
+describe('runNoiseFloorMeasurement', () => {
+  it('folds four isolated whole-corpus runs with seed, split, census and actual call disclosures', async () => {
+    expect(evalLocal.runNoiseFloorMeasurement).toBeTypeOf('function')
+    const { input, stub, corpus } = await measurementFixture()
+    const lines: string[] = []
+    const result = await evalLocal.runNoiseFloorMeasurement({ ...input,
+      onProgress: line => lines.push(line) })
+    const { artefact } = result
+    expect(artefact.runs.map(run => run.seed)).toEqual([11, 11, 11, 29])
+    expect(artefact.seeds).toEqual([11, 29])
+    expect(artefact.repeats).toBe(3)
+    expect(artefact.seedHonored).toBe(false)
+    expect(artefact.corpusDigest).toBe(computeCorpusDigest(
+      evalLocal.readCommittedCorpus(input.committedRoot).snapshot.entries))
+    expect(artefact.partitionVersion).toBe(1)
+    expect(artefact.products.alpha?.census).toEqual({ natural: 1, heldOutShared: 1, heldOutPrivate: 0 })
+    expect(artefact.products.beta?.census).toEqual({ natural: 0, heldOutShared: 0, heldOutPrivate: 1 })
+    expect(Object.keys(artefact.splits).sort()).toEqual(['held-out-private', 'held-out-shared', 'natural'])
+    expect(artefact.population.included.proof + artefact.population.included.empty).toBe(3)
+    for (const axis of Object.values(artefact.axes)) {
+      if (axis.n > 0) expect(axis.aggregateFloor).toBe(axis.wilsonHalfWidth)
+    }
+    expect(new Set(result.runRoots).size).toBe(4)
+    for (const runRoot of result.runRoots) {
+      expect(evalLocal.listReplayRecordDirs(join(runRoot, 'replays'))).toHaveLength(3)
+      const staged = evalLocal.loadStagedReport(input.agentQaRoot,
+        computeBatchKey(corpus.selected.map(entry => entry.cassette.id)), join(runRoot, 'reports'))
+      expect(staged).toMatchObject({ kind: 'loaded', report: {
+        runIdentity: { fingerprint: result.fingerprint, corpusDigest: artefact.corpusDigest },
+      } })
+    }
+    expect(stub.captured).toHaveLength(12)
+    expect(artefact.runs.map(run => run.cost.modelCalls)).toEqual([3, 3, 3, 3])
+    expect(artefact.cost.modelCalls).toBe(12)
+    expect(artefact.cost.promptTokens).toBe(120)
+    expect(artefact.cost.completionTokens).toBe(24)
+    expect(artefact.runs.every(run => run.cost.wallClockMs > 0)).toBe(true)
+    expect(lines.filter(line => line.startsWith('floor r'))).toHaveLength(4)
+    expect(lines).toContainEqual(expect.stringMatching(/^floor r0 seed=11: decisions=3 modelCalls=3 promptTokens=30 completionTokens=6 wallClock=\d+ms seedHonored=false$/))
+    expect(result.refusals).toEqual([])
+    expect(artefact.minimumGateSet.baselineRateSource).toBe('reference-run')
+  })
+
+  it('commits once and regenerates byte-identical measurement evidence with the same injected clock', async () => {
+    expect(evalLocal.runNoiseFloorMeasurement).toBeTypeOf('function')
+    const { input } = await measurementFixture()
+    const first = await evalLocal.runNoiseFloorMeasurement({ ...input, commit: true })
+    expect(first.committed?.kind).toBe('written')
+    const second = await evalLocal.runNoiseFloorMeasurement({ ...input, commit: true, clock: incrementingClock() })
+    expect(second.committed?.kind).toBe('unchanged')
+    expect(committedFileText(second.artefact)).toBe(committedFileText(first.artefact))
+    expect(evalLocal.listCommittedReports(input.committedRoot).reports).toEqual([])
+  })
+
+  it('rejects a below-minimum protocol before creating a runtime root or calling a model', async () => {
+    expect(evalLocal.runNoiseFloorMeasurement).toBeTypeOf('function')
+    const { input, stub } = await measurementFixture()
+    await expect(evalLocal.runNoiseFloorMeasurement({ ...input, repeats: 2 }))
+      .rejects.toMatchObject({ code: 'FLOOR_PROTOCOL_MINIMUM' })
+    await expect(evalLocal.runNoiseFloorMeasurement({ ...input, seeds: [11, 11] }))
+      .rejects.toThrow(/FLOOR_PROTOCOL_MINIMUM/)
+    expect(stub.captured).toHaveLength(0)
+    expect(existsSync(input.agentQaRoot)).toBe(false)
+  })
+
+  it.each([1, 2] as const)('uses a designated v%i baseline for the same planner across profile keys', async schemaVersion => {
+    expect(evalLocal.runNoiseFloorMeasurement).toBeTypeOf('function')
+    const { root, input, corpus } = await measurementFixture()
+    const baseline = await evalLocal.replayCorpusOnce({ ...input,
+      selected: corpus.selected, runRoot: join(root, 'baseline'), seed: 11,
+      replayOutputBaseDir: join(root, 'baseline-audit'), source: 'committed' })
+    const pointer = projectBaselinePointer({ ...input.profileKeyInputs,
+      fingerprint: 'historical-other-profile', corpusDigest: 'historical-corpus', batchKey: baseline.report.batchKey })
+    const { fingerprint: _fingerprint, corpusDigest: _corpusDigest, ...legacy } = pointer
+    const store = new evalLocal.FsCommittedRootStore({ committedRoot: input.committedRoot })
+    store.writeText(evalLocal.committedBaselinePointerPath(pointer.profileKey),
+      committedFileText(schemaVersion === 1 ? { ...legacy, schemaVersion: 1 } : pointer))
+    store.writeText(evalLocal.committedReportPath(baseline.report.batchKey, 'report.json'),
+      committedFileText(baseline.report))
+    const result = await evalLocal.runNoiseFloorMeasurement({ ...input, clock: incrementingClock() })
+    expect(result.artefact.minimumGateSet).toMatchObject({
+      baselineRateSource: 'designated-baseline', baselineBatchKey: baseline.report.batchKey,
+      baselineRate: { correct: 3, n: 3 },
+    })
+  })
 })
 
 describe('replayCorpusOnce', () => {
