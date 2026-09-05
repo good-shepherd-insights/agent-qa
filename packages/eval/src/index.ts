@@ -362,6 +362,16 @@ export type {
   GateSetVerdict,
   SelectGateSetInput,
 } from './gate/gate-set'
+export { readGatePosture } from './gate/gate-posture'
+export type {
+  CanaryEvidenceSummary,
+  GatePosture,
+  JudgeCapability,
+  JudgeCapabilityInput,
+  PartitionEcho,
+  ReadGatePostureInput,
+  ScopeResolution,
+} from './gate/gate-posture'
 
 export { computeCorpusDigest } from './census/corpus-digest'
 export {
