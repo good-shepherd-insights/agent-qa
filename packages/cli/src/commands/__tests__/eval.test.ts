@@ -21,6 +21,7 @@ import {
   computeCorpusDigest,
   countGateSet,
   deriveCensus,
+  guardDecisionVectorsDocument,
   guardPartitionManifest,
   guardRunExclusionRecord,
   partitionParamsOf,
@@ -875,6 +876,7 @@ describe('runReportVerb — one batch, one report, one headline (D-13/D-14)', ()
       kind: 'committed',
       json: 'written',
       markdown: 'written',
+      decisions: 'written',
     })
     const reportDir = join(
       dir,
@@ -885,12 +887,43 @@ describe('runReportVerb — one batch, one report, one headline (D-13/D-14)', ()
     expect(first.committed).toMatchObject({ reportDir })
     expect(existsSync(join(reportDir, 'report.json'))).toBe(true)
     expect(existsSync(join(reportDir, 'report.md'))).toBe(true)
+    const decisions = guardDecisionVectorsDocument(
+      JSON.parse(await readFile(join(reportDir, 'decisions.json'), 'utf8')),
+    )
+    expect(decisions.kind).toBe('ok')
+    if (decisions.kind !== 'ok') throw new Error(decisions.reason)
+    expect(decisions.document.batchKey).toBe(first.batchKey)
+    expect(decisions.document.matcherVersion).toBe(first.report.matcherVersion)
+    expect(decisions.document.vectors.length).toBeGreaterThan(0)
+    const stagedDecisions = join(
+      dir, '.agent-qa', 'eval', 'reports', `${slugBranch(first.batchKey)}.decisions.json`,
+    )
+    expect(JSON.parse(await readFile(stagedDecisions, 'utf8'))).toEqual(decisions.document)
 
     const second = await runReportVerb(session, {}, { commit: true })
     expect(second.committed).toMatchObject({
       kind: 'committed',
       json: 'unchanged',
       markdown: 'unchanged',
+      decisions: 'unchanged',
+    })
+  })
+
+  it('--commit still writes a guarded empty decisions document when every entry is refused', async () => {
+    const { dir, session, ids } = await scoredRecordsFixture()
+    for (const id of ids) await writeRefusalReplayRecord(dir, id)
+    const result = await runReportVerb(session, {}, { commit: true })
+    expect(result.report.honesty.refusalCounts['missing-blob']).toBe(ids.length)
+    expect(result.committed).toMatchObject({ kind: 'committed', decisions: 'written' })
+    const document = JSON.parse(await readFile(
+      join(dir, 'agent-qa-eval', 'reports', result.batchKey, 'decisions.json'), 'utf8',
+    ))
+    expect(guardDecisionVectorsDocument(document)).toEqual({
+      kind: 'ok',
+      document: {
+        schemaVersion: 1, batchKey: result.batchKey,
+        matcherVersion: result.report.matcherVersion, vectors: [],
+      },
     })
   })
 })
@@ -2792,6 +2825,205 @@ describe('agent-qa eval census — rendering and exit semantics (413-05, D-04/D-
  */
 const BASELINE_PLANNER_MODEL_ID = 'gpt-4o'
 
+/** Existing committed history, with no replay records and no invented run receipt. */
+async function committedReportFixture(judge?: JudgeIdentityBlock) {
+  const fixture = await seededCorpusFixture()
+  const committedRoot = join(fixture.dir, 'agent-qa-eval')
+  const corpus = readCommittedCorpus(committedRoot)
+  const batchKey = computeBatchKey(corpus.snapshot.entries.map(entry => entry.cassetteId))
+  commitFixtureReport(fixture.dir, batchKey, judge)
+  return {
+    ...fixture, batchKey, committedRoot,
+    reportFile: join(committedRoot, 'reports', batchKey, 'report.json'),
+  }
+}
+
+describe('runReportVerb --from-committed — reviewed designation without replay assembly (415 D-11)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('writes then reports unchanged with the declared fingerprint and preserves all historical bytes', async () => {
+    const { dir, session, batchKey, reportFile, committedRoot } = await committedReportFixture()
+    const reportBefore = await readFile(reportFile, 'utf8')
+    const reportsBefore = await snapshotTree(join(committedRoot, 'reports', batchKey))
+    const corpus = readCommittedCorpus(committedRoot)
+    const evalLocal = await import('@vostride/agent-qa-eval-local')
+    const assemble = vi.spyOn(evalLocal, 'assembleScoredBatch').mockImplementation(() => {
+      throw new Error('committed designation must never read replays')
+    })
+    expect(existsSync(join(dir, '.agent-qa', 'eval', 'replays'))).toBe(false)
+    const options = { baseline: true, fromCommitted: batchKey, seedPolicy: 'declared' as const }
+    const first = await runReportVerb(session, {}, options)
+    const profileKey = await baselineProfileKey(session, 'declared')
+    const pointerPath = `reports/baselines/${slugBranch(profileKey)}.json`
+    expect(first).toMatchObject({
+      batchKey, entries: 0, source: 'committed', judgeIdentity: 'absent',
+      profileKey, committedFile: reportFile,
+      baseline: { kind: 'written', path: pointerPath },
+    })
+    expect(first).not.toHaveProperty('committed')
+    expect(first).not.toHaveProperty('stagedFile')
+    expect(first.report).toEqual(JSON.parse(reportBefore))
+    expect(first.report).not.toHaveProperty('runIdentity')
+    expect(JSON.parse(await readFile(join(committedRoot, pointerPath), 'utf8'))).toEqual({
+      schemaVersion: 2, profileKey, batchKey, plannerModelId: BASELINE_PLANNER_MODEL_ID,
+      matcherVersion: first.report.matcherVersion,
+      fingerprint: await resolveReplayProfileFingerprint(session, 'declared'),
+      corpusDigest: computeCorpusDigest(corpus.snapshot.entries),
+    })
+    const second = await runReportVerb(session, {}, options)
+    expect(second.baseline).toEqual({ kind: 'unchanged', path: pointerPath })
+    expect(assemble).not.toHaveBeenCalled()
+    expect(await readFile(reportFile, 'utf8')).toBe(reportBefore)
+    expect(await snapshotTree(join(committedRoot, 'reports', batchKey))).toEqual(reportsBefore)
+    expect(existsSync(join(dir, '.agent-qa', 'eval', 'reports'))).toBe(false)
+  })
+
+  it('uses the explicit seed policy and override names without resolving auth or creating a model', async () => {
+    const { session, batchKey } = await committedReportFixture()
+    session.evalConfig.seed = 29
+    const llmUtils = await import('../../llm-utils.js')
+    const model = await import('@vostride/agent-qa-model')
+    const auth = vi.spyOn(llmUtils, 'resolveModelAuth').mockRejectedValue(new Error('auth forbidden'))
+    const create = vi.spyOn(model, 'createModel').mockImplementation(() => {
+      throw new Error('model creation forbidden')
+    })
+    const stub = replayStub(BASELINE_PLANNER_MODEL_ID)
+    const options = {
+      baseline: true, fromCommitted: batchKey, seedPolicy: 'none' as const,
+      plannerOverrides: stub.overrides,
+    }
+    const result = await runReportVerb(session, {}, options)
+    expect(result.profileKey).toBe(composeBaselineProfileKey({
+      plannerModelId: BASELINE_PLANNER_MODEL_ID,
+      fingerprint: await resolveReplayProfileFingerprint(session, 'none', stub.overrides),
+      matcherVersion: result.report.matcherVersion,
+    }))
+    expect(result.notices.join('\n')).toContain('re-designate with eval report --baseline --from-committed <batchKey> --seed-policy declared')
+    expect(auth).not.toHaveBeenCalled()
+    expect(create).not.toHaveBeenCalled()
+    expect(stub.captured).toEqual([])
+  })
+
+  it.each(['same-family-override', 'mixed-judge-identity'] as const)(
+    'refuses %s through the comparator without writing a pointer or rewriting history',
+    async kind => {
+      const { session, batchKey, reportFile, committedRoot } = await committedReportFixture(
+        kind === 'same-family-override' ? FIXTURE_JUDGE_BLOCK : undefined,
+      )
+      if (kind === 'mixed-judge-identity') {
+        const report = JSON.parse(await readFile(reportFile, 'utf8'))
+        await writeFile(reportFile, committedFileText({
+          ...report, judgeIdentity: 'mixed', mixedJudgeModelIds: ['judge-a', 'judge-b'],
+        }))
+      }
+      const before = await readFile(reportFile, 'utf8')
+      const options = { baseline: true, fromCommitted: batchKey, seedPolicy: 'declared' as const }
+      const result = await runReportVerb(session, {}, options)
+      expect(result.baseline).toMatchObject({ kind: 'refused', refusal: { kind } })
+      expect(result.judgeIdentity).toBe(kind === 'same-family-override' ? 'present' : 'mixed')
+      expect(result.notices.join('\n')).toContain(`baseline comparator refused: ${kind}`)
+      expect(existsSync(join(committedRoot, 'reports', 'baselines'))).toBe(false)
+      expect(await readFile(reportFile, 'utf8')).toBe(before)
+    },
+  )
+
+  it('returns write-conflict when another batch is already designated under the same profile', async () => {
+    const { session, batchKey, committedRoot } = await committedReportFixture()
+    const options = { baseline: true, fromCommitted: batchKey, seedPolicy: 'declared' as const }
+    const first = await runReportVerb(session, {}, options)
+    expect(first.baseline?.kind).toBe('written')
+    const otherReport = buildEvalReport([])
+    const outcome = commitEvalReport({
+      report: otherReport, markdown: '# other committed fixture\n', committedRoot,
+      reportOutputBaseDir: join(tmpRoot, 'other-report-audit'),
+    })
+    expect(outcome.kind).toBe('committed')
+    const pointerPath = `reports/baselines/${slugBranch(first.profileKey!)}.json`
+    const before = await readFile(join(committedRoot, pointerPath), 'utf8')
+    const conflict = await runReportVerb(session, {}, { ...options, fromCommitted: otherReport.batchKey })
+    expect(conflict.baseline).toEqual({ kind: 'write-conflict', path: pointerPath })
+    expect(await readFile(join(committedRoot, pointerPath), 'utf8')).toBe(before)
+  })
+
+  it.each([
+    [{ fromCommitted: computeBatchKey([]), seedPolicy: 'declared' as const }, /--from-committed requires --baseline/],
+    [{ fromCommitted: computeBatchKey([]), baseline: true }, /--from-committed requires --seed-policy/],
+    [{ fromCommitted: computeBatchKey([]), baseline: true, seedPolicy: 'declared' as const, commit: true }, /--from-committed.*--commit/],
+  ])('refuses invalid flag combinations before any session read: %j', async (options, message) => {
+    const session = Object.defineProperty({}, 'configDir', {
+      get: () => { throw new Error('session read before precondition') },
+    }) as EvalSession
+    await expect(runReportVerb(session, {}, options)).rejects.toThrow(message)
+  })
+
+  it('names an unknown committed batch in a typed named-input error', async () => {
+    const { session, committedRoot } = await committedReportFixture()
+    const missing = computeBatchKey([])
+    const options = { baseline: true, fromCommitted: missing, seedPolicy: 'declared' as const }
+    await expect(runReportVerb(session, {}, options)).rejects.toMatchObject({
+      name: 'EvalNamedInputError', inputKind: 'batchKey', inputName: missing,
+      searchRoot: join(committedRoot, 'reports'),
+    })
+    expect(existsSync(join(committedRoot, 'reports', 'baselines'))).toBe(false)
+  })
+
+  it.each(['../reports', '', 'not-a-batch-key'])(
+    'rejects invalid requested batch key %j before any read', async fromCommitted => {
+      const session = Object.defineProperty({}, 'configDir', {
+        get: () => { throw new Error('session read before batch key validation') },
+      }) as EvalSession
+      const options = { baseline: true, fromCommitted, seedPolicy: 'declared' as const }
+      await expect(runReportVerb(session, {}, options)).rejects.toThrow(/--from-committed.*batchKey/)
+    },
+  )
+
+  it.each(['body-mismatch', 'malformed-judge'])(
+    'names the requested file on %s and writes no pointer', async malformed => {
+      const { session, batchKey, reportFile, committedRoot } = await committedReportFixture()
+      const report = JSON.parse(await readFile(reportFile, 'utf8'))
+      if (malformed === 'body-mismatch') report.batchKey = computeBatchKey([])
+      else report.mixedJudgeModelIds = 'not-an-array'
+      await writeFile(reportFile, committedFileText(report))
+      const before = await readFile(reportFile, 'utf8')
+      const options = { baseline: true, fromCommitted: batchKey, seedPolicy: 'declared' as const }
+      await expect(runReportVerb(session, {}, options)).rejects.toThrow(reportFile)
+      await expect(runReportVerb(session, {}, options)).rejects.toThrow(batchKey)
+      expect(existsSync(join(committedRoot, 'reports', 'baselines'))).toBe(false)
+      expect(await readFile(reportFile, 'utf8')).toBe(before)
+    },
+  )
+
+  it('wires both report flags through Commander and emits one JSON DTO', async () => {
+    const { configPath, batchKey, reportFile } = await committedReportFixture()
+    const { logs, errors } = captureConsole()
+    expect(createEvalCommand().commands.find(command => command.name() === 'report')!
+      .options.map(option => option.flags)).toContain('--from-committed <batchKey>')
+    await buildProgram().parseAsync([
+      '--config', configPath, 'eval', 'report', '--baseline',
+      '--from-committed', batchKey, '--seed-policy', 'declared', '--json',
+    ], { from: 'user' })
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    expect(logs).toHaveLength(1)
+    expect(JSON.parse(logs[0]!)).toMatchObject({
+      batchKey, committedFile: reportFile, baseline: { kind: 'written' }, source: 'committed',
+    })
+  })
+
+  it('maps an invalid --seed-policy to the typed parser message and exitCode 1', async () => {
+    const { logs, errors } = captureConsole()
+    expect(createEvalCommand().commands.find(command => command.name() === 'report')!
+      .options.map(option => option.flags)).toContain('--seed-policy <none|declared>')
+    await buildProgram().parseAsync([
+      '--config', join(tmpRoot, 'absent-config.yaml'), 'eval', 'report',
+      '--baseline', '--from-committed', computeBatchKey([]), '--seed-policy', 'random',
+    ], { from: 'user' })
+    expect(process.exitCode).toBe(1)
+    expect(errors.join('\n')).toContain('--seed-policy must be "none" or "declared", got "random"')
+    expect(logs).toEqual([])
+  })
+})
+
 async function baselineProfileKey(session: EvalSession, seedPolicy: SeedPolicy = 'none'): Promise<string> {
   return composeBaselineProfileKey({
     plannerModelId: BASELINE_PLANNER_MODEL_ID,
@@ -2860,7 +3092,7 @@ describe('runReportVerb --commit --baseline — designation through the refusing
 
     const result = await runReportVerb(session, {}, { commit: true, baseline: true })
 
-    expect(result.committed?.kind).toBe('committed')
+    expect(result.committed).toMatchObject({ kind: 'committed', decisions: 'written' })
     const profileKey = await baselineProfileKey(session)
     expect(result.profileKey).toBe(profileKey)
     expect(profileKey).toMatch(/^planner=gpt-4o\|fingerprint=[0-9a-f]{64}\|matcher=1\|/)
@@ -2883,7 +3115,7 @@ describe('runReportVerb --commit --baseline — designation through the refusing
     })
     expect(result.notices).toContain(
       'baseline designated under seed policy none — eval gate compares against a declared-policy '
-      + "pointer; re-designate with --from-committed --seed-policy declared once Plan 17's flag exists",
+      + 'pointer; re-designate with eval report --baseline --from-committed <batchKey> --seed-policy declared',
     )
   })
 
