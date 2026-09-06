@@ -366,8 +366,10 @@ describe('offline release gate', () => {
   it.each([undefined, null, [], {}, { fingerprint: 12, corpusDigest: 'bad' },
     { fingerprint: 'bad', corpusDigest: 'a'.repeat(64) }])('refuses missing or malformed saved run identity %j with vectors', async identity => {
     const f = await fixture()
-    const stored = new evalLocal.FsReportStore({ root: f.input.agentQaRoot }).save(f.baseline.report, f.baseline.decisions)
-    rewrite(stored.file, value => { if (identity === undefined) delete value.runIdentity; else value.runIdentity = identity })
+    const invalid = structuredClone(f.baseline.report)
+    if (identity === undefined) Reflect.deleteProperty(invalid, 'runIdentity')
+    else Reflect.set(invalid, 'runIdentity', identity)
+    const stored = new evalLocal.FsReportStore({ root: f.input.agentQaRoot }).save(invalid, f.baseline.decisions)
     expect(await evalLocal.runReleaseGate(offline(f))).toMatchObject({
       kind: 'refused', refusal: { path: stored.file, reason: expect.stringContaining('runIdentity') },
     })

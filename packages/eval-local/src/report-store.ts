@@ -8,10 +8,11 @@
 // The filename derives ONLY from report.batchKey — eval core's deterministic replay-batch key
 // (sha256 over the canonical sorted cassette-id list, D-13) — through schema's slugBranch
 // sanitizer (T-368-10 path-traversal control). No timestamps or random components are minted
-// here, so a rerun of the same batch overwrites the same file (file-scoped plain rewrite) and a
+// in the published identity, so a rerun of the same batch replaces the same file and a
 // different batch lands beside it. Bytes are deterministic: same report ⇒ same path, same bytes.
-// 415 D-16 adds an optional .decisions.json sidecar. Replacing a report without decisions
-// removes that store-owned sidecar so a new run never inherits stale pairing evidence.
+// 415 D-16 adds an optional .decisions.json sidecar. A staging-only publication manifest
+// binds both file digests before either replacement; interrupted or interleaved generations
+// refuse at the reader. Legacy evidence without a manifest remains readable unchanged.
 //
 // `.agent-qa/eval/reports/` joins `eval/replays/` as UNCOMMITTED runtime staging: committed
 // placement (the corpus root with fail-closed egress) is Phase 371/372's concern; Phase 372's
@@ -20,12 +21,12 @@
 // eval-local serializes only (F9): the report arrives fully aggregated from eval core's
 // buildEvalReport — no aggregation or scoring logic lives in this file.
 
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 
 import { guardDecisionVectorsDocument } from '@vostride/agent-qa-eval'
 import type { DecisionVectorsDocument, EvalBatchReport } from '@vostride/agent-qa-eval'
-import { slugBranch } from '@vostride/agent-qa-schema'
+import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 export const DEFAULT_EVAL_REPORTS_SUBDIR = 'eval/reports'
@@ -69,6 +70,29 @@ const stagedReportSchema = z.object({
   }).passthrough().optional(),
 }).passthrough()
 
+const publicationSchema = z.object({
+  schemaVersion: z.literal(1),
+  reportDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  decisionsDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+}).strict()
+
+function readOptional(file: string): string | undefined {
+  try {
+    return readFileSync(file, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+function removeOptional(file: string): void {
+  try {
+    unlinkSync(file)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+
 /** Probe exactly one directory; callers own the gate-root-first search order. */
 export function loadStagedReport(
   root: string,
@@ -78,9 +102,18 @@ export function loadStagedReport(
   const outputRoot = outputDir ?? join(root, DEFAULT_EVAL_REPORTS_SUBDIR)
   const stem = slugBranch(batchKey)
   const file = join(outputRoot, `${stem}.json`)
+  const publicationFile = join(outputRoot, `${stem}.publication.json`)
+  let publicationText: string | undefined
+  try {
+    publicationText = readOptional(publicationFile)
+  } catch (error) {
+    return { kind: 'refused', file: publicationFile, reason: `publication unreadable: ${(error as Error).message}` }
+  }
+  let reportText: string
   let value: unknown
   try {
-    value = JSON.parse(readFileSync(file, 'utf8'))
+    reportText = readFileSync(file, 'utf8')
+    value = JSON.parse(reportText)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent', file }
     return { kind: 'refused', file, reason: `report unreadable: ${(error as Error).message}` }
@@ -94,30 +127,51 @@ export function loadStagedReport(
   }
   const report = parsed.data as unknown as EvalBatchReport
   const decisionsFile = join(outputRoot, `${stem}.decisions.json`)
+  let decisionsText: string | undefined
   let decisionsValue: unknown
   try {
-    decisionsValue = JSON.parse(readFileSync(decisionsFile, 'utf8'))
+    decisionsText = readOptional(decisionsFile)
+    decisionsValue = decisionsText === undefined ? undefined : JSON.parse(decisionsText)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'loaded', report, file }
     return {
       kind: 'refused', file: decisionsFile,
       reason: `decisions unreadable: ${(error as Error).message}`,
     }
   }
-  const guarded = guardDecisionVectorsDocument(decisionsValue)
-  if (guarded.kind === 'rejected') {
-    return { kind: 'refused', file: decisionsFile, reason: `decisions rejected: ${guarded.reason}` }
-  }
-  // Plan 09 passes only vectors into the gate; document identity must be checked here.
-  for (const field of ['batchKey', 'matcherVersion'] as const) {
-    if (guarded.document[field] !== report[field]) {
-      return {
-        kind: 'refused', file: decisionsFile,
-        reason: `decisions ${field} does not match the report ${field}`,
+  let decisions: DecisionVectorsDocument | undefined
+  if (decisionsValue !== undefined) {
+    const guarded = guardDecisionVectorsDocument(decisionsValue)
+    if (guarded.kind === 'rejected') {
+      return { kind: 'refused', file: decisionsFile, reason: `decisions rejected: ${guarded.reason}` }
+    }
+    // Plan 09 passes only vectors into the gate; check document identity at this boundary.
+    for (const field of ['batchKey', 'matcherVersion'] as const) {
+      if (guarded.document[field] !== report[field]) {
+        return { kind: 'refused', file: decisionsFile,
+          reason: `decisions ${field} does not match the report ${field}` }
       }
     }
+    decisions = guarded.document
   }
-  return { kind: 'loaded', report, decisions: guarded.document, file }
+  // Read the manifest on both sides of the data reads, including the legacy absent case.
+  // No newly published generation can be mistaken for an unbound historical pair.
+  try {
+    if (readOptional(publicationFile) !== publicationText) {
+      return { kind: 'refused', file: publicationFile, reason: 'report publication changed during read' }
+    }
+    if (publicationText !== undefined) {
+      const publication = publicationSchema.parse(JSON.parse(publicationText))
+      if (publication.reportDigest !== sha256hex(reportText)) {
+        return { kind: 'refused', file, reason: 'report publication digest mismatch' }
+      }
+      if (publication.decisionsDigest !== (decisionsText === undefined ? null : sha256hex(decisionsText))) {
+        return { kind: 'refused', file: decisionsFile, reason: 'decisions publication digest mismatch or incomplete sidecar' }
+      }
+    }
+  } catch (error) {
+    return { kind: 'refused', file: publicationFile, reason: `publication rejected: ${(error as Error).message}` }
+  }
+  return { kind: 'loaded', report, ...(decisions === undefined ? {} : { decisions }), file }
 }
 
 export class FsReportStore {
@@ -137,18 +191,39 @@ export class FsReportStore {
     }
     const file = join(this.outputRoot, `${slugBranch(report.batchKey)}.json`)
     const decisionsFile = join(this.outputRoot, `${slugBranch(report.batchKey)}.decisions.json`)
-    // Remove stale evidence before replacing its report, limited to this one owned file.
-    if (decisions === undefined) {
+    const publicationFile = join(this.outputRoot, `${slugBranch(report.batchKey)}.publication.json`)
+    const reportText = `${JSON.stringify(report, null, 2)}\n`
+    const decisionsText = decisions === undefined ? undefined : `${JSON.stringify(decisions, null, 2)}\n`
+    const publicationText = `${JSON.stringify({ schemaVersion: 1,
+      reportDigest: sha256hex(reportText),
+      decisionsDigest: decisionsText === undefined ? null : sha256hex(decisionsText),
+    }, null, 2)}\n`
+    mkdirSync(dirname(file), { recursive: true })
+    // Unique temporary storage keeps concurrent writers from sharing a staging file.
+    const temporary = mkdtempSync(join(this.outputRoot, '.publish-'))
+    const replace = (target: string, text: string): void => {
+      const staged = join(temporary, basename(target))
       try {
-        unlinkSync(decisionsFile)
+        writeFileSync(staged, text, 'utf8')
+        renameSync(staged, target)
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        const io = error as NodeJS.ErrnoException
+        if (typeof io.code !== 'string') throw error
+        // The public failed file is the intended publication; retain OS detail and cause.
+        throw Object.assign(new Error(io.message, { cause: error }), { code: io.code, path: target })
       }
     }
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
-    if (decisions !== undefined) {
-      writeFileSync(decisionsFile, `${JSON.stringify(decisions, null, 2)}\n`, 'utf8')
+    try {
+      replace(publicationFile, publicationText)
+      // Invalidate even when this save supplies new vectors, before replacing the report.
+      removeOptional(decisionsFile)
+      replace(file, reportText)
+      if (decisionsText !== undefined) replace(decisionsFile, decisionsText)
+    } finally {
+      for (const target of [publicationFile, file, decisionsFile]) {
+        removeOptional(join(temporary, basename(target)))
+      }
+      rmdirSync(temporary)
     }
     return { batchKey: report.batchKey, file, ...(decisions === undefined ? {} : { decisionsFile }) }
   }
