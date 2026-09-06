@@ -7,7 +7,7 @@
 
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
-import { renderCensusFloorLines, renderReportEvidenceLines } from '../eval-report-render.js'
+import { renderCensusFloorLines, renderFloorSummary, renderReportEvidenceLines } from '../eval-report-render.js'
 import type {
   BaselineComparatorRefusal,
   CensusVerbResult,
@@ -34,6 +34,16 @@ function parseIntegerFlag(flagName: string): (value: string) => number {
     }
     return Number.parseInt(value.trim(), 10)
   }
+}
+
+/** Parse inside the action so an invalid protocol remains a typed invocation failure. */
+function parseFloorSeeds(value: string | undefined): number[] | undefined {
+  if (value === undefined) return undefined
+  const seeds = value.split(',').map(parseIntegerFlag('--seeds'))
+  if (new Set(seeds).size < 2) {
+    throw new InvalidArgumentError('FLOOR_PROTOCOL_MINIMUM: --seeds requires at least two distinct integers')
+  }
+  return seeds
 }
 
 /**
@@ -689,6 +699,44 @@ export function createEvalCommand(): Command {
           }
         },
       ),
+  )
+
+  cmd.addCommand(
+    new Command('floor')
+      .description('Measure the committed corpus noise floor with recorded repeats and seeds')
+      .option('--repeats <n>', 'same-seed repeats (recorded default: 3; minimum: 3)')
+      .option('--seeds <a,b>', 'distinct measurement seeds (recorded default: 11,29)')
+      .option('--bootstrap-seed <n>', 'bootstrap seed (recorded default: 7)')
+      .option('--commit', 'commit the measured per-profile floor through the write-once checkpoint')
+      .option('--explanation <text>', 'operator explanation, required to commit a zero floor')
+      .option('--classifier-repeatability <path>', 'guarded classifier measurement JSON, relative to config')
+      .option('--json', 'emit the typed result DTO to stdout')
+      .action(async (opts: {
+        repeats?: string; seeds?: string; bootstrapSeed?: string; commit?: boolean
+        explanation?: string; classifierRepeatability?: string; json?: boolean
+      }, command: Command) => {
+        try {
+          const repeats = opts.repeats === undefined ? undefined : parseIntegerFlag('--repeats')(opts.repeats)
+          const seeds = parseFloorSeeds(opts.seeds)
+          const bootstrapSeed = opts.bootstrapSeed === undefined ? undefined
+            : parseIntegerFlag('--bootstrap-seed')(opts.bootstrapSeed)
+          const { resolveEvalSession, runFloorVerb } = await import('../eval-session-composition.js')
+          const session = await resolveEvalSession({ configPath: getGlobalConfigPath(command) })
+          const result = await runFloorVerb(session, {
+            repeats, seeds, bootstrapSeed, commit: opts.commit,
+            explanation: opts.explanation, classifierRepeatability: opts.classifierRepeatability,
+          })
+          if (opts.json) {
+            console.log(JSON.stringify(result, null, 2))
+            for (const notice of result.notices) console.error(notice)
+          } else {
+            for (const line of renderFloorSummary(result)) console.log(line)
+          }
+        } catch (error) {
+          console.error(pc.red(error instanceof Error ? error.message : String(error)))
+          process.exitCode = 1
+        }
+      }),
   )
 
   return cmd

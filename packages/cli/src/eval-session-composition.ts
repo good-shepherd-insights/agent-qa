@@ -31,25 +31,31 @@ import {
   buildEvalReport,
   buildSeedingPlan,
   canonicalJson,
+  composeBaselineProfileKey,
   computeBatchKey,
   computeCorpusDigest,
   decisionCorrectnessVectors,
   deriveCensus,
   EXCLUSION_CLASSES,
   extractRunCassettes,
+  FLOOR_PROTOCOL_MINIMUM,
+  guardClassifierRepeatability,
   guardCampaignManifest,
+  JUDGE_CONFIG,
   partitionParamsOf,
   projectBaselinePointer,
   projectDecisionVectorsDocument,
   projectPartitionManifest,
   projectRunExclusion,
   renderBaselineComparatorRefusal,
+  renderFloorRefusal,
   resolveJudgeFamily,
   resolveProductPartition,
   SEED_POLICIES,
 } from '@vostride/agent-qa-eval'
 import type {
   BaselineComparatorRefusal,
+  ClassifierRepeatability,
   CassetteScore,
   CorpusCensus,
   DecisionScoreEntry,
@@ -65,6 +71,7 @@ import {
   COMMITTED_CASSETTES_DIR,
   DEFAULT_EVAL_CASSETTES_SUBDIR,
   DEFAULT_EVAL_REPLAYS_SUBDIR,
+  FloorProtocolError,
   FsCassetteStore,
   FsReplayRecordStore,
   FsReportStore,
@@ -85,6 +92,7 @@ import {
   readCommittedCorpus,
   readPartitionManifests,
   readRunExclusions,
+  runNoiseFloorMeasurement,
   seedCommittedCorpus,
   sweepCassetteReplays,
   writeBaselinePointer,
@@ -94,6 +102,7 @@ import {
 import type {
   CommitCensusOutcome,
   CommitEvalReportOutcome,
+  RunNoiseFloorMeasurementResult,
   SeedingRefusal,
   WriteBaselinePointerOutcome,
 } from '@vostride/agent-qa-eval-local'
@@ -695,6 +704,107 @@ export async function resolveReplayPlanner(
     )
   }
   return resolveNamedProfile(plannerName, session.configPath)
+}
+
+// D-01: three same-seed repeats establish the recorded minimum spread.
+export const FLOOR_DEFAULT_REPEATS = 3
+// D-01: the recorded pair adds one whole-corpus run under a second seed.
+export const FLOOR_DEFAULT_SEEDS = [11, 29] as const
+// D-15: fixed resampling seed makes the bootstrap disclosure reproducible.
+export const FLOOR_DEFAULT_BOOTSTRAP_SEED = 7
+
+/** Measurement data and write-once outcomes, rendered identically on console and JSON. */
+export interface FloorVerbResult extends RunNoiseFloorMeasurementResult {
+  /** Actual same-seed repeat count supplied to the measurement. */
+  repeats: number
+  /** Distinct seeds in run order, with the first repeated above. */
+  seeds: readonly number[]
+  /** Actual deterministic bootstrap seed. */
+  bootstrapSeed: number
+  /** True only when none of the protocol settings was overridden. */
+  recordedDefaults: boolean
+  /** Digest of the committed snapshot measured by the composition. */
+  corpusDigest: string
+  /** Only measured per-run cost lines; raw cassette progress remains stderr-only. */
+  costLines: string[]
+}
+
+/** Measure the committed corpus through the shared replay/fold/write composition. */
+export async function runFloorVerb(
+  session: EvalSession,
+  opts: {
+    repeats?: number
+    seeds?: readonly number[]
+    bootstrapSeed?: number
+    commit?: boolean
+    explanation?: string
+    classifierRepeatability?: string
+    plannerOverrides?: ModelProviderOverrides
+    judgeOverrides?: ModelProviderOverrides
+  } = {},
+): Promise<FloorVerbResult> {
+  const repeats = opts.repeats ?? FLOOR_DEFAULT_REPEATS
+  const seeds = [...new Set(opts.seeds ?? FLOOR_DEFAULT_SEEDS)]
+  const bootstrapSeed = opts.bootstrapSeed ?? FLOOR_DEFAULT_BOOTSTRAP_SEED
+  // Refuse the protocol before named-profile resolution or credentials can be needed.
+  if (!Number.isSafeInteger(repeats) || repeats < FLOOR_PROTOCOL_MINIMUM.repeats
+    || seeds.length < FLOOR_PROTOCOL_MINIMUM.seeds || !seeds.every(Number.isSafeInteger)) {
+    throw new FloorProtocolError()
+  }
+  if (!Number.isSafeInteger(bootstrapSeed)) throw new TypeError('--bootstrap-seed must be a safe integer')
+  let classifierRepeatability: ClassifierRepeatability | undefined
+  if (opts.classifierRepeatability !== undefined) {
+    const path = resolve(session.configDir, opts.classifierRepeatability)
+    let value: unknown
+    try {
+      value = JSON.parse(await readFile(path, 'utf8'))
+    } catch (error) {
+      throw new TypeError(`classifier repeatability unreadable at ${path}: ${(error as Error).message}`)
+    }
+    const guarded = guardClassifierRepeatability(value)
+    if (guarded.kind === 'rejected') {
+      throw new TypeError(`classifier repeatability rejected at ${path}: ${guarded.reason}`)
+    }
+    classifierRepeatability = guarded.repeatability
+  }
+  const planner = await resolveReplayPlanner(session)
+  const judgeResolution = await resolveEvalJudge(session)
+  const judge = judgeResolution.judge === undefined ? undefined
+    : { ...judgeResolution.judge, modelOverrides: opts.judgeOverrides }
+  const fingerprint = await resolveReplayProfileFingerprint(session, 'declared', opts.plannerOverrides)
+  const profileKeyInputs = {
+    plannerModelId: await resolvePlannerModelId(session),
+    matcherVersion: buildEvalReport([]).matcherVersion,
+    ...(judge === undefined ? {} : { judgeModelId: judge.profile.model, judgeVersion: JUDGE_CONFIG.judgeVersion }),
+  }
+  const profileKey = composeBaselineProfileKey({ ...profileKeyInputs, fingerprint })
+  const costLines: string[] = []
+  const result = await runNoiseFloorMeasurement({
+    committedRoot: resolve(session.configDir, 'agent-qa-eval'),
+    cassettesRoot: resolveCassettesRoot(session, 'committed').cassettesRoot,
+    agentQaRoot: resolve(session.configDir, '.agent-qa'),
+    ...planner,
+    modelOverrides: opts.plannerOverrides,
+    judge,
+    maskingContextFactory: session.maskingContextFactory,
+    profileKeyInputs,
+    seeds, repeats, bootstrapSeed, classifierRepeatability,
+    explanation: opts.explanation,
+    commit: opts.commit === true,
+    reportOutputBaseDir: evalAuditDir(session.configDir, 'floor', profileKey),
+    onProgress: line => {
+      if (/^floor r\d+ seed=/.test(line)) costLines.push(line)
+      process.stderr.write(line + '\n')
+    },
+  })
+  const notices = [...result.notices]
+  if (judgeResolution.notice !== undefined) notices.unshift(judgeResolution.notice)
+  if (result.committed?.kind === 'refused') notices.push(renderFloorRefusal(result.committed.refusal))
+  return {
+    ...result, notices, repeats, seeds, bootstrapSeed, costLines,
+    recordedDefaults: opts.repeats === undefined && opts.seeds === undefined && opts.bootstrapSeed === undefined,
+    corpusDigest: result.artefact.corpusDigest,
+  }
 }
 
 // ---- the seed verb (372-07, D-01/D-12/D-16/D-17; 413-06, D-04/D-09) ---------------------------

@@ -6,7 +6,38 @@
 // per-decision diff renderer stays JSON-DTO territory (369 D-16).
 
 import type { EvalBatchReport } from '@vostride/agent-qa-eval'
-import type { CensusVerbResult, ReportVerbResult } from './eval-session-composition.js'
+import type { CensusVerbResult, FloorVerbResult, ReportVerbResult } from './eval-session-composition.js'
+
+/** Console-only floor disclosure, preserving denominators and undefined measurements. */
+export function renderFloorSummary(result: FloorVerbResult): string[] {
+  const lines = [
+    `eval floor: repeats=${result.repeats} seeds=${result.seeds.join(',')} bootstrapSeed=${result.bootstrapSeed}`
+      + (result.recordedDefaults ? ' (recorded defaults)' : ''),
+    `profile: ${result.profileKey}`,
+    `corpus: ${result.corpusDigest}`,
+  ]
+  for (const [axis, floor] of Object.entries(result.artefact.axes)) {
+    lines.push(`${axis}: floor=${floor.aggregateFloor ?? 'undefined'} n=${floor.n} `
+      + `sameSeed=${floor.sameSeedSpread ?? 'undefined'} twoSeed=${floor.twoSeedSpread ?? 'undefined'} `
+      + `wilson=${floor.wilsonHalfWidth ?? 'undefined'}`)
+  }
+  for (const product of Object.keys(result.artefact.products).sort()) {
+    const { minimumGateSet: minimum, census } = result.artefact.products[product]!
+    lines.push(`${product}: minimumGateSet=${minimum.value ?? `undefined (${minimum.derivation})`} `
+      + `natural=${census.natural} heldOut=${census.heldOutShared + census.heldOutPrivate}`)
+  }
+  const committed = result.committed
+  if (committed !== undefined) {
+    lines.push(`committed: ${committed.kind}` + ('path' in committed ? ` (${committed.path})` : ''))
+    if (committed.kind === 'egress-blocked') {
+      for (const detection of committed.detections) {
+        lines.push(`egress-blocked: ${detection.label} (${detection.detector})`)
+      }
+    }
+  }
+  for (const refusal of result.refusals) lines.push(`read refused: ${refusal.path}: ${refusal.reason}`)
+  return [...lines, ...result.notices]
+}
 
 /** Console-only evidence disclosure; committed report markdown below remains byte-stable. */
 export function renderReportEvidenceLines(result: ReportVerbResult): string[] {
