@@ -1,0 +1,56 @@
+{
+  "caution/door1-promote": {
+    "outcomes": "{\"buildOrdinal\":43,\"curationJobId\":\"fc20680ab6f9a7d027b82bdad75c33faa0b63c76ac8081f409719a1faeebe81a\",\"evidenceToken\":\"held-checkout-confirm\",\"observationId\":\"knowledge-port:a1d7627cb6bb22142b3be61bd00182ffb6cea2870ff453e3e27e00b1b9100e51\",\"origin\":\"agent-verified\",\"type\":\"confirmed\"}\n{\"buildOrdinal\":43,\"curationJobId\":\"promote:caution-error-checkout-confirmation-timed-out-0da26b0ef7ca9e35\",\"evidenceToken\":\"d8d6531ccdb57bdd49a0585a8200975d5dbe7e923b723c7f56be8aacf733d923\",\"type\":\"promoted\"}\n",
+    "promotedEvents": 1,
+    "status": "active",
+    "trust": "{\"counters\":{\"confirmed\":1,\"contradicted\":0,\"harmful\":0,\"helpful\":0},\"lastConfirmedOrdinal\":43,\"status\":\"active\",\"trust\":0.75,\"validity\":{\"openedAtOrdinal\":42}}",
+    "verdictBefore": {
+      "verdict": "promote"
+    }
+  },
+  "caution/door2-canary": {
+    "outcomes": "{\"buildOrdinal\":43,\"curationJobId\":\"dcf00aa295e5aac0162e3722c09fee1ec0afad5a35e5ae0d1c9241c649f57432\",\"evidenceToken\":\"0098ca0bba829e831f1c2342ba4a3c8d834a6accda52705effd0064a1944d8d5\",\"observationId\":\"knowledge-port:2e5ae928353243413e4f5673794736f3611d2cdea52f38a66ce85cb61323465b\",\"origin\":\"agent-verified\",\"type\":\"confirmed\"}\n{\"buildOrdinal\":43,\"curationJobId\":\"promote:caution-error-checkout-confirmation-timed-out-0da26b0ef7ca9e35\",\"evidenceToken\":\"d8d6531ccdb57bdd49a0585a8200975d5dbe7e923b723c7f56be8aacf733d923\",\"type\":\"promoted\"}\n",
+    "promotedEvents": 1,
+    "status": "active",
+    "trust": "{\"counters\":{\"confirmed\":1,\"contradicted\":0,\"harmful\":0,\"helpful\":0},\"lastConfirmedOrdinal\":43,\"status\":\"active\",\"trust\":0.75,\"validity\":{\"openedAtOrdinal\":42}}",
+    "verdictBefore": {
+      "verdict": "promote"
+    }
+  },
+  "caution/door3-drain": {
+    "outcomes": "{\"buildOrdinal\":42,\"curationJobId\":\"556a4cbb22dd2a24cea75be09ae531f982e134302a1cf65eb9265b22c364ab36\",\"evidenceToken\":\"promotion-evidence-caution-door3-drain\",\"observationId\":\"promotion-observation-caution-door3-drain\",\"observationOrdinal\":42,\"origin\":\"agent-verified\",\"type\":\"confirmed\"}\n{\"buildOrdinal\":42,\"curationJobId\":\"556a4cbb22dd2a24cea75be09ae531f982e134302a1cf65eb9265b22c364ab36\",\"evidenceToken\":\"702ac5e43e29a6f37105f73f9ec8e04c4002ba58c83d9129c5b33c90a7ab20b0\",\"type\":\"promoted\"}\n",
+    "promotedEvents": 1,
+    "status": "active",
+    "trust": "{\"counters\":{\"confirmed\":1,\"contradicted\":0,\"harmful\":0,\"helpful\":0},\"lastConfirmedOrdinal\":42,\"status\":\"active\",\"trust\":0.75,\"validity\":{\"openedAtOrdinal\":42}}",
+    "verdictBefore": {
+      "verdict": "promote"
+    }
+  },
+  "fact/door1-promote": {
+    "outcomes": "{\"buildOrdinal\":43,\"curationJobId\":\"a473b9ce9af1d3686dd7950abff81b8560afefb76ec33911199e28ffc9b06222\",\"evidenceToken\":\"held-checkout-confirm\",\"observationId\":\"knowledge-port:a5a04fb204fef49911b072b66a5eeb0a0dd18b2a77d3e6bd54fc85886b07d061\",\"origin\":\"agent-verified\",\"type\":\"confirmed\"}\n{\"buildOrdinal\":43,\"curationJobId\":\"promote:fact-el-button-held-checkout-fact-door1-promote-cc0a8d00860c5337\",\"evidenceToken\":\"7f002663d3f8a73647dc4f4dc08b613af3316748cf64e751d42bf29e0e603cd4\",\"type\":\"promoted\"}\n",
+    "promotedEvents": 1,
+    "status": "active",
+    "trust": "{\"counters\":{\"confirmed\":1,\"contradicted\":0,\"harmful\":0,\"helpful\":0},\"lastConfirmedOrdinal\":43,\"status\":\"active\",\"trust\":0.75,\"validity\":{\"openedAtOrdinal\":42}}",
+    "verdictBefore": {
+      "verdict": "promote"
+    }
+  },
+  "fact/door2-canary": {
+    "outcomes": "{\"buildOrdinal\":43,\"curationJobId\":\"1d68ff246808d68168b74db31154e3369b10e680a99cfe63ac1b707d0ee34be9\",\"evidenceToken\":\"5f611fe17bf4a92f0e1442f4a851712c84fb4c326ac0751007130aba1e94ee19\",\"observationId\":\"knowledge-port:8b3b5fe534f25e4add2ca039a0477462122d9ae8fc4aad05acf99d94e00cc69d\",\"origin\":\"agent-verified\",\"type\":\"confirmed\"}\n{\"buildOrdinal\":43,\"curationJobId\":\"promote:fact-el-button-held-checkout-fact-door2-canary-c6f8eb46cf81885c\",\"evidenceToken\":\"4fbb71627919c7cd5ab04d8b9b4266ec4fd4ae7bd3adf8cc29afb229135bf816\",\"type\":\"promoted\"}\n",
+    "promotedEvents": 1,
+    "status": "active",
+    "trust": "{\"counters\":{\"confirmed\":1,\"contradicted\":0,\"harmful\":0,\"helpful\":0},\"lastConfirmedOrdinal\":43,\"status\":\"active\",\"trust\":0.75,\"validity\":{\"openedAtOrdinal\":42}}",
+    "verdictBefore": {
+      "verdict": "promote"
+    }
+  },
+  "fact/door3-drain": {
+    "outcomes": "{\"buildOrdinal\":42,\"curationJobId\":\"91630d6f9a8e0ab7b8d1fad44339af3940a43a06cc1f76685de6d26a25b9ffeb\",\"evidenceToken\":\"promotion-evidence-fact-door3-drain\",\"observationId\":\"promotion-observation-fact-door3-drain\",\"observationOrdinal\":42,\"origin\":\"agent-verified\",\"type\":\"confirmed\"}\n{\"buildOrdinal\":42,\"curationJobId\":\"91630d6f9a8e0ab7b8d1fad44339af3940a43a06cc1f76685de6d26a25b9ffeb\",\"evidenceToken\":\"28c4dec5231aded9ff0e6041e9bfc9a847eb1a7761310a33c26328f74ac9fd6c\",\"type\":\"promoted\"}\n",
+    "promotedEvents": 1,
+    "status": "active",
+    "trust": "{\"counters\":{\"confirmed\":1,\"contradicted\":0,\"harmful\":0,\"helpful\":0},\"lastConfirmedOrdinal\":42,\"status\":\"active\",\"trust\":0.75,\"validity\":{\"openedAtOrdinal\":42}}",
+    "verdictBefore": {
+      "verdict": "promote"
+    }
+  }
+}
