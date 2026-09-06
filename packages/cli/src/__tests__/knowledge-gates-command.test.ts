@@ -219,6 +219,28 @@ describe('agent-qa knowledge gates', () => {
       ? `promote via ${dto.live.promotionPath}` : `held: ${dto.live.reason}`)
   })
 
+  it('shows Gate-2 corpus freshness and promotion receipt identity in human history', async () => {
+    const { config, configPath, id } = fixture()
+    const gate = stampReceiptDigest({
+      schemaVersion: 1, gate: 2, verdict: 'pass', candidateId: id,
+      producedAtOrdinal: 6, producedBy: { jobId: 'canary-review' },
+      attributedObservationId: 'synthetic-observation', corpusVersion: { corpusDigest: 'd'.repeat(64) },
+      benefit: 'exercised-benefited', stateValidity: 'valid',
+    })
+    expect(appendGateReceipt(config, id, gate)).toEqual({ kind: 'appended' })
+    expect(appendPromotionReceipt(config, id, {
+      schemaVersion: 1, kind: 'promotion', candidateId: id,
+      promotionPath: 'gate1+gate2', citedReceiptDigests: [gate.receiptDigest],
+      producedAtOrdinal: 7, producedBy: { opId: 'promote' },
+    })).toEqual({ kind: 'appended' })
+    const dto = KnowledgeGatesListResultSchema.parse(JSON.parse(await invoke(configPath, [id, '--json'])))
+    if (dto.kind !== 'found') throw new Error('published record not found')
+    const human = await invoke(configPath, [id])
+    const lines = human.split('\n')
+    expect(lines.find(line => line.startsWith('gate 2 pass'))).toContain(`corpus ${gate.corpusVersion.corpusDigest.slice(0, 12)}`)
+    expect(lines.find(line => line.startsWith('promotion gate1+gate2'))).toContain(`digest ${dto.lines[1].receiptDigest.slice(0, 12)}`)
+  })
+
   it('reports no gate receipts with the actual live answer and reports not found', async () => {
     const { configPath, id } = fixture()
     const dto = KnowledgeGatesListResultSchema.parse(JSON.parse(await invoke(configPath, [id, '--json'])))

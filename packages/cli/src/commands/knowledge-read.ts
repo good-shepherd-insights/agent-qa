@@ -332,9 +332,9 @@ function renderGates(dto: KnowledgeGatesListResult): string {
     ...dto.lines.map(line => {
       const by = [line.producedBy.jobId, line.producedBy.opId].filter(Boolean).join('|') || '-'
       if ('kind' in line) {
-        return `promotion ${line.promotionPath} @${line.producedAtOrdinal} by ${by} cites ${line.citedReceiptDigests.length}`
+        return `promotion ${line.promotionPath} @${line.producedAtOrdinal} by ${by} cites ${line.citedReceiptDigests.length} digest ${line.receiptDigest.slice(0, 12)}`
       }
-      const corpus = line.gate === 1 ? line.corpusVersion.corpusDigest.slice(0, 12) : '-'
+      const corpus = line.gate === 3 ? '-' : line.corpusVersion.corpusDigest.slice(0, 12)
       const degradation = line.gate === 1 ? line.degradation ?? '-' : '-'
       return `gate ${line.gate} ${line.verdict} @${line.producedAtOrdinal} by ${by} digest ${line.receiptDigest.slice(0, 12)} corpus ${corpus} degradation ${degradation}`
     }),
