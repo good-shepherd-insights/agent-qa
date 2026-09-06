@@ -22,6 +22,7 @@ function gate1() {
 }
 function gate2() {
   return stampReceiptDigest({ ...core(), gate: 2 as const, attributedObservationId: 'observation',
+    corpusVersion: { corpusDigest: 'c'.repeat(64) },
     benefit: 'exercised-benefited' as const, stateValidity: 'valid' as const })
 }
 function gate3() {
@@ -54,6 +55,26 @@ describe('416 strict complete receipt vocabulary', () => {
     expect(GateReceiptSchema.safeParse(gate2()).success).toBe(true)
     expect(GateReceiptSchema.safeParse({ ...gate2(), benefit: 'helped' }).success).toBe(false)
     expect(GateReceiptSchema.safeParse({ ...gate2(), stateValidity: 'maybe' }).success).toBe(false)
+  })
+  it('requires a Gate-2 corpus digest for freshness', () => {
+    const { corpusVersion: _corpusVersion, ...missingCorpus } = gate2()
+    expect(GateReceiptSchema.safeParse(missingCorpus).success).toBe(false)
+  })
+  it('rejects an invalid Gate-2 digest with the corpusDigest field error', () => {
+    const parsed = GateReceiptSchema.safeParse({ ...gate2(), corpusVersion: { corpusDigest: 'bad' } })
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) expect(parsed.error.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: ['corpusVersion', 'corpusDigest'] }),
+    ]))
+  })
+  it('accepts only the digest in Gate-2 corpusVersion and round-trips it', () => {
+    const receipt = gate2()
+    expect(GateReceiptSchema.safeParse(receipt).success).toBe(true)
+    expect(GateReceiptSchema.parse(receipt)).toEqual(receipt)
+    expect(GateReceiptSchema.safeParse({ ...receipt,
+      corpusVersion: { ...receipt.corpusVersion, partitionVersion: 2 },
+    }).success).toBe(false)
+    expect(GateReceiptSchema.safeParse({ ...receipt, corpusVersion: {} }).success).toBe(false)
   })
   it('parses Gate-3 marks with or without stepId and refuses cross-arm fields', () => {
     expect(GateReceiptSchema.safeParse(gate3()).success).toBe(true)

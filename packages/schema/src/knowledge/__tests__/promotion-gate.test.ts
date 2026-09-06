@@ -4,11 +4,52 @@ import { describe, expect, it } from 'vitest'
 
 import { asEvidenceToken } from '../../ids/record-id'
 import { distilledObservationSchema } from '../distilled-observation'
+import { stampReceiptDigest, type GateReceipt, type GateVerdict } from '../gate-receipt'
 import {
   evaluatePromotionGate,
   type PromotionGateHoldReason,
   type PromotionGateInput,
+  type ResolvedPromotionGatePosture,
 } from '../promotion-gate'
+
+function resolvedPosture(
+  overrides: Partial<ResolvedPromotionGatePosture> = {},
+): ResolvedPromotionGatePosture {
+  return {
+    kind: 'resolved', replayGateAvailable: true, gateSetNonEmpty: true, gateSetVerdict: 'ok',
+    corpusDigest: 'c'.repeat(64), minimumGateSet: 63,
+    counts: { natural: 0, heldOutShared: 0, heldOutPrivate: 0, adversarial: 0, excludedCount: 0 },
+    scope: { partition: 'checkout', resolution: 'product-key' },
+    judge: { capable: false, reason: 'no-judge-configured' },
+    canary: { kind: 'not-provided', rarePathEligible: false },
+    ...overrides,
+  }
+}
+
+function receipt(
+  gate: 1 | 2 | 3, verdict: GateVerdict, producedAtOrdinal = 5,
+  overrides: { corpusDigest?: string } = {},
+): GateReceipt {
+  const core = {
+    schemaVersion: 1 as const, candidateId: 'candidate', verdict, producedAtOrdinal,
+    producedBy: { opId: 'gate-test' },
+  }
+  const corpusDigest = overrides.corpusDigest ?? 'c'.repeat(64)
+  if (gate === 3) return stampReceiptDigest({ ...core, gate, runId: 'run', mark: 'confirmed-bug' })
+  if (gate === 2) return stampReceiptDigest({
+    ...core, gate, corpusVersion: { corpusDigest }, attributedObservationId: 'observation',
+    benefit: 'exercised-benefited', stateValidity: 'valid',
+  })
+  const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
+  return stampReceiptDigest({
+    ...core, gate,
+    perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score,
+      sideEffect: score, loop: score },
+    corpusVersion: { corpusDigest, partitionVersion: 2, gateSetSize: 63,
+      excludedCount: 0, minimumGateSet: 63 },
+    samples: { k: 1, seeds: [1], seedHonored: true, modelCalls: 0 }, crossCheck: 'held',
+  })
+}
 
 const submitAnchor = {
   t: 'el' as const,
@@ -185,6 +226,171 @@ describe('promotion gate architecture', () => {
   })
 })
 
+describe('416 ordered receipt promotion paths', () => {
+  const gated = (gateReceipts: readonly GateReceipt[],
+    overrides: Partial<PromotionGateInput> = {}) => evaluatePromotionGate(factInput({
+      gatePosture: resolvedPosture(), gateReceipts, ...overrides,
+    }))
+  const rarePosture = () => resolvedPosture({
+    canary: { kind: 'provided', attributedRows: 100, rarePathEligible: true },
+  })
+
+  it('requires gate1-receipt-required for fact and caution on a bound gate with empty receipts', () => {
+    for (const build of [factInput, cautionInput]) {
+      expect(evaluatePromotionGate(build({ gatePosture: resolvedPosture(), gateReceipts: [] })))
+        .toEqual({ verdict: 'hold', reason: 'gate1-receipt-required' })
+    }
+    expect(gated([receipt(2, 'pass')])).toEqual({ verdict: 'hold', reason: 'gate1-receipt-required' })
+  })
+
+  it('requires gate2-receipt-required after Gate-1 without rare-path eligibility', () => {
+    expect(gated([receipt(1, 'pass')])).toEqual({ verdict: 'hold', reason: 'gate2-receipt-required' })
+    expect(gated([receipt(1, 'pass')], { gatePosture: resolvedPosture({
+      canary: { kind: 'provided', attributedRows: 100, rarePathEligible: false },
+    }) })).toEqual({ verdict: 'hold', reason: 'gate2-receipt-required' })
+  })
+
+  it('promotes gate1-lower-trust only with explicit rarePathEligible and cites Gate-1', () => {
+    const g1 = receipt(1, 'pass')
+    expect(gated([g1], { gatePosture: rarePosture() })).toEqual({
+      verdict: 'promote', promotionPath: 'gate1-lower-trust', citedReceiptDigests: [g1.receiptDigest],
+    })
+  })
+
+  it.each([5, 6])('promotes gate1+gate2 for a current Gate-2 at ordinal %s (>= adjacency)', (ordinal) => {
+    const g1 = receipt(1, 'pass', 5)
+    const g2 = receipt(2, 'pass', ordinal)
+    expect(gated([g2, g1])).toEqual({ verdict: 'promote', promotionPath: 'gate1+gate2',
+      citedReceiptDigests: [g1.receiptDigest, g2.receiptDigest] })
+    expect(evaluatePromotionGate(cautionInput({ gatePosture: resolvedPosture(),
+      gateReceipts: [g1, g2] }))).toEqual({ verdict: 'promote', promotionPath: 'gate1+gate2',
+      citedReceiptDigests: [g1.receiptDigest, g2.receiptDigest] })
+  })
+
+  it('holds gate2-receipt-required when Gate-2 predates Gate-1', () => {
+    const g1 = receipt(1, 'pass', 5)
+    const g2 = receipt(2, 'pass', 4)
+    expect(gated([g1, g2])).toEqual({ verdict: 'hold', reason: 'gate2-receipt-required' })
+    expect(gated([g1, g2], { gatePosture: rarePosture() })).toEqual({
+      verdict: 'promote', promotionPath: 'gate1-lower-trust', citedReceiptDigests: [g1.receiptDigest],
+    })
+  })
+
+  it.each([1, 2] as const)('holds gate-failed for a standing Gate-%s fail, even on the rare path', (gate) => {
+    expect(gated([receipt(1, 'pass'), receipt(gate, 'fail', 6)],
+      { gatePosture: rarePosture() })).toEqual({ verdict: 'hold', reason: 'gate-failed' })
+  })
+
+  it.each([1, 2] as const)('holds gate-abstained for a standing Gate-%s abstain', (gate) => {
+    expect(gated([receipt(1, 'pass'), receipt(gate, 'abstain', 6)],
+      { gatePosture: rarePosture() })).toEqual({ verdict: 'hold', reason: 'gate-abstained' })
+  })
+
+  it.each([1, 2] as const)('holds receipt-stale for Gate-%s corpus mismatch and accepts a newer current pass', (gate) => {
+    const g1 = receipt(1, 'pass', 5)
+    const stale = receipt(gate, 'pass', 6, { corpusDigest: 'd'.repeat(64) })
+    const current = receipt(gate, 'pass', 7)
+    expect(gated([g1, stale], { gatePosture: rarePosture() }))
+      .toEqual({ verdict: 'hold', reason: 'receipt-stale' })
+    expect(gated([g1, current, stale], { gatePosture: rarePosture() })).toEqual({
+      verdict: 'promote', promotionPath: gate === 1 ? 'gate1-lower-trust' : 'gate1+gate2',
+      citedReceiptDigests: gate === 1 ? [current.receiptDigest] : [g1.receiptDigest, current.receiptDigest],
+    })
+  })
+
+  it('breaks ordinal ties with the later array line for the standing Gate-1', () => {
+    const pass = receipt(1, 'pass', 5)
+    const fail = receipt(1, 'fail', 5)
+    expect(gated([fail, pass], { gatePosture: rarePosture() })).toEqual({
+      verdict: 'promote', promotionPath: 'gate1-lower-trust', citedReceiptDigests: [pass.receiptDigest],
+    })
+    expect(gated([pass, fail], { gatePosture: rarePosture() }))
+      .toEqual({ verdict: 'hold', reason: 'gate-failed' })
+  })
+
+  it('promotes user-sovereign without v51 evidence, Gate-1 or Gate-2 on every host', () => {
+    const g3 = receipt(3, 'pass')
+    for (const gatePosture of [undefined, resolvedPosture(),
+      resolvedPosture({ replayGateAvailable: false })]) {
+      for (const build of [factInput, cautionInput]) {
+        expect(evaluatePromotionGate(build({ gatePosture, gateReceipts: [g3],
+          confirmedOutcomeEvidenceTokens: [], distilledObservations: [], withheld: true,
+          needsEnrichment: true, evidenceIncomplete: true, memoryOffForAnchorGroup: true,
+          hasUserDeprecateInLineage: true,
+        }))).toEqual({ verdict: 'promote', promotionPath: 'user-sovereign',
+          citedReceiptDigests: [g3.receiptDigest] })
+      }
+    }
+  })
+
+  it('never makes Gate-3 stale when other receipts cite a different corpus', () => {
+    const g3 = receipt(3, 'pass')
+    expect(gated([receipt(1, 'pass', 10, { corpusDigest: 'd'.repeat(64) }), g3]))
+      .toEqual({ verdict: 'promote', promotionPath: 'user-sovereign',
+        citedReceiptDigests: [g3.receiptDigest] })
+  })
+
+  it('uses the standing Gate-3 instead of an older sovereign pass', () => {
+    expect(gated([receipt(3, 'pass', 4), receipt(3, 'fail', 5)]))
+      .toEqual({ verdict: 'hold', reason: 'gate1-receipt-required' })
+    expect(gated([receipt(3, 'pass', 5), receipt(3, 'abstain', 5)]))
+      .toEqual({ verdict: 'hold', reason: 'gate1-receipt-required' })
+  })
+
+  it('orders user-sovereign above gate1+gate2 above gate1-lower-trust', () => {
+    const g1 = receipt(1, 'pass')
+    const g2 = receipt(2, 'pass')
+    const g3 = receipt(3, 'pass')
+    expect(gated([g1, g2, g3], { gatePosture: rarePosture() })).toEqual({
+      verdict: 'promote', promotionPath: 'user-sovereign', citedReceiptDigests: [g3.receiptDigest],
+    })
+    expect(gated([g1, g2], { gatePosture: rarePosture() })).toEqual({
+      verdict: 'promote', promotionPath: 'gate1+gate2', citedReceiptDigests: [g1.receiptDigest, g2.receiptDigest],
+    })
+    expect(gated([g1], { gatePosture: rarePosture() })).toEqual({
+      verdict: 'promote', promotionPath: 'gate1-lower-trust', citedReceiptDigests: [g1.receiptDigest],
+    })
+  })
+
+  it.each([true, false])('holds posture-unavailable before evidence or sovereign with replay=%s', (replayGateAvailable) => {
+    expect(gated([receipt(3, 'pass')], { confirmedOutcomeEvidenceTokens: [],
+      gatePosture: { kind: 'unavailable', replayGateAvailable, refusals: ['missing floor'] },
+    })).toEqual({ verdict: 'hold', reason: 'posture-unavailable' })
+  })
+
+  it('holds unprovenanced-candidate or empty-gate-set only with a bound gate, before sovereign', () => {
+    for (const [overrides, reason] of [
+      [{ gateSetVerdict: 'unprovenanced-candidate', gateSetNonEmpty: false }, 'unprovenanced-candidate'],
+      [{ gateSetNonEmpty: false }, 'empty-gate-set'],
+    ] as const) {
+      expect(gated([receipt(3, 'pass')], { gatePosture: resolvedPosture(overrides) }))
+        .toEqual({ verdict: 'hold', reason })
+      expect(gated([], { gatePosture: resolvedPosture({ ...overrides, replayGateAvailable: false }) }))
+        .toEqual(evaluatePromotionGate(factInput()))
+    }
+  })
+
+  it('preserves kind, status and window precedence over receipt and posture checks', () => {
+    for (const [override, reason] of [
+      [{ kind: 'procedure' }, 'kind-excluded'], [{ kind: 'policy' }, 'kind-excluded'],
+      [{ status: 'active' }, 'not-candidate'], [{ validityOpen: false }, 'window-closed'],
+    ] as const) {
+      expect(gated([receipt(1, 'pass'), receipt(3, 'pass')], override))
+        .toEqual({ verdict: 'hold', reason })
+      expect(gated([receipt(3, 'pass')], { ...override,
+        gatePosture: { kind: 'unavailable', replayGateAvailable: true, refusals: ['broken'] },
+      })).toEqual({ verdict: 'hold', reason })
+    }
+  })
+
+  it('retains the v51 evidence checks before Gate-1 and Gate-2 receipt holds', () => {
+    expect(gated([], { confirmedOutcomeEvidenceTokens: [] }))
+      .toEqual({ verdict: 'hold', reason: 'no-confirmed-evidence' })
+    expect(gated([receipt(1, 'pass'), receipt(2, 'pass')], { distilledObservations: [] }))
+      .toEqual({ verdict: 'hold', reason: 'no-element-observation' })
+  })
+})
+
 /**
  * 414 D-14. The gate learns ONE new fact about the world: whether a replay gate exists on this
  * host and, if it does, whether the candidate has a separable gate set left after provenance
@@ -193,10 +399,7 @@ describe('promotion gate architecture', () => {
  * cells below loop EVERY input shape the pre-414 cells in this file build rather than spot-check
  * the base builder.
  */
-const emptyGateSetPosture = {
-  replayGateAvailable: true,
-  gateSetNonEmpty: false,
-} as const
+const emptyGateSetPosture = resolvedPosture({ gateSetNonEmpty: false })
 
 const factVariants: ReadonlyArray<[name: string, override: Partial<PromotionGateInput>]> = [
   ['base promoting fact', {}],
@@ -267,10 +470,15 @@ describe('414 D-14 — gatePosture and the empty-gate-set hold (ROOT-09 SC4)', (
         evaluatePromotionGate(
           factInput({
             ...override,
-            gatePosture: { replayGateAvailable: false, gateSetNonEmpty: false },
+            gatePosture: resolvedPosture({ replayGateAvailable: false, gateSetNonEmpty: false }),
           }),
         ),
       ).toEqual(postureless)
+      expect(evaluatePromotionGate(factInput({ ...override, gateReceipts: [] })))
+        .toEqual(postureless)
+      expect(evaluatePromotionGate(factInput({ ...override, gateReceipts: [],
+        gatePosture: resolvedPosture({ replayGateAvailable: false }),
+      }))).toEqual(postureless)
     },
   )
 
@@ -285,22 +493,30 @@ describe('414 D-14 — gatePosture and the empty-gate-set hold (ROOT-09 SC4)', (
         evaluatePromotionGate(
           cautionInput({
             ...override,
-            gatePosture: { replayGateAvailable: false, gateSetNonEmpty: false },
+            gatePosture: resolvedPosture({ replayGateAvailable: false, gateSetNonEmpty: false }),
           }),
         ),
       ).toEqual(postureless)
+      expect(evaluatePromotionGate(cautionInput({ ...override, gateReceipts: [] })))
+        .toEqual(postureless)
+      expect(evaluatePromotionGate(cautionInput({ ...override, gateReceipts: [],
+        gatePosture: resolvedPosture({ replayGateAvailable: false }),
+      }))).toEqual(postureless)
     },
   )
 
   it.each(factVariants)(
-    'leaves the verdict for %s unchanged on every posture cell but { replay: true, set: false }',
+    'leaves the floor verdict for %s unchanged when judge and canary are disclosed',
     (_name, override) => {
       const postureless = evaluatePromotionGate(factInput(override))
       expect(
         evaluatePromotionGate(
           factInput({
             ...override,
-            gatePosture: { replayGateAvailable: true, gateSetNonEmpty: true },
+            gatePosture: resolvedPosture({ replayGateAvailable: false,
+              judge: { capable: true, reason: 'eligible', judgeFamily: 'other' },
+              canary: { kind: 'provided', attributedRows: 100, rarePathEligible: false },
+            }),
           }),
         ),
       ).toEqual(postureless)
@@ -308,20 +524,19 @@ describe('414 D-14 — gatePosture and the empty-gate-set hold (ROOT-09 SC4)', (
         evaluatePromotionGate(
           factInput({
             ...override,
-            gatePosture: { replayGateAvailable: false, gateSetNonEmpty: true },
+            gatePosture: resolvedPosture({ replayGateAvailable: false }),
           }),
         ),
       ).toEqual(postureless)
     },
   )
 
-  it('holds on exactly one of the four posture cells (adjacency)', () => {
+  it('holds on both bound-gate posture cells and preserves the two floor cells (adjacency)', () => {
     const postureless = evaluatePromotionGate(factInput())
     const cells = [
-      { replayGateAvailable: true, gateSetNonEmpty: true },
-      { replayGateAvailable: false, gateSetNonEmpty: true },
-      { replayGateAvailable: false, gateSetNonEmpty: false },
-    ] as const
+      resolvedPosture({ replayGateAvailable: false, gateSetNonEmpty: true }),
+      resolvedPosture({ replayGateAvailable: false, gateSetNonEmpty: false }),
+    ]
 
     for (const gatePosture of cells) {
       expect(evaluatePromotionGate(factInput({ gatePosture }))).toEqual(postureless)
@@ -330,6 +545,8 @@ describe('414 D-14 — gatePosture and the empty-gate-set hold (ROOT-09 SC4)', (
     expect(evaluatePromotionGate(factInput({ gatePosture: emptyGateSetPosture }))).not.toEqual(
       postureless,
     )
+    expect(evaluatePromotionGate(factInput({ gatePosture: resolvedPosture() })))
+      .toEqual({ verdict: 'hold', reason: 'gate1-receipt-required' })
   })
 
   it('checks the empty gate set after window-closed and before withheld (ordering)', () => {
