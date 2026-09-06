@@ -94,6 +94,49 @@ function flip(input: FoldNoiseFloorInput, run: number, key: number, axis: FloorA
   input.runs[run]!.vectors[key]!.axes[axis] = 'incorrect'
 }
 
+function nullLiftFixture(
+  split: 'held-out-shared' | 'held-out-private',
+  aOnly: number,
+  bOnly: number,
+  heldOutSize = 121,
+  heldOutChanges = 1,
+): FoldNoiseFloorInput {
+  const input = inputFixture()
+  input.runs = input.runs.map(run => ({
+    ...run,
+    vectors: Array.from({ length: 10 + heldOutSize }, (_, i) => {
+      const item = vector(i)
+      item.product = 'example-web'
+      item.briefSource = 'empty'
+      const incorrect = run.index === 1
+        ? i < aOnly || (i >= 10 && i < 10 + heldOutChanges)
+        : i >= aOnly && i < aOnly + bOnly
+      item.axes.headline = incorrect ? 'incorrect' : 'correct'
+      return item
+    }),
+  }))
+  for (const run of input.runs) {
+    run.report.honesty.harnessErrorCount = 0
+    run.report.honesty.refusalCounts['unrenderable-brief'] = 0
+    run.report.briefSourceCounts = { proof: 0, empty: run.vectors.length, rendered: 0 }
+    run.report.headline.firstAttemptDecisionAccuracy = {
+      numerator: run.vectors.filter(item => item.axes.headline === 'correct').length,
+      denominator: run.vectors.length,
+    }
+  }
+  input.splitByCassetteId = new Map(input.runs[0]!.vectors.map((item, i) => [
+    item.cassetteId, i < 10 ? 'natural' : split,
+  ]))
+  input.censusByProduct = {
+    'example-web': {
+      natural: 10,
+      heldOutShared: split === 'held-out-shared' ? heldOutSize : 0,
+      heldOutPrivate: split === 'held-out-private' ? heldOutSize : 0,
+    },
+  }
+  return input
+}
+
 describe('derived minimum gate set', () => {
   it.each([[0.05, 192], [0.10, 48], [0.15, 21], [0.20, 10], [0.9, 3]])(
     'inverts Wilson at 41/48 for floor %s to %s decisions',
@@ -253,6 +296,42 @@ describe('pure noise-floor fold', () => {
       expect(first.splits[split]).toEqual(second.splits[split])
     }
     expect(JSON.stringify(first.splits)).not.toContain('synthetic-cassette')
+  })
+
+  describe.each(['held-out-shared', 'held-out-private'] as const)('%s null-lift count boundary', split => {
+    it.each([
+      { aOnly: 1, bOnly: 0, net: 1, defined: false },
+      { aOnly: 0, bOnly: 1, net: 1, defined: false },
+      { aOnly: 2, bOnly: 0, net: 2, defined: false },
+      { aOnly: 0, bOnly: 2, net: 2, defined: false },
+      { aOnly: 3, bOnly: 2, net: 1, defined: false },
+      { aOnly: 3, bOnly: 0, net: 3, defined: true },
+      { aOnly: 0, bOnly: 3, net: 3, defined: true },
+    ])('uses net lift, not paired n or total discordance: $aOnly/$bOnly', ({ aOnly, bOnly, net, defined }) => {
+      const artefact = foldNoiseFloorArtefact(nullLiftFixture(split, aOnly, bOnly))
+      expect(assertFloorArtefactCommittable(artefact)).toEqual({ ok: true })
+      const record = artefact.splits[split].nullLift![0]!
+      expect(record.optimizeLift.n).toBe(10)
+      expect(Math.abs(record.optimizeLift.deltaAcc!)).toBe(net / 10)
+      // The count guard must decide these cases; the rate guard alone would permit them.
+      expect(artefact.axes.headline.aggregateFloor).toBeLessThan(net / 10)
+      expect(record.heldOutLift).toEqual({ n: 121, deltaAcc: 1 / 121 })
+      if (defined) {
+        expect(record).toMatchObject({ verdict: 'overfit', ratio: (1 / 121) / (3 / 10) })
+      } else {
+        expect(record.verdict).toBe('in-floor')
+        expect(record).not.toHaveProperty('ratio')
+      }
+    })
+
+    it('still abstains at exactly three net decisions when the rate equals the floor', () => {
+      const artefact = foldNoiseFloorArtefact(nullLiftFixture(split, 3, 0, 10, 3))
+      const record = artefact.splits[split].nullLift![0]!
+      expect(record.optimizeLift).toEqual({ n: 10, deltaAcc: 3 / 10 })
+      expect(artefact.axes.headline.aggregateFloor).toBe(3 / 10)
+      expect(record.verdict).toBe('in-floor')
+      expect(record).not.toHaveProperty('ratio')
+    })
   })
 
   it('joins bootstrap pairs by decision key even when another run is reordered', () => {
