@@ -1,4 +1,4 @@
-import { resolveProductPartition } from '@vostride/agent-qa-eval'
+import { buildEvalReport, canonicalJson, decisionCorrectnessVectors, resolveProductPartition } from '@vostride/agent-qa-eval'
 import type {
   Cassette,
   CassetteLabelLeg,
@@ -42,6 +42,8 @@ export function assembleScoredBatch(input: {
   source: string
   /** Fresh-run callers supply only completed writes; absence retains the generic disk sweep. */
   recordDirs?: readonly string[]
+  /** Committed-corpus ownership is authoritative; generic callers retain scope semantics. */
+  productByCassetteId?: ReadonlyMap<string, string>
 }): {
   entries: ScoredBatchEntry[]
   judgeBlocks: JudgeIdentityBlock[]
@@ -64,7 +66,11 @@ export function assembleScoredBatch(input: {
     if (load.cassette.granularity === 'leaf') {
       labelsById.set(load.cassette.id, load.cassette.label)
     }
-    partitionsById.set(load.cassette.id, cassetteProductPartition(load.cassette))
+    const product = input.productByCassetteId === undefined
+      ? cassetteProductPartition(load.cassette)
+      : input.productByCassetteId.get(load.cassette.id)
+    if (product === undefined) throw new TypeError(`committed product absent for ${load.cassette.id}`)
+    partitionsById.set(load.cassette.id, product)
   }
 
   const entries: ScoredBatchEntry[] = []
@@ -101,4 +107,29 @@ export function assembleScoredBatch(input: {
   }
 
   return { entries, judgeBlocks, partitionsById, missingBundleCount, notices }
+}
+
+/** The same report/vector projection serves fresh replay and guarded measured-run recovery. */
+export function projectAssembledBatch(
+  batch: ReturnType<typeof assembleScoredBatch>,
+  options: Parameters<typeof buildEvalReport>[3],
+) {
+  const { entries, judgeBlocks, partitionsById } = batch
+  entries.sort((a, b) => a.cassetteId < b.cassetteId ? -1 : a.cassetteId > b.cassetteId ? 1 : 0)
+  let judge: JudgeIdentityBlock | undefined
+  let identity: { judgeIdentity: 'mixed'; judgeModelIds: readonly string[] } | undefined
+  if (judgeBlocks.length === 0) {
+    batch.notices.push('no judge identity on any persisted score record — the report carries no judge block')
+  } else if (judgeBlocks.every(block => canonicalJson(block) === canonicalJson(judgeBlocks[0]))) {
+    judge = judgeBlocks[0]
+  } else {
+    identity = { judgeIdentity: 'mixed',
+      judgeModelIds: [...new Set(judgeBlocks.map(block => block.judgeModelId))].sort() }
+    batch.notices.push('mixed judge identities across persisted score records — the report carries no judge block')
+  }
+  return {
+    report: buildEvalReport(entries, judge, identity, options),
+    vectors: decisionCorrectnessVectors(entries, partitionsById),
+    notices: batch.notices,
+  }
 }

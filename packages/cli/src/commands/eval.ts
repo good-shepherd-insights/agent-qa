@@ -7,6 +7,7 @@
 
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
+import { installEvalWarningLogger } from '../eval-warning-logger.js'
 import { renderCensusFloorLines, renderFloorSummary, renderReportEvidenceLines } from '../eval-report-render.js'
 import type {
   BaselineComparatorRefusal,
@@ -392,6 +393,9 @@ function renderExtractSummary(result: ExtractVerbResult): void {
 export function createEvalCommand(): Command {
   const cmd = new Command('eval')
     .description('Eval corpus and release measurements: extract, replay, seed, report, census, floor, gate')
+  let restoreWarningLogger: (() => void) | undefined
+  cmd.hook('preAction', () => { restoreWarningLogger = installEvalWarningLogger() })
+  cmd.hook('postAction', () => { restoreWarningLogger?.() })
 
   cmd.addCommand(
     new Command('extract')
@@ -710,10 +714,11 @@ export function createEvalCommand(): Command {
       .option('--commit', 'commit the measured per-profile floor through the write-once checkpoint')
       .option('--explanation <text>', 'operator explanation, required to commit a zero floor')
       .option('--classifier-repeatability <path>', 'guarded classifier measurement JSON, relative to config')
+      .option('--from-measured <cost-log>', 'recover complete saved floor runs with original cost receipts and zero new model calls')
       .option('--json', 'emit the typed result DTO to stdout')
       .action(async (opts: {
         repeats?: string; seeds?: string; bootstrapSeed?: string; commit?: boolean
-        explanation?: string; classifierRepeatability?: string; json?: boolean
+        explanation?: string; classifierRepeatability?: string; fromMeasured?: string; json?: boolean
       }, command: Command) => {
         try {
           const repeats = opts.repeats === undefined ? undefined : parseIntegerFlag('--repeats')(opts.repeats)
@@ -725,6 +730,7 @@ export function createEvalCommand(): Command {
           const result = await runFloorVerb(session, {
             repeats, seeds, bootstrapSeed, commit: opts.commit,
             explanation: opts.explanation, classifierRepeatability: opts.classifierRepeatability,
+            fromMeasured: opts.fromMeasured,
           })
           if (opts.json) {
             console.log(JSON.stringify(result, null, 2))

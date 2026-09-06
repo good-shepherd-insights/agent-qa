@@ -162,6 +162,7 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
         replayOutputBaseDir: mode.replayOutputBaseDir,
         source: 'committed',
         corpusDigest,
+        productByCassetteId: new Map(corpus.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
         clock: input.clock,
         onProgress: mode.onProgress,
       })

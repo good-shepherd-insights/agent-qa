@@ -429,6 +429,26 @@ describe('runFloorVerb — recorded protocol and write-once measurement', () => 
   })
   afterEach(() => vi.restoreAllMocks())
 
+  it.each([false, true])('recovers saved floor runs with auth and model creation forbidden (judge=%s)', async judged => {
+    const runFloorVerb = requireFloorVerb()
+    const fixture = await floorVerbFixture(judged)
+    const fresh = await runFloorVerb(fixture.session, fixture.opts)
+    await writeFile(join(fixture.dir, 'original-floor.log'), fresh.costLines.join('\n'))
+    const auth = vi.spyOn(await import('../../llm-utils.js'), 'resolveModelAuth')
+      .mockRejectedValue(new Error('credential resolution forbidden'))
+    const model = vi.spyOn(await import('@vostride/agent-qa-model'), 'createModel')
+      .mockImplementation(() => { throw new Error('model creation forbidden') })
+    const recovered = await runFloorVerb(fixture.session, { ...fixture.opts,
+      fromMeasured: 'original-floor.log', commit: true })
+    expect(recovered.artefact).toEqual(fresh.artefact)
+    expect(recovered.costLines).toEqual(fresh.costLines)
+    expect(recovered.committed?.kind).toBe('written')
+    expect(recovered.recovery).toEqual({ costLog: join(fixture.dir, 'original-floor.log'), modelCalls: 0 })
+    expect(auth).not.toHaveBeenCalled()
+    expect(model).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
   it('records defaults, four actual cost lines, axis denominators and product census', async () => {
     const runFloorVerb = requireFloorVerb()
     const fixture = await floorVerbFixture()
@@ -546,7 +566,7 @@ describe('runFloorVerb — recorded protocol and write-once measurement', () => 
     const program = new Command().option('--config <path>').addCommand(createEvalCommand())
     const floor = program.commands[0]!.commands.find(command => command.name() === 'floor')
     expect(floor?.options.map(option => option.long)).toEqual(expect.arrayContaining([
-      '--repeats', '--seeds', '--bootstrap-seed', '--commit', '--explanation', '--classifier-repeatability', '--json',
+      '--repeats', '--seeds', '--bootstrap-seed', '--commit', '--explanation', '--classifier-repeatability', '--from-measured', '--json',
     ]))
     await program.parseAsync(['--config', fixture.configPath, 'eval', 'floor', '--json'], { from: 'user' })
     expect(output.logs).toHaveLength(1)

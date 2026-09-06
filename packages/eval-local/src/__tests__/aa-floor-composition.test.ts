@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,9 +14,11 @@ import {
 } from '@vostride/agent-qa-eval'
 import { resolveCapabilities } from '@vostride/agent-qa-model'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
+import { computeBriefDigest } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import * as evalLocal from '../index.js'
+import { assembleScoredBatch, projectAssembledBatch } from '../replay-batch-assembly.js'
 import {
   incrementingClock,
   noneAuth,
@@ -91,6 +93,116 @@ async function measurementFixture(configure?: Parameters<typeof writeCommittedFl
 }
 
 describe('runNoiseFloorMeasurement', () => {
+  it('recovers the original scope-partitioned runs without auth, models, or saved-file rewrites', async () => {
+    const { input } = await measurementFixture(handoff => {
+      const brief = handoff.tests[0]!.steps[0]!.servedBrief!
+      brief.scope = { tier: 'test', key: handoff.tests[0]!.testId }
+      brief.briefDigest = computeBriefDigest(brief)
+    })
+    const lines: string[] = []
+    const fresh = await evalLocal.runNoiseFloorMeasurement({ ...input, onProgress: line => lines.push(line) })
+    const retained = new Map<string, string>()
+    const snapshot = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) snapshot(path)
+        else retained.set(path, readFileSync(path, 'hex'))
+      }
+    }
+    // Reproduce the pre-fix scope join through the production assembly, not hand-authored metrics.
+    for (const [index, root] of fresh.runRoots.entries()) {
+      const old = projectAssembledBatch(assembleScoredBatch({ replaysRoot: join(root, 'replays'),
+        cassettesRoot: input.cassettesRoot, source: 'committed' }), {
+        declaredSeed: fresh.artefact.runs[index]!.seed,
+        runIdentity: { fingerprint: fresh.fingerprint, corpusDigest: fresh.artefact.corpusDigest },
+      })
+      new evalLocal.FsReportStore({ root: input.agentQaRoot, outputDir: join(root, 'reports') })
+        .save(old.report, { schemaVersion: 1, batchKey: old.report.batchKey,
+          matcherVersion: old.report.matcherVersion, vectors: old.vectors })
+      expect(old.vectors.every(vector => vector.product === 'default')).toBe(true)
+      snapshot(root)
+    }
+    const fromMeasured = join(input.agentQaRoot, 'original-cost.log')
+    writeFileSync(fromMeasured, lines.join('\n'))
+    const model = vi.spyOn(await import('@vostride/agent-qa-model'), 'createModel')
+      .mockImplementation(() => { throw new Error('model creation forbidden') })
+    const recovered = await evalLocal.runNoiseFloorMeasurement({ ...input, auth: undefined,
+      fromMeasured, commit: true,
+      maskingContextFactory: () => { throw new Error('replay safety setup forbidden during recovery') },
+    })
+    expect(recovered.artefact).toEqual(fresh.artefact)
+    expect(recovered.recovery).toEqual({ costLog: fromMeasured, modelCalls: 0 })
+    expect(recovered.committed?.kind).toBe('written')
+    expect(model).not.toHaveBeenCalled()
+    for (const [path, bytes] of retained) expect(readFileSync(path, 'hex'), path).toBe(bytes)
+  })
+
+  it.each(['missing receipt', 'duplicate receipt', 'malformed receipt', 'foreign seed', 'wrong decisions',
+    'wrong tokens', 'too few calls', 'missing replay', 'duplicate replay', 'missing decisions', 'wrong identity',
+    'wrong vector', 'missing score'])(
+    'refuses measured recovery with %s before writing a floor', async defect => {
+      const { input } = await measurementFixture()
+      const lines: string[] = []
+      const fresh = await evalLocal.runNoiseFloorMeasurement({ ...input,
+        onProgress: line => { if (line.startsWith('floor r')) lines.push(line) } })
+      const fromMeasured = join(input.agentQaRoot, 'cost.log')
+      const root = fresh.runRoots[0]!
+      const replayDir = evalLocal.listReplayRecordDirs(join(root, 'replays'))[0]!
+      const batchKey = computeBatchKey(evalLocal.readCommittedCorpus(input.committedRoot).snapshot.entries.map(entry => entry.cassetteId))
+      const reportFile = join(root, 'reports', `${batchKey}.json`)
+      const decisionsFile = join(root, 'reports', `${batchKey}.decisions.json`)
+      if (defect === 'missing receipt') lines.pop()
+      if (defect === 'duplicate receipt') lines.push(lines[0]!)
+      if (defect === 'malformed receipt') lines[0] = lines[0]!.replace('wallClock=', 'elapsed=')
+      if (defect === 'foreign seed') lines[0] = lines[0]!.replace('seed=11', 'seed=99')
+      if (defect === 'wrong decisions') lines[0] = lines[0]!.replace('decisions=3', 'decisions=2')
+      if (defect === 'wrong tokens') lines[0] = lines[0]!.replace(/promptTokens=\d+/, 'promptTokens=999')
+      if (defect === 'too few calls') lines[0] = lines[0]!.replace('modelCalls=3', 'modelCalls=0')
+      if (defect === 'missing replay') unlinkSync(join(replayDir, 'replay.json'))
+      if (defect === 'duplicate replay') cpSync(replayDir, join(root, 'replays', 'extra'), { recursive: true })
+      if (defect === 'missing decisions') unlinkSync(decisionsFile)
+      if (defect === 'missing score') unlinkSync(join(replayDir, 'score.json'))
+      if (defect === 'wrong identity') {
+        const report = JSON.parse(readFileSync(reportFile, 'utf8'))
+        report.runIdentity.fingerprint = 'a'.repeat(64)
+        writeFileSync(reportFile, JSON.stringify(report))
+      }
+      if (defect === 'wrong vector') {
+        const document = JSON.parse(readFileSync(decisionsFile, 'utf8'))
+        document.vectors[0].product = 'foreign'
+        writeFileSync(decisionsFile, JSON.stringify(document))
+      }
+      writeFileSync(fromMeasured, lines.join('\n'))
+      const model = vi.spyOn(await import('@vostride/agent-qa-model'), 'createModel')
+        .mockImplementation(() => { throw new Error('model creation forbidden') })
+      await expect(evalLocal.runNoiseFloorMeasurement({ ...input, auth: undefined, fromMeasured, commit: true }))
+        .rejects.toThrow(/measured floor/)
+      expect(evalLocal.listNoiseFloorArtefacts(input.committedRoot).artefacts).toEqual([])
+      expect(model).not.toHaveBeenCalled()
+    },
+  )
+
+  it('joins committed products even when every recorded brief has a test scope', async () => {
+    const { input } = await measurementFixture(handoff => {
+      const scope = { tier: 'test', key: handoff.tests[0]!.testId } as const
+      handoff.scope = scope
+      const brief = handoff.tests[0]!.steps[0]!.servedBrief!
+      brief.scope = scope
+      brief.briefDigest = computeBriefDigest(brief)
+    })
+    const result = await evalLocal.runNoiseFloorMeasurement(input)
+    expect(Object.keys(result.artefact.products).sort()).toEqual(['alpha', 'beta'])
+    expect(result.artefact.products.alpha?.axes.headline.n).toBe(2)
+    expect(result.artefact.products.beta?.axes.headline.n).toBe(1)
+    for (const runRoot of result.runRoots) {
+      const staged = evalLocal.loadStagedReport(input.agentQaRoot,
+        computeBatchKey(evalLocal.readCommittedCorpus(input.committedRoot).snapshot.entries.map(entry => entry.cassetteId)),
+        join(runRoot, 'reports'))
+      if (staged.kind !== 'loaded') throw new Error('expected measured report')
+      expect(staged.decisions?.vectors.map(vector => vector.product).sort()).toEqual(['alpha', 'alpha', 'beta'])
+    }
+  })
+
   it('preserves corrupt-bundle load refusals despite unchanged corpus membership and digest', async () => {
     const { input, corpus } = await measurementFixture()
     const healthy = await evalLocal.runNoiseFloorMeasurement(input)

@@ -744,6 +744,7 @@ export async function runFloorVerb(
     commit?: boolean
     explanation?: string
     classifierRepeatability?: string
+    fromMeasured?: string
     plannerOverrides?: ModelProviderOverrides
     judgeOverrides?: ModelProviderOverrides
   } = {},
@@ -772,15 +773,22 @@ export async function runFloorVerb(
     }
     classifierRepeatability = guarded.repeatability
   }
-  const planner = await resolveReplayPlanner(session)
-  const judgeResolution = await resolveEvalJudge(session)
+  // Recovery resolves declarations only; credential and model creation are unreachable.
+  const planner = opts.fromMeasured === undefined ? await resolveReplayPlanner(session)
+    : { profile: await resolveReplayProfileDeclaration(session) }
+  const judgeResolution = opts.fromMeasured === undefined ? await resolveEvalJudge(session) : {}
   const judge = judgeResolution.judge === undefined ? undefined
     : { ...judgeResolution.judge, modelOverrides: opts.judgeOverrides }
+  let judgeModelId = judge?.profile.model
+  if (opts.fromMeasured !== undefined && session.evalConfig.judge) {
+    const { resolveNamedConfig } = await import('./llm-utils.js')
+    judgeModelId = (await resolveNamedConfig(session.evalConfig.judge, session.configPath)).config.model
+  }
   const fingerprint = await resolveReplayProfileFingerprint(session, 'declared', opts.plannerOverrides)
   const profileKeyInputs = {
     plannerModelId: await resolvePlannerModelId(session),
     matcherVersion: buildEvalReport([]).matcherVersion,
-    ...(judge === undefined ? {} : { judgeModelId: judge.profile.model, judgeVersion: JUDGE_CONFIG.judgeVersion }),
+    ...(judgeModelId === undefined ? {} : { judgeModelId, judgeVersion: JUDGE_CONFIG.judgeVersion }),
   }
   const profileKey = composeBaselineProfileKey({ ...profileKeyInputs, fingerprint })
   const costLines: string[] = []
@@ -789,6 +797,7 @@ export async function runFloorVerb(
     cassettesRoot: resolveCassettesRoot(session, 'committed').cassettesRoot,
     agentQaRoot: resolve(session.configDir, '.agent-qa'),
     ...planner,
+    ...(opts.fromMeasured === undefined ? {} : { fromMeasured: resolve(session.configDir, opts.fromMeasured) }),
     modelOverrides: opts.plannerOverrides,
     judge,
     maskingContextFactory: session.maskingContextFactory,
@@ -1648,7 +1657,12 @@ export async function runReportVerb(
     partitionsById,
     missingBundleCount,
     notices: assemblyNotices,
-  } = assembleScoredBatch({ replaysRoot, cassettesRoot, source })
+  } = assembleScoredBatch({ replaysRoot, cassettesRoot, source,
+    ...(source === 'committed' ? { productByCassetteId: new Map(
+      readCommittedCorpus(resolve(session.configDir, 'agent-qa-eval')).snapshot.entries
+        .map(entry => [entry.cassetteId, entry.product]),
+    ) } : {}),
+  })
   notices.push(...assemblyNotices)
   if (missingBundleCount > 0) {
     notices.push(

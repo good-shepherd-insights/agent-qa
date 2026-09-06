@@ -4,11 +4,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
-  buildEvalReport,
-  canonicalJson,
   composeBaselineProfileKey,
   computeCorpusDigest,
-  decisionCorrectnessVectors,
   FLOOR_PROTOCOL_MINIMUM,
   foldNoiseFloorArtefact,
   guardBaselinePointer,
@@ -17,7 +14,6 @@ import {
 import type {
   DecisionCorrectnessVector,
   EvalBatchReport,
-  JudgeIdentityBlock,
   ClassifierRepeatability,
   FloorRunInput,
   FloorSplit,
@@ -36,8 +32,9 @@ import {
 import type { CommittedReadRefusal } from './committed-corpus-source.js'
 import { writeNoiseFloorArtefact } from './noise-floor-writer.js'
 import type { WriteNoiseFloorArtefactOutcome } from './noise-floor-writer.js'
+import { readMeasuredCostReceipts, readMeasuredFloorRun } from './measured-floor-read.js'
 
-import { assembleScoredBatch } from './replay-batch-assembly.js'
+import { assembleScoredBatch, projectAssembledBatch } from './replay-batch-assembly.js'
 import { computeReplayProfileFingerprintFor } from './replay-composition.js'
 import type { RunCassetteReplayInput } from './replay-composition.js'
 import { FsReplayRecordStore } from './replay-record-store.js'
@@ -64,6 +61,7 @@ export interface ReplayCorpusOnceInput {
   source: string
   /** Digest of the committed snapshot supplying this run, when the caller read one. */
   corpusDigest?: string
+  productByCassetteId?: ReadonlyMap<string, string>
   clock?: () => number
   onProgress?: (cassetteId: string) => void
 }
@@ -73,7 +71,9 @@ export interface RunNoiseFloorMeasurementInput {
   cassettesRoot: string
   agentQaRoot: string
   profile: ModelProfile
-  auth: ResolvedModelAuth
+  auth?: ResolvedModelAuth
+  /** Explicit read-only recovery from complete saved runs and the original cost log. */
+  fromMeasured?: string
   modelOverrides?: ModelProviderOverrides
   judge?: RunCassetteReplayInput['judge']
   maskingContextFactory: RunCassetteReplayInput['maskingContextFactory']
@@ -102,6 +102,8 @@ export interface RunNoiseFloorMeasurementResult {
   committed?: WriteNoiseFloorArtefactOutcome
   notices: string[]
   refusals: readonly CommittedReadRefusal[]
+  /** Calls in this invocation, separate from the original observations retained in artefact.cost. */
+  recovery?: { costLog: string; modelCalls: 0 }
 }
 
 export class FloorProtocolError extends Error {
@@ -132,6 +134,7 @@ export async function runNoiseFloorMeasurement(
   const notices = [...corpus.notices, ...partitions.notices]
   const refusals = [...corpus.refusals, ...partitions.refusals]
   const corpusDigest = computeCorpusDigest(corpus.snapshot.entries)
+  const productByCassetteId = new Map(corpus.snapshot.entries.map(entry => [entry.cassetteId, entry.product]))
   const partitionVersions = [...new Set(partitions.manifests.map(manifest => manifest.partitionVersion))]
   const partitionVersion = partitionVersions.length === 1 ? partitionVersions[0]! : 1
   if (partitionVersions.length !== 1) {
@@ -166,11 +169,28 @@ export async function runNoiseFloorMeasurement(
   const selected = loaded.loaded.sort((a, b) =>
     a.cassette.id < b.cassette.id ? -1 : a.cassette.id > b.cassette.id ? 1 : 0)
   const runSeeds = [...Array<number>(input.repeats).fill(seeds[0]!), ...seeds.slice(1)]
+  const receipts = input.fromMeasured === undefined ? undefined : readMeasuredCostReceipts(input.fromMeasured, runSeeds)
+  if (receipts !== undefined && (refusals.length !== 0 || Object.keys(loaded.loadRefusals).length !== 0 ||
+    productByCassetteId.size === 0 || selected.length !== productByCassetteId.size ||
+    new Set(selected.map(entry => entry.cassette.id)).size !== productByCassetteId.size ||
+    selected.some(entry => !productByCassetteId.has(entry.cassette.id)))) {
+    throw new TypeError('measured floor recovery requires the complete guarded committed corpus')
+  }
   const runs: FloorRunInput[] = []
   const runRoots: string[] = []
   for (const [index, seed] of runSeeds.entries()) {
     const runRoot = join(input.agentQaRoot, 'eval', 'floor', slugBranch(profileKey), `r${index}-seed${seed}`)
     runRoots.push(runRoot)
+    if (receipts !== undefined) {
+      const receipt = receipts[index]!
+      runs.push(readMeasuredFloorRun({ agentQaRoot: input.agentQaRoot, runRoot,
+        cassettesRoot: input.cassettesRoot, fingerprint, corpusDigest,
+        plannerModelId: input.profileKeyInputs.plannerModelId,
+        matcherVersion: input.profileKeyInputs.matcherVersion, productByCassetteId, receipt }))
+      input.onProgress?.(receipt.line)
+      continue
+    }
+    if (input.auth === undefined) throw new TypeError('fresh floor measurement requires resolved model auth')
     const run = await replayCorpusOnce({
       selected,
       loadRefusals: loaded.loadRefusals,
@@ -187,6 +207,7 @@ export async function runNoiseFloorMeasurement(
       replayOutputBaseDir: join(input.reportOutputBaseDir, `r${index}`),
       source: 'committed',
       corpusDigest,
+      productByCassetteId,
       clock: input.clock,
       onProgress: input.onProgress,
     })
@@ -213,6 +234,7 @@ export async function runNoiseFloorMeasurement(
   })
   return {
     artefact, profileKey, fingerprint, runRoots, notices, refusals,
+    ...(input.fromMeasured === undefined ? {} : { recovery: { costLog: input.fromMeasured, modelCalls: 0 } as const }),
     ...(input.commit ? { committed: writeNoiseFloorArtefact({
       artefact, committedRoot: input.committedRoot, reportOutputBaseDir: input.reportOutputBaseDir,
     }) } : {}),
@@ -312,33 +334,19 @@ export async function replayCorpusOnce(
   const wallClockMs = clock() - started
   // A new store does not empty a directory. Only completed writes from THIS sweep may enter
   // its report, including typed refusals; stale and partially written failed records stay out.
-  const { entries, judgeBlocks, partitionsById, notices } = assembleScoredBatch({
+  const batch = assembleScoredBatch({
     replaysRoot,
     cassettesRoot: input.cassettesRoot,
     source: input.source,
     recordDirs: sweep.recordedDirs,
+    productByCassetteId: input.productByCassetteId,
   })
-  entries.sort((a, b) => a.cassetteId < b.cassetteId ? -1 : a.cassetteId > b.cassetteId ? 1 : 0)
-  let judge: JudgeIdentityBlock | undefined
-  let identity: { judgeIdentity: 'mixed'; judgeModelIds: readonly string[] } | undefined
-  if (judgeBlocks.length === 0) {
-    notices.push('no judge identity on any persisted score record — the report carries no judge block')
-  } else if (judgeBlocks.every(block => canonicalJson(block) === canonicalJson(judgeBlocks[0]))) {
-    judge = judgeBlocks[0]
-  } else {
-    identity = {
-      judgeIdentity: 'mixed',
-      judgeModelIds: [...new Set(judgeBlocks.map(block => block.judgeModelId))].sort(),
-    }
-    notices.push('mixed judge identities across persisted score records — the report carries no judge block')
-  }
-  const report = buildEvalReport(entries, judge, identity, {
+  const { report, vectors, notices } = projectAssembledBatch(batch, {
     declaredSeed: input.seed,
     additionalHarnessErrorCount: sweep.replayRefusals['harness-error'] ?? 0,
     ...(input.loadRefusals === undefined ? {} : { additionalRefusalCounts: input.loadRefusals }),
     ...(runIdentity === undefined ? {} : { runIdentity }),
   })
-  const vectors = decisionCorrectnessVectors(entries, partitionsById)
   const staged = new FsReportStore({
     root: input.agentQaRoot, outputDir: join(input.runRoot, 'reports'),
   }).save(report, projectDecisionVectorsDocument({
