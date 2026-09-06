@@ -17,6 +17,8 @@
 // firewall-correct for all three verbs and needs no direct dependency on the safety package.
 // What they do today is nothing: each verb builds a fresh masking context and registers
 // nothing in it, and unmasking an empty context is the identity function.
+// Gate output additionally crosses the committed-text safety check before either
+// renderer runs. Producer masks and receipt digests are preserved, never regenerated.
 
 import { dirname, resolve } from 'node:path'
 

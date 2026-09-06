@@ -269,7 +269,7 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
         return { status: 'warn', message: `deterministic-verdict-floor — no eval root at ${displayPath(learning.committedRoot)}` }
       }
       if (learning.kind === 'unavailable') {
-        return { status: 'fail', message: `posture-unavailable — ${learning.refusals[0] ?? 'posture could not be resolved'}` }
+        return { status: 'fail', message: `posture-unavailable — ${learningRefusalLabel(learning.refusals[0])}` }
       }
       const { replayGateAvailable, judge, canary } = learning.host
       const judgeLabel = judge.judgeFamily
@@ -296,6 +296,17 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
       }
     },
   }
+}
+
+/** Refusals retain diagnostic detail internally; this row never echoes arbitrary input. */
+function learningRefusalLabel(refusal: string | undefined): string {
+  if (refusal?.startsWith('noise-floor: no artefact for profile ')) {
+    return 'noise-floor: no artefact for the active profile'
+  }
+  if (refusal?.startsWith('noise-floor: no minimumGateSet value at ')) {
+    return 'noise-floor: no minimumGateSet value'
+  }
+  return 'eval posture could not be resolved'
 }
 
 /**

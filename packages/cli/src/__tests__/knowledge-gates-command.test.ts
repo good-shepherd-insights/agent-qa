@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { stripVTControlCharacters } from 'node:util'
 import { createMaskingContext } from '@vostride/agent-qa-agent'
 import {
   appendGateReceipt,
@@ -11,7 +12,7 @@ import {
   verifyBundleIntegrity,
   type BundleStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
-import { KnowledgeGatesListResultSchema, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { canonicalJson, KnowledgeGatesListResultSchema, stampReceiptDigest } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createKnowledgeCommand } from '../commands/knowledge.js'
@@ -60,7 +61,7 @@ describe('agent-qa knowledge gates', () => {
     return { configPath, config, id: result.id, dir: result.dir }
   }
 
-  async function invoke(configPath: string, args: string[]) {
+  async function invoke(configPath: string, args: string[], expectedError?: string) {
     const stdout: string[] = []
     const stderr: string[] = []
     const log = vi.spyOn(console, 'log').mockImplementation((...values) => { stdout.push(values.join(' ')) })
@@ -69,11 +70,42 @@ describe('agent-qa knowledge gates', () => {
     try {
       const program = new Command().option('--config <path>').addCommand(createKnowledgeCommand()).exitOverride()
       await program.parseAsync(['node', 'agent-qa', '--config', configPath, 'knowledge', 'gates', ...args])
-      expect(stderr).toEqual([])
-      expect(process.exitCode).toBeUndefined()
+      if (expectedError === undefined) {
+        expect(stderr).toEqual([])
+        expect(process.exitCode).toBeUndefined()
+      } else {
+        expect(stdout).toEqual([])
+        expect(stderr.map(stripVTControlCharacters)).toEqual([`Knowledge gates error: ${expectedError}`])
+        expect(process.exitCode).toBe(1)
+      }
       return stdout.join('\n')
     } finally { log.mockRestore(); error.mockRestore() }
   }
+
+  it.each([
+    ['AKIAIOSFODNN7EXAMPLE', 'awsKey'],
+    ['Bearer synthetic-receipt-token', 'bearer'],
+    ['receipt-auditor@example.invalid', 'email'],
+  ])('refuses unsafe read output even when %s bypassed the receipt writer', async (raw, detector) => {
+    const { configPath, id, dir } = fixture()
+    const receipt = stampReceiptDigest({
+      schemaVersion: 1, kind: 'promotion', candidateId: id,
+      promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
+      producedAtOrdinal: 6, producedBy: { opId: raw },
+    })
+    // Model an externally edited, canonical and digest-valid part. Read-time
+    // protection must not assume that these bytes passed the production writer.
+    const bytes = `${canonicalJson(receipt)}\n`
+    writeFileSync(join(dir, 'evidence/gates.jsonl'), bytes)
+    expect(readGateReceipts(dir, id)).toEqual([receipt])
+    const error = `Committed egress blocked in part "knowledge.gates.list": ${detector}`
+    for (const args of [[id, '--json'], [id]]) {
+      await invoke(configPath, args, error)
+      expect(readFileSync(join(dir, 'evidence/gates.jsonl'), 'utf8')).toBe(bytes)
+    }
+    // The not-found arm also echoes caller-controlled record identifiers.
+    await invoke(configPath, [raw, '--json'], error)
+  })
 
   // 416 D-18/D-20: the writer rejects detector-visible raw text; the CLI preserves
   // producer-masked fields. These are synthetic values, never host credentials.

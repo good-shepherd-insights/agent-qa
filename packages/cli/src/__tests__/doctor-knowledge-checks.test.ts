@@ -361,21 +361,36 @@ describe('createKnowledgeChecks', () => {
     expect(learning).toEqual({ status, message })
   })
 
-  it('fails Learning mode only for posture-unavailable, showing the first refusal', async () => {
+  it('fails Learning mode with a safe cause while retaining the complete internal refusal', async () => {
     const project = makeProject()
     const refusals = ['noise-floor: no artefact for profile X', 'second refusal']
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'unavailable', committedRoot: join(project.projectRoot, 'agent-qa-eval'), refusals, resolve: () => undefined }),
     }))
-    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — noise-floor: no artefact for profile X' })
+    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — noise-floor: no artefact for the active profile' })
+    expect(refusals).toEqual(['noise-floor: no artefact for profile X', 'second refusal'])
   })
 
-  it('folds a throwing posture builder into an unavailable row without its stack', async () => {
+  it.each([
+    ['noise-floor: no artefact for profile private-provider/private-model', 'noise-floor: no artefact for the active profile'],
+    ['noise-floor: no minimumGateSet value at /private/project/agent-qa-eval/noise-floor/private-profile.json', 'noise-floor: no minimumGateSet value'],
+    ['/private/project/agent-qa-eval/corpus.json: invalid entry AKIAIOSFODNN7EXAMPLE', 'eval posture could not be resolved'],
+  ])('does not echo profile, path or input text from a refused posture', async (refusal, cause) => {
+    const project = makeProject()
+    const refusals = [refusal]
+    const { learning } = await runChecks(project, baseProbes({
+      buildPromotionPosture: async () => ({ kind: 'unavailable', committedRoot: join(project.projectRoot, 'agent-qa-eval'), refusals, resolve: () => undefined }),
+    }))
+    expect(learning).toEqual({ status: 'fail', message: `posture-unavailable — ${cause}` })
+    expect(refusals).toEqual([refusal])
+  })
+
+  it('folds a throwing posture builder into an unavailable row without its raw message or stack', async () => {
     const project = makeProject()
     const { learning } = await runChecks(project, baseProbes({
-      buildPromotionPosture: async () => { throw new Error('posture read refused') },
+      buildPromotionPosture: async () => { throw new Error('posture read refused for private-model: Bearer synthetic-receipt-token') },
     }))
-    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — posture read refused' })
+    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — eval posture could not be resolved' })
   })
 
   it('probes each axis exactly once across all four rows', async () => {
