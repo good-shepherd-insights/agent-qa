@@ -1,5 +1,6 @@
 export type { AuthoringReadPort } from './authoring-read.js'
 export type { KnowledgePort } from './knowledge.js'
+export type { ReplayGatePort } from './gates.js'
 export type { ToolsPort } from './tools.js'
 export type { PersistencePort } from './persistence.js'
 export type { ClockPort } from './clock.js'

@@ -894,6 +894,8 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // which is the second vocabulary this subtree exists to avoid (388 C13). The refused-line shape
   // is deliberately NOT here — it crosses the session-log port, so `schema` mints it.
   'RepairSessionOptions',
+  // 2026-09-06, 416 D-10: the replay binding — a TYPE a host names before 417 implements it.
+  'ReplayGatePort',
   'ReplayedRunEvent',
   'ResolvedClause',
   // 405-01 (D-03): the durable run-detail projection read port's shape. A TYPE, because a host

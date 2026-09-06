@@ -1,6 +1,7 @@
 export type {
   AuthoringReadPort,
   KnowledgePort,
+  ReplayGatePort,
   ToolsPort,
   PersistencePort,
   ClockPort,
