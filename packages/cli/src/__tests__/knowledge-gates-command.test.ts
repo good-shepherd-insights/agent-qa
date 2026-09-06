@@ -1,0 +1,116 @@
+// 2026-09-06, 416 D-17/D-18: real persisted history through the read-only function layer.
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  appendGateReceipt,
+  appendPromotionReceipt,
+  publishBundleForTest,
+  type BundleStoreConfig,
+} from '@vostride/agent-qa-knowledge-local'
+import { KnowledgeGatesListResultSchema, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { Command } from 'commander'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createKnowledgeCommand } from '../commands/knowledge.js'
+
+const DATA_LAYER_PACKAGES = [
+  '@vostride/agent-qa-core',
+  '@vostride/agent-qa-knowledge-local',
+  '@vostride/agent-qa-runner-local',
+] as const
+
+describe('agent-qa knowledge gates', () => {
+  const roots: string[] = []
+  const originalExitCode = process.exitCode
+  afterEach(() => {
+    process.exitCode = originalExitCode
+    vi.restoreAllMocks()
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  function fixture() {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-knowledge-gates-'))
+    roots.push(root)
+    const configPath = join(root, 'agent-qa.config.yaml')
+    mkdirSync(join(root, '.agent-qa'), { recursive: true })
+    writeFileSync(configPath, JSON.stringify({
+      workspace: { testMatch: ['tests/**/*.yaml'], suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local' },
+      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+      use: { mobile: { appState: 'preserve' } },
+    }) + '\n')
+    const config: BundleStoreConfig = {
+      knowledgeRoot: join(root, 'agent-qa-knowledge'), productKey: 'shop',
+      auditBaseDir: join(root, '.agent-qa'), commitArtifacts: 'none',
+    }
+    const result = publishBundleForTest(config, {
+      draft: { kind: 'fact', subtype: 'selector', anchors: [{ t: 'el', role: 'button', name: 'Checkout' }],
+        scope: { tier: 'product', key: 'shop' }, summary: 'Checkout', body: 'Checkout button',
+        distilledEvidenceRef: { id: 'checkout-evidence', sha: 'a'.repeat(64) }, originStage: 'run-curation' },
+      discriminant: { kind: 'fact', subtype: 'selector', elementRef: { role: 'button', name: 'Checkout' } },
+      originClass: 'agent-verified', createdAtOrdinal: 5, screenStates: [], initialEvents: [], relations: [],
+      provenance: { mode: 'run-linked', runId: 'knowledge-gates', testId: 'knowledge-gates-command',
+        stepIndex: 0, sourceBuildOrdinal: 5 }, artifacts: [],
+    })
+    expect(result.kind).toBe('published')
+    if (result.kind !== 'published') throw new Error('gate fixture publication failed')
+    return { configPath, config, id: result.id }
+  }
+
+  async function invoke(configPath: string, args: string[]) {
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((...values) => { stdout.push(values.join(' ')) })
+    const error = vi.spyOn(console, 'error').mockImplementation((...values) => { stderr.push(values.join(' ')) })
+    process.exitCode = undefined
+    try {
+      const program = new Command().option('--config <path>').addCommand(createKnowledgeCommand()).exitOverride()
+      await program.parseAsync(['node', 'agent-qa', '--config', configPath, 'knowledge', 'gates', ...args])
+      expect(stderr).toEqual([])
+      expect(process.exitCode).toBeUndefined()
+      return stdout.join('\n')
+    } finally { log.mockRestore(); error.mockRestore() }
+  }
+
+  it('renders schema-valid history, standing and the live verdict over real bundles', async () => {
+    const { config, configPath, id } = fixture()
+    expect(appendPromotionReceipt(config, id, {
+      schemaVersion: 1, kind: 'promotion', candidateId: id, promotionPath: 'deterministic-verdict-floor',
+      citedReceiptDigests: [], producedAtOrdinal: 6, producedBy: { opId: 'promote' },
+    })).toEqual({ kind: 'appended' })
+    const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 1, verdict: 'pass',
+      candidateId: id, producedAtOrdinal: 7, producedBy: { jobId: 'replay-check' } } as const)
+    expect(appendGateReceipt(config, id, receipt)).toEqual({ kind: 'appended' })
+    const dto = KnowledgeGatesListResultSchema.parse(JSON.parse(await invoke(configPath, [id, '--json'])))
+    expect(dto.kind).toBe('found')
+    if (dto.kind !== 'found') throw new Error('published record not found')
+    expect(dto.lines).toHaveLength(2)
+    expect(dto.standing).toEqual([receipt])
+    expect(dto.strongestPromotionPath).toBe('deterministic-verdict-floor')
+    const human = await invoke(configPath, [id])
+    expect(human).toContain(`record ${id} · fact · candidate · strongest path: deterministic-verdict-floor`)
+    expect(human).toContain('promotion deterministic-verdict-floor @6 by promote cites 0')
+    expect(human).toContain(`gate 1 pass @7 by replay-check digest ${receipt.receiptDigest.slice(0, 12)}`)
+    expect(human.indexOf('promotion deterministic-verdict-floor')).toBeLessThan(human.indexOf('gate 1 pass'))
+    expect(human).toContain('standing:\ngate 1: pass @7\ngate 2: none\ngate 3: none')
+    expect(human).toContain(dto.live.verdict === 'promote'
+      ? `promote via ${dto.live.promotionPath}` : `held: ${dto.live.reason}`)
+  })
+
+  it('reports no gate receipts with the actual live answer and reports not found', async () => {
+    const { configPath, id } = fixture()
+    const dto = KnowledgeGatesListResultSchema.parse(JSON.parse(await invoke(configPath, [id, '--json'])))
+    if (dto.kind !== 'found') throw new Error('published record not found')
+    expect(dto.lines).toEqual([])
+    expect(await invoke(configPath, [id])).toBe(dto.live.verdict === 'promote'
+      ? `no gate receipts; would promote via ${dto.live.promotionPath}`
+      : `no gate receipts; held: ${dto.live.reason}`)
+    expect(await invoke(configPath, ['missing'])).toBe('record missing: not found')
+  })
+
+  it('keeps every verb free of data-layer imports', () => {
+    const source = readFileSync(new URL('../commands/knowledge-read.ts', import.meta.url), 'utf8')
+    expect(source).toContain('invokeFunction')
+    for (const name of DATA_LAYER_PACKAGES) expect(source).not.toContain(name)
+  })
+})

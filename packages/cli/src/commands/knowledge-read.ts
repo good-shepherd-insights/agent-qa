@@ -30,11 +30,13 @@ import {
   guardInspectRecordView,
   guardRecordChange,
   InspectFilterSchema,
+  KnowledgeGatesListResultSchema,
 } from '@vostride/agent-qa-schema'
 import type {
   InspectFilter,
   InspectRecordView,
   KnowledgeBundleSummary,
+  KnowledgeGatesListResult,
   KnowledgeRecordsDiffOutput,
   KnowledgeRecordsInspectOutput,
   RecordChange,
@@ -79,6 +81,7 @@ const KNOWLEDGE_BUNDLES_LIST_ID = 'knowledge.bundles.list'
 /** The record-level read verbs `inspect` and `diff` are clients of (387 D-20, KREV-01). */
 const KNOWLEDGE_RECORDS_INSPECT_ID = 'knowledge.records.inspect'
 const KNOWLEDGE_RECORDS_DIFF_ID = 'knowledge.records.diff'
+const KNOWLEDGE_GATES_LIST_ID = 'knowledge.gates.list'
 
 type KnowledgeReadErrorCode =
   | 'invalid-filter'
@@ -313,7 +316,38 @@ function renderBundles(rows: readonly KnowledgeBundleSummary[]): string {
   ].join('\n')
 }
 
-function reportError(action: 'inspect' | 'diff' | 'bundles', error: unknown): void {
+function renderGates(dto: KnowledgeGatesListResult): string {
+  if (dto.kind === 'not-found') return `record ${dto.recordId}: not found`
+  const live = dto.live.verdict === 'promote'
+    ? `promote via ${dto.live.promotionPath}` : `held: ${dto.live.reason}`
+  if (dto.lines.length === 0) {
+    return dto.live.verdict === 'promote'
+      ? `no gate receipts; would promote via ${dto.live.promotionPath}`
+      : `no gate receipts; ${live}`
+  }
+  return [
+    `record ${dto.recordId} · ${dto.recordKind} · ${dto.status} · strongest path: ${dto.strongestPromotionPath ?? 'none'}`,
+    ...dto.lines.map(line => {
+      const by = [line.producedBy.jobId, line.producedBy.opId].filter(Boolean).join('|') || '-'
+      if ('kind' in line) {
+        return `promotion ${line.promotionPath} @${line.producedAtOrdinal} by ${by} cites ${line.citedReceiptDigests.length}`
+      }
+      const corpus = 'corpusVersion' in line
+        ? (line.corpusVersion as { corpusDigest: string }).corpusDigest.slice(0, 12) : '-'
+      const degradation = 'degradation' in line ? line.degradation : '-'
+      return `gate ${line.gate} ${line.verdict} @${line.producedAtOrdinal} by ${by} digest ${line.receiptDigest.slice(0, 12)} corpus ${corpus} degradation ${degradation}`
+    }),
+    'standing:',
+    ...[1, 2, 3].map(gate => {
+      const receipt = dto.standing.find(line => line.gate === gate)
+      return receipt === undefined ? `gate ${gate}: none`
+        : `gate ${gate}: ${receipt.verdict} @${receipt.producedAtOrdinal}`
+    }),
+    live,
+  ].join('\n')
+}
+
+function reportError(action: 'inspect' | 'diff' | 'bundles' | 'gates', error: unknown): void {
   if (error instanceof KnowledgeReadCommandError) {
     console.error(pc.red(`Knowledge ${action} error [${error.code}]: ${error.message}`))
   } else {
@@ -391,6 +425,28 @@ export function registerKnowledgeReadCommands(command: Command): void {
         emitHuman(renderDiff(changes, ordinal))
       } catch (error) {
         reportError('diff', error)
+      }
+    })
+
+  command
+    .command('gates <id>')
+    .description('Print a record\'s gate-and-promotion history through the agent function layer')
+    .option('--json', 'output schema-validated masked JSON')
+    .action(async (id: string, options: BundlesOptions, cmd: Command) => {
+      try {
+        const dto = KnowledgeGatesListResultSchema.parse(await invokeFunction(
+          composeCliLocalAgent(functionLayerInput(cmd)).registry,
+          KNOWLEDGE_GATES_LIST_ID,
+          { recordId: id },
+          CLI_FUNCTION_CALLER,
+        ))
+        if (options.json === true) {
+          emitJson(dto)
+          return
+        }
+        emitHuman(renderGates(dto))
+      } catch (error) {
+        reportError('gates', error)
       }
     })
 
