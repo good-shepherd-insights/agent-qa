@@ -2,7 +2,7 @@
 // D-15 / D-18).
 //
 // WHY THIS CELL EXISTS AT ALL. The retrieval rung is printed by two surfaces that share no module:
-// `agent-qa doctor`'s three knowledge rows (407-08, `cli/src/commands/doctor-knowledge-checks.ts`)
+// `agent-qa doctor`'s three retrieval rows (407-08, `cli/src/commands/doctor-knowledge-checks.ts`)
 // and the run header's degradation banner (407-10, `dashboard-ui/src/lib/knowledge-view.ts`).
 // `packages/cli` cannot import a React package's lib — dashboard-ui ships a built app bundle, not
 // a library entry, and every package pins `rootDir` to its own `src` so a cross-package relative
@@ -19,7 +19,7 @@
 //
 // THE FOURTH CELL IS A PROPERTY, NOT AN EXAMPLE. It folds EVERY index face against EVERY embedder
 // outcome against both shipped profiles, drives the real `createKnowledgeChecks` with injected
-// read-only probes, and requires every `warn` a degraded host produces to be spelled out of the
+// read-only probes, and requires every retrieval `warn` a degraded host produces to be spelled out of the
 // table. A cell that checked one host's row would pass while seven of the eight labels were
 // unreachable prose.
 
@@ -186,7 +186,7 @@ interface RowOutcome {
   readonly message: string
 }
 
-/** Run doctor's three knowledge rows against ONE synthetic host. */
+/** Run doctor's four knowledge rows against ONE synthetic host. */
 async function doctorRows(
   face: IndexFace,
   embedder: AcquireEmbedderOutcome,
@@ -259,7 +259,7 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
     ).toEqual([])
   })
 
-  it('every degraded doctor row spells its cause out of the table, over the whole host matrix', async () => {
+  it('every degraded retrieval doctor row spells its cause out of the table, over the whole host matrix', async () => {
     const labels = new Set(Object.values(RUNG_CAUSE_LABELS))
     const unspelled: string[] = []
     const rungRowDrift: string[] = []
@@ -269,8 +269,15 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
         for (const { label: profileLabel, profile } of PROFILES) {
           const where = `${faceLabel} × ${embedderLabel} × ${profileLabel}`
           const rows = await doctorRows(face, outcome, profile)
+          expect(rows.map(row => row.name)).toEqual([
+            'Knowledge store', 'Embedder', 'Retrieval rung', 'Learning mode',
+          ])
+          // Learning mode describes promotion capability, independent of the retrieval fold.
+          const learning = rows[3]!
+          expect(learning.status).toBe('warn')
+          expect(learning.message).toMatch(/^deterministic-verdict-floor — no eval root at /)
 
-          for (const row of rows) {
+          for (const row of rows.slice(0, 3)) {
             if (row.status !== 'warn') continue
             if (![...labels].some((candidate) => row.message.includes(candidate))) {
               unspelled.push(`${where} → ${row.name}: ${JSON.stringify(row.message)}`)
@@ -303,7 +310,7 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
 
     expect(
       unspelled,
-      'a doctor `warn` printed a cause that is in neither table. Every degraded row names its '
+      'a retrieval doctor `warn` printed a cause that is in neither table. Every degraded retrieval row names its '
       + 'cause out of `RUNG_CAUSE_LABELS`, so an operator reads one wording wherever they look.',
     ).toEqual([])
     expect(
