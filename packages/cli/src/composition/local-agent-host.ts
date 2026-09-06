@@ -20,6 +20,7 @@
 // can never join it. This file already carries that entry, so the placement mints none.
 
 import { spawnSync } from 'node:child_process'
+import { buildPromotionPostureResolver } from '../curation/promotion-posture.js'
 import { createHash } from 'node:crypto'
 import {
   closeSync,
@@ -468,6 +469,8 @@ function createComposedRunExecution(input: {
 }
 
 export interface ComposeCliLocalAgentInput {
+  /** An enclosing drain may supply its already-memoised preparation. */
+  resolvePromotionPosture?: ComposeLocalAgentInput['resolvePromotionPosture']
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. */
   agentQaRoot: string
   /**
@@ -3629,6 +3632,10 @@ export function createChatConfirmPort(
 }
 
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {
+  let promotionPosture: ReturnType<NonNullable<ComposeLocalAgentInput['resolvePromotionPosture']>> | undefined
+  const resolvePromotionPosture = input.resolvePromotionPosture ?? (() => promotionPosture ??=
+    buildPromotionPostureResolver({ configPath: input.configPath })
+      .then(result => result.kind === 'no-eval-root' ? undefined : result.resolve))
   // Narrowed once, here, so the hook closures below close over a value TypeScript knows is present
   // rather than re-reading an optional field at call time.
   const analytics = input.analytics
@@ -3650,6 +3657,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
   const doorConfirm = 'confirm' in input ? input.confirm : createTtyConfirmPort()
 
   return composeLocalAgent({
+    resolvePromotionPosture,
     agentQaRoot: input.agentQaRoot,
     mintQuarantineIdentityPath: createQuarantineIdentityMint(input.configPath),
     // 401-05 (D-01/D-07): the default is the in-process policy-gated drive, and since 401-10 it is

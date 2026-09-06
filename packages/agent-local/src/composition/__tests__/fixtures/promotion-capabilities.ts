@@ -1,0 +1,103 @@
+import { stampReceiptDigest, type Gate1Receipt, type GateVerdict, type Anchor, type BundleDraft, type DistilledObservation, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
+import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
+
+export function resolvedPromotionPosture(
+  overrides: Partial<ResolvedPromotionGatePosture> = {},
+): ResolvedPromotionGatePosture {
+  return {
+    kind: 'resolved', replayGateAvailable: true, gateSetNonEmpty: true, gateSetVerdict: 'ok',
+    corpusDigest: 'c'.repeat(64), minimumGateSet: 1,
+    counts: { natural: 1, heldOutShared: 1, heldOutPrivate: 0, adversarial: 0, excludedCount: 0 },
+    scope: { partition: 'storefront', resolution: 'product-key' },
+    judge: { capable: true, reason: 'eligible' },
+    canary: { kind: 'not-provided', rarePathEligible: false },
+    ...overrides,
+  }
+}
+// 416-02: additive receipt builder; the pristine v51 builders below stay byte-identical.
+export function completeGate1Receipt(
+  candidateId: string,
+  overrides?: { producedAtOrdinal?: number; corpusDigest?: string; verdict?: GateVerdict },
+): Gate1Receipt {
+  const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
+  return stampReceiptDigest({
+    schemaVersion: 1, gate: 1, candidateId, verdict: overrides?.verdict ?? 'pass',
+    producedAtOrdinal: overrides?.producedAtOrdinal ?? 44, producedBy: { opId: 'test' },
+    perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score,
+      sideEffect: score, loop: score },
+    corpusVersion: { corpusDigest: overrides?.corpusDigest ?? 'c'.repeat(64), partitionVersion: 2,
+      gateSetSize: 10, excludedCount: 0, minimumGateSet: 1 },
+    samples: { k: 1, seeds: [1], seedHonored: true, modelCalls: 0 }, crossCheck: 'held',
+  })
+}
+
+export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { knowledgeRoot: string; auditBaseDir: string }) {
+  function publishHeldCandidate(seed: string) {
+    const displayName = `Held checkout ${seed}`
+    const normalizedName = displayName.toLowerCase()
+    const anchors: Anchor[] = [
+      { t: 'el', role: 'button', name: displayName, ordinal: 0 },
+      { t: 'page', route: '/checkout' },
+      { t: 'selector', literal: `[data-testid="held-checkout-${seed}"]` },
+    ]
+    const observation: DistilledObservation = {
+      schemaVersion: 1,
+      step: { naturalKey: `held-checkout-${seed}`, ordinal: 0 },
+      platform: 'web',
+      element: { naturalKey: `button:${normalizedName}:0` },
+      locator: { selector: `[data-testid="held-checkout-${seed}"]` },
+      observedAtOrdinal: 42,
+    }
+    const draft: BundleDraft = {
+      kind: 'fact',
+      subtype: 'selector',
+      anchors,
+      scope: { tier: 'product', key: 'storefront' },
+      summary: `${displayName} selector`,
+      body: `The ${displayName} button was resolved and verified.`,
+      distilledEvidenceRef: { id: `held-checkout-${seed}`, sha: 'a'.repeat(64) },
+      originStage: 'run-curation',
+    }
+    const published = publishBundleForTest({
+      knowledgeRoot,
+      productKey: 'storefront',
+      auditBaseDir,
+      commitArtifacts: 'none',
+      writerLeaseId: 'promotion-floor-fixture',
+    }, {
+      draft,
+      discriminant: {
+        kind: 'fact',
+        subtype: 'selector',
+        elementRef: { role: 'button', name: displayName },
+      },
+      originClass: 'agent-verified',
+      createdAtOrdinal: 42,
+      screenStates: [],
+      initialEvents: [],
+      relations: [],
+      provenance: {
+        mode: 'run-linked',
+        runId: `held-checkout-${seed}-run`,
+        testId: `held-checkout-${seed}-test`,
+        stepIndex: 0,
+        curationJobId: `held-checkout-${seed}-seed`,
+        sourceBuildOrdinal: 42,
+        authorship: {
+          path: 'deterministic-fallback',
+          executionContext: 'local-interactive',
+        },
+      },
+      artifacts: [],
+      evidenceMarkdown: 'Held pending canonical confirmation.\n',
+      distilledObservations: [observation],
+    })
+    if (published.kind !== 'published') {
+      throw new Error(`expected held candidate publish, got ${published.kind}`)
+    }
+    return { draft, published }
+  }
+
+  return { publishHeldCandidate }
+}
+

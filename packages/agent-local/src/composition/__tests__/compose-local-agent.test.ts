@@ -21,12 +21,15 @@ import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   QUARANTINE_UNASSIGNED_OWNER,
   asRef,
+  asEvidenceToken,
   canonicalJson,
   slugBranch,
 } from '@vostride/agent-qa-schema'
 import {
   QUARANTINE_LEDGER_FILENAME,
   applyRunOutcomes,
+  createLocalKnowledgeStore,
+  readGateReceipts,
   indexDbPath,
   projectRunOutcomes,
 } from '@vostride/agent-qa-knowledge-local'
@@ -47,12 +50,14 @@ import type {
   ScreenState,
   StepEvidence,
 } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPromotionFloorFixture, completeGate1Receipt, resolvedPromotionPosture } from './fixtures/promotion-capabilities.js'
 
 import { writeAnalysisArtifact } from '../../analysis/persist-analysis.js'
 import { AGENT_JOB_STORE_DB_FILE } from '../../store/sqlite-job-store.js'
 import {
   composeLocalAgent,
+  LOCAL_CURATION_CAPABILITIES,
   DIGEST_JOB_ID_SOURCE,
   postRunCapabilities,
   SYSTEM_CLOCK,
@@ -145,6 +150,7 @@ describe('composeLocalAgent (D-15)', () => {
       jobKinds?: JobKindRegistry
       runExecution?: RunExecutionPort
       knowledgeRoot?: () => Promise<string> | string
+      resolvePromotionPosture?: ComposeLocalAgentInput['resolvePromotionPosture']
     } = {},
   ): LocalAgentHost {
     return composeLocalAgent({
@@ -177,6 +183,61 @@ describe('composeLocalAgent (D-15)', () => {
     knowledgeRootCalls = 0
     configReads = 0
     host = compose()
+  })
+
+  it('416 exposes only the existing writer edge for receipt and promotion capabilities', () => {
+    expect(LOCAL_CURATION_CAPABILITIES.recordGateReceipt).toBeTypeOf('function')
+    expect(LOCAL_CURATION_CAPABILITIES.promoteWithReceipts).toBeTypeOf('function')
+    expect(Object.isFrozen(LOCAL_CURATION_CAPABILITIES)).toBe(true)
+  })
+
+  it('416 promotes through the caller held lease and records one floor line', async () => {
+    const knowledgeRoot = join(root, 'knowledge')
+    const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+    const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('expected test authority')
+    try {
+      const { draft, published } = fixture.publishHeldCandidate('composition')
+      const input = { knowledgeRoot, auditBaseDir: agentQaRoot, executionContext: 'local-interactive' as const,
+        lease: { leaseId: lease.leaseId, epoch: lease.epoch }, sourceBuildOrdinal: 46 }
+      const store = createLocalKnowledgeStore({ ...input, writerLeaseId: lease.leaseId, epoch: lease.epoch })
+      await store.commit([{ kind: 'Confirm', origin: 'agent', scope: draft.scope,
+        citedIds: [published.id], targetId: published.id, evidenceToken: asEvidenceToken('composition-confirm'),
+        authorship: { path: 'deterministic-fallback', executionContext: 'local-interactive' } }])
+      await expect(LOCAL_CURATION_CAPABILITIES.promoteWithReceipts({ ...input, candidateId: published.id }))
+        .resolves.toEqual({ kind: 'promoted', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] })
+      expect(readGateReceipts(published.dir, published.id)).toHaveLength(1)
+      await expect(LOCAL_CURATION_CAPABILITIES.promoteWithReceipts({ ...input, candidateId: published.id }))
+        .resolves.toEqual({ kind: 'already-active', promotionPath: 'deterministic-verdict-floor' })
+      expect(readGateReceipts(published.dir, published.id)).toHaveLength(1)
+      const receipt = completeGate1Receipt(published.id)
+      await expect(LOCAL_CURATION_CAPABILITIES.recordGateReceipt({ ...input, receipt })).resolves.toEqual({ kind: 'appended' })
+      await expect(LOCAL_CURATION_CAPABILITIES.recordGateReceipt({ ...input, receipt })).resolves.toEqual({ kind: 'duplicate' })
+      const invalid = { ...input, lease: { leaseId: 'foreign', epoch: lease.epoch } }
+      await expect(LOCAL_CURATION_CAPABILITIES.recordGateReceipt({ ...invalid, receipt })).rejects.toThrow()
+      await expect(LOCAL_CURATION_CAPABILITIES.promoteWithReceipts({ ...invalid, candidateId: published.id })).rejects.toThrow()
+      expect(readGateReceipts(published.dir, published.id)).toHaveLength(2)
+    } finally {
+      LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot, leaseId: lease.leaseId })
+    }
+  })
+
+  it('416 forwards the host posture factory through composition to the gates reader', async () => {
+    const knowledgeRoot = join(root, 'knowledge')
+    const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+    const { published } = fixture.publishHeldCandidate('reader-composition')
+    const resolver = vi.fn(() => resolvedPromotionPosture({ replayGateAvailable: false }))
+    const factory = vi.fn(async () => resolver)
+    const composed = compose({ resolvePromotionPosture: factory })
+    try {
+      expect(factory).not.toHaveBeenCalled()
+      const result = await invokeFunction(composed.registry, 'knowledge.gates.list', { recordId: published.id }, CALLER)
+      expect(result).toMatchObject({ posture: 'resolved' })
+      expect(factory).toHaveBeenCalledOnce()
+      expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ id: published.id }))
+    } finally {
+      await composed.close()
+    }
   })
 
   afterEach(() => {

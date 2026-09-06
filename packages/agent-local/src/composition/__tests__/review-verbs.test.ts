@@ -153,7 +153,8 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     get: () => Promise.resolve(undefined),
   }
 
-  function registry(withReview: boolean, entities: EntityDirectoryPort = STUB_ENTITIES): FunctionRegistry {
+  function registry(withReview: boolean, entities: EntityDirectoryPort = STUB_ENTITIES,
+    resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>): FunctionRegistry {
     return createFunctionRegistry({
       deps: {
         runs: createRunsReader(agentQaRoot),
@@ -166,6 +167,7 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
               knowledgeReview: createKnowledgeReview({
                 agentQaRoot,
                 resolveKnowledgeRoot: () => knowledgeRoot,
+                ...(resolvePromotionPosture ? { resolvePromotionPosture } : {}),
               }),
             }
           : {}),
@@ -245,7 +247,9 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
 
   it('the SAME four ids are bound and reach the store when a review port is supplied', async () => {
     const recordId = publish()
-    const host = registry(true)
+    const factory = vi.fn(async () => undefined)
+    const host = registry(true, STUB_ENTITIES, factory)
+    expect(factory).not.toHaveBeenCalled()
     approveApply(host)
 
     for (const id of MUTATING_FUNCTION_IDS) {
@@ -273,6 +277,7 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     ) as KnowledgeApplyOutcomeDto
 
     expect(applied.outcome).toBe('applied')
+    expect(factory).toHaveBeenCalledOnce()
     const receipt = applied.forgetReceipt as ForgetReceiptV1
     expect(receipt.tombstonedRecords.map((row) => row.recordId)).toEqual([recordId])
     // Tombstoned, never destroyed — the record is still enumerable, saying what happened to it.

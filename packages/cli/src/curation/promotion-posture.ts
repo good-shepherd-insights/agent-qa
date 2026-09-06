@@ -1,12 +1,7 @@
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { ReplayGatePort } from '@vostride/agent-qa-agent'
-import { selectGateSet, type JudgeCapabilityInput } from '@vostride/agent-qa-eval'
-import {
-  readCommittedCorpus,
-  readGatePostureFor,
-  resolveMinimumGateSet,
-} from '@vostride/agent-qa-eval-local'
+import type { JudgeCapabilityInput } from '../eval-session-composition.js'
 import type {
   PromotionCanaryPosture,
   PromotionJudgePosture,
@@ -52,7 +47,9 @@ export async function buildPromotionPostureResolver(input: {
     ...(judge.judgeFamily === undefined ? {} : { judgeFamily: judge.judgeFamily }),
   })
   try {
-    const { resolveEvalSession, resolveGateProfileIdentity } = await import('../eval-session-composition.js')
+    const { resolveEvalSession, resolveGateProfileIdentity, readCommittedCorpus,
+      readGatePostureFor, resolveMinimumGateSet, selectGateSet, computeCorpusDigest,
+    } = await import('../eval-session-composition.js')
     const session = await resolveEvalSession({ configPath, keyOnly: true })
     const identity = await resolveGateProfileIdentity(session)
     const floor = resolveMinimumGateSet({ committedRoot, profileKey: identity.profileKey })
@@ -84,6 +81,9 @@ export async function buildPromotionPostureResolver(input: {
         if (currentCorpus.refusals.length > 0) return unavailable(refusalLines(currentCorpus.refusals))
         const read = readGatePostureFor({ committedRoot, scope: candidate.scope, minimumGateSet, judge, canary })
         if (read.refusals.length > 0) return unavailable(refusalLines(read.refusals))
+        if (computeCorpusDigest(currentCorpus.snapshot.entries) !== read.posture.corpusDigest) {
+          return unavailable([`${committedRoot}: corpus changed during posture resolution`])
+        }
         const verdict = selectGateSet({ entries: currentCorpus.snapshot.entries, product: candidate.product, candidate: candidate.provenance, minimumGateSet })
         return {
           kind: 'resolved', replayGateAvailable,

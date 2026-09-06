@@ -2133,6 +2133,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     const draftAuthoring = await resolveDraftAuthoring(input.configPath)
     const draftApply = await resolveDraftApply(input.configPath)
     localAgent = operations.composeLocalAgent({
+      resolvePromotionPosture: resolveHostPromotionPosture,
       agentQaRoot: input.agentQaRoot,
       config: input.config,
       knowledgeRoot: () => input.knowledgeRoot,

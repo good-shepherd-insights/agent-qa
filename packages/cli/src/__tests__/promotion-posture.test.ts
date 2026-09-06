@@ -5,7 +5,12 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ReplayGatePort } from '@vostride/agent-qa-agent'
 import type { PromotionPostureCandidate, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
-import { readCommittedCorpus } from '@vostride/agent-qa-eval-local'
+import { readCommittedCorpus, readGatePostureFor } from '@vostride/agent-qa-eval-local'
+
+vi.mock('@vostride/agent-qa-eval-local', async importOriginal => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-eval-local')>()
+  return { ...actual, readGatePostureFor: vi.fn(actual.readGatePostureFor) }
+})
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -154,9 +159,12 @@ describe('buildPromotionPostureResolver', () => {
     writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), JSON.stringify(value))
     const result = await build(f.configPath)
     expect(result?.kind).toBe('ready')
-    expect(result.resolve(candidate)).toMatchObject({ kind: 'resolved', gateSetVerdict: 'ok', gateSetNonEmpty: true })
+    const before = result.resolve(candidate)
+    expect(before).toMatchObject({ kind: 'resolved', gateSetVerdict: 'ok', gateSetNonEmpty: true })
     rmSync(join(f.committedRoot, 'corpus'), { recursive: true })
-    expect(result.resolve(candidate)).toMatchObject({ kind: 'resolved', gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, counts: { natural: 0 } })
+    const after = result.resolve(candidate)
+    expect(after).toMatchObject({ kind: 'resolved', gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, counts: { natural: 0, excludedCount: 0, remaining: { after: { natural: 0, heldOutShared: 0, heldOutPrivate: 0, adversarial: 0 } } } })
+    expect(after.corpusDigest).not.toBe(before.corpusDigest)
   })
 
   it('T-416-15 reads identity without secrets, auth state, provider credentials or model resolution', async () => {
@@ -189,5 +197,17 @@ describe('buildPromotionPostureResolver', () => {
     expect(posture.kind).toBe('unavailable')
     expect(posture.refusals.join('; ')).toContain(path)
     expect(warn).toHaveBeenCalledWith(`curation: ${candidate.id} posture unavailable: ${posture.refusals.join('; ')}`)
+  })
+
+  it('fails closed if posture and selection observe different corpus snapshots', async () => {
+    const f = fixture({ floor: true })
+    const result = await build(f.configPath)
+    expect(result?.kind).toBe('ready')
+    const read = readGatePostureFor({ committedRoot: f.committedRoot, scope: candidate.scope,
+      minimumGateSet: floor.minimumGateSet.value, judge: { plannerModelId: floor.plannerModelId },
+      canary: { kind: 'not-provided' } })
+    vi.mocked(readGatePostureFor).mockReturnValueOnce({ ...read, posture: { ...read.posture, corpusDigest: 'f'.repeat(64) } })
+    expect(result.resolve(candidate)).toEqual({ kind: 'unavailable', replayGateAvailable: false,
+      refusals: [`${f.committedRoot}: corpus changed during posture resolution`] })
   })
 })

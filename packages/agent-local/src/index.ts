@@ -265,6 +265,8 @@ export type {
   LocalAgentHost,
   LocalAgentJobs,
   LocalCurationCapabilities,
+  RecordGateReceiptInput,
+  PromoteWithReceiptsInput,
   LocalDaemonCapabilities,
   LocalKnowledgeProbeCapabilities,
   LocalKnowledgeMaintenanceCapabilities,

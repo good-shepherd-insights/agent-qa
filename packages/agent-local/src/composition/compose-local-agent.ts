@@ -86,6 +86,7 @@ import {
   classifyIndexFace,
   countPendingCurationJobs,
   createMemorySightingSource,
+  createLocalKnowledgeStore,
   createGrantOperations,
   createProposalsInbox,
   createQuarantineOperations,
@@ -162,6 +163,7 @@ import {
 import type {
   ApplyDelegate,
   ProposeReviewRequest,
+  CreateLocalKnowledgeStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeReviewPort } from '@vostride/agent-qa-agent'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
@@ -205,6 +207,11 @@ import type {
   CompletedRunHandoff,
   DraftReceipt,
   ExecutionContext,
+  GateReceipt,
+  GateReceiptRecordOutcome,
+  PromotionOutcome,
+  RecordId,
+  ResolvePromotionPosture,
   FunctionCaller,
   FunctionScope,
   GrantRecordOutcome,
@@ -466,7 +473,46 @@ export interface LocalKnowledgeMaintenanceCapabilities {
   readonly rollbackAffectedSetFingerprint: typeof rollbackAffectedSetFingerprint
 }
 
+interface ReceiptWriterInput extends Pick<CreateLocalKnowledgeStoreConfig,
+  'knowledgeRoot' | 'auditBaseDir' | 'executionContext' | 'policy' | 'resolvePromotionPosture' | 'sourceBuildOrdinal' | 'sourceRunId'> {
+  /** The caller already holds this authority; these capabilities never acquire a lease. */
+  lease: { leaseId: string; epoch: number }
+}
+
+export interface RecordGateReceiptInput extends ReceiptWriterInput {
+  receipt: GateReceipt
+}
+
+export interface PromoteWithReceiptsInput extends ReceiptWriterInput {
+  candidateId: RecordId
+  receipts?: readonly GateReceipt[]
+}
+
+function receiptWriter(input: ReceiptWriterInput) {
+  return createLocalKnowledgeStore({
+    knowledgeRoot: input.knowledgeRoot,
+    auditBaseDir: input.auditBaseDir,
+    executionContext: input.executionContext,
+    writerLeaseId: input.lease.leaseId,
+    epoch: input.lease.epoch,
+    ...(input.policy === undefined ? {} : { policy: input.policy }),
+    ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
+    ...(input.sourceBuildOrdinal === undefined ? {} : { sourceBuildOrdinal: input.sourceBuildOrdinal }),
+    ...(input.sourceRunId === undefined ? {} : { sourceRunId: input.sourceRunId }),
+  })
+}
+
+function recordGateReceipt(input: RecordGateReceiptInput): Promise<GateReceiptRecordOutcome> {
+  return receiptWriter(input).recordGateReceipt(input.receipt)
+}
+
+function promoteWithReceipts(input: PromoteWithReceiptsInput): Promise<PromotionOutcome> {
+  return receiptWriter(input).promote(input.candidateId, input.receipts)
+}
+
 export interface LocalCurationCapabilities {
+  readonly recordGateReceipt: typeof recordGateReceipt
+  readonly promoteWithReceipts: typeof promoteWithReceipts
   /** Serving-side reader the tail folds against; read-only despite arriving on the writer edge. */
   readonly openKnowledgeReader: typeof openKnowledgeReader
   readonly drainQueue: typeof drainQueue
@@ -495,6 +541,8 @@ export interface LocalCurationCapabilities {
 }
 
 export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.freeze({
+  recordGateReceipt,
+  promoteWithReceipts,
   openKnowledgeReader,
   drainQueue,
   foldRunOutcomes,
@@ -640,9 +688,11 @@ export function createRunsReader(agentQaRoot: string): RunsReaderPort {
 export function createKnowledgeReader(
   resolveKnowledgeRoot: () => Promise<string> | string,
   sightMemoryEntities?: SightMemoryEntities,
+  resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>,
 ): KnowledgeReaderPort {
   return createKnowledgeReaderPort({
     resolveKnowledgeRoot,
+    ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
     ...(sightMemoryEntities === undefined ? {} : { sightMemoryEntities }),
   })
 }
@@ -650,6 +700,7 @@ export function createKnowledgeReader(
 // ---- knowledge review: the WRITE half of the verb family (387 KREV-01 / D-17 · D-18) --------
 
 export interface CreateKnowledgeReviewInput {
+  readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>
   readonly agentQaRoot: string
   readonly resolveKnowledgeRoot: () => Promise<string> | string
   /**
@@ -711,6 +762,7 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
     async apply(proposalId) {
       const { knowledgeRoot } = await roots()
       const result = await applyReview({
+        resolvePromotionPosture: await input.resolvePromotionPosture?.(),
         agentQaRoot: input.agentQaRoot,
         knowledgeRoot,
         proposalId,
@@ -1511,6 +1563,8 @@ export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonl
   })
 
 export interface ComposeLocalAgentInput {
+  /** DATA across the wall: host preparation may await; candidate evaluation is synchronous. */
+  readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. Absolute. */
   readonly agentQaRoot: string
   /**
@@ -2955,6 +3009,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       knowledge: createKnowledgeReader(
         input.knowledgeRoot,
         createMemorySightingHook(entityResolutionInput),
+        input.resolvePromotionPosture,
       ),
       config: input.config,
       entities: createEntityDirectory(entityResolutionInput),
@@ -2963,6 +3018,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // that is genuinely read-only — a listing, a remote surface — reports the four mutating
       // verbs as `unbound` BY NAME rather than as a hole in the catalogue.
       knowledgeReview: createKnowledgeReview({
+        ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
         agentQaRoot: input.agentQaRoot,
         resolveKnowledgeRoot: input.knowledgeRoot,
         ...(input.applyDelegate === undefined ? {} : { applyDelegate: input.applyDelegate }),

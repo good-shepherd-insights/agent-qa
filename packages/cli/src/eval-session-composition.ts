@@ -165,6 +165,12 @@ export { renderBaselineComparatorRefusal, SEED_POLICIES } from '@vostride/agent-
 export type { SeedPolicy } from '@vostride/agent-qa-eval'
 export type { WriteBaselinePointerOutcome } from '@vostride/agent-qa-eval-local'
 
+// 416: the posture builder obtains eval capabilities through this existing host edge.
+// Keep the surface firewall self-shrinking; new CLI files do not gain eval imports.
+export { computeCorpusDigest, selectGateSet } from '@vostride/agent-qa-eval'
+export type { JudgeCapabilityInput } from '@vostride/agent-qa-eval'
+export { readCommittedCorpus, readGatePostureFor, resolveMinimumGateSet } from '@vostride/agent-qa-eval-local'
+
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */
 export interface EvalCliConfig {
   judge?: string
