@@ -32,6 +32,7 @@ export function gateReceiptsFor(options: GateReceiptsForOptions): KnowledgeGates
       recordKind: bundle.frontmatter.kind, status: deriveBundleTrust(bundle).status,
       ...(path === undefined ? {} : { strongestPromotionPath: path }),
       lines, standing,
+      // 416-DOOR: read live-verdict
       live: evaluatePromotionGate(gateInput),
       // 'resolved' and 'unavailable' describe the actual posture the gate judged.
       posture: gateInput.gatePosture?.kind ?? 'absent',
