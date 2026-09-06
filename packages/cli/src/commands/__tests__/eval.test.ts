@@ -9,7 +9,7 @@ import { Command } from 'commander'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import {
@@ -65,10 +65,12 @@ import type {
 } from '@vostride/agent-qa-schema'
 import {
   FsReplayRecordStore,
+  FsReportStore,
   commitEvalReport,
   committedCassettePath,
   committedLabelPath,
   computeReplayProfileFingerprintFor,
+  loadStagedReport,
   readCommittedCorpus,
 } from '@vostride/agent-qa-eval-local'
 import {
@@ -148,6 +150,275 @@ function requireFloorVerb() {
   expect(evalVerbs.runFloorVerb, 'the public floor measurement verb exists').toBeTypeOf('function')
   return evalVerbs.runFloorVerb
 }
+
+function requireGateVerb() {
+  expect(evalVerbs.runGateVerb, 'the public release gate verb exists').toBeTypeOf('function')
+  return evalVerbs.runGateVerb
+}
+
+async function gateVerbFixture(judged = false, seeds = [11, 29]) {
+  const fixture = await floorVerbFixture(judged)
+  const floor = await evalVerbs.runFloorVerb(fixture.session, {
+    ...fixture.opts, seeds, commit: true, explanation: 'measured CLI fixture',
+  })
+  expect(floor.committed?.kind).toBe('written')
+  fixture.session.evalConfig.seed = 11
+  const replay = await runReplayVerb(fixture.session, {}, { ...fixture.opts, source: 'committed' })
+  expect(replay.replayed).toBe(3)
+  const report = await runReportVerb(fixture.session, {}, {
+    source: 'committed', commit: true, baseline: true, plannerOverrides: fixture.opts.plannerOverrides,
+  })
+  expect(report.committed?.kind).toBe('committed')
+  expect(report.baseline?.kind).toBe('written')
+  delete fixture.session.evalConfig.seed
+  fixture.planner.captured.length = 0
+  fixture.judge.captured.length = 0
+  return { ...fixture, floor, report }
+}
+
+describe('runGateVerb — fresh and offline release verdicts', () => {
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_725_000_000)
+    vi.spyOn(performance, 'now').mockReturnValue(10)
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network forbidden in gate fixture'))
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('shares one override fingerprint across floor, designated pointer and the fresh exit-0 gate', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await gateVerbFixture()
+    const committedBefore = await snapshotTree(join(fixture.dir, 'agent-qa-eval'))
+    const result = await runGateVerb(fixture.session, fixture.opts)
+    expect(result.kind).toBe('verdict')
+    if (result.kind !== 'verdict') throw new Error('expected comparable fixture')
+    expect(result.verdict.exit).toBe(0)
+    expect(result.verdict.pairing.n).toBe(3)
+    expect(result.profileKey).toBe(fixture.floor.profileKey)
+    expect(result.profileKey).toBe(fixture.report.profileKey)
+    expect(result.fingerprint).toBe(fixture.floor.fingerprint)
+    expect(result.fingerprint).toBe(await resolveReplayProfileFingerprint(
+      fixture.session, 'declared', fixture.opts.plannerOverrides,
+    ))
+    expect(result.fingerprint).not.toBe(await resolveReplayProfileFingerprint(fixture.session, 'declared'))
+    expect(result.currentReportFile).toContain(`/eval/gate/${slugBranch(result.profileKey)}/reports/`)
+    expect(result).toMatchObject({ mode: 'fresh', seed: 11, seedSource: 'floor', modelCalls: 3, wallClockMs: 0 })
+    expect(fixture.planner.captured).toHaveLength(3)
+    expect(await snapshotTree(join(fixture.dir, 'agent-qa-eval'))).toEqual(committedBefore)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('resolves seed flag > config > profile floor > recorded default without changing the profile key', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await gateVerbFixture(false, [17, 31])
+    fixture.session.evalConfig.seed = 23
+    const flag = await runGateVerb(fixture.session, { ...fixture.opts, seed: 0 })
+    expect(flag).toMatchObject({ seed: 0, seedSource: 'flag', profileKey: fixture.floor.profileKey })
+    const config = await runGateVerb(fixture.session, fixture.opts)
+    expect(config).toMatchObject({ seed: 23, seedSource: 'config' })
+    delete fixture.session.evalConfig.seed
+    expect(await runGateVerb(fixture.session, fixture.opts)).toMatchObject({ seed: 17, seedSource: 'floor' })
+    const other = await floorVerbFixture()
+    expect(await runGateVerb(other.session, other.opts)).toMatchObject({
+      seed: 11, seedSource: 'default', verdict: { exit: 2 },
+    })
+  })
+
+  it('returns exit 1 for a real paired regression and preserves the unchanged comparator reasons', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await gateVerbFixture()
+    const regressing = replayStub(fixture.plannerModelId, () => ({
+      ...clickGenerateResult(),
+      content: [{ type: 'tool-call', toolCallId: 'wrong-action', toolName: 'web_fill',
+        input: JSON.stringify({ ref: 'e-continue', text: 'different operation', reasoning: 'fill',
+          confidence: 0.95, stepComplete: true, doesActionAdvanceUsTowardsGoal: true }) }],
+    }))
+    const result = await runGateVerb(fixture.session, { plannerOverrides: regressing.overrides })
+    expect(result.kind).toBe('verdict')
+    if (result.kind !== 'verdict') throw new Error('expected regression verdict')
+    expect(result.verdict.exit).toBe(1)
+    expect(result.verdict.pairing.n).toBe(3)
+    expect(result.verdict.regressions.length).toBeGreaterThan(0)
+    const offline = await runGateVerb(fixture.session, { plannerOverrides: regressing.overrides,
+      report: result.currentReport.batchKey })
+    expect(offline).toMatchObject({ kind: 'verdict', modelCalls: 0, verdict: result.verdict })
+    expect(regressing.captured).toHaveLength(3)
+  })
+
+  it('prefers the gate root over a stale default-staging-root report with the same batchKey', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await gateVerbFixture()
+    const fresh = await runGateVerb(fixture.session, fixture.opts)
+    if (fresh.kind !== 'verdict') throw new Error('expected fresh verdict')
+    const agentQaRoot = join(fixture.dir, '.agent-qa')
+    const staleReport = { ...fresh.currentReport }
+    delete staleReport.runIdentity
+    const stale = new FsReportStore({ root: agentQaRoot }).save(staleReport)
+    fixture.planner.captured.length = 0
+    const read = await runGateVerb(fixture.session, { ...fixture.opts, report: fresh.currentReport.batchKey })
+    expect(read).toMatchObject({ kind: 'verdict', currentReportFile: fresh.currentReportFile,
+      modelCalls: 0, verdict: fresh.verdict, probedDirs: [dirname(fresh.currentReportFile)] })
+    expect(read.notices).toContain(`gate --report: reading ${fresh.currentReportFile} (gate root)`)
+    const explicit = await runGateVerb(fixture.session, { ...fixture.opts,
+      report: fresh.currentReport.batchKey, stagedDir: dirname(stale.file) })
+    expect(explicit.kind).toBe('verdict')
+    if (explicit.kind !== 'verdict') throw new Error('expected historical inconclusive verdict')
+    expect(explicit.currentReportFile).toBe(stale.file)
+    expect(explicit.probedDirs).toEqual([dirname(stale.file)])
+    expect(explicit.verdict.exit).toBe(2)
+    expect(explicit.verdict.pairing.n).toBe(0)
+    expect(explicit.verdict.inconclusive).toEqual([
+      expect.objectContaining({ reason: 'no-decision-vector', detail: expect.stringMatching(/^current:/) }),
+    ])
+    expect(explicit.notices.join('\n')).toContain('no decisions sidecar')
+    expect(fixture.planner.captured).toHaveLength(0)
+  })
+
+  it('resolves an exact relative --staged-dir against configDir and falls back only on absent gate data', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await gateVerbFixture()
+    const fresh = await runGateVerb(fixture.session, fixture.opts)
+    if (fresh.kind !== 'verdict') throw new Error('expected fresh verdict')
+    const report = fresh.currentReport.batchKey
+    const gateDir = dirname(fresh.currentReportFile)
+    const read = await runGateVerb(fixture.session, { ...fixture.opts, report,
+      stagedDir: relative(fixture.dir, gateDir) })
+    expect(read).toMatchObject({ kind: 'verdict', currentReportFile: fresh.currentReportFile, verdict: fresh.verdict })
+    if (read.kind !== 'verdict') throw new Error('expected offline verdict')
+    expect(isAbsolute(read.currentReportFile)).toBe(true)
+    expect(read.probedDirs.every(isAbsolute)).toBe(true)
+    const loaded = loadStagedReport(join(fixture.dir, '.agent-qa'), report, gateDir)
+    if (loaded.kind !== 'loaded') throw new Error('expected staged evidence')
+    const fallback = new FsReportStore({ root: join(fixture.dir, '.agent-qa') })
+      .save(loaded.report, loaded.decisions)
+    await rm(fresh.currentReportFile)
+    const defaultRead = await runGateVerb(fixture.session, { ...fixture.opts, report })
+    expect(defaultRead).toMatchObject({ kind: 'verdict', currentReportFile: fallback.file,
+      verdict: fresh.verdict, modelCalls: 0, probedDirs: [gateDir, dirname(fallback.file)] })
+    expect(defaultRead.notices).toContain(`gate --report: reading ${fallback.file} (default staging root)`)
+  })
+
+  it.each(['report', 'decisions', 'identity'] as const)(
+    'does not replace a refused preferred %s with valid default-root evidence', async corruption => {
+      const runGateVerb = requireGateVerb()
+      const fixture = await gateVerbFixture()
+      const fresh = await runGateVerb(fixture.session, fixture.opts)
+      if (fresh.kind !== 'verdict') throw new Error('expected fresh verdict')
+      const report = fresh.currentReport.batchKey
+      const root = join(fixture.dir, '.agent-qa')
+      const loaded = loadStagedReport(root, report, dirname(fresh.currentReportFile))
+      if (loaded.kind !== 'loaded') throw new Error('expected staged evidence')
+      new FsReportStore({ root }).save(loaded.report, loaded.decisions)
+      const path = corruption === 'decisions'
+        ? fresh.currentReportFile.replace(/\.json$/, '.decisions.json') : fresh.currentReportFile
+      const changed = { ...fresh.currentReport }
+      delete changed.runIdentity
+      await writeFile(path, corruption === 'identity' ? JSON.stringify(changed) : '{broken')
+      fixture.planner.captured.length = 0
+      const result = await runGateVerb(fixture.session, { ...fixture.opts, report })
+      expect(result).toMatchObject({ kind: 'refused', refusal: { path },
+        probedDirs: [dirname(fresh.currentReportFile)] })
+      expect(fixture.planner.captured).toHaveLength(0)
+    },
+  )
+
+  it('names every missing probe and never leaves an explicit staged directory', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await floorVerbFixture()
+    const report = computeBatchKey([])
+    const result = await runGateVerb(fixture.session, { ...fixture.opts, report })
+    expect(result.kind).toBe('refused')
+    if (result.kind !== 'refused') throw new Error('expected missing report refusal')
+    expect(result.probedDirs).toHaveLength(2)
+    for (const dir of result.probedDirs) expect(result.refusal.reason).toContain(join(dir, `${report}.json`))
+    const explicit = await runGateVerb(fixture.session, { ...fixture.opts, report, stagedDir: 'chosen' })
+    expect(explicit).toMatchObject({ kind: 'refused', probedDirs: [join(fixture.dir, 'chosen')],
+      refusal: { path: join(fixture.dir, 'chosen', `${report}.json`) } })
+    expect(fixture.planner.captured).toHaveLength(0)
+  })
+
+  it('forwards fresh judge overrides and reads configured-judge evidence with auth/model creation forbidden', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await gateVerbFixture(true)
+    const fresh = await runGateVerb(fixture.session, fixture.opts)
+    expect(fresh).toMatchObject({ kind: 'verdict', modelCalls: 9, verdict: { exit: 0 } })
+    if (fresh.kind !== 'verdict') throw new Error('expected judged gate')
+    expect(fixture.planner.captured).toHaveLength(3)
+    expect(fixture.judge.captured).toHaveLength(6)
+    expect(fresh.currentReport.judge?.judgeModelId).toBe(fixture.judgeModelId)
+    expect(fresh.profileKey).toBe(fixture.floor.profileKey)
+    expect(fresh.profileKey).toBe(fixture.report.profileKey)
+    const auth = vi.spyOn(await import('../../llm-utils.js'), 'resolveModelAuth')
+      .mockRejectedValue(new Error('credential resolution forbidden'))
+    const model = vi.spyOn(await import('@vostride/agent-qa-model'), 'createModel')
+      .mockImplementation(() => { throw new Error('model creation forbidden') })
+    const offline = await runGateVerb(fixture.session, { ...fixture.opts, report: fresh.currentReport.batchKey })
+    expect(offline).toMatchObject({ kind: 'verdict', modelCalls: 0, wallClockMs: 0,
+      verdict: fresh.verdict, currentReport: fresh.currentReport })
+    expect(auth).not.toHaveBeenCalled()
+    expect(model).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects --staged-dir without --report before model resolution', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await floorVerbFixture()
+    const auth = vi.spyOn(await import('../../llm-utils.js'), 'resolveModelAuth')
+    await expect(runGateVerb(fixture.session, { stagedDir: 'somewhere' })).rejects.toThrow('--report')
+    expect(auth).not.toHaveBeenCalled()
+  })
+
+  it('sets command exits from 0/1/2 verdict DTOs, prints ordered lines, and keeps JSON one document', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await gateVerbFixture()
+    const result = await runGateVerb(fixture.session, fixture.opts)
+    if (result.kind !== 'verdict') throw new Error('expected fresh result')
+    const output = captureConsole()
+    const mocked = vi.spyOn(evalVerbs, 'runGateVerb')
+    for (const exit of [0, 1, 2] as const) {
+      const dto = { ...result, verdict: { ...result.verdict, exit } }
+      mocked.mockResolvedValue(dto)
+      output.logs.length = 0
+      const command = new Command().option('--config <path>').addCommand(createEvalCommand())
+      await command.parseAsync(['--config', fixture.configPath, 'eval', 'gate', '--json'], { from: 'user' })
+      expect(process.exitCode).toBe(exit)
+      expect(output.logs).toHaveLength(1)
+      expect(JSON.parse(output.logs[0]!)).toEqual(JSON.parse(JSON.stringify(dto)))
+    }
+    output.logs.length = 0
+    mocked.mockResolvedValue(result)
+    const program = new Command().option('--config <path>').addCommand(createEvalCommand())
+    await program.parseAsync(['--config', fixture.configPath, 'eval', 'gate'], { from: 'user' })
+    expect(output.logs).toEqual(result.lines)
+    const gate = program.commands[0]!.commands.find(command => command.name() === 'gate')!
+    expect(gate.options.map(option => option.long)).toEqual(expect.arrayContaining([
+      '--report', '--staged-dir', '--seed', '--judge', '--json',
+    ]))
+  })
+
+  it('maps refused reads and thrown session/config or flag errors to command exit 2', async () => {
+    const runGateVerb = requireGateVerb()
+    const fixture = await floorVerbFixture()
+    const output = captureConsole()
+    vi.spyOn(evalVerbs, 'runGateVerb').mockImplementation((session, opts) =>
+      runGateVerb(session, { ...opts, ...fixture.opts }))
+    const parse = (args: string[]) => new Command().option('--config <path>').addCommand(createEvalCommand())
+      .parseAsync(['--config', fixture.configPath, 'eval', 'gate', ...args], { from: 'user' })
+    await parse(['--report', computeBatchKey([]), '--json'])
+    expect(process.exitCode).toBe(2)
+    expect(JSON.parse(output.logs[0]!)).toMatchObject({ kind: 'refused' })
+    output.logs.length = 0
+    await parse(['--seed', 'NaN'])
+    expect(process.exitCode).toBe(2)
+    expect(output.logs).toHaveLength(0)
+    expect(output.errors.join('\n')).toContain('release-gate: inconclusive')
+    const yaml = await readFile(fixture.configPath, 'utf8')
+    await writeFile(fixture.configPath, yaml.replace('  llm: planner\n', ''))
+    await parse([])
+    expect(process.exitCode).toBe(2)
+    expect(output.errors.join('\n')).toContain('use.llm')
+  })
+})
 
 describe('runFloorVerb — recorded protocol and write-once measurement', () => {
   beforeEach(() => {
@@ -2062,7 +2333,7 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
   it('names the family "eval" with the four D-01 verbs plus the 413 D-13 census sibling', () => {
     const cmd = createEvalCommand()
     expect(cmd.name()).toBe('eval')
-    const verbs = ['extract', 'replay', 'seed', 'report', 'census', 'floor']
+    const verbs = ['extract', 'replay', 'seed', 'report', 'census', 'floor', 'gate']
     expect(cmd.commands.map(sub => sub.name())).toEqual(verbs)
   })
 
