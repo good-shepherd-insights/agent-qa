@@ -1,15 +1,16 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import {
   canonicalJson,
   guardDistilledObservation,
+  isPromotionReceipt,
   survivingOutcomeEvents,
   supersessionKey,
 } from '@vostride/agent-qa-schema'
-import type { PromotionGateInput } from '@vostride/agent-qa-schema'
+import type { GateReceipt, PromotionCandidateProvenance, PromotionGateInput, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 
-import { deriveBundleTrust } from './bundle-read.js'
+import { deriveBundleTrust, readGateReceipts } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import { scanCanonicalBundles } from './lineage-fold.js'
 
@@ -55,13 +56,31 @@ export function assemblePromotionGateInput(input: {
   knowledgeRoot: string
   bundleDir: string
   bundle: LoadedBundle
+  resolvePromotionPosture?: ResolvePromotionPosture
 }): PromotionGateInput {
   const trust = deriveBundleTrust(input.bundle)
   const survivingEvents = survivingOutcomeEvents(input.bundle.events)
   const runLinkedProvenance = input.bundle.provenance.mode === 'run-linked'
     ? input.bundle.provenance
     : undefined
+  const gateLines = readGateReceipts(input.bundleDir, input.bundle.manifest.id) ?? []
+  const provenance: PromotionCandidateProvenance = {
+    runIds: runLinkedProvenance === undefined ? [] : [runLinkedProvenance.runId],
+    receiptDigests: gateLines.map(line => line.receiptDigest),
+    capturedAtOrdinals: [...new Set([
+      ...(runLinkedProvenance?.sourceBuildOrdinal === undefined ? [] : [runLinkedProvenance.sourceBuildOrdinal]),
+      ...survivingEvents.map(event => event.buildOrdinal),
+    ].filter(Number.isInteger))].sort((left, right) => left - right),
+  }
+  const posture = input.resolvePromotionPosture?.({
+    id: input.bundle.manifest.id,
+    product: basename(dirname(dirname(input.bundleDir))),
+    scope: input.bundle.frontmatter.scope,
+    provenance,
+  })
   return {
+    gateReceipts: gateLines.filter((line): line is GateReceipt => !isPromotionReceipt(line)),
+    ...(posture === undefined ? {} : { gatePosture: posture }),
     kind: input.bundle.frontmatter.kind,
     ...(input.bundle.frontmatter.subtype === undefined
       ? {}

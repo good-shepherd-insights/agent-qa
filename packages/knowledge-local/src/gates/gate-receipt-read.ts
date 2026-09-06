@@ -10,7 +10,7 @@ import { assemblePromotionGateInput } from '../promotion-gate-input.js'
 export interface GateReceiptsForOptions {
   knowledgeRoot: string
   candidateId: string
-  // 2026-09-06: Plan 04 threads this resolver through the shared evidence assembler.
+  /** Resolved per candidate by the same assembly used by the promotion doors. */
   resolvePromotionPosture?: ResolvePromotionPosture
 }
 export function gateReceiptsFor(options: GateReceiptsForOptions): KnowledgeGatesListResult {
@@ -23,15 +23,18 @@ export function gateReceiptsFor(options: GateReceiptsForOptions): KnowledgeGates
       lines.filter((line): line is GateReceipt => !isPromotionReceipt(line)),
     )
     const path = strongestPromotionPath(lines)
+    const gateInput = assemblePromotionGateInput({
+      knowledgeRoot: options.knowledgeRoot, bundleDir: entry.dir, bundle,
+      resolvePromotionPosture: options.resolvePromotionPosture,
+    })
     return KnowledgeGatesListResultSchema.parse({
       kind: 'found', recordId: id, product: entry.product,
       recordKind: bundle.frontmatter.kind, status: deriveBundleTrust(bundle).status,
       ...(path === undefined ? {} : { strongestPromotionPath: path }),
       lines, standing,
-      live: evaluatePromotionGate(assemblePromotionGateInput({
-        knowledgeRoot: options.knowledgeRoot, bundleDir: entry.dir, bundle,
-      })),
-      posture: 'absent',
+      live: evaluatePromotionGate(gateInput),
+      // 'resolved' and 'unavailable' describe the actual posture the gate judged.
+      posture: gateInput.gatePosture?.kind ?? 'absent',
     })
   }
   return { kind: 'not-found', recordId: options.candidateId }
