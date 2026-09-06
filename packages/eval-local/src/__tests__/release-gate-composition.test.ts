@@ -17,13 +17,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import * as evalLocal from '../index.js'
 import {
+  MEMBERSHIP_DEFECTS,
+  changeCommittedMembership,
   incrementingClock,
   noneAuth,
   stubProfile,
   warningStub,
   writeCommittedFloorFixture,
 } from './fixtures/floor-fixtures.js'
-import { actionGenerateResult, capturingStub, nonActionGenerateResult } from './fixtures/replay-fixtures.js'
+import { actionGenerateResult, capturingStub, makeReplayHandoff, nonActionGenerateResult, REPLAY_FIXTURE_BLOB_SHA } from './fixtures/replay-fixtures.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -105,6 +107,16 @@ function rewrite(file: string, change: (value: Record<string, any>) => void) {
 }
 
 describe('runReleaseGate', () => {
+  it.each(MEMBERSHIP_DEFECTS)('refuses fresh %s before provider calls', async defect => {
+    const f = await fixture()
+    changeCommittedMembership(f.corpus, defect)
+    expect(await evalLocal.runReleaseGate(f.input)).toMatchObject({
+      kind: 'refused', refusal: { reason: expect.stringMatching(/committed corpus/i) },
+    })
+    expect(f.stub.captured).toHaveLength(0)
+    expect(existsSync(join(f.input.agentQaRoot, 'eval', 'gate'))).toBe(false)
+  })
+
   it('passes identical fresh decisions, stages the pair locally, and never changes committed evidence', async () => {
     const f = await fixture()
     const committedFiles = [f.pointerFile, f.floorFile, f.baselineFile, f.baselineDecisionsFile]
@@ -219,7 +231,7 @@ describe('runReleaseGate', () => {
     expect(result.refusals).toContainEqual({ path: file, reason: expect.any(String) })
   })
 
-  it('preserves actual loader refusals with unchanged corpus digest and surviving paired decisions', async () => {
+  it('refuses loader failures with unchanged corpus digest before provider calls', async () => {
     const f = await fixture()
     const brokenDir = evalLocal.listCassetteBundleDirs(f.corpus.cassettesRoot)[0]!
     const original = evalLocal.loadCassetteBundle(brokenDir)
@@ -228,15 +240,38 @@ describe('runReleaseGate', () => {
     writeFileSync(file, '{invalid')
     expect(computeCorpusDigest(evalLocal.readCommittedCorpus(f.input.committedRoot).snapshot.entries))
       .toBe(f.floor.artefact.corpusDigest)
+    expect(await evalLocal.runReleaseGate(f.input)).toMatchObject({
+      kind: 'refused', refusal: { path: file, reason: expect.stringContaining('parse-failed') },
+    })
+    expect(f.stub.captured).toHaveLength(0)
+  })
+
+  it('retains missing-blob replay refusals after admitting all committed members', async () => {
+    const f = await fixture((handoff, index) => {
+      if (index === 0) handoff.tests[0]!.steps[0] = makeReplayHandoff({ vision: true }).tests[0]!.steps[0]!
+    })
+    const bundle = evalLocal.listCassetteBundleDirs(f.corpus.cassettesRoot)
+      .find(dir => existsSync(join(dir, 'blobs', REPLAY_FIXTURE_BLOB_SHA)))!
+    unlinkSync(join(bundle, 'blobs', REPLAY_FIXTURE_BLOB_SHA))
     const result = requireVerdict(await evalLocal.runReleaseGate(f.input))
-    expect(result.currentReport.honesty.refusalCounts['parse-failed']).toBe(1)
+    expect(result.currentReport.batchKey).toBe(f.pointer.batchKey)
+    expect(result.currentReport.honesty.refusalCounts['missing-blob']).toBe(1)
     expect(result.currentReport.runIdentity?.corpusDigest).toBe(f.floor.artefact.corpusDigest)
-    expect(result.verdict.exit).toBe(2)
-    expect(result.verdict.inconclusive).toContainEqual({ reason: 'refusal-population-differs', detail: expect.stringContaining('parse-failed: baseline=0 current=1') })
-    expect(result.verdict.pairing.n).toBe(2)
+    expect(result.verdict).toMatchObject({ exit: 2, pairing: { n: 2 } })
     expect(result.modelCalls).toBe(2)
-    expect(result.refusals).toContainEqual({ path: file, reason: expect.stringContaining('parse-failed') })
-    expect(result.notices).toContainEqual(expect.stringContaining('parse-failed=1'))
+    expect(f.stub.captured).toHaveLength(2)
+  })
+
+  it('keeps legitimately unpaired scored axes after complete input admission', async () => {
+    const f = await fixture()
+    rewrite(f.baselineDecisionsFile, document => {
+      document.vectors[0].axes.headline = 'not-applicable'
+    })
+    const result = requireVerdict(await evalLocal.runReleaseGate(f.input))
+    expect(result.verdict).toMatchObject({
+      exit: 0, inconclusive: [], pairing: { n: 2, currentOnly: 1, baselineOnly: 0 },
+    })
+    expect(result.modelCalls).toBe(3)
   })
 
   it('does not inherit prior successful decisions after a current record write fails', async () => {

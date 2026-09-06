@@ -20,6 +20,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as evalLocal from '../index.js'
 import { assembleScoredBatch, projectAssembledBatch } from '../replay-batch-assembly.js'
 import {
+  MEMBERSHIP_DEFECTS,
+  changeCommittedMembership,
   incrementingClock,
   noneAuth,
   stubProfile,
@@ -35,6 +37,7 @@ import {
   makeReplayHandoff,
   memArtifacts,
   nonActionGenerateResult,
+  REPLAY_FIXTURE_BLOB_SHA,
 } from './fixtures/replay-fixtures.js'
 
 const roots: string[] = []
@@ -93,6 +96,15 @@ async function measurementFixture(configure?: Parameters<typeof writeCommittedFl
 }
 
 describe('runNoiseFloorMeasurement', () => {
+  it.each(MEMBERSHIP_DEFECTS)('refuses fresh %s before provider calls', async defect => {
+    const { input, corpus, stub } = await measurementFixture()
+    changeCommittedMembership(corpus, defect)
+    await expect(evalLocal.runNoiseFloorMeasurement(input)).rejects.toThrow(/committed corpus/i)
+    expect(stub.captured).toHaveLength(0)
+    expect(existsSync(input.agentQaRoot)).toBe(false)
+    expect(evalLocal.listNoiseFloorArtefacts(input.committedRoot).artefacts).toEqual([])
+  })
+
   it('recovers the original scope-partitioned runs without auth, models, or saved-file rewrites', async () => {
     const { input } = await measurementFixture(handoff => {
       const brief = handoff.tests[0]!.steps[0]!.servedBrief!
@@ -203,8 +215,8 @@ describe('runNoiseFloorMeasurement', () => {
     }
   })
 
-  it('preserves corrupt-bundle load refusals despite unchanged corpus membership and digest', async () => {
-    const { input, corpus } = await measurementFixture()
+  it('refuses a corrupt committed bundle with unchanged membership before provider calls', async () => {
+    const { input, corpus, stub } = await measurementFixture()
     const healthy = await evalLocal.runNoiseFloorMeasurement(input)
     expect(healthy.artefact.runs.every(run => run.refusalCounts['parse-failed'] === 0)).toBe(true)
     const brokenId = corpus.selected[0]!.cassette.id
@@ -217,12 +229,10 @@ describe('runNoiseFloorMeasurement', () => {
     const loaded = evalLocal.loadCassetteBundles(input.cassettesRoot)
     expect(loaded.loadRefusals).toEqual({ 'parse-failed': 1 })
     expect(evalLocal.readCommittedCorpus(input.committedRoot).snapshot.entries).toHaveLength(3)
-    const broken = await evalLocal.runNoiseFloorMeasurement({ ...input, clock: incrementingClock() })
-    expect(broken.artefact.corpusDigest).toBe(healthy.artefact.corpusDigest)
-    expect(broken.refusals).toContainEqual(expect.objectContaining({ reason: expect.stringContaining('parse-failed') }))
-    expect(broken.artefact.runs.map(run => run.refusalCounts['parse-failed'])).toEqual([1, 1, 1, 1])
-    expect(broken.artefact.population.refusals['parse-failed']).toBe(1)
-    expect(broken.artefact.runs.map(run => run.cost.modelCalls)).toEqual([2, 2, 2, 2])
+    stub.captured.length = 0
+    await expect(evalLocal.runNoiseFloorMeasurement(input)).rejects.toThrow(/committed corpus.*parse-failed/)
+    expect(stub.captured).toHaveLength(0)
+    // The lower-level selected-batch helper still preserves explicit refusal counters.
     const current = await evalLocal.replayCorpusOnce({ ...input,
       selected: loaded.loaded, loadRefusals: loaded.loadRefusals,
       runRoot: join(input.agentQaRoot, 'gate'), seed: 11, source: 'committed',
@@ -242,6 +252,21 @@ describe('runNoiseFloorMeasurement', () => {
     })
     expect(verdict.exit).toBe(2)
     expect(verdict.inconclusive).toContainEqual({ reason: 'refusal-population-differs', detail: expect.any(String) })
+  })
+
+  it('admits complete membership with a missing blob and retains its replay refusal population', async () => {
+    const { input, stub } = await measurementFixture((handoff, index) => {
+      if (index === 0) handoff.tests[0]!.steps[0] = makeReplayHandoff({ vision: true }).tests[0]!.steps[0]!
+    })
+    const bundle = evalLocal.listCassetteBundleDirs(input.cassettesRoot)
+      .find(dir => existsSync(join(dir, 'blobs', REPLAY_FIXTURE_BLOB_SHA)))!
+    unlinkSync(join(bundle, 'blobs', REPLAY_FIXTURE_BLOB_SHA))
+    const result = await evalLocal.runNoiseFloorMeasurement({ ...input, commit: true })
+    expect(result.committed?.kind).toBe('written')
+    expect(result.artefact.runs.map(run => run.refusalCounts['missing-blob'])).toEqual([1, 1, 1, 1])
+    expect(result.artefact.runs.map(run => run.cost.modelCalls)).toEqual([2, 2, 2, 2])
+    expect(result.artefact.corpusDigest).toBe(computeCorpusDigest(evalLocal.readCommittedCorpus(input.committedRoot).snapshot.entries))
+    expect(stub.captured).toHaveLength(8)
   })
 
   it('folds four isolated whole-corpus runs with seed, split, census and actual call disclosures', async () => {

@@ -30,6 +30,7 @@ import {
   readPartitionManifests,
 } from './committed-corpus-source.js'
 import type { CommittedReadRefusal } from './committed-corpus-source.js'
+import { committedCorpusAdmissionRefusal } from './committed-corpus-admission.js'
 import { writeNoiseFloorArtefact } from './noise-floor-writer.js'
 import type { WriteNoiseFloorArtefactOutcome } from './noise-floor-writer.js'
 import { readMeasuredCostReceipts, readMeasuredFloorRun } from './measured-floor-read.js'
@@ -163,6 +164,11 @@ export async function runNoiseFloorMeasurement(
   }
   const baselineRate = readDesignatedBaselineRate(input, notices, refusals)
   const loaded = loadCassetteBundles(input.cassettesRoot)
+  const admission = committedCorpusAdmissionRefusal(input.committedRoot, corpus, loaded)
+    ?? partitions.refusals[0]
+  if (admission !== undefined) {
+    throw new TypeError(`floor requires the complete guarded committed corpus: ${admission.path}: ${admission.reason}`)
+  }
   for (const [reason, count] of Object.entries(loaded.loadRefusals)) {
     notices.push(`cassette bundle load refused: ${reason}=${count}`)
   }
@@ -170,10 +176,7 @@ export async function runNoiseFloorMeasurement(
     a.cassette.id < b.cassette.id ? -1 : a.cassette.id > b.cassette.id ? 1 : 0)
   const runSeeds = [...Array<number>(input.repeats).fill(seeds[0]!), ...seeds.slice(1)]
   const receipts = input.fromMeasured === undefined ? undefined : readMeasuredCostReceipts(input.fromMeasured, runSeeds)
-  if (receipts !== undefined && (refusals.length !== 0 || Object.keys(loaded.loadRefusals).length !== 0 ||
-    productByCassetteId.size === 0 || selected.length !== productByCassetteId.size ||
-    new Set(selected.map(entry => entry.cassette.id)).size !== productByCassetteId.size ||
-    selected.some(entry => !productByCassetteId.has(entry.cassette.id)))) {
+  if (receipts !== undefined && refusals.length !== 0) {
     throw new TypeError('measured floor recovery requires the complete guarded committed corpus')
   }
   const runs: FloorRunInput[] = []

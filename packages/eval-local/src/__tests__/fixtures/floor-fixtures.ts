@@ -1,7 +1,9 @@
+import { cpSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
   committedFileText,
+  deriveLeafCassetteId,
   extractRunCassettes,
   projectCorpusEntry,
   projectPartitionManifest,
@@ -11,6 +13,8 @@ import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 
 import { FsCassetteStore } from '../../cassette-store.js'
 import { loadCassetteBundles } from '../../replay-sweep.js'
+import { listCassetteBundleDirs } from '../../replay-read.js'
+import { readCommittedCorpus } from '../../committed-corpus-source.js'
 import {
   buildRootMarkerValue,
   COMMITTED_GITIGNORE_TEXT,
@@ -105,4 +109,35 @@ export function writeCommittedFloorFixture(
     })))
   }
   return { ...bundles, committedRoot }
+}
+
+export const MEMBERSHIP_DEFECTS = [
+  'missing directory', 'missing marker', 'duplicate bundle', 'foreign bundle',
+  'duplicate entry', 'invalid entry',
+] as const
+
+/** Mutate only the caller's temporary corpus; retain its committed membership in bundle cases. */
+export function changeCommittedMembership(
+  fixture: ReturnType<typeof writeCommittedFloorFixture>,
+  defect: (typeof MEMBERSHIP_DEFECTS)[number],
+): void {
+  const bundle = listCassetteBundleDirs(fixture.cassettesRoot)[0]!
+  if (defect === 'missing directory') rmSync(bundle, { recursive: true })
+  if (defect === 'missing marker') unlinkSync(join(bundle, 'cassette.json'))
+  if (defect === 'duplicate bundle') cpSync(bundle, join(fixture.cassettesRoot, 'duplicate'), { recursive: true })
+  if (defect === 'foreign bundle') {
+    const foreign = join(fixture.cassettesRoot, 'foreign')
+    cpSync(bundle, foreign, { recursive: true })
+    const cassette = JSON.parse(readFileSync(join(foreign, 'cassette.json'), 'utf8'))
+    cassette.id = deriveLeafCassetteId({
+      runSlug: cassette.runId, testIndex: 99, stepIndex: 0, decisionOrdinal: 0,
+    })
+    writeFileSync(join(foreign, 'cassette.json'), JSON.stringify(cassette))
+  }
+  if (defect === 'duplicate entry' || defect === 'invalid entry') {
+    const entry = readCommittedCorpus(fixture.committedRoot).snapshot.entries[0]!
+    const file = join(fixture.committedRoot, committedCorpusPath(entry.product, entry.cassetteId))
+    if (defect === 'duplicate entry') cpSync(file, file.replace(/\.json$/, '.duplicate.json'))
+    else writeFileSync(file, '{invalid')
+  }
 }

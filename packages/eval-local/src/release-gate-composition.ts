@@ -26,6 +26,7 @@ import {
   readCommittedDecisionVectors,
 } from './committed-corpus-source.js'
 import type { CommittedReadRefusal } from './committed-corpus-source.js'
+import { committedCorpusAdmissionRefusal } from './committed-corpus-admission.js'
 import {
   committedBaselinePointerPath,
   committedNoiseFloorPath,
@@ -139,6 +140,8 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
   let freshWallClockMs: number | undefined
   if (mode.kind === 'fresh') {
     const loaded = loadCassetteBundles(mode.cassettesRoot)
+    const admission = committedCorpusAdmissionRefusal(input.committedRoot, corpus, loaded)
+    if (admission !== undefined) return { kind: 'refused', refusal: admission, notices }
     for (const [reason, count] of Object.entries(loaded.loadRefusals)) {
       notices.push(`cassette bundle load refused: ${reason}=${count}`)
     }
