@@ -585,10 +585,24 @@ export function createLocalKnowledgeStore(
     if (gate.verdict === 'hold') {
       throw new KnowledgePromotionError(candidateId, gate.reason)
     }
+    // Keep v51's first-promotion identity, but do not reuse authority that the
+    // append-only fold has retracted. A recovery episode is keyed by the durable
+    // retractions of earlier promotions, so retries share an identity and a later
+    // hold/recovery gets a new one. Ordinary path upgrades still append no event.
+    const promotedKeys = new Set(resolved.bundle.events
+      .filter(event => event.type === 'promoted').map(eventDedupKey))
+    const recoveryBoundary = [...new Set(resolved.bundle.events.flatMap(event =>
+      event.type === 'retracted'
+        && promotedKeys.has(eventDedupKey({ ...event,
+          evidenceToken: event.retractsEvidenceToken, curationJobId: event.retractsCurationJobId }))
+        ? [eventDedupKey(event)] : [],
+    ))].sort()
+    const promotionSource = recoveryBoundary.length === 0 ? candidateId
+      : canonicalJson({ candidateId, retractedPromotionEvents: recoveryBoundary })
     const appended = appendOutcomeEvent(appendConfig, candidateId, {
       // 416-DOOR: door-1-2 promoted
       type: 'promoted',
-      evidenceToken: derivePromotedEvidenceToken(candidateId),
+      evidenceToken: derivePromotedEvidenceToken(promotionSource),
       curationJobId: `promote:${candidateId}`,
       buildOrdinal: promotionBuildOrdinal(config, resolved.bundle),
     })

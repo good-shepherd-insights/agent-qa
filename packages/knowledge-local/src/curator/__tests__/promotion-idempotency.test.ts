@@ -1,10 +1,11 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asEvidenceToken, asRecordId, stampReceiptDigest, type GateReceipt, type ResolvePromotionPosture, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
+import { asEvidenceToken, asRecordId, stampReceiptDigest, survivingOutcomeEvents, type GateReceipt, type ResolvePromotionPosture, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deriveBundleTrust, readGateReceipts } from '../../bundle-read.js'
 import { acquireWriterLease } from '../../lease/writer-lease.js'
+import { openIndexReaderConnection } from '../../index-open.js'
 import { createLocalKnowledgeStore, type CreateLocalKnowledgeStoreConfig } from '../knowledge-store.js'
 import { completeGate1Receipt, createPromotionFloorFixture } from './fixtures/promotion-floor-fixture.js'
 
@@ -41,12 +42,68 @@ describe('416 promotion receipt writer contract', () => {
       authorship: { path: 'deterministic-fallback', executionContext: 'local-interactive' } }])
     return { ...seeded, store }
   }
-  function gate2(candidateId: string) {
+  function gate2(candidateId: string, ordinal = 45, corpusDigest = 'c'.repeat(64)) {
     return stampReceiptDigest({ schemaVersion: 1, gate: 2, candidateId, verdict: 'pass',
-      producedAtOrdinal: 45, producedBy: { opId: 'test' },
-      corpusVersion: { corpusDigest: 'c'.repeat(64) },
+      producedAtOrdinal: ordinal, producedBy: { opId: 'test' },
+      corpusVersion: { corpusDigest },
       attributedObservationId: 'receipt-writer-canary', benefit: 'exercised-benefited', stateValidity: 'valid' })
   }
+  function assertStatus(candidateId: string, status: 'active' | 'candidate') {
+    expect(deriveBundleTrust(fixture.onlyBundle().bundle).status).toBe(status)
+    const reader = openIndexReaderConnection(config.knowledgeRoot)
+    try {
+      expect(reader.db.prepare('SELECT status FROM records WHERE bundle_id = ?').get(candidateId))
+        .toMatchObject({ status })
+    } finally { reader.db.close() }
+  }
+
+  it('restores active authority after repeated unavailable/available episodes, with idempotent retries', async () => {
+    let available = true
+    const { published, store } = await confirmed(() => available ? undefined : {
+      kind: 'unavailable', replayGateAvailable: false, refusals: ['floor missing'],
+    })
+    await store.promote(published.id)
+    assertStatus(published.id, 'active')
+    for (let episode = 0; episode < 2; episode += 1) {
+      available = false
+      await expect(store.promote(published.id)).rejects.toMatchObject({ reason: 'posture-unavailable' })
+      assertStatus(published.id, 'candidate')
+      available = true
+      expect(await store.promote(published.id)).toMatchObject({ kind: 'promoted' })
+      assertStatus(published.id, 'active')
+      const events = fixture.onlyBundle().bundle.events
+      expect(events.filter(event => event.type === 'promoted')).toHaveLength(episode + 2)
+      expect(survivingOutcomeEvents(events).filter(event => event.type === 'promoted')).toHaveLength(1)
+      const bytes = readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8')
+      expect(await store.promote(published.id)).toEqual({ kind: 'already-active', promotionPath: 'deterministic-verdict-floor' })
+      expect(readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8')).toBe(bytes)
+      expect(readGateReceipts(published.dir, published.id)).toHaveLength(1)
+    }
+  })
+  it.each(['fail', 'stale'] as const)('recovers from a %s gate hold using newer passing receipts', async defect => {
+    config.sourceBuildOrdinal = 50
+    const current = { ...posture }
+    const { published, store } = await confirmed(() => current)
+    await store.promote(published.id, [completeGate1Receipt(published.id), gate2(published.id)])
+    assertStatus(published.id, 'active')
+    if (defect === 'fail') {
+      await store.recordGateReceipt(completeGate1Receipt(published.id, { producedAtOrdinal: 46, verdict: 'fail' }))
+    } else {
+      current.corpusDigest = 'f'.repeat(64)
+    }
+    await expect(store.promote(published.id)).rejects.toMatchObject({ reason: defect === 'fail' ? 'gate-failed' : 'receipt-stale' })
+    assertStatus(published.id, 'candidate')
+    const receipts = [
+      completeGate1Receipt(published.id, { producedAtOrdinal: 47, corpusDigest: current.corpusDigest }),
+      gate2(published.id, 48, current.corpusDigest),
+    ]
+    expect(await store.promote(published.id, receipts)).toEqual({ kind: 'promoted', promotionPath: 'gate1+gate2', citedReceiptDigests: receipts.map(receipt => receipt.receiptDigest) })
+    assertStatus(published.id, 'active')
+    const events = readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8')
+    expect(await store.promote(published.id, receipts)).toEqual({ kind: 'already-active', promotionPath: 'gate1+gate2' })
+    expect(readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8')).toBe(events)
+    expect(readGateReceipts(published.dir, published.id)!.filter(line => 'kind' in line)).toHaveLength(1)
+  })
   it('D-14 records identical receipts as appended then duplicate', async () => {
     const { published, store } = await confirmed()
     const receipt = completeGate1Receipt(published.id)
