@@ -21,7 +21,9 @@ import type {
   EvidenceToken,
   GuardrailPolicy,
   PromotionGateHoldReason,
+  PromotionPath,
   RecordId,
+  ResolvePromotionPosture,
   ScreenState,
 } from '@vostride/agent-qa-schema'
 
@@ -35,6 +37,7 @@ import {
   appendMeasurementObservation,
   appendOutcomeEvent,
   appendOutcomeEventWithEnrichment,
+  appendPromotionReceipt,
   appendRelation,
   writeMeasurementBaseline,
 } from '../bundle-append.js'
@@ -104,6 +107,8 @@ export interface CommitCurationDependencies {
   profile: DispositionProfile
   drainState: DispositionDrainState
   policy: GuardrailPolicy
+  /** Host-resolved posture as data; absent means the v51 floor. */
+  resolvePromotionPosture?: ResolvePromotionPosture
   /**
    * Multi-delta disposal (D-02): when set, terminal paths skip queue completion so the
    * claimed candidate directory stays available for the checkpoint's remaining deltas.
@@ -147,6 +152,7 @@ interface CommittedBundleResult {
   deltaKind: Delta['kind']
   /** D-16 exception-bucket observability; absent when the gate promotes or never runs. */
   promotionHoldReason?: PromotionGateHoldReason
+  promotionPath?: PromotionPath
 }
 
 /**
@@ -173,6 +179,7 @@ export type CommitCurationOutcome =
       bundleId?: RecordId
       bundleDir?: string
       promotionHoldReason?: PromotionGateHoldReason
+      promotionPath?: PromotionPath
     }
   | { kind: 'abandoned-stale-epoch'; observedEpoch: number }
   | {
@@ -863,6 +870,7 @@ function appendFailure(
     | ReturnType<typeof appendMeasurementObservation>
     | ReturnType<typeof appendOutcomeEvent>
     | ReturnType<typeof appendOutcomeEventWithEnrichment>
+    | ReturnType<typeof appendPromotionReceipt>
     | ReturnType<typeof appendRelation>,
 ): CommitCurationOutcome | undefined {
   if (outcome.kind === 'egress-blocked') {
@@ -1199,6 +1207,7 @@ export function commitCurationDelta(
           let tailMutationAppended = false
           let freshlyPublished = false
           let promotionHoldReason: PromotionGateHoldReason | undefined
+          let promotionPath: PromotionPath | undefined
           const config = storeConfig(deps, productKey, job.leaseId)
           if (preparedPublication !== undefined) {
             const published = finalizePreparedPublicationWithinCurrentAuthority(
@@ -1306,13 +1315,18 @@ export function commitCurationDelta(
                 finishCommitWithinCurrentAuthority(deps, job)
                 return { kind: 'failed', reason: 'append-failed' }
               }
+              // 416-DOOR: door-3 gate
               const gate = evaluatePromotionGate(assemblePromotionGateInput({
                 knowledgeRoot: deps.knowledgeRoot,
                 bundleDir: promotionBundleDir,
                 bundle: loaded.bundle,
+                ...(deps.resolvePromotionPosture === undefined
+                  ? {}
+                  : { resolvePromotionPosture: deps.resolvePromotionPosture }),
               }))
               if (gate.verdict === 'promote') {
                 const promoted = appendOutcomeEvent(config, published.id, {
+                  // 416-DOOR: door-3 promoted
                   type: 'promoted',
                   evidenceToken: derivePromotedEvidenceToken(job.payload.evidenceToken),
                   curationJobId: job.candidateId,
@@ -1324,6 +1338,22 @@ export function commitCurationDelta(
                   return promotedFailure
                 }
                 tailMutationAppended ||= promoted.kind === 'appended'
+                const receipt = appendPromotionReceipt(config, published.id, {
+                  schemaVersion: 1,
+                  kind: 'promotion',
+                  candidateId: published.id,
+                  promotionPath: gate.promotionPath,
+                  citedReceiptDigests: gate.citedReceiptDigests,
+                  producedAtOrdinal: job.payload.buildOrdinal,
+                  producedBy: { jobId: job.candidateId },
+                })
+                const receiptFailure = appendFailure(receipt)
+                if (receiptFailure !== undefined) {
+                  finishCommitWithinCurrentAuthority(deps, job)
+                  return receiptFailure
+                }
+                tailMutationAppended ||= receipt.kind === 'appended'
+                promotionPath = gate.promotionPath
               } else {
                 promotionHoldReason = gate.reason
               }
@@ -1356,6 +1386,7 @@ export function commitCurationDelta(
               // §5.5.5 carve-out: a deterministic drift Supersede is exempt from candidate-gating
               // and born active. Only drain-to-active disposition can set this D-02 marker.
               const promoted = appendOutcomeEvent(config, published.id, {
+                  // 416-DOOR: born-active promoted
                   type: 'promoted',
                   evidenceToken: derivePromotedEvidenceToken(delta.evidenceToken),
                   curationJobId: job.candidateId,
@@ -1561,6 +1592,7 @@ export function commitCurationDelta(
             bundleDir: bundleDir ?? '',
             deltaKind: delta.kind,
             ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
+            ...(promotionPath === undefined ? {} : { promotionPath }),
           }
           if (injectionRestricted) {
             return {
@@ -1569,6 +1601,7 @@ export function commitCurationDelta(
               bundleId: result.bundleId,
               bundleDir: result.bundleDir,
               ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
+              ...(promotionPath === undefined ? {} : { promotionPath }),
             }
           }
           if (convertedConfirm) return { kind: 'converted-confirm', ...result }

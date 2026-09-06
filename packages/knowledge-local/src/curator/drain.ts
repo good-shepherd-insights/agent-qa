@@ -9,6 +9,9 @@ import {
   type FactSubtype,
   type GuardrailPolicy,
   type IndexEntry,
+  type PromotionGateHoldReason,
+  type PromotionPath,
+  type ResolvePromotionPosture,
 } from '@vostride/agent-qa-schema'
 
 import { openKnowledgeReader, type KnowledgeReader } from '../index-reader.js'
@@ -140,6 +143,12 @@ export interface DrainNoop {
   emptyDeltaCause?: EmptyDeltaCause
 }
 
+export interface DrainPromotionOutcome {
+  candidateId: string
+  promotionPath?: PromotionPath
+  promotionHoldReason?: PromotionGateHoldReason
+}
+
 interface DrainReportBase {
   jobsProcessed: number
   committed: number
@@ -154,6 +163,8 @@ interface DrainReportBase {
    * from a drain that never ran at all.
    */
   deprecated?: number
+  /** Optional for fault-injection fakes; the real drain always sets this measurement. */
+  promotions?: readonly DrainPromotionOutcome[]
   downgraded: number
   withheld: number
   quarantined: number
@@ -169,6 +180,10 @@ interface DrainReportBase {
   remaining: number
   /** Durable remainder partition. The current writer's nonterminal claim is included. */
   remainingWork: CurationRemainingWork
+}
+
+interface MutableDrainReport extends DrainReportBase {
+  promotions: DrainPromotionOutcome[]
 }
 
 export type DrainReport = DrainReportBase &
@@ -222,6 +237,8 @@ export interface DrainOptions {
   policy: GuardrailPolicy
   /** Host-resolved posture; daemon sessions pass worker-required capability here. */
   embeddingCapability?: AcquireEmbedderOutcome
+  /** Built once per drain on the host; synchronous per candidate inside the gate. */
+  resolvePromotionPosture?: ResolvePromotionPosture
   /** Default inline preserves one-shot behavior; daemon sessions skip for their own cadence. */
   maintenance?: 'inline' | 'skip'
   signal?: AbortSignal
@@ -333,11 +350,12 @@ function isEmbeddingCrash(error: unknown, seen = new Set<object>()): boolean {
     || isEmbeddingCrash(value.cause, seen)
 }
 
-function emptyReport(): DrainReportBase {
+function emptyReport(): MutableDrainReport {
   return {
     jobsProcessed: 0,
     committed: 0,
     deprecated: 0,
+    promotions: [],
     downgraded: 0,
     withheld: 0,
     quarantined: 0,
@@ -729,13 +747,21 @@ function countDeprecation(report: DrainReportBase, deltaKind: string): void {
 }
 
 function mapCommitOutcome(
-  report: DrainReportBase,
+  report: MutableDrainReport,
   outcome: CommitCurationOutcome,
   job: ClaimedCurationJob,
   operations: DrainOperations,
   options: DrainOptions,
   authority: CurrentWriterAuthority,
 ): 'continue' | 'stop' {
+  if ((outcome.kind === 'applied' || outcome.kind === 'converted-confirm' || outcome.kind === 'downgraded')
+    && (outcome.promotionPath !== undefined || outcome.promotionHoldReason !== undefined)) {
+    report.promotions.push({
+      candidateId: job.candidateId,
+      ...(outcome.promotionPath === undefined ? {} : { promotionPath: outcome.promotionPath }),
+      ...(outcome.promotionHoldReason === undefined ? {} : { promotionHoldReason: outcome.promotionHoldReason }),
+    })
+  }
   switch (outcome.kind) {
     case 'applied':
     case 'converted-confirm':
@@ -862,7 +888,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     lease = acquired
   }
 
-  const result: DrainReportBase & { kind: 'drained' | 'aborted' } = {
+  const result: MutableDrainReport & { kind: 'drained' | 'aborted' } = {
     ...report,
     kind: 'drained',
   }
@@ -952,6 +978,10 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             sourceRunId: canaryOutcome.runId,
             policy: options.policy,
             writerLeaseId: lease.leaseId,
+            ...(options.resolvePromotionPosture === undefined
+              ? {}
+              : { resolvePromotionPosture: options.resolvePromotionPosture }),
+            onPromotionOutcome: outcome => result.promotions.push(outcome),
             /**
              * CR-02: the terminal transition joins the canary tail's own held section through
              * the within-held form. Calling the fenced writeJobState here would re-enter
@@ -1090,6 +1120,9 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
               profile: resolveDispositionProfile(executionContext),
               drainState,
               policy: options.policy,
+              ...(options.resolvePromotionPosture === undefined
+                ? {}
+                : { resolvePromotionPosture: options.resolvePromotionPosture }),
               ...(!finalDelta || anySliceFailed ? { deferCompletion: true } : {}),
             },
             claimed,

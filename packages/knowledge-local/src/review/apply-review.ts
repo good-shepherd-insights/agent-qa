@@ -31,6 +31,7 @@ import type {
   KnowledgeProjection,
   KnowledgeProposalV1,
   ProposalOrigin,
+  ResolvePromotionPosture,
 } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
@@ -195,6 +196,7 @@ export interface ApplyReviewInput {
   readonly proposalId: string
   readonly executionContext?: 'local-interactive' | 'local-headless' | 'ci' | 'cloud'
   readonly delegate?: ApplyDelegate
+  readonly resolvePromotionPosture?: ResolvePromotionPosture
   /**
    * The lease this caller ALREADY holds, when it is the holder (387-08 D-18).
    *
@@ -345,6 +347,9 @@ async function commitInProcess(
     executionContext: input.executionContext ?? 'local-interactive',
     epoch: lease.epoch,
     writerLeaseId: lease.leaseId,
+    ...(input.resolvePromotionPosture === undefined
+      ? {}
+      : { resolvePromotionPosture: input.resolvePromotionPosture }),
   })
   // THE one write path. Not `proposeDeltas` (which is the propose-only disposition profile and
   // would commit nothing), not a direct append, not a projection call — `commit`, exactly as any

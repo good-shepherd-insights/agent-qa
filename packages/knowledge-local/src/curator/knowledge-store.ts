@@ -516,6 +516,7 @@ export function createLocalKnowledgeStore(
           createdAtOrdinal: resolved.bundle.frontmatter.createdAtOrdinal,
         },
       )
+      // 416-DOOR: door-1-2 revalidation
       const revalidated = evaluatePromotionGate({ ...gateInput, status: setAside.status })
       if (revalidated.verdict === 'promote') {
         // Receipt strength can grow without granting a second lifecycle authority event.
@@ -574,6 +575,7 @@ export function createLocalKnowledgeStore(
       throw new KnowledgePromotionError(candidateId, revalidated.reason)
     }
 
+    // 416-DOOR: door-1-2 gate
     const gate = evaluatePromotionGate(assemblePromotionGateInput({
       knowledgeRoot: config.knowledgeRoot,
       bundleDir: resolved.bundleDir,
@@ -584,6 +586,7 @@ export function createLocalKnowledgeStore(
       throw new KnowledgePromotionError(candidateId, gate.reason)
     }
     const appended = appendOutcomeEvent(appendConfig, candidateId, {
+      // 416-DOOR: door-1-2 promoted
       type: 'promoted',
       evidenceToken: derivePromotedEvidenceToken(candidateId),
       curationJobId: `promote:${candidateId}`,
@@ -643,6 +646,9 @@ export function createLocalKnowledgeStore(
           profile,
           drainState,
           policy,
+          ...(config.resolvePromotionPosture === undefined
+            ? {}
+            : { resolvePromotionPosture: config.resolvePromotionPosture }),
         },
         job,
         checkpoint,

@@ -619,6 +619,7 @@ export type {
   DrainFailureStage,
   DrainNoop,
   DrainOptions,
+  DrainPromotionOutcome,
   DrainReport,
   GcPassReport,
   WriterPassReport,
