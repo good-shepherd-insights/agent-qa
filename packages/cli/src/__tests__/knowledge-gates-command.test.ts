@@ -78,8 +78,15 @@ describe('agent-qa knowledge gates', () => {
       schemaVersion: 1, kind: 'promotion', candidateId: id, promotionPath: 'deterministic-verdict-floor',
       citedReceiptDigests: [], producedAtOrdinal: 6, producedBy: { opId: 'promote' },
     })).toEqual({ kind: 'appended' })
+    const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
     const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 1, verdict: 'pass',
-      candidateId: id, producedAtOrdinal: 7, producedBy: { jobId: 'replay-check' } } as const)
+      candidateId: id, producedAtOrdinal: 7, producedBy: { jobId: 'replay-check' },
+      perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score,
+        sideEffect: score, loop: score },
+      corpusVersion: { corpusDigest: 'c'.repeat(64), partitionVersion: 2, gateSetSize: 10,
+        excludedCount: 0, minimumGateSet: 1 },
+      samples: { k: 1, seeds: [1], seedHonored: true, modelCalls: 0 }, crossCheck: 'held',
+    })
     expect(appendGateReceipt(config, id, receipt)).toEqual({ kind: 'appended' })
     const dto = KnowledgeGatesListResultSchema.parse(JSON.parse(await invoke(configPath, [id, '--json'])))
     expect(dto.kind).toBe('found')

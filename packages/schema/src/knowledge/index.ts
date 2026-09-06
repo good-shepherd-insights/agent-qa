@@ -186,3 +186,9 @@ export { PROMOTION_PATHS, PROMOTION_PATH_STRENGTH, strongerPromotionPath } from 
 export type { PromotionPath } from './promotion-path'
 export type { PromotionOutcome, GateReceiptRecordOutcome, PromotionCandidateProvenance,
   PromotionPostureCandidate, ResolvePromotionPosture } from './promotion-gate'
+
+export { PER_AXIS_SCORE_AXES, CROSS_CHECKS, DEGRADATIONS, BENEFITS, MARKS, STATE_VALIDITIES,
+  axisScoreSchema, perAxisScoreSchema, corpusVersionSchema, samplesSchema, noiseFloorRefSchema,
+  gate1ArmSchema, gate2ArmSchema, gate3ArmSchema } from './gate-receipt'
+export type { PerAxisScoreAxis, CrossCheck, Degradation, Benefit, Mark, StateValidity,
+  Gate1Receipt, Gate2Receipt, Gate3Receipt } from './gate-receipt'

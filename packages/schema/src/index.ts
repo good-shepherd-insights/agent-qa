@@ -1508,3 +1508,9 @@ export type { PromotionOutcome, GateReceiptRecordOutcome, PromotionCandidateProv
 export { KnowledgeGatesListInputSchema, KnowledgeGatesListResultSchema,
   PromotionGateVerdictSchema } from './functions/knowledge'
 export type { KnowledgeGatesListInput, KnowledgeGatesListResult } from './functions/knowledge'
+
+export { PER_AXIS_SCORE_AXES, CROSS_CHECKS, DEGRADATIONS, BENEFITS, MARKS, STATE_VALIDITIES,
+  axisScoreSchema, perAxisScoreSchema, corpusVersionSchema, samplesSchema, noiseFloorRefSchema,
+  gate1ArmSchema, gate2ArmSchema, gate3ArmSchema } from './knowledge/gate-receipt'
+export type { PerAxisScoreAxis, CrossCheck, Degradation, Benefit, Mark, StateValidity,
+  Gate1Receipt, Gate2Receipt, Gate3Receipt } from './knowledge/gate-receipt'

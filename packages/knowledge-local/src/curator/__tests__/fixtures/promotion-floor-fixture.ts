@@ -1,5 +1,5 @@
 // 2026-09-06, 416 D-06: shared pristine v51 acceptance builders.
-import { type Anchor, type BundleDraft, type DistilledObservation, type ExecutionContext } from '@vostride/agent-qa-schema'
+import { stampReceiptDigest, type Gate1Receipt, type GateVerdict, type Anchor, type BundleDraft, type DistilledObservation, type ExecutionContext } from '@vostride/agent-qa-schema'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { expect, vi } from 'vitest'
 import { createLocalKnowledgeStore, drainQueue, enumerateBundleDirs, loadBundle, type BundleStoreConfig, type CuratorAuthor, type LoadedBundle } from '../../../index.js'
@@ -8,6 +8,22 @@ import { enqueueArtifactFreeCandidateProjection, type ArtifactFreeCandidateProje
 import { acquireWriterLease } from '../../../lease/writer-lease.js'
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = { indexAbsent: false, pendingEmbeddings: 0, renderingEpochStale: false, vectorReconciliationOutstanding: false } as const
+// 416-02: additive receipt builder; the pristine v51 builders below stay byte-identical.
+export function completeGate1Receipt(
+  candidateId: string,
+  overrides?: { producedAtOrdinal?: number; corpusDigest?: string; verdict?: GateVerdict },
+): Gate1Receipt {
+  const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
+  return stampReceiptDigest({
+    schemaVersion: 1, gate: 1, candidateId, verdict: overrides?.verdict ?? 'pass',
+    producedAtOrdinal: overrides?.producedAtOrdinal ?? 44, producedBy: { opId: 'test' },
+    perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score,
+      sideEffect: score, loop: score },
+    corpusVersion: { corpusDigest: overrides?.corpusDigest ?? 'c'.repeat(64), partitionVersion: 2,
+      gateSetSize: 10, excludedCount: 0, minimumGateSet: 1 },
+    samples: { k: 1, seeds: [1], seedHonored: true, modelCalls: 0 }, crossCheck: 'held',
+  })
+}
 export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { knowledgeRoot: string; auditBaseDir: string }) {
   function selectorProjection(
     seed: string,

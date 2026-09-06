@@ -332,9 +332,8 @@ function renderGates(dto: KnowledgeGatesListResult): string {
       if ('kind' in line) {
         return `promotion ${line.promotionPath} @${line.producedAtOrdinal} by ${by} cites ${line.citedReceiptDigests.length}`
       }
-      const corpus = 'corpusVersion' in line
-        ? (line.corpusVersion as { corpusDigest: string }).corpusDigest.slice(0, 12) : '-'
-      const degradation = 'degradation' in line ? line.degradation : '-'
+      const corpus = line.gate === 1 ? line.corpusVersion.corpusDigest.slice(0, 12) : '-'
+      const degradation = line.gate === 1 ? line.degradation ?? '-' : '-'
       return `gate ${line.gate} ${line.verdict} @${line.producedAtOrdinal} by ${by} digest ${line.receiptDigest.slice(0, 12)} corpus ${corpus} degradation ${degradation}`
     }),
     'standing:',
