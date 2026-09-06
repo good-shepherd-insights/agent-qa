@@ -15,7 +15,13 @@ import type { AxisFloorSet, NoiseFloorArtefact } from '../floor-artefact'
 
 function axes(): AxisFloorSet {
   return {
-    headline: { n: 0, pairs: [] },
+    headline: {
+      n: 48, reference: { correct: 41, n: 48 }, aggregateFloor: 0.1,
+      pairs: [[0, 1], [0, 2], [1, 2], [0, 3], [1, 3], [2, 3]].map(([a, b]) => ({
+        a: a!, b: b!, kind: b! < 3 ? 'same-seed' : 'two-seed',
+        n: 48, aOnly: 0, bOnly: 0, mcnemarP: 1,
+      })),
+    },
     elementIdentity: { n: 0, pairs: [] },
     value: { n: 0, pairs: [] },
     opClass: { n: 0, pairs: [] },
@@ -46,7 +52,7 @@ export function floorFixture(): NoiseFloorArtefact {
     seedHonored: true,
     bootstrap: { B: 2000, seed: 19 },
     population: {
-      included: { proof: 0, empty: 0 },
+      included: { proof: 48, empty: 0 },
       excludedRendered: 0,
       refusals: {},
       unpartitioned: 0,
@@ -66,7 +72,16 @@ export function floorFixture(): NoiseFloorArtefact {
       'held-out-private': { axes: axes(), nullLift: [] },
     },
     minimumGateSet,
-    runs: [],
+    runs: [11, 11, 11, 29].map((seed, index) => ({
+      index, seed, headline: { correct: 41, n: 48 },
+      axes: {
+        headline: { correct: 41, n: 48 }, elementIdentity: { correct: 0, n: 0 },
+        value: { correct: 0, n: 0 }, opClass: { correct: 0, n: 0 },
+        sideEffect: { correct: 0, n: 0 }, loop: { correct: 0, n: 0 },
+      },
+      refusalCounts: {}, briefSourceCounts: { proof: 48, empty: 0, rendered: 0 },
+      harnessErrorCount: 0, cost: { wallClockMs: 0 }, reportDigest: 'fixture-report-digest',
+    })),
     cost: { wallClockMs: 0 },
   }
 }
@@ -150,7 +165,7 @@ describe('committed noise floor document', () => {
 describe('floor committability', () => {
   it.each([undefined, '', ' \n '])('refuses exact zero without a nonblank explanation (%s)', explanation => {
     const artefact = floorFixture()
-    artefact.axes.headline = { n: 48, aggregateFloor: 0, pairs: [] }
+    artefact.axes.headline.aggregateFloor = 0
     if (explanation !== undefined) artefact.explanation = explanation
     expect(assertFloorArtefactCommittable(artefact)).toEqual({
       ok: false,
@@ -162,7 +177,7 @@ describe('floor committability', () => {
     const artefact = floorFixture()
     expect(assertFloorArtefactCommittable(artefact)).toEqual({ ok: true })
     expect(artefact.axes.value).not.toHaveProperty('aggregateFloor')
-    artefact.axes.headline = { n: 48, aggregateFloor: 1 / 48, pairs: [] }
+    artefact.axes.headline.aggregateFloor = 1 / 48
     expect(assertFloorArtefactCommittable(artefact)).toEqual({ ok: true })
     artefact.axes.headline.aggregateFloor = 0
     artefact.explanation = 'stubbed identical decisions'
@@ -193,6 +208,8 @@ describe('floor committability', () => {
   })
 
   it('renders one line naming the refusal evidence', () => {
+    expect(renderFloorRefusal({ kind: 'unusable-measurement', detail: 'empty reference' }))
+      .toBe('noise floor refused: unusable-measurement — empty reference')
     const zero = renderFloorRefusal({ kind: 'zero-floor-without-explanation', axes: ['headline', 'products.example-web.value'] })
     expect(zero).toContain('headline')
     expect(zero).toContain('products.example-web.value')
@@ -202,5 +219,20 @@ describe('floor committability', () => {
     expect(minimum).toContain('1')
     expect(minimum).toContain('below-protocol-minimum')
     expect(minimum).not.toContain('\n')
+  })
+
+  it.each([
+    (a: NoiseFloorArtefact) => { a.runs = [] },
+    (a: NoiseFloorArtefact) => { a.runs[1]!.index = 0 },
+    (a: NoiseFloorArtefact) => { a.runs[3]!.seed = 11 },
+    (a: NoiseFloorArtefact) => { a.runs[2]!.harnessErrorCount = 1 },
+    (a: NoiseFloorArtefact) => { a.axes.headline.pairs = [] },
+    (a: NoiseFloorArtefact) => { a.runs[1]!.headline.n = 0 },
+  ])('requires actual usable run evidence despite valid declared minimums', change => {
+    const artefact = floorFixture()
+    change(artefact)
+    expect(assertFloorArtefactCommittable(artefact)).toMatchObject({
+      ok: false, refusal: { kind: 'unusable-measurement' },
+    })
   })
 })

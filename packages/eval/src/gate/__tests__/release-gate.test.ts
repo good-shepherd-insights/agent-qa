@@ -395,19 +395,41 @@ describe('release gate paired regressions', () => {
     })
   })
 
-  it('skips an axis with no floor and a non-headline axis with no paired decisions', () => {
+  it('refuses a missing floor for a paired applicable axis', () => {
+    const input = comparisonFixture()
+    input.floor.axes.value = { n: 0, pairs: [] }
+    input.current.vectors.forEach(v => { v.axes.value = 'incorrect' })
+    const verdict = computeGateVerdict(input)
+    expect(verdict.exit).toBe(2)
+    expect(verdict.regressions).toEqual([])
+    expect(verdict.inconclusive).toContainEqual({
+      reason: 'missing-floor', detail: expect.stringMatching(/value.*48.*eval floor --commit/),
+    })
+  })
+
+  it.each(['no-runs', 'harness-errors', 'empty-reference'] as const)(
+    'refuses an already-loaded unusable floor with %s', defect => {
+      const input = comparisonFixture()
+      if (defect === 'no-runs') input.floor.runs = []
+      if (defect === 'harness-errors') input.floor.runs[1]!.harnessErrorCount = 1
+      if (defect === 'empty-reference') input.floor.axes.headline = { n: 0, pairs: [] }
+      expect(reason(input, 'missing-floor')).toContain('unusable-measurement')
+    },
+  )
+
+  it('skips genuinely inapplicable optional axes with or without a floor', () => {
     const input = comparisonFixture()
     input.floor.axes.value = { n: 0, pairs: [] }
     input.current.vectors.forEach(v => {
-      v.axes.value = 'incorrect'
+      v.axes.value = 'not-applicable'
       v.axes.elementIdentity = 'not-applicable'
     })
     const verdict = computeGateVerdict(input)
     expect(verdict.exit).toBe(0)
     expect(verdict.skippedAxes).toEqual([
       { axis: 'elementIdentity', reason: 'no paired decisions' },
-      { axis: 'value', reason: 'no applicable decisions in the floor' },
-      { axis: 'loop', reason: 'no applicable decisions in the floor' },
+      { axis: 'value', reason: 'no paired decisions' },
+      { axis: 'loop', reason: 'no paired decisions' },
     ])
   })
 
@@ -574,7 +596,7 @@ describe('release gate lines', () => {
     expect(Object.keys(refusalJson)).toEqual([...REPLAY_REFUSAL_REASONS].sort())
     expect(refusalJson['missing-blob']).toBe(24)
     if (exit === 1) expect(lines).toContain('regression: opClass baseline=1 current=0.875 delta=-0.125 floor=0.0996 n=48')
-    if (exit === 0) expect(lines).toContain('skipped: loop: no applicable decisions in the floor')
+    if (exit === 0) expect(lines).toContain('skipped: loop: no paired decisions')
   })
 
   it('prints raw regression doubles without rounding', () => {

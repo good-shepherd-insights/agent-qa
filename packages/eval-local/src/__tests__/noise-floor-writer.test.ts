@@ -7,10 +7,11 @@ import {
   assertFloorArtefactCommittable,
   buildEvalReport,
   committedFileText,
+  deriveLeafCassetteId,
   foldNoiseFloorArtefact,
   guardNoiseFloorArtefact,
 } from '@vostride/agent-qa-eval'
-import type { NoiseFloorArtefact } from '@vostride/agent-qa-eval'
+import type { DecisionCorrectnessVector, NoiseFloorArtefact } from '@vostride/agent-qa-eval'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { committedNoiseFloorPath } from '../committed-root-store.js'
@@ -20,6 +21,17 @@ import { REPORT_EGRESS_CHANNEL } from '../report-committing.js'
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 
 function floorFixture(): NoiseFloorArtefact {
+  const cassetteId = deriveLeafCassetteId({
+    runSlug: 'r_proper-ewer-rud-ignore-ula-junk-may-effect-eva-ada',
+    testIndex: 0, stepIndex: 0, decisionOrdinal: 0,
+  })
+  const vector: DecisionCorrectnessVector = {
+    cassetteId, key: `${cassetteId}#-#0`, decisionOrdinal: 0, product: 'example-web',
+    briefSource: 'proof', axes: {
+      headline: 'correct', elementIdentity: 'correct', opClass: 'correct',
+      sideEffect: 'correct', value: 'not-applicable', loop: 'not-applicable',
+    },
+  }
   return foldNoiseFloorArtefact({
     profile: {
       profileKey: 'fixture-profile', fingerprint: 'fixture-fingerprint',
@@ -28,9 +40,10 @@ function floorFixture(): NoiseFloorArtefact {
     corpusDigest: 'fixture-corpus', partitionVersion: 1,
     seeds: [11, 29], repeats: 3, bootstrapSeed: 19,
     runs: [11, 11, 11, 29].map((seed, index) => ({
-      seed, index, report: buildEvalReport([]), vectors: [], wallClockMs: 1,
+      seed, index, report: buildEvalReport([]), vectors: [vector], wallClockMs: 1,
     })),
-    splitByCassetteId: new Map(), censusByProduct: {},
+    splitByCassetteId: new Map([[cassetteId, 'natural']]),
+    censusByProduct: { 'example-web': { natural: 1, heldOutShared: 0, heldOutPrivate: 0 } },
   })
 }
 
@@ -74,7 +87,7 @@ describe('writeNoiseFloorArtefact (415 D-04/D-12)', () => {
   })
 
   it('is refused for an unexplained zero before any file or audit sink exists', () => {
-    artefact.axes.headline = { n: 1, aggregateFloor: 0, pairs: [] }
+    artefact.axes.headline.aggregateFloor = 0
     expect(guardNoiseFloorArtefact(artefact).kind).toBe('ok')
     const auditBase = join(outDir, 'not-created')
     expect(writeNoiseFloorArtefact({
@@ -91,6 +104,13 @@ describe('writeNoiseFloorArtefact (415 D-04/D-12)', () => {
     expect(write()).toEqual({
       kind: 'refused', refusal: { kind: 'below-protocol-minimum', repeats: 2, seeds: 2 },
     })
+    expect(existsSync(join(root, 'reports'))).toBe(false)
+    expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
+  })
+
+  it('refuses unusable evidence before creating any report or audit file', () => {
+    artefact.runs[0]!.harnessErrorCount = 1
+    expect(write()).toMatchObject({ kind: 'refused', refusal: { kind: 'unusable-measurement' } })
     expect(existsSync(join(root, 'reports'))).toBe(false)
     expect(existsSync(join(outDir, 'guardrail_audit.jsonl'))).toBe(false)
   })

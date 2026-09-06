@@ -131,6 +131,7 @@ export interface NoiseFloorArtefact {
 export type FloorRefusal =
   | { kind: 'zero-floor-without-explanation'; axes: readonly string[] }
   | { kind: 'below-protocol-minimum'; repeats: number; seeds: number }
+  | { kind: 'unusable-measurement'; detail: string }
 
 const count = z.number().int().nonnegative()
 const rate = z.number().min(0).max(1)
@@ -306,6 +307,48 @@ export function assertFloorArtefactCommittable(
       refusal: { kind: 'below-protocol-minimum', repeats: artefact.repeats, seeds },
     }
   }
+  const unusable = (detail: string) => ({
+    ok: false as const, refusal: { kind: 'unusable-measurement' as const, detail },
+  })
+  const guarded = guardNoiseFloorArtefact(artefact)
+  if (guarded.kind === 'rejected') return unusable(guarded.reason)
+  if (seeds !== artefact.seeds.length ||
+      artefact.runs.length !== artefact.repeats + seeds - 1) {
+    return unusable('runs must evidence every declared repeat and distinct remaining seed')
+  }
+  for (const [index, run] of artefact.runs.entries()) {
+    const seed = index < artefact.repeats
+      ? artefact.seeds[0] : artefact.seeds[index - artefact.repeats + 1]
+    if (run.index !== index || run.seed !== seed) {
+      return unusable(`run ${index} must have index ${index} and seed ${seed}`)
+    }
+    if (run.harnessErrorCount !== 0) {
+      return unusable(`run ${index} has harnessErrorCount=${run.harnessErrorCount}`)
+    }
+    if (run.headline.n === 0 || run.headline.n !== run.axes.headline.n ||
+        run.headline.correct !== run.axes.headline.correct) {
+      return unusable(`run ${index} requires nonempty consistent eligible headline evidence`)
+    }
+  }
+  const headline = artefact.axes.headline
+  if (headline.n === 0 || headline.aggregateFloor === undefined ||
+      headline.n !== artefact.runs[0]!.headline.n ||
+      artefact.population.included.proof + artefact.population.included.empty === 0) {
+    return unusable('reference headline requires a measured floor and nonempty eligible population')
+  }
+  const expectedPairs: string[] = []
+  for (let a = 0; a < artefact.repeats; a++) {
+    for (let b = a + 1; b < artefact.runs.length; b++) {
+      expectedPairs.push(`${a}:${b}:${b < artefact.repeats ? 'same-seed' : 'two-seed'}`)
+    }
+  }
+  const actualPairs = headline.pairs.map(pair => `${pair.a}:${pair.b}:${pair.kind}`)
+  if (actualPairs.length !== expectedPairs.length ||
+      new Set(actualPairs).size !== expectedPairs.length ||
+      expectedPairs.some(pair => !actualPairs.includes(pair)) ||
+      headline.pairs.some(pair => pair.n === 0)) {
+    return unusable('headline pairs must evidence the declared same-seed and two-seed comparisons')
+  }
   const axes: string[] = []
   function collect(set: AxisFloorSet, prefix = ''): void {
     for (const axis of FLOOR_AXES) {
@@ -324,6 +367,9 @@ export function assertFloorArtefactCommittable(
 }
 
 export function renderFloorRefusal(refusal: FloorRefusal): string {
+  if (refusal.kind === 'unusable-measurement') {
+    return `noise floor refused: ${refusal.kind} — ${refusal.detail}`
+  }
   if (refusal.kind === 'zero-floor-without-explanation') {
     return `noise floor refused: ${refusal.kind} — ${refusal.axes.join(', ')}`
   }

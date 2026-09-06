@@ -9,6 +9,7 @@ import { FLOOR_AXES, axisVectors } from '../stats/decision-vector'
 import type { DecisionCorrectnessVector, FloorAxis } from '../stats/decision-vector'
 import { pairedDecisionDiff } from '../stats/paired'
 import type { NoiseFloorArtefact } from './floor-artefact'
+import { assertFloorArtefactCommittable, renderFloorRefusal } from './floor-artefact'
 
 // prettier-ignore
 export const GATE_INCONCLUSIVE_REASONS = ['missing-baseline', 'incomparable-baseline', 'missing-floor', 'stale-baseline', 'stale-floor', 'seed-regime-mismatch', 'harness-errors', 'never-scored', 'refusal-population-differs', 'no-decision-vector'] as const
@@ -163,6 +164,8 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
   if (floor === undefined) {
     add('missing-floor', `no floor for ${expectedProfileKey}; ${measureFloor}`)
   } else {
+    const admission = assertFloorArtefactCommittable(floor)
+    if (!admission.ok) add('missing-floor', `${renderFloorRefusal(admission.refusal)}; ${measureFloor}`)
     mismatch('profileKey', 'floor', floor.profileKey, 'expected', expectedProfileKey)
     mismatch('fingerprint', 'floor', floor.fingerprint, 'current', current.fingerprint)
     mismatch('profileKey from floor fields', 'floor', composeBaselineProfileKey(floor), 'expected', expectedProfileKey)
@@ -270,6 +273,17 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
     regime: floor === undefined || current.report.seedHonored === undefined ? 'unknown' :
       floor.seedHonored === current.report.seedHonored ? 'match' : 'mismatch',
   }
+  // Check applicability before treating an absent optional floor as skippable.
+  if (canPair && floor !== undefined) {
+    for (const axis of FLOOR_AXES) {
+      const diff = axis === 'headline' ? paired! : pairedDecisionDiff(
+        axisVectors(baselineVectors, axis), axisVectors(currentVectors, axis),
+      )
+      if (diff.n > 0 && floor.axes[axis].aggregateFloor === undefined) {
+        add('missing-floor', `${axis}: ${diff.n} paired applicable decisions but no aggregate floor; ${measureFloor}`)
+      }
+    }
+  }
   const inconclusive = GATE_INCONCLUSIVE_REASONS.flatMap(reason => {
     const messages = details[reason]
     return messages === undefined ? [] : [{ reason, detail: messages.join('; ') }]
@@ -278,11 +292,6 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
   const skippedAxes: { axis: FloorAxis; reason: string }[] = []
   if (inconclusive.length === 0 && floor !== undefined && baselineVectors !== undefined) {
     for (const axis of FLOOR_AXES) {
-      const axisFloor = floor.axes[axis].aggregateFloor
-      if (axisFloor === undefined) {
-        skippedAxes.push({ axis, reason: 'no applicable decisions in the floor' })
-        continue
-      }
       const diff = axis === 'headline' ? paired! : pairedDecisionDiff(
         axisVectors(baselineVectors, axis), axisVectors(currentVectors, axis),
       )
@@ -290,6 +299,7 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
         skippedAxes.push({ axis, reason: 'no paired decisions' })
         continue
       }
+      const axisFloor = floor.axes[axis].aggregateFloor!
       const baselineRate = (diff.both + diff.aOnly) / diff.n
       const currentRate = (diff.both + diff.bOnly) / diff.n
       // The stats DTO deltaAcc runs the other way. Use counts to avoid cancellation

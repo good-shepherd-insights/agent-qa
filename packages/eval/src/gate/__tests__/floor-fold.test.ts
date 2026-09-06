@@ -6,7 +6,7 @@ import { buildEvalReport } from '../../match/metrics'
 import { FLOOR_AXES, axisVectors } from '../../stats/decision-vector'
 import type { DecisionCorrectnessVector, FloorAxis } from '../../stats/decision-vector'
 import { wilsonInterval } from '../../stats/wilson'
-import { FLOOR_SPLITS, guardNoiseFloorArtefact } from '../floor-artefact'
+import { FLOOR_SPLITS, assertFloorArtefactCommittable, guardNoiseFloorArtefact } from '../floor-artefact'
 import { deriveMinimumGateSet, foldNoiseFloorArtefact } from '../floor-fold'
 import type { FoldNoiseFloorInput } from '../floor-fold'
 
@@ -135,6 +135,25 @@ describe('derived minimum gate set', () => {
 })
 
 describe('pure noise-floor fold', () => {
+  it.each(['empty-reference', 'all-errors'] as const)(
+    'refuses admission of a folded %s measurement', kind => {
+      const input = inputFixture()
+      for (const run of input.runs) run.report.honesty.harnessErrorCount = 0
+      input.runs[0]!.vectors = []
+      if (kind === 'all-errors') {
+        for (const run of input.runs) {
+          run.vectors = []
+          run.report.honesty.harnessErrorCount = 11
+        }
+      }
+      const floor = foldNoiseFloorArtefact(input)
+      expect(guardNoiseFloorArtefact(floor).kind).toBe('ok')
+      expect(assertFloorArtefactCommittable(floor)).toMatchObject({
+        ok: false, refusal: { kind: 'unusable-measurement' },
+      })
+    },
+  )
+
   it('measures only proof + empty, retains per-axis n, and counts rendered exclusions once', () => {
     const input = inputFixture()
     const artefact = foldNoiseFloorArtefact(input)
