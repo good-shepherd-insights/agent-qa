@@ -16,7 +16,7 @@
 // node builtins directly.
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -71,6 +71,7 @@ import {
   COMMITTED_CASSETTES_DIR,
   DEFAULT_EVAL_CASSETTES_SUBDIR,
   DEFAULT_EVAL_REPLAYS_SUBDIR,
+  DEFAULT_EVAL_REPORTS_SUBDIR,
   FloorProtocolError,
   FsCassetteStore,
   FsReplayRecordStore,
@@ -82,6 +83,7 @@ import {
   commitCensus,
   commitEvalReport,
   committedExclusionPath,
+  committedNoiseFloorPath,
   committedPartitionManifestPath,
   computeReplayProfileFingerprintFor,
   listBaselinePointers,
@@ -93,6 +95,7 @@ import {
   readPartitionManifests,
   readRunExclusions,
   runNoiseFloorMeasurement,
+  runReleaseGate,
   seedCommittedCorpus,
   sweepCassetteReplays,
   writeBaselinePointer,
@@ -102,7 +105,9 @@ import {
 import type {
   CommitCensusOutcome,
   CommitEvalReportOutcome,
+  ReleaseGateMode,
   RunNoiseFloorMeasurementResult,
+  RunReleaseGateResult,
   SeedingRefusal,
   WriteBaselinePointerOutcome,
 } from '@vostride/agent-qa-eval-local'
@@ -805,6 +810,117 @@ export async function runFloorVerb(
     recordedDefaults: opts.repeats === undefined && opts.seeds === undefined && opts.bootstrapSeed === undefined,
     corpusDigest: result.artefact.corpusDigest,
   }
+}
+
+/** Invocation context added to either the verdict or exact-file refusal arm. */
+interface GateVerbContext {
+  /** Resolved seed; offline reads disclose selection without making a new call. */
+  seed: number
+  /** The winning seed declaration, in flag/config/floor/default priority. */
+  seedSource: 'flag' | 'config' | 'floor' | 'default'
+  /** Absolute directories actually probed, in order; empty for a fresh run. */
+  probedDirs: string[]
+}
+
+/** Preserve the composition's refusal and actual invocation-observation contracts verbatim. */
+export type GateVerbResult = GateVerbContext & (
+  | (Extract<RunReleaseGateResult, { kind: 'verdict' }> & {
+      /** Absolute actual report path; relative --staged-dir resolves against session.configDir. */
+      currentReportFile: string
+    })
+  | Extract<RunReleaseGateResult, { kind: 'refused' }>
+)
+
+/** One fresh replay or a credential-free saved-report comparison through the shared gate. */
+export async function runGateVerb(
+  session: EvalSession,
+  opts: {
+    report?: string
+    stagedDir?: string
+    seed?: number
+    plannerOverrides?: ModelProviderOverrides
+    judgeOverrides?: ModelProviderOverrides
+  } = {},
+): Promise<GateVerbResult> {
+  if (opts.stagedDir !== undefined && opts.report === undefined) {
+    throw new TypeError('--staged-dir requires --report <batchKey>')
+  }
+  const declaredSeed = opts.seed ?? session.evalConfig.seed
+  if (declaredSeed !== undefined && !Number.isSafeInteger(declaredSeed)) {
+    throw new TypeError('--seed must be a safe integer')
+  }
+  const committedRoot = resolve(session.configDir, 'agent-qa-eval')
+  const agentQaRoot = resolve(session.configDir, '.agent-qa')
+  const plannerModelId = await resolvePlannerModelId(session)
+  const fingerprint = await resolveReplayProfileFingerprint(session, 'declared', opts.plannerOverrides)
+  // Identity reads named declarations only. Offline comparison must never ask for judge auth.
+  let judgeModelId: string | undefined
+  if (session.evalConfig.judge) {
+    const { resolveNamedConfig } = await import('./llm-utils.js')
+    judgeModelId = (await resolveNamedConfig(session.evalConfig.judge, session.configPath)).config.model
+  }
+  const profileKeyInputs = {
+    plannerModelId, matcherVersion: buildEvalReport([]).matcherVersion,
+    ...(judgeModelId === undefined ? {} : { judgeModelId, judgeVersion: JUDGE_CONFIG.judgeVersion }),
+  }
+  const profileKey = composeBaselineProfileKey({ ...profileKeyInputs, fingerprint })
+  const floorPath = join(committedRoot, committedNoiseFloorPath(profileKey))
+  const floorSeed = declaredSeed === undefined
+    ? listNoiseFloorArtefacts(committedRoot).artefacts.find(entry =>
+      entry.path === floorPath && entry.profileKey === profileKey)?.artefact.seeds[0] : undefined
+  const seed = declaredSeed ?? floorSeed ?? FLOOR_DEFAULT_SEEDS[0]
+  const seedSource: GateVerbContext['seedSource'] = opts.seed !== undefined ? 'flag'
+    : session.evalConfig.seed !== undefined ? 'config' : floorSeed !== undefined ? 'floor' : 'default'
+  const probedDirs: string[] = []
+  const notices: string[] = []
+  let mode: ReleaseGateMode
+  if (opts.report !== undefined) {
+    const choices = opts.stagedDir !== undefined
+      ? [{ dir: resolve(session.configDir, opts.stagedDir), label: '--staged-dir' }]
+      : [
+          { dir: join(agentQaRoot, 'eval', 'gate', slugBranch(profileKey), 'reports'), label: 'gate root' },
+          { dir: join(agentQaRoot, DEFAULT_EVAL_REPORTS_SUBDIR), label: 'default staging root' },
+        ]
+    const files: string[] = []
+    let stagedOutputDir: string | undefined
+    for (const choice of choices) {
+      probedDirs.push(choice.dir)
+      const file = join(choice.dir, `${slugBranch(opts.report)}.json`)
+      files.push(file)
+      try {
+        lstatSync(file)
+      } catch (error) {
+        // Only absence permits fallback. Malformed/unreadable data (even a dangling link)
+        // selects this root and reaches the composition's exact-file guarded refusal.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      }
+      stagedOutputDir = choice.dir
+      notices.push(`gate --report: reading ${file} (${choice.label})`)
+      break
+    }
+    if (stagedOutputDir === undefined) {
+      return { kind: 'refused', refusal: { path: files[files.length - 1]!,
+        reason: `staged report absent; probed ${files.join(', ')}` }, notices,
+        seed, seedSource, probedDirs }
+    }
+    mode = { kind: 'report', batchKey: opts.report, stagedOutputDir,
+      profile: await resolveReplayProfileDeclaration(session), modelOverrides: opts.plannerOverrides }
+  } else {
+    const planner = await resolveReplayPlanner(session)
+    const judgeResolution = await resolveEvalJudge(session)
+    if (judgeResolution.notice !== undefined) notices.push(judgeResolution.notice)
+    mode = {
+      kind: 'fresh', ...planner, modelOverrides: opts.plannerOverrides,
+      judge: judgeResolution.judge === undefined ? undefined
+        : { ...judgeResolution.judge, modelOverrides: opts.judgeOverrides },
+      maskingContextFactory: session.maskingContextFactory,
+      seed, cassettesRoot: resolveCassettesRoot(session, 'committed').cassettesRoot,
+      replayOutputBaseDir: evalAuditDir(session.configDir, 'gate', profileKey),
+      onProgress: line => process.stderr.write(line + '\n'),
+    }
+  }
+  const result = await runReleaseGate({ committedRoot, agentQaRoot, profileKeyInputs, mode })
+  return { ...result, notices: [...notices, ...result.notices], seed, seedSource, probedDirs }
 }
 
 // ---- the seed verb (372-07, D-01/D-12/D-16/D-17; 413-06, D-04/D-09) ---------------------------
@@ -1722,15 +1838,20 @@ export async function resolveReplayProfileFingerprint(
   seedPolicy: SeedPolicy,
   modelOverrides?: ModelProviderOverrides,
 ): Promise<string> {
+  const profile = await resolveReplayProfileDeclaration(session)
+  return computeReplayProfileFingerprintFor({ profile, seedPolicy, modelOverrides })
+}
+
+/** Shared unresolved declaration for fingerprinting and credential-free offline gate reads. */
+async function resolveReplayProfileDeclaration(session: EvalSession): Promise<ModelProfile> {
   const config = await resolveBaselinePlannerConfig(session)
-  const profile: ModelProfile = {
+  return {
     provider: config.provider,
     model: config.model,
     ...(config.baseURL !== undefined ? { baseURL: config.baseURL } : {}),
     ...(config.providerHeaders !== undefined ? { headers: config.providerHeaders } : {}),
     auth: { mode: 'none' },
   }
-  return computeReplayProfileFingerprintFor({ profile, seedPolicy, modelOverrides })
 }
 
 /** The model-id and fingerprint readers share the same named-config validation. */

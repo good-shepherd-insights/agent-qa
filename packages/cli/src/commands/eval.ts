@@ -391,7 +391,7 @@ function renderExtractSummary(result: ExtractVerbResult): void {
 
 export function createEvalCommand(): Command {
   const cmd = new Command('eval')
-    .description('Offline eval substrate: extract, replay, seed, report, census (Phase 372 D-01; 413 D-13)')
+    .description('Eval corpus and release measurements: extract, replay, seed, report, census, floor, gate')
 
   cmd.addCommand(
     new Command('extract')
@@ -735,6 +735,43 @@ export function createEvalCommand(): Command {
         } catch (error) {
           console.error(pc.red(error instanceof Error ? error.message : String(error)))
           process.exitCode = 1
+        }
+      }),
+  )
+
+  cmd.addCommand(
+    new Command('gate')
+      .description('Compare one fresh committed-corpus replay or an identified saved report')
+      .option('--report <batchKey>', 'compare a staged report with zero model calls; gate root first')
+      .option('--staged-dir <dir>', 'with --report, read only this directory, relative to config')
+      .option('--seed <n>', 'sampling seed (flag, config, measured floor, then recorded default 11)')
+      .option('--judge <name>', 'override the eval.judge named LLM config')
+      .option('--json', 'emit the typed result DTO to stdout')
+      .action(async (opts: {
+        report?: string; stagedDir?: string; seed?: string; judge?: string; json?: boolean
+      }, command: Command) => {
+        try {
+          // Parse in the action: Commander option-parser exits would bypass the exit-2 catch.
+          const seed = opts.seed === undefined ? undefined : parseIntegerFlag('--seed')(opts.seed)
+          const { resolveEvalSession, runGateVerb } = await import('../eval-session-composition.js')
+          const session = await resolveEvalSession({
+            configPath: getGlobalConfigPath(command), flags: { judge: opts.judge },
+          })
+          const result = await runGateVerb(session, { report: opts.report, stagedDir: opts.stagedDir, seed })
+          if (opts.json) {
+            console.log(JSON.stringify(result, null, 2))
+          } else if (result.kind === 'verdict') {
+            for (const line of result.lines) console.log(line)
+          } else {
+            console.log(`release-gate: refused — ${result.refusal.path}: ${result.refusal.reason}`)
+          }
+          for (const notice of result.notices) console.error(notice)
+          process.exitCode = result.kind === 'verdict' ? result.verdict.exit : 2
+        } catch (error) {
+          // An invocation failure is inconclusive, never a measured regression (exit 1).
+          console.error(pc.red('release-gate: inconclusive — '
+            + (error instanceof Error ? error.message : String(error))))
+          process.exitCode = 2
         }
       }),
   )
