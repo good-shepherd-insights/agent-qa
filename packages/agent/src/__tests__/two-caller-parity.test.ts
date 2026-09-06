@@ -276,6 +276,8 @@ const ALL_FUNCTION_IDS = [
   'knowledge.brief.why',
   'knowledge.bundles.list',
   'knowledge.forget.propose',
+  // 416 D-17: gate history is read-tier and remains visible in both caller listings.
+  'knowledge.gates.list',
   'knowledge.proposal.apply',
   'knowledge.record.show',
   'knowledge.records.diff',

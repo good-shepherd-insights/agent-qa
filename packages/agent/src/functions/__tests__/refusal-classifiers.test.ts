@@ -561,7 +561,10 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // rest — so a fold that reached into that payload for its outcome sentence would put a run's
     // knowledge content, possibly masked material, onto a receipt. It counts steps, served lines
     // and learned changes, and interpolates nothing from inside any of them.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(39)
+    // 2026-09-06 (416 D-17): 40. `knowledge.gates.list` adds a fold over the receipt count
+    // and declared verdict/path/reason. Gate evidence payloads remain inside the scanned
+    // boundary: this classifier may not inspect their content to derive its outcome.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(40)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {
