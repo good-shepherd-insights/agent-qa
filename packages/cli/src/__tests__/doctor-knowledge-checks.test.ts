@@ -16,6 +16,7 @@ import {
   createKnowledgeChecks,
   type KnowledgeCheckProbes,
 } from '../commands/doctor-knowledge-checks.js'
+import type { PromotionPostureHostFacts, PromotionPostureResolution } from '../curation/promotion-posture.js'
 
 const STATIC_PROFILE: EmbeddingProfile = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' }
 
@@ -81,21 +82,23 @@ async function runChecks(project: Project, probes: KnowledgeCheckProbes) {
     store: results[0]!,
     embedder: results[1]!,
     rung: results[2]!,
+    learning: results[3],
   }
 }
 
 describe('createKnowledgeChecks', () => {
-  it('returns exactly three rows named store, embedder, rung in that order', () => {
+  it('returns exactly four rows named store, embedder, rung, learning in that order', () => {
     const project = makeProject()
     const checks = createKnowledgeChecks({ config: project.config, configPath: project.configPath })
     expect(checks.map(check => check.name)).toEqual([
       'Knowledge store',
       'Embedder',
       'Retrieval rung',
+      'Learning mode',
     ])
   })
 
-  it('skips all three rows when the raw config is null', async () => {
+  it('skips all four rows when the raw config is null', async () => {
     const project = makeProject()
     const checks = createKnowledgeChecks({ config: null, configPath: project.configPath })
     const results = await Promise.all(checks.map(check => check.check()))
@@ -103,13 +106,17 @@ describe('createKnowledgeChecks', () => {
       { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
       { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
       { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
+      { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
     ])
   })
 
-  it('skips all three rows when the configured knowledge dir does not exist on disk', async () => {
+  it('skips all four rows when the configured knowledge dir does not exist on disk', async () => {
     const project = makeProject({ withKnowledgeDir: false })
     const classifyIndexFace = vi.fn(() => ({ source: 'index' as const }))
-    const { store, embedder, rung } = await runChecks(project, baseProbes({ classifyIndexFace }))
+    const buildPromotionPosture = vi.fn()
+    const { store, embedder, rung, learning } = await runChecks(project, baseProbes({ classifyIndexFace, buildPromotionPosture }))
+    expect(learning).toEqual({ status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE })
+    expect(buildPromotionPosture).not.toHaveBeenCalled()
     expect(store.status).toBe('skip')
     expect(embedder.status).toBe('skip')
     expect(rung.status).toBe('skip')
@@ -327,13 +334,56 @@ describe('createKnowledgeChecks', () => {
     })
   })
 
-  it('probes each axis exactly once across all three rows', async () => {
+  it('warns Learning mode when the eval root is absent, using the display path', async () => {
+    const project = makeProject()
+    const committedRoot = join(project.projectRoot, 'agent-qa-eval')
+    const { learning } = await runChecks(project, baseProbes({
+      buildPromotionPosture: async () => ({ kind: 'no-eval-root', committedRoot }),
+    }))
+    expect(learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), committedRoot)}` })
+  })
+
+  it.each([
+    [false, { capable: false, reason: 'no-judge-configured' }, { kind: 'not-provided', rarePathEligible: false }, 'warn', 'deterministic-verdict-floor — no replay gate bound, no judge configured'],
+    [false, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'not-provided', rarePathEligible: false }, 'warn', 'deterministic-verdict-floor — no replay gate bound; judge anthropic configured'],
+    [true, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'provided', attributedRows: 4, rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge anthropic; canary evidence 4)'],
+    [true, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'not-provided', rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge anthropic; canary evidence none)'],
+  ] as const)('reports Learning mode for bound=%s, judge=%j, canary=%j', async (replayGateAvailable, judge, canary, status, message) => {
+    const project = makeProject()
+    const host: PromotionPostureHostFacts = { replayGateAvailable, judge, canary, corpusDigest: 'a'.repeat(64), minimumGateSet: 3, profileKey: 'test-profile' }
+    const { learning } = await runChecks(project, baseProbes({
+      buildPromotionPosture: async () => ({ kind: 'ready', committedRoot: join(project.projectRoot, 'agent-qa-eval'), host, resolve: () => undefined }),
+    }))
+    expect(learning).toEqual({ status, message })
+  })
+
+  it('fails Learning mode only for posture-unavailable, showing the first refusal', async () => {
+    const project = makeProject()
+    const refusals = ['noise-floor: no artefact for profile X', 'second refusal']
+    const { learning } = await runChecks(project, baseProbes({
+      buildPromotionPosture: async () => ({ kind: 'unavailable', committedRoot: join(project.projectRoot, 'agent-qa-eval'), refusals, resolve: () => undefined }),
+    }))
+    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — noise-floor: no artefact for profile X' })
+  })
+
+  it('folds a throwing posture builder into an unavailable row without its stack', async () => {
+    const project = makeProject()
+    const { learning } = await runChecks(project, baseProbes({
+      buildPromotionPosture: async () => { throw new Error('posture read refused') },
+    }))
+    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — posture read refused' })
+  })
+
+  it('probes each axis exactly once across all four rows', async () => {
     const project = makeProject()
     const classifyIndexFace = vi.fn(() => ({ source: 'index' as const }))
     const resolveEmbedderCapability = vi.fn(() => Promise.resolve(ready('native')))
-    await runChecks(project, baseProbes({ classifyIndexFace, resolveEmbedderCapability }))
+    const buildPromotionPosture = vi.fn(async (): Promise<PromotionPostureResolution> => ({ kind: 'no-eval-root', committedRoot: join(project.projectRoot, 'agent-qa-eval') }))
+    const { checks } = await runChecks(project, baseProbes({ classifyIndexFace, resolveEmbedderCapability, buildPromotionPosture }))
+    await Promise.all(checks.map(check => check.check()))
     expect(classifyIndexFace).toHaveBeenCalledTimes(1)
     expect(resolveEmbedderCapability).toHaveBeenCalledTimes(1)
+    expect(buildPromotionPosture).toHaveBeenCalledExactlyOnceWith({ configPath: project.configPath })
   })
 
   it('hard-codes allowDownload false on the capability probe (D-20: asking must not change the answer)', async () => {
@@ -410,6 +460,8 @@ describe('createKnowledgeChecks', () => {
     expect(second.store).toEqual(first.store)
     expect(second.embedder).toEqual(first.embedder)
     expect(second.rung).toEqual(first.rung)
+    expect(second.learning).toEqual(first.learning)
+    expect(first.learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), join(project.projectRoot, 'agent-qa-eval'))}` })
 
     expect(afterFirst).toEqual(before)
     expect(afterSecond).toEqual(before)

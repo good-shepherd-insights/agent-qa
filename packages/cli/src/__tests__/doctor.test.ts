@@ -214,8 +214,8 @@ const NATIVE_READY = {
   embedder: {},
 } as never
 
-/** The row after which the trio prints, and the row before which it must stop. */
-const KNOWLEDGE_ROW_NAMES = ['Knowledge store', 'Embedder', 'Retrieval rung'] as const
+/** The four knowledge rows between legacy memory and config validation. */
+const KNOWLEDGE_ROW_NAMES = ['Knowledge store', 'Embedder', 'Retrieval rung', 'Learning mode'] as const
 
 const ESC = String.fromCharCode(27)
 const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, 'g')
@@ -1041,7 +1041,7 @@ targets:
 
   async function runHealthyHost(): Promise<void> {
     Object.defineProperty(process, 'version', { value: 'v24.10.0', writable: true })
-    mockExistsSync.mockReturnValue(true)
+    mockExistsSync.mockImplementation(path => !String(path).endsWith('agent-qa-eval'))
     mockExecSync.mockReturnValue(Buffer.from('ok'))
     mockResolveLLMAuth.mockResolvedValue({
       kind: 'unauthenticated',
@@ -1072,7 +1072,7 @@ targets:
     await runDoctor()
   }
 
-  it('prints the trio between Legacy v1 memory data and Config validation, store then embedder then rung', async () => {
+  it('prints four rows between Legacy v1 memory data and Config validation, store then embedder then rung then learning', async () => {
     await runHealthyHost()
 
     const indexOf = (name: string): number => consoleLogs.findIndex(line => line.includes(`    ${name}  `))
@@ -1082,11 +1082,17 @@ targets:
 
     expect(legacy).toBeGreaterThanOrEqual(0)
     expect(validation).toBeGreaterThanOrEqual(0)
-    expect(positions).toEqual([legacy + 1, legacy + 2, legacy + 3])
-    expect(positions[2]).toBeLessThan(validation)
+    expect(positions).toEqual([legacy + 1, legacy + 2, legacy + 3, legacy + 4])
+    expect(positions[3]).toBeLessThan(validation)
   })
 
-  it('skips all three rows when no knowledge root resolves, and never omits a row', async () => {
+  it('prints exactly 21 check rows after adding Learning mode', async () => {
+    await runHealthyHost()
+    const rows = consoleLogs.map(stripAnsi).filter(line => /^ {4}\S.*\b(?:PASS|WARN|FAIL|SKIP)\b/.test(line))
+    expect(rows).toHaveLength(21)
+  })
+
+  it('skips all four rows when no knowledge root resolves, and never omits a row', async () => {
     mockExistsSync.mockReturnValue(false)
 
     await runDoctor()
@@ -1103,13 +1109,15 @@ targets:
     expect(getOutput()).not.toContain('Fix: Set an explicit embedder profile')
   })
 
-  it('passes all three rows on an open index with a native embedder', async () => {
+  it('passes the retrieval rows and warns Learning mode on a healthy host without an eval root', async () => {
     await runHealthyHost()
 
     expect(rowFor('Knowledge store')).toContain('index open at')
     expect(rowFor('Embedder')).toContain(`native (${DEFAULT_EMBEDDING_PROFILE.model_id})`)
     expect(rowFor('Retrieval rung')).toContain('memidex')
-    for (const name of KNOWLEDGE_ROW_NAMES) expect(rowFor(name)).toContain('PASS')
+    for (const name of KNOWLEDGE_ROW_NAMES.slice(0, 3)) expect(rowFor(name)).toContain('PASS')
+    expect(rowFor('Learning mode')).toContain('WARN')
+    expect(rowFor('Learning mode')).toContain('deterministic-verdict-floor')
     expect(process.exitCode).toBe(0)
   })
 
