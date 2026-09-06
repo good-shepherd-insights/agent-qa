@@ -238,13 +238,17 @@ describe('release gate inconclusive evidence', () => {
     }
   })
 
-  it('names the baseline decisions.json fix for absent baseline vectors', () => {
+  it('qualifies sidecar recovery and names the reviewed baseline replacement route', () => {
     const input = fixture()
     const detail = reason({ ...input, baseline: { report: input.baseline.report } }, 'no-decision-vector')
     expect(detail).toMatch(/^baseline:/)
     expect(detail).toContain('eval report --commit')
     expect(detail).toContain('baseline-batch')
     expect(detail).toContain('decisions.json')
+    expect(detail).toContain('only when the exact baseline report is reproducible under the write-once contract')
+    expect(detail).toContain('stage a replacement with eval report (without --commit)')
+    expect(detail).toContain('review and replace the committed report parts')
+    expect(detail).toContain('eval report --baseline --from-committed baseline-batch --seed-policy declared')
   })
 
   it('collects stale-floor plus no-decision-vector together, with all disclosure blocks', () => {

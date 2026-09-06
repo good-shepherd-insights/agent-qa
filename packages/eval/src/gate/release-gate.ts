@@ -225,9 +225,13 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
 
   const baselineDocument = baseline?.vectors
   if (baselineDocument === undefined) {
+    const batchKey = baseline?.report.batchKey ?? pointer?.batchKey ?? 'absent'
     add('no-decision-vector',
-      `baseline: decisions.json absent; eval report --commit on baseline batch ` +
-      `${baseline?.report.batchKey ?? pointer?.batchKey ?? 'absent'} commits decisions.json`,
+      `baseline: decisions.json absent for batch ${batchKey}; eval report --commit can add the ` +
+      `sidecar only when the exact baseline report is reproducible under the write-once contract; ` +
+      `otherwise stage a replacement with eval report (without --commit), review and replace the ` +
+      `committed report parts, then designate it with eval report --baseline --from-committed ` +
+      `${batchKey} --seed-policy declared`,
     )
   } else {
     mismatch('batchKey', 'baseline vectors', baselineDocument.batchKey, 'baseline report', baseline!.report.batchKey)
