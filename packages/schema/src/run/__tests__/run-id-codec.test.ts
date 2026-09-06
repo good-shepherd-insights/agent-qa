@@ -207,6 +207,15 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
       "already slugged at the join — an evidence row's provenance, written under the bundle's own "
       + 'content-addressed directory.',
   },
+  'knowledge/gate-receipt.ts': {
+    hardened: 0,
+    plainString: 1,
+    verdict:
+      'reaches no path join — 2026-09-06 (416-02 D-02) adds the historical run reference on '
+      + 'a Gate3 receipt. It records attribution in bundle evidence and is returned as a string '
+      + 'by the read operation; it neither brands a RunId nor addresses run files. The strict '
+      + 'receipt contract requires a nonempty reference without rewriting historical ids.',
+  },
   'knowledge/review-verbs.ts': {
     hardened: 0,
     plainString: 2,
