@@ -28,13 +28,23 @@ const candidate: PromotionPostureCandidate = {
 }
 const floorName = readdirSync(join(demo, 'agent-qa-eval/reports/noise-floor'))[0]
 const floor = JSON.parse(readFileSync(join(demo, 'agent-qa-eval/reports/noise-floor', floorName), 'utf8'))
-const config = `registry:
+const workspace = `workspace:
+  testMatch: [tests/**/*.yaml]
+  suiteMatch: [suites/**/*.suite.yaml]
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
+`
+const config = `${workspace}
+registry:
   llms:
     - name: planner
       provider: openai-subscription
       model: gpt-5.6-terra
 use:
   llm: planner
+  mobile:
+    appState: preserve
 `
 
 function fixture(options: { root?: boolean; floor?: boolean; config?: string } = {}) {
@@ -99,7 +109,7 @@ describe('buildPromotionPostureResolver', () => {
   })
 
   it('D-12 unresolvable identity is unavailable rather than the floor', async () => {
-    const f = fixture({ config: 'eval: {}\n' })
+    const f = fixture({ config: `${workspace}\nuse:\n  mobile:\n    appState: preserve\neval: {}\n` })
     const result = await build(f.configPath)
     expect(result?.kind).toBe('unavailable')
     expect(result.refusals.join('\n')).toContain('use.llm is not set')
@@ -115,15 +125,16 @@ describe('buildPromotionPostureResolver', () => {
     expect(result.host.canary).toEqual({ kind: 'not-provided', rarePathEligible: false })
     expect(result.host.corpusDigest).toMatch(/^[a-f0-9]{64}$/)
     const entries = readCommittedCorpus(join(demo, 'agent-qa-eval')).snapshot.entries
-    const product = entries[0].product
+    const product = 'example-web'
     const resolvePosture: ResolvePromotionPosture = result.resolve
     const posture = resolvePosture({ ...candidate, product, scope: { tier: 'product', key: product } })
     expect(typeof posture).toBe('object')
     expect(posture).not.toBeInstanceOf(Promise)
-    expect(posture).toMatchObject({ kind: 'resolved', gateSetVerdict: 'ok', gateSetNonEmpty: true, scope: { resolution: 'product-key' }, counts: { excludedCount: 0 } })
+    // The committed aggregate floor is 63; example-web has only 40 entries.
+    expect(posture).toMatchObject({ kind: 'resolved', gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, scope: { resolution: 'product-key' }, counts: { excludedCount: 0, natural: 34, remaining: { before: { natural: 34 } } } })
     expect(resolvePosture({ ...candidate, provenance: { runIds: [], receiptDigests: [], capturedAtOrdinals: [] } })).toMatchObject({ gateSetVerdict: 'unprovenanced-candidate', gateSetNonEmpty: false })
     expect(resolvePosture({ ...candidate, scope: { tier: 'test', key: 'test-scope' } })).toMatchObject({ scope: { resolution: 'default-fallback' } })
-    expect(resolvePosture({ ...candidate, product, provenance: { ...candidate.provenance, runIds: entries.map(entry => entry.runId) } })).toMatchObject({ gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, counts: { remaining: { after: { natural: 0, heldOutPrivate: 0, heldOutShared: 0, adversarial: 0 } } } })
+    expect(resolvePosture({ ...candidate, product, provenance: { ...candidate.provenance, runIds: entries.map(entry => entry.run_links.runId) } })).toMatchObject({ gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, counts: { remaining: { after: { natural: 0, heldOutPrivate: 0, heldOutShared: 0, adversarial: 0 } } } })
   })
 
   it('D-10 a binding flips availability without invoking the replay gate', async () => {
@@ -133,6 +144,17 @@ describe('buildPromotionPostureResolver', () => {
     expect(result.host.replayGateAvailable).toBe(true)
     expect(result.resolve(candidate).replayGateAvailable).toBe(true)
     expect(runReplayGate).not.toHaveBeenCalled()
+  })
+
+  it('selects an ok gate set from an independent corpus with a measured product floor', async () => {
+    const f = fixture({ floor: true })
+    cpSync(join(demo, 'agent-qa-eval/corpus'), join(f.committedRoot, 'corpus'), { recursive: true })
+    const value = structuredClone(floor)
+    value.minimumGateSet = value.products['example-web'].minimumGateSet
+    writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), JSON.stringify(value))
+    const result = await build(f.configPath)
+    expect(result?.kind).toBe('ready')
+    expect(result.resolve(candidate)).toMatchObject({ kind: 'resolved', gateSetVerdict: 'ok', gateSetNonEmpty: true })
   })
 
   it('T-416-15 reads identity without secrets, auth state, provider credentials or model resolution', async () => {

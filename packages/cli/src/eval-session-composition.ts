@@ -200,10 +200,21 @@ export interface EvalSession {
 export async function resolveEvalSession(input: {
   configPath?: string
   flags?: { judge?: string; k?: number; seed?: number; silverCap?: number }
+  /** Declaration-only host probes neither read secrets/auth state nor create a run masker. */
+  keyOnly?: boolean
 } = {}): Promise<EvalSession> {
   const configPath = input.configPath ?? 'agent-qa.config.yaml'
   const configDir = dirname(resolve(configPath))
   const config = await resolveConfig({ configPath, loadAuthPlugins: true })
+
+  if (input.keyOnly === true) {
+    return {
+      config, configPath, configDir,
+      evalConfig: mergeEvalConfig(config.eval, input.flags),
+      maskingContextFactory: () => { throw new Error('A key-only eval session cannot create a run masker') },
+      executionContext: resolveRunExecutionContext(),
+    }
+  }
 
   const secretStore = await loadEvalSecretStore(config, configDir)
   const authStatePayloads = await readAuthStatePayloadsBestEffort(
@@ -860,19 +871,12 @@ export async function runGateVerb(
   }
   const committedRoot = resolve(session.configDir, 'agent-qa-eval')
   const agentQaRoot = resolve(session.configDir, '.agent-qa')
-  const plannerModelId = await resolvePlannerModelId(session)
-  const fingerprint = await resolveReplayProfileFingerprint(session, 'declared', opts.plannerOverrides)
-  // Identity reads named declarations only. Offline comparison must never ask for judge auth.
-  let judgeModelId: string | undefined
-  if (session.evalConfig.judge) {
-    const { resolveNamedConfig } = await import('./llm-utils.js')
-    judgeModelId = (await resolveNamedConfig(session.evalConfig.judge, session.configPath)).config.model
-  }
+  const { plannerModelId, judgeModelId, judgeVersion, fingerprint, matcherVersion, profileKey } =
+    await resolveGateProfileIdentity(session, opts.plannerOverrides)
   const profileKeyInputs = {
-    plannerModelId, matcherVersion: buildEvalReport([]).matcherVersion,
-    ...(judgeModelId === undefined ? {} : { judgeModelId, judgeVersion: JUDGE_CONFIG.judgeVersion }),
+    plannerModelId, matcherVersion,
+    ...(judgeModelId === undefined ? {} : { judgeModelId, judgeVersion }),
   }
-  const profileKey = composeBaselineProfileKey({ ...profileKeyInputs, fingerprint })
   const floorPath = join(committedRoot, committedNoiseFloorPath(profileKey))
   const floorSeed = declaredSeed === undefined
     ? listNoiseFloorArtefacts(committedRoot).artefacts.find(entry =>
@@ -1840,6 +1844,32 @@ async function designateReportBaseline(
  */
 async function resolvePlannerModelId(session: EvalSession): Promise<string> {
   return (await resolveBaselinePlannerConfig(session)).model
+}
+
+/** Shared declaration-only identity; gate overrides remain part of the exact fingerprint. */
+export async function resolveGateProfileIdentity(
+  session: EvalSession,
+  modelOverrides?: ModelProviderOverrides,
+): Promise<{
+  plannerModelId: string
+  judgeModelId?: string
+  judgeVersion?: number
+  fingerprint: string
+  matcherVersion: number
+  profileKey: string
+}> {
+  const plannerModelId = await resolvePlannerModelId(session)
+  const fingerprint = await resolveReplayProfileFingerprint(session, 'declared', modelOverrides)
+  let judgeModelId: string | undefined
+  if (session.evalConfig.judge) {
+    const { resolveNamedConfig } = await import('./llm-utils.js')
+    judgeModelId = (await resolveNamedConfig(session.evalConfig.judge, session.configPath)).config.model
+  }
+  const identity = {
+    plannerModelId, fingerprint, matcherVersion: buildEvalReport([]).matcherVersion,
+    ...(judgeModelId === undefined ? {} : { judgeModelId, judgeVersion: JUDGE_CONFIG.judgeVersion }),
+  }
+  return { ...identity, profileKey: composeBaselineProfileKey(identity) }
 }
 
 /**
