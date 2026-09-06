@@ -28,14 +28,10 @@ const DIRECT_LIBRARY_LEASE_ID = 'direct-library'
  * 378-17 canonical mutable-target order, additively extended by 379 D-03:
  * record, provenance, outcomes, measurements, relations, then manifest.
  */
-const MUTABLE_TARGETS = new Set([
-  'record.md',
-  'provenance.json',
-  'evidence/outcomes.jsonl',
-  'evidence/measurements.json',
-  'relations.json',
-  'manifest.json',
-])
+// 2026-09-06, 416 D-03: the seventh mutable part is born only on first receipt append.
+// prettier-ignore
+export const MUTABLE_BUNDLE_TARGETS = ['record.md', 'provenance.json', 'evidence/outcomes.jsonl', 'evidence/measurements.json', 'evidence/gates.jsonl', 'relations.json', 'manifest.json'] as const
+const MUTABLE_TARGETS = new Set<string>(MUTABLE_BUNDLE_TARGETS)
 
 const journalReplacementSchema = z
   .object({

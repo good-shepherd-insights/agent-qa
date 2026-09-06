@@ -4,6 +4,29 @@ import type { EvidenceToken } from '../ids/record-id'
 import type { DistilledObservation } from './distilled-observation'
 import type { OriginClass } from './outcome-event'
 import type { BundleStatus } from './trust-fold'
+import type { ScopeKey } from '../identity/scope-key'
+import type { PromotionPath } from './promotion-path'
+export { PROMOTION_PATHS, PROMOTION_PATH_STRENGTH, strongerPromotionPath } from './promotion-path'
+export type { PromotionPath } from './promotion-path'
+
+export type PromotionOutcome =
+  | { kind: 'promoted'; promotionPath: PromotionPath; citedReceiptDigests: readonly string[] }
+  | { kind: 'already-active'; promotionPath?: PromotionPath }
+export type GateReceiptRecordOutcome = { kind: 'appended' } | { kind: 'duplicate' }
+export interface PromotionCandidateProvenance {
+  runIds: readonly string[]
+  receiptDigests: readonly string[]
+  capturedAtOrdinals: readonly number[]
+}
+export interface PromotionPostureCandidate {
+  id: string
+  product: string
+  scope: ScopeKey
+  provenance: PromotionCandidateProvenance
+}
+export type ResolvePromotionPosture = (
+  candidate: PromotionPostureCandidate,
+) => PromotionGatePosture | undefined
 
 export type PromotionGateObservation = Pick<DistilledObservation, 'element' | 'error'>
 
@@ -87,11 +110,16 @@ export const PROMOTION_GATE_HOLD_REASONS = [
 ] as const satisfies readonly PromotionGateHoldReason[]
 
 export type PromotionGateVerdict =
-  | { verdict: 'promote' }
+  | { verdict: 'promote'; promotionPath: PromotionPath; citedReceiptDigests: readonly string[] }
   | { verdict: 'hold'; reason: PromotionGateHoldReason }
 
 function hold(reason: PromotionGateHoldReason): PromotionGateVerdict {
   return { verdict: 'hold', reason }
+}
+
+// 2026-09-06: 416-01 tracer stub: Plan 03 (D-13/D-14) replaces this with the ordered path table.
+function promoteVia(_input: PromotionGateInput): PromotionGateVerdict {
+  return { verdict: 'promote', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] }
 }
 
 function promotionElementAnchor(
@@ -140,13 +168,13 @@ export function evaluatePromotionGate(input: PromotionGateInput): PromotionGateV
 
   if (input.kind === 'fact') {
     return hasMatchingElementObservation(input)
-      ? { verdict: 'promote' }
+      ? promoteVia(input)
       : hold('no-element-observation')
   }
 
   return input.distilledObservations.some(
     (observation) => observation.error?.rootCauseClass !== undefined,
   )
-    ? { verdict: 'promote' }
+    ? promoteVia(input)
     : hold('missing-root-cause')
 }

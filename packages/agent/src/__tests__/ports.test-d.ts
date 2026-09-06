@@ -33,7 +33,7 @@ expectTypeOf<Parameters<KnowledgePort['recordCanaryOutcome']>>().toEqualTypeOf<
 >()
 expectTypeOf<ReturnType<KnowledgePort['recordCanaryOutcome']>>().toEqualTypeOf<Promise<void>>()
 expectTypeOf<Parameters<KnowledgePort['promote']>>().toEqualTypeOf<[candidateId: RecordId]>()
-expectTypeOf<ReturnType<KnowledgePort['promote']>>().toEqualTypeOf<Promise<void>>()
+expectTypeOf<ReturnType<KnowledgePort['promote']>>().toEqualTypeOf<Promise<PromotionOutcome>>()
 
 expectTypeOf<Parameters<ToolsPort['execute']>>().toEqualTypeOf<[action: Action]>()
 expectTypeOf<ReturnType<ToolsPort['execute']>>().toEqualTypeOf<Promise<ActionResult>>()
@@ -54,3 +54,4 @@ expectTypeOf<Parameters<PersistencePort['getPatch']>>().toEqualTypeOf<[id: Patch
 expectTypeOf<ReturnType<PersistencePort['getPatch']>>().toEqualTypeOf<Promise<Patch | undefined>>()
 
 expectTypeOf<ReturnType<ClockPort['now']>>().toEqualTypeOf<string>()
+import type { PromotionOutcome } from '@vostride/agent-qa-schema'

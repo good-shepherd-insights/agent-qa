@@ -10,6 +10,7 @@ import {
   foldBundleTrust,
   sha256hex,
   survivingOutcomeEvents,
+  strongestPromotionPath,
 } from '@vostride/agent-qa-schema'
 import type {
   BundleDraft,
@@ -19,6 +20,7 @@ import type {
   ExecutionContext,
   GuardrailPolicy,
   PromotionGateHoldReason,
+  PromotionOutcome,
   RecordId,
   ScreenState,
 } from '@vostride/agent-qa-schema'
@@ -27,8 +29,8 @@ import {
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
 
-import { appendOutcomeEvent } from '../bundle-append.js'
-import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
+import { appendOutcomeEvent, appendPromotionReceipt } from '../bundle-append.js'
+import { deriveBundleTrust, loadBundle, readGateReceipts } from '../bundle-read.js'
 import type { LoadedBundle } from '../bundle-read.js'
 import type { BundleStoreConfig } from '../bundle-publish.js'
 import {
@@ -444,7 +446,7 @@ export function createLocalKnowledgeStore(
    * append and projection below is irreversible canonical work, so the whole gate-and-write
    * body lives in one section rather than re-entering the fence per unit.
    */
-  function promoteWithinCurrentAuthority(candidateId: RecordId): void {
+  function promoteWithinCurrentAuthority(candidateId: RecordId): PromotionOutcome {
     /**
      * D-17: later callers add evidence first, then ask this same gate to judge it. The
      * execution posture is deliberately resolved at call time, and no override input exists.
@@ -490,7 +492,8 @@ export function createLocalKnowledgeStore(
           bundleId: candidateId,
           product: resolved.product,
         })
-        return
+        const promotionPath = strongestPromotionPath(readGateReceipts(resolved.bundleDir, candidateId) ?? [])
+        return { kind: 'already-active', ...(promotionPath === undefined ? {} : { promotionPath }) }
       }
       // Stale authority: append-only retraction of every surviving promoted event under a
       // deterministic replay-safe identity, then re-project and refuse with the gate's
@@ -546,11 +549,25 @@ export function createLocalKnowledgeStore(
     if (appended.kind === 'not-found') {
       throw new KnowledgePromotionError(candidateId, appended.kind)
     }
+    const receipt = appendPromotionReceipt(appendConfig, candidateId, {
+      schemaVersion: 1,
+      kind: 'promotion',
+      candidateId,
+      promotionPath: gate.promotionPath,
+      citedReceiptDigests: gate.citedReceiptDigests,
+      producedAtOrdinal: promotionBuildOrdinal(config, resolved.bundle),
+      producedBy: { opId: 'promote' },
+    })
+    if (receipt.kind === 'egress-blocked') {
+      throw new KnowledgePromotionError(candidateId, receipt.kind, receipt.detections)
+    }
+    if (receipt.kind === 'not-found') throw new KnowledgePromotionError(candidateId, receipt.kind)
     applyIndexDeltaForBundleWithinCurrentAuthority({
       knowledgeRoot: config.knowledgeRoot,
       bundleId: candidateId,
       product: resolved.product,
     })
+    return { kind: 'promoted', promotionPath: gate.promotionPath, citedReceiptDigests: gate.citedReceiptDigests }
   }
 
   async function commitWithProfile(
@@ -688,9 +705,9 @@ export function createLocalKnowledgeStore(
           return unreachableCanaryOutcome(outcome.runOutcome)
       }
     },
-    async promote(candidateId: RecordId): Promise<void> {
-      withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
-        promoteWithinCurrentAuthority(candidateId)
+    async promote(candidateId: RecordId): Promise<PromotionOutcome> {
+      return withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
+        return promoteWithinCurrentAuthority(candidateId)
       })
     },
   }

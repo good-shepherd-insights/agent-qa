@@ -9,6 +9,11 @@ import { isAbsolute, join } from 'node:path'
 import {
   BUNDLE_SCHEMA_VERSION,
   BundleOutcomeEventSchema,
+  GateReceiptSchema,
+  PromotionReceiptSchema,
+  isPromotionReceipt,
+  receiptDigestOf,
+  stampReceiptDigest,
   canonicalJson,
   committedFileText,
   computeMutableStateHash,
@@ -25,6 +30,8 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   BundleManifest,
+  GateReceipt,
+  PromotionReceipt,
   BundleOutcomeEvent,
   CurationAuthorship,
   BundleRelation,
@@ -36,7 +43,7 @@ import type {
 
 import { checkpointCommittedParts } from './bundle-egress.js'
 import type { BundleStoreConfig } from './bundle-publish.js'
-import { readMeasurements } from './bundle-read.js'
+import { GATES_REL_PATH, readGateReceipts, readMeasurements } from './bundle-read.js'
 import { commitBundleMutation } from './journal/bundle-mutation.js'
 
 export type AppendOutcome =
@@ -44,6 +51,54 @@ export type AppendOutcome =
   | { kind: 'duplicate' }
   | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
   | { kind: 'not-found' }
+
+/** 416 D-04: receipt identity is its verified content digest, before any committed write. */
+export function appendGateReceipt(
+  config: BundleStoreConfig, id: RecordId, receipt: GateReceipt,
+): AppendOutcome {
+  const dir = bundleDir(config, id)
+  const manifest = completeManifest(dir)
+  if (manifest === null) return { kind: 'not-found' }
+  const parsed = GateReceiptSchema.parse(receipt)
+  if (parsed.candidateId !== id) throw new TypeError('foreign candidateId')
+  if (receiptDigestOf(parsed) !== parsed.receiptDigest) throw new TypeError('receiptDigest mismatch')
+  const existing = readGateReceipts(dir, id) ?? []
+  if (existing.some(line => line.receiptDigest === parsed.receiptDigest)) return { kind: 'duplicate' }
+  const file = join(dir, GATES_REL_PATH)
+  const existingText = existsSync(file) ? readFileSync(file, 'utf8') : ''
+  const appendedText = canonicalJson(parsed) + '\n'
+  const rewrittenText = existingText + appendedText
+  return checkpointAndRewrite(config, dir, id, GATES_REL_PATH, appendedText, rewrittenText,
+    rewriteManifest(manifest, GATES_REL_PATH, rewrittenText))
+}
+
+/** 416 D-05/D-07: one promotion line per candidate/path; lifecycle bytes remain unchanged. */
+export function appendPromotionReceipt(
+  config: BundleStoreConfig,
+  id: RecordId,
+  lineWithoutDigest: Omit<PromotionReceipt, 'receiptDigest' | 'citedReceiptDigests'> & {
+    citedReceiptDigests: readonly string[]
+  },
+): AppendOutcome {
+  const dir = bundleDir(config, id)
+  const manifest = completeManifest(dir)
+  if (manifest === null) return { kind: 'not-found' }
+  const parsed = PromotionReceiptSchema.parse(stampReceiptDigest({
+    ...lineWithoutDigest, citedReceiptDigests: [...lineWithoutDigest.citedReceiptDigests],
+  }))
+  if (parsed.candidateId !== id) throw new TypeError('foreign candidateId')
+  const existing = readGateReceipts(dir, id) ?? []
+  if (existing.some(line => line.receiptDigest === parsed.receiptDigest ||
+    (isPromotionReceipt(line) && line.promotionPath === parsed.promotionPath))) {
+    return { kind: 'duplicate' }
+  }
+  const file = join(dir, GATES_REL_PATH)
+  const existingText = existsSync(file) ? readFileSync(file, 'utf8') : ''
+  const appendedText = canonicalJson(parsed) + '\n'
+  const rewrittenText = existingText + appendedText
+  return checkpointAndRewrite(config, dir, id, GATES_REL_PATH, appendedText, rewrittenText,
+    rewriteManifest(manifest, GATES_REL_PATH, rewrittenText))
+}
 
 export type AppendEnrichedOutcome =
   | { kind: 'appended' | 'duplicate'; enriched: boolean }
@@ -87,11 +142,13 @@ function completeManifest(dir: string): BundleManifest | null {
 
 function mutableStateHash(contentHashes: BundleManifest['contentHashes']): string {
   const measurements = contentHashes[MEASUREMENTS_REL_PATH]
+  const gates = contentHashes[GATES_REL_PATH]
   return computeMutableStateHash({
     outcomes: contentHashes[OUTCOMES_REL_PATH] ?? null,
     relations: contentHashes[RELATIONS_REL_PATH] ?? null,
     artifactsIndex: contentHashes[ARTIFACTS_INDEX_REL_PATH] ?? null,
     ...(measurements === undefined ? {} : { measurements }),
+    ...(gates === undefined ? {} : { gates }),
   })
 }
 

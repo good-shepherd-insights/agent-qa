@@ -430,7 +430,7 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
       ...otherwisePromotionReady,
       kind: 'fact',
       subtype: 'selector',
-    })).toEqual({ verdict: 'promote' })
+    })).toEqual({ verdict: 'promote', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] })
     expect(evaluatePromotionGate({
       ...otherwisePromotionReady,
       kind: 'policy',

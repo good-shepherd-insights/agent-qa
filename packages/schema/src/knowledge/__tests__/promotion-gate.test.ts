@@ -65,7 +65,7 @@ function cautionInput(overrides: Partial<PromotionGateInput> = {}): PromotionGat
 
 describe('evaluatePromotionGate fact evidence (D-16/D-18)', () => {
   it('promotes a candidate fact with an open window and matching element evidence', () => {
-    expect(evaluatePromotionGate(factInput())).toEqual({ verdict: 'promote' })
+    expect(evaluatePromotionGate(factInput())).toEqual({ verdict: 'promote', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] })
   })
 
   it('promotes a navigational fact whose page primary is backed by a matching element', () => {
@@ -76,7 +76,7 @@ describe('evaluatePromotionGate fact evidence (D-16/D-18)', () => {
         submitAnchor,
         { t: 'platform', platform: 'web' },
       ],
-    }))).toEqual({ verdict: 'promote' })
+    }))).toEqual({ verdict: 'promote', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] })
   })
 
   it('holds a fact until a surviving confirmed outcome supplies V4 evidence', () => {
@@ -100,7 +100,7 @@ describe('evaluatePromotionGate fact evidence (D-16/D-18)', () => {
 
   it('keys on evidence rather than authorship path while holding bare fallback Adds', () => {
     expect(evaluatePromotionGate(factInput({ originClass: 'agent-observed' })))
-      .toEqual({ verdict: 'promote' })
+      .toEqual({ verdict: 'promote', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] })
     expect(evaluatePromotionGate(factInput({
       originClass: 'agent-observed',
       needsEnrichment: true,
@@ -110,7 +110,7 @@ describe('evaluatePromotionGate fact evidence (D-16/D-18)', () => {
 
 describe('evaluatePromotionGate caution evidence (T-379-07)', () => {
   it('promotes only a caution with a typed learnable root-cause class', () => {
-    expect(evaluatePromotionGate(cautionInput())).toEqual({ verdict: 'promote' })
+    expect(evaluatePromotionGate(cautionInput())).toEqual({ verdict: 'promote', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] })
 
     expect(evaluatePromotionGate(cautionInput({
       distilledObservations: [

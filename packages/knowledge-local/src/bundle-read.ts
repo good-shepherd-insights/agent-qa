@@ -9,6 +9,8 @@ import { basename, join } from 'node:path'
 
 import {
   BundleOutcomeEventSchema,
+  GateLineSchema,
+  receiptDigestOf,
   VersionGuardError,
   canonicalJson,
   computeMutableStateHash,
@@ -25,6 +27,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   ArtifactsIndex,
+  GateLine,
   BundleManifest,
   BundleOutcomeEvent,
   BundleProvenance,
@@ -61,6 +64,7 @@ export interface IntegrityReport {
 }
 
 const OUTCOMES_REL_PATH = 'evidence/outcomes.jsonl'
+export const GATES_REL_PATH = 'evidence/gates.jsonl'
 const MEASUREMENTS_REL_PATH = 'evidence/measurements.json'
 const RELATIONS_REL_PATH = 'relations.json'
 const ARTIFACTS_INDEX_REL_PATH = 'artifacts.index.json'
@@ -124,6 +128,29 @@ export function readMeasurements(bundleDir: string): Measurements | undefined {
   }
 }
 
+/** 416 D-03/D-04: absence is normal; a present receipt must attest this bundle and its bytes. */
+export function readGateReceipts(bundleDir: string, bundleId: string): GateLine[] | undefined {
+  const file = join(bundleDir, GATES_REL_PATH)
+  if (!existsSync(file)) return undefined
+  const text = readFileSync(file, 'utf8')
+  if (text === '' || !text.endsWith('\n')) {
+    throw new SyntaxError(`${GATES_REL_PATH} must contain a receipt and end with a newline`)
+  }
+  return text.slice(0, -1).split('\n').map((line, index) => {
+    const parsed = GateLineSchema.parse(JSON.parse(line))
+    if (parsed.candidateId !== bundleId) {
+      throw new SyntaxError(`${GATES_REL_PATH} line ${index + 1}: foreign candidateId`)
+    }
+    if (receiptDigestOf(parsed) !== parsed.receiptDigest) {
+      throw new SyntaxError(`${GATES_REL_PATH} line ${index + 1}: receiptDigest mismatch`)
+    }
+    if (canonicalJson(parsed) !== line) {
+      throw new SyntaxError(`${GATES_REL_PATH} line ${index + 1}: expected canonical JSON`)
+    }
+    return parsed
+  })
+}
+
 export function loadBundle(bundleDir: string): LoadBundleOutcome {
   if (basename(bundleDir).startsWith('.')) return { kind: 'not-found' }
   try {
@@ -141,6 +168,9 @@ export function loadBundle(bundleDir: string): LoadBundleOutcome {
   try {
     const manifest = guardBundleManifest(JSON.parse(readFileSync(manifestPath, 'utf8')))
     if (manifest.complete !== true) return { kind: 'incomplete' }
+
+    currentFile = GATES_REL_PATH
+    readGateReceipts(bundleDir, manifest.id)
 
     currentFile = 'record.md'
     const record = parseRecordMarkdown(readFileSync(join(bundleDir, currentFile), 'utf8'))
@@ -308,11 +338,13 @@ export function verifyBundleIntegrity(bundleDir: string): IntegrityReport {
   }
 
   const measurements = actualDigests[MEASUREMENTS_REL_PATH]
+  const gates = actualDigests[GATES_REL_PATH]
   const mutableStateHash = computeMutableStateHash({
     outcomes: actualDigests[OUTCOMES_REL_PATH] ?? null,
     relations: actualDigests[RELATIONS_REL_PATH] ?? null,
     artifactsIndex: actualDigests[ARTIFACTS_INDEX_REL_PATH] ?? null,
     ...(measurements === undefined ? {} : { measurements }),
+    ...(gates === undefined ? {} : { gates }),
   })
   if (mutableStateHash !== manifest.mutableStateHash) {
     violations.push('manifest.json: mutableStateHash mismatch')

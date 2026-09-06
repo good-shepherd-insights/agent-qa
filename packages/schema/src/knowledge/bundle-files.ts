@@ -272,6 +272,8 @@ export interface MutableStateHashInput {
    * mutable-state hash of bundles created before measurements.json exists.
    */
   measurements?: string | null
+  /** 416 D-03: omitted until the lazy gate part exists, preserving prior bundle hashes. */
+  gates?: string | null
 }
 
 /**

@@ -822,3 +822,7 @@ export type {
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader
+// 416 D-03/D-04: committed gate part read/write seams (writer entry only).
+export { GATES_REL_PATH, readGateReceipts } from './bundle-read.js'
+export { appendGateReceipt, appendPromotionReceipt } from './bundle-append.js'
+export { MUTABLE_BUNDLE_TARGETS } from './journal/bundle-mutation.js'

@@ -157,6 +157,7 @@ describe('computeMutableStateHash (BNDL-02)', () => {
       relations: string | null
       artifactsIndex: string | null
       measurements?: string | null
+      gates?: string | null
     }>()
   })
 })
