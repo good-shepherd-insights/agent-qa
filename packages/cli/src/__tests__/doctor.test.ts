@@ -984,7 +984,7 @@ targets:
 
   it('Overall result: all pass → exit 0', async () => {
     Object.defineProperty(process, 'version', { value: 'v24.10.0', writable: true })
-    mockExistsSync.mockReturnValue(true)
+    mockExistsSync.mockImplementation(path => !String(path).endsWith('agent-qa-eval'))
     mockExecSync.mockReturnValue(Buffer.from('ok'))
     mockResolveLLMAuth.mockResolvedValue({
       kind: 'unauthenticated',

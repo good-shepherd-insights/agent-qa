@@ -1,5 +1,5 @@
 /**
- * The three knowledge trust rows `agent-qa doctor` prints (407 TRST-02 · D-18/D-19/D-20).
+ * The four knowledge trust rows `agent-qa doctor` prints (407 TRST-02, 416 D-19).
  *
  * WHY THESE THREE EXIST. Before this, none of doctor's rows touched the knowledge substrate at
  * all: a daemon whose embedder worker exits on every boot could run a whole session with no
@@ -42,6 +42,7 @@ import {
 } from '@vostride/agent-qa-agent-local'
 
 import { resolveRawConfigKnowledgeRoot } from '../config.js'
+import { buildPromotionPostureResolver, type PromotionPostureResolution } from '../curation/promotion-posture.js'
 import { readDaemonEventLedger, type DaemonEvent } from '../daemon/events.js'
 import type { CheckResult, DoctorCheck } from './doctor.js'
 
@@ -77,6 +78,8 @@ const STORE_FIX_PREFIX = 'Rebuild the index with `agent-qa knowledge rebuild-ind
 const EMBEDDER_FIX =
   'Set an explicit embedder profile in agent-qa.config.yaml (the daemon cannot resolve `deferred`), then restart the daemon.'
 const RUNG_FIX = 'Run the checks above; the rung follows from the store and embedder rows.'
+const LEARNING_MODE_FIX =
+  'Replay gating is not bound on this host. Seed the eval root and commit a measured noise floor with `agent-qa eval floor --commit`; repair any reported posture refusal.'
 
 /** The fold's index axis held OPEN, so the `Embedder` row reads its own subject's cause. */
 const INDEX_PRESENT: IndexFace = { source: 'index' }
@@ -84,6 +87,7 @@ const INDEX_PRESENT: IndexFace = { source: 'index' }
 const SKIPPED: CheckResult = { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE }
 
 export interface KnowledgeCheckProbes {
+  buildPromotionPosture?: (input: { configPath: string }) => Promise<PromotionPostureResolution>
   classifyIndexFace?: (knowledgeRoot: string) => IndexFace
   resolveEmbedderCapability?: (options: {
     preferredProfile: EmbeddingProfile
@@ -109,6 +113,7 @@ interface DaemonHalf {
 }
 
 interface KnowledgeProbe {
+  learning: PromotionPostureResolution
   face: IndexFace
   embedder: AcquireEmbedderOutcome
   /** The fold over BOTH axes — the word the banner would show. */
@@ -253,17 +258,44 @@ function createRetrievalRungCheck(context: KnowledgeCheckContext): DoctorCheck {
   }
 }
 
+function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
+  return {
+    name: 'Learning mode',
+    fixInstructions: LEARNING_MODE_FIX,
+    check: async (): Promise<CheckResult> => {
+      if (context.knowledgeRoot === null) return SKIPPED
+      const { learning } = await context.probe()
+      if (learning.kind === 'no-eval-root') {
+        return { status: 'warn', message: `deterministic-verdict-floor — no eval root at ${displayPath(learning.committedRoot)}` }
+      }
+      if (learning.kind === 'unavailable') {
+        return { status: 'fail', message: `posture-unavailable — ${learning.refusals[0] ?? 'posture could not be resolved'}` }
+      }
+      const { replayGateAvailable, judge, canary } = learning.host
+      if (replayGateAvailable) {
+        return { status: 'pass', message: `gated (Gate 1 bound; judge ${judge.judgeFamily ?? 'none'}; canary evidence ${canary.kind === 'provided' ? canary.attributedRows ?? 0 : 'none'})` }
+      }
+      return {
+        status: 'warn',
+        message: judge.judgeFamily === undefined
+          ? 'deterministic-verdict-floor — no replay gate bound, no judge configured'
+          : `deterministic-verdict-floor — no replay gate bound; judge ${judge.judgeFamily} configured`,
+      }
+    },
+  }
+}
+
 /**
- * The three rows, over ONE shared read-only probe.
+ * The four rows, over ONE shared read-only probe.
  *
- * The probe is memoised across the trio because the three rows are three views of one host state:
+ * The probe is memoised because the rows are views of one host state:
  * probing per row could report an index face to the store row and a different one to the rung row
  * if a drain landed between them, which is the disagreement this whole design exists to prevent.
  * It is also lazy, so a host with no knowledge root never touches the substrate at all.
  */
 export function createKnowledgeChecks(
   input: CreateKnowledgeChecksInput,
-): [DoctorCheck, DoctorCheck, DoctorCheck] {
+): [DoctorCheck, DoctorCheck, DoctorCheck, DoctorCheck] {
   const knowledgeRoot = resolveKnowledgeRootOnDisk(input.config, input.configPath)
   const agentQaRoot = resolve(dirname(resolve(input.configPath)), '.agent-qa')
   const preferredProfile = input.preferredProfile ?? DEFAULT_EMBEDDING_PROFILE
@@ -275,11 +307,24 @@ export function createKnowledgeChecks(
   const registration =
     probes.readEmbedderWorkerRegistration ?? LOCAL_KNOWLEDGE_PROBES.readEmbedderWorkerRegistration
   const ledger = probes.readDaemonEventLedger ?? readDaemonEventLedger
+  const buildPosture = probes.buildPromotionPosture ?? buildPromotionPostureResolver
 
   let pending: Promise<KnowledgeProbe> | undefined
 
   async function runProbe(root: string): Promise<KnowledgeProbe> {
     const face = classify(root)
+    let learning: PromotionPostureResolution
+    try {
+      learning = await buildPosture({ configPath: input.configPath })
+    } catch (error) {
+      const refusals = [error instanceof Error ? error.message : String(error)]
+      learning = {
+        kind: 'unavailable',
+        committedRoot: resolve(dirname(resolve(input.configPath)), 'agent-qa-eval'),
+        refusals,
+        resolve: () => ({ kind: 'unavailable', replayGateAvailable: false, refusals }),
+      }
+    }
 
     let embedder: AcquireEmbedderOutcome
     try {
@@ -302,6 +347,7 @@ export function createKnowledgeChecks(
     }
 
     return {
+      learning,
       face,
       embedder,
       rung: foldRetrievalRung(face, embedder, preferredProfile),
@@ -325,5 +371,6 @@ export function createKnowledgeChecks(
     createKnowledgeStoreCheck(context),
     createEmbedderCheck(context),
     createRetrievalRungCheck(context),
+    createLearningModeCheck(context),
   ]
 }
