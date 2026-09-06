@@ -133,6 +133,9 @@ export type FloorRefusal =
   | { kind: 'below-protocol-minimum'; repeats: number; seeds: number }
   | { kind: 'unusable-measurement'; detail: string }
 
+// The runtime cell and never-bar independently pin this writer-refusal vocabulary (415 CR-01).
+export const FLOOR_REFUSAL_KINDS = ['zero-floor-without-explanation', 'below-protocol-minimum', 'unusable-measurement'] as const satisfies readonly FloorRefusal['kind'][]
+
 const count = z.number().int().nonnegative()
 const rate = z.number().min(0).max(1)
 const delta = z.number().min(-1).max(1)

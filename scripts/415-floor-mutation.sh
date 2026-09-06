@@ -2,9 +2,10 @@
 #
 # 415-floor-mutation.sh — FLOOR-03/05/06 and D-07's v54 bar.
 #
-# Phase 415 widened NINE closed sets. A green suite cannot prove the new members cannot quietly
+# Phase 415 widened TEN closed sets, including CR-01's writer-refusal vocabulary. A green suite
+# cannot prove the new members cannot quietly
 # leave: satisfies checks each listed entry, not whether the list covers the full type, and
-# runtime Vitest transforms without typechecking. Twelve legs therefore remove one member or
+# runtime Vitest transforms without typechecking. Fourteen legs therefore remove one member or
 # plant one forbidden line, then require the RED in the cell named BEFORE the mutation.
 #
 # LEG INDEX — each runtime leg reads ONLY its named suite (arch legs run pnpm validate:arch).
@@ -24,10 +25,13 @@
 # F-10  held-out-private / FLOOR_SPLITS            runtime  three floor splits / gate
 # F-11  declared / SEED_POLICIES                   runtime  two seed policies / gate
 # F-12  overfit / GENERALIZATION_VERDICTS          runtime  three generalization verdicts / stats
+# F-13  unusable-measurement / FLOOR_REFUSAL_KINDS runtime  three floor refusal kinds / gate
+# F-14  same array deletion                        testd    src/gate/__tests__/release-gate.test-d.ts:29:5
 #
 # Full cell titles below are the REQUIRED and ALLOWED set, identically: no collateral failures.
 # F-02 requires the failed-suite marker AND the measured file:line:column, and exactly one
 # TypeCheckError block. Its type retains unrenderable-brief while only the array loses it.
+# F-14 applies the same independent type wall to the unusable-measurement writer refusal.
 # F-05's union is derived from its array, so source ALSO fails to compile when stale-floor leaves;
 # the runtime cell is the measured wall here (the S-07 lesson), not a whole-package tsc failure.
 #
@@ -75,6 +79,7 @@ F06_PLANT_PATH="packages/eval/src/gate/415-plant.ts"
 
 REPLAY_SUITE="src/replay/__tests__/replay-closed-sets.test.ts"
 REFUSAL_TESTD="src/replay/__tests__/result.test-d.ts"
+FLOOR_REFUSAL_TESTD="src/gate/__tests__/release-gate.test-d.ts"
 GATE_SUITE="src/gate/__tests__/gate-closed-sets.test.ts"
 STATS_SUITE="src/stats/__tests__/stats-closed-sets.test.ts"
 ARCH_SUITE="src/__tests__/415-no-randomness-on-gate-paths.test.ts"
@@ -236,6 +241,7 @@ apply_mutation () {
     F-10) remove_member "$FLOOR_ARTEFACT" FLOOR_SPLITS held-out-private ;;
     F-11) remove_member "$PROFILE_KEY" SEED_POLICIES declared ;;
     F-12) remove_member "$GENERALIZATION" GENERALIZATION_VERDICTS overfit ;;
+    F-13|F-14) remove_member "$FLOOR_ARTEFACT" FLOOR_REFUSAL_KINDS unusable-measurement ;;
     *) echo "FATAL: unknown leg $1" >&2; exit 1 ;;
   esac
 }
@@ -417,6 +423,7 @@ F09_CELL='declares exactly the six floor axes, in declaration order'
 F10_CELL='declares exactly the three floor splits, in declaration order'
 F11_CELL='declares exactly the two seed policies, in declaration order'
 F12_CELL='declares exactly the three generalization verdicts, in declaration order'
+F13_CELL='declares exactly the three floor refusal kinds, in declaration order'
 
 # ── INSTRUMENT SELF-CHECK ─────────────────────────────────────────────────────────────────────
 #
@@ -576,6 +583,7 @@ preflight_suite () {
 echo "=== PREFLIGHT — every instrument must be green before any subject is touched"
 preflight_suite "$EVAL_FILTER" "$REPLAY_SUITE"
 preflight_suite "$EVAL_FILTER" "$REFUSAL_TESTD"
+preflight_suite "$EVAL_FILTER" "$FLOOR_REFUSAL_TESTD"
 preflight_suite "$EVAL_FILTER" "$GATE_SUITE"
 preflight_suite "$EVAL_FILTER" "$STATS_SUITE"
 preflight_suite "$ARCH_FILTER" "$ARCH_SUITE"
@@ -613,17 +621,23 @@ run_leg F-11 "declared removed from SEED_POLICIES" runtime \
   "$F11_CELL" "$F11_CELL" "$EVAL_FILTER" "$GATE_SUITE" "$PROFILE_KEY" ""
 run_leg F-12 "overfit removed from GENERALIZATION_VERDICTS" runtime \
   "$F12_CELL" "$F12_CELL" "$EVAL_FILTER" "$STATS_SUITE" "$GENERALIZATION" ""
+run_leg F-13 "unusable-measurement removed from FLOOR_REFUSAL_KINDS" runtime \
+  "$F13_CELL" "$F13_CELL" "$EVAL_FILTER" "$GATE_SUITE" "$FLOOR_ARTEFACT" ""
+F14_CELLS="$FLOOR_REFUSAL_TESTD [ $FLOOR_REFUSAL_TESTD ]
+$FLOOR_REFUSAL_TESTD:29:5"
+run_leg F-14 "the same removal, read by the floor-refusal never-bar" testd \
+  "$F14_CELLS" "$F14_CELLS" "$EVAL_FILTER" "$FLOOR_REFUSAL_TESTD" "$FLOOR_ARTEFACT" ""
 
 # Pinned, not derived from the calls: a silently deleted leg must make the bar fail.
-EXPECTED_LEGS=12
+EXPECTED_LEGS=14
 if [ "$LEGS_RUN" -ne "$EXPECTED_LEGS" ]; then
   fatal "leg count drifted — expected $EXPECTED_LEGS, ran $LEGS_RUN"
 fi
 
 echo "LEGS $LEGS_RUN"
-echo "PASS — all nine closed sets Phase 415 widened and both lint walls have been seen to fail"
-echo "       in their named cells. Each leg used identical REQUIRED and ALLOWED sets; F-02"
-echo "       measured result.test-d.ts:18:5 with exactly one TypeCheckError. Every subject"
+echo "PASS — all ten closed sets Phase 415 widened and both lint walls have been seen to fail"
+echo "       in their named cells. Each leg used identical REQUIRED and ALLOWED sets; F-02/F-14"
+echo "       measured their pinned never-bars with exactly one TypeCheckError. Every subject"
 echo "       was restored byte-identically (sha256 compared), every created path was removed,"
 echo "       and the instrument was green again before the next leg. FLOOR_MUTATION_SELFTEST"
 echo "       =neutered must FATAL on F-01 rather than report a passing mutation."

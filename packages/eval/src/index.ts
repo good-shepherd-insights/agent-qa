@@ -411,6 +411,7 @@ export {
   NOISE_FLOOR_METHOD,
   FLOOR_SPLITS,
   FLOOR_PROTOCOL_MINIMUM,
+  FLOOR_REFUSAL_KINDS,
   noiseFloorArtefactSchema,
   guardNoiseFloorArtefact,
   assertFloorArtefactCommittable,

@@ -9,8 +9,8 @@ import { SEED_POLICIES } from '../../baseline/profile-key'
 import type { SeedPolicy } from '../../baseline/profile-key'
 import { FLOOR_AXES } from '../../stats/decision-vector'
 import type { FloorAxis } from '../../stats/decision-vector'
-import { FLOOR_SPLITS } from '../floor-artefact'
-import type { FloorSplit } from '../floor-artefact'
+import { FLOOR_REFUSAL_KINDS, FLOOR_SPLITS } from '../floor-artefact'
+import type { FloorRefusal, FloorSplit } from '../floor-artefact'
 import { GATE_INCONCLUSIVE_REASONS } from '../release-gate'
 import type { GateInconclusiveReason } from '../release-gate'
 
@@ -22,3 +22,9 @@ expectTypeOf<Extract<FloorAxis, 'recovery'>>().toEqualTypeOf<never>()
 expectTypeOf<Exclude<FloorSplit, (typeof FLOOR_SPLITS)[number]>>().toEqualTypeOf<never>()
 expectTypeOf<Extract<FloorSplit, 'synthetic'>>().toEqualTypeOf<never>()
 expectTypeOf<Exclude<SeedPolicy, (typeof SEED_POLICIES)[number]>>().toEqualTypeOf<never>()
+
+// F-14: the writer-refusal array deletion must fail only this coverage assertion.
+expectTypeOf<
+  Exclude<FloorRefusal['kind'], (typeof FLOOR_REFUSAL_KINDS)[number]>
+>().toEqualTypeOf<never>()
+expectTypeOf<Extract<FloorRefusal['kind'], 'timeout'>>().toEqualTypeOf<never>()

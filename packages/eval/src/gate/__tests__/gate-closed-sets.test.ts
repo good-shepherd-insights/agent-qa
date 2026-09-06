@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { SEED_POLICIES } from '../../baseline/profile-key'
 import { FLOOR_AXES } from '../../stats/decision-vector'
-import { FLOOR_SPLITS } from '../floor-artefact'
+import { FLOOR_REFUSAL_KINDS, FLOOR_SPLITS } from '../floor-artefact'
 import { GATE_INCONCLUSIVE_REASONS } from '../release-gate'
 
 describe('415 gate closed sets (v54 runtime bar)', () => {
@@ -23,5 +23,11 @@ describe('415 gate closed sets (v54 runtime bar)', () => {
 
   it('declares exactly the two seed policies, in declaration order', () => {
     expect([...SEED_POLICIES]).toEqual(['none', 'declared'])
+  })
+
+  it('declares exactly the three floor refusal kinds, in declaration order', () => {
+    expect([...FLOOR_REFUSAL_KINDS]).toEqual([
+      'zero-floor-without-explanation', 'below-protocol-minimum', 'unusable-measurement',
+    ])
   })
 })
