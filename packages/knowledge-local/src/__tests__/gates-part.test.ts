@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { appendGateReceipt, appendPromotionReceipt } from '../bundle-append.js'
 import { GATES_REL_PATH, loadBundle, readGateReceipts, verifyBundleIntegrity } from '../bundle-read.js'
 import { MUTABLE_BUNDLE_TARGETS } from '../journal/bundle-mutation.js'
+import { gateReceiptsFor } from '../gates/gate-receipt-read.js'
 import { createPromotionFloorFixture } from '../curator/__tests__/fixtures/promotion-floor-fixture.js'
 
 describe('416 lazy journaled gate part', () => {
@@ -28,6 +29,26 @@ describe('416 lazy journaled gate part', () => {
       authorship: { path: 'deterministic-fallback', executionContext: 'local-interactive' } }])
     return { ...seeded, store }
   }
+  it('reads a missing id, an absent part, and persisted promotion history through the reader', async () => {
+    const knowledgeRoot = fixture.outcomeAppendConfig().knowledgeRoot
+    expect(gateReceiptsFor({ knowledgeRoot, candidateId: 'missing' })).toEqual({
+      kind: 'not-found', recordId: 'missing',
+    })
+    const { published, store } = await confirmed()
+    expect(gateReceiptsFor({ knowledgeRoot, candidateId: published.id })).toEqual({
+      kind: 'found', recordId: published.id, product: 'storefront', recordKind: 'fact',
+      status: 'candidate', lines: [], standing: [],
+      live: { verdict: 'promote', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] },
+      posture: 'absent',
+    })
+    await store.promote(published.id)
+    expect(gateReceiptsFor({ knowledgeRoot, candidateId: published.id })).toEqual({
+      kind: 'found', recordId: published.id, product: 'storefront', recordKind: 'fact',
+      status: 'active', strongestPromotionPath: 'deterministic-verdict-floor',
+      lines: readGateReceipts(published.dir, published.id), standing: [],
+      live: { verdict: 'hold', reason: 'not-candidate' }, posture: 'absent',
+    })
+  })
   it('promotes with one receipt and event, then answers already-active; receipts dedup by digest', async () => {
     const { published, store } = await confirmed()
     expect(await store.promote(published.id)).toEqual({

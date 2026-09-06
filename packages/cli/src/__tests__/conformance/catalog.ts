@@ -209,6 +209,8 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     Object.freeze(['knowledge.accept.propose', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.brief.why', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.bundles.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    // 2026-09-06, 416 D-17: the new history read has no shipped documentation page yet.
+    Object.freeze(['knowledge.gates.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.forget.propose', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.proposal.apply', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.record.show', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),

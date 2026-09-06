@@ -45,6 +45,7 @@ import { grantsRevokeSpec } from '../functions/ops/grants-revoke.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
 import { knowledgeBriefWhySpec } from '../functions/ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
+import { knowledgeGatesListSpec } from '../functions/ops/knowledge-gates-list.js'
 import { knowledgeAcceptProposeSpec } from '../functions/ops/knowledge-accept-propose.js'
 import { knowledgeForgetProposeSpec } from '../functions/ops/knowledge-forget-propose.js'
 import { knowledgeProposalApplySpec } from '../functions/ops/knowledge-proposal-apply.js'
@@ -84,6 +85,8 @@ export interface DeclaredContracts {
  * projection. It reproduces the discipline `INVOCATION_SAMPLES` already applies to calling.
  */
 export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
+  // 416 D-17: pair the new read's live contracts with its registry projection.
+  'knowledge.gates.list': knowledgeGatesListSpec,
   // 392 D-24. Paired the day it is registered (the growth seam working as designed). Its OUTPUT
   // is the first in this map carrying an ARRAY of per-clause receipts beside an optional refusal
   // object, which is exactly the shape a careless projection flattens — and flattening it would

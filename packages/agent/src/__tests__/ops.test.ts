@@ -7,6 +7,7 @@
 import type {
   CompletedRunHandoff,
   KnowledgeBundleSummary,
+  KnowledgeGatesListResult,
   MaskedResolvedConfig,
   RunId,
 } from '@vostride/agent-qa-schema'
@@ -14,11 +15,13 @@ import {
   CONFIG_MASK_PLACEHOLDER,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  stampReceiptDigest,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
+import { knowledgeGatesListSpec, KnowledgeGatesUnboundError } from '../functions/ops/knowledge-gates-list.js'
 import { RunNotFoundError, runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
 import type { FunctionDeps } from '../functions/spec.js'
@@ -291,5 +294,47 @@ describe('the seed capability set', () => {
       knowledgeBundlesListSpec.id,
       configGetSpec.id,
     ].sort()).toEqual(['config.get', 'knowledge.bundles.list', 'runs.get', 'runs.list'])
+  })
+})
+describe('knowledge.gates.list', () => {
+  it('declares a read-only unary contract through the required knowledge port', () => {
+    expect(knowledgeGatesListSpec.id).toBe('knowledge.gates.list')
+    expect(knowledgeGatesListSpec.requiredScopes).toEqual(['read'])
+    expect(knowledgeGatesListSpec.resultKind).toBe('unary')
+    expect(knowledgeGatesListSpec.boundThrough).toBeUndefined()
+    expect(knowledgeGatesListSpec.risk).toEqual({
+      name: 'fn:knowledge.gates.list', recognized: true, readOnly: true,
+    })
+  })
+  it('forwards the found DTO unchanged and classifies its live verdict', async () => {
+    const result: KnowledgeGatesListResult = {
+      kind: 'found', recordId: 'rec-1', product: 'shop', recordKind: 'fact', status: 'candidate',
+      strongestPromotionPath: 'deterministic-verdict-floor',
+      lines: [stampReceiptDigest({ schemaVersion: 1, kind: 'promotion',
+        candidateId: 'rec-1', promotionPath: 'deterministic-verdict-floor',
+        citedReceiptDigests: [], producedAtOrdinal: 43, producedBy: { opId: 'promote' } })],
+      standing: [], live: { verdict: 'promote', promotionPath: 'deterministic-verdict-floor',
+        citedReceiptDigests: [] }, posture: 'absent',
+    }
+    const deps = fakeDeps({ knowledge: fakeKnowledge({
+      gateReceipts: ({ candidateId }) => {
+        expect(candidateId).toBe('rec-1')
+        return Promise.resolve(result)
+      },
+    }) })
+    expect(await knowledgeGatesListSpec.invoke({ recordId: 'rec-1' }, deps)).toBe(result)
+    expect(knowledgeGatesListSpec.classify!(result)).toEqual({
+      status: 'executed', outcome: '1 gate line(s); promote via deterministic-verdict-floor',
+    })
+    expect(knowledgeGatesListSpec.classify!({ kind: 'not-found', recordId: 'missing' })).toEqual({
+      status: 'executed', outcome: 'record not found',
+    })
+    expect(knowledgeGatesListSpec.classify!({
+      ...result, live: { verdict: 'hold', reason: 'not-candidate' },
+    })).toEqual({ status: 'executed', outcome: '1 gate line(s); held: not-candidate' })
+  })
+  it('refuses an unbound gateReceipts capability by name', async () => {
+    await expect(knowledgeGatesListSpec.invoke({ recordId: 'rec-1' }, fakeDeps()))
+      .rejects.toBeInstanceOf(KnowledgeGatesUnboundError)
   })
 })

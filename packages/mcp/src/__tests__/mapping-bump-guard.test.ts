@@ -388,9 +388,10 @@ describe('the partition law (D-03 / D-15)', () => {
   it('measures the registry at the count this suite header records', () => {
     // The denominator, stated where a reader can see it move. Not a rule — a MEASUREMENT, and the
     // sentence in the header is only true while this cell is green.
-    expect(declarations().length).toBe(46)
+    // 2026-09-06, 416 D-17: knowledge.gates.list joins the unprojected reads (47/22/25).
+    expect(declarations().length).toBe(47)
     expect(projectedOpIds().length).toBe(22)
-    expect(UNPROJECTED_OPS.length).toBe(24)
+    expect(UNPROJECTED_OPS.length).toBe(25)
   })
 
   it('lists no op twice in the scoping note', () => {

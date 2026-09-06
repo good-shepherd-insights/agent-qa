@@ -8,7 +8,7 @@
     "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
     "test-runner update flag reaches this file."
   ],
-  "opCount": 46,
+  "opCount": 47,
   "rows": [
     {
       "bindingStatusAtRoot": "bound",
@@ -496,6 +496,26 @@
       "risk": {
         "name": "fn:knowledge.forget.propose",
         "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.gates.list",
+      "inputSchemaDigest": "3d7f0e0bc33415cdda6cbc7996e50d2c130d39fdc01d75982faa529d72cf3a29",
+      "outputSchemaDigest": "f7610fd46f7bf3bc8720d68b186b094e9626c63ced57510b46633e0e31f57f39",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.gates.list",
+        "readOnly": true,
         "recognized": true
       }
     },

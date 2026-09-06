@@ -3,6 +3,9 @@ import { z } from 'zod'
 import type { BundleKind, FactSubtype } from '../delta/envelope'
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
 import type { BundleStatus, DerivedTrustState } from '../knowledge/trust-fold'
+import { GateLineSchema, GateReceiptSchema } from '../knowledge/gate-receipt'
+import { PROMOTION_PATHS } from '../knowledge/promotion-path'
+import { PROMOTION_GATE_HOLD_REASONS, type PromotionGateVerdict } from '../knowledge/promotion-gate'
 
 export const KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION = 1
 
@@ -112,3 +115,34 @@ export const KnowledgeBundleSummarySchema = z.object({
 export const KnowledgeBundlesListInputSchema = z.object({}).strict()
 
 export type KnowledgeBundlesListInput = z.infer<typeof KnowledgeBundlesListInputSchema>
+
+// 416 D-18: history, standing evidence and the live verdict are one schema-owned answer.
+export const KnowledgeGatesListInputSchema = z.object({ recordId: z.string().min(1) }).strict()
+export const PromotionGateVerdictSchema = z.discriminatedUnion('verdict', [
+  z.object({
+    verdict: z.literal('promote'),
+    promotionPath: z.enum(PROMOTION_PATHS),
+    citedReceiptDigests: z.array(z.string().regex(/^[0-9a-f]{64}$/)),
+  }).strict(),
+  z.object({
+    verdict: z.literal('hold'),
+    reason: z.enum(PROMOTION_GATE_HOLD_REASONS),
+  }).strict(),
+]) satisfies z.ZodType<PromotionGateVerdict>
+export const KnowledgeGatesListResultSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('not-found'), recordId: z.string() }).strict(),
+  z.object({
+    kind: z.literal('found'),
+    recordId: z.string(),
+    product: z.string(),
+    recordKind: z.enum(bundleKindValues),
+    status: z.enum(bundleStatusValues),
+    strongestPromotionPath: z.enum(PROMOTION_PATHS).optional(),
+    lines: z.array(GateLineSchema),
+    standing: z.array(GateReceiptSchema),
+    live: PromotionGateVerdictSchema,
+    posture: z.enum(['absent', 'resolved', 'unavailable']),
+  }).strict(),
+])
+export type KnowledgeGatesListInput = z.infer<typeof KnowledgeGatesListInputSchema>
+export type KnowledgeGatesListResult = z.infer<typeof KnowledgeGatesListResultSchema>

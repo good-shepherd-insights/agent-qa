@@ -16,5 +16,6 @@ describe('read-only reader entry surface', () => {
     expect(surface.createAuthoringReader).toBeTypeOf('function')
     expect(surface.inspectRecords).toBeTypeOf('function')
     expect(surface.diffSince).toBeTypeOf('function')
+    expect(surface.gateReceiptsFor).toBeTypeOf('function')
   })
 })

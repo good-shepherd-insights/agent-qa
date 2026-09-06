@@ -199,7 +199,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'JobCancelledError',
   // 387 plan 08: the delegate transport must name the op it hands the leaseholder (D-18). A
   // string, not a handle — see the barrel's own note beside the export.
+  // 2026-09-06, 416 D-17: a read-op name and named refusal, never a dispatch handle.
+  'KNOWLEDGE_GATES_LIST_FUNCTION_ID',
   'KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID',
+  'KnowledgeGatesUnboundError',
   // 392 plan 09, CHAT-03 / D-15: the pinned rational ceiling. On this list because a SUMMARY, a
   // gate run and a field projection all have to quote the same pin — a ceiling re-spelled at a
   // consumer would let two readings of "within tolerance" coexist. It is a frozen pair of

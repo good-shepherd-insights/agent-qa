@@ -40,6 +40,7 @@ import { grantsRevokeSpec } from './ops/grants-revoke.js'
 import { knowledgeAcceptProposeSpec } from './ops/knowledge-accept-propose.js'
 import { knowledgeBriefWhySpec } from './ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
+import { knowledgeGatesListSpec } from './ops/knowledge-gates-list.js'
 import { knowledgeForgetProposeSpec } from './ops/knowledge-forget-propose.js'
 import { knowledgeProposalApplySpec } from './ops/knowledge-proposal-apply.js'
 import { knowledgeRecordShowSpec } from './ops/knowledge-record-show.js'
@@ -140,6 +141,9 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // and never gates the binding.
   analysisGetSpec as FunctionSpec,
   knowledgeBundlesListSpec as FunctionSpec,
+  // 416 D-17: gate-and-promotion history, through the required knowledge port's
+  // optional member; missing bindings answer with a named refusal.
+  knowledgeGatesListSpec as FunctionSpec,
   // 387 KREV-01: the read half of the review-verb family. All three bind through the REQUIRED
   // `knowledge` port, so — unlike the mutating half 387-08 registers through the optional
   // `knowledgeReview` dep — there is no composition that lists these and cannot run them.

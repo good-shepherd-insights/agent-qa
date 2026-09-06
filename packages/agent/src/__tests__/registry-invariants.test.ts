@@ -328,6 +328,8 @@ const BOUND_OP_INPUTS: Readonly<Record<string, unknown>> = {
   'entities.resolve': { ref: 'nothing in this fixture is called this' },
   'knowledge.brief.why': { runId: FIXTURE_RUN_ID, stepIndex: 0 },
   'knowledge.bundles.list': {},
+  // 416 D-17: this fixture binds the optional reader and supplies its dispatch input.
+  'knowledge.gates.list': { recordId: 'rec-not-in-this-fixture' },
   'knowledge.record.show': { recordId: 'rec-not-in-this-fixture' },
   'knowledge.records.diff': { sinceOrdinal: 0 },
   'knowledge.records.inspect': { filter: {} },
@@ -375,6 +377,9 @@ function fakeDeps(): FunctionDeps {
       readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
     knowledge: {
+      gateReceipts: ({ candidateId }) => Promise.resolve({
+        kind: 'not-found' as const, recordId: candidateId,
+      }),
       listBundles: () => Promise.resolve([]),
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),

@@ -747,6 +747,11 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
     adjudication: '397',
   }),
   Object.freeze({
+    opId: 'knowledge.gates.list',
+    reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
+    adjudication: '397',
+  }),
+  Object.freeze({
     opId: 'knowledge.record.show',
     reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
     adjudication: '397',

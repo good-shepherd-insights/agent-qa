@@ -20,6 +20,7 @@
 
 import {
   canaryAttributionsFor,
+  gateReceiptsFor,
   diffSince,
   inspectRecords,
   listBundles,
@@ -63,6 +64,13 @@ export function createKnowledgeReaderPort(
   }
 
   return {
+    // 416 D-17: the caller supplied the identity; forward the reader's answer verbatim.
+    async gateReceipts({ candidateId }) {
+      return gateReceiptsFor({
+        knowledgeRoot: await input.resolveKnowledgeRoot(),
+        candidateId,
+      })
+    },
     async listBundles() {
       const rows = listBundles(await input.resolveKnowledgeRoot())
       await sight(rows.map((row) => row.bundleId))

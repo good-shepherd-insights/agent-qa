@@ -58,6 +58,7 @@ import {
   GrantsRevokeInputSchema,
   KnowledgeAcceptProposeInputSchema,
   KnowledgeBundlesListInputSchema,
+  KnowledgeGatesListInputSchema,
   KnowledgeForgetProposeInputSchema,
   KnowledgeProposalApplyInputSchema,
   KnowledgeRecordShowInputSchema,
@@ -122,6 +123,7 @@ export const OP_INPUT_CONTRACTS = {
   'knowledge.accept.propose': KnowledgeAcceptProposeInputSchema,
   'knowledge.brief.why': BriefWhyInputSchema,
   'knowledge.bundles.list': KnowledgeBundlesListInputSchema,
+  'knowledge.gates.list': KnowledgeGatesListInputSchema,
   'knowledge.forget.propose': KnowledgeForgetProposeInputSchema,
   'knowledge.proposal.apply': KnowledgeProposalApplyInputSchema,
   'knowledge.record.show': KnowledgeRecordShowInputSchema,
@@ -919,6 +921,18 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['kind', 'proposal'] },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
+  scenario({
+    // 416 D-17: keep the existing lexicographic scenario order (forget precedes gates).
+    opId: 'knowledge.gates.list',
+    input: { recordId: 'rec-not-in-this-fixture' },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['recordId', 'kind'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({

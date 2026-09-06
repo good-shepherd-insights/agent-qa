@@ -24,6 +24,7 @@ import type {
   JobStatus,
   KnowledgeAcceptInput,
   KnowledgeBundleSummary,
+  KnowledgeGatesListResult,
   KnowledgeForgetInput,
   KnowledgeApplyOutcomeKind,
   KnowledgeProposalV1,
@@ -587,6 +588,11 @@ export type StepEvidenceLookup =
  * writer-gated main entry is unreachable from this layer by construction.
  */
 export interface KnowledgeReaderPort {
+  /**
+   * 2026-09-06, 416 D-17: gate history and the current verdict. Optional so existing
+   * implementations and fakes remain type-valid; an unbound read refuses by name.
+   */
+  gateReceipts?(input: { candidateId: string }): Promise<KnowledgeGatesListResult>
   /** Every committed bundle, already projected to the schema-owned listing row. */
   listBundles(): Promise<readonly KnowledgeBundleSummary[]>
   /**

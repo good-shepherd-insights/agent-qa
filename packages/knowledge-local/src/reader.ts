@@ -85,3 +85,7 @@ export { canaryOutcomeObservationId } from './serving/canary-observation-id.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export type { BuildRange, ReadOptions, SearchOptions } from '@vostride/agent-qa-schema'
+// 2026-09-06, 416 D-17: gate history and the live verdict. This read walks committed
+// bundle files and folds their evidence, opening no write authority or derived index.
+export { gateReceiptsFor } from './gates/gate-receipt-read.js'
+export type { GateReceiptsForOptions } from './gates/gate-receipt-read.js'

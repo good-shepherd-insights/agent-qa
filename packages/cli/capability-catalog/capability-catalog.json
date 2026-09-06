@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 54,
+  "rowCount": 55,
   "rows": [
     {
       "alias": "digest",
@@ -1323,6 +1323,39 @@
       ]
     },
     {
+      "description": "Read a knowledge record’s gate history, standing receipts and current promotion verdict.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "recordId": "<RECORDID>"
+        }
+      },
+      "id": "knowledge.gates.list",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "recordId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "recordId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
       "description": "Apply a minted knowledge proposal through the Curator's one commit path.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
@@ -2234,5 +2267,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "68ebc811e1ebc7ccc61dfee8df5e35be2426f93db57040be32b9b5aedbdd25d0"
+  "rowsDigest": "8f697dab11163358d208c85d936e238d88a4983a83c7e652401b18827c8c6394"
 }

@@ -1505,3 +1505,6 @@ export { PROMOTION_PATHS, PROMOTION_PATH_STRENGTH, strongerPromotionPath } from 
 export type { PromotionPath } from './knowledge/promotion-path'
 export type { PromotionOutcome, GateReceiptRecordOutcome, PromotionCandidateProvenance,
   PromotionPostureCandidate, ResolvePromotionPosture } from './knowledge/promotion-gate'
+export { KnowledgeGatesListInputSchema, KnowledgeGatesListResultSchema,
+  PromotionGateVerdictSchema } from './functions/knowledge'
+export type { KnowledgeGatesListInput, KnowledgeGatesListResult } from './functions/knowledge'
