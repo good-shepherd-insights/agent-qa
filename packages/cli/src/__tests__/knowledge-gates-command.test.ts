@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
-import { createMaskingContext } from '@vostride/agent-qa-agent'
+import { createMaskingContext, invokeFunction } from '@vostride/agent-qa-agent'
 import {
   appendGateReceipt,
   appendPromotionReceipt,
@@ -16,6 +16,7 @@ import { canonicalJson, KnowledgeGatesListResultSchema, stampReceiptDigest } fro
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createKnowledgeCommand } from '../commands/knowledge.js'
+import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 
 const DATA_LAYER_PACKAGES = [
   '@vostride/agent-qa-core',
@@ -105,6 +106,30 @@ describe('agent-qa knowledge gates', () => {
     }
     // The not-found arm also echoes caller-controlled record identifiers.
     await invoke(configPath, [raw, '--json'], error)
+  })
+
+  it.each([
+    { raw: 'AKIAIOSFODNN7EXAMPLE', defect: 'schema' },
+    { raw: 'receipt-auditor@example.invalid', defect: 'schema' },
+    { raw: 'Bearer synthetic-receipt-token', defect: 'JSON' },
+  ])('does not expose $defect parser input through function or CLI errors', async ({ raw, defect }) => {
+    const { config, configPath, id, dir } = fixture()
+    const receipt = stampReceiptDigest({
+      schemaVersion: 1, kind: 'promotion', candidateId: id,
+      promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
+      producedAtOrdinal: 6, producedBy: { opId: 'test' },
+    })
+    const bytes = defect === 'schema'
+      ? `${canonicalJson({ ...receipt, [raw]: 'unexpected' })}\n` : `${raw}\n`
+    writeFileSync(join(dir, 'evidence/gates.jsonl'), bytes)
+    const host = composeCliLocalAgent({ configPath, agentQaRoot: config.auditBaseDir })
+    const failure = await invokeFunction(host.registry, 'knowledge.gates.list', { recordId: id }, CLI_FUNCTION_CALLER)
+      .then(() => { throw new Error('expected read refusal') }, error => error as Error)
+    expect(failure.message).toContain(`evidence/gates.jsonl line 1: invalid ${defect === 'schema' ? 'receipt schema' : 'JSON'}`)
+    expect(JSON.stringify({ ...failure, message: failure.message, stack: failure.stack })).not.toContain(raw)
+    expect(failure.cause).toBeUndefined()
+    for (const args of [[id, '--json'], [id]]) await invoke(configPath, args, failure.message)
+    expect(readFileSync(join(dir, 'evidence/gates.jsonl'), 'utf8')).toBe(bytes)
   })
 
   // 416 D-18/D-20: the writer rejects detector-visible raw text; the CLI preserves

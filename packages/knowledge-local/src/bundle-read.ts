@@ -137,7 +137,17 @@ export function readGateReceipts(bundleDir: string, bundleId: string): GateLine[
     throw new SyntaxError(`${GATES_REL_PATH} must contain a receipt and end with a newline`)
   }
   return text.slice(0, -1).split('\n').map((line, index) => {
-    const parsed = GateLineSchema.parse(JSON.parse(line))
+    // Parser diagnostics can quote receipt bytes or unrecognized keys. Only
+    // fixed categories and the line number may cross the shared read boundary;
+    // deliberately retain no raw parser error as a serialized cause.
+    const label = `${GATES_REL_PATH} line ${index + 1}`
+    let value: unknown
+    try { value = JSON.parse(line) } catch {
+      throw new SyntaxError(`${label}: invalid JSON`)
+    }
+    const result = GateLineSchema.safeParse(value)
+    if (!result.success) throw new SyntaxError(`${label}: invalid receipt schema`)
+    const parsed = result.data
     if (parsed.candidateId !== bundleId) {
       throw new SyntaxError(`${GATES_REL_PATH} line ${index + 1}: foreign candidateId`)
     }
