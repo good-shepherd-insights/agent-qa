@@ -25,7 +25,7 @@ export type PromotionPostureResolution =
   | { kind: 'unavailable'; committedRoot: string; refusals: readonly string[]; resolve: ResolvePromotionPosture }
   | { kind: 'ready'; committedRoot: string; host: PromotionPostureHostFacts; resolve: ResolvePromotionPosture }
 
-/** Await once before draining; the returned candidate resolver runs synchronously under authority. */
+/** Prepare before each operation or drain; candidate reads stay synchronous under authority. */
 export async function buildPromotionPostureResolver(input: {
   configPath: string
   replayGate?: ReplayGatePort
@@ -75,14 +75,28 @@ export async function buildPromotionPostureResolver(input: {
     if (hostRead.refusals.length > 0) return refused(refusalLines(hostRead.refusals))
     const resolvePosture: ResolvePromotionPosture = candidate => {
       try {
-        // Daemon hosts retain this resolver. Selection must follow the live corpus too,
-        // otherwise fresh digest/count disclosure could certify a cached pre-exclusion set.
+        if (!existsSync(committedRoot)) return undefined
+        // A drain can retain this resolver across candidates. Both selection inputs
+        // must follow disk; a prepared floor cannot outlive its measured artefact.
+        const currentFloor = resolveMinimumGateSet({ committedRoot, profileKey: identity.profileKey })
+        if (currentFloor.kind === 'no-floor') {
+          return unavailable([`noise-floor: no artefact for profile ${identity.profileKey}`])
+        }
+        if (currentFloor.kind === 'no-value') {
+          return unavailable([`noise-floor: no minimumGateSet value at ${currentFloor.path}`])
+        }
+        const minimumGateSet = currentFloor.minimumGateSet
         const currentCorpus = readCommittedCorpus(committedRoot)
         if (currentCorpus.refusals.length > 0) return unavailable(refusalLines(currentCorpus.refusals))
         const read = readGatePostureFor({ committedRoot, scope: candidate.scope, minimumGateSet, judge, canary })
         if (read.refusals.length > 0) return unavailable(refusalLines(read.refusals))
         if (computeCorpusDigest(currentCorpus.snapshot.entries) !== read.posture.corpusDigest) {
           return unavailable([`${committedRoot}: corpus changed during posture resolution`])
+        }
+        const floorAfterRead = resolveMinimumGateSet({ committedRoot, profileKey: identity.profileKey })
+        if (floorAfterRead.kind !== 'resolved' || floorAfterRead.minimumGateSet !== minimumGateSet
+          || floorAfterRead.path !== currentFloor.path) {
+          return unavailable([`${committedRoot}: noise floor changed during posture resolution`])
         }
         const verdict = selectGateSet({ entries: currentCorpus.snapshot.entries, product: candidate.product, candidate: candidate.provenance, minimumGateSet })
         return {
@@ -124,16 +138,22 @@ export function renderPromotionLine(entry: {
 /** Keep refusal detail visible even when disk reads fail after successful host preparation. */
 export function promotionPostureResolverForHost(
   resolution: PromotionPostureResolution,
-  warn: (message: string) => void,
+  warn?: (message: string) => void,
 ): ResolvePromotionPosture | undefined {
-  if (resolution.kind === 'no-eval-root') return undefined
   if (resolution.kind === 'unavailable') {
-    warn(`curation: posture unavailable: ${resolution.refusals.join('; ')}`)
+    warn?.(`curation: posture unavailable: ${resolution.refusals.join('; ')}`)
   }
   return candidate => {
-    const posture = resolution.resolve(candidate)
+    // Identity preparation is async, so a root that appears mid-drain must wait
+    // for the next preparation boundary instead of borrowing the absent-root floor.
+    const posture = resolution.kind === 'no-eval-root'
+      ? existsSync(resolution.committedRoot)
+        ? { kind: 'unavailable' as const, replayGateAvailable: false,
+          refusals: [`${resolution.committedRoot}: eval root appeared after posture preparation; retry with fresh posture`] }
+        : undefined
+      : resolution.resolve(candidate)
     if (posture?.kind === 'unavailable') {
-      warn(`curation: ${candidate.id} posture unavailable: ${posture.refusals.join('; ')}`)
+      warn?.(`curation: ${candidate.id} posture unavailable: ${posture.refusals.join('; ')}`)
     }
     return posture
   }

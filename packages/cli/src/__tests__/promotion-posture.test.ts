@@ -173,6 +173,82 @@ describe('buildPromotionPostureResolver', () => {
       counts: { excludedCount: 0, natural: 0, heldOutShared: 0, heldOutPrivate: 0, adversarial: 0 } })
   })
 
+  it.each(['deleted', 'malformed', 'valueless'] as const)('rechecks a %s floor and recovers when it is repaired', async defect => {
+    const f = fixture({ floor: true })
+    const path = join(f.committedRoot, 'reports/noise-floor', floorName)
+    const result = await build(f.configPath)
+    expect(result?.kind).toBe('ready')
+    if (defect === 'deleted') rmSync(path)
+    else if (defect === 'malformed') writeFileSync(path, '{ invalid')
+    else {
+      const value = structuredClone(floor)
+      delete value.minimumGateSet.value
+      writeFileSync(path, JSON.stringify(value))
+    }
+    expect(result.resolve(candidate)).toEqual({
+      kind: 'unavailable', replayGateAvailable: false,
+      refusals: [defect === 'valueless'
+        ? `noise-floor: no minimumGateSet value at ${path}`
+        : `noise-floor: no artefact for profile ${floor.profileKey}`],
+    })
+    writeFileSync(path, JSON.stringify(floor))
+    expect(result.resolve(candidate)).toMatchObject({ kind: 'resolved', minimumGateSet: 63 })
+  })
+
+  it('uses the current measured floor for both selection and disclosure', async () => {
+    const f = fixture({ floor: true })
+    cpSync(join(demo, 'agent-qa-eval/corpus'), join(f.committedRoot, 'corpus'), { recursive: true })
+    const result = await build(f.configPath)
+    expect(result?.kind).toBe('ready')
+    expect(result.resolve(candidate)).toMatchObject({ minimumGateSet: 63, gateSetVerdict: 'empty-gate-set' })
+    const value = structuredClone(floor)
+    value.minimumGateSet = value.products['example-web'].minimumGateSet
+    writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), JSON.stringify(value))
+    expect(result.resolve(candidate)).toMatchObject({
+      kind: 'resolved', minimumGateSet: 13, gateSetVerdict: 'ok', gateSetNonEmpty: true,
+    })
+  })
+
+  it('tracks root removal and refuses an empty replacement through a retained ready resolver', async () => {
+    const f = fixture({ floor: true })
+    const result = await build(f.configPath)
+    expect(result?.kind).toBe('ready')
+    rmSync(f.committedRoot, { recursive: true })
+    expect(result.resolve(candidate)).toBeUndefined()
+    mkdirSync(f.committedRoot)
+    expect(result.resolve(candidate)).toMatchObject({ kind: 'unavailable' })
+  })
+
+  it('refuses a newly present root until an absent-root host prepares fresh posture', async () => {
+    const f = fixture({ root: false })
+    const result = await build(f.configPath)
+    const warn = vi.fn()
+    const resolvePosture = subject!.promotionPostureResolverForHost(result, warn)
+    expect(resolvePosture?.(candidate)).toBeUndefined()
+    mkdirSync(f.committedRoot)
+    const posture = resolvePosture?.(candidate)
+    expect(posture).toMatchObject({ kind: 'unavailable', replayGateAvailable: false })
+    expect(warn).toHaveBeenCalledWith(`curation: ${candidate.id} posture unavailable: ${posture.refusals.join('; ')}`)
+    rmSync(f.committedRoot, { recursive: true })
+    expect(resolvePosture?.(candidate)).toBeUndefined()
+  })
+
+  it('fails closed when the measured floor changes during candidate resolution', async () => {
+    const f = fixture({ floor: true })
+    const result = await build(f.configPath)
+    expect(result?.kind).toBe('ready')
+    const read = vi.mocked(readGatePostureFor).getMockImplementation()!
+    vi.mocked(readGatePostureFor).mockImplementationOnce(input => {
+      const posture = read(input)
+      const value = structuredClone(floor)
+      value.minimumGateSet = value.products['example-web'].minimumGateSet
+      writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), JSON.stringify(value))
+      return posture
+    })
+    expect(result.resolve(candidate)).toEqual({ kind: 'unavailable', replayGateAvailable: false,
+      refusals: [`${f.committedRoot}: noise floor changed during posture resolution`] })
+  })
+
   it('T-416-15 reads identity without secrets, auth state, provider credentials or model resolution', async () => {
     const f = fixture({ floor: true })
     const fs = await import('node:fs/promises')

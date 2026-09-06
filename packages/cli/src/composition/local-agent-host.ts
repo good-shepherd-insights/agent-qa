@@ -20,7 +20,7 @@
 // can never join it. This file already carries that entry, so the placement mints none.
 
 import { spawnSync } from 'node:child_process'
-import { buildPromotionPostureResolver } from '../curation/promotion-posture.js'
+import { buildPromotionPostureResolver, promotionPostureResolverForHost } from '../curation/promotion-posture.js'
 import { createHash } from 'node:crypto'
 import {
   closeSync,
@@ -3632,10 +3632,9 @@ export function createChatConfirmPort(
 }
 
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {
-  let promotionPosture: ReturnType<NonNullable<ComposeLocalAgentInput['resolvePromotionPosture']>> | undefined
-  const resolvePromotionPosture = input.resolvePromotionPosture ?? (() => promotionPosture ??=
+  const resolvePromotionPosture = input.resolvePromotionPosture ?? (() =>
     buildPromotionPostureResolver({ configPath: input.configPath })
-      .then(result => result.kind === 'no-eval-root' ? undefined : result.resolve))
+      .then(result => promotionPostureResolverForHost(result)))
   // Narrowed once, here, so the hook closures below close over a value TypeScript knows is present
   // rather than re-reading an optional field at call time.
   const analytics = input.analytics

@@ -976,9 +976,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let drainWorker: Promise<void> | undefined
   let maintenanceWorker: Promise<void> | undefined
   let authorPromise: Promise<CuratorAuthor> | undefined
-  let promotionPosturePromise: Promise<ResolvePromotionPosture | undefined> | undefined
   const resolveHostPromotionPosture = (): Promise<ResolvePromotionPosture | undefined> =>
-    promotionPosturePromise ??= input.configPath === undefined
+    input.configPath === undefined
       ? Promise.resolve(undefined)
       : buildPromotionPostureResolver({ configPath: input.configPath })
         .then(posture => promotionPostureResolverForHost(posture, message => logger.error(message)))
