@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { generateRunId } from '@vostride/agent-qa-ids'
+import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import {
   assignSplit,
   buildEvalReport,
@@ -94,6 +94,195 @@ import type {
 } from '../../eval-session-composition.js'
 import { renderCensusMarkdown } from '../../eval-census-render.js'
 import { createEvalCommand } from '../eval.js'
+import * as evalVerbs from '../../eval-session-composition.js'
+import * as evalRender from '../../eval-report-render.js'
+
+/** Three real seeded leaves, using generated persistent identities and only provider stubs. */
+async function floorVerbFixture(judged = false) {
+  const plannerModelId = 'gpt-floor-stub'
+  const judgeModelId = 'claude-floor-stub'
+  const { dir, configPath } = await writeReplayFixture('', plannerModelId)
+  if (judged) {
+    const config = await readFile(configPath, 'utf8')
+    await writeFile(configPath, config.replace('use:\n', [
+      '    - name: judge', '      provider: openai-compatible',
+      `      model: ${judgeModelId}`, '      baseURL: http://localhost:9999/v1', 'use:', '',
+    ].join('\n')) + 'eval:\n  judge: judge\n')
+  }
+  const root = join(dir, '.agent-qa')
+  for (let index = 0; index < 3; index++) {
+    const runId = generateRunId()
+    const screenshotRef = new FsEvidenceArtifactStore({ root, runId })
+      .persistDecisionScreenshot(BLOB_BYTES)
+    const handoff = buildHandoff({ runId, screenshotRef })
+    handoff.tests[0]!.testId = generateTestId()
+    const step = handoff.tests[0]!.steps[0]!
+    step.modelProfile!.modelId = 'gemini-recorded-fixture'
+    const sub = step.subActions[0]!
+    sub.stateBefore = { ...sub.stateBefore, timestamp: 1_725_000_000 }
+    if (judged) {
+      sub.plannedAction = { type: 'fill', ref: buttonRef, text: 'hello world foo',
+        clearMode: 'replace', submit: false }
+    }
+    new FsHandoffStore({ root, runId }).save(handoff)
+  }
+  const session = await sessionFor(configPath)
+  const seeded = await runSeedVerb(session, {}, TEST_FRACTIONS)
+  expect(seeded.seededCount).toBe(3)
+  const planner = replayStub(plannerModelId, judged ? () => ({
+    ...clickGenerateResult(),
+    content: [{ type: 'tool-call', toolCallId: 'fill-action', toolName: 'web_fill',
+      input: JSON.stringify({ ref: 'e-continue', text: 'hello world bar', reasoning: 'fill',
+        confidence: 0.95, stepComplete: true, doesActionAdvanceUsTowardsGoal: true }) }],
+  }) : clickGenerateResult)
+  const judge = replayStub(judgeModelId, () => ({
+    ...clickGenerateResult(),
+    content: [{ type: 'text', text: JSON.stringify({ verdict: 'equivalent', confidence: 'high',
+      rationale: 'The framed values describe equivalent content' }) }],
+  }))
+  return { dir, configPath, session, planner, judge, plannerModelId, judgeModelId,
+    opts: { plannerOverrides: planner.overrides, ...(judged ? { judgeOverrides: judge.overrides } : {}) } }
+}
+
+function requireFloorVerb() {
+  expect(evalVerbs.runFloorVerb, 'the public floor measurement verb exists').toBeTypeOf('function')
+  return evalVerbs.runFloorVerb
+}
+
+describe('runFloorVerb — recorded protocol and write-once measurement', () => {
+  beforeEach(() => {
+    // Freeze only clocks: real IO and async scheduling still execute.
+    vi.spyOn(Date, 'now').mockReturnValue(1_725_000_000)
+    vi.spyOn(performance, 'now').mockReturnValue(10)
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network forbidden in floor fixture'))
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('records defaults, four actual cost lines, axis denominators and product census', async () => {
+    const runFloorVerb = requireFloorVerb()
+    const fixture = await floorVerbFixture()
+    const progress = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const result = await runFloorVerb(fixture.session, fixture.opts)
+    expect(result).toMatchObject({ repeats: 3, seeds: [11, 29], bootstrapSeed: 7,
+      recordedDefaults: true, corpusDigest: result.artefact.corpusDigest })
+    expect(result.artefact.profileKey).toBe(result.profileKey)
+    expect(result.fingerprint).toBe(await resolveReplayProfileFingerprint(
+      fixture.session, 'declared', fixture.opts.plannerOverrides,
+    ))
+    expect(result.artefact.axes.headline.n).toBe(3)
+    expect(result.artefact.runs.map(run => run.seed)).toEqual([11, 11, 11, 29])
+    expect(fixture.planner.captured).toHaveLength(12)
+    expect(result.artefact.cost.modelCalls).toBe(12)
+    expect(result.costLines).toHaveLength(4)
+    expect(result.costLines.every(line => /^floor r\d+ seed=\d+:/.test(line))).toBe(true)
+    expect(result.costLines[0]).toContain('modelCalls=3 promptTokens=30 completionTokens=6')
+    expect(progress.mock.calls).toHaveLength(16)
+    for (const root of result.runRoots) expect(existsSync(join(root, 'reports'))).toBe(true)
+    const lines = evalRender.renderFloorSummary(result)
+    expect(lines[0]).toBe('eval floor: repeats=3 seeds=11,29 bootstrapSeed=7 (recorded defaults)')
+    expect(lines).toContainEqual(expect.stringMatching(/^headline: floor=.+ n=3 sameSeed=0 twoSeed=0 wilson=/))
+    expect(lines).toContainEqual(expect.stringMatching(/^default: minimumGateSet=\d+ natural=\d+ heldOut=\d+$/))
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([{ repeats: 2 }, { seeds: [11] }, { seeds: [11, 11] }, { repeats: 3.5 }])(
+    'refuses protocol %j before planner or credential resolution', async options => {
+      const runFloorVerb = requireFloorVerb()
+      const { configPath } = await writeReplayFixture()
+      const session = await sessionFor(configPath)
+      const llmUtils = await import('../../llm-utils.js')
+      const resolution = vi.spyOn(llmUtils, 'resolveNamedConfig').mockRejectedValue(new Error('resolution forbidden'))
+      await expect(runFloorVerb(session, options)).rejects.toMatchObject({ code: 'FLOOR_PROTOCOL_MINIMUM' })
+      expect(resolution).not.toHaveBeenCalled()
+    },
+  )
+
+  it('guards the config-relative classifier file before auth and copies its measured block', async () => {
+    const runFloorVerb = requireFloorVerb()
+    const fixture = await floorVerbFixture()
+    const path = join(fixture.dir, 'classifier.json')
+    await writeFile(path, '{broken')
+    const llmUtils = await import('../../llm-utils.js')
+    const auth = vi.spyOn(llmUtils, 'resolveModelAuth')
+    await expect(runFloorVerb(fixture.session, { ...fixture.opts,
+      classifierRepeatability: 'classifier.json' })).rejects.toThrow(path)
+    expect(auth).not.toHaveBeenCalled()
+    await writeFile(path, JSON.stringify({ schemaVersion: 1 }))
+    await expect(runFloorVerb(fixture.session, { ...fixture.opts,
+      classifierRepeatability: path })).rejects.toBeInstanceOf(TypeError)
+    const measured = classifierDisclosureFixture()
+    await writeFile(path, JSON.stringify(measured))
+    const result = await runFloorVerb(fixture.session, { ...fixture.opts,
+      classifierRepeatability: path, seeds: [17, 31], repeats: 4, bootstrapSeed: 5 })
+    expect(result.artefact.classifierRepeatability).toEqual(measured)
+    expect(result).toMatchObject({ seeds: [17, 31], repeats: 4, bootstrapSeed: 5, recordedDefaults: false })
+    expect(result.costLines).toHaveLength(5)
+  })
+
+  it('commits written then unchanged, preserving a differing measurement as write-conflict data', async () => {
+    const runFloorVerb = requireFloorVerb()
+    const fixture = await floorVerbFixture()
+    const opts = { ...fixture.opts, commit: true, explanation: 'measured fixture protocol' }
+    const first = await runFloorVerb(fixture.session, opts)
+    expect(first.committed?.kind).toBe('written')
+    const second = await runFloorVerb(fixture.session, opts)
+    expect(second.committed?.kind).toBe('unchanged')
+    expect(second.artefact).toEqual(first.artefact)
+    const conflict = await runFloorVerb(fixture.session, { ...opts, explanation: 'different operator explanation' })
+    expect(conflict.committed?.kind).toBe('write-conflict')
+    expect(evalRender.renderFloorSummary(conflict)).toContainEqual(expect.stringContaining('committed: write-conflict'))
+  })
+
+  it('preserves zero-floor refusal without explanation and renders it as a notice', async () => {
+    const runFloorVerb = requireFloorVerb()
+    const fixture = await floorVerbFixture()
+    const local = await import('@vostride/agent-qa-eval-local')
+    const measure = local.runNoiseFloorMeasurement
+    // Finite nonempty Wilson samples have positive width. Inject only the zero-floor fold
+    // boundary here; the real writer still decides refusal/explanation/unchanged outcomes.
+    vi.spyOn(local, 'runNoiseFloorMeasurement').mockImplementation(async input => {
+      const result = await measure({ ...input, commit: false })
+      result.artefact.axes.headline.aggregateFloor = 0
+      return { ...result, committed: local.writeNoiseFloorArtefact({ artefact: result.artefact,
+        committedRoot: input.committedRoot, reportOutputBaseDir: input.reportOutputBaseDir }) }
+    })
+    const refused = await runFloorVerb(fixture.session, { ...fixture.opts, commit: true })
+    expect(refused.committed).toMatchObject({ kind: 'refused', refusal: { kind: 'zero-floor-without-explanation' } })
+    expect(refused.notices).toContainEqual(expect.stringContaining('zero-floor-without-explanation'))
+    const explained = { ...fixture.opts, commit: true, explanation: 'operator-supplied zero-floor rationale' }
+    expect((await runFloorVerb(fixture.session, explained)).committed?.kind).toBe('written')
+    expect((await runFloorVerb(fixture.session, explained)).committed?.kind).toBe('unchanged')
+  })
+
+  it('forwards judge overrides through the real stack and counts every planner and judge call', async () => {
+    const runFloorVerb = requireFloorVerb()
+    const fixture = await floorVerbFixture(true)
+    const result = await runFloorVerb(fixture.session, fixture.opts)
+    expect(fixture.planner.captured).toHaveLength(12)
+    expect(fixture.judge.captured).toHaveLength(24)
+    expect(result.artefact.cost.modelCalls).toBe(36)
+    expect(result.artefact.judgeModelId).toBe(fixture.judgeModelId)
+    expect(result.costLines[0]).toContain('modelCalls=9 promptTokens=90 completionTokens=18')
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('registers floor flags and emits exactly one JSON DTO with progress on stderr', async () => {
+    const runFloorVerb = requireFloorVerb()
+    const fixture = await floorVerbFixture()
+    vi.spyOn(evalVerbs, 'runFloorVerb').mockImplementation((session, opts) =>
+      runFloorVerb(session, { ...opts, ...fixture.opts }))
+    const output = captureConsole()
+    const program = new Command().option('--config <path>').addCommand(createEvalCommand())
+    const floor = program.commands[0]!.commands.find(command => command.name() === 'floor')
+    expect(floor?.options.map(option => option.long)).toEqual(expect.arrayContaining([
+      '--repeats', '--seeds', '--bootstrap-seed', '--commit', '--explanation', '--classifier-repeatability', '--json',
+    ]))
+    await program.parseAsync(['--config', fixture.configPath, 'eval', 'floor', '--json'], { from: 'user' })
+    expect(output.logs).toHaveLength(1)
+    expect(JSON.parse(output.logs[0]!)).toMatchObject({ recordedDefaults: true, repeats: 3 })
+    expect(output.errors.join('\n')).toContain('no judge configured')
+  })
+})
 
 const BLOB_BYTES = Uint8Array.from(Buffer.from('agent-qa eval extract fixture blob\n', 'utf8'))
 const SUITE_SCOPE: ScopeKey = { tier: 'suite', key: 'eval-cli' }
@@ -519,6 +708,7 @@ function clickGenerateResult(): StubGenerateResult {
  */
 function replayStub(
   modelId: string = REPLAY_STUB_MODEL_ID,
+  generate: () => StubGenerateResult = clickGenerateResult,
 ): { captured: CapturedCallOptions[]; overrides: ModelProviderOverrides } {
   const captured: CapturedCallOptions[] = []
   const stub: StubLanguageModel = {
@@ -528,7 +718,7 @@ function replayStub(
     supportedUrls: {},
     async doGenerate(params) {
       captured.push(params)
-      return clickGenerateResult()
+      return generate()
     },
     async doStream() {
       return { stream: new ReadableStream() }
@@ -1872,7 +2062,7 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
   it('names the family "eval" with the four D-01 verbs plus the 413 D-13 census sibling', () => {
     const cmd = createEvalCommand()
     expect(cmd.name()).toBe('eval')
-    const verbs = ['extract', 'replay', 'seed', 'report', 'census']
+    const verbs = ['extract', 'replay', 'seed', 'report', 'census', 'floor']
     expect(cmd.commands.map(sub => sub.name())).toEqual(verbs)
   })
 
