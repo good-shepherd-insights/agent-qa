@@ -4,6 +4,8 @@ import { join } from 'node:path'
 
 import {
   asEvidenceToken,
+  asRecordId,
+  deriveEvidenceToken,
   isPromotionReceipt,
   stampReceiptDigest,
   type CanaryOutcome,
@@ -146,8 +148,8 @@ describe('416 promotion doors share receipt authority', () => {
     const { bundle } = fixture.onlyBundle()
     const reports = vi.fn()
     const port = store(unavailable, reports)
-    await expect(port.promote(bundle.manifest.id)).rejects.toMatchObject({ reason: 'posture-unavailable' })
-    await port.recordCanaryOutcome({ candidateId: bundle.manifest.id, runOutcome: 'positive', runId: 'unavailable-canary',
+    await expect(port.promote(asRecordId(bundle.manifest.id))).rejects.toMatchObject({ reason: 'posture-unavailable' })
+    await port.recordCanaryOutcome({ candidateId: asRecordId(bundle.manifest.id), runOutcome: 'positive', runId: 'unavailable-canary',
       testId: 'checkout', testIndex: 0, stepIndex: 0, buildOrdinal: 46, briefDigest: 'unavailable',
       attribution: 'Exercised selector', exercisedAnchor: fixture.selectorProjection('unavailable').anchors[0]! })
     expect(reports).toHaveBeenLastCalledWith({ candidateId: bundle.manifest.id, promotionHoldReason: 'posture-unavailable' })
@@ -160,7 +162,7 @@ describe('416 promotion doors share receipt authority', () => {
     })
     const { candidateId, report } = await fixture.drainWithoutModel(fixture.selectorProjection(reason), undefined, { resolvePromotionPosture: resolver })
     expect(report.promotions).toEqual([{ candidateId, promotionHoldReason: reason }])
-    await expect(store(resolver).promote(fixture.onlyBundle().bundle.manifest.id)).rejects.toMatchObject({ reason })
+    await expect(store(resolver).promote(asRecordId(fixture.onlyBundle().bundle.manifest.id))).rejects.toMatchObject({ reason })
   }
 
   it('D-16 doors 1 and 3 name unprovenanced-candidate before empty-gate-set', async () => {
@@ -178,14 +180,20 @@ describe('416 promotion doors share receipt authority', () => {
   })
 
   it('SC5 re-drain preserves one active transition, one event and one promotion line', async () => {
-    const projection = fixture.selectorProjection('redrain')
+    const seededProjection = fixture.selectorProjection('redrain')
+    const projection = { ...seededProjection, evidenceToken: deriveEvidenceToken({
+      attributingObservationId: seededProjection.attributingObservationId,
+      anchor: seededProjection.anchors[0]!,
+      buildOrdinal: seededProjection.buildOrdinal,
+    }) }
     await fixture.drainWithoutModel(projection)
     const first = fixture.onlyBundle()
     const trust = deriveBundleTrust(first.bundle)
     const bytes = readFileSync(join(first.dir, 'evidence/outcomes.jsonl'), 'utf8')
     const { report } = await fixture.drainWithoutModel(projection)
-    expect(report.promotions?.some(outcome => outcome.promotionPath !== undefined)).toBe(false)
     expect(report.noops).toBe(1)
+    expect(report.promotions?.some(outcome => outcome.promotionPath !== undefined)).toBe(false)
+    expect(report.promotions).toEqual([])
     expect(readFileSync(join(first.dir, 'evidence/outcomes.jsonl'), 'utf8')).toBe(bytes)
     expect(deriveBundleTrust(fixture.onlyBundle().bundle)).toEqual(trust)
     assertPromotionLast()
@@ -195,7 +203,7 @@ describe('416 promotion doors share receipt authority', () => {
     await fixture.drainWithoutModel(fixture.selectorProjection('two-doors'))
     const first = fixture.onlyBundle()
     const trust = deriveBundleTrust(first.bundle)
-    await expect(store().promote(first.bundle.manifest.id)).resolves.toEqual({ kind: 'already-active', promotionPath: 'deterministic-verdict-floor' })
+    await expect(store().promote(asRecordId(first.bundle.manifest.id))).resolves.toEqual({ kind: 'already-active', promotionPath: 'deterministic-verdict-floor' })
     expect(deriveBundleTrust(fixture.onlyBundle().bundle)).toEqual(trust)
     assertPromotionLast()
   })
