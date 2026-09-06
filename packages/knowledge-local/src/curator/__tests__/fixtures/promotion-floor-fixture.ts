@@ -1,13 +1,26 @@
 // 2026-09-06, 416 D-06: shared pristine v51 acceptance builders.
-import { stampReceiptDigest, type Gate1Receipt, type GateVerdict, type Anchor, type BundleDraft, type DistilledObservation, type ExecutionContext } from '@vostride/agent-qa-schema'
+import { stampReceiptDigest, type Gate1Receipt, type GateVerdict, type Anchor, type BundleDraft, type DistilledObservation, type ExecutionContext, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { expect, vi } from 'vitest'
-import { createLocalKnowledgeStore, drainQueue, enumerateBundleDirs, loadBundle, type BundleStoreConfig, type CuratorAuthor, type LoadedBundle } from '../../../index.js'
+import { createLocalKnowledgeStore, drainQueue, enumerateBundleDirs, loadBundle, type BundleStoreConfig, type CuratorAuthor, type DrainOptions, type LoadedBundle } from '../../../index.js'
 import { publishBundle } from '../../../bundle-publish.test-helper.js'
 import { enqueueArtifactFreeCandidateProjection, type ArtifactFreeCandidateProjectionInput } from '../../../__tests__/fixtures/curation-candidate-fixture.js'
 import { acquireWriterLease } from '../../../lease/writer-lease.js'
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = { indexAbsent: false, pendingEmbeddings: 0, renderingEpochStale: false, vectorReconciliationOutstanding: false } as const
+export function resolvedPromotionPosture(
+  overrides: Partial<ResolvedPromotionGatePosture> = {},
+): ResolvedPromotionGatePosture {
+  return {
+    kind: 'resolved', replayGateAvailable: true, gateSetNonEmpty: true, gateSetVerdict: 'ok',
+    corpusDigest: 'c'.repeat(64), minimumGateSet: 1,
+    counts: { natural: 1, heldOutShared: 1, heldOutPrivate: 0, adversarial: 0, excludedCount: 0 },
+    scope: { partition: 'storefront', resolution: 'product-key' },
+    judge: { capable: true, reason: 'eligible' },
+    canary: { kind: 'not-provided', rarePathEligible: false },
+    ...overrides,
+  }
+}
 // 416-02: additive receipt builder; the pristine v51 builders below stay byte-identical.
 export function completeGate1Receipt(
   candidateId: string,
@@ -108,6 +121,7 @@ export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { k
   async function drainWithoutModel(
     projection: ArtifactFreeCandidateProjectionInput,
     executionContext: ExecutionContext = projection.executionContext,
+    drainOptions: Partial<DrainOptions> = {},
   ) {
     const candidateId = enqueue(projection)
     // The API requires an author capability, but this fixture binds no model/provider port.
@@ -130,6 +144,7 @@ export function createPromotionFloorFixture({ knowledgeRoot, auditBaseDir }: { k
           skipped: { unknownRef: 0, withinK: 0, userOrigin: 0, horizon: 0 },
         }),
       },
+      ...drainOptions,
     })
     expect(report).toMatchObject({ jobsProcessed: 1, failures: 0 })
     expect(author).toHaveBeenCalledOnce()

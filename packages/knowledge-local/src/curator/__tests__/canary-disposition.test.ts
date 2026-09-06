@@ -42,6 +42,7 @@ import {
 } from '../drain.js'
 import { canaryOutcomeObservationId } from '../disposition.js'
 import { createLocalKnowledgeStore } from '../knowledge-store.js'
+import { resolvedPromotionPosture } from './fixtures/promotion-floor-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const FACT_ANCHORS = [
@@ -237,6 +238,20 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
       status: replayed.trust.status,
     })).toBe(firstEvidence)
     expect(replayed.trust.counters.confirmed).toBe(1)
+  })
+
+  it('D-22 retains the positive Confirm while a planted replay binding holds promotion', async () => {
+    const published = seedCandidate()
+    const onPromotionOutcome = vi.fn()
+    const gated = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir,
+      executionContext: 'local-interactive', sourceBuildOrdinal: 43,
+      ...portAuthority(), policy, resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome })
+    await gated.recordCanaryOutcome(outcome(published.id))
+    const result = loaded(published.dir)
+    expect(result.bundle.events.filter(event => event.type === 'confirmed')).toHaveLength(1)
+    expect(result.bundle.events.filter(event => event.type === 'promoted')).toHaveLength(0)
+    expect(result.trust.status).toBe('candidate')
+    expect(onPromotionOutcome).toHaveBeenCalledExactlyOnceWith({ candidateId: published.id, promotionHoldReason: 'gate1-receipt-required' })
   })
 
   it('appends replay-safe negative evidence through the existing trust disposition', async () => {
