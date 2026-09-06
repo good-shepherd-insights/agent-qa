@@ -3,14 +3,18 @@ import { join } from 'node:path'
 import type { KnowledgePort } from '@vostride/agent-qa-agent'
 import {
   asEvidenceToken,
+  asRecordId,
   canonicalJson,
   deriveEvidenceToken,
   evaluatePromotionGate,
   eventDedupKey,
   foldBundleTrust,
+  GateReceiptSchema,
+  receiptDigestOf,
   sha256hex,
   survivingOutcomeEvents,
   strongestPromotionPath,
+  strongerPromotionPath,
 } from '@vostride/agent-qa-schema'
 import type {
   BundleDraft,
@@ -19,9 +23,13 @@ import type {
   Delta,
   ExecutionContext,
   GuardrailPolicy,
+  GateReceipt,
+  GateReceiptRecordOutcome,
   PromotionGateHoldReason,
   PromotionOutcome,
+  PromotionPath,
   RecordId,
+  ResolvePromotionPosture,
   ScreenState,
 } from '@vostride/agent-qa-schema'
 import {
@@ -29,7 +37,7 @@ import {
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
 
-import { appendOutcomeEvent, appendPromotionReceipt } from '../bundle-append.js'
+import { appendGateReceipt, appendOutcomeEvent, appendPromotionReceipt, type AppendOutcome } from '../bundle-append.js'
 import { deriveBundleTrust, loadBundle, readGateReceipts } from '../bundle-read.js'
 import type { LoadedBundle } from '../bundle-read.js'
 import type { BundleStoreConfig } from '../bundle-publish.js'
@@ -101,6 +109,8 @@ export interface CreateLocalKnowledgeStoreConfig {
   sourceBuildOrdinal?: number
   sourceRunId?: string
   screenStates?: readonly ScreenState[]
+  resolvePromotionPosture?: ResolvePromotionPosture
+  onPromotionOutcome?: (report: PromotionOutcomeReport) => void
   /** Fault-injection seam; production callers must omit it. */
   canaryAuthorityHooks?: CanaryAuthorityHooks
   /**
@@ -113,6 +123,12 @@ export interface CreateLocalKnowledgeStoreConfig {
     /** Test/chaos seam; production always uses commitCurationDelta. */
     commitCurationDelta?: typeof commitCurationDelta
   }
+}
+
+export interface PromotionOutcomeReport {
+  candidateId: RecordId
+  promotionPath?: PromotionPath
+  promotionHoldReason?: PromotionGateHoldReason
 }
 
 /**
@@ -408,7 +424,9 @@ function promotionBuildOrdinal(
   )
 }
 
-function expectedPromotionHold(error: unknown): error is KnowledgePromotionError {
+function expectedPromotionHold(error: unknown): error is KnowledgePromotionError & {
+  reason: PromotionGateHoldReason | 'propose-only'
+} {
   return error instanceof KnowledgePromotionError
     && error.reason !== 'not-found'
     && error.reason !== 'egress-blocked'
@@ -419,7 +437,7 @@ function unreachableCanaryOutcome(outcome: never): never {
 }
 
 /**
- * Realizes the four-method agent port over one mutation function. D-08 propose-only is a
+ * Realizes the agent write port over the canonical mutation path. D-08 propose-only is a
  * disposition profile inside commitCurationDelta, never a second mutation path. Because the port
  * carries bare deltas, this bridge materializes the smallest queue/checkpoint envelope and resolves
  * cited neighbor truth from canonical bundles before entering disposition.
@@ -438,6 +456,20 @@ export function createLocalKnowledgeStore(
       commitArtifacts: 'none',
       writerLeaseId: config.writerLeaseId,
       policy,
+    }
+  }
+
+  function checkedAppend(candidateId: RecordId, appended: AppendOutcome): GateReceiptRecordOutcome {
+    if (appended.kind === 'egress-blocked') {
+      throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
+    }
+    if (appended.kind === 'not-found') throw new KnowledgePromotionError(candidateId, appended.kind)
+    return appended
+  }
+
+  function reportHold(error: unknown): void {
+    if (expectedPromotionHold(error) && error.reason !== 'propose-only') {
+      config.onPromotionOutcome?.({ candidateId: error.candidateId, promotionHoldReason: error.reason })
     }
   }
 
@@ -473,6 +505,7 @@ export function createLocalKnowledgeStore(
         knowledgeRoot: config.knowledgeRoot,
         bundleDir: resolved.bundleDir,
         bundle: resolved.bundle,
+        resolvePromotionPosture: config.resolvePromotionPosture,
       })
       const setAside = foldBundleTrust(
         survivingOutcomeEvents(resolved.bundle.events)
@@ -485,14 +518,26 @@ export function createLocalKnowledgeStore(
       )
       const revalidated = evaluatePromotionGate({ ...gateInput, status: setAside.status })
       if (revalidated.verdict === 'promote') {
-        // Still authorized: heal append-before-projection retries while preserving the
-        // already-active noop contract byte-for-byte.
+        // Receipt strength can grow without granting a second lifecycle authority event.
+        const onDisk = strongestPromotionPath(readGateReceipts(resolved.bundleDir, candidateId) ?? [])
+        if (onDisk === undefined || (revalidated.promotionPath !== onDisk
+          && strongerPromotionPath(revalidated.promotionPath, onDisk) === revalidated.promotionPath)) {
+          checkedAppend(candidateId, appendPromotionReceipt(appendConfig, candidateId, {
+            schemaVersion: 1, kind: 'promotion', candidateId,
+            promotionPath: revalidated.promotionPath,
+            citedReceiptDigests: revalidated.citedReceiptDigests,
+            producedAtOrdinal: promotionBuildOrdinal(config, resolved.bundle),
+            producedBy: { opId: 'promote' },
+          }))
+        }
+        // Still authorized: heal append-before-projection retries.
         applyIndexDeltaForBundleWithinCurrentAuthority({
           knowledgeRoot: config.knowledgeRoot,
           bundleId: candidateId,
           product: resolved.product,
         })
         const promotionPath = strongestPromotionPath(readGateReceipts(resolved.bundleDir, candidateId) ?? [])
+        config.onPromotionOutcome?.({ candidateId, ...(promotionPath === undefined ? {} : { promotionPath }) })
         return { kind: 'already-active', ...(promotionPath === undefined ? {} : { promotionPath }) }
       }
       // Stale authority: append-only retraction of every surviving promoted event under a
@@ -533,6 +578,7 @@ export function createLocalKnowledgeStore(
       knowledgeRoot: config.knowledgeRoot,
       bundleDir: resolved.bundleDir,
       bundle: resolved.bundle,
+      resolvePromotionPosture: config.resolvePromotionPosture,
     }))
     if (gate.verdict === 'hold') {
       throw new KnowledgePromotionError(candidateId, gate.reason)
@@ -567,6 +613,7 @@ export function createLocalKnowledgeStore(
       bundleId: candidateId,
       product: resolved.product,
     })
+    config.onPromotionOutcome?.({ candidateId, promotionPath: gate.promotionPath })
     return { kind: 'promoted', promotionPath: gate.promotionPath, citedReceiptDigests: gate.citedReceiptDigests }
   }
 
@@ -655,6 +702,7 @@ export function createLocalKnowledgeStore(
               // A gate hold or propose-only posture means "not yet". The durable Confirm remains
               // valid evidence and must not turn a crash replay into a permanently failing job.
               if (!expectedPromotionHold(error)) throw error
+              reportHold(error)
             }
             config.onCanaryTailWithinCurrentAuthority?.()
           })
@@ -705,9 +753,37 @@ export function createLocalKnowledgeStore(
           return unreachableCanaryOutcome(outcome.runOutcome)
       }
     },
-    async promote(candidateId: RecordId): Promise<PromotionOutcome> {
+    async promote(candidateId: RecordId, receipts?: readonly GateReceipt[]): Promise<PromotionOutcome> {
       return withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
-        return promoteWithinCurrentAuthority(candidateId)
+        if (resolveDispositionProfile(config.executionContext).mode === 'propose-only') {
+          throw new KnowledgePromotionError(candidateId, 'propose-only')
+        }
+        const resolved = resolveTruth(config.knowledgeRoot, candidateId)
+        if (resolved === undefined) throw new KnowledgePromotionError(candidateId, 'not-found')
+        // Validate the entire batch before its first append; a later malformed item must not
+        // leave earlier caller evidence durable. Appenders independently repeat these checks.
+        const validated = (receipts ?? []).map(receipt => {
+          const parsed = GateReceiptSchema.parse(receipt)
+          if (parsed.candidateId !== candidateId) throw new TypeError('foreign candidateId')
+          if (receiptDigestOf(parsed) !== parsed.receiptDigest) throw new TypeError('receiptDigest mismatch')
+          return parsed
+        })
+        const appendConfig = bundleStoreConfig(resolved.product)
+        for (const receipt of validated) checkedAppend(candidateId, appendGateReceipt(appendConfig, candidateId, receipt))
+        try {
+          return promoteWithinCurrentAuthority(candidateId)
+        } catch (error) {
+          reportHold(error)
+          throw error
+        }
+      })
+    },
+    async recordGateReceipt(receipt: GateReceipt): Promise<GateReceiptRecordOutcome> {
+      return withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
+        const candidateId = asRecordId(receipt.candidateId)
+        const resolved = resolveTruth(config.knowledgeRoot, candidateId)
+        if (resolved === undefined) throw new KnowledgePromotionError(candidateId, 'not-found')
+        return checkedAppend(candidateId, appendGateReceipt(bundleStoreConfig(resolved.product), candidateId, receipt))
       })
     },
   }

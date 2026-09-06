@@ -5,6 +5,8 @@ import type {
   ActionResult,
   CanaryOutcome,
   Delta,
+  GateReceipt,
+  GateReceiptRecordOutcome,
   Patch,
   PatchId,
   RecordId,
@@ -21,7 +23,7 @@ expectTypeOf(persistence).toMatchTypeOf<PersistencePort>()
 expectTypeOf(clock).toMatchTypeOf<ClockPort>()
 
 expectTypeOf<keyof KnowledgePort>().toEqualTypeOf<
-  'proposeDeltas' | 'commit' | 'recordCanaryOutcome' | 'promote'
+  'proposeDeltas' | 'commit' | 'recordCanaryOutcome' | 'promote' | 'recordGateReceipt'
 >()
 
 expectTypeOf<Parameters<KnowledgePort['proposeDeltas']>>().toEqualTypeOf<[deltas: Delta[]]>()
@@ -32,8 +34,10 @@ expectTypeOf<Parameters<KnowledgePort['recordCanaryOutcome']>>().toEqualTypeOf<
   [outcome: CanaryOutcome]
 >()
 expectTypeOf<ReturnType<KnowledgePort['recordCanaryOutcome']>>().toEqualTypeOf<Promise<void>>()
-expectTypeOf<Parameters<KnowledgePort['promote']>>().toEqualTypeOf<[candidateId: RecordId]>()
+expectTypeOf<Parameters<KnowledgePort['promote']>>().toEqualTypeOf<[candidateId: RecordId, receipts?: readonly GateReceipt[]]>()
 expectTypeOf<ReturnType<KnowledgePort['promote']>>().toEqualTypeOf<Promise<PromotionOutcome>>()
+expectTypeOf<Parameters<KnowledgePort['recordGateReceipt']>>().toEqualTypeOf<[receipt: GateReceipt]>()
+expectTypeOf<ReturnType<KnowledgePort['recordGateReceipt']>>().toEqualTypeOf<Promise<GateReceiptRecordOutcome>>()
 
 expectTypeOf<Parameters<ToolsPort['execute']>>().toEqualTypeOf<[action: Action]>()
 expectTypeOf<ReturnType<ToolsPort['execute']>>().toEqualTypeOf<Promise<ActionResult>>()

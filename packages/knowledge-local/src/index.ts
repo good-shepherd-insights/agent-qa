@@ -818,6 +818,7 @@ export {
 export type {
   CreateLocalKnowledgeStoreConfig,
   KnowledgePromotionErrorReason,
+  PromotionOutcomeReport,
 } from './curator/knowledge-store.js'
 
 export type LocalKnowledgeStore = KnowledgePort
