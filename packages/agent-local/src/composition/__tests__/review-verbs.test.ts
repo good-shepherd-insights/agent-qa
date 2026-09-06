@@ -41,8 +41,10 @@ import type {
   KnowledgeApplyOutcomeDto,
   KnowledgeProposeOutcomeDto,
   MaskedResolvedConfig,
+  ResolvePromotionPosture,
 } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createKnowledgeReaderPort } from '../knowledge-review-reader.js'
 
 import {
   createEntityDirectory,
@@ -431,5 +433,25 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
 
     // And the root is resolved PER CALL, like its four siblings.
     expect(resolved).toBe(2)
+  })
+
+  it('416 D-18 awaits the lazy posture factory for every gates read', async () => {
+    const candidateId = publish()
+    const resolver = vi.fn<ResolvePromotionPosture>(() => ({
+      kind: 'resolved', replayGateAvailable: true, gateSetNonEmpty: true, gateSetVerdict: 'ok',
+      corpusDigest: 'c'.repeat(64), minimumGateSet: 1,
+      counts: { natural: 1, heldOutShared: 1, heldOutPrivate: 0, adversarial: 0, excludedCount: 0 },
+      scope: { partition: 'review-verbs', resolution: 'product-key' },
+      judge: { capable: true, reason: 'eligible' },
+      canary: { kind: 'not-provided', rarePathEligible: false },
+    }))
+    const factory = vi.fn(async () => resolver)
+    const port = createKnowledgeReaderPort({ resolveKnowledgeRoot: () => knowledgeRoot,
+      resolvePromotionPosture: factory })
+    expect(factory).not.toHaveBeenCalled()
+    expect(await port.gateReceipts!({ candidateId })).toMatchObject({ posture: 'resolved' })
+    expect(await port.gateReceipts!({ candidateId })).toMatchObject({ posture: 'resolved' })
+    expect(factory).toHaveBeenCalledTimes(2)
+    expect(resolver).toHaveBeenCalledTimes(2)
   })
 })
