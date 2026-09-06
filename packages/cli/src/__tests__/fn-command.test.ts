@@ -671,6 +671,12 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 416 D-10: gate receipts are a read over the same bound knowledge reader.
+      'knowledge.gates.list': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       // 387-06 KREV-01: the read half of the review-verb family. BOUND for the same reason
       // the entity pair is — they dispatch through the REQUIRED `knowledge` port, so no
       // composition lists them and then refuses. 387-08's mutating verbs go through the
