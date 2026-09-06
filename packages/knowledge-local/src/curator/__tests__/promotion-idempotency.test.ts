@@ -88,7 +88,7 @@ describe('416 promotion receipt writer contract', () => {
     expect(trust.status).toBe('active')
     expect(fixture.onlyBundle().bundle.events.filter(event => event.type === 'promoted')).toHaveLength(1)
   })
-  it.each(['digest', 'candidate'] as const)('refuses a later invalid %s before any supplied receipt lands', async defect => {
+  async function refusesInvalidBatch(defect: 'digest' | 'candidate') {
     const { published, store } = await confirmed()
     const valid = completeGate1Receipt(published.id)
     const invalid = defect === 'digest'
@@ -96,10 +96,18 @@ describe('416 promotion receipt writer contract', () => {
       : completeGate1Receipt('foreign-candidate')
     const manifest = readFileSync(join(published.dir, 'manifest.json'), 'utf8')
     const events = readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8')
-    await expect(store.promote(published.id, [valid, invalid])).rejects.toThrow(TypeError)
+    const refused = store.promote(published.id, [valid, invalid])
+    await expect(refused).rejects.toThrow(TypeError)
+    await expect(refused).rejects.toThrow(defect === 'digest' ? 'receiptDigest mismatch' : 'foreign candidateId')
     expect(readGateReceipts(published.dir, published.id)).toBeUndefined()
     expect(readFileSync(join(published.dir, 'manifest.json'), 'utf8')).toBe(manifest)
     expect(readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8')).toBe(events)
+  }
+  it('D-04 refuses a later invalid digest before any supplied receipt lands', async () => {
+    await refusesInvalidBatch('digest')
+  })
+  it('D-08 refuses a later foreign candidate before any supplied receipt lands', async () => {
+    await refusesInvalidBatch('candidate')
   })
   it('refuses an unknown record and a tampered standalone receipt', async () => {
     const { published, store } = await confirmed()
@@ -117,5 +125,43 @@ describe('416 promotion receipt writer contract', () => {
     expect(reports).toHaveBeenCalledExactlyOnceWith({ candidateId: published.id, promotionHoldReason: 'gate1-receipt-required' })
     expect(deriveBundleTrust(fixture.onlyBundle().bundle).status).toBe('candidate')
     expect(readGateReceipts(published.dir, published.id)).toBeUndefined()
+  })
+  it('propagates a resolver failure and refuses propose-only before resolving or appending', async () => {
+    const { published } = await confirmed()
+    const resolver = vi.fn<ResolvePromotionPosture>(() => { throw new Error('posture read failed') })
+    const reports = vi.fn()
+    const store = createLocalKnowledgeStore({ ...config, resolvePromotionPosture: resolver, onPromotionOutcome: reports })
+    await expect(store.promote(published.id)).rejects.toThrow('posture read failed')
+    expect(resolver).toHaveBeenCalledTimes(1)
+    expect(reports).not.toHaveBeenCalled()
+    resolver.mockClear()
+    const proposeOnly = createLocalKnowledgeStore({ ...config, executionContext: 'ci',
+      resolvePromotionPosture: resolver, onPromotionOutcome: reports })
+    await expect(proposeOnly.promote(published.id, [completeGate1Receipt(published.id)]))
+      .rejects.toMatchObject({ reason: 'propose-only' })
+    expect(resolver).not.toHaveBeenCalled()
+    expect(reports).not.toHaveBeenCalled()
+    expect(readGateReceipts(published.dir, published.id)).toBeUndefined()
+  })
+  it('requires the published writer authority for both receipt-writing methods', async () => {
+    const { published } = await confirmed()
+    const unauthorized = createLocalKnowledgeStore({ ...config, writerLeaseId: 'foreign-holder' })
+    const receipt = completeGate1Receipt(published.id)
+    await expect(unauthorized.recordGateReceipt(receipt)).rejects.toMatchObject({ name: 'WriterAuthorityLostError' })
+    await expect(unauthorized.promote(published.id, [receipt])).rejects.toMatchObject({ name: 'WriterAuthorityLostError' })
+    expect(readGateReceipts(published.dir, published.id)).toBeUndefined()
+  })
+  it('reports the positive canary gate hold while retaining its canonical confirmation', async () => {
+    const { draft, published } = fixture.publishHeldCandidate('canary-report')
+    const reports = vi.fn()
+    const store = createLocalKnowledgeStore({ ...config, resolvePromotionPosture: () => posture, onPromotionOutcome: reports })
+    await store.recordCanaryOutcome({ candidateId: published.id, runOutcome: 'positive',
+      runId: 'receipt-canary', testId: 'checkout', testIndex: 0, buildOrdinal: 43, stepIndex: 0,
+      briefDigest: 'receipt-brief', attribution: 'The served selector was exercised.', exercisedAnchor: draft.anchors[0]! })
+    expect(reports).toHaveBeenCalledExactlyOnceWith({ candidateId: published.id, promotionHoldReason: 'gate1-receipt-required' })
+    const { bundle } = fixture.onlyBundle()
+    expect(bundle.events.filter(event => event.type === 'confirmed')).toHaveLength(1)
+    expect(bundle.events.filter(event => event.type === 'promoted')).toHaveLength(0)
+    expect(deriveBundleTrust(bundle).status).toBe('candidate')
   })
 })
