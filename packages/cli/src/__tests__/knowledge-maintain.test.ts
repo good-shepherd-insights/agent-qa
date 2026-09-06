@@ -56,6 +56,8 @@ const commandHarness = vi.hoisted(() => ({
   ) | undefined,
   authorityRefreshCalls: 0,
   drainQueueCalls: 0,
+  drainInputs: [] as Record<string, unknown>[],
+  drainPromotions: undefined as Array<{ candidateId: string; promotionPath?: 'deterministic-verdict-floor'; promotionHoldReason?: 'gate1-receipt-required' }> | undefined,
   releaseLeaseCalls: 0,
   rebuildIndexInputs: [] as Record<string, unknown>[],
   purgeRecordInputs: [] as Record<string, unknown>[],
@@ -140,7 +142,9 @@ vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
     ...actual,
     drainQueue: vi.fn((...args: Parameters<typeof actual.drainQueue>) => {
       commandHarness.drainQueueCalls += 1
-      return actual.drainQueue(...args)
+      commandHarness.drainInputs.push(args[0] as unknown as Record<string, unknown>)
+      return actual.drainQueue(...args).then(report => commandHarness.drainPromotions === undefined
+        ? report : { ...report, promotions: commandHarness.drainPromotions })
     }),
     rebuildIndex: vi.fn((...args: Parameters<typeof actual.rebuildIndex>) => {
       const input = args[0] as unknown as Record<string, unknown>
@@ -634,6 +638,8 @@ describe('knowledge maintenance commands', () => {
     commandHarness.authorityRefreshHook = undefined
     commandHarness.authorityRefreshCalls = 0
     commandHarness.drainQueueCalls = 0
+    commandHarness.drainInputs = []
+    commandHarness.drainPromotions = undefined
     commandHarness.releaseLeaseCalls = 0
     commandHarness.rebuildIndexInputs.splice(0)
     commandHarness.purgeRecordInputs.splice(0)
@@ -685,6 +691,25 @@ describe('knowledge maintenance commands', () => {
     expect(result.stdout).toContain('remaining 0')
     expect(commandHarness.drainQueueCalls).toBe(1)
     expect(daemonHarness.nudgeCalls).toEqual([])
+  })
+
+  it('prints promotion paths and holds in report order on stdout', async () => {
+    const workspace = fixtureWorkspace(roots)
+    commandHarness.drainPromotions = [
+      { candidateId: 'c1', promotionPath: 'deterministic-verdict-floor' },
+      { candidateId: 'c2', promotionHoldReason: 'gate1-receipt-required' },
+    ]
+    const result = await invoke(workspace, ['drain'])
+    expect(result.stdout).toContain('curation: c1 promoted via deterministic-verdict-floor\ncuration: c2 held: gate1-receipt-required')
+  })
+
+  it('passes present-root refusal posture into the drain and discloses its identity error', async () => {
+    const workspace = fixtureWorkspace(roots)
+    mkdirSync(join(dirname(workspace.configPath), 'agent-qa-eval'))
+    const result = await invoke(workspace, ['drain'])
+    expect(result.stderr).toContain('curation: posture unavailable:')
+    expect(result.stderr).toContain('use.llm is not set')
+    expect(commandHarness.drainInputs[0].resolvePromotionPosture).toBeTypeOf('function')
   })
 
   it('cleans a stale daemon registration and falls back to the same inline drain', async () => {

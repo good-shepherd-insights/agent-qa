@@ -10,10 +10,11 @@ import {
 import type {
   PromotionCanaryPosture,
   PromotionJudgePosture,
+  PromotionGateHoldReason,
+  PromotionPath,
   ResolvePromotionPosture,
   UnavailablePromotionGatePosture,
 } from '@vostride/agent-qa-schema'
-import { resolveEvalSession, resolveGateProfileIdentity } from '../eval-session-composition.js'
 
 export interface PromotionPostureHostFacts {
   replayGateAvailable: boolean
@@ -51,6 +52,7 @@ export async function buildPromotionPostureResolver(input: {
     ...(judge.judgeFamily === undefined ? {} : { judgeFamily: judge.judgeFamily }),
   })
   try {
+    const { resolveEvalSession, resolveGateProfileIdentity } = await import('../eval-session-composition.js')
     const session = await resolveEvalSession({ configPath, keyOnly: true })
     const identity = await resolveGateProfileIdentity(session)
     const floor = resolveMinimumGateSet({ committedRoot, profileKey: identity.profileKey })
@@ -76,9 +78,13 @@ export async function buildPromotionPostureResolver(input: {
     if (hostRead.refusals.length > 0) return refused(refusalLines(hostRead.refusals))
     const resolvePosture: ResolvePromotionPosture = candidate => {
       try {
+        // Daemon hosts retain this resolver. Selection must follow the live corpus too,
+        // otherwise fresh digest/count disclosure could certify a cached pre-exclusion set.
+        const currentCorpus = readCommittedCorpus(committedRoot)
+        if (currentCorpus.refusals.length > 0) return unavailable(refusalLines(currentCorpus.refusals))
         const read = readGatePostureFor({ committedRoot, scope: candidate.scope, minimumGateSet, judge, canary })
         if (read.refusals.length > 0) return unavailable(refusalLines(read.refusals))
-        const verdict = selectGateSet({ entries: corpus.snapshot.entries, product: candidate.product, candidate: candidate.provenance, minimumGateSet })
+        const verdict = selectGateSet({ entries: currentCorpus.snapshot.entries, product: candidate.product, candidate: candidate.provenance, minimumGateSet })
         return {
           kind: 'resolved', replayGateAvailable,
           gateSetVerdict: verdict.verdict, gateSetNonEmpty: verdict.verdict === 'ok',
@@ -102,5 +108,33 @@ export async function buildPromotionPostureResolver(input: {
     }
   } catch (error) {
     return refused([error instanceof Error ? error.message : String(error)])
+  }
+}
+
+export function renderPromotionLine(entry: {
+  candidateId: string
+  promotionPath?: PromotionPath
+  promotionHoldReason?: PromotionGateHoldReason
+}): string {
+  return entry.promotionPath === undefined
+    ? `curation: ${entry.candidateId} held: ${entry.promotionHoldReason}`
+    : `curation: ${entry.candidateId} promoted via ${entry.promotionPath}`
+}
+
+/** Keep refusal detail visible even when disk reads fail after successful host preparation. */
+export function promotionPostureResolverForHost(
+  resolution: PromotionPostureResolution,
+  warn: (message: string) => void,
+): ResolvePromotionPosture | undefined {
+  if (resolution.kind === 'no-eval-root') return undefined
+  if (resolution.kind === 'unavailable') {
+    warn(`curation: posture unavailable: ${resolution.refusals.join('; ')}`)
+  }
+  return candidate => {
+    const posture = resolution.resolve(candidate)
+    if (posture?.kind === 'unavailable') {
+      warn(`curation: ${candidate.id} posture unavailable: ${posture.refusals.join('; ')}`)
+    }
+    return posture
   }
 }

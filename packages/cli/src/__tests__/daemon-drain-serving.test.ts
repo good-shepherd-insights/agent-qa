@@ -718,6 +718,7 @@ describe('daemon curation serving tracer', () => {
         const startedAtMs = Date.now()
         await drainViaDaemon(
           {
+            configPath: join(paths.agentQaRoot, '..', 'agent-qa.config.yaml'),
             knowledgeRoot: paths.knowledgeRoot,
             runtimeRoot: paths.agentQaRoot,
             auditBaseDir: paths.agentQaRoot,

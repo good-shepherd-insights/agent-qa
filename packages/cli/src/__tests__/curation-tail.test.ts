@@ -373,6 +373,26 @@ function handedOffDrainReport() {
 }
 
 describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
+  it('threads the synchronous resolver and prints every promotion in report order', async () => {
+    const info = vi.fn()
+    const resolver = vi.fn(() => undefined)
+    const drainQueue = vi.fn(async () => ({
+      ...handedOffDrainReport(),
+      promotions: [
+        { candidateId: 'c1', promotionPath: 'deterministic-verdict-floor' as const },
+        { candidateId: 'c2', promotionHoldReason: 'gate1-receipt-required' as const },
+      ],
+    }))
+    await runCurationTail(baseOptions(successfulOperations({ drainQueue }), {
+      resolvePromotionPosture: resolver, log: { warn: vi.fn(), info },
+    }))
+    expect(drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver }))
+    expect(info.mock.calls.map(([message]) => message).filter(message => message.startsWith('curation: '))).toEqual([
+      'curation: handed to daemon (pid 4242)',
+      'curation: c1 promoted via deterministic-verdict-floor',
+      'curation: c2 held: gate1-receipt-required',
+    ])
+  })
   it('loads the handoff, emits candidates and canary outcomes in one scope, then drains', async () => {
     const order: string[] = []
     const controller = new AbortController()

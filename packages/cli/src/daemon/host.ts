@@ -4,6 +4,8 @@ import { rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { isDeepStrictEqual } from 'node:util'
+import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
+import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
 
 import type {
   ConfigReaderPort,
@@ -974,6 +976,12 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let drainWorker: Promise<void> | undefined
   let maintenanceWorker: Promise<void> | undefined
   let authorPromise: Promise<CuratorAuthor> | undefined
+  let promotionPosturePromise: Promise<ResolvePromotionPosture | undefined> | undefined
+  const resolveHostPromotionPosture = (): Promise<ResolvePromotionPosture | undefined> =>
+    promotionPosturePromise ??= input.configPath === undefined
+      ? Promise.resolve(undefined)
+      : buildPromotionPostureResolver({ configPath: input.configPath })
+        .then(posture => promotionPostureResolverForHost(posture, message => logger.error(message)))
   let embedderWorkerIdleTimer: ReturnType<typeof setTimeout> | undefined
 
   type EmbedderWorkerExitReason = 'idle' | 'crash' | 'daemon-stop' | 'start-error' | 'replace'
@@ -1577,17 +1585,20 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
      * first observed candidate, whenever it appears; `authorPromise` still memoizes the factory to
      * at most one invocation per process.
      */
-    let curation: { author: CuratorAuthor; policy: GuardrailPolicy } | undefined
+    let curation: { author: CuratorAuthor; policy: GuardrailPolicy; resolvePromotionPosture?: ResolvePromotionPosture } | undefined
     const resolveCuration = async (): Promise<{
       author: CuratorAuthor
       policy: GuardrailPolicy
+      resolvePromotionPosture?: ResolvePromotionPosture
     }> => {
       const factory = input.author
       const policy = input.policy
       if (factory === undefined || policy === undefined) {
         throw new Error('Daemon curation requires an author factory and guardrail policy')
       }
-      return { author: await (authorPromise ??= Promise.resolve(factory())), policy }
+      const resolvePromotionPosture = await resolveHostPromotionPosture()
+      return { author: await (authorPromise ??= Promise.resolve(factory())), policy,
+        ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }) }
     }
     if (initialCandidates.length > 0) curation = await resolveCuration()
     while (remainingAfter > 0) {
@@ -1629,6 +1640,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           budgetMs: 'unbounded',
           lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
           author: sessionCuration.author,
+          ...(sessionCuration.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: sessionCuration.resolvePromotionPosture }),
           executionContext: 'local-headless',
           policy: sessionCuration.policy,
           embeddingCapability,
@@ -1658,6 +1670,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       } finally {
         if (worker !== undefined) armEmbedderWorkerIdleTimer(worker)
       }
+      for (const entry of report.promotions ?? []) logger.info(renderPromotionLine(entry))
       jobsProcessed += report.jobsProcessed
       failures += report.failures
       quarantined += report.quarantined
@@ -2152,7 +2165,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
             throw new Error('Daemon curation requires an author factory and guardrail policy')
           }
           const curationOperations = defaultCurationTailOperations()
+          const resolvePromotionPosture = await resolveHostPromotionPosture()
           const folded = await curateCompletedRun({
+            ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
             runDir: completedRunDir(input.agentQaRoot, curatedRunId),
             handoff: curationOperations.loadCompletedRunHandoff(
               completedRunHandoffPath(input.agentQaRoot, curatedRunId),

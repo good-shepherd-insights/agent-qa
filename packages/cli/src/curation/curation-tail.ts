@@ -39,6 +39,7 @@ import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   GuardrailPolicy,
   MaskingContext,
+  ResolvePromotionPosture,
 } from '@vostride/agent-qa-schema'
 import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 
@@ -50,6 +51,7 @@ import {
 import { emitCanaryOutcomes } from './emit-canary-outcomes.js'
 import { emitCurationCandidates, type EmitReport } from './emit-candidates.js'
 import { exercisedAnchors } from './handoff-anchors.js'
+import { renderPromotionLine } from './promotion-posture.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
 /**
@@ -120,6 +122,8 @@ export interface CurationWriterAuthority {
 }
 
 export interface RunCurationTailOptions {
+  /** Built once by the caller; synchronous per candidate inside writer authority. */
+  resolvePromotionPosture?: ResolvePromotionPosture
   runId: string
   /** Absolute `.agent-qa` runtime root shared by the run handoff and curation audit. */
   agentQaRoot: string
@@ -362,6 +366,7 @@ type CurationAuthorCapability =
   Parameters<LocalCurationCapabilities['drainQueue']>[0]['author']
 
 export interface CurateCompletedRunInput {
+  resolvePromotionPosture?: ResolvePromotionPosture
   /** The run's own directory (`<agentQaRoot>/runs/<slug>`), derived by the caller. */
   runDir: string
   /** The already-loaded, already-guarded handoff for THAT directory. */
@@ -645,6 +650,7 @@ export async function curateCompletedRun(
             })
           : operations.buildCuratorAuthor(input.modelDeps))
       const drain = await operations.drainQueue({
+        ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
         knowledgeRoot: input.knowledgeRoot,
         auditBaseDir: input.agentQaRoot,
         author,
@@ -664,6 +670,7 @@ export async function curateCompletedRun(
         const elapsedSeconds = Math.max(0, Math.floor((Date.now() - tailStartedAtMs) / 1_000))
         input.log.info?.(`curation: drained inline (${elapsedSeconds}s)`)
       }
+      for (const entry of drain.promotions ?? []) input.log.info?.(renderPromotionLine(entry))
       // A commit noop is visible but never fatal (G-381-1): legitimate reasons such as
       // evidence-token dedup would otherwise wedge a healthy tail into the retry loop.
       // The complete predicate below is deliberately unchanged.
@@ -830,6 +837,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
     try {
       if (receiptMatches(operations.readCurationTailReceipt(runDir), receiptIdentity)) continue
       const folded = await curateCompletedRun({
+        ...(opts.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: opts.resolvePromotionPosture }),
         runDir,
         handoff,
         knowledgeRoot,

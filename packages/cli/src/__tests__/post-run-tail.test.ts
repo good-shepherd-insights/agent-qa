@@ -18,7 +18,7 @@ import type { Mock } from 'vitest'
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import type { GuardrailPolicy, MaskingContext } from '@vostride/agent-qa-schema'
+import type { GuardrailPolicy, MaskingContext, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 
 import { runVerdictFirstCurationTail } from '../curation/curation-tail.js'
 import {
@@ -26,6 +26,7 @@ import {
   type PostRunTailOperations,
   type RunPostRunTailOptions,
 } from '../curation/post-run-tail.js'
+import * as promotionPosture from '../curation/promotion-posture.js'
 
 const agentQaRoot = '/workspace/project/.agent-qa'
 const configDir = '/workspace/project'
@@ -138,6 +139,27 @@ function options(h: Harness): RunPostRunTailOptions {
 }
 
 describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
+  it('builds posture once before the lease and forwards it to both the job fold and sweep', async () => {
+    const h = harness()
+    const resolvePosture = vi.fn(() => ({ kind: 'unavailable' as const, replayGateAvailable: false, refusals: ['partition refused'] }))
+    const build = vi.spyOn(promotionPosture, 'buildPromotionPostureResolver').mockResolvedValue({
+      kind: 'unavailable', committedRoot: '/project/agent-qa-eval', refusals: ['partition refused'], resolve: resolvePosture,
+    })
+    try {
+      const tail = runPostRunTail(options(h))
+      await tail.drain()
+      expect(build).toHaveBeenCalledExactlyOnceWith({ configPath })
+      expect(build.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(h.operations.acquireWriterLease).mock.invocationCallOrder[0])
+      const swept = h.runCurationTail.mock.calls[0]![0] as { resolvePromotionPosture?: ResolvePromotionPosture }
+      expect(swept.resolvePromotionPosture).toBeTypeOf('function')
+      const composed = vi.mocked(h.operations.composeHost).mock.calls[0][0]
+      await composed.curateRun({ runId, executionContext: 'local-headless' })
+      expect(h.operations.curateCompletedRun).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: swept.resolvePromotionPosture }))
+      expect(h.warn).toHaveBeenCalledWith('curation: posture unavailable: partition refused')
+    } finally {
+      build.mockRestore()
+    }
+  })
   it('hands off with a nudge and returns immediately when the lease is held', async () => {
     const h = harness({ lease: { kind: 'held', holder: { pid: 4242 } } as never })
     const tail = runPostRunTail(options(h))

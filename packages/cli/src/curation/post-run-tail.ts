@@ -75,6 +75,7 @@ import {
   type RunCurationTailOptions,
 } from './curation-tail.js'
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
+import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
 
 /**
  * What became of the durable hand-off.
@@ -459,6 +460,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   let analyzeRunCompleted = false
   let host: LocalAgentHost | undefined
   let knowledgeRoot: string | undefined
+  let posturePromise: ReturnType<typeof buildPromotionPostureResolver> | undefined
+  let resolvePromotionPosture: RunCurationTailOptions['resolvePromotionPosture']
   /**
    * The lease the pump holds, read by `curateRun` at CLAIM time rather than at composition
    * time. The host is composed before the lease is acquired — the enqueue must not wait on a
@@ -479,6 +482,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     )
     const deadlineMs = input.deadlineMs ?? drainDeadlineMs
     const folded = await ops().curateCompletedRun({
+      ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
       runDir: curatedRunDir,
       handoff,
       knowledgeRoot,
@@ -532,6 +536,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // resolved costs a warning and no fence.
         knowledgeRoot ??= ops().resolveKnowledgeRoot(opts.knowledgeConfig, opts.configDir)
         root = knowledgeRoot
+        const posture = await (posturePromise ??= buildPromotionPostureResolver({ configPath: opts.configPath }))
+        resolvePromotionPosture = promotionPostureResolverForHost(posture, message => opts.log.warn(message))
       } catch (error) {
         // Constructing the operations table reads the shipped modules, and a build where one of
         // those reads throws must not send the exception past `runVerdictFirstCurationTail` into
@@ -700,6 +706,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // (Pitfall 11). This run's own directory is already receipted by the fold the chain
         // just ran, so the sweep skips it rather than folding it twice.
         await ops().runCurationTail({
+          ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
           runId: opts.runId,
           agentQaRoot: opts.agentQaRoot,
           knowledgeConfig: opts.knowledgeConfig,

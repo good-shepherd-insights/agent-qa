@@ -155,6 +155,8 @@ describe('buildPromotionPostureResolver', () => {
     const result = await build(f.configPath)
     expect(result?.kind).toBe('ready')
     expect(result.resolve(candidate)).toMatchObject({ kind: 'resolved', gateSetVerdict: 'ok', gateSetNonEmpty: true })
+    rmSync(join(f.committedRoot, 'corpus'), { recursive: true })
+    expect(result.resolve(candidate)).toMatchObject({ kind: 'resolved', gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, counts: { natural: 0 } })
   })
 
   it('T-416-15 reads identity without secrets, auth state, provider credentials or model resolution', async () => {
@@ -172,5 +174,20 @@ describe('buildPromotionPostureResolver', () => {
     expect(auth).not.toHaveBeenCalled()
     expect(reads.mock.calls.map(call => String(call[0])).filter(path => path.includes('.env') || path.includes('auth-states'))).toEqual([])
     expect(vi.mocked(fs.readdir).mock.calls.map(call => String(call[0])).filter(path => path.includes('auth-states'))).toEqual([])
+  })
+
+  it('discloses a candidate-time refusal after a ready host without losing its rows', async () => {
+    const f = fixture({ floor: true })
+    const result = await build(f.configPath)
+    expect(result?.kind).toBe('ready')
+    const warn = vi.fn()
+    const resolvePosture = subject!.promotionPostureResolverForHost(result, warn)
+    mkdirSync(join(f.committedRoot, 'contracts'))
+    const path = join(f.committedRoot, 'contracts/partition-example-web.json')
+    writeFileSync(path, '{ invalid')
+    const posture = resolvePosture(candidate)
+    expect(posture.kind).toBe('unavailable')
+    expect(posture.refusals.join('; ')).toContain(path)
+    expect(warn).toHaveBeenCalledWith(`curation: ${candidate.id} posture unavailable: ${posture.refusals.join('; ')}`)
   })
 })

@@ -20,6 +20,7 @@ import { readdirSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
 
 import {
   createMaskingContext,
@@ -153,6 +154,7 @@ interface KnowledgeDrainStatus {
 }
 
 export interface KnowledgePaths {
+  configPath: string
   knowledgeRoot: string
   runtimeRoot: string
   auditBaseDir: string
@@ -251,6 +253,7 @@ async function resolveKnowledgePaths(command: Command): Promise<KnowledgePaths> 
     knowledgeRoot,
     runtimeRoot,
     auditBaseDir: runtimeRoot,
+    configPath,
   }
 }
 
@@ -402,9 +405,12 @@ function recordInlineDrainSession(
 }
 
 async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
+  const posture = await buildPromotionPostureResolver({ configPath: paths.configPath })
+  const resolvePromotionPosture = promotionPostureResolverForHost(posture, message => emitHuman(message, 'stderr'))
   const seenCandidateIds = new Set<string>()
   let inlineAuthority: { leaseId: string; epoch: number } | undefined
   const report = await drainQueue({
+    ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
     knowledgeRoot: paths.knowledgeRoot,
     auditBaseDir: paths.auditBaseDir,
     author: FALLBACK_CURATOR_AUTHOR,
@@ -442,6 +448,9 @@ async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promis
       pc.red(pc.bold('Knowledge curation queue drain aborted')),
       `  ${renderRemainingDisposition(remainingWork)}`,
     ].join('\n'))
+  }
+  if (options.json !== true) {
+    for (const entry of report.promotions ?? []) emitHuman(renderPromotionLine(entry))
   }
   if (
     report.kind !== 'drained'
