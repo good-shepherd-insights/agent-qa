@@ -110,7 +110,7 @@
 #   S-03  `'adversarial',` deleted from CORPUS_SPLITS         runtime  the three-splits cell        eval / corpus-splits.test.ts
 #   S-04  `'private',` deleted from HELD_OUT_VISIBILITIES     runtime  the two-visibilities cell    eval / corpus-splits.test.ts
 #   S-05  a SEVENTH GENERATOR_KINDS member, cast-smuggled     runtime  the six-generator-kinds cell eval / corpus-splits.test.ts
-#   S-06  `'empty-gate-set',` deleted from the hold reasons   runtime  the twelve-reasons cell      schema / promotion-gate-hold-reasons.test.ts
+#   S-06  `'empty-gate-set',` deleted from the hold reasons   runtime  the nineteen-reasons cell    schema / promotion-gate-hold-reasons.test.ts
 #   S-07  the same deletion, read by the never-bar            testd    promotion-gate.test-d.ts:14:5 schema / promotion-gate.test-d.ts
 #   S-08  a value export planted on eval-local/src/reader.ts  runtime  the D-20 key-set pin         eval-local / reader.test.ts
 #   S-09  listEntries' return widened to CorpusEntry          testd    reader.test-d.ts:19:5        eval-local / reader.test-d.ts
@@ -350,7 +350,8 @@ apply_mutation () {
     S-06|S-07)
       # `empty-gate-set` leaves PROMOTION_GATE_HOLD_REASONS — the ARRAY, not the union (see the
       # LEG INDEX note above for what the union direction does instead).
-      perl -0pi -e "s/\Q  'empty-gate-set',\E\n\Q] as const satisfies readonly PromotionGateHoldReason[]\E/] as const satisfies readonly PromotionGateHoldReason[]/" \
+      # 416 D-16 appended seven reasons: anchor the first new neighbor, not the old list end.
+      perl -0pi -e "s/\Q  'empty-gate-set',\E\n\Q  'gate1-receipt-required',\E\n/  'gate1-receipt-required',\n/" \
         "$REPO_ROOT/$PROMOTION_GATE" ;;
     S-08|S-11)
       # ONE plant, appended to the `/reader` barrel; TWO legs read it. A value export is the
@@ -575,7 +576,7 @@ S01_CELL='declares exactly the three corpus splits, in declaration order'
 S01_TRUNCATED='declares exactly the three corpus splits'
 S04_CELL='declares exactly the two held-out visibilities, in declaration order'
 S05_CELL='declares exactly the six generator kinds, in declaration order'
-S06_CELL='declares exactly the twelve promotion-gate hold reasons, in declaration order'
+S06_CELL='declares exactly the nineteen promotion-gate hold reasons, in declaration order'
 S08_CELL='exports exactly one value from the /reader subpath (D-20 key-set pin)'
 S11_CELL='the eval-local /reader subpath exports exactly one value, openCorpusReader (414 D-19/D-20)'
 S11_COLLATERAL='the export-set extractor sees a planted value export and ignores a type-only re-export'
@@ -841,7 +842,7 @@ echo "       'private' from HELD_OUT_VISIBILITIES REDs the two-visibilities cell
 echo "       set cannot leave quietly; a SEVENTH generator kind smuggled past the satisfies clause"
 echo "       by a cast REDs the runtime projection cell the compiler cannot see, which is the bar"
 echo "       422 will add its member through; removing 'empty-gate-set' from"
-echo "       PROMOTION_GATE_HOLD_REASONS REDs the twelve-reasons cell and its never-bar, so the"
+echo "       PROMOTION_GATE_HOLD_REASONS REDs the nineteen-reasons cell and its never-bar, so the"
 echo "       hold reason 414 landed ahead of PROM-04 is under the v54 bar from today. And of the"
 echo "       proposer's read port: ONE planted value export on the /reader barrel REDs eval-local's"
 echo "       runtime key-set pin AND, in a different package, the source-anchored export-set cell"
