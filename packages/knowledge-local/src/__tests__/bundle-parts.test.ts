@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { ArtifactCopyResult } from '../artifact-copy.js'
 import { renderBundleParts, type RenderBundlePartsInput } from '../bundle-parts.js'
+import { MUTABLE_BUNDLE_TARGETS } from '../journal/bundle-mutation'
 import {
   makeArtifactFixture,
   makeBundleDraftFixture,
@@ -101,6 +102,24 @@ function part(input: ReturnType<typeof renderBundleParts>, relPath: string) {
 }
 
 describe('renderBundleParts committed layout (D-01/D-02)', () => {
+  // 2026-09-07, 416 D-03: optional seventh mutable part; G-12 measures this cell.
+  it('declares exactly the seven mutable bundle targets, in declaration order', () => {
+    expect([...MUTABLE_BUNDLE_TARGETS]).toEqual([
+      'record.md',
+      'provenance.json',
+      'evidence/outcomes.jsonl',
+      'evidence/measurements.json',
+      'evidence/gates.jsonl',
+      'relations.json',
+      'manifest.json',
+    ])
+  })
+
+  it('never renders the optional gates part at publish', () => {
+    expect(renderBundleParts(makeInput()).parts.map(({ relPath }) => relPath))
+      .not.toContain('evidence/gates.jsonl')
+  })
+
   it('renders every committed text part in deterministic order with manifest last', () => {
     const rendered = renderBundleParts(makeInput())
 
