@@ -272,14 +272,27 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
         return { status: 'fail', message: `posture-unavailable — ${learning.refusals[0] ?? 'posture could not be resolved'}` }
       }
       const { replayGateAvailable, judge, canary } = learning.host
+      const judgeLabel = judge.judgeFamily
+        ?? (judge.reason === 'no-judge-configured' ? 'none'
+          : judge.reason === 'no-eligible-judge' ? 'ineligible' : 'not reported')
       if (replayGateAvailable) {
-        return { status: 'pass', message: `gated (Gate 1 bound; judge ${judge.judgeFamily ?? 'none'}; canary evidence ${canary.kind === 'provided' ? canary.attributedRows ?? 0 : 'none'})` }
+        const evidence = canary.kind === 'provided' ? canary.attributedRows ?? 'not reported' : 'none'
+        return {
+          status: 'pass',
+          message: `gated (Gate 1 bound; judge ${judgeLabel}; canary evidence ${evidence})`,
+        }
+      }
+      if (judge.reason === 'no-eligible-judge') {
+        return {
+          status: 'warn',
+          message: 'deterministic-verdict-floor — no replay gate bound; configured judge ineligible',
+        }
       }
       return {
         status: 'warn',
-        message: judge.judgeFamily === undefined
+        message: judge.reason === 'no-judge-configured'
           ? 'deterministic-verdict-floor — no replay gate bound, no judge configured'
-          : `deterministic-verdict-floor — no replay gate bound; judge ${judge.judgeFamily} configured`,
+          : `deterministic-verdict-floor — no replay gate bound; judge ${judgeLabel} configured`,
       }
     },
   }

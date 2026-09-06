@@ -348,6 +348,10 @@ describe('createKnowledgeChecks', () => {
     [false, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'not-provided', rarePathEligible: false }, 'warn', 'deterministic-verdict-floor — no replay gate bound; judge anthropic configured'],
     [true, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'provided', attributedRows: 4, rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge anthropic; canary evidence 4)'],
     [true, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'not-provided', rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge anthropic; canary evidence none)'],
+    [false, { capable: false, reason: 'no-eligible-judge' }, { kind: 'not-provided', rarePathEligible: false }, 'warn', 'deterministic-verdict-floor — no replay gate bound; configured judge ineligible'],
+    [true, { capable: false, reason: 'no-eligible-judge' }, { kind: 'not-provided', rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge ineligible; canary evidence none)'],
+    [true, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'provided', rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge anthropic; canary evidence not reported)'],
+    [true, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'provided', attributedRows: 0, rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge anthropic; canary evidence 0)'],
   ] as const)('reports Learning mode for bound=%s, judge=%j, canary=%j', async (replayGateAvailable, judge, canary, status, message) => {
     const project = makeProject()
     const host: PromotionPostureHostFacts = { replayGateAvailable, judge, canary, corpusDigest: 'a'.repeat(64), minimumGateSet: 3, profileKey: 'test-profile' }
