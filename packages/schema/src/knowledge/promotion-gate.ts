@@ -6,6 +6,7 @@ import type { OriginClass } from './outcome-event'
 import type { BundleStatus } from './trust-fold'
 import type { ScopeKey } from '../identity/scope-key'
 import type { PromotionPath } from './promotion-path'
+import { standingReceiptsByGate, type GateReceipt } from './gate-receipt'
 export { PROMOTION_PATHS, PROMOTION_PATH_STRENGTH, strongerPromotionPath } from './promotion-path'
 export type { PromotionPath } from './promotion-path'
 
@@ -30,18 +31,50 @@ export type ResolvePromotionPosture = (
 
 export type PromotionGateObservation = Pick<DistilledObservation, 'element' | 'error'>
 
-/**
- * 414 D-14. What the host can say about the anti-Goodhart gate set for THIS candidate:
- * whether a replay gate exists here at all, and whether a separable gate set survives
- * provenance-keyed exclusion (`spec/v2/memory.md` §12.4(c)-(d)).
- *
- * Phase 416 (PROM-04) widens this posture; 414 takes only the two booleans the
- * empty-gate-set hold reads.
- */
-export interface PromotionGatePosture {
-  gateSetNonEmpty: boolean
-  replayGateAvailable: boolean
+export const GATE_SET_VERDICT_WORDS = ['ok', 'empty-gate-set', 'unprovenanced-candidate'] as const
+export type GateSetVerdictWord = (typeof GATE_SET_VERDICT_WORDS)[number]
+export interface PromotionJudgePosture {
+  capable: boolean
+  reason: 'eligible' | 'no-judge-configured' | 'no-eligible-judge'
+  judgeFamily?: string
 }
+export interface PromotionCanaryPosture {
+  kind: 'provided' | 'not-provided'
+  attributedRows?: number
+  rarePathEligible: boolean
+}
+export interface PromotionPostureScope {
+  partition: string
+  resolution: 'product-key' | 'default-fallback'
+}
+interface PromotionSplitCounts {
+  natural: number
+  heldOutShared: number
+  heldOutPrivate: number
+  adversarial: number
+}
+export interface PromotionGateSetCounts extends PromotionSplitCounts {
+  excludedCount: number
+  remaining?: { before: PromotionSplitCounts; after: PromotionSplitCounts }
+}
+export interface ResolvedPromotionGatePosture {
+  kind: 'resolved'
+  replayGateAvailable: boolean
+  gateSetNonEmpty: boolean
+  gateSetVerdict: GateSetVerdictWord
+  corpusDigest: string
+  minimumGateSet: number
+  counts: PromotionGateSetCounts
+  scope: PromotionPostureScope
+  judge: PromotionJudgePosture
+  canary: PromotionCanaryPosture
+}
+export interface UnavailablePromotionGatePosture {
+  kind: 'unavailable'
+  replayGateAvailable: boolean
+  refusals: readonly string[]
+}
+export type PromotionGatePosture = ResolvedPromotionGatePosture | UnavailablePromotionGatePosture
 
 /** Bundle-derivable evidence only; callers assemble this view from canonical bundle truth. */
 export interface PromotionGateInput {
@@ -65,6 +98,7 @@ export interface PromotionGateInput {
    * a caller that knows nothing about gate sets keeps the pre-414 answer for every input.
    */
   gatePosture?: PromotionGatePosture
+  gateReceipts?: readonly GateReceipt[]
 }
 
 export type PromotionGateHoldReason =
@@ -80,6 +114,13 @@ export type PromotionGateHoldReason =
   | 'memory-off-anchor'
   | 'user-deprecated'
   | 'empty-gate-set'
+  | 'gate1-receipt-required'
+  | 'gate2-receipt-required'
+  | 'gate-failed'
+  | 'gate-abstained'
+  | 'receipt-stale'
+  | 'unprovenanced-candidate'
+  | 'posture-unavailable'
 
 /**
  * The v54 deletion bar on the hold-reason vocabulary (414 D-14 / D-22).
@@ -107,6 +148,13 @@ export const PROMOTION_GATE_HOLD_REASONS = [
   'memory-off-anchor',
   'user-deprecated',
   'empty-gate-set',
+  'gate1-receipt-required',
+  'gate2-receipt-required',
+  'gate-failed',
+  'gate-abstained',
+  'receipt-stale',
+  'unprovenanced-candidate',
+  'posture-unavailable',
 ] as const satisfies readonly PromotionGateHoldReason[]
 
 export type PromotionGateVerdict =
@@ -117,9 +165,33 @@ function hold(reason: PromotionGateHoldReason): PromotionGateVerdict {
   return { verdict: 'hold', reason }
 }
 
-// 2026-09-06: 416-01 tracer stub: Plan 03 (D-13/D-14) replaces this with the ordered path table.
-function promoteVia(_input: PromotionGateInput): PromotionGateVerdict {
-  return { verdict: 'promote', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] }
+function promoteVia(input: PromotionGateInput): PromotionGateVerdict {
+  const posture = input.gatePosture
+  if (posture === undefined || posture.kind !== 'resolved' || !posture.replayGateAvailable) {
+    return { verdict: 'promote', promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [] }
+  }
+  const standing = standingReceiptsByGate(input.gateReceipts ?? [])
+  const g1 = standing.find(receipt => receipt.gate === 1)
+  if (g1 === undefined) return hold('gate1-receipt-required')
+  if (g1.verdict === 'fail') return hold('gate-failed')
+  if (g1.verdict === 'abstain') return hold('gate-abstained')
+  if (g1.corpusVersion.corpusDigest !== posture.corpusDigest) return hold('receipt-stale')
+
+  const g2 = standing.find(receipt => receipt.gate === 2)
+  if (g2 !== undefined) {
+    if (g2.verdict === 'fail') return hold('gate-failed')
+    if (g2.verdict === 'abstain') return hold('gate-abstained')
+    if (g2.corpusVersion.corpusDigest !== posture.corpusDigest) return hold('receipt-stale')
+    if (g2.producedAtOrdinal >= g1.producedAtOrdinal) {
+      return { verdict: 'promote', promotionPath: 'gate1+gate2',
+        citedReceiptDigests: [g1.receiptDigest, g2.receiptDigest] }
+    }
+  }
+  if (posture.canary.rarePathEligible === true) {
+    return { verdict: 'promote', promotionPath: 'gate1-lower-trust',
+      citedReceiptDigests: [g1.receiptDigest] }
+  }
+  return hold('gate2-receipt-required')
 }
 
 function promotionElementAnchor(
@@ -154,8 +226,17 @@ export function evaluatePromotionGate(input: PromotionGateInput): PromotionGateV
   if (input.status !== 'candidate') return hold('not-candidate')
   if (!input.validityOpen) return hold('window-closed')
   const posture = input.gatePosture
+  if (posture?.kind === 'unavailable') return hold('posture-unavailable')
+  if (posture?.replayGateAvailable === true && posture.gateSetVerdict === 'unprovenanced-candidate') {
+    return hold('unprovenanced-candidate')
+  }
   if (posture?.replayGateAvailable === true && posture.gateSetNonEmpty === false) {
     return hold('empty-gate-set')
+  }
+  const g3 = standingReceiptsByGate(input.gateReceipts ?? []).find(receipt => receipt.gate === 3)
+  if (g3?.verdict === 'pass') {
+    return { verdict: 'promote', promotionPath: 'user-sovereign',
+      citedReceiptDigests: [g3.receiptDigest] }
   }
   if (input.withheld) return hold('withheld')
   if (input.needsEnrichment) return hold('needs-enrichment')

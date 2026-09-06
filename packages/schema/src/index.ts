@@ -651,10 +651,18 @@ export type {
   MeasurementBaseline,
   MeasurementObservation,
 } from './knowledge/index'
-export { evaluatePromotionGate } from './knowledge/index'
+export { GATE_SET_VERDICT_WORDS, evaluatePromotionGate } from './knowledge/index'
 export type {
   PromotionGateHoldReason,
   PromotionGateInput,
+  PromotionGatePosture,
+  ResolvedPromotionGatePosture,
+  UnavailablePromotionGatePosture,
+  GateSetVerdictWord,
+  PromotionJudgePosture,
+  PromotionCanaryPosture,
+  PromotionPostureScope,
+  PromotionGateSetCounts,
   PromotionGateObservation,
   PromotionGateVerdict,
 } from './knowledge/index'

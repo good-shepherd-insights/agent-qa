@@ -69,6 +69,7 @@ export const gate1ArmSchema = z.object({
 }).strict()
 export const gate2ArmSchema = z.object({
   ...receiptCoreShape, gate: z.literal(2), attributedObservationId: z.string().min(1),
+  corpusVersion: z.object({ corpusDigest: sha256 }).strict(),
   benefit: z.enum(BENEFITS), stateValidity: z.enum(STATE_VALIDITIES),
 }).strict()
 export const gate3ArmSchema = z.object({

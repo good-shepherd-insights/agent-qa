@@ -1,6 +1,6 @@
 import { expectTypeOf } from 'vitest'
 import { PROMOTION_GATE_HOLD_REASONS } from '../knowledge/promotion-gate'
-import type { PromotionGateHoldReason, PromotionGatePosture } from '../knowledge/promotion-gate'
+import type { PromotionGateHoldReason, PromotionGatePosture, ResolvedPromotionGatePosture, UnavailablePromotionGatePosture } from '../knowledge/promotion-gate'
 
 /**
  * The type-level half of the v54 bar on the hold-reason vocabulary (414 D-14 / D-22). The
@@ -22,9 +22,13 @@ expectTypeOf<
 expectTypeOf<Extract<PromotionGateHoldReason, 'gate-set-empty'>>().toEqualTypeOf<never>()
 
 /**
- * The posture is exactly two booleans in 414. Phase 416 (PROM-04) widens it, and this bar is
- * what makes that widening a deliberate edit here rather than a silent structural drift.
+ * 416 D-09/D-12: resolved posture and refusal are distinct, exhaustively pinned arms.
  */
-expectTypeOf<keyof PromotionGatePosture>().toEqualTypeOf<
-  'gateSetNonEmpty' | 'replayGateAvailable'
+expectTypeOf<keyof ResolvedPromotionGatePosture>().toEqualTypeOf<
+  'kind' | 'replayGateAvailable' | 'gateSetNonEmpty' | 'gateSetVerdict' | 'corpusDigest' |
+  'minimumGateSet' | 'counts' | 'scope' | 'judge' | 'canary'
 >()
+expectTypeOf<keyof UnavailablePromotionGatePosture>().toEqualTypeOf<
+  'kind' | 'replayGateAvailable' | 'refusals'
+>()
+expectTypeOf<PromotionGatePosture['kind']>().toEqualTypeOf<'resolved' | 'unavailable'>()

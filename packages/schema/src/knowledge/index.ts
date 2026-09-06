@@ -14,12 +14,19 @@ export {
 export type { BundleStatus, DerivedTrustState } from './trust-fold'
 export { cautionRootCauseClassSchema } from './distilled-observation'
 export type { CautionRootCauseClass } from './distilled-observation'
-export { PROMOTION_GATE_HOLD_REASONS, evaluatePromotionGate } from './promotion-gate'
+export { PROMOTION_GATE_HOLD_REASONS, GATE_SET_VERDICT_WORDS, evaluatePromotionGate } from './promotion-gate'
 export type {
   PromotionGateHoldReason,
   PromotionGateInput,
   PromotionGateObservation,
   PromotionGatePosture,
+  ResolvedPromotionGatePosture,
+  UnavailablePromotionGatePosture,
+  GateSetVerdictWord,
+  PromotionJudgePosture,
+  PromotionCanaryPosture,
+  PromotionPostureScope,
+  PromotionGateSetCounts,
   PromotionGateVerdict,
 } from './promotion-gate'
 export {
