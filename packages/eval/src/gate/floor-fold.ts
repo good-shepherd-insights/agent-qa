@@ -181,7 +181,7 @@ function nullLifts(
       optimizeLift: lift(optimizeDiff),
       heldOutLift: lift(heldOutDiff),
       ...generalizationRatio({
-        optimizeLiftDecisions: optimizeDiff.n,
+        optimizeLiftDecisions: Math.abs(optimizeDiff.aOnly - optimizeDiff.bOnly),
         optimizeLiftRate: Math.abs(optimizeDiff.deltaAcc ?? 0),
         heldOutLiftRate: Math.abs(heldOutDiff.deltaAcc ?? 0),
         floor,
