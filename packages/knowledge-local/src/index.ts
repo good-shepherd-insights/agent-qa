@@ -222,6 +222,8 @@ export {
   scanBundleById,
   scanBundles,
 } from './bundle-scan.js'
+export { readCanonicalBundleStateDigests } from './canonical-bundle-state-digests.js'
+export type { CanonicalBundleStateDigests } from './canonical-bundle-state-digests.js'
 export type {
   CanonicalBundleAnchorLookup,
   EnumeratedBundleDir,
