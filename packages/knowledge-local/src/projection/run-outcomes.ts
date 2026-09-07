@@ -9,7 +9,7 @@
  * The projection knows ABOUT tests (identity, counters, anchors, flags) and never CONTAINS
  * them: no test file content enters the store, and tests are never memidex-indexed.
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
@@ -59,6 +59,7 @@ import type {
   RefusedQuarantineLine,
 } from '../quarantine/ledger.js'
 import { fingerprintRecurrence, windowFloor } from './fingerprint-window-read.js'
+import { isAbsenceErrno, pathPresent } from './path-present.js'
 import { readTestOutcomeHistory } from './run-outcome-read.js'
 import { applySuiteFingerprints, suiteFingerprintDeltas } from './suite-fingerprints.js'
 import type { SuiteFingerprintTestDelta } from './suite-fingerprints.js'
@@ -629,7 +630,7 @@ function loadRunArtifact(runDir: string, runId: string): RunAnalysisArtifact | u
   try {
     bytes = readFileSync(join(runDir, ANALYSIS_FILE), 'utf8')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    if (isAbsenceErrno(error)) return undefined
     throw error
   }
   const admission = admitAnalysisArtifactForRun(
@@ -644,7 +645,7 @@ function loadRebuildHandoff(file: string): CompletedRunHandoff | undefined {
   try {
     bytes = readFileSync(file, 'utf8')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    if (isAbsenceErrno(error)) return undefined
     throw error
   }
 
@@ -702,8 +703,9 @@ function readStoredProjectionVersion(db: DatabaseSync): number | undefined {
  * empty edge). BAD-BYTES load failures and pre-381 shapes are counted skips — including a run whose
  * `analysis.json` will not decode, which costs that run's contribution and nothing else (393 round
  * 6, CR-01). One undecodable artifact must never truncate a family this function has already
- * deleted; an errno-coded HOST fault on either document propagates instead, so no sweep can stamp a
- * family the filesystem prevented it from reading (393 round 8, CR-01-READ).
+ * deleted; an errno-coded HOST fault on either document, on the runs root, or on any run dir
+ * propagates instead, so no sweep can stamp a family the filesystem prevented it from reading
+ * (418-12, CR-01-EXISTS). The read-before-delete boundary is established separately below.
  *
  * DELETE-FIRST, STAMP-LAST, and that order is the crash story rather than a style choice (393
  * CR-02). The version row is cleared with the family it describes and re-written only after the
@@ -730,11 +732,11 @@ export function rebuildRunOutcomes(
   // A missing runs root is the ABRF-02 empty edge, not a failure: the family is legitimately
   // empty at the CURRENT semantics, so it still earns the stamp below — otherwise a project with
   // no runs yet would rebuild on every single sweep forever.
-  if (existsSync(runsRoot)) {
+  if (pathPresent(runsRoot, 'directory') === 'present') {
     const runDirs = readdirSync(runsRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => join(runsRoot, entry.name))
-      .filter((dir) => existsSync(join(dir, RUN_HANDOFF_FILE)))
+      .filter((dir) => pathPresent(join(dir, RUN_HANDOFF_FILE), 'file') === 'present')
       .sort()
 
     for (const runDir of runDirs) {

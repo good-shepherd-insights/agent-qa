@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -584,6 +584,41 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       { product: 'shop-web', run_id: '002-second' },
     ])
   })
+
+  it.skipIf(process.getuid?.() === 0).each(['002-login', 'runs-holder'])(
+    'refuses EACCES at %s without returning a folded report (418-12 CR-01-EXISTS)',
+    (faultSite) => {
+      const holder = tempDir('run-outcomes-refusal-')
+      const runsRoot = join(holder, 'runs')
+      for (const [index, name] of ['001-checkout', '002-login'].entries()) {
+        const dir = join(runsRoot, name)
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(join(dir, 'handoff.json'), JSON.stringify(handoffFixture({
+          runId: name,
+          buildOrdinal: index + 1,
+          scope: SHOP_SCOPE,
+          tests: [{
+            filePath: `suite/${name}.test.ts`,
+            testId: name,
+            outcome: 'passed',
+            steps: [{ stepIndex: 0, anchors: [index === 0 ? checkoutAnchor : payAnchor] }],
+          }],
+        })))
+      }
+      const db = openDb()
+      expect(rebuildRunOutcomes(db, runsRoot, { extractAnchors }).folded).toBe(2)
+      const inaccessible = faultSite === 'runs-holder' ? holder : join(runsRoot, faultSite)
+      let report: unknown
+      chmodSync(inaccessible, 0o000)
+      try {
+        expect(() => { report = rebuildRunOutcomes(db, runsRoot, { extractAnchors }) })
+          .toThrow(expect.objectContaining({ code: 'EACCES' }))
+        expect(report).toBeUndefined()
+      } finally {
+        chmodSync(inaccessible, 0o755)
+      }
+    },
+  )
 
   it('rebuild over an empty or missing runs dir yields empty tables without error (ABRF-02 empty edge)', () => {
     const emptyRoot = tempDir('run-outcomes-empty-')
