@@ -46,6 +46,7 @@
     "validate:release-gate": "bash scripts/m3-release-gate.sh",
     "validate:floor-mutation": "bash scripts/415-floor-mutation.sh",
     "validate:gate-mutation": "bash scripts/416-gate-mutation.sh",
+    "validate:gate1-mutation": "bash scripts/417-gate1-mutation.sh",
     "release:docker": "node scripts/release/docker.mjs",
     "release:docker:check": "node scripts/release/docker.mjs --check-local",
     "release:dry-run": "node scripts/release/dry-run.mjs",

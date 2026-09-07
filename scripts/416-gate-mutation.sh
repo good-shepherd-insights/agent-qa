@@ -361,9 +361,10 @@ run_leg () {
     [ "$id" != G-04 ] || expected_blocks=2
     [ "$id" != G-13 ] || expected_blocks=9
     # Measured complete TypeCheckError blocks through their pointers, in emitted order.
-    # G-04: 416-03-path-pin.log; G-13: 416-06-g13-measured.log (2026-09-07).
-    [ "$id" != G-04 ] || diagnostic_digest=725aa6f1883e48603de26330ad22d39be5b9b75e473734cd8a87366772a49954
-    [ "$id" != G-13 ] || diagnostic_digest=d574e78496a7c8a086ccf1cb9c8a1152ba33f7dd7744ce946468446889710159
+    # 417-09 refresh: G-04 pointer 34 -> 112; G-13 additive arm renders 24 fields.
+    # Complete blocks measured in 417-09-gate-mutation[-refreshed].log (2026-09-07).
+    [ "$id" != G-04 ] || diagnostic_digest=f707c1984e440a28604de0833d90996ded063fb787d549d8dc6139a3e530aed1
+    [ "$id" != G-13 ] || diagnostic_digest=874032b0f90d2290971ea87a5a06e62c31e77940aee1ec2e696008b5ff99732d
     set +e
     blocks="$(grep -c 'TypeCheckError' "$LOG" | tr -d '[:space:]')"
     set -e
@@ -586,7 +587,7 @@ instrument_self_check () {
   # Control 5 — G-04 collateral alone must never certify the intended never-bar.
   local sc_target="$PROMOTION_TESTD:37:74"
   printf '%s\n' 'TypeCheckError: source collateral' \
-    ' ❯ src/__tests__/gate-receipt.test.ts:34:69' > "$sc_log"
+    ' ❯ src/__tests__/gate-receipt.test.ts:112:69' > "$sc_log"
   if testd_target_match "$sc_log" "$sc_target"; then
     fatal "the path never-bar accepted collateral alone"
   fi
@@ -645,7 +646,7 @@ run_leg G-03 "user-sovereign removed from PROMOTION_PATHS" runtime "$G03_CELL" "
 G04_REQUIRED="$PROMOTION_TESTD [ $PROMOTION_TESTD ]
 $PROMOTION_TESTD:37:74"
 G04_ALLOWED="$G04_REQUIRED
-src/__tests__/gate-receipt.test.ts:34:69"
+src/__tests__/gate-receipt.test.ts:112:69"
 run_leg G-04 "the same removal, read by the path never-bar with measured collateral" testd "$G04_REQUIRED" "$G04_ALLOWED" "$SCHEMA_FILTER" "$PROMOTION_TESTD" "$PROMOTION_PATH" ""
 run_leg G-05 "3 removed from GATE_NUMBERS" runtime "$G05_CELL" "$G05_CELL" "$SCHEMA_FILTER" "$RECEIPT_SUITE" "$GATE_RECEIPT" ""
 run_leg G-06 "abstain removed from GATE_VERDICTS" runtime "$G06_CELL" "$G06_CELL" "$SCHEMA_FILTER" "$RECEIPT_SUITE" "$GATE_RECEIPT" ""

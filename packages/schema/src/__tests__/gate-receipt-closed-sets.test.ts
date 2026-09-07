@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
-  GATE_NUMBERS, GATE_VERDICTS, CROSS_CHECKS, DEGRADATIONS, BENEFITS, MARKS, STATE_VALIDITIES,
+  GATE_NUMBERS,
+  GATE_VERDICTS,
+  CROSS_CHECKS,
+  DEGRADATIONS,
+  BENEFITS,
+  MARKS,
+  STATE_VALIDITIES,
 } from '../knowledge/gate-receipt'
 
 // 2026-09-06, 416 D-02: the v54 runtime bar. Plan 06 measures these named cells with
@@ -26,5 +32,57 @@ describe('416 receipt closed vocabularies', () => {
   })
   it('declares exactly the three state validities, in declaration order', () => {
     expect([...STATE_VALIDITIES]).toEqual(['valid', 'stale', 'unknown'])
+  })
+})
+
+import {
+  GATE1_REASONS,
+  GATE1_TARGET_SOURCES,
+  GATE1_K_SOURCES,
+  GATE1_HARM_ORIGINS,
+  gate1SpendSchema,
+} from '../knowledge/gate-receipt'
+
+describe('417 Gate-1 closed vocabularies', () => {
+  it('declares exactly the twelve Gate-1 reasons, in declaration order', () => {
+    expect([...GATE1_REASONS]).toEqual([
+      'tier-not-implemented',
+      'unprovenanced-candidate',
+      'empty-gate-set',
+      'target-unavailable',
+      'baseline-uncached',
+      'collateral-unscorable',
+      'cap-exceeded',
+      'no-positive-value',
+      'collateral-harm',
+      'target-not-reproduced',
+      'inconclusive',
+      'same-family-refused',
+    ])
+  })
+  it('declares exactly the two Gate-1 target sources, in declaration order', () => {
+    expect([...GATE1_TARGET_SOURCES]).toEqual(['committed', 'extracted'])
+  })
+  it('declares exactly the three Gate-1 k sources, in declaration order', () => {
+    expect([...GATE1_K_SOURCES]).toEqual(['flag', 'config', 'default'])
+  })
+  it('declares exactly the two Gate-1 harm origins, in declaration order', () => {
+    expect([...GATE1_HARM_ORIGINS]).toEqual(['gate-set', 'target-step'])
+  })
+  it('accepts exactly the five Gate-1 spend keys', () => {
+    const spend = {
+      screens: 0,
+      modelCalls: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      wallClockMs: 0,
+    }
+    expect(gate1SpendSchema.safeParse(spend).success).toBe(true)
+    for (const key of Object.keys(spend)) {
+      const missing: Record<string, number> = { ...spend }
+      delete missing[key]
+      expect(gate1SpendSchema.safeParse(missing).success).toBe(false)
+    }
+    expect(gate1SpendSchema.safeParse({ ...spend, cost: 0 }).success).toBe(false)
   })
 })
