@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import {
   buildEvalReport,
   committedFileText,
@@ -57,8 +58,22 @@ const RUN_IDS = [
   'r_epoch-ind-stripe-spot-dating-eld-cod-fon-mort-footer',
 ] as const
 
-export function writeGate1Fixture(root: string, options = { collateral: 5 }) {
-  const count = options.collateral + 1
+export function writeGate1Fixture(
+  root: string,
+  options: {
+    collateral?: number
+    targetInCorpus?: boolean
+    handoffForTarget?: boolean
+    targetDecisions?: number
+  } = {},
+) {
+  const {
+    collateral = 5,
+    targetInCorpus = true,
+    handoffForTarget = false,
+    targetDecisions = 1,
+  } = options
+  const count = collateral + 1
   if (count > RUN_IDS.length || count < 2)
     throw new Error('fixture supports one to five collateral leaves')
   const committedRoot = join(root, 'committed')
@@ -67,6 +82,7 @@ export function writeGate1Fixture(root: string, options = { collateral: 5 }) {
   const store = new FsCommittedRootStore({ committedRoot })
   store.scaffold(COMMITTED_GITIGNORE_TEXT, committedFileText(buildRootMarkerValue()))
   const cassetteStore = new FsCassetteStore({ root, outputDir: cassettesRoot })
+  const targetIds: string[] = []
   for (let index = 0; index < count; index++) {
     const handoff = makeReplayHandoff({
       vision: false,
@@ -95,24 +111,43 @@ export function writeGate1Fixture(root: string, options = { collateral: 5 }) {
     const brief = handoff.tests[0]!.steps[0]!.servedBrief!
     brief.scope = handoff.scope
     brief.briefDigest = computeBriefDigest(brief)
-    const leaf = extractRunCassettes({ handoff, artifacts: memArtifacts() }).cassettes.find(
+    if (index === count - 1) {
+      const step = handoff.tests[0]!.steps[0]!
+      for (let ordinal = 1; ordinal < targetDecisions; ordinal++) {
+        const sibling = structuredClone(step.subActions![0]!)
+        sibling.stateBefore!.tree = `gate1-target-sibling-${ordinal}: button Continue`
+        step.subActions!.push(sibling)
+      }
+      if (handoffForTarget) {
+        const runDir = join(agentQaRoot, 'runs', slugBranch(handoff.runId))
+        mkdirSync(runDir, { recursive: true })
+        writeFileSync(join(runDir, 'handoff.json'), JSON.stringify(handoff))
+      }
+    }
+    const leaves = extractRunCassettes({ handoff, artifacts: memArtifacts() }).cassettes.filter(
       (row) => row.cassette.granularity === 'leaf',
-    )!
-    if (leaf.cassette.granularity !== 'leaf') throw new Error('expected leaf')
-    cassetteStore.write(leaf)
-    const entry = projectCorpusEntry({
-      cassette: leaf.cassette,
-      product: 'alpha',
-      runId: handoff.runId,
-      assignment:
-        index % 3 === 0
-          ? { split: 'natural' }
-          : {
-              split: 'held-out',
-              heldOutVisibility: index % 3 === 1 ? 'shared' : 'private',
-            },
-    })
-    store.writeText(committedCorpusPath('alpha', leaf.cassette.id), committedFileText(entry))
+    )
+    for (const leaf of leaves) {
+      if (leaf.cassette.granularity !== 'leaf') throw new Error('expected leaf')
+      if (index === count - 1) {
+        targetIds.push(leaf.cassette.id)
+        if (!targetInCorpus) continue
+      }
+      cassetteStore.write(leaf)
+      const entry = projectCorpusEntry({
+        cassette: leaf.cassette,
+        product: 'alpha',
+        runId: handoff.runId,
+        assignment:
+          index % 3 === 0
+            ? { split: 'natural' }
+            : {
+                split: 'held-out',
+                heldOutVisibility: index % 3 === 1 ? 'shared' : 'private',
+              },
+      })
+      store.writeText(committedCorpusPath('alpha', leaf.cassette.id), committedFileText(entry))
+    }
   }
   const partition = projectPartitionManifest({
     product: 'alpha',
@@ -141,9 +176,9 @@ export function writeGate1Fixture(root: string, options = { collateral: 5 }) {
   }
   const profileKey = composeBaselineProfileKey(identity)
   const gateRoot = join(agentQaRoot, 'eval', 'gate', slugBranch(profileKey))
-  const targetId = selected.find((row) => row.cassette.runId === RUN_IDS[count - 1])!.cassette.id
+  const targetId = targetIds[0]!
   const collateralIds = selected
-    .filter((row) => row.cassette.id !== targetId)
+    .filter((row) => !targetIds.includes(row.cassette.id))
     .map((row) => row.cassette.id)
   const line = {
     id: asRecordId('gate1-candidate'),
@@ -274,6 +309,7 @@ export function writeGate1Fixture(root: string, options = { collateral: 5 }) {
     gateRoot,
     collateralIds,
     targetId,
+    targetIds,
     injection,
     artefact,
   }

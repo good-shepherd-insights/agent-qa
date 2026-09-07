@@ -1,6 +1,8 @@
 // 2026-09-07, 417: guarded committed reads + the profile cache + pure eval arithmetic.
 // All replay calls delegate to the existing safety-scoped composition. Writes are gate-local.
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { HANDOFF_FILE, RUNS_SUBDIR, loadCompletedRunHandoff } from '@vostride/agent-qa-runner-local'
 import {
   assertCommittedEgressSafe,
   defaultGuardrailPolicyInput,
@@ -16,6 +18,7 @@ import {
   decisionCorrectnessVectors,
   decisionIdentityKey,
   deriveSampleSeeds,
+  extractRunCassettes,
   diffArms,
   FLOOR_AXES,
   foldPerAxisScore,
@@ -30,6 +33,7 @@ import {
   toDeclaredBriefDelta,
   type ArmDecision,
   type ArtifactSource,
+  type CorpusEntry,
   type DeclaredBriefDelta,
   type DiffedDecision,
   type LeafCassette,
@@ -65,8 +69,89 @@ import { runCassetteReplay, type RunCassetteReplayInput } from './replay-composi
 import { FsReplayRecordStore } from './replay-record-store.js'
 import { FsScoreStore, type ScoreRecord } from './score-store.js'
 import { loadScoreRecord } from './replay-read.js'
+import { loadCassetteBundle } from './cassette-loader.js'
+import { FsCassetteStore } from './cassette-store.js'
+import { FsRunArtifactSource } from './artifact-source.js'
 
 export const GATE1_AUDIT_SUBDIR = 'eval/gate1'
+export const GATE1_TARGET_SUBDIR = 'target'
+
+/** A slug locates storage; only the loaded run/step/test establishes target identity. */
+export async function locateTargetCassettes(input: {
+  committedRoot: string
+  agentQaRoot: string
+  gate1Dir: string
+  corpusEntries: readonly CorpusEntry[]
+  target: NonNullable<CandidateInjection['target']>
+}): Promise<
+  | { kind: 'committed' | 'extracted'; cassettes: LeafBundle[]; detail: TargetLocationDetail }
+  | { kind: 'unavailable'; detail: TargetLocationDetail }
+> {
+  const { target } = input
+  const entries = input.corpusEntries.filter((entry) => entry.run_links.runId === target.runId)
+  const handoffPath = join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(target.runId), HANDOFF_FILE)
+  const detail: TargetLocationDetail = {
+    runId: target.runId,
+    stepIndex: target.stepIndex,
+    corpusEntriesForRun: entries.length,
+    handoffPresent: existsSync(handoffPath),
+  }
+  const matches = (cassette: LeafCassette) =>
+    cassette.runId === target.runId &&
+    cassette.stepIndex === target.stepIndex &&
+    (target.testId === undefined || cassette.input.testId === target.testId)
+  const entryIds = new Set(entries.map((entry) => entry.cassetteId))
+  const committed: LeafBundle[] = []
+  for (const bundle of loadCassetteBundles(join(input.committedRoot, 'cassettes')).loaded)
+    if (
+      entryIds.has(bundle.cassette.id) &&
+      bundle.cassette.granularity === 'leaf' &&
+      matches(bundle.cassette)
+    )
+      committed.push({ cassette: bundle.cassette, artifacts: bundle.artifacts })
+  if (committed.length) return { kind: 'committed', cassettes: committed, detail }
+  if (!detail.handoffPresent) return { kind: 'unavailable', detail }
+  let extraction: ReturnType<typeof extractRunCassettes>
+  try {
+    const handoff = loadCompletedRunHandoff(handoffPath)
+    if (handoff.runId !== target.runId)
+      return { kind: 'unavailable', detail: { ...detail, reason: 'loaded handoff runId mismatch' } }
+    extraction = extractRunCassettes({
+      handoff,
+      artifacts: new FsRunArtifactSource({ root: input.agentQaRoot, runId: handoff.runId }),
+    })
+  } catch (error) {
+    return {
+      kind: 'unavailable',
+      detail: { ...detail, reason: error instanceof Error ? error.message : String(error) },
+    }
+  }
+  const store = new FsCassetteStore({
+    root: input.agentQaRoot,
+    outputDir: join(input.gate1Dir, GATE1_TARGET_SUBDIR, 'cassettes'),
+  })
+  const cassettes: LeafBundle[] = []
+  for (const extracted of extraction.cassettes) {
+    if (extracted.cassette.granularity !== 'leaf' || !matches(extracted.cassette)) continue
+    const bundle = loadCassetteBundle(store.write(extracted).dir)
+    if (
+      bundle.kind === 'loaded' &&
+      bundle.cassette.granularity === 'leaf' &&
+      matches(bundle.cassette)
+    )
+      cassettes.push({ cassette: bundle.cassette, artifacts: bundle.artifacts })
+  }
+  return cassettes.length
+    ? { kind: 'extracted', cassettes, detail }
+    : { kind: 'unavailable', detail }
+}
+interface TargetLocationDetail {
+  runId: string
+  stepIndex: number
+  corpusEntriesForRun: number
+  handoffPresent: boolean
+  reason?: string
+}
 
 /** The CLI's JSON egress uses the same guarded DTO boundary as persisted receipts. */
 export function serializeReplayGateReceipt(receipt: unknown): string {
@@ -418,7 +503,9 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       corpusDigest: computeCorpusDigest(corpus.snapshot.entries),
       partitionVersion:
         partitions.manifests.find((row) => row.product === injection.product)?.partitionVersion ??
-        floor.partitionVersion,
+        (corpus.snapshot.entries.some((row) => row.product === injection.product)
+          ? floor.partitionVersion
+          : 0),
       gateSetSize: 0,
       excludedCount: 0,
       minimumGateSet: minimum.minimumGateSet,
@@ -484,20 +571,23 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
         }
       bundles.set(row.cassette.id, { cassette: row.cassette, artifacts: row.artifacts })
     }
-  const targets: LeafBundle[] = []
-  for (const entry of corpus.snapshot.entries.filter(
-    (row) => row.run_links.runId === injection.target!.runId && row.product === injection.product,
-  )) {
-    const bundle = bundles.get(entry.cassetteId)
-    if (
-      bundle?.cassette.runId === injection.target.runId &&
-      bundle.cassette.stepIndex === injection.target.stepIndex &&
-      (injection.target.testId === undefined ||
-        bundle.cassette.input.testId === injection.target.testId)
+  const gate1Dir = join(input.agentQaRoot, GATE1_AUDIT_SUBDIR, slugBranch(injection.candidateId))
+  const located = await locateTargetCassettes({
+    committedRoot: input.committedRoot,
+    agentQaRoot: input.agentQaRoot,
+    gate1Dir,
+    corpusEntries: corpus.snapshot.entries.filter((row) => row.product === injection.product),
+    target: injection.target,
+  })
+  if (located.kind === 'unavailable') {
+    const d = located.detail
+    notices.push(
+      `target-unavailable: runId=${d.runId} stepIndex=${d.stepIndex} corpusEntriesForRun=${d.corpusEntriesForRun} handoffPresent=${d.handoffPresent}${d.reason === undefined ? '' : ' reason=' + d.reason}`,
     )
-      targets.push(bundle)
+    return abstain('target-unavailable')
   }
-  if (targets.length === 0) return abstain('target-unavailable')
+  const targets = located.cassettes
+  for (const target of targets) bundles.set(target.cassette.id, target)
   const allIds = [
     ...new Set([
       ...gate.gateEntries.map((row) => row.cassetteId),
@@ -538,6 +628,24 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       promptInputHash: bundles.get(id)!.cassette.receipt.promptInputHash,
     })),
   })
+  // D-01 + literal D-06: extraction cannot inherit a committed-profile baseline,
+  // even when a stale/colliding directory happens to contain an identically slugged id.
+  if (located.kind === 'extracted') {
+    const extractedIds = new Set(targets.map((target) => target.cassette.id))
+    cache.rows = cache.rows.map((row) =>
+      extractedIds.has(row.cassetteId)
+        ? {
+            kind: 'uncached',
+            cassetteId: row.cassetteId,
+            reason: 'extracted target has no committed-profile baseline',
+          }
+        : row,
+    )
+    for (const id of extractedIds)
+      notices.push(
+        `target ${id} was extracted from the local handoff and has no committed-profile baseline; seed the run into the corpus, re-run eval gate to warm its baseline, then re-run eval replay-gate`,
+      )
+  }
   const uncached = cache.rows.filter((row) => row.kind === 'uncached')
   if (uncached.length) {
     notices.push(
@@ -551,12 +659,20 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     (row) => cacheById.get(row.cassetteId)?.kind === 'cached',
   )
   if (scoredCollateral.length === 0) return abstain('collateral-unscorable')
-  const planned = scoredCollateral.length + targets.length + 2 * (input.k - 1) * targets.length
+  const targetsToCrossCheck = targets.filter(({ cassette }) => {
+    const cached = cacheById.get(cassette.id)
+    if (cached?.kind !== 'cached') return false
+    const baseline = arm(cassette, cached.replay, cached.score)
+    return baseline.kind === 'scored' && baseline.vector.axes.headline === 'incorrect'
+  }).length
+  const scoredTargets = targets.filter(
+    (target) => cacheById.get(target.cassette.id)?.kind === 'cached',
+  ).length
+  const planned = scoredCollateral.length + scoredTargets + 2 * (input.k - 1) * targetsToCrossCheck
   if (planned > input.maxScreens) {
     notices.push(`planned ${planned} screens exceeds cap ${input.maxScreens}`)
     return abstain('cap-exceeded')
   }
-  const gate1Dir = join(input.agentQaRoot, GATE1_AUDIT_SUBDIR, slugBranch(injection.candidateId))
   const spend = receipt.spend!
   const auth = await input.planner.resolveAuth()
   const replay: ReplayBag = {
@@ -706,7 +822,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       runId: cassette.runId,
       stepIndex: cassette.stepIndex,
       decisionOrdinal: cassette.decisionOrdinal,
-      source: 'committed',
+      source: located.kind,
       baselineCorrect:
         row.baseline.kind === 'scored' && row.baseline.vector.axes.headline === 'correct',
       candidateCorrect:

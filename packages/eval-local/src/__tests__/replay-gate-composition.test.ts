@@ -1,4 +1,12 @@
-import { mkdtempSync, mkdirSync, rmSync, readdirSync, readFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -16,10 +24,10 @@ import {
 import { incrementingClock } from './fixtures/floor-fixtures.js'
 
 const roots: string[] = []
-function fixture() {
+function fixture(options?: Parameters<typeof writeGate1Fixture>[1]) {
   const root = mkdtempSync(join(tmpdir(), 'gate1-'))
   roots.push(root)
-  return writeGate1Fixture(root)
+  return writeGate1Fixture(root, options)
 }
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
@@ -42,9 +50,13 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     expect(Reflect.get(evalLocal, 'runReplayGate')).toBeTypeOf('function')
     expect(Reflect.get(evalLocal, 'removalFlipsOutcome')).toBeTypeOf('function')
   })
-  async function warm() {
-    const f = fixture()
-    const baseline = respondingStub(gate1Responder(f))
+  async function warm(options?: Parameters<typeof writeGate1Fixture>[1], allCorrect = false) {
+    const f = fixture(options)
+    const baseline = respondingStub((call) =>
+      allCorrect || JSON.stringify(call.prompt).includes('gate1-target-sibling-1')
+        ? actionGenerateResult()
+        : gate1Responder(f)(call),
+    )
     await warmGateRoot(f, baseline)
     const stub = respondingStub(gate1Responder(f))
     const input: evalLocal.RunReplayGateInput = {
@@ -67,6 +79,112 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     }
     return { f, baseline, stub, input }
   }
+  it('extracts a local target only into its audit directory and abstains baseline-uncached without warming', async () => {
+    const { f, stub, input } = await warm({ targetInCorpus: false, handoffForTarget: true })
+    const before = digestTree(f.committedRoot)
+    input.planner.resolveAuth = async () => {
+      throw new Error('no auth before cache')
+    }
+    const result = await evalLocal.runReplayGate(input)
+    expect(receipt(result)).toMatchObject({ verdict: 'abstain', reasons: ['baseline-uncached'] })
+    expect(receipt(result).targets).toBeUndefined()
+    expect(result.notices.join('\n')).toContain(f.targetId)
+    expect(result.notices.join('\n')).toContain('seed the run into the corpus')
+    expect(
+      existsSync(
+        join(
+          f.agentQaRoot,
+          'eval/gate1',
+          slugBranch(f.injection.candidateId),
+          'target/cassettes',
+          f.targetId,
+          'cassette.json',
+        ),
+      ),
+    ).toBe(true)
+    expect(existsSync(join(f.agentQaRoot, 'eval/cassettes'))).toBe(false)
+    expect(digestTree(f.committedRoot)).toEqual(before)
+    expect(stub.captured).toHaveLength(0)
+  })
+  it.each(['absent', 'version', 'identity', 'step', 'test'])(
+    'names an unavailable target from a %s handoff',
+    async (mode) => {
+      const { f, stub, input } = await warm({
+        targetInCorpus: false,
+        handoffForTarget: mode !== 'absent',
+      })
+      const path = join(
+        f.agentQaRoot,
+        'runs',
+        slugBranch(f.injection.target!.runId),
+        'handoff.json',
+      )
+      if (mode === 'version') {
+        const handoff = JSON.parse(readFileSync(path, 'utf8'))
+        handoff.schemaVersion = 999
+        writeFileSync(path, JSON.stringify(handoff))
+      }
+      if (mode === 'identity') {
+        // Slug location is not identity: the canonical loaded run differs from this DATA reference.
+        input.injection = {
+          ...f.injection,
+          target: { ...f.injection.target!, runId: f.injection.target!.runId.replace('-', '/') },
+        }
+      }
+      if (mode === 'step')
+        input.injection = { ...f.injection, target: { ...f.injection.target!, stepIndex: 99 } }
+      if (mode === 'test')
+        input.injection = {
+          ...f.injection,
+          target: { ...f.injection.target!, testId: 'different-test' },
+        }
+      input.planner.resolveAuth = async () => {
+        throw new Error('no auth before target')
+      }
+      const result = await evalLocal.runReplayGate(input)
+      expect(receipt(result).reasons).toEqual(['target-unavailable'])
+      expect(result.notices.join('\n')).toContain(
+        mode === 'absent' ? 'corpusEntriesForRun=0 handoffPresent=false' : 'handoffPresent=true',
+      )
+      if (mode === 'version' || mode === 'identity')
+        expect(result.notices.join('\n')).toContain('reason=')
+      expect(stub.captured).toHaveLength(0)
+    },
+  )
+  it('uses partition version zero for an unseen gamma product', async () => {
+    const { input, stub } = await warm()
+    input.injection = { ...input.injection, product: 'gamma' }
+    expect(receipt(await evalLocal.runReplayGate(input))).toMatchObject({
+      reasons: ['empty-gate-set'],
+      corpusVersion: { partitionVersion: 0, gateSetSize: 0 },
+    })
+    expect(stub.captured).toHaveLength(0)
+  })
+  it.each(['pass', 'harm', 'all-correct'])(
+    'judges every target-step decision: %s',
+    async (mode) => {
+      const { f, input } = await warm({ targetDecisions: 2 }, mode === 'all-correct')
+      const stub = respondingStub((call) => {
+        const text = JSON.stringify(call.prompt)
+        if (text.includes('gate1-target-sibling-1'))
+          return actionGenerateResult('web', mode === 'harm' ? 'e-other' : 'e-continue')
+        return gate1Responder(f)(call)
+      })
+      input.planner.modelOverrides = { languageModels: stub.languageModels }
+      input.maxScreens = 11
+      const got = receipt(await evalLocal.runReplayGate(input))
+      expect(got.targets).toHaveLength(2)
+      expect(got.verdict).toBe(mode === 'pass' ? 'pass' : 'fail')
+      expect(got.reasons).toEqual(
+        mode === 'pass' ? [] : mode === 'harm' ? ['collateral-harm'] : ['no-positive-value'],
+      )
+      expect(got.spend?.screens).toBe(mode === 'pass' ? 11 : 7)
+      if (mode === 'harm') {
+        expect(got.harmed?.[0]?.origin).toBe('target-step')
+        expect(got.crossCheck).toBe('not-run')
+      }
+    },
+  )
   function receipt(result: evalLocal.RunReplayGateResult) {
     expect(result.kind).toBe('receipt')
     if (result.kind !== 'receipt') throw new Error(JSON.stringify(result))
