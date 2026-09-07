@@ -50,7 +50,9 @@ if (childMode) {
 
     expect(oneShot.bundleTree).toBe(daemon.bundleTree)
     expect(oneShot.logicalDump).toBe(daemon.logicalDump)
-    expect(oneShot.epoch).toBe(1)
+    // 418-12: the direct sweep leases reconciliation first, then the queue drain leases its
+    // own write. The standing daemon reconciles and drains under one continuously held lease.
+    expect(oneShot.epoch).toBe(2)
     expect(daemon.epoch).toBe(1)
     expect(oneShot.bundleCount).toBe(2)
     expect(daemon.bundleCount).toBe(2)
@@ -138,7 +140,7 @@ if (childMode) {
 
       expect(oneShot.bundleTree).toBe(daemon.bundleTree)
       expect(oneShot.logicalDump).toBe(daemon.logicalDump)
-      expect(oneShot.epoch).toBe(1)
+      expect(oneShot.epoch).toBe(2)
       expect(daemon.epoch).toBe(1)
       expect(oneShot.commitOrder).toEqual([...oneShot.candidateIds].sort())
       expect(daemon.commitOrder).toEqual(oneShot.commitOrder)
@@ -175,7 +177,7 @@ if (childMode) {
       expect(daemon.authorOrder).toEqual([])
       expect(oneShot.commitOrder).toEqual([])
       expect(daemon.commitOrder).toEqual([])
-      expect(oneShot.epoch).toBe(1)
+      expect(oneShot.epoch).toBe(2)
       expect(daemon.epoch).toBe(1)
       expect(() => compareRunReceipts(oneShot.runReceipt, daemon.runReceipt)).not.toThrow()
       expect(oneShot.runReceipt.candidateIds).toEqual([])

@@ -202,7 +202,9 @@ export async function runDaemonLeg(): Promise<void> {
     },
   })
   progress('tail-returned')
-  expect(warnings).toEqual([])
+  // 418-12: this contender must not rebuild under the standing daemon's lease. The daemon
+  // already reconciled at acquisition; the tail discloses its typed skip and hands off.
+  expect(warnings).toEqual(['curation: run-outcome projection not reconciled (no writer authority)'])
   await nudgeDaemon(agentQaRoot)
   progress('explicit-nudge-returned')
   await waitUntil(

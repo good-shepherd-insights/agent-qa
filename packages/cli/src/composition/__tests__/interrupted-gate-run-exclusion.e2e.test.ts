@@ -58,7 +58,9 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
   RUN_OUTCOMES_PROJECTION_VERSION,
   openIndexWriter,
-  reconcileRunOutcomesProjection,
+  acquireWriterLease,
+  releaseLease,
+  reconcileRunOutcomesProjection as reconcileUnderAuthority,
   suiteFingerprintDeltas,
 } from '@vostride/agent-qa-knowledge-local'
 import { ANALYSIS_FILE, exercisedAnchors, testFingerprintElements } from '@vostride/agent-qa-schema'
@@ -74,6 +76,19 @@ import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.j
 import { CountingTarget, auditRows, createInProcessFixture, runDirs } from './in-process-run-fixture.js'
 
 type Fixture = ReturnType<typeof createInProcessFixture>
+
+/** 418-12: the direct rebuild fixture must own the same real writer authority as a host. */
+function reconcileRunOutcomesProjection(
+  opts: Parameters<typeof reconcileUnderAuthority>[0],
+): ReturnType<typeof reconcileUnderAuthority> {
+  const authority = acquireWriterLease(opts.knowledgeRoot)
+  if (authority.kind !== 'acquired') throw new Error('rebuild fixture did not acquire writer authority')
+  try {
+    return reconcileUnderAuthority({ ...opts, authority })
+  } finally {
+    releaseLease({ knowledgeRoot: opts.knowledgeRoot, leaseId: authority.leaseId })
+  }
+}
 
 const COUNTED_FILE = 'tests/counted.yaml'
 const COUNTED_NAME = 'a member with evidence on it'
