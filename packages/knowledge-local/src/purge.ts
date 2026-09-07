@@ -32,7 +32,7 @@ import { z } from 'zod'
 import { checkpointCommittedParts } from './bundle-egress.js'
 import { loadBundle } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
-import { canaryOutcomePayloadSchema } from './canary-emit.js'
+import { queuedCanaryPayloadSchema } from './canary-emit.js'
 import { fsyncDirectory, fsyncFile } from './durable-fs.js'
 import {
   deleteRecordFromAllSchemaVecTables,
@@ -593,7 +593,7 @@ export function resolveQueueSweepTargets(
       continue
     }
 
-    const canaryOutcome = canaryOutcomePayloadSchema.safeParse(payload)
+    const canaryOutcome = queuedCanaryPayloadSchema.safeParse(payload)
     if (canaryOutcome.success && lineage.has(canaryOutcome.data.candidateId)) {
       targets.push({ candidateDir, candidateId })
       continue

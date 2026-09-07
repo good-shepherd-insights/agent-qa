@@ -108,6 +108,10 @@ export interface CreateLocalKnowledgeStoreConfig {
   /** Port calls lack a run ordinal; callers with run context should supply it. */
   sourceBuildOrdinal?: number
   sourceRunId?: string
+  /** 2026-09-07, 418 D-07: queue entry identity stamped as producedBy.jobId. */
+  sourceJobId?: string
+  /** 2026-09-07, 418 D-19: proposals store root for inconsistency reports. */
+  agentQaRoot?: string
   screenStates?: readonly ScreenState[]
   resolvePromotionPosture?: ResolvePromotionPosture
   onPromotionOutcome?: (report: PromotionOutcomeReport) => void

@@ -319,6 +319,9 @@ function projectBriefAttributions(
       outcome: {
         candidateId,
         runOutcome,
+        // 2026-09-07, 418 D-01/D-08: pure projection stays uncredited until ablated.
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
         runId: String(input.handoff.runId),
         testId: test.testId,
         testIndex: test.testIndex,
@@ -389,6 +392,9 @@ function projectProcedureAttribution(
     outcome: {
       candidateId: source.procedureId,
       runOutcome,
+      // 2026-09-07, 418 D-01/D-08: pure projection stays uncredited until ablated.
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
       runId: String(input.handoff.runId),
       testId: test.testId,
       testIndex: test.testIndex,

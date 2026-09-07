@@ -301,6 +301,7 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     const secondProjection = projectCanaryOutcomes(projectionInput)
     expect(canonicalJson(secondProjection)).toBe(canonicalJson(firstProjection))
     expect(firstProjection).toHaveLength(1)
+    expect(firstProjection[0]).toMatchObject({ benefit: 'rode-along', stateValidity: 'unknown' })
 
     const firstEmit = emitCanaryOutcomes({
       handoff,

@@ -288,6 +288,8 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     expect(outcomes).toEqual([{
       candidateId: CANDIDATE,
       runOutcome: 'positive',
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
       runId: 'run-canary-1',
       testId: 'checkout::happy-path',
       testIndex: 0,
@@ -368,6 +370,8 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     expect(outcomes).toEqual([
       expect.objectContaining({
         runOutcome: 'positive',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
         exercisedAnchor: { t: 'page', route: '/checkout?mode=fast' },
       }),
     ])
@@ -419,12 +423,16 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
         testIndex: 0,
         stepIndex: 0,
         runOutcome: 'positive',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
       }),
       expect.objectContaining({
         testId: 'checkout::declined-card',
         testIndex: 1,
         stepIndex: 0,
         runOutcome: 'negative',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
       }),
     ])
     expect(outcomes[0]?.attribution).toContain('test 0 (checkout::happy-path) step 0')
@@ -554,6 +562,8 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     expect(outcomes).toEqual([{
       candidateId: PROCEDURE,
       runOutcome: 'positive',
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
       runId: 'run-canary-1',
       testId: 'checkout::happy-path',
       testIndex: 0,
@@ -590,6 +600,8 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
       expect.objectContaining({
         candidateId: PROCEDURE,
         runOutcome: 'positive',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
       }),
     ])
   })
@@ -786,11 +798,15 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
       expect.objectContaining({
         candidateId: CANDIDATE,
         runOutcome: 'positive',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
         exercisedAnchor: { t: 'el', role: 'button', name: 'checkout', ordinal: 0 },
       }),
       expect.objectContaining({
         candidateId: PROCEDURE,
         runOutcome: 'positive',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
         exercisedAnchor: normalizeAnchor({ t: 'flow', name: 'Sign in flow' }),
       }),
     ])
@@ -901,11 +917,15 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
       expect.objectContaining({
         candidateId: PROCEDURE,
         runOutcome: 'positive',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
         stepIndex: 0,
       }),
       expect.objectContaining({
         candidateId: PROCEDURE,
         runOutcome: 'positive',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
         stepIndex: 1,
       }),
     ])
@@ -974,6 +994,8 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
       expect.objectContaining({
         candidateId: FIXTURE_PAGE_FACT,
         runOutcome: 'negative',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
         testIndex: 0,
         stepIndex: 1,
       }),
@@ -1118,6 +1140,8 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
       candidateId: CANDIDATE,
       runId: RUN_A,
       runOutcome: 'negative',
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
       testId: 'checkout::happy-path',
     })
     // Byte-identity with the pure projection over the same handoff — the pre-rewire baseline.

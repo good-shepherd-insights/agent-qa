@@ -33,7 +33,7 @@ import type {
   PublishBundleOutcome,
   WriterLeaseAuthority,
 } from '../index.js'
-import { enqueueCanaryOutcome } from '../canary-emit.js'
+import { enqueueCanaryOutcome, canaryOutcomeContentAddress } from '../canary-emit.js'
 import { LEASE_FILE, LEASE_HEARTBEAT_TTL_MS } from '../lease/writer-lease.js'
 import * as purgeModule from '../purge.js'
 import { writeJobStateWithinCurrentAuthority } from '../queue/job-state.js'
@@ -1074,7 +1074,7 @@ describe('DCAY-05 sovereign purge', () => {
     expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, survivorId))).toBe(true)
   })
 
-  it('deletes a matching canary outcome by lineage and its queue-entry keyed job state', () => {
+  it.each([2, 3] as const)('deletes a matching v%s canary outcome by lineage and preserves unrelated legacy queue bytes', version => {
     const target = publish('queue-canary-target', [
       { t: 'el', role: 'button', name: 'Canary purge target' },
       { t: 'page', route: '/purge/queue/canary-target' },
@@ -1085,8 +1085,19 @@ describe('DCAY-05 sovereign purge', () => {
       { t: 'page', route: '/purge/queue/canary-unrelated' },
       { t: 'platform', platform: 'web' },
     ])
-    const matchedEntryId = enqueueCanary(target.id, 'matching')
-    const survivorEntryId = enqueueCanary(unrelated.id, 'survivor')
+    function queueVersion(id: string): string {
+      if (version === 3) return id
+      const dir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, id)
+      const { benefit: _benefit, stateValidity: _validity, ...legacy } = JSON.parse(readFileSync(join(dir, 'payload.json'), 'utf8'))
+      legacy.schemaVersion = 2
+      const legacyId = canaryOutcomeContentAddress(legacy)
+      writeFileSync(join(dir, 'payload.json'), JSON.stringify(legacy))
+      renameSync(dir, knowledgeLocal.queuedCandidateDir(knowledgeRoot, legacyId))
+      renameSync(knowledgeLocal.jobStatePath(knowledgeRoot, id), knowledgeLocal.jobStatePath(knowledgeRoot, legacyId))
+      return legacyId
+    }
+    const matchedEntryId = queueVersion(enqueueCanary(target.id, 'matching'))
+    const survivorEntryId = queueVersion(enqueueCanary(unrelated.id, 'survivor'))
     const matchedDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, matchedEntryId)
     const survivorDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, survivorEntryId)
     const survivorPayloadBytes = readFileSync(join(survivorDir, 'payload.json'))

@@ -1,10 +1,12 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
   DEFAULT_EMBEDDING_PROFILE,
   asRecordId,
+  canonicalJson,
+  sha256hex,
   type CurationAuthorship,
   type Delta,
 } from '@vostride/agent-qa-schema'
@@ -50,6 +52,9 @@ import { readJobState, writeJobState } from '../../queue/job-state.js'
 import { parseAuthoredCheckpoint } from '../author-contract.js'
 import type { CuratorAuthor, NeighborRecord } from '../author-contract.js'
 import type { CommitCurationOutcome } from '../commit.js'
+import * as knowledgeStore from '../knowledge-store.js'
+import { canaryOutcomeContentAddress, type CanaryOutcomePayloadV2 } from '../../canary-emit.js'
+import { queuedCandidateDir } from '../../queue/queue-layout.js'
 import {
   DRAIN_BUDGET_MS,
   EMBED_CRASH_VECTORLESS_THRESHOLD,
@@ -193,6 +198,85 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
     }
   }
+
+  it.each([2, 3] as const)('drains a literal v%s payload.json under its original address and sourceJobId, refusing tampering', async version => {
+    scaffoldKnowledgeRoot(knowledgeRoot)
+    const draft = makeBundleDraftFixture()
+    const published = publishBundle({
+      knowledgeRoot, productKey: 'storefront', auditBaseDir, commitArtifacts: 'none',
+    }, {
+      draft, discriminant: makeDiscriminantFixture(), originClass: 'agent-verified',
+      createdAtOrdinal: 42, screenStates: [], initialEvents: [], relations: [], artifacts: [],
+      provenance: { mode: 'run-linked', runId: 'legacy-canary-seed', testId: 'checkout', stepIndex: 0 },
+    })
+    if (published.kind !== 'published') throw new Error(`unexpected ${published.kind}`)
+    const legacy: CanaryOutcomePayloadV2 = {
+      schemaVersion: 2, jobKind: 'canary-outcome', candidateId: published.id,
+      runId: 'legacy-canary-drain', testId: 'checkout', testIndex: 0,
+      buildOrdinal: 43, stepIndex: 0, outcome: 'positive',
+      exercisedAnchor: draft.anchors[0]!, attribution: 'Legacy canary observation', briefDigest: 'legacy-brief',
+    }
+    const evidence = {
+      benefit: 'exercised-benefited' as const, stateValidity: 'valid' as const,
+      corpusDigest: 'a'.repeat(64), observedStateDigest: 'b'.repeat(64),
+      ablation: {
+        crossCheck: 'flipped' as const, k: 3, baseSeed: 42, seeds: [42, 43, 44], seedHonored: true,
+        spend: { modelCalls: 5, screens: 1, promptTokens: 20, completionTokens: 10 },
+      },
+    }
+    const payload = version === 2 ? legacy : { ...legacy, schemaVersion: 3 as const, ...evidence }
+    // Compute from the literal queued document, independently of the version-aware helper.
+    const entryId = sha256hex(canonicalJson(payload))
+    expect(canaryOutcomeContentAddress(payload)).toBe(entryId)
+    const queuedDir = queuedCandidateDir(knowledgeRoot, entryId)
+    mkdirSync(queuedDir, { recursive: true })
+    const bytes = `${canonicalJson(payload)}\n`
+    writeFileSync(join(queuedDir, 'payload.json'), bytes)
+    const realCreate = knowledgeStore.createLocalKnowledgeStore
+    const received = vi.fn()
+    const create = vi.spyOn(knowledgeStore, 'createLocalKnowledgeStore').mockImplementation(config => {
+      const store = realCreate(config)
+      return { ...store, recordCanaryOutcome: async outcome => {
+        received(outcome)
+        return store.recordCanaryOutcome(outcome)
+      } }
+    })
+    const author = vi.fn<CuratorAuthor>()
+    const lifecycle = vi.fn()
+    try {
+      const report = await drainQueue({
+        knowledgeRoot, auditBaseDir, agentQaRoot: auditBaseDir, author,
+        executionContext: 'local-interactive', policy, maintenance: 'skip',
+        onJobLifecycle: lifecycle,
+      })
+      expect(report).toMatchObject({ committed: 1, quarantined: 0, failures: 0 })
+      expect(author).not.toHaveBeenCalled()
+      expect(received).toHaveBeenCalledWith(expect.objectContaining({
+        candidateId: published.id,
+        ...(version === 2 ? { benefit: 'rode-along', stateValidity: 'unknown' } : evidence),
+      }))
+      if (version === 2) expect(received.mock.calls[0]![0]).not.toHaveProperty('ablation')
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        sourceJobId: entryId, sourceRunId: payload.runId, sourceBuildOrdinal: 43,
+        agentQaRoot: auditBaseDir,
+      }))
+      expect(lifecycle).toHaveBeenCalledWith({ kind: 'job-completed', candidateId: entryId })
+      expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
+      mkdirSync(queuedDir, { recursive: true })
+      writeFileSync(join(queuedDir, 'payload.json'), canonicalJson({ ...payload, attribution: 'Altered after queueing' }))
+      const tampered = await drainQueue({
+        knowledgeRoot, auditBaseDir, author, executionContext: 'local-interactive',
+        policy, maintenance: 'skip',
+      })
+      expect(tampered).toMatchObject({ committed: 0, quarantined: 1, failures: 1 })
+      expect(tampered.failureDetails).toEqual([
+        { candidateId: entryId, stage: 'job-state', message: 'claimed candidate payload is malformed' },
+      ])
+      expect(received).toHaveBeenCalledTimes(1)
+    } finally {
+      create.mockRestore()
+    }
+  })
 
   it('hands off to a fresh current holder without claiming or authoring', async () => {
     enqueue('held')

@@ -55,7 +55,7 @@ import {
 } from '../queue/curation-queue.js'
 import {
   canaryOutcomeContentAddress,
-  canaryOutcomePayloadSchema,
+  readQueuedCanaryPayload,
 } from '../queue/canary-payload.js'
 import {
   persistAuthoredCheckpoint,
@@ -226,6 +226,8 @@ export interface DrainOperations extends MaintenanceOperations {
 }
 
 export interface DrainOptions {
+  /** 2026-09-07, 418 D-19: proposals store root; production hosts bind this in Plan 05. */
+  agentQaRoot?: string
   knowledgeRoot: string
   auditBaseDir: string
   /** `unbounded` is reserved for a standing host whose process lifetime is the boundary. */
@@ -314,28 +316,31 @@ function readClaimedCanaryOutcome(
   claimed: MalformedClaimedCurationJob,
 ): CanaryOutcome | undefined {
   try {
-    const parsed = canaryOutcomePayloadSchema.safeParse(
+    const read = readQueuedCanaryPayload(
       JSON.parse(readFileSync(claimed.payloadPath, 'utf8')),
     )
-    if (
-      !parsed.success
-      || canaryOutcomeContentAddress(parsed.data) !== claimed.candidateId
-    ) {
+    if (read.kind === 'refused') return undefined
+    // 2026-09-07, 418: legacy identity is checked BEFORE projecting the v3 fill.
+    const original = read.kind === 'v2-filled' ? read.original : read.payload
+    if (canaryOutcomeContentAddress(original) !== claimed.candidateId) {
       return undefined
     }
     return {
-      candidateId: asRecordId(parsed.data.candidateId),
-      runOutcome: parsed.data.outcome,
-      benefit: parsed.data.benefit,
-      stateValidity: parsed.data.stateValidity,
-      runId: parsed.data.runId,
-      testId: parsed.data.testId,
-      testIndex: parsed.data.testIndex,
-      buildOrdinal: parsed.data.buildOrdinal,
-      stepIndex: parsed.data.stepIndex,
-      briefDigest: parsed.data.briefDigest,
-      attribution: parsed.data.attribution,
-      exercisedAnchor: parsed.data.exercisedAnchor,
+      candidateId: asRecordId(read.payload.candidateId),
+      runOutcome: read.payload.outcome,
+      benefit: read.payload.benefit,
+      stateValidity: read.payload.stateValidity,
+      ...(read.payload.corpusDigest === undefined ? {} : { corpusDigest: read.payload.corpusDigest }),
+      ...(read.payload.observedStateDigest === undefined ? {} : { observedStateDigest: read.payload.observedStateDigest }),
+      ...(read.payload.ablation === undefined ? {} : { ablation: read.payload.ablation }),
+      runId: read.payload.runId,
+      testId: read.payload.testId,
+      testIndex: read.payload.testIndex,
+      buildOrdinal: read.payload.buildOrdinal,
+      stepIndex: read.payload.stepIndex,
+      briefDigest: read.payload.briefDigest,
+      attribution: read.payload.attribution,
+      exercisedAnchor: read.payload.exercisedAnchor,
     }
   } catch {
     return undefined
@@ -978,6 +983,8 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             epoch: lease.epoch,
             sourceBuildOrdinal: canaryOutcome.buildOrdinal,
             sourceRunId: canaryOutcome.runId,
+            sourceJobId: claimed.candidateId,
+            ...(options.agentQaRoot === undefined ? {} : { agentQaRoot: options.agentQaRoot }),
             policy: options.policy,
             writerLeaseId: lease.leaseId,
             ...(options.resolvePromotionPosture === undefined
