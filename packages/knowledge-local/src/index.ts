@@ -839,3 +839,8 @@ export type LocalKnowledgeReader = KnowledgeHintReader
 export { GATES_REL_PATH, readGateReceipts } from './bundle-read.js'
 export { appendGateReceipt, appendPromotionReceipt } from './bundle-append.js'
 export { MUTABLE_BUNDLE_TARGETS } from './journal/bundle-mutation.js'
+
+// 2026-09-07, 418 D-13/D-14: read-only canary posture data.
+export { canaryPostureFactsFor, standingReceiptDigestsFor, lowerTrustSharesFor,
+  type CanaryPostureFacts, type StandingReceiptDigest, type LowerTrustShare,
+} from './gates/canary-posture-facts.js'

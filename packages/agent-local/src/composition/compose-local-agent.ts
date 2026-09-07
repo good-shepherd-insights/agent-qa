@@ -131,6 +131,9 @@ import {
   purgeRecord,
   readCanonicalBundleAnchors,
   readCanonicalBundleStateDigests,
+  canaryPostureFactsFor,
+  standingReceiptDigestsFor,
+  lowerTrustSharesFor,
   readEmbedderWorkerRegistration,
   readWriterLease,
   rebuildIndex,
@@ -534,6 +537,9 @@ export interface LocalCurationCapabilities {
   readonly enqueueCurationCandidateProjection: typeof enqueueCurationCandidateProjection
   readonly readCanonicalBundleAnchors: typeof readCanonicalBundleAnchors
   readonly readCanonicalBundleStateDigests: typeof readCanonicalBundleStateDigests
+  readonly readCanaryPostureFacts: typeof canaryPostureFactsFor
+  readonly readStandingGateReceipts: typeof standingReceiptDigestsFor
+  readonly readLowerTrustShares: typeof lowerTrustSharesFor
   /** 418 D-07: reuse the writer's observation identity through the existing CLI bridge. */
   readonly canaryOutcomeObservationId: typeof canaryOutcomeObservationId
   /**
@@ -555,6 +561,9 @@ export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.fre
   enqueueCurationCandidateProjection,
   readCanonicalBundleAnchors,
   readCanonicalBundleStateDigests,
+  readCanaryPostureFacts: canaryPostureFactsFor,
+  readStandingGateReceipts: standingReceiptDigestsFor,
+  readLowerTrustShares: lowerTrustSharesFor,
   runOutcomesProjectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
   canaryOutcomeObservationId,
   maintenance: Object.freeze({

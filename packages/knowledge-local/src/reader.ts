@@ -92,3 +92,8 @@ export type { GateReceiptsForOptions } from './gates/gate-receipt-read.js'
 // 2026-09-07, 417 D-01: candidate brief DATA from committed bundles, with no write authority.
 export { candidateInjectionFor } from './gates/candidate-injection.js'
 export type { CandidateInjectionForOptions } from './gates/candidate-injection.js'
+
+// 2026-09-07, 418 D-13/D-14: read-only canary posture data.
+export { canaryPostureFactsFor, standingReceiptDigestsFor, lowerTrustSharesFor,
+  type CanaryPostureFacts, type StandingReceiptDigest, type LowerTrustShare,
+} from './gates/canary-posture-facts.js'
