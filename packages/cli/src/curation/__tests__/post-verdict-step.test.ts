@@ -404,6 +404,56 @@ describe('enqueueAnalyzeRun — THE one durable hand-off (404 D-05, relocated fr
 })
 
 describe('createPostVerdictStep — decide without mutating, acquire only for a pump (404 D-10, Pitfall 3)', () => {
+  it.each([
+    { source: ['flag'] }, { source: ['config'] }, { source: ['default'] },
+    { source: null }, { source: 1 }, { source: {} },
+  ])('refuses a non-string stored canary policy source: $source', ({ source }) => {
+    const runDir = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
+    const runId = generateRunId()
+    try {
+      writeFileSync(join(runDir, 'canary-policy.json'), JSON.stringify({
+        schemaVersion: 1, runId, maxAblations: 4, source,
+      }))
+      expect(() => readRunCanaryPolicy(runDir, runId)).toThrow('canary policy invalid')
+    } finally { rmSync(runDir, { recursive: true, force: true }) }
+  })
+  it.each(['flag', 'config', 'default'] as const)('accepts the primitive stored policy source %s', source => {
+    const runDir = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
+    const runId = generateRunId()
+    const policy = { schemaVersion: 1, runId, maxAblations: 4, source }
+    try {
+      writeFileSync(join(runDir, 'canary-policy.json'), JSON.stringify(policy))
+      expect(readRunCanaryPolicy(runDir, runId)).toEqual(policy)
+    } finally { rmSync(runDir, { recursive: true, force: true }) }
+  })
+  it('refuses a malformed stored policy on resumption before enqueue or daemon handoff', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
+    const runId = generateRunId()
+    const runDir = join(root, 'runs', slugBranch(runId))
+    mkdirSync(runDir, { recursive: true })
+    try {
+      writeFileSync(join(runDir, 'canary-policy.json'), JSON.stringify({
+        schemaVersion: 1, runId, maxAblations: 1, source: ['flag'],
+      }))
+      const operations = stubOperations({
+        recordCanaryPolicy,
+        composeHost: vi.fn(() => stubHost()),
+      })
+      const step = createPostVerdictStep({
+        runId, agentQaRoot: root, knowledgeRoot: KNOWLEDGE_ROOT,
+        configPath: CONFIG_PATH, maxAblations: 8, log: { warn: vi.fn() }, operations,
+      })
+      const outcome = await step.port.run({ runId: asRunId(runId), verdict: 'passed' as never })
+      expect(outcome.disposition).toBe('detached')
+      expect(outcome.warning?.code).toBe('post-run-enqueue-failed')
+      expect(outcome.warning?.message).toContain('canary policy invalid')
+      expect(operations.composeHost).not.toHaveBeenCalled()
+      expect(operations.nudgeDaemon).not.toHaveBeenCalled()
+      expect(operations.readWriterLease).not.toHaveBeenCalled()
+      expect(step.handoff.takeAcquiredLease()).toBeUndefined()
+      expect(() => readRunCanaryPolicy(runDir, runId)).toThrow('canary policy invalid')
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
   it.each([true, false])('persists the originating cap before enqueue and daemon handoff (flag=%s)', async flag => {
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
     try {

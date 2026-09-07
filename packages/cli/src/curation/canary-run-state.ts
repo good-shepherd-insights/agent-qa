@@ -26,7 +26,8 @@ export function readRunCanaryPolicy(runDir: string, runId: string): RunCanaryPol
     || !('runId' in policy) || policy.runId !== runId
     || !('maxAblations' in policy) || typeof policy.maxAblations !== 'number'
     || !Number.isSafeInteger(policy.maxAblations) || policy.maxAblations < 1
-    || !('source' in policy) || !['flag', 'config', 'default'].includes(String(policy.source))) {
+    || !('source' in policy) || typeof policy.source !== 'string'
+    || !['flag', 'config', 'default'].includes(policy.source)) {
     throw new Error('canary policy invalid')
   }
   return policy as RunCanaryPolicy
