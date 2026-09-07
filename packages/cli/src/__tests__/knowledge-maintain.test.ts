@@ -41,6 +41,9 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { Command, CommanderError } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as promotionPosture from '../curation/promotion-posture.js'
+import { promotionHostProof } from './promotion-host-proof.js'
+import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 
 const commandHarness = vi.hoisted(() => ({
   promptAnswers: [] as string[],
@@ -691,6 +694,16 @@ describe('knowledge maintenance commands', () => {
     expect(result.stdout).toContain('remaining 0')
     expect(commandHarness.drainQueueCalls).toBe(1)
     expect(daemonHarness.nudgeCalls).toEqual([])
+  })
+
+  it('binds lazy replay so inline maintenance enforces receipts and the quiet rare path', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const proof = promotionHostProof(workspace.configPath)
+    const build = vi.spyOn(promotionPosture, 'buildPromotionPostureResolver').mockImplementation(proof.prepare)
+    const result = await invoke(workspace, ['drain'])
+    expect(result.exitCode).toBeUndefined()
+    proof.verify(commandHarness.drainInputs[0]!.resolvePromotionPosture as ResolvePromotionPosture)
+    expect(build).toHaveBeenCalledTimes(1)
   })
 
   it('prints promotion paths and holds in report order on stdout', async () => {

@@ -80,6 +80,7 @@ import { NON_SIGNAL_CLASSES } from './emit-canary-outcomes.js'
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
+import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import type { ScopeKey } from '@vostride/agent-qa-schema'
 
 /**
@@ -473,6 +474,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   let resolvePromotionPosture: RunCurationTailOptions['resolvePromotionPosture']
   const preparePromotionPosture = (currentBuildOrdinal?: number, scope?: ScopeKey) => {
     posturePromise ??= buildPromotionPostureResolver({ configPath: opts.configPath,
+      replayGate: createReplayGatePortForHost({ configPath: opts.configPath, agentQaRoot: opts.agentQaRoot }),
       knowledgeRoot, agentQaRoot: opts.agentQaRoot,
       canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
       lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,

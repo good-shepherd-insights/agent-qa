@@ -14,6 +14,10 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promotionHostProof } from './promotion-host-proof.js'
 
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
@@ -139,6 +143,24 @@ function options(h: Harness): RunPostRunTailOptions {
 }
 
 describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
+  it('binds lazy replay so the actual tail resolver holds missing receipts and permits the quiet rare path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'tail-replay-law-'))
+    const path = join(root, 'agent-qa.config.yaml')
+    const proof = promotionHostProof(path)
+    const build = vi.spyOn(promotionPosture, 'buildPromotionPostureResolver').mockImplementation(proof.prepare)
+    try {
+      const h = harness()
+      const tail = runPostRunTail({ ...options(h), configPath: path, configDir: root,
+        agentQaRoot: join(root, '.agent-qa') })
+      await tail.drain()
+      const swept = h.runCurationTail.mock.calls[0]![0] as { resolvePromotionPosture: ResolvePromotionPosture }
+      proof.verify(swept.resolvePromotionPosture)
+      expect(build).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.restoreAllMocks()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
   it('418 threads the same ablation capability and flag to own-run fold and janitor sweep', async () => {
     const h = harness()
     const canaryAblation = {

@@ -21,6 +21,7 @@ import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
+import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 
 import {
   createMaskingContext,
@@ -407,6 +408,7 @@ function recordInlineDrainSession(
 
 async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
   const posture = await buildPromotionPostureResolver({ configPath: paths.configPath,
+    replayGate: createReplayGatePortForHost({ configPath: paths.configPath, agentQaRoot: paths.runtimeRoot }),
     knowledgeRoot: paths.knowledgeRoot, agentQaRoot: paths.runtimeRoot,
     canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
     lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
