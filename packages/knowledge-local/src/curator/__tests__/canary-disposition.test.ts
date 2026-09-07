@@ -162,6 +162,8 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     return {
       candidateId,
       runOutcome,
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
       runId: 'run-canary-disposition',
       testId: 'checkout::happy-path',
       testIndex: 0,

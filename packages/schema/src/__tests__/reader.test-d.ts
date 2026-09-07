@@ -4,10 +4,12 @@ import type { Anchor } from '../identity/anchor'
 import type { ScopeKey } from '../identity/scope-key'
 import type { RecordId } from '../ids/record-id'
 import type { CuratorTier, ProcedureParamType } from '../knowledge/curator-tier'
+import type { Benefit, StateValidity } from '../knowledge/gate-receipt'
 import type {
   BriefBlock,
   BuildRange,
   CanaryOutcome,
+  CanaryAblationEvidence,
   CautionBlock,
   IndexEntry,
   ProcedureMatch,
@@ -128,6 +130,11 @@ expectTypeOf<ReadOptions>().toEqualTypeOf<{
 }>()
 
 expectTypeOf<CanaryOutcome>().toEqualTypeOf<{
+  benefit: Benefit
+  stateValidity: StateValidity
+  corpusDigest?: string
+  observedStateDigest?: string
+  ablation?: CanaryAblationEvidence
   candidateId: RecordId
   runOutcome: 'positive' | 'negative'
   runId: string
@@ -141,6 +148,11 @@ expectTypeOf<CanaryOutcome>().toEqualTypeOf<{
 }>()
 
 expectTypeOf<keyof CanaryOutcome>().toEqualTypeOf<
+  | 'benefit'
+  | 'stateValidity'
+  | 'corpusDigest'
+  | 'observedStateDigest'
+  | 'ablation'
   | 'candidateId'
   | 'runOutcome'
   | 'runId'

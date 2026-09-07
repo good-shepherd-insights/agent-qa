@@ -1,6 +1,7 @@
 import type { Anchor } from '../identity/anchor'
 import type { ScopeKey } from '../identity/scope-key'
 import type { RecordId } from '../ids/record-id'
+import type { Benefit, StateValidity, CrossCheck } from '../knowledge/gate-receipt'
 
 export interface BuildRange {
   from?: number
@@ -27,7 +28,30 @@ export interface ReadOptions {
   asOfBuild?: number
 }
 
+export interface CanaryAblationEvidence {
+  crossCheck: CrossCheck
+  k: number
+  baseSeed: number
+  seeds: number[]
+  seedHonored: boolean
+  spend: {
+    modelCalls: number
+    screens: number
+    promptTokens: number
+    completionTokens: number
+  }
+}
+
 export interface CanaryOutcome {
+  /** 2026-09-07, 418 D-01: decided in the cli post-run tail; the drain reads DATA.
+   * The pure projection's own word is rode-along / unknown until credited. */
+  benefit: Benefit
+  stateValidity: StateValidity
+  /** D-07/D-08: committed corpus read at ablation time; absent when unavailable. */
+  corpusDigest?: string
+  /** D-11: distilled pre-action live-step state digest. */
+  observedStateDigest?: string
+  ablation?: CanaryAblationEvidence
   /** Pin 3: the exact candidate whose served hypothesis was exercised. */
   candidateId: RecordId
   /** D-21: only attributed step verdicts move trust; ambiguous outcomes are never emitted. */

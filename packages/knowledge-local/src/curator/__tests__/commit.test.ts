@@ -1900,6 +1900,8 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       store.recordCanaryOutcome({
         candidateId: asRecordId('candidate-record'),
         runOutcome: 'positive',
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
         runId: 'run-canary',
         testId: 'checkout::happy-path',
         testIndex: 0,

@@ -1,6 +1,15 @@
 import type { KnowledgePort } from '@vostride/agent-qa-agent'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 
+export {
+  canaryOutcomePayloadV2Schema,
+  queuedCanaryPayloadSchema,
+  readQueuedCanaryPayload,
+  PAYLOAD_BENEFITS,
+  PAYLOAD_STATE_VALIDITIES,
+} from './canary-emit.js'
+export type { QueuedCanaryPayloadRead } from './canary-emit.js'
+
 // 387 ENTY-01 — entity addressing: the durable ledger and the tier-(a) resolver.
 //
 // The composition root is the only importer of this entry (the reader carve-out enforces

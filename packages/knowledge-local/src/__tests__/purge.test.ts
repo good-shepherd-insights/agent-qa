@@ -392,6 +392,8 @@ describe('DCAY-05 sovereign purge', () => {
     const outcome = enqueueCanaryOutcome(knowledgeRoot, {
       candidateId,
       runOutcome: 'positive',
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
       runId: `purge-canary-${identity}-run`,
       testId: `purge-canary-${identity}-test`,
       testIndex: 0,

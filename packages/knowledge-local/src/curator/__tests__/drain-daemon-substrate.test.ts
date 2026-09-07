@@ -887,6 +887,8 @@ describe('drainQueue daemon substrate', () => {
       buildOrdinal: 42,
       stepIndex: 0,
       runOutcome: 'positive',
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
       exercisedAnchor: { t: 'page', route: '/missing-canary' },
       attribution: 'run-canary-requeue:canary-requeue:0',
       briefDigest: 'missing canary target',
@@ -1193,6 +1195,8 @@ describe('drainQueue daemon substrate', () => {
       return {
         candidateId: asRecordId(bundleId),
         runOutcome,
+        benefit: 'rode-along',
+        stateValidity: 'unknown',
         runId: `run-canary-${seed}`,
         testId: `canary::${seed}`,
         testIndex: 0,

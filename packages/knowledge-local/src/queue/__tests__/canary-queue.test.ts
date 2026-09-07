@@ -13,6 +13,8 @@ function outcome(): CanaryOutcome {
   return {
     candidateId: asRecordId('fact-checkout-button-0123456789abcdef'),
     runOutcome: 'positive',
+    benefit: 'rode-along',
+    stateValidity: 'unknown',
     runId: 'run-canary-transport',
     testId: 'checkout::happy-path',
     testIndex: 1,
@@ -54,6 +56,9 @@ describe('enqueueCanaryOutcome', () => {
       testIndex: outcome().testIndex,
       outcome: outcome().runOutcome,
       jobKind: 'canary-outcome',
+      schemaVersion: 3,
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
     })
     expect(first.entryId).toBe(canaryOutcomeContentAddress(payload))
   })

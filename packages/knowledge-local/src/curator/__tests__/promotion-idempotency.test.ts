@@ -212,7 +212,7 @@ describe('416 promotion receipt writer contract', () => {
     const { draft, published } = fixture.publishHeldCandidate('canary-report')
     const reports = vi.fn()
     const store = createLocalKnowledgeStore({ ...config, resolvePromotionPosture: () => posture, onPromotionOutcome: reports })
-    await store.recordCanaryOutcome({ candidateId: published.id, runOutcome: 'positive',
+    await store.recordCanaryOutcome({ candidateId: published.id, runOutcome: 'positive', benefit: 'rode-along', stateValidity: 'unknown',
       runId: 'receipt-canary', testId: 'checkout', testIndex: 0, buildOrdinal: 43, stepIndex: 0,
       briefDigest: 'receipt-brief', attribution: 'The served selector was exercised.', exercisedAnchor: draft.anchors[0]! })
     expect(reports).toHaveBeenCalledExactlyOnceWith({ candidateId: published.id, promotionHoldReason: 'gate1-receipt-required' })

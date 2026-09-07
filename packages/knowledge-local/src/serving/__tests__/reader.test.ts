@@ -447,6 +447,8 @@ describe('openKnowledgeReader synchronous serving port', () => {
     const payload: CanaryOutcome = {
       candidateId: seeded.candidateFact,
       runOutcome: 'positive',
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
       runId: 'reader-canary-run',
       testId: 'checkout::happy-path',
       testIndex: 1,

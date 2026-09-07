@@ -80,7 +80,7 @@ async function capture(scenario: Scenario, options: {
         }
       } else {
         const sourceRunId = 'run-canary-disposition'
-        const outcome: CanaryOutcome = { candidateId: published.id, runOutcome: 'positive',
+        const outcome: CanaryOutcome = { candidateId: published.id, runOutcome: 'positive', benefit: 'rode-along', stateValidity: 'unknown',
           runId: sourceRunId, testId: 'checkout::happy-path', testIndex: 0, buildOrdinal: 43,
           stepIndex: 2, briefDigest: 'brief-digest-canary-disposition',
           attribution: 'The served checkout hypothesis was exercised by the attributed step.',

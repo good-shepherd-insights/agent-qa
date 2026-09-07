@@ -116,6 +116,8 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
     return {
       candidateId: procedureId,
       runOutcome,
+      benefit: 'rode-along',
+      stateValidity: 'unknown',
       runId: 'run-ladder-replay',
       testId: 'sign-in::happy-path',
       testIndex: 0,

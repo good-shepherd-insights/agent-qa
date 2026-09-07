@@ -68,7 +68,7 @@ describe('416 promotion doors share receipt authority', () => {
   }
 
   function positive(seeded: ReturnType<typeof fixture.publishHeldCandidate>): CanaryOutcome {
-    return { candidateId: seeded.published.id, runOutcome: 'positive', runId: 'door-canary',
+    return { candidateId: seeded.published.id, runOutcome: 'positive', benefit: 'rode-along', stateValidity: 'unknown', runId: 'door-canary',
       testId: 'checkout', testIndex: 0, stepIndex: 0, buildOrdinal: 46,
       briefDigest: 'door-brief', attribution: 'The served selector was exercised.',
       exercisedAnchor: seeded.draft.anchors[0]! }
@@ -149,7 +149,7 @@ describe('416 promotion doors share receipt authority', () => {
     const reports = vi.fn()
     const port = store(unavailable, reports)
     await expect(port.promote(asRecordId(bundle.manifest.id))).rejects.toMatchObject({ reason: 'posture-unavailable' })
-    await port.recordCanaryOutcome({ candidateId: asRecordId(bundle.manifest.id), runOutcome: 'positive', runId: 'unavailable-canary',
+    await port.recordCanaryOutcome({ candidateId: asRecordId(bundle.manifest.id), runOutcome: 'positive', benefit: 'rode-along', stateValidity: 'unknown', runId: 'unavailable-canary',
       testId: 'checkout', testIndex: 0, stepIndex: 0, buildOrdinal: 46, briefDigest: 'unavailable',
       attribution: 'Exercised selector', exercisedAnchor: fixture.selectorProjection('unavailable').anchors[0]! })
     expect(reports).toHaveBeenLastCalledWith({ candidateId: bundle.manifest.id, promotionHoldReason: 'posture-unavailable' })
