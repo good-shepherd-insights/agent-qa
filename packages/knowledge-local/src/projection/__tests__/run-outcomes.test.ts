@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -14,11 +14,13 @@ import {
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { ensureRunOutcomeTables } from '../../index-open.js'
+import { ensureRunOutcomeTables, indexDbPath, openIndexWriter } from '../../index-open.js'
+import { acquireWriterLease, releaseLease, WriterAuthorityLostError } from '../../lease/writer-lease.js'
 import {
   applyRunOutcomes,
   projectRunOutcomes,
   rebuildRunOutcomes,
+  reconcileRunOutcomesProjection,
   RUN_OUTCOMES_PROJECTION_VERSION,
 } from '../run-outcomes.js'
 import { createSuiteFingerprintIndex } from '../suite-fingerprints.js'
@@ -225,6 +227,50 @@ afterEach(() => {
 })
 
 describe('run-outcome projection fold (ABRF-02, D-14)', () => {
+  it('skips without writer authority before opening or touching the index (418-12 WR-03)', () => {
+    const knowledgeRoot = tempDir('projection-no-authority-')
+    const options = { knowledgeRoot, runsRoot: join(knowledgeRoot, 'runs'), extractAnchors }
+    expect(reconcileRunOutcomesProjection(options))
+      .toEqual({ kind: 'skipped', reason: 'no-writer-authority' })
+    expect(readdirSync(knowledgeRoot)).toEqual([])
+    expect(existsSync(indexDbPath(knowledgeRoot))).toBe(false)
+    const handle = openIndexWriter(knowledgeRoot)
+    applyRunOutcomes(handle.db, projectRunOutcomes(threeOutcomeHandoff(), { extractAnchors }))
+    const previous = dumpTables(handle.db)
+    const before = statSync(indexDbPath(knowledgeRoot))
+    expect(reconcileRunOutcomesProjection(options))
+      .toEqual({ kind: 'skipped', reason: 'no-writer-authority' })
+    const after = statSync(indexDbPath(knowledgeRoot))
+    expect([after.mtimeMs, after.size]).toEqual([before.mtimeMs, before.size])
+    expect(dumpTables(handle.db)).toEqual(previous)
+    handle.close()
+  })
+
+  it('rebuilds under current authority and refuses a stale epoch before any deletion (418-12 WR-03)', () => {
+    const knowledgeRoot = tempDir('projection-current-authority-')
+    const options = { knowledgeRoot, runsRoot: join(knowledgeRoot, 'runs'), extractAnchors }
+    const authority = acquireWriterLease(knowledgeRoot)
+    if (authority.kind !== 'acquired') throw new Error('fixture failed to acquire writer')
+    try {
+      expect(reconcileRunOutcomesProjection({ ...options, authority }).kind).toBe('rebuilt')
+      const handle = openIndexWriter(knowledgeRoot)
+      applyRunOutcomes(handle.db, projectRunOutcomes(threeOutcomeHandoff(), { extractAnchors }))
+      handle.db.prepare('UPDATE run_outcome_projection_version SET version = ?')
+        .run(RUN_OUTCOMES_PROJECTION_VERSION - 1)
+      const previous = dumpTables(handle.db)
+      const stamp = handle.db.prepare('SELECT * FROM run_outcome_projection_version').all()
+      expect(() => reconcileRunOutcomesProjection({
+        ...options, authority: { leaseId: authority.leaseId, epoch: authority.epoch - 1 },
+      })).toThrow(WriterAuthorityLostError)
+      expect(dumpTables(handle.db)).toEqual(previous)
+      expect(handle.db.prepare('SELECT * FROM run_outcome_projection_version').all()).toEqual(stamp)
+      handle.close()
+      expect(reconcileRunOutcomesProjection({ ...options, authority }).kind).toBe('rebuilt')
+    } finally {
+      releaseLease({ knowledgeRoot, leaseId: authority.leaseId })
+    }
+  })
+
   // 390 D-02/D-07/D-09 bumped 2 → 3: resolved verdicts, the fingerprint window, and the deleted
   // derived quarantined column. The bump IS the migration — receipted runs refold on the next tail.
   // 393 D-15 bumped 3 → 4: the same fold pass now also populates the suite-fingerprint table, so

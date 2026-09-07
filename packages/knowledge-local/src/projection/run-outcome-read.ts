@@ -12,7 +12,7 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 
-import { LAST_OUTCOMES_LIMIT } from './run-outcomes.js'
+import { LAST_OUTCOMES_LIMIT } from './run-outcome-constants.js'
 
 /** One window entry: ordinals only, wall-clock never (mirrors the writer's OutcomeEntry). */
 export interface TestOutcomeEntry {

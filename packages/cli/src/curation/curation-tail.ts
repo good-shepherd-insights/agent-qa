@@ -107,6 +107,8 @@ export interface CurationTailOperations {
   emitCanaryOutcomes: typeof emitCanaryOutcomes
   foldRunOutcomes: LocalCurationCapabilities['foldRunOutcomes']
   reconcileRunOutcomesProjection: LocalCurationCapabilities['reconcileRunOutcomesProjection']
+  acquireWriterLease: LocalCurationCapabilities['maintenance']['acquireWriterLease']
+  releaseLease: LocalCurationCapabilities['maintenance']['releaseLease']
   buildCuratorAuthor: typeof buildCuratorAuthor
   drainQueue: LocalCurationCapabilities['drainQueue']
   listCompletedRunDirs(agentQaRoot: string): string[]
@@ -163,6 +165,8 @@ function defaultOperations(): CurationTailOperations {
     emitCanaryOutcomes,
     foldRunOutcomes: LOCAL_CURATION_CAPABILITIES.foldRunOutcomes,
     reconcileRunOutcomesProjection: LOCAL_CURATION_CAPABILITIES.reconcileRunOutcomesProjection,
+    acquireWriterLease: LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease,
+    releaseLease: LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease,
     buildCuratorAuthor,
     drainQueue: LOCAL_CURATION_CAPABILITIES.drainQueue,
     listCompletedRunDirs,
@@ -824,13 +828,26 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
   // backfill that cannot run is a projection that stays stale, never a curation that stops. The
   // 'rebuilt' arm logs its counts because a silent rebuild of the derived index is exactly the
   // kind of work an operator should be able to see happen.
+  let acquiredReconcileLease: CurationWriterAuthority | undefined
   try {
+    // The post-run host lends its lease. A direct sweep acquires only for this synchronous
+    // reconcile, never re-acquiring an authority it already holds (418-12 WR-03).
+    let authority = opts.authority
+    if (authority === undefined) {
+      const acquired = operations.acquireWriterLease(knowledgeRoot)
+      if (acquired.kind === 'acquired') {
+        authority = acquiredReconcileLease = { leaseId: acquired.leaseId, epoch: acquired.epoch }
+      }
+    }
     const reconcile = operations.reconcileRunOutcomesProjection({
       knowledgeRoot,
+      ...(authority === undefined ? {} : { authority }),
       runsRoot: completedRunsRoot(opts.agentQaRoot),
       extractAnchors: exercisedAnchors,
     })
-    if (reconcile.kind === 'rebuilt') {
+    if (reconcile.kind === 'skipped') {
+      opts.log.warn('curation: run-outcome projection not reconciled (no writer authority)')
+    } else if (reconcile.kind === 'rebuilt') {
       opts.log.info?.(
         'curation: run-outcome projection rebuilt at version '
         + `${LOCAL_CURATION_CAPABILITIES.runOutcomesProjectionVersion} `
@@ -852,11 +869,22 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
     // same body is printed by the daemon arm, because the same two classes reach both catches.
     opts.log.warn(
       'Post-verdict knowledge curation: the run-outcome projection reconcile did not complete. '
-      + 'If the rebuild had already begun, the projection family is left unstamped and possibly'
+      + 'If the rebuild write phase had already begun, the projection family is left unstamped and possibly'
       + ' partial, and the next reconcile rebuilds it; if it stopped before that, the family and'
       + ' its previous stamp are untouched. Continuing this sweep. '
       + `(${error instanceof Error ? error.message : String(error)})`,
     )
+  } finally {
+    if (acquiredReconcileLease !== undefined) {
+      try {
+        const released = operations.releaseLease({ knowledgeRoot, leaseId: acquiredReconcileLease.leaseId })
+        if (released.kind !== 'released') {
+          opts.log.warn('curation: run-outcome projection writer lease release refused')
+        }
+      } catch {
+        opts.log.warn('curation: run-outcome projection writer lease release failed')
+      }
+    }
   }
 
   for (const runDir of runDirs) {

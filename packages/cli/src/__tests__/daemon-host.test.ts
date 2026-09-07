@@ -30,6 +30,7 @@ import {
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
   releaseLease,
+  readWriterLease,
   WRITER_AUTHORITY_DB_FILE,
   type WriterLease,
 } from '@vostride/agent-qa-knowledge-local'
@@ -3481,6 +3482,7 @@ describe('runDaemonHost — the run-outcome projection reconcile (393 CR-02-daem
       knowledgeRoot: string
       runsRoot: string
       extractAnchors: unknown
+      authority?: { leaseId: string; epoch: number }
     }
     readonly tracesAtCall: readonly DaemonHostTraceStep[]
   }
@@ -3499,6 +3501,10 @@ describe('runDaemonHost — the run-outcome projection reconcile (393 CR-02-daem
       operations: {
         ...harness.operations,
         reconcileRunOutcomesProjection: (options) => {
+          const held = readWriterLease(paths.knowledgeRoot)
+          expect(held.kind).toBe('parsed')
+          if (held.kind !== 'parsed') throw new Error('daemon fixture has no current authority')
+          expect(options.authority).toEqual({ leaseId: held.lease.leaseId, epoch: held.lease.epoch })
           calls.push({
             options: options as ReconcileCall['options'],
             tracesAtCall: [...harness.traces],
@@ -3585,7 +3591,7 @@ describe('runDaemonHost — the run-outcome projection reconcile (393 CR-02-daem
     // after (unstamped, possibly partial).
     expect(reconcileErrors[0]).toContain('the run-outcome projection reconcile did not complete')
     expect(reconcileErrors[0]).toContain(
-      'If the rebuild had already begun, the projection family is left unstamped and possibly'
+      'If the rebuild write phase had already begun, the projection family is left unstamped and possibly'
       + ' partial, and the next reconcile rebuilds it',
     )
     expect(reconcileErrors[0]).toContain(

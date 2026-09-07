@@ -45,10 +45,25 @@ import { openIndexWriter } from '../../index-open.js'
 import {
   foldRunOutcomes,
   projectionPartition,
-  reconcileRunOutcomesProjection,
+  reconcileRunOutcomesProjection as reconcileUnderAuthority,
   RUN_OUTCOMES_PROJECTION_VERSION,
 } from '../run-outcomes.js'
 import { createSuiteFingerprintIndex } from '../suite-fingerprints.js'
+
+import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
+
+// Every historical version cell now models the real host holding a live lease.
+function reconcileRunOutcomesProjection(
+  opts: Parameters<typeof reconcileUnderAuthority>[0],
+): ReturnType<typeof reconcileUnderAuthority> {
+  const acquired = acquireWriterLease(opts.knowledgeRoot)
+  if (acquired.kind !== 'acquired') throw new Error('fixture did not acquire authority')
+  try {
+    return reconcileUnderAuthority({ ...opts, authority: acquired })
+  } finally {
+    releaseLease({ knowledgeRoot: opts.knowledgeRoot, leaseId: acquired.leaseId })
+  }
+}
 
 const SHOP_SCOPE: ScopeKey = { tier: 'product', key: 'shop-web' }
 const SHOP_PRODUCT = projectionPartition(SHOP_SCOPE).product

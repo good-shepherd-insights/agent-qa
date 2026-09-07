@@ -33,7 +33,7 @@ import type { DatabaseSync } from 'node:sqlite'
 
 import type { VerdictClass } from '@vostride/agent-qa-schema'
 
-import { LAST_OUTCOMES_LIMIT } from './run-outcomes.js'
+import { LAST_OUTCOMES_LIMIT } from './run-outcome-constants.js'
 
 /**
  * §7.3's locked detection window, verbatim: the same fingerprint recurring within the last five

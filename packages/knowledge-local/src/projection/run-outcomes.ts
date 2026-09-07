@@ -43,6 +43,7 @@ import { QuarantineLedgerVersionError } from '@vostride/agent-qa-schema'
 import type { QuarantineLedgerEvent } from '@vostride/agent-qa-schema'
 
 import { ensureRunOutcomeTables, openIndexWriter } from '../index-open.js'
+import { withCurrentWriterAuthority } from '../lease/writer-lease.js'
 import { evaluateQuarantineDetection, hasSameBuildPassAndFail } from '../quarantine/detection.js'
 import type {
   QuarantineDetectionFailure,
@@ -60,6 +61,7 @@ import type {
 } from '../quarantine/ledger.js'
 import { fingerprintRecurrence, windowFloor } from './fingerprint-window-read.js'
 import { isAbsenceErrno, pathPresent } from './path-present.js'
+import { LAST_OUTCOMES_LIMIT } from './run-outcome-constants.js'
 import { readTestOutcomeHistory } from './run-outcome-read.js'
 import { applySuiteFingerprints, suiteFingerprintDeltas } from './suite-fingerprints.js'
 import type { SuiteFingerprintTestDelta } from './suite-fingerprints.js'
@@ -96,11 +98,7 @@ import type { SuiteFingerprintTestDelta } from './suite-fingerprints.js'
  */
 export const RUN_OUTCOMES_PROJECTION_VERSION = 4
 
-/**
- * PROVISIONAL last-N window for per-test outcome history (~10 pending ABRF-02 ranking
- * measurements). Entries are {buildOrdinal, passed} — ordinals only, wall-clock never.
- */
-export const LAST_OUTCOMES_LIMIT = 10
+export { LAST_OUTCOMES_LIMIT } from './run-outcome-constants.js'
 
 /**
  * Mirrors runner-local's HANDOFF_FILE. knowledge-local sits below runner-local in the
@@ -697,8 +695,8 @@ function readStoredProjectionVersion(db: DatabaseSync): number | undefined {
 }
 
 /**
- * Full rebuild: clear the projection tables, scan every run dir under `runsRoot`, and
- * refold each loadable handoff. Reproduces tables byte-identical to the incremental fold
+ * Full rebuild: scan and read every run dir under `runsRoot`, then clear the projection tables
+ * and refold each loadable handoff. Reproduces tables byte-identical to the incremental fold
  * (L12); a rebuild over zero handoff dirs yields empty tables without error (ABRF-02
  * empty edge). BAD-BYTES load failures and pre-381 shapes are counted skips — including a run whose
  * `analysis.json` will not decode, which costs that run's contribution and nothing else (393 round
@@ -784,8 +782,11 @@ export function rebuildRunOutcomes(
 export type ReconcileRunOutcomesProjectionResult =
   | { kind: 'current' }
   | { kind: 'rebuilt'; report: RebuildRunOutcomesReport }
+  | { kind: 'skipped'; reason: 'no-writer-authority' }
 
 export interface ReconcileRunOutcomesProjectionOptions {
+  /** The exact live writer lease owned by the caller; never inferred from an epoch alone. */
+  authority?: { leaseId: string; epoch: number }
   /** Absolute agent-qa-knowledge root hosting the derived index SQLite. */
   knowledgeRoot: string
   /** `<agentQaRoot>/runs` — the scan root the rebuild refolds from. */
@@ -816,25 +817,32 @@ export interface ReconcileRunOutcomesProjectionOptions {
  * replace. The rebuild is the mechanism precisely because it clears before it refolds, which is
  * also why the derived family is safe to move this way at all (L12: every row here is reproducible
  * from run artifacts on disk).
+ *
+ * 418-12 WR-03: a destructive rebuild of a shared derived family is a leased act. A caller
+ * without authority gets a typed skip before opening a writer; it stays stale until a leased
+ * sweep. The version check and entire rebuild share the current-authority generation lock.
  */
 export function reconcileRunOutcomesProjection(
   opts: ReconcileRunOutcomesProjectionOptions,
 ): ReconcileRunOutcomesProjectionResult {
-  const handle = openIndexWriter(opts.knowledgeRoot)
-  try {
-    ensureRunOutcomeTables(handle.db)
-    if (readStoredProjectionVersion(handle.db) === RUN_OUTCOMES_PROJECTION_VERSION) {
-      return { kind: 'current' }
+  if (opts.authority === undefined) return { kind: 'skipped', reason: 'no-writer-authority' }
+  return withCurrentWriterAuthority(opts.knowledgeRoot, opts.authority, () => {
+    const handle = openIndexWriter(opts.knowledgeRoot)
+    try {
+      ensureRunOutcomeTables(handle.db)
+      if (readStoredProjectionVersion(handle.db) === RUN_OUTCOMES_PROJECTION_VERSION) {
+        return { kind: 'current' }
+      }
+      return {
+        kind: 'rebuilt',
+        report: rebuildRunOutcomes(handle.db, opts.runsRoot, {
+          extractAnchors: opts.extractAnchors,
+        }),
+      }
+    } finally {
+      handle.close()
     }
-    return {
-      kind: 'rebuilt',
-      report: rebuildRunOutcomes(handle.db, opts.runsRoot, {
-        extractAnchors: opts.extractAnchors,
-      }),
-    }
-  } finally {
-    handle.close()
-  }
+  })
 }
 
 /**

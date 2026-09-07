@@ -2116,10 +2116,13 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       // spelling of 'runs' rather than a literal copied into a second host.
       const reconcile = operations.reconcileRunOutcomesProjection({
         knowledgeRoot: input.knowledgeRoot,
+        authority: { leaseId: acquired.leaseId, epoch: acquired.epoch },
         runsRoot: completedRunsRoot(input.agentQaRoot),
         extractAnchors: exercisedAnchors,
       })
-      if (reconcile.kind === 'rebuilt') {
+      if (reconcile.kind === 'skipped') {
+        logger.error('daemon: run-outcome projection not reconciled (no writer authority)')
+      } else if (reconcile.kind === 'rebuilt') {
         logger.info(
           'daemon: run-outcome projection rebuilt '
           + `(folded ${reconcile.report.folded}, `
@@ -2134,7 +2137,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       // outcomes as alternatives rather than promising a partway failure that may not have happened.
       logger.error(
         'Daemon startup: the run-outcome projection reconcile did not complete. '
-        + 'If the rebuild had already begun, the projection family is left unstamped and possibly'
+        + 'If the rebuild write phase had already begun, the projection family is left unstamped and possibly'
         + ' partial, and the next reconcile rebuilds it; if it stopped before that, the family and'
         + ' its previous stamp are untouched. Continuing to serve. '
         + `(${error instanceof Error ? error.message : String(error)})`,

@@ -393,6 +393,8 @@ function successfulOperations(
     writeCurationTailReceipt: vi.fn(),
     foldRunOutcomes: vi.fn(() => ({ kind: 'applied' as const, tests: 0, ...NO_DETECTION })),
     reconcileRunOutcomesProjection: vi.fn(() => ({ kind: 'current' as const })),
+    acquireWriterLease: vi.fn(() => ({ kind: 'acquired' as const, leaseId: 'sweep-lease', epoch: 7 })),
+    releaseLease: vi.fn(() => ({ kind: 'released' as const })),
     ...overrides,
   }
 }
@@ -1524,13 +1526,17 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
       foldRunOutcomes,
     })
 
-    await runCurationTail(baseOptions(operations, { log: { warn: vi.fn(), info } }))
+    const authority = { leaseId: 'held-post-run-lease', epoch: 12 }
+    await runCurationTail(baseOptions(operations, { authority, log: { warn: vi.fn(), info } }))
+    expect(operations.acquireWriterLease).not.toHaveBeenCalled()
+    expect(operations.releaseLease).not.toHaveBeenCalled()
 
     expect(reconcileRunOutcomesProjection).toHaveBeenCalledOnce()
     expect(reconcileRunOutcomesProjection).toHaveBeenCalledWith(
       expect.objectContaining({
         knowledgeRoot,
         runsRoot: join(agentQaRoot, RUNS_SUBDIR),
+        authority,
       }),
     )
     expect(foldRunOutcomes).toHaveBeenCalledTimes(2)
@@ -1541,6 +1547,31 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
     expect(info).toHaveBeenCalledWith(
       expect.stringContaining('folded 2, skipped 1 handoff, 0 artifact'),
     )
+  })
+
+  it('acquires and releases direct-sweep authority around reconciliation', async () => {
+    const operations = successfulOperations()
+    await runCurationTail(baseOptions(operations))
+    expect(operations.acquireWriterLease).toHaveBeenCalledExactlyOnceWith(knowledgeRoot)
+    expect(operations.reconcileRunOutcomesProjection).toHaveBeenCalledWith(expect.objectContaining({
+      authority: { leaseId: 'sweep-lease', epoch: 7 },
+    }))
+    expect(operations.releaseLease).toHaveBeenCalledExactlyOnceWith({ knowledgeRoot, leaseId: 'sweep-lease' })
+  })
+
+  it('warns on the no-authority skip and continues without releasing another holder', async () => {
+    const warn = vi.fn()
+    const operations = successfulOperations({
+      acquireWriterLease: vi.fn(() => ({ kind: 'held' as const, holder: handedOffDrainReport().holder })),
+      reconcileRunOutcomesProjection: vi.fn(() => ({ kind: 'skipped' as const, reason: 'no-writer-authority' as const })),
+    })
+    await runCurationTail(baseOptions(operations, { log: { warn } }))
+    expect(operations.reconcileRunOutcomesProjection).toHaveBeenCalledWith(expect.not.objectContaining({
+      authority: expect.anything(),
+    }))
+    expect(warn).toHaveBeenCalledWith('curation: run-outcome projection not reconciled (no writer authority)')
+    expect(operations.releaseLease).not.toHaveBeenCalled()
+    expect(operations.foldRunOutcomes).toHaveBeenCalledOnce()
   })
 
   it('isolates a throwing reconcile: warned, and every per-run fold still happens', async () => {
@@ -1561,6 +1592,8 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
       runCurationTail(baseOptions(operations, { log: { warn } })),
     ).resolves.toBeUndefined()
 
+    expect(operations.releaseLease).toHaveBeenCalledExactlyOnceWith({ knowledgeRoot, leaseId: 'sweep-lease' })
+
     // The warn has to be true about what the throw LEFT, not just that it happened — and true of
     // EVERY throw that can reach this catch (393 round 7, WARN-TEXT-CLASS). Two classes arrive
     // here: one raised before any DELETE (`openIndexWriter`, `ensureRunOutcomeTables`,
@@ -1574,7 +1607,7 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
     )
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining(
-        'If the rebuild had already begun, the projection family is left unstamped and possibly'
+        'If the rebuild write phase had already begun, the projection family is left unstamped and possibly'
         + ' partial, and the next reconcile rebuilds it',
       ),
     )
