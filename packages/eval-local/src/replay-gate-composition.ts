@@ -677,9 +677,18 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     return abstain('baseline-uncached')
   }
   const cacheById = new Map(cache.rows.map((row) => [row.cassetteId, row]))
-  const scoredCollateral = gate.gateEntries.filter(
-    (row) => cacheById.get(row.cassetteId)?.kind === 'cached',
+  const baselineArms = new Map(
+    cache.rows.map((row) => [
+      row.cassetteId,
+      row.kind === 'cached'
+        ? arm(bundles.get(row.cassetteId)!.cassette, row.replay, row.score)
+        : { kind: 'refused' as const, reason: row.reason },
+    ]),
   )
+  const scoredCollateral = gate.gateEntries.filter((row) => {
+    const baseline = baselineArms.get(row.cassetteId)
+    return baseline?.kind === 'scored' && baseline.vector.axes.headline !== 'not-applicable'
+  })
   if (scoredCollateral.length === 0) return abstain('collateral-unscorable')
   const targetsToCrossCheck = targets.filter(({ cassette }) => {
     const cached = cacheById.get(cassette.id)
@@ -733,14 +742,11 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       origin: targetIds.has(id) ? 'target-step' : 'gate-set',
       entry,
       label: cassette.label,
-      baseline:
-        baseline.kind === 'cached'
-          ? arm(cassette, baseline.replay, baseline.score)
-          : { kind: 'refused', reason: baseline.reason },
+      baseline: baselineArms.get(id)!,
       candidate: { kind: 'refused', reason: 'baseline refused' },
     }
     rows.push(row)
-    if (baseline.kind !== 'cached') continue
+    if (baseline.kind !== 'cached' || row.baseline.kind !== 'scored') continue
     seedHonored &&= baseline.seedHonored
     const plan = toDeclaredBriefDelta(injection, cassette)
     if (plan.kind !== 'plan') {
@@ -781,6 +787,15 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     sameFamilyRefused,
     targets: diffed.filter((row) => row.origin === 'target-step'),
     collateral: diffed.filter((row) => row.origin === 'gate-set'),
+  }
+  if (!decisionInput.collateral.some((row) => row.headline !== 'incomparable')) {
+    const fold = foldPerAxisScore(rows, floor.axes)
+    receipt.perAxisScore = fold.perAxisScore
+    receipt.floorAbsentAxes = fold.floorAbsentAxes
+    receipt.population = fold.population
+    receipt.samples.seedHonored = seedHonored
+    receipt.samples.modelCalls = spend.modelCalls
+    return abstain('collateral-unscorable')
   }
   const probe = decideGate1({ ...decisionInput, crossCheck: 'inconclusive' })
   let crossCheck: CrossCheck = 'not-run'

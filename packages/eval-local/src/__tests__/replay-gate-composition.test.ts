@@ -742,6 +742,36 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     )
     expect(stub.captured).toHaveLength(0)
   })
+  it.each(['baseline', 'candidate'])(
+    'abstains when every %s collateral arm errors',
+    async (mode) => {
+      const { f, input } = await warm()
+      const failing = respondingStub((call) => {
+        if (JSON.stringify(call.prompt).includes('gate1-collateral-'))
+          throw new Error('fixture-only infrastructure failure')
+        return gate1Responder(f)(call)
+      })
+      const candidate = mode === 'candidate' ? failing : respondingStub(gate1Responder(f))
+      if (mode === 'baseline') await warmGateRoot(f, failing)
+      input.planner.modelOverrides = { languageModels: candidate.languageModels }
+      let authCalls = 0
+      input.planner.resolveAuth = async () => {
+        authCalls++
+        return noneAuth
+      }
+      const got = receipt(await evalLocal.runReplayGate(input))
+      expect(got).toMatchObject({
+        verdict: 'abstain',
+        reasons: ['collateral-unscorable'],
+        crossCheck: 'not-run',
+        spend: { screens: mode === 'baseline' ? 0 : 6 },
+      })
+      expect(authCalls).toBe(mode === 'baseline' ? 0 : 1)
+      expect(got.spend?.modelCalls).toBe(candidate.captured.length)
+      if (mode === 'baseline') expect(candidate.captured).toHaveLength(0)
+      else expect(candidate.captured.length).toBeGreaterThanOrEqual(6)
+    },
+  )
   it('compares scored collateral and discloses refused rows without replaying them', async () => {
     const { f, input, stub } = await warm()
     const refused = f.collateralIds.slice(0, 2)
