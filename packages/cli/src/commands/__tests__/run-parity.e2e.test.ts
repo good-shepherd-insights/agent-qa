@@ -32,6 +32,10 @@
 // and the inventory comparison below subtracts those names FROM BOTH SIDES. A removal from the
 // golden inventory still reds; an addition nobody declared still reds; the other five
 // discriminators are untouched and stay byte-exact.
+//
+// Phase 418-05 intentionally discloses the resolved canary ablation cap. Only the
+// two affected golden stderr fields gained that exact line; the historical capture
+// was not regenerated, and every comparison below remains byte-exact.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
