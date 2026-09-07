@@ -204,7 +204,7 @@ export function renderShow(result: ProposalsShowOutput): string {
         : shape
       explanation.push(`gate-inconsistent — ${words}`, `candidate ${delta.targetId}`,
         `gate-1 receipt ${gate1Digest}`, `gate-2 receipt ${gate2Digest}`,
-        'accept ⇒ deprecate the candidate; reject ⇒ clear the flag (the gate falls back to the standing receipts)', '')
+        'accept ⇒ deprecate the candidate; reject ⇒ clear the pending proposal; conflicting standing receipts may still hold gate-inconsistent', '')
     }
   }
   return [

@@ -362,7 +362,7 @@ describe('agent-qa proposals (D-17, the decision surface)', () => {
     expect(shown.stdout).toContain('candidate fact-checkout')
     expect(shown.stdout).toContain(`gate-1 receipt ${'a'.repeat(64)}`)
     expect(shown.stdout).toContain(`gate-2 receipt ${'b'.repeat(64)}`)
-    expect(shown.stdout).toContain('accept ⇒ deprecate the candidate; reject ⇒ clear the flag')
+    expect(shown.stdout).toContain('accept ⇒ deprecate the candidate; reject ⇒ clear the pending proposal; conflicting standing receipts may still hold gate-inconsistent')
     expect(JSON.parse((await run(ws, ['proposals', 'show', proposal.proposalId, '--json'])).stdout)
       .entry.envelope.payload).toEqual(proposal)
   })
