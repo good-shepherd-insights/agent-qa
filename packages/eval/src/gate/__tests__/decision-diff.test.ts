@@ -242,6 +242,35 @@ describe('per-decision diff', () => {
 })
 
 describe('per-axis paired scores', () => {
+  it('uses strict lift and regression boundaries at a quarter floor', () => {
+    const arms = [
+      row('a'),
+      row('b', 'correct', 'correct'),
+      row('c', 'correct', 'correct'),
+      row('d', 'correct', 'correct'),
+    ]
+    if (arms[0]!.candidate.kind !== 'scored') throw new Error('fixture')
+    arms[0]!.candidate.vector.axes.elementIdentity = 'incorrect'
+    const boundary = foldPerAxisScore(arms, floors(0.25))
+    expect(boundary.perAxisScore.headline.delta).toBe(0.25)
+    expect(boundary.lifts).not.toContain('headline')
+    expect(boundary.perAxisScore.elementIdentity.delta).toBe(-0.25)
+    expect(boundary.regressions).not.toContain('elementIdentity')
+    arms[1] = row('b')
+    if (arms[1].candidate.kind !== 'scored') throw new Error('fixture')
+    arms[1].candidate.vector.axes.elementIdentity = 'incorrect'
+    const beyond = foldPerAxisScore(arms, floors(0.25))
+    expect(beyond.perAxisScore.headline.delta).toBe(0.5)
+    expect(beyond.lifts).toContain('headline')
+    expect(beyond.regressions).toContain('elementIdentity')
+  })
+  it('computes delta from paired counts without rate-subtraction rounding', () => {
+    const result = foldPerAxisScore(
+      [row('a', 'correct', 'incorrect'), row('b'), row('c')],
+      floors(),
+    )
+    expect(result.perAxisScore.headline.delta).toBe((2 - 1) / 3)
+  })
   it('compares empty-to-rendered, excludes rendered baselines, and discloses absent floors', () => {
     const empty = row('empty')
     const rendered = row('rendered', 'correct', 'incorrect')
@@ -284,6 +313,15 @@ describe('per-axis paired scores', () => {
   it('retains all six axes with finite zero rates when nothing pairs', () => {
     const result = foldPerAxisScore([], floors())
     expect(Object.keys(result.perAxisScore)).toEqual(FLOOR_AXES)
+    expect(result.population).toEqual({
+      proof: 0,
+      empty: 0,
+      rendered: 0,
+      refused: 0,
+      renderedExcluded: 0,
+    })
+    expect(result.lifts).toEqual([])
+    expect(result.regressions).toEqual([])
     for (const score of Object.values(result.perAxisScore)) {
       expect(score).toMatchObject({ baseline: 0, candidate: 0, delta: 0, n: 0 })
     }

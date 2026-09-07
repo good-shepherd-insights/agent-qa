@@ -126,6 +126,9 @@ export interface PerAxisFold {
     { baseline: number; candidate: number; delta: number; floor: number; n: number }
   >
   floorAbsentAxes: FloorAxis[]
+  /** Disclosure only: decideGate1 never uses aggregate lifts or regressions. */
+  lifts: FloorAxis[]
+  regressions: FloorAxis[]
   population: {
     proof: number
     empty: number
@@ -174,5 +177,9 @@ export function foldPerAxisScore(rows: readonly ArmDecision[], floor: AxisFloorS
       ]
     }),
   ) as PerAxisFold['perAxisScore']
-  return { perAxisScore, floorAbsentAxes, population }
+  const lifts = FLOOR_AXES.filter((axis) => perAxisScore[axis].delta > perAxisScore[axis].floor)
+  const regressions = FLOOR_AXES.filter(
+    (axis) => perAxisScore[axis].delta < -perAxisScore[axis].floor,
+  )
+  return { perAxisScore, floorAbsentAxes, population, lifts, regressions }
 }

@@ -3,6 +3,76 @@ import { GATE1_REASONS } from '@vostride/agent-qa-schema'
 import type { CrossCheck, Gate1Reason, Gate1Receipt, GateVerdict } from '@vostride/agent-qa-schema'
 import type { DiffedDecision } from './decision-diff'
 import { orderHarmed } from './decision-diff'
+import { FLOOR_AXES, type FloorAxis } from '../stats/decision-vector'
+import { generalizationRatio, MIN_LIFT_DECISIONS } from '../stats/generalization'
+import { pairedBootstrapCI } from '../stats/bootstrap'
+import { createSeededRng } from '../stats/prng'
+import type { NoiseFloorArtefact } from './floor-artefact'
+
+/** D-15 product measurements are disclosures, never verdict inputs. */
+export function productFloorRows(
+  floor: NoiseFloorArtefact,
+  product: string,
+): { product: string; axes: { axis: FloorAxis; floor: number | null; n: number }[] } | undefined {
+  if (!Object.hasOwn(floor.products, product)) return undefined
+  const record = floor.products[product]!
+  return {
+    product,
+    axes: FLOOR_AXES.map((axis) => ({
+      axis,
+      floor: record.axes[axis].aggregateFloor ?? null,
+      n: record.axes[axis].n,
+    })),
+  }
+}
+
+export interface GeneralizationDisclosure {
+  liftDecisions: number
+  minimumLiftDecisions: number
+  ratio?: number
+  ci?: [number, number]
+}
+
+/** D-04: positive-fix rates and a conditional bootstrap CI; never a verdict input. */
+export function generalizationDisclosure(input: {
+  targets: readonly DiffedDecision[]
+  heldOut: readonly DiffedDecision[]
+}): GeneralizationDisclosure {
+  const liftDecisions = input.targets.filter((row) => row.headline === 'fixed').length
+  const result: GeneralizationDisclosure = {
+    liftDecisions,
+    minimumLiftDecisions: MIN_LIFT_DECISIONS,
+  }
+  // An empty held-out population supplies no measured rate or interval.
+  if (liftDecisions < MIN_LIFT_DECISIONS || input.heldOut.length === 0) return result
+  const optimizeLiftRate = liftDecisions / input.targets.length
+  const measured = generalizationRatio({
+    optimizeLiftDecisions: liftDecisions,
+    optimizeLiftRate,
+    heldOutLiftRate:
+      input.heldOut.filter((row) => row.headline === 'fixed').length / input.heldOut.length,
+    floor: 0,
+  })
+  if (measured.ratio === undefined || !Number.isFinite(measured.ratio)) return result
+  // Reuse 415's paired bootstrap with the observed target rate held fixed. This
+  // disclosure counts positive fixes (not net gains), so pairs encode each
+  // held-out decision's fix indicator. Divide each draw by the target rate to
+  // keep the CI in ratio units. Stable ordering and a named seed make it repeatable.
+  const pairs = orderHarmed(input.heldOut).map((row) => ({ a: false, b: row.headline === 'fixed' }))
+  const ci = pairedBootstrapCI(
+    pairs,
+    (sample) =>
+      sample.reduce((sum, pair) => sum + Number(pair.b) - Number(pair.a), 0) /
+      sample.length /
+      optimizeLiftRate,
+    createSeededRng('gate1-generalization-v1'),
+  )
+  if (Number.isFinite(ci.lower) && Number.isFinite(ci.upper)) {
+    result.ratio = measured.ratio
+    result.ci = [ci.lower, ci.upper]
+  }
+  return result
+}
 
 export interface Gate1DecisionInput {
   kind: string

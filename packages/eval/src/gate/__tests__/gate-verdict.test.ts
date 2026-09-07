@@ -7,7 +7,8 @@ import {
   type AxisCorrectness,
   type DecisionCorrectnessVector,
 } from '../../stats/decision-vector'
-import type { AxisFloorSet } from '../floor-artefact'
+import type { AxisFloorSet, NoiseFloorArtefact } from '../floor-artefact'
+import { productFloorRows, generalizationDisclosure } from '../gate-verdict'
 import type { ArmDecision } from '../decision-diff'
 
 function row(
@@ -70,6 +71,63 @@ const input = () => ({
 })
 
 describe('Gate-1 verdict', () => {
+  it('discloses product floors on all six axes with null for unmeasured floors', () => {
+    const floor = { products: { example: { axes: floors(0.25) } } } as unknown as NoiseFloorArtefact
+    expect(productFloorRows(floor, 'example')).toEqual({
+      product: 'example',
+      axes: FLOOR_AXES.map((axis) => ({
+        axis,
+        floor: axis === 'loop' ? null : 0.25,
+        n: axis === 'loop' ? 0 : 10,
+      })),
+    })
+    expect(productFloorRows(floor, 'unknown')).toBeUndefined()
+    expect(productFloorRows(floor, 'toString')).toBeUndefined()
+  })
+  it('omits ratio and CI below three fixed targets and when held-out evidence is empty', () => {
+    const result = generalizationDisclosure({ targets: diffArms([row()]), heldOut: [] })
+    expect(result).toEqual({ liftDecisions: 1, minimumLiftDecisions: 3 })
+    expect('ratio' in result).toBe(false)
+    expect('ci' in result).toBe(false)
+    expect(
+      generalizationDisclosure({
+        targets: diffArms(['a', 'b', 'c'].map((id) => row(id))),
+        heldOut: [],
+      }),
+    ).toEqual({ liftDecisions: 3, minimumLiftDecisions: 3 })
+    expect(generalizationDisclosure({ targets: [], heldOut: [] })).toEqual({
+      liftDecisions: 0,
+      minimumLiftDecisions: 3,
+    })
+  })
+  it('discloses deterministic finite ratio bounds in ratio units, never deciding the verdict', () => {
+    const targets = diffArms(
+      ['a', 'b', 'c', 'd', 'e', 'f'].map((id, i) =>
+        row(id, i < 3 ? 'incorrect' : 'correct', 'correct'),
+      ),
+    )
+    const heldOut = diffArms(
+      ['h1', 'h2', 'h3', 'h4'].map((id, i) => row(id, i < 2 ? 'incorrect' : 'correct', 'correct')),
+    )
+    const disclosure = generalizationDisclosure({ targets, heldOut })
+    expect(disclosure).toEqual({ liftDecisions: 3, minimumLiftDecisions: 3, ratio: 1, ci: [0, 2] })
+    expect(
+      generalizationDisclosure({
+        targets: [...targets].reverse(),
+        heldOut: [...heldOut].reverse(),
+      }),
+    ).toEqual(disclosure)
+    for (const value of [disclosure.ratio, ...disclosure.ci!]) {
+      expect(Number.isFinite(value)).toBe(true)
+      expect(Number.isNaN(value)).toBe(false)
+    }
+    const noLift = generalizationDisclosure({
+      targets,
+      heldOut: diffArms([row('h', 'correct', 'correct')]),
+    })
+    expect(noLift).toMatchObject({ ratio: 0, ci: [0, 0] })
+    expect(invoke('decideGate1', { ...input(), targets })).toMatchObject({ verdict: 'pass' })
+  })
   it('orders both zero-weight buckets and retains the overturned channel', () => {
     const collateral = diffArms([
       { ...row('z-unverified', 'correct', 'incorrect'), label: undefined },
