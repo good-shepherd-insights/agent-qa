@@ -1,4 +1,6 @@
 import { emptyCanaryCreditCounters } from '../canary-credit.js'
+import { curateCompletedRun, readCurationTailReceipt, type CurationTailOperations } from '../curation-tail.js'
+import { readCompletedCanaryAblations } from '../canary-run-state.js'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -76,6 +78,8 @@ const PROCEDURE_ANCHORS: Anchor[] = [
 ]
 
 describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05)', () => {
+  let creditRunDir: string
+  afterEach(() => rmSync(creditRunDir, { recursive: true, force: true }))
   it('declares exactly the three non-signal classes, in declaration order', () => {
     expect([...NON_SIGNAL_CLASSES]).toEqual(['environment', 'timeout', 'flake'])
     for (const value of ['environment', 'timeout', 'flake'] as const) expect(isNonSignalClass(value)).toBe(true)
@@ -93,7 +97,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     const isNovel = vi.fn(async () => true)
     const stageFeedback = vi.fn(async () => ({ kind: 'staged' as const }))
     const report = await emitCanaryOutcomes({ handoff: input,
-      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-rerun', emit,
+      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit,
       credit: { ablation: { isNovel, stage: stageFeedback, ablate, corpusDigest: async () => ({ kind: 'no-eval-root' }) } } })
     expect(report.canary.rerunExcluded).toBe(1)
     expect(report.details[0]).toEqual({ testId: input.tests[0].testId, testIndex: 0,
@@ -115,7 +119,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     const isNovel = vi.fn(async () => true)
     const stageFeedback = vi.fn(async () => ({ kind: 'staged' as const }))
     const report = await emitCanaryOutcomes({ handoff: input,
-      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-non-signal', emit,
+      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit,
       credit: { maxAblations: 1, ablation: { isNovel, stage: stageFeedback,
         ablate: async () => ({ kind: 'no-eval-root' }), corpusDigest: async () => ({ kind: 'no-eval-root' }) } } })
     expect(report.canary.nonSignal.environment).toBe(1)
@@ -133,6 +137,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     expect(project(input, lookupSpy.anchorsById)).toHaveLength(1)
   })
   beforeEach(() => {
+    creditRunDir = mkdtempSync(join(tmpdir(), 'agent-qa-credit-completion-'))
     lookupSpy.anchorsById.clear()
     lookupSpy.invalidById.clear()
     lookupSpy.anchorsById.set(CANDIDATE, [{ t: 'el', role: 'button', name: 'checkout', ordinal: 0 }])
@@ -140,7 +145,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
   it('418 exposes a moved corpus digest in emit detail while preserving the ablation citation', async () => {
     const emit = vi.fn()
     const report = await emitCanaryOutcomes({
-      handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-sc2', emit,
+      handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit,
       credit: { maxAblations: 1, ablation: {
         isNovel: async () => true, stage: async () => ({ kind: 'staged' }),
         corpusDigest: async () => ({ kind: 'digest', corpusDigest: 'a'.repeat(64) }),
@@ -158,7 +163,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
   it.each(['absent', 'held', 'throws'] as const)('reports %s capability without certifying benefit', async mode => {
     const emit = vi.fn()
     const report = await emitCanaryOutcomes({
-      handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-sc2', emit,
+      handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit,
       ...(mode === 'absent' ? {} : { credit: { ablation: {
         isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' as const }),
         corpusDigest: async () => ({ kind: 'digest' as const, corpusDigest: 'c'.repeat(64) }),
@@ -175,6 +180,63 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     expect(report.canary[mode === 'absent' ? 'rideAlongUncredited' : mode === 'held' ? 'ablationHeld' : 'ablationError']).toBe(1)
     expect(report.refused).toBe(0)
     expect(report.details[0]?.crossCheck).toBe(mode === 'held' ? 'held' : 'not-run')
+  })
+  it.each(['projection', 'drain'].flatMap(failure => ['ablated', 'error', 'throws', 'unavailable', 'no-eval-root'].map(resultKind => ({ failure, resultKind }))))('reuses a handled $resultKind attempt on ordinary incomplete-fold retry after $failure failure', async ({ failure, resultKind }) => {
+    lookupSpy.anchorsById.set(OTHER_CANDIDATE, lookupSpy.anchorsById.get(CANDIDATE)!)
+    const completed = handoff([step({ candidateIds: [CANDIDATE, OTHER_CANDIDATE] })])
+    const emitted: CanaryOutcome[] = []
+    const ablate = vi.fn(async () => {
+      if (resultKind === 'throws') throw new Error('private fixture provider detail')
+      if (resultKind === 'error') return { kind: 'error' as const, message: 'private fixture provider detail' }
+      if (resultKind === 'unavailable') return { kind: 'unavailable' as const, reason: 'private fixture provider detail' }
+      if (resultKind === 'no-eval-root') return { kind: 'no-eval-root' as const }
+      return { kind: 'ablated' as const,
+      crossCheck: 'flipped' as const, corpusDigest: 'c'.repeat(64), k: 3, baseSeed: 11,
+      seeds: [11, 12, 13], seedHonored: true, spend: { modelCalls: 5, screens: 5, promptTokens: 10, completionTokens: 2 }, gate2Dir: creditRunDir }
+    })
+    let first = true
+    const operations: Partial<CurationTailOperations> = {
+      canaryAblation: { ablate, isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' }),
+        corpusDigest: async () => ({ kind: 'digest', corpusDigest: 'c'.repeat(64) }) },
+      runSafetyScope: (_input, fn) => fn(),
+      emitCurationCandidates: () => ({ enqueued: 0, coalesced: 0, refused: 0, capExceeded: 0, details: [] }),
+      openKnowledgeReader: () => ({ emitCanaryOutcome: (outcome: CanaryOutcome) => emitted.push(structuredClone(outcome)) }) as unknown as ReturnType<CurationTailOperations['openKnowledgeReader']>,
+      foldRunOutcomes: () => {
+        if (first && failure === 'projection') throw new Error('fixture projection unavailable after completed replay')
+        return { kind: 'applied', tests: 1, quarantine: { kind: 'not-evaluated', reason: 'not-requested' } }
+      },
+      drainQueue: async () => ({ kind: 'drained', jobsProcessed: 0, committed: 0, inconsistenciesFiled: 0,
+        downgraded: 0, withheld: 0, quarantined: 0, requeued: first && failure === 'drain' ? 1 : 0,
+        failures: first && failure === 'drain' ? 1 : 0, failureDetails: [], noops: 0, noopDetails: [],
+        remaining: 0, remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 0 },
+        reconcile: undefined, writerPass: { kind: 'not-requested' }, gc: { kind: 'not-run' } }),
+    }
+    const { defaultGuardrailPolicyInput, loadGuardrailPolicy } = await import('@vostride/agent-qa-safety')
+    const fold = () => curateCompletedRun({ handoff: completed, runDir: creditRunDir,
+      knowledgeRoot: '/tmp/agent-qa-knowledge', agentQaRoot: creditRunDir, maxAblations: 1,
+      auditSink: { appendGuardrailAudit: () => undefined, appendExecutionAudit: () => undefined },
+      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput), operations, log: { warn: vi.fn() } })
+    expect(await fold()).toMatchObject({ complete: false })
+    expect(readCurationTailReceipt(creditRunDir)).toBeUndefined()
+    const evidence = readCompletedCanaryAblations(creditRunDir, String(completed.runId))
+    expect(evidence).toHaveLength(1)
+    expect(JSON.stringify(evidence)).not.toContain('private fixture provider detail')
+    expect(ablate).toHaveBeenCalledOnce()
+    first = false
+    expect(await fold()).toMatchObject({ complete: true })
+    expect(ablate).toHaveBeenCalledOnce()
+    expect(emitted.slice(2)).toEqual(emitted.slice(0, 2))
+    expect(readCompletedCanaryAblations(creditRunDir, String(completed.runId))).toEqual(evidence)
+    expect(readCurationTailReceipt(creditRunDir)?.canary).toMatchObject({
+      credited: resultKind === 'ablated' ? 1 : 0, ablationCapExceeded: 1,
+      ablationError: resultKind === 'error' || resultKind === 'throws' ? 1 : 0,
+      ablationInconclusive: resultKind === 'unavailable' ? 1 : 0,
+      rideAlongUncredited: resultKind === 'no-eval-root' ? 1 : 0,
+    })
+    const badPath = join(creditRunDir, 'canary-completions', 'invalid.json')
+    writeFileSync(badPath, '{}')
+    await expect(fold()).rejects.toThrow('completed canary evidence invalid')
+    expect(ablate).toHaveBeenCalledOnce()
   })
 })
 

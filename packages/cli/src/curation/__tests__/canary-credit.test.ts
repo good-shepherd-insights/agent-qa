@@ -47,6 +47,7 @@ function capability(value: CanaryAblationResult = result()): CanaryAblation {
 }
 function credit(attributions: ProjectedCanaryAttribution[], ablation?: CanaryAblation, overrides: Partial<CanaryCreditInput> = {}) {
   return creditCanaryAttributions({ attributions, ablation, handoff, runDir: '/tmp/run',
+    completedAblations: [], saveCompletedAblation: () => undefined,
     knowledgeRoot: '/tmp/knowledge', maxAblations: 4,
     readBundleStateDigests: () => ({ kind: 'not-found' }),
     observationIdOf: () => 'fixture-observation', ...overrides })

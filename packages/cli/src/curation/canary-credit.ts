@@ -3,6 +3,7 @@ import type { Benefit, CanaryOutcome, CompletedRunHandoff, CrossCheck } from '@v
 import { canonicalJson, distilledScreenStateDigest, exercisedAnchors, normalizeAnchor } from '@vostride/agent-qa-schema'
 import type { LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import type { NonSignalClass, ProjectedCanaryAttribution } from './emit-canary-outcomes.js'
+import type { CompletedCanaryAblation } from './canary-run-state.js'
 
 export interface CanaryAblationInput {
   handoff: CompletedRunHandoff
@@ -77,6 +78,8 @@ export type CreditedCanaryAttribution = ProjectedCanaryAttribution & {
   corpusDigestMoved?: true
 }
 export interface CanaryCreditInput {
+  completedAblations: readonly CompletedCanaryAblation[]
+  saveCompletedAblation: (entry: CompletedCanaryAblation) => void
   maxAblations: number
   knowledgeRoot: string
   readBundleStateDigests: LocalCurationCapabilities['readCanonicalBundleStateDigests']
@@ -98,7 +101,8 @@ export async function creditCanaryAttributions(
   let digestRead = false
   let corpusDigest: string | undefined
   const ablatedCandidates = new Set<string>()
-  let ablationsRun = 0
+  const completedByCandidate = new Map(input.completedAblations.map(entry => [entry.candidateId, entry]))
+  let ablationsRun = completedByCandidate.size
   for (const row of input.attributions) {
     if (row.kind !== 'outcome') {
       attributions.push(row)
@@ -142,6 +146,7 @@ export async function creditCanaryAttributions(
     }
     let crossCheck: CrossCheck = 'not-run'
     let corpusDigestMoved: true | undefined
+    const completed = completedByCandidate.get(outcome.candidateId)
     if (outcome.runOutcome === 'positive') {
       if (!served || input.ablation === undefined) {
         counters.rideAlongUncredited += 1
@@ -149,19 +154,38 @@ export async function creditCanaryAttributions(
         counters.ablationInconclusive += 1
       } else if (ablatedCandidates.has(outcome.candidateId)) {
         counters.rideAlongUncredited += 1
-      } else if (ablationsRun >= input.maxAblations) {
+      } else if (completed !== undefined && (completed.attributedObservationId !== input.observationIdOf(outcome)
+        || completed.observedStateDigest !== outcome.observedStateDigest)) {
+        // Another observation consumed this candidate's run allowance; never move its credit.
+        counters.rideAlongUncredited += 1
+      } else if (completed === undefined && ablationsRun >= input.maxAblations) {
         counters.ablationCapExceeded += 1
       } else {
         ablatedCandidates.add(outcome.candidateId)
-        ablationsRun += 1
         let result: CanaryAblationResult
-        try {
-          result = await input.ablation.ablate({ handoff: input.handoff, runDir: input.runDir,
-            candidateId: outcome.candidateId, runId: outcome.runId, testId: outcome.testId,
-            testIndex: outcome.testIndex, stepIndex: outcome.stepIndex,
-            attributedObservationId: input.observationIdOf(outcome) })
-        } catch (error) {
-          result = { kind: 'error', message: error instanceof Error ? error.message : String(error) }
+        if (completed !== undefined) result = completed.result
+        else {
+          ablationsRun += 1
+          try {
+            result = await input.ablation.ablate({ handoff: input.handoff, runDir: input.runDir,
+              candidateId: outcome.candidateId, runId: outcome.runId, testId: outcome.testId,
+              testIndex: outcome.testIndex, stepIndex: outcome.stepIndex,
+              attributedObservationId: input.observationIdOf(outcome) })
+          } catch (error) {
+            result = { kind: 'error', message: error instanceof Error ? error.message : String(error) }
+          }
+          // Every handled result consumed an attempt. Persist only safe terminal DATA,
+          // BEFORE queue/projection/drain work can fail. A
+          // persistence failure escapes the fold; it must not mint a successful tail receipt.
+          input.saveCompletedAblation({ schemaVersion: 1,
+            runId: outcome.runId, candidateId: outcome.candidateId,
+            attributedObservationId: input.observationIdOf(outcome), observedStateDigest: outcome.observedStateDigest,
+            result: result.kind === 'ablated' ? { kind: 'ablated', crossCheck: result.crossCheck, corpusDigest: result.corpusDigest,
+              k: result.k, baseSeed: result.baseSeed, seeds: result.seeds, seedHonored: result.seedHonored,
+              spend: result.spend, gate2Dir: result.gate2Dir }
+              : result.kind === 'error' ? { kind: 'error', message: 'ablation-error' }
+                : result.kind === 'unavailable' ? { kind: 'unavailable', reason: 'ablation-unavailable' }
+                  : { kind: 'no-eval-root' } })
         }
         switch (result.kind) {
           case 'ablated':

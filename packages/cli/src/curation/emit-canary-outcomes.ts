@@ -21,6 +21,7 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import { exercisedAnchors } from './handoff-anchors.js'
+import { readCompletedCanaryAblations, saveCompletedCanaryAblation } from './canary-run-state.js'
 import { creditCanaryAttributions, emptyCanaryCreditCounters,
   type CanaryAblation, type CanaryCreditCounters, type CreditedCanaryAttribution } from './canary-credit.js'
 
@@ -501,6 +502,8 @@ export async function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): Promi
     }),
   })
   const credit = opts.credit === undefined ? undefined : await creditCanaryAttributions({
+    completedAblations: readCompletedCanaryAblations(opts.runDir, String(opts.handoff.runId)),
+    saveCompletedAblation: entry => saveCompletedCanaryAblation(opts.runDir, entry),
     attributions: projected, handoff: opts.handoff, runDir: opts.runDir,
     ...opts.credit, knowledgeRoot: opts.knowledgeRoot, observationIdOf: LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId,
     maxAblations: opts.credit.maxAblations ?? (await import('../eval-session-composition.js')).GATE2_DEFAULT_MAX_ABLATIONS,

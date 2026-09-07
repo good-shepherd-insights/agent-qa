@@ -92,6 +92,7 @@ describe('418 v4 canary receipt contract', () => {
         listCompletedRunDirs: () => dirs,
         emitCanaryOutcomes: async opts => {
           const attributed = await creditCanaryAttributions({ handoff: opts.handoff, runDir: opts.runDir,
+            completedAblations: [], saveCompletedAblation: () => undefined,
             knowledgeRoot, maxAblations: opts.credit!.maxAblations!, ablation: opts.credit!.ablation!,
             readBundleStateDigests: () => ({ kind: 'not-found' }), observationIdOf: row => `${row.runId}:${row.candidateId}`,
             attributions: [0, 1, 2].map(index => ({ kind: 'outcome' as const, source: 'served-brief' as const,
