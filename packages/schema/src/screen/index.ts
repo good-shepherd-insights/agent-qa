@@ -1,5 +1,6 @@
 export { normalizeAccessibleName } from './normalize-name'
 export { elementOrdinal } from './element-ordinal'
+export { distilledScreenStateDigest, type DistilledScreenStateInput } from './distilled-state-digest'
 export type { ElementBounds, ScrollContext } from './element-bounds'
 export type { ElementInfo, ElementState, ElementLabels, ElementHierarchy } from './element-info'
 export type { ScreenState } from './screen-state'

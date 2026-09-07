@@ -426,12 +426,17 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       'seedHonored=false: samples collapse to repeat variance on this provider',
     )
   })
-  it.each(['present', 'uniform', 'missing'])(
+  it.each(['present', 'uniform', 'missing', 'canary', 'canary-ordinary', 'unflagged', 'active-canary', 'retired-canary'])(
     'removes an active-record proof line: %s',
     async (mode) => {
       const f = fixture({ proofBrief: true })
       const target = f.selected.find((row) => row.cassette.id === f.targetId)!
       const line = target.cassette.input.servedBrief.channel1[0]!
+      if (['canary', 'canary-ordinary', 'unflagged'].includes(mode)) line.status = 'candidate'
+      if (mode === 'retired-canary') line.status = 'deprecated'
+      if (['canary', 'canary-ordinary', 'active-canary', 'retired-canary'].includes(mode)) line.servedAsCanary = true
+      const admitted = ['present', 'uniform', 'canary', 'active-canary'].includes(mode)
+      target.cassette.receipt.promptInputHash = sha256hex(canonicalizeInputLeg(target.cassette.input))
       if (mode === 'uniform') {
         const brief = target.cassette.input.servedBrief
         // Retain another line so removal still has to rebuild a populated proof.
@@ -467,7 +472,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       }
       const got = await evalLocal.removalFlipsOutcome({
         recordId: mode !== 'missing' ? line.id : 'unknown-record',
-        mode: { kind: 'active-record' },
+        mode: { kind: 'active-record', ...(['canary', 'unflagged', 'active-canary', 'retired-canary'].includes(mode) ? { servedCanary: true as const } : {}) },
         cassettes: [target],
         k: 3,
         baseSeed: 11,
@@ -480,8 +485,8 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
         },
         gate1Dir: join(f.agentQaRoot, 'active-removal'),
       })
-      expect(got.crossCheck).toBe(mode !== 'missing' ? 'flipped' : 'inconclusive')
-      if (mode !== 'missing') {
+      expect(got.crossCheck).toBe(admitted ? 'flipped' : 'inconclusive')
+      if (admitted) {
         expect(got.screens).toBe(4)
         expect(got.detail).toHaveLength(6)
         expect(stub.captured).toHaveLength(4)

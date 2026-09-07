@@ -216,7 +216,7 @@ export type RunReplayGateResult =
   | { kind: 'refused'; refusal: CommittedReadRefusal; notices: string[] }
 type LeafBundle = { cassette: LeafCassette; artifacts: ArtifactSource }
 type Cached = Extract<BaselineCacheRow, { kind: 'cached' }>
-type ReplayBag = Pick<
+export type ReplayBag = Pick<
   RunCassetteReplayInput,
   | 'profile'
   | 'auth'
@@ -284,7 +284,9 @@ export interface RemovalFlipsOutcomeInput {
     baseSeed?: number
     seedHonored?: boolean
   })[]
-  mode: { kind: 'injected'; injection: CandidateInjection } | { kind: 'active-record' }
+  // 2026-09-07, 418 D-02/reconciliation 8: opt-in served-canary removal only.
+  // Ordinary active-record callers retain rule 5; this is not another mode arm.
+  mode: { kind: 'injected'; injection: CandidateInjection } | { kind: 'active-record'; servedCanary?: true }
   k: number
   baseSeed: number
   existing?: { withRecord: ReplaySample; withoutRecord: ReplaySample }
@@ -345,7 +347,8 @@ export async function removalFlipsOutcome(
       }
       if (
         line === undefined ||
-        line.status !== 'active' ||
+        !(line.status === 'active' ||
+          (input.mode.servedCanary === true && line.status === 'candidate' && line.servedAsCanary === true)) ||
         (line.tier !== 'L0' && line.tier !== 'L1' && line.tier !== 'L2')
       ) {
         incomparable('active record brief line unavailable')
