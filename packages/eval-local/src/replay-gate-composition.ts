@@ -20,14 +20,14 @@ import {
   deriveSampleSeeds,
   extractRunCassettes,
   diffArms,
-  FLOOR_AXES,
   foldPerAxisScore,
   foldRemovalSamples,
+  generalizationDisclosure,
   injectCandidate,
   JUDGE_CONFIG,
   locateBriefLine,
-  MIN_LIFT_DECISIONS,
   orderGate1Reasons,
+  productFloorRows,
   renderGate1Line,
   selectGateSet,
   toDeclaredBriefDelta,
@@ -498,7 +498,9 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     producedAtOrdinal: injection.latestOrdinal,
     producedBy: input.producedBy,
     verdict: 'abstain',
-    ...emptyFold,
+    perAxisScore: emptyFold.perAxisScore,
+    floorAbsentAxes: emptyFold.floorAbsentAxes,
+    population: emptyFold.population,
     corpusVersion: {
       corpusDigest: computeCorpusDigest(corpus.snapshot.entries),
       partitionVersion:
@@ -809,7 +811,11 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     }
   }
   const decision = decideGate1({ ...decisionInput, crossCheck })
-  Object.assign(receipt, foldPerAxisScore(rows, floor.axes), {
+  const fold = foldPerAxisScore(rows, floor.axes)
+  Object.assign(receipt, {
+    perAxisScore: fold.perAxisScore,
+    floorAbsentAxes: fold.floorAbsentAxes,
+    population: fold.population,
     verdict: decision.verdict,
     reasons: decision.reasons,
     crossCheck: decision.crossCheck,
@@ -832,20 +838,12 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       candidateBriefSource: row.candidate.kind === 'scored' ? row.candidate.briefSource : 'refused',
     }
   })
-  const product = floor.products[injection.product]
-  if (product)
-    receipt.productFloor = {
-      product: injection.product,
-      axes: FLOOR_AXES.map((axis) => ({
-        axis,
-        floor: product.axes[axis].aggregateFloor ?? null,
-        n: product.axes[axis].n,
-      })),
-    }
-  receipt.generalization = {
-    liftDecisions: decisionInput.targets.filter((row) => row.headline === 'fixed').length,
-    minimumLiftDecisions: MIN_LIFT_DECISIONS,
-  }
+  const product = productFloorRows(floor, injection.product)
+  if (product !== undefined) receipt.productFloor = product
+  receipt.generalization = generalizationDisclosure({
+    targets: decisionInput.targets,
+    heldOut: decisionInput.collateral.filter((row) => row.split === 'held-out'),
+  })
   spend.wallClockMs = Math.max(0, Math.round(clock() - started))
   receipt.samples.modelCalls = spend.modelCalls
   input.onProgress?.(

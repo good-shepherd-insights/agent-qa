@@ -54,12 +54,18 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     expect(Reflect.get(evalLocal, 'runReplayGate')).toBeTypeOf('function')
     expect(Reflect.get(evalLocal, 'removalFlipsOutcome')).toBeTypeOf('function')
   })
-  async function warm(options?: Parameters<typeof writeGate1Fixture>[1], allCorrect = false) {
+  async function warm(
+    options?: Parameters<typeof writeGate1Fixture>[1],
+    allCorrect = false,
+    baselineMisses: readonly string[] = [],
+  ) {
     const f = fixture(options)
     const baseline = respondingStub((call) =>
-      allCorrect || JSON.stringify(call.prompt).includes('gate1-target-sibling-1')
-        ? actionGenerateResult()
-        : gate1Responder(f)(call),
+      baselineMisses.some((key) => JSON.stringify(call.prompt).includes(key))
+        ? actionGenerateResult('web', 'e-other')
+        : allCorrect || JSON.stringify(call.prompt).includes('gate1-target-sibling-1')
+          ? actionGenerateResult()
+          : gate1Responder(f)(call),
     )
     await warmGateRoot(f, baseline)
     const stub = respondingStub(gate1Responder(f))
@@ -83,6 +89,43 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     }
     return { f, baseline, stub, input }
   }
+  it('serializes measured generalization from held-out collateral only after three target fixes', async () => {
+    const { f, input } = await warm({ targetDecisions: 3 }, false, [
+      'gate1-target-sibling',
+      'gate1-collateral-0',
+      'gate1-collateral-1',
+    ])
+    const stub = respondingStub((call) => {
+      const text = JSON.stringify(call.prompt)
+      return actionGenerateResult(
+        'web',
+        text.includes('gate1-target') && !text.includes(f.injection.renderedLine)
+          ? 'e-other'
+          : 'e-continue',
+      )
+    })
+    input.planner.modelOverrides = { languageModels: stub.languageModels }
+    const got = receipt(await evalLocal.runReplayGate(input))
+    expect(got.verdict).toBe('pass')
+    expect(got.generalization).toEqual({
+      liftDecisions: 3,
+      minimumLiftDecisions: 3,
+      ratio: 1 / 3,
+      ci: [0, 1],
+    })
+    expect(got.productFloor?.axes).toHaveLength(6)
+    expect(got.productFloor?.axes.find((axis) => axis.axis === 'loop')).toEqual({
+      axis: 'loop',
+      floor: null,
+      n: 0,
+    })
+    const serialized = evalLocal.serializeReplayGateReceipt(got)
+    expect(GateReceiptSchema.parse(JSON.parse(serialized))).toEqual(got)
+    expect(got).not.toHaveProperty('lifts')
+    expect(got).not.toHaveProperty('regressions')
+    expect(got.generalization!.ci!.every(Number.isFinite)).toBe(true)
+    expect(got.spend?.screens).toBe(20)
+  })
   it('extracts a local target only into its audit directory and abstains baseline-uncached without warming', async () => {
     const { f, stub, input } = await warm({ targetInCorpus: false, handoffForTarget: true })
     const before = digestTree(f.committedRoot)
@@ -237,6 +280,9 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     })
     expect(got.samples.detail).toHaveLength(6)
     expect(GateReceiptSchema.parse(got)).toEqual(got)
+    expect(got.generalization).toEqual({ liftDecisions: 1, minimumLiftDecisions: 3 })
+    expect(got.generalization).not.toHaveProperty('ratio')
+    expect(got.generalization).not.toHaveProperty('ci')
     expect(receiptDigestOf(got)).toBe(got.receiptDigest)
     expect(stub.captured.length).toBe(got.spend?.screens)
     for (let i = 0; i < 5; i++) {
