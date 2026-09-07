@@ -36,6 +36,9 @@
 // Phase 418-05 intentionally discloses the resolved canary ablation cap. Only the
 // two affected golden stderr fields gained that exact line; the historical capture
 // was not regenerated, and every comparison below remains byte-exact.
+// 418 CR-02 additionally requires one strict originating-run canary-policy.json per
+// produced handoff. The capture helper checks its exact contents and run identity;
+// the inventory below adds its explicit cardinality, without filtering the file.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -116,8 +119,9 @@ describe('agent-qa run parity across the in-process extraction (401-11)', () => 
         expect(actual.targetHits).toEqual([...expected.targetHits])
         // THE ONE FILTERED AXIS — see the header. Subtracted from BOTH sides, so a removal from
         // the golden inventory and an undeclared addition each still red.
+        const policyFiles = Array(invocation.id === 'all' ? 2 : 1).fill('canary-policy.json')
         expect(withoutDeclaredRunDirAdditions(actual.runDirFiles))
-          .toEqual(withoutDeclaredRunDirAdditions([...expected.runDirFiles]))
+          .toEqual(withoutDeclaredRunDirAdditions([...expected.runDirFiles, ...policyFiles].sort()))
         expect(actual.exitCode).toBe(expected.exitCode)
       },
       180_000,

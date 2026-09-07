@@ -26,6 +26,7 @@
 // artifacts plan 11's own truths name, and each such edit is recorded in the SUMMARY.
 
 import { spawn } from 'node:child_process'
+import assert from 'node:assert/strict'
 import {
   existsSync,
   mkdirSync,
@@ -388,6 +389,15 @@ export async function captureInvocation(invocation) {
   try {
     const fixture = createParityFixture(target.origin)
     const result = await runCli(fixture, invocation.args)
+    // 418 CR-02: policy publication is mandatory on each originating run, including
+    // the direct framework-error path. Check exact DATA against that run's handoff;
+    // the historical inventory comparison separately requires one file per run.
+    for (const dir of runDirs(fixture.project)) {
+      const handoff = JSON.parse(readFileSync(join(dir, 'handoff.json'), 'utf8'))
+      assert.deepEqual(JSON.parse(readFileSync(join(dir, 'canary-policy.json'), 'utf8')), {
+        schemaVersion: 1, runId: handoff.runId, maxAblations: 4, source: 'default',
+      })
+    }
     const context = {
       project: fixture.project,
       home: fixture.home,
