@@ -795,5 +795,71 @@ export function createEvalCommand(): Command {
       }),
   )
 
+  cmd.addCommand(
+    new Command('replay-gate')
+      .description(
+        'Run Gate 1 for one candidate: cached baseline vs one served brief line; records the receipt',
+      )
+      .argument('<candidateId>')
+      .option('--k <n>', 'cross-check samples per arm (odd, at least 3; flag, eval.k, default 3)')
+      .option('--max-screens <n>', 'cap on replayed screens (flag, recorded default 64)')
+      .option('--judge <name>', 'override eval.judge (same-family judges are refused)')
+      .option('--dry-run', 'print the receipt without recording it')
+      .option('--json', 'emit the schema-validated receipt DTO to stdout')
+      .action(
+        async (
+          candidateId: string,
+          opts: {
+            k?: string
+            maxScreens?: string
+            judge?: string
+            dryRun?: boolean
+            json?: boolean
+          },
+          command: Command,
+        ) => {
+          try {
+            const k = opts.k === undefined ? undefined : parseIntegerFlag('--k')(opts.k)
+            const maxScreens =
+              opts.maxScreens === undefined
+                ? undefined
+                : parseIntegerFlag('--max-screens')(opts.maxScreens)
+            const { resolveEvalSession, runReplayGateVerb, serializeReplayGateReceipt } =
+              await import('../eval-session-composition.js')
+            const session = await resolveEvalSession({
+              configPath: getGlobalConfigPath(command),
+              flags: { judge: opts.judge },
+              keyOnly: true,
+            })
+            const result = await runReplayGateVerb(session, candidateId, {
+              k,
+              maxScreens,
+              dryRun: opts.dryRun,
+              onProgress: (line) => console.error(line),
+            })
+            if (result.kind === 'receipt') {
+              // GateReceiptSchema + assertCommittedEgressSafe live at the existing eval boundary.
+              if (opts.json) console.log(serializeReplayGateReceipt(result.receipt))
+              else {
+                for (const line of result.lines) console.log(line)
+                console.log(`recorded: ${result.recorded}`)
+              }
+            } else
+              console.error(`replay-gate: refused — ${result.refusal.path}: ${result.refusal.reason}`)
+            for (const notice of result.notices) console.error(notice)
+            process.exitCode = result.exit
+          } catch (error) {
+            console.error(
+              pc.red(
+                'replay-gate: inconclusive — ' +
+                  (error instanceof Error ? error.message : String(error)),
+              ),
+            )
+            process.exitCode = 2
+          }
+        },
+      ),
+  )
+
   return cmd
 }

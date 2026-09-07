@@ -98,7 +98,13 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       harmed: [],
       population: { rendered: 6, renderedExcluded: 0 },
       samples: { k: 3, seeds: [11, 1938274511, 1319274378] },
-      spend: { screens: 10, modelCalls: 10, promptTokens: 100, completionTokens: 20 },
+      spend: {
+        screens: 10,
+        modelCalls: 10,
+        promptTokens: 100,
+        completionTokens: 20,
+        wallClockMs: 410,
+      },
     })
     expect(got.targets?.[0]).toMatchObject({
       source: 'committed',

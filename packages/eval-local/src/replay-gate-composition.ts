@@ -2,6 +2,11 @@
 // All replay calls delegate to the existing safety-scoped composition. Writes are gate-local.
 import { join } from 'node:path'
 import {
+  assertCommittedEgressSafe,
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+} from '@vostride/agent-qa-safety'
+import {
   applyBriefDelta,
   assessJudgeEligibility,
   buildEvalReport,
@@ -62,6 +67,16 @@ import { FsScoreStore, type ScoreRecord } from './score-store.js'
 import { loadScoreRecord } from './replay-read.js'
 
 export const GATE1_AUDIT_SUBDIR = 'eval/gate1'
+
+/** The CLI's JSON egress uses the same guarded DTO boundary as persisted receipts. */
+export function serializeReplayGateReceipt(receipt: unknown): string {
+  const text = JSON.stringify(GateReceiptSchema.parse(receipt), null, 2)
+  assertCommittedEgressSafe([{ label: 'eval.replay-gate', text }], {
+    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+    channel: 'eval.replay-gate',
+  })
+  return text
+}
 type Planner = {
   profile: ModelProfile
   modelOverrides?: ModelProviderOverrides

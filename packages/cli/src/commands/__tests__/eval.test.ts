@@ -157,6 +157,63 @@ function requireGateVerb() {
   return evalVerbs.runGateVerb
 }
 
+function requireReplayGateVerb() {
+  expect(evalVerbs.runReplayGateVerb).toBeTypeOf('function')
+  return evalVerbs.runReplayGateVerb
+}
+
+describe('417 replay-gate command', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    process.exitCode = 0
+  })
+  it('exports recorded defaults and registers the candidate argument and options', () => {
+    requireReplayGateVerb()
+    expect(evalVerbs.GATE1_DEFAULT_MAX_SCREENS).toBe(64)
+    expect(evalVerbs.GATE1_DEFAULT_K).toBe(3)
+    const verb = createEvalCommand().commands.find((command) => command.name() === 'replay-gate')!
+    expect(verb.registeredArguments[0]!.name()).toBe('candidateId')
+    expect(verb.options.map((option) => option.long)).toEqual([
+      '--k',
+      '--max-screens',
+      '--judge',
+      '--dry-run',
+      '--json',
+    ])
+  })
+  it.each(['unsafe', 'refused'] as const)('never emits %s content on JSON stdout', async (kind) => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(evalVerbs, 'resolveEvalSession').mockResolvedValue({} as EvalSession)
+    if (kind === 'refused')
+      vi.spyOn(evalVerbs, 'runReplayGateVerb').mockResolvedValue({
+        kind: 'refused',
+        refusal: { path: '/missing', reason: 'no-floor' },
+        notices: [],
+        exit: 2,
+      })
+    else {
+      const { completeGate1Receipt } = await import(
+        new URL(
+          '../../../../knowledge-local/src/curator/__tests__/fixtures/promotion-floor-fixture.js',
+          import.meta.url,
+        ).href
+      )
+      vi.spyOn(evalVerbs, 'runReplayGateVerb').mockResolvedValue({
+        kind: 'receipt',
+        receipt: completeGate1Receipt('AKIAIOSFODNN7EXAMPLE'),
+        recorded: 'dry-run',
+        lines: [],
+        notices: [],
+        exit: 0,
+      })
+    }
+    await createEvalCommand().parseAsync(['replay-gate', 'candidate', '--json'], { from: 'user' })
+    expect(log).not.toHaveBeenCalled()
+    expect(process.exitCode).toBe(2)
+  })
+})
+
 async function gateVerbFixture(judged = false, seeds = [11, 29]) {
   const fixture = await floorVerbFixture(judged)
   const floor = await evalVerbs.runFloorVerb(fixture.session, {
@@ -2452,7 +2509,7 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
   it('names the family "eval" with the four D-01 verbs plus the 413 D-13 census sibling', () => {
     const cmd = createEvalCommand()
     expect(cmd.name()).toBe('eval')
-    const verbs = ['extract', 'replay', 'seed', 'report', 'census', 'floor', 'gate']
+    const verbs = ['extract', 'replay', 'seed', 'report', 'census', 'floor', 'gate', 'replay-gate']
     expect(cmd.commands.map(sub => sub.name())).toEqual(verbs)
   })
 

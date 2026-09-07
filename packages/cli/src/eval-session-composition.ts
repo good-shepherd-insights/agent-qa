@@ -213,7 +213,7 @@ export async function resolveEvalSession(input: {
 } = {}): Promise<EvalSession> {
   const configPath = input.configPath ?? 'agent-qa.config.yaml'
   const configDir = dirname(resolve(configPath))
-  const config = await resolveConfig({ configPath, loadAuthPlugins: true })
+  const config = await resolveConfig({ configPath, loadAuthPlugins: input.keyOnly !== true })
 
   if (input.keyOnly === true) {
     return {
@@ -791,6 +791,106 @@ export const FLOOR_DEFAULT_REPEATS = 3
 export const FLOOR_DEFAULT_SEEDS = [11, 29] as const
 // D-15: fixed resampling seed makes the bootstrap disclosure reproducible.
 export const FLOOR_DEFAULT_BOOTSTRAP_SEED = 7
+
+// 417 D-19: 51 demo collateral + one target + four cross-check screens = 56; next power of two.
+export const GATE1_DEFAULT_MAX_SCREENS = 64
+// 417 D-12: smallest odd k whose ceil(k/2)+1 is a strict supermajority.
+export const GATE1_DEFAULT_K = 3
+
+// Preserve the existing eval composition boundary; the DATA bridge imports this lazily.
+export { runReplayGate, serializeReplayGateReceipt } from '@vostride/agent-qa-eval-local'
+export type { RunReplayGateInput, RunReplayGateResult } from '@vostride/agent-qa-eval-local'
+export type { ReplayGateVerbResult } from './gates/replay-gate-host.js'
+
+export interface ReplayGateVerbOptions {
+  k?: number
+  maxScreens?: number
+  dryRun?: boolean
+  plannerOverrides?: ModelProviderOverrides
+  judgeOverrides?: ModelProviderOverrides
+  clock?: () => number
+  onProgress?: (line: string) => void
+}
+
+export async function runReplayGateVerb(
+  session: EvalSession,
+  candidateId: string,
+  opts: ReplayGateVerbOptions = {},
+): Promise<import('./gates/replay-gate-host.js').ReplayGateVerbResult> {
+  const k = opts.k ?? session.evalConfig.k ?? GATE1_DEFAULT_K
+  if (!Number.isSafeInteger(k) || k < 3 || k % 2 === 0) {
+    throw new TypeError('--k must be an odd integer of at least 3')
+  }
+  const maxScreens = opts.maxScreens ?? GATE1_DEFAULT_MAX_SCREENS
+  if (!Number.isSafeInteger(maxScreens) || maxScreens < 1) {
+    throw new TypeError('--max-screens must be a positive integer')
+  }
+  const identity = await resolveGateProfileIdentity(session, opts.plannerOverrides)
+  const profile = await resolveReplayProfileDeclaration(session)
+  // A key-only session deliberately has no masker. Prepare the full run-parity session only
+  // when the composition crosses its spend boundary, before resolving provider credentials.
+  let execution: Promise<EvalSession> | undefined
+  let maskingContextFactory = session.maskingContextFactory
+  const prepare = () =>
+    (execution ??= resolveEvalSession({
+      configPath: session.configPath,
+      flags: { judge: session.evalConfig.judge },
+    }).then((full) => {
+      maskingContextFactory = full.maskingContextFactory
+      return full
+    }))
+  let judge: import('@vostride/agent-qa-eval-local').RunReplayGateInput['judge']
+  if (session.evalConfig.judge !== undefined) {
+    const { resolveNamedConfig } = await import('./llm-utils.js')
+    const { config } = await resolveNamedConfig(session.evalConfig.judge, session.configPath)
+    judge = {
+      profile: {
+        provider: config.provider,
+        model: config.model,
+        auth: { mode: 'none' },
+        ...(config.baseURL === undefined ? {} : { baseURL: config.baseURL }),
+        ...(config.providerHeaders === undefined ? {} : { headers: config.providerHeaders }),
+      },
+      modelOverrides: opts.judgeOverrides,
+      resolveAuth: async () => {
+        const resolved = await resolveEvalJudge(await prepare())
+        if (resolved.judge === undefined) throw new Error('configured Gate 1 judge disappeared')
+        return resolved.judge.auth
+      },
+    }
+  }
+  const committedRoot = resolve(session.configDir, 'agent-qa-eval')
+  const floor = listNoiseFloorArtefacts(committedRoot).artefacts.find(
+    (entry) => entry.artefact.profileKey === identity.profileKey,
+  )?.artefact
+  const { createReplayGateHost } = await import('./gates/replay-gate-host.js')
+  return createReplayGateHost({
+    configPath: session.configPath,
+    agentQaRoot: resolve(session.configDir, '.agent-qa'),
+    record: opts.dryRun !== true,
+    session: { ...session, maskingContextFactory: () => maskingContextFactory() },
+    composition: {
+      identity,
+      k,
+      kSource:
+        opts.k !== undefined ? 'flag' : session.evalConfig.k !== undefined ? 'config' : 'default',
+      maxScreens,
+      planner: {
+        profile,
+        modelOverrides: opts.plannerOverrides,
+        resolveAuth: async () => (await resolveReplayPlanner(await prepare())).auth,
+      },
+      judge,
+      judgeOverrideConfigured: session.evalConfig.judgeAllowSameFamily === true,
+      baselineSeed:
+        session.evalConfig.seed !== undefined
+          ? { seed: session.evalConfig.seed, source: 'config' }
+          : { floorSeeds: floor?.seeds ?? [] },
+      clock: opts.clock,
+      onProgress: opts.onProgress,
+    },
+  }).run(candidateId)
+}
 
 /** Measurement data and write-once outcomes, rendered identically on console and JSON. */
 export interface FloorVerbResult extends RunNoiseFloorMeasurementResult {

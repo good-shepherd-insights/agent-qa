@@ -31,7 +31,7 @@ export type { RunCassetteReplayInput } from './replay-composition.js'
 
 export { resolveBaselineCache, listBaselineRunRoots } from './baseline-cache-read.js'
 export type { BaselineCacheRow, BaselineCacheResolution } from './baseline-cache-read.js'
-export { runReplayGate, removalFlipsOutcome, GATE1_AUDIT_SUBDIR } from './replay-gate-composition.js'
+export { runReplayGate, removalFlipsOutcome, serializeReplayGateReceipt, GATE1_AUDIT_SUBDIR } from './replay-gate-composition.js'
 export type { RunReplayGateInput, RunReplayGateResult, RemovalFlipsOutcomeInput, RemovalFlipsOutcomeResult } from './replay-gate-composition.js'
 
 export { loadCassetteBundles, sweepCassetteReplays } from './replay-sweep.js'
