@@ -504,7 +504,7 @@
       "classifies": true,
       "id": "knowledge.gates.list",
       "inputSchemaDigest": "3d7f0e0bc33415cdda6cbc7996e50d2c130d39fdc01d75982faa529d72cf3a29",
-      "outputSchemaDigest": "5630c70a6342a3c1898656c662f6f13ada64137d1b3b0ee008fbaaebfe04f375",
+      "outputSchemaDigest": "2132a423046d3631952cb0e5f6d8b1e22dca990c9a971ed5309d8ac9731e4401",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
