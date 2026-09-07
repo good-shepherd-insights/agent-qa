@@ -10,6 +10,7 @@ import {
   evaluatePromotionGate,
   isVettedCandidate,
   isPromotionReceipt,
+  stampReceiptDigest,
   type BundleDiscriminant,
   type BundleDraft,
   type CanaryOutcome,
@@ -43,6 +44,10 @@ import {
 } from '../drain.js'
 import { canaryOutcomeObservationId } from '../disposition.js'
 import { createLocalKnowledgeStore } from '../knowledge-store.js'
+import { assemblePromotionGateInput } from '../commit.js'
+import { appendOutcomeEvent } from '../../bundle-append.js'
+import { rebuildIndex } from '../../index-rebuild.js'
+import { openKnowledgeReader } from '../../index-reader.js'
 import { completeGate1Receipt, resolvedPromotionPosture } from './fixtures/promotion-floor-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
@@ -321,6 +326,103 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     expect(first.trust.status).toBe('candidate')
     expect(replayed.trust).toEqual(first.trust)
     expect(replayed.bundle.events).toEqual(first.bundle.events)
+  })
+
+  it('418 SC4 stale harm abstains without trust motion, then a different run in the window confirms', async () => {
+    const published = seedCandidate()
+    const beforeIndexProjection = vi.fn()
+    const terminal = vi.fn()
+    await rebuildIndex({ knowledgeRoot })
+    const port = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir, policy,
+      executionContext: 'local-interactive', ...portAuthority(),
+      canaryAuthorityHooks: { beforeIndexProjection }, onCanaryTailWithinCurrentAuthority: terminal })
+    // Supply the existing floor evidence so the actual diagnostic reaches Gate 2.
+    expect(appendOutcomeEvent(bundleConfig(), published.id, { type: 'confirmed',
+      evidenceToken: asEvidenceToken('stale-seed'), curationJobId: 'stale-seed',
+      buildOrdinal: 42, origin: 'agent-verified' }).kind).toBe('appended')
+    await port.recordGateReceipt(completeGate1Receipt(published.id, { producedAtOrdinal: 42 }))
+    const index = openKnowledgeReader(knowledgeRoot)
+    expect(index.source).toBe('index')
+    const indexBefore = index.getById(published.id)
+    index.close()
+    const harm: CanaryOutcome = { ...outcome(published.id, 'negative'),
+      benefit: 'exercised-harmed', stateValidity: 'stale', corpusDigest: 'c'.repeat(64),
+      observedStateDigest: 'd'.repeat(64) }
+    const before = loaded(published.dir)
+    await port.recordCanaryOutcome(harm)
+    expect(loaded(published.dir).trust).toEqual(before.trust)
+    expect(loaded(published.dir).bundle.events).toEqual(before.bundle.events)
+    expect(beforeIndexProjection).not.toHaveBeenCalled()
+    expect(terminal).toHaveBeenCalledOnce()
+    const afterIndex = openKnowledgeReader(knowledgeRoot)
+    expect(afterIndex.source).toBe('index')
+    expect(afterIndex.getById(published.id)).toEqual(indexBefore)
+    afterIndex.close()
+    const receipts = readGateReceipts(published.dir, published.id)!
+    expect(receipts.at(-1)).toMatchObject({ gate: 2, verdict: 'abstain', benefit: 'exercised-harmed',
+      stateValidity: 'stale', runId: harm.runId, testIndex: harm.testIndex, stepIndex: harm.stepIndex,
+      observedStateDigest: harm.observedStateDigest })
+    const current = loaded(published.dir)
+    expect(evaluatePromotionGate(assemblePromotionGateInput({ knowledgeRoot,
+      bundleDir: published.dir, bundle: current.bundle,
+      resolvePromotionPosture: () => resolvedPromotionPosture() })))
+      .toMatchObject({ verdict: 'hold', reason: 'gate-abstained' })
+
+    await port.recordCanaryOutcome({ ...harm, testIndex: 1, stepIndex: 3 })
+    expect(loaded(published.dir).trust.counters.contradicted).toBe(0)
+    expect(beforeIndexProjection).not.toHaveBeenCalled()
+    const next = { ...harm, runId: 'run-canary-confirmation', buildOrdinal: 44 }
+    await port.recordCanaryOutcome(next)
+    expect(loaded(published.dir).trust.counters.contradicted).toBe(1)
+    expect(readGateReceipts(published.dir, published.id)!.at(-1))
+      .toMatchObject({ gate: 2, verdict: 'fail', runId: next.runId, producedAtOrdinal: 44 })
+    expect(beforeIndexProjection).toHaveBeenCalledOnce()
+    const bytes = readFileSync(join(published.dir, 'evidence/gates.jsonl'), 'utf8')
+    await port.recordCanaryOutcome(next)
+    expect(readFileSync(join(published.dir, 'evidence/gates.jsonl'), 'utf8')).toBe(bytes)
+    expect(loaded(published.dir).trust.counters.contradicted).toBe(1)
+  })
+
+  it.each(['below-open', 'above-close', 'missing-run', 'current-outside'] as const)
+    ('418 stale confirmation rejects %s evidence outside the validity/identity contract', async mode => {
+      const published = seedCandidate()
+      const port = store()
+      const openedAtOrdinal = loaded(published.dir).trust.validity.openedAtOrdinal
+      if (mode === 'above-close' || mode === 'current-outside') {
+        expect(appendOutcomeEvent(bundleConfig(), published.id, { type: 'window-close',
+          evidenceToken: asEvidenceToken('close-stale-window'), curationJobId: 'close-stale-window',
+          buildOrdinal: 44, closedAtOrdinal: 44 }).kind).toBe('appended')
+      }
+      await port.recordGateReceipt(stampReceiptDigest({ schemaVersion: 1, gate: 2,
+        candidateId: published.id, verdict: 'abstain', benefit: 'exercised-harmed', stateValidity: 'stale',
+        producedAtOrdinal: mode === 'below-open' ? openedAtOrdinal - 1 : mode === 'above-close' ? 45 : 43,
+        producedBy: { opId: 'canary.record' }, corpusVersion: { corpusDigest: 'c'.repeat(64) },
+        attributedObservationId: 'fixture-prior-stale',
+        ...(mode === 'missing-run' ? {} : { runId: 'run-prior-stale' }) }))
+      await port.recordCanaryOutcome({ ...outcome(published.id, 'negative'),
+        benefit: 'exercised-harmed', stateValidity: 'stale', corpusDigest: 'c'.repeat(64),
+        buildOrdinal: mode === 'current-outside' ? 45 : 43 })
+      expect(loaded(published.dir).trust.counters.contradicted).toBe(0)
+      expect(readGateReceipts(published.dir, published.id)!.at(-1)).toMatchObject({ verdict: 'abstain' })
+    })
+
+  it.each(['valid', 'unknown'] as const)('418 %s negative contradicts immediately and writes fail', async stateValidity => {
+    const published = seedCandidate()
+    await store().recordCanaryOutcome({ ...outcome(published.id, 'negative'),
+      stateValidity, benefit: 'exercised-harmed', corpusDigest: 'c'.repeat(64) })
+    expect(loaded(published.dir).trust.counters.contradicted).toBe(1)
+    expect(readGateReceipts(published.dir, published.id)).toEqual([
+      expect.objectContaining({ gate: 2, verdict: 'fail', benefit: 'exercised-harmed', stateValidity,
+        producedBy: { opId: 'canary.record' }, corpusVersion: { corpusDigest: 'c'.repeat(64) } }),
+    ])
+  })
+
+  it.each(['unknown', 'stale'] as const)('418 digest-less %s negative keeps the v51 event law without receipt', async stateValidity => {
+    const published = seedCandidate()
+    await store().recordCanaryOutcome({ ...outcome(published.id, 'negative'),
+      stateValidity, benefit: 'exercised-harmed' })
+    expect(loaded(published.dir).trust.counters.contradicted).toBe(1)
+    expect(readGateReceipts(published.dir, published.id)).toBeUndefined()
   })
 
   it('persists mixed same-step outcomes from separate tests under distinct identities', async () => {

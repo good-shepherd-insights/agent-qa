@@ -10,6 +10,8 @@ import {
   eventDedupKey,
   foldBundleTrust,
   GateReceiptSchema,
+  GATE2_DEFAULT_STALE_CONFIRMATIONS,
+  isPromotionReceipt,
   receiptDigestOf,
   sha256hex,
   stampReceiptDigest,
@@ -676,6 +678,29 @@ export function createLocalKnowledgeStore(
     }
   }
 
+  function gate2ReceiptFor(outcome: CanaryOutcome, verdict: 'pass' | 'fail' | 'abstain') {
+    if (outcome.corpusDigest === undefined) throw new TypeError('Gate-2 receipt requires a corpus digest')
+    return stampReceiptDigest({
+      schemaVersion: 1 as const, gate: 2 as const, candidateId: outcome.candidateId,
+      verdict, producedAtOrdinal: outcome.buildOrdinal,
+      producedBy: { ...(config.sourceJobId === undefined ? {} : { jobId: config.sourceJobId }),
+        opId: 'canary.record' },
+      attributedObservationId: canaryOutcomeObservationId(outcome),
+      corpusVersion: { corpusDigest: outcome.corpusDigest },
+      benefit: outcome.runOutcome === 'negative' ? 'exercised-harmed' as const : outcome.benefit,
+      stateValidity: outcome.stateValidity,
+      runId: outcome.runId, testIndex: outcome.testIndex, stepIndex: outcome.stepIndex,
+      attribution: outcome.attribution,
+      ...(outcome.observedStateDigest === undefined ? {} : { observedStateDigest: outcome.observedStateDigest }),
+      ...(outcome.ablation === undefined ? {} : {
+        crossCheck: outcome.ablation.crossCheck,
+        samples: { k: outcome.ablation.k, seeds: outcome.ablation.seeds,
+          seedHonored: outcome.ablation.seedHonored, modelCalls: outcome.ablation.spend.modelCalls },
+        spend: outcome.ablation.spend,
+      }),
+    })
+  }
+
   const store: KnowledgePort = {
     proposeDeltas(deltas: Delta[]): Promise<void> {
       return commitWithProfile(deltas, { mode: 'propose-only' })
@@ -724,24 +749,7 @@ export function createLocalKnowledgeStore(
             // 2026-09-07, 418 D-05/D-06/D-07: retain evidence regardless of Gate-1 state.
             // The observation supplies its ordinal; the shared routine decides order and reports holds.
             if (outcome.benefit === 'exercised-benefited' && outcome.corpusDigest !== undefined) {
-              const receipt = stampReceiptDigest({
-                schemaVersion: 1 as const, gate: 2 as const, candidateId: outcome.candidateId,
-                verdict: 'pass' as const, producedAtOrdinal: outcome.buildOrdinal,
-                producedBy: { ...(config.sourceJobId === undefined ? {} : { jobId: config.sourceJobId }),
-                  opId: 'canary.record' },
-                attributedObservationId: observationId,
-                corpusVersion: { corpusDigest: outcome.corpusDigest },
-                benefit: outcome.benefit, stateValidity: outcome.stateValidity,
-                runId: outcome.runId, testIndex: outcome.testIndex, stepIndex: outcome.stepIndex,
-                attribution: outcome.attribution,
-                ...(outcome.observedStateDigest === undefined ? {} : { observedStateDigest: outcome.observedStateDigest }),
-                ...(outcome.ablation === undefined ? {} : {
-                  crossCheck: outcome.ablation.crossCheck,
-                  samples: { k: outcome.ablation.k, seeds: outcome.ablation.seeds,
-                    seedHonored: outcome.ablation.seedHonored, modelCalls: outcome.ablation.spend.modelCalls },
-                  spend: outcome.ablation.spend,
-                }),
-              })
+              const receipt = gate2ReceiptFor(outcome, 'pass')
               const appendConfig = bundleStoreConfig(resolved.product)
               checkedAppend(outcome.candidateId, appendGateReceipt(appendConfig, outcome.candidateId, receipt))
             }
@@ -769,6 +777,29 @@ export function createLocalKnowledgeStore(
            */
           config.canaryAuthorityHooks?.beforeNegativeAppend?.()
           withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
+            // 2026-09-07, 418 D-08/D-12: digest-less BYOM keeps v51's single-sample
+            // law BEFORE stale policy. State validity is independent of eval-root presence:
+            // retain truthful stale evidence, but never await a receipt we cannot write.
+            // Valid/unknown states likewise keep single-sample contradiction.
+            if (outcome.corpusDigest !== undefined && outcome.stateValidity === 'stale') {
+              const current = resolveTruth(config.knowledgeRoot, outcome.candidateId)
+              if (current === undefined) throw new KnowledgePromotionError(outcome.candidateId, 'not-found')
+              const validity = deriveBundleTrust(current.bundle).validity
+              const insideWindow = (ordinal: number) => ordinal >= validity.openedAtOrdinal
+                && (validity.closedAtOrdinal === undefined || ordinal <= validity.closedAtOrdinal)
+              const priorRuns = new Set((readGateReceipts(current.bundleDir, outcome.candidateId) ?? [])
+                .flatMap(receipt => !isPromotionReceipt(receipt) && receipt.gate === 2
+                  && receipt.verdict === 'abstain' && receipt.stateValidity === 'stale'
+                  && receipt.benefit === 'exercised-harmed' && receipt.runId !== undefined
+                  && receipt.runId !== outcome.runId && insideWindow(receipt.producedAtOrdinal)
+                  ? [receipt.runId] : []))
+              if (!insideWindow(outcome.buildOrdinal) || priorRuns.size + 1 < GATE2_DEFAULT_STALE_CONFIRMATIONS) {
+                const receipt = gate2ReceiptFor(outcome, 'abstain')
+                checkedAppend(outcome.candidateId, appendGateReceipt(appendConfig, outcome.candidateId, receipt))
+                config.onCanaryTailWithinCurrentAuthority?.()
+                return
+              }
+            }
             const appended = appendOutcomeEvent(appendConfig, outcome.candidateId, {
               type: 'contradicted',
               evidenceToken,
@@ -787,6 +818,10 @@ export function createLocalKnowledgeStore(
             }
             if (appended.kind === 'not-found') {
               throw new KnowledgePromotionError(outcome.candidateId, appended.kind)
+            }
+            if (outcome.corpusDigest !== undefined) {
+              const receipt = gate2ReceiptFor(outcome, 'fail')
+              checkedAppend(outcome.candidateId, appendGateReceipt(appendConfig, outcome.candidateId, receipt))
             }
             config.canaryAuthorityHooks?.beforeIndexProjection?.()
             applyIndexDeltaForBundleWithinCurrentAuthority({
