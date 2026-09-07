@@ -79,6 +79,21 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     lookupSpy.invalidById.clear()
     lookupSpy.anchorsById.set(CANDIDATE, [{ t: 'el', role: 'button', name: 'checkout', ordinal: 0 }])
   })
+  it('418 exposes a moved corpus digest in emit detail while preserving the ablation citation', async () => {
+    const emit = vi.fn()
+    const report = await emitCanaryOutcomes({
+      handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-sc2', emit,
+      credit: { maxAblations: 1, ablation: {
+        corpusDigest: async () => ({ kind: 'digest', corpusDigest: 'a'.repeat(64) }),
+        ablate: async () => ({ kind: 'ablated', crossCheck: 'flipped', corpusDigest: 'b'.repeat(64),
+          k: 3, baseSeed: 11, seeds: [11, 12, 13], seedHonored: false,
+          spend: { modelCalls: 5, screens: 5, promptTokens: 10, completionTokens: 2 }, gate2Dir: '/tmp/gate2' }),
+      } },
+    })
+    expect(report.details[0]).toMatchObject({ benefit: 'exercised-benefited', corpusDigestMoved: true })
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ corpusDigest: 'b'.repeat(64),
+      ablation: expect.objectContaining({ seeds: [11, 12, 13], seedHonored: false }) }))
+  })
   it.each(['absent', 'held', 'throws'] as const)('reports %s capability without certifying benefit', async mode => {
     const emit = vi.fn()
     const report = await emitCanaryOutcomes({

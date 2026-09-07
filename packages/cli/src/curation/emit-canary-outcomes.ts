@@ -129,6 +129,7 @@ export type EmitCanaryOutcomeResult =
 export interface EmitCanaryOutcomeDetail {
   benefit: CanaryOutcome['benefit']
   crossCheck?: CrossCheck
+  corpusDigestMoved?: true
   candidateId: RecordId
   testId: string
   testIndex: number
@@ -151,7 +152,7 @@ export interface EmitCanaryOutcomeReport {
 }
 
 export interface EmitCanaryOutcomesOptions {
-  credit?: Pick<import('./canary-credit.js').CanaryCreditInput, 'ablation' | 'maxAblations' | 'readBundleStateDigests'>
+  credit?: Partial<Pick<import('./canary-credit.js').CanaryCreditInput, 'ablation' | 'maxAblations' | 'readBundleStateDigests'>>
   handoff: CompletedRunHandoff
   /** Absolute agent-qa-knowledge root used for store lookup and durable queue emission. */
   knowledgeRoot: string
@@ -454,6 +455,8 @@ export async function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): Promi
   const credit = opts.credit === undefined ? undefined : await creditCanaryAttributions({
     attributions: projected, handoff: opts.handoff, runDir: opts.runDir,
     ...opts.credit, knowledgeRoot: opts.knowledgeRoot, observationIdOf: LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId,
+    maxAblations: opts.credit.maxAblations ?? (await import('../eval-session-composition.js')).GATE2_DEFAULT_MAX_ABLATIONS,
+    readBundleStateDigests: opts.credit.readBundleStateDigests ?? LOCAL_CURATION_CAPABILITIES.readCanonicalBundleStateDigests,
   })
   const canary = credit?.counters ?? emptyCanaryCreditCounters()
   if (credit === undefined) {
@@ -505,6 +508,7 @@ export async function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): Promi
     report.details.push({
       benefit: attribution.outcome.benefit,
       crossCheck: attribution.crossCheck ?? 'not-run',
+      ...(attribution.corpusDigestMoved === undefined ? {} : { corpusDigestMoved: attribution.corpusDigestMoved }),
       candidateId: attribution.outcome.candidateId,
       testId: attribution.outcome.testId,
       testIndex: attribution.outcome.testIndex,

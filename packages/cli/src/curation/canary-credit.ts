@@ -1,5 +1,7 @@
 // 2026-09-07, 418 D-01: the credit pass; DATA crosses the eval/knowledge wall here.
 import type { CanaryOutcome, CompletedRunHandoff, CrossCheck } from '@vostride/agent-qa-schema'
+import { distilledScreenStateDigest } from '@vostride/agent-qa-schema'
+import type { LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import type { NonSignalClass, ProjectedCanaryAttribution } from './emit-canary-outcomes.js'
 
 export interface CanaryAblationInput {
@@ -64,11 +66,14 @@ export function emptyCanaryCreditCounters(): CanaryCreditCounters {
     nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 }
 }
 
-export type CreditedCanaryAttribution = ProjectedCanaryAttribution & { crossCheck?: CrossCheck }
+export type CreditedCanaryAttribution = ProjectedCanaryAttribution & {
+  crossCheck?: CrossCheck
+  corpusDigestMoved?: true
+}
 export interface CanaryCreditInput {
-  maxAblations?: number
-  knowledgeRoot?: string
-  readBundleStateDigests?: (input: { knowledgeRoot: string; candidateId: string }) => { kind: 'found'; digests: string[] } | { kind: 'not-found' }
+  maxAblations: number
+  knowledgeRoot: string
+  readBundleStateDigests: LocalCurationCapabilities['readCanonicalBundleStateDigests']
   attributions: readonly ProjectedCanaryAttribution[]
   ablation?: CanaryAblation
   handoff: CompletedRunHandoff
@@ -79,10 +84,15 @@ export interface CanaryCreditInput {
 export async function creditCanaryAttributions(
   input: CanaryCreditInput,
 ): Promise<{ attributions: CreditedCanaryAttribution[], counters: CanaryCreditCounters }> {
+  if (!Number.isSafeInteger(input.maxAblations) || input.maxAblations < 1) {
+    throw new TypeError('--max-ablations must be a positive integer')
+  }
   const counters = emptyCanaryCreditCounters()
   const attributions: CreditedCanaryAttribution[] = []
   let digestRead = false
   let corpusDigest: string | undefined
+  const ablatedCandidates = new Set<string>()
+  let ablationsRun = 0
   for (const row of input.attributions) {
     if (row.kind !== 'outcome') {
       attributions.push(row)
@@ -99,11 +109,35 @@ export async function creditCanaryAttributions(
     const outcome: CanaryOutcome = { ...row.outcome, stateValidity: 'unknown',
       benefit: row.outcome.runOutcome === 'negative' ? 'exercised-harmed' : 'rode-along',
       ...(served && corpusDigest !== undefined ? { corpusDigest } : {}) }
+    // Recompute evidence from this pass rather than inheriting a prior projection's citation.
+    if (!served || corpusDigest === undefined) delete outcome.corpusDigest
+    delete outcome.observedStateDigest
+    delete outcome.ablation
+    if (served) {
+      const step = input.handoff.tests.find((test) =>
+        test.testIndex === outcome.testIndex && test.testId === outcome.testId)
+        ?.steps.find((candidate) => candidate.stepIndex === outcome.stepIndex)
+      const observed = step?.subActions?.[0]?.stateBefore
+      if (observed !== undefined) outcome.observedStateDigest = distilledScreenStateDigest(observed)
+      const bundle = input.readBundleStateDigests({
+        knowledgeRoot: input.knowledgeRoot, candidateId: outcome.candidateId,
+      })
+      if (outcome.observedStateDigest !== undefined && bundle.kind === 'found' && bundle.digests.length > 0) {
+        outcome.stateValidity = bundle.digests.includes(outcome.observedStateDigest) ? 'valid' : 'stale'
+      }
+    }
     let crossCheck: CrossCheck = 'not-run'
+    let corpusDigestMoved: true | undefined
     if (outcome.runOutcome === 'positive') {
       if (!served || input.ablation === undefined) {
         counters.rideAlongUncredited += 1
+      } else if (ablatedCandidates.has(outcome.candidateId)) {
+        counters.rideAlongUncredited += 1
+      } else if (ablationsRun >= input.maxAblations) {
+        counters.ablationCapExceeded += 1
       } else {
+        ablatedCandidates.add(outcome.candidateId)
+        ablationsRun += 1
         let result: CanaryAblationResult
         try {
           result = await input.ablation.ablate({ handoff: input.handoff, runDir: input.runDir,
@@ -116,6 +150,7 @@ export async function creditCanaryAttributions(
         switch (result.kind) {
           case 'ablated':
             crossCheck = result.crossCheck
+            if (corpusDigest !== undefined && corpusDigest !== result.corpusDigest) corpusDigestMoved = true
             outcome.corpusDigest = result.corpusDigest
             outcome.ablation = { crossCheck, k: result.k, baseSeed: result.baseSeed,
               seeds: result.seeds, seedHonored: result.seedHonored, spend: result.spend }
@@ -137,7 +172,8 @@ export async function creditCanaryAttributions(
         }
       }
     }
-    attributions.push({ ...row, outcome, crossCheck })
+    attributions.push({ ...row, outcome, crossCheck,
+      ...(corpusDigestMoved === undefined ? {} : { corpusDigestMoved }) })
   }
   return { attributions, counters }
 }
