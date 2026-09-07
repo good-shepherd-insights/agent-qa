@@ -35,6 +35,7 @@ import type {
   Cassette,
   CassetteScore,
   DecisionDiff,
+  DeclaredBriefDelta,
   ReplayCassetteInput,
   ReplayCassetteOutcome,
   ReplayClock,
@@ -67,6 +68,8 @@ import type { FsScoreStore } from './score-store.js'
 export interface RunCassetteReplayInput {
   /** A loaded, guarded cassette (leaf or procedure) — normally from loadCassetteBundle. */
   cassette: Cassette
+  /** 417 D-01 / 415 D-05: already applied by the caller; the engine reverses it only before hashing. */
+  declaredBriefDelta?: DeclaredBriefDelta
   /** Blob source for full-capture screenshot reconstruction (normally a DirArtifactSource). */
   artifacts: ArtifactSource
   /** The currently-configured model profile — the SOLE source of model selection (D-03). */
@@ -345,6 +348,7 @@ export async function runCassetteReplay(
     actionToolNames,
     clock,
     ...(input.k !== undefined ? { k: input.k } : {}),
+    ...(input.declaredBriefDelta !== undefined ? { declaredBriefDelta: input.declaredBriefDelta } : {}),
     escalationPredicate: input.escalationPredicate ?? neverEscalate,
   }
 

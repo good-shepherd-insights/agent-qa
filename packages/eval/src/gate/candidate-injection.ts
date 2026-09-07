@@ -21,33 +21,58 @@ export function toDeclaredBriefDelta(
   }
   const brief = cassette.input.servedBrief
   const delta: DeclaredBriefDelta = {
-    kind: 'injected', line, tier, renderedLine,
+    kind: 'injected',
+    line,
+    tier,
+    renderedLine,
     channel1Position: brief.channel1.length,
-    turnOrdinal: cassette.decisionOrdinal, position: 0,
+    turnOrdinal: cassette.decisionOrdinal,
+    position: 0,
   }
   const turns = brief.proof?.promptTurns ?? []
   const first = turns[0]
   if (first !== undefined) {
-    const exact = turns.find(turn => turn.turnOrdinal === cassette.decisionOrdinal)
-    const uniform = turns.every(turn => turn.policyL0 === first.policyL0 &&
-      turn.learnedL1 === first.learnedL1 && turn.learnedL2 === first.learnedL2)
+    const exact = turns.find((turn) => turn.turnOrdinal === cassette.decisionOrdinal)
+    const uniform = turns.every(
+      (turn) =>
+        turn.policyL0 === first.policyL0 &&
+        turn.learnedL1 === first.learnedL1 &&
+        turn.learnedL2 === first.learnedL2,
+    )
     const turn = exact ?? (uniform ? first : undefined)
     if (turn === undefined) {
-      return { kind: 'unrenderable-target', detail:
-        `no promptTurn matches decisionOrdinal ${cassette.decisionOrdinal} (turnOrdinals ${turns.map(item => item.turnOrdinal).join(',')} differ)` }
+      return {
+        kind: 'unrenderable-target',
+        detail: `no promptTurn matches decisionOrdinal ${cassette.decisionOrdinal} (turnOrdinals ${turns.map((item) => item.turnOrdinal).join(',')} differ)`,
+      }
     }
-    const text = turn[{ L0: 'policyL0', L1: 'learnedL1', L2: 'learnedL2' }[tier] as 'policyL0' | 'learnedL1' | 'learnedL2']
-    return { kind: 'plan', plan: {
-      delta: { ...delta, turnOrdinal: turn.turnOrdinal, position: text === '' ? 0 : text.split('\n').length },
-      expectedBriefSource: 'proof', turnMatch: exact === undefined ? 'uniform' : 'exact',
-    } }
+    const text =
+      turn[
+        { L0: 'policyL0', L1: 'learnedL1', L2: 'learnedL2' }[tier] as
+          'policyL0' | 'learnedL1' | 'learnedL2'
+      ]
+    return {
+      kind: 'plan',
+      plan: {
+        delta: {
+          ...delta,
+          turnOrdinal: turn.turnOrdinal,
+          position: text === '' ? 0 : text.split('\n').length,
+        },
+        expectedBriefSource: 'proof',
+        turnMatch: exact === undefined ? 'uniform' : 'exact',
+      },
+    }
   }
   // An existing proof with no turn cannot satisfy applyBriefDelta's exact-one-turn law.
   if (brief.proof !== undefined) {
     return { kind: 'unrenderable-target', detail: 'brief proof carries no prompt turns' }
   }
   if (brief.channel1.length === 0 && brief.channel2.length + brief.channel3.length > 0) {
-    return { kind: 'unrenderable-target', detail: 'brief populated on channel2/channel3 only and carries no proof' }
+    return {
+      kind: 'unrenderable-target',
+      detail: 'brief populated on channel2/channel3 only and carries no proof',
+    }
   }
   return { kind: 'plan', plan: { delta, expectedBriefSource: 'rendered' } }
 }

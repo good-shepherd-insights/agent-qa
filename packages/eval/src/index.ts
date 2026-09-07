@@ -444,6 +444,21 @@ export type {
   ClassifierSweep,
 } from './gate/classifier-repeatability'
 
+export { toDeclaredBriefDelta, injectCandidate } from './gate/candidate-injection'
+export type { CandidateArmPlan, CandidateArmRefusal } from './gate/candidate-injection'
+export { diffArms, weightFor, foldPerAxisScore } from './gate/decision-diff'
+export type {
+  DecisionWeight,
+  ArmOutcome,
+  ArmDecision,
+  DecisionHeadline,
+  DiffedDecision,
+  PerAxisFold,
+} from './gate/decision-diff'
+export { decideGate1, orderGate1Reasons, renderGate1Line } from './gate/gate-verdict'
+export type { Gate1DecisionInput, Gate1Decision } from './gate/gate-verdict'
+export { deriveSampleSeeds, requiredAgreement, foldRemovalSamples } from './gate/cross-check'
+
 export { GATE_INCONCLUSIVE_REASONS, computeGateVerdict, renderGateLines } from './gate/release-gate'
 export type {
   GateExit,
