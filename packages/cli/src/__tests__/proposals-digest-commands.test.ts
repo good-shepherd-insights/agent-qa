@@ -22,18 +22,24 @@ import {
   proposeReview,
   publishBundleForTest,
   readGrantLedger,
+  buildGateInconsistencyProposal,
+  fileGateInconsistencyProposal,
+  proposalsDir,
+  writePendingProposalRecord,
 } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
   asRunId,
+  asRecordId,
   canonicalJson,
   CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   ProposalsAcceptOutputSchema,
   STANDING_APPROVAL_SCOPE,
   TRUST_SCOPE_KEYS,
+  sha256hex,
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
@@ -296,6 +302,71 @@ describe('agent-qa digest (D-17, the on-demand channel)', () => {
 })
 
 describe('agent-qa proposals (D-17, the decision surface)', () => {
+  it('418 keeps blocked config show on its existing report-only disclosure path', async () => {
+    const ws = workspace()
+    const id = 'prop_blockedconfig'
+    writePendingProposalRecord(ws.agentQaRoot, { schemaVersion: 1, id, kind: 'config',
+      origin: { emittedBy: 'config.field.set', at: Date.now() }, payload: {
+        schemaVersion: 1, payloadKind: 'blocked', action: 'config.field.set', summaryLine: 'Blocked config edit',
+        blockedReason: 'guardrail-hit', paths: ['agent-qa.config.yaml'],
+        scanFindings: [{ path: 'agent-qa.config.yaml', detector: 'secret-detector', redactedFingerprint: 'nonreversing-fingerprint' }],
+      } })
+    const shown = await run(ws, ['proposals', 'show', id])
+    expect(shown.stdout).toContain('guardrail-hit')
+    expect(shown.stdout).toContain('secret-detector')
+    expect(shown.stdout).not.toContain('(decoded')
+    expect(shown.stdout).not.toContain('newContent')
+    expect(shown.stdout).not.toContain('shownDiff')
+  })
+
+  it('418 decodes config diff and UTF-8 content for review while JSON and persisted bytes stay identical', async () => {
+    const ws = workspace()
+    const diff = '--- a/agent-qa.config.yaml\n+++ b/agent-qa.config.yaml\n@@ -1 +1 @@\n-name: before\n+name: café\n'
+    const content = 'name: café\n'
+    const payload = { schemaVersion: 1 as const, payloadKind: 'applyable' as const,
+      action: 'config.field.set', summaryLine: 'Update the display name',
+      files: [{ path: 'agent-qa.config.yaml', changeKind: 'modify' as const,
+        baseDigest: 'a'.repeat(64), newContentBase64: Buffer.from(content).toString('base64') }],
+      shownDiffBase64: Buffer.from(diff).toString('base64'), shownDiffDigest: sha256hex(diff),
+      crossBoundary: false, crossBoundaryReasons: [] }
+    const id = 'prop_decodedconfig'
+    writePendingProposalRecord(ws.agentQaRoot, { schemaVersion: 1, id, kind: 'config',
+      origin: { emittedBy: 'config.field.set', at: Date.now() }, payload })
+    const path = join(proposalsDir(ws.agentQaRoot), `${id}.json`)
+    const before = readFileSync(path, 'utf8')
+    const shown = await run(ws, ['proposals', 'show', id])
+    expect(shown.exitCode).toBeUndefined()
+    expect(shown.stdout).toContain(`--- shown diff (decoded; digest ${payload.shownDiffDigest}) ---`)
+    expect(shown.stdout).toContain('--- a/agent-qa.config.yaml')
+    expect(shown.stdout).toContain(diff)
+    expect(shown.stdout).toContain(`--- agent-qa.config.yaml (decoded) ---\n${content}`)
+    expect(shown.stdout).toContain(`<decoded, ${Buffer.byteLength(content)} bytes>`)
+    expect(shown.stdout).not.toContain(payload.shownDiffBase64)
+    expect(shown.stdout).not.toContain(payload.files[0].newContentBase64)
+    const json = JSON.parse((await run(ws, ['proposals', 'show', id, '--json'])).stdout)
+    expect(json.entry.envelope.payload).toEqual(payload)
+    expect(readFileSync(path, 'utf8')).toBe(before)
+  })
+
+  it.each(['gate1-pass-gate2-fail', 'gate2-pass-gate1-heldout-fail'] as const)
+  ('418 renders %s in plain text with candidate, receipts and human decision consequences', async shape => {
+    const ws = workspace()
+    const proposal = buildGateInconsistencyProposal({ candidateId: asRecordId('fact-checkout'),
+      scope: { tier: 'product', key: 'digest-cmd' }, shape,
+      gate1Digest: 'a'.repeat(64), gate2Digest: 'b'.repeat(64), proposedAt: Date.now() })
+    fileGateInconsistencyProposal(ws.agentQaRoot, proposal, { at: Date.now() })
+    const shown = await run(ws, ['proposals', 'show', proposal.proposalId])
+    expect(shown.stdout).toContain(shape === 'gate1-pass-gate2-fail'
+      ? 'gate-inconsistent — replay passed but the live canary failed'
+      : 'gate-inconsistent — live canary passed but held-out neighbours regressed')
+    expect(shown.stdout).toContain('candidate fact-checkout')
+    expect(shown.stdout).toContain(`gate-1 receipt ${'a'.repeat(64)}`)
+    expect(shown.stdout).toContain(`gate-2 receipt ${'b'.repeat(64)}`)
+    expect(shown.stdout).toContain('accept ⇒ deprecate the candidate; reject ⇒ clear the flag')
+    expect(JSON.parse((await run(ws, ['proposals', 'show', proposal.proposalId, '--json'])).stdout)
+      .entry.envelope.payload).toEqual(proposal)
+  })
+
   it('lists what is waiting, shows the receipts, then records the decision', async () => {
     const ws = workspace()
     const proposalId = mintProposal(ws, NEWER_RUN, 'checkout button', 11)

@@ -176,9 +176,41 @@ export function renderShow(result: ProposalsShowOutput): string {
   if (envelope.kind === 'config' && envelope.payload.payloadKind === 'blocked') {
     return [renderEntry(result.entry), '', ...renderBlockedConfig(envelope.payload)].join('\n')
   }
+  // 2026-09-08, 418 folded todo 399: transport bytes stay in the payload; only show decodes.
+  if (envelope.kind === 'config' && envelope.payload.payloadKind === 'applyable') {
+    const { shownDiffBase64, files, ...metadata } = envelope.payload
+    const decoded = files.map(({ newContentBase64, ...file }) => ({
+      file, bytes: Buffer.from(newContentBase64, 'base64'),
+    }))
+    return [renderEntry(result.entry), '',
+      JSON.stringify({ ...metadata, files: decoded.map(({ file, bytes }) => ({
+        ...file, newContent: `<decoded, ${bytes.length} bytes>`,
+      })) }, null, 2),
+      `--- shown diff (decoded; digest ${metadata.shownDiffDigest}) ---`,
+      Buffer.from(shownDiffBase64, 'base64').toString('utf8'),
+      ...decoded.flatMap(({ file, bytes }) => [
+        `--- ${file.path} (decoded) ---`, bytes.toString('utf8'),
+      ]),
+    ].join('\n')
+  }
+  const explanation: string[] = []
+  if (envelope.kind === 'knowledge') {
+    const delta = envelope.payload.deltas[0]
+    if (delta?.kind === 'Deprecate' && typeof delta.reason === 'string'
+      && delta.reason.startsWith('gate-inconsistent:')) {
+      const [, shape, gate1Digest, gate2Digest] = delta.reason.split(':')
+      const words = shape === 'gate1-pass-gate2-fail' ? 'replay passed but the live canary failed'
+        : shape === 'gate2-pass-gate1-heldout-fail' ? 'live canary passed but held-out neighbours regressed'
+        : shape
+      explanation.push(`gate-inconsistent — ${words}`, `candidate ${delta.targetId}`,
+        `gate-1 receipt ${gate1Digest}`, `gate-2 receipt ${gate2Digest}`,
+        'accept ⇒ deprecate the candidate; reject ⇒ clear the flag (the gate falls back to the standing receipts)', '')
+    }
+  }
   return [
     renderEntry(result.entry),
     '',
+    ...explanation,
     JSON.stringify(envelope.payload, null, 2),
   ].join('\n')
 }

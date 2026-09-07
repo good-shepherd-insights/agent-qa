@@ -435,6 +435,20 @@ function handedOffDrainReport() {
 }
 
 describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
+  it.each([0, 1])('418 discloses only newly filed inconsistency proposals: %s', async count => {
+    const info = vi.fn()
+    const operations = successfulOperations()
+    const drain = operations.drainQueue!
+    const drainQueue = vi.fn(async (...args: Parameters<typeof drain>) => ({
+      ...await drain(...args), inconsistenciesFiled: count,
+    }))
+    await runCurationTail(baseOptions({ ...operations, drainQueue }, { log: { warn: vi.fn(), info } }))
+    const lines = info.mock.calls.map(([line]) => String(line)).filter(line => line.includes('gate-inconsistency proposal'))
+    expect(lines).toEqual(count === 0 ? [] : [
+      'curation: filed 1 gate-inconsistency proposal(s); review with agent-qa proposals list',
+    ])
+  })
+
   it('418 the sweep binds posture from the loaded handoff ordinal', async () => {
     const resolver = vi.fn(() => undefined)
     const resolvePromotionPostureForRun = vi.fn(async () => resolver)
