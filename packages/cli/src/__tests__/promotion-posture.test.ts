@@ -170,11 +170,16 @@ describe('buildPromotionPostureResolver', () => {
     expect(f.result.resolve({ ...candidate, product: 'second' })).toMatchObject({ canary: { rarePathEligible: false } })
     expect(f.result.resolve({ ...candidate, product: 'absent' })).toMatchObject({ canary: { rarePathEligible: false } })
     expect(f.result.host.notices).toContain('no-current-build-ordinal')
-    const run14 = subject!.promotionPostureResolverForHost(f.result, undefined, 14)!
-    const run15 = subject!.promotionPostureResolverForHost(f.result, undefined, 15)!
+    const run14 = subject!.promotionPostureResolverForHost(f.result, undefined, 14, 'example-web')!
+    const run15 = subject!.promotionPostureResolverForHost(f.result, undefined, 15, 'example-web')!
     expect(run14(candidate)).toMatchObject({ canary: { rarePathEligible: false } })
     expect(run15(candidate)).toMatchObject({ canary: { rarePathEligible: true } })
     expect(run14(candidate)).toMatchObject({ canary: { rarePathEligible: false } })
+    // One drain can claim both products. The same-product handoff wins over latest,
+    // while a foreign candidate uses its own latest recorded ordinal (14), not 15.
+    expect(run15({ ...candidate, product: 'second' })).toMatchObject({ canary: { rarePathEligible: false } })
+    expect(run15({ ...candidate, product: 'absent' })).toMatchObject({ canary: { rarePathEligible: false } })
+    expect(f.result.host.notices).toContain('no-current-build-ordinal')
   })
 
   it('417 binds the production port with a floor and still holds a present broken root', async () => {

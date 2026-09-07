@@ -40,6 +40,7 @@ import type {
   GuardrailPolicy,
   MaskingContext,
   ResolvePromotionPosture,
+  ScopeKey,
 } from '@vostride/agent-qa-schema'
 import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 
@@ -131,7 +132,7 @@ export interface RunCurationTailOptions {
   /** Built once by the caller; synchronous per candidate inside writer authority. */
   resolvePromotionPosture?: ResolvePromotionPosture
   /** 418 D-13: reuse prepared identity but bind each swept handoff's own ordinal. */
-  resolvePromotionPostureForRun?: (buildOrdinal: number) => Promise<ResolvePromotionPosture | undefined>
+  resolvePromotionPostureForRun?: (buildOrdinal: number, scope?: ScopeKey) => Promise<ResolvePromotionPosture | undefined>
   runId: string
   /** Absolute `.agent-qa` runtime root shared by the run handoff and curation audit. */
   agentQaRoot: string
@@ -873,7 +874,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
     try {
       if (receiptMatches(operations.readCurationTailReceipt(runDir), receiptIdentity)) continue
       const resolvePromotionPosture = opts.resolvePromotionPostureForRun === undefined
-        ? opts.resolvePromotionPosture : await opts.resolvePromotionPostureForRun(handoff.buildOrdinal)
+        ? opts.resolvePromotionPosture : await opts.resolvePromotionPostureForRun(handoff.buildOrdinal, handoff.scope)
       const folded = await curateCompletedRun({
         ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
         ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),

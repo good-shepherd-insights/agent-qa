@@ -436,9 +436,10 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
   it('418 the sweep binds posture from the loaded handoff ordinal', async () => {
     const resolver = vi.fn(() => undefined)
     const resolvePromotionPostureForRun = vi.fn(async () => resolver)
-    const operations = successfulOperations({ loadCompletedRunHandoff: () => ({ ...handoff(), buildOrdinal: 42 }) })
+    const scope = { tier: 'product', key: 'shop-web' } as const
+    const operations = successfulOperations({ loadCompletedRunHandoff: () => ({ ...handoff(), buildOrdinal: 42, scope }) })
     await runCurationTail(baseOptions(operations, { resolvePromotionPostureForRun }))
-    expect(resolvePromotionPostureForRun).toHaveBeenCalledWith(42)
+    expect(resolvePromotionPostureForRun).toHaveBeenCalledWith(42, scope)
     expect(operations.drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver }))
   })
   it('418 resolves and discloses the cap and passes snapshot data through the capability', async () => {

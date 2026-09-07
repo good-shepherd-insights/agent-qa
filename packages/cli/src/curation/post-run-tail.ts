@@ -79,7 +79,8 @@ import type { CanaryCreditCounters } from './canary-credit.js'
 import { NON_SIGNAL_CLASSES } from './emit-canary-outcomes.js'
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
-import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
+import type { ScopeKey } from '@vostride/agent-qa-schema'
 
 /**
  * What became of the durable hand-off.
@@ -470,14 +471,18 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   let knowledgeRoot: string | undefined
   let posturePromise: ReturnType<typeof buildPromotionPostureResolver> | undefined
   let resolvePromotionPosture: RunCurationTailOptions['resolvePromotionPosture']
-  const preparePromotionPosture = (currentBuildOrdinal?: number) => {
+  const preparePromotionPosture = (currentBuildOrdinal?: number, scope?: ScopeKey) => {
     posturePromise ??= buildPromotionPostureResolver({ configPath: opts.configPath,
       knowledgeRoot, agentQaRoot: opts.agentQaRoot,
       canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
       lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
+      // A root-wide drain may claim another product's candidate. Its "now" must
+      // come from that product's store, not the run whose tail happens to drain it.
+      currentBuildOrdinal: product => latestBuildOrdinal({ root: opts.agentQaRoot, product }),
     })
     return posturePromise.then(posture => promotionPostureResolverForHost(
       posture, message => opts.log.warn(message), currentBuildOrdinal,
+      scope?.tier === 'product' ? scope.key : null,
     ))
   }
   /**
@@ -499,7 +504,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       completedRunHandoffPath(opts.agentQaRoot, input.runId),
     )
     const deadlineMs = input.deadlineMs ?? drainDeadlineMs
-    const runPromotionPosture = await preparePromotionPosture(handoff.buildOrdinal)
+    const runPromotionPosture = await preparePromotionPosture(handoff.buildOrdinal, handoff.scope)
     const folded = await ops().curateCompletedRun({
       ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
       ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),

@@ -185,22 +185,27 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
       kind: 'ready', committedRoot: '/project/agent-qa-eval', resolve,
       host: { notices: [] } as unknown as promotionPosture.PromotionPostureHostFacts,
     })
-    vi.mocked(h.operations.loadCompletedRunHandoff).mockReturnValue({ ...handoff, buildOrdinal: 15 })
+    vi.mocked(h.operations.loadCompletedRunHandoff).mockReturnValue({ ...handoff, buildOrdinal: 15,
+      scope: { tier: 'product', key: 'shop' } })
     try {
       await runPostRunTail(options(h)).drain()
       const composed = vi.mocked(h.operations.composeHost).mock.calls[0]![0]
       await composed.curateRun({ runId, executionContext: 'local-headless' })
       const own = vi.mocked(h.operations.curateCompletedRun).mock.calls[0]![0].resolvePromotionPosture!
       const sweep = h.runCurationTail.mock.calls[0]![0] as {
-        resolvePromotionPostureForRun: (ordinal: number) => Promise<ResolvePromotionPosture>
+        resolvePromotionPostureForRun: (ordinal: number, scope: { tier: 'product'; key: string }) => Promise<ResolvePromotionPosture>
       }
-      const prior = await sweep.resolvePromotionPostureForRun(11)
+      const prior = await sweep.resolvePromotionPostureForRun(11, { tier: 'product', key: 'shop' })
       const candidate = { id: 'candidate', product: 'shop', scope: { tier: 'product' as const, key: 'shop' },
         provenance: { runIds: [], receiptDigests: [], capturedAtOrdinals: [] } }
       own(candidate)
       prior(candidate)
       own(candidate)
-      expect(resolve.mock.calls).toEqual([[candidate, 15], [candidate, 11], [candidate, 15]])
+      const foreign = { ...candidate, product: 'another-shop' }
+      own(foreign)
+      prior(foreign)
+      expect(resolve.mock.calls).toEqual([[candidate, 15], [candidate, 11], [candidate, 15],
+        [foreign, undefined], [foreign, undefined]])
       expect(build).toHaveBeenCalledTimes(1)
     } finally { build.mockRestore() }
   })

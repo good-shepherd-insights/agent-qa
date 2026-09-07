@@ -193,6 +193,8 @@ export function promotionPostureResolverForHost(
   resolution: PromotionPostureResolution,
   warn?: (message: string) => void,
   currentBuildOrdinal?: number,
+  /** null means a handoff without product-tier scope; never borrow its ordinal. */
+  product?: string | null,
 ): ResolvePromotionPosture | undefined {
   if (resolution.kind === 'unavailable') {
     warn?.(`curation: posture unavailable: ${resolution.refusals.join('; ')}`)
@@ -205,7 +207,9 @@ export function promotionPostureResolverForHost(
         ? { kind: 'unavailable' as const, replayGateAvailable: false,
           refusals: [`${resolution.committedRoot}: eval root appeared after posture preparation; retry with fresh posture`] }
         : undefined
-      : resolution.kind === 'ready' ? resolution.resolve(candidate, currentBuildOrdinal) : resolution.resolve(candidate)
+      : resolution.kind === 'ready' ? resolution.resolve(candidate,
+        product === undefined || product === candidate.product ? currentBuildOrdinal : undefined,
+      ) : resolution.resolve(candidate)
     if (resolution.kind === 'ready' && resolution.host.notices.includes('no-current-build-ordinal')) {
       warn?.('curation: no-current-build-ordinal')
     }

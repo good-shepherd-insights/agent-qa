@@ -5,7 +5,7 @@ import { rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { isDeepStrictEqual } from 'node:util'
-import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
+import type { ResolvePromotionPosture, ScopeKey } from '@vostride/agent-qa-schema'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 
@@ -980,17 +980,18 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let drainWorker: Promise<void> | undefined
   let maintenanceWorker: Promise<void> | undefined
   let authorPromise: Promise<CuratorAuthor> | undefined
-  const resolveHostPromotionPosture = (currentBuildOrdinal?: number): Promise<ResolvePromotionPosture | undefined> =>
+  const resolveHostPromotionPosture = (currentBuildOrdinal?: number, scope?: ScopeKey): Promise<ResolvePromotionPosture | undefined> =>
     input.configPath === undefined
       ? Promise.resolve(undefined)
       : buildPromotionPostureResolver({ configPath: input.configPath,
           knowledgeRoot: input.knowledgeRoot, agentQaRoot: input.agentQaRoot,
           canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
           lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
-          currentBuildOrdinal: currentBuildOrdinal ?? (product => latestBuildOrdinal({ root: input.agentQaRoot, product })),
+          currentBuildOrdinal: product => latestBuildOrdinal({ root: input.agentQaRoot, product }),
           replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot }),
         })
-        .then(posture => promotionPostureResolverForHost(posture, message => logger.error(message)))
+        .then(posture => promotionPostureResolverForHost(posture, message => logger.error(message),
+          currentBuildOrdinal, scope?.tier === 'product' ? scope.key : null))
   let embedderWorkerIdleTimer: ReturnType<typeof setTimeout> | undefined
 
   type EmbedderWorkerExitReason = 'idle' | 'crash' | 'daemon-stop' | 'start-error' | 'replace'
@@ -2183,7 +2184,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           const handoff = curationOperations.loadCompletedRunHandoff(
             completedRunHandoffPath(input.agentQaRoot, curatedRunId),
           )
-          const resolvePromotionPosture = await resolveHostPromotionPosture(handoff.buildOrdinal)
+          const resolvePromotionPosture = await resolveHostPromotionPosture(handoff.buildOrdinal, handoff.scope)
           const folded = await curateCompletedRun({
             operations: curationOperations,
             ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
