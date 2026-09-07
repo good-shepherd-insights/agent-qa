@@ -3,7 +3,7 @@
 # 416-gate-mutation.sh — PROM-03/04, D-02/D-03/D-16's v54 deletion bar.
 #
 # LEG INDEX — thirteen independent runtime projection deletions.
-# G-01 posture-unavailable / PROMOTION_GATE_HOLD_REASONS — nineteen reasons
+# G-01 posture-unavailable / PROMOTION_GATE_HOLD_REASONS — twenty reasons
 # G-02 same deletion — promotion-gate.test-d.ts:14:5
 # G-03 user-sovereign / PROMOTION_PATHS — four paths
 # G-04 same deletion — promotion-gate.test-d.ts:37:74
@@ -81,8 +81,8 @@ same_bytes () {
 #
 # PER RED LINE, AND ANCHORED AT THE LINE END. A substring match against the whole multi-line blob
 # reports MATCHED for a fragment that is a strict PREFIX of a cell's real title — which is the
-# truncation this phase's own plan text reaches for (`declares exactly the nineteen promotion-gate hold reasons`,
-# where the cell is `declares exactly the nineteen promotion-gate hold reasons, in declaration order`). A leg that
+# truncation this phase's own plan text reaches for (`declares exactly the twenty promotion-gate hold reasons`,
+# where the cell is `declares exactly the twenty promotion-gate hold reasons, in declaration order`). A leg that
 # named the truncation would pass while proving nothing about the cell it meant.
 #
 # The suffix is the right anchor, not full-line equality: the runtime red-parser strips the
@@ -361,10 +361,11 @@ run_leg () {
     [ "$id" != G-04 ] || expected_blocks=2
     [ "$id" != G-13 ] || expected_blocks=9
     # Measured complete TypeCheckError blocks through their pointers, in emitted order.
-    # 417-09 refresh: G-04 pointer 34 -> 112; G-13 additive arm renders 24 fields.
-    # Complete blocks measured in 417-09-gate-mutation[-refreshed].log (2026-09-07).
-    [ "$id" != G-04 ] || diagnostic_digest=f707c1984e440a28604de0833d90996ded063fb787d549d8dc6139a3e530aed1
-    [ "$id" != G-13 ] || diagnostic_digest=874032b0f90d2290971ea87a5a06e62c31e77940aee1ec2e696008b5ff99732d
+    # 418-11 refresh: same intended never-bars and 2/9 complete diagnostic blocks.
+    # Measured gate-receipt fixture pointer 138 and promotion source pointers 214/220.
+    # Full RED logs: 418-11-gate416-final.log and 418-11-prior-G13-red.log.
+    [ "$id" != G-04 ] || diagnostic_digest=3e7295b5ad45ac4e07a06f7e82bf7aae23b380909d59e256f1d18b67a3119062
+    [ "$id" != G-13 ] || diagnostic_digest=47c41156e1b7bb6729b317bcce555a0eb6b08e497cef8b0156a1cc01b8d74d6e
     set +e
     blocks="$(grep -c 'TypeCheckError' "$LOG" | tr -d '[:space:]')"
     set -e
@@ -445,7 +446,7 @@ run_leg () {
 }
 
 # Named cells are transcribed verbatim, including the declaration-order suffix.
-G01_CELL='declares exactly the nineteen promotion-gate hold reasons, in declaration order'
+G01_CELL='declares exactly the twenty promotion-gate hold reasons, in declaration order'
 G03_CELL='declares exactly the four promotion paths, in declaration order'
 G05_CELL='declares exactly the three gate numbers, in declaration order'
 G06_CELL='declares exactly the three gate verdicts, in declaration order'
@@ -455,7 +456,7 @@ G09_CELL='declares exactly the three benefits, in declaration order'
 G10_CELL='declares exactly the three marks, in declaration order'
 G11_CELL='declares exactly the three state validities, in declaration order'
 G12_CELL='declares exactly the seven mutable bundle targets, in declaration order'
-G01_TRUNCATED='declares exactly the nineteen promotion-gate hold reasons'
+G01_TRUNCATED='declares exactly the twenty promotion-gate hold reasons'
 
 # ── INSTRUMENT SELF-CHECK ─────────────────────────────────────────────────────────────────────
 #
@@ -646,7 +647,7 @@ run_leg G-03 "user-sovereign removed from PROMOTION_PATHS" runtime "$G03_CELL" "
 G04_REQUIRED="$PROMOTION_TESTD [ $PROMOTION_TESTD ]
 $PROMOTION_TESTD:37:74"
 G04_ALLOWED="$G04_REQUIRED
-src/__tests__/gate-receipt.test.ts:112:69"
+src/__tests__/gate-receipt.test.ts:138:69"
 run_leg G-04 "the same removal, read by the path never-bar with measured collateral" testd "$G04_REQUIRED" "$G04_ALLOWED" "$SCHEMA_FILTER" "$PROMOTION_TESTD" "$PROMOTION_PATH" ""
 run_leg G-05 "3 removed from GATE_NUMBERS" runtime "$G05_CELL" "$G05_CELL" "$SCHEMA_FILTER" "$RECEIPT_SUITE" "$GATE_RECEIPT" ""
 run_leg G-06 "abstain removed from GATE_VERDICTS" runtime "$G06_CELL" "$G06_CELL" "$SCHEMA_FILTER" "$RECEIPT_SUITE" "$GATE_RECEIPT" ""
@@ -659,14 +660,14 @@ run_leg G-12 "evidence/gates.jsonl removed from MUTABLE_BUNDLE_TARGETS" runtime 
 G13_CELLS="$RECEIPT_TESTD [ $RECEIPT_TESTD ]
 $RECEIPT_TESTD:14:5"
 G13_ALLOWED="$G13_CELLS
-src/knowledge/__tests__/promotion-gate.test.ts:38:19
-src/knowledge/__tests__/promotion-gate.test.ts:38:45
 src/knowledge/__tests__/promotion-gate.test.ts:39:19
 src/knowledge/__tests__/promotion-gate.test.ts:39:45
-src/knowledge/__tests__/promotion-gate.test.ts:44:3
-src/knowledge/__tests__/promotion-gate.test.ts:44:29
-src/knowledge/promotion-gate.ts:177:7
-src/knowledge/promotion-gate.ts:183:9"
+src/knowledge/__tests__/promotion-gate.test.ts:40:19
+src/knowledge/__tests__/promotion-gate.test.ts:40:45
+src/knowledge/__tests__/promotion-gate.test.ts:45:3
+src/knowledge/__tests__/promotion-gate.test.ts:45:29
+src/knowledge/promotion-gate.ts:214:7
+src/knowledge/promotion-gate.ts:220:9"
 run_leg G-13 "abstain removed, read by the verdict never-bar with measured collateral" testd "$G13_CELLS" "$G13_ALLOWED" "$SCHEMA_FILTER" "$RECEIPT_TESTD" "$GATE_RECEIPT" ""
 
 # Pinned, not derived from the calls: a silently deleted leg must make the bar fail.

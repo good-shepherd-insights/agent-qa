@@ -614,7 +614,7 @@ G06_CELLS="$RECEIPT_TESTD [ $RECEIPT_TESTD ]
 $RECEIPT_TESTD:49:70"
 G06_ALLOWED="$G06_CELLS
 417 Gate-1 closed vocabularies > accepts exactly the five Gate-1 spend keys
-$RECEIPT_SUITE:80:55"
+$RECEIPT_SUITE:103:55"
 run_leg G1-06 "wallClockMs removed, read by the spend keyof pin" testd "$G06_CELLS" "$G06_ALLOWED" "$SCHEMA_FILTER" "$SPEND_SUITE" "$GATE_RECEIPT" ""
 
 # Pinned, not derived: silently deleting a leg must fail.
