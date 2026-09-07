@@ -276,6 +276,7 @@ interface Side {
 function side(label: string, markers: { gateRun?: true; excludedFromOutcomes?: true }): Side {
   const agentQaRoot = mkdtempSync(join(tmpdir(), `agent-qa-393-05-${label}-`))
   roots.push(agentQaRoot)
+  writeFileSync(join(agentQaRoot, 'agent-qa.config.yaml'), 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nuse:\n  mobile:\n    appState: preserve\n')
   const knowledgeRoot = join(agentQaRoot, 'knowledge')
   mkdirSync(knowledgeRoot, { recursive: true })
   const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(RUN_ID))

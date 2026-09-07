@@ -1,4 +1,8 @@
 import { emptyCanaryCreditCounters } from '../curation/canary-credit.js'
+import { creditCanaryAttributions, type CanaryAblation } from '../curation/canary-credit.js'
+import { readRunCanaryPolicy, writeRunCanaryPolicy } from '../curation/canary-run-state.js'
+import { generateRunId } from '@vostride/agent-qa-ids'
+import { asRecordId } from '@vostride/agent-qa-schema'
 import {
   mkdirSync,
   mkdtempSync,
@@ -60,6 +64,52 @@ const policy = {} as GuardrailPolicy
 const modelDeps = {} as RunCurationTailOptions['modelDeps']
 
 describe('418 v4 canary receipt contract', () => {
+  it('curates backlog runs with their own recorded caps and sources, with explicit legacy fallback', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-policy-backlog-'))
+    try {
+      const handoffs = [1, 2, undefined].map(() => completeHandoffForGuard(generateRunId()))
+      const dirs = handoffs.map(h => join(root, RUNS_SUBDIR, slugBranch(h.runId)))
+      dirs.forEach(dir => mkdirSync(dir, { recursive: true }))
+      writeRunCanaryPolicy(dirs[0]!, { schemaVersion: 1, runId: String(handoffs[0]!.runId), maxAblations: 1, source: 'flag' })
+      writeRunCanaryPolicy(dirs[1]!, { schemaVersion: 1, runId: String(handoffs[1]!.runId), maxAblations: 2, source: 'config' })
+      const ablation: CanaryAblation = { isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' }),
+        corpusDigest: async () => ({ kind: 'digest', corpusDigest: 'a'.repeat(64) }),
+        resolveCaps: async () => ({ maxAblations: 4, source: 'default' }),
+        ablate: vi.fn(async () => ({ kind: 'ablated' as const, crossCheck: 'flipped' as const,
+          corpusDigest: 'a'.repeat(64), k: 3, baseSeed: 11, seeds: [11, 12, 13], seedHonored: true,
+          spend: { modelCalls: 5, screens: 5, promptTokens: 0, completionTokens: 0 }, gate2Dir: root })),
+      }
+      const seen: Record<string, number> = {}
+      const operations = successfulOperations({ canaryAblation: ablation,
+        loadCompletedRunHandoff: path => handoffs[dirs.findIndex(dir => path.startsWith(dir))]!,
+        listCompletedRunDirs: () => dirs,
+        emitCanaryOutcomes: async opts => {
+          const attributed = await creditCanaryAttributions({ handoff: opts.handoff, runDir: opts.runDir,
+            knowledgeRoot, maxAblations: opts.credit!.maxAblations!, ablation: opts.credit!.ablation!,
+            readBundleStateDigests: () => ({ kind: 'not-found' }), observationIdOf: row => `${row.runId}:${row.candidateId}`,
+            attributions: [0, 1, 2].map(index => ({ kind: 'outcome' as const, source: 'served-brief' as const,
+              outcome: { candidateId: asRecordId(`fixture-policy-${index}`), runId: String(opts.handoff.runId),
+                testId: opts.handoff.tests[0]!.testId, testIndex: 0, stepIndex: 0, buildOrdinal: 42,
+                briefDigest: 'brief', attribution: 'fixture exercised checkout', exercisedAnchor: { t: 'el' as const, role: 'button', name: 'checkout', ordinal: 0 },
+                runOutcome: 'positive' as const, benefit: 'rode-along' as const, stateValidity: 'unknown' as const } })),
+          })
+          seen[String(opts.handoff.runId)] = attributed.counters.credited
+          return { canary: attributed.counters, emitted: 3, refused: 0, unresolved: 0,
+            procedure: { emitted: 0, refused: 0, unresolved: 0 }, details: [] }
+        },
+      })
+      const info = vi.fn()
+      await runCurationTail(baseOptions(operations, { agentQaRoot: root, runId: String(handoffs[0]!.runId),
+        maxAblations: 8, log: { warn: vi.fn(), info } }))
+      expect(handoffs.map(h => seen[String(h.runId)])).toEqual([1, 2, 3])
+      expect(ablation.ablate).toHaveBeenCalledTimes(6)
+      expect(info).toHaveBeenCalledWith('canary cap: maxAblations=1 (flag)')
+      expect(info).toHaveBeenCalledWith('canary cap: maxAblations=2 (config)')
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('legacy run without recorded policy'))
+      writeFileSync(join(dirs[0]!, 'canary-policy.json'), '{"schemaVersion":1,"maxAblations":8}')
+      expect(() => readRunCanaryPolicy(dirs[0]!, String(handoffs[0]!.runId))).toThrow('canary policy invalid')
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
   it.each(['v3', 'missing', 'extra', 'negative', 'fractional', 'nonSignal-extra', 'nonSignal-missing', 'nonSignal-negative'] as const)(
     'refuses %s counter shape at the reader', mode => {
       const dir = mkdtempSync(join(tmpdir(), 'agent-qa-v4-reader-'))

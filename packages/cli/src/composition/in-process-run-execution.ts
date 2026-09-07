@@ -263,6 +263,7 @@ export interface InProcessCliRunExecutionOptions {
    * what it found. That is what every other door gets, and it is byte-identical to 404-01.
    */
   readonly postProcessing?: {
+    readonly maxAblations?: number
     readonly detach?: true
     readonly writerAuthority?: CurationWriterAuthority
   }
@@ -642,6 +643,7 @@ export async function runInProcessCliRun(
     // consult, the enqueue and the drain must address ONE root.
     postVerdict: () => {
       const step = createPostVerdictStep({
+        ...(options.postProcessing?.maxAblations === undefined ? {} : { maxAblations: options.postProcessing.maxAblations }),
         runId,
         agentQaRoot: options.agentQaRoot,
         knowledgeRoot: produced.knowledgeRoot,

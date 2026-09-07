@@ -674,6 +674,7 @@ function stepOperations(
   overrides: Record<string, unknown> = {},
 ): Partial<PostVerdictStepOperations> {
   return {
+    recordCanaryPolicy: vi.fn(async () => undefined),
     acquireWriterLease: fence.acquireWriterLease,
     releaseLease: fence.releaseLease,
     readWriterLease: vi.fn(() => ({ kind: 'absent' })),

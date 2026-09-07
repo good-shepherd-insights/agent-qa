@@ -508,7 +508,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     const deadlineMs = input.deadlineMs ?? drainDeadlineMs
     const runPromotionPosture = await preparePromotionPosture(handoff.buildOrdinal, handoff.scope)
     const folded = await ops().curateCompletedRun({
-      ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
+      ...(input.runId !== opts.runId || opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
       ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),
       ...(runPromotionPosture === undefined ? {} : { resolvePromotionPosture: runPromotionPosture }),
       runDir: curatedRunDir,
@@ -735,7 +735,6 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // just ran, so the sweep skips it rather than folding it twice.
         await ops().runCurationTail({
           resolvePromotionPostureForRun: preparePromotionPosture,
-          ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
           ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),
           ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
           runId: opts.runId,

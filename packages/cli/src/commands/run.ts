@@ -1862,7 +1862,8 @@ async function executeSuites(
         // run. `--detach` asks this process not to SPEND itself on the chain, so it skips the LEASE —
         // never the enqueue, which the step performs either way (RESEARCH Pitfall 8). The literal-only
         // spread is the same house rule the INVK-06 markers ride: an absent flag is an ABSENT field.
-        postProcessing: opts.detach === true ? { detach: true } : {},
+        postProcessing: { ...(opts.detach === true ? { detach: true as const } : {}),
+          ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }) },
         onSession: (session) => {
           activeRunSession = session
         },
@@ -4883,7 +4884,8 @@ export function createRunCommand(): Command {
               // run. `--detach` asks this process not to SPEND itself on the chain, so it skips the LEASE —
               // never the enqueue, which the step performs either way (RESEARCH Pitfall 8). The literal-only
               // spread is the same house rule the INVK-06 markers ride: an absent flag is an ABSENT field.
-              postProcessing: opts.detach === true ? { detach: true } : {},
+              postProcessing: { ...(opts.detach === true ? { detach: true as const } : {}),
+                ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }) },
               onSession: (session) => {
                 activeRunSession = session
               },

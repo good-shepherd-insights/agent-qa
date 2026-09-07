@@ -55,6 +55,7 @@ import { NON_SIGNAL_CLASSES } from './emit-canary-outcomes.js'
 import { emitCurationCandidates, type EmitReport } from './emit-candidates.js'
 import { exercisedAnchors } from './handoff-anchors.js'
 import { renderPromotionLine } from './promotion-posture.js'
+import { readRunCanaryPolicy } from './canary-run-state.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
 /**
@@ -639,12 +640,14 @@ export async function curateCompletedRun(
       // D-20: candidate and canary drops share this scope and crash boundary.
       const reader = operations.openKnowledgeReader({ knowledgeRoot: input.knowledgeRoot })
       const ablation = operations.canaryAblation
-      const caps = ablation === undefined ? undefined : input.maxAblations !== undefined
+      const recordedPolicy = readRunCanaryPolicy(input.runDir, String(input.handoff.runId))
+      const caps = ablation === undefined ? undefined : recordedPolicy ?? (input.maxAblations !== undefined
         ? { maxAblations: input.maxAblations, source: 'flag' }
         : await ablation.resolveCaps?.() ?? {
           maxAblations: (await import('../eval-session-composition.js')).GATE2_DEFAULT_MAX_ABLATIONS,
           source: 'default',
-        }
+        })
+      if (ablation !== undefined && recordedPolicy === undefined) input.log.info?.('canary cap: legacy run without recorded policy; using explicit run override or current config/default')
       if (caps !== undefined) input.log.info?.(`canary cap: maxAblations=${caps.maxAblations} (${caps.source})`)
       const canaries = await operations.emitCanaryOutcomes({
         handoff: input.handoff,
@@ -907,7 +910,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       const resolvePromotionPosture = opts.resolvePromotionPostureForRun === undefined
         ? opts.resolvePromotionPosture : await opts.resolvePromotionPostureForRun(handoff.buildOrdinal, handoff.scope)
       const folded = await curateCompletedRun({
-        ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
+        ...(runDir !== currentRunDir || opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
         ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
         runDir,
         handoff,

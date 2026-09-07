@@ -29,9 +29,16 @@
 // see `post-verdict-step.ts`'s header for why each arm sits where it does.
 
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { generateRunId } from '@vostride/agent-qa-ids'
+import { asRunId, slugBranch } from '@vostride/agent-qa-schema'
+import { readRunCanaryPolicy } from '../canary-run-state.js'
 
 import {
   createPostVerdictStep,
+  recordCanaryPolicy,
   dispositionOf,
   enqueueAnalyzeRun,
   PostProcessingUnboundError,
@@ -85,6 +92,7 @@ function stubOperations(
   overrides: Partial<PostVerdictStepOperations> = {},
 ): Partial<PostVerdictStepOperations> {
   return {
+    recordCanaryPolicy: vi.fn(async () => undefined),
     acquireWriterLease: vi.fn(() => ACQUIRED) as unknown as PostVerdictStepOperations['acquireWriterLease'],
     releaseLease: vi.fn(() => ({ kind: 'released' })) as unknown as PostVerdictStepOperations['releaseLease'],
     readWriterLease: vi.fn(() => ({ kind: 'absent' })) as unknown as PostVerdictStepOperations['readWriterLease'],
@@ -396,6 +404,39 @@ describe('enqueueAnalyzeRun — THE one durable hand-off (404 D-05, relocated fr
 })
 
 describe('createPostVerdictStep — decide without mutating, acquire only for a pump (404 D-10, Pitfall 3)', () => {
+  it.each([true, false])('persists the originating cap before enqueue and daemon handoff (flag=%s)', async flag => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
+    try {
+      const runId = generateRunId()
+      const runDir = join(root, 'runs', slugBranch(runId))
+      mkdirSync(runDir, { recursive: true })
+      const configPath = join(root, 'agent-qa.config.yaml')
+      writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nuse:\n  mobile:\n    appState: preserve\neval:\n  gate2:\n    maxAblations: 4\n')
+      const expected = { schemaVersion: 1, runId, maxAblations: flag ? 1 : 4, source: flag ? 'flag' : 'config' }
+      const operations = stubOperations({
+        recordCanaryPolicy,
+        loadCompletedRunHandoff: () => ({ ...HANDOFF, runId: asRunId(runId) }),
+        readWriterLease: vi.fn(() => PARSED_LEASE),
+        composeHost: () => {
+          expect(readRunCanaryPolicy(runDir, runId)).toEqual(expected)
+          return stubHost()
+        },
+        nudgeDaemon: vi.fn(async () => {
+          expect(readRunCanaryPolicy(runDir, runId)).toEqual(expected)
+          return undefined
+        }),
+      })
+      const run = (maxAblations?: number) => createPostVerdictStep({
+        runId, agentQaRoot: root, knowledgeRoot: KNOWLEDGE_ROOT, configPath,
+        ...(maxAblations === undefined ? {} : { maxAblations }),
+        log: { warn: vi.fn() }, operations,
+      }).port.run({ runId: runId as never, verdict: 'passed' as never })
+      expect(await run(flag ? 1 : undefined)).toEqual({ disposition: 'handedOff' })
+      expect(operations.nudgeDaemon).toHaveBeenCalledOnce()
+      expect(await run(8)).toEqual({ disposition: 'handedOff' })
+      expect(readRunCanaryPolicy(runDir, runId)).toEqual(expected)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
   it('a free lease reads drained and ACQUIRES NOTHING until a pump asks', async () => {
     const operations = stubOperations()
     const step = createPostVerdictStep({

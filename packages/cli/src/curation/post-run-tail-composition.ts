@@ -96,7 +96,6 @@ export function composeCliPostRunTail(input: ComposeCliPostRunTailInput): PostRu
     ...(input.maxAblations === undefined ? {} : { maxAblations: input.maxAblations }),
     canaryAblation: input.canaryAblation ?? createCanaryAblationForHost({
       configPath: resolve(input.configFilePath), agentQaRoot: resolve(input.configDir, '.agent-qa'),
-      ...(input.maxAblations === undefined ? {} : { maxAblations: input.maxAblations }),
     }),
     runId: input.runId,
     agentQaRoot: resolve(input.configDir, '.agent-qa'),
