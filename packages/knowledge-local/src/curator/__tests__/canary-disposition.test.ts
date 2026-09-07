@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,6 +9,7 @@ import {
   deriveEvidenceToken,
   evaluatePromotionGate,
   isVettedCandidate,
+  isPromotionReceipt,
   type BundleDiscriminant,
   type BundleDraft,
   type CanaryOutcome,
@@ -24,7 +25,7 @@ import {
   enqueueArtifactFreeCandidateProjection,
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import { scaffoldKnowledgeRoot } from '../../__tests__/fixtures/bundle-fixture.js'
-import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
+import { deriveBundleTrust, loadBundle, readGateReceipts } from '../../bundle-read.js'
 import {
   publishBundle,
   type BundleStoreConfig,
@@ -42,7 +43,7 @@ import {
 } from '../drain.js'
 import { canaryOutcomeObservationId } from '../disposition.js'
 import { createLocalKnowledgeStore } from '../knowledge-store.js'
-import { resolvedPromotionPosture } from './fixtures/promotion-floor-fixture.js'
+import { completeGate1Receipt, resolvedPromotionPosture } from './fixtures/promotion-floor-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const FACT_ANCHORS = [
@@ -214,6 +215,54 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     expect(promotedIndex).toBeGreaterThan(confirmedIndex)
     expect(result.trust.status).toBe('active')
     expect(result.trust.counters.confirmed).toBe(1)
+  })
+
+  it.each([true, false])('SC3 ordered=%s: keeps credited receipt and reports the gated result without throwing', async ordered => {
+    const published = seedCandidate()
+    const onPromotionOutcome = vi.fn()
+    const port = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir, policy,
+      executionContext: 'local-interactive', sourceBuildOrdinal: 43, sourceJobId: 'fixture-job',
+      ...portAuthority(), resolvePromotionPosture: () => resolvedPromotionPosture(), onPromotionOutcome })
+    await port.recordGateReceipt(completeGate1Receipt(published.id, { producedAtOrdinal: ordered ? 42 : 48 }))
+    const credited: CanaryOutcome = { ...outcome(published.id), benefit: 'exercised-benefited', corpusDigest: 'c'.repeat(64) }
+    await expect(port.recordCanaryOutcome(credited)).resolves.toBeUndefined()
+    expect(onPromotionOutcome).toHaveBeenLastCalledWith({ candidateId: published.id,
+      ...(ordered ? { promotionPath: 'gate1+gate2' } : { promotionHoldReason: 'gate2-receipt-required' }) })
+    const before = readFileSync(join(published.dir, 'evidence/gates.jsonl'), 'utf8')
+    await port.recordCanaryOutcome(credited)
+    expect(readFileSync(join(published.dir, 'evidence/gates.jsonl'), 'utf8')).toBe(before)
+    const receipts = readGateReceipts(published.dir, published.id)!
+    expect(receipts.filter(line => !isPromotionReceipt(line) && line.gate === 2)).toEqual([
+      expect.objectContaining({ gate: 2, verdict: 'pass', producedAtOrdinal: 43,
+        producedBy: { jobId: 'fixture-job', opId: 'canary.record' } }),
+    ])
+  })
+
+  it.each(['rode-along', 'exercised-benefited'] as const)('SC3 %s without digest preserves v51 Confirm and floor bytes', async benefit => {
+    const published = seedCandidate()
+    const attributed = { ...outcome(published.id), benefit }
+    await store().recordCanaryOutcome(attributed)
+    const { bundle } = loaded(published.dir)
+    expect(bundle.events.filter(event => event.type === 'confirmed')).toEqual([
+      expect.objectContaining({ evidenceToken: deriveEvidenceToken({ attributingObservationId: canaryOutcomeObservationId(attributed),
+        anchor: attributed.exercisedAnchor, buildOrdinal: attributed.buildOrdinal }), buildOrdinal: 43 }),
+    ])
+    const receipts = readGateReceipts(published.dir, published.id)!
+    expect(receipts).toEqual([expect.objectContaining({ promotionPath: 'deterministic-verdict-floor' })])
+    expect(receipts.filter(line => !isPromotionReceipt(line) && line.gate === 2)).toEqual([])
+    const bytes = canonicalJson(bundle.events)
+    await store().recordCanaryOutcome({ ...attributed, benefit: 'rode-along' })
+    expect(canonicalJson(loaded(published.dir).bundle.events)).toBe(bytes)
+  })
+
+  it('the canary arm appends its receipt before the one gated routine and never appends a promoted event itself', () => {
+    const source = readFileSync(new URL('../knowledge-store.ts', import.meta.url), 'utf8')
+    const arm = source.slice(source.indexOf("case 'positive': {"), source.indexOf("case 'negative': {"))
+    expect(arm.indexOf('appendGateReceipt(')).toBeGreaterThanOrEqual(0)
+    expect(arm.indexOf('appendGateReceipt(')).toBeLessThan(arm.indexOf('promoteWithinCurrentAuthority(outcome.candidateId)'))
+    expect(arm).not.toContain("type: 'promoted'")
+    expect(arm).not.toContain('evaluatePromotionGate(')
+    expect(source.match(/\/\/ 416-DOOR:/g)).toHaveLength(3)
   })
 
   it('replays the same positive outcome as a trust-preserving no-op', async () => {

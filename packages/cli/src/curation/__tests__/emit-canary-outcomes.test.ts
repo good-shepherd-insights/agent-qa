@@ -73,6 +73,34 @@ const PROCEDURE_ANCHORS: Anchor[] = [
   { t: 'page', route: '/login' },
 ]
 
+describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05)', () => {
+  beforeEach(() => {
+    lookupSpy.anchorsById.clear()
+    lookupSpy.invalidById.clear()
+    lookupSpy.anchorsById.set(CANDIDATE, [{ t: 'el', role: 'button', name: 'checkout', ordinal: 0 }])
+  })
+  it.each(['absent', 'held', 'throws'] as const)('reports %s capability without certifying benefit', async mode => {
+    const emit = vi.fn()
+    const report = await emitCanaryOutcomes({
+      handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-sc2', emit,
+      ...(mode === 'absent' ? {} : { credit: { ablation: {
+        corpusDigest: async () => ({ kind: 'digest' as const, corpusDigest: 'c'.repeat(64) }),
+        ablate: async () => {
+          if (mode === 'throws') throw new Error('fixture failure')
+          return { kind: 'ablated' as const, crossCheck: 'held' as const, corpusDigest: 'c'.repeat(64),
+            k: 3, baseSeed: 11, seeds: [11, 12, 13], seedHonored: true,
+            spend: { modelCalls: 5, screens: 5, promptTokens: 0, completionTokens: 0 }, gate2Dir: '/tmp/gate2' }
+        },
+      } } }),
+    })
+    expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ benefit: 'rode-along', stateValidity: 'unknown' }))
+    expect(report.canary.credited).toBe(0)
+    expect(report.canary[mode === 'absent' ? 'rideAlongUncredited' : mode === 'held' ? 'ablationHeld' : 'ablationError']).toBe(1)
+    expect(report.refused).toBe(0)
+    expect(report.details[0]?.crossCheck).toBe(mode === 'held' ? 'held' : 'not-run')
+  })
+})
+
 type GuardMissReason = NonNullable<
   Extract<StepPlanSource, { kind: 'procedure-replay' }>['guard']['miss']
 >['reason']
