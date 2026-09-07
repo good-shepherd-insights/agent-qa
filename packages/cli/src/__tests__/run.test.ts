@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -711,10 +712,13 @@ const tempDirs: string[] = []
  * stable value across a single run pin it themselves with `mockReturnValue(freshRunId(...))`; the
  * one cell that asserts the printed id reads it back off the mint rather than typing it in.
  */
+// 418-07: OS PIDs recur across sessions while these fixture directories persist.
+// A per-suite nonce prevents historical run evidence from refusing a fresh fixture.
+const runIdSession = randomUUID().replaceAll('-', '')
 let runIdOrdinal = 0
 function freshRunId(stem: string): string {
   runIdOrdinal += 1
-  return `r_${stem}-${process.pid.toString(36)}-${runIdOrdinal.toString(36)}`
+  return `r_${stem}-${runIdSession}-${runIdOrdinal.toString(36)}`
 }
 
 beforeEach(() => {

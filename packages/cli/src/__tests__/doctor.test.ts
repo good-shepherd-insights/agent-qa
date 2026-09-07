@@ -52,6 +52,13 @@ vi.mock('@vostride/agent-qa-agent-local', async () => {
     '@vostride/agent-qa-knowledge-local',
   )
   return {
+    // 418-07: keep the newly bound read capabilities on this composition mock.
+    // These no-eval-root cells still exit before reading any knowledge bundles.
+    latestBuildOrdinal: vi.fn(() => 0),
+    LOCAL_CURATION_CAPABILITIES: {
+      readCanaryPostureFacts: knowledge.canaryPostureFactsFor,
+      readLowerTrustShares: knowledge.lowerTrustSharesFor,
+    },
     LOCAL_KNOWLEDGE_PROBES: {
       foldRetrievalRung: knowledge.foldRetrievalRung,
       indexDbPath: knowledge.indexDbPath,
