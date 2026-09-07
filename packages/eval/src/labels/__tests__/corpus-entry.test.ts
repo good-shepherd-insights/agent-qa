@@ -42,6 +42,13 @@ function fixtureLeaf(): LeafCassette {
 }
 
 describe('projectCorpusEntry (D-02/ROOT-03, 414 D-03/D-04/D-13)', () => {
+  it('adds feedback provenance only when present without changing ordinary entry keys', () => {
+    const input = { cassette: fixtureLeaf(), product: 'demo-app', runId: RUN_ID, assignment: { split: 'natural' as const } }
+    const ordinary = projectCorpusEntry(input)
+    const feedback = { attributedObservationId: 'observation-fixture', benefit: 'rode-along' as const }
+    expect(projectCorpusEntry({ ...input, feedback })).toEqual({ ...ordinary, source: 'canary-feedback', ...feedback })
+    expect(Object.keys(ordinary).sort()).toEqual(['schemaVersion', 'cassetteId', 'product', 'split', 'captured_at_ordinal', 'run_links', 'receiptDigest'].sort())
+  })
   it('projects the full v2 membership shape with requirement-verbatim provenance keys', () => {
     const cassette = fixtureLeaf()
 

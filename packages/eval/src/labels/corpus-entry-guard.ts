@@ -28,6 +28,7 @@
  * `run_links`, which is the whole point of making the ban structural.
  */
 import { z } from 'zod'
+import { BENEFITS } from '@vostride/agent-qa-schema'
 import type {
   CorpusEntry,
   HeldOutVisibility,
@@ -67,6 +68,9 @@ export const corpusEntryV1Schema = z
 const runLinksV2Schema = z.object({ runId: z.string(), runSlug: z.string() }).strict()
 
 const v2BaseShape = {
+  source: z.literal('canary-feedback').optional(),
+  attributedObservationId: z.string().min(1).optional(),
+  benefit: z.enum(BENEFITS).optional(),
   schemaVersion: z.literal(2),
   cassetteId: z.string(),
   product: z.string(),
@@ -152,6 +156,9 @@ function normaliseV1(data: z.infer<typeof corpusEntryV1Schema>): NaturalCorpusEn
 /** Widen a parsed v2 arm to the declared entry union. */
 function asV2Entry(data: z.infer<typeof corpusEntryV2Schema>): CorpusEntry {
   const base = {
+    ...(data.source === undefined ? {} : { source: data.source }),
+    ...(data.attributedObservationId === undefined ? {} : { attributedObservationId: data.attributedObservationId }),
+    ...(data.benefit === undefined ? {} : { benefit: data.benefit }),
     schemaVersion: 2 as const,
     cassetteId: data.cassetteId,
     product: data.product,

@@ -115,6 +115,12 @@ describe('assignSplit — determinism and salt sensitivity (D-05/D-06)', () => {
 })
 
 describe('assignSplit — the D-08 pair exemption', () => {
+  it('forces feedback natural even when the same input would be private held-out', () => {
+    const partition = { saltHex: ZERO_SALT, heldOutFraction: 0.9, privateFraction: 0.9, cassetteId: VECTOR_A_ID, isPairMember: false }
+    expect(assignSplit({ ...partition, isFeedbackEntry: false })).toEqual({ split: 'held-out', heldOutVisibility: 'private' })
+    expect(assignSplit({ ...partition, isFeedbackEntry: true })).toEqual({ split: 'natural' })
+    expect(assignSplit({ cassetteId: VECTOR_A_ID, isFeedbackEntry: true })).toEqual({ split: 'natural' })
+  })
   it('keeps a self-heal pair member natural even when its bucket falls in held-out', () => {
     const bucket = bucketOf(ZERO_SALT, VECTOR_B_ID)
     const partition = {

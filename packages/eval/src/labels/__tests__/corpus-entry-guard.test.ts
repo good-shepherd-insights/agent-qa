@@ -237,6 +237,16 @@ describe('parseCorpusEntry — empty inputs (ROOT-06)', () => {
 })
 
 describe('parseCorpusEntry — the optional D-04 fields', () => {
+  it('round trips optional feedback on every shape and refuses invalid provenance words', () => {
+    const feedback = { source: 'canary-feedback', attributedObservationId: 'observation-fixture', benefit: 'rode-along' }
+    for (const split of [{ split: 'natural' }, { split: 'held-out', heldOutVisibility: 'private' }]) {
+      const entry = v2Natural({ ...split, ...feedback })
+      expect(guardCorpusEntry(entry)).toEqual(entry)
+    }
+    for (const invalid of [{ source: 'bogus' }, { benefit: 'bogus' }, { attributedObservationId: '' }]) {
+      expect(parseCorpusEntry(v2Natural({ ...feedback, ...invalid })).ok).toBe(false)
+    }
+  })
   it('admits captured_at and targetEnvironment only in their exact spellings', () => {
     const withBoth = parseCorpusEntry(
       v2Natural({ captured_at: '2026-09-04T16:25:54.000Z', targetEnvironment: 'local' }),

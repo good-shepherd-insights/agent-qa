@@ -37,7 +37,7 @@
  * three sets therefore REDs a test that names what joined or left.
  */
 import { sha256hex } from '@vostride/agent-qa-schema'
-import type { ScopeKey } from '@vostride/agent-qa-schema'
+import type { Benefit, ScopeKey } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
 import type { LeafCassette } from '../cassette/cassette'
 import { deriveRunSlug } from '../extract/ids'
@@ -125,6 +125,10 @@ export interface CorpusRunLinks {
 
 /** Fields every split arm carries (414 D-03). */
 export interface CorpusEntryBase {
+  // 2026-09-08, 418 D-24: optional feedback DATA on v2, absent on ordinary entries.
+  source?: 'canary-feedback'
+  attributedObservationId?: string
+  benefit?: Benefit
   /** Version gate (D-02, 414 D-03). */
   schemaVersion: 2
   /** Deterministic cassette identity this entry admits (D-02). */
@@ -203,6 +207,7 @@ export type SplitAssignment =
   | { split: 'adversarial'; generator: CorpusGenerator }
 
 export interface ProjectCorpusEntryInput {
+  feedback?: { attributedObservationId: string; benefit: Benefit }
   cassette: LeafCassette
   product: string
   runId: string
@@ -222,11 +227,13 @@ export function projectCorpusEntry({
   assignment,
   capturedAt,
   targetEnvironment,
+  feedback,
 }: ProjectCorpusEntryInput): CorpusEntry {
   const base: CorpusEntryBase = {
     schemaVersion: CORPUS_ENTRY_SCHEMA_VERSION,
     cassetteId: cassette.id,
     product,
+    // 2026-09-08, ROOT-03: feedback retains the actual receipt ordinal and breeding run.
     captured_at_ordinal: cassette.receipt.buildOrdinal,
     run_links: {
       runId,
@@ -238,6 +245,7 @@ export function projectCorpusEntry({
     // value for (D-04).
     ...(capturedAt === undefined ? {} : { captured_at: capturedAt }),
     ...(targetEnvironment === undefined ? {} : { targetEnvironment }),
+    ...(feedback === undefined ? {} : { source: 'canary-feedback' as const, ...feedback }),
   }
   return { ...base, ...assignment }
 }

@@ -64,6 +64,7 @@ export interface AssignSplitInput extends PartitionParams {
   cassetteId: string
   /** D-08: a self-heal pair member is never bucketed. */
   isPairMember: boolean
+  isFeedbackEntry?: boolean
 }
 
 /** The 52-bit bucket for one cassette under one salt (PARTITION_VERSION 1). */
@@ -96,8 +97,11 @@ function requireFraction(name: string, value: number): void {
  * The data gate for a manifest document lives in `partition-manifest.ts`.
  */
 export function assignSplit(
-  input: AssignSplitInput,
+  input: AssignSplitInput | { cassetteId: string; isFeedbackEntry: true },
 ): Extract<SplitAssignment, { split: 'natural' } | { split: 'held-out' }> {
+  // 2026-09-08, 418 D-23: feedback never needs a product's salt or fractions;
+  // newly encountered products must not invent partition defaults to bypass bucketing.
+  if (input.isFeedbackEntry) return { split: 'natural' }
   requireSalt(input.saltHex)
   requireFraction('heldOutFraction', input.heldOutFraction)
   requireFraction('privateFraction', input.privateFraction)
