@@ -231,7 +231,7 @@ export function createCurationAuditSink(agentQaRoot: string): AuditSink {
   return new JsonlAuditSink(agentQaRoot)
 }
 
-function listCompletedRunDirs(agentQaRoot: string): string[] {
+export function listCompletedRunDirs(agentQaRoot: string): string[] {
   const runsRoot = completedRunsRoot(agentQaRoot)
   if (!existsSync(runsRoot)) return []
   return readdirSync(runsRoot, { withFileTypes: true })

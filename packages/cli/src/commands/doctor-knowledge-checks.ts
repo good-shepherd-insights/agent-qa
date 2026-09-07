@@ -44,7 +44,6 @@ import {
 import { resolveRawConfigKnowledgeRoot } from '../config.js'
 import { buildPromotionPostureResolver, type PromotionPostureResolution } from '../curation/promotion-posture.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
-import type { ReplayGatePort } from '@vostride/agent-qa-agent'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import { readDaemonEventLedger, type DaemonEvent } from '../daemon/events.js'
 import type { CheckResult, DoctorCheck } from './doctor.js'
@@ -90,7 +89,7 @@ const INDEX_PRESENT: IndexFace = { source: 'index' }
 const SKIPPED: CheckResult = { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE }
 
 export interface KnowledgeCheckProbes {
-  buildPromotionPosture?: (input: { configPath: string; replayGate?: ReplayGatePort }) => Promise<PromotionPostureResolution>
+  buildPromotionPosture?: typeof buildPromotionPostureResolver
   classifyIndexFace?: (knowledgeRoot: string) => IndexFace
   resolveEmbedderCapability?: (options: {
     preferredProfile: EmbeddingProfile
@@ -128,6 +127,7 @@ interface KnowledgeProbe {
 }
 
 interface KnowledgeCheckContext {
+  agentQaRoot: string
   knowledgeRoot: string | null
   relativeRoot: string
   relativeIndexPath: string
@@ -280,9 +280,23 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
           : judge.reason === 'no-eligible-judge' ? 'ineligible' : 'not reported')
       if (replayGateAvailable) {
         const evidence = canary.kind === 'provided' ? canary.attributedRows ?? 'not reported' : 'none'
+        // 2026-09-08, 418 D-04/D-14/D-21: cumulative since-v4 counts only.
+        // Reuse the tail's validated reader and completed-run census; never guess old receipts.
+        const { listCompletedRunDirs, readCurationTailReceipt } = await import('../curation/curation-tail.js')
+        const totals = { rideAlong: 0, capExceeded: 0, staged: 0 }
+        for (const dir of listCompletedRunDirs(context.agentQaRoot)) {
+          const receipt = readCurationTailReceipt(dir)
+          if (receipt === undefined) continue
+          totals.rideAlong += receipt.canary.rideAlongUncredited
+          totals.capExceeded += receipt.canary.ablationCapExceeded
+          totals.staged += receipt.canary.staged
+        }
+        const shares = learning.host.lowerTrustShares
+          .map(({ product, active, lowerTrust }) => `${lowerTrust}/${active} active in ${product}`)
+          .join(', ') || 'none'
         return {
           status: 'pass',
-          message: `gated (Gate 1 bound; judge ${judgeLabel}; canary evidence ${evidence})`,
+          message: `gated (Gate 1 bound; judge ${judgeLabel}; canary evidence ${evidence}; since-v4 ride-along ${totals.rideAlong}; cap-exceeded ${totals.capExceeded}; lower-trust ${shares}; staged ${totals.staged})`,
         }
       }
       if (judge.reason === 'no-eligible-judge') {
@@ -390,6 +404,7 @@ export function createKnowledgeChecks(
   }
 
   const context: KnowledgeCheckContext = {
+    agentQaRoot,
     knowledgeRoot,
     relativeRoot: knowledgeRoot === null ? '' : displayPath(knowledgeRoot),
     relativeIndexPath: knowledgeRoot === null ? '' : displayPath(indexDbPath(knowledgeRoot)),

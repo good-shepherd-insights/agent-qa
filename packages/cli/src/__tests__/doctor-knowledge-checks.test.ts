@@ -1,10 +1,11 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 
 import {
   DEFAULT_EMBEDDING_PROFILE,
+  asEvidenceToken,
   RETRIEVAL_RUNG_REASONS,
   type EmbeddingProfile,
 } from '@vostride/agent-qa-schema'
@@ -17,6 +18,11 @@ import {
   type KnowledgeCheckProbes,
 } from '../commands/doctor-knowledge-checks.js'
 import type { PromotionPostureHostFacts, PromotionPostureResolution } from '../curation/promotion-posture.js'
+import { buildPromotionPostureResolver } from '../curation/promotion-posture.js'
+import { emptyCanaryCreditCounters } from '../curation/canary-credit.js'
+import { completedRunsRoot, CURATION_TAIL_RECEIPT_FILE, readCurationTailReceipt } from '../curation/curation-tail.js'
+import { promotionHostProof } from './promotion-host-proof.js'
+import { publishBundleForTest, appendPromotionReceipt } from '@vostride/agent-qa-knowledge-local'
 
 const STATIC_PROFILE: EmbeddingProfile = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' }
 
@@ -40,6 +46,16 @@ interface Project {
 }
 
 const created: string[] = []
+
+function receipt(project: Project, name: string, canary = emptyCanaryCreditCounters(), extra: Record<string, unknown> = {}) {
+  const dir = join(completedRunsRoot(project.agentQaRoot), name)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'handoff.json'), '{}')
+  writeFileSync(join(dir, CURATION_TAIL_RECEIPT_FILE), JSON.stringify({ schemaVersion: 4,
+    runId: name, handoffDigest: 'a'.repeat(64), projectionVersion: 1, drainKind: 'drained',
+    handoffHolderPid: null, candidateIds: [], canary, ...extra }))
+  return dir
+}
 
 function makeProject(options: { withKnowledgeDir?: boolean } = {}): Project {
   const projectRoot = mkdtempSync(join(tmpdir(), 'doctor-knowledge-'))
@@ -368,7 +384,83 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'ready', committedRoot: join(project.projectRoot, 'agent-qa-eval'), host, resolve: () => undefined }),
     }))
-    expect(learning).toEqual({ status, message })
+    expect(learning).toEqual({ status, message: replayGateAvailable
+      ? `${message.slice(0, -1)}; since-v4 ride-along 0; cap-exceeded 0; lower-trust none; staged 0)`
+      : message })
+  })
+
+  it('folds only validated v4 receipts into since-v4 counts and renders per-product shares', async () => {
+    const project = makeProject()
+    receipt(project, 'first', { ...emptyCanaryCreditCounters(), rideAlongUncredited: 1, ablationCapExceeded: 1 })
+    receipt(project, 'second', { ...emptyCanaryCreditCounters(), rideAlongUncredited: 2, staged: 3 })
+    for (const [name, extra] of [['old', { schemaVersion: 3 }], ['extra', { unexpected: true }],
+      ['bad-count', { canary: { ...emptyCanaryCreditCounters(), staged: -1 } }]] as const) {
+      const dir = receipt(project, name, { ...emptyCanaryCreditCounters(), rideAlongUncredited: 100 }, extra)
+      expect(readCurationTailReceipt(dir)).toBeUndefined()
+    }
+    const missing = join(completedRunsRoot(project.agentQaRoot), 'missing')
+    mkdirSync(missing)
+    writeFileSync(join(missing, 'handoff.json'), '{}')
+    const host: PromotionPostureHostFacts = { replayGateAvailable: true,
+      judge: { capable: false, reason: 'no-judge-configured' }, canary: { kind: 'not-provided', rarePathEligible: false },
+      corpusDigest: 'a'.repeat(64), minimumGateSet: 3, profileKey: 'test-profile',
+      lowerTrustShares: [{ product: 'example-web', active: 4, lowerTrust: 1 },
+        { product: 'empty-product', active: 0, lowerTrust: 0 }],
+      canaryHorizonBuilds: 5, canaryHorizonBuildsSource: 'default', maxLowerTrustPerScope: 2,
+      maxLowerTrustPerScopeSource: 'default', notices: [] }
+    const { checks, learning } = await runChecks(project, baseProbes({
+      buildPromotionPosture: async () => ({ kind: 'ready', committedRoot: '', host, resolve: () => undefined }),
+    }))
+    expect(checks).toHaveLength(4)
+    expect(learning).toEqual({ status: 'pass', message: 'gated (Gate 1 bound; judge none; canary evidence none; since-v4 ride-along 3; cap-exceeded 1; lower-trust 1/4 active in example-web, 0/0 active in empty-product; staged 3)' })
+  })
+
+  it('discloses actual on-disk shares through the production doctor facts binding without replay or writes', async () => {
+    const project = makeProject()
+    promotionHostProof(project.configPath)
+    const appendConfig = { knowledgeRoot: project.knowledgeRoot, auditBaseDir: project.agentQaRoot,
+      productKey: 'storefront', commitArtifacts: 'none' as const, writerLeaseId: 'fixture' }
+    for (let index = 0; index < 4; index += 1) {
+      const name = ['alpha', 'beta', 'gamma', 'delta'][index]!
+      const published = publishBundleForTest(appendConfig, {
+        draft: { kind: 'caution', scope: { tier: 'product', key: 'storefront' },
+          anchors: [{ t: 'error', message: name }], summary: name, body: `Observed ${name}.`,
+          originStage: 'run-curation', distilledEvidenceRef: { id: name, sha: 'a'.repeat(64) } },
+        discriminant: { kind: 'caution', errorKey: name }, originClass: 'agent-verified',
+        createdAtOrdinal: 42, screenStates: [], relations: [], artifacts: [],
+        initialEvents: [{ type: 'promoted', evidenceToken: asEvidenceToken(name), curationJobId: name, buildOrdinal: 45 }],
+        provenance: { mode: 'standalone', sourceDescription: 'doctor fixture' },
+        evidenceMarkdown: 'Observed caution.\n',
+      })
+      if (published.kind !== 'published') throw new Error(published.kind)
+      if (index === 0) expect(appendPromotionReceipt(appendConfig, published.id, {
+        schemaVersion: 1, kind: 'promotion', candidateId: published.id, promotionPath: 'gate1-lower-trust',
+        citedReceiptDigests: [], producedAtOrdinal: 45, producedBy: { opId: 'doctor-fixture' },
+      })).toEqual({ kind: 'appended' })
+    }
+    receipt(project, 'live', { ...emptyCanaryCreditCounters(), rideAlongUncredited: 3, ablationCapExceeded: 1, staged: 3 })
+    const replay = vi.fn(() => { throw new Error('doctor must never run replay') })
+    const buildPromotionPosture = vi.fn<NonNullable<KnowledgeCheckProbes['buildPromotionPosture']>>(async input => {
+      expect(input.knowledgeRoot).toBe(project.knowledgeRoot)
+      expect(input.agentQaRoot).toBe(project.agentQaRoot)
+      expect(input.canaryFacts).toBeTypeOf('function')
+      expect(input.lowerTrustShares).toBeTypeOf('function')
+      expect(input.currentBuildOrdinal).toBeTypeOf('function')
+      vi.spyOn(input.replayGate!, 'runReplayGate').mockImplementation(replay)
+      return buildPromotionPostureResolver(input)
+    })
+    const snapshot = () => readdirSync(project.projectRoot, { recursive: true, withFileTypes: true })
+      .filter(row => row.isFile()).map(row => {
+        const path = join(row.parentPath, row.name)
+        return [relative(project.projectRoot, path), readFileSync(path).toString('base64')]
+      }).sort((a, b) => a[0]!.localeCompare(b[0]!))
+    const before = snapshot()
+    const { learning } = await runChecks(project, baseProbes({ buildPromotionPosture }))
+    expect(learning?.message).toContain('since-v4 ride-along 3; cap-exceeded 1; lower-trust 1/4 active in storefront; staged 3')
+    expect(learning?.status).toBe('pass')
+    expect(buildPromotionPosture).toHaveBeenCalledTimes(1)
+    expect(replay).not.toHaveBeenCalled()
+    expect(snapshot()).toEqual(before)
   })
 
   it('fails Learning mode with a safe cause while retaining the complete internal refusal', async () => {
