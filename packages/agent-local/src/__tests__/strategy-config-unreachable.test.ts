@@ -64,30 +64,42 @@ function defOf(node: unknown): ZodDef | undefined {
 }
 
 /**
- * Every key name reachable in any schema this package publishes.
+ * Every export-qualified key site reachable in any schema this package publishes.
  *
  * DISCOVERED from the package's own export table, so the inventory cannot fall behind the schemas.
  * A hand-written list of schemas is a list somebody has to remember to extend, and the day it is
  * not extended is the day this assertion stops covering the surface that grew.
  */
-function collectSchemaKeys(): string[] {
-  const keys = new Set<string>()
-  const seen = new Set<unknown>()
+interface SchemaKeySite {
+  readonly path: string
+  readonly key: string
+  readonly owner: unknown
+}
 
-  const walk = (node: unknown, depth: number): void => {
-    if (depth > 16 || seen.has(node)) return
+function collectSchemaKeySites(
+  exports: Readonly<Record<string, unknown>> = schemaExports,
+): SchemaKeySite[] {
+  const sites: SchemaKeySite[] = []
+
+  const walk = (node: unknown, path: string, depth: number, ancestors: ReadonlySet<unknown>): void => {
+    if (depth > 16 || ancestors.has(node)) return
     const def = defOf(node)
     if (def === undefined) return
-    seen.add(node)
+    // Only cycles are skipped. A global seen-set would hide a shared receipt schema
+    // reused by a new configuration export, precisely the override path this guard must catch.
+    const nextAncestors = new Set(ancestors).add(node)
+    const child = (value: unknown, childPath = path): void =>
+      walk(value, childPath, depth + 1, nextAncestors)
     switch (def.type) {
       case 'object':
         for (const [key, value] of Object.entries(def.shape ?? {})) {
-          keys.add(key)
-          walk(value, depth + 1)
+          const keyPath = `${path}.${key}`
+          sites.push({ path: keyPath, key, owner: node })
+          child(value, keyPath)
         }
         break
       case 'union':
-        for (const option of def.options ?? []) walk(option, depth + 1)
+        for (const option of def.options ?? []) child(option)
         break
       case 'optional':
       case 'nullable':
@@ -95,32 +107,32 @@ function collectSchemaKeys(): string[] {
       case 'nonoptional':
       case 'readonly':
       case 'catch':
-        walk(def.innerType, depth + 1)
+        child(def.innerType)
         break
       case 'array':
-        walk(def.element, depth + 1)
+        child(def.element, `${path}[]`)
         break
       case 'record':
-        walk(def.valueType, depth + 1)
+        child(def.valueType, `${path}{}`)
         break
       case 'intersection':
-        walk(def.left, depth + 1)
-        walk(def.right, depth + 1)
+        child(def.left)
+        child(def.right)
         break
       case 'pipe':
-        walk(def.in, depth + 1)
-        walk(def.out, depth + 1)
+        child(def.in)
+        child(def.out)
         break
       case 'lazy':
-        walk(def.getter?.(), depth + 1)
+        child(def.getter?.())
         break
       default:
         break
     }
   }
 
-  for (const exported of Object.values(schemaExports)) walk(exported, 0)
-  return [...keys]
+  for (const [name, exported] of Object.entries(exports)) walk(exported, name, 0, new Set())
+  return sites
 }
 
 /**
@@ -139,6 +151,28 @@ function strategyKnobKeys(keys: readonly string[]): string[] {
       || (lowered.includes('chat') && lowered.includes('strateg'))
     )
   })
+}
+
+// 2026-09-07, 417 D-13: this boolean DISCLOSES that the operator configured a
+// judge-family override which Gate 1 refused to honor. It cannot configure chat
+// reconciliation. Adjudicate its five published receipt paths, never its spelling
+// globally; any new config/alias/wrapper path still reds, even with the same schema object.
+const RECEIPT_DISCLOSURE_PATHS = [
+  'gate1ArmSchema.judge.overrideConfigured',
+  'GateReceiptSchema.judge.overrideConfigured',
+  'GateLineSchema.judge.overrideConfigured',
+  'KnowledgeGatesListResultSchema.lines[].judge.overrideConfigured',
+  'KnowledgeGatesListResultSchema.standing[].judge.overrideConfigured',
+] as const
+
+function isReceiptDisclosure(site: SchemaKeySite): boolean {
+  return site.key === 'overrideConfigured'
+    && (RECEIPT_DISCLOSURE_PATHS as readonly string[]).includes(site.path)
+    && site.owner === schemaExports.gate1ArmSchema.shape.judge.unwrap()
+}
+
+function strategyKnobSites(sites: readonly SchemaKeySite[]): SchemaKeySite[] {
+  return sites.filter(site => strategyKnobKeys([site.key]).length > 0)
 }
 
 /** Every `process.env` read in a built artifact, as the variable names it reaches for. */
@@ -167,7 +201,7 @@ function readDist(path: string): string {
 
 describe('D-16: the reconciliation strategy is reachable from no configuration key', () => {
   it('walks a real, non-empty, DISCOVERED schema-key inventory', () => {
-    const keys = collectSchemaKeys()
+    const keys = [...new Set(collectSchemaKeySites().map(site => site.key))]
     // A walker that silently returned nothing would pass the assertion below forever.
     expect(keys.length).toBeGreaterThan(100)
     // And it must actually be reaching the project configuration, not only the DTOs: these three
@@ -176,8 +210,13 @@ describe('D-16: the reconciliation strategy is reachable from no configuration k
     for (const key of ['browser', 'device', 'timeouts']) expect(keys).toContain(key)
   })
 
-  it('no key in any published schema names the reconciliation strategy or an override switch', () => {
-    expect(strategyKnobKeys(collectSchemaKeys())).toEqual([])
+  it('no published schema exposes a strategy switch beyond the adjudicated receipt disclosure', () => {
+    const hits = strategyKnobSites(collectSchemaKeySites())
+    // Exact-set non-vacuity: a missing export or broken walk cannot silently erase
+    // a disposition, and a sixth occurrence is not covered by a count-only allowance.
+    expect(hits.filter(isReceiptDisclosure).map(site => site.path).sort())
+      .toEqual([...RECEIPT_DISCLOSURE_PATHS].sort())
+    expect(hits.filter(site => !isReceiptDisclosure(site))).toEqual([])
   })
 
   it('POSITIVE CONTROL: the detector flags such a key when one exists', () => {
@@ -185,6 +224,27 @@ describe('D-16: the reconciliation strategy is reachable from no configuration k
     expect(strategyKnobKeys(['disableOverride'])).toEqual(['disableOverride'])
     expect(strategyKnobKeys(['chatStrategy'])).toEqual(['chatStrategy'])
     expect(strategyKnobKeys(['reconciliationMode'])).toEqual(['reconciliationMode'])
+    expect(strategyKnobKeys(['overrideConfigured'])).toEqual(['overrideConfigured'])
+  })
+
+  it('POSITIVE CONTROL: the same disclosure spelling and schema still fail on a configuration path', () => {
+    // Structural fixtures use the same definition interface as the real schemas;
+    // no package dependency is added solely to construct the injected config.
+    const config = { def: { type: 'object', shape: {
+      judge: schemaExports.gate1ArmSchema.shape.judge,
+      receipt: schemaExports.GateReceiptSchema,
+    } } }
+    for (const exports of [
+      { GateReceiptSchema: schemaExports.GateReceiptSchema, InjectedConfigSchema: config },
+      { InjectedConfigSchema: config, GateReceiptSchema: schemaExports.GateReceiptSchema },
+    ]) {
+      const hits = strategyKnobSites(collectSchemaKeySites(exports))
+      expect(hits.filter(site => !isReceiptDisclosure(site)).map(site => site.path).sort())
+        .toEqual([
+          'InjectedConfigSchema.judge.overrideConfigured',
+          'InjectedConfigSchema.receipt.judge.overrideConfigured',
+        ])
+    }
   })
 })
 
