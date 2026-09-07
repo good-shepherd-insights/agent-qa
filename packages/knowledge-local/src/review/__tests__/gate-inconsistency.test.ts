@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -80,6 +80,15 @@ describe('418 gate inconsistency proposal durability', () => {
   it('rejects path-shaped proposal ids before filing', () => {
     expect(() => fileGateInconsistencyProposal(root, { ...proposal(), proposalId: '../escape' }, { at: 10 })).toThrow()
     expect(readdirSync(root)).toEqual([])
+  })
+
+  it('refuses a decided path carrying another proposal rather than clearing the flag', () => {
+    file()
+    writeFileSync(join(proposalsDir(root), `${proposal().proposalId}.applied.json`), JSON.stringify({
+      proposal: { ...proposal(), proposalId: 'prop_another', status: 'applied' },
+    }))
+    expect(pending).toThrow('Proposal path and payload id disagree')
+    expect(file).toThrow('Proposal path and payload id disagree')
   })
 
   it.each(['restore', 'applied', 'rejected'] as const)('re-reads when a claim becomes %s between listing and content read', async transition => {

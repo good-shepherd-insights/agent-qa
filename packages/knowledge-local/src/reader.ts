@@ -97,3 +97,4 @@ export type { CandidateInjectionForOptions } from './gates/candidate-injection.j
 export { canaryPostureFactsFor, standingReceiptDigestsFor, lowerTrustSharesFor,
   type CanaryPostureFacts, type StandingReceiptDigest, type LowerTrustShare,
 } from './gates/canary-posture-facts.js'
+export { pendingGateInconsistencyFor } from './review/gate-inconsistency-read.js'

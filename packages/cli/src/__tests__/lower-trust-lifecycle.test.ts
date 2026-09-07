@@ -6,6 +6,7 @@ import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import {
   acquireWriterLease, appendOutcomeEvent, createLocalKnowledgeStore, deriveBundleTrust,
   loadBundle, openKnowledgeReader, publishBundleForTest, readGateReceipts,
+  buildGateInconsistencyProposal, fileGateInconsistencyProposal,
 } from '@vostride/agent-qa-knowledge-local'
 import { asEvidenceToken, stampReceiptDigest, survivingOutcomeEvents, type CanaryOutcome } from '@vostride/agent-qa-schema'
 import { buildPromotionPostureResolver } from '../curation/promotion-posture.js'
@@ -119,19 +120,17 @@ describe('418 lower-trust active lifecycle through real store, resolver and serv
       }
       expected = 'receipt-stale'
     } else if (defect === 'pending inconsistency') {
-      const current = f.posture.resolve
-      f.posture.resolve = candidate => {
-        const value = current(candidate)
-        return value?.kind === 'resolved' ? { ...value,
-          canary: { ...value.canary, inconsistency: { pending: true, proposalId: 'pending' } } } : value
-      }
+      fileGateInconsistencyProposal(f.appendConfig.auditBaseDir,
+        buildGateInconsistencyProposal({ candidateId: f.seeded.id, scope,
+          shape: 'gate1-pass-gate2-fail', gate1Digest: f.gate1().receiptDigest,
+          gate2Digest: 'd'.repeat(64), proposedAt: 10 }), { at: 10 })
       expected = 'gate-inconsistent'
     } else {
       await f.store().recordCanaryOutcome({ ...f.outcome('rode-along'), runOutcome: 'negative',
         benefit: 'exercised-harmed', stateValidity: defect === 'negative' ? 'valid' : 'stale' })
       expected = defect === 'negative' ? 'gate-inconsistent' : 'gate-abstained'
     }
-    // Real revalidation path; two rows above alter only the external posture DATA.
+    // Real revalidation path; the stale-corpus row alters external posture DATA.
     const store = createLocalKnowledgeStore({ ...f.storeConfig, sourceBuildOrdinal: 16,
       resolvePromotionPosture: f.posture.resolve })
     await expect(store.promote(f.seeded.id)).rejects.toMatchObject({ reason: expected })

@@ -5,6 +5,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import { deriveBundleTrust, readGateReceipts } from '../bundle-read.js'
 import { enumerateMaintenanceBundleDirs, loadMaintenanceBundle } from '../maintenance-scan.js'
+import { pendingGateInconsistencyFor, type PendingGateInconsistency } from '../review/gate-inconsistency-read.js'
 
 export type CanaryPostureFacts = {
   kind: 'found'
@@ -16,6 +17,7 @@ export type CanaryPostureFacts = {
   latestGate2Ordinal?: number
   activeInScope: number
   lowerTrustActiveInScope: number
+  pendingInconsistency?: PendingGateInconsistency
 } | { kind: 'not-found' }
 
 export interface StandingReceiptDigest {
@@ -44,7 +46,7 @@ function latest(ordinals: number[]): number | undefined {
 }
 
 export function canaryPostureFactsFor(input: {
-  knowledgeRoot: string; candidateId: string; scope: ScopeKey
+  knowledgeRoot: string; candidateId: string; scope: ScopeKey; agentQaRoot?: string
 }): CanaryPostureFacts {
   const id = asRecordId(input.candidateId)
   const rows = readBundles(input.knowledgeRoot)
@@ -70,8 +72,11 @@ export function canaryPostureFactsFor(input: {
   const latestGate2Ordinal = latest(receipts.filter(row => row.gate === 2).map(row => row.producedAtOrdinal))
   const active = rows.filter(row => row.active && row.product === candidate.product
     && row.bundle.frontmatter.scope.tier === 'product' && row.bundle.frontmatter.scope.key === scope.key)
+  const pendingInconsistency = input.agentQaRoot === undefined ? undefined
+    : pendingGateInconsistencyFor({ agentQaRoot: input.agentQaRoot, candidateId: id })
   return {
     kind: 'found',
+    ...(pendingInconsistency === undefined ? {} : { pendingInconsistency }),
     ...(pass === undefined ? {} : { gate1PassOrdinal: pass.producedAtOrdinal, gate1PassDigest: pass.receiptDigest }),
     ...(lowerTrustActiveGate1Digest === undefined ? {} : { lowerTrustActiveGate1Digest }),
     ...(latestAttributionOrdinal === undefined ? {} : { latestAttributionOrdinal }),

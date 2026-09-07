@@ -46,14 +46,23 @@ function idFor(name: string): string | undefined {
 type ProposalState = { state: 'pending' | 'claimed' | 'applied' | 'rejected'; stored: StoredProposal }
 
 function decided(root: string, id: string): ProposalState | undefined {
+  const checked = (state: 'applied' | 'rejected', stored: StoredProposal): ProposalState => {
+    if (stored.id !== id) throw new TypeError('Proposal path and payload id disagree')
+    return { state, stored }
+  }
   for (const state of ['applied', 'rejected'] as const) {
     const raw = readJsonIfPresent(state === 'applied' ? appliedPath(root, id) : rejectedPath(root, id))
     if (raw === undefined) continue
     if (typeof raw === 'object' && raw !== null && 'record' in raw) {
-      return { state, stored: extractStoredProposal(DecidedProposalRecordSchema.parse(raw).record) }
+      const parsed = DecidedProposalRecordSchema.parse(raw)
+      if (parsed.decision.decision !== state) throw new TypeError('Proposal path and decision disagree')
+      return checked(state, extractStoredProposal(parsed.record))
     }
     const parsed = state === 'applied' ? AppliedProposalRecordSchema.parse(raw) : RejectedProposalRecordSchema.parse(raw)
-    return { state, stored: extractStoredProposal(parsed.proposal) }
+    if (parsed.decision !== undefined && parsed.decision.decision !== state) {
+      throw new TypeError('Proposal path and decision disagree')
+    }
+    return checked(state, extractStoredProposal(parsed.proposal))
   }
   return undefined
 }

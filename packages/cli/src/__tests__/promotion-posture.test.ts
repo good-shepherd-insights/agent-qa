@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, cpSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -7,7 +7,10 @@ import type { ReplayGatePort } from '@vostride/agent-qa-agent'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import type { PromotionPostureCandidate, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 import { asEvidenceToken, evaluatePromotionGate, stampReceiptDigest } from '@vostride/agent-qa-schema'
-import { latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
+import { latestBuildOrdinal, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { acquireWriterLease, appendGateReceipt, buildGateInconsistencyProposal,
+  createLocalKnowledgeStore, deriveBundleTrust, fileGateInconsistencyProposal, loadBundle,
+  proposalsDir, publishBundleForTest, rejectPendingProposal } from '@vostride/agent-qa-knowledge-local'
 import { readCommittedCorpus, readGatePostureFor } from '@vostride/agent-qa-eval-local'
 
 vi.mock('@vostride/agent-qa-eval-local', async importOriginal => {
@@ -131,6 +134,80 @@ describe('buildPromotionPostureResolver', () => {
     // Live cap reads: a previous promotion in this same drain consumes the final slot.
     f.facts.lowerTrustActiveInScope = 2
     expect(f.gate().verdict).toEqual({ verdict: 'hold', reason: 'gate2-receipt-required' })
+  })
+
+  it('418 real pending and claimed review holds clean newer receipts until rejected, then promotes', async () => {
+    const f = await rarePath({ now: 15 })
+    const knowledgeRoot = join(f.dir, 'knowledge')
+    const agentQaRoot = join(f.dir, '.agent-qa')
+    const appendConfig = { knowledgeRoot, auditBaseDir: agentQaRoot, productKey: candidate.product,
+      commitArtifacts: 'none' as const, writerLeaseId: 'fixture' }
+    const anchor = { t: 'el' as const, role: 'button', name: 'Checkout', ordinal: 0 }
+    const seeded = publishBundleForTest(appendConfig, {
+      draft: { kind: 'fact', subtype: 'selector', scope: candidate.scope, anchors: [anchor],
+        summary: 'Checkout selector', body: 'The checkout button is verified.', originStage: 'run-curation',
+        distilledEvidenceRef: { id: 'checkout', sha: 'a'.repeat(64) } },
+      discriminant: { kind: 'fact', subtype: 'selector', elementRef: { role: 'button', name: 'Checkout' } },
+      originClass: 'agent-verified', createdAtOrdinal: 1, screenStates: [], relations: [], artifacts: [],
+      initialEvents: [{ type: 'confirmed', evidenceToken: asEvidenceToken('confirm-checkout'),
+        curationJobId: 'confirm-checkout', buildOrdinal: 1 }],
+      provenance: { mode: 'run-linked', runId: 'seed-checkout', testId: 'seed-checkout', stepIndex: 0,
+        curationJobId: 'seed-checkout', sourceBuildOrdinal: 1 }, evidenceMarkdown: 'Verified selector.\n',
+      distilledObservations: [{ schemaVersion: 1, step: { naturalKey: 'checkout', ordinal: 0 }, platform: 'web',
+        element: { naturalKey: 'button:checkout:0' }, observedAtOrdinal: 1 }],
+    })
+    if (seeded.kind !== 'published') throw new Error(seeded.kind)
+    const { receiptDigest: _digest, ...body } = f.gate().receipt
+    const g1 = stampReceiptDigest({ ...body, candidateId: seeded.id })
+    const g2 = stampReceiptDigest({ schemaVersion: 1, gate: 2, candidateId: seeded.id,
+      verdict: 'fail', producedAtOrdinal: 11, producedBy: { opId: 'fixture' },
+      corpusVersion: { corpusDigest: f.result.host.corpusDigest }, attributedObservationId: 'first-harm',
+      benefit: 'exercised-harmed', stateValidity: 'valid' })
+    appendGateReceipt(appendConfig, seeded.id, g1)
+    appendGateReceipt(appendConfig, seeded.id, g2)
+    const proposal = buildGateInconsistencyProposal({ candidateId: seeded.id, scope: candidate.scope,
+      shape: 'gate1-pass-gate2-fail', gate1Digest: g1.receiptDigest, gate2Digest: g2.receiptDigest, proposedAt: 10 })
+    fileGateInconsistencyProposal(agentQaRoot, proposal, { at: 10 })
+    const replay = vi.fn(() => { throw new Error('automatic replay forbidden') })
+    const resolved = await subject!.buildPromotionPostureResolver({ configPath: f.configPath,
+      knowledgeRoot, agentQaRoot, currentBuildOrdinal: 15, replayGate: { runReplayGate: replay },
+      canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
+      lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares })
+    if (resolved.kind !== 'ready') throw new Error(resolved.kind)
+    const currentCandidate = { ...candidate, id: seeded.id }
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error(lease.kind)
+    const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+      writerLeaseId: lease.leaseId, epoch: lease.epoch, executionContext: 'local-interactive',
+      sourceBuildOrdinal: 15, resolvePromotionPosture: resolved.resolve })
+    const { receiptDigest: _old, ...g2body } = g2
+    await store.recordGateReceipt(stampReceiptDigest({ ...body, candidateId: seeded.id, producedAtOrdinal: 12 }))
+    await store.recordGateReceipt(stampReceiptDigest({ ...g2body, producedAtOrdinal: 13,
+      verdict: 'pass', benefit: 'exercised-benefited', attributedObservationId: 'new-clean-benefit' }))
+    const holds = async () => {
+      expect(resolved.resolve(currentCandidate)).toMatchObject({ canary: { rarePathEligible: false,
+        inconsistency: { pending: true, proposalId: proposal.proposalId } } })
+      await expect(store.promote(seeded.id)).rejects.toMatchObject({ reason: 'gate-inconsistent' })
+    }
+    await holds()
+    // The storage suite drives claimPendingProposal itself and its read interleaves;
+    // this package exercises the same durable names without importing writer internals.
+    const pendingPath = join(proposalsDir(agentQaRoot), `${proposal.proposalId}.json`)
+    const claimedPath = `${pendingPath}.claimed.${process.pid}`
+    renameSync(pendingPath, claimedPath)
+    await holds()
+    renameSync(claimedPath, pendingPath)
+    await holds()
+    rejectPendingProposal(agentQaRoot, proposal.proposalId, { at: 20 })
+    expect(resolved.resolve(currentCandidate)).not.toHaveProperty('canary.inconsistency')
+    await expect(store.promote(seeded.id)).resolves.toMatchObject({ promotionPath: 'gate1+gate2' })
+    const loaded = loadBundle(seeded.dir)
+    if (loaded.kind !== 'loaded') throw new Error(loaded.kind)
+    expect(deriveBundleTrust(loaded.bundle).status).toBe('active')
+    expect(replay).not.toHaveBeenCalled()
+    // A corrupt pending record must become unavailable, never a cleared flag.
+    writeFileSync(join(proposalsDir(agentQaRoot), 'prop_corrupt.json'), '{bad')
+    expect(resolved.resolve(currentCandidate)).toMatchObject({ kind: 'unavailable' })
   })
 
   it.each([

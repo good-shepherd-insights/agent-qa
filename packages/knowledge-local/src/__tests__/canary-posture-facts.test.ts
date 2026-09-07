@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { appendGateReceipt, appendOutcomeEvent, appendPromotionReceipt } from '../bundle-append.js'
 import { canaryPostureFactsFor, lowerTrustSharesFor, standingReceiptDigestsFor } from '../gates/canary-posture-facts.js'
 import { completeGate1Receipt, createPromotionFloorFixture } from '../curator/__tests__/fixtures/promotion-floor-fixture.js'
+import { buildGateInconsistencyProposal, fileGateInconsistencyProposal } from '../review/gate-inconsistency.js'
+import { claimPendingProposal, publishAppliedProposal, rejectPendingProposal, restorePendingProposal,
+  proposalsDir } from '../review/proposals-store.js'
 
 describe('418 bundle-local canary posture facts', () => {
   let root: string
@@ -25,6 +28,33 @@ describe('418 bundle-local canary posture facts', () => {
     return { ...published, pass }
   }
   const read = (candidateId: string) => canaryPostureFactsFor({ knowledgeRoot, candidateId, scope })
+  it.each(['applied', 'rejected'] as const)('reads pending and claimed flags without writing and clears after %s', state => {
+    const planted = seed()
+    const agentQaRoot = join(root, '.agent-qa')
+    const proposal = buildGateInconsistencyProposal({ candidateId: planted.id, scope,
+      shape: 'gate1-pass-gate2-fail', gate1Digest: planted.pass.receiptDigest, gate2Digest: 'd'.repeat(64), proposedAt: 10 })
+    fileGateInconsistencyProposal(agentQaRoot, proposal, { at: 10 })
+    const facts = () => canaryPostureFactsFor({ knowledgeRoot, candidateId: planted.id, scope, agentQaRoot })
+    expect(facts()).toMatchObject({ pendingInconsistency: { proposalId: proposal.proposalId } })
+    expect(read(planted.id)).not.toHaveProperty('pendingInconsistency')
+    claimPendingProposal(agentQaRoot, proposal.proposalId)
+    expect(facts()).toMatchObject({ pendingInconsistency: { proposalId: proposal.proposalId } })
+    if (state === 'applied') publishAppliedProposal(agentQaRoot, { proposal })
+    else {
+      restorePendingProposal(agentQaRoot, proposal.proposalId)
+      rejectPendingProposal(agentQaRoot, proposal.proposalId, { at: 20 })
+    }
+    expect(facts()).not.toHaveProperty('pendingInconsistency')
+  })
+  it('refuses corrupt pending proposal data instead of reporting a cleared flag', () => {
+    const planted = seed()
+    const agentQaRoot = join(root, '.agent-qa')
+    const proposal = buildGateInconsistencyProposal({ candidateId: planted.id, scope,
+      shape: 'gate1-pass-gate2-fail', gate1Digest: planted.pass.receiptDigest, gate2Digest: 'd'.repeat(64), proposedAt: 10 })
+    fileGateInconsistencyProposal(agentQaRoot, proposal, { at: 10 })
+    writeFileSync(join(proposalsDir(agentQaRoot), `${proposal.proposalId}.json`), '{bad')
+    expect(() => canaryPostureFactsFor({ knowledgeRoot, candidateId: planted.id, scope, agentQaRoot })).toThrow()
+  })
   it('reads the standing pass and corpus digest without inventing attribution', () => {
     const planted = seed()
     expect(read(planted.id)).toEqual({ kind: 'found', gate1PassOrdinal: 10,
