@@ -597,8 +597,8 @@ export function applyRunOutcomes(
 /**
  * An errno-coded fs failure — the FILESYSTEM refusing, not the file's contents being wrong. Every
  * `fs` throw carries a string `code`; `JSON.parse` throws a `SyntaxError` and the schema guard
- * throws a `VersionGuardError`, and neither carries one. ENOENT never reaches this predicate: both
- * loaders convert it to `undefined` (legitimate absence) before anything else can rethrow.
+ * throws a `VersionGuardError`, and neither carries one. Absence errnos never reach this predicate: both
+ * loaders convert them to `undefined` (legitimate absence) before anything else can rethrow.
  */
 function isErrnoHostFault(error: unknown): boolean {
   return typeof error === 'object'
@@ -621,7 +621,7 @@ function isErrnoHostFault(error: unknown): boolean {
  * incremental `foldRunOutcomes` path the throw stands: one run's fold fails loudly rather than
  * silently recording a resolved run at its unresolved floor. In `rebuildRunOutcomes` the per-run
  * body catches the BAD-BYTES class and counts a skip, because there those throws would abandon a
- * family the rebuild has already DELETEd — while an errno-coded HOST fault rethrows from that same
+ * family from one malformed run — while an errno-coded HOST fault rethrows from that same
  * call site (393 round 8, CR-01-READ). Two postures, one loader — do not "fix" this by softening
  * the loader.
  */
@@ -703,11 +703,15 @@ function readStoredProjectionVersion(db: DatabaseSync): number | undefined {
  * empty edge). BAD-BYTES load failures and pre-381 shapes are counted skips — including a run whose
  * `analysis.json` will not decode, which costs that run's contribution and nothing else (393 round
  * 6, CR-01). One undecodable artifact must never truncate a family this function has already
- * deleted; an errno-coded HOST fault on either document, on the runs root, or on any run dir
- * propagates instead, so no sweep can stamp a family the filesystem prevented it from reading
- * (418-12, CR-01-EXISTS). The read-before-delete boundary is established separately below.
+ * read; an errno-coded HOST fault on either document, on the runs root, or on any run dir
+ * propagates BEFORE the family is deleted, so no sweep can stamp — or empty — a family the
+ * filesystem prevented it from reading (418-12, CR-01-EXISTS).
  *
- * DELETE-FIRST, STAMP-LAST, and that order is the crash story rather than a style choice (393
+ * Phase A: no document is destroyed before every document was read — a host fault during reads
+ * leaves the previous family and its stamp untouched (418-12, CR-02-DESTRUCTIVE, load-before-delete).
+ * The list holds parsed handoffs for one sweep; the runs root is bounded by host run retention.
+ *
+ * Phase B is DELETE-FIRST, STAMP-LAST, and that order is the crash story rather than a style choice (393
  * CR-02). The version row is cleared with the family it describes and re-written only after the
  * refold loop has run to completion, so a crash anywhere in between leaves NO stamp — which
  * `reconcileRunOutcomesProjection` reads as a mismatch and rebuilds again. The projection
@@ -718,16 +722,7 @@ export function rebuildRunOutcomes(
   runsRoot: string,
   opts: RebuildRunOutcomesOptions,
 ): RebuildRunOutcomesReport {
-  ensureRunOutcomeTables(db)
-  db.exec(`
-    DELETE FROM run_test_outcomes;
-    DELETE FROM run_test_anchors;
-    DELETE FROM run_outcome_applied_runs;
-    DELETE FROM run_fingerprint_windows;
-    DELETE FROM suite_fingerprints;
-    DELETE FROM run_outcome_projection_version;
-  `)
-
+  const loaded: { handoff: CompletedRunHandoff; artifact?: RunAnalysisArtifact }[] = []
   const report: RebuildRunOutcomesReport = { folded: 0, skippedHandoffs: 0, skippedArtifacts: 0 }
   // A missing runs root is the ABRF-02 empty edge, not a failure: the family is legitimately
   // empty at the CURRENT semantics, so it still earns the stamp below — otherwise a project with
@@ -745,42 +740,10 @@ export function rebuildRunOutcomes(
         report.skippedHandoffs += 1
         continue
       }
-      // D-09 / L12: `analysis.json` is read from beside `handoff.json` through the SAME loader the
-      // incremental fold uses, so the rebuild reproduces resolved-verdict tables byte-identically —
-      // but the two paths' FAILURE postures are deliberately asymmetric (393 round 6, CR-01). An
-      // UNDECODABLE artifact — bad bytes, not an unavailable filesystem — is a counted skip HERE
-      // and a hard failure on the incremental path, and
-      // each posture is argued where it lives: the incremental fold is one run's own verdict edge,
-      // where a silent floor would misrepresent an AI-resolved run as unresolved; this loop runs
-      // downstream of the six DELETEs above, where the same throw would truncate the whole family
-      // at whatever prefix of the sorted run dirs preceded the bad file. This is `loadRebuildHandoff`'s
-      // malformed-file-is-a-counted-skip posture applied per run to the document written beside it.
-      //
-      // THE CATCH IS ONE FAILURE CLASS WIDE, and the scope is the argument (393 round 7,
-      // CR-01-WIDENED). It wraps the LOADER CALL and nothing else, and inside that call it keeps
-      // ONE CLASS, because the reason above is a reason about UNTRUSTED PERSISTED BYTES: one run's
-      // bad file is that run's problem, and charging the family for it would be the wrong trade. An
-      // errno-coded HOST fault is not that file's problem at all — an unavailable filesystem is no
-      // more true of one run than an unavailable write path is, so `isErrnoHostFault` rethrows it
-      // (393 round 8, CR-01-READ), and `loadRebuildHandoff` reads its own document under the same
-      // rule. A `projectRunOutcomes` or
-      // `applyRunOutcomes` failure is a different animal entirely — SQLITE_BUSY past the writer
-      // timeout, ENOSPC, a constraint violation — and it says the WRITE PATH is unavailable, which
-      // is never true of one run only. Swallowing that as a per-run skip walked the loop to the
-      // unconditional stamp below and published an EMPTY `suite_fingerprints` as CURRENT: gate 3's
-      // own comparison substrate, wrong silently and forever, since every later reconcile then
-      // answers 'current' and never looks again. So those calls sit OUTSIDE the try and their
-      // throws leave `rebuildRunOutcomes` — the loop never reaches the stamp, and the DELETE-FIRST /
-      // STAMP-LAST order documented above turns that into the self-heal: no stamp reads as a
-      // mismatch and the next sweep rebuilds. Fail closed, then recover, rather than fail quiet.
-      //
-      // A run whose artifact will not load is SKIPPED ENTIRELY rather than folded to the
-      // deterministic floor: floor counters for that run are values no fold ever produced (the
-      // incremental path refuses to produce them), so parity with that path means absence, not a
-      // floor. `applyRunOutcomes` owns its own transaction (`BEGIN IMMEDIATE`) and rolls back on
-      // error, so a propagating apply failure still leaves the family internally consistent — which
-      // is also why wrapping the whole rebuild in one transaction is not the fix here: the inner
-      // transaction does not compose.
+      // D-09 / L12: share the incremental artifact loader but keep the established per-run
+      // BAD-BYTES skip. Only the loader sits in this catch: host faults propagate, and
+      // projection/write failures in phase B must never be mistaken for malformed bytes.
+      // An unreadable artifact skips the whole run rather than inventing floor counters.
       let artifact: RunAnalysisArtifact | undefined
       try {
         artifact = loadRunArtifact(runDir, String(handoff.runId))
@@ -789,12 +752,27 @@ export function rebuildRunOutcomes(
         report.skippedArtifacts += 1
         continue
       }
-      applyRunOutcomes(db, projectRunOutcomes(handoff, {
-        extractAnchors: opts.extractAnchors,
-        ...(artifact === undefined ? {} : { artifact }),
-      }))
-      report.folded += 1
+      loaded.push({ handoff, ...(artifact === undefined ? {} : { artifact }) })
     }
+  }
+
+  ensureRunOutcomeTables(db)
+  db.exec(`
+    DELETE FROM run_test_outcomes;
+    DELETE FROM run_test_anchors;
+    DELETE FROM run_outcome_applied_runs;
+    DELETE FROM run_fingerprint_windows;
+    DELETE FROM suite_fingerprints;
+    DELETE FROM run_outcome_projection_version;
+  `)
+
+  for (const { handoff, artifact } of loaded) {
+    // Each apply owns its transaction; a write failure leaves no stamp and retries next sweep.
+    applyRunOutcomes(db, projectRunOutcomes(handoff, {
+      extractAnchors: opts.extractAnchors,
+      ...(artifact === undefined ? {} : { artifact }),
+    }))
+    report.folded += 1
   }
 
   db.prepare('INSERT OR REPLACE INTO run_outcome_projection_version (id, version) VALUES (1, ?)')

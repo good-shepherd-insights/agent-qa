@@ -21,6 +21,7 @@ import {
   rebuildRunOutcomes,
   RUN_OUTCOMES_PROJECTION_VERSION,
 } from '../run-outcomes.js'
+import { createSuiteFingerprintIndex } from '../suite-fingerprints.js'
 
 const SHOP_SCOPE: ScopeKey = { tier: 'product', key: 'shop-web' }
 const BLOG_SCOPE: ScopeKey = { tier: 'product', key: 'blog-web' }
@@ -29,6 +30,7 @@ interface StepFixture {
   stepIndex: number
   anchors?: Anchor[]
   selfHealed?: boolean
+  fingerprintName?: string
 }
 
 interface TestFixture {
@@ -55,7 +57,18 @@ function stepEvidence(fixture: StepFixture): StepEvidence {
       channel3: [],
       briefDigest: 'fixture-brief-digest',
     },
-    subActions: [],
+    subActions: fixture.fingerprintName === undefined ? [] : [{
+      plan: 'click the exercised control',
+      plannedAction: { type: 'click', ref: 'control' },
+      stateBefore: {
+        platform: 'web',
+        tree: '', refMap: {}, timestamp: 0, metadata: {},
+        elements: [{ ref: 'control', role: 'button', name: fixture.fingerprintName,
+          nameNormalized: fixture.fingerprintName,
+          state: { enabled: true, focused: false, visible: true }, labels: {}, attributes: {} }],
+      },
+      result: { success: true },
+    }],
     verifierVerdict: { pass: true, reasoning: 'fixture verdict' },
     anchors: fixture.anchors ?? [],
     ...(fixture.selfHealed === true
@@ -601,22 +614,42 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
             filePath: `suite/${name}.test.ts`,
             testId: name,
             outcome: 'passed',
-            steps: [{ stepIndex: 0, anchors: [index === 0 ? checkoutAnchor : payAnchor] }],
+            steps: [{ stepIndex: 0, anchors: [index === 0 ? checkoutAnchor : payAnchor],
+              fingerprintName: name }],
           }],
         })))
       }
       const db = openDb()
       expect(rebuildRunOutcomes(db, runsRoot, { extractAnchors }).folded).toBe(2)
+      const family = () => ({
+        ...dumpTables(db),
+        fingerprints: db.prepare('SELECT * FROM suite_fingerprints ORDER BY file_path').all(),
+        windows: db.prepare('SELECT * FROM run_fingerprint_windows ORDER BY file_path').all(),
+        stamp: db.prepare('SELECT * FROM run_outcome_projection_version').all(),
+      })
+      // Retain an OLD stamp as well as the complete family: a failed upgrade must retry.
+      db.prepare('UPDATE run_outcome_projection_version SET version = ?')
+        .run(RUN_OUTCOMES_PROJECTION_VERSION - 1)
+      const previous = family()
+      const index = createSuiteFingerprintIndex(db, { product: 'shop-web' })
+      expect(index.elementUnion().size).toBe(2)
       const inaccessible = faultSite === 'runs-holder' ? holder : join(runsRoot, faultSite)
       let report: unknown
       chmodSync(inaccessible, 0o000)
       try {
-        expect(() => { report = rebuildRunOutcomes(db, runsRoot, { extractAnchors }) })
-          .toThrow(expect.objectContaining({ code: 'EACCES' }))
-        expect(report).toBeUndefined()
+        for (let sweep = 0; sweep < 3; sweep += 1) {
+          expect(() => { report = rebuildRunOutcomes(db, runsRoot, { extractAnchors }) })
+            .toThrow(expect.objectContaining({ code: 'EACCES' }))
+          expect(report).toBeUndefined()
+          // The previous complete family survived, never the 002-login partial union of 1.
+          expect(family()).toEqual(previous)
+          expect(index.elementUnion().size).toBe(2)
+        }
       } finally {
         chmodSync(inaccessible, 0o755)
       }
+      expect(rebuildRunOutcomes(db, runsRoot, { extractAnchors }).folded).toBe(2)
+      expect(family().stamp).toEqual([{ id: 1, version: RUN_OUTCOMES_PROJECTION_VERSION }])
     },
   )
 

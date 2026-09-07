@@ -621,13 +621,21 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
-  it('propagates a host fault reading handoff.json: no stamp, and the healed sweep rebuilds the family (CR-01-READ)', () => {
+  it('propagates a host fault reading handoff.json: previous complete family survived, then the healed sweep rebuilds (CR-01-READ)', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+    const previous = withIndex(knowledgeRoot, (db) => {
+      db.prepare('UPDATE run_outcome_projection_version SET version = ?')
+        .run(RUN_OUTCOMES_PROJECTION_VERSION - 1)
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(2)
+      return dumpProjection(db)
+    })
 
     // A DIRECTORY where the document belongs: `readFileSync` throws EISDIR, an errno-coded
-    // non-ENOENT host fault. Root-proof where `chmod 000` is inert, and it still satisfies the
-    // scan's `existsSync` filter, so the run is visited and the read genuinely attempted.
-    const handoffPath = join(runsRoot, '001-checkout', 'handoff.json')
+    // non-absence host fault. Root-proof where chmod is inert, on SECOND run 002-login
+    // (WR-04): the first run must not become a partial union while the fault persists.
+    const handoffPath = join(runsRoot, '002-login', 'handoff.json')
     rmSync(handoffPath)
     mkdirSync(handoffPath)
 
@@ -635,12 +643,12 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
       .toThrow(/EISDIR/)
 
     withIndex(knowledgeRoot, (db) => {
-      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all()).toEqual([])
-      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(0)
+      expect(dumpProjection(db)).toEqual(previous)
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(2)
     })
 
     rmSync(handoffPath, { recursive: true })
-    writeFileSync(handoffPath, JSON.stringify(HISTORICAL_RUNS[0]))
+    writeFileSync(handoffPath, JSON.stringify(HISTORICAL_RUNS[1]))
 
     expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
       .toBe('rebuilt')
@@ -653,21 +661,29 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
-  it('propagates a host fault reading analysis.json: no stamp, and the healed sweep rebuilds the family (CR-01-READ)', () => {
+  it('propagates a host fault reading analysis.json: previous complete family survived, then the healed sweep rebuilds (CR-01-READ)', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+    const previous = withIndex(knowledgeRoot, (db) => {
+      db.prepare('UPDATE run_outcome_projection_version SET version = ?')
+        .run(RUN_OUTCOMES_PROJECTION_VERSION - 1)
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(2)
+      return dumpProjection(db)
+    })
 
     // The sibling-input law: ONE fault primitive, BOTH documents. The run carries a directory where
     // its artifact belongs, so `loadRunArtifact`'s `readFileSync` throws EISDIR and the loader
     // rethrows it (non-ENOENT) into the per-run artifact catch that owns the skip decision.
-    const artifactPath = join(runsRoot, '001-checkout', ANALYSIS_FILE)
+    const artifactPath = join(runsRoot, '002-login', ANALYSIS_FILE)
     mkdirSync(artifactPath)
 
     expect(() => reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }))
       .toThrow(/EISDIR/)
 
     withIndex(knowledgeRoot, (db) => {
-      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all()).toEqual([])
-      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(0)
+      expect(dumpProjection(db)).toEqual(previous)
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(2)
     })
 
     // Healed by removal: an ABSENT artifact is legitimate, so the run folds handoff-only.
