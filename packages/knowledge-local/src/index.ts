@@ -844,3 +844,4 @@ export { MUTABLE_BUNDLE_TARGETS } from './journal/bundle-mutation.js'
 export { canaryPostureFactsFor, standingReceiptDigestsFor, lowerTrustSharesFor,
   type CanaryPostureFacts, type StandingReceiptDigest, type LowerTrustShare,
 } from './gates/canary-posture-facts.js'
+export * from './review/gate-inconsistency.js'

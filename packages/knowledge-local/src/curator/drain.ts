@@ -165,6 +165,8 @@ interface DrainReportBase {
   deprecated?: number
   /** Optional for fault-injection fakes; the real drain always sets this measurement. */
   promotions?: readonly DrainPromotionOutcome[]
+  /** The real drain always sets this; optional for existing injected reports. */
+  inconsistenciesFiled?: number
   downgraded: number
   withheld: number
   quarantined: number
@@ -363,6 +365,7 @@ function emptyReport(): MutableDrainReport {
     committed: 0,
     deprecated: 0,
     promotions: [],
+    inconsistenciesFiled: 0,
     downgraded: 0,
     withheld: 0,
     quarantined: 0,
@@ -991,6 +994,11 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
               ? {}
               : { resolvePromotionPosture: options.resolvePromotionPosture }),
             onPromotionOutcome: outcome => result.promotions.push(outcome),
+            onInconsistencyFiled: outcome => {
+              if (outcome.kind === 'filed') {
+                result.inconsistenciesFiled = (result.inconsistenciesFiled ?? 0) + 1
+              }
+            },
             /**
              * CR-02: the terminal transition joins the canary tail's own held section through
              * the within-held form. Calling the fenced writeJobState here would re-enter
