@@ -9,6 +9,7 @@ import { ablateCanaryStep, readCommittedCorpusDigest, GATE2_AUDIT_SUBDIR } from 
 import { readCommittedCorpus } from '../committed-corpus-source.js'
 import { resolveActiveRecordRemoval } from '../replay-gate-composition.js'
 import { loadCassetteBundles } from '../replay-sweep.js'
+import { buildRootMarkerValue } from '../committed-root-store.js'
 import { writeGate1Fixture } from './fixtures/gate1-fixtures.js'
 import { actionGenerateResult, respondingStub, stubProfile, noneAuth } from './fixtures/replay-fixtures.js'
 
@@ -63,6 +64,24 @@ function inputFor(f: ReturnType<typeof fixture>, behavior: 'flipped' | 'held' | 
 }
 
 describe('Gate 2 live canary ablation (fixture providers only)', () => {
+  it('retains a valid initialized empty corpus digest', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gate2-empty-'))
+    roots.push(root)
+    writeFileSync(join(root, 'eval-root.json'), JSON.stringify(buildRootMarkerValue()))
+    expect(readCommittedCorpusDigest({ committedRoot: root })).toEqual({
+      kind: 'digest', corpusDigest: computeCorpusDigest([]),
+    })
+  })
+  it.each(['missing', 'malformed', 'unsupported'] as const)('refuses a %s root marker without replay', async (mode) => {
+    const f = fixture()
+    const marker = join(f.committedRoot, 'eval-root.json')
+    if (mode === 'missing') rmSync(marker)
+    else writeFileSync(marker, mode === 'malformed' ? '{' : '{"schemaVersion":999}')
+    const { input, stub } = inputFor(f)
+    expect(readCommittedCorpusDigest(input)).toMatchObject({ kind: 'unavailable', reason: 'corpus-unreadable' })
+    expect(await ablateCanaryStep(input)).toMatchObject({ kind: 'unavailable', reason: 'corpus-unreadable' })
+    expect(stub.captured).toHaveLength(0)
+  })
   it('counts exactly five fresh calls at k=3 and writes only eval/gate2 audit artifacts', async () => {
     const f = fixture()
     const { input, stub, observedCalls } = inputFor(f)

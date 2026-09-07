@@ -413,6 +413,7 @@ async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promis
     ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
     knowledgeRoot: paths.knowledgeRoot,
     auditBaseDir: paths.auditBaseDir,
+    agentQaRoot: paths.runtimeRoot,
     author: FALLBACK_CURATOR_AUTHOR,
     executionContext: resolveRunExecutionContext(),
     policy: loadDefaultGuardrailPolicy(),

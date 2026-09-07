@@ -42,6 +42,7 @@ export type CanaryCorpusDigestResult =
 export interface CanaryAblation {
   ablate(input: CanaryAblationInput): Promise<CanaryAblationResult>
   corpusDigest(): Promise<CanaryCorpusDigestResult>
+  resolveCaps?(): Promise<{ maxAblations: number; source: string }>
 }
 
 export interface CanaryCreditCounters {
@@ -65,6 +66,9 @@ export function emptyCanaryCreditCounters(): CanaryCreditCounters {
 
 export type CreditedCanaryAttribution = ProjectedCanaryAttribution & { crossCheck?: CrossCheck }
 export interface CanaryCreditInput {
+  maxAblations?: number
+  knowledgeRoot?: string
+  readBundleStateDigests?: (input: { knowledgeRoot: string; candidateId: string }) => { kind: 'found'; digests: string[] } | { kind: 'not-found' }
   attributions: readonly ProjectedCanaryAttribution[]
   ablation?: CanaryAblation
   handoff: CompletedRunHandoff

@@ -1,3 +1,4 @@
+import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { rmSync } from 'node:fs'
@@ -1639,6 +1640,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         report = await operations.drainQueue({
           knowledgeRoot: input.knowledgeRoot,
           auditBaseDir: input.agentQaRoot,
+          agentQaRoot: input.agentQaRoot,
           budgetMs: 'unbounded',
           lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
           author: sessionCuration.author,
@@ -2167,9 +2169,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           if (factory === undefined || policy === undefined) {
             throw new Error('Daemon curation requires an author factory and guardrail policy')
           }
-          const curationOperations = defaultCurationTailOperations()
+          const curationOperations = { ...defaultCurationTailOperations(),
+            ...(input.configPath === undefined ? {} : { canaryAblation: createCanaryAblationForHost({
+              configPath: input.configPath, agentQaRoot: input.agentQaRoot,
+            }) }),
+          }
           const resolvePromotionPosture = await resolveHostPromotionPosture()
           const folded = await curateCompletedRun({
+            operations: curationOperations,
             ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
             runDir: completedRunDir(input.agentQaRoot, curatedRunId),
             handoff: curationOperations.loadCompletedRunHandoff(

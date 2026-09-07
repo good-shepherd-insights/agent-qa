@@ -1,3 +1,4 @@
+import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 // The CLI's half of the local host (Phase 384 plan 01, superseded in place by 385 plan 09, D-15).
 //
 // What used to live here — the runs reader, the knowledge listing binding and the registry
@@ -415,6 +416,7 @@ function createComposedRunExecution(input: {
                 '../curation/post-run-tail-composition.js'
               )
               const tail = composeCliPostRunTail({
+                canaryAblation: createCanaryAblationForHost({ configPath: context.configFilePath, agentQaRoot: input.agentQaRoot }),
                 runId: context.runId,
                 configDir: context.configDir,
                 configFilePath: context.configFilePath,

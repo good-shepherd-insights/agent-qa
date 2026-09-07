@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { resolve as resolvePath } from 'node:path'
-import { Command } from 'commander'
+import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
 import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
@@ -551,6 +551,7 @@ export interface RunOptions {
   var?: string[]
   runAttr?: string[]
   trustSession?: boolean
+  maxAblations?: number
   detach?: boolean
   gateRun?: boolean
   excludedFromOutcomes?: boolean
@@ -1896,6 +1897,7 @@ async function executeSuites(
           // and it ran under `--detach` too (Pitfall 8). What is detach-gated is the in-process
           // chain drain, and neither leg can replace the code frozen on the line above.
           const postRunTail = composeCliPostRunTail({
+            ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
             runId,
             configDir,
             configFilePath,
@@ -4423,6 +4425,7 @@ export function createRunCommand(): Command {
     .option('--var <kv...>', 'set variable KEY=VALUE (repeatable)')
     .option('--run-attr <kv...>', 'attach run attribute KEY=VALUE; repeatable')
     .option('--trust-session', 'treat every ask-tier policy decision in this session as trusted (execution-safety §2.3 session.trustMode; explicit opt-in, session-scoped)')
+    .option('--max-ablations <n>', 'maximum canary ablations per run', parseIntegerFlag('--max-ablations'))
     .option('--detach', 'skip the post-verdict knowledge curation tail')
     // 402-03 (D-12): the config knob's flag half. ORDINARY OVERRIDES — they ride the same
     // `use`-bucket precedence every other flag here does, and there is no request field to match
@@ -4917,6 +4920,7 @@ export function createRunCommand(): Command {
                 // 388-02: the same shared tail as the multi-suite site above, and the same 404
                 // D-05 posture — the enqueue happened in the shell, so this handle has two legs.
                 const postRunTail = composeCliPostRunTail({
+                  ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
                   runId: singleRunId,
                   configDir,
                   configFilePath,
@@ -5071,4 +5075,14 @@ export function createRunCommand(): Command {
     })
 
   return cmd
+}
+
+function parseIntegerFlag(flagName: string): (value: string) => number {
+  return (value) => {
+    const number = Number(value)
+    if (!/^\d+$/.test(value.trim()) || !Number.isSafeInteger(number) || number < 1) {
+      throw new InvalidArgumentError(`${flagName} must be a positive integer`)
+    }
+    return number
+  }
 }

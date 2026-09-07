@@ -25,6 +25,7 @@
 // names `schema` for two types and nothing else; the guardrail policy, the audit sink type and the
 // masking context all arrive through relative modules that are already ledgered for them.
 
+import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { resolve } from 'node:path'
 
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
@@ -48,6 +49,8 @@ import {
  * roots below are derived from them here so no caller derives them again.
  */
 export interface ComposeCliPostRunTailInput {
+  readonly maxAblations?: number
+  readonly canaryAblation?: import('./canary-credit.js').CanaryAblation
   readonly runId: string
   /** The directory the project's config file lives in. `<configDir>/.agent-qa` is derived from it. */
   readonly configDir: string
@@ -90,6 +93,11 @@ export interface ComposeCliPostRunTailInput {
  */
 export function composeCliPostRunTail(input: ComposeCliPostRunTailInput): PostRunTailHandle {
   return runPostRunTail({
+    ...(input.maxAblations === undefined ? {} : { maxAblations: input.maxAblations }),
+    canaryAblation: input.canaryAblation ?? createCanaryAblationForHost({
+      configPath: resolve(input.configFilePath), agentQaRoot: resolve(input.configDir, '.agent-qa'),
+      ...(input.maxAblations === undefined ? {} : { maxAblations: input.maxAblations }),
+    }),
     runId: input.runId,
     agentQaRoot: resolve(input.configDir, '.agent-qa'),
     configPath: resolve(input.configFilePath),

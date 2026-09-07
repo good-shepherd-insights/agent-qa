@@ -139,6 +139,23 @@ function options(h: Harness): RunPostRunTailOptions {
 }
 
 describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
+  it('418 threads the same ablation capability and flag to own-run fold and janitor sweep', async () => {
+    const h = harness()
+    const canaryAblation = {
+      ablate: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
+      corpusDigest: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
+    }
+    const tail = runPostRunTail({ ...options(h), maxAblations: 2, canaryAblation })
+    await tail.drain()
+    expect(h.runCurationTail).toHaveBeenCalledWith(expect.objectContaining({
+      maxAblations: 2, operations: { canaryAblation },
+    }))
+    const composed = vi.mocked(h.operations.composeHost).mock.calls[0]![0]
+    await composed.curateRun({ runId, executionContext: 'local-headless' })
+    expect(h.operations.curateCompletedRun).toHaveBeenCalledWith(expect.objectContaining({
+      maxAblations: 2, operations: { canaryAblation },
+    }))
+  })
   it('builds posture once before the lease and forwards it to both the job fold and sweep', async () => {
     const h = harness()
     const resolvePosture = vi.fn(() => ({ kind: 'unavailable' as const, replayGateAvailable: false, refusals: ['partition refused'] }))

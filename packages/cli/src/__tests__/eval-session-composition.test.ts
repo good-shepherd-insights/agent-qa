@@ -10,6 +10,7 @@ import {
   resolveEvalJudge,
   resolveEvalSession,
   resolveReplayPlanner,
+  resolveGate2Caps,
 } from '../eval-session-composition.js'
 
 const SECRET_VALUE = 'super-sensitive-value-123456'
@@ -98,6 +99,16 @@ afterEach(async () => {
 })
 
 describe('resolveEvalSession — eval config + flag overrides (D-03)', () => {
+  it('418 resolves the ablation cap from flag, config and default and refuses zero', async () => {
+    const f = await writeFixture({ evalBlock: 'eval:\n  gate2:\n    maxAblations: 2' })
+    const configured = await resolveEvalSession({ configPath: f.configPath, keyOnly: true })
+    expect(resolveGate2Caps(configured)).toEqual({ maxAblations: 2, maxAblationsSource: 'config' })
+    expect(resolveGate2Caps(configured, { maxAblations: 1 }))
+      .toEqual({ maxAblations: 1, maxAblationsSource: 'flag' })
+    expect(resolveGate2Caps({ ...configured, evalConfig: {} }))
+      .toEqual({ maxAblations: 4, maxAblationsSource: 'default' })
+    expect(() => resolveGate2Caps(configured, { maxAblations: 0 })).toThrow('--max-ablations')
+  })
   it('returns the config eval block and applies flag overrides field-wise', async () => {
     const { configPath } = await writeFixture({
       evalBlock: 'eval:\n  judge: j\n  k: 2',

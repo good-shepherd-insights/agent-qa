@@ -433,6 +433,22 @@ function handedOffDrainReport() {
 }
 
 describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
+  it('418 resolves and discloses the cap and passes snapshot data through the capability', async () => {
+    const info = vi.fn()
+    const operations = successfulOperations({
+      canaryAblation: {
+        ablate: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
+        corpusDigest: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
+        resolveCaps: vi.fn(async () => ({ maxAblations: 2, source: 'config' })),
+      },
+    })
+    await runCurationTail(baseOptions(operations, { log: { warn: vi.fn(), info } }))
+    expect(info).toHaveBeenCalledWith('canary cap: maxAblations=2 (config)')
+    expect(operations.emitCanaryOutcomes).toHaveBeenCalledWith(expect.objectContaining({
+      credit: { ablation: operations.canaryAblation, maxAblations: 2,
+        readBundleStateDigests: expect.any(Function) },
+    }))
+  })
   it('threads the synchronous resolver and prints every promotion in report order', async () => {
     const info = vi.fn()
     const resolver = vi.fn(() => undefined)
@@ -446,7 +462,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     await runCurationTail(baseOptions(successfulOperations({ drainQueue }), {
       resolvePromotionPosture: resolver, log: { warn: vi.fn(), info },
     }))
-    expect(drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver }))
+    expect(drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver, agentQaRoot, auditBaseDir: agentQaRoot }))
     expect(info.mock.calls.map(([message]) => message).filter(message => message.startsWith('curation: '))).toEqual([
       'curation: handed to daemon (pid 4242)',
       'curation: c1 promoted via deterministic-verdict-floor',

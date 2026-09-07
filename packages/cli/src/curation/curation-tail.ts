@@ -127,6 +127,7 @@ export interface CurationWriterAuthority {
 }
 
 export interface RunCurationTailOptions {
+  maxAblations?: number
   /** Built once by the caller; synchronous per candidate inside writer authority. */
   resolvePromotionPosture?: ResolvePromotionPosture
   runId: string
@@ -386,6 +387,7 @@ type CurationAuthorCapability =
   Parameters<LocalCurationCapabilities['drainQueue']>[0]['author']
 
 export interface CurateCompletedRunInput {
+  maxAblations?: number
   resolvePromotionPosture?: ResolvePromotionPosture
   /** The run's own directory (`<agentQaRoot>/runs/<slug>`), derived by the caller. */
   runDir: string
@@ -629,12 +631,20 @@ export async function curateCompletedRun(
       input.log.info?.(candidateSummaryLine(receiptIdentity.runId, candidates))
       // D-20: candidate and canary drops share this scope and crash boundary.
       const reader = operations.openKnowledgeReader({ knowledgeRoot: input.knowledgeRoot })
+      const ablation = operations.canaryAblation
+      const caps = ablation === undefined ? undefined : input.maxAblations !== undefined
+        ? { maxAblations: input.maxAblations, source: 'flag' }
+        : await ablation.resolveCaps?.() ?? {
+          maxAblations: (await import('../eval-session-composition.js')).GATE2_DEFAULT_MAX_ABLATIONS,
+          source: 'default',
+        }
+      if (caps !== undefined) input.log.info?.(`canary cap: maxAblations=${caps.maxAblations} (${caps.source})`)
       const canaries = await operations.emitCanaryOutcomes({
         handoff: input.handoff,
         knowledgeRoot: input.knowledgeRoot,
         runDir: input.runDir,
         emit: reader.emitCanaryOutcome.bind(reader),
-        ...(operations.canaryAblation === undefined ? {} : { credit: { ablation: operations.canaryAblation } }),
+        ...(operations.canaryAblation === undefined ? {} : { credit: { ablation: operations.canaryAblation, maxAblations: caps!.maxAblations, readBundleStateDigests: LOCAL_CURATION_CAPABILITIES.readCanonicalBundleStateDigests } }),
       })
       // D-14: the run-outcome fold shares this crash boundary and the SAME extended
       // receipt as candidate/canary emit — never a second marker file. The durable
@@ -674,6 +684,8 @@ export async function curateCompletedRun(
         ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
         knowledgeRoot: input.knowledgeRoot,
         auditBaseDir: input.agentQaRoot,
+        // 418 D-19: proposals and audit share the config-relative runtime root.
+        agentQaRoot: input.agentQaRoot,
         author,
         executionContext: input.handoff.executionContext,
         policy: input.policy,
@@ -859,6 +871,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
     try {
       if (receiptMatches(operations.readCurationTailReceipt(runDir), receiptIdentity)) continue
       const folded = await curateCompletedRun({
+        ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
         ...(opts.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: opts.resolvePromotionPosture }),
         runDir,
         handoff,

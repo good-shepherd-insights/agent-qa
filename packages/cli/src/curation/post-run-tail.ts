@@ -281,6 +281,7 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
 export interface RunPostRunTailOptions extends Pick<
   RunCurationTailOptions,
   | 'runId'
+  | 'maxAblations'
   | 'agentQaRoot'
   | 'knowledgeConfig'
   | 'configDir'
@@ -293,6 +294,7 @@ export interface RunPostRunTailOptions extends Pick<
 > {
   /** The resolved project config file; the composition resolves everything else from it. */
   configPath: string
+  canaryAblation?: import('./canary-credit.js').CanaryAblation
   /**
    * What the post-verdict step's enqueue answered (404 D-05).
    *
@@ -489,6 +491,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     )
     const deadlineMs = input.deadlineMs ?? drainDeadlineMs
     const folded = await ops().curateCompletedRun({
+      ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
+      ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),
       ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
       runDir: curatedRunDir,
       handoff,
@@ -713,6 +717,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // (Pitfall 11). This run's own directory is already receipted by the fold the chain
         // just ran, so the sweep skips it rather than folding it twice.
         await ops().runCurationTail({
+          ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
+          ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),
           ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
           runId: opts.runId,
           agentQaRoot: opts.agentQaRoot,

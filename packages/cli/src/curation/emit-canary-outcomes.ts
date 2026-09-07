@@ -151,7 +151,7 @@ export interface EmitCanaryOutcomeReport {
 }
 
 export interface EmitCanaryOutcomesOptions {
-  credit?: { ablation?: CanaryAblation }
+  credit?: Pick<import('./canary-credit.js').CanaryCreditInput, 'ablation' | 'maxAblations' | 'readBundleStateDigests'>
   handoff: CompletedRunHandoff
   /** Absolute agent-qa-knowledge root used for store lookup and durable queue emission. */
   knowledgeRoot: string
@@ -453,7 +453,7 @@ export async function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): Promi
   })
   const credit = opts.credit === undefined ? undefined : await creditCanaryAttributions({
     attributions: projected, handoff: opts.handoff, runDir: opts.runDir,
-    ablation: opts.credit.ablation, observationIdOf: LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId,
+    ...opts.credit, knowledgeRoot: opts.knowledgeRoot, observationIdOf: LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId,
   })
   const canary = credit?.counters ?? emptyCanaryCreditCounters()
   if (credit === undefined) {

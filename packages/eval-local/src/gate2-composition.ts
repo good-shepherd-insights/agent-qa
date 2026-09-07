@@ -1,6 +1,7 @@
 // 2026-09-07, 418 D-02: the ablation composition. The live decision becomes sample one
 // only here; every fresh model call delegates to runCassetteReplay's safety scope.
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import {
   applyBriefDelta,
   buildEvalReport,
@@ -21,6 +22,7 @@ import { runCassetteReplay } from './replay-composition.js'
 import { FsReplayRecordStore } from './replay-record-store.js'
 import { FsScoreStore } from './score-store.js'
 import { loadScoreRecord } from './replay-read.js'
+import { buildRootMarkerValue, COMMITTED_ROOT_MARKER_FILE } from './committed-root-store.js'
 
 export const GATE2_AUDIT_SUBDIR = 'eval/gate2'
 export const GATE2_TARGET_SUBDIR = 'target'
@@ -59,6 +61,18 @@ export type AblateCanaryStepResult =
 
 function readDigestSnapshot(committedRoot: string) {
   const corpus = readCommittedCorpus(committedRoot)
+  // 418 D-08: the general census reader accepts an absent tree as empty data. A gate
+  // citation must establish the root itself, or a broken host could mint an empty digest.
+  try {
+    const marker = JSON.parse(readFileSync(join(committedRoot, COMMITTED_ROOT_MARKER_FILE), 'utf8'))
+    if (marker?.schemaVersion !== buildRootMarkerValue().schemaVersion) {
+      throw new Error('invalid eval root marker schemaVersion')
+    }
+  } catch (error) {
+    return { corpus, result: { kind: 'unavailable', reason: 'corpus-unreadable',
+      detail: error instanceof Error ? error.message : String(error),
+    } as const }
+  }
   const result: CommittedCorpusDigestRead =
     corpus.refusals.length > 0
       ? {
