@@ -34,8 +34,12 @@ function renderFeedbackSeedSummary(result: SeedFromFeedbackVerbResult): void {
   for (const entry of result.entries) console.log(`${result.kind === 'dry-run' ? 'would admit' : 'admitted'} ${entry.cassetteId} natural source=canary-feedback benefit=${entry.benefit} from ${entry.runId}#${entry.stepIndex}`)
   for (const refusal of result.refusals) console.log(`refused ${refusal.product}/${refusal.cassetteId}: ${refusal.kind}`)
   if (result.previousCorpusDigest !== undefined) console.log(`corpus digest ${result.previousCorpusDigest} → ${result.kind === 'dry-run' ? 'unchanged (dry-run)' : result.nextCorpusDigest ?? 'unavailable'}`)
-  console.log(`standing receipts that will read receipt-stale: ${result.staleReceipts.length}`)
-  for (const receipt of result.staleReceipts) console.log(`${receipt.candidateId} gate ${receipt.gate} ${receipt.verdict}`)
+  for (const failure of result.failures) console.log(`feedback ${failure.phase}: ${failure.reason}${'cassetteId' in failure && failure.cassetteId !== undefined ? ` (${failure.cassetteId})` : ''}`)
+  console.log(`standing receipts that will read receipt-stale: ${result.staleReceipts === null ? 'unknown (final corpus digest unavailable)' : result.staleReceipts.length}`)
+  for (const receipt of result.staleReceipts ?? []) console.log(`${receipt.candidateId} gate ${receipt.gate} ${receipt.verdict}`)
+  if (result.failures.length && result.writesStarted) {
+    console.log(`Writes began; inspect the admitted entries and remaining staging at ${result.stagingDir}. Resolve the reported filesystem issue, then preview remaining feedback with eval seed --from-feedback --dry-run. Recheck the corpus digest before measuring the floor.`)
+  }
   console.log(`re-measure the floor: ${result.floorCommand}`)
 }
 

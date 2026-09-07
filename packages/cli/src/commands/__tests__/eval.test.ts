@@ -9,6 +9,8 @@ import { Command } from 'commander'
 import { APICallError } from 'ai'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import fs from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, appendFile, rename } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -2009,7 +2011,72 @@ async function feedbackVerbFixture() {
 }
 
 describe('418 eval seed --from-feedback', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => { vi.restoreAllMocks(); syncBuiltinESMExports() })
+  it.each([
+    ['cleanup', false], ['cleanup', true], ['final-digest', false], ['final-digest', true],
+  ] as const)('preserves verified admission after %s failure (json=%s)', async (phase, json) => {
+    const f = await feedbackVerbFixture()
+    const remove = fs.rmSync
+    const read = fs.readFileSync
+    const stagingRoot = join(fs.realpathSync(f.agentQaRoot), 'eval/feedback/')
+    let cleanupReached = false
+    vi.spyOn(fs, 'rmSync').mockImplementation((path, options) => {
+      if (String(path).startsWith(stagingRoot)) {
+        cleanupReached = true
+        if (phase === 'cleanup') throw Object.assign(new Error('private fault text must not escape'), { code: 'EACCES' })
+      }
+      return remove(path, options)
+    })
+    vi.spyOn(fs, 'readFileSync').mockImplementation(((path: fs.PathOrFileDescriptor, options?: unknown) => {
+      if (phase === 'final-digest' && cleanupReached && String(path) === join(f.committedRoot, 'eval-root.json')) {
+        throw Object.assign(new Error('private fault text must not escape'), { code: 'EACCES' })
+      }
+      return read(path, options as Parameters<typeof read>[1])
+    }) as typeof fs.readFileSync)
+    syncBuiltinESMExports()
+    const { logs, errors } = captureConsole()
+    await buildProgram().parseAsync(['--config', f.configPath, 'eval', 'seed', '--from-feedback', ...(json ? ['--json'] : [])], { from: 'user' })
+    expect(cleanupReached, JSON.stringify({ logs, errors })).toBe(true)
+    expect(errors).toEqual([])
+    expect(process.exitCode).toBe(2)
+    expect(readCommittedCorpus(f.committedRoot).snapshot.entries).toHaveLength(2)
+    expect(logs.join('\n')).not.toContain('private fault text')
+    if (json) {
+      const result = JSON.parse(logs[0]!)
+      expect(result).toMatchObject({ kind: 'refused', writesStarted: true, previousCorpusDigest: f.digest,
+        failures: expect.arrayContaining([expect.objectContaining({ phase })]) })
+      expect(result.entries).toHaveLength(2)
+      if (phase === 'final-digest') {
+        expect(result.staleReceipts).toBeNull()
+        expect(result).not.toHaveProperty('nextCorpusDigest')
+      } else {
+        expect(result.staleReceipts).toHaveLength(1)
+        expect(result.nextCorpusDigest).not.toBe(f.digest)
+        expect(result.failures).toHaveLength(2)
+        expect(result.failures.every((failure: { cassetteId?: string }) => failure.cassetteId)).toBe(true)
+      }
+    } else {
+      expect(logs.filter(line => line.startsWith('admitted '))).toHaveLength(2)
+      expect(logs.some(line => line.startsWith(`feedback ${phase}:`))).toBe(true)
+      expect(logs.join('\n')).toContain('Writes began; inspect the admitted entries')
+      expect(logs.join('\n')).toContain(phase === 'final-digest'
+        ? 'receipt-stale: unknown (final corpus digest unavailable)' : 'receipt-stale: 1')
+    }
+    vi.restoreAllMocks()
+    syncBuiltinESMExports()
+    const remaining = await readdir(join(f.agentQaRoot, 'eval/feedback/feedback-0'))
+    expect(remaining).toHaveLength(phase === 'cleanup' ? 1 : 0)
+  })
+  it('classifies a staging read refusal before any writes without claiming progress', async () => {
+    const f = await feedbackVerbFixture()
+    await writeFile(join(f.agentQaRoot, 'eval/feedback/unexpected-file'), 'fixture')
+    const before = await snapshotTree(f.committedRoot)
+    const { logs } = captureConsole()
+    await buildProgram().parseAsync(['--config', f.configPath, 'eval', 'seed', '--from-feedback', '--json'], { from: 'user' })
+    expect(JSON.parse(logs[0]!)).toMatchObject({ kind: 'refused', entries: [], writesStarted: false,
+      staleReceipts: [], failures: [{ phase: 'before-write', reason: 'feedback-unavailable' }] })
+    expect(await snapshotTree(f.committedRoot)).toEqual(before)
+  })
   it('previews a real mixed-product batch and standing receipt without changing any host file', async () => {
     const f = await feedbackVerbFixture()
     const before = await snapshotTree(f.dir)
@@ -2058,7 +2125,7 @@ describe('418 eval seed --from-feedback', () => {
     expect(result.entries).toHaveLength(1)
     expect(result.entries[0]!.product).toBe('feedback-1')
     expect(result.staleReceipts).toHaveLength(1)
-    expect(result.staleReceipts[0]!.gate).toBe(1)
+    expect(result.staleReceipts?.[0]!.gate).toBe(1)
   })
   it.each([['--run', 'x'], ['--held-out-fraction', '0.5'], ['--private-fraction', '0.5'], ['--silver-cap', '2']])('refuses incompatible flags %j before session resolution', async (...flags) => {
     const { errors } = captureConsole()

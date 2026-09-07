@@ -900,7 +900,10 @@ export interface SeedFromFeedbackVerbResult {
   entries: { cassetteId: string; product: string; split: 'natural'; source: 'canary-feedback'; benefit: import('@vostride/agent-qa-schema').Benefit;
     attributedObservationId: string; runId: string; stepIndex: number; captured_at_ordinal: number }[]
   refusals: import('@vostride/agent-qa-eval-local').AdmitStagedFeedbackResult['refusals']
-  staleReceipts: ReturnType<typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts>
+  staleReceipts: ReturnType<typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts> | null
+  writesStarted: boolean
+  failures: (import('@vostride/agent-qa-eval-local').AdmitStagedFeedbackResult['failures'][number]
+    | { phase: 'before-write'; reason: 'feedback-unavailable' | 'no-eval-root' | 'corpus-unavailable' })[]
   previousCorpusDigest?: string
   nextCorpusDigest?: string
   stagingDir: string
@@ -916,9 +919,12 @@ export async function runSeedFromFeedbackVerb(session: EvalSession, opts: {
   // a standing write-once floor, and no new model call occurs during feedback admission itself.
   const configArg = `'${resolve(session.configPath).replaceAll("'", "'\"'\"'")}'`
   const floorCommand = `agent-qa --config ${configArg} eval floor`
-  const base = { entries: [], refusals: [], staleReceipts: [], stagingDir, floorCommand }
+  const base = { entries: [], refusals: [], staleReceipts: [], writesStarted: false, failures: [], stagingDir, floorCommand }
   const digest = readCanaryCorpusDigest(session)
-  if (digest.kind !== 'digest') return { ...base, kind: 'refused', reason: digest.kind === 'no-eval-root' ? 'no-eval-root' : 'corpus-unavailable' }
+  if (digest.kind !== 'digest') {
+    const reason = digest.kind === 'no-eval-root' ? 'no-eval-root' : 'corpus-unavailable'
+    return { ...base, kind: 'refused', reason, failures: [{ phase: 'before-write', reason }] }
+  }
   try {
     // Read standing DATA before the operator's write. Gate3 has no digest and is never invented stale.
     const receipts = opts.knowledgeRoot !== undefined && opts.readStandingGateReceipts !== undefined
@@ -930,14 +936,17 @@ export async function runSeedFromFeedbackVerb(session: EvalSession, opts: {
       split: 'natural' as const, source: 'canary-feedback' as const, benefit: entry.benefit,
       attributedObservationId: entry.attributedObservationId, runId: entry.runId, stepIndex: entry.stepIndex,
       captured_at_ordinal: entry.extracted.cassette.receipt.buildOrdinal }))
-    const moves = opts.dryRun ? entries.length > 0 : result.nextCorpusDigest !== result.previousCorpusDigest
-    return { kind: result.refusals.length ? 'refused' : result.entries.length === 0 ? 'nothing-staged' : opts.dryRun ? 'dry-run' : 'admitted',
-      ...(result.refusals.length ? { reason: 'admission-refused' } : {}), entries, refusals: result.refusals,
-      staleReceipts: moves ? receipts.filter(receipt => receipt.corpusDigest === result.previousCorpusDigest) : [],
+    const moves = opts.dryRun ? entries.length > 0 : result.nextCorpusDigest === undefined ? undefined : result.nextCorpusDigest !== result.previousCorpusDigest
+    const refused = result.refusals.length > 0 || result.failures.length > 0
+    return { kind: refused ? 'refused' : result.entries.length === 0 ? 'nothing-staged' : opts.dryRun ? 'dry-run' : 'admitted',
+      ...(refused ? { reason: 'admission-refused' } : {}), entries, refusals: result.refusals,
+      writesStarted: result.writesStarted, failures: result.failures,
+      staleReceipts: moves === undefined ? null : moves ? receipts.filter(receipt => receipt.corpusDigest === result.previousCorpusDigest) : [],
       previousCorpusDigest: result.previousCorpusDigest,
       ...(result.nextCorpusDigest === undefined ? {} : { nextCorpusDigest: result.nextCorpusDigest }), stagingDir, floorCommand }
   } catch {
-    return { ...base, kind: 'refused', reason: 'feedback-unavailable', previousCorpusDigest: digest.corpusDigest }
+    return { ...base, kind: 'refused', reason: 'feedback-unavailable',
+      failures: [{ phase: 'before-write', reason: 'feedback-unavailable' }], previousCorpusDigest: digest.corpusDigest }
   }
 }
 

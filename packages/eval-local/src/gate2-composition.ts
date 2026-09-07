@@ -29,7 +29,7 @@ import { FsRunArtifactSource } from './artifact-source.js'
 import { loadCassetteBundle } from './cassette-loader.js'
 import { loadCassetteBundles } from './replay-sweep.js'
 import { cassetteProductPartition } from './replay-batch-assembly.js'
-import { seedCommittedCorpus, type SeedingRefusal } from './seeding-composition.js'
+import { seedCommittedCorpus, type SeedingRefusal, type SeedingBatchReport } from './seeding-composition.js'
 import { readCommittedCorpus } from './committed-corpus-source.js'
 import {
   locateTargetCassettes,
@@ -209,6 +209,14 @@ export interface AdmitStagedFeedbackResult {
   refusals: (SeedingRefusal & { product: string; runId: string })[]
   previousCorpusDigest: string
   nextCorpusDigest?: string
+  writesStarted: boolean
+  failures: {
+    phase: 'write' | 'cleanup' | 'final-digest'
+    reason: 'seeding-unavailable' | 'staging-cleanup-failed' | 'corpus-unavailable'
+    cassetteId?: string
+    product?: string
+    runId?: string
+  }[]
 }
 export async function admitStagedFeedback(input: {
   agentQaRoot: string; committedRoot: string; product?: string; dryRun: boolean
@@ -227,15 +235,23 @@ export async function admitStagedFeedback(input: {
       pairSkips: [], silverExclusions: [], pairCounts: { total: 0, sameState: 0, differingState: 0 }, proceduresExcludedCount: 0 }
     return { plan, cassettes: [entry.extracted] }
   })
-  const result: AdmitStagedFeedbackResult = { entries, admitted: [], refusals: [], previousCorpusDigest: previous.corpusDigest }
+  const result: AdmitStagedFeedbackResult = { entries, admitted: [], refusals: [], previousCorpusDigest: previous.corpusDigest, writesStarted: false, failures: [] }
   if (input.dryRun) return result
   if (entries.length) {
-    const seeded = seedCommittedCorpus({ batches, committedRoot: input.committedRoot,
-      seedingOutputBaseDir: input.seedingOutputBaseDir, policy: input.policy, auditSink: input.auditSink })
-    for (const [index, report] of seeded.reports.entries()) {
-      const entry = entries[index]!
-      result.refusals.push(...report.refusals.map(refusal => ({ ...refusal, product: entry.product, runId: entry.runId })))
-      if (report.refusals.length) continue
+    result.writesStarted = true
+    let seeded: SeedingBatchReport | undefined
+    try {
+      seeded = seedCommittedCorpus({ batches, committedRoot: input.committedRoot,
+        seedingOutputBaseDir: input.seedingOutputBaseDir, policy: input.policy, auditSink: input.auditSink })
+    } catch {
+      result.failures.push({ phase: 'write', reason: 'seeding-unavailable' })
+    }
+    // Even an interrupted bulk writer can have published cases. Verify each case's bytes;
+    // neither aggregate counts nor a late exception are evidence of rollback.
+    for (const [index, entry] of entries.entries()) {
+      const report = seeded?.reports[index]
+      result.refusals.push(...(report?.refusals ?? []).map(refusal => ({ ...refusal, product: entry.product, runId: entry.runId })))
+      if (report?.refusals.length) continue
       const planCase = batches[index]!.plan.cases[0]!
       const id = entry.extracted.cassette.id
       const textParts = [
@@ -253,12 +269,19 @@ export async function admitStagedFeedback(input: {
         continue
       }
       result.admitted.push(entry)
-      rmSync(entry.dir, { recursive: true })
+      try { rmSync(entry.dir, { recursive: true }) } catch {
+        result.failures.push({ phase: 'cleanup', reason: 'staging-cleanup-failed',
+          cassetteId: id, product: entry.product, runId: entry.runId })
+      }
     }
   }
-  const next = readCommittedCorpusDigest(input)
-  if (next.kind !== 'digest') throw new TypeError('feedback corpus unavailable after admission')
-  result.nextCorpusDigest = next.corpusDigest
+  try {
+    const next = readCommittedCorpusDigest(input)
+    if (next.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
+    result.nextCorpusDigest = next.corpusDigest
+  } catch {
+    result.failures.push({ phase: 'final-digest', reason: 'corpus-unavailable' })
+  }
   return result
 }
 
