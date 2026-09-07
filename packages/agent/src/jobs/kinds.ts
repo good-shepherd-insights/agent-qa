@@ -20,6 +20,7 @@
 // history differ from an uninterrupted one for a reason that has nothing to do with recovery,
 // and the usual repair for a failing equality assertion is to loosen it.
 
+import type { ReplayGatePort } from '../ports/gates.js'
 import type {
   ChainedJobRequest,
   CompletedRunHandoff,
@@ -250,6 +251,11 @@ export interface PostRunJobCapabilities {
    * is text-only, the L9 graceful degradation, never an error.
    */
   readEvidenceBlob?(runId: string, sha: string): Uint8Array | undefined
+  /**
+   * 2026-09-07, 417 D-18: typed now, bound nowhere in 417. Phase 422's
+   * propose-improvements binds this seam; the five-kind chain is untouched.
+   */
+  runReplayGate?: ReplayGatePort['runReplayGate']
 }
 
 /**

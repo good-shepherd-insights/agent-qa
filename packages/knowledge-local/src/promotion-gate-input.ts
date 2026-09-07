@@ -64,14 +64,7 @@ export function assemblePromotionGateInput(input: {
     ? input.bundle.provenance
     : undefined
   const gateLines = readGateReceipts(input.bundleDir, input.bundle.manifest.id) ?? []
-  const provenance: PromotionCandidateProvenance = {
-    runIds: runLinkedProvenance === undefined ? [] : [runLinkedProvenance.runId],
-    receiptDigests: gateLines.map(line => line.receiptDigest),
-    capturedAtOrdinals: [...new Set([
-      ...(runLinkedProvenance?.sourceBuildOrdinal === undefined ? [] : [runLinkedProvenance.sourceBuildOrdinal]),
-      ...survivingEvents.map(event => event.buildOrdinal),
-    ].filter(Number.isInteger))].sort((left, right) => left - right),
-  }
+  const provenance = candidateProvenanceOf(input.bundleDir, input.bundle)
   const posture = input.resolvePromotionPosture?.({
     id: input.bundle.manifest.id,
     product: basename(dirname(dirname(input.bundleDir))),
@@ -101,5 +94,22 @@ export function assemblePromotionGateInput(input: {
     // a retracted deprecation is removed above before this evidence is assembled.
     hasUserDeprecateInLineage: survivingEvents.some((event) => event.type === 'deprecated'),
     memoryOffForAnchorGroup: memoryOffForBundle(input.knowledgeRoot, input.bundle),
+  }
+}
+
+/** 2026-09-07, 417 D-01: one provenance assembly shared by promotion and the candidate read. */
+export function candidateProvenanceOf(
+  bundleDir: string,
+  bundle: LoadedBundle,
+): PromotionCandidateProvenance {
+  const runLinked = bundle.provenance.mode === 'run-linked' ? bundle.provenance : undefined
+  const gateLines = readGateReceipts(bundleDir, bundle.manifest.id) ?? []
+  return {
+    runIds: runLinked === undefined ? [] : [runLinked.runId],
+    receiptDigests: gateLines.map(line => line.receiptDigest),
+    capturedAtOrdinals: [...new Set([
+      ...(runLinked?.sourceBuildOrdinal === undefined ? [] : [runLinked.sourceBuildOrdinal]),
+      ...survivingOutcomeEvents(bundle.events).map(event => event.buildOrdinal),
+    ].filter(Number.isInteger))].sort((left, right) => left - right),
   }
 }

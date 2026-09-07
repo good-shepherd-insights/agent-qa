@@ -89,3 +89,6 @@ export type { BuildRange, ReadOptions, SearchOptions } from '@vostride/agent-qa-
 // bundle files and folds their evidence, opening no write authority or derived index.
 export { gateReceiptsFor } from './gates/gate-receipt-read.js'
 export type { GateReceiptsForOptions } from './gates/gate-receipt-read.js'
+// 2026-09-07, 417 D-01: candidate brief DATA from committed bundles, with no write authority.
+export { candidateInjectionFor } from './gates/candidate-injection.js'
+export type { CandidateInjectionForOptions } from './gates/candidate-injection.js'

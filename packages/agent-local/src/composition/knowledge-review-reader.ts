@@ -20,6 +20,7 @@
 
 import {
   canaryAttributionsFor,
+  candidateInjectionFor,
   gateReceiptsFor,
   diffSince,
   inspectRecords,
@@ -72,6 +73,17 @@ export function createKnowledgeReaderPort(
   }
 
   return {
+    // 2026-09-07, 417 D-01: forward the candidate DATA verbatim after the same egress check.
+    async candidateInjection({ candidateId }) {
+      const dto = candidateInjectionFor({
+        knowledgeRoot: await input.resolveKnowledgeRoot(), candidateId,
+      })
+      assertCommittedEgressSafe(
+        [{ label: 'knowledge.candidate.injection', text: JSON.stringify(dto) }],
+        { policy: loadGuardrailPolicy(defaultGuardrailPolicyInput) },
+      )
+      return dto
+    },
     // 416 D-17: the caller supplied the identity; forward the reader's answer verbatim.
     async gateReceipts({ candidateId }) {
       const dto = gateReceiptsFor({
