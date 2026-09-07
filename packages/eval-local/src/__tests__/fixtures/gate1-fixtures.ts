@@ -45,6 +45,7 @@ import {
   noneAuth,
   stubProfile,
   respondingStub,
+  judgeGenerateResult,
   type CapturingStub,
   type CapturedCallOptions,
 } from './replay-fixtures.js'
@@ -361,4 +362,18 @@ export function gate1Responder(fixture: Pick<ReturnType<typeof writeGate1Fixture
         : 'e-continue',
     )
   }
+}
+
+export function judgeStub(
+  modelId = 'claude-fixture',
+  verdict:
+    | 'equivalent'
+    | 'different'
+    | 'unsure'
+    | (() => 'equivalent' | 'different' | 'unsure') = 'equivalent',
+) {
+  return respondingStub(
+    () => judgeGenerateResult(typeof verdict === 'function' ? verdict() : verdict, 'high'),
+    modelId,
+  )
 }

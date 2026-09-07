@@ -77,6 +77,14 @@ import { FsRunArtifactSource } from './artifact-source.js'
 export const GATE1_AUDIT_SUBDIR = 'eval/gate1'
 export const GATE1_TARGET_SUBDIR = 'target'
 
+export function judgeIdOf(input: {
+  judgeModelId: string
+  judgeFamily: string
+  judgeVersion: number
+}): string {
+  return `${input.judgeModelId}|family=${input.judgeFamily}|judgeVersion=${input.judgeVersion}`
+}
+
 /** A slug locates storage; only the loaded run/step/test establishes target identity. */
 export async function locateTargetCassettes(input: {
   committedRoot: string
@@ -535,7 +543,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     },
     ...(eligibility.eligible
       ? {
-          judgeId: `${eligibility.judgeModelId}|family=${eligibility.judgeFamily}|judgeVersion=${JUDGE_CONFIG.judgeVersion}`,
+          judgeId: judgeIdOf({ ...eligibility, judgeVersion: JUDGE_CONFIG.judgeVersion }),
         }
       : { degradation: 'replay-diff' }),
   }
@@ -631,7 +639,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       ? {
           judgeIdentity: {
             judgeModelId: eligibility.judgeModelId,
-            judgeVersion: identity.judgeVersion ?? JUDGE_CONFIG.judgeVersion,
+            judgeVersion: JUDGE_CONFIG.judgeVersion,
           },
         }
       : {}),

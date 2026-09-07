@@ -225,26 +225,41 @@ describe('417 replay-gate command', () => {
     { configured: 7, flag: 5, k: 5, kSource: 'flag' },
     { configured: 7, flag: undefined, k: 7, kSource: 'config' },
     { configured: undefined, flag: undefined, k: 3, kSource: 'default' },
-  ])('resolves the cross-check k ladder from $kSource', async ({ configured, flag, k, kSource }) => {
-    const { configPath } = await writeReplayFixture('')
-    if (configured !== undefined) await appendFile(configPath, `\neval:\n  k: ${configured}\n`)
-    const session = await sessionFor(configPath)
-    const host = await import('../../gates/replay-gate-host.js')
-    const captured: Parameters<typeof host.createReplayGateHost>[0][] = []
-    vi.spyOn(host, 'createReplayGateHost').mockImplementation(deps => {
-      captured.push(deps)
-      return { port: { runReplayGate: async () => { throw new Error('unused port') } },
-        run: async () => ({ kind: 'refused', refusal: { path: 'fixture', reason: 'boundary' }, notices: [], exit: 2 }) }
-    })
-    const result = await requireReplayGateVerb()(session, 'candidate', { k: flag })
-    expect(captured[0]?.composition).toMatchObject({ k, kSource })
-    expect(result).toMatchObject({ k, kSource })
+  ])(
+    'resolves the cross-check k ladder from $kSource',
+    async ({ configured, flag, k, kSource }) => {
+      const { configPath } = await writeReplayFixture('')
+      if (configured !== undefined) await appendFile(configPath, `\neval:\n  k: ${configured}\n`)
+      const session = await sessionFor(configPath)
+      const host = await import('../../gates/replay-gate-host.js')
+      const captured: Parameters<typeof host.createReplayGateHost>[0][] = []
+      vi.spyOn(host, 'createReplayGateHost').mockImplementation((deps) => {
+        captured.push(deps)
+        return {
+          port: {
+            runReplayGate: async () => {
+              throw new Error('unused port')
+            },
+          },
+          run: async () => ({
+            kind: 'refused',
+            refusal: { path: 'fixture', reason: 'boundary' },
+            notices: [],
+            exit: 2,
+          }),
+        }
+      })
+      const result = await requireReplayGateVerb()(session, 'candidate', { k: flag })
+      expect(captured[0]?.composition).toMatchObject({ k, kSource })
+      expect(result).toMatchObject({ k, kSource })
+    },
+  )
+  it.each([1, 2, 4, 3.5, NaN])('rejects invalid Gate-1 k=%s before composition', async (k) => {
+    await expect(
+      requireReplayGateVerb()({ evalConfig: {} } as EvalSession, 'candidate', { k }),
+    ).rejects.toThrow('--k must be an odd integer of at least 3')
   })
-  it.each([1, 2, 4, 3.5, NaN])('rejects invalid Gate-1 k=%s before composition', async k => {
-    await expect(requireReplayGateVerb()({ evalConfig: {} } as EvalSession, 'candidate', { k }))
-      .rejects.toThrow('--k must be an odd integer of at least 3')
-  })
-  it.each(['1', '2', '4'])('the actual replay-gate command exits 2 for --k %s', async k => {
+  it.each(['1', '2', '4'])('the actual replay-gate command exits 2 for --k %s', async (k) => {
     const { configPath } = await writeReplayFixture('')
     const session = await sessionFor(configPath)
     vi.spyOn(evalVerbs, 'resolveEvalSession').mockResolvedValue(session)
@@ -256,10 +271,73 @@ describe('417 replay-gate command', () => {
     expect(error.mock.calls.flat().join(' ')).toContain('--k must be an odd integer of at least 3')
     expect(compose).not.toHaveBeenCalled()
   })
+  it('rejects fractional --k before it can be truncated to an odd integer', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const session = vi.spyOn(evalVerbs, 'resolveEvalSession')
+    await createEvalCommand().parseAsync(['replay-gate', 'candidate', '--k', '3.5'], {
+      from: 'user',
+    })
+    expect(process.exitCode).toBe(2)
+    expect(error.mock.calls.flat().join(' ')).toContain('--k')
+    expect(session).not.toHaveBeenCalled()
+  })
+  it('selects --judge by name but never forwards the configured same-family override', async () => {
+    const { configPath } = await writeReplayFixture('', 'gpt-fixture')
+    const config = await readFile(configPath, 'utf8')
+    await writeFile(
+      configPath,
+      config.replace(
+        'use:\n',
+        [
+          '    - name: selected-judge',
+          '      provider: openai-compatible',
+          '      model: gpt-judge',
+          '      baseURL: http://localhost:9999/v1',
+          'use:',
+          '',
+        ].join('\n'),
+      ) + 'eval:\n  judgeAllowSameFamily: true\n',
+    )
+    const host = await import('../../gates/replay-gate-host.js')
+    const captured: Parameters<typeof host.createReplayGateHost>[0][] = []
+    vi.spyOn(host, 'createReplayGateHost').mockImplementation((deps) => {
+      captured.push(deps)
+      return {
+        port: {
+          runReplayGate: async () => {
+            throw new Error('unused port')
+          },
+        },
+        run: async () => ({
+          kind: 'refused',
+          refusal: { path: 'fixture', reason: 'boundary' },
+          notices: [],
+          exit: 2,
+        }),
+      }
+    })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await new Command()
+      .option('--config <path>')
+      .addCommand(createEvalCommand())
+      .parseAsync(
+        ['--config', configPath, 'eval', 'replay-gate', 'candidate', '--judge', 'selected-judge'],
+        { from: 'user' },
+      )
+    expect(captured).toHaveLength(1)
+    const input = captured[0]!.composition
+    expect(input.judge?.profile.model).toBe('gpt-judge')
+    expect('allowSameFamily' in input.judge!).toBe(false)
+    expect(input.judgeOverrideConfigured).toBe(true)
+  })
   it('keeps ordinary eval replay k=1 valid', async () => {
     const fixture = await floorVerbFixture()
     fixture.session.evalConfig.k = 1
-    const result = await runReplayVerb(fixture.session, {}, { source: 'committed', ...fixture.opts })
+    const result = await runReplayVerb(
+      fixture.session,
+      {},
+      { source: 'committed', ...fixture.opts },
+    )
     expect(result.replayed).toBe(3)
     expect(result.spend.sampleCount).toBe(3)
     expect(fixture.planner.captured).toHaveLength(3)
