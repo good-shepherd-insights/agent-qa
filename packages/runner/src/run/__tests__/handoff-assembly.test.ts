@@ -60,6 +60,21 @@ function resultWithoutEvidence(): TestResult {
 }
 
 describe('handoff assembly instrumentation parity', () => {
+  it.each(['passed', 'failed'] as const)('418 stamps member retry evidence on %s results', outcome => {
+    const assembled = assemblePerTestOutcome(member,
+      { ...resultWithoutEvidence(), status: outcome, retryCount: 2 }, outcome,
+      { testIndex: 0, scope, buildOrdinal: 7, mask: text => text })
+    expect(JSON.parse(JSON.stringify(assembled))).toMatchObject({ isRerun: true, rerunAttempt: 2 })
+  })
+
+  it.each([0, undefined])('418 omits both retry keys for retryCount %s', retryCount => {
+    const assembled = assemblePerTestOutcome(member,
+      { ...resultWithoutEvidence(), retryCount }, 'passed',
+      { testIndex: 0, scope, buildOrdinal: 7, mask: text => text })
+    const serialized = JSON.parse(JSON.stringify(assembled))
+    expect(serialized).not.toHaveProperty('isRerun')
+    expect(serialized).not.toHaveProperty('rerunAttempt')
+  })
   it('copies profile, verifier identity, and digest onto synthesized step evidence', () => {
     const outcome = assemblePerTestOutcome(member, resultWithoutEvidence(), 'passed', {
       testIndex: 0,

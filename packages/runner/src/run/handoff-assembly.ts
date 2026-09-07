@@ -257,6 +257,10 @@ export function assemblePerTestOutcome(
     steps,
     ...(rootCause !== undefined ? { rootCause } : {}),
     ...(deps.quarantined === true ? { quarantined: true as const } : {}),
+    // 2026-09-07, 418 D-09: approved member grain, for passing AND failing retries.
+    ...(result.retryCount !== undefined && result.retryCount > 0
+      ? { isRerun: true as const, rerunAttempt: result.retryCount }
+      : {}),
   }
 }
 

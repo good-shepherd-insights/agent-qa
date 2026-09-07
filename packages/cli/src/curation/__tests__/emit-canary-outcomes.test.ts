@@ -62,6 +62,8 @@ vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
 
 import {
   emitCanaryOutcomes,
+  NON_SIGNAL_CLASSES,
+  isNonSignalClass,
   projectCanaryOutcomes,
 } from '../emit-canary-outcomes.js'
 
@@ -74,6 +76,53 @@ const PROCEDURE_ANCHORS: Anchor[] = [
 ]
 
 describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05)', () => {
+  it('declares exactly the three non-signal classes, in declaration order', () => {
+    expect([...NON_SIGNAL_CLASSES]).toEqual(['environment', 'timeout', 'flake'])
+    for (const value of ['environment', 'timeout', 'flake'] as const) expect(isNonSignalClass(value)).toBe(true)
+    for (const value of ['unknown', 'app_bug'] as const) expect(isNonSignalClass(value)).toBe(false)
+    expect(isNonSignalClass('product')).toBe(false)
+  })
+
+  it.each(['passed', 'failed'] as const)('418 SC4 excludes all sources of a %s rerun member while its sibling attributes', async outcome => {
+    const input = handoff([step({ pass: outcome === 'passed', planSource: replaySource() })], rootCause('app_bug'))
+    input.tests[0] = { ...input.tests[0], outcome, isRerun: true, rerunAttempt: 2 }
+    input.tests.push({ ...input.tests[0], isRerun: undefined, rerunAttempt: undefined,
+      testIndex: 1, testId: 'checkout::sibling', steps: [step()] })
+    const emit = vi.fn()
+    const ablate = vi.fn(async () => ({ kind: 'no-eval-root' as const }))
+    const report = await emitCanaryOutcomes({ handoff: input,
+      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-rerun', emit,
+      credit: { ablation: { ablate, corpusDigest: async () => ({ kind: 'no-eval-root' }) } } })
+    expect(report.canary.rerunExcluded).toBe(1)
+    expect(report.details[0]).toEqual({ testId: input.tests[0].testId, testIndex: 0,
+      outcome: { kind: 'rerun-excluded' } })
+    expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 1 }))
+    expect(ablate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 1 }))
+    expect(report).toMatchObject({ refused: 0, unresolved: 0, procedure: { emitted: 0 } })
+  })
+
+  it('418 SC4 counts typed non-signal classes and keeps unknown failures visible', async () => {
+    const input = handoff([step({ pass: false })], rootCause('environment'))
+    input.tests = (['environment', 'timeout', 'flake', 'unknown'] as const).map((value, index) => ({
+      ...input.tests[0], testIndex: index, testId: `checkout::class-${index}`,
+      rootCause: { ...rootCause(value), perTest: index },
+    }))
+    const emit = vi.fn()
+    const report = await emitCanaryOutcomes({ handoff: input,
+      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-non-signal', emit,
+      credit: { maxAblations: 1 } })
+    expect(report.canary.nonSignal.environment).toBe(1)
+    expect(report.canary.nonSignal.timeout).toBe(1)
+    expect(report.canary.nonSignal.flake).toBe(1)
+    expect(report.details.slice(0, 3).map(row => row.outcome)).toEqual([
+      { kind: 'non-signal', class: 'environment' },
+      { kind: 'non-signal', class: 'timeout' },
+      { kind: 'non-signal', class: 'flake' },
+    ])
+    expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 3, runOutcome: 'negative' }))
+    expect(report).toMatchObject({ refused: 0, unresolved: 0 })
+    expect(project(input, lookupSpy.anchorsById)).toHaveLength(1)
+  })
   beforeEach(() => {
     lookupSpy.anchorsById.clear()
     lookupSpy.invalidById.clear()

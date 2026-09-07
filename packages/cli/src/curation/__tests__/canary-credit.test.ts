@@ -12,7 +12,7 @@ const handoff: CompletedRunHandoff = { schemaVersion: 3, runId: asRunId('run-cre
   scope: { tier: 'product', key: 'storefront' }, buildOrdinal: 43,
   executionContext: 'local-interactive', aggregateVerdict: 'passed',
   configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' }, startedAt: 1, endedAt: 2, tests: [] }
-function row(candidateId = 'candidate-checkout', runOutcome: 'positive' | 'negative' = 'positive'): ProjectedCanaryAttribution {
+function row(candidateId = 'candidate-checkout', runOutcome: 'positive' | 'negative' = 'positive'): Extract<ProjectedCanaryAttribution, { kind: 'outcome' }> {
   return { kind: 'outcome', source: 'served-brief', outcome: {
     candidateId: asRecordId(candidateId), runOutcome, benefit: 'rode-along', stateValidity: 'unknown',
     runId: String(handoff.runId), testId: 'checkout', testIndex: 0, stepIndex: 0,

@@ -24,12 +24,12 @@ import { exercisedAnchors } from './handoff-anchors.js'
 import { creditCanaryAttributions, emptyCanaryCreditCounters,
   type CanaryAblation, type CanaryCreditCounters, type CreditedCanaryAttribution } from './canary-credit.js'
 
-// 2026-09-07, 418 D-10: runtime, never-bar and mutation legs follow in Plans 06/11.
+// 2026-09-07, 418 D-10: runtime and never-bar pin this closed vocabulary.
 export type NonSignalClass = 'environment' | 'timeout' | 'flake'
 // prettier-ignore
 export const NON_SIGNAL_CLASSES = ['environment', 'timeout', 'flake'] as const satisfies readonly NonSignalClass[]
 const NON_ATTRIBUTABLE_FAILURES = new Set<string>(NON_SIGNAL_CLASSES)
-export function isNonSignalClass(value: Verdict['class']): value is NonSignalClass {
+export function isNonSignalClass(value: string): value is NonSignalClass {
   return NON_ATTRIBUTABLE_FAILURES.has(value)
 }
 
@@ -118,6 +118,7 @@ export type CandidateAnchorResolution =
   | { kind: 'unresolved'; reason: 'not-found' | 'invalid' | 'lookup-error'; detail?: string }
 
 export type EmitCanaryOutcomeResult =
+  | { kind: 'non-signal'; class: NonSignalClass }
   | { kind: 'emitted' }
   | { kind: 'refused'; reason: 'emit-error' }
   | {
@@ -126,7 +127,16 @@ export type EmitCanaryOutcomeResult =
       detail?: string
     }
 
-export interface EmitCanaryOutcomeDetail {
+export type EmitCanaryOutcomeDetail = {
+  benefit?: never
+  crossCheck?: never
+  corpusDigestMoved?: never
+  candidateId?: never
+  stepIndex?: never
+  testId: string
+  testIndex: number
+  outcome: { kind: 'rerun-excluded' }
+} | {
   benefit: CanaryOutcome['benefit']
   crossCheck?: CrossCheck
   corpusDigestMoved?: true
@@ -254,6 +264,16 @@ function firstMatchingAnchor(
 type AttributionSource = 'served-brief' | 'procedure-replay'
 
 export type ProjectedCanaryAttribution =
+  | { kind: 'rerun-excluded'; testId: string; testIndex: number }
+  | {
+      kind: 'non-signal'
+      source: AttributionSource
+      class: NonSignalClass
+      candidateId: RecordId
+      testId: string
+      testIndex: number
+      stepIndex: number
+    }
   | { kind: 'outcome'; source: AttributionSource; outcome: CanaryOutcome }
   | {
       kind: 'unresolved'
@@ -290,6 +310,11 @@ function projectCanaryAttributions(
 
   const projected: ProjectedCanaryAttribution[] = []
   for (const test of input.handoff.tests) {
+    // 418 D-09: one diagnostic per member, before either attribution source or lookup.
+    if (test.isRerun === true) {
+      projected.push({ kind: 'rerun-excluded', testId: test.testId, testIndex: test.testIndex })
+      continue
+    }
     for (const step of test.steps) {
       projectBriefAttributions(input, test, step, resolveAnchors, resolved, projected)
       projectProcedureAttribution(input, test, step, resolveAnchors, resolved, projected)
@@ -307,7 +332,16 @@ function projectBriefAttributions(
   projected: ProjectedCanaryAttribution[],
 ): void {
   const runOutcome = attributedOutcome(test, step, resolved)
-  if (runOutcome === undefined) return
+  const resolvedClass = resolved.get(test.testIndex)
+  if (runOutcome === undefined) {
+    if (resolvedClass !== undefined && isNonSignalClass(resolvedClass)) {
+      for (const candidateId of servedCanaryIds(step)) {
+        projected.push({ kind: 'non-signal', source: 'served-brief', class: resolvedClass,
+          candidateId, testId: test.testId, testIndex: test.testIndex, stepIndex: step.stepIndex })
+      }
+    }
+    return
+  }
   const stepAnchors = exercisedAnchors(step)
   if (stepAnchors.length === 0) return
 
@@ -373,7 +407,19 @@ function projectProcedureAttribution(
   const source = step.planSource
   if (source === undefined || source.kind !== 'procedure-replay') return
   const runOutcome = procedureReplayOutcome(test, step, resolved)
-  if (runOutcome === undefined) return
+  if (runOutcome === undefined) {
+    const resolvedClass = resolved.get(test.testIndex)
+    const failed = source.guard.executionFailure !== undefined
+      || source.guard.verifierRejection !== undefined
+      || (source.guard.miss !== undefined && STALENESS_MISS_REASONS.has(source.guard.miss.reason))
+      || (source.guard.miss === undefined && !step.verifierVerdict.pass)
+    if (failed && resolvedClass !== undefined && isNonSignalClass(resolvedClass)) {
+      projected.push({ kind: 'non-signal', source: 'procedure-replay', class: resolvedClass,
+        candidateId: source.procedureId, testId: test.testId, testIndex: test.testIndex,
+        stepIndex: step.stepIndex })
+    }
+    return
+  }
 
   const resolution = resolveAnchors(source.procedureId)
   if (resolution.kind === 'unresolved') {
@@ -474,6 +520,19 @@ export async function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): Promi
 
   const attributions: CreditedCanaryAttribution[] = credit?.attributions ?? projected
   for (const attribution of attributions) {
+    if (attribution.kind === 'rerun-excluded') {
+      report.canary.rerunExcluded += 1
+      report.details.push({ testId: attribution.testId, testIndex: attribution.testIndex,
+        outcome: { kind: 'rerun-excluded' } })
+      continue
+    }
+    if (attribution.kind === 'non-signal') {
+      report.canary.nonSignal[attribution.class] += 1
+      report.details.push({ benefit: 'rode-along', candidateId: attribution.candidateId,
+        testId: attribution.testId, testIndex: attribution.testIndex, stepIndex: attribution.stepIndex,
+        outcome: { kind: 'non-signal', class: attribution.class } })
+      continue
+    }
     const fromProcedure = attribution.source === 'procedure-replay'
     if (attribution.kind === 'unresolved') {
       report.unresolved += 1
