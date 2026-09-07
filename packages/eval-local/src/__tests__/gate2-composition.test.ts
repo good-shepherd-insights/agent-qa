@@ -212,6 +212,24 @@ function inputFor(f: ReturnType<typeof fixture>, behavior: 'flipped' | 'held' | 
 }
 
 describe('Gate 2 live canary ablation (fixture providers only)', () => {
+  it('replays and stages the unique live decision after a different cached prefix', async () => {
+    const f = fixture()
+    const input = feedbackInput(f, 'live-after-cache')
+    const live = structuredClone(f.step.subActions[0]!)
+    const cached = structuredClone(live)
+    cached.stateBefore.url = 'https://feedback.example/cached-prefix'
+    delete cached.exchanges
+    f.step.subActions = [cached, live]
+    f.save()
+    const { input: replay, stub } = inputFor(f)
+    const result = await ablateCanaryStep(replay)
+    expect(result).toMatchObject({ kind: 'ablated', crossCheck: 'flipped' })
+    expect(stub.captured).toHaveLength(5)
+    expect(await stageFeedbackEntry(input)).toMatchObject({ kind: 'staged' })
+    const [entry] = listStagedFeedback(input)
+    expect(entry!.extracted.cassette.input.decisionOrdinal).toBe(1)
+    expect(distilledScreenStateDigest(entry!.extracted.cassette.input.stateBefore)).toBe(input.stateDigest)
+  })
   it('retains a valid initialized empty corpus digest', () => {
     const root = mkdtempSync(join(tmpdir(), 'gate2-empty-'))
     roots.push(root)

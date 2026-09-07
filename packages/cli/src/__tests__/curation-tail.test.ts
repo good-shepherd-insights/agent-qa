@@ -68,6 +68,13 @@ describe('418 v4 canary receipt contract', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-policy-backlog-'))
     try {
       const handoffs = [1, 2, undefined].map(() => completeHandoffForGuard(generateRunId()))
+      const { makeScreenStateFixture } = await import(new URL('../../../knowledge-local/src/__tests__/fixtures/bundle-fixture.js', import.meta.url).href)
+      for (const h of handoffs) {
+        const state: import('@vostride/agent-qa-schema').ScreenState = makeScreenStateFixture()
+        state.url = 'https://fixture.example/checkout'
+        h.tests[0]!.steps[0]!.subActions = [{ plan: 'Open checkout', exchanges: [],
+          plannedAction: { type: 'navigate', to: 'url', url: state.url }, stateBefore: state, result: { success: true } }]
+      }
       const dirs = handoffs.map(h => join(root, RUNS_SUBDIR, slugBranch(h.runId)))
       dirs.forEach(dir => mkdirSync(dir, { recursive: true }))
       writeRunCanaryPolicy(dirs[0]!, { schemaVersion: 1, runId: String(handoffs[0]!.runId), maxAblations: 1, source: 'flag' })
@@ -90,7 +97,7 @@ describe('418 v4 canary receipt contract', () => {
             attributions: [0, 1, 2].map(index => ({ kind: 'outcome' as const, source: 'served-brief' as const,
               outcome: { candidateId: asRecordId(`fixture-policy-${index}`), runId: String(opts.handoff.runId),
                 testId: opts.handoff.tests[0]!.testId, testIndex: 0, stepIndex: 0, buildOrdinal: 42,
-                briefDigest: 'brief', attribution: 'fixture exercised checkout', exercisedAnchor: { t: 'el' as const, role: 'button', name: 'checkout', ordinal: 0 },
+                briefDigest: 'brief', attribution: 'fixture exercised checkout', exercisedAnchor: { t: 'page' as const, route: 'https://fixture.example/checkout' },
                 runOutcome: 'positive' as const, benefit: 'rode-along' as const, stateValidity: 'unknown' as const } })),
           })
           seen[String(opts.handoff.runId)] = attributed.counters.credited

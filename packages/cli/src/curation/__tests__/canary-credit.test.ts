@@ -8,10 +8,26 @@ const D = DIGEST
 const { makeScreenStateFixture } = await import(new URL(
   '../../../../knowledge-local/src/__tests__/fixtures/bundle-fixture.js', import.meta.url,
 ).href)
+function stateFixture(): ScreenState {
+  const state: ScreenState = makeScreenStateFixture()
+  state.elements[0] = { ...state.elements[0]!, role: 'button', name: 'Checkout', nameNormalized: 'checkout' }
+  return state
+}
+function liveAction(state = stateFixture()) {
+  return { stateBefore: state, plannedAction: { type: 'click' as const, ref: state.elements[0]!.ref },
+    plan: 'Click Checkout', result: { success: true }, exchanges: [] }
+}
+function liveStep(state = stateFixture()): StepEvidence {
+  return { stepIndex: 0, stepText: 'Click Checkout', cacheStatus: 'miss', subActions: [liveAction(state)],
+    servedBrief: { scope: { tier: 'product', key: 'storefront' }, asOfBuild: 43, budget: 100,
+      truncation: 'none', channel1: [], channel2: [], channel3: [], briefDigest: 'brief' },
+    verifierVerdict: { pass: true, reasoning: 'Fixture checkout exercised' } }
+}
 const handoff: CompletedRunHandoff = { schemaVersion: 3, runId: asRunId('run-credit'),
   scope: { tier: 'product', key: 'storefront' }, buildOrdinal: 43,
   executionContext: 'local-interactive', aggregateVerdict: 'passed',
-  configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' }, startedAt: 1, endedAt: 2, tests: [] }
+  configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' }, startedAt: 1, endedAt: 2,
+  tests: [{ testId: 'checkout', testIndex: 0, testName: 'Checkout', filePath: 'checkout.yaml', outcome: 'passed', steps: [liveStep(), { ...liveStep(), stepIndex: 1 }] }] }
 function row(candidateId = 'candidate-checkout', runOutcome: 'positive' | 'negative' = 'positive'): Extract<ProjectedCanaryAttribution, { kind: 'outcome' }> {
   return { kind: 'outcome', source: 'served-brief', outcome: {
     candidateId: asRecordId(candidateId), runOutcome, benefit: 'rode-along', stateValidity: 'unknown',
@@ -36,11 +52,43 @@ function credit(attributions: ProjectedCanaryAttribution[], ablation?: CanaryAbl
     observationIdOf: () => 'fixture-observation', ...overrides })
 }
 describe('418 credit pass', () => {
+  it.each(['valid', 'stale', 'ambiguous', 'wrong-anchor', 'cached-only'] as const)('uses the matching live pre-state after a cached prefix: %s', async mode => {
+    const first = stateFixture()
+    first.url = 'https://fixture.example/cached'
+    const target = stateFixture()
+    target.url = 'https://fixture.example/live'
+    const prefix = liveAction(first)
+    delete (prefix as { exchanges?: unknown }).exchanges
+    const action = liveAction(target)
+    if (mode === 'wrong-anchor') action.plannedAction.ref = asRecordId('unresolved') as never
+    const step = { ...liveStep(), subActions: mode === 'cached-only' ? [prefix]
+      : mode === 'ambiguous' ? [prefix, action, liveAction(target)] : [prefix, action] }
+    const ablation = capability()
+    ablation.isNovel = vi.fn(async () => true)
+    const report = await credit([row('a'), row('b', 'negative')], ablation, {
+      handoff: { ...handoff, tests: [{ ...handoff.tests[0]!, steps: [step] }] },
+      readBundleStateDigests: () => ({ kind: 'found', digests: [distilledScreenStateDigest(mode === 'stale' ? first : target)] }),
+    })
+    for (const attribution of report.attributions) {
+      expect(attribution).toMatchObject({ outcome: { stateValidity: ['valid', 'stale'].includes(mode) ? mode : 'unknown' } })
+      if (attribution.kind !== 'outcome') throw new Error('expected outcome')
+      if (['valid', 'stale'].includes(mode)) expect(attribution.outcome.observedStateDigest).toBe(distilledScreenStateDigest(target))
+      else expect(attribution.outcome).not.toHaveProperty('observedStateDigest')
+    }
+    if (['valid', 'stale'].includes(mode)) {
+      expect(ablation.ablate).toHaveBeenCalledOnce()
+      expect(ablation.stage).toHaveBeenCalledTimes(2)
+      expect(ablation.stage).toHaveBeenCalledWith(expect.objectContaining({ stateDigest: distilledScreenStateDigest(target) }))
+    } else {
+      expect(ablation.ablate).not.toHaveBeenCalled()
+      expect(ablation.stage).not.toHaveBeenCalled()
+    }
+  })
   it('stages benefited, rode-along and harmed without consuming another ablation', async () => {
     const ablation = capability()
     ablation.isNovel = vi.fn(async () => true)
     const live: CompletedRunHandoff = { ...handoff, tests: [{ testId: 'checkout', testIndex: 0, testName: 'Checkout', filePath: 'checkout.yaml', outcome: 'passed',
-      steps: [{ stepIndex: 0, subActions: [{ stateBefore: makeScreenStateFixture() }] } as StepEvidence] }] }
+      steps: [liveStep()] }] }
     const report = await credit([row('a'), row('b'), row('c', 'negative')], ablation, { handoff: live, maxAblations: 1 })
     expect(ablation.stage).toHaveBeenCalledTimes(3)
     expect(ablation.ablate).toHaveBeenCalledTimes(1)
@@ -53,7 +101,7 @@ describe('418 credit pass', () => {
     ablation.isNovel = async () => { if (mode === 'novelty-throws') throw new Error('refused'); return true }
     ablation.stage = async () => { if (mode === 'stage-throws') throw new Error('refused'); return { kind: 'egress-blocked' } }
     const live: CompletedRunHandoff = { ...handoff, tests: [{ testId: 'checkout', testIndex: 0, testName: 'Checkout', filePath: 'checkout.yaml', outcome: 'passed',
-      steps: [{ stepIndex: 0, subActions: [{ stateBefore: makeScreenStateFixture() }] } as StepEvidence] }] }
+      steps: [liveStep()] }] }
     const report = await credit([row()], ablation, { handoff: live })
     expect(report.counters).toMatchObject({ credited: 1, staged: 0, stagingRefused: 1 })
     expect(report.attributions[0]).toMatchObject({ outcome: { benefit: 'exercised-benefited' } })
@@ -83,11 +131,11 @@ describe('418 credit pass', () => {
     expect(report.counters).toMatchObject({ ablationError: 1, rideAlongUncredited: 1, ablationCapExceeded: 1 })
   })
   it.each(['valid', 'stale', 'missing-step', 'not-found', 'empty'] as const)('computes %s snapshot validity for positives and negatives', async (mode) => {
-    const state: ScreenState = makeScreenStateFixture()
+    const state = stateFixture()
     const observedStateDigest = distilledScreenStateDigest(state)
     const live: CompletedRunHandoff = { ...handoff, tests: [{
       testId: 'checkout', testIndex: 0, testName: 'Checkout', filePath: 'checkout.yaml', outcome: 'passed',
-      steps: mode === 'missing-step' ? [] : [{ stepIndex: 0, subActions: [{ stateBefore: state }] } as StepEvidence],
+      steps: mode === 'missing-step' ? [] : [liveStep(state)],
     }] }
     const readBundleStateDigests = vi.fn<CanaryCreditInput['readBundleStateDigests']>(() => mode === 'not-found'
       ? { kind: 'not-found' } : { kind: 'found', digests: mode === 'empty' ? []

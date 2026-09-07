@@ -114,6 +114,7 @@ function exercisedSubAction(): SubActionEvidence {
   const state = screen()
   return {
     plan: 'Click Checkout',
+    exchanges: [],
     plannedAction: { type: 'click', ref: asRef('checkout') },
     stateBefore: state,
     stateAfter: state,

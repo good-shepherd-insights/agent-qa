@@ -276,6 +276,7 @@ function subAction(input: {
   const elements = input.ref === undefined ? [] : [element(input.ref)]
   return {
     plan: input.ref === undefined ? 'Navigate' : `Use ${input.ref}`,
+    exchanges: [],
     plannedAction: input.ref === undefined
       ? { type: 'navigate', to: 'reload' }
       : { type: 'click', ref: asRef(input.ref) },

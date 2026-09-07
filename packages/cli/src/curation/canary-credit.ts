@@ -1,6 +1,6 @@
 // 2026-09-07, 418 D-01: the credit pass; DATA crosses the eval/knowledge wall here.
 import type { Benefit, CanaryOutcome, CompletedRunHandoff, CrossCheck } from '@vostride/agent-qa-schema'
-import { distilledScreenStateDigest } from '@vostride/agent-qa-schema'
+import { canonicalJson, distilledScreenStateDigest, exercisedAnchors, normalizeAnchor } from '@vostride/agent-qa-schema'
 import type { LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import type { NonSignalClass, ProjectedCanaryAttribution } from './emit-canary-outcomes.js'
 
@@ -123,7 +123,15 @@ export async function creditCanaryAttributions(
       const step = input.handoff.tests.find((test) =>
         test.testIndex === outcome.testIndex && test.testId === outcome.testId)
         ?.steps.find((candidate) => candidate.stepIndex === outcome.stepIndex)
-      const observed = step?.subActions?.[0]?.stateBefore
+      // Match the live target used by Gate2 extraction/staging. Cache-prefix state is not
+      // the live decision's input, and the step-only replay address cannot disambiguate
+      // multiple live decisions. The unique live action must exercise THIS row's anchor.
+      const live = step?.subActions?.filter(action => action.exchanges !== undefined) ?? []
+      const action = live.length === 1 ? live[0] : undefined
+      const observed = step !== undefined && action !== undefined
+        && exercisedAnchors({ ...step, subActions: [action] }).some(anchor =>
+          canonicalJson(normalizeAnchor(anchor)) === canonicalJson(normalizeAnchor(outcome.exercisedAnchor)))
+        ? action.stateBefore : undefined
       if (observed !== undefined) outcome.observedStateDigest = distilledScreenStateDigest(observed)
       const bundle = input.readBundleStateDigests({
         knowledgeRoot: input.knowledgeRoot, candidateId: outcome.candidateId,
@@ -137,6 +145,8 @@ export async function creditCanaryAttributions(
     if (outcome.runOutcome === 'positive') {
       if (!served || input.ablation === undefined) {
         counters.rideAlongUncredited += 1
+      } else if (outcome.observedStateDigest === undefined) {
+        counters.ablationInconclusive += 1
       } else if (ablatedCandidates.has(outcome.candidateId)) {
         counters.rideAlongUncredited += 1
       } else if (ablationsRun >= input.maxAblations) {
