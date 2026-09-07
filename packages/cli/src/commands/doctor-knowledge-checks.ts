@@ -43,6 +43,7 @@ import {
 
 import { resolveRawConfigKnowledgeRoot } from '../config.js'
 import { buildPromotionPostureResolver, type PromotionPostureResolution } from '../curation/promotion-posture.js'
+import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
 import type { ReplayGatePort } from '@vostride/agent-qa-agent'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import { readDaemonEventLedger, type DaemonEvent } from '../daemon/events.js'
@@ -342,6 +343,10 @@ export function createKnowledgeChecks(
     let learning: PromotionPostureResolution
     try {
       learning = await buildPosture({ configPath: input.configPath,
+        knowledgeRoot: root, agentQaRoot,
+        canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
+        lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
+        currentBuildOrdinal: product => latestBuildOrdinal({ root: agentQaRoot, product }),
         replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot }),
       })
     } catch (error) {

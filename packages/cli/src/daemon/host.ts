@@ -17,6 +17,8 @@ import type {
 import {
   composeJobRecovery,
   composeLocalAgent,
+  LOCAL_CURATION_CAPABILITIES,
+  latestBuildOrdinal,
   DIGEST_JOB_ID_SOURCE,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
@@ -978,10 +980,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let drainWorker: Promise<void> | undefined
   let maintenanceWorker: Promise<void> | undefined
   let authorPromise: Promise<CuratorAuthor> | undefined
-  const resolveHostPromotionPosture = (): Promise<ResolvePromotionPosture | undefined> =>
+  const resolveHostPromotionPosture = (currentBuildOrdinal?: number): Promise<ResolvePromotionPosture | undefined> =>
     input.configPath === undefined
       ? Promise.resolve(undefined)
       : buildPromotionPostureResolver({ configPath: input.configPath,
+          knowledgeRoot: input.knowledgeRoot, agentQaRoot: input.agentQaRoot,
+          canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
+          lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
+          currentBuildOrdinal: currentBuildOrdinal ?? (product => latestBuildOrdinal({ root: input.agentQaRoot, product })),
           replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot }),
         })
         .then(posture => promotionPostureResolverForHost(posture, message => logger.error(message)))
@@ -2174,14 +2180,15 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
               configPath: input.configPath, agentQaRoot: input.agentQaRoot,
             }) }),
           }
-          const resolvePromotionPosture = await resolveHostPromotionPosture()
+          const handoff = curationOperations.loadCompletedRunHandoff(
+            completedRunHandoffPath(input.agentQaRoot, curatedRunId),
+          )
+          const resolvePromotionPosture = await resolveHostPromotionPosture(handoff.buildOrdinal)
           const folded = await curateCompletedRun({
             operations: curationOperations,
             ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
             runDir: completedRunDir(input.agentQaRoot, curatedRunId),
-            handoff: curationOperations.loadCompletedRunHandoff(
-              completedRunHandoffPath(input.agentQaRoot, curatedRunId),
-            ),
+            handoff,
             knowledgeRoot: input.knowledgeRoot,
             agentQaRoot: input.agentQaRoot,
             auditSink: createCurationAuditSink(input.agentQaRoot),

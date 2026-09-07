@@ -433,6 +433,14 @@ function handedOffDrainReport() {
 }
 
 describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
+  it('418 the sweep binds posture from the loaded handoff ordinal', async () => {
+    const resolver = vi.fn(() => undefined)
+    const resolvePromotionPostureForRun = vi.fn(async () => resolver)
+    const operations = successfulOperations({ loadCompletedRunHandoff: () => ({ ...handoff(), buildOrdinal: 42 }) })
+    await runCurationTail(baseOptions(operations, { resolvePromotionPostureForRun }))
+    expect(resolvePromotionPostureForRun).toHaveBeenCalledWith(42)
+    expect(operations.drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver }))
+  })
   it('418 resolves and discloses the cap and passes snapshot data through the capability', async () => {
     const info = vi.fn()
     const operations = successfulOperations({

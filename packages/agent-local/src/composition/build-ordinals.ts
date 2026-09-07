@@ -20,5 +20,6 @@
 export {
   BuildOrdinalReservationError,
   reserveBuildOrdinalForProducts,
+  latestBuildOrdinal,
 } from '@vostride/agent-qa-runner-local'
 export { resolveBuildTag } from '@vostride/agent-qa-runner-local'

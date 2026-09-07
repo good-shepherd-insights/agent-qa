@@ -1,3 +1,4 @@
+import { GATE2_DEFAULT_MAX_LOWER_TRUST_PER_SCOPE } from '@vostride/agent-qa-schema'
 // The CLI composition-root sibling for the eval verbs (Phase 372, Plan 04 — the D-05 sibling of
 // the run session composition, which as of 385-08/D-13 is the local agent package's composition
 // subtree rather than a module beside this one). It discharges at ONE site what every eval verb (replay / score /
@@ -806,6 +807,10 @@ export const GATE1_DEFAULT_K = 3
 // ~20 calls / ~2.5 min, covering the <=2 cold-start reservation plus lower-trust actives.
 export const GATE2_DEFAULT_MAX_ABLATIONS = 4
 
+// 2026-09-07, 418 D-13: the >=5-unconfirmed-builds staleness law is the sizing
+// precedent: five natural builds with an unexercised anchor form a quiet horizon.
+export const GATE2_DEFAULT_CANARY_HORIZON_BUILDS = 5
+
 export function resolveGate2Caps(session: EvalSession, opts: { maxAblations?: number } = {}) {
   const maxAblations = opts.maxAblations ?? session.evalConfig.gate2?.maxAblations ?? GATE2_DEFAULT_MAX_ABLATIONS
   if (!Number.isSafeInteger(maxAblations) || maxAblations < 1) {
@@ -813,7 +818,15 @@ export function resolveGate2Caps(session: EvalSession, opts: { maxAblations?: nu
   }
   const maxAblationsSource = opts.maxAblations !== undefined ? 'flag' as const
     : session.evalConfig.gate2?.maxAblations !== undefined ? 'config' as const : 'default' as const
-  return { maxAblations, maxAblationsSource }
+  const canaryHorizonBuilds = session.evalConfig.gate2?.canaryHorizonBuilds ?? GATE2_DEFAULT_CANARY_HORIZON_BUILDS
+  const maxLowerTrustPerScope = session.evalConfig.gate2?.maxLowerTrustPerScope ?? GATE2_DEFAULT_MAX_LOWER_TRUST_PER_SCOPE
+  for (const [name, value] of Object.entries({ canaryHorizonBuilds, maxLowerTrustPerScope })) {
+    if (!Number.isSafeInteger(value) || value < 1) throw new TypeError(`eval.gate2.${name} must be a positive integer`)
+  }
+  return { maxAblations, maxAblationsSource, canaryHorizonBuilds, maxLowerTrustPerScope,
+    canaryHorizonBuildsSource: session.evalConfig.gate2?.canaryHorizonBuilds === undefined ? 'default' as const : 'config' as const,
+    maxLowerTrustPerScopeSource: session.evalConfig.gate2?.maxLowerTrustPerScope === undefined ? 'default' as const : 'config' as const,
+  }
 }
 
 export function readCanaryCorpusDigest(session: EvalSession): import('./curation/canary-credit.js').CanaryCorpusDigestResult {

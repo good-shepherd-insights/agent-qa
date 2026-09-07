@@ -29,6 +29,7 @@ import {
 import {
   BuildOrdinalReservationError,
   LOCAL_CURATION_CAPABILITIES,
+  latestBuildOrdinal,
   LOCAL_DAEMON_CAPABILITIES,
   reserveBuildOrdinalForProducts,
   resolveRunExecutionContext,
@@ -405,7 +406,12 @@ function recordInlineDrainSession(
 }
 
 async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
-  const posture = await buildPromotionPostureResolver({ configPath: paths.configPath })
+  const posture = await buildPromotionPostureResolver({ configPath: paths.configPath,
+    knowledgeRoot: paths.knowledgeRoot, agentQaRoot: paths.runtimeRoot,
+    canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
+    lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
+    currentBuildOrdinal: product => latestBuildOrdinal({ root: paths.runtimeRoot, product }),
+  })
   const resolvePromotionPosture = promotionPostureResolverForHost(posture, message => emitHuman(message, 'stderr'))
   const seenCandidateIds = new Set<string>()
   let inlineAuthority: { leaseId: string; epoch: number } | undefined

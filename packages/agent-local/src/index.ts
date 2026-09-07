@@ -315,6 +315,7 @@ export type {
 export {
   BuildOrdinalReservationError,
   reserveBuildOrdinalForProducts,
+  latestBuildOrdinal,
   resolveBuildTag,
 } from './composition/build-ordinals.js'
 

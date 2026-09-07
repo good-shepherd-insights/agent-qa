@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 import type { ReplayGatePort } from '@vostride/agent-qa-agent'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import type { PromotionPostureCandidate, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
+import { asEvidenceToken, evaluatePromotionGate, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
 import { readCommittedCorpus, readGatePostureFor } from '@vostride/agent-qa-eval-local'
 
 vi.mock('@vostride/agent-qa-eval-local', async importOriginal => {
@@ -78,6 +80,103 @@ afterEach(() => {
 })
 
 describe('buildPromotionPostureResolver', () => {
+  async function rarePath(options: {
+    now?: number | ((product: string) => number | undefined)
+    facts?: Record<string, number>
+    gate2Config?: string
+  } = {}) {
+    const f = fixture({ floor: true, config: config + (options.gate2Config ?? '') })
+    cpSync(join(demo, 'agent-qa-eval/corpus'), join(f.committedRoot, 'corpus'), { recursive: true })
+    const value = structuredClone(floor)
+    value.minimumGateSet = value.products['example-web'].minimumGateSet
+    writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), JSON.stringify(value))
+    const facts = { kind: 'found' as const, gate1PassOrdinal: 10, activeInScope: 3,
+      lowerTrustActiveInScope: 1, ...options.facts }
+    const canaryFacts = vi.fn(() => facts)
+    const lowerTrustShares = vi.fn(() => [{ product: 'example-web', active: 3, lowerTrust: 1 }])
+    const result = await subject!.buildPromotionPostureResolver({ configPath: f.configPath,
+      replayGate: { runReplayGate: vi.fn() }, knowledgeRoot: join(f.dir, 'knowledge'),
+      currentBuildOrdinal: options.now, canaryFacts, lowerTrustShares,
+    })
+    if (result.kind !== 'ready') throw new Error(`expected ready: ${JSON.stringify(result)}`)
+    const gate = (posture = result.resolve(candidate)) => {
+      const score = { baseline: 0, candidate: 1, delta: 1, floor: 0.1, n: 3 }
+      const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 1, candidateId: candidate.id,
+        verdict: 'pass', producedAtOrdinal: facts.gate1PassOrdinal, producedBy: { opId: 'fixture' },
+        perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score, sideEffect: score, loop: score },
+        corpusVersion: { corpusDigest: result.host.corpusDigest, partitionVersion: 1, gateSetSize: 40, excludedCount: 0, minimumGateSet: 13 },
+        samples: { k: 3, seeds: [1, 2, 3], seedHonored: true, modelCalls: 0 }, crossCheck: 'held',
+      })
+      return { receipt, verdict: evaluatePromotionGate({ kind: 'caution', status: 'candidate',
+        validityOpen: true, anchors: [{ t: 'error', message: 'timeout' }], originClass: 'agent-verified',
+        withheld: false, needsEnrichment: false, evidenceIncomplete: false,
+        distilledObservations: [{ error: { naturalKey: 'timeout', rootCauseClass: 'timeout' } }],
+        confirmedOutcomeEvidenceTokens: [asEvidenceToken('earlier-confirmation')],
+        hasUserDeprecateInLineage: false, memoryOffForAnchorGroup: false,
+        gatePosture: posture, gateReceipts: [receipt],
+      }) }
+    }
+    return { ...f, result, gate, facts, canaryFacts }
+  }
+
+  it('418 quiet horizon and cap room promote gate1-lower-trust citing the Gate-1 digest', async () => {
+    const f = await rarePath({ now: 15 })
+    expect(f.result.resolve(candidate)).toMatchObject({ canary: { kind: 'provided', rarePathEligible: true } })
+    const { verdict, receipt } = f.gate()
+    expect(verdict).toEqual({ verdict: 'promote', promotionPath: 'gate1-lower-trust', citedReceiptDigests: [receipt.receiptDigest] })
+    expect(f.canaryFacts).toHaveBeenCalledWith({ knowledgeRoot: join(f.dir, 'knowledge'), candidateId: candidate.id, scope: candidate.scope })
+    expect(f.result.host).toMatchObject({ lowerTrustShares: [{ product: 'example-web', active: 3, lowerTrust: 1 }],
+      canaryHorizonBuilds: 5, canaryHorizonBuildsSource: 'default',
+      maxLowerTrustPerScope: 2, maxLowerTrustPerScopeSource: 'default', notices: [] })
+    // Live cap reads: a previous promotion in this same drain consumes the final slot.
+    f.facts.lowerTrustActiveInScope = 2
+    expect(f.gate().verdict).toEqual({ verdict: 'hold', reason: 'gate2-receipt-required' })
+  })
+
+  it.each([
+    ['short horizon', 14, {}], ['attribution', 15, { latestAttributionOrdinal: 12 }],
+    ['Gate-2 abstain', 15, { latestGate2Ordinal: 11 }], ['cap full', 15, { lowerTrustActiveInScope: 2 }],
+    ['old candidate with fresh Gate-1', 15, { gate1PassOrdinal: 14 }],
+  ] as const)('418 holds %s', async (_name, now, facts) => {
+    const f = await rarePath({ now, facts })
+    expect(f.result.resolve(candidate)).toMatchObject({ canary: { rarePathEligible: false } })
+    expect(f.gate().verdict).toEqual({ verdict: 'hold', reason: 'gate2-receipt-required' })
+  })
+
+  it.each([undefined, 0, -1, NaN, Infinity, 1.5])('418 discloses absent or invalid now %s', async now => {
+    const f = await rarePath({ now })
+    expect(f.result.resolve(candidate)).toMatchObject({ canary: { rarePathEligible: false } })
+    expect(f.result.host.notices).toContain('no-current-build-ordinal')
+    const warn = vi.fn()
+    subject!.promotionPostureResolverForHost(f.result, warn)?.(candidate)
+    expect(warn).toHaveBeenCalledWith('curation: no-current-build-ordinal')
+  })
+
+  it('418 resolves config source words and refuses fact-read errors', async () => {
+    const f = await rarePath({ now: 15, gate2Config: '\neval:\n  gate2:\n    canaryHorizonBuilds: 6\n    maxLowerTrustPerScope: 3\n' })
+    expect(f.result.host).toMatchObject({ canaryHorizonBuilds: 6, canaryHorizonBuildsSource: 'config',
+      maxLowerTrustPerScope: 3, maxLowerTrustPerScopeSource: 'config' })
+    expect(f.gate().verdict).toEqual({ verdict: 'hold', reason: 'gate2-receipt-required' })
+    f.canaryFacts.mockImplementationOnce(() => { throw new Error('corrupt bundle') })
+    expect(f.result.resolve(candidate)).toMatchObject({ kind: 'unavailable', refusals: ['corrupt bundle'] })
+  })
+
+  it('418 binds each run ordinal and reads latest recorded now per candidate product', async () => {
+    const f = await rarePath({ now: product => latestBuildOrdinal({ root: runtime, product }) })
+    const runtime = join(f.dir, '.agent-qa')
+    mkdirSync(runtime)
+    writeFileSync(join(runtime, 'build-ordinals.json'), JSON.stringify({ 'example-web': 15, second: 14 }))
+    expect(f.result.resolve(candidate)).toMatchObject({ canary: { rarePathEligible: true } })
+    expect(f.result.resolve({ ...candidate, product: 'second' })).toMatchObject({ canary: { rarePathEligible: false } })
+    expect(f.result.resolve({ ...candidate, product: 'absent' })).toMatchObject({ canary: { rarePathEligible: false } })
+    expect(f.result.host.notices).toContain('no-current-build-ordinal')
+    const run14 = subject!.promotionPostureResolverForHost(f.result, undefined, 14)!
+    const run15 = subject!.promotionPostureResolverForHost(f.result, undefined, 15)!
+    expect(run14(candidate)).toMatchObject({ canary: { rarePathEligible: false } })
+    expect(run15(candidate)).toMatchObject({ canary: { rarePathEligible: true } })
+    expect(run14(candidate)).toMatchObject({ canary: { rarePathEligible: false } })
+  })
+
   it('417 binds the production port with a floor and still holds a present broken root', async () => {
     for (const hasFloor of [true, false]) {
       const f = fixture({ floor: hasFloor })

@@ -65,6 +65,8 @@ import type {
 } from '@vostride/agent-qa-agent'
 import {
   composeLocalAgent,
+  LOCAL_CURATION_CAPABILITIES,
+  latestBuildOrdinal,
   resolveRunExecutionContext,
   sensitiveEnvSlice,
 } from '@vostride/agent-qa-agent-local'
@@ -3635,11 +3637,15 @@ export function createChatConfirmPort(
 }
 
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {
-  const resolvePromotionPosture = input.resolvePromotionPosture ?? (() =>
+  const resolvePromotionPosture = input.resolvePromotionPosture ?? (async () =>
     buildPromotionPostureResolver({ configPath: input.configPath,
+      knowledgeRoot: await knowledgeRoot(), agentQaRoot: input.agentQaRoot,
+      canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
+      lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
+      currentBuildOrdinal: product => latestBuildOrdinal({ root: input.agentQaRoot, product }),
       replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot }),
     })
-      .then(result => promotionPostureResolverForHost(result)))
+      .then(result => promotionPostureResolverForHost(result, message => console.warn(message))))
   // Narrowed once, here, so the hook closures below close over a value TypeScript knows is present
   // rather than re-reading an optional field at call time.
   const analytics = input.analytics

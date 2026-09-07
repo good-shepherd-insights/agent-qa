@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { ReplayGatePort } from '@vostride/agent-qa-agent'
+import type { LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import type { JudgeCapabilityInput } from '../eval-session-composition.js'
 import type {
   PromotionCanaryPosture,
@@ -18,17 +19,35 @@ export interface PromotionPostureHostFacts {
   corpusDigest: string
   minimumGateSet: number
   profileKey: string
+  lowerTrustShares: ReturnType<LocalCurationCapabilities['readLowerTrustShares']>
+  canaryHorizonBuilds: number
+  canaryHorizonBuildsSource: 'config' | 'default'
+  maxLowerTrustPerScope: number
+  maxLowerTrustPerScopeSource: 'config' | 'default'
+  notices: string[]
 }
+
+// A run-bound override reuses prepared identity, while each candidate still reads
+// current bundle/corpus facts. Non-run hosts read the product's latest ordinal.
+type ResolveAtBuildOrdinal = (
+  candidate: Parameters<ResolvePromotionPosture>[0], currentBuildOrdinal?: number,
+) => ReturnType<ResolvePromotionPosture>
 
 export type PromotionPostureResolution =
   | { kind: 'no-eval-root'; committedRoot: string }
   | { kind: 'unavailable'; committedRoot: string; refusals: readonly string[]; resolve: ResolvePromotionPosture }
-  | { kind: 'ready'; committedRoot: string; host: PromotionPostureHostFacts; resolve: ResolvePromotionPosture }
+  | { kind: 'ready'; committedRoot: string; host: PromotionPostureHostFacts; resolve: ResolveAtBuildOrdinal }
 
 /** Prepare before each operation or drain; candidate reads stay synchronous under authority. */
 export async function buildPromotionPostureResolver(input: {
   configPath: string
   replayGate?: ReplayGatePort
+  canaryFacts?: LocalCurationCapabilities['readCanaryPostureFacts']
+  lowerTrustShares?: LocalCurationCapabilities['readLowerTrustShares']
+  knowledgeRoot?: string
+  agentQaRoot?: string
+  currentBuildOrdinal?: number | ((product: string) => number | undefined)
+  notice?: (message: string) => void
 }): Promise<PromotionPostureResolution> {
   const { configPath, replayGate } = input
   const committedRoot = resolve(dirname(resolve(configPath)), 'agent-qa-eval')
@@ -48,10 +67,21 @@ export async function buildPromotionPostureResolver(input: {
   })
   try {
     const { resolveEvalSession, resolveGateProfileIdentity, readCommittedCorpus,
-      readGatePostureFor, resolveMinimumGateSet, selectGateSet, computeCorpusDigest,
+      readGatePostureFor, resolveMinimumGateSet, selectGateSet, computeCorpusDigest, resolveGate2Caps,
     } = await import('../eval-session-composition.js')
     const session = await resolveEvalSession({ configPath, keyOnly: true })
     const identity = await resolveGateProfileIdentity(session)
+    const caps = resolveGate2Caps(session)
+    const notices: string[] = []
+    const validOrdinal = (value: number | undefined): value is number =>
+      value !== undefined && Number.isSafeInteger(value) && value > 0
+    const noticeNoOrdinal = () => {
+      if (!notices.includes('no-current-build-ordinal')) notices.push('no-current-build-ordinal')
+      input.notice?.('no-current-build-ordinal')
+    }
+    if (typeof input.currentBuildOrdinal !== 'function' && !validOrdinal(input.currentBuildOrdinal)) noticeNoOrdinal()
+    const lowerTrustShares = input.knowledgeRoot === undefined ? []
+      : input.lowerTrustShares?.({ knowledgeRoot: input.knowledgeRoot }) ?? []
     const floor = resolveMinimumGateSet({ committedRoot, profileKey: identity.profileKey })
     if (floor.kind === 'no-floor') {
       return refused([`noise-floor: no artefact for profile ${identity.profileKey}`])
@@ -73,7 +103,7 @@ export async function buildPromotionPostureResolver(input: {
       committedRoot, scope: { tier: 'global', key: 'global' }, minimumGateSet, judge, canary,
     })
     if (hostRead.refusals.length > 0) return refused(refusalLines(hostRead.refusals))
-    const resolvePosture: ResolvePromotionPosture = candidate => {
+    const resolvePosture: ResolveAtBuildOrdinal = (candidate, ordinalOverride) => {
       try {
         if (!existsSync(committedRoot)) return undefined
         // A drain can retain this resolver across candidates. Both selection inputs
@@ -88,7 +118,26 @@ export async function buildPromotionPostureResolver(input: {
         const minimumGateSet = currentFloor.minimumGateSet
         const currentCorpus = readCommittedCorpus(committedRoot)
         if (currentCorpus.refusals.length > 0) return unavailable(refusalLines(currentCorpus.refusals))
-        const read = readGatePostureFor({ committedRoot, scope: candidate.scope, minimumGateSet, judge, canary })
+        const currentBuildOrdinal = ordinalOverride ?? (typeof input.currentBuildOrdinal === 'function'
+          ? input.currentBuildOrdinal(candidate.product) : input.currentBuildOrdinal)
+        if (!validOrdinal(currentBuildOrdinal)) noticeNoOrdinal()
+        else notices.splice(0, notices.length)
+        const facts = input.knowledgeRoot === undefined ? undefined : input.canaryFacts?.({
+          knowledgeRoot: input.knowledgeRoot, candidateId: candidate.id, scope: candidate.scope,
+        })
+        const canary: PromotionCanaryPosture = {
+          kind: facts === undefined ? 'not-provided' : 'provided',
+          rarePathEligible: facts?.kind === 'found' && facts.gate1PassOrdinal !== undefined
+            && validOrdinal(currentBuildOrdinal)
+            && currentBuildOrdinal - facts.gate1PassOrdinal >= caps.canaryHorizonBuilds
+            && (facts.latestAttributionOrdinal === undefined || facts.latestAttributionOrdinal <= facts.gate1PassOrdinal)
+            && (facts.latestGate2Ordinal === undefined || facts.latestGate2Ordinal <= facts.gate1PassOrdinal)
+            && facts.lowerTrustActiveInScope < caps.maxLowerTrustPerScope,
+        }
+        // The eval reader's canary census has a different contract (attributedRows
+        // plus skippedBundles). Eligibility is our candidate DATA, returned below.
+        const read = readGatePostureFor({ committedRoot, scope: candidate.scope, minimumGateSet, judge,
+          canary: { kind: 'not-provided' } })
         if (read.refusals.length > 0) return unavailable(refusalLines(read.refusals))
         if (computeCorpusDigest(currentCorpus.snapshot.entries) !== read.posture.corpusDigest) {
           return unavailable([`${committedRoot}: corpus changed during posture resolution`])
@@ -118,7 +167,11 @@ export async function buildPromotionPostureResolver(input: {
     return {
       kind: 'ready', committedRoot, resolve: resolvePosture,
       host: { replayGateAvailable, judge: judgeFacts(hostRead.posture.judge), canary,
-        corpusDigest: hostRead.posture.corpusDigest, minimumGateSet, profileKey: identity.profileKey },
+        corpusDigest: hostRead.posture.corpusDigest, minimumGateSet, profileKey: identity.profileKey,
+        lowerTrustShares, canaryHorizonBuilds: caps.canaryHorizonBuilds,
+        canaryHorizonBuildsSource: caps.canaryHorizonBuildsSource,
+        maxLowerTrustPerScope: caps.maxLowerTrustPerScope,
+        maxLowerTrustPerScopeSource: caps.maxLowerTrustPerScopeSource, notices },
     }
   } catch (error) {
     return refused([error instanceof Error ? error.message : String(error)])
@@ -139,6 +192,7 @@ export function renderPromotionLine(entry: {
 export function promotionPostureResolverForHost(
   resolution: PromotionPostureResolution,
   warn?: (message: string) => void,
+  currentBuildOrdinal?: number,
 ): ResolvePromotionPosture | undefined {
   if (resolution.kind === 'unavailable') {
     warn?.(`curation: posture unavailable: ${resolution.refusals.join('; ')}`)
@@ -151,7 +205,10 @@ export function promotionPostureResolverForHost(
         ? { kind: 'unavailable' as const, replayGateAvailable: false,
           refusals: [`${resolution.committedRoot}: eval root appeared after posture preparation; retry with fresh posture`] }
         : undefined
-      : resolution.resolve(candidate)
+      : resolution.kind === 'ready' ? resolution.resolve(candidate, currentBuildOrdinal) : resolution.resolve(candidate)
+    if (resolution.kind === 'ready' && resolution.host.notices.includes('no-current-build-ordinal')) {
+      warn?.('curation: no-current-build-ordinal')
+    }
     if (posture?.kind === 'unavailable') {
       warn?.(`curation: ${candidate.id} posture unavailable: ${posture.refusals.join('; ')}`)
     }

@@ -165,17 +165,44 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     try {
       const tail = runPostRunTail(options(h))
       await tail.drain()
-      expect(build).toHaveBeenCalledExactlyOnceWith({ configPath })
+      expect(build).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ configPath, knowledgeRoot, agentQaRoot, canaryFacts: expect.any(Function), lowerTrustShares: expect.any(Function) }))
       expect(build.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(h.operations.acquireWriterLease).mock.invocationCallOrder[0])
       const swept = h.runCurationTail.mock.calls[0]![0] as { resolvePromotionPosture?: ResolvePromotionPosture }
       expect(swept.resolvePromotionPosture).toBeTypeOf('function')
       const composed = vi.mocked(h.operations.composeHost).mock.calls[0][0]
       await composed.curateRun({ runId, executionContext: 'local-headless' })
-      expect(h.operations.curateCompletedRun).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: swept.resolvePromotionPosture }))
+      expect(h.operations.curateCompletedRun).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: expect.any(Function) }))
+      expect(build).toHaveBeenCalledTimes(1)
       expect(h.warn).toHaveBeenCalledWith('curation: posture unavailable: partition refused')
     } finally {
       build.mockRestore()
     }
+  })
+  it('418 reuses prepared identity with distinct own-run and janitor ordinal bindings', async () => {
+    const h = harness()
+    const resolve = vi.fn(() => undefined)
+    const build = vi.spyOn(promotionPosture, 'buildPromotionPostureResolver').mockResolvedValue({
+      kind: 'ready', committedRoot: '/project/agent-qa-eval', resolve,
+      host: { notices: [] } as unknown as promotionPosture.PromotionPostureHostFacts,
+    })
+    vi.mocked(h.operations.loadCompletedRunHandoff).mockReturnValue({ ...handoff, buildOrdinal: 15 })
+    try {
+      await runPostRunTail(options(h)).drain()
+      const composed = vi.mocked(h.operations.composeHost).mock.calls[0]![0]
+      await composed.curateRun({ runId, executionContext: 'local-headless' })
+      const own = vi.mocked(h.operations.curateCompletedRun).mock.calls[0]![0].resolvePromotionPosture!
+      const sweep = h.runCurationTail.mock.calls[0]![0] as {
+        resolvePromotionPostureForRun: (ordinal: number) => Promise<ResolvePromotionPosture>
+      }
+      const prior = await sweep.resolvePromotionPostureForRun(11)
+      const candidate = { id: 'candidate', product: 'shop', scope: { tier: 'product' as const, key: 'shop' },
+        provenance: { runIds: [], receiptDigests: [], capturedAtOrdinals: [] } }
+      own(candidate)
+      prior(candidate)
+      own(candidate)
+      expect(resolve.mock.calls).toEqual([[candidate, 15], [candidate, 11], [candidate, 15]])
+      expect(build).toHaveBeenCalledTimes(1)
+    } finally { build.mockRestore() }
   })
   it('hands off with a nudge and returns immediately when the lease is held', async () => {
     const h = harness({ lease: { kind: 'held', holder: { pid: 4242 } } as never })

@@ -364,7 +364,7 @@ describe('createKnowledgeChecks', () => {
     [true, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'provided', attributedRows: 0, rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge anthropic; canary evidence 0)'],
   ] as const)('reports Learning mode for bound=%s, judge=%j, canary=%j', async (replayGateAvailable, judge, canary, status, message) => {
     const project = makeProject()
-    const host: PromotionPostureHostFacts = { replayGateAvailable, judge, canary, corpusDigest: 'a'.repeat(64), minimumGateSet: 3, profileKey: 'test-profile' }
+    const host: PromotionPostureHostFacts = { lowerTrustShares: [], canaryHorizonBuilds: 5, canaryHorizonBuildsSource: 'default', maxLowerTrustPerScope: 2, maxLowerTrustPerScopeSource: 'default', notices: [], replayGateAvailable, judge, canary, corpusDigest: 'a'.repeat(64), minimumGateSet: 3, profileKey: 'test-profile' }
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'ready', committedRoot: join(project.projectRoot, 'agent-qa-eval'), host, resolve: () => undefined }),
     }))
@@ -412,9 +412,11 @@ describe('createKnowledgeChecks', () => {
     await Promise.all(checks.map(check => check.check()))
     expect(classifyIndexFace).toHaveBeenCalledTimes(1)
     expect(resolveEmbedderCapability).toHaveBeenCalledTimes(1)
-    expect(buildPromotionPosture).toHaveBeenCalledExactlyOnceWith({ configPath: project.configPath,
+    expect(buildPromotionPosture).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ configPath: project.configPath,
       replayGate: { runReplayGate: expect.any(Function) },
-    })
+      canaryFacts: expect.any(Function), lowerTrustShares: expect.any(Function),
+      currentBuildOrdinal: expect.any(Function),
+    }))
   })
 
   it('hard-codes allowDownload false on the capability probe (D-20: asking must not change the answer)', async () => {

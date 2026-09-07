@@ -79,6 +79,7 @@ import type { CanaryCreditCounters } from './canary-credit.js'
 import { NON_SIGNAL_CLASSES } from './emit-canary-outcomes.js'
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
+import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 
 /**
  * What became of the durable hand-off.
@@ -467,11 +468,18 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   let analyzeRunCompleted = false
   let host: LocalAgentHost | undefined
   let knowledgeRoot: string | undefined
-  let posturePromise: Promise<RunCurationTailOptions['resolvePromotionPosture']> | undefined
+  let posturePromise: ReturnType<typeof buildPromotionPostureResolver> | undefined
   let resolvePromotionPosture: RunCurationTailOptions['resolvePromotionPosture']
-  const preparePromotionPosture = () => posturePromise ??=
-    buildPromotionPostureResolver({ configPath: opts.configPath })
-      .then(posture => promotionPostureResolverForHost(posture, message => opts.log.warn(message)))
+  const preparePromotionPosture = (currentBuildOrdinal?: number) => {
+    posturePromise ??= buildPromotionPostureResolver({ configPath: opts.configPath,
+      knowledgeRoot, agentQaRoot: opts.agentQaRoot,
+      canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
+      lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
+    })
+    return posturePromise.then(posture => promotionPostureResolverForHost(
+      posture, message => opts.log.warn(message), currentBuildOrdinal,
+    ))
+  }
   /**
    * The lease the pump holds, read by `curateRun` at CLAIM time rather than at composition
    * time. The host is composed before the lease is acquired — the enqueue must not wait on a
@@ -491,10 +499,11 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       completedRunHandoffPath(opts.agentQaRoot, input.runId),
     )
     const deadlineMs = input.deadlineMs ?? drainDeadlineMs
+    const runPromotionPosture = await preparePromotionPosture(handoff.buildOrdinal)
     const folded = await ops().curateCompletedRun({
       ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
       ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),
-      ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
+      ...(runPromotionPosture === undefined ? {} : { resolvePromotionPosture: runPromotionPosture }),
       runDir: curatedRunDir,
       handoff,
       knowledgeRoot,
@@ -718,6 +727,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // (Pitfall 11). This run's own directory is already receipted by the fold the chain
         // just ran, so the sweep skips it rather than folding it twice.
         await ops().runCurationTail({
+          resolvePromotionPostureForRun: preparePromotionPosture,
           ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
           ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),
           ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
