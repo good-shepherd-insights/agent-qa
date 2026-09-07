@@ -809,6 +809,8 @@ export type ReplayGateVerbResult = import('./gates/replay-gate-host.js').ReplayG
 }
 
 export interface ReplayGateVerbOptions {
+  /** Host runtime artifacts and audit root; config and committed roots remain config-relative. */
+  agentQaRoot?: string
   k?: number
   maxScreens?: number
   dryRun?: boolean
@@ -877,7 +879,7 @@ export async function runReplayGateVerb(
   const { createReplayGateHost } = await import('./gates/replay-gate-host.js')
   const result = await createReplayGateHost({
     configPath: session.configPath,
-    agentQaRoot: resolve(session.configDir, '.agent-qa'),
+    agentQaRoot: opts.agentQaRoot ?? resolve(session.configDir, '.agent-qa'),
     record: opts.dryRun !== true,
     session: { ...session, maskingContextFactory: () => maskingContextFactory() },
     composition: {

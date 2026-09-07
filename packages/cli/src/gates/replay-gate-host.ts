@@ -54,6 +54,25 @@ export interface ReplayGateHost {
   port: ReplayGatePort
   run(candidateId: string): Promise<ReplayGateVerbResult>
 }
+/** Binding is free: resolve current configuration only when an operator invokes the gate. */
+export function createReplayGatePortForHost(input: {
+  configPath: string
+  agentQaRoot: string
+}): ReplayGatePort {
+  return {
+    async runReplayGate(candidateId) {
+      const { resolveEvalSession, runReplayGateVerb } =
+        await import('../eval-session-composition.js')
+      const session = await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
+      const result = await runReplayGateVerb(session, candidateId, {
+        agentQaRoot: input.agentQaRoot,
+        onProgress: () => undefined,
+      })
+      if (result.kind === 'refused') throw new Error(result.refusal.reason)
+      return result.receipt
+    },
+  }
+}
 export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
   const configDir = dirname(resolve(deps.configPath))
   const knowledgeRoot = resolveConfiguredKnowledgeRoot(deps.session.config, configDir)
@@ -129,7 +148,7 @@ export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
   return {
     run,
     port: {
-      runReplayGate: async (id) => {
+      async runReplayGate(id) {
         const result = await run(id)
         if (result.kind === 'refused') throw new Error(result.refusal.reason)
         return result.receipt

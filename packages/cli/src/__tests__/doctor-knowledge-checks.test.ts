@@ -343,7 +343,17 @@ describe('createKnowledgeChecks', () => {
     expect(learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), committedRoot)}` })
   })
 
+  it('passes the production replay port to the posture probe', async () => {
+    const project = makeProject()
+    const buildPromotionPosture = vi.fn(async () => ({ kind: 'no-eval-root' as const, committedRoot: join(project.projectRoot, 'agent-qa-eval') }))
+    await runChecks(project, baseProbes({ buildPromotionPosture }))
+    expect(buildPromotionPosture).toHaveBeenCalledWith(expect.objectContaining({
+      configPath: expect.any(String), replayGate: { runReplayGate: expect.any(Function) },
+    }))
+  })
+
   it.each([
+    [true, { capable: false, reason: 'no-judge-configured' }, { kind: 'not-provided', rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge none; canary evidence none)'],
     [false, { capable: false, reason: 'no-judge-configured' }, { kind: 'not-provided', rarePathEligible: false }, 'warn', 'deterministic-verdict-floor — no replay gate bound, no judge configured'],
     [false, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'not-provided', rarePathEligible: false }, 'warn', 'deterministic-verdict-floor — no replay gate bound; judge anthropic configured'],
     [true, { capable: true, reason: 'eligible', judgeFamily: 'anthropic' }, { kind: 'provided', attributedRows: 4, rarePathEligible: false }, 'pass', 'gated (Gate 1 bound; judge anthropic; canary evidence 4)'],
@@ -402,7 +412,9 @@ describe('createKnowledgeChecks', () => {
     await Promise.all(checks.map(check => check.check()))
     expect(classifyIndexFace).toHaveBeenCalledTimes(1)
     expect(resolveEmbedderCapability).toHaveBeenCalledTimes(1)
-    expect(buildPromotionPosture).toHaveBeenCalledExactlyOnceWith({ configPath: project.configPath })
+    expect(buildPromotionPosture).toHaveBeenCalledExactlyOnceWith({ configPath: project.configPath,
+      replayGate: { runReplayGate: expect.any(Function) },
+    })
   })
 
   it('hard-codes allowDownload false on the capability probe (D-20: asking must not change the answer)', async () => {

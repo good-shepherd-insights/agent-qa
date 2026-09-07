@@ -21,6 +21,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from '../curation/promotion-posture.js'
+import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import { createHash } from 'node:crypto'
 import {
   closeSync,
@@ -3633,7 +3634,9 @@ export function createChatConfirmPort(
 
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {
   const resolvePromotionPosture = input.resolvePromotionPosture ?? (() =>
-    buildPromotionPostureResolver({ configPath: input.configPath })
+    buildPromotionPostureResolver({ configPath: input.configPath,
+      replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot }),
+    })
       .then(result => promotionPostureResolverForHost(result)))
   // Narrowed once, here, so the hook closures below close over a value TypeScript knows is present
   // rather than re-reading an optional field at call time.

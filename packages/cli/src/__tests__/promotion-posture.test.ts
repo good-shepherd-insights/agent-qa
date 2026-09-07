@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ReplayGatePort } from '@vostride/agent-qa-agent'
+import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import type { PromotionPostureCandidate, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 import { readCommittedCorpus, readGatePostureFor } from '@vostride/agent-qa-eval-local'
 
@@ -77,6 +78,23 @@ afterEach(() => {
 })
 
 describe('buildPromotionPostureResolver', () => {
+  it('417 binds the production port with a floor and still holds a present broken root', async () => {
+    for (const hasFloor of [true, false]) {
+      const f = fixture({ floor: hasFloor })
+      const result = await build(f.configPath, createReplayGatePortForHost({ configPath: f.configPath, agentQaRoot: join(f.dir, '.agent-qa') }))
+      expect(result?.kind).toBe(hasFloor ? 'ready' : 'unavailable')
+      if (hasFloor) expect(result.host.replayGateAvailable).toBe(true)
+      expect(result.resolve(candidate)).toMatchObject({ kind: hasFloor ? 'resolved' : 'unavailable', replayGateAvailable: true })
+    }
+  })
+
+  it('417 leaves the absent-root BYOM floor identical and never invokes the bound port', async () => {
+    const f = fixture({ root: false, config: 'broken: [yaml' })
+    const runReplayGate = vi.fn()
+    expect(await build(f.configPath, { runReplayGate })).toEqual(await build(f.configPath))
+    expect(runReplayGate).not.toHaveBeenCalled()
+  })
+
   it('D-12 absent eval root returns no-eval-root without reading invalid config', async () => {
     const f = fixture({ root: false, config: 'broken: [yaml' })
     expect(await build(f.configPath)).toEqual({ kind: 'no-eval-root', committedRoot: f.committedRoot })

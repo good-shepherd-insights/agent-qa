@@ -43,6 +43,8 @@ import {
 
 import { resolveRawConfigKnowledgeRoot } from '../config.js'
 import { buildPromotionPostureResolver, type PromotionPostureResolution } from '../curation/promotion-posture.js'
+import type { ReplayGatePort } from '@vostride/agent-qa-agent'
+import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import { readDaemonEventLedger, type DaemonEvent } from '../daemon/events.js'
 import type { CheckResult, DoctorCheck } from './doctor.js'
 
@@ -87,7 +89,7 @@ const INDEX_PRESENT: IndexFace = { source: 'index' }
 const SKIPPED: CheckResult = { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE }
 
 export interface KnowledgeCheckProbes {
-  buildPromotionPosture?: (input: { configPath: string }) => Promise<PromotionPostureResolution>
+  buildPromotionPosture?: (input: { configPath: string; replayGate?: ReplayGatePort }) => Promise<PromotionPostureResolution>
   classifyIndexFace?: (knowledgeRoot: string) => IndexFace
   resolveEmbedderCapability?: (options: {
     preferredProfile: EmbeddingProfile
@@ -339,7 +341,9 @@ export function createKnowledgeChecks(
     const face = classify(root)
     let learning: PromotionPostureResolution
     try {
-      learning = await buildPosture({ configPath: input.configPath })
+      learning = await buildPosture({ configPath: input.configPath,
+        replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot }),
+      })
     } catch (error) {
       const refusals = [error instanceof Error ? error.message : String(error)]
       learning = {

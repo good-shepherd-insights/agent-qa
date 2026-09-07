@@ -6,6 +6,7 @@ import type { Readable } from 'node:stream'
 import { isDeepStrictEqual } from 'node:util'
 import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
+import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 
 import type {
   ConfigReaderPort,
@@ -979,7 +980,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   const resolveHostPromotionPosture = (): Promise<ResolvePromotionPosture | undefined> =>
     input.configPath === undefined
       ? Promise.resolve(undefined)
-      : buildPromotionPostureResolver({ configPath: input.configPath })
+      : buildPromotionPostureResolver({ configPath: input.configPath,
+          replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot }),
+        })
         .then(posture => promotionPostureResolverForHost(posture, message => logger.error(message)))
   let embedderWorkerIdleTimer: ReturnType<typeof setTimeout> | undefined
 
