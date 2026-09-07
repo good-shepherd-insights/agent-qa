@@ -195,6 +195,8 @@ export interface RunReplayGateInput {
   kSource: Gate1KSource
   maxScreens: number
   baselineSeed: { seed?: number; source: 'flag' | 'config' } | { floorSeeds: readonly number[] }
+  /** Effective CLI selection for a copyable, spend-bearing cache recovery command. */
+  baselineWarmup?: { configPath: string; judge?: string }
   maskingContextFactory?: RunCassetteReplayInput['maskingContextFactory']
   producedBy: { opId: string }
   clock?: () => number
@@ -670,9 +672,19 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
   }
   const uncached = cache.rows.filter((row) => row.kind === 'uncached')
   if (uncached.length) {
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+    const config =
+      input.baselineWarmup === undefined
+        ? ''
+        : ` --config ${quote(input.baselineWarmup.configPath)}`
+    const judge =
+      input.baselineWarmup?.judge === undefined
+        ? ''
+        : ` --judge ${quote(input.baselineWarmup.judge)}`
     notices.push(
       `uncached: ${uncached.map((row) => row.cassetteId).join(', ')}`,
-      `eval replay --source committed --seed ${seed}`,
+      `agent-qa${config} eval gate --seed ${seed}${judge}`,
+      'Baseline warm-up spends planner and configured judge calls; then re-run eval replay-gate.',
     )
     return abstain('baseline-uncached')
   }

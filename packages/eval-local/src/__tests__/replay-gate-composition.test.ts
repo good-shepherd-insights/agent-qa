@@ -845,7 +845,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     expect(authCalls).toBe(0)
     if (mode === 'baseline-uncached')
       expect(result.kind === 'receipt' && result.lines).toContain(
-        'eval replay --source committed --seed 11',
+        'agent-qa eval gate --seed 11',
       )
   })
   it('names every stale cassette in corpus order with the warm-up line', async () => {
@@ -865,7 +865,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     expect(receipt(result).reasons).toEqual(['baseline-uncached'])
     expect(result.notices).toContain(`uncached: ${ids.join(', ')}`)
     expect(result.kind === 'receipt' && result.lines).toContain(
-      'eval replay --source committed --seed 11',
+      'agent-qa eval gate --seed 11',
     )
     expect(stub.captured).toHaveLength(0)
   })

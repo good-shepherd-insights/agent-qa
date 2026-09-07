@@ -9,7 +9,7 @@ import { Command } from 'commander'
 import { APICallError } from 'ai'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, appendFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, appendFile, rename } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
@@ -37,6 +37,7 @@ import type {
   CorpusCensus,
   DecisionCorrectnessVector,
   JudgeIdentityBlock,
+  LeafCassette,
   SeedPolicy,
 } from '@vostride/agent-qa-eval'
 import type { createModel, ModelProfile, ModelProviderOverrides } from '@vostride/agent-qa-model'
@@ -73,6 +74,8 @@ import {
   computeReplayProfileFingerprintFor,
   loadStagedReport,
   readCommittedCorpus,
+  resolveBaselineCache,
+  runReplayGate,
 } from '@vostride/agent-qa-eval-local'
 import {
   EvalNamedInputError,
@@ -329,6 +332,7 @@ describe('417 replay-gate command', () => {
     expect(input.judge?.profile.model).toBe('gpt-judge')
     expect('allowSameFamily' in input.judge!).toBe(false)
     expect(input.judgeOverrideConfigured).toBe(true)
+    expect(input.baselineWarmup).toEqual({ configPath, judge: 'selected-judge' })
   })
   it('keeps ordinary eval replay k=1 valid', async () => {
     const fixture = await floorVerbFixture()
@@ -421,6 +425,84 @@ describe('runGateVerb — fresh and offline release verdicts', () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network forbidden in gate fixture'))
   })
   afterEach(() => vi.restoreAllMocks())
+
+  it('follows the advertised cold-cache producer command and resolves its actual seeded records', async () => {
+    // Runtime fixture imports keep peer package source outside this package's TS rootDir.
+    const gateFixturePath = resolve(import.meta.dirname, '../../../../eval-local/src/__tests__/fixtures/gate1-fixtures.ts')
+    const replayFixturePath = resolve(import.meta.dirname, '../../../../eval-local/src/__tests__/fixtures/replay-fixtures.ts')
+    const { writeGate1Fixture, gate1Responder } = await import(gateFixturePath)
+    const { respondingStub, stubProfile, noneAuth } = await import(replayFixturePath)
+    const { dir, configPath } = await writeReplayFixture('', stubProfile().model)
+    await writeFile(
+      configPath,
+      (await readFile(configPath, 'utf8')).replace('localhost:9999', 'localhost:1'),
+    )
+    const f = writeGate1Fixture(dir)
+    const committedRoot = join(dir, 'agent-qa-eval')
+    await rename(f.committedRoot, committedRoot)
+    const planner = respondingStub(gate1Responder(f))
+    const overrides = { languageModels: planner.languageModels }
+    const session = await sessionFor(configPath)
+    const identity = await evalVerbs.resolveGateProfileIdentity(session, overrides)
+    expect(identity).toEqual(f.identity)
+    const cold = await runReplayGate({
+      injection: f.injection,
+      committedRoot,
+      agentQaRoot: f.agentQaRoot,
+      identity,
+      planner: {
+        profile: stubProfile(),
+        resolveAuth: async () => noneAuth,
+        modelOverrides: overrides,
+      },
+      judgeOverrideConfigured: false,
+      k: 3,
+      kSource: 'default',
+      maxScreens: 64,
+      baselineSeed: { seed: 29, source: 'config' },
+      baselineWarmup: { configPath },
+      producedBy: { opId: 'eval.replay-gate' },
+    })
+    expect(cold.kind).toBe('receipt')
+    if (cold.kind !== 'receipt') throw new Error(JSON.stringify(cold))
+    expect(cold.receipt.reasons).toEqual(['baseline-uncached'])
+    expect(planner.captured).toHaveLength(0)
+    expect(cold.notices.join('\n')).toContain('spends planner and configured judge calls')
+    const command = cold.lines.find((line) => line.startsWith('agent-qa '))!
+    // Parse the actual advertised arguments (the fixture path has no embedded quotes).
+    const argv = command
+      .match(/'[^']*'|\S+/g)!
+      .slice(1)
+      .map((arg) => (arg.startsWith("'") ? arg.slice(1, -1) : arg))
+    const actualGate = evalVerbs.runGateVerb
+    vi.spyOn(evalVerbs, 'runGateVerb').mockImplementation((resolved, opts) =>
+      actualGate(resolved, { ...opts, plannerOverrides: overrides }),
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await new Command()
+      .option('--config <path>')
+      .addCommand(createEvalCommand())
+      .parseAsync(argv, { from: 'user' })
+    expect(planner.captured).toHaveLength(6)
+    expect(planner.captured.every((call: CapturedCallOptions) => call.seed === 29)).toBe(true)
+    const cache = resolveBaselineCache({
+      agentQaRoot: f.agentQaRoot,
+      ...identity,
+      gateRootSeed: 11,
+      gateRootSeedSource: 'config',
+      cassettes: f.selected.map(({ cassette }: { cassette: LeafCassette }) => ({
+        id: cassette.id,
+        promptInputHash: cassette.receipt.promptInputHash,
+      })),
+    })
+    expect(
+      cache.rows.every(
+        (row) => row.kind === 'cached' && row.seed === 29 && row.seedSource === 'run-publication',
+      ),
+    ).toBe(true)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
 
   it('shares one override fingerprint across floor, designated pointer and the fresh exit-0 gate', async () => {
     const runGateVerb = requireGateVerb()

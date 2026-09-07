@@ -884,6 +884,7 @@ export async function runReplayGateVerb(
     session: { ...session, maskingContextFactory: () => maskingContextFactory() },
     composition: {
       identity,
+      baselineWarmup: { configPath: session.configPath, judge: session.evalConfig.judge },
       k,
       kSource,
       maxScreens,
