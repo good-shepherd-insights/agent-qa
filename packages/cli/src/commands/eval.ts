@@ -116,6 +116,19 @@ function renderReplaySummary(result: ReplayVerbResult): void {
       + pc.dim(` (swept ${result.swept}, replayed ${result.replayed}, scored ${result.scored})`),
   )
   console.log(`source: ${result.source}`)
+  const spend = result.spend
+  console.log(
+    `replay seed=${spend.seed ?? 'none'}: decisions=${spend.decisions}`
+      + ` modelCalls=${spend.modelCalls} promptTokens=${spend.promptTokens}`
+      + ` completionTokens=${spend.completionTokens} wallClock=${spend.wallClockMs}ms`
+      + ` seedHonored=${spend.seedHonored ?? 'unknown'}`,
+  )
+  console.log(
+    'spend: modelCalls includes planner, judge and retries; tokens are persisted reported usage'
+      + ` (planner samples=${spend.sampleCount}, missingUsage=${spend.samplesMissingTokenUsage};`
+      + ` judge outcomes=${spend.judgeCost.calls}, inputTokens=${spend.judgeCost.inputTokens},`
+      + ` outputTokens=${spend.judgeCost.outputTokens}, missingUsage=${spend.judgeCost.outcomesMissingUsage})`,
+  )
   console.log(`load refusals: ${renderCounters(result.loadRefusals)}`)
   console.log(`replay refusals: ${renderCounters(result.replayRefusals)}`)
   const judge = result.judge

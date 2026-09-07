@@ -6,6 +6,7 @@
 // the deterministic batchKey audit dir (D-07).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { Command } from 'commander'
+import { APICallError } from 'ai'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -1037,6 +1038,104 @@ function replayDirFor(dir: string, id: string): string {
 }
 
 describe('runReplayVerb — offline sweep through the sanctioned composition (D-02/D-06/D-08)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('reports observed spend, reported usage and supported seed from this invocation only', async () => {
+    const fixture = await floorVerbFixture()
+    fixture.session.evalConfig.seed = 11
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
+    const first = await runReplayVerb(fixture.session, {}, { ...fixture.opts, source: 'committed' })
+    expect(first.spend).toEqual({
+      seed: 11, seedHonored: true, decisions: 3, modelCalls: 3,
+      promptTokens: 30, completionTokens: 6, wallClockMs: 0,
+      sampleCount: 3, samplesMissingTokenUsage: 0,
+      judgeCost: { calls: 0, inputTokens: 0, outputTokens: 0, outcomesMissingUsage: 0 },
+    })
+    const oneId = (await readCommittedCorpus(join(fixture.dir, 'agent-qa-eval')))
+      .snapshot.entries[0]!.cassetteId
+    const timed = replayStub(fixture.plannerModelId, () => {
+      clock.mockReturnValue(137)
+      return clickGenerateResult()
+    })
+    const second = await runReplayVerb(fixture.session, { cassette: oneId }, {
+      source: 'committed', plannerOverrides: timed.overrides,
+    })
+    expect(second.spend).toMatchObject({ decisions: 1, modelCalls: 1, promptTokens: 10,
+      completionTokens: 2, wallClockMs: 37, sampleCount: 1 })
+    expect(fixture.planner.captured).toHaveLength(first.spend.modelCalls)
+  })
+
+  it('counts provider retries separately from replay samples without inventing retry usage', async () => {
+    const fixture = await floorVerbFixture()
+    let calls = 0
+    const retrying = replayStub(fixture.plannerModelId, () => {
+      if (calls++ === 0) throw new APICallError({
+        message: 'retry fixture', url: 'http://localhost/fixture', requestBodyValues: {},
+        statusCode: 429, isRetryable: true, responseHeaders: { 'retry-after-ms': '0' },
+      })
+      return clickGenerateResult()
+    })
+    const result = await runReplayVerb(fixture.session, {}, {
+      source: 'committed', plannerOverrides: retrying.overrides,
+    })
+    expect(result.spend).toMatchObject({ modelCalls: 4, sampleCount: 3, promptTokens: 30,
+      completionTokens: 6, samplesMissingTokenUsage: 0, seed: null, seedHonored: null })
+    expect(retrying.captured).toHaveLength(result.spend.modelCalls)
+  })
+
+  it('retains missing sample usage on provider failures', async () => {
+    const fixture = await floorVerbFixture()
+    const failing = replayStub(fixture.plannerModelId, () => {
+      throw new Error('unreported provider failure')
+    })
+    const result = await runReplayVerb(fixture.session, {}, {
+      source: 'committed', plannerOverrides: failing.overrides,
+    })
+    expect(result.spend).toMatchObject({ sampleCount: 3, samplesMissingTokenUsage: 3,
+      promptTokens: 0, completionTokens: 0 })
+    expect(result.spend.modelCalls).toBe(failing.captured.length)
+    expect(result.spend.modelCalls).toBeGreaterThanOrEqual(3)
+  })
+
+  it('discloses unsupported seed evidence instead of asserting determinism', async () => {
+    const fixture = await floorVerbFixture()
+    fixture.session.evalConfig.seed = 0
+    const failing = replayStub(fixture.plannerModelId, () => {
+      return { ...clickGenerateResult(), warnings: [{ type: 'unsupported', feature: 'seed' }] }
+    })
+    const result = await runReplayVerb(fixture.session, {}, {
+      source: 'committed', plannerOverrides: failing.overrides,
+    })
+    expect(result.spend).toMatchObject({ seed: 0, seedHonored: false, modelCalls: 3,
+      sampleCount: 3, samplesMissingTokenUsage: 0, promptTokens: 30, completionTokens: 6 })
+  })
+
+  it('includes judge provider calls and reports their token contribution explicitly', async () => {
+    const fixture = await floorVerbFixture(true)
+    const result = await runReplayVerb(fixture.session, {}, { ...fixture.opts, source: 'committed' })
+    // Each ambiguous fixture decision has two adjudicated tie axes.
+    expect(result.spend).toMatchObject({ modelCalls: 9, sampleCount: 3, promptTokens: 90,
+      completionTokens: 18,
+      judgeCost: { calls: 6, inputTokens: 60, outputTokens: 12, outcomesMissingUsage: 0 },
+    })
+    expect(result.spend.modelCalls).toBe(fixture.planner.captured.length + fixture.judge.captured.length)
+  })
+
+  it('returns zero spend for empty committed input without resolving models or credentials', async () => {
+    const { configPath } = await writeReplayFixture()
+    const session = await sessionFor(configPath)
+    delete session.config.use!.llm
+    session.evalConfig.judge = 'does-not-exist'
+    session.evalConfig.seed = 11
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network forbidden'))
+    const result = await runReplayVerb(session, {}, { source: 'committed' })
+    expect(result.spend).toMatchObject({ seed: 11, seedHonored: null, decisions: 0,
+      modelCalls: 0, promptTokens: 0, completionTokens: 0, sampleCount: 0,
+      samplesMissingTokenUsage: 0 })
+    expect(result.spend.wallClockMs).toBeGreaterThanOrEqual(0)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
   it('replays every staged bundle, persists replay.json + score.json, and stamps the deterministic batchKey', async () => {
     const { dir, configPath } = await writeReplayFixture()
     saveRun(dir, 'run-alpha')
@@ -2721,6 +2820,8 @@ describe('agent-qa eval replay — rendering and exit semantics (372-06, D-04/D-
     expect(dto.swept).toBe(0)
     expect(dto.replayed).toBe(0)
     expect(dto.judge.configured).toBe(false)
+    expect(dto.spend).toMatchObject({ modelCalls: 0, promptTokens: 0, completionTokens: 0,
+      seed: null, seedHonored: null })
   })
 
   it('renders the human summary from the DTO fields only, "0 ties" honestly (D-04)', async () => {
@@ -2736,6 +2837,9 @@ describe('agent-qa eval replay — rendering and exit semantics (372-06, D-04/D-
     expect(rendered).toContain('swept 0')
     expect(rendered).toContain('judge: not configured')
     expect(rendered).toContain('0 ties')
+    expect(rendered).toMatch(/replay seed=none: decisions=0 modelCalls=0 promptTokens=0 completionTokens=0 wallClock=\d+ms seedHonored=unknown/)
+    expect(rendered).toContain('modelCalls includes planner, judge and retries')
+    expect(rendered).toContain('planner samples=0, missingUsage=0; judge outcomes=0')
     expect(rendered).toContain(join('.agent-qa', 'eval', 'replays'))
     expect(() => JSON.parse(rendered)).toThrow()
   })
@@ -2770,6 +2874,8 @@ describe('agent-qa eval replay — rendering and exit semantics (372-06, D-04/D-
     expect(dto.swept).toBe(1)
     expect(dto.loadRefusals).toEqual({ 'parse-failed': 1 })
     expect(dto.replayed).toBe(0)
+    expect(dto.spend).toMatchObject({ modelCalls: 0, decisions: 0, sampleCount: 0,
+      promptTokens: 0, completionTokens: 0, seedHonored: null })
   })
 })
 

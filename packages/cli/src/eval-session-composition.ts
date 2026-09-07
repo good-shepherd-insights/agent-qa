@@ -65,6 +65,7 @@ import type {
   JudgeIdentityBlock,
   PartitionManifest,
   SeedPolicy,
+  ScoredBatchEntry,
   TargetEnvironment,
 } from '@vostride/agent-qa-eval'
 import {
@@ -90,6 +91,7 @@ import {
   listCommittedReports,
   listNoiseFloorArtefacts,
   loadCassetteBundles,
+  loadReplayRecord,
   loadScoreRecord,
   readCommittedCorpus,
   readPartitionManifests,
@@ -473,6 +475,45 @@ export interface ReplayVerbResult {
   source: EvalCorpusSource
   /** Stderr-destined notices: no-judge / family-preflight warnings, harness errors, empty sweep. */
   notices: string[]
+  /** Invocation calls include planner, judge and retries; tokens are persisted reported usage. */
+  spend: ReplayInvocationSpend
+}
+
+export interface ReplayInvocationSpend {
+  seed: number | null
+  /** Null when no seed was declared or no replay samples were recorded. */
+  seedHonored: boolean | null
+  decisions: number
+  /** Observed provider invocations, including retries and judge calls. Never sample-derived. */
+  modelCalls: number
+  /** Reported planner + judge usage; failed/unreported attempts may have unknown usage. */
+  promptTokens: number
+  completionTokens: number
+  wallClockMs: number
+  sampleCount: number
+  samplesMissingTokenUsage: number
+  /** Persisted judge outcomes and usage, included in the token totals above. */
+  judgeCost: EvalBatchReport['honesty']['judge']['cost']
+}
+
+function replayInvocationSpend(
+  entries: ScoredBatchEntry[], seed: number | undefined, modelCalls: number, started: number,
+): ReplayInvocationSpend {
+  const report = buildEvalReport(entries, undefined, undefined, { declaredSeed: seed })
+  const cost = report.totalCost
+  const judgeCost = report.honesty.judge.cost
+  return {
+    seed: seed ?? null,
+    seedHonored: cost.sampleCount === 0 ? null : report.seedHonored ?? null,
+    decisions: report.headline.perDecisionCost.decisionCount,
+    modelCalls,
+    promptTokens: cost.promptTokens + judgeCost.inputTokens,
+    completionTokens: cost.completionTokens + judgeCost.outputTokens,
+    wallClockMs: Math.max(0, Math.round(performance.now() - started)),
+    sampleCount: cost.sampleCount,
+    samplesMissingTokenUsage: cost.samplesMissingTokenUsage,
+    judgeCost,
+  }
 }
 
 /**
@@ -496,6 +537,7 @@ export async function runReplayVerb(
     source?: EvalCorpusSource
   } = {},
 ): Promise<ReplayVerbResult> {
+  const started = performance.now()
   const agentQaRoot = resolve(session.configDir, '.agent-qa')
   const source: EvalCorpusSource = opts.source ?? 'staged'
   const sourceRoot = resolveCassettesRoot(session, source)
@@ -557,6 +599,7 @@ export async function runReplayVerb(
       replaysRoot,
       source,
       notices,
+      spend: replayInvocationSpend([], session.evalConfig.seed, 0, started),
     }
   }
 
@@ -572,11 +615,13 @@ export async function runReplayVerb(
   const replayBaseDir = evalAuditDir(session.configDir, 'replay', batchKey)
   const recordStore = new FsReplayRecordStore({ root: agentQaRoot })
   const scoreStore = new FsScoreStore({ root: agentQaRoot })
+  let modelCalls = 0
   const { replayed, replayRefusals, replayedDirs, notices: replayNotices } =
     await sweepCassetteReplays({
       selected,
       profile: planner.profile,
       auth: planner.auth,
+      modelCallObservation: { onProviderCall: () => { modelCalls++ } },
       ...(opts.plannerOverrides !== undefined ? { modelOverrides: opts.plannerOverrides } : {}),
       ...(session.evalConfig.k !== undefined ? { k: session.evalConfig.k } : {}),
       ...(session.evalConfig.seed !== undefined ? { seed: session.evalConfig.seed } : {}),
@@ -601,8 +646,19 @@ export async function runReplayVerb(
   // (7) fold judge dispositions FROM the persisted score records — never recomputed (D-04).
   const judge = zeroJudge(judgeResolution.judge !== undefined)
   let scored = 0
+  const spendEntries: ScoredBatchEntry[] = []
   for (const recordDir of replayedDirs) {
+    const replay = loadReplayRecord(recordDir)
     const load = loadScoreRecord(recordDir)
+    if (replay.kind === 'loaded') {
+      spendEntries.push({
+        cassetteId: replay.outcome.cassetteId,
+        outcome: replay.outcome,
+        ...(load.kind === 'loaded' ? { score: load.record.score } : {}),
+      })
+    } else {
+      notices.push(`spend replay read refused under ${recordDir}: ${replay.refusal.detail}`)
+    }
     if (load.kind === 'absent') continue
     if (load.kind === 'refused') {
       notices.push(`score read refused under ${recordDir}: ${load.refusal.detail}`)
@@ -623,6 +679,7 @@ export async function runReplayVerb(
     replaysRoot,
     source,
     notices,
+    spend: replayInvocationSpend(spendEntries, session.evalConfig.seed, modelCalls, started),
   }
 }
 
