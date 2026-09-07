@@ -42,6 +42,7 @@ export interface PromotionCanaryPosture {
   kind: 'provided' | 'not-provided'
   attributedRows?: number
   rarePathEligible: boolean
+  inconsistency?: { pending: true; proposalId: string }
 }
 export interface PromotionPostureScope {
   partition: string
@@ -121,6 +122,8 @@ export type PromotionGateHoldReason =
   | 'receipt-stale'
   | 'unprovenanced-candidate'
   | 'posture-unavailable'
+  // 2026-09-07, 418 D-17 / ATTR-04: cross-signal contradiction; precedes gate-failed
+  | 'gate-inconsistent'
 
 /**
  * The v54 deletion bar on the hold-reason vocabulary (414 D-14 / D-22).
@@ -155,7 +158,41 @@ export const PROMOTION_GATE_HOLD_REASONS = [
   'receipt-stale',
   'unprovenanced-candidate',
   'posture-unavailable',
+  // 2026-09-07, 418 D-17 / ATTR-04: cross-signal contradiction; precedes gate-failed
+  'gate-inconsistent',
 ] as const satisfies readonly PromotionGateHoldReason[]
+
+export type GateInconsistencyShape = 'gate1-pass-gate2-fail' | 'gate2-pass-gate1-heldout-fail'
+// prettier-ignore
+export const GATE_INCONSISTENCY_SHAPES = ['gate1-pass-gate2-fail', 'gate2-pass-gate1-heldout-fail'] as const satisfies readonly GateInconsistencyShape[]
+export interface GateInconsistency {
+  shape: GateInconsistencyShape
+  gate1Digest: string
+  gate2Digest: string
+}
+
+/**
+ * 2026-09-07, 418 D-18: same digest means Gate-1 versus Gate-2, independently of the
+ * posture's current digest. A contradiction on an older digest precedes staleness.
+ * Fold to standing receipts first: historical contradictions do not override newer evidence.
+ */
+export function detectGateInconsistency(standing: readonly GateReceipt[]): GateInconsistency | undefined {
+  const receipts = standingReceiptsByGate(standing)
+  const g1 = receipts.find(receipt => receipt.gate === 1)
+  const g2 = receipts.find(receipt => receipt.gate === 2)
+  if (g1 === undefined || g2 === undefined ||
+    g1.corpusVersion.corpusDigest !== g2.corpusVersion.corpusDigest) return undefined
+  let shape: GateInconsistencyShape
+  if (g1.verdict === 'pass' && g2.verdict === 'fail') {
+    shape = 'gate1-pass-gate2-fail'
+  } else if (g2.verdict === 'pass' && g1.verdict === 'fail' &&
+    (g1.harmed ?? []).some(row => row.split === 'held-out')) {
+    shape = 'gate2-pass-gate1-heldout-fail'
+  } else {
+    return undefined
+  }
+  return { shape, gate1Digest: g1.receiptDigest, gate2Digest: g2.receiptDigest }
+}
 
 export type PromotionGateVerdict =
   | { verdict: 'promote'; promotionPath: PromotionPath; citedReceiptDigests: readonly string[] }
@@ -233,11 +270,20 @@ export function evaluatePromotionGate(input: PromotionGateInput): PromotionGateV
   if (posture?.replayGateAvailable === true && posture.gateSetNonEmpty === false) {
     return hold('empty-gate-set')
   }
-  const g3 = standingReceiptsByGate(input.gateReceipts ?? []).find(receipt => receipt.gate === 3)
+  const standing = standingReceiptsByGate(input.gateReceipts ?? [])
+  const g3 = standing.find(receipt => receipt.gate === 3)
   if (g3?.verdict === 'pass') {
     return { verdict: 'promote', promotionPath: 'user-sovereign',
       citedReceiptDigests: [g3.receiptDigest] }
   }
+  // 2026-09-07, 418 D-17/D-20: directly after sovereign is the earliest slot allowed
+  // by 416's kind/status/window and gate-set precedence. Fourteen holds precede
+  // promoteVia, which also floors without posture: a never-confirmed candidate's first
+  // live harm must report its contradiction before no-confirmed-evidence can mask it.
+  if (posture?.kind === 'resolved' && posture.canary.inconsistency?.pending === true) {
+    return hold('gate-inconsistent')
+  }
+  if (detectGateInconsistency(standing) !== undefined) return hold('gate-inconsistent')
   if (input.withheld) return hold('withheld')
   if (input.needsEnrichment) return hold('needs-enrichment')
   if (input.evidenceIncomplete) return hold('evidence-incomplete')

@@ -6,6 +6,7 @@ import { asEvidenceToken } from '../../ids/record-id'
 import { distilledObservationSchema } from '../distilled-observation'
 import { stampReceiptDigest, type GateReceipt, type GateVerdict } from '../gate-receipt'
 import {
+  detectGateInconsistency,
   evaluatePromotionGate,
   type PromotionGateHoldReason,
   type PromotionGateInput,
@@ -217,6 +218,16 @@ describe('evaluatePromotionGate exclusion walls', () => {
 })
 
 describe('promotion gate architecture', () => {
+  it('checks inconsistency after sovereign and before v51 evidence, outside promoteVia', () => {
+    const source = readFileSync(new URL('../promotion-gate.ts', import.meta.url), 'utf8')
+    expect(source.indexOf("promotionPath: 'user-sovereign'"))
+      .toBeLessThan(source.indexOf('detectGateInconsistency(standing)'))
+    expect(source.indexOf('detectGateInconsistency(standing)'))
+      .toBeLessThan(source.indexOf("hold('withheld')"))
+    const promoteVia = source.slice(source.indexOf('function promoteVia('),
+      source.indexOf('function promotionElementAnchor('))
+    expect(promoteVia).not.toMatch(/detectGateInconsistency|inconsistency/)
+  })
   it('has no model, port, provider, or adapter import path', () => {
     const source = readFileSync(new URL('../promotion-gate.ts', import.meta.url), 'utf8')
 
@@ -277,7 +288,8 @@ describe('416 ordered receipt promotion paths', () => {
   })
 
   it.each([1, 2] as const)('holds gate-failed for a standing Gate-%s fail, even on the rare path', (gate) => {
-    expect(gated([receipt(1, 'pass'), receipt(gate, 'fail', 6)],
+    // 418 D-17: an ordinary failure uses a distinct corpus; same-digest conflict is pinned below.
+    expect(gated([receipt(1, 'pass'), receipt(gate, 'fail', 6, { corpusDigest: 'd'.repeat(64) })],
       { gatePosture: rarePosture() })).toEqual({ verdict: 'hold', reason: 'gate-failed' })
   })
 
@@ -388,6 +400,106 @@ describe('416 ordered receipt promotion paths', () => {
       .toEqual({ verdict: 'hold', reason: 'no-confirmed-evidence' })
     expect(gated([receipt(1, 'pass'), receipt(2, 'pass')], { distilledObservations: [] }))
       .toEqual({ verdict: 'hold', reason: 'no-element-observation' })
+  })
+})
+
+describe('418 D-17 — gate-inconsistent precedes the v51 evidence holds and every per-gate answer', () => {
+  const contradiction = () => [receipt(1, 'pass'), receipt(2, 'fail', 6)]
+  const neverConfirmed = (gateReceipts: readonly GateReceipt[],
+    overrides: Partial<PromotionGateInput> = {}) => factInput({
+    confirmedOutcomeEvidenceTokens: [], gatePosture: resolvedPosture(), gateReceipts, ...overrides,
+  })
+  const inconsistent = { verdict: 'hold', reason: 'gate-inconsistent' }
+
+  it('holds gate-inconsistent for a never-confirmed candidate with same-digest pass and fail', () => {
+    expect(evaluatePromotionGate(neverConfirmed(contradiction()))).toEqual(inconsistent)
+  })
+  it('holds on confirmed, withheld, missing-element and absent-posture inputs', () => {
+    for (const overrides of [
+      {}, { withheld: true }, { distilledObservations: [] }, { gatePosture: undefined },
+    ]) {
+      expect(evaluatePromotionGate(factInput({
+        gatePosture: resolvedPosture(), gateReceipts: contradiction(), ...overrides,
+      }))).toEqual(inconsistent)
+    }
+  })
+  it('keeps not-candidate above contradiction on an active never-confirmed input', () => {
+    expect(evaluatePromotionGate(neverConfirmed(contradiction(), { status: 'active' })))
+      .toEqual({ verdict: 'hold', reason: 'not-candidate' })
+  })
+  it('keeps sovereign above contradictory receipts and a pending proposal on never-confirmed input', () => {
+    const g3 = receipt(3, 'pass')
+    expect(evaluatePromotionGate(neverConfirmed([...contradiction(), g3], {
+      gatePosture: resolvedPosture({ canary: { kind: 'provided', rarePathEligible: false,
+        inconsistency: { pending: true, proposalId: 'pending-inconsistency' } } }),
+    }))).toEqual({ verdict: 'promote', promotionPath: 'user-sovereign',
+      citedReceiptDigests: [g3.receiptDigest] })
+  })
+  it('retains no-confirmed-evidence for a never-confirmed input with a lone Gate-1 failure', () => {
+    expect(evaluatePromotionGate(neverConfirmed([receipt(1, 'fail')])))
+      .toEqual({ verdict: 'hold', reason: 'no-confirmed-evidence' })
+  })
+  it('holds shape 2 on never-confirmed input only when Gate-1 harmed a held-out row', () => {
+    const g1 = receipt(1, 'fail')
+    if (g1.gate !== 1) throw new Error('Expected Gate-1 fixture')
+    const { receiptDigest: _digest, ...body } = g1
+    const harmed = stampReceiptDigest({ ...body, harmed: [{ cassetteId: 'heldout-cassette',
+      decisionOrdinal: 0, origin: 'gate-set' as const, verdictPresent: true,
+      split: 'held-out', axes: ['headline' as const] }] })
+    const g2 = receipt(2, 'pass', 6)
+    expect(evaluatePromotionGate(neverConfirmed([harmed, g2]))).toEqual(inconsistent)
+    expect(detectGateInconsistency([harmed, g2])).toEqual({
+      shape: 'gate2-pass-gate1-heldout-fail', gate1Digest: harmed.receiptDigest,
+      gate2Digest: g2.receiptDigest,
+    })
+    const noPositive = stampReceiptDigest({ ...body, reasons: ['no-positive-value' as const] })
+    expect(evaluatePromotionGate(neverConfirmed([noPositive, g2])))
+      .toEqual({ verdict: 'hold', reason: 'no-confirmed-evidence' })
+    expect(evaluatePromotionGate(factInput({ gatePosture: resolvedPosture(),
+      gateReceipts: [noPositive, g2] }))).toEqual({ verdict: 'hold', reason: 'gate-failed' })
+    const naturalHarm = stampReceiptDigest({ ...body,
+      harmed: harmed.harmed.map(row => ({ ...row, split: 'natural' })) })
+    expect(detectGateInconsistency([naturalHarm, g2])).toBeUndefined()
+  })
+  it('does not call different digests inconsistent on never-confirmed or confirmed input', () => {
+    const gateReceipts = [receipt(1, 'pass'),
+      receipt(2, 'fail', 6, { corpusDigest: 'd'.repeat(64) })]
+    expect(evaluatePromotionGate(neverConfirmed(gateReceipts)))
+      .toEqual({ verdict: 'hold', reason: 'no-confirmed-evidence' })
+    expect(evaluatePromotionGate(factInput({ gatePosture: resolvedPosture(), gateReceipts })))
+      .toEqual({ verdict: 'hold', reason: 'gate-failed' })
+  })
+  it('holds a never-confirmed candidate when both cite an old digest, before staleness', () => {
+    const corpusDigest = 'd'.repeat(64)
+    expect(evaluatePromotionGate(neverConfirmed([
+      receipt(1, 'pass', 5, { corpusDigest }), receipt(2, 'fail', 6, { corpusDigest }),
+    ]))).toEqual(inconsistent)
+  })
+  it('holds a pending proposal on never-confirmed input even with clean ordered pass receipts', () => {
+    expect(evaluatePromotionGate(neverConfirmed([receipt(1, 'pass'), receipt(2, 'pass', 6)], {
+      gatePosture: resolvedPosture({ canary: { kind: 'provided', rarePathEligible: false,
+        inconsistency: { pending: true, proposalId: 'pending-inconsistency' } } }),
+    }))).toEqual(inconsistent)
+  })
+  it('still promotes ordered pass plus pass on confirmed input with both cited digests', () => {
+    const g1 = receipt(1, 'pass')
+    const g2 = receipt(2, 'pass', 6)
+    expect(evaluatePromotionGate(factInput({ gatePosture: resolvedPosture(), gateReceipts: [g1, g2] })))
+      .toEqual({ verdict: 'promote', promotionPath: 'gate1+gate2',
+        citedReceiptDigests: [g1.receiptDigest, g2.receiptDigest] })
+  })
+  it('folds latest ordinal and later ties before detecting a contradiction and cites standing digests', () => {
+    const g1 = receipt(1, 'pass')
+    const fail = receipt(2, 'fail', 6)
+    const pass = receipt(2, 'pass', 6)
+    expect(detectGateInconsistency([g1, fail])).toEqual({ shape: 'gate1-pass-gate2-fail',
+      gate1Digest: g1.receiptDigest, gate2Digest: fail.receiptDigest })
+    expect(detectGateInconsistency([g1, fail, pass])).toBeUndefined()
+    expect(detectGateInconsistency([g1, pass, fail])).toEqual({ shape: 'gate1-pass-gate2-fail',
+      gate1Digest: g1.receiptDigest, gate2Digest: fail.receiptDigest })
+    expect(detectGateInconsistency([g1, receipt(2, 'pass', 7), fail])).toBeUndefined()
+    expect(detectGateInconsistency([g1, receipt(2, 'abstain')])).toBeUndefined()
+    expect(detectGateInconsistency([fail])).toBeUndefined()
   })
 })
 

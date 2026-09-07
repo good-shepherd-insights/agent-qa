@@ -36,3 +36,11 @@ expectTypeOf<PromotionGatePosture['kind']>().toEqualTypeOf<'resolved' | 'unavail
 // 2026-09-06, 416 G-04: measured path never-bar diagnostic at promotion-gate.test-d.ts:37:74.
 expectTypeOf<Exclude<PromotionPath, (typeof PROMOTION_PATHS)[number]>>().toEqualTypeOf<never>()
 expectTypeOf<Extract<PromotionPath, 'gate1-and-gate2'>>().toEqualTypeOf<never>()
+
+// 2026-09-07, 418 D-20: append-only to preserve the 416 diagnostic pins above.
+import { GATE_INCONSISTENCY_SHAPES } from '../knowledge/promotion-gate'
+import type { PromotionCanaryPosture, GateInconsistencyShape } from '../knowledge/promotion-gate'
+expectTypeOf<keyof PromotionCanaryPosture>().toEqualTypeOf<
+  'kind' | 'attributedRows' | 'rarePathEligible' | 'inconsistency'
+>()
+expectTypeOf<Exclude<GateInconsistencyShape, (typeof GATE_INCONSISTENCY_SHAPES)[number]>>().toEqualTypeOf<never>()

@@ -47,3 +47,7 @@ expectTypeOf<Exclude<Gate1HarmOrigin, (typeof GATE1_HARM_ORIGINS)[number]>>().to
 expectTypeOf<Extract<Gate1HarmOrigin, 'held-out'>>().toEqualTypeOf<never>()
 // prettier-ignore
 expectTypeOf<keyof z.infer<typeof gate1SpendSchema>>().toEqualTypeOf<'screens' | 'modelCalls' | 'promptTokens' | 'completionTokens' | 'wallClockMs'>()
+
+// 2026-09-07, 418 D-04: Gate-2 spend has exactly four keys; append after the 416/417 pins.
+import { gate2SpendSchema } from '../knowledge/gate-receipt'
+expectTypeOf<keyof z.infer<typeof gate2SpendSchema>>().toEqualTypeOf<'modelCalls' | 'screens' | 'promptTokens' | 'completionTokens'>()

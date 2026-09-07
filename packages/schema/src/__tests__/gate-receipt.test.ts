@@ -27,6 +27,32 @@ function gate2() {
     benefit: 'exercised-benefited' as const, stateValidity: 'valid' as const })
 }
 
+describe('418 additive Gate-2 contract', () => {
+  const completeGate2 = () => ({
+    ...gate2(), crossCheck: 'flipped',
+    samples: { k: 3, seeds: [11, 12, 13], seedHonored: true, modelCalls: 5 },
+    spend: { modelCalls: 5, screens: 1, promptTokens: 100, completionTokens: 20 },
+    runId: 'run', testIndex: 0, stepIndex: 1, observedStateDigest: 'd'.repeat(64),
+    attribution: 'independent removal flipped the outcome',
+  })
+  it('round-trips a complete Gate-2 pass arm with every additive field', () => {
+    expect(GateReceiptSchema.parse(completeGate2())).toEqual(completeGate2())
+  })
+  it('preserves the 416 complete Gate-2 arm without the new fields', () => {
+    expect(GateReceiptSchema.parse(gate2())).toEqual(gate2())
+  })
+  it('refuses a fifth spend key, unknown cross check and malformed optional evidence', () => {
+    const base = completeGate2()
+    for (const value of [
+      { ...base, spend: { ...base.spend, wallClockMs: 0 } },
+      { ...base, crossCheck: 'bogus' }, { ...base, runId: '' },
+      { ...base, testIndex: -1 }, { ...base, stepIndex: 0.5 },
+      { ...base, observedStateDigest: 'invalid' }, { ...base, attribution: false },
+      { ...base, unexpected: true },
+    ]) expect(GateReceiptSchema.safeParse(value).success).toBe(false)
+  })
+})
+
 function completeGate1() {
   return { ...gate1(), reasons: [], crossCheck: 'flipped',
     cap: { maxScreens: 50 },

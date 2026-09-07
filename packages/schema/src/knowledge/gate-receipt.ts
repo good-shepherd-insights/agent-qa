@@ -4,6 +4,7 @@ import { sha256hex } from '../determinism/sha256'
 import { PROMOTION_PATHS, strongerPromotionPath, type PromotionPath } from './promotion-path'
 
 // 2026-09-07, 417 D-19/D-20: additive optional fields; no persisted Gate-1 lines predate this widening.
+// 2026-09-07, 418: Gate-2 evidence widens additively; zero persisted Gate-2 lines predate this widening — reconciliation 2.
 export const GATE_RECEIPT_SCHEMA_VERSION = 1
 export type GateNumber = 1 | 2 | 3
 export type GateVerdict = 'pass' | 'fail' | 'abstain'
@@ -50,6 +51,9 @@ const count = z.number().int().nonnegative()
 export const gate1CapSchema = z.object({ maxScreens: z.number().int().min(1) }).strict()
 export const gate1SpendSchema = z.object({
   screens: count, modelCalls: count, promptTokens: count, completionTokens: count, wallClockMs: count,
+}).strict()
+export const gate2SpendSchema = z.object({
+  modelCalls: count, screens: count, promptTokens: count, completionTokens: count,
 }).strict()
 export const gate1TargetSchema = z.object({
   cassetteId: z.string().min(1), stepIndex: count, decisionOrdinal: count,
@@ -133,6 +137,14 @@ export const gate2ArmSchema = z.object({
   ...receiptCoreShape, gate: z.literal(2), attributedObservationId: z.string().min(1),
   corpusVersion: z.object({ corpusDigest: sha256 }).strict(),
   benefit: z.enum(BENEFITS), stateValidity: z.enum(STATE_VALIDITIES),
+  crossCheck: z.enum(CROSS_CHECKS).optional(),
+  samples: samplesSchema.optional(),
+  spend: gate2SpendSchema.optional(),
+  runId: z.string().min(1).optional(),
+  testIndex: count.optional(),
+  stepIndex: count.optional(),
+  observedStateDigest: sha256.optional(),
+  attribution: z.string().optional(),
 }).strict()
 export const gate3ArmSchema = z.object({
   ...receiptCoreShape, gate: z.literal(3), runId: z.string().min(1),

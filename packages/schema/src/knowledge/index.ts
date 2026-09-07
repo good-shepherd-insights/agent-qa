@@ -15,6 +15,8 @@ export type { BundleStatus, DerivedTrustState } from './trust-fold'
 export { cautionRootCauseClassSchema } from './distilled-observation'
 export type { CautionRootCauseClass } from './distilled-observation'
 export { PROMOTION_GATE_HOLD_REASONS, GATE_SET_VERDICT_WORDS, evaluatePromotionGate } from './promotion-gate'
+export { GATE_INCONSISTENCY_SHAPES, detectGateInconsistency } from './promotion-gate'
+export type { GateInconsistencyShape, GateInconsistency } from './promotion-gate'
 export type {
   PromotionGateHoldReason,
   PromotionGateInput,
@@ -33,6 +35,9 @@ export {
   COLD_START_MAX_BUDGET_FRACTION,
   COLD_START_MAX_RECORDS,
   COLD_START_TRUST_DISCOUNT,
+  LOWER_TRUST_PATH_DISCOUNT,
+  GATE2_DEFAULT_STALE_CONFIRMATIONS,
+  GATE2_DEFAULT_MAX_LOWER_TRUST_PER_SCOPE,
   applyColdStartSubCap,
   isVettedCandidate,
 } from './cold-start'
@@ -196,7 +201,7 @@ export type { PromotionOutcome, GateReceiptRecordOutcome, PromotionCandidateProv
 
 export { PER_AXIS_SCORE_AXES, CROSS_CHECKS, DEGRADATIONS, BENEFITS, MARKS, STATE_VALIDITIES,
   axisScoreSchema, perAxisScoreSchema, corpusVersionSchema, samplesSchema, noiseFloorRefSchema,
-  gate1ArmSchema, gate2ArmSchema, gate3ArmSchema } from './gate-receipt'
+  gate1ArmSchema, gate2ArmSchema, gate3ArmSchema, gate2SpendSchema } from './gate-receipt'
 export type { PerAxisScoreAxis, CrossCheck, Degradation, Benefit, Mark, StateValidity,
   Gate1Receipt, Gate2Receipt, Gate3Receipt } from './gate-receipt'
 // 2026-09-07, 417: neutral replay receipt and candidate DATA contracts.

@@ -7,7 +7,9 @@ import {
   BENEFITS,
   MARKS,
   STATE_VALIDITIES,
+  gate2SpendSchema,
 } from '../knowledge/gate-receipt'
+import { GATE_INCONSISTENCY_SHAPES } from '../knowledge/promotion-gate'
 
 // 2026-09-06, 416 D-02: the v54 runtime bar. Plan 06 measures these named cells with
 // scripts/416-gate-mutation.sh legs G-05..G-11; relative imports measure edited source bytes.
@@ -32,6 +34,27 @@ describe('416 receipt closed vocabularies', () => {
   })
   it('declares exactly the three state validities, in declaration order', () => {
     expect([...STATE_VALIDITIES]).toEqual(['valid', 'stale', 'unknown'])
+  })
+})
+
+describe('418 Gate-2 closed vocabularies', () => {
+  it('declares exactly the two gate-inconsistency shapes, in declaration order', () => {
+    expect([...GATE_INCONSISTENCY_SHAPES]).toEqual([
+      'gate1-pass-gate2-fail', 'gate2-pass-gate1-heldout-fail',
+    ])
+  })
+  it('accepts exactly the four Gate-2 spend keys', () => {
+    expect(Object.keys(gate2SpendSchema.shape).sort()).toEqual([
+      'completionTokens', 'modelCalls', 'promptTokens', 'screens',
+    ])
+    const spend = { modelCalls: 5, screens: 1, promptTokens: 100, completionTokens: 20 }
+    expect(gate2SpendSchema.parse(spend)).toEqual(spend)
+    expect(gate2SpendSchema.safeParse({ ...spend, wallClockMs: 0 }).success).toBe(false)
+    for (const key of Object.keys(spend)) {
+      const missing: Record<string, number> = { ...spend }
+      delete missing[key]
+      expect(gate2SpendSchema.safeParse(missing).success).toBe(false)
+    }
   })
 })
 

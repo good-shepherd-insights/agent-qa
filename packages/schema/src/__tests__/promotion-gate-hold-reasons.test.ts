@@ -27,11 +27,11 @@ import { PROMOTION_GATE_HOLD_REASONS, PROMOTION_PATHS } from '../knowledge/promo
  */
 
 describe('414 D-14/D-22 — the promotion-gate hold-reason vocabulary (v54 runtime wall)', () => {
-  it('declares exactly the nineteen promotion-gate hold reasons, in declaration order', () => {
+  it('declares exactly the twenty promotion-gate hold reasons, in declaration order', () => {
     // Declaration order, not sorted: `PROMOTION_GATE_HOLD_REASONS` is an authored array, so the
     // order is part of what it claims. Listed rather than counted so the RED says WHAT joined or
     // left — a `.length` or a `toContain` sweep would go green on a swap and name nothing. The
-    // nineteen are hand-spelled INLINE, not hoisted, so the expectation and the literal cannot
+    // twenty are hand-spelled INLINE, not hoisted, so the expectation and the literal cannot
     // drift apart and Plan 08's red-parser reads one expression.
     expect([...PROMOTION_GATE_HOLD_REASONS]).toEqual([
       'kind-excluded',
@@ -53,6 +53,7 @@ describe('414 D-14/D-22 — the promotion-gate hold-reason vocabulary (v54 runti
       'receipt-stale',
       'unprovenanced-candidate',
       'posture-unavailable',
+      'gate-inconsistent',
     ])
   })
   it('declares exactly the four promotion paths, in declaration order', () => {

@@ -4,6 +4,13 @@ import type { PromotionGateInput } from './promotion-gate'
 /** LOCKED D-19 maximum for the always-on organic canary reservation. */
 export const COLD_START_MAX_RECORDS = 2
 
+/**
+ * 2026-09-07, 418 D-14: absolute active gate1-lower-trust count per product-tier scope.
+ * Sized like the cold-start reservation so a three-record product can still hold two
+ * rare-path records; a fraction would round to zero. Override: eval.gate2.maxLowerTrustPerScope.
+ */
+export const GATE2_DEFAULT_MAX_LOWER_TRUST_PER_SCOPE = 2
+
 /** LOCKED D-19 maximum share of the caller-supplied brief budget. */
 export const COLD_START_MAX_BUDGET_FRACTION = 0.2
 
@@ -12,6 +19,20 @@ export const COLD_START_MAX_BUDGET_FRACTION = 0.2
  * this remains an internal constitution value, never a config key.
  */
 export const COLD_START_TRUST_DISCOUNT = 0.5
+
+/**
+ * 2026-09-07, 418 D-15: a passed offline Gate-1 receipt warrants more trust than the
+ * cold-start unverified discount, but less than full trust without attributed live benefit.
+ * Lifts on the gate1+gate2 upgrade; internal constitution value, never a config key.
+ */
+export const LOWER_TRUST_PATH_DISCOUNT = 0.75
+
+/**
+ * 2026-09-07, 418 D-12: two samples from different runs inside the validity window
+ * confirm stale-state harm — the smallest count beyond one run's environment.
+ * Internal constitution value, never a config key.
+ */
+export const GATE2_DEFAULT_STALE_CONFIRMATIONS = 2
 
 export interface VettedCandidateInput extends Pick<
   PromotionGateInput,

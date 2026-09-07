@@ -213,7 +213,7 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
   },
   'knowledge/gate-receipt.ts': {
     hardened: 0,
-    plainString: 2,
+    plainString: 3,
     verdict:
       'reaches no path join — 2026-09-06 (416-02 D-02) adds the historical run reference on '
       + 'a Gate3 receipt. It records attribution in bundle evidence and is returned as a string '
@@ -221,7 +221,10 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
       + 'receipt contract requires a nonempty reference without rewriting historical ids. '
       + '2026-09-07 (417-03 D-01) adds the SECOND: Gate1 targets[].runId records the '
       + 'originating run of an already-compared target decision. It is receipt attribution, '
-      + 'not the input that locates or executes a run; it preserves the recorded string.',
+      + 'not the input that locates or executes a run; it preserves the recorded string. '
+      + '2026-09-07 (418-01 D-12) adds the THIRD: optional Gate2 runId identifies the '
+      + 'attributed run for stale-state confirmation across different runs. It is compared '
+      + 'as receipt evidence, never used as a path or rewritten as a canonical run id.',
   },
   'knowledge/candidate-injection.ts': {
     hardened: 0,
