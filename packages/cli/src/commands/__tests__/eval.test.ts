@@ -53,6 +53,7 @@ import {
   asRef,
   asRunId,
   computeBriefDigest,
+  distilledScreenStateDigest,
 } from '@vostride/agent-qa-schema'
 import type {
   ArtifactRef,
@@ -76,7 +77,10 @@ import {
   readCommittedCorpus,
   resolveBaselineCache,
   runReplayGate,
+  stageFeedbackEntry,
 } from '@vostride/agent-qa-eval-local'
+import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { appendGateReceipt } from '@vostride/agent-qa-knowledge-local'
 import {
   EvalNamedInputError,
   EvalPartitionFlagsRequiredError,
@@ -1973,6 +1977,109 @@ async function saveAnalysis(dir: string, runId: string, text: string): Promise<v
   await mkdir(runDir, { recursive: true })
   await writeFile(join(runDir, 'analysis.json'), text)
 }
+
+async function feedbackVerbFixture() {
+  const { dir, configPath } = await writeFixture()
+  await appendFile(configPath, '\nknowledge:\n  dir: knowledge\n')
+  const committedRoot = join(dir, 'agent-qa-eval')
+  await mkdir(committedRoot)
+  await writeFile(join(committedRoot, 'eval-root.json'), '{"schemaVersion":1}')
+  const agentQaRoot = join(dir, '.agent-qa')
+  for (let index = 0; index < 2; index++) {
+    const runId = generateRunId()
+    const screenshotRef = new FsEvidenceArtifactStore({ root: agentQaRoot, runId }).persistDecisionScreenshot(BLOB_BYTES)
+    const handoff = buildHandoff({ runId, screenshotRef, scope: { tier: 'product', key: `feedback-${index}` } })
+    const state = handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore
+    state.url = `https://feedback.example/${index}`
+    state.timestamp = 1_725_000_000
+    new FsHandoffStore({ root: agentQaRoot, runId }).save(handoff)
+    expect(await stageFeedbackEntry({ agentQaRoot, committedRoot, product: `feedback-${index}`,
+      target: { runId, testId: handoff.tests[0]!.testId, stepIndex: 0 }, stateDigest: distilledScreenStateDigest(state),
+      candidateId: `fixture-candidate-${index}`, attributedObservationId: `fixture-observation-${index}`, benefit: index === 0 ? 'rode-along' : 'exercised-harmed' })).toMatchObject({ kind: 'staged' })
+  }
+  const { createPromotionFloorFixture, completeGate1Receipt } = await import(new URL(
+    '../../../../knowledge-local/src/curator/__tests__/fixtures/promotion-floor-fixture.js', import.meta.url,
+  ).href)
+  const knowledgeRoot = join(dir, 'knowledge')
+  const knowledge = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir: agentQaRoot })
+  const { published } = knowledge.publishHeldCandidate('feedback')
+  const digest = computeCorpusDigest(readCommittedCorpus(committedRoot).snapshot.entries)
+  expect(appendGateReceipt(knowledge.outcomeAppendConfig(), published.id, completeGate1Receipt(published.id, { corpusDigest: digest }))).toEqual({ kind: 'appended' })
+  return { dir, configPath, agentQaRoot, committedRoot, knowledgeRoot, candidateId: published.id, digest }
+}
+
+describe('418 eval seed --from-feedback', () => {
+  afterEach(() => vi.restoreAllMocks())
+  it('previews a real mixed-product batch and standing receipt without changing any host file', async () => {
+    const f = await feedbackVerbFixture()
+    const before = await snapshotTree(f.dir)
+    const { logs, errors } = captureConsole()
+    await buildProgram().parseAsync(['--config', f.configPath, 'eval', 'seed', '--from-feedback', '--dry-run', '--json'], { from: 'user' })
+    expect(errors).toEqual([])
+    expect(logs).toHaveLength(1)
+    const result = JSON.parse(logs[0]!)
+    expect(result).toMatchObject({ kind: 'dry-run', previousCorpusDigest: f.digest,
+      staleReceipts: [{ candidateId: f.candidateId, gate: 1, verdict: 'pass', corpusDigest: f.digest }] })
+    expect(result.entries).toHaveLength(2)
+    expect(result).not.toHaveProperty('nextCorpusDigest')
+    expect(await snapshotTree(f.dir)).toEqual(before)
+    expect(result.floorCommand).toBe(`agent-qa --config '${f.configPath}' eval floor`)
+    const floor = vi.spyOn(evalVerbs, 'runFloorVerb').mockRejectedValue(new Error('registered floor reached without measurement'))
+    await buildProgram().parseAsync(['--config', f.configPath, 'eval', 'floor'], { from: 'user' })
+    expect(floor).toHaveBeenCalledTimes(1)
+  })
+  it('admits once, discloses the digest and receipt-stale change, then answers nothing-staged', async () => {
+    const f = await feedbackVerbFixture()
+    const { logs, errors } = captureConsole()
+    const args = ['--config', f.configPath, 'eval', 'seed', '--from-feedback']
+    await buildProgram().parseAsync(args, { from: 'user' })
+    expect(errors).toEqual([])
+    expect(logs.filter(line => line.startsWith('admitted '))).toHaveLength(2)
+    expect(logs).toContain('standing receipts that will read receipt-stale: 1')
+    expect(logs).toContain(`${f.candidateId} gate 1 pass`)
+    expect(logs.some(line => line.startsWith(`corpus digest ${f.digest} → `))).toBe(true)
+    const after = await snapshotTree(f.committedRoot)
+    const next = computeCorpusDigest(readCommittedCorpus(f.committedRoot).snapshot.entries)
+    expect(next).not.toBe(f.digest)
+    logs.length = 0
+    await buildProgram().parseAsync([...args, '--json'], { from: 'user' })
+    expect(JSON.parse(logs[0]!)).toMatchObject({ kind: 'nothing-staged', entries: [], staleReceipts: [], nextCorpusDigest: next })
+    expect(await snapshotTree(f.committedRoot)).toEqual(after)
+  })
+  it('filters optional product and never invents a corpus citation for Gate3', async () => {
+    const f = await feedbackVerbFixture()
+    const session = await resolveEvalSession({ configPath: f.configPath, keyOnly: true })
+    const result = await evalVerbs.runSeedFromFeedbackVerb(session, { agentQaRoot: f.agentQaRoot, product: 'feedback-1', dryRun: true,
+      knowledgeRoot: f.knowledgeRoot, readStandingGateReceipts: input => [
+        ...LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts(input),
+        { candidateId: f.candidateId, gate: 3, verdict: 'pass', producedAtOrdinal: 45 },
+        { candidateId: 'older', gate: 1, verdict: 'pass', corpusDigest: 'f'.repeat(64), producedAtOrdinal: 45 },
+      ] })
+    expect(result.entries).toHaveLength(1)
+    expect(result.entries[0]!.product).toBe('feedback-1')
+    expect(result.staleReceipts).toHaveLength(1)
+    expect(result.staleReceipts[0]!.gate).toBe(1)
+  })
+  it.each([['--run', 'x'], ['--held-out-fraction', '0.5'], ['--private-fraction', '0.5'], ['--silver-cap', '2']])('refuses incompatible flags %j before session resolution', async (...flags) => {
+    const { errors } = captureConsole()
+    const session = vi.spyOn(evalVerbs, 'resolveEvalSession')
+    await buildProgram().parseAsync(['eval', 'seed', '--from-feedback', ...flags], { from: 'user' })
+    expect(process.exitCode).toBe(1)
+    expect(errors.join('\n')).toContain('--from-feedback admits staged feedback only; --run and partition flags do not apply')
+    expect(session).not.toHaveBeenCalled()
+  })
+  it('refuses no-eval-root with exit 2 and prevents dry-run on ordinary seed from writing', async () => {
+    const f = await writeFixture()
+    const before = await snapshotTree(f.dir)
+    const { logs, errors } = captureConsole()
+    await buildProgram().parseAsync(['--config', f.configPath, 'eval', 'seed', '--from-feedback', '--json'], { from: 'user' })
+    expect(JSON.parse(logs[0]!)).toMatchObject({ kind: 'refused', reason: 'no-eval-root', entries: [] })
+    expect(process.exitCode).toBe(2)
+    await buildProgram().parseAsync(['--config', f.configPath, 'eval', 'seed', '--dry-run'], { from: 'user' })
+    expect(errors.join('\n')).toContain('--dry-run requires --from-feedback')
+    expect(await snapshotTree(f.dir)).toEqual(before)
+  })
+})
 
 describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/D-16/D-17)', () => {
   it('re-extracts per handoff, plans, seeds the committed root, and sums the reports (D-16)', async () => {

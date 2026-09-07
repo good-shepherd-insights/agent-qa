@@ -1,4 +1,5 @@
 import { GATE2_DEFAULT_MAX_LOWER_TRUST_PER_SCOPE } from '@vostride/agent-qa-schema'
+import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 // The CLI composition-root sibling for the eval verbs (Phase 372, Plan 04 — the D-05 sibling of
 // the run session composition, which as of 385-08/D-13 is the local agent package's composition
 // subtree rather than a module beside this one). It discharges at ONE site what every eval verb (replay / score /
@@ -146,6 +147,7 @@ import { renderCensusMarkdown } from './eval-census-render.js'
 import { renderEvalReportMarkdown } from './eval-report-render.js'
 import {
   buildRunMaskingContext,
+  LOCAL_CURATION_CAPABILITIES,
   resolveRunExecutionContext,
 } from '@vostride/agent-qa-agent-local'
 import type { RunExecutionContext, RunMaskingContext } from '@vostride/agent-qa-agent-local'
@@ -890,6 +892,60 @@ export async function runFeedbackStaging(session: EvalSession, input: Omit<Stage
   if (digest.kind !== 'digest') return digest
   return stageFeedbackEntry({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval'),
     auditSink: new JsonlAuditSink(join(input.agentQaRoot, 'eval/audit/feedback', slugBranch(input.attributedObservationId))) })
+}
+
+export interface SeedFromFeedbackVerbResult {
+  kind: 'admitted' | 'dry-run' | 'nothing-staged' | 'refused'
+  reason?: string
+  entries: { cassetteId: string; product: string; split: 'natural'; source: 'canary-feedback'; benefit: import('@vostride/agent-qa-schema').Benefit;
+    attributedObservationId: string; runId: string; stepIndex: number; captured_at_ordinal: number }[]
+  refusals: import('@vostride/agent-qa-eval-local').AdmitStagedFeedbackResult['refusals']
+  staleReceipts: ReturnType<typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts>
+  previousCorpusDigest?: string
+  nextCorpusDigest?: string
+  stagingDir: string
+  floorCommand: string
+}
+
+export async function runSeedFromFeedbackVerb(session: EvalSession, opts: {
+  agentQaRoot: string; product?: string; dryRun: boolean; knowledgeRoot?: string
+  readStandingGateReceipts?: typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts
+}): Promise<SeedFromFeedbackVerbResult> {
+  const stagingDir = join(opts.agentQaRoot, FEEDBACK_STAGING_SUBDIR)
+  // This is the actual registered floor measurement verb. Measuring does not silently replace
+  // a standing write-once floor, and no new model call occurs during feedback admission itself.
+  const configArg = `'${resolve(session.configPath).replaceAll("'", "'\"'\"'")}'`
+  const floorCommand = `agent-qa --config ${configArg} eval floor`
+  const base = { entries: [], refusals: [], staleReceipts: [], stagingDir, floorCommand }
+  const digest = readCanaryCorpusDigest(session)
+  if (digest.kind !== 'digest') return { ...base, kind: 'refused', reason: digest.kind === 'no-eval-root' ? 'no-eval-root' : 'corpus-unavailable' }
+  try {
+    // Read standing DATA before the operator's write. Gate3 has no digest and is never invented stale.
+    const receipts = opts.knowledgeRoot !== undefined && opts.readStandingGateReceipts !== undefined
+      ? opts.readStandingGateReceipts({ knowledgeRoot: opts.knowledgeRoot }) : []
+    const result = await admitStagedFeedback({ ...opts, committedRoot: resolve(session.configDir, 'agent-qa-eval'),
+      seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', 'feedback') })
+    const selected = opts.dryRun ? result.entries : result.admitted
+    const entries = selected.map(entry => ({ cassetteId: entry.extracted.cassette.id, product: entry.product,
+      split: 'natural' as const, source: 'canary-feedback' as const, benefit: entry.benefit,
+      attributedObservationId: entry.attributedObservationId, runId: entry.runId, stepIndex: entry.stepIndex,
+      captured_at_ordinal: entry.extracted.cassette.receipt.buildOrdinal }))
+    const moves = opts.dryRun ? entries.length > 0 : result.nextCorpusDigest !== result.previousCorpusDigest
+    return { kind: result.refusals.length ? 'refused' : result.entries.length === 0 ? 'nothing-staged' : opts.dryRun ? 'dry-run' : 'admitted',
+      ...(result.refusals.length ? { reason: 'admission-refused' } : {}), entries, refusals: result.refusals,
+      staleReceipts: moves ? receipts.filter(receipt => receipt.corpusDigest === result.previousCorpusDigest) : [],
+      previousCorpusDigest: result.previousCorpusDigest,
+      ...(result.nextCorpusDigest === undefined ? {} : { nextCorpusDigest: result.nextCorpusDigest }), stagingDir, floorCommand }
+  } catch {
+    return { ...base, kind: 'refused', reason: 'feedback-unavailable', previousCorpusDigest: digest.corpusDigest }
+  }
+}
+
+/** Resolve the existing host roots once for the command; the verb also accepts explicit test DATA. */
+export function feedbackSeedHostOptions(session: EvalSession) {
+  return { agentQaRoot: resolve(session.configDir, '.agent-qa'),
+    knowledgeRoot: resolveKnowledgeRoot(session.config.knowledge, session.configDir),
+    readStandingGateReceipts: LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts }
 }
 
 // Preserve the existing eval composition boundary; the DATA bridge imports this lazily.

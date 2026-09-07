@@ -14,7 +14,7 @@ import { writeGate1Fixture } from './fixtures/gate1-fixtures.js'
 import { actionGenerateResult, respondingStub, stubProfile, noneAuth } from './fixtures/replay-fixtures.js'
 import { stageFeedbackEntry, isNovelState, listStagedFeedback, admitStagedFeedback } from '../gate2-composition.js'
 import * as seeding from '../seeding-composition.js'
-import { committedCorpusPath } from '../committed-root-store.js'
+import { committedCorpusPath, committedLabelPath } from '../committed-root-store.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -93,11 +93,14 @@ describe('418 feedback staging and explicit admission', () => {
     f.handoff.runId = asRunId(`${f.handoff.runId}-second`)
     f.handoff.buildOrdinal += 1
     f.handoff.scope = { tier: 'product', key: 'second/product' }
+    f.handoff.aggregateVerdict = 'failed'
+    f.handoff.tests[0]!.outcome = 'failed'
+    f.step.verifierVerdict = { pass: false, reasoning: 'fixture failed live step' }
     const runDir = join(f.agentQaRoot, 'runs', slugBranch(f.handoff.runId))
     mkdirSync(runDir, { recursive: true })
     const second = feedbackInput(f, 'two')
     writeFileSync(join(runDir, 'handoff.json'), JSON.stringify(f.handoff))
-    expect(await stageFeedbackEntry(second)).toMatchObject({ kind: 'staged' })
+    expect(await stageFeedbackEntry({ ...second, benefit: 'exercised-harmed' })).toMatchObject({ kind: 'staged' })
     const entries = listStagedFeedback({ agentQaRoot: f.agentQaRoot })
     const heldOut = assignSplit({ cassetteId: entries[0]!.extracted.cassette.id, saltHex: '0'.repeat(64), heldOutFraction: 0.999999, privateFraction: 0.999999, isPairMember: false })
     expect(heldOut.split).toBe('held-out')
@@ -121,6 +124,11 @@ describe('418 feedback staging and explicit admission', () => {
         run_links: { runId: entry.runId, runSlug: slugBranch(entry.runId) }, captured_at_ordinal: entry.extracted.cassette.receipt.buildOrdinal })
       expect(Number.isInteger(corpusEntry.captured_at_ordinal)).toBe(true)
       expect(corpusEntry.run_links.runId).not.toBe('')
+      const label = JSON.parse(readFileSync(join(f.committedRoot, committedLabelPath(entry.product, entry.extracted.cassette.id)), 'utf8'))
+      expect(label.label).toEqual(entry.extracted.cassette.label)
+      expect(label.label.tier).toBe('silver')
+      expect(label.label.verdict.pass).toBe(entry.product !== 'second/product')
+      expect(label.provenance).toMatchObject({ runId: entry.runId, capturedAtOrdinal: corpusEntry.captured_at_ordinal })
       expect(isNovelState({ agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot, product: entry.product, stateDigest: entry.stateDigest })).toBe(false)
     }
     const after = tree(f.committedRoot)

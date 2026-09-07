@@ -18,6 +18,7 @@ import type {
   ReportVerbResult,
   SeedPolicy,
   SeedVerbResult,
+  SeedFromFeedbackVerbResult,
 } from '../eval-session-composition.js'
 
 // The auth.ts parent-opts idiom: the global `--config` lives on the program two levels above a
@@ -25,6 +26,17 @@ import type {
 function getGlobalConfigPath(command: Command): string | undefined {
   return command.parent?.parent?.opts<{ config?: string }>().config
     ?? command.parent?.opts<{ config?: string }>().config
+}
+
+function renderFeedbackSeedSummary(result: SeedFromFeedbackVerbResult): void {
+  if (result.kind === 'nothing-staged') { console.log(`no staged feedback under ${result.stagingDir}`); return }
+  if (result.reason !== undefined) console.log(`feedback admission refused: ${result.reason}`)
+  for (const entry of result.entries) console.log(`${result.kind === 'dry-run' ? 'would admit' : 'admitted'} ${entry.cassetteId} natural source=canary-feedback benefit=${entry.benefit} from ${entry.runId}#${entry.stepIndex}`)
+  for (const refusal of result.refusals) console.log(`refused ${refusal.product}/${refusal.cassetteId}: ${refusal.kind}`)
+  if (result.previousCorpusDigest !== undefined) console.log(`corpus digest ${result.previousCorpusDigest} → ${result.kind === 'dry-run' ? 'unchanged (dry-run)' : result.nextCorpusDigest ?? 'unavailable'}`)
+  console.log(`standing receipts that will read receipt-stale: ${result.staleReceipts.length}`)
+  for (const receipt of result.staleReceipts) console.log(`${receipt.candidateId} gate ${receipt.gate} ${receipt.verdict}`)
+  console.log(`re-measure the floor: ${result.floorCommand}`)
 }
 
 /** Typed integer flag parser (D-08): a non-integer `--k`/`--seed` is a loud invalid-value error. */
@@ -524,6 +536,8 @@ export function createEvalCommand(): Command {
   cmd.addCommand(
     new Command('seed')
       .description('Commit measurement corpus cases into the reviewed committed root (explicit, D-01)')
+      .option('--from-feedback', 'admit the staged natural feedback batch')
+      .option('--dry-run', 'preview feedback admission without writing')
       .option('--run <slug>', 'narrow to one recorded run')
       .option('--product <slug>', 'narrow by product scope')
       .option('--silver-cap <n>', 'per-test silver cap override', parseIntegerFlag('--silver-cap'))
@@ -542,6 +556,8 @@ export function createEvalCommand(): Command {
       .action(
         async (
           opts: {
+            fromFeedback?: boolean
+            dryRun?: boolean
             run?: string
             product?: string
             silverCap?: number
@@ -552,20 +568,33 @@ export function createEvalCommand(): Command {
           command: Command,
         ) => {
           try {
+            if (opts.fromFeedback && (opts.run !== undefined || opts.heldOutFraction !== undefined || opts.privateFraction !== undefined || opts.silverCap !== undefined)) {
+              throw new TypeError('--from-feedback admits staged feedback only; --run and partition flags do not apply')
+            }
+            if (opts.dryRun && !opts.fromFeedback) throw new TypeError('--dry-run requires --from-feedback')
             const heldOutFraction = parseFractionFlag('--held-out-fraction', opts.heldOutFraction)
             const privateFraction = parseFractionFlag('--private-fraction', opts.privateFraction)
             const configPath = getGlobalConfigPath(command)
-            const { resolveEvalSession, runSeedVerb } = await import(
+            const { resolveEvalSession, runSeedVerb, runSeedFromFeedbackVerb, feedbackSeedHostOptions } = await import(
               '../eval-session-composition.js'
             )
             // D-03: --silver-cap flows into the session's field-wise flag merge — the verb reads
             // it from session.evalConfig.seeding, exactly like judge/k/seed on replay.
             const session = await resolveEvalSession({
               ...(configPath === undefined ? {} : { configPath }),
+              ...(opts.fromFeedback ? { keyOnly: true } : {}),
               flags: {
                 ...(opts.silverCap === undefined ? {} : { silverCap: opts.silverCap }),
               },
             })
+            if (opts.fromFeedback) {
+              const result = await runSeedFromFeedbackVerb(session, { ...feedbackSeedHostOptions(session),
+                product: opts.product, dryRun: opts.dryRun === true })
+              if (opts.json) console.log(JSON.stringify(result, null, 2))
+              else renderFeedbackSeedSummary(result)
+              if (result.kind === 'refused') process.exitCode = 2
+              return
+            }
             const result = await runSeedVerb(
               session,
               {
