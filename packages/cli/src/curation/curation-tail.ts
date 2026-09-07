@@ -711,7 +711,7 @@ export async function curateCompletedRun(
         input.log.info?.(`curation: drained inline (${elapsedSeconds}s)`)
       }
       for (const entry of drain.promotions ?? []) input.log.info?.(renderPromotionLine(entry))
-      if ((drain.inconsistenciesFiled ?? 0) > 0) {
+      if (drain.inconsistenciesFiled > 0) {
         input.log.info?.(`curation: filed ${drain.inconsistenciesFiled} gate-inconsistency proposal(s); review with agent-qa proposals list`)
       }
       // A commit noop is visible but never fatal (G-381-1): legitimate reasons such as

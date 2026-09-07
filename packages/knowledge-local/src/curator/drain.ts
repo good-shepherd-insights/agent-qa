@@ -165,8 +165,8 @@ interface DrainReportBase {
   deprecated?: number
   /** Optional for fault-injection fakes; the real drain always sets this measurement. */
   promotions?: readonly DrainPromotionOutcome[]
-  /** The real drain always sets this; optional for existing injected reports. */
-  inconsistenciesFiled?: number
+  /** Number of newly filed reviews; every drain outcome carries an explicit measurement. */
+  inconsistenciesFiled: number
   downgraded: number
   withheld: number
   quarantined: number
@@ -996,7 +996,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             onPromotionOutcome: outcome => result.promotions.push(outcome),
             onInconsistencyFiled: outcome => {
               if (outcome.kind === 'filed') {
-                result.inconsistenciesFiled = (result.inconsistenciesFiled ?? 0) + 1
+                result.inconsistenciesFiled += 1
               }
             },
             /**

@@ -371,6 +371,7 @@ function successfulOperations(
     drainQueue: vi.fn(async () => ({
       kind: 'drained' as const,
       jobsProcessed: 0,
+      inconsistenciesFiled: 0,
       committed: 0,
       downgraded: 0,
       withheld: 0,
@@ -417,6 +418,7 @@ function handedOffDrainReport() {
       heartbeatAtMs: 0,
     },
     jobsProcessed: 0,
+    inconsistenciesFiled: 0,
     committed: 0,
     downgraded: 0,
     withheld: 0,
@@ -627,6 +629,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         return {
           kind: 'drained',
           jobsProcessed: 0,
+          inconsistenciesFiled: 0,
           committed: 0,
           downgraded: 0,
           withheld: 0,
@@ -730,6 +733,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           heartbeatAtMs: 0,
         },
         jobsProcessed: 0,
+        inconsistenciesFiled: 0,
         committed: 0,
         downgraded: 0,
         withheld: 0,
@@ -1001,6 +1005,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           return {
             kind: 'drained',
             jobsProcessed: 0,
+            inconsistenciesFiled: 0,
             committed: 0,
             downgraded: 0,
             withheld: 0,
@@ -1065,6 +1070,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         return {
           kind: aborted ? 'aborted' as const : 'drained' as const,
           jobsProcessed: 0,
+          inconsistenciesFiled: 0,
           committed: 0,
           downgraded: 0,
           withheld: 0,
@@ -1679,6 +1685,7 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
       return {
         kind: 'aborted' as const,
         jobsProcessed: 0,
+        inconsistenciesFiled: 0,
         committed: 0,
         downgraded: 0,
         withheld: 0,

@@ -343,6 +343,7 @@ function startProductionDrainHost(options: {
 
 function drainReport(jobsProcessed: number, remaining: number) {
   return {
+    inconsistenciesFiled: 0,
     kind: 'drained' as const,
     jobsProcessed,
     committed: jobsProcessed,
@@ -496,6 +497,7 @@ describe('daemon curation serving tracer', () => {
       return {
         kind: 'drained',
         jobsProcessed,
+        inconsistenciesFiled: 0,
         committed: jobsProcessed,
         downgraded: 0,
         withheld: 0,
@@ -620,6 +622,7 @@ describe('daemon curation serving tracer', () => {
             heartbeatAtMs: Date.now(),
           },
           jobsProcessed: 0,
+          inconsistenciesFiled: 0,
           committed: 0,
           downgraded: 0,
           withheld: 0,

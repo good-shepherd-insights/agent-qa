@@ -296,6 +296,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     expect(report).toMatchObject({
       kind: 'handed-off',
       jobsProcessed: 0,
+      inconsistenciesFiled: 0,
       committed: 0,
       writerPass: { kind: 'skipped', reason: 'lease-held' },
       holder: { leaseId: holder.leaseId, epoch: holder.epoch },
@@ -739,6 +740,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
     expect(report).toMatchObject({
       kind: 'aborted',
+      inconsistenciesFiled: 0,
       jobsProcessed: 1,
       committed: 1,
       writerPass: { kind: 'skipped', reason: 'aborted' },
