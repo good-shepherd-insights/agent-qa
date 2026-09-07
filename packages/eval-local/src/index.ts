@@ -29,6 +29,9 @@ export type { ReplayRecordLoad, ScoreRecordLoad } from './replay-read.js'
 export { computeReplayProfileFingerprintFor, runCassetteReplay } from './replay-composition.js'
 export type { RunCassetteReplayInput } from './replay-composition.js'
 
+export { resolveBaselineCache, listBaselineRunRoots } from './baseline-cache-read.js'
+export type { BaselineCacheRow, BaselineCacheResolution } from './baseline-cache-read.js'
+
 export { loadCassetteBundles, sweepCassetteReplays } from './replay-sweep.js'
 export type {
   LoadedCassetteBundle,

@@ -378,6 +378,15 @@ export interface CapturingStub {
   languageModels: Record<string, StubLanguageModel>
 }
 
+/** Prompt-aware response at the same captured, post-middleware provider boundary. */
+export function respondingStub(
+  respond: (call: CapturedCallOptions, index: number) => StubGenerateResult,
+  modelId = STUB_MODEL_ID,
+): CapturingStub {
+  const stub = capturingStub(index => respond(stub.captured[index]!, index), modelId)
+  return stub
+}
+
 /**
  * A scripted capturing stub injected through createModel's `overrides.languageModels`: every
  * doGenerate params object is captured POST the pinned-last mask/guardrail middleware — the exact
