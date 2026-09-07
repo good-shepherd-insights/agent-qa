@@ -463,6 +463,22 @@ SC2 — the cross-run supersession differential (389-06, D-10) > a foreign artif
 # so each of them is DRIVEN IN ITS FAILING DIRECTION here, on every invocation, before any subject
 # is touched. It costs milliseconds, writes nothing into a tracked path, and turns each branch from
 # one that has been READ into one that has been SEEN to fire.
+# 418 CR-04: measured G2-07 collateral, ten handled-result/failure-boundary cells.
+# Each reads the final strict receipt: deleting flake invalidates its three-key
+# nonSignal counters, so the receipt assertion fails. The vocabulary cell above
+# remains REQUIRED; these exact additional titles alone cannot certify the leg.
+G07_ALLOWED="${G07_ALLOWED}
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'ablated' attempt on ordinary incomplete-fold retry after 'drain' failure
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'ablated' attempt on ordinary incomplete-fold retry after 'projection' failure
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'error' attempt on ordinary incomplete-fold retry after 'drain' failure
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'error' attempt on ordinary incomplete-fold retry after 'projection' failure
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'no-eval-root' attempt on ordinary incomplete-fold retry after 'drain' failure
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'no-eval-root' attempt on ordinary incomplete-fold retry after 'projection' failure
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'throws' attempt on ordinary incomplete-fold retry after 'drain' failure
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'throws' attempt on ordinary incomplete-fold retry after 'projection' failure
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'unavailable' attempt on ordinary incomplete-fold retry after 'drain' failure
+SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05) > reuses a handled 'unavailable' attempt on ordinary incomplete-fold retry after 'projection' failure"
+
 instrument_self_check () {
   echo "=== INSTRUMENT SELF-CHECK — the gates the criterion rests on, driven in their failing direction"
 
