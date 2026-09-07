@@ -1,0 +1,723 @@
+// 2026-09-07, 417: guarded committed reads + the profile cache + pure eval arithmetic.
+// All replay calls delegate to the existing safety-scoped composition. Writes are gate-local.
+import { join } from 'node:path'
+import {
+  applyBriefDelta,
+  assessJudgeEligibility,
+  buildEvalReport,
+  computeCorpusDigest,
+  computeDecisionIdentity,
+  decideGate1,
+  decisionCorrectnessVectors,
+  decisionIdentityKey,
+  deriveSampleSeeds,
+  diffArms,
+  FLOOR_AXES,
+  foldPerAxisScore,
+  foldRemovalSamples,
+  injectCandidate,
+  JUDGE_CONFIG,
+  locateBriefLine,
+  MIN_LIFT_DECISIONS,
+  orderGate1Reasons,
+  renderGate1Line,
+  selectGateSet,
+  toDeclaredBriefDelta,
+  type ArmDecision,
+  type ArtifactSource,
+  type DeclaredBriefDelta,
+  type DiffedDecision,
+  type LeafCassette,
+  type ReplayCassetteOutcome,
+  type ReplaySample,
+  type ReplaySampleOutcome,
+} from '@vostride/agent-qa-eval'
+import type {
+  ModelProfile,
+  ModelProviderOverrides,
+  ResolvedModelAuth,
+} from '@vostride/agent-qa-model'
+import {
+  GateReceiptSchema,
+  slugBranch,
+  stampReceiptDigest,
+  type CandidateInjection,
+  type CrossCheck,
+  type Gate1KSource,
+  type Gate1Reason,
+  type Gate1Receipt,
+} from '@vostride/agent-qa-schema'
+import { resolveBaselineCache, type BaselineCacheRow } from './baseline-cache-read.js'
+import {
+  listNoiseFloorArtefacts,
+  readCommittedCorpus,
+  readPartitionManifests,
+  resolveMinimumGateSet,
+  type CommittedReadRefusal,
+} from './committed-corpus-source.js'
+import { loadCassetteBundles } from './replay-sweep.js'
+import { runCassetteReplay, type RunCassetteReplayInput } from './replay-composition.js'
+import { FsReplayRecordStore } from './replay-record-store.js'
+import { FsScoreStore, type ScoreRecord } from './score-store.js'
+import { loadScoreRecord } from './replay-read.js'
+
+export const GATE1_AUDIT_SUBDIR = 'eval/gate1'
+type Planner = {
+  profile: ModelProfile
+  modelOverrides?: ModelProviderOverrides
+  resolveAuth: () => Promise<ResolvedModelAuth>
+}
+export interface RunReplayGateInput {
+  injection: CandidateInjection
+  committedRoot: string
+  agentQaRoot: string
+  identity: {
+    plannerModelId: string
+    matcherVersion: number
+    judgeModelId?: string
+    judgeVersion?: number
+    fingerprint: string
+    profileKey: string
+  }
+  planner: Planner
+  judge?: Planner
+  judgeOverrideConfigured: boolean
+  k: number
+  kSource: Gate1KSource
+  maxScreens: number
+  baselineSeed: { seed?: number; source: 'flag' | 'config' } | { floorSeeds: readonly number[] }
+  maskingContextFactory?: RunCassetteReplayInput['maskingContextFactory']
+  producedBy: { opId: string }
+  clock?: () => number
+  onProgress?: (line: string) => void
+}
+export type RunReplayGateResult =
+  | {
+      kind: 'receipt'
+      receipt: Gate1Receipt
+      lines: string[]
+      notices: string[]
+      refusals: readonly CommittedReadRefusal[]
+      modelCalls: number
+      wallClockMs: number
+    }
+  | { kind: 'refused'; refusal: CommittedReadRefusal; notices: string[] }
+type LeafBundle = { cassette: LeafCassette; artifacts: ArtifactSource }
+type Cached = Extract<BaselineCacheRow, { kind: 'cached' }>
+type ReplayBag = Pick<
+  RunCassetteReplayInput,
+  | 'profile'
+  | 'auth'
+  | 'modelOverrides'
+  | 'judge'
+  | 'maskingContextFactory'
+  | 'modelCallObservation'
+  | 'clock'
+>
+
+function firstSample(outcome: ReplayCassetteOutcome): ReplaySample | undefined {
+  return 'granularity' in outcome && outcome.granularity === 'leaf' ? outcome.samples[0] : undefined
+}
+function outcomeOf(sample: ReplaySample | undefined): ReplaySampleOutcome {
+  return sample?.outcome ?? { kind: 'harness-error', message: 'replay produced no sample' }
+}
+function honored(sample: ReplaySample | undefined): boolean {
+  return (
+    sample !== undefined &&
+    !(sample.unsupportedFeatures ?? []).some((feature) => feature.toLowerCase().includes('seed'))
+  )
+}
+function arm(
+  cassette: LeafCassette,
+  replay: ReplayCassetteOutcome,
+  score?: ScoreRecord,
+): ArmDecision['baseline'] {
+  const vector = decisionCorrectnessVectors([
+    { cassetteId: cassette.id, outcome: replay, score: score?.score, label: cassette.label },
+  ])[0]
+  return vector === undefined
+    ? { kind: 'refused', reason: 'no decision vector' }
+    : { kind: 'scored', vector, briefSource: vector.briefSource }
+}
+function harm(row: DiffedDecision): NonNullable<Gate1Receipt['harmed']>[number] {
+  const {
+    cassetteId,
+    stepIndex,
+    decisionOrdinal,
+    origin,
+    labelTier,
+    sourceChannel,
+    verdictPresent,
+    split,
+    heldOutVisibility,
+  } = row
+  return {
+    cassetteId,
+    ...(stepIndex === undefined ? {} : { stepIndex }),
+    decisionOrdinal,
+    origin,
+    ...(labelTier === undefined ? {} : { labelTier }),
+    ...(sourceChannel === undefined ? {} : { sourceChannel }),
+    verdictPresent,
+    ...(split === undefined ? {} : { split }),
+    ...(heldOutVisibility === undefined ? {} : { heldOutVisibility }),
+    axes: row.flippedWorse,
+  }
+}
+
+export interface RemovalFlipsOutcomeInput {
+  recordId: string
+  cassettes: readonly (LeafBundle & {
+    existing?: { withRecord: ReplaySample; withoutRecord: ReplaySample }
+    baseSeed?: number
+    seedHonored?: boolean
+  })[]
+  mode: { kind: 'injected'; injection: CandidateInjection } | { kind: 'active-record' }
+  k: number
+  baseSeed: number
+  existing?: { withRecord: ReplaySample; withoutRecord: ReplaySample }
+  replay: ReplayBag
+  gate1Dir: string
+}
+export interface RemovalFlipsOutcomeResult {
+  crossCheck: Exclude<CrossCheck, 'not-run'>
+  perTarget: { cassetteId: string; crossCheck: Exclude<CrossCheck, 'not-run'> }[]
+  seeds: number[]
+  seedHonored: boolean
+  detail: NonNullable<Gate1Receipt['samples']['detail']>
+  modelCalls: number
+  screens: number
+  promptTokens: number
+  completionTokens: number
+}
+
+/** Existing samples count as sample one; every additional sample gets a distinct derived seed. */
+export async function removalFlipsOutcome(
+  input: RemovalFlipsOutcomeInput,
+): Promise<RemovalFlipsOutcomeResult> {
+  const result: RemovalFlipsOutcomeResult = {
+    crossCheck: 'inconclusive',
+    perTarget: [],
+    seeds: [input.baseSeed, ...deriveSampleSeeds(input.baseSeed, input.k)],
+    seedHonored: true,
+    detail: [],
+    modelCalls: 0,
+    screens: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+  }
+  for (const target of input.cassettes) {
+    const { cassette, artifacts } = target
+    const baseSeed = target.baseSeed ?? input.baseSeed
+    const seeds = [baseSeed, ...deriveSampleSeeds(baseSeed, input.k)]
+    const existing = target.existing ?? input.existing
+    if (existing === undefined) throw new TypeError('cross-check requires both first samples')
+    let withCassette = cassette
+    let withoutCassette = cassette
+    let withDelta: DeclaredBriefDelta | undefined
+    let withoutDelta: DeclaredBriefDelta | undefined
+    if (input.mode.kind === 'injected') {
+      const planned = toDeclaredBriefDelta(input.mode.injection, cassette)
+      if (planned.kind !== 'plan') throw new TypeError(planned.detail)
+      withDelta = planned.plan.delta
+      withCassette = injectCandidate(cassette, planned.plan)
+    } else {
+      const brief = cassette.input.servedBrief
+      const channel1Position = brief.channel1.findIndex((line) => line.id === input.recordId)
+      const line = brief.channel1[channel1Position]
+      if (line === undefined || (line.tier !== 'L0' && line.tier !== 'L1' && line.tier !== 'L2'))
+        throw new TypeError('active record brief line unavailable')
+      const turns = brief.proof?.promptTurns ?? []
+      const turn =
+        turns.find((row) => row.turnOrdinal === cassette.decisionOrdinal) ??
+        (turns.every(
+          (row) =>
+            row.policyL0 === turns[0]?.policyL0 &&
+            row.learnedL1 === turns[0]?.learnedL1 &&
+            row.learnedL2 === turns[0]?.learnedL2,
+        )
+          ? turns[0]
+          : undefined)
+      if (turn === undefined)
+        throw new TypeError('active record requires a reproducible proof turn')
+      const text =
+        turn[
+          { L0: 'policyL0', L1: 'learnedL1', L2: 'learnedL2' }[line.tier] as
+            'policyL0' | 'learnedL1' | 'learnedL2'
+        ]
+      const located = locateBriefLine(text, line, line.tier)
+      if (located.kind !== 'located')
+        throw new TypeError('active record rendered line is absent or ambiguous')
+      withoutDelta = {
+        kind: 'removed',
+        line,
+        tier: line.tier,
+        renderedLine: text.split('\n')[located.index]!,
+        turnOrdinal: turn.turnOrdinal,
+        position: located.index,
+        channel1Position,
+      }
+      withoutCassette = { ...cassette, input: applyBriefDelta(cassette.input, withoutDelta) }
+    }
+    const gold = computeDecisionIdentity(
+      cassette.sidecar.goldAction,
+      cassette.input.stateBefore.elements,
+    )
+    const goldKey = decisionIdentityKey(gold)
+    const arms = { withRecord: [existing.withRecord], withoutRecord: [existing.withoutRecord] }
+    result.seedHonored &&= target.seedHonored !== false
+    for (let index = 1; index < input.k; index++) {
+      for (const withRecord of [true, false]) {
+        const outputDir = join(
+          input.gate1Dir,
+          'cross-check',
+          withRecord ? 'with' : 'without',
+          `sample-${index}`,
+          'replays',
+        )
+        const replay = await runCassetteReplay({
+          ...input.replay,
+          cassette: withRecord ? withCassette : withoutCassette,
+          artifacts,
+          declaredBriefDelta: withRecord ? withDelta : withoutDelta,
+          k: 1,
+          seed: seeds[index]!,
+          replayOutputBaseDir: input.gate1Dir,
+          modelCallObservation: {
+            onProviderCall: () => {
+              result.modelCalls++
+              input.replay.modelCallObservation?.onProviderCall?.()
+            },
+          },
+          recordStore: new FsReplayRecordStore({ root: input.gate1Dir, outputDir }),
+          scoreStore: new FsScoreStore({ root: input.gate1Dir, outputDir }),
+        })
+        const sample = firstSample(replay) ?? {
+          sampleIndex: 0,
+          outcome: outcomeOf(undefined),
+          durationMs: 0,
+        }
+        arms[withRecord ? 'withRecord' : 'withoutRecord'].push(sample)
+        result.screens++
+        result.promptTokens += sample.tokenUsage?.promptTokens ?? 0
+        result.completionTokens += sample.tokenUsage?.completionTokens ?? 0
+        const score = loadScoreRecord(join(outputDir, ...cassette.id.split('/').map(slugBranch)))
+        if (score.kind === 'loaded') {
+          const cost = buildEvalReport([
+            { cassetteId: cassette.id, outcome: replay, score: score.record.score },
+          ]).honesty.judge.cost
+          result.promptTokens += cost.inputTokens
+          result.completionTokens += cost.outputTokens
+        }
+      }
+    }
+    for (const withRecord of [true, false])
+      for (const [index, sample] of arms[withRecord ? 'withRecord' : 'withoutRecord'].entries()) {
+        result.seedHonored &&= honored(sample)
+        result.detail.push({
+          withRecord,
+          seed: seeds[index]!,
+          matchesGold:
+            sample.outcome.kind === 'decision' &&
+            decisionIdentityKey(sample.outcome.identity) === goldKey,
+          kind: sample.outcome.kind,
+        })
+      }
+    result.perTarget.push({
+      cassetteId: cassette.id,
+      crossCheck: foldRemovalSamples({
+        withRecord: arms.withRecord.map((sample) => sample.outcome),
+        withoutRecord: arms.withoutRecord.map((sample) => sample.outcome),
+        gold,
+      }),
+    })
+  }
+  if (result.perTarget.length > 0 && result.perTarget.every((row) => row.crossCheck === 'flipped'))
+    result.crossCheck = 'flipped'
+  else if (
+    result.perTarget.length > 0 &&
+    result.perTarget.every((row) => row.crossCheck === 'held')
+  )
+    result.crossCheck = 'held'
+  return result
+}
+
+export async function runReplayGate(input: RunReplayGateInput): Promise<RunReplayGateResult> {
+  const notices: string[] = []
+  try {
+    return await compose(input, notices)
+  } catch (error) {
+    const io = error as NodeJS.ErrnoException
+    if (typeof io?.code !== 'string' || typeof io.path !== 'string') throw error
+    return {
+      kind: 'refused',
+      refusal: { path: io.path, reason: `gate staging failed: ${io.message}` },
+      notices,
+    }
+  }
+}
+
+async function compose(input: RunReplayGateInput, notices: string[]): Promise<RunReplayGateResult> {
+  const { injection, identity } = input
+  if (!Number.isSafeInteger(input.k) || input.k < 3 || input.k % 2 === 0)
+    throw new TypeError('k must be an odd integer of at least 3')
+  if (!Number.isSafeInteger(input.maxScreens) || input.maxScreens < 1)
+    throw new TypeError('maxScreens must be a positive safe integer')
+  const clock = input.clock ?? Date.now
+  const started = clock()
+  const corpus = readCommittedCorpus(input.committedRoot)
+  const floors = listNoiseFloorArtefacts(input.committedRoot)
+  const partitions = readPartitionManifests(input.committedRoot)
+  const refusals = [...corpus.refusals, ...floors.refusals, ...partitions.refusals]
+  notices.push(...corpus.notices, ...partitions.notices)
+  if (refusals[0]) return { kind: 'refused', refusal: refusals[0], notices }
+  const floor = floors.artefacts.find((row) => row.profileKey === identity.profileKey)?.artefact
+  const minimum = resolveMinimumGateSet({
+    committedRoot: input.committedRoot,
+    profileKey: identity.profileKey,
+  })
+  if (floor === undefined || minimum.kind !== 'resolved')
+    return {
+      kind: 'refused',
+      refusal: { path: input.committedRoot, reason: 'noise floor or minimum gate set unavailable' },
+      notices,
+    }
+  const eligibility = assessJudgeEligibility({
+    judgeModelId: identity.judgeModelId,
+    replayedModelId: identity.plannerModelId,
+  })
+  const sameFamilyRefused =
+    input.judgeOverrideConfigured &&
+    !eligibility.eligible &&
+    eligibility.reason === 'no-eligible-judge'
+  const emptyFold = foldPerAxisScore([], floor.axes)
+  const receipt: Omit<Gate1Receipt, 'receiptDigest'> = {
+    schemaVersion: 1,
+    gate: 1,
+    candidateId: injection.candidateId,
+    producedAtOrdinal: injection.latestOrdinal,
+    producedBy: input.producedBy,
+    verdict: 'abstain',
+    ...emptyFold,
+    corpusVersion: {
+      corpusDigest: computeCorpusDigest(corpus.snapshot.entries),
+      partitionVersion:
+        partitions.manifests.find((row) => row.product === injection.product)?.partitionVersion ??
+        floor.partitionVersion,
+      gateSetSize: 0,
+      excludedCount: 0,
+      minimumGateSet: minimum.minimumGateSet,
+    },
+    noiseFloorRef: { profileKey: floor.profileKey, corpusDigest: floor.corpusDigest },
+    samples: { k: input.k, seeds: [], seedHonored: false, modelCalls: 0 },
+    crossCheck: 'not-run',
+    kSource: input.kSource,
+    cap: { maxScreens: input.maxScreens },
+    spend: { screens: 0, modelCalls: 0, promptTokens: 0, completionTokens: 0, wallClockMs: 0 },
+    judge: {
+      eligibility: eligibility.eligible ? 'eligible' : eligibility.reason,
+      overrideConfigured: input.judgeOverrideConfigured,
+    },
+    ...(eligibility.eligible
+      ? {
+          judgeId: `${eligibility.judgeModelId}|family=${eligibility.judgeFamily}|judgeVersion=${JUDGE_CONFIG.judgeVersion}`,
+        }
+      : { degradation: 'replay-diff' }),
+  }
+  const finish = (): RunReplayGateResult => {
+    const stamped = stampReceiptDigest(receipt)
+    GateReceiptSchema.parse(stamped)
+    return {
+      kind: 'receipt',
+      receipt: stamped,
+      lines: [renderGate1Line(stamped), ...notices],
+      notices,
+      refusals,
+      modelCalls: receipt.spend!.modelCalls,
+      wallClockMs: receipt.spend!.wallClockMs,
+    }
+  }
+  const abstain = (reason: Gate1Reason) => {
+    receipt.reasons = orderGate1Reasons([
+      reason,
+      ...(sameFamilyRefused ? ['same-family-refused' as const] : []),
+    ])
+    if (reason === 'tier-not-implemented') receipt.degradation = 'tier-not-implemented'
+    return finish()
+  }
+  if (injection.kind !== 'fact' && injection.kind !== 'caution')
+    return abstain('tier-not-implemented')
+  const gate = selectGateSet({
+    entries: corpus.snapshot.entries,
+    product: injection.product,
+    candidate: injection.provenance,
+    minimumGateSet: minimum.minimumGateSet,
+  })
+  if (gate.verdict !== 'ok') return abstain(gate.verdict)
+  receipt.corpusVersion.gateSetSize = gate.gateEntries.length
+  receipt.corpusVersion.excludedCount = gate.excluded.length
+  if (injection.target === undefined) return abstain('target-unavailable')
+  const loaded = loadCassetteBundles(join(input.committedRoot, 'cassettes')).loaded
+  const bundles = new Map<string, LeafBundle>()
+  for (const row of loaded)
+    if (row.cassette.granularity === 'leaf') {
+      if (bundles.has(row.cassette.id))
+        return {
+          kind: 'refused',
+          refusal: { path: input.committedRoot, reason: 'duplicate cassette identity' },
+          notices,
+        }
+      bundles.set(row.cassette.id, { cassette: row.cassette, artifacts: row.artifacts })
+    }
+  const targets: LeafBundle[] = []
+  for (const entry of corpus.snapshot.entries.filter(
+    (row) => row.run_links.runId === injection.target!.runId && row.product === injection.product,
+  )) {
+    const bundle = bundles.get(entry.cassetteId)
+    if (
+      bundle?.cassette.runId === injection.target.runId &&
+      bundle.cassette.stepIndex === injection.target.stepIndex &&
+      (injection.target.testId === undefined ||
+        bundle.cassette.input.testId === injection.target.testId)
+    )
+      targets.push(bundle)
+  }
+  if (targets.length === 0) return abstain('target-unavailable')
+  const allIds = [
+    ...new Set([
+      ...gate.gateEntries.map((row) => row.cassetteId),
+      ...targets.map((row) => row.cassette.id),
+    ]),
+  ]
+  if (allIds.some((id) => !bundles.has(id)))
+    return {
+      kind: 'refused',
+      refusal: { path: input.committedRoot, reason: 'gate cassette unavailable' },
+      notices,
+    }
+  const seed =
+    'floorSeeds' in input.baselineSeed
+      ? (input.baselineSeed.floorSeeds[0] ?? 11)
+      : (input.baselineSeed.seed ?? 11)
+  const seedSource =
+    'floorSeeds' in input.baselineSeed
+      ? input.baselineSeed.floorSeeds[0] === undefined
+        ? 'default'
+        : 'floor'
+      : input.baselineSeed.source
+  const cache = resolveBaselineCache({
+    agentQaRoot: input.agentQaRoot,
+    ...identity,
+    ...(eligibility.eligible
+      ? {
+          judgeIdentity: {
+            judgeModelId: eligibility.judgeModelId,
+            judgeVersion: identity.judgeVersion ?? JUDGE_CONFIG.judgeVersion,
+          },
+        }
+      : {}),
+    gateRootSeed: seed,
+    gateRootSeedSource: seedSource,
+    cassettes: allIds.map((id) => ({
+      id,
+      promptInputHash: bundles.get(id)!.cassette.receipt.promptInputHash,
+    })),
+  })
+  const uncached = cache.rows.filter((row) => row.kind === 'uncached')
+  if (uncached.length) {
+    notices.push(
+      `uncached: ${uncached.map((row) => row.cassetteId).join(', ')}`,
+      `eval replay --source committed --seed ${seed}`,
+    )
+    return abstain('baseline-uncached')
+  }
+  const cacheById = new Map(cache.rows.map((row) => [row.cassetteId, row]))
+  const scoredCollateral = gate.gateEntries.filter(
+    (row) => cacheById.get(row.cassetteId)?.kind === 'cached',
+  )
+  if (scoredCollateral.length === 0) return abstain('collateral-unscorable')
+  const planned = scoredCollateral.length + targets.length + 2 * (input.k - 1) * targets.length
+  if (planned > input.maxScreens) {
+    notices.push(`planned ${planned} screens exceeds cap ${input.maxScreens}`)
+    return abstain('cap-exceeded')
+  }
+  const gate1Dir = join(input.agentQaRoot, GATE1_AUDIT_SUBDIR, slugBranch(injection.candidateId))
+  const spend = receipt.spend!
+  const auth = await input.planner.resolveAuth()
+  const replay: ReplayBag = {
+    profile: input.planner.profile,
+    auth,
+    modelOverrides: input.planner.modelOverrides,
+    maskingContextFactory: input.maskingContextFactory,
+    modelCallObservation: {
+      onProviderCall: () => {
+        spend.modelCalls++
+      },
+    },
+    ...(input.clock === undefined ? {} : { clock: { now: input.clock } }),
+    ...(eligibility.eligible && input.judge
+      ? {
+          judge: {
+            profile: input.judge.profile,
+            auth: await input.judge.resolveAuth(),
+            modelOverrides: input.judge.modelOverrides,
+          },
+        }
+      : {}),
+  }
+  const rows: ArmDecision[] = []
+  const candidateSamples = new Map<string, ReplaySample>()
+  const targetIds = new Set(targets.map((row) => row.cassette.id))
+  let seedHonored = true
+  for (const id of allIds) {
+    const { cassette, artifacts } = bundles.get(id)!
+    const baseline = cacheById.get(id)!
+    const entry = corpus.snapshot.entries.find((row) => row.cassetteId === id)
+    const row: ArmDecision = {
+      cassetteId: id,
+      stepIndex: cassette.stepIndex,
+      decisionOrdinal: cassette.decisionOrdinal,
+      origin: targetIds.has(id) ? 'target-step' : 'gate-set',
+      entry,
+      label: cassette.label,
+      baseline:
+        baseline.kind === 'cached'
+          ? arm(cassette, baseline.replay, baseline.score)
+          : { kind: 'refused', reason: baseline.reason },
+      candidate: { kind: 'refused', reason: 'baseline refused' },
+    }
+    rows.push(row)
+    if (baseline.kind !== 'cached') continue
+    seedHonored &&= baseline.seedHonored
+    const plan = toDeclaredBriefDelta(injection, cassette)
+    if (plan.kind !== 'plan') {
+      row.candidate = { kind: 'refused', reason: plan.detail }
+      continue
+    }
+    const outputDir = join(gate1Dir, 'candidate-arm', 'replays')
+    const candidate = await runCassetteReplay({
+      ...replay,
+      cassette: injectCandidate(cassette, plan.plan),
+      artifacts,
+      k: 1,
+      seed: baseline.seed,
+      declaredBriefDelta: plan.plan.delta,
+      replayOutputBaseDir: gate1Dir,
+      recordStore: new FsReplayRecordStore({ root: input.agentQaRoot, outputDir }),
+      scoreStore: new FsScoreStore({ root: input.agentQaRoot, outputDir }),
+    })
+    spend.screens++
+    const sample = firstSample(candidate)
+    if (sample) candidateSamples.set(id, sample)
+    seedHonored &&= honored(sample)
+    const score = loadScoreRecord(join(outputDir, ...id.split('/').map(slugBranch)))
+    row.candidate = arm(cassette, candidate, score.kind === 'loaded' ? score.record : undefined)
+    const cost = buildEvalReport([
+      {
+        cassetteId: id,
+        outcome: candidate,
+        score: score.kind === 'loaded' ? score.record.score : undefined,
+      },
+    ])
+    spend.promptTokens += cost.totalCost.promptTokens + cost.honesty.judge.cost.inputTokens
+    spend.completionTokens += cost.totalCost.completionTokens + cost.honesty.judge.cost.outputTokens
+  }
+  const diffed = diffArms(rows)
+  const decisionInput = {
+    kind: injection.kind,
+    sameFamilyRefused,
+    targets: diffed.filter((row) => row.origin === 'target-step'),
+    collateral: diffed.filter((row) => row.origin === 'gate-set'),
+  }
+  const probe = decideGate1({ ...decisionInput, crossCheck: 'inconclusive' })
+  let crossCheck: CrossCheck = 'not-run'
+  const firstBaseline = cacheById.get(targets[0]!.cassette.id)
+  const base =
+    firstBaseline?.kind === 'cached'
+      ? firstBaseline
+      : cache.rows.find((row): row is Cached => row.kind === 'cached')!
+  receipt.baselineSource = { runRoot: base.root, seed: base.seed, seedSource: base.seedSource }
+  receipt.samples = { k: input.k, seeds: [base.seed], seedHonored, modelCalls: spend.modelCalls }
+  const fixedTargetIds = new Set(
+    decisionInput.targets.filter((row) => row.headline === 'fixed').map((row) => row.cassetteId),
+  )
+  if (probe.verdict !== 'fail' && fixedTargetIds.size > 0) {
+    const result = await removalFlipsOutcome({
+      recordId: injection.candidateId,
+      mode: { kind: 'injected', injection },
+      k: input.k,
+      baseSeed: base.seed,
+      gate1Dir,
+      replay,
+      cassettes: targets
+        .filter((target) => fixedTargetIds.has(target.cassette.id))
+        .map((target) => {
+          const cached = cacheById.get(target.cassette.id) as Cached
+          return {
+            ...target,
+            baseSeed: cached.seed,
+            seedHonored: cached.seedHonored,
+            existing: {
+              withRecord: candidateSamples.get(target.cassette.id)!,
+              withoutRecord: firstSample(cached.replay)!,
+            },
+          }
+        }),
+    })
+    crossCheck = result.crossCheck
+    spend.screens += result.screens
+    spend.promptTokens += result.promptTokens
+    spend.completionTokens += result.completionTokens
+    receipt.samples = {
+      k: input.k,
+      seeds: result.seeds,
+      seedHonored: seedHonored && result.seedHonored,
+      modelCalls: spend.modelCalls,
+      detail: result.detail,
+    }
+  }
+  const decision = decideGate1({ ...decisionInput, crossCheck })
+  Object.assign(receipt, foldPerAxisScore(rows, floor.axes), {
+    verdict: decision.verdict,
+    reasons: decision.reasons,
+    crossCheck: decision.crossCheck,
+    harmed: decision.harmed.map(harm),
+    unverifiedFlips: decision.unverifiedFlips.map(harm),
+  })
+  receipt.targets = targets.map(({ cassette }) => {
+    const row = rows.find((row) => row.cassetteId === cassette.id)!
+    return {
+      cassetteId: cassette.id,
+      runId: cassette.runId,
+      stepIndex: cassette.stepIndex,
+      decisionOrdinal: cassette.decisionOrdinal,
+      source: 'committed',
+      baselineCorrect:
+        row.baseline.kind === 'scored' && row.baseline.vector.axes.headline === 'correct',
+      candidateCorrect:
+        row.candidate.kind === 'scored' && row.candidate.vector.axes.headline === 'correct',
+      baselineBriefSource: row.baseline.kind === 'scored' ? row.baseline.briefSource : 'refused',
+      candidateBriefSource: row.candidate.kind === 'scored' ? row.candidate.briefSource : 'refused',
+    }
+  })
+  const product = floor.products[injection.product]
+  if (product)
+    receipt.productFloor = {
+      product: injection.product,
+      axes: FLOOR_AXES.map((axis) => ({
+        axis,
+        floor: product.axes[axis].aggregateFloor ?? null,
+        n: product.axes[axis].n,
+      })),
+    }
+  receipt.generalization = {
+    liftDecisions: decisionInput.targets.filter((row) => row.headline === 'fixed').length,
+    minimumLiftDecisions: MIN_LIFT_DECISIONS,
+  }
+  spend.wallClockMs = Math.max(0, Math.round(clock() - started))
+  receipt.samples.modelCalls = spend.modelCalls
+  input.onProgress?.(
+    `gate1 candidate=${injection.candidateId}: screens=${spend.screens} modelCalls=${spend.modelCalls} promptTokens=${spend.promptTokens} completionTokens=${spend.completionTokens} wallClock=${spend.wallClockMs}ms seedHonored=${receipt.samples.seedHonored}`,
+  )
+  return finish()
+}

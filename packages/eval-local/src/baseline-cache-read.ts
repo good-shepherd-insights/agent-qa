@@ -8,15 +8,22 @@ import { loadReplayRecord, loadScoreRecord } from './replay-read.js'
 import { loadStagedReport } from './report-store.js'
 import type { ScoreRecord } from './score-store.js'
 
-export function listBaselineRunRoots(agentQaRoot: string, profileKey: string): {
-  root: string; kind: 'gate' | 'floor'; seed?: number
+export function listBaselineRunRoots(
+  agentQaRoot: string,
+  profileKey: string,
+): {
+  root: string
+  kind: 'gate' | 'floor'
+  seed?: number
 }[] {
   const roots: ReturnType<typeof listBaselineRunRoots> = []
   const gate = join(agentQaRoot, 'eval', 'gate', slugBranch(profileKey))
   if (existsSync(gate)) roots.push({ root: gate, kind: 'gate' })
   const floor = join(agentQaRoot, 'eval', 'floor', slugBranch(profileKey))
   if (!existsSync(floor)) return roots
-  for (const entry of readdirSync(floor, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of readdirSync(floor, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
     const match = /^r\d+-seed(-?\d+)$/.exec(entry.name)
     if (entry.isDirectory() && match && Number.isSafeInteger(Number(match[1]))) {
       roots.push({ root: join(floor, entry.name), kind: 'floor', seed: Number(match[1]) })
@@ -26,16 +33,32 @@ export function listBaselineRunRoots(agentQaRoot: string, profileKey: string): {
 }
 
 export type BaselineCacheRow =
-  | { cassetteId: string; kind: 'cached'; root: string; replay: ReplayCassetteOutcome;
-      score: ScoreRecord; seed: number; seedSource: string; seedHonored: boolean }
+  | {
+      cassetteId: string
+      kind: 'cached'
+      root: string
+      replay: ReplayCassetteOutcome
+      score: ScoreRecord
+      seed: number
+      seedSource: string
+      seedHonored: boolean
+    }
   | { cassetteId: string; kind: 'refused'; root: string; reason: string }
   | { cassetteId: string; kind: 'uncached'; reason: string }
-export interface BaselineCacheResolution { rows: BaselineCacheRow[]; roots: string[] }
+export interface BaselineCacheResolution {
+  rows: BaselineCacheRow[]
+  roots: string[]
+}
 
 export function resolveBaselineCache(input: {
-  agentQaRoot: string; profileKey: string; fingerprint: string; matcherVersion: number;
-  plannerModelId: string; judgeIdentity?: { judgeModelId: string; judgeVersion: number };
-  gateRootSeed: number; gateRootSeedSource: string;
+  agentQaRoot: string
+  profileKey: string
+  fingerprint: string
+  matcherVersion: number
+  plannerModelId: string
+  judgeIdentity?: { judgeModelId: string; judgeVersion: number }
+  gateRootSeed: number
+  gateRootSeedSource: string
   cassettes: readonly { id: string; promptInputHash: string }[]
 }): BaselineCacheResolution {
   const resolved = new Map<string, BaselineCacheRow>()
@@ -44,12 +67,26 @@ export function resolveBaselineCache(input: {
   for (const run of listBaselineRunRoots(input.agentQaRoot, input.profileKey)) {
     const reportsDir = join(run.root, 'reports')
     let names: string[] = []
-    try { names = readdirSync(reportsDir).filter(name => /^[^.]+\.json$/.test(name)).sort() } catch { /* cold root */ }
-    const reports = names.map(name => loadStagedReport(input.agentQaRoot, name.slice(0, -5), reportsDir))
-    const report = reports.find(read => read.kind === 'loaded' &&
-      read.report.runIdentity?.fingerprint === input.fingerprint && read.report.matcherVersion === input.matcherVersion)
+    try {
+      names = readdirSync(reportsDir)
+        .filter((name) => /^[^.]+\.json$/.test(name))
+        .sort()
+    } catch {
+      /* cold root */
+    }
+    const reports = names.map((name) =>
+      loadStagedReport(input.agentQaRoot, name.slice(0, -5), reportsDir),
+    )
+    const report = reports.find(
+      (read) =>
+        read.kind === 'loaded' &&
+        read.report.runIdentity?.fingerprint === input.fingerprint &&
+        read.report.matcherVersion === input.matcherVersion,
+    )
     if (report?.kind !== 'loaded') {
-      const reason = reports.some(read => read.kind === 'loaded') ? 'report fingerprint or matcherVersion mismatch' : 'missing or refused replay record report'
+      const reason = reports.some((read) => read.kind === 'loaded')
+        ? 'report fingerprint or matcherVersion mismatch'
+        : 'missing or refused replay record report'
       for (const cassette of input.cassettes) failures.set(cassette.id, reason)
       continue
     }
@@ -58,33 +95,82 @@ export function resolveBaselineCache(input: {
       const miss = (reason: string) => failures.set(cassette.id, reason)
       const dir = join(run.root, 'replays', ...cassette.id.split('/').map(slugBranch))
       const loaded = loadReplayRecord(dir)
-      if (loaded.kind !== 'loaded') { miss('missing or refused replay record'); continue }
+      if (loaded.kind !== 'loaded') {
+        miss('missing or refused replay record')
+        continue
+      }
       const replay = loaded.outcome
-      if (replay.cassetteId !== cassette.id) { miss('replay cassetteId mismatch'); continue }
+      if (replay.cassetteId !== cassette.id) {
+        miss('replay cassetteId mismatch')
+        continue
+      }
       if ('kind' in replay) {
-        resolved.set(cassette.id, { cassetteId: cassette.id, kind: 'refused', root: run.root, reason: replay.reason })
+        resolved.set(cassette.id, {
+          cassetteId: cassette.id,
+          kind: 'refused',
+          root: run.root,
+          reason: replay.reason,
+        })
         roots.add(run.root)
         continue
       }
-      if (replay.granularity !== 'leaf') { miss('replay is not a leaf'); continue }
-      if (replay.promptDrift?.recordedHash !== cassette.promptInputHash) { miss('promptDrift.recordedHash mismatch'); continue }
-      if (replay.replayedModel?.modelId !== input.plannerModelId) { miss('plannerModelId mismatch'); continue }
-      const score = loadScoreRecord(dir)
-      if (score.kind !== 'loaded') { miss('missing or refused score record'); continue }
-      if (score.record.cassetteId !== cassette.id) { miss('score cassetteId mismatch'); continue }
-      if (score.record.matcherVersion !== input.matcherVersion) { miss('score matcherVersion mismatch'); continue }
-      const judge = score.record.judge
-      if (input.judgeIdentity === undefined ? judge !== undefined : judge?.judgeModelId !== input.judgeIdentity.judgeModelId || judge?.judgeVersion !== input.judgeIdentity.judgeVersion) {
-        miss('judge identity mismatch'); continue
+      if (replay.granularity !== 'leaf') {
+        miss('replay is not a leaf')
+        continue
       }
-      resolved.set(cassette.id, { cassetteId: cassette.id, kind: 'cached', root: run.root,
-        replay, score: score.record, seed: run.seed ?? input.gateRootSeed,
+      if (replay.promptDrift?.recordedHash !== cassette.promptInputHash) {
+        miss('promptDrift.recordedHash mismatch')
+        continue
+      }
+      if (replay.replayedModel?.modelId !== input.plannerModelId) {
+        miss('plannerModelId mismatch')
+        continue
+      }
+      const score = loadScoreRecord(dir)
+      if (score.kind !== 'loaded') {
+        miss('missing or refused score record')
+        continue
+      }
+      if (score.record.cassetteId !== cassette.id) {
+        miss('score cassetteId mismatch')
+        continue
+      }
+      if (score.record.matcherVersion !== input.matcherVersion) {
+        miss('score matcherVersion mismatch')
+        continue
+      }
+      const judge = score.record.judge
+      if (
+        input.judgeIdentity === undefined
+          ? judge !== undefined
+          : judge?.judgeModelId !== input.judgeIdentity.judgeModelId ||
+            judge?.judgeVersion !== input.judgeIdentity.judgeVersion
+      ) {
+        miss('judge identity mismatch')
+        continue
+      }
+      resolved.set(cassette.id, {
+        cassetteId: cassette.id,
+        kind: 'cached',
+        root: run.root,
+        replay,
+        score: score.record,
+        seed: run.seed ?? input.gateRootSeed,
         seedSource: run.kind === 'floor' ? 'run-dir' : input.gateRootSeedSource,
-        seedHonored: report.report.seedHonored === true })
+        seedHonored: report.report.seedHonored === true,
+      })
       roots.add(run.root)
     }
   }
-  return { rows: input.cassettes.map(cassette => resolved.get(cassette.id) ?? {
-    cassetteId: cassette.id, kind: 'uncached', reason: failures.get(cassette.id) ?? 'missing replay record',
-  }), roots: [...roots] }
+  return {
+    rows: input.cassettes.map(
+      (cassette) =>
+        resolved.get(cassette.id) ?? {
+          cassetteId: cassette.id,
+          kind: 'uncached',
+          reason: failures.get(cassette.id) ?? 'missing replay record',
+        },
+    ),
+    roots: [...roots],
+  }
 }
