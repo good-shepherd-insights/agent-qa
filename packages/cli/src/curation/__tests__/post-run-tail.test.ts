@@ -362,7 +362,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
     expect(lines[1]).toContain(CLUSTER_SENTENCE)
   })
 
-  it.each([4, 3])('terminal caller renders counters only from a validated v%s receipt', async schemaVersion => {
+  it.each([[4, false], [3, false], [4, true]] as const)('terminal caller renders counters only from a validated v%s receipt (418 class counts=%s)', async (schemaVersion, nonSignal) => {
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-terminal-canary-'))
     try {
       const runDir = completedRunDir(root, runId)
@@ -370,7 +370,8 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
       writeFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), JSON.stringify({
         schemaVersion, runId, handoffDigest: 'a'.repeat(64), projectionVersion: 1,
         drainKind: 'drained', handoffHolderPid: null, candidateIds: [],
-        ...(schemaVersion === 4 ? { canary: { ...emptyCanaryCreditCounters(), credited: 1, rideAlongUncredited: 2 } } : {}),
+        ...(schemaVersion === 4 ? { canary: { ...emptyCanaryCreditCounters(), credited: 1, rideAlongUncredited: 2,
+          ...(nonSignal ? { nonSignal: { environment: 1, timeout: 2, flake: 3 }, rerunExcluded: 2 } : {}) } } : {}),
       }))
       const h = harness({ runNextJob: pump([ANALYZE_COMPLETED]),
         status: { ...doneStatus(), notification: terminalNotification() } })
@@ -378,7 +379,8 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
       await tail.drain()
       await tail.finish()
       const line = String(h.info.mock.calls[0]?.[0])
-      if (schemaVersion === 4) expect(line).toContain('curation: done (2 curated, 0 deprecated; canary: credited 1, ride-along 2, cap-exceeded 0, non-signal 0, rerun-excluded 0, staged 0)')
+      if (nonSignal) expect(line).toContain('non-signal 6 (environment 1, timeout 2, flake 3), rerun-excluded 2')
+      else if (schemaVersion === 4) expect(line).toContain('curation: done (2 curated, 0 deprecated; canary: credited 1, ride-along 2, cap-exceeded 0, non-signal 0, rerun-excluded 0, staged 0)')
       else expect(line).not.toContain('canary:')
     } finally { rmSync(root, { recursive: true, force: true }) }
   })

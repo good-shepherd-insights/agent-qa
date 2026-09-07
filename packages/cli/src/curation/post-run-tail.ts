@@ -76,6 +76,7 @@ import {
   type RunCurationTailOptions,
 } from './curation-tail.js'
 import type { CanaryCreditCounters } from './canary-credit.js'
+import { NON_SIGNAL_CLASSES } from './emit-canary-outcomes.js'
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
 
@@ -1015,10 +1016,15 @@ export function renderChainTerminalLine(
       : [`${stages.curation.deprecated} deprecated`]),
   ]
   const canary = report?.canary
+  const nonSignalTotal = canary === undefined ? 0
+    : NON_SIGNAL_CLASSES.reduce((sum, name) => sum + canary.nonSignal[name], 0)
+  // 418 D-10: the receipt's typed class counts remain visible on the chain line.
+  const nonSignalClasses = canary === undefined || nonSignalTotal === 0 ? ''
+    : ` (${NON_SIGNAL_CLASSES.map(name => `${name} ${canary.nonSignal[name]}`).join(', ')})`
   const canaryText = canary === undefined ? '' :
     `canary: credited ${canary.credited}, ride-along ${canary.rideAlongUncredited}`
     + `, cap-exceeded ${canary.ablationCapExceeded}`
-    + `, non-signal ${Object.values(canary.nonSignal).reduce((sum, count) => sum + count, 0)}`
+    + `, non-signal ${nonSignalTotal}${nonSignalClasses}`
     + `, rerun-excluded ${canary.rerunExcluded}, staged ${canary.staged}`
   const curationCounts = counts.join(', ') + (canaryText === '' ? '' :
     `${counts.length === 0 ? '' : '; '}${canaryText}`)
