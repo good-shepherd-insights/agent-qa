@@ -221,6 +221,49 @@ describe('417 replay-gate command', () => {
       requireReplayGateVerb()({ evalConfig: {} } as EvalSession, 'candidate', { maxScreens: 0 }),
     ).rejects.toThrow('--max-screens must be a positive integer')
   })
+  it.each([
+    { configured: 7, flag: 5, k: 5, kSource: 'flag' },
+    { configured: 7, flag: undefined, k: 7, kSource: 'config' },
+    { configured: undefined, flag: undefined, k: 3, kSource: 'default' },
+  ])('resolves the cross-check k ladder from $kSource', async ({ configured, flag, k, kSource }) => {
+    const { configPath } = await writeReplayFixture('')
+    if (configured !== undefined) await appendFile(configPath, `\neval:\n  k: ${configured}\n`)
+    const session = await sessionFor(configPath)
+    const host = await import('../../gates/replay-gate-host.js')
+    const captured: Parameters<typeof host.createReplayGateHost>[0][] = []
+    vi.spyOn(host, 'createReplayGateHost').mockImplementation(deps => {
+      captured.push(deps)
+      return { port: { runReplayGate: async () => { throw new Error('unused port') } },
+        run: async () => ({ kind: 'refused', refusal: { path: 'fixture', reason: 'boundary' }, notices: [], exit: 2 }) }
+    })
+    const result = await requireReplayGateVerb()(session, 'candidate', { k: flag })
+    expect(captured[0]?.composition).toMatchObject({ k, kSource })
+    expect(result).toMatchObject({ k, kSource })
+  })
+  it.each([1, 2, 4, 3.5, NaN])('rejects invalid Gate-1 k=%s before composition', async k => {
+    await expect(requireReplayGateVerb()({ evalConfig: {} } as EvalSession, 'candidate', { k }))
+      .rejects.toThrow('--k must be an odd integer of at least 3')
+  })
+  it.each(['1', '2', '4'])('the actual replay-gate command exits 2 for --k %s', async k => {
+    const { configPath } = await writeReplayFixture('')
+    const session = await sessionFor(configPath)
+    vi.spyOn(evalVerbs, 'resolveEvalSession').mockResolvedValue(session)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const host = await import('../../gates/replay-gate-host.js')
+    const compose = vi.spyOn(host, 'createReplayGateHost')
+    await createEvalCommand().parseAsync(['replay-gate', 'candidate', '--k', k], { from: 'user' })
+    expect(process.exitCode).toBe(2)
+    expect(error.mock.calls.flat().join(' ')).toContain('--k must be an odd integer of at least 3')
+    expect(compose).not.toHaveBeenCalled()
+  })
+  it('keeps ordinary eval replay k=1 valid', async () => {
+    const fixture = await floorVerbFixture()
+    fixture.session.evalConfig.k = 1
+    const result = await runReplayVerb(fixture.session, {}, { source: 'committed', ...fixture.opts })
+    expect(result.replayed).toBe(3)
+    expect(result.spend.sampleCount).toBe(3)
+    expect(fixture.planner.captured).toHaveLength(3)
+  })
   it.each(['unsafe', 'refused'] as const)('never emits %s content on JSON stdout', async (kind) => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
