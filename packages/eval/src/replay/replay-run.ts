@@ -292,6 +292,7 @@ async function runSample(context: DecisionReplayContext, sampleIndex: number): P
   try {
     reconstructed = reconstructDecisionContext({
       leg,
+      ...(context.declaredBriefDelta === undefined ? {} : { declaredBriefDelta: context.declaredBriefDelta }),
       captureMode: leg.stateBefore.metadata.captureMode,
       ...(leg.decisionScreenshotRef !== undefined ? { screenshotRef: leg.decisionScreenshotRef } : {}),
       artifacts,

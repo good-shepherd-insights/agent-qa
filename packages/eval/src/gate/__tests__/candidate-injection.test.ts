@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import { canonicalizeInputLeg } from '../../extract/receipt'
 import { rebuildKnowledgeTiers } from '../../replay/brief-tiers'
 import { computeReplayDrift } from '../../replay/drift'
+import { reverseBriefDelta } from '../../replay/brief-delta'
 import { leafCassette } from '../../replay/__tests__/fixtures'
 import proofs from '../../replay/__tests__/fixtures/proof-briefs.json'
 import { injectCandidate, toDeclaredBriefDelta } from '../candidate-injection'
@@ -86,11 +87,36 @@ describe('candidate injection', () => {
     const brief = structuredClone(proofs[0]!.servedBrief) as unknown as ServedBrief
     const first = brief.proof!.promptTurns[0]!
     brief.proof!.promptTurns = [first, { ...first, turnOrdinal: 1 }]
-    const cassette = { ...leafCassette({ leg: { servedBrief: brief } }), decisionOrdinal: 9 }
+    const cassette = {
+      ...leafCassette({ leg: { servedBrief: brief, decisionOrdinal: 9 } }),
+      decisionOrdinal: 9,
+    }
     expect(toDeclaredBriefDelta(injection(), cassette)).toMatchObject({
       kind: 'plan',
       plan: { turnMatch: 'uniform', delta: { turnOrdinal: first.turnOrdinal } },
     })
+    const planned = toDeclaredBriefDelta(injection(), cassette)
+    if (planned.kind !== 'plan') throw new Error(planned.detail)
+    const injected = injectCandidate(cassette, planned.plan)
+    const rebuilt = rebuildKnowledgeTiers(injected.input.servedBrief, 9, planned.plan.delta)
+    expect(rebuilt).toMatchObject({ briefSource: 'proof', turnMatch: 'uniform' })
+    expect(rebuilt.knowledgeBriefL2).toContain(injection().renderedLine)
+    expect(injected.decisionOrdinal).toBe(9)
+    expect(injected.input.servedBrief.proof!.promptTurns[1]).toEqual({ ...first, turnOrdinal: 1 })
+    expect(reverseBriefDelta(injected.input, planned.plan.delta)).toEqual(cassette.input)
+    expect(
+      computeReplayDrift(injected.input, sha256hex(canonicalizeInputLeg(cassette.input)), {
+        declaredBriefDelta: planned.plan.delta,
+      }),
+    ).toMatchObject({ drift: true, harnessDrift: false })
+    expect(() => rebuildKnowledgeTiers(injected.input.servedBrief, 9)).toThrow(
+      'no promptTurn matches',
+    )
+    const wrongTurnPlan = { ...planned.plan, delta: { ...planned.plan.delta, turnOrdinal: 1 } }
+    const wrongTurn = injectCandidate(cassette, wrongTurnPlan)
+    expect(() =>
+      rebuildKnowledgeTiers(wrongTurn.input.servedBrief, 9, wrongTurnPlan.delta),
+    ).toThrow('declared brief delta does not select the original proof turn')
     brief.proof!.promptTurns[1]!.learnedL2 = 'different'
     const result = toDeclaredBriefDelta(injection(), cassette)
     expect(result).toEqual({

@@ -1,4 +1,4 @@
-import type { BriefLine } from '@vostride/agent-qa-schema'
+import type { BriefLine, ServedBrief } from '@vostride/agent-qa-schema'
 import { OBSERVATION_LINE_PREFIX } from '@vostride/agent-qa-runner'
 import { APP_OBSERVED_DATA_CLOSE, APP_OBSERVED_DATA_OPEN } from '@vostride/agent-qa-safety'
 import { canonicalJson } from '../canonical-json'
@@ -49,11 +49,11 @@ function assertPosition(position: number, maximum: number): void {
   }
 }
 
-function editBriefDelta(
-  leg: CassetteInputLeg,
+function editBriefDelta<T extends { servedBrief: ServedBrief }>(
+  leg: T,
   delta: DeclaredBriefDelta,
   inject: boolean,
-): CassetteInputLeg {
+): T {
   if (delta.renderedLine.length === 0 || delta.renderedLine.includes('\n')) {
     throw new TypeError('Brief delta must carry exactly one nonempty rendered line')
   }
@@ -105,9 +105,9 @@ export function applyBriefDelta(
 }
 
 /** Restore the exact canonical leg using both recorded positions, without retained hidden state. */
-export function reverseBriefDelta(
-  leg: CassetteInputLeg,
+export function reverseBriefDelta<T extends { servedBrief: ServedBrief }>(
+  leg: T,
   delta: DeclaredBriefDelta,
-): CassetteInputLeg {
+): T {
   return editBriefDelta(leg, delta, delta.kind === 'removed')
 }

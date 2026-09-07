@@ -10,7 +10,13 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { GateReceiptSchema, receiptDigestOf, slugBranch, asRef } from '@vostride/agent-qa-schema'
+import {
+  GateReceiptSchema,
+  receiptDigestOf,
+  slugBranch,
+  asRef,
+  sha256hex,
+} from '@vostride/agent-qa-schema'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import {
   composeBaselineProfileKey,
@@ -18,6 +24,7 @@ import {
   deriveSampleSeeds,
   requiredAgreement,
   computeDecisionIdentity,
+  canonicalizeInputLeg,
 } from '@vostride/agent-qa-eval'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as evalLocal from '../index.js'
@@ -419,52 +426,111 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       'seedHonored=false: samples collapse to repeat variance on this provider',
     )
   })
-  it.each(['present', 'missing'])('removes an active-record proof line: %s', async (mode) => {
-    const f = fixture({ proofBrief: true })
-    const target = f.selected.find((row) => row.cassette.id === f.targetId)!
-    const line = target.cassette.input.servedBrief.channel1[0]!
-    const stub = respondingStub((call) =>
-      actionGenerateResult(
-        'web',
-        JSON.stringify(call.prompt).includes(line.summary.replaceAll('"', '\\"'))
-          ? 'e-continue'
-          : 'e-other',
-      ),
-    )
-    const sample = (ref: string) => {
-      const action = { type: 'click' as const, ref: asRef(ref) }
-      return {
-        sampleIndex: 0,
-        durationMs: 0,
-        outcome: {
-          kind: 'decision' as const,
-          action,
-          identity: computeDecisionIdentity(action, target.cassette.input.stateBefore.elements),
-        },
+  it.each(['present', 'uniform', 'missing'])(
+    'removes an active-record proof line: %s',
+    async (mode) => {
+      const f = fixture({ proofBrief: true })
+      const target = f.selected.find((row) => row.cassette.id === f.targetId)!
+      const line = target.cassette.input.servedBrief.channel1[0]!
+      if (mode === 'uniform') {
+        const brief = target.cassette.input.servedBrief
+        // Retain another line so removal still has to rebuild a populated proof.
+        brief.channel1.push(f.injection.line)
+        const first = { ...brief.proof!.promptTurns[0]!, turnOrdinal: 0 }
+        first.learnedL2 += '\n' + f.injection.renderedLine
+        brief.proof!.promptTurns = [first, { ...first, turnOrdinal: 1 }]
+        target.cassette.decisionOrdinal = 9
+        target.cassette.input.decisionOrdinal = 9
+        target.cassette.receipt.promptInputHash = sha256hex(
+          canonicalizeInputLeg(target.cassette.input),
+        )
       }
+      const stub = respondingStub((call) =>
+        actionGenerateResult(
+          'web',
+          JSON.stringify(call.prompt).includes(line.summary.replaceAll('"', '\\"'))
+            ? 'e-continue'
+            : 'e-other',
+        ),
+      )
+      const sample = (ref: string) => {
+        const action = { type: 'click' as const, ref: asRef(ref) }
+        return {
+          sampleIndex: 0,
+          durationMs: 0,
+          outcome: {
+            kind: 'decision' as const,
+            action,
+            identity: computeDecisionIdentity(action, target.cassette.input.stateBefore.elements),
+          },
+        }
+      }
+      const got = await evalLocal.removalFlipsOutcome({
+        recordId: mode !== 'missing' ? line.id : 'unknown-record',
+        mode: { kind: 'active-record' },
+        cassettes: [target],
+        k: 3,
+        baseSeed: 11,
+        existing: { withRecord: sample('e-continue'), withoutRecord: sample('e-other') },
+        replay: {
+          profile: stubProfile(),
+          auth: noneAuth,
+          modelOverrides: { languageModels: stub.languageModels },
+          maskingContextFactory: createMaskingContext,
+        },
+        gate1Dir: join(f.agentQaRoot, 'active-removal'),
+      })
+      expect(got.crossCheck).toBe(mode !== 'missing' ? 'flipped' : 'inconclusive')
+      if (mode !== 'missing') {
+        expect(got.screens).toBe(4)
+        expect(got.detail).toHaveLength(6)
+        expect(stub.captured).toHaveLength(4)
+        if (mode === 'uniform') {
+          expect(target.cassette.decisionOrdinal).toBe(9)
+          for (const row of readdirSync(join(f.agentQaRoot, 'active-removal'), {
+            recursive: true,
+            withFileTypes: true,
+          })) {
+            if (row.name === 'replay.json') {
+              const replay = JSON.parse(readFileSync(join(row.parentPath, row.name), 'utf8'))
+              expect(replay.promptDrift.harnessDrift).toBe(false)
+              expect(replay.turnMatch).toBe('uniform')
+            }
+          }
+        }
+      } else {
+        expect(got.notices.join('\n')).toContain('brief-line-not-found')
+        expect(stub.captured).toHaveLength(0)
+      }
+    },
+  )
+  it('replays candidate injection through a uniform two-turn proof at decision ordinal nine', async () => {
+    const { f, stub, input, baseline } = await warm({ proofBrief: true })
+    for (const target of f.selected.filter((row) => row.cassette.id === f.targetId)) {
+      const first = { ...target.cassette.input.servedBrief.proof!.promptTurns[0]!, turnOrdinal: 0 }
+      target.cassette.input.servedBrief.proof!.promptTurns = [first, { ...first, turnOrdinal: 1 }]
+      target.cassette.decisionOrdinal = 9
+      target.cassette.input.decisionOrdinal = 9
+      target.cassette.receipt.promptInputHash = sha256hex(
+        canonicalizeInputLeg(target.cassette.input),
+      )
+      new evalLocal.FsCassetteStore({ root: f.root, outputDir: f.cassettesRoot }).write({
+        cassette: target.cassette,
+        blobs: [],
+      })
     }
-    const got = await evalLocal.removalFlipsOutcome({
-      recordId: mode === 'present' ? line.id : 'unknown-record',
-      mode: { kind: 'active-record' },
-      cassettes: [target],
-      k: 3,
-      baseSeed: 11,
-      existing: { withRecord: sample('e-continue'), withoutRecord: sample('e-other') },
-      replay: {
-        profile: stubProfile(),
-        auth: noneAuth,
-        modelOverrides: { languageModels: stub.languageModels },
-        maskingContextFactory: createMaskingContext,
-      },
-      gate1Dir: join(f.agentQaRoot, 'active-removal'),
-    })
-    expect(got.crossCheck).toBe(mode === 'present' ? 'flipped' : 'inconclusive')
-    if (mode === 'present') {
-      expect(got.screens).toBe(4)
-      expect(got.detail).toHaveLength(6)
-    } else {
-      expect(got.notices.join('\n')).toContain('brief-line-not-found')
-      expect(stub.captured).toHaveLength(0)
+    await warmGateRoot(f, baseline)
+    const got = receipt(await evalLocal.runReplayGate(input))
+    expect(got.verdict).toBe('pass')
+    expect(got.targets?.[0]?.decisionOrdinal).toBe(9)
+    expect(stub.captured).toHaveLength(10)
+    const audit = join(f.agentQaRoot, 'eval/gate1', slugBranch(f.injection.candidateId))
+    for (const row of readdirSync(audit, { recursive: true, withFileTypes: true })) {
+      if (row.name === 'replay.json') {
+        const replay = JSON.parse(readFileSync(join(row.parentPath, row.name), 'utf8'))
+        expect(replay.promptDrift.harnessDrift).toBe(false)
+        if (replay.cassetteId === f.targetId) expect(replay.turnMatch).toBe('uniform')
+      }
     }
   })
   it('extracts a local target only into its audit directory and abstains baseline-uncached without warming', async () => {
