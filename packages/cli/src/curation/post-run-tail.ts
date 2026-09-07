@@ -69,11 +69,13 @@ import {
   completedRunHandoffPath,
   curateCompletedRun,
   defaultCurationTailOperations,
+  readCurationTailReceipt,
   runCurationTail,
   type CurationTailOperations,
   type CurationWriterAuthority,
   type RunCurationTailOptions,
 } from './curation-tail.js'
+import type { CanaryCreditCounters } from './canary-credit.js'
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
 
@@ -827,9 +829,11 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         if (status.notification !== undefined && drainOutcome === 'drained') {
           // D-09: this process ran the chain to its terminal, so the human line is the honest
           // close-out — it reports what HAPPENED, where the summary reports what is pending.
-          // Rendered from the row and NOTHING else, so the fetch command never grafts onto
-          // it; the digest itself follows when this process authored the analysis.
-          opts.log.info?.(renderChainTerminalLine(status.notification))
+          // 418 D-04: diagnostics come from this run's validated durable v4 receipt;
+          // older/missing receipts keep the pre-v4 line. Notification vocabulary is unchanged.
+          const receipt = readCurationTailReceipt(completedRunDir(opts.agentQaRoot, opts.runId))
+          opts.log.info?.(renderChainTerminalLine(status.notification,
+            receipt?.runId === opts.runId ? receipt : undefined))
           await printDigestBlock(openedHost)
           return
         }
@@ -988,7 +992,10 @@ export function renderPostProcessingSummaryLine(
  * bundle reports its status, and a `0 curated` would say it curated nothing, which is a
  * different claim from never having got that far.
  */
-export function renderChainTerminalLine(notification: RunNotification): string {
+export function renderChainTerminalLine(
+  notification: RunNotification,
+  report?: { canary: CanaryCreditCounters },
+): string {
   const { verdictSummary, stages } = notification
   const classes = Object.entries(verdictSummary.byClass)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -1001,11 +1008,19 @@ export function renderChainTerminalLine(notification: RunNotification): string {
       ? []
       : [`${stages.curation.deprecated} deprecated`]),
   ]
+  const canary = report?.canary
+  const canaryText = canary === undefined ? '' :
+    `canary: credited ${canary.credited}, ride-along ${canary.rideAlongUncredited}`
+    + `, cap-exceeded ${canary.ablationCapExceeded}`
+    + `, non-signal ${Object.values(canary.nonSignal).reduce((sum, count) => sum + count, 0)}`
+    + `, rerun-excluded ${canary.rerunExcluded}, staged ${canary.staged}`
+  const curationCounts = counts.join(', ') + (canaryText === '' ? '' :
+    `${counts.length === 0 ? '' : '; '}${canaryText}`)
   return `post-processing ${notification.outcome} for ${notification.runId} — ${[
     verdicts,
     `analysis: ${stages.analysis.status}`,
     `curation: ${stages.curation.status}`
-      + (counts.length === 0 ? '' : ` (${counts.join(', ')})`),
+      + (curationCounts === '' ? '' : ` (${curationCounts})`),
   ].join(SUMMARY_SEPARATOR)}`
 }
 

@@ -25,6 +25,7 @@ import { parseProcedureBody, type GuardrailPolicy } from '@vostride/agent-qa-sch
 import { describe, expect, it } from 'vitest'
 
 import { CURATION_TAIL_RECEIPT_FILE, runCurationTail } from '../curation-tail.js'
+import { emptyCanaryCreditCounters } from '../canary-credit.js'
 import { buildCuratorAuthor, CURATOR_RETRY_CAP } from '../curator-author.js'
 import {
   emitCurationCandidates,
@@ -293,6 +294,9 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
       // written, both fact bundles committed.
       expect(warns.filter((line) => line.includes('incomplete'))).toEqual([])
       expect(existsSync(join(roots.runDir, CURATION_TAIL_RECEIPT_FILE))).toBe(true)
+      expect(JSON.parse(readFileSync(join(roots.runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8'))).toMatchObject({
+        schemaVersion: 4, canary: emptyCanaryCreditCounters(),
+      })
       expect(factBundleIds(roots.knowledgeRoot)).toHaveLength(2)
       expect(procedureBundleIds(roots.knowledgeRoot)).toHaveLength(0)
 

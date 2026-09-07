@@ -14,18 +14,30 @@ export interface CanaryAblationInput {
 }
 
 export type CanaryAblationResult =
-  | { kind: 'ablated'; crossCheck: CrossCheck; corpusDigest: string; k: number;
-      baseSeed: number; seeds: number[]; seedHonored: boolean;
-      spend: { modelCalls: number; screens: number; promptTokens: number; completionTokens: number };
-      gate2Dir: string }
+  | {
+      kind: 'ablated'
+      crossCheck: CrossCheck
+      corpusDigest: string
+      k: number
+      baseSeed: number
+      seeds: number[]
+      seedHonored: boolean
+      spend: {
+        modelCalls: number
+        screens: number
+        promptTokens: number
+        completionTokens: number
+      }
+      gate2Dir: string
+    }
   | { kind: 'no-eval-root' }
-  | { kind: 'unavailable'; reason: string }
-  | { kind: 'error'; message: string }
+  | { kind: 'unavailable', reason: string }
+  | { kind: 'error', message: string }
 
 export type CanaryCorpusDigestResult =
-  | { kind: 'digest'; corpusDigest: string }
+  | { kind: 'digest', corpusDigest: string }
   | { kind: 'no-eval-root' }
-  | { kind: 'unavailable'; reason: string }
+  | { kind: 'unavailable', reason: string }
 
 export interface CanaryAblation {
   ablate(input: CanaryAblationInput): Promise<CanaryAblationResult>
@@ -62,7 +74,7 @@ export interface CanaryCreditInput {
 
 export async function creditCanaryAttributions(
   input: CanaryCreditInput,
-): Promise<{ attributions: CreditedCanaryAttribution[]; counters: CanaryCreditCounters }> {
+): Promise<{ attributions: CreditedCanaryAttribution[], counters: CanaryCreditCounters }> {
   const counters = emptyCanaryCreditCounters()
   const attributions: CreditedCanaryAttribution[] = []
   let digestRead = false
@@ -109,9 +121,15 @@ export async function creditCanaryAttributions(
             } else if (crossCheck === 'held') counters.ablationHeld += 1
             else counters.ablationInconclusive += 1
             break
-          case 'no-eval-root': counters.rideAlongUncredited += 1; break
-          case 'unavailable': counters.ablationInconclusive += 1; break
-          case 'error': counters.ablationError += 1; break
+          case 'no-eval-root':
+            counters.rideAlongUncredited += 1
+            break
+          case 'unavailable':
+            counters.ablationInconclusive += 1
+            break
+          case 'error':
+            counters.ablationError += 1
+            break
         }
       }
     }

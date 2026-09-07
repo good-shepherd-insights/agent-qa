@@ -49,20 +49,22 @@ import {
   type BuildCuratorAuthorDependencies,
 } from './curator-author.js'
 import { emitCanaryOutcomes } from './emit-canary-outcomes.js'
-import type { CanaryAblation } from './canary-credit.js'
+import type { CanaryAblation, CanaryCreditCounters } from './canary-credit.js'
+import { NON_SIGNAL_CLASSES } from './emit-canary-outcomes.js'
 import { emitCurationCandidates, type EmitReport } from './emit-candidates.js'
 import { exercisedAnchors } from './handoff-anchors.js'
 import { renderPromotionLine } from './promotion-posture.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
 /**
- * v3 (386-02): the receipt gained the final drain disposition, handoff holder, and sorted
- * candidate ids. v2 receipts fail validation, so already-drained runs refold once — safe
+ * v4 (418-03): the receipt gained the canary credit counters. v3 receipts fail validation,
+ * so already-drained runs refold once — safe
  * because every tail fold is idempotent per runId. Never a second marker file (PATTERNS mandate).
  */
-export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 3
+export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 4
 
 export interface CurationTailReceipt {
+  canary: CanaryCreditCounters
   schemaVersion: typeof CURATION_TAIL_RECEIPT_SCHEMA_VERSION
   runId: string
   handoffDigest: string
@@ -239,11 +241,26 @@ function isSortedCandidateIds(value: unknown): value is string[] {
   return value.every((candidateId, index) => index === 0 || value[index - 1]! <= candidateId)
 }
 
+function isCanaryCreditCounters(value: unknown): value is CanaryCreditCounters {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(',') !==
+    'ablationCapExceeded,ablationError,ablationHeld,ablationInconclusive,credited,nonSignal,rerunExcluded,rideAlongUncredited,staged,stagingRefused') return false
+  const count = (entry: unknown): boolean =>
+    typeof entry === 'number' && Number.isInteger(entry) && entry >= 0
+  if (!Object.entries(record).every(([key, entry]) => key === 'nonSignal' || count(entry))) return false
+  const nonSignal = record.nonSignal
+  if (typeof nonSignal !== 'object' || nonSignal === null || Array.isArray(nonSignal)) return false
+  return Object.keys(nonSignal).sort().join(',') === [...NON_SIGNAL_CLASSES].sort().join(',')
+    && Object.values(nonSignal).every(count)
+}
+
 function isCurationTailReceipt(value: unknown): value is CurationTailReceipt {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
   return Object.keys(record).sort().join(',')
-    === 'candidateIds,drainKind,handoffDigest,handoffHolderPid,projectionVersion,runId,schemaVersion'
+    === 'canary,candidateIds,drainKind,handoffDigest,handoffHolderPid,projectionVersion,runId,schemaVersion'
+    && isCanaryCreditCounters(record.canary)
     && record.schemaVersion === CURATION_TAIL_RECEIPT_SCHEMA_VERSION
     && typeof record.runId === 'string'
     && record.runId.length > 0
@@ -701,6 +718,7 @@ export async function curateCompletedRun(
       if (complete && (drain.kind === 'drained' || drain.kind === 'handed-off')) {
         completedReceipt = {
           ...receiptIdentity,
+          canary: canaries.canary,
           drainKind: drain.kind,
           handoffHolderPid: drain.kind === 'handed-off' ? drain.holder.pid : null,
           candidateIds: sortedCandidateIds(candidates),

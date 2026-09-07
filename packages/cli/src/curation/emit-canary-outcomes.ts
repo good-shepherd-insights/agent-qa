@@ -469,7 +469,8 @@ export async function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): Promi
     details: [],
   }
 
-  for (const attribution of (credit?.attributions ?? projected) as CreditedCanaryAttribution[]) {
+  const attributions: CreditedCanaryAttribution[] = credit?.attributions ?? projected
+  for (const attribution of attributions) {
     const fromProcedure = attribution.source === 'procedure-replay'
     if (attribution.kind === 'unresolved') {
       report.unresolved += 1

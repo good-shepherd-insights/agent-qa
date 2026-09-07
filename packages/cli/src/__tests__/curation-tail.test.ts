@@ -1,3 +1,4 @@
+import { emptyCanaryCreditCounters } from '../curation/canary-credit.js'
 import {
   mkdirSync,
   mkdtempSync,
@@ -42,6 +43,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   CURATION_TAIL_RECEIPT_FILE,
   curationTailHandoffDigest,
+  readCurationTailReceipt,
   runCurationTail,
   runVerdictFirstCurationTail,
   type CurationTailReceipt,
@@ -56,6 +58,63 @@ const auditSink = {} as AuditSink
 const maskingContext = {} as MaskingContext
 const policy = {} as GuardrailPolicy
 const modelDeps = {} as RunCurationTailOptions['modelDeps']
+
+describe('418 v4 canary receipt contract', () => {
+  it.each(['v3', 'missing', 'extra', 'negative', 'fractional', 'nonSignal-extra', 'nonSignal-missing', 'nonSignal-negative'] as const)(
+    'refuses %s counter shape at the reader', mode => {
+      const dir = mkdtempSync(join(tmpdir(), 'agent-qa-v4-reader-'))
+      try {
+        const receipt: Record<string, unknown> = { schemaVersion: 4, runId, handoffDigest: 'a'.repeat(64),
+          projectionVersion: 1, drainKind: 'drained', handoffHolderPid: null, candidateIds: [],
+          canary: emptyCanaryCreditCounters() }
+        const counters = receipt.canary as Record<string, unknown>
+        if (mode === 'v3') {
+          receipt.schemaVersion = 3
+          delete receipt.canary
+        }
+        if (mode === 'missing') delete counters.staged
+        if (mode === 'extra') counters.unknown = 0
+        if (mode === 'negative') counters.credited = -1
+        if (mode === 'fractional') counters.ablationError = 0.5
+        if (mode === 'nonSignal-extra') counters.nonSignal = { environment: 0, timeout: 0, flake: 0, unknown: 0 }
+        if (mode === 'nonSignal-missing') counters.nonSignal = { environment: 0, timeout: 0 }
+        if (mode === 'nonSignal-negative') counters.nonSignal = { environment: -1, timeout: 0, flake: 0 }
+        writeFileSync(join(dir, CURATION_TAIL_RECEIPT_FILE), JSON.stringify(receipt))
+        expect(readCurationTailReceipt(dir)).toBeUndefined()
+      } finally { rmSync(dir, { recursive: true, force: true }) }
+    },
+  )
+
+  it('a v3 receipt refolds once into the exact v4 canary key set; diagnostic errors do not block completion', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-v4-refold-'))
+    const runDir = join(root, RUNS_SUBDIR, slugBranch(runId))
+    mkdirSync(runDir, { recursive: true })
+    try {
+      const completed = handoff()
+      writeFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), JSON.stringify({ schemaVersion: 3,
+        runId, handoffDigest: curationTailHandoffDigest(completed), projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+        drainKind: 'drained', handoffHolderPid: null, candidateIds: [] }))
+      expect(readCurationTailReceipt(runDir)).toBeUndefined()
+      const canary = { ...emptyCanaryCreditCounters(), ablationError: 1, stagingRefused: 1 }
+      const emit = vi.fn(async () => ({ emitted: 0, refused: 0, unresolved: 0, canary,
+        procedure: { emitted: 0, refused: 0, unresolved: 0 }, details: [] }))
+      const operations = successfulOperations({ loadCompletedRunHandoff: () => completed,
+        listCompletedRunDirs: () => [runDir], emitCanaryOutcomes: emit })
+      delete operations.readCurationTailReceipt
+      delete operations.writeCurationTailReceipt
+      await runCurationTail(baseOptions(operations, { agentQaRoot: root }))
+      const receipt = readCurationTailReceipt(runDir)!
+      expect(receipt.schemaVersion).toBe(4)
+      expect(receipt.canary).toEqual(canary)
+      expect(Object.keys(receipt).sort().join(',')).toBe('canary,candidateIds,drainKind,handoffDigest,handoffHolderPid,projectionVersion,runId,schemaVersion')
+      expect(Object.keys(receipt.canary).sort()).toEqual(['ablationCapExceeded', 'ablationError', 'ablationHeld',
+        'ablationInconclusive', 'credited', 'nonSignal', 'rerunExcluded', 'rideAlongUncredited', 'staged', 'stagingRefused'])
+      expect(Object.keys(receipt.canary.nonSignal).sort()).toEqual(['environment', 'flake', 'timeout'])
+      await runCurationTail(baseOptions(operations, { agentQaRoot: root }))
+      expect(emit).toHaveBeenCalledOnce()
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+})
 
 function handoff(executionContext: CompletedRunHandoff['executionContext'] = 'ci') {
   return { executionContext, runId } as CompletedRunHandoff
@@ -581,7 +640,8 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     expect(writeCurationTailReceipt).toHaveBeenCalledWith(
       join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
       expect.objectContaining({
-        schemaVersion: 3,
+        schemaVersion: 4,
+      canary: emptyCanaryCreditCounters(),
         runId,
         handoffDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
         projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
@@ -662,7 +722,8 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       expect(JSON.parse(
         readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8'),
       )).toEqual({
-        schemaVersion: 3,
+        schemaVersion: 4,
+      canary: emptyCanaryCreditCounters(),
         runId,
         handoffDigest: curationTailHandoffDigest(completed),
         projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
@@ -743,7 +804,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     expect(writeCurationTailReceipt).toHaveBeenCalledWith(
       join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
       expect.objectContaining({
-        schemaVersion: 3,
+        schemaVersion: 4,
         drainKind: 'drained',
         handoffHolderPid: null,
         candidateIds: [],
@@ -782,7 +843,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     expect(drainQueue).toHaveBeenCalledOnce()
   })
 
-  it('refolds a v2 receipt exactly once and leaves the v3 bytes unchanged thereafter', async () => {
+  it('refolds a v2 receipt exactly once and leaves the v4 bytes unchanged thereafter', async () => {
     const root = mkdtempSync(join(tmpdir(), 'curation-tail-v2-refold-'))
     try {
       const realAgentQaRoot = join(root, '.agent-qa')
@@ -811,7 +872,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       await runCurationTail(baseOptions(operations, { agentQaRoot: realAgentQaRoot }))
       const firstV3Bytes = readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8')
       expect(JSON.parse(firstV3Bytes)).toMatchObject({
-        schemaVersion: 3,
+        schemaVersion: 4,
         drainKind: 'drained',
         handoffHolderPid: null,
         candidateIds: [],
@@ -1299,7 +1360,8 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
   it('skips the projection fold too for an already-receipted handoffDigest — the one extended receipt', async () => {
     const completed = handoff()
     const receipt: CurationTailReceipt = {
-      schemaVersion: 3,
+      schemaVersion: 4,
+      canary: emptyCanaryCreditCounters(),
       runId,
       handoffDigest: curationTailHandoffDigest(completed),
       projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
@@ -1397,7 +1459,7 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
         readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8'),
       ) as Record<string, unknown>
       expect(receipt).toMatchObject({
-        schemaVersion: 3,
+        schemaVersion: 4,
         runId,
         projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
         drainKind: 'drained',
