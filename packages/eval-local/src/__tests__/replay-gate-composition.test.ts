@@ -844,9 +844,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     expect(stub.captured.length).toBe(0)
     expect(authCalls).toBe(0)
     if (mode === 'baseline-uncached')
-      expect(result.kind === 'receipt' && result.lines).toContain(
-        'agent-qa eval gate --seed 11',
-      )
+      expect(result.kind === 'receipt' && result.lines).toContain('agent-qa eval gate --seed 11')
   })
   it('names every stale cassette in corpus order with the warm-up line', async () => {
     const { f, input, stub } = await warm()
@@ -864,11 +862,32 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     const result = await evalLocal.runReplayGate(input)
     expect(receipt(result).reasons).toEqual(['baseline-uncached'])
     expect(result.notices).toContain(`uncached: ${ids.join(', ')}`)
-    expect(result.kind === 'receipt' && result.lines).toContain(
-      'agent-qa eval gate --seed 11',
-    )
+    expect(result.kind === 'receipt' && result.lines).toContain('agent-qa eval gate --seed 11')
     expect(stub.captured).toHaveLength(0)
   })
+  it.each(['replay', 'score'])(
+    'abstains on malformed %s cache data before auth or provider calls',
+    async (leg) => {
+      const { f, input, stub } = await warm()
+      const id = f.collateralIds[0]!
+      writeFileSync(join(f.gateRoot, 'replays', id, `${leg}.json`), 'null')
+      let authCalls = 0
+      input.planner.resolveAuth = async () => {
+        authCalls++
+        throw new Error('cache admission must precede auth')
+      }
+      const result = await evalLocal.runReplayGate(input)
+      expect(receipt(result)).toMatchObject({
+        verdict: 'abstain',
+        reasons: ['baseline-uncached'],
+        crossCheck: 'not-run',
+        spend: { modelCalls: 0, screens: 0 },
+      })
+      expect(result.notices).toContain(`uncached: ${id}`)
+      expect(authCalls).toBe(0)
+      expect(stub.captured).toHaveLength(0)
+    },
+  )
   it.each(['baseline', 'candidate'])(
     'abstains when every %s collateral arm errors',
     async (mode) => {

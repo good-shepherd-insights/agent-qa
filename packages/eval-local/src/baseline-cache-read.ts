@@ -7,6 +7,7 @@ import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
 import { loadReplayRecord, loadScoreRecord } from './replay-read.js'
 import { loadStagedReport } from './report-store.js'
 import type { ScoreRecord } from './score-store.js'
+import { baselineReplaySchema, baselineScoreSchema } from './baseline-cache-guards.js'
 
 export function listBaselineRunRoots(
   agentQaRoot: string,
@@ -100,6 +101,10 @@ export function resolveBaselineCache(input: {
         continue
       }
       const replay = loaded.outcome
+      if (!baselineReplaySchema.safeParse(replay).success) {
+        miss('invalid replay record: malformed leaf samples, refusal, or replay metadata')
+        continue
+      }
       if (replay.cassetteId !== cassette.id) {
         miss('replay cassetteId mismatch')
         continue
@@ -129,6 +134,12 @@ export function resolveBaselineCache(input: {
       const score = loadScoreRecord(dir)
       if (score.kind !== 'loaded') {
         miss('missing or refused score record')
+        continue
+      }
+      if (!baselineScoreSchema.safeParse(score.record).success) {
+        miss(
+          'invalid score record: malformed score, diffs, or nested cassetteId/matcherVersion identities',
+        )
         continue
       }
       if (score.record.cassetteId !== cassette.id) {

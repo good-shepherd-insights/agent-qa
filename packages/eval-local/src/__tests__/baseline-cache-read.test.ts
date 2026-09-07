@@ -51,6 +51,55 @@ async function warm() {
 }
 
 describe('profile-keyed gate and floor baseline cache', () => {
+  it.each([
+    ['replay', 'null'],
+    ['replay', 'primitive'],
+    ['replay', 'missing-samples'],
+    ['replay', 'bad-outcome'],
+    ['replay', 'bad-action'],
+    ['score', 'null'],
+    ['score', 'primitive'],
+    ['score', 'missing-entry'],
+    ['score', 'bad-axes'],
+    ['score', 'bad-nested-id'],
+    ['score', 'bad-diffs'],
+  ])(
+    'rejects malformed %s %s with a cassette diagnostic and safe floor fallback',
+    async (leg, mode) => {
+      const { f, input, stub } = await warm()
+      const id = f.collateralIds[0]!
+      const path = join(f.gateRoot, 'replays', id, `${leg}.json`)
+      if (mode === 'null' || mode === 'primitive')
+        writeFileSync(path, mode === 'null' ? 'null' : '17')
+      else
+        rewrite(path, (value) => {
+          if (mode === 'missing-samples') delete value.samples
+          if (mode === 'bad-outcome') value.samples[0].outcome = { kind: 'unknown' }
+          if (mode === 'bad-action') value.samples[0].outcome.action = { type: 'click', ref: null }
+          if (mode === 'missing-entry') delete value.score.entry
+          if (mode === 'bad-axes') value.score.entry.score.axes = { opClass: { kind: 'match' } }
+          if (mode === 'bad-nested-id') value.score.cassetteId = 'other-cassette'
+          if (mode === 'bad-diffs') value.diffs = null
+        })
+      const before = stub.captured.length
+      const cold = resolveBaselineCache(input)
+      expect(cold.rows.find((row) => row.cassetteId === id)).toMatchObject({
+        kind: 'uncached',
+        reason: expect.stringContaining(`invalid ${leg} record`),
+      })
+      expect(cold.rows.filter((row) => row.kind === 'cached')).toHaveLength(5)
+      expect(stub.captured).toHaveLength(before)
+      const floorRoot = join(f.agentQaRoot, 'eval/floor', slugBranch(f.profileKey), 'r0-seed29')
+      await warmGateRoot({ ...f, gateRoot: floorRoot }, stub, 29)
+      const warmedCalls = stub.captured.length
+      expect(resolveBaselineCache(input).rows.find((row) => row.cassetteId === id)).toMatchObject({
+        kind: 'cached',
+        root: floorRoot,
+        seed: 29,
+      })
+      expect(stub.captured).toHaveLength(warmedCalls)
+    },
+  )
   it.each([11, 29])(
     'inherits the actual producer seed %i despite changed caller config',
     async (seed) => {
