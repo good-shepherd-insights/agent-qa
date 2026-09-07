@@ -8,17 +8,22 @@ import * as session from '../../eval-session-composition.js'
 
 afterEach(() => vi.restoreAllMocks())
 
-describe('417 production replay gate binding', () => {
+// 2026-09-07, 418 D-13: tail and maintenance bind lazy capability so receipt
+// posture reaches the law. The 417 no-automatic-replay/no-spend boundary still
+// requires an unbound replay job slot and zero session IO during construction.
+describe('417/418 production replay gate binding', () => {
   it.each([
     'composition/local-agent-host.ts',
     'daemon/host.ts',
     'commands/doctor-knowledge-checks.ts',
+    'curation/post-run-tail.ts',
+    'commands/knowledge-maintain.ts',
   ])('binds exactly once in %s', (file) => {
     const source = readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
     expect(source.match(/createReplayGatePortForHost\(/g)).toHaveLength(1)
   })
 
-  it('keeps the post-run job slot unbound and the tail independent of the bridge', () => {
+  it('keeps the post-run replay job slot unbound while hosts prepare receipt posture', () => {
     function files(dir: string): string[] {
       return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
         entry.name === '__tests__'
@@ -36,9 +41,6 @@ describe('417 production replay gate binding', () => {
     expect(
       roots.flatMap(files).filter((file) => /runReplayGate:/.test(readFileSync(file, 'utf8'))),
     ).toEqual([])
-    expect(
-      readFileSync(new URL('../../curation/post-run-tail.ts', import.meta.url), 'utf8'),
-    ).not.toContain('replay-gate-host')
   })
 
   it('constructs without session IO, then lazily resolves a key-only session and preserves the host runtime root', async () => {
