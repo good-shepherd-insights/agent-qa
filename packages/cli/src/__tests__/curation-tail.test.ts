@@ -297,10 +297,11 @@ function successfulOperations(
       details: [],
     })),
     openKnowledgeReader: () => ({ emitCanaryOutcome: vi.fn() }) as unknown as KnowledgeHintReader,
-    emitCanaryOutcomes: vi.fn(() => ({
+    emitCanaryOutcomes: vi.fn(async () => ({
       emitted: 0,
       refused: 0,
       unresolved: 0,
+      canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
       procedure: { emitted: 0, refused: 0, unresolved: 0 },
       details: [],
     })),
@@ -469,7 +470,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           },
         } as unknown as KnowledgeHintReader
       },
-      emitCanaryOutcomes(options) {
+      async emitCanaryOutcomes(options) {
         order.push('canary-emit')
         expect(options).toMatchObject({
           handoff: completed,
@@ -481,8 +482,10 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           emitted: 1,
           refused: 0,
           unresolved: 0,
+          canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
           procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [{
+            benefit: canaryOutcome.benefit,
             candidateId: canaryOutcome.candidateId,
             testId: canaryOutcome.testId,
             testIndex: canaryOutcome.testIndex,
@@ -704,10 +707,11 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         refused: condition === 'candidate-refused' ? 1 : 0,
         details: [],
       })),
-      emitCanaryOutcomes: vi.fn(() => ({
+      emitCanaryOutcomes: vi.fn(async () => ({
         emitted: 0,
         refused: condition === 'canary-refused' ? 1 : 0,
         unresolved: condition === 'canary-unresolved' ? 1 : 0,
+        canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
         procedure: { emitted: 0, refused: 0, unresolved: 0 },
         details: [],
       })),
@@ -879,12 +883,13 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
             details: [],
           }
         },
-        emitCanaryOutcomes() {
+        async emitCanaryOutcomes() {
           if (failureStage === 'canary-emit') throw new Error('canary emit failed')
           return {
             emitted: 0,
             refused: 0,
             unresolved: 0,
+            canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
             procedure: { emitted: 0, refused: 0, unresolved: 0 },
             details: [],
           }
@@ -943,11 +948,12 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           details: [],
         }
       },
-      emitCanaryOutcomes() {
+      async emitCanaryOutcomes() {
         return {
           emitted: 0,
           refused: condition === 'canary-refused' ? 1 : 0,
           unresolved: condition === 'canary-unresolved' ? 1 : 0,
+          canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
           procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [],
         }
@@ -1031,7 +1037,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       writeCurationTailReceipt(seenRunDir, receipt) {
         receipts.set(seenRunDir, receipt)
       },
-      emitCanaryOutcomes({ handoff: completed }) {
+      async emitCanaryOutcomes({ handoff: completed }) {
         const completedRunId = String(completed.runId)
         canaryRuns.push(completedRunId)
         if (completedRunId === oldRunId) {
@@ -1043,6 +1049,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
               emitted: 1,
               refused: 1,
               unresolved: 0,
+              canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
               procedure: { emitted: 0, refused: 0, unresolved: 0 },
               details: [],
             }
@@ -1052,6 +1059,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
             emitted: 2,
             refused: 0,
             unresolved: 0,
+            canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
             procedure: { emitted: 0, refused: 0, unresolved: 0 },
             details: [],
           }
@@ -1061,6 +1069,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           emitted: 1,
           refused: 0,
           unresolved: 0,
+          canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
           procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [],
         }

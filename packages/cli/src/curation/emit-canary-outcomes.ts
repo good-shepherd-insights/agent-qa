@@ -12,6 +12,7 @@ import {
   type Anchor,
   type CanaryOutcome,
   type CompletedRunHandoff,
+  type CrossCheck,
   type PerTestOutcome,
   type RecordId,
   type RunAnalysisArtifact,
@@ -20,8 +21,17 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import { exercisedAnchors } from './handoff-anchors.js'
+import { creditCanaryAttributions, emptyCanaryCreditCounters,
+  type CanaryAblation, type CanaryCreditCounters, type CreditedCanaryAttribution } from './canary-credit.js'
 
-const NON_ATTRIBUTABLE_FAILURES = new Set(['environment', 'timeout', 'flake'])
+// 2026-09-07, 418 D-10: runtime, never-bar and mutation legs follow in Plans 06/11.
+export type NonSignalClass = 'environment' | 'timeout' | 'flake'
+// prettier-ignore
+export const NON_SIGNAL_CLASSES = ['environment', 'timeout', 'flake'] as const satisfies readonly NonSignalClass[]
+const NON_ATTRIBUTABLE_FAILURES = new Set<string>(NON_SIGNAL_CLASSES)
+export function isNonSignalClass(value: Verdict['class']): value is NonSignalClass {
+  return NON_ATTRIBUTABLE_FAILURES.has(value)
+}
 
 /**
  * The RESOLVED class per member test, computed ONCE per fold (389-06, D-10).
@@ -117,6 +127,8 @@ export type EmitCanaryOutcomeResult =
     }
 
 export interface EmitCanaryOutcomeDetail {
+  benefit: CanaryOutcome['benefit']
+  crossCheck?: CrossCheck
   candidateId: RecordId
   testId: string
   testIndex: number
@@ -125,6 +137,7 @@ export interface EmitCanaryOutcomeDetail {
 }
 
 export interface EmitCanaryOutcomeReport {
+  canary: CanaryCreditCounters
   emitted: number
   refused: number
   unresolved: number
@@ -138,6 +151,7 @@ export interface EmitCanaryOutcomeReport {
 }
 
 export interface EmitCanaryOutcomesOptions {
+  credit?: { ablation?: CanaryAblation }
   handoff: CompletedRunHandoff
   /** Absolute agent-qa-knowledge root used for store lookup and durable queue emission. */
   knowledgeRoot: string
@@ -238,7 +252,7 @@ function firstMatchingAnchor(
 
 type AttributionSource = 'served-brief' | 'procedure-replay'
 
-type ProjectedCanaryAttribution =
+export type ProjectedCanaryAttribution =
   | { kind: 'outcome'; source: AttributionSource; outcome: CanaryOutcome }
   | {
       kind: 'unresolved'
@@ -420,8 +434,8 @@ export function projectCanaryOutcomes(
   )
 }
 
-/** Resolves candidate anchors read-only, then synchronously emits every attribution in isolation. */
-export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryOutcomeReport {
+/** Resolves anchors read-only, credits evidence, then emits every attribution in isolation. */
+export async function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): Promise<EmitCanaryOutcomeReport> {
   if (!isAbsolute(opts.knowledgeRoot)) throw new TypeError('knowledgeRoot must be absolute')
   if (!isAbsolute(opts.runDir)) throw new TypeError('runDir must be absolute')
 
@@ -437,7 +451,17 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
       bundleId: id,
     }),
   })
+  const credit = opts.credit === undefined ? undefined : await creditCanaryAttributions({
+    attributions: projected, handoff: opts.handoff, runDir: opts.runDir,
+    ablation: opts.credit.ablation, observationIdOf: LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId,
+  })
+  const canary = credit?.counters ?? emptyCanaryCreditCounters()
+  if (credit === undefined) {
+    canary.rideAlongUncredited = projected.filter(row =>
+      row.kind === 'outcome' && row.outcome.runOutcome === 'positive').length
+  }
   const report: EmitCanaryOutcomeReport = {
+    canary,
     emitted: 0,
     refused: 0,
     unresolved: 0,
@@ -445,12 +469,13 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
     details: [],
   }
 
-  for (const attribution of projected) {
+  for (const attribution of (credit?.attributions ?? projected) as CreditedCanaryAttribution[]) {
     const fromProcedure = attribution.source === 'procedure-replay'
     if (attribution.kind === 'unresolved') {
       report.unresolved += 1
       if (fromProcedure) report.procedure.unresolved += 1
       report.details.push({
+        benefit: 'rode-along',
         candidateId: attribution.candidateId,
         testId: attribution.testId,
         testIndex: attribution.testIndex,
@@ -477,6 +502,8 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
       if (fromProcedure) report.procedure.refused += 1
     }
     report.details.push({
+      benefit: attribution.outcome.benefit,
+      crossCheck: attribution.crossCheck ?? 'not-run',
       candidateId: attribution.outcome.candidateId,
       testId: attribution.outcome.testId,
       testIndex: attribution.outcome.testIndex,

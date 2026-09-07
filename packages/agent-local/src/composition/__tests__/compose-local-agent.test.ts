@@ -187,6 +187,7 @@ describe('composeLocalAgent (D-15)', () => {
 
   it('416 exposes only the existing writer edge for receipt and promotion capabilities', () => {
     expect(LOCAL_CURATION_CAPABILITIES.recordGateReceipt).toBeTypeOf('function')
+    expect(LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId).toBeTypeOf('function')
     expect(LOCAL_CURATION_CAPABILITIES.promoteWithReceipts).toBeTypeOf('function')
     expect(Object.isFrozen(LOCAL_CURATION_CAPABILITIES)).toBe(true)
   })

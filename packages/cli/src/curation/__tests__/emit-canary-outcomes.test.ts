@@ -1,3 +1,4 @@
+import { emptyCanaryCreditCounters } from '../canary-credit.js'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -277,7 +278,7 @@ function project(
 }
 
 describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
-  it('attributes a normalized resolved-element contact to one positive step outcome', () => {
+  it('attributes a normalized resolved-element contact to one positive step outcome', async () => {
     const outcomes = project(handoff([step()]), new Map([[CANDIDATE, [{
       t: 'el',
       role: ' Button ',
@@ -301,7 +302,7 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     }])
   })
 
-  it('produces no outcome when a served canary never contacts a matching anchor', () => {
+  it('produces no outcome when a served canary never contacts a matching anchor', async () => {
     const outcomes = project(handoff([step()]), new Map([[CANDIDATE, [{
       t: 'el',
       role: 'button',
@@ -312,7 +313,7 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     expect(outcomes).toEqual([])
   })
 
-  it('uses the live grounding resolution instead of a stale planned ref', () => {
+  it('uses the live grounding resolution instead of a stale planned ref', async () => {
     const grounded = subAction({ ref: 'stale', beforeUrl: '/cart' })
     grounded.stateBefore = screen([element('checkout'), element('stale')], '/cart')
     grounded.grounding = {
@@ -337,7 +338,7 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     ])
   })
 
-  it('excludes environment, timeout, and flake failures but attributes other failures', () => {
+  it('excludes environment, timeout, and flake failures but attributes other failures', async () => {
     const candidateAnchors = new Map([[CANDIDATE, [{
       t: 'el' as const,
       role: 'button',
@@ -358,7 +359,7 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     }
   })
 
-  it('attributes a candidate whose page anchor matches the classified route', () => {
+  it('attributes a candidate whose page anchor matches the classified route', async () => {
     const routeStep = step({
       subActions: [subAction({ beforeUrl: '/cart', afterUrl: '/Checkout/?Mode=FAST#receipt' })],
     })
@@ -377,7 +378,7 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     ])
   })
 
-  it('is byte-deterministic and emits once per candidate and exercised step', () => {
+  it('is byte-deterministic and emits once per candidate and exercised step', async () => {
     const firstStep = step({
       stepIndex: 0,
       candidateIds: [CANDIDATE, CANDIDATE],
@@ -399,7 +400,7 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     expect(first.map((outcome) => outcome.stepIndex)).toEqual([0, 1])
   })
 
-  it('keeps same-index steps from different tests independently attributable', () => {
+  it('keeps same-index steps from different tests independently attributable', async () => {
     const input = handoff([step({ stepIndex: 0 })])
     input.aggregateVerdict = 'failed'
     input.tests.push({
@@ -447,7 +448,7 @@ describe('emitCanaryOutcomes', () => {
     lookupSpy.openCalls.length = 0
   })
 
-  it('resolves stored anchors and isolates a failed emit from the remaining projections', () => {
+  it('resolves stored anchors and isolates a failed emit from the remaining projections', async () => {
     lookupSpy.anchorsById.set(CANDIDATE, [{
       t: 'el',
       role: 'button',
@@ -457,7 +458,7 @@ describe('emitCanaryOutcomes', () => {
     const emitted: number[] = []
     const input = handoff([step({ stepIndex: 0 }), step({ stepIndex: 1 })])
 
-    const report = emitCanaryOutcomes({
+    const report = await emitCanaryOutcomes({
       handoff: input,
       knowledgeRoot: '/tmp/agent-qa-knowledge',
       runDir: '/tmp/runs/run-canary-1',
@@ -472,12 +473,14 @@ describe('emitCanaryOutcomes', () => {
     ])
     expect(emitted).toEqual([1])
     expect(report).toEqual({
+      canary: { ...emptyCanaryCreditCounters(), rideAlongUncredited: 2 },
       emitted: 1,
       refused: 1,
       unresolved: 0,
       procedure: { emitted: 0, refused: 0, unresolved: 0 },
       details: [
         {
+          benefit: 'rode-along', crossCheck: 'not-run',
           candidateId: CANDIDATE,
           testId: 'checkout::happy-path',
           testIndex: 0,
@@ -485,6 +488,7 @@ describe('emitCanaryOutcomes', () => {
           outcome: { kind: 'refused', reason: 'emit-error' },
         },
         {
+          benefit: 'rode-along', crossCheck: 'not-run',
           candidateId: CANDIDATE,
           testId: 'checkout::happy-path',
           testIndex: 0,
@@ -495,23 +499,23 @@ describe('emitCanaryOutcomes', () => {
     })
   })
 
-  it('guards both host paths before opening the reader', () => {
+  it('guards both host paths before opening the reader', async () => {
     const input = handoff([step()])
     const base = {
       handoff: input,
       emit: vi.fn(),
     }
 
-    expect(() => emitCanaryOutcomes({
+    await expect(emitCanaryOutcomes({
       ...base,
       knowledgeRoot: 'relative-knowledge',
       runDir: '/tmp/runs/run-canary-1',
-    })).toThrow(new TypeError('knowledgeRoot must be absolute'))
-    expect(() => emitCanaryOutcomes({
+    })).rejects.toThrow(new TypeError('knowledgeRoot must be absolute'))
+    await expect(emitCanaryOutcomes({
       ...base,
       knowledgeRoot: '/tmp/agent-qa-knowledge',
       runDir: 'relative-run',
-    })).toThrow(new TypeError('runDir must be absolute'))
+    })).rejects.toThrow(new TypeError('runDir must be absolute'))
     expect(lookupSpy.openCalls).toEqual([])
   })
 
@@ -520,9 +524,9 @@ describe('emitCanaryOutcomes', () => {
     ['corrupt', 'invalid', 'record.md: content hash mismatch'],
   ] as const)(
     'reports a %s served record as unresolved instead of certifying a zero/zero success',
-    (_condition, reason, detail) => {
+    async (_condition, reason, detail) => {
       if (detail !== undefined) lookupSpy.invalidById.set(OTHER_CANDIDATE, detail)
-      const report = emitCanaryOutcomes({
+      const report = await emitCanaryOutcomes({
         handoff: handoff([step({ candidateIds: [OTHER_CANDIDATE] })]),
         knowledgeRoot: '/tmp/agent-qa-knowledge',
         runDir: '/tmp/runs/run-canary-1',
@@ -530,11 +534,13 @@ describe('emitCanaryOutcomes', () => {
       })
 
       expect(report).toEqual({
+      canary: emptyCanaryCreditCounters(),
         emitted: 0,
         refused: 0,
         unresolved: 1,
         procedure: { emitted: 0, refused: 0, unresolved: 0 },
         details: [{
+          benefit: 'rode-along',
           candidateId: OTHER_CANDIDATE,
           testId: 'checkout::happy-path',
           testIndex: 0,
@@ -553,7 +559,7 @@ describe('emitCanaryOutcomes', () => {
 describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () => {
   const procedureAnchors = new Map([[PROCEDURE, PROCEDURE_ANCHORS]])
 
-  it('projects a positive procedure outcome for a verified-PASS replayed step', () => {
+  it('projects a positive procedure outcome for a verified-PASS replayed step', async () => {
     const outcomes = project(
       handoff([step({ candidateIds: [], planSource: replaySource() })]),
       procedureAnchors,
@@ -575,7 +581,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     }])
   })
 
-  it('projects only a positive procedure outcome for a clean navigating replay', () => {
+  it('projects only a positive procedure outcome for a clean navigating replay', async () => {
     // Contract pin: navigation in the completed evidence is not a staleness signal when the
     // pre-action replay guard passed cleanly.
     const navigating = subAction({
@@ -606,7 +612,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     ])
   })
 
-  it('never projects a positive procedure outcome after replay execution failed', () => {
+  it('never projects a positive procedure outcome after replay execution failed', async () => {
     const outcomes = project(
       handoff([step({
         candidateIds: [],
@@ -622,7 +628,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     ])
   })
 
-  it('projects an execution-failed replay as negative for an attributable failed run', () => {
+  it('projects an execution-failed replay as negative for an attributable failed run', async () => {
     const outcomes = project(
       handoff(
         [step({
@@ -640,7 +646,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     ])
   })
 
-  it('keeps execution-failed replays behind the non-attributable classifier gate', () => {
+  it('keeps execution-failed replays behind the non-attributable classifier gate', async () => {
     for (const excluded of ['environment', 'timeout', 'flake'] as const) {
       expect(project(
         handoff(
@@ -656,7 +662,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     }
   })
 
-  it('attributes a verifier-rejected replay negatively even after live recovery passes', () => {
+  it('attributes a verifier-rejected replay negatively even after live recovery passes', async () => {
     const outcomes = project(
       handoff([step({
         candidateIds: [],
@@ -671,7 +677,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     ])
   })
 
-  it('keeps verifier-rejected replays behind the non-attributable classifier gate', () => {
+  it('keeps verifier-rejected replays behind the non-attributable classifier gate', async () => {
     for (const excluded of ['environment', 'timeout', 'flake'] as const) {
       expect(project(
         handoff(
@@ -687,7 +693,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     }
   })
 
-  it('does not certify a clean incomplete replay from a later passing verdict', () => {
+  it('does not certify a clean incomplete replay from a later passing verdict', async () => {
     expect(project(
       handoff([step({
         candidateIds: [],
@@ -698,7 +704,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     )).toEqual([])
   })
 
-  it('keeps clean incomplete replay failures on the existing classifier path', () => {
+  it('keeps clean incomplete replay failures on the existing classifier path', async () => {
     const outcomes = project(
       handoff(
         [step({
@@ -716,7 +722,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     ])
   })
 
-  it('gates failed replayed steps behind the shared root-cause classifier', () => {
+  it('gates failed replayed steps behind the shared root-cause classifier', async () => {
     for (const excluded of ['environment', 'timeout', 'flake'] as const) {
       expect(project(
         handoff(
@@ -739,7 +745,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     ])
   })
 
-  it('attributes staleness guard misses as negatives even when the step passed via planning', () => {
+  it('attributes staleness guard misses as negatives even when the step passed via planning', async () => {
     const reasons = [
       'descriptor-ambiguous',
       'descriptor-missing',
@@ -760,7 +766,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     }
   })
 
-  it('never attributes policy-wall guard misses', () => {
+  it('never attributes policy-wall guard misses', async () => {
     for (const reason of ['gate-refused', 'non-replayable-action'] as const) {
       expect(project(
         handoff([step({ candidateIds: [], planSource: replaySource(reason) })]),
@@ -769,7 +775,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     }
   })
 
-  it('keeps the classifier gate over staleness misses on non-attributable failures', () => {
+  it('keeps the classifier gate over staleness misses on non-attributable failures', async () => {
     for (const excluded of ['environment', 'timeout', 'flake'] as const) {
       expect(project(
         handoff(
@@ -785,7 +791,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     }
   })
 
-  it('projects channel1 and planSource outcomes independently from one step (Pin 1)', () => {
+  it('projects channel1 and planSource outcomes independently from one step (Pin 1)', async () => {
     const outcomes = project(
       handoff([step({ planSource: replaySource() })]),
       new Map<string, Anchor[]>([
@@ -812,7 +818,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     ])
   })
 
-  it('records nothing for procedure-hint exposure', () => {
+  it('records nothing for procedure-hint exposure', async () => {
     expect(project(
       handoff([step({
         candidateIds: [],
@@ -868,7 +874,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
     ])
   }
 
-  it('fixture faithfulness: handoff bytes are the failed live run bytes', () => {
+  it('fixture faithfulness: handoff bytes are the failed live run bytes', async () => {
     const digest = createHash('sha256')
       .update(readFileSync(fixturePath))
       .digest('hex')
@@ -886,7 +892,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
     })
   })
 
-  it('a failed test projects no positive procedure canary from its verified-PASS replayed steps', () => {
+  it('a failed test projects no positive procedure canary from its verified-PASS replayed steps', async () => {
     const fixture = loadCompletedRunHandoff(fixturePath)
     const outcomes = project(fixture, fixtureAnchors())
 
@@ -904,7 +910,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
       .toEqual([])
   })
 
-  it('P1: a passing test keeps one positive per verified-PASS replayed step (380 D-21)', () => {
+  it('P1: a passing test keeps one positive per verified-PASS replayed step (380 D-21)', async () => {
     const outcomes = project(
       handoff([
         step({ stepIndex: 0, candidateIds: [], planSource: replaySource() }),
@@ -931,7 +937,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
     ])
   })
 
-  it('P2: a staleness miss in a failed test still projects a negative (D-11)', () => {
+  it('P2: a staleness miss in a failed test still projects a negative (D-11)', async () => {
     const outcomes = project(
       handoff(
         [step({
@@ -949,7 +955,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
     ])
   })
 
-  it('P3: the classifier gate keeps misses silent on non-attributable failures', () => {
+  it('P3: the classifier gate keeps misses silent on non-attributable failures', async () => {
     for (const excluded of ['environment', 'timeout', 'flake'] as const) {
       expect(project(
         handoff(
@@ -965,7 +971,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
     }
   })
 
-  it('P4: zero procedure-replay steps project zero procedure attributions (PROC-01 empty edge)', () => {
+  it('P4: zero procedure-replay steps project zero procedure attributions (PROC-01 empty edge)', async () => {
     const outcomes = project(
       handoff([step({ stepIndex: 0 }), step({ stepIndex: 1, pass: false })]),
       new Map<string, Anchor[]>([
@@ -981,7 +987,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
       .toHaveLength(2)
   })
 
-  it('P5: served-brief (Pin 1) attribution over the verbatim fixture keeps its exact counts', () => {
+  it('P5: served-brief (Pin 1) attribution over the verbatim fixture keeps its exact counts', async () => {
     const fixture = loadCompletedRunHandoff(fixturePath)
     const outcomes = project(fixture, fixtureAnchors())
 
@@ -1010,7 +1016,7 @@ describe('emitCanaryOutcomes procedure counters', () => {
     lookupSpy.openCalls.length = 0
   })
 
-  it('splits procedure-source counters beside the shared totals', () => {
+  it('splits procedure-source counters beside the shared totals', async () => {
     lookupSpy.anchorsById.set(CANDIDATE, [{
       t: 'el',
       role: 'button',
@@ -1019,7 +1025,7 @@ describe('emitCanaryOutcomes procedure counters', () => {
     }])
     lookupSpy.anchorsById.set(PROCEDURE, PROCEDURE_ANCHORS)
 
-    const report = emitCanaryOutcomes({
+    const report = await emitCanaryOutcomes({
       handoff: handoff([step({ planSource: replaySource() })]),
       knowledgeRoot: '/tmp/agent-qa-knowledge',
       runDir: '/tmp/runs/run-canary-1',
@@ -1033,8 +1039,8 @@ describe('emitCanaryOutcomes procedure counters', () => {
     ]))
   })
 
-  it('reports an unresolved procedure without certifying a zero/zero success', () => {
-    const report = emitCanaryOutcomes({
+  it('reports an unresolved procedure without certifying a zero/zero success', async () => {
+    const report = await emitCanaryOutcomes({
       handoff: handoff([step({ candidateIds: [], planSource: replaySource() })]),
       knowledgeRoot: '/tmp/agent-qa-knowledge',
       runDir: '/tmp/runs/run-canary-1',
@@ -1042,11 +1048,13 @@ describe('emitCanaryOutcomes procedure counters', () => {
     })
 
     expect(report).toEqual({
+      canary: emptyCanaryCreditCounters(),
       emitted: 0,
       refused: 0,
       unresolved: 1,
       procedure: { emitted: 0, refused: 0, unresolved: 1 },
       details: [{
+        benefit: 'rode-along',
         candidateId: PROCEDURE,
         testId: 'checkout::happy-path',
         testIndex: 0,
@@ -1131,9 +1139,9 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     })
   }
 
-  it('no-artifact leg: fold output byte-identical to the handoff-only baseline (regression pin)', () => {
+  it('no-artifact leg: fold output byte-identical to the handoff-only baseline (regression pin)', async () => {
     const collected: CanaryOutcome[] = []
-    const report = foldInto(collected, failingHandoffFor(RUN_A), tempRunDir())
+    const report = await foldInto(collected, failingHandoffFor(RUN_A), tempRunDir())
 
     expect(report.emitted).toBe(1)
     expect(collected[0]).toMatchObject({
@@ -1150,7 +1158,7 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     ))
   })
 
-  it('the artifact supersedes the deterministic unknown and the RESOLVED class flips attribution', () => {
+  it('the artifact supersedes the deterministic unknown and the RESOLVED class flips attribution', async () => {
     const runDir = tempRunDir()
     writeFileSync(
       join(runDir, ANALYSIS_FILE),
@@ -1159,7 +1167,7 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     )
 
     const collected: CanaryOutcome[] = []
-    const report = foldInto(collected, failingHandoffFor(RUN_A), runDir)
+    const report = await foldInto(collected, failingHandoffFor(RUN_A), runDir)
 
     // unknown → flake: flake is non-attributable (D-11), so the fold that reads the
     // resolved verdict emits NOTHING for this test — the outcome log cannot contradict it.
@@ -1169,7 +1177,7 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     expect(report.unresolved).toBe(0)
   })
 
-  it('SC2: two runs and a supersession — exactly ONE attributed observation per (runId, testId)', () => {
+  it('SC2: two runs and a supersession — exactly ONE attributed observation per (runId, testId)', async () => {
     const log: CanaryOutcome[] = []
     const dirA = tempRunDir()
     const dirB = tempRunDir()
@@ -1177,19 +1185,19 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     const runB = failingHandoffFor(RUN_B)
 
     // Run A folds on its deterministic unknown floor: attributed.
-    expect(foldInto(log, runA, dirA).emitted).toBe(1)
+    expect((await foldInto(log, runA, dirA)).emitted).toBe(1)
 
     // The analysis artifact lands: unknown → flake for run A.
     writeFileSync(join(dirA, ANALYSIS_FILE), `${canonicalJson(flakeArtifact(RUN_A))}\n`, 'utf8')
 
     // The re-fold reads the RESOLVED verdict: no second observation, ever (the upgrade
     // flips attribution rather than appending beside the original).
-    expect(foldInto(log, runA, dirA).emitted).toBe(0)
+    expect((await foldInto(log, runA, dirA)).emitted).toBe(0)
 
     // Run B folds AFTER the supersession, with run A's artifact on disk — and answers its
     // OWN floor: the artifact is loaded from the fold's own runDir, keyed by the run it
     // folds, never a sibling's (the cross-instance attribution defect class).
-    expect(foldInto(log, runB, dirB).emitted).toBe(1)
+    expect((await foldInto(log, runB, dirB)).emitted).toBe(1)
 
     const observations = new Map<string, number>()
     for (const outcome of log) {
@@ -1206,7 +1214,7 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     for (const outcome of log) expect(outcome.runOutcome).toBe('negative')
   })
 
-  it('a foreign artifact on run B\'s OWN dir never flips B\'s attribution (G-389-3A)', () => {
+  it('a foreign artifact on run B\'s OWN dir never flips B\'s attribution (G-389-3A)', async () => {
     // The two-sided-contract pin law again, at the fold's loader: the file is PRESENT on
     // B's own runDir in BOTH legs — only the recorded runId varies. A copied/restored run
     // directory is run A's bytes on B's path; admission by identity keeps B on its floor.
@@ -1217,7 +1225,7 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     // attributed emission STILL occurs; A's flake (non-attributable) is never adopted.
     writeFileSync(join(dirB, ANALYSIS_FILE), `${canonicalJson(flakeArtifact(RUN_A))}\n`, 'utf8')
     const foreignLog: CanaryOutcome[] = []
-    const foreignReport = foldInto(foreignLog, runB, dirB)
+    const foreignReport = await foldInto(foreignLog, runB, dirB)
     expect(foreignReport.emitted).toBe(1)
     expect(foreignLog.map((outcome) => outcome.runId)).toEqual([RUN_B])
     expect(foreignLog[0]!.runOutcome).toBe('negative')
@@ -1226,14 +1234,14 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     // adopted, unknown → flake, the emission suppressed (the supersession case's shape).
     writeFileSync(join(dirB, ANALYSIS_FILE), `${canonicalJson(flakeArtifact(RUN_B))}\n`, 'utf8')
     const controlLog: CanaryOutcome[] = []
-    const controlReport = foldInto(controlLog, runB, dirB)
+    const controlReport = await foldInto(controlLog, runB, dirB)
     expect(controlLog).toEqual([])
     expect(controlReport.emitted).toBe(0)
     expect(controlReport.refused).toBe(0)
     expect(controlReport.unresolved).toBe(0)
   })
 
-  it('reads verdicts through the D-10 accessor only (source pin + grep gate)', () => {
+  it('reads verdicts through the D-10 accessor only (source pin + grep gate)', async () => {
     const source = readFileSync(
       new URL('../emit-canary-outcomes.ts', import.meta.url),
       'utf8',

@@ -303,14 +303,14 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     expect(firstProjection).toHaveLength(1)
     expect(firstProjection[0]).toMatchObject({ benefit: 'rode-along', stateValidity: 'unknown' })
 
-    const firstEmit = emitCanaryOutcomes({
+    const firstEmit = await emitCanaryOutcomes({
       handoff,
       knowledgeRoot,
       runDir,
       emit: reader.emitCanaryOutcome.bind(reader),
     })
     const queuedAfterFirstEmit = listQueuedCandidates(knowledgeRoot)
-    const secondEmit = emitCanaryOutcomes({
+    const secondEmit = await emitCanaryOutcomes({
       handoff,
       knowledgeRoot,
       runDir,
@@ -427,7 +427,7 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     if (served === undefined) throw new Error('candidate was not served')
     const handoff = completedHandoff(published.id, served)
 
-    const first = emitCanaryOutcomes({
+    const first = await emitCanaryOutcomes({
       handoff,
       knowledgeRoot,
       runDir,
@@ -448,7 +448,7 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     await rebuildIndex({ knowledgeRoot })
     expect(reader.read(published.id)).toBeUndefined()
 
-    const replay = emitCanaryOutcomes({
+    const replay = await emitCanaryOutcomes({
       handoff,
       knowledgeRoot,
       runDir,

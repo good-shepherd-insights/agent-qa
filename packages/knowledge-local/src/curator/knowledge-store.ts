@@ -12,6 +12,7 @@ import {
   GateReceiptSchema,
   receiptDigestOf,
   sha256hex,
+  stampReceiptDigest,
   survivingOutcomeEvents,
   strongestPromotionPath,
   strongerPromotionPath,
@@ -720,6 +721,30 @@ export function createLocalKnowledgeStore(
            */
           config.canaryAuthorityHooks?.beforePromotionAppend?.()
           withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
+            // 2026-09-07, 418 D-05/D-06/D-07: retain evidence regardless of Gate-1 state.
+            // The observation supplies its ordinal; the shared routine decides order and reports holds.
+            if (outcome.benefit === 'exercised-benefited' && outcome.corpusDigest !== undefined) {
+              const receipt = stampReceiptDigest({
+                schemaVersion: 1 as const, gate: 2 as const, candidateId: outcome.candidateId,
+                verdict: 'pass' as const, producedAtOrdinal: outcome.buildOrdinal,
+                producedBy: { ...(config.sourceJobId === undefined ? {} : { jobId: config.sourceJobId }),
+                  opId: 'canary.record' },
+                attributedObservationId: observationId,
+                corpusVersion: { corpusDigest: outcome.corpusDigest },
+                benefit: outcome.benefit, stateValidity: outcome.stateValidity,
+                runId: outcome.runId, testIndex: outcome.testIndex, stepIndex: outcome.stepIndex,
+                attribution: outcome.attribution,
+                ...(outcome.observedStateDigest === undefined ? {} : { observedStateDigest: outcome.observedStateDigest }),
+                ...(outcome.ablation === undefined ? {} : {
+                  crossCheck: outcome.ablation.crossCheck,
+                  samples: { k: outcome.ablation.k, seeds: outcome.ablation.seeds,
+                    seedHonored: outcome.ablation.seedHonored, modelCalls: outcome.ablation.spend.modelCalls },
+                  spend: outcome.ablation.spend,
+                }),
+              })
+              const appendConfig = bundleStoreConfig(resolved.product)
+              checkedAppend(outcome.candidateId, appendGateReceipt(appendConfig, outcome.candidateId, receipt))
+            }
             try {
               promoteWithinCurrentAuthority(outcome.candidateId)
             } catch (error) {

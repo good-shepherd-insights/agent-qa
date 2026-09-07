@@ -19,6 +19,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
+import { canaryOutcomeObservationId } from '@vostride/agent-qa-knowledge-local/reader'
 import {
   AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
   CHAT_HELP_TEXT,
@@ -531,6 +532,8 @@ export interface LocalCurationCapabilities {
   readonly reconcileRunOutcomesProjection: typeof reconcileRunOutcomesProjection
   readonly enqueueCurationCandidateProjection: typeof enqueueCurationCandidateProjection
   readonly readCanonicalBundleAnchors: typeof readCanonicalBundleAnchors
+  /** 418 D-07: reuse the writer's observation identity through the existing CLI bridge. */
+  readonly canaryOutcomeObservationId: typeof canaryOutcomeObservationId
   /**
    * Component of the tail's receipt: a bump refolds runs already receipted at the old version.
    * The receipt is the per-run half of that promise; `reconcileRunOutcomesProjection` above is
@@ -550,6 +553,7 @@ export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.fre
   enqueueCurationCandidateProjection,
   readCanonicalBundleAnchors,
   runOutcomesProjectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+  canaryOutcomeObservationId,
   maintenance: Object.freeze({
     acquireWriterLease,
     refreshWriterLeaseAuthority,

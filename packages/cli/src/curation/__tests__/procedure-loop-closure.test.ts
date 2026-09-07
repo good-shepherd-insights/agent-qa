@@ -503,7 +503,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     }
   }
 
-  function emitPositiveProcedureCanary(stepIndex: number): void {
+  async function emitPositiveProcedureCanary(stepIndex: number): Promise<void> {
     const evidence: StepEvidence = {
       ...step(
         stepIndex,
@@ -518,7 +518,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       },
     }
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
-    const report = emitCanaryOutcomes({
+    const report = await emitCanaryOutcomes({
       handoff: handoffWithSteps({
         runId: `run-canary-replay-${stepIndex}`,
         buildOrdinal: 43 + stepIndex,
@@ -625,7 +625,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     // canaries and nothing else — identical in ordered and -t filtered execution.
     expect(confirmationEvents().organic).toEqual([])
 
-    emitPositiveProcedureCanary(0)
+    await emitPositiveProcedureCanary(0)
     await drainPositiveProcedureCanary()
 
     const afterFirst = getProcedure()
@@ -635,7 +635,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     expect(oneOrganic.organic).toHaveLength(1)
     expect(oneOrganic.organic[0]!.curationJobId).not.toBe(oneOrganic.creationJobId)
 
-    emitPositiveProcedureCanary(1)
+    await emitPositiveProcedureCanary(1)
     await drainPositiveProcedureCanary()
 
     const afterSecond = getProcedure()
@@ -1045,7 +1045,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     })
 
     const emitted: CanaryOutcome[] = []
-    const report = emitCanaryOutcomes({
+    const report = await emitCanaryOutcomes({
       handoff: handoffWithSteps({
         runId: 'run-loop-verifier-rejection',
         buildOrdinal: 43,

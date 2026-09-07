@@ -49,6 +49,7 @@ import {
   type BuildCuratorAuthorDependencies,
 } from './curator-author.js'
 import { emitCanaryOutcomes } from './emit-canary-outcomes.js'
+import type { CanaryAblation } from './canary-credit.js'
 import { emitCurationCandidates, type EmitReport } from './emit-candidates.js'
 import { exercisedAnchors } from './handoff-anchors.js'
 import { renderPromotionLine } from './promotion-posture.js'
@@ -93,6 +94,8 @@ export interface CurationTailLogger {
 }
 
 export interface CurationTailOperations {
+  /** 2026-09-07, 418 D-01: eval-composing hosts bind this in Plan 05; BYOM omits it. */
+  canaryAblation?: CanaryAblation
   loadCompletedRunHandoff: typeof loadCompletedRunHandoff
   resolveKnowledgeRoot: typeof resolveKnowledgeRoot
   runSafetyScope: typeof runSafetyScope
@@ -609,11 +612,12 @@ export async function curateCompletedRun(
       input.log.info?.(candidateSummaryLine(receiptIdentity.runId, candidates))
       // D-20: candidate and canary drops share this scope and crash boundary.
       const reader = operations.openKnowledgeReader({ knowledgeRoot: input.knowledgeRoot })
-      const canaries = operations.emitCanaryOutcomes({
+      const canaries = await operations.emitCanaryOutcomes({
         handoff: input.handoff,
         knowledgeRoot: input.knowledgeRoot,
         runDir: input.runDir,
         emit: reader.emitCanaryOutcome.bind(reader),
+        ...(operations.canaryAblation === undefined ? {} : { credit: { ablation: operations.canaryAblation } }),
       })
       // D-14: the run-outcome fold shares this crash boundary and the SAME extended
       // receipt as candidate/canary emit — never a second marker file. The durable
