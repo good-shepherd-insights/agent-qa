@@ -42,4 +42,14 @@ export interface PerTestOutcome {
    * in JSON (the `excludedFromOutcomes` idiom).
    */
   quarantined?: true
+  /**
+   * 2026-09-07, 418 D-09 / approved OQ-1: reruns are member-grain retries, narrowing
+   * D-09's run-level wording. The runner stamps this from TestResult.retryCount > 0;
+   * the canary seam projects no attribution, positive or negative, for this member.
+   * The curator's analyze-run / attributed-deprecation path is unchanged.
+   * Only literal true is meaningful; absence denotes an ordinary member.
+   */
+  isRerun?: true
+  /** Positive attempt index that produced the recorded outcome; absent on an ordinary member. */
+  rerunAttempt?: number
 }

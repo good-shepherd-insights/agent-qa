@@ -456,7 +456,13 @@ function hasCompleteTestShape(value: unknown): boolean {
     (!('rootCause' in value) || hasCompleteRootCauseShape(value.rootCause)) &&
     // 390 D-14: only the literal marker is legal. A truthy-but-not-true value would let a
     // hand-edited handoff read as quarantined at one consumer and not at another.
-    (!('quarantined' in value) || value.quarantined === true)
+    (!('quarantined' in value) || value.quarantined === true) &&
+    // 2026-09-07, 418 D-09: persisted rerun fields are present-implies-valid.
+    (!('isRerun' in value) || value.isRerun === true) &&
+    (!('rerunAttempt' in value) ||
+      (typeof value.rerunAttempt === 'number' &&
+        Number.isInteger(value.rerunAttempt) &&
+        value.rerunAttempt >= 1))
   )
 }
 

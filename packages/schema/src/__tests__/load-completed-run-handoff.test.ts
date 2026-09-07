@@ -152,6 +152,46 @@ function makeHandoffWithStep(rung?: unknown): Record<string, unknown> {
   }
 }
 
+describe('member-grain rerun markers at the load boundary (418 D-09, approved OQ-1)', () => {
+  function handoffWithRerunFields(fields: Record<string, unknown>) {
+    const doc = makeHandoffWithStep()
+    const tests = doc.tests as Record<string, unknown>[]
+    return { ...doc, tests: tests.map((test) => ({ ...test, ...fields })) }
+  }
+
+  it.each([1, 3])('preserves a literal rerun marker and attempt %s', (rerunAttempt) => {
+    const doc = handoffWithRerunFields({ isRerun: true, rerunAttempt })
+    const guarded = guardCompletedRunHandoff(doc)
+    expect(guarded.tests[0]?.isRerun).toBe(true)
+    expect(guarded.tests[0]?.rerunAttempt).toBe(rerunAttempt)
+    expect(guarded).toEqual(doc)
+    expect(guarded).not.toHaveProperty('isRerun')
+  })
+
+  it.each([false, 'yes', 1, null, undefined])('refuses a present isRerun value of %s', (isRerun) => {
+    expect(() => guardCompletedRunHandoff(handoffWithRerunFields({ isRerun }))).toThrow(
+      /failed structural validation/,
+    )
+  })
+
+  it.each([0, -1, 1.5, '1', Number.NaN, Infinity, null, undefined])(
+    'refuses a present rerunAttempt value of %s',
+    (rerunAttempt) => {
+      expect(() =>
+        guardCompletedRunHandoff(handoffWithRerunFields({ isRerun: true, rerunAttempt })),
+      ).toThrow(/failed structural validation/)
+    },
+  )
+
+  it('loads an ordinary member unchanged with both keys absent', () => {
+    const doc = makeHandoffWithStep()
+    const guarded = guardCompletedRunHandoff(doc)
+    expect(guarded).toEqual(doc)
+    expect(guarded.tests[0]).not.toHaveProperty('isRerun')
+    expect(guarded.tests[0]).not.toHaveProperty('rerunAttempt')
+  })
+})
+
 describe('StepEvidence.retrievalRung at the load boundary (407 D-13, TRST-01)', () => {
   it('bumps the current handoff schemaVersion to 7', () => {
     expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
