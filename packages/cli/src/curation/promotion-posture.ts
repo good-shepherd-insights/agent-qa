@@ -129,10 +129,17 @@ export async function buildPromotionPostureResolver(input: {
           kind: facts === undefined ? 'not-provided' : 'provided',
           rarePathEligible: facts?.kind === 'found' && facts.gate1PassOrdinal !== undefined
             && validOrdinal(currentBuildOrdinal)
-            && currentBuildOrdinal - facts.gate1PassOrdinal >= caps.canaryHorizonBuilds
-            && (facts.latestAttributionOrdinal === undefined || facts.latestAttributionOrdinal <= facts.gate1PassOrdinal)
-            && (facts.latestGate2Ordinal === undefined || facts.latestGate2Ordinal <= facts.gate1PassOrdinal)
-            && facts.lowerTrustActiveInScope < caps.maxLowerTrustPerScope,
+            && currentBuildOrdinal >= facts.gate1PassOrdinal
+            // 2026-09-08, 418 D-16: quiet horizon/cap govern NEW admission. An active
+            // citing the same standing G1 keeps serving after ride-alongs or filling its
+            // own cap slot. The one pure gate still revalidates rollback support, current
+            // corpus, Gate-2 negatives/abstains and inconsistency on every promotion call.
+            && ((facts.lowerTrustActiveGate1Digest !== undefined
+                && facts.lowerTrustActiveGate1Digest === facts.gate1PassDigest)
+              || (currentBuildOrdinal - facts.gate1PassOrdinal >= caps.canaryHorizonBuilds
+                && (facts.latestAttributionOrdinal === undefined || facts.latestAttributionOrdinal <= facts.gate1PassOrdinal)
+                && (facts.latestGate2Ordinal === undefined || facts.latestGate2Ordinal <= facts.gate1PassOrdinal)
+                && facts.lowerTrustActiveInScope < caps.maxLowerTrustPerScope)),
         }
         // The eval reader's canary census has a different contract (attributedRows
         // plus skippedBundles). Eligibility is our candidate DATA, returned below.

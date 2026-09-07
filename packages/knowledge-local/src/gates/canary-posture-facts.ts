@@ -10,6 +10,8 @@ export type CanaryPostureFacts = {
   kind: 'found'
   gate1PassOrdinal?: number
   gate1PassDigest?: string
+  /** Existing active authority cites this Gate-1 receipt; not admission eligibility. */
+  lowerTrustActiveGate1Digest?: string
   latestAttributionOrdinal?: number
   latestGate2Ordinal?: number
   activeInScope: number
@@ -54,6 +56,14 @@ export function canaryPostureFactsFor(input: {
     || scope.key !== input.scope.key) return { kind: 'not-found' }
   const receipts = candidate.lines.filter((line): line is GateReceipt => !isPromotionReceipt(line))
   const pass = standingReceiptsByGate(receipts).find(row => row.gate === 1 && row.verdict === 'pass')
+  const lowerTrustActiveGate1Digest = candidate.active
+    && strongestPromotionPath(candidate.lines) === 'gate1-lower-trust'
+    && survivingOutcomeEvents(candidate.bundle.events).some(event => event.type === 'promoted')
+    && pass !== undefined
+    && candidate.lines.some(line => isPromotionReceipt(line)
+      && line.promotionPath === 'gate1-lower-trust'
+      && line.citedReceiptDigests.includes(pass.receiptDigest))
+    ? pass.receiptDigest : undefined
   const latestAttributionOrdinal = latest(survivingOutcomeEvents(candidate.bundle.events)
     .filter(event => ['confirmed', 'contradicted', 'helpful', 'harmful'].includes(event.type))
     .map(event => event.buildOrdinal))
@@ -63,6 +73,7 @@ export function canaryPostureFactsFor(input: {
   return {
     kind: 'found',
     ...(pass === undefined ? {} : { gate1PassOrdinal: pass.producedAtOrdinal, gate1PassDigest: pass.receiptDigest }),
+    ...(lowerTrustActiveGate1Digest === undefined ? {} : { lowerTrustActiveGate1Digest }),
     ...(latestAttributionOrdinal === undefined ? {} : { latestAttributionOrdinal }),
     ...(latestGate2Ordinal === undefined ? {} : { latestGate2Ordinal }),
     activeInScope: active.length,

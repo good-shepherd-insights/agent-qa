@@ -1,5 +1,6 @@
 import {
   COLD_START_TRUST_DISCOUNT,
+  LOWER_TRUST_PATH_DISCOUNT,
   isVettedCandidate,
   supersessionKey,
 } from '@vostride/agent-qa-schema'
@@ -32,6 +33,7 @@ export interface RerankEntry {
   readonly vettedCandidateInput?: VettedCandidateInput
   readonly unconfirmedSinceOrdinal?: number
   readonly unverified?: boolean
+  readonly lowerTrust?: true
   readonly conflict?: ConflictAnnotation
 }
 
@@ -134,12 +136,14 @@ export function applyLifecycleTrustTreatments<T extends RerankEntry>(
     const unverified = entry.vettedCandidateInput !== undefined
       && isVettedCandidate(entry.vettedCandidateInput)
     if (unverified) trust *= COLD_START_TRUST_DISCOUNT
+    if (entry.lowerTrust === true) trust *= LOWER_TRUST_PATH_DISCOUNT
 
     return {
       ...base,
       trust,
       ...(unconfirmedSinceOrdinal === undefined ? {} : { unconfirmedSinceOrdinal }),
       ...(unverified ? { unverified: true } : {}),
+      ...(entry.lowerTrust === true ? { lowerTrust: true } : {}),
     } as T
   })
 }

@@ -11,6 +11,7 @@ import {
   asEvidenceToken,
   asRecordId,
   BundleOutcomeEventSchema,
+  LOWER_TRUST_PATH_DISCOUNT,
   parseProcedureBody,
   procedureSourceBinding,
   serializeProcedureBody,
@@ -44,6 +45,7 @@ import {
   type PublishBundleInput,
 } from '../../bundle-publish.test-helper.js'
 import { rebuildIndex } from '../../index-rebuild.js'
+import { appendPromotionReceipt } from '../../bundle-append.js'
 import { listQueuedCandidates } from '../../queue/curation-queue.js'
 import { openKnowledgeReader } from '../reader.js'
 
@@ -386,6 +388,39 @@ describe('openKnowledgeReader synchronous serving port', () => {
       status: 'superseded',
       audit: expect.objectContaining({ status: 'superseded' }),
     }))
+  })
+
+  it('serves lower-trust actives beside a full cold-start reservation and lifts framing on upgrade', async () => {
+    const lower = seedRecord({ key: 'lower-trust' })
+    const candidates = [seeded.candidateFact, seedRecord({ key: 'cold-two', status: 'candidate' }),
+      seedRecord({ key: 'cold-three', status: 'candidate' })]
+    const append = (id: RecordId, promotionPath: 'gate1-lower-trust' | 'gate1+gate2' | 'deterministic-verdict-floor') => {
+      expect(appendPromotionReceipt(storeConfig(), id, { schemaVersion: 1, kind: 'promotion',
+        candidateId: id, promotionPath, citedReceiptDigests: [], producedAtOrdinal: 10,
+        producedBy: { opId: 'reader-test' } })).toEqual({ kind: 'appended' })
+    }
+    append(lower, 'gate1-lower-trust')
+    append(seeded.activeFact, 'deterministic-verdict-floor')
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT,
+      scopeDefaults: { asOfBuild: 10 }, budgets: { recordCap: 50 } })
+    const served = reader.search('checkout', { scope: SCOPE }).find(({ id }) => id === lower)!
+    expect(served).toMatchObject({ status: 'active', lowerTrust: true, servedAsCanary: true })
+    expect(served).not.toHaveProperty('unverified')
+    const brief = reader.getRunBrief(SCOPE, 10_000).brief
+    expect(brief.lines.filter(({ id }) => candidates.includes(id))).toHaveLength(2)
+    expect(brief.lines.find(({ id }) => id === lower)).toMatchObject({ status: 'active',
+      servedAsCanary: true, trust: served.trust * LOWER_TRUST_PATH_DISCOUNT })
+    expect(brief.tiers.L2).toContain('[LEARNED, UNCONFIRMED] [CANARY]')
+    expect(reader.search('checkout', { scope: SCOPE }).find(({ id }) => id === seeded.activeFact))
+      .not.toHaveProperty('lowerTrust')
+    append(lower, 'gate1+gate2')
+    const upgraded = reader.search('checkout', { scope: SCOPE }).find(({ id }) => id === lower)!
+    expect(upgraded).toMatchObject({ status: 'active', servedAsCanary: false })
+    expect(upgraded).not.toHaveProperty('lowerTrust')
+    const upgradedBrief = reader.getRunBrief(SCOPE, 10_000).brief
+    expect(upgradedBrief.lines.find(({ id }) => id === lower)?.trust).toBe(served.trust)
+    expect(upgradedBrief.tiers.L2).not.toContain('LEARNED, UNCONFIRMED')
   })
 
   it('defends direct reads with current status, scope, and as-of walls', async () => {

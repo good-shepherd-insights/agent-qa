@@ -70,11 +70,33 @@ describe('418 bundle-local canary posture facts', () => {
       kind: 'promotion', candidateId: first.id, promotionPath: 'gate1-lower-trust',
       citedReceiptDigests: [first.pass.receiptDigest], producedAtOrdinal: 15, producedBy: { opId: 'fixture' } })
     expect(read(second.id)).toMatchObject({ activeInScope: 2, lowerTrustActiveInScope: 1 })
+    expect(read(first.id)).toMatchObject({ lowerTrustActiveGate1Digest: first.pass.receiptDigest })
+    expect(read(second.id)).not.toHaveProperty('lowerTrustActiveGate1Digest')
     expect(lowerTrustSharesFor({ knowledgeRoot })).toEqual([{ product: 'storefront', active: 2, lowerTrust: 1 }])
     appendPromotionReceipt(fixture.outcomeAppendConfig(), first.id, { schemaVersion: 1,
       kind: 'promotion', candidateId: first.id, promotionPath: 'gate1+gate2',
       citedReceiptDigests: [first.pass.receiptDigest], producedAtOrdinal: 16, producedBy: { opId: 'fixture' } })
     expect(read(second.id)).toMatchObject({ activeInScope: 2, lowerTrustActiveInScope: 0 })
+    expect(read(first.id)).not.toHaveProperty('lowerTrustActiveGate1Digest')
+  })
+  it('never derives continued authority from a historical promotion after retraction or a changed Gate-1', () => {
+    const planted = seed()
+    const config = fixture.outcomeAppendConfig()
+    appendPromotionReceipt(config, planted.id, { schemaVersion: 1, kind: 'promotion',
+      candidateId: planted.id, promotionPath: 'gate1-lower-trust',
+      citedReceiptDigests: [planted.pass.receiptDigest], producedAtOrdinal: 45, producedBy: { opId: 'fixture' } })
+    expect(read(planted.id)).not.toHaveProperty('lowerTrustActiveGate1Digest')
+    appendOutcomeEvent(config, planted.id, { type: 'promoted', evidenceToken: asEvidenceToken('authority'),
+      curationJobId: 'authority', buildOrdinal: 45 })
+    expect(read(planted.id)).toMatchObject({ lowerTrustActiveGate1Digest: planted.pass.receiptDigest })
+    appendOutcomeEvent(config, planted.id, { type: 'retracted', evidenceToken: asEvidenceToken('retract-authority'),
+      curationJobId: 'retract-authority', buildOrdinal: 46, retractsEvidenceToken: asEvidenceToken('authority'),
+      retractsCurationJobId: 'authority', rollbackReceiptId: 'rollback-authority' })
+    expect(read(planted.id)).not.toHaveProperty('lowerTrustActiveGate1Digest')
+    appendOutcomeEvent(config, planted.id, { type: 'promoted', evidenceToken: asEvidenceToken('authority-two'),
+      curationJobId: 'authority-two', buildOrdinal: 47 })
+    appendGateReceipt(config, planted.id, completeGate1Receipt(planted.id, { producedAtOrdinal: 48 }))
+    expect(read(planted.id)).not.toHaveProperty('lowerTrustActiveGate1Digest')
   })
   it('refuses mismatched scopes and corrupt evidence instead of undercounting the cap', () => {
     const planted = seed()
