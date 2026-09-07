@@ -540,6 +540,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     }
   }
   const abstain = (reason: Gate1Reason) => {
+    receipt.spend!.wallClockMs = Math.max(0, Math.round(clock() - started))
     receipt.reasons = orderGate1Reasons([
       reason,
       ...(sameFamilyRefused ? ['same-family-refused' as const] : []),
@@ -670,7 +671,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
   ).length
   const planned = scoredCollateral.length + scoredTargets + 2 * (input.k - 1) * targetsToCrossCheck
   if (planned > input.maxScreens) {
-    notices.push(`planned ${planned} screens exceeds cap ${input.maxScreens}`)
+    notices.push(`cap-exceeded: planned=${planned} maxScreens=${input.maxScreens}`)
     return abstain('cap-exceeded')
   }
   const spend = receipt.spend!

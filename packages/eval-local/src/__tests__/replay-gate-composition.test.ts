@@ -10,12 +10,16 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { GateReceiptSchema, receiptDigestOf, slugBranch } from '@vostride/agent-qa-schema'
+import { GateReceiptSchema, receiptDigestOf, slugBranch, asRef } from '@vostride/agent-qa-schema'
+import { createMaskingContext } from '@vostride/agent-qa-safety'
+import { composeBaselineProfileKey, JUDGE_CONFIG } from '@vostride/agent-qa-eval'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as evalLocal from '../index.js'
 import { gate1Responder, warmGateRoot, writeGate1Fixture } from './fixtures/gate1-fixtures.js'
 import {
   actionGenerateResult,
+  familyStubProfile,
+  judgeGenerateResult,
   respondingStub,
   noneAuth,
   stubProfile,
@@ -367,12 +371,190 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       })
     const got = receipt(await evalLocal.runReplayGate(input))
     expect(got.verdict).toBe('pass')
-    expect(got.population?.refused).toBe(2)
+    const population = got.population!
+    expect(population.refused).toBe(2)
     expect(got.spend?.screens).toBe(8)
     for (const id of refused) {
       const text = f.selected.find(({ cassette }) => cassette.id === id)!.cassette.input.stepText
       expect(stub.captured.some((call) => JSON.stringify(call.prompt).includes(text))).toBe(false)
     }
+  })
+  it.each([10, 9])(
+    'checks the inclusive cap %i before auth and reports exact spend',
+    async (maxScreens) => {
+      const { f, input, stub } = await warm({ collateral: 5 })
+      const lines: string[] = []
+      input.maxScreens = maxScreens
+      input.onProgress = (line) => lines.push(line)
+      if (maxScreens === 9)
+        input.planner.resolveAuth = async () => {
+          throw new Error('cap must precede auth')
+        }
+      const result = await evalLocal.runReplayGate(input)
+      const got = receipt(result)
+      expect(got.cap).toEqual({ maxScreens })
+      expect(got.spend).toEqual(
+        maxScreens === 10
+          ? {
+              screens: 10,
+              modelCalls: 10,
+              promptTokens: 100,
+              completionTokens: 20,
+              wallClockMs: 410,
+            }
+          : { screens: 0, modelCalls: 0, promptTokens: 0, completionTokens: 0, wallClockMs: 10 },
+      )
+      if (maxScreens === 9) {
+        expect(got.reasons).toEqual(['cap-exceeded'])
+        expect(result.notices.join('\n')).toContain('planned=10 maxScreens=9')
+        expect(stub.captured).toHaveLength(0)
+      } else {
+        expect(got.verdict).toBe('pass')
+        expect(lines).toEqual([
+          `gate1 candidate=${f.injection.candidateId}: screens=10 modelCalls=10 promptTokens=100 completionTokens=20 wallClock=410ms seedHonored=true`,
+        ])
+        expect(Number.isInteger(got.spend!.promptTokens)).toBe(true)
+        expect(Number.isInteger(got.spend!.completionTokens)).toBe(true)
+      }
+    },
+  )
+  it('counts planner retries as provider calls without inflating screens', async () => {
+    const { f, input } = await warm()
+    const stub = respondingStub((call, index) =>
+      index === 0 ? actionGenerateResult('web', 'missing-ref') : gate1Responder(f)(call),
+    )
+    input.planner.modelOverrides = { languageModels: stub.languageModels }
+    const got = receipt(await evalLocal.runReplayGate(input))
+    expect(got.verdict).toBe('pass')
+    expect(stub.captured).toHaveLength(11)
+    expect(got.spend).toMatchObject({
+      screens: 10,
+      modelCalls: 11,
+      promptTokens: 110,
+      completionTokens: 22,
+    })
+  })
+  it('counts both order-swapped eligible judge calls for one tie without adding screens', async () => {
+    const { f, input } = await warm()
+    const profile = familyStubProfile('gpt-gate1-stub')
+    const judgeProfile = familyStubProfile('claude-gate1-stub')
+    const tied = f.selected.find(({ cassette }) => cassette.id === f.collateralIds[0])!
+    const tieText = tied.cassette.input.stepText
+    const goldText = 'hello world foo'
+    tied.cassette.sidecar.goldAction = {
+      type: 'fill',
+      ref: asRef('e-continue'),
+      text: goldText,
+      clearMode: 'replace',
+      submit: false,
+    }
+    tied.cassette.sidecar.opClass = 'fill'
+    tied.cassette.sidecar.goldValue = goldText
+    for (const { cassette } of f.selected) {
+      cassette.receipt.model.declared!.modelId = 'gemini-recorded-fixture'
+      new evalLocal.FsCassetteStore({ root: f.root, outputDir: f.cassettesRoot }).write({
+        cassette,
+        blobs: [],
+      })
+    }
+    const fill = (text: string) => ({
+      ...actionGenerateResult(),
+      content: [
+        {
+          type: 'tool-call' as const,
+          toolCallId: 'fill-action',
+          toolName: 'web_fill',
+          input: JSON.stringify({
+            ref: 'e-continue',
+            text,
+            reasoning: 'fill the recorded control',
+            confidence: 0.95,
+            stepComplete: true,
+            doesActionAdvanceUsTowardsGoal: true,
+          }),
+        },
+      ],
+    })
+    const baseline = respondingStub(
+      (call) =>
+        JSON.stringify(call.prompt).includes(tieText) ? fill(goldText) : gate1Responder(f)(call),
+      profile.model,
+    )
+    const planner = respondingStub(
+      (call) =>
+        JSON.stringify(call.prompt).includes(tieText)
+          ? fill('hello world bar')
+          : gate1Responder(f)(call),
+      profile.model,
+    )
+    const judge = respondingStub(
+      () => judgeGenerateResult('equivalent', 'high'),
+      judgeProfile.model,
+    )
+    const fingerprint = evalLocal.computeReplayProfileFingerprintFor({
+      profile,
+      modelOverrides: { languageModels: planner.languageModels },
+      seedPolicy: 'declared',
+    })
+    const identity = {
+      ...f.identity,
+      plannerModelId: profile.model,
+      judgeModelId: judgeProfile.model,
+      judgeVersion: JUDGE_CONFIG.judgeVersion,
+      fingerprint,
+    }
+    identity.profileKey = composeBaselineProfileKey(identity)
+    const gateRoot = join(f.agentQaRoot, 'eval/gate', slugBranch(identity.profileKey))
+    const written = evalLocal.writeNoiseFloorArtefact({
+      artefact: { ...f.artefact, ...identity },
+      committedRoot: f.committedRoot,
+      reportOutputBaseDir: join(f.agentQaRoot, 'judge-fixture-audit'),
+    })
+    expect(written.kind).toBe('written')
+    await evalLocal.replayCorpusOnce({
+      selected: f.selected,
+      cassettesRoot: f.cassettesRoot,
+      agentQaRoot: f.agentQaRoot,
+      runRoot: gateRoot,
+      profile,
+      auth: noneAuth,
+      modelOverrides: { languageModels: baseline.languageModels },
+      judge: {
+        profile: judgeProfile,
+        auth: noneAuth,
+        modelOverrides: { languageModels: judge.languageModels },
+      },
+      seed: 11,
+      k: 1,
+      maskingContextFactory: createMaskingContext,
+      replayOutputBaseDir: gateRoot,
+      source: 'committed',
+      corpusDigest: f.corpusDigest,
+      clock: incrementingClock(),
+    })
+    expect(judge.captured).toHaveLength(0)
+    input.identity = identity
+    input.planner = {
+      profile,
+      resolveAuth: async () => noneAuth,
+      modelOverrides: { languageModels: planner.languageModels },
+    }
+    input.judge = {
+      profile: judgeProfile,
+      resolveAuth: async () => noneAuth,
+      modelOverrides: { languageModels: judge.languageModels },
+    }
+    const got = receipt(await evalLocal.runReplayGate(input))
+    expect(got.verdict).toBe('pass')
+    expect(got.judge?.eligibility).toBe('eligible')
+    expect(judge.captured).toHaveLength(2)
+    expect(got.spend).toMatchObject({
+      screens: 10,
+      modelCalls: 12,
+      promptTokens: 120,
+      completionTokens: 24,
+    })
+    expect(got.spend!.modelCalls).toBe(planner.captured.length + judge.captured.length)
   })
   it('discloses split target samples as inconclusive', async () => {
     const { f, input } = await warm()

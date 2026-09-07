@@ -58,6 +58,10 @@ const AgentQaConfigSchemaInner = z.object({
     judgeAllowSameFamily: z.boolean().optional(),
     k: z.number().int().positive().optional(),
     seed: z.number().int().optional(),
+    // 2026-09-07, 417 D-19: Gate-1 screen cap; recorded default lives in the CLI.
+    gate1: z.object({
+      maxScreens: z.number().int().positive().optional(),
+    }).strict().optional(),
     seeding: z.object({
       silverPerTestCap: z.number().int().positive().optional(),
     }).strict().optional(),

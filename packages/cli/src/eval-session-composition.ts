@@ -181,6 +181,7 @@ export interface EvalCliConfig {
   k?: number
   seed?: number
   seeding?: { silverPerTestCap?: number }
+  gate1?: { maxScreens?: number }
 }
 
 /** The one resolved session every eval verb consumes (D-05). */
@@ -800,7 +801,12 @@ export const GATE1_DEFAULT_K = 3
 // Preserve the existing eval composition boundary; the DATA bridge imports this lazily.
 export { runReplayGate, serializeReplayGateReceipt } from '@vostride/agent-qa-eval-local'
 export type { RunReplayGateInput, RunReplayGateResult } from '@vostride/agent-qa-eval-local'
-export type { ReplayGateVerbResult } from './gates/replay-gate-host.js'
+export type ReplayGateVerbResult = import('./gates/replay-gate-host.js').ReplayGateVerbResult & {
+  maxScreens: number
+  maxScreensSource: 'flag' | 'config' | 'default'
+  k: number
+  kSource: 'flag' | 'config' | 'default'
+}
 
 export interface ReplayGateVerbOptions {
   k?: number
@@ -816,12 +822,17 @@ export async function runReplayGateVerb(
   session: EvalSession,
   candidateId: string,
   opts: ReplayGateVerbOptions = {},
-): Promise<import('./gates/replay-gate-host.js').ReplayGateVerbResult> {
+): Promise<ReplayGateVerbResult> {
   const k = opts.k ?? session.evalConfig.k ?? GATE1_DEFAULT_K
   if (!Number.isSafeInteger(k) || k < 3 || k % 2 === 0) {
     throw new TypeError('--k must be an odd integer of at least 3')
   }
-  const maxScreens = opts.maxScreens ?? GATE1_DEFAULT_MAX_SCREENS
+  const kSource =
+    opts.k !== undefined ? 'flag' : session.evalConfig.k !== undefined ? 'config' : 'default'
+  const maxScreens =
+    opts.maxScreens ?? session.evalConfig.gate1?.maxScreens ?? GATE1_DEFAULT_MAX_SCREENS
+  const maxScreensSource = opts.maxScreens !== undefined ? 'flag'
+    : session.evalConfig.gate1?.maxScreens !== undefined ? 'config' : 'default'
   if (!Number.isSafeInteger(maxScreens) || maxScreens < 1) {
     throw new TypeError('--max-screens must be a positive integer')
   }
@@ -864,7 +875,7 @@ export async function runReplayGateVerb(
     (entry) => entry.artefact.profileKey === identity.profileKey,
   )?.artefact
   const { createReplayGateHost } = await import('./gates/replay-gate-host.js')
-  return createReplayGateHost({
+  const result = await createReplayGateHost({
     configPath: session.configPath,
     agentQaRoot: resolve(session.configDir, '.agent-qa'),
     record: opts.dryRun !== true,
@@ -872,8 +883,7 @@ export async function runReplayGateVerb(
     composition: {
       identity,
       k,
-      kSource:
-        opts.k !== undefined ? 'flag' : session.evalConfig.k !== undefined ? 'config' : 'default',
+      kSource,
       maxScreens,
       planner: {
         profile,
@@ -890,6 +900,16 @@ export async function runReplayGateVerb(
       onProgress: opts.onProgress,
     },
   }).run(candidateId)
+  const capNotice = `cap: maxScreens=${maxScreens} (${maxScreensSource})`
+  return {
+    ...result,
+    maxScreens,
+    maxScreensSource,
+    k,
+    kSource,
+    notices: [...result.notices, capNotice],
+    ...(result.kind === 'receipt' ? { lines: [...result.lines, capNotice] } : {}),
+  }
 }
 
 /** Measurement data and write-once outcomes, rendered identically on console and JSON. */
@@ -2341,6 +2361,7 @@ function mergeEvalConfig(
   const k = flags?.k ?? fromConfig?.k
   const seed = flags?.seed ?? fromConfig?.seed
   const silverPerTestCap = flags?.silverCap ?? fromConfig?.seeding?.silverPerTestCap
+  const maxScreens = fromConfig?.gate1?.maxScreens
 
   return {
     ...(judge !== undefined ? { judge } : {}),
@@ -2348,5 +2369,7 @@ function mergeEvalConfig(
     ...(k !== undefined ? { k } : {}),
     ...(seed !== undefined ? { seed } : {}),
     ...(silverPerTestCap !== undefined ? { seeding: { silverPerTestCap } } : {}),
+    ...(fromConfig?.gate1 !== undefined
+      ? { gate1: { ...(maxScreens === undefined ? {} : { maxScreens }) } } : {}),
   }
 }

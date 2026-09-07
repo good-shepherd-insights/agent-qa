@@ -9,7 +9,7 @@ import { Command } from 'commander'
 import { APICallError } from 'ai'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, appendFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
@@ -181,12 +181,56 @@ describe('417 replay-gate command', () => {
       '--json',
     ])
   })
+  it.each([
+    { configCap: 40, flagCap: undefined, maxScreens: 40, maxScreensSource: 'config' },
+    { configCap: 40, flagCap: 12, maxScreens: 12, maxScreensSource: 'flag' },
+    { configCap: undefined, flagCap: undefined, maxScreens: 64, maxScreensSource: 'default' },
+  ])(
+    'resolves and discloses the $maxScreensSource cap before the bridge',
+    async ({ configCap, flagCap, maxScreens, maxScreensSource }) => {
+      const { configPath } = await writeReplayFixture('')
+      if (configCap !== undefined)
+        await appendFile(configPath, `\neval:\n  gate1:\n    maxScreens: ${configCap}\n`)
+      const session = await sessionFor(configPath)
+      const host = await import('../../gates/replay-gate-host.js')
+      const captured: Parameters<typeof host.createReplayGateHost>[0][] = []
+      vi.spyOn(host, 'createReplayGateHost').mockImplementation((deps) => {
+        captured.push(deps)
+        return {
+          port: {
+            runReplayGate: async () => {
+              throw new Error('unused port')
+            },
+          },
+          run: async () => ({
+            kind: 'refused',
+            refusal: { path: 'fixture', reason: 'fixture boundary' },
+            notices: [],
+            exit: 2,
+          }),
+        }
+      })
+      const result = await requireReplayGateVerb()(session, 'candidate', { maxScreens: flagCap })
+      expect(captured[0]?.composition.maxScreens).toBe(maxScreens)
+      expect(result).toMatchObject({ maxScreens, maxScreensSource, k: 3, kSource: 'default' })
+      expect(result.notices).toContain(`cap: maxScreens=${maxScreens} (${maxScreensSource})`)
+    },
+  )
+  it('rejects max-screens zero before resolving a session or bridge', async () => {
+    await expect(
+      requireReplayGateVerb()({ evalConfig: {} } as EvalSession, 'candidate', { maxScreens: 0 }),
+    ).rejects.toThrow('--max-screens must be a positive integer')
+  })
   it.each(['unsafe', 'refused'] as const)('never emits %s content on JSON stdout', async (kind) => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(evalVerbs, 'resolveEvalSession').mockResolvedValue({} as EvalSession)
     if (kind === 'refused')
       vi.spyOn(evalVerbs, 'runReplayGateVerb').mockResolvedValue({
+        maxScreens: 64,
+        maxScreensSource: 'default',
+        k: 3,
+        kSource: 'default',
         kind: 'refused',
         refusal: { path: '/missing', reason: 'no-floor' },
         notices: [],
@@ -200,6 +244,10 @@ describe('417 replay-gate command', () => {
         ).href
       )
       vi.spyOn(evalVerbs, 'runReplayGateVerb').mockResolvedValue({
+        maxScreens: 64,
+        maxScreensSource: 'default',
+        k: 3,
+        kSource: 'default',
         kind: 'receipt',
         receipt: completeGate1Receipt('AKIAIOSFODNN7EXAMPLE'),
         recorded: 'dry-run',
@@ -217,15 +265,25 @@ describe('417 replay-gate command', () => {
 async function gateVerbFixture(judged = false, seeds = [11, 29]) {
   const fixture = await floorVerbFixture(judged)
   const floor = await evalVerbs.runFloorVerb(fixture.session, {
-    ...fixture.opts, seeds, commit: true, explanation: 'measured CLI fixture',
+    ...fixture.opts,
+    seeds,
+    commit: true,
+    explanation: 'measured CLI fixture',
   })
   expect(floor.committed?.kind).toBe('written')
   fixture.session.evalConfig.seed = 11
   const replay = await runReplayVerb(fixture.session, {}, { ...fixture.opts, source: 'committed' })
   expect(replay.replayed).toBe(3)
-  const report = await runReportVerb(fixture.session, {}, {
-    source: 'committed', commit: true, baseline: true, plannerOverrides: fixture.opts.plannerOverrides,
-  })
+  const report = await runReportVerb(
+    fixture.session,
+    {},
+    {
+      source: 'committed',
+      commit: true,
+      baseline: true,
+      plannerOverrides: fixture.opts.plannerOverrides,
+    },
+  )
   expect(report.committed?.kind).toBe('committed')
   expect(report.baseline?.kind).toBe('written')
   delete fixture.session.evalConfig.seed
