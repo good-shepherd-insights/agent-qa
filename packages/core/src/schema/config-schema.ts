@@ -62,6 +62,13 @@ const AgentQaConfigSchemaInner = z.object({
     gate1: z.object({
       maxScreens: z.number().int().positive().optional(),
     }).strict().optional(),
+    // 2026-09-07, 418 D-04/D-13/D-14: Gate-2 ablation cap, canary horizon (build ordinals)
+    // and per-scope lower-trust cap; recorded defaults live in the CLI (GATE2_DEFAULT_*).
+    gate2: z.object({
+      maxAblations: z.number().int().positive().optional(),
+      canaryHorizonBuilds: z.number().int().positive().optional(),
+      maxLowerTrustPerScope: z.number().int().positive().optional(),
+    }).strict().optional(),
     seeding: z.object({
       silverPerTestCap: z.number().int().positive().optional(),
     }).strict().optional(),
