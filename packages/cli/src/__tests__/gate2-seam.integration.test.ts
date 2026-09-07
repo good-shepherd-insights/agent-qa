@@ -54,6 +54,7 @@ import {
   emitCanaryOutcomes,
   projectCanaryOutcomes,
 } from '../index.js'
+import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 
 const PRODUCT = 'canary-seam-storefront'
 const BUILD_ORDINAL = 43
@@ -256,6 +257,84 @@ const bound: ResolvePromotionPosture = () => ({
 describe('418 credited canary Gate-2 seam', () => {
   const roots: string[] = []
   afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+  it.each(['eval-bound', 'no-credit', 'no-root-stale'] as const)
+    ('418 negative %s preserves v51 outcome bytes through credit, queue and drain', async mode => {
+      const root = mkdtempSync(join(tmpdir(), 'agent-qa-negative-seam-'))
+      roots.push(root)
+      const knowledgeRoot = join(root, 'knowledge')
+      const auditBaseDir = join(root, '.agent-qa')
+      const runDir = join(root, 'run')
+      mkdirSync(runDir, { recursive: true })
+      const config: BundleStoreConfig = { knowledgeRoot, auditBaseDir, productKey: PRODUCT,
+        writerLeaseId: 'negative-seed', commitArtifacts: 'none', policy }
+      const published = publishBundle(config, { ...candidateInput(),
+        screenStates: [{ ...screen(), url: mode === 'no-root-stale'
+          ? 'https://fixture.invalid/earlier-cart' : 'https://fixture.invalid/cart' }] })
+      if (published.kind !== 'published') throw new Error(published.kind)
+      const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
+      if (mode === 'eval-bound') expect(appendGateReceipt(config, published.id, stampReceiptDigest({
+        schemaVersion: 1, gate: 1, candidateId: published.id, verdict: 'pass',
+        producedAtOrdinal: BUILD_ORDINAL - 1, producedBy: { opId: 'fixture' },
+        perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score, sideEffect: score, loop: score },
+        corpusVersion: { corpusDigest: DIGEST, partitionVersion: 2, gateSetSize: 10, excludedCount: 0, minimumGateSet: 1 },
+        samples: { k: 1, seeds: [1], seedHonored: true, modelCalls: 0 }, crossCheck: 'held',
+      })).kind).toBe('appended')
+      await rebuildIndex({ knowledgeRoot })
+      const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT, scopeDefaults: { asOfBuild: BUILD_ORDINAL } })
+      const line = reader.getRunBrief({ tier: 'product', key: PRODUCT }, 1_000).brief.lines.find(row => row.id === published.id)!
+      expect(line).toMatchObject({ servedAsCanary: true })
+      const handoff = completedHandoff(published.id, line)
+      handoff.aggregateVerdict = 'failed'
+      handoff.tests[0].outcome = 'failed'
+      handoff.tests[0].steps[0].verifierVerdict = { pass: false, reasoning: 'Fixture attributable regression' }
+      handoff.tests[0].steps[0].subActions[0].stateBefore = { ...screen(), url: 'https://fixture.invalid/cart' }
+      // No rootCause means the existing deterministic unknown floor: visible negative signal.
+      const projected = projectCanaryOutcomes({ handoff, resolveCandidateAnchors: () => ({
+        kind: 'resolved', anchors: candidateInput().draft.anchors }) })[0]!
+      expect(projected.runOutcome).toBe('negative')
+      const beforeBytes = readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8')
+      const observationId = `canary-outcome:${sha256hex(canonicalJson({ candidateId: published.id,
+        runId: projected.runId, testId: projected.testId, testIndex: projected.testIndex, stepIndex: projected.stepIndex }))}`
+      const v51Event = { type: 'contradicted', evidenceToken: expectedCanaryEvidenceToken(projected),
+        curationJobId: observationId, buildOrdinal: BUILD_ORDINAL, observationOrdinal: projected.stepIndex,
+        observationId, origin: 'agent-verified' }
+      const configPath = join(root, 'agent-qa.config.yaml')
+      writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nuse:\n  mobile:\n    appState: preserve\n')
+      const host = createCanaryAblationForHost({ configPath, agentQaRoot: auditBaseDir })
+      const ablate = vi.spyOn(host, 'ablate')
+      const corpusDigest = vi.spyOn(host, 'corpusDigest')
+      if (mode === 'eval-bound') corpusDigest.mockResolvedValue({ kind: 'digest', corpusDigest: DIGEST })
+      const emission = await emitCanaryOutcomes({ handoff, knowledgeRoot, runDir,
+        emit: reader.emitCanaryOutcome.bind(reader),
+        ...(mode === 'no-credit' ? {} : { credit: { ablation: host } }) })
+      expect(emission).toMatchObject({ emitted: 1, refused: 0, unresolved: 0 })
+      expect(ablate).not.toHaveBeenCalled()
+      if (mode === 'no-root-stale') {
+        expect(corpusDigest).toHaveBeenCalledOnce()
+        await expect(corpusDigest.mock.results[0]!.value).resolves.toEqual({ kind: 'no-eval-root' })
+      }
+      const entry = listQueuedCandidates(knowledgeRoot)[0]!
+      const payload = JSON.parse(readFileSync(join(knowledgeRoot, 'memory/queue/queued', entry, 'payload.json'), 'utf8'))
+      expect(payload).toMatchObject({ schemaVersion: 3, outcome: 'negative',
+        benefit: mode === 'no-credit' ? 'rode-along' : 'exercised-harmed',
+        stateValidity: mode === 'eval-bound' ? 'valid' : mode === 'no-root-stale' ? 'stale' : 'unknown' })
+      if (mode === 'eval-bound') expect(payload.corpusDigest).toBe(DIGEST)
+      else expect(payload).not.toHaveProperty('corpusDigest')
+      const author = vi.fn<CuratorAuthor>(async () => { throw new Error('negative canary must not call author') })
+      expect(await drainQueue({ knowledgeRoot, auditBaseDir, author, executionContext: 'local-interactive',
+        policy, maintenance: 'skip', ...(mode === 'eval-bound' ? { resolvePromotionPosture: bound } : {}) }))
+        .toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
+      expect(author).not.toHaveBeenCalled()
+      expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
+      expect(readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8'))
+        .toBe(beforeBytes + canonicalJson(v51Event) + '\n')
+      const gate2 = (readGateReceipts(published.dir, published.id) ?? [])
+        .filter(row => !isPromotionReceipt(row) && row.gate === 2)
+      expect(gate2).toEqual(mode === 'eval-bound' ? [expect.objectContaining({ gate: 2, verdict: 'fail',
+        benefit: 'exercised-harmed', stateValidity: 'valid', corpusVersion: { corpusDigest: DIGEST },
+        producedAtOrdinal: handoff.buildOrdinal, producedBy: { opId: 'canary.record', jobId: entry },
+      })] : [])
+    })
   it.each([true, false])('ordered=%s: credit → v3 queue → drain → receipt → gate1+gate2 or hold', async ordered => {
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-gate2-seam-'))
     roots.push(root)

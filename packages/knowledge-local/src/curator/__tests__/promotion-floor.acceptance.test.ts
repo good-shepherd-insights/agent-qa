@@ -1,9 +1,13 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
   asEvidenceToken,
+  canonicalJson,
+  stampReceiptDigest,
+  type CanaryOutcome,
   type Anchor,
   type BundleDraft,
   type Delta,
@@ -33,6 +37,9 @@ import {
   type ArtifactFreeCandidateProjectionInput,
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import { acquireWriterLease } from '../../lease/writer-lease.js'
+import { readGateReceipts } from '../../bundle-read.js'
+import { enqueueCanaryOutcome } from '../../queue/canary-queue.js'
+import { createPromotionFloorFixture } from './fixtures/promotion-floor-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = {
@@ -282,6 +289,30 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       sourceBuildOrdinal,
     })
   }
+
+  it.each(['rode-along', 'exercised-benefited'] as const)
+    ('418 BYOM %s without corpus drains v51 bytes and exactly one floor promotion line', async benefit => {
+      const fixture = createPromotionFloorFixture({ knowledgeRoot, auditBaseDir })
+      const { draft, published } = fixture.publishHeldCandidate('fact-door2-canary')
+      const outcome: CanaryOutcome = { candidateId: published.id, runOutcome: 'positive', benefit,
+        stateValidity: 'unknown', runId: 'run-canary-disposition', testId: 'checkout::happy-path',
+        testIndex: 0, buildOrdinal: 43, stepIndex: 2, briefDigest: 'brief-digest-canary-disposition',
+        attribution: 'The served checkout hypothesis was exercised by the attributed step.',
+        exercisedAnchor: draft.anchors[0]! }
+      enqueueCanaryOutcome(knowledgeRoot, outcome)
+      const author = vi.fn<CuratorAuthor>(async () => { throw new Error('no model in BYOM acceptance') })
+      expect(await drainQueue({ knowledgeRoot, auditBaseDir, author, executionContext: 'local-interactive',
+        policy, maintenance: 'skip' })).toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
+      const reference = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/416-v51-reference.json', import.meta.url)), 'utf8'))
+      expect(readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8'))
+        .toBe(reference['fact/door2-canary'].outcomes)
+      const promotion = stampReceiptDigest({ schemaVersion: 1, kind: 'promotion', candidateId: published.id,
+        promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [], producedAtOrdinal: 43,
+        producedBy: { opId: 'promote' } })
+      expect(readGateReceipts(published.dir, published.id)).toEqual([promotion])
+      expect(readFileSync(join(published.dir, 'evidence/gates.jsonl'), 'utf8')).toBe(canonicalJson(promotion) + '\n')
+      expect(author).not.toHaveBeenCalled()
+    })
 
   it('RATIFIED A2: fallback-authored evidence-complete fact drains queue → gate → active', async () => {
     const { report } = await drainWithoutModel(selectorProjection('primary'))
