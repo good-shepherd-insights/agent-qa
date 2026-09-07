@@ -1,19 +1,27 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
-import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { renderGate1Line } from '@vostride/agent-qa-eval'
+import { CommittedEgressBlockedError } from '@vostride/agent-qa-safety'
 import {
   asEvidenceToken,
   asRecordId,
+  GATE1_REASONS,
   GateReceiptSchema,
   receiptDigestOf,
+  stampReceiptDigest,
 } from '@vostride/agent-qa-schema'
 import { gateReceiptsFor } from '@vostride/agent-qa-knowledge-local/reader'
-import { createLocalKnowledgeStore } from '@vostride/agent-qa-knowledge-local'
+import {
+  CorruptEpochStateError,
+  createLocalKnowledgeStore,
+} from '@vostride/agent-qa-knowledge-local'
 import {
   resolveEvalSession,
+  runReplayGate,
   runReplayGateVerb,
   serializeReplayGateReceipt,
 } from '../../eval-session-composition.js'
@@ -34,11 +42,22 @@ const { completeGate1Receipt, createPromotionFloorFixture, resolvedPromotionPost
       import.meta.url,
     ).href
   )
+const { publishBundle } = await import(
+  new URL('../../../../knowledge-local/src/bundle-publish.test-helper.js', import.meta.url).href
+)
+const { makeProcedureBundleDraftFixture } = await import(
+  new URL('../../../../knowledge-local/src/__tests__/fixtures/bundle-fixture.js', import.meta.url)
+    .href
+)
+const { writeGate1Fixture } = await import(
+  new URL('../../../../eval-local/src/__tests__/fixtures/gate1-fixtures.js', import.meta.url).href
+)
 
 describe('417 DATA replay gate bridge', () => {
   let root: string
   let knowledgeRoot: string
   let candidateId: string
+  let candidateDir: string
   let deps: ReplayGateHostDeps
   let calls: string[]
   beforeEach(async () => {
@@ -48,7 +67,9 @@ describe('417 DATA replay gate bridge', () => {
       knowledgeRoot,
       auditBaseDir: join(root, '.agent-qa'),
     })
-    candidateId = fixture.publishHeldCandidate('rg').published.id
+    const published = fixture.publishHeldCandidate('rg').published
+    candidateId = published.id
+    candidateDir = published.dir
     const configPath = join(root, 'agent-qa.config.yaml')
     writeFileSync(
       configPath,
@@ -151,13 +172,65 @@ describe('417 DATA replay gate bridge', () => {
       modelCalls: 0,
       wallClockMs: 0,
     })
-    expect(await createReplayGateHost(deps).run(candidateId)).toMatchObject({ exit })
+    expect(await createReplayGateHost(deps).run(candidateId)).toMatchObject({
+      exit,
+      recorded: 'appended',
+    })
+    expect(deps.curation!.recordGateReceipt).toHaveBeenCalledOnce()
+  })
+  it.each(GATE1_REASONS)('preserves typed reason %s on a recorded receipt', async (reason) => {
+    const { receiptDigest: _previousDigest, ...base } = completeGate1Receipt(candidateId, {
+      verdict: 'abstain',
+    })
+    const receipt = stampReceiptDigest({
+      ...base,
+      // This cell tests transport preservation, not the verdict fold. Judge refusal is
+      // supplemental disclosure, so it accompanies the inconclusive abstention here.
+      reasons: reason === 'same-family-refused' ? ['inconclusive', reason] : [reason],
+    })
+    deps.runReplayGate = async () => ({
+      kind: 'receipt',
+      receipt,
+      lines: [renderGate1Line(receipt)],
+      notices: [],
+      refusals: [],
+      modelCalls: 0,
+      wallClockMs: 0,
+    })
+    expect(await createReplayGateHost(deps).run(candidateId)).toMatchObject({
+      recorded: 'appended',
+      exit: 2,
+    })
+    expect(deps.curation!.recordGateReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ receipt }),
+    )
+  })
+  it('uses the supplied runtime root for execution and audit while retaining config-relative data roots', async () => {
+    const runtimeRoot = join(root, 'custom-runtime')
+    await createReplayGateHost({ ...deps, agentQaRoot: runtimeRoot }).run(candidateId)
+    expect(deps.runReplayGate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentQaRoot: runtimeRoot,
+        committedRoot: join(root, 'agent-qa-eval'),
+      }),
+    )
+    expect(deps.curation!.recordGateReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auditBaseDir: runtimeRoot,
+        knowledgeRoot,
+      }),
+    )
   })
   it('dry-run never acquires a lease', async () => {
     expect(await createReplayGateHost({ ...deps, record: false }).run(candidateId)).toMatchObject({
       recorded: 'dry-run',
     })
     expect(calls).toEqual([])
+    expect(existsSync(join(candidateDir, 'evidence/gates.jsonl'))).toBe(false)
+    expect(gateReceiptsFor({ knowledgeRoot, candidateId })).toMatchObject({
+      kind: 'found',
+      lines: [],
+    })
   })
   it('refuses missing reader support and unknown candidates without a lease', async () => {
     await expect(
@@ -173,6 +246,29 @@ describe('417 DATA replay gate bridge', () => {
       'candidate missing not found',
     )
     expect(calls).toEqual([])
+  })
+  it('reports lease-refused and preserves the receipt without recording or releasing', async () => {
+    deps.curation = {
+      ...deps.curation!,
+      maintenance: {
+        ...deps.curation!.maintenance,
+        acquireWriterLease: vi.fn(() => ({
+          kind: 'refused' as const,
+          reason: 'corrupt-epoch-state' as const,
+          error: new CorruptEpochStateError(join(knowledgeRoot, '.epoch'), 'malformed', 'fixture'),
+        })),
+      },
+    }
+    const result = await createReplayGateHost(deps).run(candidateId)
+    expect(result).toMatchObject({
+      kind: 'receipt',
+      receipt: completeGate1Receipt(candidateId),
+      recorded: 'lease-refused',
+      exit: 2,
+      notices: ['writer lease refused: corrupt-epoch-state; receipt printed, not recorded'],
+    })
+    expect(deps.curation!.recordGateReceipt).not.toHaveBeenCalled()
+    expect(deps.curation!.maintenance.releaseLease).not.toHaveBeenCalled()
   })
   it('passes a composition refusal through without acquiring a lease', async () => {
     deps.runReplayGate = async () => ({
@@ -204,11 +300,17 @@ describe('417 DATA replay gate bridge', () => {
     }
     const result = await createReplayGateHost(deps).run(candidateId)
     expect(result).toMatchObject({
+      kind: 'receipt',
+      receipt: completeGate1Receipt(candidateId),
       recorded: 'lease-held',
       exit: 2,
-      notices: [expect.stringContaining('receipt printed, not recorded')],
+      notices: [
+        'writer lease held by another process; receipt printed, not recorded — re-run when the daemon releases it',
+      ],
     })
     expect(calls).toEqual([])
+    expect(deps.curation!.recordGateReceipt).not.toHaveBeenCalled()
+    expect(deps.curation!.maintenance.releaseLease).not.toHaveBeenCalled()
   })
   it('releases the acquired lease even when recording fails', async () => {
     deps.curation = {
@@ -288,12 +390,125 @@ describe('417 DATA replay gate bridge', () => {
   })
   it('serializes only schema-valid, committed-egress-safe receipts', () => {
     const receipt = completeGate1Receipt(candidateId)
-    expect(JSON.parse(serializeReplayGateReceipt(receipt))).toEqual(receipt)
+    expect(GateReceiptSchema.parse(JSON.parse(serializeReplayGateReceipt(receipt)))).toEqual(
+      receipt,
+    )
     expect(() => serializeReplayGateReceipt({ kind: 'refused', reason: 'private' })).toThrow()
     expect(() =>
       serializeReplayGateReceipt({ ...receipt, candidateId: 'AKIAIOSFODNN7EXAMPLE' }),
-    ).toThrow()
+    ).toThrow(CommittedEgressBlockedError)
   })
+  it.each(['procedure', 'unknown'] as const)(
+    'records the real %s tier abstention and reads its kind-excluded hold',
+    async (kind) => {
+      const f = writeGate1Fixture(root)
+      renameSync(f.committedRoot, join(root, 'agent-qa-eval'))
+      const published = publishBundle(
+        {
+          knowledgeRoot,
+          productKey: 'storefront',
+          auditBaseDir: deps.agentQaRoot,
+          commitArtifacts: 'none',
+          writerLeaseId: '417-kind-fixture',
+        },
+        {
+          draft:
+            kind === 'procedure'
+              ? makeProcedureBundleDraftFixture({ scope: { tier: 'product', key: 'storefront' } })
+              : {
+                  kind: 'unknown',
+                  anchors: [{ t: 'flow', name: 'Unresolved checkout' }],
+                  scope: { tier: 'product', key: 'storefront' },
+                  summary: 'Checkout remains unresolved',
+                  body: 'The observations do not establish a reliable checkout flow.',
+                  distilledEvidenceRef: { id: '417-kind-evidence', sha: 'a'.repeat(64) },
+                  originStage: 'run-curation',
+                },
+          discriminant:
+            kind === 'procedure'
+              ? { kind, flowName: 'Sign in flow', stepSignature: 'email>password>submit' }
+              : { kind, conflictRecordIds: [] },
+          originClass: 'agent-verified',
+          createdAtOrdinal: 42,
+          screenStates: [],
+          initialEvents: [],
+          relations: [],
+          artifacts: [],
+          provenance: { mode: 'standalone', sourceDescription: '417 excluded-kind fixture' },
+        },
+      )
+      expect(published.kind).toBe('published')
+      if (published.kind !== 'published') throw new Error('fixture bundle publication failed')
+      const id = published.id
+      // The fixture has actual confirmed evidence, independent of its new gate receipt.
+      const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(knowledgeRoot)
+      if (lease.kind !== 'acquired') throw new Error('fixture confirmation needs a writer lease')
+      try {
+        const store = createLocalKnowledgeStore({
+          knowledgeRoot,
+          auditBaseDir: deps.agentQaRoot,
+          executionContext: 'local-interactive',
+          writerLeaseId: lease.leaseId,
+          epoch: lease.epoch,
+          sourceBuildOrdinal: 43,
+        })
+        await store.commit([
+          {
+            kind: 'Confirm',
+            origin: 'agent',
+            scope: { tier: 'product', key: 'storefront' },
+            citedIds: [asRecordId(id)],
+            targetId: asRecordId(id),
+            evidenceToken: asEvidenceToken('417-excluded-kind-confirmation'),
+            authorship: { path: 'deterministic-fallback', executionContext: 'local-interactive' },
+          },
+        ])
+      } finally {
+        LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({
+          knowledgeRoot,
+          leaseId: lease.leaseId,
+        })
+      }
+      const resolvePromotionPosture = () => resolvedPromotionPosture()
+      const auth = vi.fn(async () => {
+        throw new Error('tier abstention must not resolve auth')
+      })
+      const result = await createReplayGateHost({
+        ...deps,
+        reader: createKnowledgeReader(() => knowledgeRoot),
+        curation: LOCAL_CURATION_CAPABILITIES,
+        resolvePromotionPosture,
+        runReplayGate,
+        composition: {
+          ...deps.composition,
+          identity: f.identity,
+          planner: { ...deps.composition.planner, resolveAuth: auth },
+        },
+      }).run(id)
+      expect(result).toMatchObject({ kind: 'receipt', recorded: 'appended', exit: 2 })
+      if (result.kind !== 'receipt') throw new Error('expected excluded-kind receipt')
+      if (result.receipt.gate !== 1) throw new Error('expected Gate 1 receipt')
+      expect(result.lines[0]).toBe(renderGate1Line(result.receipt))
+      expect(result.lines[0]).toBe(
+        'gate 1 · abstain · replay-diff · crossCheck not-run · k=3 · 0/64 screens · 0 calls · reason tier-not-implemented',
+      )
+      expect(auth).not.toHaveBeenCalled()
+      const read = gateReceiptsFor({ knowledgeRoot, candidateId: id, resolvePromotionPosture })
+      expect(read).toMatchObject({
+        kind: 'found',
+        recordKind: kind,
+        status: 'candidate',
+        lines: [{ gate: 1, verdict: 'abstain', degradation: 'tier-not-implemented' }],
+        live: { verdict: 'hold', reason: 'kind-excluded' },
+      })
+      if (read.kind !== 'found') throw new Error('missing recorded abstention')
+      expect(read.lines).toHaveLength(1)
+      expect(read.lines[0]).toEqual(result.receipt)
+      expect(
+        GateReceiptSchema.parse(JSON.parse(serializeReplayGateReceipt(result.receipt))),
+      ).toEqual(result.receipt)
+    },
+  )
   it('defers auth and full masking setup until the spend boundary, then masks workspace secrets', async () => {
     writeFileSync(
       deps.configPath,
@@ -305,20 +520,21 @@ describe('417 DATA replay gate bridge', () => {
     const secret = 'fixture-masking-token-417-only'
     writeFileSync(join(root, '.env.secrets.local'), `FIXTURE_SECRET=${secret}\n`)
     const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
-    const auth = vi
-      .spyOn(llm, 'resolveModelAuth')
-      .mockResolvedValue({
-        kind: 'unauthenticated',
-        credentialKey: 'fixture',
-        provider: 'openai-compatible',
-        optional: true,
-        message: 'fixture',
-      })
+    const auth = vi.spyOn(llm, 'resolveModelAuth').mockResolvedValue({
+      kind: 'unauthenticated',
+      credentialKey: 'fixture',
+      provider: 'openai-compatible',
+      optional: true,
+      message: 'fixture',
+    })
     const reads = vi.spyOn(fsPromises, 'readFile')
     let spend = false
     vi.spyOn(bridge, 'createReplayGateHost').mockImplementation((input) => ({
       port: { runReplayGate: async () => completeGate1Receipt(candidateId) },
       run: async () => {
+        expect(input.agentQaRoot).toBe(join(root, 'custom-runtime'))
+        expect(input.configPath).toBe(deps.configPath)
+        expect(input.session.configDir).toBe(root)
         expect(auth).not.toHaveBeenCalled()
         expect(reads.mock.calls.some(([path]) => String(path).endsWith('.env.secrets.local'))).toBe(
           false,
@@ -341,17 +557,19 @@ describe('417 DATA replay gate bridge', () => {
         }
       },
     }))
-    await runReplayGateVerb(session, candidateId)
+    await runReplayGateVerb(session, candidateId, { agentQaRoot: join(root, 'custom-runtime') })
     expect(auth).not.toHaveBeenCalled()
     spend = true
     reads.mockClear()
-    await runReplayGateVerb(session, candidateId)
+    await runReplayGateVerb(session, candidateId, { agentQaRoot: join(root, 'custom-runtime') })
     expect(auth).toHaveBeenCalledTimes(3)
   })
   it('keeps the bridge behind the existing eval session seam with DATA-only imports', () => {
     const source = readFileSync(new URL('../replay-gate-host.ts', import.meta.url), 'utf8')
     expect(source).not.toMatch(/from ['"]@vostride\/agent-qa-(eval|knowledge)/)
     expect(source).toContain("await import('../eval-session-composition.js')")
-    expect(source).toMatch(/import type \{\s+EvalSession,\s+RunReplayGateInput,\s+RunReplayGateResult,?\s+\} from '\.\.\/eval-session-composition.js'/)
+    expect(source).toMatch(
+      /import type \{\s+EvalSession,\s+RunReplayGateInput,\s+RunReplayGateResult,?\s+\} from '\.\.\/eval-session-composition.js'/,
+    )
   })
 })
