@@ -19,6 +19,7 @@ import {
   decisionIdentityKey,
   deriveSampleSeeds,
   extractRunCassettes,
+  FLOOR_AXES,
   diffArms,
   foldPerAxisScore,
   foldRemovalSamples,
@@ -246,7 +247,7 @@ function arm(
   const vector = decisionCorrectnessVectors([
     { cassetteId: cassette.id, outcome: replay, score: score?.score, label: cassette.label },
   ])[0]
-  return vector === undefined
+  return vector === undefined || FLOOR_AXES.every((axis) => vector.axes[axis] === 'not-applicable')
     ? { kind: 'refused', reason: 'no decision vector' }
     : { kind: 'scored', vector, briefSource: vector.briefSource }
 }
@@ -699,7 +700,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
   )
   const scoredCollateral = gate.gateEntries.filter((row) => {
     const baseline = baselineArms.get(row.cassetteId)
-    return baseline?.kind === 'scored' && baseline.vector.axes.headline !== 'not-applicable'
+    return baseline?.kind === 'scored'
   })
   if (scoredCollateral.length === 0) return abstain('collateral-unscorable')
   const targetsToCrossCheck = targets.filter(({ cassette }) => {
@@ -800,7 +801,19 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     targets: diffed.filter((row) => row.origin === 'target-step'),
     collateral: diffed.filter((row) => row.origin === 'gate-set'),
   }
-  if (!decisionInput.collateral.some((row) => row.headline !== 'incomparable')) {
+  if (
+    !rows.some(
+      ({ origin, baseline, candidate }) =>
+        origin === 'gate-set' &&
+        baseline.kind === 'scored' &&
+        candidate.kind === 'scored' &&
+        FLOOR_AXES.some(
+          (axis) =>
+            baseline.vector.axes[axis] !== 'not-applicable' &&
+            candidate.vector.axes[axis] !== 'not-applicable',
+        ),
+    )
+  ) {
     const fold = foldPerAxisScore(rows, floor.axes)
     receipt.perAxisScore = fold.perAxisScore
     receipt.floorAbsentAxes = fold.floorAbsentAxes

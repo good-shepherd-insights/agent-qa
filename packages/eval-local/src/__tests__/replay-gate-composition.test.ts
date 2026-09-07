@@ -981,6 +981,41 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       }
     },
   )
+  it.each([1, 5])(
+    'bounds spend while retaining %i collateral rows with non-headline comparisons',
+    async (count) => {
+      const { f, input, stub } = await warm()
+      for (const id of f.collateralIds.slice(0, count)) {
+        const { cassette } = f.selected.find((row) => row.cassette.id === id)!
+        cassette.label!.pairing = { relation: 'contrastive-negative', pairedCassetteId: f.targetId }
+        new evalLocal.FsCassetteStore({ root: f.root, outputDir: f.cassettesRoot }).write({
+          cassette,
+          blobs: [],
+        })
+      }
+      let authCalls = 0
+      input.planner.resolveAuth = async () => {
+        authCalls++
+        return noneAuth
+      }
+      input.maxScreens = 9
+      expect(receipt(await evalLocal.runReplayGate(input))).toMatchObject({
+        verdict: 'abstain',
+        reasons: ['cap-exceeded'],
+        spend: { modelCalls: 0, screens: 0 },
+      })
+      expect(authCalls).toBe(0)
+      expect(stub.captured).toHaveLength(0)
+      input.maxScreens = 10
+      expect(receipt(await evalLocal.runReplayGate(input))).toMatchObject({
+        verdict: 'pass',
+        spend: { modelCalls: 10, screens: 10 },
+        perAxisScore: { elementIdentity: { n: 6 } },
+        population: { refused: 0 },
+      })
+      expect(authCalls).toBe(1)
+    },
+  )
   it('counts planner retries as provider calls without inflating screens', async () => {
     const { f, input } = await warm()
     const stub = respondingStub((call, index) =>
