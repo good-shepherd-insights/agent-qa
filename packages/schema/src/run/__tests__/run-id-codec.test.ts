@@ -33,6 +33,8 @@ import { AnalysisGetInputSchema } from '../../functions/analysis-get'
 import { RunSummarySchema, RunsStartInputSchema } from '../../functions/runs'
 import { jobSchema } from '../../job/job'
 import { RunsDigestInputSchema } from '../../notification/run-digest'
+import { CandidateInjectionSchema } from '../../knowledge/candidate-injection'
+import { gate1TargetSchema } from '../../knowledge/gate-receipt'
 import { runIdSchema } from '../run-id'
 
 /** `packages/schema/src/run/__tests__` → two levels up is the package's whole shipped source. */
@@ -84,6 +86,8 @@ const REQUIRED_CENSUS_MEMBERS = [
   join('job', 'job.ts'),
   join('notification', 'run-digest.ts'),
   join('ids', 'slug.ts'),
+  join('knowledge', 'candidate-injection.ts'),
+  join('knowledge', 'gate-receipt.ts'),
 ] as const
 
 /**
@@ -209,12 +213,30 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
   },
   'knowledge/gate-receipt.ts': {
     hardened: 0,
-    plainString: 1,
+    plainString: 2,
     verdict:
       'reaches no path join — 2026-09-06 (416-02 D-02) adds the historical run reference on '
       + 'a Gate3 receipt. It records attribution in bundle evidence and is returned as a string '
       + 'by the read operation; it neither brands a RunId nor addresses run files. The strict '
-      + 'receipt contract requires a nonempty reference without rewriting historical ids.',
+      + 'receipt contract requires a nonempty reference without rewriting historical ids. '
+      + '2026-09-07 (417-03 D-01) adds the SECOND: Gate1 targets[].runId records the '
+      + 'originating run of an already-compared target decision. It is receipt attribution, '
+      + 'not the input that locates or executes a run; it preserves the recorded string.',
+  },
+  'knowledge/candidate-injection.ts': {
+    hardened: 0,
+    plainString: 2,
+    verdict:
+      '2026-09-07 (417-03 D-01): TWO projections of committed bundle provenance, not '
+      + 'caller-supplied run-execution ids. provenance.runIds preserves opaque historical '
+      + 'equality keys for gate-set exclusion, so normalizing them would change which runs '
+      + 'contributed. target.runId echoes BundleProvenanceSchema.runId verbatim as the '
+      + 'optional run/step address; hardening this read DTO would reject historical bundle '
+      + 'evidence the bundle schema already accepts. The reader joins no path with either '
+      + 'field. Plan 05 owns target lookup: exact corpus identity, then the existing '
+      + 'slugBranch-sanitized handoff location; that lookup must verify loaded evidence '
+      + 'identity rather than treat a rewritten directory name as run identity. '
+      + 'This DTO grants no authority to use either string as an unchecked path segment.',
   },
   'knowledge/review-verbs.ts': {
     hardened: 0,
@@ -303,6 +325,18 @@ describe('P2 — the KEY-shaped predicate: every run-identifying field carries a
 })
 
 describe('P3 — the RUNTIME-shaped predicate: the same object, and it refuses', () => {
+  it('preserves historical replay references as strings while the execution codec refuses rewrites', () => {
+    const historical = 'legacy/run 2026'
+    expect(runIdSchema.safeParse(historical).success).toBe(false)
+    expect(CandidateInjectionSchema.shape.provenance.shape.runIds.parse([historical]))
+      .toEqual([historical])
+    const targetRunId = CandidateInjectionSchema.shape.target.unwrap().shape.runId
+    expect(targetRunId.parse(historical)).toBe(historical)
+    expect(gate1TargetSchema.shape.runId.parse(historical)).toBe(historical)
+    expect(targetRunId.safeParse('').success).toBe(false)
+    expect(gate1TargetSchema.shape.runId.safeParse('').success).toBe(false)
+  })
+
   it('every hardened surface holds the SAME codec instance', () => {
     expect(RunsStartInputSchema.shape.runId.unwrap()).toBe(runIdSchema)
     expect(RunSummarySchema.shape.runId).toBe(runIdSchema)
