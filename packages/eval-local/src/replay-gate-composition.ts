@@ -22,6 +22,7 @@ import {
   diffArms,
   foldPerAxisScore,
   foldRemovalSamples,
+  foldCrossCheckAcrossTargets,
   generalizationDisclosure,
   injectCandidate,
   JUDGE_CONFIG,
@@ -289,6 +290,7 @@ export interface RemovalFlipsOutcomeResult {
   screens: number
   promptTokens: number
   completionTokens: number
+  notices: string[]
 }
 
 /** Existing samples count as sample one; every additional sample gets a distinct derived seed. */
@@ -305,6 +307,7 @@ export async function removalFlipsOutcome(
     screens: 0,
     promptTokens: 0,
     completionTokens: 0,
+    notices: [],
   }
   for (const target of input.cassettes) {
     const { cassette, artifacts } = target
@@ -325,8 +328,18 @@ export async function removalFlipsOutcome(
       const brief = cassette.input.servedBrief
       const channel1Position = brief.channel1.findIndex((line) => line.id === input.recordId)
       const line = brief.channel1[channel1Position]
-      if (line === undefined || (line.tier !== 'L0' && line.tier !== 'L1' && line.tier !== 'L2'))
-        throw new TypeError('active record brief line unavailable')
+      const incomparable = (reason: string) => {
+        result.notices.push(`brief-line-not-found: ${cassette.id}: ${reason}`)
+        result.perTarget.push({ cassetteId: cassette.id, crossCheck: 'inconclusive' })
+      }
+      if (
+        line === undefined ||
+        line.status !== 'active' ||
+        (line.tier !== 'L0' && line.tier !== 'L1' && line.tier !== 'L2')
+      ) {
+        incomparable('active record brief line unavailable')
+        continue
+      }
       const turns = brief.proof?.promptTurns ?? []
       const turn =
         turns.find((row) => row.turnOrdinal === cassette.decisionOrdinal) ??
@@ -338,16 +351,20 @@ export async function removalFlipsOutcome(
         )
           ? turns[0]
           : undefined)
-      if (turn === undefined)
-        throw new TypeError('active record requires a reproducible proof turn')
+      if (turn === undefined) {
+        incomparable('active record requires a reproducible proof turn')
+        continue
+      }
       const text =
         turn[
           { L0: 'policyL0', L1: 'learnedL1', L2: 'learnedL2' }[line.tier] as
             'policyL0' | 'learnedL1' | 'learnedL2'
         ]
       const located = locateBriefLine(text, line, line.tier)
-      if (located.kind !== 'located')
-        throw new TypeError('active record rendered line is absent or ambiguous')
+      if (located.kind !== 'located') {
+        incomparable('active record rendered line is absent or ambiguous')
+        continue
+      }
       withoutDelta = {
         kind: 'removed',
         line,
@@ -432,13 +449,7 @@ export async function removalFlipsOutcome(
       }),
     })
   }
-  if (result.perTarget.length > 0 && result.perTarget.every((row) => row.crossCheck === 'flipped'))
-    result.crossCheck = 'flipped'
-  else if (
-    result.perTarget.length > 0 &&
-    result.perTarget.every((row) => row.crossCheck === 'held')
-  )
-    result.crossCheck = 'held'
+  result.crossCheck = foldCrossCheckAcrossTargets(result.perTarget.map((row) => row.crossCheck))
   return result
 }
 
@@ -772,6 +783,24 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       : cache.rows.find((row): row is Cached => row.kind === 'cached')!
   receipt.baselineSource = { runRoot: base.root, seed: base.seed, seedSource: base.seedSource }
   receipt.samples = { k: input.k, seeds: [base.seed], seedHonored, modelCalls: spend.modelCalls }
+  receipt.samples.detail = targets.flatMap(({ cassette }) => {
+    const cached = cacheById.get(cassette.id)
+    if (cached?.kind !== 'cached') return []
+    const goldKey = decisionIdentityKey(
+      computeDecisionIdentity(cassette.sidecar.goldAction, cassette.input.stateBefore.elements),
+    )
+    return [true, false].map((withRecord) => {
+      const sample = withRecord ? candidateSamples.get(cassette.id) : firstSample(cached.replay)
+      const outcome = outcomeOf(sample)
+      return {
+        withRecord,
+        seed: cached.seed,
+        kind: outcome.kind,
+        matchesGold:
+          outcome.kind === 'decision' && decisionIdentityKey(outcome.identity) === goldKey,
+      }
+    })
+  })
   const fixedTargetIds = new Set(
     decisionInput.targets.filter((row) => row.headline === 'fixed').map((row) => row.cassetteId),
   )
@@ -799,6 +828,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
         }),
     })
     crossCheck = result.crossCheck
+    notices.push(...result.notices)
     spend.screens += result.screens
     spend.promptTokens += result.promptTokens
     spend.completionTokens += result.completionTokens
@@ -846,6 +876,8 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
   })
   spend.wallClockMs = Math.max(0, Math.round(clock() - started))
   receipt.samples.modelCalls = spend.modelCalls
+  if (!receipt.samples.seedHonored)
+    notices.push('seedHonored=false: samples collapse to repeat variance on this provider')
   input.onProgress?.(
     `gate1 candidate=${injection.candidateId}: screens=${spend.screens} modelCalls=${spend.modelCalls} promptTokens=${spend.promptTokens} completionTokens=${spend.completionTokens} wallClock=${spend.wallClockMs}ms seedHonored=${receipt.samples.seedHonored}`,
   )

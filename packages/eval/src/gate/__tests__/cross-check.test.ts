@@ -19,6 +19,13 @@ const fold = (withRecord: ReplaySampleOutcome[], withoutRecord: ReplaySampleOutc
   invoke('foldRemovalSamples', { withRecord, withoutRecord, gold })
 
 describe('cross-check sampling', () => {
+  it('folds target words only when every target agrees', () => {
+    expect(invoke('foldCrossCheckAcrossTargets', ['flipped', 'flipped'])).toBe('flipped')
+    expect(invoke('foldCrossCheckAcrossTargets', ['held', 'held'])).toBe('held')
+    for (const words of [['held', 'flipped'], ['inconclusive'], ['flipped', 'inconclusive']])
+      expect(invoke('foldCrossCheckAcrossTargets', words)).toBe('inconclusive')
+    expect(() => invoke('foldCrossCheckAcrossTargets', [])).toThrow(TypeError)
+  })
   it('pins the derived seed stream, independent of the base seed', () => {
     expect(invoke('deriveSampleSeeds', 11, 3)).toEqual([1938274511, 1319274378])
     const extended = invoke('deriveSampleSeeds', 11, 5)

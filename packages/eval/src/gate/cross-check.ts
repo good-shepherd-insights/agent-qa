@@ -13,6 +13,15 @@ function assertSampleCount(k: number): void {
     throw new TypeError('k must be an odd integer of at least 3')
 }
 
+export function foldCrossCheckAcrossTargets(
+  words: readonly Exclude<CrossCheck, 'not-run'>[],
+): Exclude<CrossCheck, 'not-run'> {
+  if (words.length === 0) throw new TypeError('cross-check requires at least one target')
+  if (words.every((word) => word === 'flipped')) return 'flipped'
+  if (words.every((word) => word === 'held')) return 'held'
+  return 'inconclusive'
+}
+
 export function deriveSampleSeeds(baseSeed: number, k: number): number[] {
   assertSampleCount(k)
   const rng = createSeededRng(baseSeed)

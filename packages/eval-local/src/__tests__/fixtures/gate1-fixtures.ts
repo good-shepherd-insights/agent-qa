@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import {
   buildEvalReport,
   committedFileText,
@@ -22,6 +22,7 @@ import {
   computeBriefDigest,
   slugBranch,
   type CandidateInjection,
+  type ServedBrief,
 } from '@vostride/agent-qa-schema'
 import { FsCassetteStore } from '../../cassette-store.js'
 import {
@@ -65,6 +66,7 @@ export function writeGate1Fixture(
     targetInCorpus?: boolean
     handoffForTarget?: boolean
     targetDecisions?: number
+    proofBrief?: boolean
   } = {},
 ) {
   const {
@@ -107,6 +109,18 @@ export function writeGate1Fixture(
       ...structuredClone(screen.refMap[asRef('e-continue')]!),
       bounds: { x: 500, y: 500, width: 100, height: 40 },
       center: { x: 550, y: 520 },
+    }
+    if (index === count - 1 && options.proofBrief) {
+      const proofs = JSON.parse(
+        readFileSync(
+          new URL(
+            '../../../../eval/src/replay/__tests__/fixtures/proof-briefs.json',
+            import.meta.url,
+          ),
+          'utf8',
+        ),
+      ) as { servedBrief: ServedBrief }[]
+      handoff.tests[0]!.steps[0]!.servedBrief = structuredClone(proofs[2]!.servedBrief)
     }
     const brief = handoff.tests[0]!.steps[0]!.servedBrief!
     brief.scope = handoff.scope

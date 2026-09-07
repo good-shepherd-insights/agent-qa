@@ -12,7 +12,13 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { GateReceiptSchema, receiptDigestOf, slugBranch, asRef } from '@vostride/agent-qa-schema'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
-import { composeBaselineProfileKey, JUDGE_CONFIG } from '@vostride/agent-qa-eval'
+import {
+  composeBaselineProfileKey,
+  JUDGE_CONFIG,
+  deriveSampleSeeds,
+  requiredAgreement,
+  computeDecisionIdentity,
+} from '@vostride/agent-qa-eval'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as evalLocal from '../index.js'
 import { gate1Responder, warmGateRoot, writeGate1Fixture } from './fixtures/gate1-fixtures.js'
@@ -125,6 +131,161 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     expect(got).not.toHaveProperty('regressions')
     expect(got.generalization!.ci!.every(Number.isFinite)).toBe(true)
     expect(got.spend?.screens).toBe(20)
+  })
+  it.each(['ride-along', 'harm'])(
+    'retains first samples when %s prevents cross-check',
+    async (mode) => {
+      const { f, input } = await warm(undefined, mode === 'ride-along')
+      const stub = respondingStub((call) =>
+        JSON.stringify(call.prompt).includes('gate1-collateral-0') && mode === 'harm'
+          ? actionGenerateResult('web', 'e-other')
+          : gate1Responder(f)(call),
+      )
+      input.planner.modelOverrides = { languageModels: stub.languageModels }
+      const got = receipt(await evalLocal.runReplayGate(input))
+      expect(got.crossCheck).toBe('not-run')
+      expect(got.samples.detail).toHaveLength(2)
+      expect(got.spend?.screens).toBe(6)
+    },
+  )
+  it('holds at k=5 when four fresh without-record samples overcome the cached miss', async () => {
+    const { input } = await warm()
+    input.k = 5
+    input.planner.modelOverrides = {
+      languageModels: respondingStub(() => actionGenerateResult()).languageModels,
+    }
+    const got = receipt(await evalLocal.runReplayGate(input))
+    expect(got).toMatchObject({
+      crossCheck: 'held',
+      verdict: 'fail',
+      reasons: ['target-not-reproduced'],
+    })
+    expect(got.samples.detail).toHaveLength(10)
+    expect(got.samples.detail?.filter((row) => !row.withRecord && !row.matchesGold)).toHaveLength(1)
+  })
+  it('discloses a harness-error cross-check sample without claiming a flip', async () => {
+    const { f, input } = await warm()
+    let withCalls = 0
+    const stub = respondingStub((call) => {
+      const text = JSON.stringify(call.prompt)
+      if (
+        text.includes('gate1-target-run') &&
+        text.includes(f.injection.renderedLine) &&
+        ++withCalls === 2
+      )
+        throw new Error('fixture infrastructure failure')
+      return gate1Responder(f)(call)
+    })
+    input.planner.modelOverrides = { languageModels: stub.languageModels }
+    const got = receipt(await evalLocal.runReplayGate(input))
+    expect(got).toMatchObject({ crossCheck: 'inconclusive', verdict: 'abstain' })
+    expect(got.samples.detail).toContainEqual(expect.objectContaining({ kind: 'harness-error' }))
+  })
+  it('pairs distinct seeds with the inherited samples on both arms', async () => {
+    const { baseline, stub, input } = await warm()
+    const got = receipt(await evalLocal.runReplayGate(input))
+    const seeds = [11, ...deriveSampleSeeds(11, 3)]
+    expect(got.samples.seeds).toEqual(seeds)
+    const target = [...baseline.captured, ...stub.captured].filter((call) =>
+      JSON.stringify(call.prompt).includes('gate1-target-run'),
+    )
+    expect(target.map((call) => call.seed).sort()).toEqual([...seeds, ...seeds].sort())
+    expect(new Set(seeds).size).toBe(3)
+  })
+  it('accepts four gold of five and spends exactly eight fresh cross-check screens', async () => {
+    const { f, input } = await warm()
+    let withCalls = 0
+    const stub = respondingStub((call) => {
+      const text = JSON.stringify(call.prompt)
+      if (
+        text.includes('gate1-target-run') &&
+        text.includes(f.injection.renderedLine) &&
+        ++withCalls === 5
+      )
+        return actionGenerateResult('web', 'e-other')
+      return gate1Responder(f)(call)
+    })
+    const got = receipt(
+      await evalLocal.runReplayGate({
+        ...input,
+        k: 5,
+        planner: { ...input.planner, modelOverrides: { languageModels: stub.languageModels } },
+      }),
+    )
+    expect(requiredAgreement(5)).toBe(4)
+    expect(got).toMatchObject({
+      crossCheck: 'flipped',
+      verdict: 'pass',
+      spend: {
+        screens: 14,
+        modelCalls: 14,
+        promptTokens: 140,
+        completionTokens: 28,
+        wallClockMs: 570,
+      },
+    })
+    expect(got.samples.detail).toHaveLength(10)
+  })
+  it('discloses provider seed rejection as repeat variance', async () => {
+    const { f, input } = await warm()
+    const stub = respondingStub((call) => ({
+      ...gate1Responder(f)(call),
+      warnings: [{ type: 'unsupported', feature: 'seed' }],
+    }))
+    input.planner.modelOverrides = { languageModels: stub.languageModels }
+    const result = await evalLocal.runReplayGate(input)
+    expect(receipt(result).samples.seedHonored).toBe(false)
+    expect(result.notices).toContain(
+      'seedHonored=false: samples collapse to repeat variance on this provider',
+    )
+  })
+  it.each(['present', 'missing'])('removes an active-record proof line: %s', async (mode) => {
+    const f = fixture({ proofBrief: true })
+    const target = f.selected.find((row) => row.cassette.id === f.targetId)!
+    const line = target.cassette.input.servedBrief.channel1[0]!
+    const stub = respondingStub((call) =>
+      actionGenerateResult(
+        'web',
+        JSON.stringify(call.prompt).includes(line.summary.replaceAll('"', '\\"'))
+          ? 'e-continue'
+          : 'e-other',
+      ),
+    )
+    const sample = (ref: string) => {
+      const action = { type: 'click' as const, ref: asRef(ref) }
+      return {
+        sampleIndex: 0,
+        durationMs: 0,
+        outcome: {
+          kind: 'decision' as const,
+          action,
+          identity: computeDecisionIdentity(action, target.cassette.input.stateBefore.elements),
+        },
+      }
+    }
+    const got = await evalLocal.removalFlipsOutcome({
+      recordId: mode === 'present' ? line.id : 'unknown-record',
+      mode: { kind: 'active-record' },
+      cassettes: [target],
+      k: 3,
+      baseSeed: 11,
+      existing: { withRecord: sample('e-continue'), withoutRecord: sample('e-other') },
+      replay: {
+        profile: stubProfile(),
+        auth: noneAuth,
+        modelOverrides: { languageModels: stub.languageModels },
+        maskingContextFactory: createMaskingContext,
+      },
+      gate1Dir: join(f.agentQaRoot, 'active-removal'),
+    })
+    expect(got.crossCheck).toBe(mode === 'present' ? 'flipped' : 'inconclusive')
+    if (mode === 'present') {
+      expect(got.screens).toBe(4)
+      expect(got.detail).toHaveLength(6)
+    } else {
+      expect(got.notices.join('\n')).toContain('brief-line-not-found')
+      expect(stub.captured).toHaveLength(0)
+    }
   })
   it('extracts a local target only into its audit directory and abstains baseline-uncached without warming', async () => {
     const { f, stub, input } = await warm({ targetInCorpus: false, handoffForTarget: true })

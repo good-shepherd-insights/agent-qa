@@ -457,7 +457,7 @@ export type {
 } from './gate/decision-diff'
 export { decideGate1, orderGate1Reasons, renderGate1Line, productFloorRows, generalizationDisclosure } from './gate/gate-verdict'
 export type { Gate1DecisionInput, Gate1Decision, GeneralizationDisclosure } from './gate/gate-verdict'
-export { deriveSampleSeeds, requiredAgreement, foldRemovalSamples } from './gate/cross-check'
+export { deriveSampleSeeds, requiredAgreement, foldRemovalSamples, foldCrossCheckAcrossTargets } from './gate/cross-check'
 
 export { GATE_INCONCLUSIVE_REASONS, computeGateVerdict, renderGateLines } from './gate/release-gate'
 export type {
