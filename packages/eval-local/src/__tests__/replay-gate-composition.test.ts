@@ -257,6 +257,12 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       )
     }
     expect(digestTree(f.gateRoot)).toEqual(beforeBaseline)
+    expect(got.baselineSource).toEqual({ runRoot: f.gateRoot, seed: 11, seedSource: 'floor' })
+    expect(
+      digestTree(join(f.agentQaRoot, 'eval/gate1', slugBranch(f.injection.candidateId))).filter(
+        ([path]) => path!.startsWith('/cross-check/'),
+      ).length,
+    ).toBeGreaterThan(0)
     expect(digestTree(f.committedRoot)).toEqual(beforeCommitted)
     expect(
       digestTree(join(f.agentQaRoot, 'eval/gate1', slugBranch(f.injection.candidateId))).length,
@@ -323,6 +329,50 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       expect(result.kind === 'receipt' && result.lines).toContain(
         'eval replay --source committed --seed 11',
       )
+  })
+  it('names every stale cassette in corpus order with the warm-up line', async () => {
+    const { f, input, stub } = await warm()
+    const ids = evalLocal
+      .readCommittedCorpus(f.committedRoot)
+      .snapshot.entries.filter((entry) => f.collateralIds.includes(entry.cassetteId))
+      .slice(0, 2)
+      .map((entry) => entry.cassetteId)
+    for (const id of ids) {
+      const path = join(f.gateRoot, 'replays', id, 'replay.json')
+      const record = JSON.parse(readFileSync(path, 'utf8'))
+      record.promptDrift.recordedHash = 'f'.repeat(64)
+      writeFileSync(path, JSON.stringify(record))
+    }
+    const result = await evalLocal.runReplayGate(input)
+    expect(receipt(result).reasons).toEqual(['baseline-uncached'])
+    expect(result.notices).toContain(`uncached: ${ids.join(', ')}`)
+    expect(result.kind === 'receipt' && result.lines).toContain(
+      'eval replay --source committed --seed 11',
+    )
+    expect(stub.captured).toHaveLength(0)
+  })
+  it('compares scored collateral and discloses refused rows without replaying them', async () => {
+    const { f, input, stub } = await warm()
+    const refused = f.collateralIds.slice(0, 2)
+    const store = new evalLocal.FsReplayRecordStore({
+      root: f.agentQaRoot,
+      outputDir: join(f.gateRoot, 'replays'),
+    })
+    for (const cassetteId of refused)
+      store.save({
+        kind: 'integrity-refusal',
+        cassetteId,
+        reason: 'missing-blob',
+        detail: 'offline refusal',
+      })
+    const got = receipt(await evalLocal.runReplayGate(input))
+    expect(got.verdict).toBe('pass')
+    expect(got.population?.refused).toBe(2)
+    expect(got.spend?.screens).toBe(8)
+    for (const id of refused) {
+      const text = f.selected.find(({ cassette }) => cassette.id === id)!.cassette.input.stepText
+      expect(stub.captured.some((call) => JSON.stringify(call.prompt).includes(text))).toBe(false)
+    }
   })
   it('discloses split target samples as inconclusive', async () => {
     const { f, input } = await warm()

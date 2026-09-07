@@ -119,11 +119,11 @@ export function resolveBaselineCache(input: {
         continue
       }
       if (replay.promptDrift?.recordedHash !== cassette.promptInputHash) {
-        miss('promptDrift.recordedHash mismatch')
+        miss('promptInputHash mismatch: promptDrift.recordedHash differs')
         continue
       }
       if (replay.replayedModel?.modelId !== input.plannerModelId) {
-        miss('plannerModelId mismatch')
+        miss('replayedModel.modelId mismatch')
         continue
       }
       const score = loadScoreRecord(dir)
