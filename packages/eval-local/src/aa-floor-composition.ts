@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import {
   composeBaselineProfileKey,
+  canonicalJson,
   computeCorpusDigest,
   FLOOR_PROTOCOL_MINIMUM,
   foldNoiseFloorArtefact,
@@ -21,7 +22,7 @@ import type {
   NoiseFloorArtefact,
 } from '@vostride/agent-qa-eval'
 import type { ModelProfile, ModelProviderOverrides, ResolvedModelAuth } from '@vostride/agent-qa-model'
-import { slugBranch } from '@vostride/agent-qa-schema'
+import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
 
 import {
   listBaselinePointers,
@@ -41,7 +42,7 @@ import type { RunCassetteReplayInput } from './replay-composition.js'
 import { FsReplayRecordStore } from './replay-record-store.js'
 import { loadCassetteBundles, sweepCassetteReplays } from './replay-sweep.js'
 import type { LoadedCassetteBundle, SweepCassetteReplaysResult } from './replay-sweep.js'
-import { FsReportStore } from './report-store.js'
+import { FsReportStore, type ReplayGeneration } from './report-store.js'
 import { FsScoreStore } from './score-store.js'
 
 export interface ReplayCorpusOnceInput {
@@ -305,8 +306,27 @@ export async function replayCorpusOnce(
   input: ReplayCorpusOnceInput,
 ): Promise<ReplayCorpusOnceResult> {
   const replaysRoot = join(input.runRoot, 'replays')
-  const recordStore = new FsReplayRecordStore({ root: input.agentQaRoot, outputDir: replaysRoot })
-  const scoreStore = new FsScoreStore({ root: input.agentQaRoot, outputDir: replaysRoot })
+  // Capture THIS writer's values, never reread possibly replaced rows to assign their seed.
+  const records = new Map<string, ReplayGeneration['records'][number]>()
+  const recordStore = new (class extends FsReplayRecordStore {
+    override save(outcome: Parameters<FsReplayRecordStore['save']>[0]) {
+      const written = super.save(outcome)
+      records.set(outcome.cassetteId, {
+        cassetteId: outcome.cassetteId,
+        replayDigest: sha256hex(canonicalJson({ ...outcome, executionSeed: input.seed })),
+        scoreDigest: null,
+      })
+      return written
+    }
+  })({ root: input.agentQaRoot, outputDir: replaysRoot, executionSeed: input.seed })
+  const scoreStore = new (class extends FsScoreStore {
+    override save(record: Parameters<FsScoreStore['save']>[0]) {
+      const written = super.save(record)
+      const replay = records.get(record.cassetteId)
+      if (replay !== undefined) replay.scoreDigest = sha256hex(canonicalJson(record))
+      return written
+    }
+  })({ root: input.agentQaRoot, outputDir: replaysRoot })
   const clock = input.clock ?? Date.now
   // Capture before replay begins: model creation may resolve capabilities on its own copy.
   const runIdentity = input.corpusDigest === undefined ? undefined : {
@@ -351,10 +371,17 @@ export async function replayCorpusOnce(
     ...(runIdentity === undefined ? {} : { runIdentity }),
   })
   const staged = new FsReportStore({
-    root: input.agentQaRoot, outputDir: join(input.runRoot, 'reports'),
-  }).save(report, projectDecisionVectorsDocument({
-    batchKey: report.batchKey, matcherVersion: report.matcherVersion, vectors,
-  }))
+    root: input.agentQaRoot,
+    outputDir: join(input.runRoot, 'reports'),
+  }).save(
+    report,
+    projectDecisionVectorsDocument({
+      batchKey: report.batchKey,
+      matcherVersion: report.matcherVersion,
+      vectors,
+    }),
+    { seed: input.seed, records: [...records.values()] },
+  )
   if (staged.decisionsFile === undefined) throw new Error('report store did not stage decisions')
   return {
     report, vectors, replaysRoot, reportFile: staged.file, decisionsFile: staged.decisionsFile,

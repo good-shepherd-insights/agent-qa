@@ -28,6 +28,8 @@ export interface FsReplayRecordStoreConfig {
   root: string
   /** Optional retargeted root used by later committed-corpus composition. */
   outputDir?: string
+  /** Actual producer seed; embedded in the bytes bound by the run publication. */
+  executionSeed?: number
 }
 
 export interface WrittenReplayRecord {
@@ -38,21 +40,25 @@ export interface WrittenReplayRecord {
 
 export class FsReplayRecordStore {
   private readonly outputRoot: string
+  private readonly executionSeed?: number
 
   constructor(config: FsReplayRecordStoreConfig) {
     this.outputRoot = config.outputDir ?? join(config.root, DEFAULT_EVAL_REPLAYS_SUBDIR)
+    this.executionSeed = config.executionSeed
   }
 
   save(outcome: ReplayCassetteOutcome): WrittenReplayRecord {
     const dir = join(
       this.outputRoot,
-      ...outcome.cassetteId.split('/').map(segment => slugBranch(segment)),
+      ...outcome.cassetteId.split('/').map((segment) => slugBranch(segment)),
     )
     rmSync(dir, { recursive: true, force: true })
     mkdirSync(dir, { recursive: true })
 
     const file = join(dir, REPLAY_RECORD_FILE)
-    writeFileSync(file, `${JSON.stringify(outcome, null, 2)}\n`, 'utf8')
+    const record =
+      this.executionSeed === undefined ? outcome : { ...outcome, executionSeed: this.executionSeed }
+    writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8')
 
     return { cassetteId: outcome.cassetteId, dir, file }
   }

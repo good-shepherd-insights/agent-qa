@@ -23,7 +23,11 @@ function rewriteReport(root: string, change: (value: Record<string, any>) => voi
     const loaded = loadStagedReport(root, name.slice(0, -5), dir)
     if (loaded.kind !== 'loaded') throw new Error(JSON.stringify(loaded))
     change(loaded.report)
-    new FsReportStore({ root, outputDir: dir }).save(loaded.report, loaded.decisions)
+    new FsReportStore({ root, outputDir: dir }).save(
+      loaded.report,
+      loaded.decisions,
+      loaded.replayGeneration,
+    )
     expect(loadStagedReport(root, name.slice(0, -5), dir).kind).toBe('loaded')
   }
 }
@@ -47,6 +51,26 @@ async function warm() {
 }
 
 describe('profile-keyed gate and floor baseline cache', () => {
+  it.each([11, 29])(
+    'inherits the actual producer seed %i despite changed caller config',
+    async (seed) => {
+      const { f, input, stub } = await warm()
+      stub.captured.length = 0
+      await warmGateRoot(f, stub, seed)
+      expect(stub.captured.every((call) => call.seed === seed)).toBe(true)
+      const rows = resolveBaselineCache({
+        ...input,
+        gateRootSeed: seed === 11 ? 29 : 11,
+        gateRootSeedSource: 'config',
+      }).rows
+      expect(
+        rows.every(
+          (row) =>
+            row.kind === 'cached' && row.seed === seed && row.seedSource === 'run-publication',
+        ),
+      ).toBe(true)
+    },
+  )
   it('inherits floor seed 11 and seedHonored from the report without calls', async () => {
     const { f, stub, warmed, input } = await warm()
     const before = stub.captured.length
@@ -57,7 +81,7 @@ describe('profile-keyed gate and floor baseline cache', () => {
         kind: 'cached',
         root: f.gateRoot,
         seed: 11,
-        seedSource: 'floor',
+        seedSource: 'run-publication',
         seedHonored: warmed.report.seedHonored,
       })
     expect(stub.captured).toHaveLength(before)
@@ -65,7 +89,7 @@ describe('profile-keyed gate and floor baseline cache', () => {
   it('falls back per cassette to r0-seed29 with run-dir seed provenance', async () => {
     const { f, input } = await warm()
     const floorRoot = join(f.agentQaRoot, 'eval/floor', slugBranch(f.profileKey), 'r0-seed29')
-    cpSync(f.gateRoot, floorRoot, { recursive: true })
+    await warmGateRoot({ ...f, gateRoot: floorRoot }, respondingStub(gate1Responder(f)), 29)
     rewriteReport(floorRoot, (report) => {
       if ('seed' in report) report.seed = 29
       if (report.runIdentity && 'seed' in report.runIdentity) report.runIdentity.seed = 29
@@ -78,7 +102,7 @@ describe('profile-keyed gate and floor baseline cache', () => {
       kind: 'cached',
       root: floorRoot,
       seed: 29,
-      seedSource: 'run-dir',
+      seedSource: 'run-publication',
       seedHonored: false,
     })
     expect(cache.rows.find((row) => row.cassetteId !== id)).toMatchObject({
@@ -150,6 +174,44 @@ describe('profile-keyed gate and floor baseline cache', () => {
     expect(
       resolveBaselineCache({ ...input, agentQaRoot: join(f.root, 'absent') }).rows.every(
         (row) => row.kind === 'uncached',
+      ),
+    ).toBe(true)
+  })
+  it('rejects interrupted seed replacement and does not attribute stale rows to a later report', async () => {
+    const { f, input, stub } = await warm()
+    const savedReports = join(f.root, 'previous-reports')
+    cpSync(join(f.gateRoot, 'reports'), savedReports, { recursive: true })
+    await warmGateRoot(f, stub, 29)
+    rmSync(join(f.gateRoot, 'reports'), { recursive: true })
+    cpSync(savedReports, join(f.gateRoot, 'reports'), { recursive: true })
+    expect(
+      resolveBaselineCache(input).rows.every(
+        (row) => row.kind === 'uncached' && row.reason.includes('generation mismatch'),
+      ),
+    ).toBe(true)
+    const selected = f.selected.slice(0, 1)
+    await warmGateRoot({ ...f, selected }, stub, 29)
+    const rows = resolveBaselineCache(input).rows
+    expect(rows.filter((row) => row.kind === 'cached')).toHaveLength(1)
+    expect(rows.find((row) => row.kind === 'cached')).toMatchObject({ seed: 29 })
+  })
+  it('treats historical gate records with no seed publication as cold and uses a historical floor fallback', async () => {
+    const { f, input } = await warm()
+    const dir = join(f.gateRoot, 'reports')
+    for (const name of readdirSync(dir).filter((name) => name.endsWith('.publication.json')))
+      rewrite(join(dir, name), (value) => {
+        delete value.replayGeneration
+      })
+    expect(
+      resolveBaselineCache(input).rows.every(
+        (row) => row.kind === 'uncached' && row.reason.includes('seed is unproven'),
+      ),
+    ).toBe(true)
+    const floorRoot = join(f.agentQaRoot, 'eval/floor', slugBranch(f.profileKey), 'r0-seed11')
+    cpSync(f.gateRoot, floorRoot, { recursive: true })
+    expect(
+      resolveBaselineCache(input).rows.every(
+        (row) => row.kind === 'cached' && row.seed === 11 && row.seedSource === 'run-dir',
       ),
     ).toBe(true)
   })

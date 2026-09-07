@@ -2,8 +2,8 @@
 // Read-only cache resolution; a corpus change does not invalidate an individual cassette.
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ReplayCassetteOutcome } from '@vostride/agent-qa-eval'
-import { slugBranch } from '@vostride/agent-qa-schema'
+import { canonicalJson, type ReplayCassetteOutcome } from '@vostride/agent-qa-eval'
+import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
 import { loadReplayRecord, loadScoreRecord } from './replay-read.js'
 import { loadStagedReport } from './report-store.js'
 import type { ScoreRecord } from './score-store.js'
@@ -149,14 +149,41 @@ export function resolveBaselineCache(input: {
         miss('judge identity mismatch')
         continue
       }
+      const generation = report.replayGeneration
+      if (generation === undefined && run.kind === 'gate') {
+        miss('gate replay seed is unproven: missing run publication generation')
+        continue
+      }
+      if (
+        generation === undefined &&
+        Reflect.get(replay, 'executionSeed') !== undefined &&
+        Reflect.get(replay, 'executionSeed') !== run.seed
+      ) {
+        miss('replay execution seed differs from floor run directory')
+        continue
+      }
+      if (generation !== undefined) {
+        const matching = generation.records.filter((record) => record.cassetteId === cassette.id)
+        const recorded = matching[0]
+        if (
+          matching.length !== 1 ||
+          recorded?.replayDigest !== sha256hex(canonicalJson(replay)) ||
+          recorded.scoreDigest !== sha256hex(canonicalJson(score.record)) ||
+          Reflect.get(replay, 'executionSeed') !== generation.seed ||
+          (run.seed !== undefined && run.seed !== generation.seed)
+        ) {
+          miss('replay generation mismatch: seed or record digests differ from run publication')
+          continue
+        }
+      }
       resolved.set(cassette.id, {
         cassetteId: cassette.id,
         kind: 'cached',
         root: run.root,
         replay,
         score: score.record,
-        seed: run.seed ?? input.gateRootSeed,
-        seedSource: run.kind === 'floor' ? 'run-dir' : input.gateRootSeedSource,
+        seed: generation?.seed ?? run.seed!,
+        seedSource: generation === undefined ? 'run-dir' : 'run-publication',
         seedHonored: report.report.seedHonored === true,
       })
       roots.add(run.root)

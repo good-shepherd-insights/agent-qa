@@ -333,6 +333,7 @@ export function writeGate1Fixture(
 export async function warmGateRoot(
   fixture: ReturnType<typeof writeGate1Fixture>,
   stub: CapturingStub,
+  seed = 11,
 ) {
   return replayCorpusOnce({
     selected: fixture.selected,
@@ -343,7 +344,7 @@ export async function warmGateRoot(
     auth: noneAuth,
     modelOverrides: { languageModels: stub.languageModels },
     maskingContextFactory: createMaskingContext,
-    seed: 11,
+    seed,
     k: 1,
     replayOutputBaseDir: fixture.gateRoot,
     source: 'committed',

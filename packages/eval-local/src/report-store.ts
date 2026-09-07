@@ -45,7 +45,13 @@ export interface WrittenReport {
 }
 
 export type StagedReportLoad =
-  | { kind: 'loaded'; report: EvalBatchReport; decisions?: DecisionVectorsDocument; file: string }
+  | {
+      kind: 'loaded'
+      report: EvalBatchReport
+      decisions?: DecisionVectorsDocument
+      file: string
+      replayGeneration?: ReplayGeneration
+    }
   | { kind: 'absent'; file: string }
   | { kind: 'refused'; file: string; reason: string }
 
@@ -70,10 +76,30 @@ const stagedReportSchema = z.object({
   }).passthrough().optional(),
 }).passthrough()
 
+const replayGenerationSchema = z
+  .object({
+    seed: z.number().int().safe(),
+    records: z.array(
+      z
+        .object({
+          cassetteId: z.string().min(1),
+          replayDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          scoreDigest: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .nullable(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+export type ReplayGeneration = z.infer<typeof replayGenerationSchema>
+
 const publicationSchema = z.object({
   schemaVersion: z.literal(1),
   reportDigest: z.string().regex(/^[a-f0-9]{64}$/),
   decisionsDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  replayGeneration: replayGenerationSchema.optional(),
 }).strict()
 
 function readOptional(file: string): string | undefined {
@@ -155,12 +181,14 @@ export function loadStagedReport(
   }
   // Read the manifest on both sides of the data reads, including the legacy absent case.
   // No newly published generation can be mistaken for an unbound historical pair.
+  let replayGeneration: ReplayGeneration | undefined
   try {
     if (readOptional(publicationFile) !== publicationText) {
       return { kind: 'refused', file: publicationFile, reason: 'report publication changed during read' }
     }
     if (publicationText !== undefined) {
       const publication = publicationSchema.parse(JSON.parse(publicationText))
+      replayGeneration = publication.replayGeneration
       if (publication.reportDigest !== sha256hex(reportText)) {
         return { kind: 'refused', file, reason: 'report publication digest mismatch' }
       }
@@ -171,7 +199,8 @@ export function loadStagedReport(
   } catch (error) {
     return { kind: 'refused', file: publicationFile, reason: `publication rejected: ${(error as Error).message}` }
   }
-  return { kind: 'loaded', report, ...(decisions === undefined ? {} : { decisions }), file }
+  return { kind: 'loaded', report, ...(decisions === undefined ? {} : { decisions }), file,
+    ...(replayGeneration === undefined ? {} : { replayGeneration }) }
 }
 
 export class FsReportStore {
@@ -181,7 +210,8 @@ export class FsReportStore {
     this.outputRoot = config.outputDir ?? join(config.root, DEFAULT_EVAL_REPORTS_SUBDIR)
   }
 
-  save(report: EvalBatchReport, decisions?: DecisionVectorsDocument): WrittenReport {
+  save(report: EvalBatchReport, decisions?: DecisionVectorsDocument, replayGeneration?: ReplayGeneration): WrittenReport {
+    if (replayGeneration !== undefined) replayGenerationSchema.parse(replayGeneration)
     if (decisions !== undefined) {
       for (const field of ['batchKey', 'matcherVersion'] as const) {
         if (decisions[field] !== report[field]) {
@@ -197,6 +227,7 @@ export class FsReportStore {
     const publicationText = `${JSON.stringify({ schemaVersion: 1,
       reportDigest: sha256hex(reportText),
       decisionsDigest: decisionsText === undefined ? null : sha256hex(decisionsText),
+      ...(replayGeneration === undefined ? {} : { replayGeneration }),
     }, null, 2)}\n`
     mkdirSync(dirname(file), { recursive: true })
     // Unique temporary storage keeps concurrent writers from sharing a staging file.

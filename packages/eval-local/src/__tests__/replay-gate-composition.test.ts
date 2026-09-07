@@ -648,7 +648,11 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       )
     }
     expect(digestTree(f.gateRoot)).toEqual(beforeBaseline)
-    expect(got.baselineSource).toEqual({ runRoot: f.gateRoot, seed: 11, seedSource: 'floor' })
+    expect(got.baselineSource).toEqual({
+      runRoot: f.gateRoot,
+      seed: 11,
+      seedSource: 'run-publication',
+    })
     expect(
       digestTree(join(f.agentQaRoot, 'eval/gate1', slugBranch(f.injection.candidateId))).filter(
         ([path]) => path!.startsWith('/cross-check/'),
@@ -661,6 +665,63 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     expect(result.kind === 'receipt' && result.lines[0]).toBe(
       'gate 1 · pass · replay-diff · crossCheck flipped · k=3 · 10/64 screens · 10 calls',
     )
+  })
+  it.each([11, 29])(
+    'uses the persisted seed %i for both first-pair samples and receipt provenance',
+    async (seed) => {
+      const { f, baseline, stub, input } = await warm()
+      baseline.captured.length = 0
+      await warmGateRoot(f, baseline, seed)
+      input.baselineSeed = { seed: seed === 11 ? 29 : 11, source: 'config' }
+      const got = receipt(await evalLocal.runReplayGate(input))
+      expect(got.verdict).toBe('pass')
+      expect(baseline.captured.every((call) => call.seed === seed)).toBe(true)
+      expect(stub.captured.slice(0, f.selected.length).every((call) => call.seed === seed)).toBe(
+        true,
+      )
+      expect(got.baselineSource).toEqual({
+        runRoot: f.gateRoot,
+        seed,
+        seedSource: 'run-publication',
+      })
+      expect(
+        got.samples.detail
+          ?.filter((row) => row.seed === seed)
+          .map((row) => row.withRecord)
+          .sort(),
+      ).toEqual([false, true])
+      expect(got.samples.seeds).toEqual([seed, ...deriveSampleSeeds(seed, 3)])
+    },
+  )
+  it('inherits a different floor seed for each target first pair without changing other rows', async () => {
+    const { f, stub, input } = await warm({ targetDecisions: 2 })
+    const target = f.selected.find((row) =>
+      row.cassette.input.stateBefore.tree.includes('gate1-target-sibling-1'),
+    )!
+    const floorRoot = join(f.agentQaRoot, 'eval/floor', slugBranch(f.profileKey), 'r0-seed29')
+    const baseline = respondingStub(gate1Responder(f))
+    await warmGateRoot({ ...f, selected: [target], gateRoot: floorRoot }, baseline, 29)
+    rmSync(join(f.gateRoot, 'replays', target.cassette.id), { recursive: true })
+    input.baselineSeed = { seed: 37, source: 'config' }
+    const got = receipt(await evalLocal.runReplayGate(input))
+    expect(got.verdict).toBe('pass')
+    const matching = stub.captured.filter((call) =>
+      JSON.stringify(call.prompt).includes('gate1-target-sibling-1'),
+    )
+    expect(matching[0]?.seed).toBe(29)
+    expect(baseline.captured[0]?.seed).toBe(29)
+    expect(
+      got.samples.detail
+        ?.filter((row) => row.seed === 29)
+        .map((row) => row.withRecord)
+        .sort(),
+    ).toEqual([false, true])
+    expect(
+      got.samples.detail
+        ?.filter((row) => row.seed === 11)
+        .map((row) => row.withRecord)
+        .sort(),
+    ).toEqual([false, true])
   })
   it.each([
     'procedure',
@@ -1029,7 +1090,7 @@ describe('gate-1 fixture and the profile-keyed baseline cache', () => {
       expect(row).toMatchObject({
         kind: 'cached',
         seed: 11,
-        seedSource: 'floor',
+        seedSource: 'run-publication',
         seedHonored: warmed.report.seedHonored,
       })
     expect(result.roots).toEqual([f.gateRoot])
