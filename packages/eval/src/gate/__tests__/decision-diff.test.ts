@@ -1,11 +1,24 @@
 import { describe, expect, it } from 'vitest'
+import { asRef } from '@vostride/agent-qa-schema'
+import { leafCassette, makeSidecar } from '../../replay/__tests__/fixtures'
+import { decisionIdentityKey, type DecisionIdentity } from '../../replay/identity'
+import type { ReplayCassetteOutcome } from '../../replay/result'
+import { scoreCassetteReplay } from '../../match/score'
+import { decisionCorrectnessVectors } from '../../match/decision-vectors'
+import { decideGate1 } from '../gate-verdict'
 import {
   FLOOR_AXES,
   type AxisCorrectness,
   type DecisionCorrectnessVector,
 } from '../../stats/decision-vector'
 import type { AxisFloorSet } from '../floor-artefact'
-import { diffArms, foldPerAxisScore, weightFor, type ArmDecision } from '../decision-diff'
+import {
+  diffArms,
+  foldPerAxisScore,
+  weightFor,
+  orderHarmed,
+  type ArmDecision,
+} from '../decision-diff'
 
 export function row(
   id = 'cassette-a',
@@ -54,6 +67,125 @@ export function floors(value = 0.1): AxisFloorSet {
 }
 
 describe('per-decision diff', () => {
+  it.each(['gold', 'near-gold', 'silver'] as const)(
+    'never charges an overturned %s label',
+    (tier) => {
+      expect(weightFor({ ...row().label!, tier, sourceChannel: 'overturned-verdict' })).toBe(
+        'overturned',
+      )
+      expect(weightFor({ tier, sourceChannel: 'overturned-verdict' })).toBe('unverified')
+    },
+  )
+  it('re-scores overturned gold through the cassette scorer and canonical identity vectors', () => {
+    const corrected = { type: 'click', ref: asRef('corrected') } as const
+    const anchor = { role: 'button', nameNormalized: 'submit', ordinal: 0 }
+    const cassette = leafCassette({
+      label: { ...row().label!, sourceChannel: 'overturned-verdict' },
+      sidecar: makeSidecar({ goldAction: corrected, goldAnchor: anchor }),
+    })
+    const originalIdentity: DecisionIdentity = {
+      opClass: 'click',
+      target: { role: 'link', nameNormalized: 'cancel', ordinal: 0 },
+    }
+    const correctedIdentity: DecisionIdentity = { opClass: 'click', target: anchor }
+    const reordered: DecisionIdentity = {
+      target: { ordinal: 0, nameNormalized: 'submit', role: 'button' },
+      opClass: 'click',
+    }
+    expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(correctedIdentity))
+    expect(decisionIdentityKey(reordered)).toBe(decisionIdentityKey(correctedIdentity))
+    const scored = (isCorrect: boolean): ArmDecision['baseline'] => {
+      const identity = isCorrect ? correctedIdentity : originalIdentity
+      const outcome: ReplayCassetteOutcome = {
+        granularity: 'leaf',
+        cassetteId: cassette.id,
+        briefSource: 'proof',
+        samples: [
+          {
+            sampleIndex: 0,
+            durationMs: 0,
+            outcome: {
+              kind: 'decision',
+              action: isCorrect ? corrected : { type: 'click', ref: asRef('original') },
+              identity,
+            },
+          },
+        ],
+        agreement: {
+          k: 1,
+          agreementRate: 1,
+          noConsensus: false,
+          harnessErrorCount: 0,
+          modal: { identity: isCorrect ? reordered : identity, count: 1 },
+        },
+        modalDecision: isCorrect ? reordered : identity,
+        promptDrift: {
+          drift: false,
+          harnessDrift: false,
+          recordedHash: 'fixture',
+          recomputedHash: 'fixture',
+        },
+        replayedModel: { provider: 'test', modelId: 'fixture' },
+        unconsumedExchanges: [],
+        totalDurationMs: 0,
+      }
+      const score = scoreCassetteReplay(cassette, outcome)
+      const vectors = decisionCorrectnessVectors([
+        { cassetteId: cassette.id, outcome, score, label: cassette.label },
+      ])
+      expect(vectors).toHaveLength(1)
+      return { kind: 'scored', vector: vectors[0]!, briefSource: 'proof' }
+    }
+    const arm: ArmDecision = {
+      ...row(cassette.id),
+      label: cassette.label,
+      baseline: scored(false),
+      candidate: scored(true),
+    }
+    const fixed = diffArms([arm])
+    expect(fixed[0]).toMatchObject({
+      weight: 'overturned',
+      headline: 'fixed',
+      sourceChannel: 'overturned-verdict',
+      flippedWorse: [],
+      flippedBetter: ['headline', 'elementIdentity'],
+    })
+    const broken = diffArms([{ ...arm, baseline: arm.candidate, candidate: arm.baseline }])
+    expect(broken[0]).toMatchObject({
+      weight: 'overturned',
+      headline: 'broken',
+      flippedWorse: ['headline', 'elementIdentity'],
+    })
+    const input = { kind: 'fact', sameFamilyRefused: false, crossCheck: 'flipped' as const }
+    expect(decideGate1({ ...input, targets: fixed, collateral: [] })).toMatchObject({
+      verdict: 'pass',
+      harmed: [],
+      unverifiedFlips: [],
+    })
+    expect(decideGate1({ ...input, targets: diffArms([row()]), collateral: broken })).toMatchObject(
+      { verdict: 'pass', harmed: [], unverifiedFlips: broken },
+    )
+  })
+  it('orders harm by tier, cassette and ordinal without mutating the input', () => {
+    const rows = diffArms([
+      { ...row('b'), decisionOrdinal: 2 },
+      { ...row('b'), label: { ...row().label!, tier: 'gold' } },
+      { ...row('a'), decisionOrdinal: 1, label: { ...row().label!, tier: 'near-gold' } },
+      { ...row('b'), decisionOrdinal: 1 },
+      row('a'),
+      { ...row('a'), decisionOrdinal: 2, label: { ...row().label!, tier: 'gold' } },
+    ])
+    const before = structuredClone(rows)
+    expect(orderHarmed(rows).map((r) => [r.weight, r.cassetteId, r.decisionOrdinal])).toEqual([
+      ['gold', 'a', 2],
+      ['gold', 'b', 0],
+      ['near-gold', 'a', 1],
+      ['silver', 'a', 0],
+      ['silver', 'b', 1],
+      ['silver', 'b', 2],
+    ])
+    expect(rows).toEqual(before)
+  })
   it.each([
     ['incorrect', 'correct', 'fixed'],
     ['correct', 'incorrect', 'broken'],
@@ -88,6 +220,10 @@ describe('per-decision diff', () => {
       heldOutVisibility: 'private',
     }
     expect(diffArms([input])[0]).toMatchObject({ split: 'held-out', heldOutVisibility: 'private' })
+    const { heldOutVisibility: _visibility, ...entry } = input.entry
+    input.entry = { ...entry, split: 'natural' }
+    expect(diffArms([input])[0]).toMatchObject({ split: 'natural' })
+    expect(diffArms([input])[0]).not.toHaveProperty('heldOutVisibility')
   })
   it('makes refused arms incomparable and rejects duplicate identities with TypeError', () => {
     expect(

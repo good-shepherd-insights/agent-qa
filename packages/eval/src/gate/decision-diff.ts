@@ -12,7 +12,9 @@ import {
 import { pairedDecisionDiff } from '../stats/paired'
 import type { AxisFloorSet } from './floor-artefact'
 
-export type DecisionWeight = 'gold' | 'near-gold' | 'silver' | 'unverified'
+export type DecisionWeight = 'gold' | 'near-gold' | 'silver' | 'unverified' | 'overturned'
+// prettier-ignore
+export const DECISION_WEIGHTS = ['gold', 'near-gold', 'silver', 'unverified', 'overturned'] as const satisfies readonly DecisionWeight[]
 export type ArmOutcome =
   | { kind: 'scored'; vector: DecisionCorrectnessVector; briefSource: BriefSource }
   | { kind: 'refused'; reason: string }
@@ -28,6 +30,8 @@ export interface ArmDecision {
 }
 export type DecisionHeadline =
   'fixed' | 'broken' | 'unchanged-correct' | 'unchanged-incorrect' | 'incomparable'
+// prettier-ignore
+export const DECISION_HEADLINES = ['fixed', 'broken', 'unchanged-correct', 'unchanged-incorrect', 'incomparable'] as const satisfies readonly DecisionHeadline[]
 export interface DiffedDecision {
   cassetteId: string
   stepIndex?: number
@@ -47,8 +51,22 @@ export interface DiffedDecision {
 }
 
 export function weightFor(label: CassetteLabelLeg | undefined): DecisionWeight {
-  // 2026-09-07: D-03 overturned-verdict re-score is Plan 06's addition.
-  return label?.verdict === undefined ? 'unverified' : label.tier
+  if (label?.verdict === undefined) return 'unverified'
+  // 2026-09-07 D-03: scoreCassetteReplay re-scores both arms against the cassette's
+  // recorded goldAction (the corrected gold under an overturned label). The same
+  // correctness vectors reach this fold; a return to the overturned action has
+  // zero harm weight and is disclosed, never charged.
+  return label.sourceChannel === 'overturned-verdict' ? 'overturned' : label.tier
+}
+
+export function orderHarmed(rows: readonly DiffedDecision[]): DiffedDecision[] {
+  const rank = { gold: 0, 'near-gold': 1, silver: 2, unverified: 3, overturned: 3 }
+  return [...rows].sort(
+    (a, b) =>
+      rank[a.weight] - rank[b.weight] ||
+      a.cassetteId.localeCompare(b.cassetteId, 'en') ||
+      a.decisionOrdinal - b.decisionOrdinal,
+  )
 }
 
 export function diffArms(rows: readonly ArmDecision[]): DiffedDecision[] {

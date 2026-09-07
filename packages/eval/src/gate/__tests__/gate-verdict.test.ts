@@ -70,6 +70,41 @@ const input = () => ({
 })
 
 describe('Gate-1 verdict', () => {
+  it('orders both zero-weight buckets and retains the overturned channel', () => {
+    const collateral = diffArms([
+      { ...row('z-unverified', 'correct', 'incorrect'), label: undefined },
+      {
+        ...row('a-overturned', 'correct', 'incorrect'),
+        label: { ...row().label!, sourceChannel: 'overturned-verdict' },
+      },
+    ])
+    const result = invoke('decideGate1', { ...input(), collateral })
+    expect(result).toMatchObject({ verdict: 'pass', harmed: [], crossCheck: 'flipped' })
+    expect(result.unverifiedFlips.map((r: { cassetteId: string }) => r.cassetteId)).toEqual([
+      'a-overturned',
+      'z-unverified',
+    ])
+    expect(result.unverifiedFlips[0].sourceChannel).toBe('overturned-verdict')
+  })
+  it('charges near-gold harm on a held-out private entry', () => {
+    const arm = row('private', 'correct', 'incorrect')
+    arm.label = { ...arm.label!, tier: 'near-gold' }
+    arm.entry = {
+      schemaVersion: 2,
+      cassetteId: arm.cassetteId,
+      product: 'example-web',
+      captured_at_ordinal: 1,
+      run_links: { runId: 'synthetic', runSlug: 'synthetic' },
+      receiptDigest: 'a'.repeat(64),
+      split: 'held-out',
+      heldOutVisibility: 'private',
+    }
+    expect(invoke('decideGate1', { ...input(), collateral: diffArms([arm]) })).toMatchObject({
+      verdict: 'fail',
+      reasons: ['collateral-harm'],
+      harmed: [{ weight: 'near-gold', heldOutVisibility: 'private' }],
+    })
+  })
   it('fails a ride-along target and keeps the cross-check unrun', () => {
     expect(
       invoke('decideGate1', { ...input(), targets: diffArms([row('a', 'correct', 'correct')]) }),

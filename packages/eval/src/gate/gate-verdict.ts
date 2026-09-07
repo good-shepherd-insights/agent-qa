@@ -2,6 +2,7 @@
 import { GATE1_REASONS } from '@vostride/agent-qa-schema'
 import type { CrossCheck, Gate1Reason, Gate1Receipt, GateVerdict } from '@vostride/agent-qa-schema'
 import type { DiffedDecision } from './decision-diff'
+import { orderHarmed } from './decision-diff'
 
 export interface Gate1DecisionInput {
   kind: string
@@ -46,16 +47,14 @@ export function decideGate1(input: Gate1DecisionInput): Gate1Decision {
   if (input.preSpendAbstain !== undefined) return result('abstain', [input.preSpendAbstain])
 
   const worse = [...input.targets, ...input.collateral].filter((row) => row.flippedWorse.length > 0)
-  const rank = { gold: 0, 'near-gold': 1, silver: 2, unverified: 3 }
-  harmed = worse
-    .filter((row) => row.weight !== 'unverified')
-    .sort(
-      (a, b) =>
-        rank[a.weight] - rank[b.weight] ||
-        (a.cassetteId < b.cassetteId ? -1 : a.cassetteId > b.cassetteId ? 1 : 0) ||
-        a.decisionOrdinal - b.decisionOrdinal,
-    )
-  unverifiedFlips = worse.filter((row) => row.weight === 'unverified')
+  harmed = orderHarmed(
+    worse.filter(
+      (row) => row.weight === 'gold' || row.weight === 'near-gold' || row.weight === 'silver',
+    ),
+  )
+  unverifiedFlips = orderHarmed(
+    worse.filter((row) => row.weight === 'unverified' || row.weight === 'overturned'),
+  )
   const incorrectTargets = input.targets.filter(
     (row) => row.headline === 'fixed' || row.headline === 'unchanged-incorrect',
   )

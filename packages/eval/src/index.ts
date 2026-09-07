@@ -446,7 +446,7 @@ export type {
 
 export { toDeclaredBriefDelta, injectCandidate } from './gate/candidate-injection'
 export type { CandidateArmPlan, CandidateArmRefusal } from './gate/candidate-injection'
-export { diffArms, weightFor, foldPerAxisScore } from './gate/decision-diff'
+export { diffArms, weightFor, foldPerAxisScore, orderHarmed, DECISION_WEIGHTS, DECISION_HEADLINES } from './gate/decision-diff'
 export type {
   DecisionWeight,
   ArmOutcome,
