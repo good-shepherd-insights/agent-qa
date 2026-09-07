@@ -93,6 +93,8 @@ export async function locateTargetCassettes(input: {
   gate1Dir: string
   corpusEntries: readonly CorpusEntry[]
   target: NonNullable<CandidateInjection['target']>
+  /** 418 D-02: a live ablation must not substitute a committed/corrected gold record. */
+  source?: 'handoff'
 }): Promise<
   | { kind: 'committed' | 'extracted'; cassettes: LeafBundle[]; detail: TargetLocationDetail }
   | { kind: 'unavailable'; detail: TargetLocationDetail }
@@ -112,7 +114,9 @@ export async function locateTargetCassettes(input: {
     (target.testId === undefined || cassette.input.testId === target.testId)
   const entryIds = new Set(entries.map((entry) => entry.cassetteId))
   const committed: LeafBundle[] = []
-  for (const bundle of loadCassetteBundles(join(input.committedRoot, 'cassettes')).loaded)
+  const committedBundles = input.source === 'handoff'
+    ? [] : loadCassetteBundles(join(input.committedRoot, 'cassettes')).loaded
+  for (const bundle of committedBundles)
     if (
       entryIds.has(bundle.cassette.id) &&
       bundle.cassette.granularity === 'leaf' &&
@@ -130,6 +134,17 @@ export async function locateTargetCassettes(input: {
       handoff,
       artifacts: new FsRunArtifactSource({ root: input.agentQaRoot, runId: handoff.runId }),
     })
+    if (
+      input.source === 'handoff' &&
+      handoff.tests.some((test) =>
+        (target.testId === undefined || test.testId === target.testId) &&
+        test.steps.some((step) => step.stepIndex === target.stepIndex),
+      ) &&
+      !extraction.cassettes.some((row) =>
+        row.cassette.granularity === 'leaf' && matches(row.cassette),
+      )
+    )
+      return { kind: 'unavailable', detail: { ...detail, reason: 'no live decision at target' } }
   } catch (error) {
     return {
       kind: 'unavailable',
@@ -286,7 +301,9 @@ export interface RemovalFlipsOutcomeInput {
   })[]
   // 2026-09-07, 418 D-02/reconciliation 8: opt-in served-canary removal only.
   // Ordinary active-record callers retain rule 5; this is not another mode arm.
-  mode: { kind: 'injected'; injection: CandidateInjection } | { kind: 'active-record'; servedCanary?: true }
+  mode:
+    | { kind: 'injected'; injection: CandidateInjection }
+    | { kind: 'active-record'; servedCanary?: true }
   k: number
   baseSeed: number
   existing?: { withRecord: ReplaySample; withoutRecord: ReplaySample }
@@ -304,6 +321,58 @@ export interface RemovalFlipsOutcomeResult {
   promptTokens: number
   completionTokens: number
   notices: string[]
+}
+
+/** 418 D-02: share the exact removal proof between sample one and subsequent samples.
+ * Internal to eval-local; ordinary callers retain the active-record admission rule.
+ */
+export function resolveActiveRecordRemoval(input: {
+  cassette: LeafCassette
+  recordId: string
+  servedCanary?: true
+}): { kind: 'removed'; delta: DeclaredBriefDelta } | { kind: 'unavailable'; reason: string } {
+  const { cassette } = input
+  const brief = cassette.input.servedBrief
+  const channel1Position = brief.channel1.findIndex((line) => line.id === input.recordId)
+  const line = brief.channel1[channel1Position]
+  if (
+    line === undefined ||
+    !(
+      line.status === 'active' ||
+      (input.servedCanary === true && line.status === 'candidate' && line.servedAsCanary === true)
+    ) ||
+    (line.tier !== 'L0' && line.tier !== 'L1' && line.tier !== 'L2')
+  )
+    return { kind: 'unavailable', reason: 'active record brief line unavailable' }
+  const turns = brief.proof?.promptTurns ?? []
+  const turn =
+    turns.find((row) => row.turnOrdinal === cassette.decisionOrdinal) ??
+    (turns.every((row) =>
+      row.policyL0 === turns[0]?.policyL0 &&
+      row.learnedL1 === turns[0]?.learnedL1 &&
+      row.learnedL2 === turns[0]?.learnedL2,
+    ) ? turns[0] : undefined)
+  if (turn === undefined)
+    return { kind: 'unavailable', reason: 'active record requires a reproducible proof turn' }
+  const text = turn[
+    { L0: 'policyL0', L1: 'learnedL1', L2: 'learnedL2' }[line.tier] as
+      'policyL0' | 'learnedL1' | 'learnedL2'
+  ]
+  const located = locateBriefLine(text, line, line.tier)
+  if (located.kind !== 'located')
+    return { kind: 'unavailable', reason: 'active record rendered line is absent or ambiguous' }
+  return {
+    kind: 'removed',
+    delta: {
+      kind: 'removed',
+      line,
+      tier: line.tier,
+      renderedLine: text.split('\n')[located.index]!,
+      turnOrdinal: turn.turnOrdinal,
+      position: located.index,
+      channel1Position,
+    },
+  }
 }
 
 /** Existing samples count as sample one; every additional sample gets a distinct derived seed. */
@@ -338,56 +407,17 @@ export async function removalFlipsOutcome(
       withDelta = planned.plan.delta
       withCassette = injectCandidate(cassette, planned.plan)
     } else {
-      const brief = cassette.input.servedBrief
-      const channel1Position = brief.channel1.findIndex((line) => line.id === input.recordId)
-      const line = brief.channel1[channel1Position]
-      const incomparable = (reason: string) => {
-        result.notices.push(`brief-line-not-found: ${cassette.id}: ${reason}`)
+      const removal = resolveActiveRecordRemoval({
+        cassette,
+        recordId: input.recordId,
+        servedCanary: input.mode.servedCanary,
+      })
+      if (removal.kind === 'unavailable') {
+        result.notices.push(`brief-line-not-found: ${cassette.id}: ${removal.reason}`)
         result.perTarget.push({ cassetteId: cassette.id, crossCheck: 'inconclusive' })
-      }
-      if (
-        line === undefined ||
-        !(line.status === 'active' ||
-          (input.mode.servedCanary === true && line.status === 'candidate' && line.servedAsCanary === true)) ||
-        (line.tier !== 'L0' && line.tier !== 'L1' && line.tier !== 'L2')
-      ) {
-        incomparable('active record brief line unavailable')
         continue
       }
-      const turns = brief.proof?.promptTurns ?? []
-      const turn =
-        turns.find((row) => row.turnOrdinal === cassette.decisionOrdinal) ??
-        (turns.every(
-          (row) =>
-            row.policyL0 === turns[0]?.policyL0 &&
-            row.learnedL1 === turns[0]?.learnedL1 &&
-            row.learnedL2 === turns[0]?.learnedL2,
-        )
-          ? turns[0]
-          : undefined)
-      if (turn === undefined) {
-        incomparable('active record requires a reproducible proof turn')
-        continue
-      }
-      const text =
-        turn[
-          { L0: 'policyL0', L1: 'learnedL1', L2: 'learnedL2' }[line.tier] as
-            'policyL0' | 'learnedL1' | 'learnedL2'
-        ]
-      const located = locateBriefLine(text, line, line.tier)
-      if (located.kind !== 'located') {
-        incomparable('active record rendered line is absent or ambiguous')
-        continue
-      }
-      withoutDelta = {
-        kind: 'removed',
-        line,
-        tier: line.tier,
-        renderedLine: text.split('\n')[located.index]!,
-        turnOrdinal: turn.turnOrdinal,
-        position: located.index,
-        channel1Position,
-      }
+      withoutDelta = removal.delta
       withoutCassette = { ...cassette, input: applyBriefDelta(cassette.input, withoutDelta) }
     }
     const gold = computeDecisionIdentity(
