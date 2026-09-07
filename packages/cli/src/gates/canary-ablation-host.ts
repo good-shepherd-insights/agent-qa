@@ -7,6 +7,23 @@ export function createCanaryAblationForHost(input: {
   maxAblations?: number
 }): CanaryAblation & { resolveCaps(): Promise<{ maxAblations: number; source: string }> } {
   return {
+    async isNovel(target) {
+      const { resolveEvalSession, isFeedbackStateNovel } = await import('../eval-session-composition.js')
+      const session = await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
+      return isFeedbackStateNovel(session, { ...target, agentQaRoot: input.agentQaRoot })
+    },
+    async stage(target) {
+      try {
+        const { resolveEvalSession, runFeedbackStaging } = await import('../eval-session-composition.js')
+        const session = await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
+        return await runFeedbackStaging(session, { agentQaRoot: input.agentQaRoot,
+          product: target.product, stateDigest: target.stateDigest, benefit: target.benefit,
+          candidateId: target.candidateId, attributedObservationId: target.attributedObservationId,
+          target: { runId: target.runId, testId: target.testId, stepIndex: target.stepIndex } })
+      } catch (error) {
+        return { kind: 'error', message: error instanceof Error ? error.message : String(error) }
+      }
+    },
     async ablate(target) {
       try {
         const { resolveEvalSession, runCanaryAblation } = await import('../eval-session-composition.js')

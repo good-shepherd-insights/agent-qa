@@ -90,14 +90,18 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
       testIndex: 1, testId: 'checkout::sibling', steps: [step()] })
     const emit = vi.fn()
     const ablate = vi.fn(async () => ({ kind: 'no-eval-root' as const }))
+    const isNovel = vi.fn(async () => true)
+    const stageFeedback = vi.fn(async () => ({ kind: 'staged' as const }))
     const report = await emitCanaryOutcomes({ handoff: input,
       knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-rerun', emit,
-      credit: { ablation: { ablate, corpusDigest: async () => ({ kind: 'no-eval-root' }) } } })
+      credit: { ablation: { isNovel, stage: stageFeedback, ablate, corpusDigest: async () => ({ kind: 'no-eval-root' }) } } })
     expect(report.canary.rerunExcluded).toBe(1)
     expect(report.details[0]).toEqual({ testId: input.tests[0].testId, testIndex: 0,
       outcome: { kind: 'rerun-excluded' } })
     expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 1 }))
     expect(ablate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 1 }))
+    expect(isNovel).toHaveBeenCalledTimes(1)
+    expect(stageFeedback).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 1 }))
     expect(report).toMatchObject({ refused: 0, unresolved: 0, procedure: { emitted: 0 } })
   })
 
@@ -108,9 +112,12 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
       rootCause: { ...rootCause(value), perTest: index },
     }))
     const emit = vi.fn()
+    const isNovel = vi.fn(async () => true)
+    const stageFeedback = vi.fn(async () => ({ kind: 'staged' as const }))
     const report = await emitCanaryOutcomes({ handoff: input,
       knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-non-signal', emit,
-      credit: { maxAblations: 1 } })
+      credit: { maxAblations: 1, ablation: { isNovel, stage: stageFeedback,
+        ablate: async () => ({ kind: 'no-eval-root' }), corpusDigest: async () => ({ kind: 'no-eval-root' }) } } })
     expect(report.canary.nonSignal.environment).toBe(1)
     expect(report.canary.nonSignal.timeout).toBe(1)
     expect(report.canary.nonSignal.flake).toBe(1)
@@ -120,6 +127,8 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
       { kind: 'non-signal', class: 'flake' },
     ])
     expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 3, runOutcome: 'negative' }))
+    expect(isNovel).toHaveBeenCalledTimes(1)
+    expect(stageFeedback).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 3 }))
     expect(report).toMatchObject({ refused: 0, unresolved: 0 })
     expect(project(input, lookupSpy.anchorsById)).toHaveLength(1)
   })
@@ -133,6 +142,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     const report = await emitCanaryOutcomes({
       handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-sc2', emit,
       credit: { maxAblations: 1, ablation: {
+        isNovel: async () => true, stage: async () => ({ kind: 'staged' }),
         corpusDigest: async () => ({ kind: 'digest', corpusDigest: 'a'.repeat(64) }),
         ablate: async () => ({ kind: 'ablated', crossCheck: 'flipped', corpusDigest: 'b'.repeat(64),
           k: 3, baseSeed: 11, seeds: [11, 12, 13], seedHonored: false,
@@ -140,6 +150,8 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
       } },
     })
     expect(report.details[0]).toMatchObject({ benefit: 'exercised-benefited', corpusDigestMoved: true })
+    expect(report.details[0]).toMatchObject({ staged: true })
+    expect(report.canary.staged).toBe(1)
     expect(emit).toHaveBeenCalledWith(expect.objectContaining({ corpusDigest: 'b'.repeat(64),
       ablation: expect.objectContaining({ seeds: [11, 12, 13], seedHonored: false }) }))
   })
@@ -148,6 +160,7 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     const report = await emitCanaryOutcomes({
       handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: '/tmp/run-sc2', emit,
       ...(mode === 'absent' ? {} : { credit: { ablation: {
+        isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' as const }),
         corpusDigest: async () => ({ kind: 'digest' as const, corpusDigest: 'c'.repeat(64) }),
         ablate: async () => {
           if (mode === 'throws') throw new Error('fixture failure')

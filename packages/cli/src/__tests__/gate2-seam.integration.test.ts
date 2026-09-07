@@ -363,6 +363,7 @@ describe('418 credited canary Gate-2 seam', () => {
     const emit = async () => emitCanaryOutcomes({
       handoff, knowledgeRoot, runDir, emit: reader.emitCanaryOutcome.bind(reader),
       credit: { ablation: {
+        isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' as const }),
         corpusDigest: async () => ({ kind: 'digest', corpusDigest: DIGEST }),
         ablate: async () => ({ kind: 'ablated', crossCheck: 'flipped', corpusDigest: DIGEST,
           k: 3, baseSeed: 11, seeds: [11, 12, 13], seedHonored: true,

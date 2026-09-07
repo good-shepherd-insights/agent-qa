@@ -164,6 +164,7 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
   it('418 threads the same ablation capability and flag to own-run fold and janitor sweep', async () => {
     const h = harness()
     const canaryAblation = {
+      isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' as const }),
       ablate: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
       corpusDigest: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
     }

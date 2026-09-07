@@ -1,16 +1,35 @@
 // 2026-09-07, 418 D-02: the ablation composition. The live decision becomes sample one
 // only here; every fresh model call delegates to runCassetteReplay's safety scope.
-import { join } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import {
   applyBriefDelta,
   buildEvalReport,
   computeCorpusDigest,
   computeDecisionIdentity,
   deriveSampleSeeds,
+  assignSplit,
+  committedFileText,
+  deriveRunSlug,
+  extractRunCassettes,
+  projectCorpusEntry,
+  projectSilverLabelRecord,
+  resolveProductPartition,
+  type ExtractedCassette,
+  type LeafCassette,
+  type SeedingPlan,
   type ReplaySample,
 } from '@vostride/agent-qa-eval'
-import { slugBranch, type CrossCheck } from '@vostride/agent-qa-schema'
+import { BENEFITS, distilledScreenStateDigest, slugBranch, type Benefit, type CrossCheck, type GuardrailPolicy } from '@vostride/agent-qa-schema'
+import { z } from 'zod'
+import { assertCommittedEgressSafe, CommittedEgressBlockedError, defaultGuardrailPolicyInput, loadGuardrailPolicy, type AuditSink } from '@vostride/agent-qa-safety'
+import { loadCompletedRunHandoff, RUNS_SUBDIR, HANDOFF_FILE } from '@vostride/agent-qa-runner-local'
+import { FsRunArtifactSource } from './artifact-source.js'
+import { loadCassetteBundle } from './cassette-loader.js'
+import { loadCassetteBundles } from './replay-sweep.js'
+import { cassetteProductPartition } from './replay-batch-assembly.js'
+import { seedCommittedCorpus, type SeedingRefusal } from './seeding-composition.js'
 import { readCommittedCorpus } from './committed-corpus-source.js'
 import {
   locateTargetCassettes,
@@ -22,10 +41,226 @@ import { runCassetteReplay } from './replay-composition.js'
 import { FsReplayRecordStore } from './replay-record-store.js'
 import { FsScoreStore } from './score-store.js'
 import { loadScoreRecord } from './replay-read.js'
-import { buildRootMarkerValue, COMMITTED_ROOT_MARKER_FILE } from './committed-root-store.js'
+import { buildRootMarkerValue, COMMITTED_ROOT_MARKER_FILE, committedCassettePath, committedCorpusPath, committedLabelPath, committedBlobPath } from './committed-root-store.js'
 
 export const GATE2_AUDIT_SUBDIR = 'eval/gate2'
 export const GATE2_TARGET_SUBDIR = 'target'
+
+// 2026-09-08, 418 D-21: staging is local audit DATA. Only explicit admission calls the seeder.
+export const FEEDBACK_STAGING_SUBDIR = 'eval/feedback'
+export const FEEDBACK_EGRESS_CHANNEL = 'eval-feedback-staging'
+const feedbackSchema = z.object({
+  schemaVersion: z.literal(1), product: z.string().min(1), stateDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  attributedObservationId: z.string().min(1), benefit: z.enum(BENEFITS), candidateId: z.string().min(1),
+  runId: z.string().min(1), testId: z.string().min(1), stepIndex: z.number().int().nonnegative(),
+  stagedAt: z.iso.datetime(),
+}).strict()
+type FeedbackMetadata = z.infer<typeof feedbackSchema>
+export interface StagedFeedbackEntry extends FeedbackMetadata {
+  dir: string
+  extracted: ExtractedCassette & { cassette: LeafCassette }
+}
+export interface FeedbackStateInput {
+  agentQaRoot: string
+  committedRoot: string
+  product: string
+  stateDigest: string
+}
+export interface StageFeedbackEntryInput extends FeedbackStateInput {
+  target: { runId: string; testId: string; stepIndex: number }
+  attributedObservationId: string
+  benefit: Benefit
+  candidateId: string
+  policy?: GuardrailPolicy
+  auditSink?: AuditSink
+}
+export type StageFeedbackEntryResult =
+  | { kind: 'staged'; dir: string }
+  | { kind: 'already-staged' | 'not-novel' }
+  | { kind: 'egress-blocked' | 'target-unavailable' | 'write-conflict' }
+
+function feedbackDir(input: Omit<FeedbackStateInput, 'committedRoot'>): string {
+  if (!/^[0-9a-f]{64}$/.test(input.stateDigest)) throw new TypeError('invalid feedback state digest')
+  return join(realpathSync(input.agentQaRoot), FEEDBACK_STAGING_SUBDIR, slugBranch(input.product), input.stateDigest)
+}
+function pathPresent(path: string): boolean {
+  try { lstatSync(path); return true } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+/** Refuse links/wrong-kind ancestors rather than following local audit paths out of their root. */
+function requireDirectories(path: string): void {
+  const absolute = resolve(path)
+  const parent = dirname(absolute)
+  if (parent !== absolute) requireDirectories(parent)
+  if (pathPresent(absolute) && !lstatSync(absolute).isDirectory()) throw new TypeError('unsafe feedback directory')
+}
+function directoryNames(path: string): string[] {
+  requireDirectories(path)
+  if (!pathPresent(path)) return []
+  return readdirSync(path, { withFileTypes: true }).map(entry => {
+    if (!entry.isDirectory()) throw new TypeError('unexpected feedback path')
+    return entry.name
+  }).sort()
+}
+export function isNovelState(input: FeedbackStateInput): boolean {
+  const dir = feedbackDir(input)
+  requireDirectories(dirname(dir))
+  if (pathPresent(dir)) return false
+  const { corpus, result } = readDigestSnapshot(input.committedRoot)
+  if (result.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
+  const bundles = loadCassetteBundles(join(input.committedRoot, 'cassettes'))
+  if (Object.keys(bundles.loadRefusals).length > 0) throw new TypeError('feedback cassette unavailable')
+  const productIds = new Set(corpus.snapshot.entries.filter(entry => entry.product === input.product).map(entry => entry.cassetteId))
+  return !bundles.loaded.some(({ cassette }) => cassette.granularity === 'leaf'
+    && (productIds.has(cassette.id) || cassetteProductPartition(cassette) === input.product)
+    && distilledScreenStateDigest(cassette.input.stateBefore) === input.stateDigest)
+}
+
+export async function stageFeedbackEntry(input: StageFeedbackEntryInput): Promise<StageFeedbackEntryResult> {
+  let temporary: string | undefined
+  try {
+    const dir = feedbackDir(input)
+    requireDirectories(dirname(dir))
+    if (pathPresent(dir)) return { kind: 'already-staged' }
+    if (!isNovelState(input)) return { kind: 'not-novel' }
+    // Reuse the same pure extraction as Gate2, in memory. The old locator publishes before
+    // scanning, so calling its write leg here would violate the staging safety checkpoint.
+    const handoff = loadCompletedRunHandoff(join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(input.target.runId), HANDOFF_FILE))
+    if (handoff.runId !== input.target.runId || resolveProductPartition(handoff.scope) !== input.product
+      || handoff.tests.find(test => test.testId === input.target.testId)?.isRerun === true) return { kind: 'target-unavailable' }
+    const extraction = extractRunCassettes({ handoff, artifacts: new FsRunArtifactSource({ root: input.agentQaRoot, runId: handoff.runId }) })
+    const matches = extraction.cassettes.filter((entry): entry is ExtractedCassette & { cassette: LeafCassette } =>
+      entry.cassette.granularity === 'leaf' && entry.cassette.runId === input.target.runId
+      && entry.cassette.input.testId === input.target.testId && entry.cassette.stepIndex === input.target.stepIndex)
+    if (matches.length !== 1) return { kind: 'target-unavailable' }
+    const extracted = matches[0]!
+    if (distilledScreenStateDigest(extracted.cassette.input.stateBefore) !== input.stateDigest) return { kind: 'target-unavailable' }
+    const metadata = feedbackSchema.parse({ schemaVersion: 1, product: input.product, stateDigest: input.stateDigest,
+      attributedObservationId: input.attributedObservationId, benefit: input.benefit, candidateId: input.candidateId,
+      ...input.target, stagedAt: new Date().toISOString() })
+    const texts = assertCommittedEgressSafe([
+      { label: 'cassette', text: committedFileText(extracted.cassette) },
+      { label: 'feedback', text: committedFileText(metadata) },
+    ], { policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput), channel: FEEDBACK_EGRESS_CHANNEL, auditSink: input.auditSink })
+    for (const blob of extracted.blobs) {
+      if (!/^[0-9a-f]{64}$/.test(blob.sha) || createHash('sha256').update(blob.bytes).digest('hex') !== blob.sha) return { kind: 'target-unavailable' }
+    }
+    mkdirSync(dirname(dir), { recursive: true })
+    temporary = mkdtempSync(join(dirname(dir), '.pending-'))
+    writeFileSync(join(temporary, 'cassette.json'), texts[0]!, { flag: 'wx' })
+    writeFileSync(join(temporary, 'feedback.json'), texts[1]!, { flag: 'wx' })
+    if (extracted.blobs.length) mkdirSync(join(temporary, 'blobs'))
+    for (const blob of extracted.blobs) writeFileSync(join(temporary, 'blobs', blob.sha), blob.bytes, { flag: 'wx' })
+    // Rename only a fully validated bundle. Existing published bundles are nonempty and
+    // cannot be replaced by rename; a competitor is reported without a successful stage count.
+    if (pathPresent(dir)) return { kind: 'already-staged' }
+    renameSync(temporary, dir)
+    temporary = undefined
+    return { kind: 'staged', dir }
+  } catch (error) {
+    if (error instanceof CommittedEgressBlockedError) return { kind: 'egress-blocked' }
+    if (['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) return { kind: 'write-conflict' }
+    return { kind: 'target-unavailable' }
+  } finally {
+    if (temporary !== undefined) rmSync(temporary, { recursive: true, force: true })
+  }
+}
+
+export function listStagedFeedback(input: { agentQaRoot: string; product?: string }): StagedFeedbackEntry[] {
+  if (!pathPresent(input.agentQaRoot)) return []
+  const root = join(realpathSync(input.agentQaRoot), FEEDBACK_STAGING_SUBDIR)
+  const products = input.product === undefined ? directoryNames(root) : [slugBranch(input.product)]
+  const entries: StagedFeedbackEntry[] = []
+  for (const productSlug of products) for (const stateDigest of directoryNames(join(root, productSlug))) {
+    if (stateDigest.startsWith('.pending-')) continue
+    const dir = feedbackDir({ agentQaRoot: input.agentQaRoot, product: productSlug, stateDigest })
+    for (const name of ['feedback.json', 'cassette.json']) {
+      if (!lstatSync(join(dir, name)).isFile()) throw new TypeError('unsafe feedback file')
+    }
+    const metadata = feedbackSchema.parse(JSON.parse(readFileSync(join(dir, 'feedback.json'), 'utf8')))
+    if (slugBranch(metadata.product) !== productSlug || metadata.stateDigest !== stateDigest
+      || (input.product !== undefined && input.product !== metadata.product)) throw new TypeError('feedback path identity mismatch')
+    const bundle = loadCassetteBundle(dir)
+    if (bundle.kind !== 'loaded' || bundle.cassette.granularity !== 'leaf') throw new TypeError('feedback cassette unavailable')
+    const cassette = bundle.cassette
+    if (cassette.runId !== metadata.runId || cassette.input.testId !== metadata.testId || cassette.stepIndex !== metadata.stepIndex
+      || distilledScreenStateDigest(cassette.input.stateBefore) !== stateDigest) throw new TypeError('feedback provenance mismatch')
+    const blobs = directoryNamesForBlobs(join(dir, 'blobs'))
+    entries.push({ ...metadata, dir, extracted: { cassette, blobs } })
+  }
+  return entries
+}
+function directoryNamesForBlobs(dir: string): ExtractedCassette['blobs'] {
+  requireDirectories(dir)
+  if (!pathPresent(dir)) return []
+  return readdirSync(dir, { withFileTypes: true }).map(entry => {
+    if (!entry.isFile() || !/^[0-9a-f]{64}$/.test(entry.name)) throw new TypeError('invalid feedback blob')
+    const bytes = readFileSync(join(dir, entry.name))
+    if (createHash('sha256').update(bytes).digest('hex') !== entry.name) throw new TypeError('feedback blob mismatch')
+    return { sha: entry.name, bytes }
+  })
+}
+
+export interface AdmitStagedFeedbackResult {
+  entries: StagedFeedbackEntry[]
+  admitted: StagedFeedbackEntry[]
+  refusals: (SeedingRefusal & { product: string; runId: string })[]
+  previousCorpusDigest: string
+  nextCorpusDigest?: string
+}
+export async function admitStagedFeedback(input: {
+  agentQaRoot: string; committedRoot: string; product?: string; dryRun: boolean
+  policy?: GuardrailPolicy; auditSink?: AuditSink; seedingOutputBaseDir: string
+}): Promise<AdmitStagedFeedbackResult> {
+  const previous = readCommittedCorpusDigest(input)
+  if (previous.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
+  const entries = listStagedFeedback(input)
+  const batches = entries.map(entry => {
+    const cassette = entry.extracted.cassette
+    const plan: SeedingPlan = { product: entry.product, runId: entry.runId, runSlug: deriveRunSlug(entry.runId),
+      cases: [{ cassetteId: cassette.id, labelRecord: projectSilverLabelRecord({ cassette, runId: entry.runId }),
+        corpusEntry: projectCorpusEntry({ cassette, product: entry.product, runId: entry.runId,
+          assignment: assignSplit({ cassetteId: cassette.id, isFeedbackEntry: true }),
+          feedback: { attributedObservationId: entry.attributedObservationId, benefit: entry.benefit } }) }],
+      pairSkips: [], silverExclusions: [], pairCounts: { total: 0, sameState: 0, differingState: 0 }, proceduresExcludedCount: 0 }
+    return { plan, cassettes: [entry.extracted] }
+  })
+  const result: AdmitStagedFeedbackResult = { entries, admitted: [], refusals: [], previousCorpusDigest: previous.corpusDigest }
+  if (input.dryRun) return result
+  if (entries.length) {
+    const seeded = seedCommittedCorpus({ batches, committedRoot: input.committedRoot,
+      seedingOutputBaseDir: input.seedingOutputBaseDir, policy: input.policy, auditSink: input.auditSink })
+    for (const [index, report] of seeded.reports.entries()) {
+      const entry = entries[index]!
+      result.refusals.push(...report.refusals.map(refusal => ({ ...refusal, product: entry.product, runId: entry.runId })))
+      if (report.refusals.length) continue
+      const planCase = batches[index]!.plan.cases[0]!
+      const id = entry.extracted.cassette.id
+      const textParts = [
+        [committedCassettePath(entry.product, id), entry.extracted.cassette],
+        [committedCorpusPath(entry.product, id), planCase.corpusEntry],
+        [committedLabelPath(entry.product, id), planCase.labelRecord],
+      ] as const
+      let verified = false
+      try {
+        verified = textParts.every(([path, value]) => readFileSync(join(input.committedRoot, path), 'utf8') === committedFileText(value))
+          && entry.extracted.blobs.every(blob => readFileSync(join(input.committedRoot, committedBlobPath(entry.product, id, blob.sha))).equals(blob.bytes))
+      } catch { /* A missing or unreadable part is not admission; retain its staged source. */ }
+      if (!verified) {
+        result.refusals.push({ cassetteId: id, kind: 'write-conflict', path: committedCorpusPath(entry.product, id), product: entry.product, runId: entry.runId })
+        continue
+      }
+      result.admitted.push(entry)
+      rmSync(entry.dir, { recursive: true })
+    }
+  }
+  const next = readCommittedCorpusDigest(input)
+  if (next.kind !== 'digest') throw new TypeError('feedback corpus unavailable after admission')
+  result.nextCorpusDigest = next.corpusDigest
+  return result
+}
 
 export interface AblateCanaryStepInput {
   agentQaRoot: string

@@ -8,6 +8,7 @@ import * as llm from '../../llm-utils.js'
 import * as evalLocal from '@vostride/agent-qa-eval-local'
 import { createCanaryAblationForHost } from '../canary-ablation-host.js'
 import type { CanaryAblationInput } from '../../curation/canary-credit.js'
+import { distilledScreenStateDigest, slugBranch, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
 
 vi.mock('../../llm-utils.js', async (original) => ({
   ...await original<typeof import('../../llm-utils.js')>(),
@@ -37,6 +38,25 @@ afterEach(() => {
 })
 
 describe('418 lazy canary host bridge', () => {
+  it('binds real zero-call staging and novelty through the session to the local feedback tree', async () => {
+    const f = fixture()
+    const corpus = writeGate1Fixture(f.root, { targetInCorpus: false, handoffForTarget: true, proofBrief: true })
+    renameSync(corpus.committedRoot, join(f.root, 'agent-qa-eval'))
+    const handoffPath = join(f.agentQaRoot, 'runs', slugBranch(corpus.injection.target.runId), 'handoff.json')
+    const handoff = JSON.parse(readFileSync(handoffPath, 'utf8')) as CompletedRunHandoff
+    const state = handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore
+    state.url = 'https://feedback.example/host-new-state'
+    state.timestamp = 1_725_000_000
+    writeFileSync(handoffPath, JSON.stringify(handoff))
+    const host = createCanaryAblationForHost(f)
+    const address = { ...target, runId: String(handoff.runId), testId: handoff.tests[0]!.testId,
+      product: 'alpha', stateDigest: distilledScreenStateDigest(state), benefit: 'exercised-harmed' as const }
+    expect(await host.isNovel(address)).toBe(true)
+    expect(await host.stage(address)).toMatchObject({ kind: 'staged' })
+    expect(await host.isNovel(address)).toBe(false)
+    expect(evalLocal.listStagedFeedback({ agentQaRoot: f.agentQaRoot })).toHaveLength(1)
+    expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+  })
   it('composes configured k and seed, with input overrides, without a provider call', async () => {
     const f = fixture('registry:\n  llms:\n    - name: planner\n      provider: openai-compatible\n      model: fixture\n      baseURL: http://127.0.0.1:1/v1\neval:\n  k: 5\n  seed: 29\n')
     writeFileSync(f.configPath, readFileSync(f.configPath, 'utf8').replace('use:\n', 'use:\n  llm: planner\n'))
@@ -61,6 +81,8 @@ describe('418 lazy canary host bridge', () => {
     const host = createCanaryAblationForHost(fixture())
     expect(await host.ablate(target)).toEqual({ kind: 'no-eval-root' })
     expect(await host.corpusDigest()).toEqual({ kind: 'no-eval-root' })
+    expect(await host.isNovel({ product: 'alpha', stateDigest: 'a'.repeat(64) })).toBe(false)
+    expect(await host.stage({ ...target, product: 'alpha', stateDigest: 'a'.repeat(64), benefit: 'rode-along' })).toEqual({ kind: 'no-eval-root' })
     expect(llm.resolveModelAuth).not.toHaveBeenCalled()
   })
   it('reads the real committed digest without credentials', async () => {

@@ -26,7 +26,7 @@ function result(crossCheck: 'flipped' | 'held' | 'inconclusive' | 'not-run' = 'f
     spend: { modelCalls: 5, screens: 5, promptTokens: 10, completionTokens: 2 }, gate2Dir: '/tmp/gate2' }
 }
 function capability(value: CanaryAblationResult = result()): CanaryAblation {
-  return { ablate: vi.fn(async () => value),
+  return { isNovel: vi.fn(async () => false), stage: vi.fn(async () => ({ kind: 'staged' as const })), ablate: vi.fn(async () => value),
     corpusDigest: vi.fn(async () => ({ kind: 'digest' as const, corpusDigest: DIGEST })) }
 }
 function credit(attributions: ProjectedCanaryAttribution[], ablation?: CanaryAblation, overrides: Partial<CanaryCreditInput> = {}) {
@@ -36,6 +36,29 @@ function credit(attributions: ProjectedCanaryAttribution[], ablation?: CanaryAbl
     observationIdOf: () => 'fixture-observation', ...overrides })
 }
 describe('418 credit pass', () => {
+  it('stages benefited, rode-along and harmed without consuming another ablation', async () => {
+    const ablation = capability()
+    ablation.isNovel = vi.fn(async () => true)
+    const live: CompletedRunHandoff = { ...handoff, tests: [{ testId: 'checkout', testIndex: 0, testName: 'Checkout', filePath: 'checkout.yaml', outcome: 'passed',
+      steps: [{ stepIndex: 0, subActions: [{ stateBefore: makeScreenStateFixture() }] } as StepEvidence] }] }
+    const report = await credit([row('a'), row('b'), row('c', 'negative')], ablation, { handoff: live, maxAblations: 1 })
+    expect(ablation.stage).toHaveBeenCalledTimes(3)
+    expect(ablation.ablate).toHaveBeenCalledTimes(1)
+    expect(report.counters).toMatchObject({ staged: 3, stagingRefused: 0, credited: 1, ablationCapExceeded: 1 })
+    expect(vi.mocked(ablation.stage).mock.calls.map(([input]) => input.benefit)).toEqual(['exercised-benefited', 'rode-along', 'exercised-harmed'])
+    expect(report.attributions.every(attribution => attribution.staged === true)).toBe(true)
+  })
+  it.each(['stage-refuses', 'stage-throws', 'novelty-throws'] as const)('isolates %s from credit', async mode => {
+    const ablation = capability()
+    ablation.isNovel = async () => { if (mode === 'novelty-throws') throw new Error('refused'); return true }
+    ablation.stage = async () => { if (mode === 'stage-throws') throw new Error('refused'); return { kind: 'egress-blocked' } }
+    const live: CompletedRunHandoff = { ...handoff, tests: [{ testId: 'checkout', testIndex: 0, testName: 'Checkout', filePath: 'checkout.yaml', outcome: 'passed',
+      steps: [{ stepIndex: 0, subActions: [{ stateBefore: makeScreenStateFixture() }] } as StepEvidence] }] }
+    const report = await credit([row()], ablation, { handoff: live })
+    expect(report.counters).toMatchObject({ credited: 1, staged: 0, stagingRefused: 1 })
+    expect(report.attributions[0]).toMatchObject({ outcome: { benefit: 'exercised-benefited' } })
+    expect(report.attributions[0]).not.toHaveProperty('staged')
+  })
   it('caps two candidates at one attempt and keeps the pass-level corpusDigest: D on excess rows', async () => {
     const ablation = capability()
     const report = await credit([row('a'), row('b')], ablation, { maxAblations: 1 })

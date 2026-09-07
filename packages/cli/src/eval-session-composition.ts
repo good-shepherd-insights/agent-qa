@@ -82,6 +82,10 @@ import {
   FsScoreStore,
   assembleScoredBatch,
   ablateCanaryStep,
+  isNovelState,
+  stageFeedbackEntry,
+  admitStagedFeedback,
+  FEEDBACK_STAGING_SUBDIR,
   readCommittedCorpusDigest,
   cassetteProductPartition,
   commitCensus,
@@ -114,6 +118,7 @@ import type {
   RunNoiseFloorMeasurementResult,
   RunReleaseGateResult,
   SeedingRefusal,
+  StageFeedbackEntryInput,
   WriteBaselinePointerOutcome,
 } from '@vostride/agent-qa-eval-local'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
@@ -872,6 +877,19 @@ export async function runCanaryAblation(session: EvalSession, input: RunCanaryAb
     replay: { profile: planner.profile, auth: planner.auth,
       modelOverrides: input.plannerOverrides, maskingContextFactory: execution.maskingContextFactory },
   })
+}
+
+export function isFeedbackStateNovel(session: EvalSession, input: { agentQaRoot: string; product: string; stateDigest: string }): boolean {
+  const digest = readCanaryCorpusDigest(session)
+  if (digest.kind === 'no-eval-root') return false
+  if (digest.kind !== 'digest') throw new TypeError('feedback corpus unavailable')
+  return isNovelState({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval') })
+}
+export async function runFeedbackStaging(session: EvalSession, input: Omit<StageFeedbackEntryInput, 'committedRoot' | 'policy' | 'auditSink'>) {
+  const digest = readCanaryCorpusDigest(session)
+  if (digest.kind !== 'digest') return digest
+  return stageFeedbackEntry({ ...input, committedRoot: resolve(session.configDir, 'agent-qa-eval'),
+    auditSink: new JsonlAuditSink(join(input.agentQaRoot, 'eval/audit/feedback', slugBranch(input.attributedObservationId))) })
 }
 
 // Preserve the existing eval composition boundary; the DATA bridge imports this lazily.

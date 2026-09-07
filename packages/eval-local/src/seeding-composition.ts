@@ -50,6 +50,7 @@ import {
   assertCommittedEgressSafe,
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
+  type AuditSink,
 } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
@@ -82,6 +83,7 @@ export interface SeedCommittedCorpusInput {
   seedingOutputBaseDir: string
   /** Guardrail policy; defaults to the shipped default input, injectable for tests. */
   policy?: GuardrailPolicy
+  auditSink?: AuditSink
 }
 
 export type SeedingRefusal =
@@ -125,9 +127,28 @@ export interface SeedingReport {
  * (D-04), then each case as an atomic checkpoint-then-preview-then-write unit (D-14/D-17).
  * Blocked or conflicted cases refuse atomically; the batch always runs to completion.
  */
-export function seedCommittedCorpus(input: SeedCommittedCorpusInput): SeedingReport {
+/** 2026-09-08, 418 D-21: one reviewed invocation may contain several actual product/run plans.
+ * The existing per-case sequential writer remains the unit; no whole-root transaction is implied.
+ */
+export interface SeedCommittedCorpusBatchInput extends Omit<SeedCommittedCorpusInput, 'plan' | 'cassettes'> {
+  batches: readonly Pick<SeedCommittedCorpusInput, 'plan' | 'cassettes'>[]
+}
+export interface SeedingBatchReport {
+  reports: SeedingReport[]
+}
+export function seedCommittedCorpus(input: SeedCommittedCorpusBatchInput): SeedingBatchReport
+// Keep the original signature last: existing ReturnType/Parameters consumers retain their contract.
+export function seedCommittedCorpus(input: SeedCommittedCorpusInput): SeedingReport
+export function seedCommittedCorpus(input: SeedCommittedCorpusInput | SeedCommittedCorpusBatchInput): SeedingReport | SeedingBatchReport {
+  if ('batches' in input) {
+    return { reports: input.batches.map(batch => executeSeedingPlan({ ...input, ...batch })) }
+  }
+  return executeSeedingPlan(input)
+}
+
+function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
   const store = new FsCommittedRootStore({ committedRoot: input.committedRoot })
-  const auditSink = new JsonlAuditSink(input.seedingOutputBaseDir)
+  const auditSink = input.auditSink ?? new JsonlAuditSink(input.seedingOutputBaseDir)
   const policy = input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput)
   const checkpointOpts = { policy, channel: SEEDING_EGRESS_CHANNEL, auditSink }
 
@@ -215,6 +236,12 @@ export function seedCommittedCorpus(input: SeedCommittedCorpusInput): SeedingRep
     const outcomes: CommittedWriteOutcome[] = texts.map((candidate) =>
       store.writeText(candidate.relPath, candidate.text),
     )
+    // A writer can race the preview. Do not count partially written text as admission.
+    const textConflict = outcomes.find(outcome => outcome.kind === 'write-conflict')
+    if (textConflict?.kind === 'write-conflict') {
+      refusals.push({ cassetteId, kind: 'write-conflict', path: textConflict.path })
+      continue
+    }
     // Blob bytes bypass the checkpoint (binary, ignore-covered, D-15); the store verifies
     // sha format + byte hash before landing. A verification refusal is surfaced typed.
     let blobConflictPath: string | undefined

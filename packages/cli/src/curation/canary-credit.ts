@@ -1,5 +1,5 @@
 // 2026-09-07, 418 D-01: the credit pass; DATA crosses the eval/knowledge wall here.
-import type { CanaryOutcome, CompletedRunHandoff, CrossCheck } from '@vostride/agent-qa-schema'
+import type { Benefit, CanaryOutcome, CompletedRunHandoff, CrossCheck } from '@vostride/agent-qa-schema'
 import { distilledScreenStateDigest } from '@vostride/agent-qa-schema'
 import type { LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import type { NonSignalClass, ProjectedCanaryAttribution } from './emit-canary-outcomes.js'
@@ -42,6 +42,11 @@ export type CanaryCorpusDigestResult =
   | { kind: 'unavailable', reason: string }
 
 export interface CanaryAblation {
+  isNovel(input: { product: string; stateDigest: string }): Promise<boolean>
+  stage(input: CanaryAblationInput & { product: string; stateDigest: string; benefit: Benefit }): Promise<
+    { kind: 'staged' | 'already-staged' | 'not-novel' | 'no-eval-root' | 'egress-blocked' | 'target-unavailable' | 'write-conflict' }
+    | { kind: 'unavailable'; reason: string } | { kind: 'error'; message: string }
+  >
   ablate(input: CanaryAblationInput): Promise<CanaryAblationResult>
   corpusDigest(): Promise<CanaryCorpusDigestResult>
   resolveCaps?(): Promise<{ maxAblations: number; source: string }>
@@ -67,6 +72,7 @@ export function emptyCanaryCreditCounters(): CanaryCreditCounters {
 }
 
 export type CreditedCanaryAttribution = ProjectedCanaryAttribution & {
+  staged?: true
   crossCheck?: CrossCheck
   corpusDigestMoved?: true
 }
@@ -172,7 +178,23 @@ export async function creditCanaryAttributions(
         }
       }
     }
-    attributions.push({ ...row, outcome, crossCheck,
+    let staged: true | undefined
+    if (served && input.ablation !== undefined && outcome.observedStateDigest !== undefined) {
+      try {
+        const product = input.handoff.scope.tier === 'product' && input.handoff.scope.key !== '' && input.handoff.scope.key !== 'unknown'
+          ? input.handoff.scope.key : 'default'
+        const stateDigest = outcome.observedStateDigest
+        if (await input.ablation.isNovel({ product, stateDigest })) {
+          const stage = await input.ablation.stage({ handoff: input.handoff, runDir: input.runDir,
+            candidateId: outcome.candidateId, runId: outcome.runId, testId: outcome.testId,
+            testIndex: outcome.testIndex, stepIndex: outcome.stepIndex,
+            attributedObservationId: input.observationIdOf(outcome), product, stateDigest, benefit: outcome.benefit })
+          if (stage.kind === 'staged') { counters.staged += 1; staged = true }
+          else if (!['already-staged', 'not-novel', 'no-eval-root'].includes(stage.kind)) counters.stagingRefused += 1
+        }
+      } catch { counters.stagingRefused += 1 }
+    }
+    attributions.push({ ...row, outcome, crossCheck, ...(staged === undefined ? {} : { staged }),
       ...(corpusDigestMoved === undefined ? {} : { corpusDigestMoved }) })
   }
   return { attributions, counters }

@@ -1,9 +1,9 @@
 import { mkdtempSync, readFileSync, writeFileSync, readdirSync, rmSync, mkdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
-import { computeCorpusDigest } from '@vostride/agent-qa-eval'
-import { computeBriefDigest, slugBranch, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { assignSplit, computeCorpusDigest } from '@vostride/agent-qa-eval'
+import { asRunId, computeBriefDigest, distilledScreenStateDigest, slugBranch, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { ablateCanaryStep, readCommittedCorpusDigest, GATE2_AUDIT_SUBDIR } from '../index.js'
 import { readCommittedCorpus } from '../committed-corpus-source.js'
@@ -12,9 +12,149 @@ import { loadCassetteBundles } from '../replay-sweep.js'
 import { buildRootMarkerValue } from '../committed-root-store.js'
 import { writeGate1Fixture } from './fixtures/gate1-fixtures.js'
 import { actionGenerateResult, respondingStub, stubProfile, noneAuth } from './fixtures/replay-fixtures.js'
+import { stageFeedbackEntry, isNovelState, listStagedFeedback, admitStagedFeedback } from '../gate2-composition.js'
+import * as seeding from '../seeding-composition.js'
+import { committedCorpusPath } from '../committed-root-store.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+
+function feedbackInput(f: ReturnType<typeof fixture>, route = 'novel') {
+  f.step.subActions[0]!.stateBefore.url = `https://feedback.example/${route}`
+  f.step.subActions[0]!.stateBefore.timestamp = 1_725_000_000
+  f.save()
+  return { agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot,
+    product: f.handoff.scope.key, target: { runId: String(f.handoff.runId), testId: f.handoff.tests[0]!.testId, stepIndex: 0 },
+    attributedObservationId: 'fixture-feedback-observation', benefit: 'rode-along' as const,
+    candidateId: f.line.id, stateDigest: distilledScreenStateDigest(f.step.subActions[0]!.stateBefore) }
+}
+function admissionInput(f: ReturnType<typeof fixture>, dryRun = false) {
+  return { agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot, dryRun,
+    seedingOutputBaseDir: join(f.agentQaRoot, 'eval/audit/seed-feedback') }
+}
+
+describe('418 feedback staging and explicit admission', () => {
+  it('rechecks staged text on eval-seeding and retains egress-refused entries', async () => {
+    const f = fixture()
+    expect(await stageFeedbackEntry(feedbackInput(f))).toMatchObject({ kind: 'staged' })
+    const [entry] = listStagedFeedback({ agentQaRoot: f.agentQaRoot })
+    const cassette = entry!.extracted.cassette
+    cassette.input.stepText = 'AKIAIOSFODNN7EXAMPLE'
+    writeFileSync(join(entry!.dir, 'cassette.json'), JSON.stringify(cassette))
+    const result = await admitStagedFeedback(admissionInput(f))
+    expect(result.admitted).toEqual([])
+    expect(result.refusals).toMatchObject([{ kind: 'egress-blocked', cassetteId: cassette.id }])
+    expect(listStagedFeedback({ agentQaRoot: f.agentQaRoot })).toHaveLength(1)
+    expect(result.nextCorpusDigest).toBe(result.previousCorpusDigest)
+  })
+  it('checks committed novelty, publishes write-once locally, and never changes committed bytes', async () => {
+    const f = fixture({ targetInCorpus: true })
+    const committed = loadCassetteBundles(join(f.committedRoot, 'cassettes')).loaded.find(b => b.cassette.granularity === 'leaf')!
+    if (committed.cassette.granularity !== 'leaf') throw new Error('leaf expected')
+    const input = feedbackInput(f)
+    expect(isNovelState({ ...input, stateDigest: distilledScreenStateDigest(committed.cassette.input.stateBefore) })).toBe(false)
+    const before = tree(f.committedRoot)
+    expect(isNovelState(input)).toBe(true)
+    expect(await stageFeedbackEntry(input)).toMatchObject({ kind: 'staged' })
+    const staged = listStagedFeedback(input)
+    expect(staged).toHaveLength(1)
+    expect(Object.keys(tree(staged[0]!.dir)).sort()).toContain('cassette.json')
+    expect(Object.keys(tree(staged[0]!.dir))).toContain('feedback.json')
+    expect(staged[0]!.dir).toContain(`/eval/feedback/${slugBranch(input.product)}/${input.stateDigest}`)
+    const bytes = tree(f.agentQaRoot)
+    expect(isNovelState(input)).toBe(false)
+    expect(await stageFeedbackEntry(input)).toEqual({ kind: 'already-staged' })
+    expect(tree(f.agentQaRoot)).toEqual(bytes)
+    expect(tree(f.committedRoot)).toEqual(before)
+  })
+  it.each(['egress', 'digest', 'wrong-product', 'wrong-run', 'rerun', 'ambiguous'] as const)('refuses %s before any publication', async mode => {
+    const f = fixture()
+    const input = feedbackInput(f)
+    if (mode === 'egress') f.step.stepText = 'AKIAIOSFODNN7EXAMPLE'
+    if (mode === 'digest') input.stateDigest = '../outside'
+    if (mode === 'wrong-product') input.product = 'other-product'
+    if (mode === 'wrong-run') input.target.runId = 'another-run'
+    if (mode === 'rerun') f.handoff.tests[0]!.isRerun = true
+    if (mode === 'ambiguous') f.step.subActions.push(structuredClone(f.step.subActions[0]!))
+    f.save()
+    const runtime = tree(f.agentQaRoot)
+    const committed = tree(f.committedRoot)
+    const auditSink = { appendGuardrailAudit: vi.fn(), appendExecutionAudit: vi.fn() }
+    expect(await stageFeedbackEntry({ ...input, auditSink })).toEqual({ kind: mode === 'egress' ? 'egress-blocked' : 'target-unavailable' })
+    expect(listStagedFeedback({ agentQaRoot: f.agentQaRoot })).toEqual([])
+    expect(tree(f.agentQaRoot)).toEqual(runtime)
+    expect(tree(f.committedRoot)).toEqual(committed)
+    if (mode === 'egress') expect(auditSink.appendGuardrailAudit).toHaveBeenCalledWith(expect.objectContaining({ channel: 'eval-feedback-staging:cassette' }))
+  })
+  it('admits a mixed-product and mixed-run batch once with real provenance, natural splits and unchanged labels', async () => {
+    const f = fixture()
+    const first = feedbackInput(f, 'one')
+    expect(await stageFeedbackEntry(first)).toMatchObject({ kind: 'staged' })
+    f.handoff.runId = asRunId(`${f.handoff.runId}-second`)
+    f.handoff.buildOrdinal += 1
+    f.handoff.scope = { tier: 'product', key: 'second/product' }
+    const runDir = join(f.agentQaRoot, 'runs', slugBranch(f.handoff.runId))
+    mkdirSync(runDir, { recursive: true })
+    const second = feedbackInput(f, 'two')
+    writeFileSync(join(runDir, 'handoff.json'), JSON.stringify(f.handoff))
+    expect(await stageFeedbackEntry(second)).toMatchObject({ kind: 'staged' })
+    const entries = listStagedFeedback({ agentQaRoot: f.agentQaRoot })
+    const heldOut = assignSplit({ cassetteId: entries[0]!.extracted.cassette.id, saltHex: '0'.repeat(64), heldOutFraction: 0.999999, privateFraction: 0.999999, isPairMember: false })
+    expect(heldOut.split).toBe('held-out')
+    const runtime = tree(f.agentQaRoot), committed = tree(f.committedRoot)
+    const dry = await admitStagedFeedback(admissionInput(f, true))
+    expect(dry.entries).toHaveLength(2)
+    expect(dry.admitted).toHaveLength(0)
+    expect(dry).not.toHaveProperty('nextCorpusDigest')
+    expect(tree(f.agentQaRoot)).toEqual(runtime)
+    expect(tree(f.committedRoot)).toEqual(committed)
+    const seed = vi.spyOn(seeding, 'seedCommittedCorpus')
+    const result = await admitStagedFeedback(admissionInput(f))
+    expect(seed).toHaveBeenCalledTimes(1)
+    expect(result.refusals).toEqual([])
+    expect(result.admitted).toHaveLength(2)
+    expect(result.nextCorpusDigest).not.toBe(result.previousCorpusDigest)
+    for (const entry of result.admitted) {
+      const corpusEntry = JSON.parse(readFileSync(join(f.committedRoot, committedCorpusPath(entry.product, entry.extracted.cassette.id)), 'utf8'))
+      expect(corpusEntry).toMatchObject({ split: 'natural', product: entry.product, source: 'canary-feedback',
+        attributedObservationId: entry.attributedObservationId, benefit: entry.benefit,
+        run_links: { runId: entry.runId, runSlug: slugBranch(entry.runId) }, captured_at_ordinal: entry.extracted.cassette.receipt.buildOrdinal })
+      expect(Number.isInteger(corpusEntry.captured_at_ordinal)).toBe(true)
+      expect(corpusEntry.run_links.runId).not.toBe('')
+      expect(isNovelState({ agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot, product: entry.product, stateDigest: entry.stateDigest })).toBe(false)
+    }
+    const after = tree(f.committedRoot)
+    const rerun = await admitStagedFeedback(admissionInput(f))
+    expect(rerun.entries).toEqual([])
+    expect(rerun.nextCorpusDigest).toBe(result.nextCorpusDigest)
+    expect(tree(f.committedRoot)).toEqual(after)
+    expect(seed).toHaveBeenCalledTimes(1)
+    seed.mockRestore()
+  })
+  it('retains a refused case while admitting the other case, without inferring success from aggregate counts', async () => {
+    const f = fixture()
+    expect(await stageFeedbackEntry(feedbackInput(f, 'one'))).toMatchObject({ kind: 'staged' })
+    // Same run, new decision id and state: the stored entry remains the original immutable snapshot.
+    f.step.stepIndex = 1
+    const second = { ...feedbackInput(f, 'two'), target: { runId: String(f.handoff.runId), testId: f.handoff.tests[0]!.testId, stepIndex: 1 } }
+    expect(await stageFeedbackEntry(second)).toMatchObject({ kind: 'staged' })
+    const entries = listStagedFeedback({ agentQaRoot: f.agentQaRoot })
+    const refused = entries[0]!
+    const path = join(f.committedRoot, committedCorpusPath(refused.product, refused.extracted.cassette.id))
+    // Plant valid conflicting corpus bytes, so the digest read itself remains valid.
+    const dry = await admitStagedFeedback(admissionInput(f, true))
+    expect(dry.entries).toHaveLength(2)
+    const { projectCorpusEntry } = await import('@vostride/agent-qa-eval')
+    mkdirSync(join(path, '..'), { recursive: true })
+    writeFileSync(path, JSON.stringify(projectCorpusEntry({ cassette: refused.extracted.cassette, product: refused.product,
+      runId: refused.runId, assignment: { split: 'natural' } })))
+    const result = await admitStagedFeedback(admissionInput(f))
+    expect(result.admitted).toHaveLength(1)
+    expect(result.refusals).toHaveLength(1)
+    expect(result.refusals[0]).toMatchObject({ cassetteId: refused.extracted.cassette.id, kind: 'write-conflict' })
+    expect(listStagedFeedback({ agentQaRoot: f.agentQaRoot }).map(entry => entry.dir)).toEqual([refused.dir])
+  })
+})
 
 function tree(root: string) {
   return Object.fromEntries(readdirSync(root, { recursive: true, withFileTypes: true })

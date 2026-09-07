@@ -464,6 +464,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     const info = vi.fn()
     const operations = successfulOperations({
       canaryAblation: {
+        isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' as const }),
         ablate: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
         corpusDigest: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
         resolveCaps: vi.fn(async () => ({ maxAblations: 2, source: 'config' })),

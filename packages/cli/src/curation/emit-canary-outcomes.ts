@@ -128,6 +128,7 @@ export type EmitCanaryOutcomeResult =
     }
 
 export type EmitCanaryOutcomeDetail = {
+  staged?: never
   benefit?: never
   crossCheck?: never
   corpusDigestMoved?: never
@@ -137,6 +138,7 @@ export type EmitCanaryOutcomeDetail = {
   testIndex: number
   outcome: { kind: 'rerun-excluded' }
 } | {
+  staged?: true
   benefit: CanaryOutcome['benefit']
   crossCheck?: CrossCheck
   corpusDigestMoved?: true
@@ -567,6 +569,7 @@ export async function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): Promi
     report.details.push({
       benefit: attribution.outcome.benefit,
       crossCheck: attribution.crossCheck ?? 'not-run',
+      ...(attribution.staged === undefined ? {} : { staged: attribution.staged }),
       ...(attribution.corpusDigestMoved === undefined ? {} : { corpusDigestMoved: attribution.corpusDigestMoved }),
       candidateId: attribution.outcome.candidateId,
       testId: attribution.outcome.testId,
