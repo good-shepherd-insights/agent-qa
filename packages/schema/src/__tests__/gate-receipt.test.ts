@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { CandidateInjectionSchema, KnowledgeCandidateInjectionResultSchema } from '../knowledge/candidate-injection'
 import {
   GateReceiptSchema, PromotionReceiptSchema, receiptDigestOf, stampReceiptDigest,
   standingReceiptsByGate, strongestPromotionPath,
@@ -25,6 +26,83 @@ function gate2() {
     corpusVersion: { corpusDigest: 'c'.repeat(64) },
     benefit: 'exercised-benefited' as const, stateValidity: 'valid' as const })
 }
+
+function completeGate1() {
+  return { ...gate1(), reasons: [], crossCheck: 'flipped',
+    cap: { maxScreens: 50 },
+    spend: { screens: 8, modelCalls: 8, promptTokens: 100, completionTokens: 20, wallClockMs: 500 },
+    kSource: 'default',
+    targets: [{ cassetteId: 'cassette', stepIndex: 0, decisionOrdinal: 0, runId: 'run',
+      source: 'committed', baselineCorrect: false, candidateCorrect: true,
+      baselineBriefSource: 'proof', candidateBriefSource: 'proof' }],
+    harmed: [], unverifiedFlips: [],
+    population: { proof: 5, empty: 1, rendered: 2, refused: 0, renderedExcluded: 2 },
+    floorAbsentAxes: ['loop'],
+    productFloor: { product: 'checkout', axes: [{ axis: 'headline', floor: 0.1, n: 5 },
+      { axis: 'loop', floor: null, n: 0 }] },
+    generalization: { liftDecisions: 1, minimumLiftDecisions: 3 },
+    baselineSource: { runRoot: 'local/replay', seed: 11, seedSource: 'floor' },
+    judge: { eligibility: 'no-judge-configured', overrideConfigured: false },
+    samples: { k: 3, seeds: [11, 12, 13], seedHonored: true, modelCalls: 6,
+      detail: [{ withRecord: true, seed: 11, matchesGold: true, kind: 'action' },
+        { withRecord: false, seed: 11, matchesGold: false, kind: 'action' }] },
+  }
+}
+
+describe('417 additive Gate-1 contract', () => {
+  it('round-trips every new field and preserves the historical complete arm', () => {
+    expect(GateReceiptSchema.parse(completeGate1())).toEqual(completeGate1())
+    expect(GateReceiptSchema.parse(gate1())).toEqual(gate1())
+  })
+  it('records a zero-screen baseline-uncached abstention', () => {
+    const receipt = { ...completeGate1(), verdict: 'abstain', reasons: ['baseline-uncached'],
+      crossCheck: 'not-run', spend: { screens: 0, modelCalls: 0, promptTokens: 0,
+        completionTokens: 0, wallClockMs: 0 } }
+    expect(GateReceiptSchema.parse(receipt)).toEqual(receipt)
+  })
+  it('accepts extracted sibling harm without split or held-out visibility', () => {
+    const harmed = [{ cassetteId: 'target', decisionOrdinal: 1, origin: 'target-step',
+      verdictPresent: true, axes: ['headline'] }]
+    expect(GateReceiptSchema.parse({ ...completeGate1(), harmed })).toMatchObject({ harmed })
+  })
+  it('refuses unknown reasons, empty harm axes, invalid caps and unknown nested fields', () => {
+    const base = completeGate1()
+    const harm = { cassetteId: 'c', decisionOrdinal: 0, origin: 'gate-set',
+      verdictPresent: true, axes: [] }
+    for (const value of [
+      { ...base, reasons: ['bogus'] }, { ...base, cap: { maxScreens: 0 } },
+      { ...base, harmed: [harm] }, { ...base, spend: { ...base.spend, extra: 1 } },
+      { ...base, targets: [{ ...base.targets[0], extra: 1 }] },
+      { ...base, population: { ...base.population, extra: 1 } },
+      { ...base, productFloor: { ...base.productFloor, extra: 1 } },
+      { ...base, generalization: { ...base.generalization, extra: 1 } },
+      { ...base, baselineSource: { ...base.baselineSource, extra: 1 } },
+      { ...base, judge: { ...base.judge, extra: 1 } },
+      { ...base, samples: { ...base.samples, detail: [{ ...base.samples.detail[0], extra: 1 }] } },
+      { ...base, scalarScore: 1 },
+    ]) expect(GateReceiptSchema.safeParse(value).success).toBe(false)
+  })
+  it('round-trips candidate DATA and absence, refusing missing rendered bytes and unknown keys', () => {
+    const injection = { candidateId: 'candidate', kind: 'fact', product: 'checkout',
+      scope: { tier: 'product', key: 'checkout' }, anchors: [], status: 'candidate',
+      line: { id: 'candidate', kind: 'fact', summary: 'Checkout', trust: 0.5,
+        status: 'candidate', servedAsCanary: false, tier: 'L2' },
+      renderedLine: '[observation] Checkout',
+      provenance: { runIds: ['run'], receiptDigests: [], capturedAtOrdinals: [42] },
+      target: { runId: 'run', stepIndex: 0, testId: 'test', sourceBuildOrdinal: 42 },
+      latestOrdinal: 42 }
+    expect(CandidateInjectionSchema.parse(injection)).toEqual(injection)
+    const { renderedLine: _renderedLine, ...missing } = injection
+    for (const value of [missing, { ...injection, renderedLine: '' }, { ...injection, extra: 1 },
+      { ...injection, target: { ...injection.target, extra: 1 } },
+      { ...injection, provenance: { ...injection.provenance, extra: 1 } },
+      { ...injection, line: { ...injection.line, extra: 1 } },
+    ]) expect(CandidateInjectionSchema.safeParse(value).success).toBe(false)
+    for (const result of [{ kind: 'found', injection }, { kind: 'not-found', recordId: 'missing' }]) {
+      expect(KnowledgeCandidateInjectionResultSchema.parse(result)).toEqual(result)
+    }
+  })
+})
 function gate3() {
   return stampReceiptDigest({ ...core(), gate: 3 as const, runId: 'run', stepId: 'step',
     mark: 'confirmed-bug' as const })

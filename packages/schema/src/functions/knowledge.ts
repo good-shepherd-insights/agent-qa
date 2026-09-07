@@ -78,6 +78,9 @@ const bundleStatusValues = [
   'deprecated',
 ] as const satisfies readonly BundleStatus[]
 
+export const BundleKindSchema = z.enum(bundleKindValues)
+export const BundleStatusSchema = z.enum(bundleStatusValues)
+
 const scopeKeySchema = z.object({
   tier: z.enum(scopeTierValues),
   key: z.string(),
@@ -94,10 +97,10 @@ export const KnowledgeBundleSummarySchema = z.object({
   bundleId: z.string(),
   product: z.string(),
   dir: z.string(),
-  kind: z.enum(bundleKindValues),
+  kind: BundleKindSchema,
   subtype: z.enum(factSubtypeValues).optional(),
   scope: scopeKeySchema,
-  status: z.enum(bundleStatusValues),
+  status: BundleStatusSchema,
   trust: z.number().min(0).max(1),
   counters: trustCountersSchema,
   openedAtOrdinal: z.number().int().nonnegative(),

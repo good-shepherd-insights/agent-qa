@@ -3,6 +3,7 @@ import { canonicalJson } from '../determinism/canonical-json'
 import { sha256hex } from '../determinism/sha256'
 import { PROMOTION_PATHS, strongerPromotionPath, type PromotionPath } from './promotion-path'
 
+// 2026-09-07, 417 D-19/D-20: additive optional fields; no persisted Gate-1 lines predate this widening.
 export const GATE_RECEIPT_SCHEMA_VERSION = 1
 export type GateNumber = 1 | 2 | 3
 export type GateVerdict = 'pass' | 'fail' | 'abstain'
@@ -20,6 +21,21 @@ export const CROSS_CHECKS = ['flipped', 'held', 'inconclusive', 'not-run'] as co
 export type Degradation = 'replay-diff' | 'tier-not-implemented'
 // prettier-ignore
 export const DEGRADATIONS = ['replay-diff', 'tier-not-implemented'] as const satisfies readonly Degradation[]
+// 2026-09-07, 417 D-02/D-06/D-09/D-13/D-19/D-20: declaration order is precedence.
+// The first applicable reason decides; same-family-refused is disclosure-only and never decides.
+export type Gate1Reason = 'tier-not-implemented' | 'unprovenanced-candidate' | 'empty-gate-set' | 'target-unavailable' | 'baseline-uncached' | 'collateral-unscorable' | 'cap-exceeded' | 'no-positive-value' | 'collateral-harm' | 'target-not-reproduced' | 'inconclusive' | 'same-family-refused'
+// prettier-ignore
+export const GATE1_REASONS = ['tier-not-implemented', 'unprovenanced-candidate', 'empty-gate-set', 'target-unavailable', 'baseline-uncached', 'collateral-unscorable', 'cap-exceeded', 'no-positive-value', 'collateral-harm', 'target-not-reproduced', 'inconclusive', 'same-family-refused'] as const satisfies readonly Gate1Reason[]
+export type Gate1TargetSource = 'committed' | 'extracted'
+// prettier-ignore
+export const GATE1_TARGET_SOURCES = ['committed', 'extracted'] as const satisfies readonly Gate1TargetSource[]
+export type Gate1KSource = 'flag' | 'config' | 'default'
+// prettier-ignore
+export const GATE1_K_SOURCES = ['flag', 'config', 'default'] as const satisfies readonly Gate1KSource[]
+// 417 D-01/D-03: post-exclusion collateral versus siblings at the target's step.
+export type Gate1HarmOrigin = 'gate-set' | 'target-step'
+// prettier-ignore
+export const GATE1_HARM_ORIGINS = ['gate-set', 'target-step'] as const satisfies readonly Gate1HarmOrigin[]
 export type Benefit = 'exercised-benefited' | 'rode-along' | 'exercised-harmed'
 // prettier-ignore
 export const BENEFITS = ['exercised-benefited', 'rode-along', 'exercised-harmed'] as const satisfies readonly Benefit[]
@@ -30,6 +46,25 @@ export type StateValidity = 'valid' | 'stale' | 'unknown'
 // prettier-ignore
 export const STATE_VALIDITIES = ['valid', 'stale', 'unknown'] as const satisfies readonly StateValidity[]
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/)
+const count = z.number().int().nonnegative()
+export const gate1CapSchema = z.object({ maxScreens: z.number().int().min(1) }).strict()
+export const gate1SpendSchema = z.object({
+  screens: count, modelCalls: count, promptTokens: count, completionTokens: count, wallClockMs: count,
+}).strict()
+export const gate1TargetSchema = z.object({
+  cassetteId: z.string().min(1), stepIndex: count, decisionOrdinal: count,
+  runId: z.string().min(1), source: z.enum(GATE1_TARGET_SOURCES),
+  baselineCorrect: z.boolean(), candidateCorrect: z.boolean(),
+  baselineBriefSource: z.string(), candidateBriefSource: z.string(),
+}).strict()
+// Mirror LabelTier, LabelSourceChannel and CorpusEntry split/heldOutVisibility without importing eval.
+// Extracted target-step siblings have no CorpusEntry, so split and visibility are optional.
+export const gate1HarmedSchema = z.object({
+  cassetteId: z.string().min(1), stepIndex: count.optional(), decisionOrdinal: count,
+  origin: z.enum(GATE1_HARM_ORIGINS), labelTier: z.string().optional(),
+  sourceChannel: z.string().optional(), verdictPresent: z.boolean(), split: z.string().optional(),
+  heldOutVisibility: z.string().optional(), axes: z.array(z.enum(PER_AXIS_SCORE_AXES)).min(1),
+}).strict()
 export const axisScoreSchema = z.object({
   baseline: z.number(), candidate: z.number(), delta: z.number(), floor: z.number(),
   n: z.number().int().nonnegative(),
@@ -48,6 +83,9 @@ export const corpusVersionSchema = z.object({
 export const samplesSchema = z.object({
   k: z.number().int().min(1), seeds: z.array(z.number().int()), seedHonored: z.boolean(),
   modelCalls: z.number().int().nonnegative(),
+  detail: z.array(z.object({
+    withRecord: z.boolean(), seed: z.number().int(), matchesGold: z.boolean(), kind: z.string(),
+  }).strict()).optional(),
 }).strict()
 export const noiseFloorRefSchema = z.object({
   profileKey: z.string().min(1), corpusDigest: sha256,
@@ -66,6 +104,30 @@ export const gate1ArmSchema = z.object({
   corpusVersion: corpusVersionSchema, samples: samplesSchema, crossCheck: z.enum(CROSS_CHECKS),
   judgeId: z.string().optional(), degradation: z.enum(DEGRADATIONS).optional(),
   noiseFloorRef: noiseFloorRefSchema.optional(),
+  reasons: z.array(z.enum(GATE1_REASONS)).optional(),
+  cap: gate1CapSchema.optional(),
+  spend: gate1SpendSchema.optional(),
+  kSource: z.enum(GATE1_K_SOURCES).optional(),
+  targets: z.array(gate1TargetSchema).optional(),
+  harmed: z.array(gate1HarmedSchema).optional(),
+  unverifiedFlips: z.array(gate1HarmedSchema).optional(),
+  population: z.object({
+    proof: count, empty: count, rendered: count, refused: count, renderedExcluded: count,
+  }).strict().optional(),
+  floorAbsentAxes: z.array(z.enum(PER_AXIS_SCORE_AXES)).optional(),
+  productFloor: z.object({
+    product: z.string(), axes: z.array(z.object({
+      axis: z.enum(PER_AXIS_SCORE_AXES), floor: z.number().nullable(), n: count,
+    }).strict()),
+  }).strict().optional(),
+  generalization: z.object({
+    ratio: z.number().optional(), ci: z.tuple([z.number(), z.number()]).optional(),
+    liftDecisions: count, minimumLiftDecisions: count,
+  }).strict().optional(),
+  baselineSource: z.object({
+    runRoot: z.string(), seed: z.number().int(), seedSource: z.string(),
+  }).strict().optional(),
+  judge: z.object({ eligibility: z.string(), overrideConfigured: z.boolean() }).strict().optional(),
 }).strict()
 export const gate2ArmSchema = z.object({
   ...receiptCoreShape, gate: z.literal(2), attributedObservationId: z.string().min(1),

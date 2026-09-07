@@ -48,19 +48,20 @@ const anchorSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('error'), message: z.string() }).strict(),
 ])
 
+export const RecordAnchorsSchema = z.array(z.object({ raw: anchorSchema, normalized: anchorSchema }).strict())
+export const RecordScopeSchema = z.object({
+  tier: z.enum(['global', 'product', 'suite', 'test']),
+  key: z.string(),
+}).strict()
+
 const recordFrontmatterSchema: z.ZodType<RecordFrontmatter> = z
   .object({
     schemaVersion: z.literal(BUNDLE_SCHEMA_VERSION),
     id: z.string(),
     kind: bundleKindSchema,
     subtype: factSubtypeSchema.optional(),
-    anchors: z.array(z.object({ raw: anchorSchema, normalized: anchorSchema }).strict()),
-    scope: z
-      .object({
-        tier: z.enum(['global', 'product', 'suite', 'test']),
-        key: z.string(),
-      })
-      .strict(),
+    anchors: RecordAnchorsSchema,
+    scope: RecordScopeSchema,
     createdAtOrdinal: z.number(),
     originClass: z.enum(['user', 'agent-verified', 'agent-observed', 'import']),
     evidenceIncomplete: z.boolean(),

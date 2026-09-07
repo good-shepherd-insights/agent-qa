@@ -45,7 +45,7 @@ const anchorSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('error'), message: z.string() }).strict(),
 ])
 
-const briefLineSchema = z
+export const BriefLineSchema = z
   .object({
     id: recordIdSchema,
     kind: z.string(),
@@ -132,7 +132,7 @@ export const LosslessServedBriefSchema = z
     asOfBuild: nonnegativeIntegerSchema,
     budget: nonnegativeIntegerSchema,
     truncation: z.string(),
-    channel1: z.array(briefLineSchema),
+    channel1: z.array(BriefLineSchema),
     channel2: z.array(readTraceSchema),
     channel3: z.array(cautionLineSchema),
     briefDigest: digestSchema,
