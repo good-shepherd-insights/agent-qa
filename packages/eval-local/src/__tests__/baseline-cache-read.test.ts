@@ -244,6 +244,19 @@ describe('profile-keyed gate and floor baseline cache', () => {
     expect(rows.filter((row) => row.kind === 'cached')).toHaveLength(1)
     expect(rows.find((row) => row.kind === 'cached')).toMatchObject({ seed: 29 })
   })
+  it('selects each cassette matching publication when different batches share one gate root', async () => {
+    const { f, input, stub } = await warm()
+    const selected = f.selected.slice(0, 1)
+    await warmGateRoot({ ...f, selected }, stub, 29)
+    const rows = resolveBaselineCache(input).rows
+    expect(rows.filter((row) => row.kind === 'cached')).toHaveLength(6)
+    for (const row of rows)
+      expect(row).toMatchObject({
+        kind: 'cached',
+        seed: row.cassetteId === selected[0]!.cassette.id ? 29 : 11,
+        seedSource: 'run-publication',
+      })
+  })
   it('treats historical gate records with no seed publication as cold and uses a historical floor fallback', async () => {
     const { f, input } = await warm()
     const dir = join(f.gateRoot, 'reports')

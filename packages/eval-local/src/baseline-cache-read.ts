@@ -78,13 +78,13 @@ export function resolveBaselineCache(input: {
     const reports = names.map((name) =>
       loadStagedReport(input.agentQaRoot, name.slice(0, -5), reportsDir),
     )
-    const report = reports.find(
-      (read) =>
+    const matchingReports = reports.filter(
+      (read): read is Extract<typeof read, { kind: 'loaded' }> =>
         read.kind === 'loaded' &&
         read.report.runIdentity?.fingerprint === input.fingerprint &&
         read.report.matcherVersion === input.matcherVersion,
     )
-    if (report?.kind !== 'loaded') {
+    if (matchingReports.length === 0) {
       const reason = reports.some((read) => read.kind === 'loaded')
         ? 'report fingerprint or matcherVersion mismatch'
         : 'missing or refused replay record report'
@@ -160,33 +160,37 @@ export function resolveBaselineCache(input: {
         miss('judge identity mismatch')
         continue
       }
-      const generation = report.replayGeneration
-      if (generation === undefined && run.kind === 'gate') {
-        miss('gate replay seed is unproven: missing run publication generation')
-        continue
-      }
-      if (
-        generation === undefined &&
-        Reflect.get(replay, 'executionSeed') !== undefined &&
-        Reflect.get(replay, 'executionSeed') !== run.seed
-      ) {
-        miss('replay execution seed differs from floor run directory')
-        continue
-      }
-      if (generation !== undefined) {
+      // A gate root can hold multiple batch reports. Admit against the publication
+      // that binds this row, never whichever filename happens to sort first.
+      const replayDigest = sha256hex(canonicalJson(replay))
+      const scoreDigest = sha256hex(canonicalJson(score.record))
+      const report = matchingReports.find((candidate) => {
+        const generation = candidate.replayGeneration
+        if (generation === undefined)
+          return (
+            run.kind === 'floor' &&
+            (Reflect.get(replay, 'executionSeed') === undefined ||
+              Reflect.get(replay, 'executionSeed') === run.seed)
+          )
         const matching = generation.records.filter((record) => record.cassetteId === cassette.id)
         const recorded = matching[0]
-        if (
-          matching.length !== 1 ||
-          recorded?.replayDigest !== sha256hex(canonicalJson(replay)) ||
-          recorded.scoreDigest !== sha256hex(canonicalJson(score.record)) ||
-          Reflect.get(replay, 'executionSeed') !== generation.seed ||
-          (run.seed !== undefined && run.seed !== generation.seed)
-        ) {
-          miss('replay generation mismatch: seed or record digests differ from run publication')
-          continue
-        }
+        return (
+          matching.length === 1 &&
+          recorded?.replayDigest === replayDigest &&
+          recorded.scoreDigest === scoreDigest &&
+          Reflect.get(replay, 'executionSeed') === generation.seed &&
+          (run.seed === undefined || run.seed === generation.seed)
+        )
+      })
+      if (report === undefined) {
+        miss(
+          run.kind === 'gate' && matchingReports.every((row) => row.replayGeneration === undefined)
+            ? 'gate replay seed is unproven: missing run publication generation'
+            : 'replay generation mismatch: seed or record digests differ from run publication',
+        )
+        continue
       }
+      const generation = report.replayGeneration
       resolved.set(cassette.id, {
         cassetteId: cassette.id,
         kind: 'cached',
