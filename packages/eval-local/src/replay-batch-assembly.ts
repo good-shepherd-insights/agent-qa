@@ -1,10 +1,11 @@
-import { buildEvalReport, canonicalJson, decisionCorrectnessVectors, resolveProductPartition } from '@vostride/agent-qa-eval'
+import { buildEvalReport, canonicalJson, decisionCorrectnessVectors, resolveProductPartition, scoreCassetteReplay } from '@vostride/agent-qa-eval'
 import type {
   Cassette,
   CassetteLabelLeg,
   CassetteScore,
   JudgeIdentityBlock,
   ScoredBatchEntry,
+  StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
 
 import { loadCassetteBundle } from './cassette-loader.js'
@@ -46,6 +47,7 @@ export function assembleScoredBatch(input: {
   productByCassetteId?: ReadonlyMap<string, string>
   /** Latest committed mark generations only; historical bundles remain on disk. */
   eligibleCassetteIds?: ReadonlySet<string>
+  labelRecords?: ReadonlyMap<string, StandaloneLabelRecord>
 }): {
   entries: ScoredBatchEntry[]
   judgeBlocks: JudgeIdentityBlock[]
@@ -58,6 +60,7 @@ export function assembleScoredBatch(input: {
 
   // Only leaf cassettes carry a label leg; procedures join with partition only.
   const labelsById = new Map<string, CassetteLabelLeg>()
+  const cassettesById = new Map<string, Cassette>()
   const partitionsById = new Map<string, string>()
   for (const bundleDir of listCassetteBundleDirs(cassettesRoot)) {
     const load = loadCassetteBundle(bundleDir)
@@ -67,7 +70,8 @@ export function assembleScoredBatch(input: {
     }
     if (input.eligibleCassetteIds !== undefined && !input.eligibleCassetteIds.has(load.cassette.id)) continue
     if (load.cassette.granularity === 'leaf') {
-      labelsById.set(load.cassette.id, load.cassette.label)
+      labelsById.set(load.cassette.id, input.labelRecords?.get(load.cassette.id)?.label ?? load.cassette.label)
+      cassettesById.set(load.cassette.id, load.cassette)
     }
     const product = input.productByCassetteId === undefined
       ? cassetteProductPartition(load.cassette)
@@ -98,6 +102,11 @@ export function assembleScoredBatch(input: {
     }
 
     const label = labelsById.get(cassetteId)
+    const authoritative = input.labelRecords?.get(cassetteId)
+    const cassette = cassettesById.get(cassetteId)
+    if (authoritative?.correction !== undefined && cassette !== undefined) {
+      score = scoreCassetteReplay(cassette, outcome, authoritative)
+    }
     const product = partitionsById.get(cassetteId)
     if (!partitionsById.has(cassetteId)) missingBundleCount++
 

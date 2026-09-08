@@ -60,6 +60,7 @@
 // `data-*` DESCRIBES WHAT IS RENDERED, not what was passed (the banner's `showingFull` lesson).
 
 import { useState } from 'react'
+import { MarkCorrectionFields, type MarkCorrection } from './mark-correction-fields'
 import { Link } from 'react-router'
 import { MARKS, type Mark } from '@vostride/agent-qa-schema'
 import { DenialBlock } from '@/chat/chat-transcript'
@@ -99,6 +100,8 @@ export function VerdictBlock({
 }: VerdictBlockProps) {
   const [kind, setKind] = useState<Mark>()
   const [note, setNote] = useState('')
+  const [correction, setCorrection] = useState<MarkCorrection>()
+  const [correctionValid, setCorrectionValid] = useState(true)
   const mark = view.marks?.find(entry => entry.stepIndex === undefined)
   return (
     <div
@@ -116,7 +119,7 @@ export function VerdictBlock({
         <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px]">
           {MARKS.map(kind => (
             <button key={kind} type="button" data-mark-kind={kind} className={AFFORDANCE_CLASS}
-              disabled={markPending} onClick={() => { setKind(kind); setNote('') }}>
+              disabled={markPending} onClick={() => { setKind(current => current === kind ? undefined : kind); setNote(''); setCorrection(undefined); setCorrectionValid(true) }}>
               {MARK_LABELS[kind]}
             </button>
           ))}
@@ -125,8 +128,10 @@ export function VerdictBlock({
               <textarea data-mark-note aria-label="Optional mark note" maxLength={2000}
                 className="w-full rounded-[2px] border border-border bg-background p-1 text-xs"
                 value={note} onChange={event => setNote(event.target.value)} disabled={markPending} />
-              <button type="button" data-mark-submit className={AFFORDANCE_CLASS} disabled={markPending}
-                onClick={() => { onMark(view.testIndex, undefined, kind, note || undefined); setKind(undefined) }}>Mark</button>
+              <MarkCorrectionFields key={kind} disabled={markPending} onChange={(value, valid) => { setCorrection(value); setCorrectionValid(valid) }} />
+              <button type="button" data-mark-submit className={AFFORDANCE_CLASS} disabled={markPending || !correctionValid}
+                onClick={() => { if (correction) onMark(view.testIndex, undefined, kind, note || undefined, correction)
+                  else onMark(view.testIndex, undefined, kind, note || undefined); setKind(undefined) }}>Mark</button>
               <button type="button" data-mark-cancel className={AFFORDANCE_CLASS} disabled={markPending}
                 onClick={() => { setKind(undefined); setNote('') }}>Cancel</button>
             </div>

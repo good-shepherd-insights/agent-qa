@@ -145,7 +145,8 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
     for (const [reason, count] of Object.entries(loaded.loadRefusals)) {
       notices.push(`cassette bundle load refused: ${reason}=${count}`)
     }
-    const selected = loaded.loaded.sort((a, b) =>
+    const eligibleIds = new Set(corpus.snapshot.entries.map(entry => entry.cassetteId))
+    const selected = loaded.loaded.filter(entry => eligibleIds.has(entry.cassette.id)).sort((a, b) =>
       a.cassette.id < b.cassette.id ? -1 : a.cassette.id > b.cassette.id ? 1 : 0)
     let run: Awaited<ReturnType<typeof replayCorpusOnce>>
     try {
@@ -166,6 +167,7 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
         source: 'committed',
         corpusDigest,
         productByCassetteId: new Map(corpus.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
+        labelRecords: corpus.snapshot.labelsById,
         clock: input.clock,
         onProgress: mode.onProgress,
       })

@@ -1,4 +1,4 @@
-import type { Action, ElementInfo, Ref, SubActionEvidence } from '@vostride/agent-qa-schema'
+import type { Action, ActionAnnotation, ElementInfo, Ref, ScreenState, SubActionEvidence } from '@vostride/agent-qa-schema'
 import type {
   CassetteSidecarLeg,
   GoldAnchorDescriptor,
@@ -110,25 +110,29 @@ function equivalenceSet(
 export function projectSidecarLeg({
   subAction,
 }: ProjectSidecarLegInput): ProjectSidecarLegResult {
-  const ref = actionRef(subAction.plannedAction)
+  return projectActionSidecar(subAction.plannedAction, subAction.stateBefore, subAction.result.annotation)
+}
+
+/** Scoring-only projection; the recorded action and screen are never modified. */
+export function projectActionSidecar(action: Action, stateBefore: ScreenState, annotation?: ActionAnnotation): ProjectSidecarLegResult {
+  const ref = actionRef(action)
   const goldElement = ref === undefined
     ? undefined
-    : subAction.stateBefore.elements.find((element) => element.ref === ref)
+    : stateBefore.elements.find((element) => element.ref === ref)
   const goldAnchor = goldElement === undefined
     ? undefined
-    : anchorDescriptor(goldElement, subAction.stateBefore.elements)
-  const goldValue = projectActionGoldValue(subAction.plannedAction)
-  const annotation = subAction.result.annotation
+    : anchorDescriptor(goldElement, stateBefore.elements)
+  const goldValue = projectActionGoldValue(action)
 
   return {
     leg: {
-      goldAction: subAction.plannedAction,
-      opClass: subAction.plannedAction.type,
+      goldAction: action,
+      opClass: action.type,
       ...(goldValue === undefined ? {} : { goldValue }),
       ...(goldAnchor === undefined ? {} : { goldAnchor }),
       equivalenceSet: goldElement === undefined
         ? []
-        : equivalenceSet(goldElement, subAction.stateBefore.elements),
+        : equivalenceSet(goldElement, stateBefore.elements),
       ...(annotation === undefined ? {} : { annotation }),
     },
     anchorUnresolved: ref !== undefined && goldElement === undefined,

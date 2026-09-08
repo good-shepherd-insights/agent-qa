@@ -131,6 +131,22 @@ describe('419 member mark control', () => {
     act(() => root.render(<VerdictBlock view={view()} onMark={onMark} onCitedStep={() => {}} onSelectMember={() => {}} onCitedArtifact={() => {}} />))
     expect(container.querySelector('[data-mark-kind]')).toBeNull()
   })
+  it('validates and submits an optional executable correction through the existing mark callback', () => {
+    const onMark = vi.fn()
+    render({ testIndex: 4, marks: [] }, { onMark })
+    click('[data-mark-kind="false-pass"]')
+    const input = container.querySelector<HTMLTextAreaElement>('[aria-label="Corrected action JSON"]')!
+    const fill = (text: string) => act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    fill('{"type":"fill"}')
+    expect(container.querySelector<HTMLButtonElement>('[data-mark-submit]')!.disabled).toBe(true)
+    click('[data-mark-submit]'); expect(onMark).not.toHaveBeenCalled()
+    const correctedAction = { type: 'click', ref: 'e-correct' }
+    fill(JSON.stringify(correctedAction)); click('[data-mark-submit]')
+    expect(onMark).toHaveBeenCalledExactlyOnceWith(4, undefined, 'false-pass', undefined, { correctedAction })
+  })
 
   it('copies the standing chip, drafted triage and chat confirm door', () => {
     render({ marks: [mark] }, { onMark: vi.fn() })

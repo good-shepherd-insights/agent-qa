@@ -928,8 +928,8 @@
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "runs.mark",
-      "inputSchemaDigest": "6573362fa79c614a2329f58dcb5b04dea8e3dd3a3612d2669011590f4c987b36",
-      "outputSchemaDigest": "4edb196dd94a3a974f4dd101751712e2475c5ca0315ec79cdb20b491efce4f18",
+      "inputSchemaDigest": "3fa17032140c1c9aafa71645f8d29436b18698e1039d5696327e04763f382e1e",
+      "outputSchemaDigest": "c42a94421415ec0c76e78bd31cc657c70a0fc1462d327d48029da37a3958d679",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_mark_run"

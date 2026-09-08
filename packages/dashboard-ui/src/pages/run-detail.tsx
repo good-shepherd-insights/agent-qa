@@ -148,7 +148,7 @@ export default function RunDetailPage() {
     return projection
   }, [id])
 
-  const onMark = useCallback<OnMark>(async (testIndex, stepIndex, kind, note) => {
+  const onMark = useCallback<OnMark>(async (testIndex, stepIndex, kind, note, correction) => {
     if (!id || detail?.runId !== id || markingRef.current) return
     const member = detail.members.find(entry => entry.testIndex === testIndex)
     if (member?.marks === undefined) return
@@ -168,6 +168,7 @@ export default function RunDetailPage() {
         ...(member.testId ? { testId: member.testId } : {}),
         ...(stepIndex === undefined ? {} : { stepIndex }),
         ...(note ? { note } : {}),
+        ...correction,
       })
       if (markRunRef.current !== id) return
       if (outcome.kind === 'marked' || outcome.kind === 'already-marked') {

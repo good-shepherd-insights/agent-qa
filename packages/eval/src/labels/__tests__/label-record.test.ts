@@ -273,8 +273,8 @@ describe('419 gold projections', () => {
     const record = projectUserMarkLabelRecord(input)
     expect(record.label).toEqual({ ...cassette.label, sourceChannel: 'user-mark', tier: 'gold' })
     expect(record.provenance.sourceCassetteId).toBe(cassette.id)
-    if (kind === 'false-fail') expect(record.correction).toEqual({ verdict: 'pass', overturnedVerdict: cassette.label.verdict, markId: mark.markId })
-    else expect(Object.hasOwn(record, 'correction')).toBe(false)
+    expect(record.correction).toEqual({ verdict: kind === 'false-fail' ? 'pass' : 'fail',
+      overturnedVerdict: cassette.label.verdict, markId: mark.markId, correctedExpectation: mark.correctedExpectation })
     expect(Object.hasOwn(record, 'supersedes')).toBe(false)
   })
 

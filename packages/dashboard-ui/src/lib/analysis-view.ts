@@ -44,6 +44,7 @@ import type {
   AnalysisResolvedVerdict,
   PostProcessingChipStatus,
   Mark,
+  RunsMarkInput,
   GateRemedy,
   RunDetailMemberMark,
   RunDetailProjection,
@@ -55,7 +56,8 @@ export const MARK_LABELS = {
   'confirmed-bug': 'confirmed-bug',
 } satisfies Record<Mark, string>
 export const MARK_CHIP_PREFIX = 'marked '
-export type OnMark = (testIndex: number, stepIndex: number | undefined, kind: Mark, note?: string) => void
+export type OnMark = (testIndex: number, stepIndex: number | undefined, kind: Mark, note?: string,
+  correction?: Pick<RunsMarkInput, 'correctedExpectation' | 'correctedAction'>) => void
 export interface MarkDenial { reason: string; remedies: readonly GateRemedy[] }
 
 export function markChipText(mark: RunDetailMemberMark): string {

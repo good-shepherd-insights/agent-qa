@@ -33,11 +33,13 @@ describe('runs mark thin client', () => {
     }))
     const output = vi.spyOn(console, 'log').mockImplementation(() => {})
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
-    await program().parseAsync(['--config', f.configPath, 'runs', 'mark', f.handoff.runId, '--kind', 'confirmed-bug', '--json'], { from: 'user' })
+    const correctedAction = f.handoff.tests[0]!.steps[0]!.subActions[0]!.plannedAction
+    await program().parseAsync(['--config', f.configPath, 'runs', 'mark', f.handoff.runId, '--kind', 'confirmed-bug',
+      '--corrected-action', JSON.stringify(correctedAction), '--json'], { from: 'user' })
     expect(errors.mock.calls).toEqual([])
     expect(prompt).toContain('fn:runs.mark')
     const result = RunsMarkOutcomeSchema.parse(JSON.parse(String(output.mock.calls.at(-1)?.[0])))
-    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, origin: 'user', disposition: { kind: 'confirmed-bug' } } })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, origin: 'user', correctedAction, disposition: { kind: 'confirmed-bug' } } })
     expect(readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1)
   })
 

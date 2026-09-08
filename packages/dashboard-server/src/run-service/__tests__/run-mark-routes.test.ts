@@ -80,7 +80,8 @@ describe('markRun delegates to the shared gate and feedback port', () => {
 
   it('enters the named frame, asks, and forwards all input fields', async () => {
     const f = fixture()
-    const body = { kind: 'false-fail', note: NOTE, correctedExpectation: 'must fail', stepIndex: 2, testId: 'member' }
+    const body = { kind: 'false-fail', note: NOTE, correctedExpectation: 'must fail', stepIndex: 2, testId: 'member',
+      correctedAction: { type: 'click', ref: 'e-correct' } }
     expect(await markRun(f.host, RUN_ID, body, { confirmScope: f.scope, enter: f.enter })).toEqual({ kind: 'ok', body: outcome })
     expect(f.ask).toHaveBeenCalledOnce()
     expect(f.mark).toHaveBeenCalledExactlyOnceWith({ ...body, runId: RUN_ID })

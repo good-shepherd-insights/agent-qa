@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, mkdtempSync, statSync, wri
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { buildGoldenTrajectoryPlan, buildSeedingPlan, committedFileText, deriveCensus, extractRunCassettes, renderCensusMarkdown } from '@vostride/agent-qa-eval'
+import { buildGoldenTrajectoryPlan, buildSeedingPlan, committedFileText, computeDecisionIdentity, decisionCorrectnessVectors, deriveCensus, extractRunCassettes, renderCensusMarkdown, scoreCassetteReplay, type LeafReplayResult } from '@vostride/agent-qa-eval'
 import { FsEvidenceArtifactStore, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import * as safety from '@vostride/agent-qa-safety'
 import type { GuardrailAuditRow } from '@vostride/agent-qa-safety'
@@ -16,6 +16,9 @@ import { FsRunArtifactSource } from '../artifact-source.js'
 import { readActiveCommittedCorpus, readCommittedCorpus } from '../committed-corpus-source.js'
 import { FsMarkLedger } from '../mark-ledger.js'
 import { readGatePostureFor } from '../gate-posture-composition.js'
+import { assembleScoredBatch } from '../replay-batch-assembly.js'
+import { FsReplayRecordStore } from '../replay-record-store.js'
+import { FsScoreStore } from '../score-store.js'
 import { selectGateSet } from '@vostride/agent-qa-eval'
 import { committedCassettePath, committedCorpusPath, committedLabelPath, committedCensusPath } from '../committed-root-store.js'
 import { seedCommittedCorpus } from '../seeding-composition.js'
@@ -145,6 +148,57 @@ describe('freezeGoldenTrajectory', () => {
     if (result.kind !== 'frozen') throw new Error(JSON.stringify(result))
     expect(result.cases.map(item => item.channel).sort()).toEqual(['overturned-verdict', 'user-mark'])
     expect(readCommittedCorpus(committedRoot).snapshot.entries).toHaveLength(2)
+  })
+  it('scores actual frozen corrected gold through the batch consumer while preserving the observed cassette', async () => {
+    mark.kind = 'false-pass'
+    mark.correctedExpectation = 'Fill the target with the corrected text'
+    mark.correctedAction = { type: 'fill', ref: handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore.elements[0]!.ref,
+      text: 'corrected', clearMode: 'replace', submit: false }
+    const frozen = freeze()
+    if (frozen.kind !== 'frozen') throw new Error(JSON.stringify(frozen))
+    await new FsMarkLedger({ root, runId: handoff.runId }).append({ ...mark, gold: frozen.cases })
+    const corpus = readActiveCommittedCorpus(committedRoot, root)
+    const before = hashes(frozen.cases.flatMap(item => paths(item.cassetteId)))
+    const replaysRoot = join(root, 'replays')
+    for (const item of frozen.cases) {
+      const cassette = corpus.snapshot.cassettesById.get(item.cassetteId)!
+      const identity = computeDecisionIdentity(mark.correctedAction, cassette.input.stateBefore.elements)
+      const outcome: LeafReplayResult = { granularity: 'leaf', cassetteId: cassette.id, briefSource: 'empty',
+        samples: [{ sampleIndex: 0, outcome: { kind: 'decision', action: mark.correctedAction, identity }, durationMs: 0 }],
+        agreement: { k: 1, agreementRate: 1, modal: { identity, count: 1 }, noConsensus: false, harnessErrorCount: 0 },
+        modalDecision: identity, promptDrift: { drift: false, harnessDrift: false, recordedHash: 'a'.repeat(64), recomputedHash: 'a'.repeat(64) },
+        replayedModel: { provider: 'fixture', modelId: 'provider-free' }, unconsumedExchanges: [], totalDurationMs: 0 }
+      new FsReplayRecordStore({ root, outputDir: replaysRoot }).save(outcome)
+      new FsScoreStore({ root, outputDir: replaysRoot }).save({ cassetteId: cassette.id, matcherVersion: 1,
+        score: scoreCassetteReplay(cassette, outcome), diffs: [] })
+      expect(cassette.sidecar.goldAction.type).toBe('click')
+    }
+    const batch = assembleScoredBatch({ replaysRoot, cassettesRoot: join(committedRoot, 'cassettes'), source: 'committed',
+      labelRecords: corpus.snapshot.labelsById, eligibleCassetteIds: new Set(corpus.snapshot.entries.map(item => item.cassetteId)) })
+    expect.soft(batch.entries.map(entry => entry.label?.tier)).toEqual(['gold', 'gold'])
+    expect.soft(decisionCorrectnessVectors(batch.entries).map(vector => vector.axes.headline)).toEqual(['correct', 'correct'])
+    expect(hashes(frozen.cases.flatMap(item => paths(item.cassetteId)))).toEqual(before)
+  })
+
+  it('keeps prose-only correction as evidence and explicitly refuses executable scoring', () => {
+    mark.kind = 'false-pass'; mark.correctedExpectation = 'Stay blocked'
+    const frozen = freeze()
+    if (frozen.kind !== 'frozen') throw new Error(JSON.stringify(frozen))
+    const corpus = readCommittedCorpus(committedRoot)
+    for (const item of frozen.cases) {
+      const cassette = corpus.snapshot.cassettesById.get(item.cassetteId)!
+      const outcome = { granularity: 'leaf' } as LeafReplayResult
+      expect(scoreCassetteReplay(cassette, outcome, corpus.snapshot.labelsById.get(item.cassetteId)))
+        .toMatchObject({ kind: 'leaf', entry: { kind: 'never-scored', reason: 'missing-executable-correction' } })
+    }
+  })
+
+  it('refuses one corrected action spanning multiple recorded decisions before any gold writes', () => {
+    const step = handoff.tests[0]!.steps[0]!
+    mark.correctedAction = step.subActions[0]!.plannedAction
+    step.subActions.push({ ...step.subActions[0]! })
+    expect(freeze()).toEqual({ kind: 'ambiguous-correction', decisionCount: 2 })
+    expect(existsSync(committedRoot)).toBe(false)
   })
   it('retires every previous decision/channel and a subsequent no-gold generation before gate counts', async () => {
     const step = handoff.tests[0]!.steps[0]!

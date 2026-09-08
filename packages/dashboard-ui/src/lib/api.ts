@@ -11,7 +11,7 @@ import type {
   RunKnowledgeProjection,
   RunServiceReadiness,
   RunsLiveUrlResult,
-  Mark,
+  RunsMarkInput,
   GateRemedy,
   RunsMarkOutcome,
 } from '@vostride/agent-qa-schema'
@@ -381,7 +381,7 @@ export class MarkDeniedError extends Error {
 
 export async function markRun(
   runId: string,
-  body: { kind: Mark; testId?: string; stepIndex?: number; note?: string; correctedExpectation?: string },
+  body: Omit<RunsMarkInput, 'runId'>,
 ): Promise<RunsMarkOutcome> {
   try {
     return await postJson(`/api/runs/${encodeURIComponent(runId)}/mark`, {

@@ -101,6 +101,8 @@ export {
   scoreCassetteReplay,
   scoreDecision,
 } from './match/score'
+export { effectiveGold } from './labels/effective-gold'
+export type { EffectiveGold } from './labels/effective-gold'
 export type {
   CassetteScore,
   DecisionAxes,
@@ -373,7 +375,7 @@ export type {
 } from './labels/run-exclusion'
 export { committedFileText } from './labels/committed-file'
 export { buildSeedingPlan } from './labels/seeding-plan'
-export { activeMarkedCorpusEntries, buildGoldenTrajectoryPlan, resolveMarkedDecisions } from './labels/golden-plan'
+export { activeMarkedCorpusEntries, buildGoldenTrajectoryPlan, markedDecisionCount, resolveMarkedDecisions } from './labels/golden-plan'
 export type { GoldenTrajectoryPlan, GoldenTrajectoryTarget, BuildGoldenTrajectoryPlanInput } from './labels/golden-plan'
 export type {
   BuildSeedingPlanInput,

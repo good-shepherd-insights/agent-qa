@@ -20,6 +20,7 @@ import type {
   FloorSplit,
   FoldNoiseFloorInput,
   NoiseFloorArtefact,
+  StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
 import type { ModelProfile, ModelProviderOverrides, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
@@ -64,6 +65,7 @@ export interface ReplayCorpusOnceInput {
   /** Digest of the committed snapshot supplying this run, when the caller read one. */
   corpusDigest?: string
   productByCassetteId?: ReadonlyMap<string, string>
+  labelRecords?: ReadonlyMap<string, StandaloneLabelRecord>
   clock?: () => number
   onProgress?: (cassetteId: string) => void
 }
@@ -173,7 +175,7 @@ export async function runNoiseFloorMeasurement(
   for (const [reason, count] of Object.entries(loaded.loadRefusals)) {
     notices.push(`cassette bundle load refused: ${reason}=${count}`)
   }
-  const selected = loaded.loaded.sort((a, b) =>
+  const selected = loaded.loaded.filter(entry => productByCassetteId.has(entry.cassette.id)).sort((a, b) =>
     a.cassette.id < b.cassette.id ? -1 : a.cassette.id > b.cassette.id ? 1 : 0)
   const runSeeds = [...Array<number>(input.repeats).fill(seeds[0]!), ...seeds.slice(1)]
   const receipts = input.fromMeasured === undefined ? undefined : readMeasuredCostReceipts(input.fromMeasured, runSeeds)
@@ -190,7 +192,8 @@ export async function runNoiseFloorMeasurement(
       runs.push(readMeasuredFloorRun({ agentQaRoot: input.agentQaRoot, runRoot,
         cassettesRoot: input.cassettesRoot, fingerprint, corpusDigest,
         plannerModelId: input.profileKeyInputs.plannerModelId,
-        matcherVersion: input.profileKeyInputs.matcherVersion, productByCassetteId, receipt }))
+        matcherVersion: input.profileKeyInputs.matcherVersion, productByCassetteId,
+        labelRecords: corpus.snapshot.labelsById, receipt }))
       input.onProgress?.(receipt.line)
       continue
     }
@@ -212,6 +215,7 @@ export async function runNoiseFloorMeasurement(
       source: 'committed',
       corpusDigest,
       productByCassetteId,
+      labelRecords: corpus.snapshot.labelsById,
       clock: input.clock,
       onProgress: input.onProgress,
     })
@@ -339,6 +343,7 @@ export async function replayCorpusOnce(
   const started = clock()
   const sweep = await sweepCassetteReplays({
     selected: input.selected,
+    labelRecords: input.labelRecords,
     profile: input.profile,
     auth: input.auth,
     modelOverrides: input.modelOverrides,
@@ -363,6 +368,8 @@ export async function replayCorpusOnce(
     source: input.source,
     recordDirs: sweep.recordedDirs,
     productByCassetteId: input.productByCassetteId,
+    labelRecords: input.labelRecords,
+    ...(input.productByCassetteId === undefined ? {} : { eligibleCassetteIds: new Set(input.productByCassetteId.keys()) }),
   })
   const { report, vectors, notices } = projectAssembledBatch(batch, {
     declaredSeed: input.seed,

@@ -564,7 +564,10 @@ export async function runReplayVerb(
   const { swept, loaded, loadRefusals } = loadCassetteBundles(cassettesRoot)
 
   // (3) filters on the LOADED set — the ONE D-02 vocabulary; a named miss is the only throw.
-  let selected = loaded
+  const activeCorpus = source === 'committed'
+    ? readActiveCommittedCorpus(resolve(session.configDir, 'agent-qa-eval'), agentQaRoot) : undefined
+  const activeIds = activeCorpus === undefined ? undefined : new Set(activeCorpus.snapshot.entries.map(entry => entry.cassetteId))
+  let selected = activeIds === undefined ? loaded : loaded.filter(entry => activeIds.has(entry.cassette.id))
   if (filters.cassette !== undefined) {
     const named = filters.cassette
     selected = selected.filter(entry => entry.cassette.id === named)
@@ -633,6 +636,7 @@ export async function runReplayVerb(
   const { replayed, replayRefusals, replayedDirs, notices: replayNotices } =
     await sweepCassetteReplays({
       selected,
+      labelRecords: activeCorpus?.snapshot.labelsById,
       profile: planner.profile,
       auth: planner.auth,
       modelCallObservation: { onProviderCall: () => { modelCalls++ } },
@@ -2014,6 +2018,7 @@ export async function runReportVerb(
     ...(committedCorpus === undefined ? {} : {
       productByCassetteId: new Map(committedCorpus.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
       eligibleCassetteIds: new Set(committedCorpus.snapshot.entries.map(entry => entry.cassetteId)),
+      labelRecords: committedCorpus.snapshot.labelsById,
     }),
   })
   notices.push(...assemblyNotices)
@@ -2541,7 +2546,7 @@ function mergeEvalConfig(
   }
 }
 // Gate hosts reach eval/runtime storage only through this established composition boundary.
-export { resolveMarkedDecisions, resolveProductPartition } from '@vostride/agent-qa-eval'
+export { canonicalJson, markedDecisionCount, resolveMarkedDecisions, resolveProductPartition } from '@vostride/agent-qa-eval'
 export { FsHandoffSource, FsMarkLedger, freezeGoldenTrajectory } from '@vostride/agent-qa-eval-local'
 export { slugBranch } from '@vostride/agent-qa-runner-local'
 export { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'

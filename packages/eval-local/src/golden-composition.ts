@@ -7,6 +7,7 @@ import {
   buildGoldenTrajectoryPlan,
   deriveCensus,
   extractRunCassettes,
+  markedDecisionCount,
   renderCensusMarkdown,
   resolveMarkedDecisions,
 } from '@vostride/agent-qa-eval'
@@ -37,6 +38,7 @@ export interface FreezeGoldenTrajectoryInput {
 }
 
 export type FreezeOutcome =
+  | { kind: 'ambiguous-correction'; decisionCount: number }
   | { kind: 'frozen'; cases: MarkReceipt['gold']; census: 'committed' | 'unchanged' | 'write-conflict' }
   | { kind: 'refused'; refusals: SeedingRefusal[] }
   | { kind: 'step-not-found'; stepCount: number }
@@ -45,6 +47,8 @@ export type FreezeOutcome =
 export function freezeGoldenTrajectory(input: FreezeGoldenTrajectoryInput): FreezeOutcome {
   const targets = resolveMarkedDecisions(input.handoff, input.mark, input.mark.kind)
   if ('refusal' in targets) return { kind: 'step-not-found', stepCount: targets.stepCount }
+  const decisionCount = markedDecisionCount(input.handoff, targets)
+  if (input.mark.correctedAction !== undefined && decisionCount !== 1) return { kind: 'ambiguous-correction', decisionCount }
 
   const extracted = extractRunCassettes({
     handoff: input.handoff,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { ACTION_WIRE_SCHEMAS_BY_TYPE, actionWireSchema } from '../../action/wire-schema'
 import { asRunId, runIdSchema } from '../../run/run-id'
 import {
   MARK_DISPOSITIONS, MARK_FIX_KINDS, MARK_QUARANTINE_CLASSES,
@@ -35,6 +36,19 @@ const commitReceipt = {
 }
 
 describe('Gate-3 neutral feedback contracts (419)', () => {
+  it('validates correctedAction with the exhaustive shared wire validator', () => {
+    const correctedAction = { type: 'fill', ref: 'e1', text: 'corrected', clearMode: 'replace', submit: false }
+    expect(RunsMarkInputSchema.parse({ runId, kind: 'false-pass', correctedAction }).correctedAction).toEqual(correctedAction)
+    expect(MarkReceiptSchema.parse({ ...receipt, correctedAction }).correctedAction).toEqual(correctedAction)
+    expect(Object.keys(ACTION_WIRE_SCHEMAS_BY_TYPE).length).toBeGreaterThan(20)
+    for (const action of [{ type: 'fill', ref: 'e1' }, { type: 'unknown' }, { type: 'constructor' },
+      { type: 'click', ref: 'e1', platform: 'web' }]) {
+      expect(actionWireSchema.safeParse(action).success).toBe(false)
+      expect(RunsMarkInputSchema.safeParse({ runId, kind: 'false-pass', correctedAction: action }).success).toBe(false)
+    }
+    expect(RunsMarkOutcomeSchema.parse({ kind: 'ambiguous-correction', runId, testIndex: 0, decisionCount: 2 }))
+      .toMatchObject({ kind: 'ambiguous-correction' })
+  })
   it('pins the quarantine, disposition and fix vocabularies in declaration order', () => {
     expect(MARK_QUARANTINE_CLASSES).toEqual(['flake', 'environment', 'timeout'])
     expect(MARK_DISPOSITIONS).toEqual(['quarantined', 'drafted', 'no-draftable-fix', 'confirmed-bug'])

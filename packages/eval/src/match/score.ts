@@ -7,6 +7,8 @@ import type {
 } from '../cassette/cassette'
 import type { CassetteSidecarLeg } from '../cassette/sidecar-leg'
 import { projectActionGoldValue } from '../extract/sidecar-leg'
+import { effectiveGold } from '../labels/effective-gold'
+import type { StandaloneLabelRecord } from '../labels/label-record'
 import { decisionIdentityKey } from '../replay/identity'
 import type {
   DecisionReplayResult,
@@ -198,6 +200,7 @@ export type DecisionScoreEntry =
       reason:
         | NeverScoredDecision['reason']
         | 'missing-cassette-decision'
+        | 'missing-executable-correction' | 'invalid-executable-correction' | 'label-identity-mismatch'
       matcherVersion: number
     }
   | {
@@ -566,12 +569,17 @@ function isReplayRefusal(outcome: ReplayCassetteOutcome): outcome is ReplayRefus
 export function scoreCassetteReplay(
   cassette: Cassette,
   outcome: ReplayCassetteOutcome,
+  labelRecord?: StandaloneLabelRecord,
 ): CassetteScore {
   if (isReplayRefusal(outcome)) {
     return { kind: 'replay-refusal', cassetteId: outcome.cassetteId, refusal: outcome }
   }
 
   if (cassette.granularity === 'leaf') {
+    const gold = effectiveGold(cassette, labelRecord)
+    if (gold.kind === 'refused') return { kind: 'leaf', cassetteId: cassette.id,
+      entry: { kind: 'never-scored', decisionOrdinal: cassette.decisionOrdinal,
+        reason: gold.reason, matcherVersion: MATCHER_CONFIG.matcherVersion } }
     if (outcome.granularity !== 'leaf') {
       return {
         kind: 'shape-mismatch',
@@ -586,7 +594,7 @@ export function scoreCassetteReplay(
       entry: decisionEntry(
         cassette.decisionOrdinal,
         outcome,
-        cassette.sidecar,
+        gold.cassette.sidecar,
         {
           priorIdentities: 'leaf-no-history',
           screenStateHash: cassette.receipt.screenStateHash,

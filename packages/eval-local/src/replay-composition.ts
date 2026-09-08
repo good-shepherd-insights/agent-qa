@@ -26,6 +26,7 @@ import {
   assessJudgeEligibility,
   buildDecisionDiff,
   computeReplayProfileFingerprint,
+  effectiveGold,
   neverEscalate,
   replayCassette,
   scoreCassetteReplay,
@@ -44,6 +45,7 @@ import type {
   ReplayPlannerHandle,
   ReplayResult,
   SeedPolicy,
+  StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
 import {
   createModel,
@@ -68,6 +70,8 @@ import type { FsScoreStore } from './score-store.js'
 export interface RunCassetteReplayInput {
   /** A loaded, guarded cassette (leaf or procedure) — normally from loadCassetteBundle. */
   cassette: Cassette
+  /** Authoritative score metadata; never included in replayCassette's planner inputs. */
+  labelRecord?: StandaloneLabelRecord
   /** 417 D-01 / 415 D-05: already applied by the caller; the engine reverses it only before hashing. */
   declaredBriefDelta?: DeclaredBriefDelta
   /** Blob source for full-capture screenshot reconstruction (normally a DirArtifactSource). */
@@ -373,7 +377,9 @@ export async function runCassetteReplay(
   // instead). Score, adjudication, and diffs are computed in eval core (F9); this composition
   // only orchestrates and saves.
   if (input.scoreStore !== undefined && isReplayResult(outcome)) {
-    const score = scoreCassetteReplay(input.cassette, outcome)
+    const score = scoreCassetteReplay(input.cassette, outcome, input.labelRecord)
+    const effective = input.cassette.granularity === 'leaf' ? effectiveGold(input.cassette, input.labelRecord) : undefined
+    const scoringCassette = effective?.kind === 'eligible' ? effective.cassette : input.cassette
 
     // D-12/D-14 two-sided family eligibility, assessed ONCE at composition time against BOTH the
     // replayed profile's model and the cassette receipt's recorded identity. Ineligible ⇒ the
@@ -407,7 +413,7 @@ export async function runCassetteReplay(
         { maskingContext: judgeMaskingContext, auditSink: judgeAuditSink },
         () =>
           adjudicateCassetteScore({
-            cassette: input.cassette,
+            cassette: scoringCassette,
             outcome,
             score,
             eligibility,
@@ -422,7 +428,7 @@ export async function runCassetteReplay(
       cassetteId: input.cassette.id,
       matcherVersion: scoreMatcherVersion(adjudicated.score),
       score: adjudicated.score,
-      diffs: decisionDiffs(input.cassette, outcome, adjudicated.score),
+      diffs: decisionDiffs(scoringCassette, outcome, adjudicated.score),
       ...(adjudicated.judge !== undefined ? { judge: adjudicated.judge } : {}),
     })
   }

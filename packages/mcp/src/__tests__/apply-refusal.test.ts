@@ -110,7 +110,8 @@ describe('419 sovereign mark credential refusal', () => {
   })
   it('passes the mark input unchanged through the sole invoke and masks both result channels', async () => {
     const calls: unknown[] = []
-    const args = { kind: 'confirmed-bug' }
+    const args = { kind: 'confirmed-bug', correctedExpectation: 'Use the corrected control',
+      correctedAction: { type: 'click', ref: 'e-correct' } }
     const handler = createMarkToolHandler({
       caller: { ...caller, credential: { scope: STANDING_APPROVAL_SCOPE } },
       invoke: async (...input) => { calls.push(input); return { note: 'planted-secret' } },

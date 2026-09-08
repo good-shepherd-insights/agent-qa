@@ -119,7 +119,7 @@ export class FsMarkLedger {
     if (prior !== undefined) {
       const request = (value: MarkReceipt) => ({ runId: value.runId, testIndex: value.testIndex,
         testId: value.testId, stepIndex: value.stepIndex, kind: value.kind, note: value.note,
-        correctedExpectation: value.correctedExpectation })
+        correctedExpectation: value.correctedExpectation, correctedAction: value.correctedAction })
       if (canonicalJson(request(prior.mark)) !== canonicalJson(request(mark))) {
         throw new Error('An unfinished mark must be retried with its original address and correction')
       }

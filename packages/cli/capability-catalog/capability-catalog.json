@@ -2155,6 +2155,19 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "correctedAction": {
+            "additionalProperties": {},
+            "properties": {
+              "type": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
           "correctedExpectation": {
             "maxLength": 2000,
             "type": "string"
@@ -2328,5 +2341,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "324f2b025d369af6dfff2f4d7e250770a89dd1ecb634e364a0ebec597b46695c"
+  "rowsDigest": "c84c6e566f86f5b7a17a2419ce430029c81718f7af40822fef6b107ad76f538b"
 }

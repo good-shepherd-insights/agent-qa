@@ -1,5 +1,7 @@
 // 2026-09-08, 419 D-06/D-07/D-08/D-12: the Gate-3 neutral contracts.
 import { z } from 'zod'
+import type { Action } from '../action/index'
+import { actionWireSchema } from '../action/wire-schema'
 
 import { MARKS } from '../knowledge/gate-receipt'
 import { PROMOTION_PATHS } from '../knowledge/promotion-path'
@@ -12,6 +14,7 @@ import { VERDICT_CLASSES, type VerdictClass } from '../verdict/verdict'
 const runIdSchema = runIdCodec.in as unknown as z.ZodType<RunId>
 const markIdSchema = z.string().regex(/^mark_[0-9a-f]{12}$/)
 const indexSchema = z.number().int().nonnegative()
+const correctedActionSchema = actionWireSchema as unknown as z.ZodType<Action>
 
 // prettier-ignore
 export const MARK_QUARANTINE_CLASSES = ['flake', 'environment', 'timeout'] as const satisfies readonly VerdictClass[]
@@ -65,6 +68,7 @@ export const MarkReceiptSchema = z.object({
   markedAt: indexSchema,
   note: z.string().max(2000).optional(),
   correctedExpectation: z.string().max(2000).optional(),
+  correctedAction: correctedActionSchema.optional(),
   rootCause: z.object({ class: z.enum(VERDICT_CLASSES), producer: z.string().min(1) }).strict().optional(),
   isRerun: z.literal(true).optional(),
   disposition: MarkDispositionSchema,
@@ -85,6 +89,7 @@ export const RunsMarkInputSchema = z.object({
   kind: z.enum(MARKS),
   note: z.string().max(2000).optional(),
   correctedExpectation: z.string().max(2000).optional(),
+  correctedAction: correctedActionSchema.optional(),
 }).strict()
 export type RunsMarkInput = z.infer<typeof RunsMarkInputSchema>
 
@@ -101,6 +106,8 @@ export const RunsMarkOutcomeSchema = z.discriminatedUnion('kind', [
     kind: z.literal('ambiguous-address'), runId: runIdSchema,
     candidates: z.array(z.object({ testIndex: indexSchema, testId: z.string().optional() }).strict()).min(2),
   }).strict(),
+  z.object({ kind: z.literal('ambiguous-correction'), runId: runIdSchema,
+    testIndex: indexSchema, decisionCount: indexSchema }).strict(),
 ])
 export type RunsMarkOutcome = z.infer<typeof RunsMarkOutcomeSchema>
 

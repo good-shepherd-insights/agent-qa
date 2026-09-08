@@ -66,7 +66,9 @@ export function readActiveCommittedCorpus(committedRoot: string, agentQaRoot: st
     catch { refusals.push({ path: agentQaRoot, reason: 'mark ledger unreadable; active gold unavailable' }) }
   }
   const entries = activeMarkedCorpusEntries(read.snapshot, marks)
+  const activeIds = new Set(entries.map(entry => entry.cassetteId))
   return { ...read, refusals, snapshot: { ...read.snapshot, entries },
+    retiredMarkedCassetteIds: new Set(read.snapshot.entries.filter(entry => !activeIds.has(entry.cassetteId)).map(entry => entry.cassetteId)),
     notices: [...read.notices, ...(entries.length === read.snapshot.entries.length ? []
       : [`${read.snapshot.entries.length - entries.length} historical or incomplete marked cases excluded`])] }
 }
@@ -129,6 +131,7 @@ export interface CommittedReadRefusal {
 
 /** The loaded committed root: eval core's snapshot plus everything the read learned about it. */
 export interface CommittedCorpusRead {
+  retiredMarkedCassetteIds?: ReadonlySet<string>
   snapshot: CommittedCorpusSnapshot
   productsSeen: readonly string[]
   notices: string[]

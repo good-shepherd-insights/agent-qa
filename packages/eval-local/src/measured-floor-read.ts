@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { canonicalJson, computeBatchKey } from '@vostride/agent-qa-eval'
-import type { FloorRunInput } from '@vostride/agent-qa-eval'
+import type { FloorRunInput, StandaloneLabelRecord } from '@vostride/agent-qa-eval'
 import { slugBranch } from '@vostride/agent-qa-schema'
 
 import { assembleScoredBatch, projectAssembledBatch } from './replay-batch-assembly.js'
@@ -53,6 +53,7 @@ export function readMeasuredFloorRun(input: {
   plannerModelId: string
   matcherVersion: number
   productByCassetteId: ReadonlyMap<string, string>
+  labelRecords?: ReadonlyMap<string, StandaloneLabelRecord>
   receipt: MeasuredCostReceipt
 }): FloorRunInput {
   const { receipt, productByCassetteId } = input
@@ -102,7 +103,9 @@ export function readMeasuredFloorRun(input: {
     saved.report.matcherVersion !== input.matcherVersion) refuse('saved report identity differs')
   const assemble = (products?: ReadonlyMap<string, string>) => {
     const batch = assembleScoredBatch({ replaysRoot, cassettesRoot: input.cassettesRoot,
-      source: 'committed', recordDirs, productByCassetteId: products })
+      source: 'committed', recordDirs, productByCassetteId: products,
+      ...(products === undefined ? {} : { labelRecords: input.labelRecords,
+        eligibleCassetteIds: new Set(products.keys()) }) })
     if (batch.missingBundleCount !== 0 || batch.notices.length !== 0) refuse('cassette or score read refused')
     return projectAssembledBatch(batch, { declaredSeed: receipt.seed, runIdentity })
   }

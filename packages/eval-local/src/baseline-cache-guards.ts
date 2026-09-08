@@ -206,6 +206,7 @@ const scoreEntry = z.discriminatedUnion('kind', [
       'all-samples-harness-error',
       'modal-representative-missing',
       'missing-cassette-decision',
+      'missing-executable-correction', 'invalid-executable-correction', 'label-identity-mismatch',
     ]),
     matcherVersion: integer,
   }),

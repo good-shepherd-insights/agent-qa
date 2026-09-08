@@ -19,6 +19,8 @@ import {
   decisionIdentityKey,
   deriveSampleSeeds,
   extractRunCassettes,
+  effectiveGold,
+  scoreCassetteReplay,
   FLOOR_AXES,
   diffArms,
   foldPerAxisScore,
@@ -42,6 +44,7 @@ import {
   type ReplayCassetteOutcome,
   type ReplaySample,
   type ReplaySampleOutcome,
+  type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
 import type {
   ModelProfile,
@@ -258,9 +261,12 @@ function arm(
   cassette: LeafCassette,
   replay: ReplayCassetteOutcome,
   score?: ScoreRecord,
+  labelRecord?: StandaloneLabelRecord,
 ): ArmDecision['baseline'] {
   const vector = decisionCorrectnessVectors([
-    { cassetteId: cassette.id, outcome: replay, score: score?.score, label: cassette.label },
+    { cassetteId: cassette.id, outcome: replay,
+      score: labelRecord?.correction === undefined ? score?.score : scoreCassetteReplay(cassette, replay, labelRecord),
+      label: labelRecord?.label ?? cassette.label },
   ])[0]
   return vector === undefined || FLOOR_AXES.every((axis) => vector.axes[axis] === 'not-applicable')
     ? { kind: 'refused', reason: 'no decision vector' }
@@ -295,6 +301,7 @@ function harm(row: DiffedDecision): NonNullable<Gate1Receipt['harmed']>[number] 
 export interface RemovalFlipsOutcomeInput {
   recordId: string
   cassettes: readonly (LeafBundle & {
+    labelRecord?: StandaloneLabelRecord
     existing?: { withRecord: ReplaySample; withoutRecord: ReplaySample }
     baseSeed?: number
     seedHonored?: boolean
@@ -393,6 +400,12 @@ export async function removalFlipsOutcome(
   }
   for (const target of input.cassettes) {
     const { cassette, artifacts } = target
+    const effective = effectiveGold(cassette, target.labelRecord)
+    if (effective.kind === 'refused') {
+      result.notices.push(`gold unavailable: ${cassette.id}: ${effective.reason}`)
+      result.perTarget.push({ cassetteId: cassette.id, crossCheck: 'inconclusive' })
+      continue
+    }
     const baseSeed = target.baseSeed ?? input.baseSeed
     const seeds = [baseSeed, ...deriveSampleSeeds(baseSeed, input.k)]
     const existing = target.existing ?? input.existing
@@ -421,7 +434,7 @@ export async function removalFlipsOutcome(
       withoutCassette = { ...cassette, input: applyBriefDelta(cassette.input, withoutDelta) }
     }
     const gold = computeDecisionIdentity(
-      cassette.sidecar.goldAction,
+      effective.cassette.sidecar.goldAction,
       cassette.input.stateBefore.elements,
     )
     const goldKey = decisionIdentityKey(gold)
@@ -727,7 +740,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     cache.rows.map((row) => [
       row.cassetteId,
       row.kind === 'cached'
-        ? arm(bundles.get(row.cassetteId)!.cassette, row.replay, row.score)
+        ? arm(bundles.get(row.cassetteId)!.cassette, row.replay, row.score, corpus.snapshot.labelsById.get(row.cassetteId))
         : { kind: 'refused' as const, reason: row.reason },
     ]),
   )
@@ -739,7 +752,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
   const targetsToCrossCheck = targets.filter(({ cassette }) => {
     const cached = cacheById.get(cassette.id)
     if (cached?.kind !== 'cached') return false
-    const baseline = arm(cassette, cached.replay, cached.score)
+    const baseline = arm(cassette, cached.replay, cached.score, corpus.snapshot.labelsById.get(cassette.id))
     return baseline.kind === 'scored' && baseline.vector.axes.headline === 'incorrect'
   }).length
   const scoredTargets = targets.filter(
@@ -787,7 +800,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       decisionOrdinal: cassette.decisionOrdinal,
       origin: targetIds.has(id) ? 'target-step' : 'gate-set',
       entry,
-      label: cassette.label,
+      label: corpus.snapshot.labelsById.get(cassette.id)?.label ?? cassette.label,
       baseline: baselineArms.get(id)!,
       candidate: { kind: 'refused', reason: 'baseline refused' },
     }
@@ -816,7 +829,8 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     if (sample) candidateSamples.set(id, sample)
     seedHonored &&= honored(sample)
     const score = loadScoreRecord(join(outputDir, ...id.split('/').map(slugBranch)))
-    row.candidate = arm(cassette, candidate, score.kind === 'loaded' ? score.record : undefined)
+    row.candidate = arm(cassette, candidate, score.kind === 'loaded' ? score.record : undefined,
+      corpus.snapshot.labelsById.get(cassette.id))
     const cost = buildEvalReport([
       {
         cassetteId: id,
@@ -867,8 +881,10 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
   receipt.samples.detail = targets.flatMap(({ cassette }) => {
     const cached = cacheById.get(cassette.id)
     if (cached?.kind !== 'cached') return []
+    const effective = effectiveGold(cassette, corpus.snapshot.labelsById.get(cassette.id))
+    if (effective.kind === 'refused') return []
     const goldKey = decisionIdentityKey(
-      computeDecisionIdentity(cassette.sidecar.goldAction, cassette.input.stateBefore.elements),
+      computeDecisionIdentity(effective.cassette.sidecar.goldAction, cassette.input.stateBefore.elements),
     )
     return [true, false].map((withRecord) => {
       const sample = withRecord ? candidateSamples.get(cassette.id) : firstSample(cached.replay)
@@ -899,6 +915,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
           const cached = cacheById.get(target.cassette.id) as Cached
           return {
             ...target,
+            labelRecord: corpus.snapshot.labelsById.get(target.cassette.id),
             baseSeed: cached.seed,
             seedHonored: cached.seedHonored,
             existing: {

@@ -321,6 +321,9 @@ export function buildEvalReport(
     'all-samples-harness-error': 0,
     'modal-representative-missing': 0,
     'missing-cassette-decision': 0,
+    'missing-executable-correction': 0,
+    'invalid-executable-correction': 0,
+    'label-identity-mismatch': 0,
   }
   const skippedCounts: Counts<SkippedReason> = { 'cache-served': 0, synthesized: 0 }
   const missByFailure = new Map<string, number>()

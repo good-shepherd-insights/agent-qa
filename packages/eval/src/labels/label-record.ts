@@ -21,7 +21,7 @@
  * cassette or an existing record.
  */
 import { sha256hex } from '@vostride/agent-qa-schema'
-import type { MarkReceipt } from '@vostride/agent-qa-schema'
+import type { Action, MarkReceipt } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
 import type { LeafCassette } from '../cassette/cassette'
 import type { CassetteLabelLeg, ContrastivePairing } from '../cassette/label-leg'
@@ -83,6 +83,7 @@ export interface LabelCorrection {
   verdict: 'pass' | 'fail'
   overturnedVerdict: { pass: boolean; reasoning: string }
   correctedExpectation?: string
+  correctedAction?: Action
   markId: string
 }
 
@@ -114,8 +115,11 @@ export function projectUserMarkLabelRecord({
     // All three kinds retain the recorded VerifierVerdict. false-fail corrects it
     // to pass separately; confirmed-bug confirms FAIL; false-pass has a sibling correction.
     label: { ...cassette.label, sourceChannel: 'user-mark', tier: 'gold' },
-    ...(mark.kind === 'false-fail' ? {
-      correction: { verdict: 'pass' as const, overturnedVerdict: recordedVerdict(cassette), markId: mark.markId },
+    ...(mark.kind !== 'confirmed-bug' || mark.correctedAction !== undefined || mark.correctedExpectation !== undefined ? {
+      correction: { verdict: mark.kind === 'false-fail' ? 'pass' as const : 'fail' as const,
+        overturnedVerdict: recordedVerdict(cassette), markId: mark.markId,
+        ...(mark.correctedExpectation === undefined ? {} : { correctedExpectation: mark.correctedExpectation }),
+        ...(mark.correctedAction === undefined ? {} : { correctedAction: mark.correctedAction }) },
     } : {}),
     ...(supersedes === undefined ? {} : { supersedes }),
     provenance: { ...projectProvenance(cassette, runId), sourceCassetteId: cassette.id },
@@ -135,6 +139,7 @@ export function projectOverturnedVerdictLabelRecord({
       verdict: 'fail',
       overturnedVerdict: recordedVerdict(cassette),
       ...(correctedExpectation === undefined ? {} : { correctedExpectation }),
+      ...(mark.correctedAction === undefined ? {} : { correctedAction: mark.correctedAction }),
       markId: mark.markId,
     },
     ...(supersedes === undefined ? {} : { supersedes }),

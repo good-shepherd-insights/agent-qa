@@ -26,6 +26,7 @@ export function committedCorpusAdmissionRefusal(
   if (expected.size === 0) return refuse('no guarded committed members')
   const seen = new Set<string>()
   for (const { cassette } of loaded.loaded) {
+    if (corpus.retiredMarkedCassetteIds?.has(cassette.id)) continue
     if (!expected.has(cassette.id)) return refuse(`foreign cassette member ${cassette.id}`)
     if (seen.has(cassette.id)) return refuse(`duplicate cassette member ${cassette.id}`)
     seen.add(cassette.id)

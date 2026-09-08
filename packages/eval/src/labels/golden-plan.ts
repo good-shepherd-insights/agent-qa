@@ -49,6 +49,13 @@ export interface GoldenTrajectoryPlan {
   skipped: { cassetteId: string; reason: 'missing-cassette' | 'not-leaf' }[]
 }
 
+export function markedDecisionCount(handoff: CompletedRunHandoff, targets: readonly GoldenTrajectoryTarget[]): number {
+  return targets.reduce((count, target) => {
+    const handoffTest = handoff.tests.find(member => member.testIndex === target.testIndex)!
+    return count + collectStepSelections({ handoffTest, step: handoffTest.steps[target.stepIndex]! }).selections.length
+  }, 0)
+}
+
 export interface BuildGoldenTrajectoryPlanInput {
   handoff: CompletedRunHandoff
   cassettes: readonly ExtractedCassette[]
@@ -64,6 +71,9 @@ export function buildGoldenTrajectoryPlan({
 }: BuildGoldenTrajectoryPlanInput): GoldenTrajectoryPlan {
   const targets = resolveMarkedDecisions(handoff, mark, mark.kind)
   if ('refusal' in targets) throw new Error(`step-not-found: stepCount=${targets.stepCount}`)
+  if (mark.correctedAction !== undefined && markedDecisionCount(handoff, targets) !== 1) {
+    throw new Error('ambiguous-correction: executable correction requires exactly one decision')
+  }
   const runSlug = deriveRunSlug(handoff.runId)
   const plan: GoldenTrajectoryPlan = {
     product, runId: handoff.runId, runSlug, markId: mark.markId,

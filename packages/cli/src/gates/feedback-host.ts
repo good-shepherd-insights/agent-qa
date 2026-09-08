@@ -6,7 +6,7 @@ import { createKnowledgeReader, createKnowledgeReview, DIGEST_JOB_ID_SOURCE, LOC
 import { RunsMarkInputSchema, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type CompletedRunHandoff, type MarkReceipt, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { wordImprovementPlan } from './feedback-wording.js'
-import { resolveEvalSession, resolveMarkedDecisions, resolveProductPartition, FsHandoffSource, FsMarkLedger, freezeGoldenTrajectory, slugBranch } from '../eval-session-composition.js'
+import { canonicalJson, resolveEvalSession, markedDecisionCount, resolveMarkedDecisions, resolveProductPartition, FsHandoffSource, FsMarkLedger, freezeGoldenTrajectory, slugBranch } from '../eval-session-composition.js'
 
 export interface FeedbackHostDeps {
   configPath: string
@@ -65,7 +65,8 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
       let refusal: RunsMarkOutcome | undefined
       const receipt = await ledger.transact(async ordinal => {
         const prior = ledger.latestFor(address)
-        if (prior?.kind === input.kind) {
+        if (prior?.kind === input.kind && prior.correctedExpectation === input.correctedExpectation
+          && canonicalJson(prior.correctedAction ?? null) === canonicalJson(input.correctedAction ?? null)) {
           refusal = { kind: 'already-marked', receipt: prior }
           return undefined
         }
@@ -91,6 +92,11 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
         if (triage.kind === 'quarantined') {
           mark.disposition = { kind: 'quarantined', class: triage.class }
           return mark
+        }
+        const decisionCount = markedDecisionCount(handoff, targets)
+        if (input.correctedAction !== undefined && decisionCount !== 1) {
+          refusal = { kind: 'ambiguous-correction', runId: input.runId, testIndex: member.testIndex, decisionCount }
+          return undefined
         }
         let intent = ledger.prepareIntent(mark, deps.randomUuid())
         mark = intent.mark

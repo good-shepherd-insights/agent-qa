@@ -16,6 +16,8 @@ import {
   slugBranch,
   asRef,
   sha256hex,
+  type MarkReceipt,
+  type CompletedRunHandoff,
 } from '@vostride/agent-qa-schema'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import {
@@ -25,6 +27,7 @@ import {
   requiredAgreement,
   computeDecisionIdentity,
   canonicalizeInputLeg,
+  computeCorpusDigest,
 } from '@vostride/agent-qa-eval'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as evalLocal from '../index.js'
@@ -107,6 +110,39 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     }
     return { f, baseline, stub, input }
   }
+  it('Gate1 consumes real frozen corrected gold without adding gold to planner inputs', async () => {
+    const { f, input } = await warm({ handoffForTarget: true })
+    const runId = f.injection.target!.runId
+    const handoff = JSON.parse(readFileSync(join(f.agentQaRoot, 'runs', slugBranch(runId), 'handoff.json'), 'utf8')) as CompletedRunHandoff
+    const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_a123456789ab', runId: handoff.runId,
+      runSlug: slugBranch(runId), testIndex: 0, stepIndex: 0, kind: 'false-pass', origin: 'user', ordinal: 1, markedAt: 0,
+      correctedExpectation: 'Choose Cancel', correctedAction: { type: 'click', ref: asRef('e-other') },
+      disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, gold: [], evidence: { confirmed: 0, overturned: 0 } }
+    const frozen = evalLocal.freezeGoldenTrajectory({ agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot,
+      product: 'alpha', mark, handoff })
+    if (frozen.kind !== 'frozen') throw new Error(JSON.stringify(frozen))
+    await new evalLocal.FsMarkLedger({ root: f.agentQaRoot, runId }).append({ ...mark, gold: frozen.cases })
+    const corpus = evalLocal.readActiveCommittedCorpus(f.committedRoot, f.agentQaRoot)
+    f.corpusDigest = computeCorpusDigest(corpus.snapshot.entries)
+    f.artefact.corpusDigest = f.corpusDigest
+    writeFileSync(join(f.committedRoot, evalLocal.committedNoiseFloorPath(f.profileKey)), JSON.stringify(f.artefact))
+    const selected = evalLocal.loadCassetteBundles(f.cassettesRoot).loaded.flatMap(row =>
+      row.cassette.granularity === 'leaf' ? [{ ...row, cassette: row.cassette }] : [])
+    f.selected.splice(0, f.selected.length, ...selected)
+    const before = frozen.cases.map(item => readFileSync(join(f.committedRoot, 'cassettes', 'alpha', item.cassetteId, 'cassette.json'), 'utf8'))
+    await warmGateRoot(f, respondingStub(gate1Responder(f)))
+    const calls: CapturedCallOptions[] = []
+    const candidate = respondingStub(call => { calls.push(call); return gate1Responder(f)(call) })
+    input.planner.modelOverrides = { languageModels: candidate.languageModels }
+    const result = await evalLocal.runReplayGate(input)
+    if (result.kind !== 'receipt') throw new Error(JSON.stringify(result))
+    expect(result.receipt.verdict).toBe('fail')
+    expect(result.receipt.harmed).toEqual(expect.arrayContaining([expect.objectContaining({
+      cassetteId: frozen.cases.find(item => item.channel === 'user-mark')!.cassetteId, labelTier: 'gold', sourceChannel: 'user-mark' })]))
+    expect(JSON.stringify(calls)).not.toContain('Choose Cancel')
+    expect(frozen.cases.map(item => readFileSync(join(f.committedRoot, 'cassettes', 'alpha', item.cassetteId, 'cassette.json'), 'utf8'))).toEqual(before)
+  })
+
   async function warmJudge(
     options: {
       modelId?: string
