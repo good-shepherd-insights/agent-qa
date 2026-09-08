@@ -1,6 +1,14 @@
 // Neutral port type re-exports anchor the eval workspace dependency declared by this package.
 export { freezeGoldenTrajectory } from './golden-composition.js'
 export type { FreezeGoldenTrajectoryInput, FreezeOutcome } from './golden-composition.js'
+export {
+  FsMarkLedger,
+  MARKS_LEDGER_FILE,
+  MARKS_LEDGER_LOCK_FILE,
+  MarkLedgerBusyError,
+  MarkLedgerCorruptError,
+  MarkLedgerNoRunError,
+} from './mark-ledger.js'
 export type { ArtifactSource, HandoffSource } from '@vostride/agent-qa-eval'
 
 export { FsHandoffSource } from './handoff-source.js'
