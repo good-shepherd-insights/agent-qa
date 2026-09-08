@@ -6,6 +6,7 @@ import {
   BundleOutcomeEventSchema,
   asRecordId,
   guardRecordChange,
+  stampReceiptDigest,
 } from '@vostride/agent-qa-schema'
 import type {
   BundleOutcomeEvent,
@@ -20,6 +21,10 @@ import type {
   PublishBundleInput,
 } from '../bundle-publish.test-helper.js'
 import * as knowledgeLocal from '../index.js'
+import { createLocalKnowledgeStore } from '../curator/knowledge-store.js'
+import { acquireWriterLease, releaseLease } from '../lease/writer-lease.js'
+import { readGateReceipts } from '../bundle-read.js'
+import { enumerateBundleDirs } from '../bundle-scan.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,
@@ -65,6 +70,31 @@ describe('diffSince deterministic maintenance history', () => {
       commitArtifacts: 'none',
     }
   }
+
+  it.each([3, 6])('419 promoted rows copy sovereign path and digest at ordinal %s, including immediate promotion', async ordinal => {
+    const recordId = publishFact('Sovereign checkout', 'shop', 3, [])
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('fixture lease unavailable')
+    try {
+      const store = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: join(root, '.agent-qa'),
+        executionContext: 'local-interactive', writerLeaseId: lease.leaseId, epoch: lease.epoch,
+        sourceBuildOrdinal: ordinal })
+      await store.promote(recordId, [stampReceiptDigest({ schemaVersion: 1, gate: 3,
+        candidateId: recordId, verdict: 'pass', producedAtOrdinal: ordinal,
+        producedBy: { opId: 'knowledge.proposal.apply' }, runId: 'diff-mark-run', mark: 'false-fail' })])
+      const rows = diffSince(knowledgeRoot, 0)
+      const promoted = rows.find(row => row.change === 'promoted')!
+      expect(promoted).toMatchObject({ recordId, promotionPath: 'user-sovereign', atOrdinal: ordinal,
+        promotionReceiptDigest: expect.stringMatching(/^[a-f0-9]{64}$/) })
+      const dir = enumerateBundleDirs(knowledgeRoot)[0]!.dir
+      const line = readGateReceipts(dir, recordId)!.find(line => 'kind' in line && line.kind === 'promotion')!
+      expect(promoted.promotionReceiptDigest).toBe(line.receiptDigest)
+      const added = rows.find(row => row.change === 'added')!
+      expect(added).not.toHaveProperty('promotionPath')
+      expect(added).not.toHaveProperty('promotionReceiptDigest')
+      expect(diffSince(knowledgeRoot, ordinal)).toEqual([])
+    } finally { releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
+  })
 
   function publishFact(
     name: string,

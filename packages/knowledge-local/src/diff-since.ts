@@ -6,6 +6,8 @@ import {
   RECORD_CHANGE_SCHEMA_VERSION,
   RecordChangeSchema,
   survivingOutcomeEvents,
+  isPromotionReceipt,
+  strongestPromotionPath,
 } from '@vostride/agent-qa-schema'
 import type {
   BundleOutcomeEvent,
@@ -22,6 +24,7 @@ import {
   guardPurgeReceiptForFile,
   parseCanonicalPurgeReceiptFileName,
 } from './purge-receipt.js'
+import { readGateReceipts } from './bundle-read.js'
 
 export interface DiffSinceOptions {
   knowledgeRoot: string
@@ -214,9 +217,21 @@ export function diffSince(options: DiffSinceOptions): RecordChange[] {
     }
 
     for (const event of survivingEvents) {
-      if (event.buildOrdinal <= eventLowerBound) continue
+      if (event.buildOrdinal <= options.sinceOrdinal) continue
+      const receipts = event.type === 'promoted' ? readGateReceipts(entry.dir, bundle.manifest.id) ?? [] : []
+      const promotion = receipts.filter(isPromotionReceipt)
+        .reverse().find(line => line.producedAtOrdinal === event.buildOrdinal)
+      // A synchronous mark commit and promotion share an ordinal. Its persisted promotion
+      // receipt makes that event distinct from the added row; legacy receipt-less rows retain
+      // their historical suppression at the creation ordinal.
+      if (event.buildOrdinal <= eventLowerBound && promotion === undefined) continue
       const change = directChange(bundle.manifest.id, event, bundle.provenance)
-      if (change !== undefined) changes.push(change)
+      if (change !== undefined) {
+        const promotionPath = promotion === undefined ? undefined : strongestPromotionPath(receipts)
+        changes.push(promotionPath === undefined ? change : RecordChangeSchema.parse({
+          ...change, promotionPath, promotionReceiptDigest: promotion!.receiptDigest,
+        }))
+      }
     }
   }
 
