@@ -128,6 +128,9 @@ export function renderCensusMarkdown(census: CorpusCensus): string {
     lines.push('')
     lines.push(...counterLines('staticScorability', block.staticScorability))
     lines.push(...counterLines('labelTiers', block.labelTiers))
+    if (block.markedGold !== undefined) {
+      lines.push(`- marked gold: user-mark ${block.markedGold['user-mark']} · overturned-verdict ${block.markedGold['overturned-verdict']}`, '')
+    }
     lines.push(...counterLines('rungMix', block.rungMix))
     lines.push(...counterLines('briefContent', block.briefContent))
     lines.push(...counterLines('runsExcluded', block.runsExcluded))

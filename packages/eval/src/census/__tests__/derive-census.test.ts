@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import type {
   ActionAnnotation,
   CompletedRunHandoff,
@@ -213,6 +214,24 @@ function legacy24Products(cassettes: readonly LeafCassette[]): Map<string, strin
 }
 
 describe('deriveCensus (413 D-14/D-16, ROOT-05)', () => {
+  it('keeps the pre-419 unmarked census bytes and omits markedGold entirely', () => {
+    const census = deriveCensus({ snapshot: snapshotOf([cassetteWith('unmarked')]) })
+    const baseline = readFileSync(new URL('./fixtures/pre419-unmarked-census.json', import.meta.url), 'utf8')
+    expect(`${JSON.stringify(census)}\n`).toBe(baseline)
+    expect(Object.hasOwn(census.products['example-web']!, 'markedGold')).toBe(false)
+  })
+
+  it.each([0, 1])('counts user-mark and %i overturned-verdict labels in the committed record', overturnedCount => {
+    const snapshot = snapshotOf([cassetteWith('user'), ...(overturnedCount ? [cassetteWith('overturned')] : [])])
+    const labelsById = new Map(snapshot.labelsById)
+    for (const [id, sourceChannel] of [['user', 'user-mark'], ['overturned', 'overturned-verdict']] as const) {
+      const label = labelsById.get(id)
+      if (label) labelsById.set(id, { ...label, label: { ...label.label, tier: 'gold', sourceChannel } })
+    }
+    const census = deriveCensus({ snapshot: { ...snapshot, labelsById } })
+    expect(census.products['example-web']!.markedGold).toEqual({ 'user-mark': 1, 'overturned-verdict': overturnedCount })
+    expect(census.schemaVersion).toBe(2)
+  })
   it('reproduces the legacy-24 split 14 / 1 / 9 with per-product totals', () => {
     const base = FIXTURE_LEAF.sidecar
     const anchor = { role: 'button', nameNormalized: 'continue', ordinal: 0 }

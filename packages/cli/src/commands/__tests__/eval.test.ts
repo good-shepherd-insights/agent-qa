@@ -3467,6 +3467,18 @@ function censusFixture(): CorpusCensus {
 }
 
 describe('renderCensusMarkdown — byte-deterministic, counts-only projection (413 D-15/D-16)', () => {
+  it('copies marked gold counts and leaves unmarked markdown byte-identical', () => {
+    const census = censusFixture()
+    const before = renderCensusMarkdown(census)
+    expect(before).not.toContain('marked gold:')
+    census.products.default!.markedGold = { 'user-mark': 1, 'overturned-verdict': 1 }
+    const line = '- marked gold: user-mark 1 · overturned-verdict 1\n\n'
+    const rendered = renderCensusMarkdown(census)
+    expect(rendered).toContain(line)
+    expect(rendered.replace(line, '')).toBe(before)
+    census.products.default!.markedGold = { 'user-mark': 37, 'overturned-verdict': 0 }
+    expect(renderCensusMarkdown(census)).toContain('marked gold: user-mark 37 · overturned-verdict 0')
+  })
   it('renders the same DTO to byte-identical text under the locked section structure', () => {
     const census = censusFixture()
 

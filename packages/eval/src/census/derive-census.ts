@@ -120,8 +120,9 @@ export interface CensusCampaignInput {
   manifestDigest: string
 }
 
-/** Per-product counters; every key is present even at zero, so absence is never silent. */
+/** Per-product counters; markedGold is the presence-conditional compatibility extension. */
 export interface CensusProductBlock {
+  markedGold?: { 'user-mark': number; 'overturned-verdict': number }
   total: number
   scorableByTier: { tier1: number; tier2: number; tier3: number }
   goldEvidence: number
@@ -284,6 +285,7 @@ function zeroVerdictProducers(): Counts<VerdictProducer> {
 }
 
 interface ProductAccumulator {
+  markedGold: { 'user-mark': number; 'overturned-verdict': number }
   total: number
   entries: CorpusEntry[]
   capturedAtPresent: number
@@ -310,6 +312,7 @@ interface ProductAccumulator {
 
 function newAccumulator(): ProductAccumulator {
   return {
+    markedGold: { 'user-mark': 0, 'overturned-verdict': 0 },
     total: 0,
     entries: [],
     capturedAtPresent: 0,
@@ -420,6 +423,11 @@ function projectBlock(accumulator: ProductAccumulator): CensusProductBlock {
     goldEvidence: tier2 + tier3,
     staticScorability: accumulator.staticScorability,
     labelTiers: accumulator.labelTiers,
+    // 2026-09-08, 419 D-05: omit on unmarked corpora so the same digest retains
+    // byte-identical census documents under the existing version-2 write-once key.
+    ...(accumulator.markedGold['user-mark'] > 0 || accumulator.markedGold['overturned-verdict'] > 0
+      ? { markedGold: accumulator.markedGold }
+      : {}),
     proofCoverage: rateMetric(accumulator.proofCarrying, accumulator.proofDenominator),
     rungMix: accumulator.rungMix,
     briefContent: accumulator.briefContent,
@@ -500,7 +508,13 @@ export function deriveCensus(input: DeriveCensusInput): CorpusCensus {
 
     const label = snapshot.labelsById.get(entry.cassetteId)
     if (label === undefined) accumulator.missingLabelRecord += 1
-    else accumulator.labelTiers[label.label.tier] += 1
+    else {
+      accumulator.labelTiers[label.label.tier] += 1
+      const channel = label.label.sourceChannel
+      if (channel === 'user-mark' || channel === 'overturned-verdict') {
+        accumulator.markedGold[channel] += 1
+      }
+    }
 
     const cassette = snapshot.cassettesById.get(entry.cassetteId)
     if (cassette === undefined) {
