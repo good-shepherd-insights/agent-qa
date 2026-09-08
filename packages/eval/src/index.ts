@@ -197,6 +197,7 @@ export type {
   ProcedureSynthesizedStepRecord,
 } from './cassette/cassette'
 export { cassetteSchema } from './cassette/schema'
+export { cassetteEgressText } from './cassette/egress'
 export { ACTION_WIRE_SCHEMAS_BY_TYPE, actionWireSchema } from './cassette/action-wire-schema'
 export {
   CASSETTE_MIGRATIONS,

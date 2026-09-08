@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, mkdtempSync, statSync, wri
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { buildGoldenTrajectoryPlan, buildSeedingPlan, deriveCensus, extractRunCassettes, renderCensusMarkdown } from '@vostride/agent-qa-eval'
+import { buildGoldenTrajectoryPlan, buildSeedingPlan, committedFileText, deriveCensus, extractRunCassettes, renderCensusMarkdown } from '@vostride/agent-qa-eval'
 import { FsEvidenceArtifactStore, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import * as safety from '@vostride/agent-qa-safety'
 import type { GuardrailAuditRow } from '@vostride/agent-qa-safety'
@@ -99,6 +99,39 @@ describe('freezeGoldenTrajectory', () => {
     expect(freeze().kind).toBe('frozen')
     expect(hashes(files)).toEqual(before)
     expect(readCommittedCorpus(committedRoot).snapshot.entries).toHaveLength(2)
+  })
+
+  it('freezes the captured Luhn-valid screen timestamp without changing cassette bytes or receipt hashes', () => {
+    // Actual 419 (4a) failure: 2026-09-08T16:12:38.737Z, audit fingerprint 11103290ebca9211.
+    const timestamp = 1_788_883_958_737
+    expect(safety.scan(String(timestamp), safety.loadGuardrailPolicy(safety.defaultGuardrailPolicyInput)).result.action).toBe('block')
+    handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore.timestamp = timestamp
+    const cassettes = extract()
+    const plan = buildGoldenTrajectoryPlan({ handoff, cassettes, mark, product })
+    const expected = committedFileText(plan.goldCassettes[0]!.cassette)
+    const result = freeze()
+    expect(result.kind).toBe('frozen')
+    expect(rows).toEqual([])
+    expect(readFileSync(paths(plan.cases[0]!.cassetteId)[0]!, 'utf8')).toBe(expected)
+    expect(handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore.timestamp).toBe(timestamp)
+  })
+
+  it.each([
+    ['captured timestamp as user text', '1788883958737'],
+    ['captured timestamp as numeric content', 1_788_883_958_737],
+    ['PAN as user text', '4111111111111111'],
+    ['PAN as numeric content', 4_111_111_111_111_111],
+  ] as const)('still refuses %s outside machine screen timestamp metadata', (_name, value) => {
+    const state = handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore
+    state.timestamp = 1_788_883_958_737
+    if (typeof value === 'string') state.tree = value
+    else state.metadata = Object.assign({}, state.metadata, { timestamp: value })
+    expect(freeze().kind).toBe('refused')
+    expect(rows).toEqual(expect.arrayContaining([expect.objectContaining({
+      detector: 'creditCard', action: 'block',
+      redactedFingerprint: createHash('sha256').update(String(value)).digest('hex').slice(0, 16),
+    })]))
+    expect(readCommittedCorpus(committedRoot).snapshot.entries).toHaveLength(0)
   })
 
   it('false-pass writes both independent gold channels', () => {

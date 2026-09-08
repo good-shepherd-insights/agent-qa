@@ -4,7 +4,7 @@
 # (406-11; the cells are 406-10's, the apparatus is 405-15's as 406-09 repaired it).
 #
 # WHAT THIS PROVES, AND WHY A GREEN SUITE DOES NOT PROVE IT. `conformance/failure-view-dom.test.ts`
-# asserts that ten facts hold about the page the shipped `agent-qa dashboard` serves: that a RED
+# asserts that eleven facts hold about the page the shipped `agent-qa dashboard` serves: that a RED
 # run's `analyze-run` job completed first-attempt and the model AUTHORED its verdict, that the block
 # under member 0 reads the LLM-verdict provenance over the op's own sentence, that the cited
 # screenshot is a real button whose bytes the pane fetched, that no masking delimiter reaches a text
@@ -16,7 +16,7 @@
 # the fact away and watch the cell go red — and to watch its NEIGHBOURS stay green, because a
 # mutation that reds the whole file is measuring blast radius.
 #
-# FOUR MUTATIONS, ONE PER FACT-CARRIER, ACROSS TWO PACKAGES:
+# FIVE MUTATIONS, ONE PER FACT-CARRIER, ACROSS TWO PACKAGES:
 #
 #   M1   406-07's fix at the egress guardrail reverted — `isFractionalTail` goes back to the
 #        2026-08-10 rule (suppress a zero-integer decimal, score everything else), so the analyze-run
@@ -30,6 +30,7 @@
 #   M3b  the failure view's absent ref rendered as a PLAIN CLICKABLE LINK — the `ref.incomplete ?`
 #        ternary collapses to its button branch, so an affordance that opens nothing is painted over
 #        bytes that are not there
+#   M4   the three-way sovereign mark control removed from the failure view; only (4a) reds
 #
 # WHAT EACH LEG IS EXPECTED TO REACH IS STATED IN ADVANCE, AND SO IS WHAT IT MUST NOT.
 #
@@ -103,7 +104,7 @@
 # is the only required red: the cell asserts the pane's state, the page-wide `incomplete` pair AND
 # that ZERO artifact requests were made, and this leg moves all three.
 #
-# ITS CONTROL LIST IS THE WIDEST IN THIS SCRIPT — nine cells. The failure view's own ternary is
+# ITS CONTROL LIST IS THE WIDEST IN THIS SCRIPT — ten cells. The failure view's own ternary is
 # untouched, so (3c)'s chip and its count line are exactly where the unmutated tree left them; the
 # wire in (3a) never crosses this component; (3d)'s four comparisons are of the verdict, not the
 # pane; and (1a)-(1d)/(2a)-(2b) drive a page whose bytes are all present, where `present === false`
@@ -132,10 +133,11 @@
 #   M2   .../run-detail/verdict-block.tsx                  `ref.incomplete ? (` … `) : (`
 #   M3a  .../run-detail/tab-overview.tsx                   `ref.present === false ||`
 #   M3b  .../run-detail/verdict-block.tsx                  `ref.incomplete ? (` … `) : (`
+#   M4   .../run-detail/verdict-block.tsx                  `view.marks !== undefined && onMark`
 #
 # EVERY LEG CROSSES A `dist` BOUNDARY AND THE REBUILD IS PART OF THE MUTATION. All three subjects are
 # resolved by the spawned `agent-qa dashboard` as BUILT workspace dependencies — dashboard-ui's
-# bundle for M2/M3a/M3b, the safety dist the CLI links for M1 — and the DOM file's own
+# bundle for M2/M3a/M3b/M4, the safety dist the CLI links for M1 — and the DOM file's own
 # `buildFreshness(POPULATED_RUN_ANCHORED_BUILDS)` guard compares mtimes against those artifacts, so a
 # restored-but-unbuilt source refuses every cell with a message that reads exactly like a red. That
 # is a red the leg never measured. `--force` is required for the same guard's sake in the other
@@ -160,8 +162,8 @@
 #
 # EXIT CODES ARE READ FROM THE PROCESS, NEVER THROUGH A PIPE.
 #
-# THIS SCRIPT IS SLOW AND IT IS SLOW FOR A REASON. Nine forced workspace builds (preflight plus
-# mutate-and-restore per leg) and five passes of a suite that spawns the built binary twice, launches
+# THIS SCRIPT IS SLOW AND IT IS SLOW FOR A REASON. Eleven forced workspace builds (preflight plus
+# mutate-and-restore per leg) and six passes of a suite that spawns the built binary twice, launches
 # a real Chromium, executes a real failing run and a real passing run through real planning turns,
 # and unlinks a blob between two browser contexts. Tens of minutes, not seconds. It is the phase's
 # ACCEPTANCE for ANLZ-01 and DETL-05, run at wave merge and before `/gsd-verify-work`; the per-commit
@@ -174,9 +176,8 @@
 #
 # KNOBS
 #   FAILURE_VIEW_MUTATION_SELFTEST=neutered
-#       apply a NO-OP edit in place of every mutation. The script must then FATAL with "the suite
-#       stayed green under the mutation" — a gate nobody has seen fire is a comment.
-#   FAILURE_VIEW_MUTATION_ONLY=M1|M2|M3a|M3b
+#       apply a NO-OP edit in place of every mutation. The byte guard must FATAL at "changed no byte".
+#   FAILURE_VIEW_MUTATION_ONLY=M1|M2|M3a|M3b|M4
 #       run ONE leg (the preflight still runs). A single leg is a SAMPLE, never the acceptance: the
 #       script says so on the way out so nobody quotes a one-leg run as the bar.
 
@@ -187,6 +188,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 CLI_FILTER="agent-qa"
+
+case "${FAILURE_VIEW_MUTATION_ONLY:-}" in
+  ''|M1|M2|M3a|M3b|M4) ;;
+  *) echo "FATAL: unknown FAILURE_VIEW_MUTATION_ONLY=${FAILURE_VIEW_MUTATION_ONLY}" >&2; exit 1 ;;
+esac
 
 SEAM_SUBJECT="packages/safety/src/guardrail/detectors.ts"
 VERDICT_SUBJECT="packages/dashboard-ui/src/components/run-detail/verdict-block.tsx"
@@ -212,7 +218,7 @@ sha_of () {
 # whether or not it changes a byte, and the DOM cells' `buildFreshness` guard compares source mtimes
 # against the dists they drive — so an unconditional restore in the EXIT trap, which runs AFTER this
 # script's last rebuild, leaves every source "newer than" the artifacts and the next person to run
-# the suite gets ten refusals that read exactly like a red.
+# the suite gets eleven refusals that read exactly like a red.
 #
 # AND IT REPORTS WHETHER IT ACTUALLY COPIED, because that is what lets `restore_and_rebuild` below
 # know a rebuild is owed on an ERROR path, where the file on disk IS still mutated.
@@ -279,29 +285,34 @@ echo
 # mutation exists to red; ALLOWED is everything a red is permitted to be; GREEN is the control —
 # cells this mutation must NOT reach, asserted by name so the log carries what stayed still.
 #
-# EVERY ONE OF THE TEN IS CLASSIFIED IN EVERY LEG. There is no third bucket of cells nobody
+# EVERY ONE OF THE ELEVEN IS CLASSIFIED IN EVERY LEG. There is no third bucket of cells nobody
 # predicted: a cell missing from both lists is a cell whose behaviour under the mutation was never
 # reasoned about, and this file's whole claim is that the reasoning was done in advance.
 #
 # The ordinals are the contract between this script and the suite. A cell renamed without its
 # ordinal reds nothing here and this script says so by name rather than passing quietly.
 
-# The authoring claim and everything that rests on it. Seven of ten, predicted by name above —
+# The authoring claim and everything that rests on it. Eight of eleven, predicted by name above —
 # including (1d), whose block-scoped clause reads the FLOOR's sentence once the model's is gone.
+# 419-11 measured (4a) as another REQUIRED catcher: the exact same planted reasoning float reaches
+# the marked cassette and label. Reverting its generic egress fix must refuse that real freeze too.
+# Audit fingerprint 3e30cfd8846b918c is the candidate `0285714285714285 `, including its final space.
 REQUIRED_M1="(1a)
 (1b)
 (1c)
 (1d)
 (3a)
 (3b)
-(3c)"
+(3c)
+(4a)"
 ALLOWED_M1="(1a)
 (1b)
 (1c)
 (1d)
 (3a)
 (3b)
-(3c)"
+(3c)
+(4a)"
 GREEN_M1="(2a)
 (2b)
 (3d)"
@@ -318,9 +329,10 @@ GREEN_M2="(1a)
 (2a)
 (2b)
 (3a)
-(3d)"
+(3d)
+(4a)"
 
-# The overview's own claim, and nothing else. Nine controls for one required red — the widest
+# The overview's own claim, and nothing else. Ten controls for one required red — the widest
 # control list in this script, and the reason this leg is worth its build.
 REQUIRED_M3A="(3b)"
 ALLOWED_M3A="(3b)"
@@ -332,7 +344,8 @@ GREEN_M3A="(1a)
 (2b)
 (3a)
 (3c)
-(3d)"
+(3d)
+(4a)"
 
 # The plain-link claim, plus the same page-wide count for the same reason as M2.
 REQUIRED_M3B="(3b)
@@ -346,6 +359,21 @@ GREEN_M3B="(1a)
 (2a)
 (2b)
 (3a)
+(3d)
+(4a)"
+
+# 419 D-16: the mark action is independent of the authored verdict and missing screenshot UI.
+REQUIRED_M4="(4a)"
+ALLOWED_M4="(4a)"
+GREEN_M4="(1a)
+(1b)
+(1c)
+(1d)
+(2a)
+(2b)
+(3a)
+(3b)
+(3c)
 (3d)"
 
 apply_mutation () {
@@ -384,6 +412,10 @@ apply_mutation () {
       # bytes that are not there — the "affordance that opens nothing" the one component's own header
       # names as the worse lie.
       perl -0pi -e 's/            ref\.incomplete \? \(\n(?:.*\n)*?            \) : \(\n/            (\n/' \
+        "$REPO_ROOT/$VERDICT_SUBJECT" ;;
+    M4)
+      # Match the unique literal including its JSX braces and exact six-space indentation.
+      perl -0pi -e 's/      \{view\.marks !== undefined && onMark \? \(\n(?:.*\n)*?      \) : null\}\n/      {null}\n/' \
         "$REPO_ROOT/$VERDICT_SUBJECT" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac
@@ -471,6 +503,26 @@ reds_from_verdicts () {
 
 # ONE LEG, OR ALL OF THEM. `FAILURE_VIEW_MUTATION_ONLY` is the per-commit sample: it skips the other
 # legs by name so the log says which measurement was NOT taken.
+assert_cell_census () {
+  node -e '
+    const fs = require("node:fs")
+    const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    const split = text => text.split("\n").filter(Boolean)
+    const required = split(process.argv[2]), allowed = split(process.argv[3]), green = split(process.argv[4])
+    const cells = (report.testResults ?? []).flatMap(file => file.assertionResults ?? [])
+    const ids = cells.map(cell => cell.title.match(/^\([1-4][a-d]\)/)?.[0])
+    const expected = [...allowed, ...green]
+    const fatal = message => { console.error(`FATAL: cell census ${message}`); process.exit(1) }
+    if (cells.length !== 11 || ids.some(id => !id) || new Set(ids).size !== 11) fatal("must collect eleven uniquely named cells")
+    if (new Set(expected).size !== expected.length || expected.length !== 11) fatal("must classify each cell exactly once")
+    if (expected.some(id => !ids.includes(id)) || ids.some(id => !expected.includes(id))) fatal("does not match required/allowed/green lists")
+    if (required.some(id => !allowed.includes(id))) fatal("required lies outside allowed")
+    if (cells.some(cell => !["passed", "failed"].includes(cell.status))) fatal("contains skipped or unmeasured cells")
+    for (const id of green) if (cells[ids.indexOf(id)].status !== "passed") fatal(`expected non-catcher ${id} did not pass`)
+    console.log("  eleven cells collected; every expected non-catcher explicitly passed")
+  ' "$VERDICTS" "$1" "$2" "$3"
+}
+
 should_run () {
   case "${FAILURE_VIEW_MUTATION_ONLY:-}" in
     ''|"$1") return 0 ;;
@@ -492,12 +544,11 @@ run_leg () {
 
   case "${FAILURE_VIEW_MUTATION_SELFTEST:-}" in
     neutered) echo "  SELFTEST=neutered: applying a NO-OP edit in place of $name" ;;
-    *)
-      if ! assert_mutated "$subject" "$(baseline_of "$subject")"; then
-        echo "FATAL: mutation $name changed no byte of $subject — its pattern no longer matches" >&2
-        exit 1
-      fi ;;
   esac
+  if ! assert_mutated "$subject" "$(baseline_of "$subject")"; then
+    echo "FATAL: mutation $name changed no byte of $subject — its pattern no longer matches" >&2
+    exit 1
+  fi
 
   echo "  rebuilding every dist the spawned dashboard resolves, so it IS the mutated source"
   build_all
@@ -517,6 +568,12 @@ run_leg () {
 
   if [ "$rc" -eq 0 ]; then
     echo "FATAL: the suite stayed green under the mutation — mutation $name measures nothing" >&2
+    restore_and_rebuild
+    exit 1
+  fi
+
+  if ! assert_cell_census "$required" "$allowed" "$green"; then
+    sed -n '1,120p' "$LOG" >&2
     restore_and_rebuild
     exit 1
   fi
@@ -583,16 +640,18 @@ if [ "$PREFLIGHT_RC" -ne 0 ]; then
   sed -n '1,120p' "$LOG" >&2
   exit 1
 fi
+assert_cell_census "$REQUIRED_M4" "$ALLOWED_M4" "$GREEN_M4"
 echo
 
 run_leg M1 "$SEAM_SUBJECT" "406-07's egress fix reverted — the analyze-run prompt is blocked again" "$REQUIRED_M1" "$ALLOWED_M1" "$GREEN_M1"
 run_leg M2 "$VERDICT_SUBJECT" "the absent cited artifact dropped from the row" "$REQUIRED_M2" "$ALLOWED_M2" "$GREEN_M2"
 run_leg M3a "$OVERVIEW_SUBJECT" "the overview's absent ref rendered as a plain available pane" "$REQUIRED_M3A" "$ALLOWED_M3A" "$GREEN_M3A"
 run_leg M3b "$VERDICT_SUBJECT" "the absent cited artifact rendered as a plain clickable link" "$REQUIRED_M3B" "$ALLOWED_M3B" "$GREEN_M3B"
+run_leg M4 "$VERDICT_SUBJECT" "the three-way mark control deleted from the failure view" "$REQUIRED_M4" "$ALLOWED_M4" "$GREEN_M4"
 
 if [ -n "${FAILURE_VIEW_MUTATION_ONLY:-}" ]; then
   echo "SAMPLE — one leg (${FAILURE_VIEW_MUTATION_ONLY}) ran. This is the per-commit sample, NOT the"
-  echo "         acceptance: the other three facts were not taken away in this run."
+  echo "         acceptance: the other four facts were not taken away in this run."
   exit 0
 fi
 
@@ -600,6 +659,9 @@ echo "PASS — taking 406-07's fix away from the egress guardrail red the author
 echo "       cell that rests on it while the green run still completed, dropping the absent cited"
 echo "       artifact from the row red exactly the chip cell and the page-wide count it is half of,"
 echo "       rendering the overview's absent ref as an available pane red exactly the pane cell and"
-echo "       left nine standing, and rendering the failure view's absent ref as a plain link red the"
+echo "       left ten standing, and rendering the failure view's absent ref as a plain link red the"
 echo "       same pair as the drop — while the wire's own answer, the verdict that was not re-graded"
 echo "       and the masking scan stayed green under every mutation that does not touch them."
+echo "       M4 red exactly (4a), while all ten prior cells stayed green: five live legs passed."
+echo "       M1 also required (4a) red: the shared egress mutation refused the same opaque float"
+echo "       in the real gold freeze; its three original non-catchers stayed green."

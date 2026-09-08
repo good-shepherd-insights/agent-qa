@@ -11,6 +11,8 @@
 //     arrives placeholder-masked from record time (the MaskingContext layer is upstream at
 //     recording; ROOT-02's "after masking" is satisfied by construction) — this checkpoint is the
 //     LAST line of defense, fail-closed on pattern detections, audit rows appended before any throw.
+//     The validated cassette scan view renders only machine ScreenState timestamps in scientific
+//     notation; original serialized bytes and hashes still land unchanged (419-11).
 //   - The atomic unit is the CASE: cassette + label record + corpus entry are checkpointed in ONE
 //     call and land together or not at all. A block refuses the whole case as a typed refusal
 //     carrying the detector labels, and the batch continues — never a batch abort (D-14).
@@ -30,6 +32,7 @@ import { join } from 'node:path'
 
 import {
   canonicalJson,
+  cassetteEgressText,
   committedFileText,
   contractFileName,
   projectJudgeConfigContract,
@@ -205,7 +208,7 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
     try {
       assertCommittedEgressSafe(
         [
-          { label: `cassette:${cassetteId}`, text: texts[0]!.text },
+          { label: `cassette:${cassetteId}`, text: cassetteEgressText(extracted.cassette) },
           { label: `label:${cassetteId}`, text: texts[1]!.text },
           { label: `corpus:${cassetteId}`, text: texts[2]!.text },
         ],
