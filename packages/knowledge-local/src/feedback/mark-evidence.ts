@@ -1,5 +1,5 @@
 // 2026-09-08, 419 D-04/D-09/D-10: append evidence under the caller's authority.
-import { asEvidenceToken, asRecordId, isPromotionReceipt, type BundleOutcomeEvent,
+import { asEvidenceToken, asRecordId, deriveEvidenceToken, exercisedAnchors, isPromotionReceipt, type BundleOutcomeEvent,
   type CompletedRunHandoff, type ExecutionContext, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { appendOutcomeEvent } from '../bundle-append.js'
 import type { BundleStoreConfig } from '../bundle-publish.js'
@@ -56,17 +56,32 @@ export async function appendMarkEvidence(input: AppendMarkEvidenceInput): Promis
       }
       const bundle = loaded.bundle
       const observations = new Set<string>()
+      const evidenceTokens = new Set<string>()
+      const bundleAnchors = bundle.frontmatter.anchors.map(({ raw }) => raw)
       for (const member of input.handoff?.tests ?? []) {
         for (const step of member.steps) {
-          observations.add(canaryOutcomeObservationId({ candidateId: asRecordId(recordId),
+          const canaryId = canaryOutcomeObservationId({ candidateId: asRecordId(recordId),
             runId: input.mark.runId, testId: member.testId, testIndex: member.testIndex,
-            stepIndex: step.stepIndex }))
+            stepIndex: step.stepIndex })
+          observations.add(canaryId)
+          // The deterministic emitter's persisted observation address (emit-candidates.ts).
+          observations.add(`${input.mark.runId}:test-${member.testIndex}:step-${step.stepIndex}`)
+          // Positive canary Confirm goes through the knowledge-port bridge, which changes
+          // observationId but preserves this canonical run/anchor/build evidence token.
+          for (const anchor of [...bundleAnchors, ...exercisedAnchors(step)]) {
+            evidenceTokens.add(deriveEvidenceToken({ attributingObservationId: canaryId,
+              anchor, buildOrdinal: input.handoff!.buildOrdinal }))
+          }
         }
       }
       // Gate-2 receipts preserve run + observation identity even when the handoff is gone.
       for (const receipt of readGateReceipts(entry.dir, asRecordId(recordId)) ?? []) {
         if (!isPromotionReceipt(receipt) && receipt.gate === 2 && receipt.runId === input.mark.runId) {
           observations.add(receipt.attributedObservationId)
+          for (const anchor of bundleAnchors) {
+            evidenceTokens.add(deriveEvidenceToken({ attributingObservationId: receipt.attributedObservationId,
+              anchor, buildOrdinal: receipt.producedAtOrdinal }))
+          }
         }
       }
       const jobs = new Set(input.curationJobIds ?? [])
@@ -75,7 +90,7 @@ export async function appendMarkEvidence(input: AppendMarkEvidenceInput): Promis
         && provenance.curationJobId !== undefined) jobs.add(provenance.curationJobId)
       const hits = bundle.events.filter((event) => (event.type === 'helpful' || event.type === 'confirmed')
         && ((event.observationId !== undefined && observations.has(event.observationId))
-          || jobs.has(event.curationJobId)))
+          || evidenceTokens.has(event.evidenceToken) || jobs.has(event.curationJobId)))
       const buildOrdinal = Math.max(bundle.manifest.createdAtOrdinal,
         ...bundle.events.map((event) => event.buildOrdinal)) + 1
       const config: BundleStoreConfig = { knowledgeRoot: input.knowledgeRoot, productKey: entry.product,

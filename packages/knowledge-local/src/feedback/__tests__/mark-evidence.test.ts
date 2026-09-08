@@ -10,6 +10,7 @@ import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from '../../bund
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
 import { makeBundleDraftFixture, scaffoldKnowledgeRoot } from '../../__tests__/fixtures/bundle-fixture.js'
 import { canaryOutcomeObservationId } from '../../serving/canary-observation-id.js'
+import { createLocalKnowledgeStore } from '../../curator/knowledge-store.js'
 import { appendMarkEvidence, type AppendMarkEvidenceInput } from '../mark-evidence.js'
 
 describe('mark evidence appends through the production writer', () => {
@@ -142,6 +143,35 @@ describe('mark evidence appends through the production writer', () => {
       curationJobId: 'floor-job', buildOrdinal: 12 })
     expect(await appendMarkEvidence(value)).toEqual({ confirmed: 1, overturned: 1, skipped: [] })
     expect(deriveBundleTrust(loaded(a.dir)).status).toBe('active')
+  })
+
+  it('overturns a real positive canary Confirm emitted through the knowledge-port bridge', async () => {
+    const a = plant('Checkout'); const value = input([a.id], 'false-pass'); value.handoff = handoff()
+    const port = createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir,
+      executionContext: 'local-interactive', writerLeaseId: value.lease.leaseId, epoch: value.lease.epoch,
+      sourceBuildOrdinal: 12, sourceRunId: runId })
+    await port.recordCanaryOutcome({ candidateId: a.id, runId, testId: 'checkout', testIndex: 0,
+      stepIndex: 0, buildOrdinal: 12, runOutcome: 'positive', benefit: 'rode-along',
+      stateValidity: 'unknown', exercisedAnchor: loaded(a.dir).frontmatter.anchors[0]!.raw,
+      briefDigest: 'brief', attribution: 'recorded test outcome' })
+    const before = loaded(a.dir)
+    expect(before.events.filter((event) => event.type === 'confirmed')).toHaveLength(1)
+    expect(before.events.find((event) => event.type === 'confirmed')?.observationId).toMatch(/^knowledge-port:/)
+    const status = deriveBundleTrust(before).status
+    expect(await appendMarkEvidence(value)).toEqual({ confirmed: 1, overturned: 1, skipped: [] })
+    expect(deriveBundleTrust(loaded(a.dir)).counters.confirmed).toBe(1)
+    expect(deriveBundleTrust(loaded(a.dir)).status).toBe(status)
+  })
+
+  it('recognizes the emitter floor observation address with exact member and step boundaries', async () => {
+    const a = plant('Checkout'); const value = input([a.id], 'false-pass'); value.handoff = handoff()
+    for (const stepIndex of [0, 10]) {
+      append(a.id, value, { type: 'confirmed', evidenceToken: asEvidenceToken(`floor-step-${stepIndex}`),
+        curationJobId: 'opaque-floor-job', buildOrdinal: 12,
+        observationId: `${runId}:test-0:step-${stepIndex}` })
+    }
+    expect(await appendMarkEvidence(value)).toEqual({ confirmed: 1, overturned: 1, skipped: [] })
+    expect(deriveBundleTrust(loaded(a.dir)).counters.confirmed).toBe(2)
   })
 
   it('skips an unreadable bundle while confirming the readable one', async () => {
