@@ -103,6 +103,7 @@ import {
   loadReplayRecord,
   loadScoreRecord,
   readCommittedCorpus,
+  readActiveCommittedCorpus,
   readPartitionManifests,
   readRunExclusions,
   runNoiseFloorMeasurement,
@@ -182,7 +183,7 @@ export type { WriteBaselinePointerOutcome } from '@vostride/agent-qa-eval-local'
 // Keep the surface firewall self-shrinking; new CLI files do not gain eval imports.
 export { computeCorpusDigest, selectGateSet } from '@vostride/agent-qa-eval'
 export type { JudgeCapabilityInput } from '@vostride/agent-qa-eval'
-export { readCommittedCorpus, readGatePostureFor, resolveMinimumGateSet } from '@vostride/agent-qa-eval-local'
+export { readActiveCommittedCorpus, readCommittedCorpus, readGatePostureFor, resolveMinimumGateSet } from '@vostride/agent-qa-eval-local'
 
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */
 export interface EvalCliConfig {
@@ -2001,6 +2002,8 @@ export async function runReportVerb(
   if (sourceRoot.notice !== undefined) notices.push(sourceRoot.notice)
 
   // (1)+(2) Join every persisted replay record to its score, judge identity, and cassette label.
+  const committedCorpus = source === 'committed'
+    ? readActiveCommittedCorpus(resolve(session.configDir, 'agent-qa-eval'), agentQaRoot) : undefined
   const {
     entries: assembled,
     judgeBlocks,
@@ -2008,10 +2011,10 @@ export async function runReportVerb(
     missingBundleCount,
     notices: assemblyNotices,
   } = assembleScoredBatch({ replaysRoot, cassettesRoot, source,
-    ...(source === 'committed' ? { productByCassetteId: new Map(
-      readCommittedCorpus(resolve(session.configDir, 'agent-qa-eval')).snapshot.entries
-        .map(entry => [entry.cassetteId, entry.product]),
-    ) } : {}),
+    ...(committedCorpus === undefined ? {} : {
+      productByCassetteId: new Map(committedCorpus.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
+      eligibleCassetteIds: new Set(committedCorpus.snapshot.entries.map(entry => entry.cassetteId)),
+    }),
   })
   notices.push(...assemblyNotices)
   if (missingBundleCount > 0) {
@@ -2149,7 +2152,7 @@ async function designateReportBaseline(
   notices: string[],
 ): Promise<{ profileKey: string; baseline: WriteBaselinePointerOutcome }> {
   const committedRoot = resolve(session.configDir, 'agent-qa-eval')
-  const read = readCommittedCorpus(committedRoot)
+  const read = readActiveCommittedCorpus(committedRoot, resolve(session.configDir, '.agent-qa'))
   notices.push(...read.notices)
   for (const refusal of read.refusals) {
     notices.push(`committed read refused ${refusal.path}: ${refusal.reason}`)

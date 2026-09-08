@@ -17,6 +17,7 @@ import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 
 import {
+  activeMarkedCorpusEntries,
   guardDecisionVectorsDocument,
   guardNoiseFloorArtefact,
   parseCorpusEntry,
@@ -51,6 +52,24 @@ import {
   committedReportPath,
 } from './committed-root-store.js'
 import { listCassetteBundleDirs } from './replay-read.js'
+import { FsMarkLedger } from './mark-ledger.js'
+
+/** Gate-side effective view; raw committed history and the proposer reader remain unchanged. */
+export function readActiveCommittedCorpus(committedRoot: string, agentQaRoot: string): CommittedCorpusRead {
+  const read = readCommittedCorpus(committedRoot)
+  const runs = new Set([...read.snapshot.labelsById.values()].filter(label =>
+    label.provenance.sourceCassetteId !== undefined).map(label => label.provenance.runId))
+  const marks = []
+  const refusals = [...read.refusals]
+  for (const runId of runs) {
+    try { marks.push(...new FsMarkLedger({ root: agentQaRoot, runId }).latestPerAddress()) }
+    catch { refusals.push({ path: agentQaRoot, reason: 'mark ledger unreadable; active gold unavailable' }) }
+  }
+  const entries = activeMarkedCorpusEntries(read.snapshot, marks)
+  return { ...read, refusals, snapshot: { ...read.snapshot, entries },
+    notices: [...read.notices, ...(entries.length === read.snapshot.entries.length ? []
+      : [`${read.snapshot.entries.length - entries.length} historical or incomplete marked cases excluded`])] }
+}
 
 /** Census, baseline pointers and per-profile floors are not batch reports (415 D-04). */
 const RESERVED_REPORT_DIRS = new Set(['census', 'baselines', 'noise-floor'])

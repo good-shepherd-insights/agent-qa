@@ -61,7 +61,7 @@ import {
 import { resolveBaselineCache, type BaselineCacheRow } from './baseline-cache-read.js'
 import {
   listNoiseFloorArtefacts,
-  readCommittedCorpus,
+  readActiveCommittedCorpus,
   readPartitionManifests,
   resolveMinimumGateSet,
   type CommittedReadRefusal,
@@ -520,7 +520,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     throw new TypeError('maxScreens must be a positive safe integer')
   const clock = input.clock ?? Date.now
   const started = clock()
-  const corpus = readCommittedCorpus(input.committedRoot)
+  const corpus = readActiveCommittedCorpus(input.committedRoot, input.agentQaRoot)
   const floors = listNoiseFloorArtefacts(input.committedRoot)
   const partitions = readPartitionManifests(input.committedRoot)
   const refusals = [...corpus.refusals, ...floors.refusals, ...partitions.refusals]

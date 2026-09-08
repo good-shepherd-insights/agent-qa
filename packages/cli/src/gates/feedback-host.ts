@@ -99,7 +99,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
         const configDir = dirname(resolve(deps.configPath))
         const frozen = freezeGoldenTrajectory({ agentQaRoot: deps.agentQaRoot,
           committedRoot: resolve(configDir, 'agent-qa-eval'), product: resolveProductPartition(handoff.scope),
-          mark, handoff, ...(prior?.gold[0] === undefined ? {} : { supersedes: prior.gold[0].cassetteId }) })
+          mark, handoff, ...(prior === undefined ? {} : { priorGold: prior.gold }) })
         if (frozen.kind !== 'frozen' || frozen.census === 'write-conflict') throw new FeedbackFreezeRefusedError(frozen)
         mark.gold = frozen.cases
         const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, configDir)

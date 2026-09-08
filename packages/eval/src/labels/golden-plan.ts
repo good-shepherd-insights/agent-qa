@@ -5,6 +5,7 @@ import { collectStepSelections } from '../extract/select'
 import { projectCorpusEntry } from './corpus-entry'
 import { projectOverturnedVerdictLabelRecord, projectUserMarkLabelRecord } from './label-record'
 import type { SeedingPlanCase } from './seeding-plan'
+import type { CommittedCorpusSnapshot } from '../census/derive-census'
 
 export type GoldenTrajectoryTarget = {
   testIndex: number
@@ -54,11 +55,12 @@ export interface BuildGoldenTrajectoryPlanInput {
   mark: MarkReceipt
   product: string
   supersedes?: string
+  priorGold?: MarkReceipt['gold']
 }
 
 /** Pure freeze plan. The writer executes these private assignments and observed bytes verbatim. */
 export function buildGoldenTrajectoryPlan({
-  handoff, cassettes, mark, product, supersedes,
+  handoff, cassettes, mark, product, supersedes, priorGold,
 }: BuildGoldenTrajectoryPlanInput): GoldenTrajectoryPlan {
   const targets = resolveMarkedDecisions(handoff, mark, mark.kind)
   if ('refusal' in targets) throw new Error(`step-not-found: stepCount=${targets.stepCount}`)
@@ -87,7 +89,11 @@ export function buildGoldenTrajectoryPlan({
       for (const overturned of mark.kind === 'false-pass' ? [false, true] : [false]) {
         const goldId = deriveGoldCassetteId({ leafCassetteId: overturned ? `${leafId}-overturned` : leafId, markOrdinal: mark.ordinal })
         const gold = { ...cassette, id: goldId }
-        const input = { cassette, runId: handoff.runId, goldCassetteId: goldId, mark, supersedes }
+        const channel = overturned ? 'overturned-verdict' : 'user-mark'
+        const previous = priorGold?.filter(item => item.sourceCassetteId === cassette.id && item.channel === channel)
+        if (previous !== undefined && previous.length > 1) throw new Error('ambiguous prior gold generation')
+        const input = { cassette, runId: handoff.runId, goldCassetteId: goldId, mark,
+          supersedes: priorGold === undefined ? supersedes : previous?.[0]?.cassetteId }
         plan.cases.push({
           cassetteId: goldId,
           labelRecord: overturned ? projectOverturnedVerdictLabelRecord(input) : projectUserMarkLabelRecord(input),
@@ -102,4 +108,20 @@ export function buildGoldenTrajectoryPlan({
   plan.goldCassettes.sort((a, b) => a.cassette.id < b.cassette.id ? -1 : a.cassette.id > b.cassette.id ? 1 : 0)
   plan.skipped.sort((a, b) => a.cassetteId < b.cassetteId ? -1 : a.cassetteId > b.cassetteId ? 1 : 0)
   return plan
+}
+
+/** Only completed latest marks admit their gold; historical and unfinished files remain inspectable. */
+export function activeMarkedCorpusEntries(snapshot: CommittedCorpusSnapshot, marks: readonly MarkReceipt[]) {
+  const latest = new Map<string, MarkReceipt>()
+  for (const mark of marks) {
+    const key = JSON.stringify([mark.runId, mark.testIndex, mark.stepIndex ?? null])
+    if ((latest.get(key)?.ordinal ?? 0) < mark.ordinal) latest.set(key, mark)
+  }
+  const active = new Set([...latest.values()].flatMap(mark => mark.gold.map(item => item.cassetteId)))
+  return snapshot.entries.filter(entry => {
+    const label = snapshot.labelsById.get(entry.cassetteId)
+    const marked = label?.provenance.sourceCassetteId !== undefined
+      && (label.label.sourceChannel === 'user-mark' || label.label.sourceChannel === 'overturned-verdict')
+    return !marked || active.has(entry.cassetteId)
+  })
 }

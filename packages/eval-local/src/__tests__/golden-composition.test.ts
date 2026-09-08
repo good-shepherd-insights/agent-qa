@@ -13,7 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { freezeGoldenTrajectory } from '../golden-composition.js'
 import { commitCensus } from '../census-committing.js'
 import { FsRunArtifactSource } from '../artifact-source.js'
-import { readCommittedCorpus } from '../committed-corpus-source.js'
+import { readActiveCommittedCorpus, readCommittedCorpus } from '../committed-corpus-source.js'
+import { FsMarkLedger } from '../mark-ledger.js'
+import { readGatePostureFor } from '../gate-posture-composition.js'
+import { selectGateSet } from '@vostride/agent-qa-eval'
 import { committedCassettePath, committedCorpusPath, committedLabelPath, committedCensusPath } from '../committed-root-store.js'
 import { seedCommittedCorpus } from '../seeding-composition.js'
 import { LOCAL_FIXTURE_BLOB_BYTES, makeLocalV2Handoff } from './fixtures/local-handoff-fixture.js'
@@ -38,6 +41,7 @@ describe('freezeGoldenTrajectory', () => {
     root = mkdtempSync(join(tmpdir(), 'gold-freeze-'))
     committedRoot = join(root, 'committed')
     handoff = makeLocalV2Handoff()
+    handoff.runId = 'gold-freeze-run' as typeof handoff.runId
     for (const step of handoff.tests[0]!.steps) {
       for (const sub of step.subActions) sub.stateBefore = { ...sub.stateBefore, timestamp: 1_725_000_000 }
     }
@@ -141,6 +145,46 @@ describe('freezeGoldenTrajectory', () => {
     if (result.kind !== 'frozen') throw new Error(JSON.stringify(result))
     expect(result.cases.map(item => item.channel).sort()).toEqual(['overturned-verdict', 'user-mark'])
     expect(readCommittedCorpus(committedRoot).snapshot.entries).toHaveLength(2)
+  })
+  it('retires every previous decision/channel and a subsequent no-gold generation before gate counts', async () => {
+    const step = handoff.tests[0]!.steps[0]!
+    step.subActions.push({ ...step.subActions[0]! })
+    mark.kind = 'false-pass'
+    const first = freeze()
+    if (first.kind !== 'frozen') throw new Error(JSON.stringify(first))
+    expect(first.cases).toHaveLength(4)
+    const ledger = new FsMarkLedger({ root, runId: handoff.runId })
+    await ledger.append({ ...mark, gold: first.cases })
+    const history = hashes(first.cases.flatMap(item => paths(item.cassetteId)))
+    mark = { ...mark, kind: 'confirmed-bug', ordinal: 2, markId: 'mark_1123456789ab', supersedes: mark.markId }
+    const second = freezeGoldenTrajectory({ agentQaRoot: root, committedRoot, product, handoff, mark, priorGold: first.cases })
+    if (second.kind !== 'frozen') throw new Error(JSON.stringify(second))
+    await ledger.append({ ...mark, gold: second.cases })
+    const active = () => readActiveCommittedCorpus(committedRoot, root)
+    const posture = () => readGatePostureFor({ committedRoot, agentQaRoot: root,
+      scope: { tier: 'product', key: product }, minimumGateSet: 1,
+      judge: { plannerModelId: 'fixture-planner' }, canary: { kind: 'not-provided' } }).posture
+    expect(active().snapshot.entries).toHaveLength(2)
+    expect(posture().counts.heldOutPrivate).toBe(2)
+    expect(readCommittedCorpus(committedRoot).snapshot.entries).toHaveLength(6)
+    for (const item of second.cases) {
+      const label = active().snapshot.labelsById.get(item.cassetteId)!
+      expect(label.supersedes).toBe(first.cases.find(prior => prior.sourceCassetteId === item.sourceCassetteId
+        && prior.channel === item.channel)!.cassetteId)
+    }
+    const selected = selectGateSet({ entries: active().snapshot.entries, product,
+      candidate: { runIds: ['unrelated-run'], receiptDigests: ['unrelated-receipt'], capturedAtOrdinals: [999] }, minimumGateSet: 1 })
+    expect(selected).toMatchObject({ verdict: 'ok', gateEntries: expect.any(Array) })
+    if (selected.verdict === 'ok') expect(selected.gateEntries).toHaveLength(2)
+    // Quarantine is receipt-only: no corpus/label/cassette writes for this retirement.
+    const allPaths = [...first.cases, ...second.cases].flatMap(item => paths(item.cassetteId))
+    const beforeQuarantine = hashes(allPaths)
+    await ledger.append({ ...mark, markId: 'mark_2123456789ab', gold: [],
+      disposition: { kind: 'quarantined', class: 'flake' } })
+    expect(active().snapshot.entries).toHaveLength(0)
+    expect(posture().counts.heldOutPrivate).toBe(0)
+    expect(hashes(allPaths)).toEqual(beforeQuarantine)
+    expect(hashes(first.cases.flatMap(item => paths(item.cassetteId)))).toEqual(history)
   })
 
   it('refuses a conflicting case before writing any of its other parts', () => {

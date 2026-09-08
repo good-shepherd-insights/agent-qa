@@ -31,6 +31,7 @@ export interface FreezeGoldenTrajectoryInput {
   mark: MarkReceipt
   handoff: CompletedRunHandoff
   supersedes?: string
+  priorGold?: MarkReceipt['gold']
   policy?: GuardrailPolicy
   auditSink?: AuditSink
 }

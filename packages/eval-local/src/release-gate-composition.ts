@@ -22,7 +22,7 @@ import {
   listBaselinePointers,
   listCommittedReports,
   listNoiseFloorArtefacts,
-  readCommittedCorpus,
+  readActiveCommittedCorpus,
   readCommittedDecisionVectors,
 } from './committed-corpus-source.js'
 import type { CommittedReadRefusal } from './committed-corpus-source.js'
@@ -106,7 +106,7 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
     profile: mode.profile, modelOverrides: mode.modelOverrides, seedPolicy: 'declared',
   })
   const expectedProfileKey = composeBaselineProfileKey({ ...input.profileKeyInputs, fingerprint })
-  const corpus = readCommittedCorpus(input.committedRoot)
+  const corpus = readActiveCommittedCorpus(input.committedRoot, input.agentQaRoot)
   const pointers = listBaselinePointers(input.committedRoot)
   const floors = listNoiseFloorArtefacts(input.committedRoot)
   const reports = listCommittedReports(input.committedRoot)

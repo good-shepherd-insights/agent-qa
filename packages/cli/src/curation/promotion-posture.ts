@@ -51,6 +51,7 @@ export async function buildPromotionPostureResolver(input: {
 }): Promise<PromotionPostureResolution> {
   const { configPath, replayGate } = input
   const committedRoot = resolve(dirname(resolve(configPath)), 'agent-qa-eval')
+  const agentQaRoot = input.agentQaRoot ?? resolve(dirname(resolve(configPath)), '.agent-qa')
   if (!existsSync(committedRoot)) return { kind: 'no-eval-root', committedRoot }
   const replayGateAvailable = replayGate !== undefined
   const unavailable = (refusals: readonly string[]): UnavailablePromotionGatePosture => ({
@@ -66,7 +67,7 @@ export async function buildPromotionPostureResolver(input: {
     ...(judge.judgeFamily === undefined ? {} : { judgeFamily: judge.judgeFamily }),
   })
   try {
-    const { resolveEvalSession, resolveGateProfileIdentity, readCommittedCorpus,
+    const { resolveEvalSession, resolveGateProfileIdentity, readActiveCommittedCorpus,
       readGatePostureFor, resolveMinimumGateSet, selectGateSet, computeCorpusDigest, resolveGate2Caps,
     } = await import('../eval-session-composition.js')
     const session = await resolveEvalSession({ configPath, keyOnly: true })
@@ -90,7 +91,7 @@ export async function buildPromotionPostureResolver(input: {
       return refused([`noise-floor: no minimumGateSet value at ${floor.path}`])
     }
     const minimumGateSet = floor.minimumGateSet
-    const corpus = readCommittedCorpus(committedRoot)
+    const corpus = readActiveCommittedCorpus(committedRoot, agentQaRoot)
     if (corpus.refusals.length > 0) return refused(refusalLines(corpus.refusals))
     const judge: JudgeCapabilityInput = {
       plannerModelId: identity.plannerModelId,
@@ -100,7 +101,7 @@ export async function buildPromotionPostureResolver(input: {
     const canary = { kind: 'not-provided' as const, rarePathEligible: false }
     // Probe once so even a host with no candidates discloses refused manifests.
     const hostRead = readGatePostureFor({
-      committedRoot, scope: { tier: 'global', key: 'global' }, minimumGateSet, judge, canary,
+      committedRoot, agentQaRoot, scope: { tier: 'global', key: 'global' }, minimumGateSet, judge, canary,
     })
     if (hostRead.refusals.length > 0) return refused(refusalLines(hostRead.refusals))
     const resolvePosture: ResolveAtBuildOrdinal = (candidate, ordinalOverride) => {
@@ -116,7 +117,7 @@ export async function buildPromotionPostureResolver(input: {
           return unavailable([`noise-floor: no minimumGateSet value at ${currentFloor.path}`])
         }
         const minimumGateSet = currentFloor.minimumGateSet
-        const currentCorpus = readCommittedCorpus(committedRoot)
+        const currentCorpus = readActiveCommittedCorpus(committedRoot, agentQaRoot)
         if (currentCorpus.refusals.length > 0) return unavailable(refusalLines(currentCorpus.refusals))
         const currentBuildOrdinal = ordinalOverride ?? (typeof input.currentBuildOrdinal === 'function'
           ? input.currentBuildOrdinal(candidate.product) : input.currentBuildOrdinal)
@@ -147,7 +148,7 @@ export async function buildPromotionPostureResolver(input: {
         }
         // The eval reader's canary census has a different contract (attributedRows
         // plus skippedBundles). Eligibility is our candidate DATA, returned below.
-        const read = readGatePostureFor({ committedRoot, scope: candidate.scope, minimumGateSet, judge,
+        const read = readGatePostureFor({ committedRoot, agentQaRoot, scope: candidate.scope, minimumGateSet, judge,
           canary: { kind: 'not-provided' } })
         if (read.refusals.length > 0) return unavailable(refusalLines(read.refusals))
         if (computeCorpusDigest(currentCorpus.snapshot.entries) !== read.posture.corpusDigest) {

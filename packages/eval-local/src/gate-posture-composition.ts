@@ -25,12 +25,14 @@ import type {
 } from '@vostride/agent-qa-eval'
 import type { ScopeKey } from '@vostride/agent-qa-schema'
 
-import { readCommittedCorpus, readPartitionManifests } from './committed-corpus-source.js'
+import { dirname, join } from 'node:path'
+import { readActiveCommittedCorpus, readPartitionManifests } from './committed-corpus-source.js'
 import type { CommittedReadRefusal } from './committed-corpus-source.js'
 
 export interface ReadGatePostureForInput {
   /** Explicit absolute committed-root path — `<configDir>/agent-qa-eval` for the CLI. */
   committedRoot: string
+  agentQaRoot?: string
   /** The scope being asked about; `resolveProductPartition` is the ONE mapping (D-16). */
   scope: ScopeKey
   /** REQUIRED integer floor, >= 1. No default exists anywhere (D-12). */
@@ -56,7 +58,8 @@ export interface ReadGatePostureForResult {
  * a caller bug, not data. Everything the DISK got wrong is a refusal row.
  */
 export function readGatePostureFor(input: ReadGatePostureForInput): ReadGatePostureForResult {
-  const corpus = readCommittedCorpus(input.committedRoot)
+  const corpus = readActiveCommittedCorpus(input.committedRoot,
+    input.agentQaRoot ?? join(dirname(input.committedRoot), '.agent-qa'))
   const manifests = readPartitionManifests(input.committedRoot)
 
   const posture = readGatePosture({

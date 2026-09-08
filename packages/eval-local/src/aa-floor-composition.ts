@@ -27,7 +27,7 @@ import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
 import {
   listBaselinePointers,
   listCommittedReports,
-  readCommittedCorpus,
+  readActiveCommittedCorpus,
   readPartitionManifests,
 } from './committed-corpus-source.js'
 import type { CommittedReadRefusal } from './committed-corpus-source.js'
@@ -131,7 +131,7 @@ export async function runNoiseFloorMeasurement(
     profile: input.profile, modelOverrides: input.modelOverrides, seedPolicy: 'declared',
   })
   const profileKey = composeBaselineProfileKey({ ...input.profileKeyInputs, fingerprint })
-  const corpus = readCommittedCorpus(input.committedRoot)
+  const corpus = readActiveCommittedCorpus(input.committedRoot, input.agentQaRoot)
   const partitions = readPartitionManifests(input.committedRoot)
   const notices = [...corpus.notices, ...partitions.notices]
   const refusals = [...corpus.refusals, ...partitions.refusals]

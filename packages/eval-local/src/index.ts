@@ -179,6 +179,7 @@ export {
   listCommittedReports,
   listNoiseFloorArtefacts,
   readCommittedCorpus,
+  readActiveCommittedCorpus,
   readCommittedDecisionVectors,
   readPartitionManifests,
   readRunExclusions,

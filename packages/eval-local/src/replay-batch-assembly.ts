@@ -44,6 +44,8 @@ export function assembleScoredBatch(input: {
   recordDirs?: readonly string[]
   /** Committed-corpus ownership is authoritative; generic callers retain scope semantics. */
   productByCassetteId?: ReadonlyMap<string, string>
+  /** Latest committed mark generations only; historical bundles remain on disk. */
+  eligibleCassetteIds?: ReadonlySet<string>
 }): {
   entries: ScoredBatchEntry[]
   judgeBlocks: JudgeIdentityBlock[]
@@ -63,6 +65,7 @@ export function assembleScoredBatch(input: {
       notices.push(`${source} bundle read refused under ${bundleDir}: ${load.refusal.detail}`)
       continue
     }
+    if (input.eligibleCassetteIds !== undefined && !input.eligibleCassetteIds.has(load.cassette.id)) continue
     if (load.cassette.granularity === 'leaf') {
       labelsById.set(load.cassette.id, load.cassette.label)
     }
@@ -83,6 +86,7 @@ export function assembleScoredBatch(input: {
       notices.push(`replay record read refused under ${recordDir}: ${load.refusal.detail}`)
     }
     const cassetteId = outcome.cassetteId
+    if (input.eligibleCassetteIds !== undefined && !input.eligibleCassetteIds.has(cassetteId)) continue
 
     let score: CassetteScore | undefined
     const scoreLoad = loadScoreRecord(recordDir)
