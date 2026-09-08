@@ -2537,3 +2537,7 @@ function mergeEvalConfig(
       ? { gate1: { ...(maxScreens === undefined ? {} : { maxScreens }) } } : {}),
   }
 }
+// Gate hosts reach eval/runtime storage only through this established composition boundary.
+export { resolveMarkedDecisions, resolveProductPartition } from '@vostride/agent-qa-eval'
+export { FsHandoffSource, FsMarkLedger, freezeGoldenTrajectory } from '@vostride/agent-qa-eval-local'
+export { slugBranch } from '@vostride/agent-qa-runner-local'

@@ -1,4 +1,8 @@
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
+import { randomUUID } from 'node:crypto'
+import { AUTHORING_DRAFT_EDIT_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
+import { AuthoringDraftEditOutputSchema } from '@vostride/agent-qa-schema'
+import { createFeedbackPortForHost } from '../gates/feedback-host.js'
 // The CLI's half of the local host (Phase 384 plan 01, superseded in place by 385 plan 09, D-15).
 //
 // What used to live here — the runs reader, the knowledge listing binding and the registry
@@ -3666,7 +3670,13 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
   // prompt", which is every other CLI invocation.
   const doorConfirm = 'confirm' in input ? input.confirm : createTtyConfirmPort()
 
-  return composeLocalAgent({
+  const host = composeLocalAgent({
+    feedback: createFeedbackPortForHost({
+      configPath: input.configPath, agentQaRoot: input.agentQaRoot, randomUuid: randomUUID,
+      invokeAuthoringDraftEdit: async draftInput => AuthoringDraftEditOutputSchema.parse(
+        await invokeFunction(host.registry, AUTHORING_DRAFT_EDIT_FUNCTION_ID, draftInput, CLI_FUNCTION_CALLER),
+      ),
+    }),
     resolvePromotionPosture,
     agentQaRoot: input.agentQaRoot,
     mintQuarantineIdentityPath: createQuarantineIdentityMint(input.configPath),
@@ -3833,4 +3843,5 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // absent field still defaults to "prompt where there is somebody to prompt".
     ...(doorConfirm === undefined ? {} : { confirm: doorConfirm }),
   })
+  return host
 }

@@ -29,6 +29,7 @@ import {
   createValidateCommand,
 } from './commands/index.js'
 import { rejectRemovedCliSurface } from './removed-cli-surface.js'
+import { createRunsCommand } from './commands/runs.js'
 
 rejectRemovedCliSurface()
 
@@ -47,6 +48,7 @@ program
   .option('--quiet', 'shorthand for --log-level silent')
 
 program.addCommand(createRunCommand())
+program.addCommand(createRunsCommand())
 program.addCommand(createInitCommand())
 program.addCommand(createInstallBrowsersCommand())
 program.addCommand(createInstallMobileDriversCommand())

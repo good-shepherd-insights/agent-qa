@@ -160,6 +160,11 @@ import {
   type EntityIndexSweepReport,
   type ResolveEntityRefDeps,
   applyReview,
+  appendMarkEvidence,
+  triageMark,
+  servedIdsOn,
+  procedureReadOn,
+  applyFeedback,
   createAuthoringReader,
   openAddressingLedger as openAddressingLedgerForReview,
   proposeReview,
@@ -171,6 +176,8 @@ import type {
   CreateLocalKnowledgeStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeReviewPort } from '@vostride/agent-qa-agent'
+import type { FeedbackPort } from '@vostride/agent-qa-schema'
+export type { ServedRecordFacts, MarkTriage, ApplyFeedbackInput } from '@vostride/agent-qa-knowledge-local'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
   NO_STANDING_APPROVALS,
@@ -516,6 +523,11 @@ function promoteWithReceipts(input: PromoteWithReceiptsInput): Promise<Promotion
 }
 
 export interface LocalCurationCapabilities {
+  readonly appendMarkEvidence: typeof appendMarkEvidence
+  readonly triageMark: typeof triageMark
+  readonly servedIdsOn: typeof servedIdsOn
+  readonly procedureReadOn: typeof procedureReadOn
+  readonly applyFeedback: typeof applyFeedback
   readonly recordGateReceipt: typeof recordGateReceipt
   readonly promoteWithReceipts: typeof promoteWithReceipts
   /** Serving-side reader the tail folds against; read-only despite arriving on the writer edge. */
@@ -552,6 +564,11 @@ export interface LocalCurationCapabilities {
 }
 
 export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.freeze({
+  appendMarkEvidence,
+  triageMark,
+  servedIdsOn,
+  procedureReadOn,
+  applyFeedback,
   recordGateReceipt,
   promoteWithReceipts,
   openKnowledgeReader,
@@ -1579,6 +1596,7 @@ export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonl
   })
 
 export interface ComposeLocalAgentInput {
+  readonly feedback?: FeedbackPort
   /** DATA across the wall: host preparation may await; candidate evaluation is synchronous. */
   readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. Absolute. */
@@ -3187,6 +3205,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         resolveAgentQaRoot: () => input.agentQaRoot,
         now: () => Date.parse(clock.now()),
       }),
+      ...(input.feedback === undefined ? {} : { feedback: input.feedback }),
       quarantine: createQuarantineOperations({
         resolveKnowledgeRoot: input.knowledgeRoot,
         auditBaseDir: input.agentQaRoot,

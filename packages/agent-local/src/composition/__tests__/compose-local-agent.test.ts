@@ -151,6 +151,7 @@ describe('composeLocalAgent (D-15)', () => {
       runExecution?: RunExecutionPort
       knowledgeRoot?: () => Promise<string> | string
       resolvePromotionPosture?: ComposeLocalAgentInput['resolvePromotionPosture']
+      feedback?: ComposeLocalAgentInput['feedback']
     } = {},
   ): LocalAgentHost {
     return composeLocalAgent({
@@ -190,6 +191,15 @@ describe('composeLocalAgent (D-15)', () => {
     expect(LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId).toBeTypeOf('function')
     expect(LOCAL_CURATION_CAPABILITIES.promoteWithReceipts).toBeTypeOf('function')
     expect(Object.isFrozen(LOCAL_CURATION_CAPABILITIES)).toBe(true)
+  })
+
+  it('419 feedback is bound only when the host supplies the port', async () => {
+    expect(host.registry.list(CALLER).find(entry => entry.id === 'runs.mark')).toMatchObject({ bindingStatus: 'unbound' })
+    const feedback = { mark: vi.fn(), marksFor: vi.fn(async () => []) }
+    const bound = compose({ feedback })
+    try {
+      expect(bound.registry.list(CALLER).find(entry => entry.id === 'runs.mark')).toMatchObject({ bindingStatus: 'bound' })
+    } finally { await bound.close() }
   })
 
   it('416 promotes through the caller held lease and records one floor line', async () => {
