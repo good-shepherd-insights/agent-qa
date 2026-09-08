@@ -165,6 +165,9 @@ import {
   servedIdsOn,
   procedureReadOn,
   applyFeedback,
+  pendingProposalExists,
+  showProposalEnvelope,
+  rejectPendingProposal,
   createAuthoringReader,
   openAddressingLedger as openAddressingLedgerForReview,
   proposeReview,
@@ -522,7 +525,26 @@ function promoteWithReceipts(input: PromoteWithReceiptsInput): Promise<Promotion
   return receiptWriter(input).promote(input.candidateId, input.receipts)
 }
 
+export interface WithdrawPendingProposalInput {
+  agentQaRoot: string
+  proposalId: string
+  proposalKind: 'knowledge' | 'test-draft'
+  reason: string
+}
+
+async function withdrawPendingProposal(input: WithdrawPendingProposalInput): Promise<'withdrawn' | 'not-pending'> {
+  if (!pendingProposalExists(input.agentQaRoot, input.proposalId)) return 'not-pending'
+  const pending = showProposalEnvelope(input.agentQaRoot, input.proposalId, { now: Date.now() })
+  if (pending === undefined) return 'not-pending'
+  if (pending.envelope.kind !== input.proposalKind) throw new Error('Superseded proposal kind does not match the mark receipt')
+  // The existing generic rejection primitive handles knowledge AND test-draft records.
+  const result = rejectPendingProposal(input.agentQaRoot, input.proposalId, { at: Date.now(), reason: input.reason })
+  if (result.kind === 'apply-in-flight') throw new Error('Superseded proposal is being applied; retry after its decision settles')
+  return result.kind === 'rejected' ? 'withdrawn' : 'not-pending'
+}
+
 export interface LocalCurationCapabilities {
+  readonly withdrawPendingProposal: typeof withdrawPendingProposal
   readonly appendMarkEvidence: typeof appendMarkEvidence
   readonly triageMark: typeof triageMark
   readonly servedIdsOn: typeof servedIdsOn
@@ -564,6 +586,7 @@ export interface LocalCurationCapabilities {
 }
 
 export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.freeze({
+  withdrawPendingProposal,
   appendMarkEvidence,
   triageMark,
   servedIdsOn,

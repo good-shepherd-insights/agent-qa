@@ -11,7 +11,7 @@ export interface FeedbackHostDeps {
   configPath: string
   agentQaRoot: string
   invokeAuthoringDraftEdit?: (input: AuthoringDraftEditInput) => Promise<AuthoringDraftEditOutput>
-  curation?: Pick<LocalCurationCapabilities, 'appendMarkEvidence' | 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback'> & {
+  curation?: Pick<LocalCurationCapabilities, 'appendMarkEvidence' | 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'withdrawPendingProposal'> & {
     maintenance: Pick<LocalCurationCapabilities['maintenance'], 'acquireWriterLease' | 'releaseLease'>
   }
   reader?: KnowledgeReaderPort
@@ -76,6 +76,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           ...(prior === undefined ? {} : { supersedes: prior.markId }),
           ...(member.rootCause === undefined ? {} : { rootCause: {
             class: member.rootCause.class, producer: member.rootCause.producer } }),
+          ...(member.isRerun === true ? { isRerun: true } : {}),
         }
         const targets = resolveMarkedDecisions(handoff, address, input.kind)
         if ('refusal' in targets) {
@@ -84,8 +85,10 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           delete (refusal as { testId?: string }).testId
           return undefined
         }
-        if (triage.kind === 'quarantined') throw new Error('Quarantine expansion is not bound yet')
-        if (input.kind !== 'confirmed-bug') throw new Error('Drafting expansion is not bound yet')
+        if (triage.kind === 'quarantined') {
+          mark.disposition = { kind: 'quarantined', class: triage.class }
+          return mark
+        }
         const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
         const configDir = dirname(resolve(deps.configPath))
         const frozen = freezeGoldenTrajectory({ agentQaRoot: deps.agentQaRoot,
@@ -107,7 +110,14 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
             mark.evidence = { confirmed: evidence.confirmed, overturned: evidence.overturned }
           } finally { curation.maintenance.releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
         }
-        mark.disposition = { kind: 'confirmed-bug', confirmedRecords: mark.evidence.confirmed }
+        mark.disposition = input.kind === 'confirmed-bug'
+          ? { kind: 'confirmed-bug', confirmedRecords: mark.evidence.confirmed }
+          : { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } }
+        if (prior?.disposition.kind === 'drafted') {
+          await curation.withdrawPendingProposal({ agentQaRoot: deps.agentQaRoot,
+            proposalId: prior.disposition.proposalId, proposalKind: prior.disposition.proposalKind,
+            reason: `superseded by ${mark.markId}` })
+        }
         return mark
       })
       if (receipt !== undefined) return { kind: 'marked', receipt }

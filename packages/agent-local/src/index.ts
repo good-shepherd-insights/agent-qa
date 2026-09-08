@@ -265,6 +265,7 @@ export type {
   LocalAgentHost,
   LocalAgentJobs,
   LocalCurationCapabilities,
+  WithdrawPendingProposalInput,
   ServedRecordFacts,
   MarkTriage,
   ApplyFeedbackInput,

@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, mkdtempSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { randomUUID } from 'node:crypto'
 
 import { createJobKindRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { JobKindRegistry, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -31,6 +32,9 @@ import {
   createLocalKnowledgeStore,
   readGateReceipts,
   indexDbPath,
+  mintProposalId,
+  writePendingProposalRecord,
+  showProposalEnvelope,
   projectRunOutcomes,
 } from '@vostride/agent-qa-knowledge-local'
 import {
@@ -200,6 +204,22 @@ describe('composeLocalAgent (D-15)', () => {
     try {
       expect(bound.registry.list(CALLER).find(entry => entry.id === 'runs.mark')).toMatchObject({ bindingStatus: 'bound' })
     } finally { await bound.close() }
+  })
+
+  it.each(['knowledge', 'test-draft'] as const)('419 withdrawPendingProposal rejects pending %s once then returns not-pending', async proposalKind => {
+    const proposalId = mintProposalId(randomUUID)
+    const payload = proposalKind === 'knowledge' ? {
+      schemaVersion: 1, proposalId, verb: 'accept', targetRef: { grain: 'record', recordId: 'record-fixture' }, deltas: [], proposedAt: Date.now(), status: 'pending',
+    } : {
+      schemaVersion: 1, draftRef: { filePath: 'tests/draft.yaml', testId: 'fixture', testName: 'Checkout', contentDigest: 'digest' }, targetPath: 'tests/checkout.yaml', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Checkout edit',
+    }
+    writePendingProposalRecord(agentQaRoot, { schemaVersion: 1, id: proposalId, kind: proposalKind,
+      origin: { emittedBy: 'runs.mark', at: Date.now() }, payload } as Parameters<typeof writePendingProposalRecord>[1])
+    const input = { agentQaRoot, proposalId, proposalKind, reason: 'superseded by mark_0123456789ab' }
+    await expect(LOCAL_CURATION_CAPABILITIES.withdrawPendingProposal(input)).resolves.toBe('withdrawn')
+    const envelope = showProposalEnvelope(agentQaRoot, proposalId, { now: Date.now() })
+    expect(envelope?.envelope).toMatchObject({ id: proposalId, kind: proposalKind, status: 'rejected' })
+    await expect(LOCAL_CURATION_CAPABILITIES.withdrawPendingProposal(input)).resolves.toBe('not-pending')
   })
 
   it('416 promotes through the caller held lease and records one floor line', async () => {
