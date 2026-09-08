@@ -83,6 +83,16 @@ export function selectFixKind(input: {
 }): FixSelection {
   if (input.kind === 'confirmed-bug') throw new TypeError('confirmed-bug has no drafted fix')
   const target = input.served[0]
+  if (target !== undefined && input.kind === 'false-fail'
+    && (target.kind !== 'fact' || target.subtype === undefined)) {
+    // A recorded caution/unknown does not establish any fact subtype. Do not offer
+    // a broad draft that the actual kind-specific commit contract cannot accept.
+    return { fix: 'none', checked: { servedRecords: input.served.length,
+      procedureReads: input.procedure === undefined ? 0 : 1,
+      assertionDrift: assertionDrift(input.member, input.step),
+      ...(input.member.rootCause === undefined ? {} : { rootCause: input.member.rootCause.class }),
+    } }
+  }
   if (target !== undefined) return { fix: input.kind === 'false-fail' ? 'fact' : 'caution', target }
   if (input.procedure !== undefined) return { fix: 'procedure-hint', target: input.procedure }
   if (assertionDrift(input.member, input.step)) return { fix: 'test-edit' }

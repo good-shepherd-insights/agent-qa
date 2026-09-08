@@ -82,6 +82,15 @@ describe('mechanical mark triage and selection', () => {
 })
 
 describe('schema-valid floor plans', () => {
+  it.each(['caution', 'unknown'] as const)('does not offer an uncommittable fact from a served %s', kind => {
+    const value = input()
+    const { subtype: _, ...withoutSubtype } = target
+    value.served = [{ ...withoutSubtype, kind }]
+    expect(applyFeedback(value)).toMatchObject({ kind: 'no-draftable-fix',
+      checked: { servedRecords: 1, procedureReads: 0, assertionDrift: false } })
+    value.mark.kind = 'false-pass'
+    expect(applyFeedback(value)).toMatchObject({ kind: 'knowledge', fix: 'caution' })
+  })
   it('supersedes exactly the cited fact with user origin and recorded screenshot', () => {
     const value = input()
     const screenshot = { ...artifact, id: 'decision' }
