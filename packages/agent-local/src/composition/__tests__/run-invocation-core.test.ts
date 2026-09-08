@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { ExecutionAuditRow } from '@vostride/agent-qa-safety'
 import type { RunEventEnvelope, RunSession, TrustCredential } from '@vostride/agent-qa-schema'
+import { remediesRenderableBy } from '@vostride/agent-qa-schema'
 
 import { buildRunPorts } from '../run-composition.js'
 import type { RunExecutionContext } from '../run-composition.js'
@@ -289,7 +290,9 @@ describe('the invocation core — the deny leg (D-16 criterion 3, at the unit)',
     expect(denied.remedies.map((remedy) => remedy.kind)).toEqual([
       'answer-confirm',
       'trust-session-flag',
+      'present-bearer-scope',
     ])
+    expect(remediesRenderableBy('run-service', denied.remedies)).toEqual([])
     expect(denied.neutralReason).not.toContain('--trust-session')
   })
 

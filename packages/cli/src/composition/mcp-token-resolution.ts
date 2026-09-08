@@ -31,8 +31,8 @@
 
 import { createHash, timingSafeEqual } from 'node:crypto'
 
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
-import type { FunctionScope, McpTokenEntry } from '@vostride/agent-qa-schema'
+import { FunctionScopeSchema, STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
+import type { FunctionScope, McpTokenEntry, TrustCredential } from '@vostride/agent-qa-schema'
 
 /**
  * What an unauthenticated local caller may do (D-07).
@@ -118,6 +118,16 @@ export type BearerVerdict =
   | { readonly kind: 'anonymous'; readonly scopes: readonly FunctionScope[] }
   | { readonly kind: 'token'; readonly clientId: string; readonly scopes: readonly FunctionScope[] }
   | { readonly kind: 'refused'; readonly reason: 'malformed_authorization' | 'invalid_token' }
+
+/**
+ * 419 D-20: the declared knowledge-write bearer IS the trust grant. Anonymous scopes
+ * cannot mint it. invokeFunction compares this exact standing scope, as on the run door.
+ */
+export function credentialForBearer(verdict: BearerVerdict): TrustCredential | undefined {
+  return verdict.kind === 'token' && verdict.scopes.includes('knowledge-write')
+    ? { scope: STANDING_APPROVAL_SCOPE }
+    : undefined
+}
 
 /**
  * Constant-time equality over two secrets of possibly different lengths.

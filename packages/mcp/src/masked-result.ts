@@ -78,6 +78,19 @@
 // was told about.
 
 import type { CallToolResult } from '@modelcontextprotocol/server'
+import { FunctionDeniedError } from '@vostride/agent-qa-agent'
+import { remediesRenderableBy } from '@vostride/agent-qa-schema'
+import type { GateRemedy, RemedyKindFor } from '@vostride/agent-qa-schema'
+
+const MCP_REMEDY_TEXT = {
+  'present-bearer-scope': 'present a bearer whose scopes include `knowledge-write`',
+} as const satisfies Record<RemedyKindFor<'mcp'>, string>
+
+/** Only affordances this surface can take, never credential values or caller-supplied params. */
+export function renderMcpRemedies(remedies: readonly GateRemedy[]): string {
+  return remediesRenderableBy('mcp', remedies)
+    .map(remedy => MCP_REMEDY_TEXT[remedy.kind as RemedyKindFor<'mcp'>]).join('; ')
+}
 
 /** The one prose a caller reads when a value could not be masked in place. Value-free by design. */
 const WITHHELD_TEXT =
@@ -207,11 +220,14 @@ export function maskedToolResult(
  * are one thing to read and one thing to change.
  */
 export function maskedToolError(err: unknown, maskText: (text: string) => string): CallToolResult {
+  const message = err instanceof FunctionDeniedError
+    ? [`Denied ${err.functionId}: ${err.neutralReason}`, renderMcpRemedies(err.remedies)].filter(Boolean).join('; ')
+    : err instanceof Error ? err.message : String(err)
   return {
     content: [
       {
         type: 'text' as const,
-        text: maskText(err instanceof Error ? err.message : String(err)),
+        text: maskText(message),
       },
     ],
     isError: true,

@@ -55,7 +55,7 @@ import type { AuthInfo } from '@modelcontextprotocol/server'
 import { buildAgentQaMcpServer, createAgentQaMcpNodeHandler } from '@vostride/agent-qa-mcp'
 import type { LiveLinkSupplier } from '@vostride/agent-qa-mcp'
 import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, FunctionScope, TrustCredential } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { dirname, resolve } from 'node:path'
@@ -64,6 +64,7 @@ import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-h
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 import {
   DEFAULT_MCP_SCOPES,
+  credentialForBearer,
   matchBearer,
   mcpTokenSecretStore,
   resolveMcpTokens,
@@ -110,8 +111,14 @@ export const MCP_AUTH_TOKEN_SENTINEL = '[agent-qa: token withheld]'
  * the instance of that law where the only granted scope is `read`, so leaving the registry's
  * cosmetic flag off keeps ONE filter deciding what a caller sees.
  */
-export function mcpFunctionCaller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
-  return { surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent' }
+export function mcpFunctionCaller(
+  grantedScopes: readonly FunctionScope[],
+  credential?: TrustCredential,
+): FunctionCaller {
+  return {
+    surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent',
+    ...(credential === undefined ? {} : { credential }),
+  }
 }
 
 /**
@@ -165,6 +172,7 @@ function mcpServerDeps(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
   grantedScopes: readonly FunctionScope[]
+  credential?: TrustCredential
   /**
    * Which dashboard this process is pointed at (408 plan 03, D-08/D-09).
    *
@@ -178,7 +186,7 @@ function mcpServerDeps(input: {
 }) {
   return {
     registry: input.registry,
-    caller: mcpFunctionCaller(input.grantedScopes),
+    caller: mcpFunctionCaller(input.grantedScopes, input.credential),
     maskText: input.maskText,
     // Absent stays ABSENT rather than becoming a present `undefined`: the house rule for an
     // optional member, and the two are the same posture to the builder either way.
@@ -214,19 +222,6 @@ export function createMcpHttpRequestListener(input: {
    */
   liveLink?: LiveLinkSupplier
 }): (req: IncomingMessage, res: ServerResponse) => void {
-  // Resolved ONCE per request and read by the factory the SDK runs for that request. The scope set
-  // is carried on `req.auth`, which `toNodeHandler` forwards as `authInfo` — the official route.
-  const nodeHandler = createAgentQaMcpNodeHandler((ctx) =>
-    mcpServerDeps({
-      registry: input.registry,
-      maskText: input.maskText,
-      // A request that reached the handler HAS a verdict; the fallback is the D-07 default grant,
-      // which is what a request with no `Authorization` header resolved to on the line below.
-      grantedScopes: (ctx.authInfo?.scopes as FunctionScope[] | undefined) ?? DEFAULT_MCP_SCOPES,
-      ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
-    }),
-  )
-
   return (req, res) => {
     // (1) DNS-rebinding guard. A browser page on any origin can resolve a name it controls to
     // 127.0.0.1; what it cannot do is change the `Host` header it sends. The SDK's own validator is
@@ -278,6 +273,17 @@ export function createMcpHttpRequestListener(input: {
     // that is the seam `toNodeHandler` reads (measured on 2.0.0 — RESEARCH A3).
     ;(req as IncomingMessage & { auth?: AuthInfo }).auth = authInfo
 
+    // 419 D-20: close over THIS verified verdict, never a shared mutable credential or a
+    // clientId comparison (an operator may name a declared token "anonymous"). No credential
+    // data enters authInfo or protocol responses, and no previous request can donate authority.
+    const credential = credentialForBearer(verdict)
+    const nodeHandler = createAgentQaMcpNodeHandler(() => mcpServerDeps({
+      registry: input.registry,
+      maskText: input.maskText,
+      grantedScopes: verdict.scopes,
+      ...(credential === undefined ? {} : { credential }),
+      ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
+    }))
     void nodeHandler(req, res)
   }
 }

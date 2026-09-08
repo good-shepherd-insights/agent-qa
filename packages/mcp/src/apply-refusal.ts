@@ -62,10 +62,10 @@ import type {
   InputRequiredResult,
   StandardSchemaWithJSON,
 } from '@modelcontextprotocol/server'
-import { ProposalsShowOutputSchema, remediesRenderableBy } from '@vostride/agent-qa-schema'
+import { ProposalsShowOutputSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
-import { maskedToolError, maskedToolResult } from './masked-result.js'
+import { maskedToolError, maskedToolResult, renderMcpRemedies } from './masked-result.js'
 
 /** The read this module makes to render what a caller is about to authorise. */
 export const PROPOSALS_SHOW_OP_ID = 'proposals.show'
@@ -252,11 +252,9 @@ export const CREDENTIAL_REFUSAL_JSON_SCHEMA = {
 
 /** Shared by the hidden-name dispatch guard and the handler's independent guard. */
 export function credentialRequiredRefusal(maskText: (text: string) => string): CallToolResult {
-  const remedies = remediesRenderableBy('mcp', [
+  const instruction = 'agent_qa_mark_run requires a declared bearer; ' + renderMcpRemedies([
     { kind: 'present-bearer-scope', params: { scope: 'knowledge-write' } },
   ])
-  const instruction = 'agent_qa_mark_run requires a declared bearer; '
-    + remedies.map(() => 'present a bearer whose scopes include `knowledge-write`').join('; ')
   return {
     ...maskedToolResult({ status: 'credential-required', applied: false, instruction }, maskText),
     isError: true,

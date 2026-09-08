@@ -33,6 +33,7 @@ import { dirname, join, resolve } from 'node:path'
 import { createChatRouter, type ChatTurnResponse } from '@vostride/agent-qa-dashboard'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import type { ExecutionContext } from '@vostride/agent-qa-schema'
+import { remediesRenderableBy } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { composeDashboardDoor } from '../commands/dashboard.js'
@@ -177,6 +178,9 @@ describe('a denial reaching the browser carries prose that surface can read (D-1
     expect(denial?.remedies.map((remedy) => remedy.kind)).toEqual([
       'answer-confirm',
       'trust-session-flag',
+      'present-bearer-scope',
     ])
+    expect(remediesRenderableBy('dashboard', denial!.remedies).map(remedy => remedy.kind))
+      .toEqual(['answer-confirm'])
   })
 })

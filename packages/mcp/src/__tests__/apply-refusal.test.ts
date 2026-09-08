@@ -74,6 +74,9 @@
 import { CLIENT_CAPABILITIES_META_KEY } from '@modelcontextprotocol/server'
 import { describe, expect, it } from 'vitest'
 import { ProposalsShowOutputSchema } from '@vostride/agent-qa-schema'
+import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
+import { FunctionDeniedError } from '@vostride/agent-qa-agent'
+import { maskedToolError } from '../masked-result.js'
 
 import {
   APPLY_CONFIRMATION_REQUEST_KEY,
@@ -82,12 +85,52 @@ import {
   APPLY_TOOL_INPUT_SCHEMA,
   PROPOSALS_SHOW_OP_ID,
   createApplyToolHandler,
+  createMarkToolHandler,
   summarizeProposalForApply,
 } from '../apply-refusal.js'
 
 const APPLY_OP_ID = 'knowledge.proposal.apply'
 const PROPOSAL_ID = 'prop_alpha-bravo-charlie'
 const OTHER_PROPOSAL_ID = 'prop_delta-echo-foxtrot'
+
+describe('419 sovereign mark credential refusal', () => {
+  const caller = { surface: 'mcp', grantedScopes: ['knowledge-write'], safeMode: false, origin: 'agent' } as const
+  it('refuses before invoking and renders only the MCP remedy without echoing input', async () => {
+    const calls: unknown[] = []
+    const handler = createMarkToolHandler({ caller, invoke: async (...args) => { calls.push(args) }, maskText: text => text })
+    const result = await handler({ note: 'untrusted-input' })
+    expect(calls).toEqual([])
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toEqual({
+      status: 'credential-required', applied: false,
+      instruction: 'agent_qa_mark_run requires a declared bearer; present a bearer whose scopes include `knowledge-write`',
+    })
+    expect(JSON.stringify(result)).not.toContain('untrusted-input')
+    expect(JSON.stringify(result)).not.toContain('--trust-session')
+  })
+  it('passes the mark input unchanged through the sole invoke and masks both result channels', async () => {
+    const calls: unknown[] = []
+    const args = { kind: 'confirmed-bug' }
+    const handler = createMarkToolHandler({
+      caller: { ...caller, credential: { scope: STANDING_APPROVAL_SCOPE } },
+      invoke: async (...input) => { calls.push(input); return { note: 'planted-secret' } },
+      maskText: text => text.replaceAll('planted-secret', '<SECRET>'),
+    })
+    const result = await handler(args)
+    expect(calls).toEqual([['runs.mark', args]])
+    expect(result.structuredContent).toEqual({ note: '<SECRET>' })
+    expect(JSON.stringify(result)).not.toContain('planted-secret')
+  })
+  it('renders typed gate denials with neutral prose and only actionable MCP affordances', () => {
+    const result = maskedToolError(new FunctionDeniedError('runs.mark', 'use --trust-session', [
+      { kind: 'answer-confirm' }, { kind: 'trust-session-flag' },
+      { kind: 'present-bearer-scope', params: { scope: 'knowledge-write' } },
+    ], 'confirmation required'), text => text)
+    expect(result.content).toEqual([{ type: 'text', text: 'Denied runs.mark: confirmation required; present a bearer whose scopes include `knowledge-write`' }])
+    expect(result.isError).toBe(true)
+    expect(JSON.stringify(result)).not.toContain('--trust-session')
+  })
+})
 
 /**
  * The `proposals.show` answer the double returns, PRODUCED through the op's own output contract

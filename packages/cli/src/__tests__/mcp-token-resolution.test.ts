@@ -15,11 +15,12 @@
 // suite sees it.
 
 import { describe, expect, it } from 'vitest'
-import { McpTokenEntrySchema, FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { McpTokenEntrySchema, FunctionScopeSchema, STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 
 import {
   DEFAULT_MCP_SCOPES,
+  credentialForBearer,
   matchBearer,
   mcpTokenSecretStore,
   McpTokenEnvVarUnsetError,
@@ -30,6 +31,20 @@ import {
 /** The value that must never appear in any message, header or body this suite can reach. */
 const PLANTED = 'zz-396-05-planted-credential-4f1c9a'
 const PLANTED_VAR = 'AGENT_QA_396_MCP_CRED'
+
+describe('419 declared bearer credentials', () => {
+  it('mints exactly the standing scope for a declared knowledge writer, regardless of label', () => {
+    expect(credentialForBearer({ kind: 'token', clientId: 'anonymous', scopes: ['knowledge-write'] }))
+      .toEqual({ scope: STANDING_APPROVAL_SCOPE })
+  })
+  it('mints nothing for anonymous defaults, readers or rejected credentials', () => {
+    expect(DEFAULT_MCP_SCOPES).toContain('knowledge-write')
+    expect(credentialForBearer({ kind: 'anonymous', scopes: DEFAULT_MCP_SCOPES })).toBeUndefined()
+    expect(credentialForBearer({ kind: 'token', clientId: 'reader', scopes: ['read'] })).toBeUndefined()
+    expect(credentialForBearer({ kind: 'refused', reason: 'invalid_token' })).toBeUndefined()
+    expect(credentialForBearer({ kind: 'refused', reason: 'malformed_authorization' })).toBeUndefined()
+  })
+})
 
 describe('the D-07 default grant is derived, not restated', () => {
   it('is the closed scope union minus exactly config-write', () => {
