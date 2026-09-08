@@ -800,6 +800,7 @@ describe('agent-qa fn (generic function invoker)', () => {
       // `runs.detail` beside it there is no composition that lists this verb and then refuses it.
       'runs.knowledge': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.mark': { requiredScopes: ['knowledge-write'], resultKind: 'unary', bindingStatus: 'bound' },
       // 403 D-03: UNBOUND from this composition, and that is the honest answer rather than an
       // oversight. `runs.liveurl` mints a viewing credential for a LIVE run, so it binds only where
       // a live-view port exists — `agent-qa dashboard`'s `composeLiveView`. A CLI host with no
