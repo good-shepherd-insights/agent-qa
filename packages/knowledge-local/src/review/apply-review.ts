@@ -37,7 +37,7 @@ import type {
   ResolvePromotionPosture,
 } from '@vostride/agent-qa-schema'
 
-import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
+import { deriveBundleTrust, loadBundle, readGateReceipts } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
 import { createLocalKnowledgeStore, KnowledgePromotionError } from '../curator/knowledge-store.js'
 import { diffSince } from '../diff-since.js'
@@ -356,6 +356,7 @@ async function commitInProcess(
     executionContext: input.executionContext ?? 'local-interactive',
     epoch: lease.epoch,
     writerLeaseId: lease.leaseId,
+    ...(proposal.mark === undefined ? {} : { sourceRunId: proposal.mark.runId }),
     ...(sourceBuildOrdinal === undefined ? {} : { sourceBuildOrdinal }),
     ...(input.resolvePromotionPosture === undefined
       ? {}
@@ -375,7 +376,8 @@ function currentOrdinal(knowledgeRoot: string): number {
     const loaded = loadBundle(entry.dir)
     if (loaded.kind !== 'loaded') continue
     ordinal = Math.max(ordinal, loaded.bundle.manifest.createdAtOrdinal,
-      ...loaded.bundle.events.map(event => event.buildOrdinal))
+      ...loaded.bundle.events.map(event => event.buildOrdinal),
+      ...(readGateReceipts(entry.dir, loaded.bundle.manifest.id) ?? []).map(line => line.producedAtOrdinal))
   }
   return ordinal
 }

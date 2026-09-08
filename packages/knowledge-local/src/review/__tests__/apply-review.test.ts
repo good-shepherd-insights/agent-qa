@@ -28,6 +28,7 @@ import {
   asRecordId,
   asEvidenceToken,
   strongestPromotionPath,
+  stampReceiptDigest,
 } from '@vostride/agent-qa-schema'
 import type { Anchor, KnowledgeReviewVerb, RecordId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -268,20 +269,23 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     return outcome.proposal.proposalId
   }
 
-  function proposeMark(recordId: string, kind: 'fact' | 'caution' = 'fact', add = false) {
+  function proposeMark(recordId: string, kind: 'fact' | 'caution' = 'fact', add = false, confirm = false) {
     const target = { grain: 'record' as const, recordId }
     const runId = asRunId('mark-apply-run')
     const mark = { markId: 'mark_0123456789ab', runId, testIndex: 2, stepIndex: 3,
       kind: 'false-fail' as const, fix: kind }
     const scope = { tier: 'product' as const, key: 'apply-storefront' }
     const draft = makeBundleDraftFixture({ kind, scope, anchors: [ANCHOR],
+      ...(kind === 'fact' ? { subtype: 'navigational' as const } : {}),
       summary: kind === 'fact' ? 'Navigational fact: open the checkout panel first' : 'Avoid stale checkout state' })
     const shared = { origin: 'user' as const, scope, citedIds: [asRecordId(recordId)],
       evidenceToken: asEvidenceToken(`mark:${mark.markId}`) }
     const outcome = proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input: {
       target, mark, plan: { schemaVersion: 1, markId: mark.markId, kind: 'knowledge', fix: kind,
         target, wording: 'floor', feedbackSource: { runId, testIndex: 2, stepIndex: 3, kind: mark.kind },
-        runTraceRef: { runId, runSlug: runId }, deltas: [add
+        runTraceRef: { runId, runSlug: runId }, deltas: [confirm
+          ? { ...shared, kind: 'Confirm', targetId: asRecordId(recordId) }
+          : add
           ? { ...shared, kind: 'Add', bundle: draft }
           : { ...shared, kind: 'Supersede', victimId: asRecordId(recordId), newBundle: draft }],
       },
@@ -302,11 +306,13 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
       const id = result.commitReceipt!.recordIds[0]!
       expect(id).not.toBe(recordId)
       const entry = enumerateBundleDirs(knowledgeRoot).find(entry => loadBundle(entry.dir).kind === 'loaded'
-        && readGateReceipts(entry.dir, id)?.length)! 
+        && readGateReceipts(entry.dir, id)?.length)!
       const loaded = loadBundle(entry.dir)
       expect(loaded.kind).toBe('loaded')
       if (loaded.kind !== 'loaded') throw new Error('missing committed record')
       expect(loaded.bundle.frontmatter.originClass).toBe('user')
+      expect(loaded.bundle.provenance).toMatchObject({ mode: 'run-linked', runId: 'mark-apply-run' })
+      if (kind === 'fact') expect(loaded.bundle.frontmatter.subtype).toBe('navigational')
       const lines = readGateReceipts(entry.dir, id)!
       expect(lines.filter(line => 'gate' in line && line.gate === 3)).toEqual([
         expect.objectContaining({ gate: 3, verdict: 'pass', candidateId: id,
@@ -329,6 +335,30 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(results.map(result => result.outcome).sort()).toEqual(['already-applied', 'applied'])
     expect(results[0]!.commitReceipt).toEqual(results[1]!.commitReceipt)
     expect(results[0]!.commitReceipt?.gate3).toHaveLength(1)
+  })
+
+  it('419 Confirm readback names only its target and advances beyond earlier gate-only ordinals', async () => {
+    const recordId = publish('previously gated checkout')
+    const unrelated = publish('unrelated checkout')
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('fixture lease unavailable')
+    try {
+      const store = knowledgeStore.createLocalKnowledgeStore({ knowledgeRoot, auditBaseDir: agentQaRoot,
+        executionContext: 'local-interactive', writerLeaseId: lease.leaseId, epoch: lease.epoch })
+      await store.recordGateReceipt(stampReceiptDigest({ schemaVersion: 1, gate: 3,
+        candidateId: recordId, verdict: 'fail', producedAtOrdinal: 100,
+        producedBy: { opId: 'prior-confirmation' }, runId: 'prior-run', mark: 'false-pass' }))
+    } finally { releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
+    const proposalId = proposeMark(recordId, 'fact', false, true)
+    const result = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+    expect(result.commitReceipt?.recordIds).toEqual([recordId])
+    expect(result.commitReceipt?.committedAtOrdinal).toBe(101)
+    expect(result.commitReceipt?.promoted).toEqual([{ candidateId: recordId, promotionPath: 'user-sovereign' }])
+    expect(rowsFor(unrelated)[0]?.status).toBe('candidate')
+    const record = enumerateBundleDirs(knowledgeRoot).map(entry => loadBundle(entry.dir))
+      .find(loaded => loaded.kind === 'loaded' && loaded.bundle.manifest.id === recordId)
+    expect(record?.kind === 'loaded' && record.bundle.events.some(event =>
+      event.type === 'confirmed' && event.origin === 'user' && event.buildOrdinal === 101)).toBe(true)
   })
 
   it('419 propose-only mark application refuses before commit or Gate-3 writes', async () => {
