@@ -26,6 +26,7 @@ import type { RunId } from '../run/run-id'
 import { EXECUTION_CONTEXT_VALUES } from '../run/run-status'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
 import type { Verdict } from '../verdict/verdict'
+import { RunDetailMemberMarkSchema, type RunDetailMemberMark } from './feedback'
 
 export const RUN_SUMMARY_SCHEMA_VERSION = 1
 
@@ -470,6 +471,13 @@ export interface RunDetailMember {
   failureSummary?: string
   retryCount?: number
   attempts: number
+  /**
+   * 419 D-15: the LATEST mark per address on this member — the run-level entry
+   * (no stepIndex) first, then step entries ascending. Absent when the host binds
+   * no feedback dep or nothing was marked; a projection of the mark ledger,
+   * nothing new is fetched by the block.
+   */
+  marks?: readonly RunDetailMemberMark[]
 }
 
 /**
@@ -635,6 +643,7 @@ export const RunDetailMemberSchema = z.object({
   failureSummary: z.string().optional(),
   retryCount: z.number().int().nonnegative().optional(),
   attempts: z.number().int().positive(),
+  marks: z.array(RunDetailMemberMarkSchema).optional(),
 }).strict() satisfies z.ZodType<RunDetailMember>
 
 export const RunStepTokenUsageSchema = z.object({
