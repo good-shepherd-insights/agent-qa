@@ -22,6 +22,8 @@ import {
   RunsDetailInputSchema,
 } from '@vostride/agent-qa-schema'
 import type {
+  MarkReceipt,
+  RunDetailMemberMark,
   RunDetailProjection,
   RunDetailStep,
   RunTokenTotals,
@@ -121,6 +123,36 @@ export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> 
       throw new RunNotFoundError(String(input.runId))
     }
 
+    // 419 D-11/D-15: the ledger is append-only; only its latest ordinal per member/step
+    // governs. No catch: a bound reader that throws is a broken host, not an absent ledger.
+    let members = [...rows.members]
+    if (deps.feedback !== undefined) {
+      const latest = new Map<string, MarkReceipt>()
+      for (const mark of await deps.feedback.marksFor(input.runId)) {
+        const address = `${mark.testIndex}:${mark.stepIndex ?? 'run'}`
+        const prior = latest.get(address)
+        if (prior === undefined || mark.ordinal > prior.ordinal) latest.set(address, mark)
+      }
+      const byMember = new Map<number, RunDetailMemberMark[]>()
+      for (const mark of latest.values()) {
+        const marks = byMember.get(mark.testIndex) ?? []
+        marks.push({
+          markId: mark.markId,
+          kind: mark.kind,
+          ordinal: mark.ordinal,
+          ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }),
+          disposition: mark.disposition,
+        })
+        byMember.set(mark.testIndex, marks)
+      }
+      members = rows.members.map(member => {
+        const marks = byMember.get(member.testIndex)
+        if (marks === undefined) return member
+        marks.sort((a, b) => (a.stepIndex ?? -1) - (b.stepIndex ?? -1))
+        return { ...member, marks }
+      })
+    }
+
     // READ-TIME PRESENCE, OPPORTUNISTICALLY (406 D-17). The projection recorded which blobs a
     // sub-action produced; only a stat taken now can say whether they survived. `boundThrough`
     // stays `runDetail` because this is not a binding condition: a host with no runtime root
@@ -135,7 +167,7 @@ export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> 
 
     return {
       runId: rows.runId,
-      members: [...rows.members],
+      members,
       steps: [...rows.steps],
       subActions,
       tokens: projectRunTokenTotals(rows.steps),

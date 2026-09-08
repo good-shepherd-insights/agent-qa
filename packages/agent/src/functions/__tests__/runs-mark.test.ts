@@ -2,11 +2,13 @@ import {
   FunctionScopeSchema,
   STANDING_APPROVAL_SCOPE,
   asRunId,
+  RunDetailProjectionSchema,
 } from '@vostride/agent-qa-schema'
 import type {
   FeedbackPort,
   FunctionCaller,
   MarkReceipt,
+  RunDetailRows,
   RunsMarkInput,
   RunsMarkOutcome,
 } from '@vostride/agent-qa-schema'
@@ -14,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { FunctionDeniedError, FunctionNotBoundError, FunctionScopeError, invokeFunction } from '../invoke.js'
 import { RUNS_MARK_FUNCTION_ID, runsMarkSpec } from '../ops/runs-mark.js'
+import { runsDetailSpec } from '../ops/runs-detail.js'
 import { createFunctionRegistry } from '../registry.js'
 import type { FunctionDeps } from '../spec.js'
 
@@ -156,5 +159,55 @@ describe('mark outcome classifications omit producer text', () => {
     expect(runsMarkSpec.classify!({ kind: 'already-marked', receipt: receipt() })).toEqual({
       status: 'executed', outcome: 'already marked: identical repeat, prior receipt returned',
     })
+  })
+})
+
+describe('runs.detail mark projection (419 D-11/D-15)', () => {
+  const rows: RunDetailRows = {
+    runId: RUN_ID,
+    // Deliberately not positional: marks join by testIndex, not by array offset.
+    members: [{ testIndex: 4, attempts: 1 }, { testIndex: 0, attempts: 1 }],
+    steps: [],
+    subActions: [],
+  }
+
+  function detailDeps(feedback?: FeedbackPort): FunctionDeps {
+    return { ...deps(feedback), runDetail: { read: async () => rows } }
+  }
+
+  it('projects latest ordinals per address, run-level first then ascending step indexes', async () => {
+    const run = receipt({ ordinal: 3, kind: 'confirmed-bug' })
+    const step = receipt({ stepIndex: 2 })
+    const stepZero = receipt({ stepIndex: 0, ordinal: 2 })
+    // Out of ordinal order so taking the last array entry is observably wrong.
+    const history = [step, run, receipt(), stepZero]
+    const before = JSON.stringify(history)
+    const marksFor = vi.fn(async () => history)
+    const result = await runsDetailSpec.invoke({ runId: RUN_ID }, detailDeps({ ...stub().port, marksFor }))
+    expect(marksFor.mock.calls).toEqual([[RUN_ID]])
+    expect(result.members[1]!.marks).toEqual([run, stepZero, step].map(mark => ({
+      markId: mark.markId, kind: mark.kind, ordinal: mark.ordinal,
+      ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }),
+      disposition: mark.disposition,
+    })))
+    expect('marks' in result.members[0]!).toBe(false)
+    expect('marks' in rows.members[1]!).toBe(false)
+    expect(JSON.stringify(history)).toBe(before)
+    expect(RunDetailProjectionSchema.parse(result)).toEqual(result)
+  })
+
+  it('leaves every marks key absent with an unbound or empty ledger', async () => {
+    const unbound = await runsDetailSpec.invoke({ runId: RUN_ID }, detailDeps())
+    const empty = await runsDetailSpec.invoke({ runId: RUN_ID }, detailDeps(stub().port))
+    expect(JSON.stringify(empty)).toBe(JSON.stringify(unbound))
+    expect(unbound.members.every(member => !('marks' in member))).toBe(true)
+    expect(RunDetailProjectionSchema.parse(unbound)).toEqual(unbound)
+  })
+
+  it('propagates a bound marksFor failure instead of presenting an unmarked run', async () => {
+    const failure = new Error('ledger unavailable')
+    await expect(runsDetailSpec.invoke({ runId: RUN_ID }, detailDeps({
+      ...stub().port, marksFor: async () => { throw failure },
+    }))).rejects.toBe(failure)
   })
 })
