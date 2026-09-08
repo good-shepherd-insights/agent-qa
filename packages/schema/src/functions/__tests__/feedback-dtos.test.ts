@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { asRunId } from '../../run/run-id'
+import { asRunId, runIdSchema } from '../../run/run-id'
 import {
   MARK_DISPOSITIONS, MARK_FIX_KINDS, MARK_QUARANTINE_CLASSES,
   CommitReceiptSchema, ImprovementPlanSchema, ImprovementPlanKnowledgeSchema,
@@ -42,6 +42,7 @@ describe('Gate-3 neutral feedback contracts (419)', () => {
   })
 
   it('requires only the address and kind, retaining optional user text and zero-based steps', () => {
+    expect(RunsMarkInputSchema.shape.runId).toBe(runIdSchema.in)
     const input = { runId, kind: 'false-fail' }
     expect(RunsMarkInputSchema.parse(input)).toEqual(input)
     const full = { ...input, testId: 'member', stepIndex: 0, note: 'check', correctedExpectation: 'visible' }
