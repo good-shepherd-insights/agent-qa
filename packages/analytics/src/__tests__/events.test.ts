@@ -57,7 +57,9 @@ describe('the closed event union — membership is the D-18 list, exactly (ANLY-
     expect([...ANALYTICS_MCP_TOOL_NAMES].sort()).toEqual(
       AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name).sort(),
     )
-    expect(ANALYTICS_MCP_TOOL_NAMES.length).toBe(12)
+    expect(ANALYTICS_MCP_TOOL_NAMES.length).toBe(14)
+    expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_mark_run')
+    expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_list_knowledge_gates')
   })
 })
 
