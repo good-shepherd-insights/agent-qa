@@ -845,3 +845,9 @@ export { canaryPostureFactsFor, standingReceiptDigestsFor, lowerTrustSharesFor,
   type CanaryPostureFacts, type StandingReceiptDigest, type LowerTrustShare,
 } from './gates/canary-posture-facts.js'
 export * from './review/gate-inconsistency.js'
+
+// 2026-09-08, 419: deterministic user-mark drafting (writer entry only).
+export { applyFeedback, triageMark, selectFixKind, assertionDrift, procedureReadOn,
+  servedIdsOn, type ApplyFeedbackInput, type ServedRecordFacts, type MarkTriage,
+  type FixSelection } from './feedback/apply-feedback.js'
+export { floorProse, type FloorProseInput } from './feedback/floor-prose.js'
