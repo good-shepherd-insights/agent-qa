@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import { asEvidenceToken, asRecordId } from '../../ids/record-id'
 import {
   BundleOutcomeEventSchema,
+  OVERTURNED_EVENT_TYPE,
   dedupeEvents,
   eventDedupKey,
   survivingOutcomeEvents,
@@ -19,6 +20,17 @@ const baseEvent = {
 }
 
 describe('BundleOutcomeEventSchema (D-08/D-09/D-10)', () => {
+  it('419 D-09 pins and round-trips the strict overturned citing arm', () => {
+    expect(OVERTURNED_EVENT_TYPE).toBe('overturned')
+    const line = {
+      ...baseEvent, type: 'overturned', overturnsEvidenceToken: 'target',
+      overturnsCurationJobId: 'target-job', markId: 'mark_012345abcdef',
+    }
+    expect(BundleOutcomeEventSchema.parse(JSON.parse(JSON.stringify(line)))).toEqual(line)
+    expect(BundleOutcomeEventSchema.safeParse({ ...line, markId: undefined }).success).toBe(false)
+    expect(BundleOutcomeEventSchema.safeParse({ ...line, markId: 'mark_invalid' }).success).toBe(false)
+    expect(BundleOutcomeEventSchema.safeParse({ ...line, origin: 'user' }).success).toBe(false)
+  })
   it('keeps OriginClass closed to the four origin-prior classes', () => {
     expectTypeOf<OriginClass>().toEqualTypeOf<
       'user' | 'agent-verified' | 'agent-observed' | 'import'

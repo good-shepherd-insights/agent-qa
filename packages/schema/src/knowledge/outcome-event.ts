@@ -25,6 +25,7 @@ const commonEventShape = {
 }
 
 const originClassSchema = z.enum(originClassValues)
+export const OVERTURNED_EVENT_TYPE = 'overturned' as const
 const observationVariant = <T extends 'confirmed' | 'contradicted' | 'helpful' | 'harmful'>(
   type: T,
 ) => z.object({
@@ -81,6 +82,17 @@ export const BundleOutcomeEventSchema = z.discriminatedUnion('type', [
     type: z.literal('window-close'),
     closedAtOrdinal: z.number(),
   }).strict(),
+  /**
+   * 2026-09-08, 419 D-09: a compensating line beside the evidence a user mark
+   * overturned — evidence only; no status moves here.
+   */
+  z.object({
+    ...commonEventShape,
+    type: z.literal(OVERTURNED_EVENT_TYPE),
+    overturnsEvidenceToken: z.string().transform(asEvidenceToken),
+    overturnsCurationJobId: z.string(),
+    markId: z.string().regex(/^mark_[0-9a-f]{12}$/),
+  }).strict(),
 ])
 
 export type BundleOutcomeEvent = z.infer<typeof BundleOutcomeEventSchema>
@@ -119,8 +131,13 @@ export function survivingOutcomeEvents(
 ): BundleOutcomeEvent[] {
   const dedupedEvents = dedupeEvents(events)
   const retractedEventKeys = new Set<string>()
+  const overturnedEventKeys = new Set<string>()
 
   for (const event of dedupedEvents) {
+    if (event.type === 'overturned') {
+      overturnedEventKeys.add(`${event.overturnsEvidenceToken}:${event.overturnsCurationJobId}`)
+      continue
+    }
     if (event.type !== 'retracted') continue
     retractedEventKeys.add(eventDedupKey({
       ...event,
@@ -130,6 +147,13 @@ export function survivingOutcomeEvents(
   }
 
   return dedupedEvents.filter(
-    (event) => event.type !== 'retracted' && !retractedEventKeys.has(eventDedupKey(event)),
+    (event) => {
+      if (event.type === 'retracted' || event.type === 'overturned') return false
+      if (retractedEventKeys.has(eventDedupKey(event))) return false
+      // 419 D-09: even a malformed citation cannot cancel a lifecycle transition.
+      const isObservation = event.type === 'confirmed' || event.type === 'contradicted'
+        || event.type === 'helpful' || event.type === 'harmful'
+      return !isObservation || !overturnedEventKeys.has(eventDedupKey(event))
+    },
   )
 }

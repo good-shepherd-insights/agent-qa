@@ -675,3 +675,33 @@ describe('414 D-14 — gatePosture and the empty-gate-set hold (ROOT-09 SC4)', (
     ).toEqual({ verdict: 'hold', reason: 'empty-gate-set' })
   })
 })
+
+describe('419 D-04 sovereign confirmation with harmful canary evidence', () => {
+  const g3 = stampReceiptDigest({
+    schemaVersion: 1, gate: 3, candidateId: 'candidate', verdict: 'pass',
+    producedAtOrdinal: 7, producedBy: { opId: 'knowledge.proposal.apply' },
+    runId: 'r_x', stepId: '0:2', mark: 'false-fail',
+  })
+  const input = () => factInput({
+    confirmedOutcomeEvidenceTokens: [],
+    gateReceipts: [receipt(1, 'pass'), receipt(2, 'fail', 6), g3],
+    gatePosture: resolvedPosture({
+      canary: { kind: 'provided', attributedRows: 1, rarePathEligible: false,
+        inconsistency: { pending: true, proposalId: 'harmful-canary' } },
+    }),
+  })
+
+  it('promotes a mark-produced Gate-3 pass user-sovereign despite harmful canary evidence', () => {
+    expect(evaluatePromotionGate(input())).toEqual({
+      verdict: 'promote', promotionPath: 'user-sovereign',
+      citedReceiptDigests: [g3.receiptDigest],
+    })
+    expect(evaluatePromotionGate({ ...input(), gateReceipts: [receipt(1, 'pass'), receipt(2, 'fail', 6)] }))
+      .toEqual({ verdict: 'hold', reason: 'gate-inconsistent' })
+  })
+
+  it('keeps procedure kind-excluded ahead of the sovereign short-circuit (419 OQ3)', () => {
+    expect(evaluatePromotionGate({ ...input(), kind: 'procedure' }))
+      .toEqual({ verdict: 'hold', reason: 'kind-excluded' })
+  })
+})

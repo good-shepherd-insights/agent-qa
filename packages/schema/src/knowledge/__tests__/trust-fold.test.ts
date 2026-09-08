@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   BundleOutcomeEventSchema,
+  survivingOutcomeEvents,
   type BundleOutcomeEvent,
   type OriginClass,
 } from '../outcome-event'
@@ -50,6 +51,44 @@ function fold(
     createdAtOrdinal: 5,
   })
 }
+
+describe('419 D-09 overturned evidence cancellation', () => {
+  function overturn(target: BundleOutcomeEvent, token = 'overturn') {
+    return event('overturned', token, 99, {
+      overturnsEvidenceToken: target.evidenceToken,
+      overturnsCurationJobId: target.curationJobId,
+      markId: 'mark_012345abcdef',
+    })
+  }
+
+  it('cancels the pair without mutating either audit line or counting harm', () => {
+    const confirmed = event('confirmed', 'a', 7)
+    const overturned = overturn(confirmed)
+    const log = Object.freeze([Object.freeze(confirmed), Object.freeze(overturned)])
+    const bytes = JSON.stringify(log)
+    expect(fold(log)).toEqual(fold([]))
+    expect(survivingOutcomeEvents(log)).toEqual([])
+    expect(JSON.stringify(log)).toBe(bytes)
+    expect(log).toEqual([confirmed, overturned])
+  })
+
+  it('cancels only the exact token and job pair, including replay and reversed order', () => {
+    const a = event('confirmed', 'a', 7)
+    const b = event('confirmed', 'a', 8, { curationJobId: 'another-job' })
+    const overturned = overturn(a)
+    expect(fold([a, b, overturned])).toEqual(fold([b]))
+    expect(fold([overturned, b, a, overturned])).toEqual(fold([b]))
+  })
+
+  it.each(['confirmed', 'contradicted', 'helpful', 'harmful'] as const)(
+    'cancels %s evidence and retains a previously promoted status', (kind) => {
+      const observation = event(kind, 'observation', 7)
+      const promoted = event('promoted', 'promoted', 8)
+      expect(fold([observation, promoted, overturn(observation)])).toEqual(fold([promoted]))
+      expect(fold([promoted, overturn(promoted)])).toEqual(fold([promoted]))
+    },
+  )
+})
 
 describe('foldBundleTrust priors and Beta evidence (D-08/D-10)', () => {
   it.each([
