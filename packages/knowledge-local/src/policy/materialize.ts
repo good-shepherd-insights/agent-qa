@@ -37,6 +37,8 @@ export interface MaterializePolicyInput {
   policy?: GuardrailPolicy
   auditSink?: AuditSink
   auditBaseDir: string
+  /** Recovery validates a previously authored section and must never recreate a missing one. */
+  existingOnly?: boolean
 }
 
 export type MaterializeOutcome =
@@ -85,6 +87,7 @@ function materializeUnderAuthority(input: MaterializePolicyInput): MaterializeOu
   }
   if (pending !== undefined) throw new PolicyTextRefusedError()
   if (seen.has(input.recordId)) return { kind: 'unchanged', relPath, sectionBytes }
+  if (input.existingOnly) throw new PolicyTextRefusedError()
   const text = `${exists ? '' : `# Policies — ${input.scope}\n`}${section}`
   try {
     assertCommittedEgressSafe([{ label: `policy:${input.recordId}`, text, origin: 'user' }], {

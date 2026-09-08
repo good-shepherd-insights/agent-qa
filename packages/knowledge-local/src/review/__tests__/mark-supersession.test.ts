@@ -15,7 +15,7 @@ import { proposeReview } from '../propose-review.js'
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
-it('commits a real same-kind same-anchor floor replacement before sovereign promotion', async () => {
+it.each([false, true])('commits a real same-kind same-anchor floor replacement before sovereign promotion (interrupted=%s)', async interrupted => {
   const root = mkdtempSync(join(tmpdir(), 'mark-supersession-'))
   roots.push(root)
   const knowledgeRoot = join(root, 'knowledge')
@@ -76,7 +76,16 @@ it('commits a real same-kind same-anchor floor replacement before sovereign prom
   } } })
   if (proposed.kind !== 'proposed') throw new Error('expected a filed proposal')
   const proposalId = proposed.proposal.proposalId
+  let beforeRetry: unknown
+  if (interrupted) {
+    await expect(applyReview({ agentQaRoot, knowledgeRoot, proposalId,
+      now: () => { throw new Error('injected interrupted mark publication') } })).rejects.toThrow('injected')
+    beforeRetry = bundles().map(row => ({ id: row.bundle.manifest.id, events: row.bundle.events,
+      gates: readGateReceipts(row.dir, row.bundle.manifest.id) }))
+  }
   const result = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+  if (interrupted) expect(bundles().map(row => ({ id: row.bundle.manifest.id, events: row.bundle.events,
+    gates: readGateReceipts(row.dir, row.bundle.manifest.id) }))).toEqual(beforeRetry)
   expect(result.commitReceipt?.held).toEqual([])
   expect(result.commitReceipt?.promoted).toEqual([{ candidateId: expect.any(String), promotionPath: 'user-sovereign' }])
   const replacementId = result.commitReceipt!.recordIds[0]!

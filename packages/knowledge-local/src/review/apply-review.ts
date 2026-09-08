@@ -23,8 +23,9 @@
 // There is no code path in this file that acquires when a live holder exists, because there is no
 // second acquisition primitive for one to use.
 
-import { relative } from 'node:path'
-import { asEvidenceToken, asRecordId, deriveMarkStepId, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { existsSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { asEvidenceToken, asRecordId, canonicalJson, deriveMarkStepId, stampReceiptDigest } from '@vostride/agent-qa-schema'
 
 import type {
   Delta,
@@ -42,8 +43,8 @@ import { enumerateBundleDirs } from '../bundle-scan.js'
 import { createLocalKnowledgeStore, KnowledgePromotionError } from '../curator/knowledge-store.js'
 import { diffSince } from '../diff-since.js'
 import { resolveDispositionProfile } from '../curator/author-contract.js'
-import { materializePolicy, PolicyTextRefusedError } from '../policy/materialize.js'
-import { acquireWriterLease, releaseLease } from '../lease/writer-lease.js'
+import { materializePolicy, policyShelfPath, PolicyTextRefusedError } from '../policy/materialize.js'
+import { acquireWriterLease, releaseLease, withCurrentWriterAuthority } from '../lease/writer-lease.js'
 import type { WriterLease } from '../lease/writer-lease.js'
 import { memoryStatusForBundle } from '../memory-status.js'
 import { FORGET_SCRUBBED_PROJECTIONS } from './propose-review.js'
@@ -262,6 +263,7 @@ function locateRecord(knowledgeRoot: string, recordId: string) {
     if (outcome.kind !== 'loaded') continue
     if (outcome.bundle.manifest.id !== recordId) continue
     return {
+      dir: entry.dir,
       product: entry.product,
       status: deriveBundleTrust(outcome.bundle).status,
       provenance: outcome.bundle.provenance,
@@ -344,13 +346,13 @@ function assembleForgetReceipt(
   }
 }
 
-async function commitInProcess(
+function reviewStore(
   input: ApplyReviewInput,
   proposal: KnowledgeProposalV1,
   lease: { readonly leaseId: string; readonly epoch: number },
   sourceBuildOrdinal?: number,
 ) {
-  const store = createLocalKnowledgeStore({
+  return createLocalKnowledgeStore({
     knowledgeRoot: input.knowledgeRoot,
     auditBaseDir: input.agentQaRoot,
     executionContext: input.executionContext ?? 'local-interactive',
@@ -362,6 +364,15 @@ async function commitInProcess(
       ? {}
       : { resolvePromotionPosture: input.resolvePromotionPosture }),
   })
+}
+
+async function commitInProcess(
+  input: ApplyReviewInput,
+  proposal: KnowledgeProposalV1,
+  lease: { readonly leaseId: string; readonly epoch: number },
+  sourceBuildOrdinal?: number,
+) {
+  const store = reviewStore(input, proposal, lease, sourceBuildOrdinal)
   // THE one write path. Not `proposeDeltas` (which is the propose-only disposition profile and
   // would commit nothing), not a direct append, not a projection call — `commit`, exactly as any
   // curation write reaches it.
@@ -416,10 +427,13 @@ async function applyMarkArm(
   if (resolveDispositionProfile(input.executionContext ?? 'local-interactive').mode === 'propose-only') {
     throw new KnowledgePromotionError(asRecordId(proposal.proposalId), 'propose-only')
   }
+  const recovered = completedMarkSupersession(input, proposal, authority)
   const preOrdinal = currentOrdinal(input.knowledgeRoot)
-  const store = await commitInProcess(input, proposal, authority, preOrdinal + 1)
-  const recordIds = readBackCommittedIds(input.knowledgeRoot, preOrdinal, proposal)
-  const committedAtOrdinal = currentOrdinal(input.knowledgeRoot)
+  const store = recovered === undefined
+    ? await commitInProcess(input, proposal, authority, preOrdinal + 1)
+    : reviewStore(input, proposal, authority)
+  const recordIds = recovered?.recordIds ?? readBackCommittedIds(input.knowledgeRoot, preOrdinal, proposal)
+  const committedAtOrdinal = recovered?.ordinal ?? currentOrdinal(input.knowledgeRoot)
   const commitReceipt: CommitReceipt = {
     schemaVersion: 1, proposalId: proposal.proposalId, markId: proposal.mark!.markId,
     committedAtOrdinal, recordIds, gate3: [], promoted: [], held: [],
@@ -444,6 +458,50 @@ async function applyMarkArm(
   return { outcome: 'applied', proposal: applied, commitReceipt }
 }
 
+/** A retry is not another lineage transition. Recover exact mark Supersede effects before commit. */
+function completedMarkSupersession(
+  input: ApplyReviewInput, proposal: KnowledgeProposalV1,
+  authority: { readonly leaseId: string; readonly epoch: number },
+): { recordIds: string[]; ordinal: number } | undefined {
+  if (proposal.deltas.length === 0 || !proposal.deltas.every(delta => delta.kind === 'Supersede')) return undefined
+  return withCurrentWriterAuthority(input.knowledgeRoot, authority, () => {
+    const found: { id: string; ordinal: number }[] = []
+    for (const delta of proposal.deltas) {
+      if (delta.kind !== 'Supersede') throw new Error('Expected mark Supersede')
+      const victim = locateRecord(input.knowledgeRoot, delta.victimId)
+      const matches = victim?.bundle.events.filter(row => row.type === 'superseded'
+        && row.evidenceToken === delta.evidenceToken) ?? []
+      if (matches.length === 0) {
+        // No own effects: the normal commit path retains its exact citation-integrity refusal.
+        continue
+      }
+      const event = matches.length === 1 ? matches[0] : undefined
+      if (event?.type !== 'superseded' || delta.evidenceToken !== `mark:${proposal.mark!.markId}`) {
+        throw new ProposalTargetVanishedError(proposal.proposalId)
+      }
+      const replacement = locateRecord(input.knowledgeRoot, event.byRecordId)
+      if (replacement === undefined || memoryStatusForBundle(replacement.status) === 'tombstoned'
+        || replacement.bundle.frontmatter.kind !== delta.newBundle.kind
+        || replacement.bundle.frontmatter.subtype !== delta.newBundle.subtype
+        || replacement.bundle.body !== delta.newBundle.body
+        || canonicalJson(replacement.bundle.frontmatter.scope) !== canonicalJson(delta.newBundle.scope)
+        || canonicalJson(replacement.bundle.frontmatter.anchors.map(anchor => anchor.raw)) !== canonicalJson(delta.newBundle.anchors)
+        || !replacement.bundle.events.some(row => row.type === 'confirmed' && row.evidenceToken === delta.evidenceToken
+          && row.buildOrdinal === event.buildOrdinal && row.curationJobId === event.curationJobId)
+        || !replacement.bundle.relations.relations.some(row => row.type === 'supersedes' && row.targetId === delta.victimId
+          && row.addedAtOrdinal === event.buildOrdinal && row.curationJobId === event.curationJobId)
+        || !victim!.bundle.events.some(row => row.type === 'window-close' && row.closedAtOrdinal === event.buildOrdinal
+          && row.curationJobId === event.curationJobId)) throw new ProposalTargetVanishedError(proposal.proposalId)
+      found.push({ id: event.byRecordId, ordinal: event.buildOrdinal })
+    }
+    if (found.length === 0) return undefined
+    if (found.length !== proposal.deltas.length || new Set(found.map(row => row.ordinal)).size !== 1) {
+      throw new ProposalTargetVanishedError(proposal.proposalId)
+    }
+    return { recordIds: [...new Set(found.map(row => row.id))].sort(), ordinal: found[0]!.ordinal }
+  })
+}
+
 async function applyPolicyArm(
   input: ApplyReviewInput, proposal: KnowledgeProposalV1,
   authority: { readonly leaseId: string; readonly epoch: number }, origin: ProposalOrigin | undefined,
@@ -453,9 +511,7 @@ async function applyPolicyArm(
     throw new KnowledgePromotionError(asRecordId(recordId), 'propose-only')
   }
   if (memoryStatusForBundle(record.status) === 'tombstoned') {
-    // Preserve the existing citation refusal BEFORE any authored policy byte is written.
-    await commitInProcess(input, proposal, authority)
-    throw new ProposalTargetVanishedError(proposal.proposalId)
+    return recoverPolicyArm(input, proposal, authority, origin, recordId)
   }
   const { bundle } = record
   const scope = bundle.frontmatter.scope
@@ -503,6 +559,69 @@ async function applyPolicyArm(
       relPath: materialized.relPath, outcome: materialized.kind } }
   const applied: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
   publishAppliedProposal(input.agentQaRoot, { proposal: applied, commitReceipt, ...decisionTrail(input, origin) })
+  return { outcome: 'applied', proposal: applied, commitReceipt }
+}
+
+/** Recover only this proposal's fully committed effects; a closed target alone proves nothing. */
+async function recoverPolicyArm(
+  input: ApplyReviewInput, proposal: KnowledgeProposalV1,
+  authority: { readonly leaseId: string; readonly epoch: number }, origin: ProposalOrigin | undefined,
+  recordId: string,
+): Promise<ApplyReviewResult> {
+  const committed = withCurrentWriterAuthority(input.knowledgeRoot, authority, () => {
+    const victim = locateRecord(input.knowledgeRoot, recordId)
+    const token = `policy-materialize:${proposal.proposalId}`
+    const events = victim?.bundle.events.filter(event => event.type === 'superseded' && event.evidenceToken === token)
+    const event = events?.length === 1 ? events[0] : undefined
+    if (victim === undefined || event?.type !== 'superseded') throw new ProposalTargetVanishedError(proposal.proposalId)
+    const replacement = locateRecord(input.knowledgeRoot, event.byRecordId)
+    const scope = victim.bundle.frontmatter.scope
+    const shelfScope = scope.tier === 'global' ? 'global' : scope.key
+    const relPath = relative(input.knowledgeRoot, policyShelfPath(input.knowledgeRoot, shelfScope))
+    if (replacement?.bundle.frontmatter.kind !== 'policy'
+      || memoryStatusForBundle(replacement.status) === 'tombstoned'
+      || replacement.bundle.body !== `${relPath}#agent-qa:policy ${recordId}`
+      || canonicalJson(replacement.bundle.frontmatter.scope) !== canonicalJson(scope)
+      || replacement.bundle.manifest.createdAtOrdinal !== event.buildOrdinal
+      || !replacement.bundle.events.some(row => row.type === 'confirmed' && row.evidenceToken === token
+        && row.buildOrdinal === event.buildOrdinal && row.curationJobId === event.curationJobId)
+      || !replacement.bundle.relations.relations.some(row => row.type === 'supersedes' && row.targetId === recordId
+        && row.addedAtOrdinal === event.buildOrdinal && row.curationJobId === event.curationJobId)
+      || !victim.bundle.events.some(row => row.type === 'window-close' && row.closedAtOrdinal === event.buildOrdinal
+        && row.curationJobId === event.curationJobId)
+      || !proposal.deltas.every(delta => delta.kind === 'Confirm' && delta.targetId === recordId
+        && victim.bundle.events.some(row => row.type === 'confirmed' && row.evidenceToken === delta.evidenceToken
+          && row.buildOrdinal === event.buildOrdinal))) throw new ProposalTargetVanishedError(proposal.proposalId)
+    const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 3, candidateId: recordId,
+      verdict: 'pass', producedAtOrdinal: event.buildOrdinal,
+      producedBy: { opId: 'knowledge.proposal.apply' },
+      policyApproval: { proposalId: proposal.proposalId, recordId },
+    } as const)
+    const gates = readGateReceipts(victim.dir, recordId)
+    if (gates === undefined && existsSync(join(victim.dir, 'evidence/gates.jsonl'))) {
+      throw new Error('Policy approval evidence is unreadable')
+    }
+    const prior = (gates ?? []).filter(row => 'gate' in row && row.gate === 3
+      && row.policyApproval?.proposalId === proposal.proposalId)
+    if (prior.length > 1 || (prior.length === 1 && canonicalJson(prior[0]) !== canonicalJson(receipt))) {
+      throw new Error('Policy approval evidence does not match the committed supersession')
+    }
+    return { victim, shelfScope, relPath, receipt, hasReceipt: prior.length === 1 }
+  })
+  const materialized = materializePolicy({ knowledgeRoot: input.knowledgeRoot, recordId,
+    scope: committed.shelfScope, ruleText: committed.victim.bundle.body,
+    title: committed.victim.bundle.summary, auditBaseDir: input.agentQaRoot,
+    writerAuthority: authority, existingOnly: true })
+  if (materialized.kind !== 'unchanged') throw new Error('Committed policy section is unavailable')
+  if (!committed.hasReceipt) await reviewStore(input, proposal, authority).recordGateReceipt(committed.receipt)
+  const commitReceipt: CommitReceipt = { schemaVersion: 1, proposalId: proposal.proposalId,
+    committedAtOrdinal: committed.receipt.producedAtOrdinal, recordIds: [recordId],
+    gate3: [{ candidateId: recordId, receiptDigest: committed.receipt.receiptDigest }], promoted: [], held: [],
+    policy: { recordId, scope: committed.shelfScope, relPath: committed.relPath, outcome: materialized.kind } }
+  const applied: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
+  withCurrentWriterAuthority(input.knowledgeRoot, authority, () => {
+    publishAppliedProposal(input.agentQaRoot, { proposal: applied, commitReceipt, ...decisionTrail(input, origin) })
+  })
   return { outcome: 'applied', proposal: applied, commitReceipt }
 }
 
