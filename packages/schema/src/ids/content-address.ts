@@ -23,6 +23,8 @@ export type BundleDiscriminant =
       kind: 'fact'
       subtype: ElementFactSubtype
       elementRef: { role: string; name: string }
+      /** Real Supersede evidence identifies the replacement validity-window generation. */
+      validityWindowEvidenceToken?: string
     }
   | { kind: 'fact'; subtype: 'measurement'; metricKey: string }
   | { kind: 'procedure'; flowName: string; stepSignature: string }
@@ -81,6 +83,9 @@ export function deriveDiscriminantKey(discriminant: BundleDiscriminant): string 
         },
         kind: discriminant.kind,
         subtype: discriminant.subtype,
+        ...(discriminant.validityWindowEvidenceToken === undefined ? {} : {
+          validityWindowEvidenceToken: discriminant.validityWindowEvidenceToken,
+        }),
       })
     case 'procedure':
       return canonicalJson({

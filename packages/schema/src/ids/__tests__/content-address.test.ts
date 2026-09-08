@@ -43,6 +43,20 @@ function withDiscriminant(
 }
 
 describe('bundle content address (D-05/D-06/D-07)', () => {
+  it('keys real fact supersession generations by evidence while preserving legacy keys', () => {
+    const discriminant = { kind: 'fact', subtype: 'selector',
+      elementRef: { role: 'button', name: 'Cart' } } as const
+    const legacy = deriveDiscriminantKey(discriminant)
+    expect(legacy).toBe('{"elementRef":{"name":"cart","role":"button"},"kind":"fact","subtype":"selector"}')
+    const generation = (token: string) => mintBundleId({ ...elementFactIdentity('selector'),
+      discriminantKey: deriveDiscriminantKey({ ...discriminant, validityWindowEvidenceToken: token }) })
+    expect(generation('mark:first')).toBe(generation('mark:first'))
+    expect(generation('mark:first')).not.toBe(generation('mark:second'))
+    expect(generation('mark:first')).not.toBe(mintBundleId(elementFactIdentity('selector')))
+    expect(deriveDiscriminantKey({ kind: 'fact', subtype: 'measurement', metricKey: 'load p95' }))
+      .toBe('{"kind":"fact","metricKey":"load p95","subtype":"measurement"}')
+  })
+
   it('is deterministic across repeated hash and id calls', () => {
     const core = elementFactIdentity('selector')
     const hashes = Array.from({ length: 5 }, () => computeBundleIdentityHash(core))

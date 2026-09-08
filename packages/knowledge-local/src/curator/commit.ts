@@ -280,7 +280,13 @@ function discriminant(
           }),
         }
       }
-      return { kind: 'fact', subtype: draft.subtype, elementRef: elementRef(draft.anchors) }
+      return { kind: 'fact', subtype: draft.subtype, elementRef: elementRef(draft.anchors),
+        // Same-anchor corrections replace immutable authored content. Give that actual
+        // validity-window generation its evidence identity, as measurements already do;
+        // Add and historical identities remain unchanged and prose never enters the key.
+        ...(delta.kind === 'Supersede'
+          ? { validityWindowEvidenceToken: delta.evidenceToken } : {}),
+      }
     }
     case 'procedure': {
       const flow = draft.anchors.find(
