@@ -409,6 +409,7 @@ function buildDecisionRemedies(resolved: ResolveAskResult): readonly GateRemedy[
           kind: 'trust-session-flag',
           params: { flag: '--trust-session', command: 'run' },
         },
+        { kind: 'present-bearer-scope', params: { scope: 'knowledge-write' } },
       ]
     case 'session-pin-denied':
       // 392 D-21: a pin has no revoke verb by design, so the session boundary is the only way out

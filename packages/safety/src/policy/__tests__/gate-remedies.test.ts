@@ -135,6 +135,11 @@ describe('an arm with no actionable remedy mints an empty list', () => {
 })
 
 describe('remediesRenderableBy is a total projection over the vocabulary', () => {
+  it('419 D-20 pins the four kinds in render order', () => {
+    expect(GATE_REMEDY_KINDS).toEqual([
+      'answer-confirm', 'trust-session-flag', 'session-pin-final', 'present-bearer-scope',
+    ])
+  })
   it('excludes the CLI flag from MCP and includes it on the CLI', async () => {
     const { remedies } = await evaluate(mutatingSharedAction, 'ci')
 
@@ -146,12 +151,21 @@ describe('remediesRenderableBy is a total projection over the vocabulary', () =>
     )
   })
 
-  it('renders honest absence rather than another surfaces instructions on MCP', async () => {
+  it('419 D-20 projects the declared-bearer remedy on MCP only', async () => {
     const { remedies } = await evaluate(mutatingSharedAction, 'ci')
 
-    // The whole of the todo's finding: the surface that issued the denial is handed nothing it
-    // cannot take. An MCP client gets an empty projection, not a flag it has no way to pass.
-    expect(remediesRenderableBy('mcp', remedies)).toEqual([])
+    expect(remediesRenderableBy('mcp', remedies)).toEqual([
+      { kind: 'present-bearer-scope', params: { scope: 'knowledge-write' } },
+    ])
+    expect(kindsOf(remedies)).toEqual([
+      'answer-confirm', 'trust-session-flag', 'present-bearer-scope',
+    ])
+    for (const surface of ['cli', 'dashboard', 'chat', 'run-service'] as const) {
+      expect(kindsOf(remediesRenderableBy(surface, remedies))).not.toContain('present-bearer-scope')
+    }
+    const bearerRemedy = remedies.find(remedy => remedy.kind === 'present-bearer-scope')!
+    expect(Object.keys(bearerRemedy.params!)).toEqual(['scope'])
+    expect(bearerRemedy.params).toEqual({ scope: 'knowledge-write' })
     expect(remedies.length).toBeGreaterThan(0)
   })
 
@@ -196,6 +210,7 @@ describe('the session-pin arm names the only way out it has', () => {
     expect(result.verdict).toBe('deny')
     expect(kindsOf(result.remedies)).toEqual(['session-pin-final'])
     expect(remediesRenderableBy('cli', result.remedies)).toEqual([])
+    expect(remediesRenderableBy('mcp', result.remedies)).toEqual([])
   })
 })
 
@@ -256,6 +271,9 @@ describe('a surface-neutral reason rides beside the canonical prose (D-15 prose 
     // Beside it, the canonical sentence still names both ways forward, unedited.
     expect(result.reason).toContain('--trust-session')
     expect(result.reason).toContain('re-run and approve')
+    expect(remediesRenderableBy('mcp', result.remedies)).toEqual([
+      { kind: 'present-bearer-scope', params: { scope: 'knowledge-write' } },
+    ])
   })
 
   it('mints a neutral reason on the session-pin arm too — the three switches stay parallel', async () => {

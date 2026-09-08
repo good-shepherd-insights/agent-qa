@@ -26,6 +26,10 @@
 // escalation on a filed proposal, so telling the caller of an arbitrary denied op to "record a
 // standing approval" would be exactly the unreachable-remedy defect above, re-minted with a type
 // on it. The vocabulary is small because it is honest, not because it is unfinished.
+// 2026-09-08, 419 D-20: MCP is the surface that can take present-bearer-scope —
+// a declared bearer whose scopes include knowledge-write IS the trust grant;
+// params carry the scope NAME only. Canonical rendering (419-08):
+// present a bearer whose scopes include `knowledge-write`
 //
 // SCHEMA-PACKAGE HOME, on the `session-events` precedent: safety mints these, cli/agent/dashboard
 // render them, and a type four packages read belongs to the package they all already depend on.
@@ -41,6 +45,7 @@ export const GATE_REMEDY_KINDS = [
   'answer-confirm',
   'trust-session-flag',
   'session-pin-final',
+  'present-bearer-scope',
 ] as const
 
 export type GateRemedyKind = (typeof GATE_REMEDY_KINDS)[number]
@@ -103,6 +108,7 @@ export const GATE_REMEDY_SURFACES_BY_KIND = {
   'answer-confirm': ['cli', 'chat', 'dashboard'],
   'trust-session-flag': ['cli'],
   'session-pin-final': ['chat', 'dashboard'],
+  'present-bearer-scope': ['mcp'],
 } as const satisfies Record<GateRemedyKind, readonly GateRemedySurface[]>
 
 /**
