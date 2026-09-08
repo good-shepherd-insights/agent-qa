@@ -38,6 +38,7 @@ import {
   computeCorpusDigest,
   decisionCorrectnessVectors,
   deriveCensus,
+  renderCensusMarkdown,
   EXCLUSION_CLASSES,
   extractRunCassettes,
   FLOOR_PROTOCOL_MINIMUM,
@@ -143,7 +144,7 @@ import type {
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { resolveConfig } from './config.js'
 import { listTargets, resolveTarget } from './targets.js'
-import { renderCensusMarkdown } from './eval-census-render.js'
+export { renderCensusMarkdown }
 import { renderEvalReportMarkdown } from './eval-report-render.js'
 import {
   buildRunMaskingContext,

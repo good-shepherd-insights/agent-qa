@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { committedFileText, deriveCensus } from '@vostride/agent-qa-eval'
+import { committedFileText, deriveCensus, renderCensusMarkdown } from '@vostride/agent-qa-eval'
 import type { CorpusCensus } from '@vostride/agent-qa-eval'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { slugBranch } from '@vostride/agent-qa-schema'
@@ -108,6 +108,17 @@ describe('commitCensus (413 D-15/D-16)', () => {
     expect(second.markdown).toBe('unchanged')
     expect(readFileSync(paths.json).equals(jsonBefore)).toBe(true)
     expect(readFileSync(paths.markdown).equals(markdownBefore)).toBe(true)
+  })
+
+  it('re-derived pre-419 unmarked census keeps its existing committed bytes', () => {
+    const fixture = JSON.parse(readFileSync(new URL('../../../eval/src/census/__tests__/fixtures/pre419-unmarked-census.json', import.meta.url), 'utf8'))
+    // The fixture is the prior producer's exact JSON, not a new expectation from this renderer.
+    census = fixture
+    const markdown = renderCensusMarkdown(census)
+    expect(commit({ markdown }).kind).toBe('committed')
+    expect(commit({ markdown: renderCensusMarkdown(structuredClone(census)) })).toMatchObject({
+      kind: 'committed', json: 'unchanged', markdown: 'unchanged',
+    })
   })
 
   it('refuses divergent bytes at the same corpus digest atomically — nothing modified', () => {

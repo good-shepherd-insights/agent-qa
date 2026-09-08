@@ -528,3 +528,5 @@ export type {
   PartitionCensusBlock,
   StaticScorability,
 } from './census/derive-census'
+
+export { renderCensusMarkdown } from './census/render-census'
