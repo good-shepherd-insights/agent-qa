@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { createVersionGuard } from '../versioning/create-version-guard'
+import { PROMOTION_PATHS } from './promotion-path'
 
 export const RECORD_CHANGE_SCHEMA_VERSION = 1
 export const INSPECT_RECORD_VIEW_SCHEMA_VERSION = 1
@@ -80,6 +81,13 @@ export const RecordChangeSchema = z.object({
   evidenceToken: z.string().optional(),
   byRecordId: z.string().optional(),
   /**
+   * 419 D-19: present only when change === 'promoted' and the bundle's gate part
+   * names a strongest path; numbers and digests are COPIED from the receipt line,
+   * never derived at render.
+   */
+  promotionPath: z.enum(PROMOTION_PATHS).optional(),
+  promotionReceiptDigest: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  /**
    * The run whose curation produced this change (Phase 407, LERN-02 · D-10).
    *
    * ADDITIVE AND OPTIONAL, and `RECORD_CHANGE_SCHEMA_VERSION` deliberately does NOT move: every
@@ -105,7 +113,17 @@ export const RecordChangeSchema = z.object({
    * matching commit/promotion changes by run id. Absent for a change no observation produced.
    */
   observationId: z.string().min(1).optional(),
-}).strict()
+}).strict().superRefine((value, ctx) => {
+  if (value.change === 'promoted') return
+  for (const field of ['promotionPath', 'promotionReceiptDigest'] as const) {
+    if (value[field] !== undefined) {
+      ctx.addIssue({
+        code: 'custom', path: [field],
+        message: 'only a promoted change carries promotion receipt attribution (419 D-19)',
+      })
+    }
+  }
+})
 
 export type RecordChange = z.infer<typeof RecordChangeSchema>
 

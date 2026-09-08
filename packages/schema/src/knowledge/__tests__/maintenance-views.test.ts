@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import * as knowledge from '../index.js'
+import { RecordChangeSchema } from '../maintenance-views'
 
 type Schema<T> = {
   parse(value: unknown): T
@@ -23,6 +24,29 @@ function maintenanceViews(): MaintenanceViewsModule {
 }
 
 describe('maintenance view contracts', () => {
+  it('419 D-19 preserves the pre-419 promoted fixture and optionally carries its receipt', () => {
+    const legacy = { schemaVersion: 1, recordId: 'record-1', change: 'promoted', atOrdinal: 42 }
+    expect(RecordChangeSchema.parse(legacy)).toEqual(legacy)
+    const attributed = {
+      ...legacy, promotionPath: 'user-sovereign', promotionReceiptDigest: 'a'.repeat(64),
+    }
+    expect(RecordChangeSchema.parse(attributed)).toEqual(attributed)
+    expect(RecordChangeSchema.safeParse({ ...legacy, promotionPath: 'sovereign' }).success).toBe(false)
+    expect(RecordChangeSchema.safeParse({ ...attributed, promotionReceiptDigest: 'invalid' }).success).toBe(false)
+  })
+
+  it.each(['added', 'confirmed', 'superseded', 'deprecated', 'purged'] as const)(
+    '419 D-19 refuses both promotion fields on %s at their own paths', (change) => {
+      for (const field of ['promotionPath', 'promotionReceiptDigest'] as const) {
+        const result = RecordChangeSchema.safeParse({
+          schemaVersion: 1, recordId: 'record-1', change, atOrdinal: 42,
+          [field]: field === 'promotionPath' ? 'user-sovereign' : 'a'.repeat(64),
+        })
+        expect(result.success).toBe(false)
+        if (!result.success) expect(result.error.issues.map(issue => issue.path)).toEqual([[field]])
+      }
+    },
+  )
   it.each([
     'added',
     'confirmed',
