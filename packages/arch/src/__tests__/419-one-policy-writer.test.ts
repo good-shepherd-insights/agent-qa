@@ -26,14 +26,15 @@ const SOURCES = files.sort().map(file => ({
 
 const ALLOWED: readonly DoorSite[] = [
   { file: 'packages/knowledge-local/src/policy/materialize.ts', marker: 'materialize directory', label: 'mkdirSync' },
-  { file: 'packages/knowledge-local/src/policy/materialize.ts', marker: 'materialize', label: 'appendFileSync' },
+  { file: 'packages/knowledge-local/src/policy/materialize.ts', marker: 'materialize', label: 'renameSync' },
   { file: 'packages/cli/src/commands/init.ts', marker: 'init scaffold', label: 'scaffoldFilePlan' },
+  { file: 'packages/knowledge-local/src/policy/materialize.ts', marker: 'materialize stage', label: 'openSync' },
 ]
 const LIVE_HITS = policyWriterHits(SOURCES)
 const siteDiff = (sources: typeof SOURCES) => doorDifferences([...LIVE_HITS, ...policyWriterHits(sources)], ALLOWED, '419-POLICY-WRITER')
 
 describe('419 one policy writer', () => {
-  it('censuses the actual materializer mkdir/append and init atomic scaffold input', () => {
+  it('censuses the actual materializer mkdir/stage/rename and init atomic scaffold input', () => {
     const differences = siteDiff([])
     expect(differences, differences.join('\n')).toEqual([])
   })
@@ -65,6 +66,11 @@ describe('419 one policy writer', () => {
       `${file}:5: appendFileSync (forged)`,
     ])
   })
+  it.each(['renameSync', 'rename'])('detects %s publication to policy paths', writer => {
+    expect(policyWriterHits([{ file: 'planted.ts',
+      text: `${writer}('temporary', 'policies/global.md')` }]))
+      .toEqual([{ file: 'planted.ts', line: 1, marker: '', label: writer }])
+  })
   it('rejects a second policy scaffold and duplicate valid marker', () => {
     const site = ALLOWED[2]!
     expect(siteDiff([{
@@ -82,10 +88,9 @@ describe('419 one policy writer', () => {
   })
   it('pins every real sink, so a matcher cannot pass with an empty census', () => {
     const hits = LIVE_HITS
-    expect(hits).toHaveLength(3)
-    for (const label of ['mkdirSync', 'appendFileSync', 'scaffoldFilePlan']) {
+    expect(hits).toHaveLength(4)
+    for (const label of ['mkdirSync', 'openSync', 'renameSync', 'scaffoldFilePlan']) {
       expect(hits.filter(hit => hit.label === label)).toHaveLength(1)
     }
   })
 })
-

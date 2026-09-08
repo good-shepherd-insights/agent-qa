@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { slugBranch, type GuardrailPolicy } from '@vostride/agent-qa-schema'
 import {
@@ -7,6 +7,7 @@ import {
 } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import { withCurrentWriterAuthority, type CurrentWriterAuthority } from '../lease/writer-lease.js'
+import { stripPolicyHtmlComments } from '../serving/policy-ladder.js'
 
 export const POLICY_MATERIALIZE_EGRESS_CHANNEL = 'policy-materialize'
 
@@ -61,7 +62,29 @@ function materializeUnderAuthority(input: MaterializePolicyInput): MaterializeOu
   const section = `\n${open}\n${input.title ? `### ${input.title}\n` : ''}${input.ruleText.trim()}\n${close}\n`
   const sectionBytes = Buffer.byteLength(section)
   const exists = existsSync(path)
-  if (exists && readFileSync(path, 'utf8').includes(open)) return { kind: 'unchanged', relPath, sectionBytes }
+  const previous = exists ? readFileSync(path) : Buffer.alloc(0)
+  const source = previous.toString('utf8')
+  // Validate every existing section, including removed/other IDs, before trusting idempotency.
+  // The serving parser also rejects nested and incomplete HTML comments.
+  try { stripPolicyHtmlComments(source, relPath) } catch { throw new PolicyTextRefusedError() }
+  const seen = new Set<string>()
+  let pending: string | undefined
+  for (const line of source.split(/\r?\n/)) {
+    if (!line.includes('agent-qa:policy')) continue
+    const marker = /^<!-- (\/?)agent-qa:policy ([A-Za-z0-9_.:-]+) -->$/.exec(line)
+    if (marker === null) throw new PolicyTextRefusedError()
+    const id = marker[2]!
+    if (marker[1] === '') {
+      if (pending !== undefined || seen.has(id)) throw new PolicyTextRefusedError()
+      pending = id
+    } else {
+      if (pending !== id) throw new PolicyTextRefusedError()
+      pending = undefined
+      seen.add(id)
+    }
+  }
+  if (pending !== undefined) throw new PolicyTextRefusedError()
+  if (seen.has(input.recordId)) return { kind: 'unchanged', relPath, sectionBytes }
   const text = `${exists ? '' : `# Policies — ${input.scope}\n`}${section}`
   try {
     assertCommittedEgressSafe([{ label: `policy:${input.recordId}`, text, origin: 'user' }], {
@@ -75,7 +98,21 @@ function materializeUnderAuthority(input: MaterializePolicyInput): MaterializeOu
   }
   // 419-POLICY-WRITER: materialize directory
   mkdirSync(dirname(path), { recursive: true })
-  // 419-POLICY-WRITER: materialize
-  appendFileSync(path, text, 'utf8')
+  const staged = `${path}.pending`
+  let fd: number | undefined
+  try {
+    // Serialized by the existing writer transaction; a prior interrupted stage is replaceable.
+    // 419-POLICY-WRITER: materialize stage
+    fd = openSync(staged, 'w', 0o600)
+    writeFileSync(fd, Buffer.concat([previous, Buffer.from(text)]))
+    fsyncSync(fd)
+    closeSync(fd)
+    fd = undefined
+    // 419-POLICY-WRITER: materialize
+    renameSync(staged, path)
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+    rmSync(staged, { force: true })
+  }
   return { kind: 'written', relPath, sectionBytes }
 }

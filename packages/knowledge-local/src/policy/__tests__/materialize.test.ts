@@ -21,6 +21,17 @@ describe('materializePolicy sovereign authored shelf', () => {
     return { knowledgeRoot: root, recordId: 'policy-fixture', scope: 'shop', ruleText,
       auditBaseDir: join(root, 'runtime'), writerAuthority }
   }
+  it.each([
+    '<!-- agent-qa:policy policy-fixture -->\nunfinished',
+    '<!-- /agent-qa:policy policy-fixture -->',
+    '<!-- agent-qa:policy policy-fixture -->\n<!-- /agent-qa:policy other -->',
+    '<!-- agent-qa:policy policy-fixture -->\n<!-- /agent-qa:policy policy-fixture -->\n<!-- agent-qa:policy policy-fixture -->\n<!-- /agent-qa:policy policy-fixture -->',
+  ])('refuses incomplete or ambiguous sections without changing human bytes: %s', text => {
+    mkdirSync(join(root, 'policies'))
+    writeFileSync(policyShelfPath(root, 'shop'), text)
+    expect(() => materializePolicy(input())).toThrow(PolicyTextRefusedError)
+    expect(readFileSync(policyShelfPath(root, 'shop'), 'utf8')).toBe(text)
+  })
   it.each(['stale', 'released'])('refuses %s authority before creating or changing shelf bytes', state => {
     if (state === 'released') releaseLease({ knowledgeRoot: root, leaseId: writerAuthority.leaseId })
     else writerAuthority = { ...writerAuthority, epoch: writerAuthority.epoch + 1 }

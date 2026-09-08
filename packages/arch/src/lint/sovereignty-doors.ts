@@ -124,8 +124,8 @@ export function policyWriterHits(sources: readonly DoorSource[]): DoorHit[] {
       if (!ts.isCallExpression(node)) return
       const rawName = callName(node.expression)
       const name = source.aliases.get(rawName) ?? rawName
-      const pathArg = name === 'scaffoldFilePlan' ? 1 : 0
-      if (!/^(writeFileSync|appendFileSync|mkdirSync|writeFile|appendFile|mkdir|scaffoldFilePlan)$/.test(name)) return
+      const pathArg = /^(scaffoldFilePlan|renameSync|rename)$/.test(name) ? 1 : 0
+      if (!/^(openSync|renameSync|rename|writeFileSync|appendFileSync|mkdirSync|writeFile|appendFile|mkdir|scaffoldFilePlan)$/.test(name)) return
       if (!isPath(node.arguments[pathArg], source)) return
       const line = source.ast.getLineAndCharacterOfPosition(node.getStart(source.ast)).line
       const marker = lines[line - 1]?.match(/^\s*\/\/ 419-POLICY-WRITER:\s*(.+?)\s*$/)?.[1] ?? ''
