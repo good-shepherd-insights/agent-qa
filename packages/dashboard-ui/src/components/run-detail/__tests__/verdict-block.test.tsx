@@ -18,6 +18,9 @@
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
+import { MemoryRouter } from 'react-router'
+import { readFileSync } from 'node:fs'
+import { MARKS, type RunDetailMemberMark } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { MASKED_MARKER_DELIMITER, maskedMarker } from "@vostride/agent-qa-schema"
 
@@ -31,6 +34,9 @@ import {
   provenanceLabel,
   siblingLine,
   type MemberVerdictView,
+  MARK_LABELS,
+  type OnMark,
+  type MarkDenial,
 } from "@/lib/analysis-view"
 import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
 
@@ -44,7 +50,7 @@ function mount(element: ReactElement) {
   document.body.appendChild(container)
   root = createRoot(container)
   act(() => {
-    root.render(element)
+    root.render(<MemoryRouter>{element}</MemoryRouter>)
   })
   return container
 }
@@ -72,6 +78,8 @@ function view(over: Partial<MemberVerdictView> = {}): MemberVerdictView {
 }
 
 function render(over: Partial<MemberVerdictView> = {}, handlers: {
+  onMark?: OnMark
+  markDenial?: MarkDenial
   onCitedStep?: (testIndex: number, stepIndex: number) => void
   onSelectMember?: (testIndex: number) => void
   onCitedArtifact?: (sha: string) => void
@@ -79,6 +87,8 @@ function render(over: Partial<MemberVerdictView> = {}, handlers: {
   return mount(
     <VerdictBlock
       view={view(over)}
+      onMark={handlers.onMark}
+      markDenial={handlers.markDenial}
       onCitedStep={handlers.onCitedStep ?? (() => {})}
       onSelectMember={handlers.onSelectMember ?? (() => {})}
       onCitedArtifact={handlers.onCitedArtifact ?? (() => {})}
@@ -89,6 +99,69 @@ function render(over: Partial<MemberVerdictView> = {}, handlers: {
 /** Two content addresses, distinct and 64-hex, so a cell can tell one ref from the other. */
 const SHA_PRESENT = "a".repeat(64)
 const SHA_GONE = "b".repeat(64)
+
+describe('419 member mark control', () => {
+  const mark: RunDetailMemberMark = { markId: 'mark_0123456789ab', kind: 'false-fail', ordinal: 2,
+    disposition: { kind: 'drafted', fix: 'fact', proposalId: 'prop_0123456789ab', proposalKind: 'knowledge' } }
+  const click = (selector: string) => act(() => { container.querySelector<HTMLButtonElement>(selector)!.click() })
+
+  it('renders three text labels in canonical order and submits the optional note', () => {
+    const onMark = vi.fn()
+    render({ testIndex: 4, marks: [] }, { onMark })
+    const buttons = [...container.querySelectorAll('[data-mark-kind]')]
+    expect(buttons.map(button => button.getAttribute('data-mark-kind'))).toEqual(MARKS)
+    expect(buttons.map(button => button.textContent)).toEqual(MARKS.map(kind => MARK_LABELS[kind]))
+    click('[data-mark-kind="false-fail"]')
+    const note = container.querySelector<HTMLTextAreaElement>('[data-mark-note]')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(note, 'note text')
+      note.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    click('[data-mark-submit]')
+    expect(onMark).toHaveBeenCalledExactlyOnceWith(4, undefined, 'false-fail', 'note text')
+  })
+
+  it('cancel submits nothing and unbound marks offer no controls', () => {
+    const onMark = vi.fn()
+    render({ marks: [] }, { onMark })
+    click('[data-mark-kind="false-pass"]')
+    click('[data-mark-cancel]')
+    expect(onMark).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-mark-note]')).toBeNull()
+    act(() => root.render(<VerdictBlock view={view()} onMark={onMark} onCitedStep={() => {}} onSelectMember={() => {}} onCitedArtifact={() => {}} />))
+    expect(container.querySelector('[data-mark-kind]')).toBeNull()
+  })
+
+  it('copies the standing chip, drafted triage and chat confirm door', () => {
+    render({ marks: [mark] }, { onMark: vi.fn() })
+    expect(container.querySelector('[data-mark-chip]')?.textContent).toBe('marked false-fail by user · 2')
+    expect(container.querySelector('[data-mark-triage]')?.textContent).toBe('drafted: fact → proposal prop_0123456789ab')
+    expect(container.querySelector('[data-mark-confirm-link]')?.getAttribute('href')).toBe('/chat')
+  })
+
+  it.each([
+    [{ kind: 'quarantined', class: 'flake' }, 'quarantined: flake'],
+    [{ kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } }, 'no draftable fix'],
+    [{ kind: 'confirmed-bug', confirmedRecords: 0 }, 'confirmed-bug: no fix drafted'],
+  ] as const)('renders %s without a draft link', (disposition, text) => {
+    render({ marks: [{ ...mark, disposition }] }, { onMark: vi.fn() })
+    expect(container.querySelector('[data-mark-triage]')?.textContent).toBe(text)
+    expect(container.querySelector('[data-mark-confirm-link]')).toBeNull()
+  })
+
+  it('renders the existing denial and answer-confirm remedy', () => {
+    render({ marks: [] }, { onMark: vi.fn(), markDenial: { reason: 'The safety gate denied this mark.', remedies: [{ kind: 'answer-confirm' }] } })
+    expect(container.querySelector('[data-mark-denied]')?.textContent).toContain('The safety gate denied this mark.')
+    expect(container.querySelector('[data-remedy-kind="answer-confirm"]')?.textContent).toBe('keep this chat open and re-run it — an ask-tier op raises a confirm here that you can answer')
+    expect(container.querySelector('[data-mark-chip]')).toBeNull()
+  })
+
+  it('does not render a step receipt as a member receipt or construct producer markup', () => {
+    render({ marks: [{ ...mark, stepIndex: 2 }] }, { onMark: vi.fn() })
+    expect(container.querySelector('[data-mark-chip]')).toBeNull()
+    expect(readFileSync('src/components/run-detail/verdict-block.tsx', 'utf8')).not.toContain('dangerouslySetInnerHTML')
+  })
+})
 
 describe("the sentence's lifecycle is a marker, and the marker is the view's (D-09/D-11)", () => {
   it("paints the provisional marker with its exported sentence while the chain may still upgrade", () => {
