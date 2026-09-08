@@ -22,6 +22,8 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
 import type { Anchor, BundleDraft } from '@vostride/agent-qa-schema'
+import { asRunId, asRecordId, asEvidenceToken, KnowledgeProposalV1Schema,
+  type KnowledgeMarkInput } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { publishBundle, type BundleStoreConfig } from '../../bundle-publish.test-helper.js'
@@ -33,6 +35,7 @@ import {
 import {
   FORGET_SCRUBBED_PROJECTIONS,
   proposeReview,
+  MarkPlanIntegrityError,
 } from '../propose-review.js'
 import {
   PROPOSALS_DIR_NAME,
@@ -129,6 +132,50 @@ describe('propose computes everything and commits nothing (D-17)', () => {
     if (outcome.kind !== 'published') throw new Error(`fixture publish failed: ${outcome.kind}`)
     return outcome.id
   }
+
+  function markInput(recordId: string): KnowledgeMarkInput {
+    const runId = asRunId('review-mark-run')
+    const target = { grain: 'record' as const, recordId }
+    const mark = { markId: 'mark_0123456789ab', runId, testIndex: 0,
+      kind: 'false-fail' as const, fix: 'fact' as const }
+    const scope = { tier: 'product' as const, key: 'review-storefront' }
+    return { target, mark, plan: { schemaVersion: 1, markId: mark.markId, kind: 'knowledge',
+      fix: 'fact', target, wording: 'floor', feedbackSource: { runId, testIndex: 0, kind: mark.kind },
+      runTraceRef: { runId, runSlug: runId }, deltas: [{ kind: 'Supersede', origin: 'user', scope,
+        citedIds: [asRecordId(recordId)], victimId: asRecordId(recordId),
+        evidenceToken: asEvidenceToken(`mark:${mark.markId}`),
+        newBundle: makeBundleDraftFixture({ scope, anchors: [ANCHOR] }),
+      }] } }
+  }
+
+  it('files one stamped mark proposal with exact plan deltas and no knowledge writes', () => {
+    const input = markInput(publish('checkout button'))
+    const before = hashTree(knowledgeRoot)
+    const result = proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input } })
+    expect(result.kind).toBe('proposed')
+    if (result.kind !== 'proposed') throw new Error('expected proposal')
+    expect(result.proposal).toMatchObject({ verb: 'mark', deltas: input.plan.deltas,
+      targetRef: input.plan.target, mark: input.mark, status: 'pending' })
+    expect(KnowledgeProposalV1Schema.parse(result.proposal)).toEqual(result.proposal)
+    expect(readPendingProposal(agentQaRoot, result.proposal.proposalId)).toEqual(result.proposal)
+    expect(readdirSync(proposalsDir(agentQaRoot)).filter((name) => name.endsWith('.json'))).toHaveLength(1)
+    expect(hashTree(knowledgeRoot)).toBe(before)
+  })
+
+  it.each(['origin', 'citation', 'scope', 'stamp', 'target'] as const)(
+    'refuses a mark plan with invalid %s before filing', (field) => {
+      const input = markInput(publish('checkout button'))
+      if (field === 'origin') input.plan.deltas[0]!.origin = 'agent'
+      if (field === 'citation') input.plan.deltas[0]!.citedIds = [asRecordId('foreign-record')]
+      if (field === 'scope') input.plan.deltas[0]!.scope = { tier: 'global', key: 'global' }
+      if (field === 'stamp') input.mark.markId = 'mark_abcdefabcdef'
+      if (field === 'target') input.plan.target = { grain: 'record', recordId: 'foreign-record' }
+      const before = hashTree(knowledgeRoot)
+      expect(() => proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input } }))
+        .toThrow(MarkPlanIntegrityError)
+      expect(existsSync(proposalsDir(agentQaRoot)) ? readdirSync(proposalsDir(agentQaRoot)) : []).toEqual([])
+      expect(hashTree(knowledgeRoot)).toBe(before)
+    })
 
   it('POTENCY CONTROL: the tree hash notices a single byte written into the knowledge root', () => {
     publish('checkout button')

@@ -24,6 +24,9 @@ import {
   BundleOutcomeEventSchema,
   DEFAULT_EMBEDDING_PROFILE,
   KNOWLEDGE_REVIEW_VERBS,
+  asRunId,
+  asRecordId,
+  asEvidenceToken,
 } from '@vostride/agent-qa-schema'
 import type { Anchor, KnowledgeReviewVerb, RecordId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -1005,6 +1008,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     accept: 'refuses',
     reject: 'short-circuits-applied',
     forget: 'short-circuits-applied',
+    mark: 'refuses',
   } satisfies Record<KnowledgeReviewVerb, TombstonedTargetExpectation>
 
   /** The two ways a review verb can leave a record `deprecated`. Both are in the corpus. */
@@ -1018,6 +1022,26 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
         return proposeReject(recordId, `matrix reject of ${recordId}`)
       case 'forget':
         return proposeForget(recordId)
+      case 'mark': {
+        // A real mark proposal exercises the shared citation fence now; Gate-3 receipt
+        // emission for live targets belongs to the confirmation arm in Plan 419-07.
+        const target = { grain: 'record' as const, recordId }
+        const runId = asRunId('tombstone-mark-run')
+        const mark = { markId: 'mark_0123456789ab', runId, testIndex: 0,
+          kind: 'false-fail' as const, fix: 'fact' as const }
+        const scope = { tier: 'product' as const, key: 'apply-storefront' }
+        const outcome = proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input: {
+          target, mark, plan: { schemaVersion: 1, markId: mark.markId, kind: 'knowledge', fix: 'fact',
+            target, wording: 'floor', feedbackSource: { runId, testIndex: 0, kind: mark.kind },
+            runTraceRef: { runId, runSlug: runId }, deltas: [{ kind: 'Supersede', origin: 'user', scope,
+              citedIds: [asRecordId(recordId)], victimId: asRecordId(recordId),
+              evidenceToken: asEvidenceToken(`mark:${mark.markId}`),
+              newBundle: makeBundleDraftFixture({ scope, anchors: [ANCHOR] }),
+            }] },
+        } } })
+        if (outcome.kind !== 'proposed') throw new Error('expected a mark proposal')
+        return outcome.proposal.proposalId
+      }
     }
   }
 

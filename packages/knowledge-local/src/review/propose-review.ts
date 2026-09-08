@@ -13,13 +13,14 @@
 
 import { randomUUID } from 'node:crypto'
 
-import { asRecordId } from '@vostride/agent-qa-schema'
+import { asRecordId, canonicalJson, KnowledgeMarkInputSchema } from '@vostride/agent-qa-schema'
 import type {
   BundleProvenance,
   Delta,
   ForgetPreview,
   KnowledgeAcceptInput,
   KnowledgeForgetInput,
+  KnowledgeMarkInput,
   KnowledgeProjection,
   KnowledgeProposalV1,
   KnowledgeRejectInput,
@@ -53,8 +54,15 @@ export const FORGET_SCRUBBED_PROJECTIONS: readonly KnowledgeProjection[] = ['fts
 export type ResolveBundleShortId = (shortId: string) => string | undefined
 
 export interface ProposeReviewRequest {
-  readonly verb: 'accept' | 'reject' | 'forget'
-  readonly input: KnowledgeAcceptInput | KnowledgeRejectInput | KnowledgeForgetInput
+  readonly verb: 'accept' | 'reject' | 'forget' | 'mark'
+  readonly input: KnowledgeAcceptInput | KnowledgeRejectInput | KnowledgeForgetInput | KnowledgeMarkInput
+}
+
+export class MarkPlanIntegrityError extends Error {
+  constructor(readonly recordId: string) {
+    super('mark plan does not match its user-authored target and stamp')
+    this.name = 'MarkPlanIntegrityError'
+  }
 }
 
 export interface ProposeReviewInput {
@@ -182,6 +190,22 @@ function deltasFor(
     citedIds: [asRecordId(resolved.recordId)],
   }
   switch (request.verb) {
+    case 'mark': {
+      const parsed = KnowledgeMarkInputSchema.safeParse(request.input)
+      if (!parsed.success) throw new MarkPlanIntegrityError(resolved.recordId)
+      const { plan, mark } = parsed.data
+      if (plan.markId !== mark.markId || plan.fix !== mark.fix
+        || plan.feedbackSource.runId !== mark.runId || plan.runTraceRef.runId !== mark.runId
+        || plan.feedbackSource.testIndex !== mark.testIndex
+        || plan.feedbackSource.stepIndex !== mark.stepIndex || plan.feedbackSource.kind !== mark.kind
+        || canonicalJson(plan.target) !== canonicalJson(parsed.data.target)
+        || plan.deltas.some((delta) => delta.origin !== 'user'
+          || canonicalJson(delta.scope) !== canonicalJson(resolved.scope)
+          || !delta.citedIds.includes(asRecordId(resolved.recordId)))) {
+        throw new MarkPlanIntegrityError(resolved.recordId)
+      }
+      return plan.deltas
+    }
     case 'accept':
       return [{
         ...envelope,
@@ -238,6 +262,7 @@ export function proposeReview(input: ProposeReviewInput): ProposeReviewOutcome {
     verb: input.request.verb,
     targetRef: target,
     deltas: deltasFor(input.request, resolved, proposalId),
+    ...(input.request.verb === 'mark' ? { mark: (input.request.input as KnowledgeMarkInput).mark } : {}),
     ...(input.request.verb === 'forget' ? { receiptPreview: forgetPreview(resolved) } : {}),
     proposedAt,
     status: 'pending',

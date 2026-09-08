@@ -851,3 +851,4 @@ export { applyFeedback, triageMark, selectFixKind, assertionDrift, procedureRead
   servedIdsOn, type ApplyFeedbackInput, type ServedRecordFacts, type MarkTriage,
   type FixSelection } from './feedback/apply-feedback.js'
 export { floorProse, type FloorProseInput } from './feedback/floor-prose.js'
+export { MarkPlanIntegrityError } from './review/propose-review.js'
