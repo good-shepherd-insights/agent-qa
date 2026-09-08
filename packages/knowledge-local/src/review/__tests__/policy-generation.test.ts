@@ -52,7 +52,7 @@ it('materializes a production Add policy as a distinct replay-stable reference u
     expect(replacement.events.some(event => event.type === 'window-close')).toBe(false)
     expect(victim.body).toBe(original.body)
     const gates = readGateReceipts(victim.dir, recordId)!
-    const approval = gates.find(receipt => receipt.gate === 3)
+    const approval = gates.find(receipt => 'gate' in receipt && receipt.gate === 3)
     expect(approval).toMatchObject({ policyApproval: { proposalId: input.proposalId, recordId } })
     expect(approval).not.toHaveProperty('mark')
     expect(approval).not.toHaveProperty('runId')
