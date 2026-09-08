@@ -852,3 +852,5 @@ export { applyFeedback, triageMark, selectFixKind, assertionDrift, procedureRead
   type FixSelection } from './feedback/apply-feedback.js'
 export { floorProse, type FloorProseInput } from './feedback/floor-prose.js'
 export { MarkPlanIntegrityError } from './review/propose-review.js'
+export { appendMarkEvidence, MARK_EVIDENCE_TOKEN_PREFIX, type AppendMarkEvidenceInput,
+  type AppendMarkEvidenceOutcome } from './feedback/mark-evidence.js'
