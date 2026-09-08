@@ -20,7 +20,7 @@ import {
   deriveSampleSeeds,
   extractRunCassettes,
   effectiveGold,
-  scoreCassetteReplay,
+  resolveScoringContext,
   FLOOR_AXES,
   diffArms,
   foldPerAxisScore,
@@ -36,6 +36,7 @@ import {
   selectGateSet,
   toDeclaredBriefDelta,
   type ArmDecision,
+  type ScoringJudgeRequest,
   type ArtifactSource,
   type CorpusEntry,
   type DeclaredBriefDelta,
@@ -262,10 +263,12 @@ function arm(
   replay: ReplayCassetteOutcome,
   score?: ScoreRecord,
   labelRecord?: StandaloneLabelRecord,
+  expectedJudgeRequest?: ScoringJudgeRequest,
 ): ArmDecision['baseline'] {
+  const resolved = resolveScoringContext({ cassette, outcome: replay, record: score, labelRecord, expectedJudgeRequest })
   const vector = decisionCorrectnessVectors([
     { cassetteId: cassette.id, outcome: replay,
-      score: labelRecord?.correction === undefined ? score?.score : scoreCassetteReplay(cassette, replay, labelRecord),
+      score: resolved.score,
       label: labelRecord?.label ?? cassette.label },
   ])[0]
   return vector === undefined || FLOOR_AXES.every((axis) => vector.axes[axis] === 'not-applicable')
@@ -452,6 +455,7 @@ export async function removalFlipsOutcome(
         const replay = await runCassetteReplay({
           ...input.replay,
           cassette: withRecord ? withCassette : withoutCassette,
+          labelRecord: target.labelRecord,
           artifacts,
           declaredBriefDelta: withRecord ? withDelta : withoutDelta,
           k: 1,
@@ -736,11 +740,13 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     return abstain('baseline-uncached')
   }
   const cacheById = new Map(cache.rows.map((row) => [row.cassetteId, row]))
+  const baselineJudgeRequest = identity.judgeModelId === undefined ? null : {
+    judgeModelId: identity.judgeModelId, allowSameFamily: false }
   const baselineArms = new Map(
     cache.rows.map((row) => [
       row.cassetteId,
       row.kind === 'cached'
-        ? arm(bundles.get(row.cassetteId)!.cassette, row.replay, row.score, corpus.snapshot.labelsById.get(row.cassetteId))
+        ? arm(bundles.get(row.cassetteId)!.cassette, row.replay, row.score, corpus.snapshot.labelsById.get(row.cassetteId), baselineJudgeRequest)
         : { kind: 'refused' as const, reason: row.reason },
     ]),
   )
@@ -752,7 +758,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
   const targetsToCrossCheck = targets.filter(({ cassette }) => {
     const cached = cacheById.get(cassette.id)
     if (cached?.kind !== 'cached') return false
-    const baseline = arm(cassette, cached.replay, cached.score, corpus.snapshot.labelsById.get(cassette.id))
+    const baseline = arm(cassette, cached.replay, cached.score, corpus.snapshot.labelsById.get(cassette.id), baselineJudgeRequest)
     return baseline.kind === 'scored' && baseline.vector.axes.headline === 'incorrect'
   }).length
   const scoredTargets = targets.filter(
@@ -813,9 +819,11 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       continue
     }
     const outputDir = join(gate1Dir, 'candidate-arm', 'replays')
+    const candidateCassette = injectCandidate(cassette, plan.plan)
     const candidate = await runCassetteReplay({
       ...replay,
-      cassette: injectCandidate(cassette, plan.plan),
+      cassette: candidateCassette,
+      labelRecord: corpus.snapshot.labelsById.get(cassette.id),
       artifacts,
       k: 1,
       seed: baseline.seed,
@@ -829,8 +837,9 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     if (sample) candidateSamples.set(id, sample)
     seedHonored &&= honored(sample)
     const score = loadScoreRecord(join(outputDir, ...id.split('/').map(slugBranch)))
-    row.candidate = arm(cassette, candidate, score.kind === 'loaded' ? score.record : undefined,
-      corpus.snapshot.labelsById.get(cassette.id))
+    row.candidate = arm(candidateCassette, candidate, score.kind === 'loaded' ? score.record : undefined,
+      corpus.snapshot.labelsById.get(cassette.id), replay.judge === undefined ? null : {
+        judgeModelId: replay.judge.profile.model, allowSameFamily: replay.judge.allowSameFamily === true })
     const cost = buildEvalReport([
       {
         cassetteId: id,

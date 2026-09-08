@@ -201,6 +201,7 @@ export type DecisionScoreEntry =
         | NeverScoredDecision['reason']
         | 'missing-cassette-decision'
         | 'missing-executable-correction' | 'invalid-executable-correction' | 'label-identity-mismatch'
+        | 'stale-scoring-context'
       matcherVersion: number
     }
   | {

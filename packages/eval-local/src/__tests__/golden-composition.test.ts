@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, mkdtempSync, statSync, wri
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { buildGoldenTrajectoryPlan, buildSeedingPlan, committedFileText, computeDecisionIdentity, decisionCorrectnessVectors, deriveCensus, extractRunCassettes, renderCensusMarkdown, scoreCassetteReplay, type LeafReplayResult } from '@vostride/agent-qa-eval'
+import { buildGoldenTrajectoryPlan, buildSeedingPlan, committedFileText, computeDecisionIdentity, createScoringContext, decisionCorrectnessVectors, deriveCensus, extractRunCassettes, renderCensusMarkdown, scoreCassetteReplay, type LeafReplayResult } from '@vostride/agent-qa-eval'
 import { FsEvidenceArtifactStore, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import * as safety from '@vostride/agent-qa-safety'
 import type { GuardrailAuditRow } from '@vostride/agent-qa-safety'
@@ -169,8 +169,10 @@ describe('freezeGoldenTrajectory', () => {
         modalDecision: identity, promptDrift: { drift: false, harnessDrift: false, recordedHash: 'a'.repeat(64), recomputedHash: 'a'.repeat(64) },
         replayedModel: { provider: 'fixture', modelId: 'provider-free' }, unconsumedExchanges: [], totalDurationMs: 0 }
       new FsReplayRecordStore({ root, outputDir: replaysRoot }).save(outcome)
+      const labelRecord = corpus.snapshot.labelsById.get(cassette.id)
+      const score = scoreCassetteReplay(cassette, outcome, labelRecord)
       new FsScoreStore({ root, outputDir: replaysRoot }).save({ cassetteId: cassette.id, matcherVersion: 1,
-        score: scoreCassetteReplay(cassette, outcome), diffs: [] })
+        score, diffs: [], scoringContext: createScoringContext({ cassette, outcome, labelRecord, score, judgeRequest: null }) })
       expect(cassette.sidecar.goldAction.type).toBe('click')
     }
     const batch = assembleScoredBatch({ replaysRoot, cassettesRoot: join(committedRoot, 'cassettes'), source: 'committed',

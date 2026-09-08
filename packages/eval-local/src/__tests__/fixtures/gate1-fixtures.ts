@@ -32,7 +32,7 @@ import {
   committedCorpusPath,
   committedPartitionManifestPath,
 } from '../../committed-root-store.js'
-import { readCommittedCorpus } from '../../committed-corpus-source.js'
+import { readActiveCommittedCorpus, readCommittedCorpus } from '../../committed-corpus-source.js'
 import { loadCassetteBundles } from '../../replay-sweep.js'
 import { computeReplayProfileFingerprintFor } from '../../replay-composition.js'
 import { replayCorpusOnce } from '../../aa-floor-composition.js'
@@ -337,6 +337,7 @@ export async function warmGateRoot(
 ) {
   return replayCorpusOnce({
     selected: fixture.selected,
+    labelRecords: readActiveCommittedCorpus(fixture.committedRoot, fixture.agentQaRoot).snapshot.labelsById,
     cassettesRoot: fixture.cassettesRoot,
     agentQaRoot: fixture.agentQaRoot,
     runRoot: fixture.gateRoot,

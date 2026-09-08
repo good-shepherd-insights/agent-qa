@@ -26,6 +26,7 @@ import {
   assessJudgeEligibility,
   buildDecisionDiff,
   computeReplayProfileFingerprint,
+  createScoringContext,
   effectiveGold,
   neverEscalate,
   replayCassette,
@@ -429,6 +430,9 @@ export async function runCassetteReplay(
       matcherVersion: scoreMatcherVersion(adjudicated.score),
       score: adjudicated.score,
       diffs: decisionDiffs(scoringCassette, outcome, adjudicated.score),
+      scoringContext: createScoringContext({ cassette: input.cassette, outcome, labelRecord: input.labelRecord,
+        ...adjudicated, judgeRequest: input.judge === undefined ? null : {
+          judgeModelId: input.judge.profile.model, allowSameFamily: input.judge.allowSameFamily === true } }),
       ...(adjudicated.judge !== undefined ? { judge: adjudicated.judge } : {}),
     })
   }

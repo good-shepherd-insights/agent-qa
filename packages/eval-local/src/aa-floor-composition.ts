@@ -193,7 +193,9 @@ export async function runNoiseFloorMeasurement(
         cassettesRoot: input.cassettesRoot, fingerprint, corpusDigest,
         plannerModelId: input.profileKeyInputs.plannerModelId,
         matcherVersion: input.profileKeyInputs.matcherVersion, productByCassetteId,
-        labelRecords: corpus.snapshot.labelsById, receipt }))
+        labelRecords: corpus.snapshot.labelsById, receipt,
+        expectedJudgeRequest: input.profileKeyInputs.judgeModelId === undefined ? null : {
+          judgeModelId: input.profileKeyInputs.judgeModelId, allowSameFamily: input.judge?.allowSameFamily === true } }))
       input.onProgress?.(receipt.line)
       continue
     }
@@ -370,6 +372,8 @@ export async function replayCorpusOnce(
     productByCassetteId: input.productByCassetteId,
     labelRecords: input.labelRecords,
     ...(input.productByCassetteId === undefined ? {} : { eligibleCassetteIds: new Set(input.productByCassetteId.keys()) }),
+    expectedJudgeRequest: input.judge === undefined ? null : {
+      judgeModelId: input.judge.profile.model, allowSameFamily: input.judge.allowSameFamily === true },
   })
   const { report, vectors, notices } = projectAssembledBatch(batch, {
     declaredSeed: input.seed,

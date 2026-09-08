@@ -7,6 +7,7 @@ import {
   TURN_MATCHES,
   REPLAY_REFUSAL_REASONS,
   projectMatcherConfigContract,
+  scoringContextSchema,
 } from '@vostride/agent-qa-eval'
 import { TIER_ORDER } from '@vostride/agent-qa-safety'
 
@@ -207,6 +208,7 @@ const scoreEntry = z.discriminatedUnion('kind', [
       'modal-representative-missing',
       'missing-cassette-decision',
       'missing-executable-correction', 'invalid-executable-correction', 'label-identity-mismatch',
+      'stale-scoring-context',
     ]),
     matcherVersion: integer,
   }),
@@ -217,6 +219,7 @@ export const baselineScoreSchema = z
     cassetteId: z.string().min(1),
     matcherVersion: integer,
     score: z.object({ kind: z.literal('leaf'), cassetteId: z.string().min(1), entry: scoreEntry }),
+    scoringContext: scoringContextSchema.optional(),
     diffs: z.array(
       z.object({
         kind: z.enum(['scored', 'miss-by-failure', 'unresolved-tie']),

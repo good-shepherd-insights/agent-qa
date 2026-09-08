@@ -1,4 +1,4 @@
-import { buildEvalReport, canonicalJson, decisionCorrectnessVectors, resolveProductPartition, scoreCassetteReplay } from '@vostride/agent-qa-eval'
+import { buildEvalReport, canonicalJson, decisionCorrectnessVectors, resolveProductPartition, resolveScoringContext } from '@vostride/agent-qa-eval'
 import type {
   Cassette,
   CassetteLabelLeg,
@@ -6,6 +6,7 @@ import type {
   JudgeIdentityBlock,
   ScoredBatchEntry,
   StandaloneLabelRecord,
+  ScoringJudgeRequest,
 } from '@vostride/agent-qa-eval'
 
 import { loadCassetteBundle } from './cassette-loader.js'
@@ -48,6 +49,7 @@ export function assembleScoredBatch(input: {
   /** Latest committed mark generations only; historical bundles remain on disk. */
   eligibleCassetteIds?: ReadonlySet<string>
   labelRecords?: ReadonlyMap<string, StandaloneLabelRecord>
+  expectedJudgeRequest?: ScoringJudgeRequest
 }): {
   entries: ScoredBatchEntry[]
   judgeBlocks: JudgeIdentityBlock[]
@@ -71,8 +73,8 @@ export function assembleScoredBatch(input: {
     if (input.eligibleCassetteIds !== undefined && !input.eligibleCassetteIds.has(load.cassette.id)) continue
     if (load.cassette.granularity === 'leaf') {
       labelsById.set(load.cassette.id, input.labelRecords?.get(load.cassette.id)?.label ?? load.cassette.label)
-      cassettesById.set(load.cassette.id, load.cassette)
     }
+    cassettesById.set(load.cassette.id, load.cassette)
     const product = input.productByCassetteId === undefined
       ? cassetteProductPartition(load.cassette)
       : input.productByCassetteId.get(load.cassette.id)
@@ -96,7 +98,6 @@ export function assembleScoredBatch(input: {
     const scoreLoad = loadScoreRecord(recordDir)
     if (scoreLoad.kind === 'loaded') {
       score = scoreLoad.record.score
-      if (scoreLoad.record.judge !== undefined) judgeBlocks.push(scoreLoad.record.judge)
     } else if (scoreLoad.kind === 'refused') {
       notices.push(`score read refused under ${recordDir}: ${scoreLoad.refusal.detail}`)
     }
@@ -104,8 +105,12 @@ export function assembleScoredBatch(input: {
     const label = labelsById.get(cassetteId)
     const authoritative = input.labelRecords?.get(cassetteId)
     const cassette = cassettesById.get(cassetteId)
-    if (authoritative?.correction !== undefined && cassette !== undefined) {
-      score = scoreCassetteReplay(cassette, outcome, authoritative)
+    const resolved = cassette === undefined ? undefined : resolveScoringContext({ cassette, outcome,
+      labelRecord: authoritative, expectedJudgeRequest: input.expectedJudgeRequest,
+      record: scoreLoad.kind === 'loaded' ? scoreLoad.record : undefined })
+    if (resolved !== undefined) score = resolved.score
+    if (scoreLoad.kind === 'loaded' && resolved?.compatible !== false && scoreLoad.record.judge !== undefined) {
+      judgeBlocks.push(scoreLoad.record.judge)
     }
     const product = partitionsById.get(cassetteId)
     if (!partitionsById.has(cassetteId)) missingBundleCount++
@@ -114,6 +119,7 @@ export function assembleScoredBatch(input: {
       cassetteId,
       outcome,
       ...(score !== undefined ? { score } : {}),
+      ...(resolved?.incurredJudgeScore === undefined ? {} : { incurredJudgeScore: resolved.incurredJudgeScore }),
       ...(label !== undefined ? { label } : {}),
       ...(product !== undefined ? { product } : {}),
     })

@@ -87,6 +87,8 @@ export interface ScoredBatchEntry {
   product?: string
   outcome: ReplayCassetteOutcome
   score?: CassetteScore
+  /** Historical judge work excluded from current verdicts, retained only for incurred usage. */
+  incurredJudgeScore?: CassetteScore
   label?: CassetteLabelLeg
 }
 
@@ -324,6 +326,7 @@ export function buildEvalReport(
     'missing-executable-correction': 0,
     'invalid-executable-correction': 0,
     'label-identity-mismatch': 0,
+    'stale-scoring-context': 0,
   }
   const skippedCounts: Counts<SkippedReason> = { 'cache-served': 0, synthesized: 0 }
   const missByFailure = new Map<string, number>()
@@ -356,6 +359,19 @@ export function buildEvalReport(
   let negativeFullMatchCount = 0
 
   for (const entry of entries) {
+    for (const historical of scoreEntries(entry.incurredJudgeScore)) {
+      if (historical.kind !== 'decision') continue
+      const score = historical.score
+      const stamp = score.kind === 'scored' ? score.judgeSettled : undefined
+      if (stamp !== undefined) {
+        judgeHonesty.invoked[stamp.cause]++
+        addJudgeUsage(judgeHonesty.cost, stamp.usage)
+      } else if (score.kind === 'unresolved-tie' && score.judgeOutcome !== undefined &&
+        score.judgeOutcome.kind !== 'not-invoked') {
+        judgeHonesty.invoked[score.cause]++
+        addJudgeUsage(judgeHonesty.cost, score.judgeOutcome.usage)
+      }
+    }
     if (isReplayRefusal(entry.outcome)) {
       refusalCounts[entry.outcome.reason]++
     }

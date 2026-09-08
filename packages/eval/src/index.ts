@@ -102,6 +102,8 @@ export {
   scoreDecision,
 } from './match/score'
 export { effectiveGold } from './labels/effective-gold'
+export { createScoringContext, resolveScoringContext, scoringContextSchema } from './match/scoring-context'
+export type { ScoringContext, ScoringJudgeRequest } from './match/scoring-context'
 export type { EffectiveGold } from './labels/effective-gold'
 export type {
   CassetteScore,

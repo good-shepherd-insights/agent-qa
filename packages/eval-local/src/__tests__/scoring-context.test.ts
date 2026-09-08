@@ -1,0 +1,133 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, expect, it } from 'vitest'
+import { asRef } from '@vostride/agent-qa-schema'
+import {
+  adjudicateCassetteScore, buildEvalReport, computeDecisionIdentity,
+  decisionCorrectnessVectors, effectiveGold, extractRunCassettes, scoreCassetteReplay,
+  createScoringContext,
+  type LeafReplayResult, type StandaloneLabelRecord,
+} from '@vostride/agent-qa-eval'
+import { FsCassetteStore, FsReplayRecordStore, FsScoreStore, assembleScoredBatch, loadScoreRecord } from '../index.js'
+import { makeLocalV2Handoff } from './fixtures/local-handoff-fixture.js'
+import { memArtifacts } from './fixtures/replay-fixtures.js'
+
+const roots: string[] = []
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+
+async function fixture(verdict: 'equivalent' | 'different' | 'unsure' | 'error' | 'not-invoked') {
+  const root = mkdtempSync(join(tmpdir(), 'score-context-')); roots.push(root)
+  const extracted = extractRunCassettes({ handoff: makeLocalV2Handoff(), artifacts: memArtifacts() })
+    .cassettes.find(item => item.cassette.granularity === 'leaf')!
+  if (extracted.cassette.granularity !== 'leaf') throw new Error('leaf required')
+  const cassette = extracted.cassette
+  const correctedAction = { type: 'fill' as const, ref: asRef('e-continue'),
+    text: 'alpha beta gamma delta', clearMode: 'replace' as const, submit: false }
+  const label: StandaloneLabelRecord = { schemaVersion: 1, cassetteId: cassette.id,
+    label: { ...cassette.label, tier: 'gold', sourceChannel: 'user-mark' },
+    provenance: { runId: cassette.runId, runSlug: 'fixture', capturedAtOrdinal: 1, receiptDigest: 'a'.repeat(64) },
+    correction: { verdict: 'fail', overturnedVerdict: { pass: true, reasoning: 'recorded' },
+      markId: 'mark_0123456789ab', correctedAction } }
+  const action = { ...correctedAction, text: 'alpha beta epsilon zeta' }
+  const identity = computeDecisionIdentity(action, cassette.input.stateBefore.elements)
+  const outcome: LeafReplayResult = { granularity: 'leaf', cassetteId: cassette.id, briefSource: 'empty',
+    samples: [{ sampleIndex: 0, outcome: { kind: 'decision', action, identity }, durationMs: 0 }],
+    agreement: { k: 1, agreementRate: 1, modal: { identity, count: 1 }, noConsensus: false, harnessErrorCount: 0 },
+    modalDecision: identity, promptDrift: { drift: false, harnessDrift: false,
+      recordedHash: 'a'.repeat(64), recomputedHash: 'a'.repeat(64) },
+    replayedModel: { provider: 'fixture', modelId: 'gpt-5' }, unconsumedExchanges: [], totalDurationMs: 0 }
+  const gold = effectiveGold(cassette, label)
+  if (gold.kind !== 'eligible') throw new Error(gold.reason)
+  const score = scoreCassetteReplay(cassette, outcome, label)
+  expect(score).toMatchObject({ kind: 'leaf', entry: { kind: 'decision', score: { kind: 'unresolved-tie', cause: 'value-mid-band' } } })
+  const adjudicated = await adjudicateCassetteScore({ cassette: gold.cassette, outcome, score,
+    eligibility: verdict === 'not-invoked' ? { eligible: false, reason: 'no-judge-configured' }
+      : { eligible: true, judgeModelId: 'claude-sonnet-4-5', judgeFamily: 'claude' },
+    ...(verdict === 'not-invoked' ? {} : { port: { judgeModelId: 'claude-sonnet-4-5', async call() {
+      return verdict === 'error' ? { kind: 'call-error' as const, reason: 'provider-error' as const, detail: 'scripted failure' }
+        : { kind: 'verdict' as const, verdict, confidence: 'high' as const, rationale: 'scripted',
+          usage: { calls: 1, inputTokens: 10, outputTokens: 5 } }
+    } } }) })
+  const cassettesRoot = join(root, 'cassettes'), replaysRoot = join(root, 'replays')
+  new FsCassetteStore({ root, outputDir: cassettesRoot }).write(extracted)
+  new FsReplayRecordStore({ root, outputDir: replaysRoot }).save(outcome)
+  const judgeRequest = verdict === 'not-invoked' ? null : { judgeModelId: 'claude-sonnet-4-5', allowSameFamily: false }
+  const record = { cassetteId: cassette.id, matcherVersion: 1, diffs: [], ...adjudicated,
+    scoringContext: createScoringContext({ cassette, outcome, labelRecord: label, ...adjudicated, judgeRequest }) }
+  new FsScoreStore({ root, outputDir: replaysRoot }).save(record)
+  const assemble = (current = label) => assembleScoredBatch({ replaysRoot, cassettesRoot, source: 'committed',
+    labelRecords: new Map([[cassette.id, current]]), expectedJudgeRequest: judgeRequest })
+  return { root, replaysRoot, cassettesRoot, cassette, outcome, label, record, assemble }
+}
+
+it.each(['equivalent', 'different', 'unsure', 'error', 'not-invoked'] as const)(
+  'preserves compatible corrected %s adjudication and incurred usage', async verdict => {
+    const f = await fixture(verdict)
+    const expected = [{ cassetteId: f.cassette.id, outcome: f.outcome, score: f.record.score, label: f.label.label }]
+    const batch = f.assemble(structuredClone(f.label))
+    expect(batch.entries[0]!.score).toEqual(f.record.score)
+    expect(decisionCorrectnessVectors(batch.entries)).toEqual(decisionCorrectnessVectors(expected))
+    expect(buildEvalReport(batch.entries).honesty).toEqual(buildEvalReport(expected).honesty)
+  })
+
+it.each(['correction', 'replay', 'matcher', 'judge', 'judge-version', 'judge-threshold', 'missing-context', 'old-gold', 'tampered-score'] as const)(
+  'refuses %s compatibility while retaining incurred usage without a current settled verdict', async change => {
+    const f = await fixture('equivalent')
+    const old = structuredClone(f.record)
+    const current = structuredClone(f.label)
+    if (change === 'correction') current.correction!.correctedAction = {
+      type: 'fill', ref: asRef('e-continue'), text: 'different correction', clearMode: 'replace', submit: false }
+    if (change === 'replay') {
+      const replay = structuredClone(f.outcome); replay.totalDurationMs = 17
+      new FsReplayRecordStore({ root: f.root, outputDir: f.replaysRoot }).save(replay)
+    }
+    if (change === 'matcher') old.matcherVersion = 2
+    if (change === 'judge-version') old.judge!.judgeVersion = 2
+    if (change === 'judge-threshold') old.judge!.confidenceThreshold = 'medium'
+    if (change === 'missing-context') Reflect.deleteProperty(old, 'scoringContext')
+    if (change === 'old-gold') old.scoringContext = createScoringContext({ cassette: f.cassette,
+      outcome: f.outcome, score: f.record.score, judge: f.record.judge, judgeRequest: f.record.scoringContext.judgeRequest })
+    if (change === 'tampered-score') old.score = scoreCassetteReplay(f.cassette, f.outcome, current)
+    new FsScoreStore({ root: f.root, outputDir: f.replaysRoot }).save(old)
+    const batch = change === 'judge' ? assembleScoredBatch({ replaysRoot: f.replaysRoot, cassettesRoot: f.cassettesRoot,
+      source: 'committed', labelRecords: new Map([[f.cassette.id, current]]),
+      expectedJudgeRequest: { judgeModelId: 'claude-new-model', allowSameFamily: false } }) : f.assemble(current)
+    expect(batch.entries[0]!.score).toMatchObject({ entry: { kind: 'never-scored', reason: 'stale-scoring-context' } })
+    const report = buildEvalReport(batch.entries)
+    expect(report.headline.firstAttemptDecisionAccuracy.denominator).toBe(0)
+    expect(report.honesty.judge.settled['value-mid-band']).toBe(0)
+    expect(report.honesty.judge.cost.calls).toBe(change === 'tampered-score' ? 0 : 2)
+    expect(report.honesty.judge.cost.inputTokens).toBe(change === 'tampered-score' ? 0 : 20)
+    expect(batch.judgeBlocks).toEqual([])
+  })
+
+it.each(['equivalent', 'different', 'unsure', 'error', 'not-invoked'] as const)(
+  'retains incurred %s usage after correction becomes stale', async verdict => {
+    const f = await fixture(verdict)
+    const current = structuredClone(f.label)
+    current.correction!.correctedAction = { type: 'click', ref: asRef('e-continue') }
+    const expected = buildEvalReport([{ cassetteId: f.cassette.id, outcome: f.outcome, score: f.record.score }])
+    const report = buildEvalReport(f.assemble(current).entries)
+    expect(report.honesty.judge.cost).toEqual(expected.honesty.judge.cost)
+    expect(report.honesty.judge.invoked).toEqual(expected.honesty.judge.invoked)
+    expect(report.honesty.judge.settled['value-mid-band']).toBe(0)
+    expect(report.honesty.judge.abstained['value-mid-band']).toBe(0)
+    expect(report.honesty.judge.errors['value-mid-band']).toBe(0)
+    expect(report.honesty.neverScoredCounts['stale-scoring-context']).toBe(1)
+  })
+
+it('keeps prose-only refusal precise and rejects a malformed present context', async () => {
+  const f = await fixture('equivalent')
+  const prose = structuredClone(f.label)
+  delete prose.correction!.correctedAction
+  prose.correction!.correctedExpectation = 'A prose-only correction'
+  const batch = f.assemble(prose)
+  expect(batch.entries[0]!.score).toMatchObject({ entry: { reason: 'missing-executable-correction' } })
+  expect(buildEvalReport(batch.entries).honesty.judge.cost.calls).toBe(2)
+  const written = new FsScoreStore({ root: f.root, outputDir: f.replaysRoot }).save(f.record)
+  const raw = JSON.parse(readFileSync(written.file, 'utf8'))
+  raw.scoringContext.unrecognized = true
+  writeFileSync(written.file, JSON.stringify(raw))
+  expect(loadScoreRecord(written.dir)).toMatchObject({ kind: 'refused', refusal: { reason: 'parse-failed' } })
+})

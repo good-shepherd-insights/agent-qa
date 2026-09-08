@@ -20,7 +20,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { CassetteScore, DecisionDiff, JudgeIdentityBlock } from '@vostride/agent-qa-eval'
+import type { CassetteScore, DecisionDiff, JudgeIdentityBlock, ScoringContext } from '@vostride/agent-qa-eval'
 import { slugBranch } from '@vostride/agent-qa-schema'
 
 import { DEFAULT_EVAL_REPLAYS_SUBDIR } from './replay-record-store.js'
@@ -43,6 +43,7 @@ export interface ScoreRecord {
    * the scorer never writes back into the measurement.
    */
   judge?: JudgeIdentityBlock
+  scoringContext?: ScoringContext
 }
 
 export interface FsScoreStoreConfig {

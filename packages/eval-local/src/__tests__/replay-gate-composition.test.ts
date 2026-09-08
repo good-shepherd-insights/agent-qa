@@ -28,6 +28,7 @@ import {
   computeDecisionIdentity,
   canonicalizeInputLeg,
   computeCorpusDigest,
+  type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as evalLocal from '../index.js'
@@ -148,12 +149,14 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       modelId?: string
       warmWithoutJudge?: boolean
       targetTie?: boolean
-      verdict?: 'different' | 'unsure'
+      correctedTie?: boolean
+      verdict?: 'equivalent' | 'different' | 'unsure'
     } = {},
   ) {
     const { f, input } = await warm()
     const profile = familyStubProfile('gpt-fixture')
     const judgeProfile = familyStubProfile(options.modelId ?? 'claude-fixture')
+    const labels = new Map<string, StandaloneLabelRecord>()
     for (const { cassette } of f.selected) {
       cassette.receipt.model.declared!.modelId = 'gemini-recorded-fixture'
       if (options.targetTie && cassette.id === f.targetId) {
@@ -170,9 +173,29 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
         cassette,
         blobs: [],
       })
+      if (options.correctedTie && cassette.id === f.targetId) {
+        const label: StandaloneLabelRecord = { schemaVersion: 1, cassetteId: cassette.id,
+          label: { ...cassette.label, tier: 'gold', sourceChannel: 'user-mark' },
+          provenance: { runId: cassette.runId, runSlug: slugBranch(cassette.runId), capturedAtOrdinal: 1,
+            receiptDigest: sha256hex(JSON.stringify(cassette.receipt)) },
+          correction: { markId: 'mark_0123456789ab', verdict: 'fail',
+            overturnedVerdict: { pass: true, reasoning: 'Recorded Continue click' },
+            correctedExpectation: 'Corrected fill expectation stays out of planner input',
+            correctedAction: { type: 'fill', ref: asRef('e-continue'), text: 'alpha beta gamma delta',
+              clearMode: 'replace', submit: false } } }
+        labels.set(cassette.id, label)
+        new evalLocal.FsCommittedRootStore({ committedRoot: f.committedRoot })
+          .writeText(evalLocal.committedLabelPath('alpha', cassette.id), JSON.stringify(label))
+      }
     }
     const respond = (call: CapturedCallOptions) => {
       const text = JSON.stringify(call.prompt)
+      if (options.correctedTie && text.includes('gate1-target-run')) {
+        return { ...actionGenerateResult(), content: [{ type: 'tool-call' as const, toolCallId: 'replay-action',
+          toolName: 'web_fill', input: JSON.stringify({ ref: 'e-continue', text: 'alpha beta epsilon zeta',
+            reasoning: 'Scripted candidate fill', confidence: 0.95, stepComplete: true,
+            doesActionAdvanceUsTowardsGoal: true }) }] }
+      }
       return options.targetTie &&
         text.includes('gate1-target-run') &&
         !text.includes(f.injection.renderedLine)
@@ -183,7 +206,8 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     const planner = respondingStub(respond, profile.model)
     let warmed = false
     const judge = judgeStub(judgeProfile.model, () =>
-      !warmed && options.verdict === 'unsure' ? 'different' : (options.verdict ?? 'equivalent'),
+      !warmed && options.correctedTie ? 'equivalent'
+        : !warmed && options.verdict === 'unsure' ? 'different' : (options.verdict ?? 'equivalent'),
     )
     const fingerprint = evalLocal.computeReplayProfileFingerprintFor({
       profile,
@@ -208,6 +232,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     ).toBe('written')
     await evalLocal.replayCorpusOnce({
       selected: f.selected,
+      labelRecords: labels,
       cassettesRoot: f.cassettesRoot,
       agentQaRoot: f.agentQaRoot,
       runRoot: gateRoot,
@@ -247,6 +272,29 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     }
     return { f, input, planner, judge, baselineJudgeCalls }
   }
+  it.each(['equivalent', 'different'] as const)('Gate1 retains corrected baseline and %s candidate judge results', async verdict => {
+    const { f, input, planner, judge, baselineJudgeCalls } = await warmJudge({ correctedTie: true, verdict })
+    const original = JSON.stringify(f.selected.find(item => item.cassette.id === f.targetId)!.cassette)
+    const result = await evalLocal.runReplayGate(input)
+    if (result.kind !== 'receipt') throw new Error(JSON.stringify(result))
+    expect(baselineJudgeCalls).toBe(2)
+    expect(judge.captured.length).toBe(2)
+    const candidateRoot = join(f.agentQaRoot, evalLocal.GATE1_AUDIT_SUBDIR, slugBranch(f.injection.candidateId), 'candidate-arm', 'replays')
+    const score = evalLocal.loadScoreRecord(join(candidateRoot, ...f.targetId.split('/').map(slugBranch)))
+    expect(score).toMatchObject({ kind: 'loaded', record: { score: { entry: { score: {
+      kind: 'scored', judgeSettled: { cause: 'value-mid-band', resolution: verdict, usage: { calls: 2 } } } } } } })
+    if (verdict === 'different') {
+      expect(result.receipt.verdict).toBe('fail')
+      expect(result.receipt.harmed).toEqual(expect.arrayContaining([expect.objectContaining({ cassetteId: f.targetId })]))
+    } else {
+      expect(result.receipt.harmed ?? []).toEqual([])
+      expect(result.receipt.reasons).not.toContain('collateral-unscorable')
+    }
+    expect(JSON.stringify(planner.captured)).not.toContain('Corrected fill expectation')
+    expect(JSON.stringify(planner.captured)).not.toContain('alpha beta gamma delta')
+    expect(JSON.stringify(judge.captured)).toContain('alpha beta gamma delta')
+    expect(JSON.stringify(f.selected.find(item => item.cassette.id === f.targetId)!.cassette)).toBe(original)
+  })
   it('formats the key-only judge identity', async () => {
     const module = await import('../replay-gate-composition.js')
     expect(Reflect.get(module, 'judgeIdOf')).toBeTypeOf('function')
