@@ -122,7 +122,7 @@ export type ForgetTargetRef = KnowledgeTargetRef
  * and the name is the union it belongs to. Calling it `Delta` here is not a stronger promise
  * than before, it is the same promise stated over a schema a catalogue can publish.
  */
-const DeltaSchema = z.looseObject({
+export const DeltaSchema = z.looseObject({
   kind: z.enum(DELTA_KINDS),
   origin: z.enum(DELTA_ORIGINS),
   scope: z.looseObject({ tier: z.string(), key: z.string() }),

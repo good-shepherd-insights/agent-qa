@@ -1537,3 +1537,17 @@ export type { CandidateInjection, KnowledgeCandidateInjectionResult } from './kn
 export { RecordAnchorsSchema, RecordScopeSchema } from './knowledge/record-frontmatter'
 export { BundleKindSchema, BundleStatusSchema } from './functions/knowledge'
 export { BriefLineSchema } from './brief/guard-lossless-served-brief'
+
+// 2026-09-08, 419 D-06: the Gate-3 feedback contracts
+export {
+  MARK_QUARANTINE_CLASSES, MARK_FIX_KINDS, MARK_DISPOSITIONS,
+  MARK_RECEIPT_SCHEMA_VERSION, IMPROVEMENT_PLAN_SCHEMA_VERSION, COMMIT_RECEIPT_SCHEMA_VERSION,
+  NoDraftableFixCheckedSchema, MarkDispositionSchema, MarkAddressSchema, MarkReceiptSchema,
+  RunsMarkInputSchema, RunsMarkOutcomeSchema, ImprovementPlanKnowledgeSchema,
+  ImprovementPlanSchema, CommitReceiptSchema, RunDetailMemberMarkSchema, deriveMarkStepId,
+} from './functions/feedback'
+export type {
+  MarkQuarantineClass, MarkFixKind, MarkDisposition, NoDraftableFixChecked, MarkAddress,
+  MarkReceipt, RunsMarkInput, RunsMarkOutcome, ImprovementPlanKnowledge, ImprovementPlan,
+  CommitReceipt, RunDetailMemberMark, FeedbackPort,
+} from './functions/feedback'
