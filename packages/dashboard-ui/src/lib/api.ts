@@ -1,4 +1,4 @@
-import { RUN_EVENT_TYPES } from '@vostride/agent-qa-schema'
+import { RUN_EVENT_TYPES, GATE_REMEDY_KINDS } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   AnalysisGetOutput,
@@ -11,6 +11,9 @@ import type {
   RunKnowledgeProjection,
   RunServiceReadiness,
   RunsLiveUrlResult,
+  Mark,
+  GateRemedy,
+  RunsMarkOutcome,
 } from '@vostride/agent-qa-schema'
 
 export interface RunRow {
@@ -363,6 +366,41 @@ export async function fetchRun(id: string): Promise<{ run: RunRow }> {
  */
 export async function fetchRunDetail(id: string): Promise<RunDetailProjection> {
   return request(`/api/runs/${encodeURIComponent(id)}/detail`)
+}
+
+export class MarkDeniedError extends Error {
+  readonly reason: string
+  readonly remedies: readonly GateRemedy[]
+  constructor(denial: { reason: string; remedies: readonly GateRemedy[] }) {
+    super(denial.reason)
+    this.name = 'MarkDeniedError'
+    this.reason = denial.reason
+    this.remedies = denial.remedies
+  }
+}
+
+export async function markRun(
+  runId: string,
+  body: { kind: Mark; testId?: string; stepIndex?: number; note?: string; correctedExpectation?: string },
+): Promise<RunsMarkOutcome> {
+  try {
+    return await postJson(`/api/runs/${encodeURIComponent(runId)}/mark`, {
+      ...body,
+      ...(currentRunConfirmScope === undefined ? {} : { confirmScope: currentRunConfirmScope }),
+    })
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 403 && error.payload?.error === 'mark_denied') {
+      const remedies = Array.isArray(error.payload.remedies)
+        ? error.payload.remedies.filter((value): value is GateRemedy =>
+          typeof value === 'object' && value !== null && GATE_REMEDY_KINDS.some(kind => kind === value.kind))
+        : []
+      throw new MarkDeniedError({
+        reason: typeof error.payload.reason === 'string' ? error.payload.reason : 'The safety gate denied this mark.',
+        remedies,
+      })
+    }
+    throw error
+  }
 }
 
 /**

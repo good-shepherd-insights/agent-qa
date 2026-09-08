@@ -190,16 +190,17 @@ describe('runs.detail mark projection (419 D-11/D-15)', () => {
       ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }),
       disposition: mark.disposition,
     })))
-    expect('marks' in result.members[0]!).toBe(false)
+    expect(result.members[0]!.marks).toEqual([])
     expect('marks' in rows.members[1]!).toBe(false)
     expect(JSON.stringify(history)).toBe(before)
     expect(RunDetailProjectionSchema.parse(result)).toEqual(result)
   })
 
-  it('leaves every marks key absent with an unbound or empty ledger', async () => {
+  it('omits marks only when unbound and enables first-use controls with a bound empty ledger', async () => {
     const unbound = await runsDetailSpec.invoke({ runId: RUN_ID }, detailDeps())
     const empty = await runsDetailSpec.invoke({ runId: RUN_ID }, detailDeps(stub().port))
-    expect(JSON.stringify(empty)).toBe(JSON.stringify(unbound))
+    expect(empty.members.map(member => member.marks)).toEqual([[], []])
+    expect(RunDetailProjectionSchema.parse(empty)).toEqual(empty)
     expect(unbound.members.every(member => !('marks' in member))).toBe(true)
     expect(RunDetailProjectionSchema.parse(unbound)).toEqual(unbound)
   })

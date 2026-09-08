@@ -1,3 +1,10 @@
+import { useState } from 'react'
+import { Link } from 'react-router'
+import { MARKS, type Mark, type RunDetailMemberMark } from '@vostride/agent-qa-schema'
+import { DenialBlock } from '@/chat/chat-transcript'
+import { MaskedText } from './masked-text'
+import { routes } from '@/lib/routes'
+import { MARK_LABELS, markChipText, markTriageText, type OnMark, type MarkDenial } from '@/lib/analysis-view'
 import { CheckCircle2, XCircle, RefreshCw, Circle } from "lucide-react"
 import { SubActionTreeItem } from "./sub-action-tree-item"
 import { ExecutionTreeItem } from "./execution-tree-item"
@@ -23,6 +30,10 @@ function StepStatusIcon({ status }: { status: string }) {
 }
 
 interface StepTreeItemProps {
+  onMark?: OnMark
+  marks?: readonly RunDetailMemberMark[]
+  markDenial?: MarkDenial
+  markPending?: boolean
   step: DisplayStep
   isSelected: boolean
   isExpanded: boolean
@@ -32,7 +43,10 @@ interface StepTreeItemProps {
   embedded?: boolean
 }
 
-export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect, inlineLogs = [], embedded = false }: StepTreeItemProps) {
+export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect, inlineLogs = [], embedded = false, onMark, marks, markDenial, markPending = false }: StepTreeItemProps) {
+  const [kind, setKind] = useState<Mark>()
+  const [note, setNote] = useState('')
+  const mark = marks?.find(entry => entry.stepIndex === step.stepIndex)
   // THE DURABLE SUB-ACTIONS, NOT THE v1 BLOB (405-08/405-11). The v1 sub-action array this row
   // used to read had no producer on this page, and 405-11 deleted it with the overview's readers.
   const subActions = step.subActions ?? []
@@ -94,6 +108,35 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect
           {formatDuration(step.duration)}
         </span>
       </button>
+
+      {marks !== undefined && onMark && step.testIndex !== undefined && step.stepIndex !== undefined ? (
+        <div className="mx-3 mb-1.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
+          {MARKS.map(kind => (
+            <button key={kind} type="button" data-mark-kind={kind} data-mark-step={step.stepIndex}
+              className="rounded-[2px] border border-border/60 px-1.5 py-0.5 font-mono hover:bg-muted/60"
+              disabled={markPending} onClick={() => { setKind(kind); setNote('') }}>{MARK_LABELS[kind]}</button>
+          ))}
+          {kind === undefined ? null : (
+            <div className="flex w-full flex-wrap items-center gap-1">
+              <textarea data-mark-note aria-label="Optional step mark note" maxLength={2000}
+                className="w-full rounded-[2px] border border-border bg-background p-1 text-xs"
+                value={note} onChange={event => setNote(event.target.value)} disabled={markPending} />
+              <button type="button" data-mark-submit disabled={markPending}
+                onClick={() => { onMark(step.testIndex!, step.stepIndex!, kind, note || undefined); setKind(undefined) }}>Mark</button>
+              <button type="button" data-mark-cancel disabled={markPending}
+                onClick={() => { setKind(undefined); setNote('') }}>Cancel</button>
+            </div>
+          )}
+          {mark === undefined ? null : (
+            <>
+              <span data-mark-chip>{markChipText(mark)}</span>
+              <span data-mark-triage><MaskedText text={markTriageText(mark)} /></span>
+              {mark.disposition.kind === 'drafted' ? <Link data-mark-confirm-link to={routes.chat}>review in chat</Link> : null}
+            </>
+          )}
+          {markDenial === undefined ? null : <div data-mark-denied className="w-full"><DenialBlock neutralReason={markDenial.reason} remedies={markDenial.remedies} /></div>}
+        </div>
+      ) : null}
 
       {isExpanded && hasChildren && (
         <ul role="group">

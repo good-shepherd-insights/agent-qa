@@ -59,12 +59,21 @@
 //
 // `data-*` DESCRIBES WHAT IS RENDERED, not what was passed (the banner's `showingFull` lesson).
 
+import { useState } from 'react'
+import { Link } from 'react-router'
+import { MARKS, type Mark } from '@vostride/agent-qa-schema'
+import { DenialBlock } from '@/chat/chat-transcript'
+import { routes } from '@/lib/routes'
+import { MARK_LABELS, markChipText, markTriageText, type OnMark, type MarkDenial } from '@/lib/analysis-view'
 import { EvidenceIncomplete } from "@/components/run-detail/evidence-incomplete"
 import { MaskedText } from "@/components/run-detail/masked-text"
 import { CITED_ARTIFACT_LABEL, citedStepLabel, type MemberVerdictView } from "@/lib/analysis-view"
 import { memberHandleLabel } from "@/lib/run-detail-view"
 
 interface VerdictBlockProps {
+  onMark?: OnMark
+  markDenial?: MarkDenial
+  markPending?: boolean
   view: MemberVerdictView
   /** Select the cited step in this member's tree — `(memberHandle, stepOrdinal)` (D-02). */
   onCitedStep: (testIndex: number, stepIndex: number) => void
@@ -84,7 +93,13 @@ export function VerdictBlock({
   onCitedStep,
   onSelectMember,
   onCitedArtifact,
+  onMark,
+  markDenial,
+  markPending = false,
 }: VerdictBlockProps) {
+  const [kind, setKind] = useState<Mark>()
+  const [note, setNote] = useState('')
+  const mark = view.marks?.find(entry => entry.stepIndex === undefined)
   return (
     <div
       data-verdict-block
@@ -95,6 +110,41 @@ export function VerdictBlock({
       <span data-verdict-sentence className="select-text text-foreground/80">
         <MaskedText text={view.sentence} />
       </span>
+
+      {/* SPELLED HERE, ONCE, AND NOT HOISTED — 419-11's M4 leg matches this expression literally. */}
+      {view.marks !== undefined && onMark ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px]">
+          {MARKS.map(kind => (
+            <button key={kind} type="button" data-mark-kind={kind} className={AFFORDANCE_CLASS}
+              disabled={markPending} onClick={() => { setKind(kind); setNote('') }}>
+              {MARK_LABELS[kind]}
+            </button>
+          ))}
+          {kind === undefined ? null : (
+            <div className="flex w-full flex-wrap items-center gap-1">
+              <textarea data-mark-note aria-label="Optional mark note" maxLength={2000}
+                className="w-full rounded-[2px] border border-border bg-background p-1 text-xs"
+                value={note} onChange={event => setNote(event.target.value)} disabled={markPending} />
+              <button type="button" data-mark-submit className={AFFORDANCE_CLASS} disabled={markPending}
+                onClick={() => { onMark(view.testIndex, undefined, kind, note || undefined); setKind(undefined) }}>Mark</button>
+              <button type="button" data-mark-cancel className={AFFORDANCE_CLASS} disabled={markPending}
+                onClick={() => { setKind(undefined); setNote('') }}>Cancel</button>
+            </div>
+          )}
+          {mark === undefined ? null : (
+            <>
+              <span data-mark-chip>{markChipText(mark)}</span>
+              <span data-mark-triage><MaskedText text={markTriageText(mark)} /></span>
+              {mark.disposition.kind === 'drafted' ? (
+                <Link data-mark-confirm-link to={routes.chat} className={AFFORDANCE_CLASS}>review in chat</Link>
+              ) : null}
+            </>
+          )}
+          {markDenial === undefined ? null : (
+            <div data-mark-denied className="w-full"><DenialBlock neutralReason={markDenial.reason} remedies={markDenial.remedies} /></div>
+          )}
+        </div>
+      ) : null}
 
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
         {view.marker === undefined ? null : (

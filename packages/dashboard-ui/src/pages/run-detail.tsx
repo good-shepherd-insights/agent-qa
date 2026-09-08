@@ -22,7 +22,7 @@ import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
+import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
 import type { RunRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary, KnowledgeRead, PostProcessingRead } from "@/lib/api"
 import type { AnalysisGetOutput, RunDetailProjection, RunDetailSubAction } from "@vostride/agent-qa-schema"
 import {
@@ -36,7 +36,7 @@ import {
 } from "@/lib/run-detail-view"
 import { projectPostProcessingView } from "@/lib/post-processing-view"
 import { bannerRung, projectKnowledgeView } from "@/lib/knowledge-view"
-import { projectAnalysisView } from "@/lib/analysis-view"
+import { projectAnalysisView, type OnMark, type MarkDenial } from "@/lib/analysis-view"
 import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
@@ -130,6 +130,60 @@ export default function RunDetailPage() {
   // genuinely recorded nothing. Collapsing any two of them would make a server fault look like a
   // quiet test.
   const [detail, setDetail] = useState<RunDetailProjection | null | undefined>(undefined)
+  const [markDenial, setMarkDenial] = useState<MarkDenial & { testIndex: number; stepIndex?: number }>()
+  const [markPending, setMarkPending] = useState(false)
+  const markingRef = useRef(false)
+  const markRunRef = useRef(id)
+  useEffect(() => {
+    markRunRef.current = id
+    setMarkDenial(undefined)
+    setDetail(undefined)
+    return () => { markRunRef.current = undefined }
+  }, [id])
+
+  const reloadDetail = useCallback(async () => {
+    if (!id) return undefined
+    const projection = await fetchRunDetail(id)
+    if (markRunRef.current === id && projection.runId === id) setDetail(projection)
+    return projection
+  }, [id])
+
+  const onMark = useCallback<OnMark>(async (testIndex, stepIndex, kind, note) => {
+    if (!id || detail?.runId !== id || markingRef.current) return
+    const member = detail.members.find(entry => entry.testIndex === testIndex)
+    if (member?.marks === undefined) return
+    const address = { testIndex, ...(stepIndex === undefined ? {} : { stepIndex }) }
+    // The wire addresses members by testId. Never silently mark a different member when a
+    // suite has no unique testId for the selected row.
+    if (detail.members.length > 1 && (!member.testId || detail.members.filter(entry => entry.testId === member.testId).length !== 1)) {
+      setMarkDenial({ ...address, reason: 'This member has no unique mark address.', remedies: [] })
+      return
+    }
+    markingRef.current = true
+    setMarkPending(true)
+    setMarkDenial(undefined)
+    try {
+      const outcome = await markRun(id, {
+        kind,
+        ...(member.testId ? { testId: member.testId } : {}),
+        ...(stepIndex === undefined ? {} : { stepIndex }),
+        ...(note ? { note } : {}),
+      })
+      if (markRunRef.current !== id) return
+      if (outcome.kind === 'marked' || outcome.kind === 'already-marked') {
+        await reloadDetail()
+      } else {
+        setMarkDenial({ ...address, reason: `Mark refused: ${outcome.kind}.`, remedies: [] })
+      }
+    } catch (error) {
+      if (markRunRef.current !== id) return
+      if (error instanceof MarkDeniedError) setMarkDenial({ ...address, reason: error.reason, remedies: error.remedies })
+      else setMarkDenial({ ...address, reason: 'Could not complete the mark or refresh its receipt. Reload this run before trying again.', remedies: [] })
+    } finally {
+      markingRef.current = false
+      if (markRunRef.current !== undefined) setMarkPending(false)
+    }
+  }, [id, detail, reloadDetail])
   const [isLoading, setIsLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const pipelineRef = useRef<ReasoningPipelineHandle | null>(null)
@@ -294,9 +348,9 @@ export default function RunDetailPage() {
         // rendered above, so the header, the verdict and the failure banner stay; only the tree
         // says it could not be loaded.
         try {
-          const projection = await fetchRunDetail(id!)
+          const projection = await reloadDetail()
           if (cancelled) return
-          setDetail(projection)
+          if (projection === undefined) return
           const groups = filterGroups(
             groupRunDetail(projection),
             parseMemberFilter(searchParams.get("member")),
@@ -434,8 +488,8 @@ export default function RunDetailPage() {
   const visibleGroups = useMemo(() => filterGroups(groups, memberFilter), [groups, memberFilter])
   // The op's bytes and the chip word, joined to member handles. The page composes no sentence.
   const analysisView = useMemo(
-    () => projectAnalysisView(analysis, analysisChip),
-    [analysis, analysisChip],
+    () => projectAnalysisView(analysis, analysisChip, detail),
+    [analysis, analysisChip, detail],
   )
   // CHROME KEYS ON THE RUN, NOT ON THE FILTER (D-16). A viewer who narrowed a five-member suite to
   // one member is still looking at a suite, and hiding the header and the picker would strand them
@@ -904,6 +958,9 @@ export default function RunDetailPage() {
                   groups={visibleGroups}
                   showMemberChrome={hasMemberChrome}
                   analysisView={analysisView}
+                  onMark={onMark}
+                  markDenial={markDenial}
+                  markPending={markPending}
                   onCitedStep={onCitedStep}
                   onSelectMember={onSelectMember}
                   onCitedArtifact={onCitedArtifact}

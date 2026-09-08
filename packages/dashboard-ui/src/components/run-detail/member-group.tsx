@@ -49,7 +49,7 @@ import { ChevronRight } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { MaskedText } from "@/components/run-detail/masked-text"
 import { VerdictBlock } from "@/components/run-detail/verdict-block"
-import type { MemberVerdictView } from "@/lib/analysis-view"
+import type { MemberVerdictView, OnMark, MarkDenial } from "@/lib/analysis-view"
 import { statusBadgeLook } from "@/lib/status"
 import { cn } from "@/lib/utils"
 import {
@@ -61,6 +61,9 @@ import {
 } from "@/lib/run-detail-view"
 
 interface MemberGroupProps {
+  onMark?: OnMark
+  markDenial?: MarkDenial
+  markPending?: boolean
   group: RunDetailGroup
   /** Whether this run has more than one member — a single-member run gets no grouping chrome. */
   showChrome: boolean
@@ -110,6 +113,9 @@ export function MemberGroup({
   group,
   showChrome,
   verdict,
+  onMark,
+  markDenial,
+  markPending,
   onCitedStep = NO_OP,
   onSelectMember = NO_OP,
   onCitedArtifact = NO_OP,
@@ -131,6 +137,9 @@ export function MemberGroup({
   const verdictBlock = verdict === undefined ? null : (
     <VerdictBlock
       view={verdict}
+      onMark={onMark}
+      markDenial={markDenial}
+      markPending={markPending}
       onCitedStep={onCitedStep}
       onSelectMember={onSelectMember}
       onCitedArtifact={onCitedArtifact}

@@ -146,8 +146,8 @@ export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> 
         byMember.set(mark.testIndex, marks)
       }
       members = rows.members.map(member => {
-        const marks = byMember.get(member.testIndex)
-        if (marks === undefined) return member
+        // Bound-but-unmarked enables the first mark; unbound above still omits the key.
+        const marks = byMember.get(member.testIndex) ?? []
         marks.sort((a, b) => (a.stepIndex ?? -1) - (b.stepIndex ?? -1))
         return { ...member, marks }
       })

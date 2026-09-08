@@ -433,7 +433,7 @@ function PayloadBlock({
  * spending their attention on a way forward that is not there. The reason alone is a complete
  * answer.
  */
-function DenialBlock({
+export function DenialBlock({
   neutralReason,
   remedies,
 }: {

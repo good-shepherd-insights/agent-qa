@@ -43,7 +43,35 @@ import type {
   AnalysisGetOutput,
   AnalysisResolvedVerdict,
   PostProcessingChipStatus,
+  Mark,
+  GateRemedy,
+  RunDetailMemberMark,
+  RunDetailProjection,
 } from '@vostride/agent-qa-schema'
+
+export const MARK_LABELS = {
+  'false-fail': 'false-fail',
+  'false-pass': 'false-pass',
+  'confirmed-bug': 'confirmed-bug',
+} satisfies Record<Mark, string>
+export const MARK_CHIP_PREFIX = 'marked '
+export type OnMark = (testIndex: number, stepIndex: number | undefined, kind: Mark, note?: string) => void
+export interface MarkDenial { reason: string; remedies: readonly GateRemedy[] }
+
+export function markChipText(mark: RunDetailMemberMark): string {
+  return `${MARK_CHIP_PREFIX}${mark.kind} by user · ${mark.ordinal}`
+}
+
+export function markTriageText(mark: RunDetailMemberMark): string {
+  const disposition = mark.disposition
+  switch (disposition.kind) {
+    case 'quarantined': return `quarantined: ${disposition.class}`
+    case 'drafted': return `drafted: ${disposition.fix} → proposal ${disposition.proposalId}`
+    case 'no-draftable-fix': return 'no draftable fix'
+    case 'confirmed-bug': return 'confirmed-bug: no fix drafted'
+    default: return disposition satisfies never
+  }
+}
 
 /** The provenance chip when the model authored this verdict (D-10). */
 export const LLM_VERDICT_LABEL = 'LLM verdict'
@@ -90,6 +118,7 @@ export interface MemberVerdictMissingEvidence {
 
 /** One member's verdict, ready to paint. Every field is the op's, except the product's own copy. */
 export interface MemberVerdictView {
+  readonly marks?: readonly RunDetailMemberMark[]
   /** The member handle this block belongs under — the op's `perTest`. */
   readonly testIndex: number
   /** The op's sentence, VERBATIM. Never sliced, never re-cased, never re-composed. */
@@ -209,6 +238,7 @@ export function missingEvidenceLine(count: MemberVerdictMissingEvidence): string
 export function projectAnalysisView(
   analysis: AnalysisGetOutput | undefined,
   chip: AnalysisChipWord,
+  detail?: RunDetailProjection | null,
 ): ReadonlyMap<number, MemberVerdictView> {
   const view = new Map<number, MemberVerdictView>()
   if (analysis === undefined) return view
@@ -251,6 +281,10 @@ export function projectAnalysisView(
     const siblings = siblingsByPerTest.get(verdict.perTest) ?? []
 
     view.set(verdict.perTest, {
+      ...(() => {
+        const marks = detail?.members.find(member => member.testIndex === verdict.perTest)?.marks
+        return marks === undefined ? {} : { marks }
+      })(),
       testIndex: verdict.perTest,
       sentence: sentenceByPerTest.get(verdict.perTest) ?? '',
       producer: verdict.producer,
