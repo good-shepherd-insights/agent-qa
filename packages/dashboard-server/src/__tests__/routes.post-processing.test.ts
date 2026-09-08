@@ -86,6 +86,7 @@ function plantHost(options: PlantOptions): PlantedHost {
     // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
     // workspace still satisfies the interface.
     runsKnowledgeFunctionId: 'test:planted-run-knowledge-op',
+    runsMarkFunctionId: 'test:planted-run-mark-op',
     invokeFunction: (registry, functionId, input, caller): Promise<unknown> => {
       calls.push({ registry, functionId, input, caller })
       if (functionId === PP_ID) {

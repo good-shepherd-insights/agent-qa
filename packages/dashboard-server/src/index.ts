@@ -117,3 +117,4 @@ export type {
   RunServiceRouter,
   RunServiceStartInput,
 } from './run-service/run-service-routes.js'
+export { markRun, registerRunMarkRoute, type RunMarkOutcome } from './run-service/run-mark-routes.js'

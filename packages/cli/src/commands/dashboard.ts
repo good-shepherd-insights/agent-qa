@@ -15,6 +15,7 @@ import {
   RUNS_DETAIL_FUNCTION_ID,
   RUNS_EVENTS_FUNCTION_ID,
   RUNS_KNOWLEDGE_FUNCTION_ID,
+  RUNS_MARK_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
   type ConfigReaderPort,
@@ -220,6 +221,7 @@ export function composeDashboardAgentHost(
    * the identity, which is chat's unchanged posture (see the seam's own law in `chat/host.ts`).
    */
   unmaskForDisplay?: DisplayUnmask,
+  enterRunTriggerScope?: AgentHost['enterRunTriggerScope'],
 ): AgentHost {
   const enter = enterAskingSession ?? (<T>(_sessionId: string | undefined, run: () => T): T => run())
   const unmask: DisplayUnmask = unmaskForDisplay
@@ -256,6 +258,8 @@ export function composeDashboardAgentHost(
     // Knowledge tab's read dispatches — `runs.knowledge` is the single producer of what a run used
     // and learned, and the dashboard package can only learn its name as data.
     runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
+    runsMarkFunctionId: RUNS_MARK_FUNCTION_ID,
+    ...(enterRunTriggerScope === undefined ? {} : { enterRunTriggerScope }),
     // 400-15: THE ONE PLACE THE ASKING CONVERSATION IS KNOWN AND STILL AHEAD OF EVERYTHING THAT
     // NEEDS IT. `handleTurn` makes exactly one call here per turn, carrying the browser's
     // `sessionId`; the gate's context resolver and the confirm port are both further down this same
@@ -276,10 +280,14 @@ export function composeDashboardAgentHost(
       input: unknown,
       caller: FunctionCaller,
     ): Promise<unknown> =>
-      enter(
-        askingSessionOf(input),
-        () => invokeFunction(registry as FunctionRegistry, functionId, input, caller),
-      ),
+      // 419 D-13: the route entered the run-confirm frame. An undefined chat frame would erase
+      // it here; a direct mark call with no outer frame still resolves to local-headless.
+      functionId === RUNS_MARK_FUNCTION_ID
+        ? invokeFunction(registry as FunctionRegistry, functionId, input, caller)
+        : enter(
+          askingSessionOf(input),
+          () => invokeFunction(registry as FunctionRegistry, functionId, input, caller),
+        ),
     foldFunctionResult: (
       registry: AgentRegistryHandle,
       functionId: string,
@@ -1003,6 +1011,9 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
         env: () => process.env,
         authStatePayloads: () => [],
       }),
+      (scopeId, run) => askingSessions.run(
+        { askingSession: scopeId, reachableByChannelAlone: true }, run,
+      ),
     ),
     resolveExecutionContext: (scopeId, options) =>
       postureOf(scopeId, options?.reachableByChannelAlone === true),

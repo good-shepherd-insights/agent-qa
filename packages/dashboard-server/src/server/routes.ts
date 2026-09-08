@@ -43,6 +43,7 @@ import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
 // the analysis arm and above the `/api/runs/:id` catch-all, formatting nothing and opening no
 // database.
 import { serveRunKnowledgeRead } from '../run-service/run-knowledge-routes.js'
+import { registerRunMarkRoute } from '../run-service/run-mark-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -2077,6 +2078,26 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           ? { logs }
           : unmaskTreeForDisplay(deps.agentHost, { logs }, { runId: id }),
       ))
+      return
+    }
+
+    // 419 D-13: register before the run catch-all; no private feedback implementation here.
+    if (path.startsWith('/api/runs/') && path.endsWith('/mark') && req.method === 'POST') {
+      if (deps.agentHost === undefined) {
+        jsonNoCors(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/mark'.length))
+      } catch {
+        jsonNoCors(res, { error: 'invalid_mark_input' }, 400)
+        return
+      }
+      registerRunMarkRoute(req, res, {
+        host: deps.agentHost, runId, boundary: 'human',
+        enterRunTriggerScope: deps.agentHost.enterRunTriggerScope,
+      })
       return
     }
 

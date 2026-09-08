@@ -509,6 +509,7 @@ function dashboardRollCallHost(
     // 406-01: a sixth. Same posture — the SHAPE has to be complete; this fixture reaches only the
     // ask, and the RUN host below is where `analysis.get` is actually dispatched.
     analysisGetFunctionId: 'analysis.get',
+    runsMarkFunctionId: 'runs.mark',
     // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
     // workspace still satisfies the interface.
     runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,

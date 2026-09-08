@@ -174,6 +174,7 @@ function plantedHost(read: {
     // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
     // workspace still satisfies the interface.
     runsKnowledgeFunctionId: 'test:planted-run-knowledge-op',
+    runsMarkFunctionId: 'test:planted-run-mark-op',
     invokeFunction: (_registry, functionId): Promise<unknown> => {
       if (functionId === PP_ID) return Promise.resolve(read.status())
       if (functionId === EVENTS_ID) {

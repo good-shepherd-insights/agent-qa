@@ -312,6 +312,9 @@ const REVIEWED_SEAM_MODULES: readonly string[] = [
   // imports from the detail adapter rather than a second writer. Reviewed against the source, not
   // against a token count.
   'run-service/run-knowledge-routes.ts',
+  // 419 D-13: cross-site refusal precedes parsing and dispatch; only a successful human
+  // response reaches restoration. Source reviewed with the route's socket refusal cells.
+  'run-service/run-mark-routes.ts',
   'server/routes.ts',
 ]
 

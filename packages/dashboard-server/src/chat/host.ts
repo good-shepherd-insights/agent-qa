@@ -182,6 +182,10 @@ export interface AgentHost {
    * instead of a page composing it from N per-step calls that can disagree.
    */
   readonly runsKnowledgeFunctionId: string
+  /** 2026-09-08, 419 D-13: the eighth op id arrives as data, on the knowledge id's footing. */
+  readonly runsMarkFunctionId: string
+  /** Names the run-confirm channel; the door still proves reachability at gate evaluation. */
+  readonly enterRunTriggerScope?: <T>(scopeId: string, run: () => T) => T
   /**
    * `invokeFunction`, bound by the composer. THE one door call.
    *
