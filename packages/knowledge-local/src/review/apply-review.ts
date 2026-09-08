@@ -24,9 +24,12 @@
 // second acquisition primitive for one to use.
 
 import { relative } from 'node:path'
+import { asRecordId, deriveMarkStepId, stampReceiptDigest } from '@vostride/agent-qa-schema'
 
 import type {
   Delta,
+  CommitReceipt,
+  Gate3Receipt,
   ForgetReceiptV1,
   KnowledgeProjection,
   KnowledgeProposalV1,
@@ -36,7 +39,8 @@ import type {
 
 import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
-import { createLocalKnowledgeStore } from '../curator/knowledge-store.js'
+import { createLocalKnowledgeStore, KnowledgePromotionError } from '../curator/knowledge-store.js'
+import { diffSince } from '../diff-since.js'
 import { acquireWriterLease, releaseLease } from '../lease/writer-lease.js'
 import type { WriterLease } from '../lease/writer-lease.js'
 import { memoryStatusForBundle } from '../memory-status.js'
@@ -177,6 +181,7 @@ export interface ApplyReviewResult {
   readonly outcome: ApplyOutcomeKind
   readonly proposal: KnowledgeProposalV1
   readonly forgetReceipt?: ForgetReceiptV1
+  readonly commitReceipt?: CommitReceipt
 }
 
 /**
@@ -340,13 +345,15 @@ async function commitInProcess(
   input: ApplyReviewInput,
   proposal: KnowledgeProposalV1,
   lease: { readonly leaseId: string; readonly epoch: number },
-): Promise<void> {
+  sourceBuildOrdinal?: number,
+) {
   const store = createLocalKnowledgeStore({
     knowledgeRoot: input.knowledgeRoot,
     auditBaseDir: input.agentQaRoot,
     executionContext: input.executionContext ?? 'local-interactive',
     epoch: lease.epoch,
     writerLeaseId: lease.leaseId,
+    ...(sourceBuildOrdinal === undefined ? {} : { sourceBuildOrdinal }),
     ...(input.resolvePromotionPosture === undefined
       ? {}
       : { resolvePromotionPosture: input.resolvePromotionPosture }),
@@ -355,6 +362,77 @@ async function commitInProcess(
   // would commit nothing), not a direct append, not a projection call — `commit`, exactly as any
   // curation write reaches it.
   await store.commit([...proposal.deltas])
+  return store
+}
+
+/** The local bridge has no global counter. Fence this commit above every persisted ordinal. */
+function currentOrdinal(knowledgeRoot: string): number {
+  let ordinal = 0
+  for (const entry of enumerateBundleDirs(knowledgeRoot)) {
+    const loaded = loadBundle(entry.dir)
+    if (loaded.kind !== 'loaded') continue
+    ordinal = Math.max(ordinal, loaded.bundle.manifest.createdAtOrdinal,
+      ...loaded.bundle.events.map(event => event.buildOrdinal))
+  }
+  return ordinal
+}
+
+/** commit() returns void: read the committed additions/confirmations, excluding retired victims. */
+function readBackCommittedIds(knowledgeRoot: string, preOrdinal: number, proposal: KnowledgeProposalV1): string[] {
+  const ids = new Set(proposal.deltas.flatMap(delta => delta.kind === 'Confirm' ? [delta.targetId] : []))
+  for (const row of diffSince({ knowledgeRoot, sinceOrdinal: preOrdinal })) {
+    if (row.change === 'added' || row.change === 'confirmed' || row.change === 'superseded') {
+      ids.add(asRecordId(row.recordId))
+    }
+  }
+  return [...ids].filter(id => {
+    const record = locateRecord(knowledgeRoot, id)
+    return record !== undefined && memoryStatusForBundle(record.status) !== 'tombstoned'
+  }).sort()
+}
+
+function mintGate3Receipt(candidateId: string, proposal: KnowledgeProposalV1, producedAtOrdinal: number): Gate3Receipt {
+  if (proposal.mark === undefined) throw new TypeError('mark proposal has no mark stamp')
+  return stampReceiptDigest({
+    schemaVersion: 1, gate: 3, candidateId, verdict: 'pass', producedAtOrdinal,
+    producedBy: { opId: 'knowledge.proposal.apply' }, runId: proposal.mark.runId,
+    ...(proposal.mark.stepIndex === undefined ? {} : {
+      stepId: deriveMarkStepId(proposal.mark.testIndex, proposal.mark.stepIndex),
+    }),
+    mark: proposal.mark.kind,
+  })
+}
+
+async function applyMarkArm(
+  input: ApplyReviewInput, proposal: KnowledgeProposalV1,
+  authority: { readonly leaseId: string; readonly epoch: number }, origin: ProposalOrigin | undefined,
+): Promise<ApplyReviewResult> {
+  const preOrdinal = currentOrdinal(input.knowledgeRoot)
+  const store = await commitInProcess(input, proposal, authority, preOrdinal + 1)
+  const recordIds = readBackCommittedIds(input.knowledgeRoot, preOrdinal, proposal)
+  const committedAtOrdinal = currentOrdinal(input.knowledgeRoot)
+  const commitReceipt: CommitReceipt = {
+    schemaVersion: 1, proposalId: proposal.proposalId, markId: proposal.mark!.markId,
+    committedAtOrdinal, recordIds, gate3: [], promoted: [], held: [],
+  }
+  for (const candidateId of recordIds) {
+    const receipt = mintGate3Receipt(candidateId, proposal, committedAtOrdinal)
+    try {
+      const outcome = await store.promote(asRecordId(candidateId), [receipt])
+      if (outcome.promotionPath !== undefined) {
+        commitReceipt.promoted.push({ candidateId, promotionPath: outcome.promotionPath })
+      }
+    } catch (error) {
+      if (!(error instanceof KnowledgePromotionError)
+        || error.reason === 'propose-only' || error.reason === 'not-found'
+        || error.reason === 'egress-blocked') throw error
+      commitReceipt.held.push({ candidateId, reason: error.reason })
+    }
+    commitReceipt.gate3.push({ candidateId, receiptDigest: receipt.receiptDigest })
+  }
+  const applied: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
+  publishAppliedProposal(input.agentQaRoot, { proposal: applied, commitReceipt, ...decisionTrail(input, origin) })
+  return { outcome: 'applied', proposal: applied, commitReceipt }
 }
 
 /**
@@ -451,6 +529,7 @@ export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewR
     return {
       outcome: 'already-applied',
       proposal: claim.record.proposal,
+      ...(claim.record.commitReceipt === undefined ? {} : { commitReceipt: claim.record.commitReceipt }),
       ...(claim.record.forgetReceipt === undefined
         ? {}
         : { forgetReceipt: claim.record.forgetReceipt }),
@@ -522,6 +601,7 @@ async function commitAndPublish(
   origin: ProposalOrigin | undefined,
 ): Promise<ApplyReviewResult> {
   try {
+    if (proposal.verb === 'mark') return await applyMarkArm(input, proposal, authority, origin)
     // FUNC-04's adjacency edge, decided BEFORE the commit rather than hoped for after it.
     //
     // Deprecating an already-tombstoned record must be "a receipt naming the already-tombstoned

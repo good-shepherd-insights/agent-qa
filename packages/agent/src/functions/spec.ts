@@ -16,6 +16,7 @@ import type {
   AgentAskResult,
   ClauseReceiptStatus,
   CompletedRunHandoff,
+  CommitReceipt,
   EntityDescriptor,
   EntityResolution,
   ForgetReceiptV1,
@@ -823,6 +824,7 @@ export interface KnowledgeApplyOutcome {
   readonly proposal: KnowledgeProposalV1
   /** Present exactly when the applied verb was `forget` (D-19). */
   readonly forgetReceipt?: ForgetReceiptV1
+  readonly commitReceipt?: CommitReceipt
 }
 
 /**

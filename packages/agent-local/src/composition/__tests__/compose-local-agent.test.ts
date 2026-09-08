@@ -61,6 +61,7 @@ import { writeAnalysisArtifact } from '../../analysis/persist-analysis.js'
 import { AGENT_JOB_STORE_DB_FILE } from '../../store/sqlite-job-store.js'
 import {
   composeLocalAgent,
+  createKnowledgeReview,
   LOCAL_CURATION_CAPABILITIES,
   DIGEST_JOB_ID_SOURCE,
   postRunCapabilities,
@@ -188,6 +189,25 @@ describe('composeLocalAgent (D-15)', () => {
     knowledgeRootCalls = 0
     configReads = 0
     host = compose()
+  })
+
+  it.each([true, false])('419 review apply forwards persisted commitReceipt with strict absence (%s)', async present => {
+    const proposalId = mintProposalId(randomUUID)
+    const commitReceipt = { schemaVersion: 1 as const, proposalId, committedAtOrdinal: 12,
+      recordIds: ['fact-confirmed'], gate3: [{ candidateId: 'fact-confirmed', receiptDigest: 'a'.repeat(64) }],
+      promoted: [{ candidateId: 'fact-confirmed', promotionPath: 'user-sovereign' as const }], held: [] }
+    mkdirSync(join(agentQaRoot, 'proposals'), { recursive: true })
+    writeFileSync(join(agentQaRoot, 'proposals', `${proposalId}.applied.json`), JSON.stringify({
+      proposal: { schemaVersion: 1, proposalId, verb: 'accept',
+        targetRef: { grain: 'record', recordId: 'fact-confirmed' }, deltas: [],
+        proposedAt: 1, status: 'applied' },
+      ...(present ? { commitReceipt } : {}),
+    }))
+    const review = createKnowledgeReview({ agentQaRoot, resolveKnowledgeRoot: () => join(root, 'knowledge') })
+    const answer = await review.apply(proposalId)
+    expect(answer.outcome).toBe('already-applied')
+    if (present) expect(answer.commitReceipt).toEqual(commitReceipt)
+    else expect(answer).not.toHaveProperty('commitReceipt')
   })
 
   it('416 exposes only the existing writer edge for receipt and promotion capabilities', () => {

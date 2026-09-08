@@ -1,7 +1,7 @@
 // 2026-09-08, 418 D-20: shared inert proposal codecs and paths; no writer or reaper.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { KnowledgeProposalV1Schema, ForgetReceiptV1Schema, ProposalDecisionRecordSchema, ProposalOriginSchema, ProposalRecordSchema, isProposalKind } from '@vostride/agent-qa-schema'
+import { KnowledgeProposalV1Schema, ForgetReceiptV1Schema, CommitReceiptSchema, ProposalDecisionRecordSchema, ProposalOriginSchema, ProposalRecordSchema, isProposalKind } from '@vostride/agent-qa-schema'
 import type { ProposalKind, ProposalOrigin, ProposalRecord } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
@@ -48,6 +48,7 @@ export const TEMP_SUFFIX = '.tmp'
 export const AppliedProposalRecordSchema = z.object({
   proposal: KnowledgeProposalV1Schema,
   forgetReceipt: ForgetReceiptV1Schema.optional(),
+  commitReceipt: CommitReceiptSchema.optional(),
   /**
    * 391: the mint's attribution, CARRIED ACROSS the apply rather than dropped at it.
    *
@@ -234,4 +235,3 @@ export function readJsonIfPresent(path: string): unknown | undefined {
     throw error
   }
 }
-

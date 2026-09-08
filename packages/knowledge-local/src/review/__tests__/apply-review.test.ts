@@ -27,9 +27,12 @@ import {
   asRunId,
   asRecordId,
   asEvidenceToken,
+  strongestPromotionPath,
 } from '@vostride/agent-qa-schema'
 import type { Anchor, KnowledgeReviewVerb, RecordId } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as knowledgeStore from '../../curator/knowledge-store.js'
+import { loadBundle, readGateReceipts } from '../../bundle-read.js'
 
 import { appendOutcomeEvent } from '../../bundle-append.js'
 import { publishBundle, type BundleStoreConfig } from '../../bundle-publish.test-helper.js'
@@ -264,6 +267,69 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     if (outcome.kind !== 'proposed') throw new Error('expected an accept proposal')
     return outcome.proposal.proposalId
   }
+
+  function proposeMark(recordId: string, kind: 'fact' | 'caution' = 'fact', add = false) {
+    const target = { grain: 'record' as const, recordId }
+    const runId = asRunId('mark-apply-run')
+    const mark = { markId: 'mark_0123456789ab', runId, testIndex: 2, stepIndex: 3,
+      kind: 'false-fail' as const, fix: kind }
+    const scope = { tier: 'product' as const, key: 'apply-storefront' }
+    const draft = makeBundleDraftFixture({ kind, scope, anchors: [ANCHOR],
+      summary: kind === 'fact' ? 'Navigational fact: open the checkout panel first' : 'Avoid stale checkout state' })
+    const shared = { origin: 'user' as const, scope, citedIds: [asRecordId(recordId)],
+      evidenceToken: asEvidenceToken(`mark:${mark.markId}`) }
+    const outcome = proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input: {
+      target, mark, plan: { schemaVersion: 1, markId: mark.markId, kind: 'knowledge', fix: kind,
+        target, wording: 'floor', feedbackSource: { runId, testIndex: 2, stepIndex: 3, kind: mark.kind },
+        runTraceRef: { runId, runSlug: runId }, deltas: [add
+          ? { ...shared, kind: 'Add', bundle: draft }
+          : { ...shared, kind: 'Supersede', victimId: asRecordId(recordId), newBundle: draft }],
+      },
+    } } })
+    if (outcome.kind !== 'proposed') throw new Error('expected mark proposal')
+    return outcome.proposal.proposalId
+  }
+
+  it.each(['fact', 'caution'] as const)('419 confirmed %s fix commits user content and one sovereign Gate-3 receipt', async kind => {
+    const recordId = publish('checkout button')
+    const proposalId = proposeMark(recordId, kind, kind === 'caution')
+    const create = vi.spyOn(knowledgeStore, 'createLocalKnowledgeStore')
+    try {
+      const result = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+      expect(create.mock.calls[0]?.[0].executionContext).toBe('local-interactive')
+      expect(result.outcome).toBe('applied')
+      expect(result.commitReceipt?.gate3).toHaveLength(1)
+      const id = result.commitReceipt!.recordIds[0]!
+      expect(id).not.toBe(recordId)
+      const entry = enumerateBundleDirs(knowledgeRoot).find(entry => loadBundle(entry.dir).kind === 'loaded'
+        && readGateReceipts(entry.dir, id)?.length)! 
+      const loaded = loadBundle(entry.dir)
+      expect(loaded.kind).toBe('loaded')
+      if (loaded.kind !== 'loaded') throw new Error('missing committed record')
+      expect(loaded.bundle.frontmatter.originClass).toBe('user')
+      const lines = readGateReceipts(entry.dir, id)!
+      expect(lines.filter(line => 'gate' in line && line.gate === 3)).toEqual([
+        expect.objectContaining({ gate: 3, verdict: 'pass', candidateId: id,
+          producedBy: { opId: 'knowledge.proposal.apply' }, stepId: '2:3', mark: 'false-fail' }),
+      ])
+      expect(strongestPromotionPath(lines)).toBe('user-sovereign')
+      expect(rowsFor(id)[0]?.status).toBe('active')
+      expect(result.commitReceipt?.promoted).toEqual([{ candidateId: id, promotionPath: 'user-sovereign' }])
+      const before = hashTree(knowledgeRoot)
+      const repeated = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+      expect(repeated.outcome).toBe('already-applied')
+      expect(repeated.commitReceipt).toEqual(result.commitReceipt)
+      expect(hashTree(knowledgeRoot)).toBe(before)
+    } finally { create.mockRestore() }
+  })
+
+  it('419 concurrent mark applies answer the same durable receipt and commit once', async () => {
+    const proposalId = proposeMark(publish('concurrent checkout'))
+    const results = await Promise.all([1, 2].map(() => applyReview({ agentQaRoot, knowledgeRoot, proposalId })))
+    expect(results.map(result => result.outcome).sort()).toEqual(['already-applied', 'applied'])
+    expect(results[0]!.commitReceipt).toEqual(results[1]!.commitReceipt)
+    expect(results[0]!.commitReceipt?.gate3).toHaveLength(1)
+  })
 
   /**
    * How many bundle DIRECTORIES exist, measured off the filesystem rather than off the fold.

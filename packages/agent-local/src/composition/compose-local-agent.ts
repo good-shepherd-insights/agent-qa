@@ -868,6 +868,7 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
         outcome: result.outcome,
         proposal: result.proposal,
         ...(result.forgetReceipt === undefined ? {} : { forgetReceipt: result.forgetReceipt }),
+        ...(result.commitReceipt === undefined ? {} : { commitReceipt: result.commitReceipt }),
       }
     },
   }
