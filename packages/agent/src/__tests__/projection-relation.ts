@@ -64,6 +64,7 @@ import { runsLiveUrlSpec } from '../functions/ops/runs-live-url.js'
 import { runsDigestSpec } from '../functions/ops/runs-digest.js'
 import { runsArtifactSpec } from '../functions/ops/runs-artifact.js'
 import { runsDetailSpec } from '../functions/ops/runs-detail.js'
+import { runsMarkSpec } from '../functions/ops/runs-mark.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsKnowledgeSpec } from '../functions/ops/runs-knowledge.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
@@ -196,6 +197,8 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // which `../../etc/passwd` is a well-formed request.
   'runs.artifact': runsArtifactSpec,
   'runs.detail': runsDetailSpec,
+  // 419 GATE3-01: project the real mark validators through the same inert-declaration law.
+  'runs.mark': runsMarkSpec,
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,
   // 407-01 D-05. Paired here the day it is registered, on the growth seam's own rule. Its output

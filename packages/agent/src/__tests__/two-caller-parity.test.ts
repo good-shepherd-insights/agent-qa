@@ -328,6 +328,8 @@ const ALL_FUNCTION_IDS = [
   // the derived non-read set below is unchanged, which is what keeps the filter assertion a test
   // of the RULE rather than of a frozen list.
   'runs.liveurl',
+  // 419 GATE3-01: shared mutation; safe-mode listing excludes it by declared scope.
+  'runs.mark',
   // 388 D-14: read-tier like its `runs.` siblings, so it too survives safe-mode filtering and
   // the filter assertion below sharpens rather than merely lengthens — `runs.start` plus the
   // four knowledge-write verbs are still exactly the ids that drop out.

@@ -564,7 +564,8 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // 2026-09-06 (416 D-17): 40. `knowledge.gates.list` adds a fold over the receipt count
     // and declared verdict/path/reason. Gate evidence payloads remain inside the scanned
     // boundary: this classifier may not inspect their content to derive its outcome.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(40)
+    // 2026-09-08 (419 GATE3-01): 41. runs.mark folds only governed kinds and address indexes.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(41)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {

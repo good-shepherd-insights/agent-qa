@@ -62,6 +62,7 @@ import { runsDetailSpec } from './ops/runs-detail.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsKnowledgeSpec } from './ops/runs-knowledge.js'
 import { runsListSpec } from './ops/runs-list.js'
+import { runsMarkSpec } from './ops/runs-mark.js'
 import { runsPostProcessingSpec } from './ops/runs-post-processing.js'
 import { runsStartSpec } from './ops/runs-start.js'
 import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from './spec.js'
@@ -125,6 +126,8 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // OPTIONAL `runDetail` dep, so a host that owns no dashboard projection database lists it
   // `unbound` BY NAME instead of answering an empty run about a projection it cannot see.
   runsDetailSpec as FunctionSpec,
+  // 419 GATE3-01: the sovereign mark write binds only where the host supplies feedback.
+  runsMarkSpec as FunctionSpec,
   // 2026-08-27 (405-05 D-12/D-13): THE ref-resolving read — one run's content-addressed evidence
   // blob, by sha, with the content type sniffed from the bytes themselves. Registered beside
   // `runs.detail` because the two are the halves of one claim: the projection carries an
