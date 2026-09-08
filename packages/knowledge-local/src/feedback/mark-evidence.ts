@@ -1,10 +1,11 @@
 // 2026-09-08, 419 D-04/D-09/D-10: append evidence under the caller's authority.
+import { basename } from 'node:path'
 import { asEvidenceToken, asRecordId, deriveEvidenceToken, exercisedAnchors, isPromotionReceipt, type BundleOutcomeEvent,
   type CompletedRunHandoff, type ExecutionContext, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { appendOutcomeEvent } from '../bundle-append.js'
 import type { BundleStoreConfig } from '../bundle-publish.js'
 import { loadBundle, readGateReceipts, verifyBundleIntegrity } from '../bundle-read.js'
-import { BundleTargetResolutionError, resolveProductQualifiedBundleDir } from '../bundle-scan.js'
+import { BundleTargetResolutionError, enumerateBundleDirs, resolveProductQualifiedBundleDir } from '../bundle-scan.js'
 import { withCurrentWriterAuthority } from '../lease/writer-lease.js'
 import { canaryOutcomeObservationId } from '../serving/canary-observation-id.js'
 
@@ -40,7 +41,10 @@ export async function appendMarkEvidence(input: AppendMarkEvidenceInput): Promis
       ...(input.mark.kind === 'false-pass' && input.handoff === undefined
         ? { correlationIncomplete: true as const } : {}) }
     const token = `${MARK_EVIDENCE_TOKEN_PREFIX}${input.mark.markId}`
-    for (const recordId of new Set(input.servedRecordIds)) {
+    const served = new Set(input.servedRecordIds)
+    const targets = new Set([...served, ...(input.mark.kind === 'false-pass'
+      ? enumerateBundleDirs(input.knowledgeRoot).map(entry => basename(entry.dir)) : [])])
+    for (const recordId of targets) {
       let entry
       try {
         entry = resolveProductQualifiedBundleDir({ knowledgeRoot: input.knowledgeRoot, recordId })
@@ -91,6 +95,7 @@ export async function appendMarkEvidence(input: AppendMarkEvidenceInput): Promis
       const hits = bundle.events.filter((event) => (event.type === 'helpful' || event.type === 'confirmed')
         && ((event.observationId !== undefined && observations.has(event.observationId))
           || evidenceTokens.has(event.evidenceToken) || jobs.has(event.curationJobId)))
+      if (!served.has(recordId) && hits.length === 0) continue
       const buildOrdinal = Math.max(bundle.manifest.createdAtOrdinal,
         ...bundle.events.map((event) => event.buildOrdinal)) + 1
       const config: BundleStoreConfig = { knowledgeRoot: input.knowledgeRoot, productKey: entry.product,
@@ -103,7 +108,7 @@ export async function appendMarkEvidence(input: AppendMarkEvidenceInput): Promis
         // Do not misreport safety refusal or a lost target as a successful mark.
         throw new Error(`mark evidence append refused: ${outcome.kind}`)
       }
-      let changed = append({ type: 'confirmed', evidenceToken: asEvidenceToken(token),
+      let changed = served.has(recordId) && append({ type: 'confirmed', evidenceToken: asEvidenceToken(token),
         curationJobId: token, buildOrdinal, origin: 'user' })
       if (changed) result.confirmed += 1
       if (input.mark.kind === 'false-pass') {

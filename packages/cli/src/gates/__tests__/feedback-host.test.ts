@@ -55,6 +55,22 @@ describe('419 feedback host', () => {
     expect(result.receipt.gold.map(item => item.channel)).toContain('overturned-verdict')
     expect(loadBundle(f.published.dir).bundle.events).toContainEqual(expect.objectContaining({ type: 'overturned' }))
   })
+  it('false-pass overturns run evidence even with no served records on the marked step', async () => {
+    const f = markFixture(); root = f.root
+    f.handoff.tests[0]!.steps[0]!.servedBrief.channel3 = []
+    f.handoff.tests[0]!.steps[0]!.verifierVerdict.pass = true; f.save()
+    const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('expected authority')
+    try {
+      appendOutcomeEvent({ knowledgeRoot: f.knowledgeRoot, auditBaseDir: f.agentQaRoot,
+        productKey: 'storefront', commitArtifacts: 'none', writerLeaseId: lease.leaseId, writerEpoch: lease.epoch },
+      asRecordId(f.published.id), { type: 'helpful', evidenceToken: asEvidenceToken('unserved-feedback'),
+        curationJobId: 'fixture-job', buildOrdinal: 45, observationId: `${f.handoff.runId}:test-0:step-0` })
+    } finally { LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: lease.leaseId }) }
+    expect(await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-pass' }))
+      .toMatchObject({ kind: 'marked', receipt: { evidence: { confirmed: 0, overturned: 1 } } })
+    expect(loadBundle(f.published.dir).bundle.events).toContainEqual(expect.objectContaining({ type: 'overturned' }))
+  })
 
   it('draft test_bug invokes authoring edit and files its real pending test-draft identity', async () => {
     const f = markFixture(); root = f.root

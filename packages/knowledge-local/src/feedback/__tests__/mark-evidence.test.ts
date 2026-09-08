@@ -144,6 +144,20 @@ describe('mark evidence appends through the production writer', () => {
     expect(await appendMarkEvidence(value)).toEqual({ confirmed: 1, overturned: 1, skipped: [] })
     expect(deriveBundleTrust(loaded(a.dir)).status).toBe('active')
   })
+  it('overturns unserved run/job/provenance positives with zero served IDs, preserving unrelated evidence and status', async () => {
+    const linked = plant('Newly curated', { runId, curationJobId: 'seed-job' })
+    const unrelated = plant('Unrelated')
+    const value = input([], 'false-pass'); value.handoff = handoff(); value.curationJobIds = ['floor-job']
+    append(linked.id, value, helpful(linked.id, { curationJobId: 'seed-job', observationId: undefined }))
+    append(linked.id, value, helpful(linked.id, { curationJobId: 'floor-job', evidenceToken: asEvidenceToken('floor'), observationId: undefined }))
+    append(unrelated.id, value, helpful(unrelated.id, { observationId: 'another-run' }))
+    const before = readFileSync(join(unrelated.dir, 'evidence/outcomes.jsonl'))
+    const status = deriveBundleTrust(loaded(linked.dir)).status
+    expect(await appendMarkEvidence(value)).toMatchObject({ confirmed: 0, overturned: 2 })
+    expect(loaded(linked.dir).events.filter(event => event.type === 'confirmed')).toEqual([])
+    expect(deriveBundleTrust(loaded(linked.dir))).toMatchObject({ status, counters: { helpful: 0 } })
+    expect(readFileSync(join(unrelated.dir, 'evidence/outcomes.jsonl'))).toEqual(before)
+  })
 
   it('overturns a real positive canary Confirm emitted through the knowledge-port bridge', async () => {
     const a = plant('Checkout'); const value = input([a.id], 'false-pass'); value.handoff = handoff()

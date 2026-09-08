@@ -101,7 +101,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
         mark.gold = frozen.cases
         const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, configDir)
         const servedRecordIds = targets.flatMap(target => curation.servedIdsOn(member.steps[target.stepIndex]!))
-        if (servedRecordIds.length > 0) {
+        if (servedRecordIds.length > 0 || input.kind === 'false-pass') {
           const lease = curation.maintenance.acquireWriterLease(knowledgeRoot)
           if (lease.kind !== 'acquired') throw new Error(`Mark evidence writer lease ${lease.kind}; gold landed, no mark receipt appended`)
           try {
