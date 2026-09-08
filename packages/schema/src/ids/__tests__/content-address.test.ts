@@ -43,6 +43,14 @@ function withDiscriminant(
 }
 
 describe('bundle content address (D-05/D-06/D-07)', () => {
+  it('preserves legacy policy keys and separates actual Supersede generations', () => {
+    const policy = { kind: 'policy', ruleKey: ' Review Rule ' } as const
+    expect(deriveDiscriminantKey(policy)).toBe('{"kind":"policy","ruleKey":"review rule"}')
+    const key = (token: string) => deriveDiscriminantKey({ ...policy, validityWindowEvidenceToken: token })
+    expect(key('policy-materialize:first')).toBe(key('policy-materialize:first'))
+    expect(key('policy-materialize:first')).not.toBe(key('policy-materialize:second'))
+    expect(key('policy-materialize:first')).not.toBe(deriveDiscriminantKey(policy))
+  })
   it('keys real fact supersession generations by evidence while preserving legacy keys', () => {
     const discriminant = { kind: 'fact', subtype: 'selector',
       elementRef: { role: 'button', name: 'Cart' } } as const

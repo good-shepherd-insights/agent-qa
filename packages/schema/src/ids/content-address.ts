@@ -30,7 +30,7 @@ export type BundleDiscriminant =
   | { kind: 'procedure'; flowName: string; stepSignature: string }
   | { kind: 'caution'; errorKey: string }
   | { kind: 'unknown'; conflictRecordIds: readonly string[] }
-  | { kind: 'policy'; ruleKey: string }
+  | { kind: 'policy'; ruleKey: string; validityWindowEvidenceToken?: string }
 
 /**
  * Immutable bundle identity core. `primaryAnchor` is stored normalized. LLM-authored prose
@@ -107,6 +107,9 @@ export function deriveDiscriminantKey(discriminant: BundleDiscriminant): string 
       return canonicalJson({
         kind: discriminant.kind,
         ruleKey: normalizeText(discriminant.ruleKey),
+        ...(discriminant.validityWindowEvidenceToken === undefined ? {} : {
+          validityWindowEvidenceToken: discriminant.validityWindowEvidenceToken,
+        }),
       })
   }
 }

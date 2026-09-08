@@ -312,7 +312,10 @@ function discriminant(
         conflictRecordIds: delta.kind === 'MintUnknown' ? delta.conflict.recordIds : delta.citedIds,
       }
     case 'policy':
-      return { kind: 'policy', ruleKey: canonicalJson(draft.anchors[0]) }
+      return { kind: 'policy', ruleKey: canonicalJson(draft.anchors[0]),
+        ...(delta.kind === 'Supersede'
+          ? { validityWindowEvidenceToken: delta.evidenceToken } : {}),
+      }
   }
 }
 
