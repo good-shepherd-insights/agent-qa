@@ -8,6 +8,7 @@
 //
 // Schema module-discipline law: extension-less relative import specifiers, no node builtins.
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 
 import {
   BRIEF_WHY_NO_TRACE_REASONS,
@@ -16,6 +17,8 @@ import {
   BriefWhyResultSchema,
   ForgetTargetRefSchema,
   KnowledgeAcceptInputSchema,
+  KnowledgeApplyOutcomeSchema,
+  KnowledgeMarkInputSchema,
   KnowledgeForgetInputSchema,
   KnowledgeProposalApplyInputSchema,
   KnowledgeRecordShowOutputSchema,
@@ -35,6 +38,11 @@ import { DELTA_KINDS } from '../delta/delta'
 import { DELTA_ORIGINS } from '../delta/envelope'
 
 const scope = { tier: 'suite', key: 'checkout' } as const
+
+const markStamp = {
+  markId: 'mark_0123456789ab', runId: 'run-1', testIndex: 0,
+  kind: 'false-fail', fix: 'fact',
+}
 
 const confirmDelta = {
   origin: 'user',
@@ -79,6 +87,46 @@ function receipt(overrides: Record<string, unknown> = {}): Record<string, unknow
   }
 }
 
+describe('mark proposals/*.json verb and stamp (419 D-01)', () => {
+  const plan = {
+    schemaVersion: 1, kind: 'knowledge', markId: markStamp.markId,
+    feedbackSource: { runId: 'run-1', testIndex: 0, kind: 'false-fail' },
+    runTraceRef: { runId: 'run-1', runSlug: 'run-1' },
+    fix: 'fact', target: { grain: 'record', recordId: 'rec-checkout-1' },
+    deltas: [confirmDelta], wording: 'floor',
+  }
+
+  it('admits a mark stamp exactly when the persisted verb is mark', () => {
+    const marked = proposal({ verb: 'mark', mark: markStamp })
+    expect(KnowledgeProposalV1Schema.parse(marked)).toEqual(marked)
+    for (const invalid of [proposal({ verb: 'mark' }), proposal({ mark: markStamp })]) {
+      const parsed = KnowledgeProposalV1Schema.safeParse(invalid)
+      expect(parsed.success).toBe(false)
+      if (!parsed.success) expect(parsed.error.issues[0]?.path).toEqual(['mark'])
+    }
+  })
+
+  it('accepts only a non-empty knowledge plan for the mark review input', () => {
+    const input = { target: plan.target, mark: markStamp, plan }
+    expect(KnowledgeMarkInputSchema.parse(input)).toEqual(input)
+    expect(KnowledgeMarkInputSchema.safeParse({ ...input, plan: { ...plan, deltas: [] } }).success).toBe(false)
+    expect(KnowledgeMarkInputSchema.safeParse({ ...input, plan: { ...plan, kind: 'test-edit' } }).success).toBe(false)
+    expect(() => z.toJSONSchema(KnowledgeMarkInputSchema)).not.toThrow()
+  })
+
+  it('round-trips the apply outcome with a commit receipt', () => {
+    const outcome = {
+      outcome: 'applied', proposal: proposal({ verb: 'mark', mark: markStamp }),
+      commitReceipt: {
+        schemaVersion: 1, proposalId: 'prop_alpha-bravo-charlie', markId: markStamp.markId,
+        committedAtOrdinal: 1, recordIds: ['rec-checkout-1'], gate3: [], promoted: [], held: [],
+      },
+    }
+    expect(KnowledgeApplyOutcomeSchema.parse(outcome)).toEqual(outcome)
+    expect(() => z.toJSONSchema(KnowledgeApplyOutcomeSchema)).not.toThrow()
+  })
+})
+
 describe('KnowledgeProposalV1 (D-17, 391-shaped)', () => {
   it('accepts a well-formed pending proposal', () => {
     const parsed = KnowledgeProposalV1Schema.parse(proposal())
@@ -90,16 +138,18 @@ describe('KnowledgeProposalV1 (D-17, 391-shaped)', () => {
   })
 
   it('pins the verb and status vocabularies as exact closed sets', () => {
-    expect([...KNOWLEDGE_REVIEW_VERBS]).toEqual(['accept', 'reject', 'forget'])
+    expect(KNOWLEDGE_REVIEW_VERBS).toEqual(['accept', 'reject', 'forget', 'mark'])
     expect([...KNOWLEDGE_PROPOSAL_STATUSES]).toEqual(['pending', 'applied'])
   })
 
   it('admits every declared verb and refuses one outside the union', () => {
     for (const verb of KNOWLEDGE_REVIEW_VERBS) {
-      expect(KnowledgeProposalV1Schema.parse(proposal({ verb })).verb).toBe(verb)
+      expect(KnowledgeProposalV1Schema.parse(proposal({
+        verb, ...(verb === 'mark' ? { mark: markStamp } : {}),
+      })).verb).toBe(verb)
     }
     // `purge` is a real verb elsewhere in this store, which is exactly why it must be
-    // refused HERE: the review family is accept/reject/forget and nothing else.
+    // refused HERE: the review family is accept/reject/forget/mark and nothing else.
     expect(() => KnowledgeProposalV1Schema.parse(proposal({ verb: 'purge' }))).toThrow()
   })
 

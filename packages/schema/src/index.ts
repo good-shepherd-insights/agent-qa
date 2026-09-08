@@ -1551,3 +1551,7 @@ export type {
   MarkReceipt, RunsMarkInput, RunsMarkOutcome, ImprovementPlanKnowledge, ImprovementPlan,
   CommitReceipt, RunDetailMemberMark, FeedbackPort,
 } from './functions/feedback'
+export { MarkProposalStampSchema } from './knowledge/proposal'
+export type { MarkProposalStamp } from './knowledge/proposal'
+export { KnowledgeMarkInputSchema } from './knowledge/review-verbs'
+export type { KnowledgeMarkInput } from './knowledge/review-verbs'

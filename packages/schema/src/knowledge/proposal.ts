@@ -19,9 +19,10 @@ import type { Delta } from '../delta/delta'
 import { ENTITY_STATUSES } from '../entity/entity-card'
 import { parseShortId } from '../entity/kinds'
 import { BundleProvenanceSchema } from './bundle-files'
+import { MARKS } from './gate-receipt'
 
-/** The three mutating review verbs (KREV-01). Closed: there is no fourth review verb. */
-export const KNOWLEDGE_REVIEW_VERBS = ['accept', 'reject', 'forget'] as const
+/** 2026-09-08, 419 D-01: mark is the fourth — a user mark's drafted fix, confirmed through the same apply door. */
+export const KNOWLEDGE_REVIEW_VERBS = ['accept', 'reject', 'forget', 'mark'] as const
 
 export type KnowledgeReviewVerb = (typeof KNOWLEDGE_REVIEW_VERBS)[number]
 
@@ -184,6 +185,17 @@ export const ForgetPreviewSchema = z.object({
 
 export type ForgetPreview = z.infer<typeof ForgetPreviewSchema>
 
+/** Persisted proposals/*.json stamp binding a drafted fix to its originating mark. */
+export const MarkProposalStampSchema = z.object({
+  markId: z.string().regex(/^mark_[0-9a-f]{12}$/),
+  runId: z.string().min(1),
+  testIndex: z.number().int().nonnegative(),
+  stepIndex: z.number().int().nonnegative().optional(),
+  kind: z.enum(MARKS),
+  fix: z.enum(['fact', 'caution', 'procedure-hint']),
+}).strict()
+export type MarkProposalStamp = z.infer<typeof MarkProposalStampSchema>
+
 /**
  * The proposal itself: what would change, what it is about, and an id to apply it by —
  * committing nothing (D-17).
@@ -196,9 +208,22 @@ export const KnowledgeProposalV1Schema = z.object({
   deltas: z.array(DeltaSchema),
   /** Present only on a forget proposal — the "show what would be removed" half of D-19. */
   receiptPreview: ForgetPreviewSchema.optional(),
+  mark: MarkProposalStampSchema.optional(),
   proposedAt: z.number().int().nonnegative(),
   status: z.enum(KNOWLEDGE_PROPOSAL_STATUSES),
 }).strict().superRefine((value, ctx) => {
+  if (value.mark !== undefined && value.verb !== 'mark') {
+    ctx.addIssue({
+      code: 'custom', path: ['mark'],
+      message: 'only a mark proposal carries the mark stamp (419 D-01)',
+    })
+  }
+  if (value.verb === 'mark' && value.mark === undefined) {
+    ctx.addIssue({
+      code: 'custom', path: ['mark'],
+      message: 'a mark proposal names its mark (419 D-01)',
+    })
+  }
   if (value.receiptPreview !== undefined && value.verb !== 'forget') {
     ctx.addIssue({
       code: 'custom',

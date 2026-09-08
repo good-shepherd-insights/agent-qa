@@ -14,6 +14,7 @@ import { z } from 'zod'
 
 import { ServedRetrievalTraceV1Schema } from '../brief/retrieval-trace'
 import type { ServedBrief } from '../brief/served-brief'
+import { CommitReceiptSchema, ImprovementPlanKnowledgeSchema } from '../functions/feedback'
 import { InspectFilterSchema, InspectRecordViewSchema, RecordChangeSchema } from './maintenance-views'
 import { BundleProvenanceSchema } from './bundle-files'
 import {
@@ -21,6 +22,7 @@ import {
   ForgetTargetRefSchema,
   KnowledgeProposalV1Schema,
   KnowledgeTargetRefSchema,
+  MarkProposalStampSchema,
   ProposalIdSchema,
 } from './proposal'
 
@@ -161,6 +163,14 @@ export const KnowledgeForgetInputSchema = z.object({
 
 export type KnowledgeForgetInput = z.infer<typeof KnowledgeForgetInputSchema>
 
+/** 419 D-01: draft a knowledge fix for a recorded user mark; apply remains the commit door. */
+export const KnowledgeMarkInputSchema = z.object({
+  target: KnowledgeTargetRefSchema,
+  mark: MarkProposalStampSchema,
+  plan: ImprovementPlanKnowledgeSchema,
+}).strict()
+export type KnowledgeMarkInput = z.infer<typeof KnowledgeMarkInputSchema>
+
 /**
  * What a PROPOSE op takes on top of the verb it proposes: the run the caller is serving (391-07).
  *
@@ -247,6 +257,8 @@ export const KnowledgeApplyOutcomeSchema = z.object({
   proposal: KnowledgeProposalV1Schema,
   /** Present exactly when the applied verb was `forget` (D-19). */
   forgetReceipt: ForgetReceiptV1Schema.optional(),
+  /** Present exactly when the applied verb was mark, or the target was a policy record (419 D-04/D-17). */
+  commitReceipt: CommitReceiptSchema.optional(),
 }).strict()
 
 export type KnowledgeApplyOutcomeDto = z.infer<typeof KnowledgeApplyOutcomeSchema>
