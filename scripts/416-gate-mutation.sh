@@ -364,8 +364,11 @@ run_leg () {
     # 418-11 refresh: same intended never-bars and 2/9 complete diagnostic blocks.
     # Measured gate-receipt fixture pointer 138 and promotion source pointers 214/220.
     # Full RED logs: 418-11-gate416-final.log and 418-11-prior-G13-red.log.
-    [ "$id" != G-04 ] || diagnostic_digest=3e7295b5ad45ac4e07a06f7e82bf7aae23b380909d59e256f1d18b67a3119062
-    [ "$id" != G-13 ] || diagnostic_digest=47c41156e1b7bb6729b317bcce555a0eb6b08e497cef8b0156a1cc01b8d74d6e
+    # 419: identical G-04 diagnostic blocks; only gate-receipt fixture line 138→160 moved.
+    [ "$id" != G-04 ] || diagnostic_digest=38fd4f4ba05ad75764217422a6708506f9434b30e1bfe1f41c5ab08ebd571da8
+    # 419 policyApproval changes only the printed Gate-3 provenance type; all nine
+    # diagnostic blocks/pointers, verdict incompatibilities and the never-bar remain.
+    [ "$id" != G-13 ] || diagnostic_digest=be66150ce3ef2c7ccdbb2a746e0a5f96dbefb3b2c061dd6b0291fa5614a67e70
     set +e
     blocks="$(grep -c 'TypeCheckError' "$LOG" | tr -d '[:space:]')"
     set -e
@@ -647,7 +650,7 @@ run_leg G-03 "user-sovereign removed from PROMOTION_PATHS" runtime "$G03_CELL" "
 G04_REQUIRED="$PROMOTION_TESTD [ $PROMOTION_TESTD ]
 $PROMOTION_TESTD:37:74"
 G04_ALLOWED="$G04_REQUIRED
-src/__tests__/gate-receipt.test.ts:138:69"
+src/__tests__/gate-receipt.test.ts:160:69"
 run_leg G-04 "the same removal, read by the path never-bar with measured collateral" testd "$G04_REQUIRED" "$G04_ALLOWED" "$SCHEMA_FILTER" "$PROMOTION_TESTD" "$PROMOTION_PATH" ""
 run_leg G-05 "3 removed from GATE_NUMBERS" runtime "$G05_CELL" "$G05_CELL" "$SCHEMA_FILTER" "$RECEIPT_SUITE" "$GATE_RECEIPT" ""
 run_leg G-06 "abstain removed from GATE_VERDICTS" runtime "$G06_CELL" "$G06_CELL" "$SCHEMA_FILTER" "$RECEIPT_SUITE" "$GATE_RECEIPT" ""
