@@ -414,8 +414,8 @@ apply_mutation () {
       perl -0pi -e 's/            ref\.incomplete \? \(\n(?:.*\n)*?            \) : \(\n/            (\n/' \
         "$REPO_ROOT/$VERDICT_SUBJECT" ;;
     M4)
-      # Match the unique literal including its JSX braces and exact six-space indentation.
-      perl -0pi -e 's/      \{view\.marks !== undefined && onMark \? \(\n(?:.*\n)*?      \) : null\}\n/      {null}\n/' \
+      # Match the shared member-control return, also used when failure analysis is absent.
+      perl -0pi -e 's/  return view\.marks !== undefined && onMark \? \(\n(?:.*\n)*?      \) : null\n/  return null\n/' \
         "$REPO_ROOT/$VERDICT_SUBJECT" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac

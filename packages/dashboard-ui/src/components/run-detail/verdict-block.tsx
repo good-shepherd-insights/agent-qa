@@ -89,34 +89,21 @@ const AFFORDANCE_CLASS =
   "rounded-[2px] border border-border/60 bg-background/60 px-1.5 py-0.5 font-mono text-[10px] " +
   "text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
 
-export function VerdictBlock({
-  view,
-  onCitedStep,
-  onSelectMember,
-  onCitedArtifact,
-  onMark,
-  markDenial,
-  markPending = false,
-}: VerdictBlockProps) {
+/** Bound member feedback exists independently of failure-analysis prose. */
+export function MemberMarkControls({ view, onMark, markDenial, markPending = false }: {
+  view: Pick<MemberVerdictView, 'testIndex' | 'marks'>
+  onMark?: OnMark
+  markDenial?: MarkDenial
+  markPending?: boolean
+}) {
   const [kind, setKind] = useState<Mark>()
   const [note, setNote] = useState('')
   const [correction, setCorrection] = useState<MarkCorrection>()
   const [correctionValid, setCorrectionValid] = useState(true)
   const mark = view.marks?.find(entry => entry.stepIndex === undefined)
-  return (
-    <div
-      data-verdict-block
-      data-verdict-producer={view.producer}
-      data-verdict-confidence={String(view.confidence)}
-      className="mx-2 mt-1 mb-1.5 rounded-[2px] border border-border/60 bg-muted/10 px-3 py-2 text-xs"
-    >
-      <span data-verdict-sentence className="select-text text-foreground/80">
-        <MaskedText text={view.sentence} />
-      </span>
-
-      {/* SPELLED HERE, ONCE, AND NOT HOISTED — 419-11's M4 leg matches this expression literally. */}
-      {view.marks !== undefined && onMark ? (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px]">
+  // 419-11 M4 pins this availability expression in the shared member control.
+  return view.marks !== undefined && onMark ? (
+        <div data-member-mark className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px]">
           {MARKS.map(kind => (
             <button key={kind} type="button" data-mark-kind={kind} className={AFFORDANCE_CLASS}
               disabled={markPending} onClick={() => { setKind(current => current === kind ? undefined : kind); setNote(''); setCorrection(undefined); setCorrectionValid(true) }}>
@@ -149,7 +136,30 @@ export function VerdictBlock({
             <div data-mark-denied className="w-full"><DenialBlock neutralReason={markDenial.reason} remedies={markDenial.remedies} /></div>
           )}
         </div>
-      ) : null}
+      ) : null
+}
+
+export function VerdictBlock({
+  view,
+  onCitedStep,
+  onSelectMember,
+  onCitedArtifact,
+  onMark,
+  markDenial,
+  markPending = false,
+}: VerdictBlockProps) {
+  return (
+    <div
+      data-verdict-block
+      data-verdict-producer={view.producer}
+      data-verdict-confidence={String(view.confidence)}
+      className="mx-2 mt-1 mb-1.5 rounded-[2px] border border-border/60 bg-muted/10 px-3 py-2 text-xs"
+    >
+      <span data-verdict-sentence className="select-text text-foreground/80">
+        <MaskedText text={view.sentence} />
+      </span>
+
+      <MemberMarkControls view={view} onMark={onMark} markDenial={markDenial} markPending={markPending} />
 
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
         {view.marker === undefined ? null : (

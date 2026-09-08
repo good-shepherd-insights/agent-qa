@@ -23,6 +23,7 @@ import { DID_NOT_RUN_LABEL, RUN_DETAIL_UNAVAILABLE_LABEL } from "@/lib/run-detai
 
 const {
   markRunMock,
+  fetchRunAnalysisMock,
   fetchRunMock,
   fetchRunDetailMock,
   fetchRunArtifactMock,
@@ -30,6 +31,7 @@ const {
   fetchAccessibilitySummaryMock,
 } = vi.hoisted(() => ({
   markRunMock: vi.fn(),
+  fetchRunAnalysisMock: vi.fn(),
   fetchRunMock: vi.fn(),
   fetchRunDetailMock: vi.fn(),
   fetchRunArtifactMock: vi.fn(),
@@ -45,7 +47,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   // 2026-08-29 (406-01, D-04): the page's THIRD read — the failure view's. This whole-module
   // mock replaces `@/lib/api`, so an omitted export is `undefined` at the call site and every
   // cell here dies before it asserts. Its own behaviour is measured in `run-detail.analysis.test.tsx`.
-  fetchRunAnalysis: () => Promise.resolve({ runId: RUN_ID, verdicts: [{ perTest: 7, producer: 'deterministic-classifier', confidence: 0 }], sentences: [{ perTest: 7, sentence: 'Cart differs' }], clusters: [] }),
+  fetchRunAnalysis: fetchRunAnalysisMock,
   fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
@@ -250,6 +252,8 @@ beforeEach(() => {
   document.title = ""
   Element.prototype.scrollIntoView = vi.fn()
   markRunMock.mockReset()
+  fetchRunAnalysisMock.mockReset()
+  fetchRunAnalysisMock.mockResolvedValue({ runId: RUN_ID, verdicts: [{ perTest: 7, producer: 'deterministic-classifier', confidence: 0 }], sentences: [{ perTest: 7, sentence: 'Cart differs' }], clusters: [] })
   fetchRunMock.mockReset()
   fetchRunDetailMock.mockReset()
   fetchRunArtifactMock.mockReset()
@@ -297,6 +301,42 @@ async function submit() {
 
 describe('419 page mark post/refetch', () => {
   beforeEach(() => { fetchRunDetailMock.mockResolvedValue(initial) })
+  it.each(['passed', 'analysis-absent'] as const)('allows a first member false-pass with %s analysis', async state => {
+    if (state === 'passed') fetchRunAnalysisMock.mockResolvedValue({ runId: RUN_ID, verdicts: [], sentences: [], clusters: [] })
+    else fetchRunAnalysisMock.mockRejectedValue(new Error('analysis unavailable'))
+    fetchRunDetailMock.mockResolvedValue({ ...initial, members: [{ ...initial.members[0], outcome: 'passed' }] })
+    markRunMock.mockResolvedValue({ kind: 'run-not-found' })
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(container!.querySelector('[data-verdict-sentence]')).toBeNull()
+    expect(container!.querySelectorAll('[data-member-mark] [data-mark-kind]')).toHaveLength(3)
+    await click('[data-member-mark] [data-mark-kind="false-pass"]')
+    await click('[data-member-mark] [data-mark-submit]')
+    expect(markRunMock).toHaveBeenCalledExactlyOnceWith(RUN_ID, { kind: 'false-pass', testId: TEST_ID })
+    expect(container!.querySelector('[data-step-id="7:2"]')).not.toBeNull()
+  })
+  it('shows and replaces the standing passing-member mark independently of its step mark', async () => {
+    fetchRunAnalysisMock.mockResolvedValue({ runId: RUN_ID, verdicts: [], sentences: [], clusters: [] })
+    const standing = { ...marked, kind: 'false-pass' as const }
+    const stepMark = { ...marked, markId: 'mark_1123456789ab', stepIndex: 2 }
+    const replacement = { ...marked, markId: 'mark_2123456789ab', ordinal: 3, kind: 'confirmed-bug' as const }
+    fetchRunDetailMock.mockResolvedValueOnce({ ...initial, members: [{ ...initial.members[0], outcome: 'passed', marks: [standing, stepMark] }] })
+      .mockResolvedValueOnce({ ...initial, members: [{ ...initial.members[0], outcome: 'passed', marks: [replacement, stepMark] }] })
+    markRunMock.mockResolvedValue({ kind: 'marked', receipt: replacement })
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(container!.querySelector('[data-member-mark] [data-mark-chip]')?.textContent).toBe('marked false-pass by user · 2')
+    await click('[data-member-mark] [data-mark-kind="confirmed-bug"]')
+    await click('[data-member-mark] [data-mark-submit]')
+    expect(markRunMock).toHaveBeenCalledExactlyOnceWith(RUN_ID, { kind: 'confirmed-bug', testId: TEST_ID })
+    expect(container!.querySelector('[data-member-mark] [data-mark-chip]')?.textContent).toBe('marked confirmed-bug by user · 3')
+    expect(container!.querySelector('[data-step-id="7:2"] [data-mark-chip]')?.textContent).toContain('false-fail')
+    expect(container!.querySelector('[data-verdict-sentence]')).toBeNull()
+  })
+  it('omits unbound passing-member controls without analysis', async () => {
+    fetchRunAnalysisMock.mockResolvedValue({ runId: RUN_ID, verdicts: [], sentences: [], clusters: [] })
+    fetchRunDetailMock.mockResolvedValue({ ...initial, members: [member(7, { outcome: 'passed', testId: TEST_ID })] })
+    await renderAt(`/runs/${RUN_ID}`)
+    expect(container!.querySelector('[data-mark-kind]')).toBeNull()
+  })
   it.each(['marked', 'already-marked'])('refetches %s and paints only the returned projection', async kind => {
     markRunMock.mockResolvedValue({ kind, receipt: { ...marked, ordinal: 99 } })
     fetchRunDetailMock.mockResolvedValueOnce(initial).mockResolvedValueOnce({
