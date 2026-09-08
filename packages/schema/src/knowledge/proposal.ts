@@ -209,9 +209,14 @@ export const KnowledgeProposalV1Schema = z.object({
   /** Present only on a forget proposal — the "show what would be removed" half of D-19. */
   receiptPreview: ForgetPreviewSchema.optional(),
   mark: MarkProposalStampSchema.optional(),
+  /** 419 D-02: persisted prose provenance; absent on historical proposals. */
+  wording: z.enum(['floor', 'model']).optional(),
   proposedAt: z.number().int().nonnegative(),
   status: z.enum(KNOWLEDGE_PROPOSAL_STATUSES),
 }).strict().superRefine((value, ctx) => {
+  if (value.wording !== undefined && value.verb !== 'mark') {
+    ctx.addIssue({ code: 'custom', path: ['wording'], message: 'only a mark proposal carries wording provenance (419 D-02)' })
+  }
   if (value.mark !== undefined && value.verb !== 'mark') {
     ctx.addIssue({
       code: 'custom', path: ['mark'],

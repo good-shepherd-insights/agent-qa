@@ -167,6 +167,9 @@ import {
   applyFeedback,
   pendingProposalExists,
   showProposalEnvelope,
+  enumerateBundleDirs,
+  loadBundle,
+  verifyBundleIntegrity,
   rejectPendingProposal,
   createAuthoringReader,
   openAddressingLedger as openAddressingLedgerForReview,
@@ -180,6 +183,8 @@ import type {
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeReviewPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
+import type { ArtifactRef, TestDraftProposalV1 } from '@vostride/agent-qa-schema'
+import type { ServedRecordFacts } from '@vostride/agent-qa-knowledge-local'
 export type { ServedRecordFacts, MarkTriage, ApplyFeedbackInput } from '@vostride/agent-qa-knowledge-local'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
@@ -532,6 +537,33 @@ export interface WithdrawPendingProposalInput {
   reason: string
 }
 
+/** Internal facts only: public showRecord deliberately omits bundle construction fields. */
+function readFeedbackRecord(input: { knowledgeRoot: string; recordId: string; evidenceRef?: ArtifactRef }): ServedRecordFacts | undefined {
+  const matches = enumerateBundleDirs(input.knowledgeRoot).flatMap(entry => {
+    const result = loadBundle(entry.dir)
+    return result.kind === 'loaded' && result.bundle.manifest.id === input.recordId
+      && verifyBundleIntegrity(entry.dir).ok ? [result.bundle] : []
+  })
+  if (matches.length !== 1) return undefined
+  const bundle = matches[0]!
+  const artifact = input.evidenceRef ?? bundle.artifactsIndex.artifacts[0]
+  if (artifact === undefined) return undefined
+  return { recordId: input.recordId, kind: bundle.frontmatter.kind,
+    ...(bundle.frontmatter.subtype === undefined ? {} : { subtype: bundle.frontmatter.subtype }),
+    anchors: bundle.frontmatter.anchors.map(anchor => anchor.raw), scope: bundle.frontmatter.scope,
+    summary: bundle.summary, distilledEvidenceRef: { id: artifact.id, sha: artifact.sha },
+    // This is the only admitted draft construction stage; user origin belongs on the delta.
+    originStage: 'run-curation' }
+}
+
+function fileMarkTestDraft(input: { agentQaRoot: string; runId: string; proposal: TestDraftProposalV1 }): string {
+  const proposalId = mintProposalId(randomUUID)
+  writePendingProposalRecord(input.agentQaRoot, { schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+    id: proposalId, kind: 'test-draft', origin: { emittedBy: 'runs.mark', runId: input.runId, at: Date.now() },
+    payload: input.proposal })
+  return proposalId
+}
+
 async function withdrawPendingProposal(input: WithdrawPendingProposalInput): Promise<'withdrawn' | 'not-pending'> {
   if (!pendingProposalExists(input.agentQaRoot, input.proposalId)) return 'not-pending'
   const pending = showProposalEnvelope(input.agentQaRoot, input.proposalId, { now: Date.now() })
@@ -544,6 +576,8 @@ async function withdrawPendingProposal(input: WithdrawPendingProposalInput): Pro
 }
 
 export interface LocalCurationCapabilities {
+  readonly readFeedbackRecord: typeof readFeedbackRecord
+  readonly fileMarkTestDraft: typeof fileMarkTestDraft
   readonly withdrawPendingProposal: typeof withdrawPendingProposal
   readonly appendMarkEvidence: typeof appendMarkEvidence
   readonly triageMark: typeof triageMark
@@ -586,6 +620,8 @@ export interface LocalCurationCapabilities {
 }
 
 export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.freeze({
+  readFeedbackRecord,
+  fileMarkTestDraft,
   withdrawPendingProposal,
   appendMarkEvidence,
   triageMark,

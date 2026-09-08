@@ -106,6 +106,15 @@ describe('mark proposals/*.json verb and stamp (419 D-01)', () => {
     }
   })
 
+  it('persists optional floor/model wording only on mark proposals', () => {
+    for (const wording of ['floor', 'model'] as const) {
+      const marked = proposal({ verb: 'mark', mark: markStamp, wording })
+      expect(KnowledgeProposalV1Schema.parse(marked)).toEqual(marked)
+      expect(KnowledgeProposalV1Schema.safeParse(proposal({ wording })).success).toBe(false)
+    }
+    expect(KnowledgeProposalV1Schema.safeParse(proposal({ verb: 'mark', mark: markStamp, wording: 'invented' })).success).toBe(false)
+  })
+
   it('accepts only a non-empty knowledge plan for the mark review input', () => {
     const input = { target: plan.target, mark: markStamp, plan }
     expect(KnowledgeMarkInputSchema.parse(input)).toEqual(input)

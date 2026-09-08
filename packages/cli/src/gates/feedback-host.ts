@@ -1,22 +1,24 @@
 import { dirname, resolve } from 'node:path'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
-import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
-import { DIGEST_JOB_ID_SOURCE, LOCAL_CURATION_CAPABILITIES, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
+import { chainJobIdsForRun, RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import { createKnowledgeReader, createKnowledgeReview, DIGEST_JOB_ID_SOURCE, LOCAL_CURATION_CAPABILITIES, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import { RunsMarkInputSchema, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type CompletedRunHandoff, type MarkReceipt, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
+import { wordImprovementPlan } from './feedback-wording.js'
 import { resolveEvalSession, resolveMarkedDecisions, resolveProductPartition, FsHandoffSource, FsMarkLedger, freezeGoldenTrajectory, slugBranch } from '../eval-session-composition.js'
 
 export interface FeedbackHostDeps {
   configPath: string
   agentQaRoot: string
   invokeAuthoringDraftEdit?: (input: AuthoringDraftEditInput) => Promise<AuthoringDraftEditOutput>
-  curation?: Pick<LocalCurationCapabilities, 'appendMarkEvidence' | 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'withdrawPendingProposal'> & {
+  curation?: Pick<LocalCurationCapabilities, 'appendMarkEvidence' | 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'withdrawPendingProposal' | 'readFeedbackRecord' | 'fileMarkTestDraft'> & {
     maintenance: Pick<LocalCurationCapabilities['maintenance'], 'acquireWriterLease' | 'releaseLease'>
   }
   reader?: KnowledgeReaderPort
   now?: () => number
   randomUuid: () => string
+  word?: typeof wordImprovementPlan
 }
 
 export class FeedbackFreezeRefusedError extends Error {
@@ -110,9 +112,47 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
             mark.evidence = { confirmed: evidence.confirmed, overturned: evidence.overturned }
           } finally { curation.maintenance.releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
         }
-        mark.disposition = input.kind === 'confirmed-bug'
-          ? { kind: 'confirmed-bug', confirmedRecords: mark.evidence.confirmed }
-          : { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } }
+        if (input.kind === 'confirmed-bug') {
+          mark.disposition = { kind: 'confirmed-bug', confirmedRecords: mark.evidence.confirmed }
+        } else {
+          const step = member.steps[targets[0]!.stepIndex]!
+          const reader = deps.reader ?? createKnowledgeReader(() => knowledgeRoot)
+          const evidenceRef = step.subActions.find(action => action.decisionScreenshotRef !== undefined)?.decisionScreenshotRef
+          const readFacts = async (recordId: string) => {
+            // showRecord supplies the existing guarded read. The private capability adds only
+            // fields needed to construct a draft; unresolved/corrupt records are not counted.
+            if ((await reader.showRecord({ recordId })).kind !== 'found') return undefined
+            return curation.readFeedbackRecord({ knowledgeRoot, recordId, evidenceRef })
+          }
+          const served = (await Promise.all(curation.servedIdsOn(step).map(readFacts))).filter(value => value !== undefined)
+          const procedureId = curation.procedureReadOn(member, step.stepIndex)
+          const procedure = procedureId === undefined ? undefined : await readFacts(procedureId)
+          let plan = curation.applyFeedback({ mark, handoff, resolvedStepIndex: step.stepIndex, served,
+            ...(procedure === undefined ? {} : { procedure }),
+            ...(member.filePath && member.testName ? { testRef: `${member.filePath}::${member.testName}` } : {}) })
+          plan = await (deps.word ?? wordImprovementPlan)({ plan, config: session.config,
+            executionContext: session.executionContext,
+            maskingContextFactory: async () => (await resolveEvalSession({ configPath: deps.configPath })).maskingContextFactory(),
+            auditDir: resolve(deps.agentQaRoot, 'eval', 'audit', 'mark-wording', mark.markId) })
+          if (plan.kind === 'knowledge') {
+            const review = createKnowledgeReview({ agentQaRoot: deps.agentQaRoot, resolveKnowledgeRoot: () => knowledgeRoot })
+            const proposed = await review.propose({ verb: 'mark', input: { target: plan.target,
+              mark: { runId: mark.runId, testIndex: mark.testIndex,
+                ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }),
+                markId: mark.markId, kind: mark.kind, fix: plan.fix }, plan } },
+            { emittedBy: RUNS_MARK_FUNCTION_ID, runId: mark.runId })
+            if (proposed.kind !== 'proposed') throw new Error('Mark draft target disappeared; gold/evidence landed, no mark receipt appended')
+            mark.disposition = { kind: 'drafted', fix: plan.fix, proposalId: proposed.proposal.proposalId, proposalKind: 'knowledge' }
+          } else if (plan.kind === 'test-edit' && deps.invokeAuthoringDraftEdit !== undefined) {
+            const edited = await deps.invokeAuthoringDraftEdit({ testRef: plan.testRef, intent: plan.intent })
+            const proposalId = curation.fileMarkTestDraft({ agentQaRoot: deps.agentQaRoot, runId: mark.runId, proposal: edited.proposal })
+            mark.disposition = { kind: 'drafted', fix: 'test-edit', proposalId, proposalKind: 'test-draft' }
+          } else {
+            mark.disposition = { kind: 'no-draftable-fix', checked: plan.kind === 'no-draftable-fix' ? plan.checked
+              : { servedRecords: served.length, procedureReads: procedure === undefined ? 0 : 1, assertionDrift: true,
+                ...(member.rootCause === undefined ? {} : { rootCause: member.rootCause.class }) } }
+          }
+        }
         if (prior?.disposition.kind === 'drafted') {
           await curation.withdrawPendingProposal({ agentQaRoot: deps.agentQaRoot,
             proposalId: prior.disposition.proposalId, proposalKind: prior.disposition.proposalKind,

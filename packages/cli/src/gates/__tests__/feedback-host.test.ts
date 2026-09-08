@@ -1,14 +1,101 @@
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { asEvidenceToken, asRecordId, type AuthoringDraftEditOutput, type ImprovementPlan } from '@vostride/agent-qa-schema'
+import { wordImprovementPlan } from '../feedback-wording.js'
 import { createFeedbackPortForHost } from '../feedback-host.js'
 import { markFixture, files, loadBundle } from './feedback-fixture.js'
+
+const { readPendingProposal, showProposalEnvelope, decidePendingProposal } = await import(new URL('../../../../knowledge-local/src/review/proposals-store.js', import.meta.url).href)
+const { appendOutcomeEvent } = await import(new URL('../../../../knowledge-local/src/bundle-append.js', import.meta.url).href)
 
 describe('419 feedback host', () => {
   let root: string | undefined
   afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }) })
   const hashes = (dir: string) => files(dir).map(path => [path, createHash('sha256').update(readFileSync(path)).digest('hex')])
+
+  it('draft false-fail files a real mark fact proposal with user Supersede and floor wording', async () => {
+    const f = markFixture(); root = f.root
+    let worded: ImprovementPlan | undefined
+    const word = vi.fn<typeof wordImprovementPlan>(async input => { worded = await wordImprovementPlan(input); return worded })
+    const port = createFeedbackPortForHost({ ...f.deps, word })
+    const result = await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'drafted', fix: 'fact', proposalKind: 'knowledge' }, evidence: { confirmed: 1 } } })
+    if (result.kind !== 'marked' || result.receipt.disposition.kind !== 'drafted') throw new Error('expected draft')
+    const proposal = readPendingProposal(f.agentQaRoot, result.receipt.disposition.proposalId)
+    expect(proposal).toMatchObject({ verb: 'mark', wording: 'floor', mark: { markId: result.receipt.markId }, deltas: [{ kind: 'Supersede', victimId: f.published.id, origin: 'user' }] })
+    expect(proposal.deltas).toHaveLength(1)
+    expect(worded).toMatchObject({ wording: 'floor' })
+    expect(result.receipt.gold).toHaveLength(1)
+    const before = hashes(root)
+    expect(await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })).toEqual({ kind: 'already-marked', receipt: result.receipt })
+    expect(hashes(root)).toEqual(before)
+    expect(word).toHaveBeenCalledOnce()
+    const next = await port.mark({ runId: f.handoff.runId, kind: 'confirmed-bug' })
+    expect(next).toMatchObject({ kind: 'marked', receipt: { supersedes: result.receipt.markId } })
+    expect(showProposalEnvelope(f.agentQaRoot, result.receipt.disposition.proposalId, { now: Date.now() }).envelope.status).toBe('rejected')
+  })
+
+  it('draft false-pass adds a caution, overturned gold and cancels this run helpful attribution', async () => {
+    const f = markFixture(); root = f.root
+    f.handoff.tests[0]!.steps[0]!.verifierVerdict.pass = true; f.save()
+    const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('expected authority')
+    try {
+      appendOutcomeEvent({ knowledgeRoot: f.knowledgeRoot, auditBaseDir: f.agentQaRoot,
+        productKey: 'storefront', commitArtifacts: 'none', writerLeaseId: lease.leaseId, writerEpoch: lease.epoch },
+      asRecordId(f.published.id), { type: 'helpful', evidenceToken: asEvidenceToken('prior-feedback'),
+        curationJobId: 'fixture-job', buildOrdinal: 45, observationId: `${f.handoff.runId}:test-0:step-0` })
+    } finally { LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: lease.leaseId }) }
+    const result = await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-pass' })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'drafted', fix: 'caution' }, evidence: { overturned: 1 } } })
+    if (result.kind !== 'marked') throw new Error('expected mark')
+    expect(result.receipt.gold.map(item => item.channel)).toContain('overturned-verdict')
+    expect(loadBundle(f.published.dir).bundle.events).toContainEqual(expect.objectContaining({ type: 'overturned' }))
+  })
+
+  it('draft test_bug invokes authoring edit and files its real pending test-draft identity', async () => {
+    const f = markFixture(); root = f.root
+    const member = f.handoff.tests[0]!
+    member.steps[0]!.servedBrief.channel3 = []
+    member.rootCause = { class: 'test_bug', producer: 'deterministic-classifier', confidence: 1, evidence: { citedSteps: [0], citedAnchors: [], citedArtifacts: [], rationale: 'Assertion drift' }, memoryMisdirectionRuledOut: true, perTest: 0 }
+    f.save()
+    const draftRef = { filePath: 'tests/draft.yaml', testId: member.testId!, testName: member.testName, contentDigest: 'draft-digest' }
+    const edited: AuthoringDraftEditOutput = { draftRef, editedFrom: { filePath: member.filePath, testName: member.testName, boundBy: 'exact-ref' }, patches: [], thoughts: 'Correct assertion', proposal: {
+      schemaVersion: 1, draftRef, targetPath: member.filePath, sourceDigest: 'original-digest', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Correct assertion',
+    } }
+    const invokeAuthoringDraftEdit = vi.fn(async () => edited)
+    const port = createFeedbackPortForHost({ ...f.deps, invokeAuthoringDraftEdit })
+    const result = await port.mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    expect(invokeAuthoringDraftEdit).toHaveBeenCalledWith({ testRef: `${member.filePath}::${member.testName}`, intent: expect.any(String) })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'drafted', fix: 'test-edit', proposalKind: 'test-draft' } } })
+    if (result.kind !== 'marked' || result.receipt.disposition.kind !== 'drafted') throw new Error('expected test draft')
+    const id = result.receipt.disposition.proposalId
+    expect(showProposalEnvelope(f.agentQaRoot, id, { now: Date.now() }).envelope).toMatchObject({ id, kind: 'test-draft', status: 'pending' })
+    // The existing decision store records a confirmed draft; a later mark leaves it standing.
+    expect(decidePendingProposal(f.agentQaRoot, id, { decision: 'applied', at: Date.now() }).kind).toBe('decided')
+    const before = files(join(f.agentQaRoot, 'proposals')).map(path => readFileSync(path, 'utf8'))
+    await port.mark({ runId: f.handoff.runId, kind: 'confirmed-bug' })
+    expect(files(join(f.agentQaRoot, 'proposals')).map(path => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
+  it('draft no-draftable-fix names the empty resolved evidence without filing a fallback', async () => {
+    const f = markFixture(); root = f.root
+    const member = f.handoff.tests[0]!
+    member.steps[0]!.servedBrief.channel3 = []
+    member.steps[0]!.verifierVerdict.pass = true
+    member.rootCause = { class: 'app_bug', producer: 'deterministic-classifier', confidence: 1, evidence: { citedSteps: [], citedAnchors: [], citedArtifacts: [], rationale: 'Application bug' }, memoryMisdirectionRuledOut: true, perTest: 0 }
+    f.save()
+    const invokeAuthoringDraftEdit = vi.fn()
+    const result = await createFeedbackPortForHost({ ...f.deps, invokeAuthoringDraftEdit }).mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false, rootCause: 'app_bug' } } } })
+    if (result.kind !== 'marked') throw new Error('expected mark')
+    expect(result.receipt.gold).toHaveLength(1)
+    expect(files(join(f.agentQaRoot, 'proposals'))).toEqual([])
+    expect(invokeAuthoringDraftEdit).not.toHaveBeenCalled()
+  })
 
   it.each(['flake', 'environment', 'timeout'] as const)('quarantines %s with no gold, knowledge bytes or proposal', async klass => {
     const f = markFixture(); root = f.root

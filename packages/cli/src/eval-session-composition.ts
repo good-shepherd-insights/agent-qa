@@ -2541,3 +2541,7 @@ function mergeEvalConfig(
 export { resolveMarkedDecisions, resolveProductPartition } from '@vostride/agent-qa-eval'
 export { FsHandoffSource, FsMarkLedger, freezeGoldenTrajectory } from '@vostride/agent-qa-eval-local'
 export { slugBranch } from '@vostride/agent-qa-runner-local'
+export { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
+export { createModel } from '@vostride/agent-qa-model'
+export type { AgentQaConfig as FeedbackWordingConfig } from '@vostride/agent-qa-core'
+export type { RunMaskingContext as FeedbackMaskingContext } from '@vostride/agent-qa-agent-local'

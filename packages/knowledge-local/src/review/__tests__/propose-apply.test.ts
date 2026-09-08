@@ -148,13 +148,14 @@ describe('propose computes everything and commits nothing (D-17)', () => {
       }] } }
   }
 
-  it('files one stamped mark proposal with exact plan deltas and no knowledge writes', () => {
+  it.each(['floor', 'model'] as const)('files one stamped mark proposal with persisted %s wording and no knowledge writes', wording => {
     const input = markInput(publish('checkout button'))
+    input.plan.wording = wording
     const before = hashTree(knowledgeRoot)
     const result = proposeReview({ agentQaRoot, knowledgeRoot, request: { verb: 'mark', input } })
     expect(result.kind).toBe('proposed')
     if (result.kind !== 'proposed') throw new Error('expected proposal')
-    expect(result.proposal).toMatchObject({ verb: 'mark', deltas: input.plan.deltas,
+    expect(result.proposal).toMatchObject({ verb: 'mark', wording, deltas: input.plan.deltas,
       targetRef: input.plan.target, mark: input.mark, status: 'pending' })
     expect(KnowledgeProposalV1Schema.parse(result.proposal)).toEqual(result.proposal)
     expect(readPendingProposal(agentQaRoot, result.proposal.proposalId)).toEqual(result.proposal)
