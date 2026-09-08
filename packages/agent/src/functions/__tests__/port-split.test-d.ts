@@ -178,6 +178,7 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // REQUIRED, so a blob verb on it would make every daemon, MCP and test implementer satisfy a
 // method most of them have no storage for — and a host that could list runs but hold no blobs
 // would have to answer that verb with something. Optional, it is instead an honest `unbound`.
+// 2026-09-08, 419 GATE3-01: feedback is the twenty-eighth member, pinned BY NAME.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'liveView'
@@ -207,6 +208,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'configUndoSource'
     | 'scaffoldContent'
     | 'capabilityCatalog'
+    | 'feedback'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half
@@ -227,7 +229,7 @@ expectTypeOf<keyof QuarantineOperationsPort>().toEqualTypeOf<'list' | 'release' 
 // implements against this and a third member arriving quietly would be a third power no host
 // declared.
 expectTypeOf<keyof KnowledgeReviewPort>().toEqualTypeOf<'propose' | 'apply'>()
-expectTypeOf<KnowledgeProposalRequest['verb']>().toEqualTypeOf<'accept' | 'reject' | 'forget'>()
+expectTypeOf<KnowledgeProposalRequest['verb']>().toEqualTypeOf<'accept' | 'reject' | 'forget' | 'mark'>()
 expectTypeOf<KnowledgeApplyOutcome['forgetReceipt']>().toBeNullable()
 
 // ---- 3. The step-evidence read distinguishes four situations, not two -------------------------

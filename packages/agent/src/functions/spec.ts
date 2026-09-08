@@ -19,6 +19,7 @@ import type {
   EntityDescriptor,
   EntityResolution,
   ForgetReceiptV1,
+  FeedbackPort,
   FunctionScope,
   InspectRecordView,
   JobStatus,
@@ -27,6 +28,7 @@ import type {
   KnowledgeCandidateInjectionResult,
   KnowledgeGatesListResult,
   KnowledgeForgetInput,
+  KnowledgeMarkInput,
   KnowledgeApplyOutcomeKind,
   KnowledgeProposalV1,
   KnowledgeRecordShowInput,
@@ -152,6 +154,47 @@ export type OptionalFunctionDepKey =
   | 'configUndoSource'
   | 'scaffoldContent'
   | 'capabilityCatalog'
+  | 'feedback' // 2026-09-08, 419 GATE3-01: the Gate-3 mark port
+
+/**
+ * 419 GATE3-01: the union previously had only a type-level pin, invisible to vitest.
+ * Like DELTA_ORIGINS and MARKS, this runtime projection makes removal measurable.
+ */
+export const OPTIONAL_FUNCTION_DEP_KEYS = [
+  'liveView',
+  'runInvocation',
+  'knowledgeReview',
+  'postProcessing',
+  'runDetail',
+  'evidenceBlobs',
+  'analysis',
+  'recurrence',
+  'quarantine',
+  'proposalsInbox',
+  'standingGrants',
+  'chatTurn',
+  'draftEvaluation',
+  'authoringRead',
+  'authoringScope',
+  'draftShelf',
+  'authoringFunnel',
+  'draftApply',
+  'authoringProposals',
+  'configFiles',
+  'configValidate',
+  'configApply',
+  'configProposals',
+  'configScan',
+  'configUndoSource',
+  'scaffoldContent',
+  'capabilityCatalog',
+  'feedback',
+] as const satisfies readonly OptionalFunctionDepKey[]
+
+type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+type _Cover = ExactlyEqual<(typeof OPTIONAL_FUNCTION_DEP_KEYS)[number], OptionalFunctionDepKey>
+const _optionalFunctionDepKeysCover: _Cover = true
+void _optionalFunctionDepKeysCover
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -757,6 +800,7 @@ export type KnowledgeProposalRequest =
   | { readonly verb: 'accept'; readonly input: KnowledgeAcceptInput }
   | { readonly verb: 'reject'; readonly input: KnowledgeRejectInput }
   | { readonly verb: 'forget'; readonly input: KnowledgeForgetInput }
+  | { readonly verb: 'mark'; readonly input: KnowledgeMarkInput }
 
 /**
  * What an apply reports: the proposal in its applied state, and — for a forget — the receipt.
@@ -1127,6 +1171,11 @@ export interface FunctionDeps {
    * depending on the function layer.
    */
   quarantine?: QuarantineOperationsPort
+  /**
+   * 419 GATE3-01: the mark port — assembled by the cli host over eval-local + the review
+   * port; absent on hosts that cannot freeze gold.
+   */
+  feedback?: FeedbackPort
   /**
    * 391 PROP-03 / D-15: the proposals inbox's three verbs — list, show, reject.
    *

@@ -25,6 +25,8 @@ export type { CreateFunctionRegistryOptions, FunctionRegistry } from './function
 // 399.1 D-01/D-02: what a classifier answers. A two-field DATA type a receipt is built from; the
 // classifier itself stays on the spec, which never leaves `functions/`.
 export type { ClauseVerdict } from './functions/spec.js'
+// 419 GATE3-01: the optional dep vocabulary is DATA, carrying no dispatch capability.
+export { OPTIONAL_FUNCTION_DEP_KEYS } from './functions/spec.js'
 export {
   invokeFunction,
   FunctionDeniedError,

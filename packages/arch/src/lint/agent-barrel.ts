@@ -218,6 +218,8 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'LiveViewUnavailableError',
   'MARK_UNHANDLED_CEILING',
   'MissingIdempotencyKeyError',
+  // 2026-09-08, 419 GATE3-01: runtime dep vocabulary, DATA with no dispatch handle.
+  'OPTIONAL_FUNCTION_DEP_KEYS',
   // 394-18: the accept verb's id, on the same footing as its `list` sibling below and for the same
   // reason — a composed cell drives the human decision through the SHIPPED verb, and comparing
   // against the DECLARED id rather than a string the cell spelled itself is 387 D-11's rule. The
