@@ -898,6 +898,22 @@ function learnedFrom(
   return learnedView(read.projection)
 }
 
+describe('419 promotion projection copies receipt attribution', () => {
+  it('preserves the path and complete digest, and keeps historical keys absent', () => {
+    const promotionReceiptDigest = '0123456789abcdef'.repeat(4)
+    const view = learnedFrom({
+      curation: { status: 'done' },
+      learned: { canaryAttributions: [], changes: [
+        change('promoted', 'fact-current', { promotionPath: 'user-sovereign', promotionReceiptDigest }),
+        change('promoted', 'fact-historical'),
+      ] },
+    })
+    expect(view.rows[0]).toMatchObject({ promotionPath: 'user-sovereign', promotionReceiptDigest })
+    expect(view.rows[1]).not.toHaveProperty('promotionPath')
+    expect(view.rows[1]).not.toHaveProperty('promotionReceiptDigest')
+  })
+})
+
 /**
  * The proposals line, read where it LIVES — the `ready` arm, beside `learned` and not inside it.
  *

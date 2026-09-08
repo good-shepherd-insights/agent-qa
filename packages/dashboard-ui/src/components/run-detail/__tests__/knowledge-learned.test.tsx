@@ -92,6 +92,32 @@ function row(overrides: Partial<LearnedRowView> = {}): LearnedRowView {
   }
 }
 
+describe('419 receipt-backed promotion attribution', () => {
+  it.each(['user-sovereign', 'gate1+gate2', 'gate1-lower-trust', 'deterministic-verdict-floor'] as const)(
+    'renders the recorded %s path and receipt prefix', promotionPath => {
+      const promotionReceiptDigest = '0123456789abcdef'.repeat(4)
+      const host = render({ state: 'done', rows: [row({ kind: 'promoted', promotionPath, promotionReceiptDigest })] })
+      const attribution = host.querySelector(`[data-promotion-path="${promotionPath}"]`)
+      expect(attribution?.textContent).toBe(`promoted via ${promotionPath} · 0123456789ab`)
+      expect(attribution?.getAttribute('data-promotion-receipt')).toBe(promotionReceiptDigest)
+      expect(rowsOf(host)[0]?.getAttribute('data-record-change')).toBe('promoted')
+    },
+  )
+
+  it('renders a path without inventing a receipt', () => {
+    const host = render({ state: 'done', rows: [row({ kind: 'promoted', promotionPath: 'user-sovereign' })] })
+    const attribution = host.querySelector('[data-promotion-path="user-sovereign"]')
+    expect(attribution?.textContent).toBe('promoted via user-sovereign')
+    expect(attribution?.getAttribute('data-promotion-receipt')).toBe('')
+  })
+
+  it('leaves historical promoted rows without an attribution element', () => {
+    const host = render({ state: 'done', rows: [row({ kind: 'promoted' })] })
+    expect(host.querySelector('[data-promotion-path]')).toBeNull()
+    expect(host.textContent).not.toContain('promoted via')
+  })
+})
+
 describe("an unsettled curation says so in words, never in a spinner (D-12)", () => {
   it("carries the pending word on the root and the one sentence a reader can act on", () => {
     const host = render({ state: "pending", sentence: DELTAS_PENDING_TEXT, rows: [] })

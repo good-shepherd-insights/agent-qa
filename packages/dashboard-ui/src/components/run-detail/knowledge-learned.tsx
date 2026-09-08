@@ -61,6 +61,7 @@ import { Badge } from "@/components/ui/badge"
 import {
   LEARNED_HEADING,
   REVIEW_PROPOSALS_CTA,
+  promotionPathLabel,
   type LearnedChangeKind,
   type LearnedRowView,
   type LearnedView,
@@ -227,6 +228,16 @@ function RecordRow({ row }: { row: LearnedRowView }) {
       className="flex flex-wrap items-baseline gap-2 text-sm"
     >
       <Badge {...KIND_LOOK[row.kind]}>{row.kind}</Badge>
+      {row.promotionPath === undefined ? null : (
+        <span
+          data-promotion-path={row.promotionPath}
+          data-promotion-receipt={row.promotionReceiptDigest ?? ''}
+          className="text-xs text-muted-foreground wrap-anywhere"
+        >
+          promoted via {promotionPathLabel(row.promotionPath)}
+          {row.promotionReceiptDigest ? ` · ${row.promotionReceiptDigest.slice(0, 12)}` : ''}
+        </span>
+      )}
       {row.ref === undefined ? null : row.href === undefined ? (
         <span data-record-ref className="truncate max-w-[32rem] text-muted-foreground">
           {row.ref}

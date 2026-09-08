@@ -28,6 +28,7 @@ import { TRACE_TRUNCATION_TOP_K, formatEntityUri, parseShortId } from '@vostride
 import type {
   BriefWhyNoTraceReason,
   PostProcessingChipStatus,
+  PromotionPath,
   RecordChange,
   RecordedRetrievalRung,
   RetrievalRung,
@@ -447,6 +448,17 @@ export const LEARNED_CHANGE_KINDS = ['added', 'confirmed', 'superseded', 'deprec
 
 export type LearnedChangeKind = (typeof LEARNED_CHANGE_KINDS)[number]
 
+const PROMOTION_PATH_LABELS = {
+  'deterministic-verdict-floor': 'deterministic-verdict-floor',
+  'gate1-lower-trust': 'gate1-lower-trust',
+  'gate1+gate2': 'gate1+gate2',
+  'user-sovereign': 'user-sovereign',
+} satisfies Record<PromotionPath, string>
+
+export function promotionPathLabel(path: PromotionPath): string {
+  return PROMOTION_PATH_LABELS[path]
+}
+
 const LEARNED_CHANGE_KIND_SET: ReadonlySet<string> = new Set(LEARNED_CHANGE_KINDS)
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -785,6 +797,9 @@ export interface LearnedRowView {
    */
   readonly key: string
   readonly kind: LearnedChangeKind
+  /** Receipt attribution copied from the producer, never inferred from the badge. */
+  readonly promotionPath?: PromotionPath
+  readonly promotionReceiptDigest?: string
   /** The record's own id, VERBATIM — the row addresses a record, not a title. */
   readonly recordId: string
   /** The canonical entity URI, built by the schema's own codec. Never hand-formatted here. */
@@ -993,6 +1008,8 @@ function learnedRow(row: RecordChange, index: number): LearnedRowView {
     key: `${String(index)}:${row.recordId}:${row.change}:${String(row.atOrdinal)}`,
     kind: row.change as LearnedChangeKind,
     recordId: row.recordId,
+    ...(row.promotionPath === undefined ? {} : { promotionPath: row.promotionPath }),
+    ...(row.promotionReceiptDigest === undefined ? {} : { promotionReceiptDigest: row.promotionReceiptDigest }),
     ...(ref === undefined ? {} : { ref }),
     ...(href === undefined ? {} : { href }),
   }
