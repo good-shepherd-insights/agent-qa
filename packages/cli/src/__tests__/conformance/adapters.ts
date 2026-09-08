@@ -88,6 +88,7 @@ import { composeLiveView } from '../../composition/live-view-composition.js'
 import { createRunServiceSessionRegistry } from '../../composition/run-service-session-registry.js'
 import { createFnCommand } from '../../commands/fn.js'
 import { mcpFunctionCaller } from '../../commands/mcp.js'
+import { credentialForBearer, matchBearer, resolveMcpTokens } from '../../composition/mcp-token-resolution.js'
 import { CONFORMANCE_EXECUTION_CONTEXT } from './policy-fixtures.js'
 import {
   RUN_SERVICE_FIXTURE_ENTRY_NAME,
@@ -206,7 +207,16 @@ export const MCP_ENUMERATION_SCOPES: readonly FunctionScope[] = Object.freeze([
  * every completeness leg would pass on it. The mint goes through the shipped `mcpFunctionCaller`
  * rather than a literal object, so the surface attribution and the agent origin stay one decision.
  */
-export const MCP_ENUMERATION_CALLER: FunctionCaller = mcpFunctionCaller(MCP_ENUMERATION_SCOPES)
+// 419 D-20: the full census includes credential-required tools. Resolve a declared test bearer
+// through the production mint; a scope-only anonymous listing deliberately has a smaller surface.
+function declaredMcpCaller(grantedScopes: readonly FunctionScope[]): FunctionCaller {
+  const token = 'agent-qa-conformance-enumeration-bearer'
+  const tokens = resolveMcpTokens([
+    { name: 'conformance', tokenEnvVar: 'AGENT_QA_CONFORMANCE_BEARER', scopes: [...grantedScopes] },
+  ], { AGENT_QA_CONFORMANCE_BEARER: token })
+  return mcpFunctionCaller(grantedScopes, credentialForBearer(matchBearer(`Bearer ${token}`, tokens)))
+}
+export const MCP_ENUMERATION_CALLER: FunctionCaller = declaredMcpCaller(MCP_ENUMERATION_SCOPES)
 
 /**
  * The gate-facing seams a verdict leg supplies, and the whole of them (397-04).
@@ -340,11 +350,12 @@ export async function withMcpClient<Answer>(
   // which consults no gate; supplied by anything that CALLS, so an MCP verdict states the context
   // it was taken in rather than inheriting the process's (Pitfall 3).
   registryOptions: ConformanceRegistryOptions = {},
+  declaredBearer = true,
 ): Promise<Answer> {
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
       registry: conformanceRegistry(registryOptions),
-      caller: mcpFunctionCaller(grantedScopes),
+      caller: declaredBearer ? declaredMcpCaller(grantedScopes) : mcpFunctionCaller(grantedScopes),
       maskText: (text: string) => text,
     }),
   )
@@ -365,11 +376,12 @@ export async function withMcpClient<Answer>(
 /** A real `tools/list`, off a real server, for one grant. */
 export async function listMcpToolNames(
   grantedScopes: readonly FunctionScope[] = MCP_ENUMERATION_SCOPES,
+  declaredBearer = true,
 ): Promise<readonly string[]> {
   return withMcpClient(async (client) => {
     const listed = await client.listTools()
     return listed.tools.map((tool) => tool.name)
-  }, grantedScopes)
+  }, grantedScopes, {}, declaredBearer)
 }
 
 /**
@@ -391,8 +403,9 @@ export function plausibleMcpToolSpelling(opId: string): string {
 /** The MCP surface's op-id reach for one grant, read off the wire and folded through the mapping. */
 export async function enumerateMcpOpIds(
   grantedScopes: readonly FunctionScope[] = MCP_ENUMERATION_SCOPES,
+  declaredBearer = true,
 ): Promise<SurfaceEnumeration> {
-  const listedToolNames = await listMcpToolNames(grantedScopes)
+  const listedToolNames = await listMcpToolNames(grantedScopes, declaredBearer)
   const expansion = expandMcpListedTools(listedToolNames, AGENT_QA_TOOL_PROJECTIONS)
   return {
     opIds: expansion.opIds,

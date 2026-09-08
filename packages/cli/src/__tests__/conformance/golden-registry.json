@@ -8,14 +8,14 @@
     "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
     "test-runner update flag reaches this file."
   ],
-  "opCount": 47,
+  "opCount": 48,
   "rows": [
     {
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "agent.ask",
       "inputSchemaDigest": "4263d0037103be319312c3933a8c3bc17f441fe2a8852ac4afd917e78db43f8d",
-      "outputSchemaDigest": "7d7f938abf6a51610f6d7e70b2e5057dc9a1ee68abe95b85f89fe7552e8fa648",
+      "outputSchemaDigest": "e4969fac9427138ed84dc0f8e9e9188f2c488fc247d6346fe83e2dc860f74be4",
       "partition": {
         "kind": "unprojected",
         "reason": "agent-ask-delegation-deferral"
@@ -424,7 +424,7 @@
       "classifies": true,
       "id": "knowledge.accept.propose",
       "inputSchemaDigest": "71fa1a386fd3f9977492ac0c9cd1c3f3a58cc9e4ae17aab816333e9f1ad2bfac",
-      "outputSchemaDigest": "58b3d494ecdf985d7557e64837eb4c1b34136fb63fba69b3446b7a78bf71eae9",
+      "outputSchemaDigest": "3ea633f6d7fd567a684eedb134cd283221b3391c4b772de78be881a4e78e9f4c",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_propose_knowledge_change"
@@ -484,7 +484,7 @@
       "classifies": true,
       "id": "knowledge.forget.propose",
       "inputSchemaDigest": "71fa1a386fd3f9977492ac0c9cd1c3f3a58cc9e4ae17aab816333e9f1ad2bfac",
-      "outputSchemaDigest": "58b3d494ecdf985d7557e64837eb4c1b34136fb63fba69b3446b7a78bf71eae9",
+      "outputSchemaDigest": "3ea633f6d7fd567a684eedb134cd283221b3391c4b772de78be881a4e78e9f4c",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_propose_knowledge_change"
@@ -504,10 +504,10 @@
       "classifies": true,
       "id": "knowledge.gates.list",
       "inputSchemaDigest": "3d7f0e0bc33415cdda6cbc7996e50d2c130d39fdc01d75982faa529d72cf3a29",
-      "outputSchemaDigest": "0b4a335c20f183999735a7842fb283b25985b65b7a1e558b3eae0119a8b6bd48",
+      "outputSchemaDigest": "a3c7490b5e9003ebbebd3dbea6e9cd87f519b2fb904399842f46e0cbd269e262",
       "partition": {
-        "kind": "unprojected",
-        "reason": "not-mid-flight-read"
+        "kind": "projected",
+        "tool": "agent_qa_list_knowledge_gates"
       },
       "requiredScopes": [
         "read"
@@ -524,7 +524,7 @@
       "classifies": true,
       "id": "knowledge.proposal.apply",
       "inputSchemaDigest": "22ab6f6276b4e60e27758f591e47bb2890bf8ee64c4a0e6e861a97d93e0ae980",
-      "outputSchemaDigest": "1e59ba5e9d40e967de077793e72b5caeea495f7a5b38a9fb5e0c87112f88dba4",
+      "outputSchemaDigest": "e4f72e90664eb610875c63ba32fbfb4982c0b3f673d7d2e7d983c1b3cd0bfa70",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_apply_proposal"
@@ -565,7 +565,7 @@
       "classifies": true,
       "id": "knowledge.records.diff",
       "inputSchemaDigest": "13ef772cfc51debbcf88c19eb55fd9cf10405f1de55eae4f51dd4d1060ed4780",
-      "outputSchemaDigest": "8b89dcd8e23a853ad8f8f378c8063e619083cabfc8894e1c176c01ac7e2736a0",
+      "outputSchemaDigest": "8f21594263951f2bc970a1ecdf7cc1786e9b7f0e1dae72c992729fc5d51e1525",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
@@ -605,7 +605,7 @@
       "classifies": true,
       "id": "knowledge.reject.propose",
       "inputSchemaDigest": "e1d4344c43bf56254e8844ed401bdfe80d136d711d831805f4634d8e09acc55c",
-      "outputSchemaDigest": "58b3d494ecdf985d7557e64837eb4c1b34136fb63fba69b3446b7a78bf71eae9",
+      "outputSchemaDigest": "3ea633f6d7fd567a684eedb134cd283221b3391c4b772de78be881a4e78e9f4c",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_propose_knowledge_change"
@@ -625,7 +625,7 @@
       "classifies": true,
       "id": "proposals.accept",
       "inputSchemaDigest": "5b5b489fc085becee74396ff4acbd351c41986518402afe0e024f057ea45824a",
-      "outputSchemaDigest": "85e8a481b072094d1ba008c4674a7033e32b2f816e1dcabb73c9e3f7898d42b1",
+      "outputSchemaDigest": "1c9d74ae7a155fcc133b8e937c58d821c7996968b3bc49da0baff0c13cbfaca0",
       "partition": {
         "kind": "unprojected",
         "reason": "requires-human-origin"
@@ -648,7 +648,7 @@
       "classifies": true,
       "id": "proposals.list",
       "inputSchemaDigest": "012cc84b061f0892ac1067e97d8135fcc4f5a59a1ecdb575383b8914719a4401",
-      "outputSchemaDigest": "ddfedcdf0ededc58aff729949bd1b1b0014a9b2bfbc1906e21e230eb7c92d606",
+      "outputSchemaDigest": "6bd50afa895c6456c54a11c951695f18b701cb9c2900ff98702adf25ae578f0e",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_list_proposals"
@@ -668,7 +668,7 @@
       "classifies": true,
       "id": "proposals.reject",
       "inputSchemaDigest": "f6ca5100a80ae14b0d11df3452fb0faf0ca7ac53e4da300bd06872a20809eda6",
-      "outputSchemaDigest": "6be6d8a97ff0a12be635f0e5b9f33b023e38b003882409f1dcef86754fb5b30d",
+      "outputSchemaDigest": "cc090c0676b7d2fbdfc062373253592f7259c75cb4feaafbfe9b6f39edcacbe8",
       "partition": {
         "kind": "unprojected",
         "reason": "requires-human-origin"
@@ -689,7 +689,7 @@
       "classifies": true,
       "id": "proposals.show",
       "inputSchemaDigest": "22ab6f6276b4e60e27758f591e47bb2890bf8ee64c4a0e6e861a97d93e0ae980",
-      "outputSchemaDigest": "a84d51c2f06900d6e9c86df7f4d87395c7a7d8ab89becdd2649b69c330795954",
+      "outputSchemaDigest": "e9fcdba4a54503708650a469c206b96c17f2fe5023f5d44c557a8171d144bb2c",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_show_proposal"
@@ -789,7 +789,7 @@
       "classifies": true,
       "id": "runs.detail",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "3b5504f385aac1de9fabb7251bd1ffda5996d728d06692996e09b1834f367d74",
+      "outputSchemaDigest": "2f4e52e5ed9ccd1d463fbeebade7356c8568e0ae4736f11500341df064fc5e76",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
@@ -869,7 +869,7 @@
       "classifies": true,
       "id": "runs.knowledge",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "70aa3cef9c39280b0ff83a0252d489f09cc9dd0fc11a089b3895ff3de1f6df43",
+      "outputSchemaDigest": "318423b4878b20cf721418d84808b63eb71dde3926ca2b0234b6035f41516c2a",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
@@ -921,6 +921,27 @@
       "risk": {
         "name": "fn:runs.liveurl",
         "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.mark",
+      "inputSchemaDigest": "6573362fa79c614a2329f58dcb5b04dea8e3dd3a3612d2669011590f4c987b36",
+      "outputSchemaDigest": "4edb196dd94a3a974f4dd101751712e2475c5ca0315ec79cdb20b491efce4f18",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_mark_run"
+      },
+      "requiredScopes": [
+        "knowledge-write"
+      ],
+      "resultKind": "unary",
+      "risk": {
+        "declaredTier": "mutating-shared",
+        "name": "fn:runs.mark",
+        "readOnly": false,
         "recognized": true
       }
     },

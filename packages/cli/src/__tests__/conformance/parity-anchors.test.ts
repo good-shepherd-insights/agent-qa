@@ -283,7 +283,12 @@ describe('the built-binary anchors (D-02)', () => {
       )
 
       const spawned = expandMcpListedTools(spawnedToolNames, AGENT_QA_TOOL_PROJECTIONS)
-      const inProcess = await enumerateMcpOpIds(MCP_ENUMERATION_SCOPES)
+      // 419 D-20: stdio has no request bearer. Compare the SAME credential posture;
+      // the authenticated HTTP census is independently pinned by parity and mark-parity.
+      const inProcess = await enumerateMcpOpIds(MCP_ENUMERATION_SCOPES, false)
+      expect([...spawnedToolNames].sort()).toEqual(AGENT_QA_TOOL_PROJECTIONS
+        .filter(projection => projection.credential !== 'required')
+        .map(projection => projection.name).sort())
 
       // D-01's uncatalogued-capability shape, asked of the BINARY. `parity.test.ts` asks it of the
       // in-process server; a tool that only the shipped artifact serves would be invisible there.

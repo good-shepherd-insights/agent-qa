@@ -381,7 +381,10 @@ type Leg2Plan =
  * rather than from a per-op list this file would have to keep in step with them.
  */
 function leg2InputPlan(projection: ToolProjection, opId: string): Leg2Plan {
-  if (projection.kind === 'apply') return { kind: 'exception', key: 'apply-door-wire-envelope' }
+  // The credential-required mark door takes its native op input; only proposal apply wraps it.
+  if (projection.kind === 'apply' && projection.credential !== 'required') {
+    return { kind: 'exception', key: 'apply-door-wire-envelope' }
+  }
   const composition = compositionOf(projection)
   if (composition === 'union') return { kind: 'arm', at: projection.ops.indexOf(opId) }
   if (composition === 'pipeline' && projection.ops[0] !== opId) {
@@ -1775,6 +1778,18 @@ describe('the parity suite ranges the registry census over every rostered surfac
         args: {},
         grantedScopes: refusing.caller.grantedScopes,
       })
+      // 419 D-20: the declared credential wall refuses direct anonymous calls in-band,
+      // before input parsing. Preserve the protocol wall for every scope-only projection.
+      const projection = AGENT_QA_TOOL_PROJECTIONS.find(candidate => candidate.name === tool)!
+      if (projection.credential === 'required') {
+        expect(called.answered, `${row.opId}: the credential wall must give its typed remedy`).toBe(true)
+        if (!called.answered) throw new Error('missing credential refusal')
+        expect(called.isError).toBe(true)
+        expect(called.structured?.['status']).toBe('credential-required')
+        expect(called.structured?.['applied']).toBe(false)
+        expect(called.text).toContain('present a bearer whose scopes include `knowledge-write`')
+        continue
+      }
       expect(
         called.answered,
         `${row.opId} on mcp (surface wall): a caller without ${refusing.withheldScope} reached the `
@@ -2011,7 +2026,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         continue
       }
       const row = scenarioRowFor(opId as ScenarioOpId)
-      const args = projection.kind === 'apply'
+      const args = projection.kind === 'apply' && projection.credential !== 'required'
         // The apply door's own argument name, read off the op's contract rather than typed: its
         // input carries exactly one field and the tool spells it in snake case.
         ? { proposal_id: (row!.input as { proposalId: string }).proposalId }
@@ -2020,7 +2035,13 @@ describe('the parity suite ranges the registry census over every rostered surfac
       expect(answered.answered, `${opId} on mcp (ask): the protocol refused the call outright`)
         .toBe(true)
       const inBand = answered as Extract<typeof answered, { answered: true }>
-      if (projection.kind === 'apply') {
+      if (projection.credential === 'required') {
+        bandRefusals += 1
+        expect(inBand.isError, `${opId}: anonymous credential-required call must refuse`).toBe(true)
+        expect(inBand.structured?.['status']).toBe('credential-required')
+        expect(inBand.structured?.['applied']).toBe(false)
+        expect(inBand.text).toContain('present a bearer whose scopes include `knowledge-write`')
+      } else if (projection.kind === 'apply') {
         applyTools += 1
         expect(inBand.isError, `${opId} on mcp (ask): refuse-and-teach is an ANSWER, not an error `
           + '— a caller told this is an error has been taught nothing').toBe(false)
@@ -2588,17 +2609,17 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
 
     // THE ARITHMETIC, so a future reader can tell a real change from a loop that stopped ranging.
-    // Twenty-two projected capabilities, on each side, every one of them either compared or
+    // Twenty-four projected capabilities, on each side, every one of them either compared or
     // carrying a declared exception:
-    //   inputs  — 22 less the 2 apply doors and the 1 pipeline downstream op        = 19
-    //   outputs — 22 less the 2 degraded contracts and the 1 pipeline downstream op = 19
+    //   inputs  — 24 less the 2 proposal apply doors and 1 pipeline downstream op = 21
+    //   outputs — 24 less the 2 degraded contracts and 1 pipeline downstream op   = 21
     const projectedOpCount = AGENT_QA_TOOL_PROJECTIONS.reduce(
       (total, projection) => total + projection.ops.length,
       0,
     )
     const exceptionTotal = [...exceptionsTaken.values()].reduce((total, at) => total + at, 0)
-    expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(19)
-    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(19)
+    expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(21)
+    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(21)
     expect(
       inputsCompared + outputsCompared + exceptionTotal,
       'every projected capability must be compared or excepted on BOTH sides — no skip-lists',

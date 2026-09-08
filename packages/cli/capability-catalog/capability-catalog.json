@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 55,
+  "rowCount": 56,
   "rows": [
     {
       "alias": "digest",
@@ -1333,7 +1333,7 @@
       },
       "id": "knowledge.gates.list",
       "kind": "op",
-      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "mcpTool": "agent_qa_list_knowledge_gates",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1352,7 +1352,8 @@
         "read"
       ],
       "surfaces": [
-        "chat"
+        "chat",
+        "mcp"
       ]
     },
     {
@@ -2138,6 +2139,66 @@
       ]
     },
     {
+      "description": "Mark a run or step false-fail / false-pass / confirmed-bug: freeze the marked decision as gold, triage, draft a fix proposal.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "kind": "false-fail",
+          "runId": "<RUNID>"
+        }
+      },
+      "id": "runs.mark",
+      "kind": "op",
+      "mcpTool": "agent_qa_mark_run",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "correctedExpectation": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "false-fail",
+              "false-pass",
+              "confirmed-bug"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "stepIndex": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "testId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "knowledge-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
       "description": "Read one run's post-processing chip statuses from durable job state.",
       "docAnchor": "agent job queue",
       "docPath": "docs/queues.md",
@@ -2267,5 +2328,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "8f697dab11163358d208c85d936e238d88a4983a83c7e652401b18827c8c6394"
+  "rowsDigest": "324f2b025d369af6dfff2f4d7e250770a89dd1ecb634e364a0ebec597b46695c"
 }

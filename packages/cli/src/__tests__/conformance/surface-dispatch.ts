@@ -604,5 +604,6 @@ export async function driveMcpCall(input: {
         code: typeof asError.code === 'number' ? asError.code : undefined,
       }
     }
-  }, input.grantedScopes, { resolveExecutionContext: () => executionContext })
+  // Dispatch policy cells measure the anonymous ask/refusal, not the credentialed census.
+  }, input.grantedScopes, { resolveExecutionContext: () => executionContext }, false)
 }

@@ -80,6 +80,7 @@ import {
   RunsLiveUrlInputSchema,
   RunsGetInputSchema,
   RunsListInputSchema,
+  RunsMarkInputSchema,
   RunsPostProcessingInputSchema,
   RunsStartInputSchema,
 } from '@vostride/agent-qa-schema'
@@ -145,6 +146,7 @@ export const OP_INPUT_CONTRACTS = {
   'runs.liveurl': RunsLiveUrlInputSchema,
   'runs.get': RunsGetInputSchema,
   'runs.list': RunsListInputSchema,
+  'runs.mark': RunsMarkInputSchema,
   'runs.postprocessing': RunsPostProcessingInputSchema,
   'runs.start': RunsStartInputSchema,
 } as const
@@ -929,7 +931,8 @@ export const SCENARIO_TABLE = Object.freeze([
     input: { recordId: 'rec-not-in-this-fixture' },
     perSurface: {
       chat: { reachable: true },
-      mcp: { unprojected: 'not-mid-flight-read' },
+      // 2026-09-08, 419 D-19: the MCP carry from 416.
+      mcp: { reachable: { tool: 'agent_qa_list_knowledge_gates' } },
       fn: { reachable: true },
     },
     renderExpect: { markers: ['recordId', 'kind'] },
@@ -1266,6 +1269,17 @@ export const SCENARIO_TABLE = Object.freeze([
     },
     renderExpect: { markers: ['expiresAt', 'handle', 'liveUrl', 'stream'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
+  scenario({
+    opId: 'runs.mark',
+    input: { runId: FIXTURE_RUN_ID, kind: 'confirmed-bug' },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_mark_run' } },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['receipt', 'kind'] },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   scenario({
     opId: 'runs.postprocessing',

@@ -259,4 +259,6 @@ export const ASK_CAPABLE_OP_IDS: readonly string[] = Object.freeze([
   'grants.revoke',
   'knowledge.proposal.apply',
   'proposals.accept',
+  // 2026-09-08, 419 D-13/D-20: measured by the same shipped ask derivation.
+  'runs.mark',
 ])
