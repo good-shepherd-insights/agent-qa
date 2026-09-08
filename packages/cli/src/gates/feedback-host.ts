@@ -29,12 +29,13 @@ export class FeedbackFreezeRefusedError extends Error {
 }
 
 export function resolveMarkMember(handoff: CompletedRunHandoff, testId?: string) {
-  const candidates = handoff.tests.map(member => ({ testIndex: member.testIndex,
+  const matches = testId === undefined ? handoff.tests : handoff.tests.filter(test => test.testId === testId)
+  const candidates = matches.map(member => ({ testIndex: member.testIndex,
     ...(member.testId === undefined ? {} : { testId: member.testId }) }))
-  if (testId === undefined && candidates.length > 1) {
+  if (candidates.length > 1) {
     return { kind: 'ambiguous-address' as const, runId: handoff.runId, candidates }
   }
-  const member = testId === undefined ? handoff.tests[0] : handoff.tests.find(test => test.testId === testId)
+  const member = matches[0]
   if (member === undefined) return { kind: 'member-not-found' as const, runId: handoff.runId,
     ...(testId === undefined ? {} : { testId }) }
   return { kind: 'member' as const, member }

@@ -142,6 +142,18 @@ describe('419 feedback host', () => {
     f.handoff.tests[0]!.isRerun = true; f.save()
     expect(await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'confirmed-bug' })).toMatchObject({ kind: 'marked', receipt: { isRerun: true } })
   })
+  it('refuses an explicit duplicate test ID with the true member indexes before side effects', async () => {
+    const f = markFixture(); root = f.root
+    const first = f.handoff.tests[0]!
+    f.handoff.tests.push({ ...first, testIndex: 1 }); f.save()
+    const before = hashes(root)
+    expect(await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId,
+      testId: first.testId, kind: 'confirmed-bug' })).toEqual({
+      kind: 'ambiguous-address', runId: f.handoff.runId,
+      candidates: [{ testIndex: 0, testId: first.testId }, { testIndex: 1, testId: first.testId }],
+    })
+    expect(hashes(root)).toEqual(before)
+  })
   it('tracer: confirmed-bug bare mark freezes private gold, evidence and one ledger receipt', async () => {
     const f = markFixture(); root = f.root
     const port = createFeedbackPortForHost(f.deps)
