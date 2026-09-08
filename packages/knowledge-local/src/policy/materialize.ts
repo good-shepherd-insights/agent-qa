@@ -67,6 +67,7 @@ export function materializePolicy(input: MaterializePolicyInput): MaterializeOut
     if (!(error instanceof CommittedEgressBlockedError)) throw error
     return { kind: 'egress-blocked', detections: error.blocked.map(({ label, detector }) => ({ label, detector })) }
   }
+  // 419-POLICY-WRITER: materialize directory
   mkdirSync(dirname(path), { recursive: true })
   // 419-POLICY-WRITER: materialize
   appendFileSync(path, text, 'utf8')

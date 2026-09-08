@@ -365,6 +365,7 @@ async function commitInProcess(
   // THE one write path. Not `proposeDeltas` (which is the propose-only disposition profile and
   // would commit nothing), not a direct append, not a projection call — `commit`, exactly as any
   // curation write reaches it.
+  // 419-COMMIT-DOOR: commitInProcess
   await store.commit([...proposal.deltas])
   return store
 }

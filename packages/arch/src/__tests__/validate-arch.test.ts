@@ -444,9 +444,10 @@ describe('validate:arch held-out fixtures', () => {
       findDepReconciliationOffenders(
         fixtureContract({
           packageDir: 'packages/arch',
-          externalDependencies: ['declared-only'],
+          // This fixture reads arch's real manifest; retain its compiler baseline.
+          externalDependencies: ['typescript', 'declared-only'],
         }),
-        [fixtureHit('runtime-only')],
+        [fixtureHit('typescript'), fixtureHit('runtime-only')],
         repoRoot,
       ),
     ).toEqual([
@@ -460,7 +461,7 @@ describe('validate:arch held-out fixtures', () => {
     const configAwareContract = fixtureContract({
       packageDir: 'packages/arch',
       packageClasses: ['browserSafe'],
-      externalDependencies: [],
+      externalDependencies: ['typescript'],
     })
     const configHits = [
       fixtureHit('node:fs', { file: 'packages/arch/vitest.config.ts' }),
@@ -471,7 +472,8 @@ describe('validate:arch held-out fixtures', () => {
     expect(findClassRuleOffenders(configAwareContract, configHits)).toEqual([
       'packages/arch | packages/arch/vitest.config.ts:1 | node:fs | browserSafe forbids node:*',
     ])
-    expect(findDepReconciliationOffenders(configAwareContract, [], repoRoot)).toEqual([])
+    expect(findDepReconciliationOffenders(configAwareContract, [fixtureHit('typescript')], repoRoot))
+      .toEqual([])
   })
 
   it('held-out DAG walk reports synthetic cycles and accepts acyclic contracts', () => {

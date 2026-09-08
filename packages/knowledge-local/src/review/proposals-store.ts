@@ -253,7 +253,7 @@ export type ConsumeProposalOutcome =
    * for the honest reason that no claim file exists to name (WR-06).
    *
    * The claim is taken by renaming the pending name away FIRST and the applied name is written
-   * LAST, so for the entire duration of `store.commit()` neither name exists. Without this arm a
+   * LAST, so for the entire duration of the store commit neither name exists. Without this arm a
    * caller arriving in that window is told the id names nothing — which is exactly the confusion
    * `restorePendingProposal` below says the design exists to prevent, arriving through a
    * different door.

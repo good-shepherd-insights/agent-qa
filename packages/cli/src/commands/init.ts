@@ -749,6 +749,7 @@ function buildScaffoldFilePlans(
       force,
       true,
     ),
+    // 419-POLICY-WRITER: init scaffold
     scaffoldFilePlan(
       dir,
       join(KNOWLEDGE_ROOT_DIR, 'policies', 'global.md'),

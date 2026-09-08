@@ -663,6 +663,7 @@ export function createLocalKnowledgeStore(
     return { kind: 'promoted', promotionPath: gate.promotionPath, citedReceiptDigests: gate.citedReceiptDigests }
   }
 
+  // 419-COMMIT-DOOR: curator profile pipeline
   async function commitWithProfile(
     deltas: Delta[],
     profile: DispositionProfile,
@@ -725,9 +726,11 @@ export function createLocalKnowledgeStore(
 
   const store: KnowledgePort = {
     proposeDeltas(deltas: Delta[]): Promise<void> {
+      // 419-COMMIT-DOOR: curator propose-only
       return commitWithProfile(deltas, { mode: 'propose-only' })
     },
     commit(deltas: Delta[]): Promise<void> {
+      // 419-COMMIT-DOOR: curator disposition
       return commitWithProfile(deltas, resolveDispositionProfile(config.executionContext))
     },
     async recordCanaryOutcome(outcome: CanaryOutcome): Promise<void> {
@@ -759,6 +762,7 @@ export function createLocalKnowledgeStore(
               executionContext: config.executionContext,
             },
           }
+          // 419-COMMIT-DOOR: curator canary confirm
           await store.commit([confirm])
           /**
            * CR-02: the Confirm has its own fenced commit pipeline; the promotion tail that

@@ -19,6 +19,9 @@ const PACKAGES_DIR = join(HERE, '..', '..', '..')
 const REPO_ROOT = join(PACKAGES_DIR, '..')
 
 const ROOTS = [
+  // 2026-09-08, 419: feedback host/wording are gate-tier; UUID minting is injected by
+  // local-agent-host.ts. Existing model composition roots remain outside this census.
+  'cli/src/gates',
   'eval/src/gate',
   'eval/src/stats',
   'eval/src/labels/split-assignment.ts',
