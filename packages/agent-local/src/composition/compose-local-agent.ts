@@ -556,10 +556,19 @@ function readFeedbackRecord(input: { knowledgeRoot: string; recordId: string; ev
     originStage: 'run-curation' }
 }
 
-function fileMarkTestDraft(input: { agentQaRoot: string; runId: string; proposal: TestDraftProposalV1 }): string {
-  const proposalId = mintProposalId(randomUUID)
+function fileMarkTestDraft(input: { agentQaRoot: string; runId: string; proposal: TestDraftProposalV1;
+  identity?: { uuid: string; at: number } }): string {
+  const proposalId = mintProposalId(input.identity === undefined ? randomUUID : () => input.identity!.uuid)
+  if (input.identity !== undefined) {
+    const existing = showProposalEnvelope(input.agentQaRoot, proposalId, { now: input.identity.at })
+    if (existing !== undefined) {
+      if (existing.envelope.kind !== 'test-draft' || existing.envelope.origin?.runId !== input.runId
+        || existing.envelope.origin?.emittedBy !== 'runs.mark') throw new Error('Mark draft identity conflict')
+      return proposalId
+    }
+  }
   writePendingProposalRecord(input.agentQaRoot, { schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-    id: proposalId, kind: 'test-draft', origin: { emittedBy: 'runs.mark', runId: input.runId, at: Date.now() },
+    id: proposalId, kind: 'test-draft', origin: { emittedBy: 'runs.mark', runId: input.runId, at: input.identity?.at ?? Date.now() },
     payload: input.proposal })
   return proposalId
 }
@@ -792,6 +801,8 @@ export function createKnowledgeReader(
 // ---- knowledge review: the WRITE half of the verb family (387 KREV-01 / D-17 · D-18) --------
 
 export interface CreateKnowledgeReviewInput {
+  /** Stable identity from the serialized mark intent, used only for resumable proposal publication. */
+  readonly proposalIdentity?: { uuid: string; at: number }
   readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>
   readonly agentQaRoot: string
   readonly resolveKnowledgeRoot: () => Promise<string> | string
@@ -838,6 +849,9 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
           agentQaRoot: input.agentQaRoot,
           knowledgeRoot,
           request: request as ProposeReviewRequest,
+          ...(input.proposalIdentity === undefined ? {} : {
+            randomUuid: () => input.proposalIdentity!.uuid, now: () => input.proposalIdentity!.at,
+          }),
           // 391 D-08/D-15: handed straight through, unspread only when absent — the envelope's
           // `at` is stamped by the mint from the SAME instant it writes `proposedAt`, so nothing
           // here samples a clock and the two cannot disagree about when one act happened.

@@ -1,14 +1,30 @@
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, unlinkSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { canonicalJson } from '@vostride/agent-qa-eval'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { MarkReceiptSchema, type MarkAddress, type MarkReceipt } from '@vostride/agent-qa-schema'
+import { AuthoringDraftEditOutputSchema, ImprovementPlanSchema, MarkReceiptSchema, type MarkAddress, type MarkReceipt } from '@vostride/agent-qa-schema'
+import { z } from 'zod'
 
 export const MARKS_LEDGER_FILE = 'marks.jsonl'
 export const MARKS_LEDGER_LOCK_FILE = 'marks.jsonl.lock'
 const LOCK_WAIT_MS = 10_000
 const LOCK_RETRY_MS = 50
+const intentSchema = z.object({
+  schemaVersion: z.literal(1), mark: MarkReceiptSchema,
+  stage: z.enum(['prepared', 'evidence', 'drafted']),
+  proposalUuid: z.uuid(),
+  plan: ImprovementPlanSchema.optional(),
+  testDraft: AuthoringDraftEditOutputSchema.optional(),
+}).strict()
+type MarkIntent = z.infer<typeof intentSchema>
+
+function atomicPublish(path: string, text: string): void {
+  const staged = `${path}.pending`
+  const fd = openSync(staged, 'w', 0o600)
+  try { writeFileSync(fd, text); fsyncSync(fd) } finally { closeSync(fd) }
+  renameSync(staged, path)
+}
 
 export class MarkLedgerBusyError extends Error {
   constructor() {
@@ -43,6 +59,8 @@ export class FsMarkLedger {
   private readonly lock: string
   private readonly runId: string
   private readonly runSlug: string
+  private inTransaction = false
+  private intentValue: MarkIntent | undefined
 
   constructor(config: { root: string; runId: string }) {
     this.runId = config.runId
@@ -94,6 +112,32 @@ export class FsMarkLedger {
       && (address.testId === undefined || receipt.testId === address.testId))
   }
 
+  /** Private resumable state is admitted only while this run's existing lock is held. */
+  prepareIntent(mark: MarkReceipt, proposalUuid: string): MarkIntent {
+    if (!this.inTransaction) throw new Error('mark intent requires the run transaction')
+    const prior = this.intentValue
+    if (prior !== undefined) {
+      const request = (value: MarkReceipt) => ({ runId: value.runId, testIndex: value.testIndex,
+        testId: value.testId, stepIndex: value.stepIndex, kind: value.kind, note: value.note,
+        correctedExpectation: value.correctedExpectation })
+      if (canonicalJson(request(prior.mark)) !== canonicalJson(request(mark))) {
+        throw new Error('An unfinished mark must be retried with its original address and correction')
+      }
+      return prior
+    }
+    return this.checkpointIntent({ schemaVersion: 1, mark, proposalUuid, stage: 'prepared' })
+  }
+
+  checkpointIntent(value: MarkIntent): MarkIntent {
+    if (!this.inTransaction) throw new Error('mark intent requires the run transaction')
+    const intent = intentSchema.parse(value)
+    if (intent.mark.runId !== this.runId || intent.mark.runSlug !== this.runSlug
+      || intent.mark.ordinal !== this.read().length + 1) throw new MarkLedgerCorruptError(intent.mark.ordinal)
+    atomicPublish(join(this.dir, 'mark-intent.json'), `${canonicalJson(intent)}\n`)
+    this.intentValue = intent
+    return intent
+  }
+
   async transact(
     fn: (nextOrdinal: number) => Promise<Omit<MarkReceipt, 'ordinal'> | undefined>,
   ): Promise<MarkReceipt | undefined> {
@@ -113,16 +157,38 @@ export class FsMarkLedger {
     }
     try {
       // Freeze and draft inside this callback: the next host sees the entire prior receipt.
-      const nextOrdinal = this.read().length + 1
+      const receipts = this.read()
+      const nextOrdinal = receipts.length + 1
+      const intentPath = join(this.dir, 'mark-intent.json')
+      this.intentValue = undefined
+      if (existsSync(intentPath)) {
+        try {
+          const intent = intentSchema.parse(JSON.parse(readFileSync(intentPath, 'utf8')))
+          if (intent.mark.runId !== this.runId || intent.mark.runSlug !== this.runSlug) throw new Error('foreign intent')
+          if (intent.mark.ordinal === nextOrdinal) this.intentValue = intent
+          else if (canonicalJson(receipts[intent.mark.ordinal - 1]) === canonicalJson(intent.mark)) unlinkSync(intentPath)
+          else throw new Error('intent does not match receipt order')
+        } catch { throw new MarkLedgerCorruptError(nextOrdinal) }
+      }
+      this.inTransaction = true
       const record = await fn(nextOrdinal)
       if (record === undefined) return undefined
       const receipt = MarkReceiptSchema.parse({ ...record, ordinal: nextOrdinal })
       if (receipt.runId !== this.runId || receipt.runSlug !== this.runSlug) {
         throw new Error('mark receipt does not belong to this run ledger')
       }
-      appendFileSync(this.file, `${canonicalJson(receipt)}\n`, 'utf8')
+      if (this.intentValue !== undefined && (this.intentValue.stage !== 'drafted'
+        || canonicalJson(this.intentValue.mark) !== canonicalJson(receipt))) {
+        throw new MarkLedgerCorruptError(nextOrdinal)
+      }
+      // Preserve the exact historical prefix while atomically publishing the next complete line.
+      const before = existsSync(this.file) ? readFileSync(this.file, 'utf8') : ''
+      atomicPublish(this.file, `${before}${canonicalJson(receipt)}\n`)
+      if (this.intentValue !== undefined) unlinkSync(intentPath)
       return receipt
     } finally {
+      this.inTransaction = false
+      this.intentValue = undefined
       try { closeSync(fd) } finally { unlinkSync(this.lock) }
     }
   }

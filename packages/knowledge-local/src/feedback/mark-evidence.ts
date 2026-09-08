@@ -22,6 +22,8 @@ export interface AppendMarkEvidenceInput {
   handoff?: CompletedRunHandoff
   /** Host-derived chainJobIdsForRun(runId, idSource).curateMemory; never guessed here. */
   curationJobIds?: readonly string[]
+  /** Resuming one mark reports its complete logical effect, including already durable events. */
+  includeAlreadyAppended?: boolean
 }
 
 export type AppendMarkEvidenceOutcome = {
@@ -104,7 +106,7 @@ export async function appendMarkEvidence(input: AppendMarkEvidenceInput): Promis
       function append(event: BundleOutcomeEvent): boolean {
         const outcome = appendOutcomeEvent(config, asRecordId(recordId), event)
         if (outcome.kind === 'appended') return true
-        if (outcome.kind === 'duplicate') return false
+        if (outcome.kind === 'duplicate') return input.includeAlreadyAppended === true
         // Do not misreport safety refusal or a lost target as a successful mark.
         throw new Error(`mark evidence append refused: ${outcome.kind}`)
       }

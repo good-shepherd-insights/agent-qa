@@ -103,6 +103,33 @@ describe('FsMarkLedger', () => {
     expect(existsSync(join(dir, MARKS_LEDGER_LOCK_FILE))).toBe(false)
     expect(await ledger.append(record)).toMatchObject({ ordinal: 1 })
   })
+  it('resumes a strictly validated intent at the same ordinal and rejects a different request', async () => {
+    const proposalUuid = '01234567-89ab-4def-8123-456789abcdef'
+    await expect(ledger.transact(async ordinal => {
+      ledger.prepareIntent({ ...record, ordinal }, proposalUuid)
+      throw new Error('after intent')
+    })).rejects.toThrow('after intent')
+    await expect(ledger.transact(async ordinal => {
+      ledger.prepareIntent({ ...record, ordinal, kind: 'false-pass' }, proposalUuid)
+      return undefined
+    })).rejects.toThrow('unfinished mark')
+    const recovered = await ledger.transact(async ordinal => {
+      const intent = ledger.prepareIntent({ ...record, markId: 'mark_abcdef012345', ordinal }, proposalUuid)
+      expect(intent.mark.markId).toBe(record.markId)
+      ledger.checkpointIntent({ ...intent, stage: 'drafted' })
+      return intent.mark
+    })
+    expect(recovered).toMatchObject({ ordinal: 1, markId: record.markId })
+    expect(ledger.read()).toEqual([recovered])
+    expect(existsSync(join(dir, 'mark-intent.json'))).toBe(false)
+  })
+  it('refuses malformed intent bytes before invoking any side effect', async () => {
+    writeFileSync(join(dir, 'mark-intent.json'), JSON.stringify({ schemaVersion: 1, mark: record, extra: true }))
+    const fn = vi.fn(async () => record)
+    await expect(ledger.transact(fn)).rejects.toThrow(MarkLedgerCorruptError)
+    expect(fn).not.toHaveBeenCalled()
+    expect(ledger.read()).toEqual([])
+  })
 
   it('a no-op callback consumes no ordinal and appends no file', async () => {
     expect(await ledger.transact(async () => undefined)).toBeUndefined()

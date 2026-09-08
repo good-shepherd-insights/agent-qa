@@ -30,7 +30,7 @@ import type {
 
 import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
-import { mintProposalId, writePendingProposal } from './proposals-store.js'
+import { mintProposalId, readProposal, writePendingProposal } from './proposals-store.js'
 
 /**
  * The §7.7 projections a forget in THIS store actually scrubs, enumerated honestly.
@@ -267,6 +267,15 @@ export function proposeReview(input: ProposeReviewInput): ProposeReviewOutcome {
     ...(input.request.verb === 'forget' ? { receiptPreview: forgetPreview(resolved) } : {}),
     proposedAt,
     status: 'pending',
+  }
+  if (proposal.verb === 'mark') {
+    const existing = readProposal(input.agentQaRoot, proposalId)
+    if (existing !== undefined) {
+      if (canonicalJson({ ...existing, status: 'pending' }) !== canonicalJson(proposal)) {
+        throw new MarkPlanIntegrityError(resolved.recordId)
+      }
+      return { kind: 'proposed', proposal: existing }
+    }
   }
 
   // The envelope's `at` IS the proposal's `proposedAt`, read off the same value rather than

@@ -70,7 +70,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           return undefined
         }
         const triage = curation.triageMark(member)
-        const mark: MarkReceipt = {
+        let mark: MarkReceipt = {
           schemaVersion: 1, ...input, ...address, runSlug: slugBranch(input.runId),
           markId: `mark_${deps.randomUuid().replace(/-/g, '').slice(0, 12)}`,
           origin: 'user', ordinal, markedAt: (deps.now ?? Date.now)(),
@@ -92,6 +92,9 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           mark.disposition = { kind: 'quarantined', class: triage.class }
           return mark
         }
+        let intent = ledger.prepareIntent(mark, deps.randomUuid())
+        mark = intent.mark
+        if (intent.stage !== 'drafted') {
         const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
         const configDir = dirname(resolve(deps.configPath))
         const frozen = freezeGoldenTrajectory({ agentQaRoot: deps.agentQaRoot,
@@ -101,18 +104,20 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
         mark.gold = frozen.cases
         const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, configDir)
         const servedRecordIds = targets.flatMap(target => curation.servedIdsOn(member.steps[target.stepIndex]!))
-        if (servedRecordIds.length > 0 || input.kind === 'false-pass') {
+        if (intent.stage === 'prepared' && (servedRecordIds.length > 0 || input.kind === 'false-pass')) {
           const lease = curation.maintenance.acquireWriterLease(knowledgeRoot)
           if (lease.kind !== 'acquired') throw new Error(`Mark evidence writer lease ${lease.kind}; gold landed, no mark receipt appended`)
           try {
             const evidence = await curation.appendMarkEvidence({ knowledgeRoot, auditBaseDir: deps.agentQaRoot,
               executionContext: session.executionContext, lease: { leaseId: lease.leaseId, epoch: lease.epoch },
               mark, servedRecordIds, handoff,
+              includeAlreadyAppended: true,
               curationJobIds: [chainJobIdsForRun(input.runId, DIGEST_JOB_ID_SOURCE).curateMemory] })
             if (evidence.correlationIncomplete) throw new Error('Mark evidence correlation incomplete; gold/evidence may have landed, no receipt appended')
             mark.evidence = { confirmed: evidence.confirmed, overturned: evidence.overturned }
           } finally { curation.maintenance.releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
         }
+        intent = ledger.checkpointIntent({ ...intent, mark, stage: 'evidence' })
         if (input.kind === 'confirmed-bug') {
           mark.disposition = { kind: 'confirmed-bug', confirmedRecords: mark.evidence.confirmed }
         } else {
@@ -128,15 +133,17 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           const served = (await Promise.all(curation.servedIdsOn(step).map(readFacts))).filter(value => value !== undefined)
           const procedureId = curation.procedureReadOn(member, step.stepIndex)
           const procedure = procedureId === undefined ? undefined : await readFacts(procedureId)
-          let plan = curation.applyFeedback({ mark, handoff, resolvedStepIndex: step.stepIndex, served,
+          let plan = intent.plan ?? curation.applyFeedback({ mark, handoff, resolvedStepIndex: step.stepIndex, served,
             ...(procedure === undefined ? {} : { procedure }),
             ...(member.filePath && member.testName ? { testRef: `${member.filePath}::${member.testName}` } : {}) })
-          plan = await (deps.word ?? wordImprovementPlan)({ plan, config: session.config,
+          if (intent.plan === undefined) plan = await (deps.word ?? wordImprovementPlan)({ plan, config: session.config,
             executionContext: session.executionContext,
             maskingContextFactory: async () => (await resolveEvalSession({ configPath: deps.configPath })).maskingContextFactory(),
             auditDir: resolve(deps.agentQaRoot, 'eval', 'audit', 'mark-wording', mark.markId) })
+          intent = ledger.checkpointIntent({ ...intent, mark, plan })
           if (plan.kind === 'knowledge') {
-            const review = createKnowledgeReview({ agentQaRoot: deps.agentQaRoot, resolveKnowledgeRoot: () => knowledgeRoot })
+            const review = createKnowledgeReview({ agentQaRoot: deps.agentQaRoot, resolveKnowledgeRoot: () => knowledgeRoot,
+              proposalIdentity: { uuid: intent.proposalUuid, at: mark.markedAt } })
             const proposed = await review.propose({ verb: 'mark', input: { target: plan.target,
               mark: { runId: mark.runId, testIndex: mark.testIndex,
                 ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }),
@@ -145,14 +152,18 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
             if (proposed.kind !== 'proposed') throw new Error('Mark draft target disappeared; gold/evidence landed, no mark receipt appended')
             mark.disposition = { kind: 'drafted', fix: plan.fix, proposalId: proposed.proposal.proposalId, proposalKind: 'knowledge' }
           } else if (plan.kind === 'test-edit' && deps.invokeAuthoringDraftEdit !== undefined) {
-            const edited = await deps.invokeAuthoringDraftEdit({ testRef: plan.testRef, intent: plan.intent })
-            const proposalId = curation.fileMarkTestDraft({ agentQaRoot: deps.agentQaRoot, runId: mark.runId, proposal: edited.proposal })
+            const edited = intent.testDraft ?? await deps.invokeAuthoringDraftEdit({ testRef: plan.testRef, intent: plan.intent })
+            intent = ledger.checkpointIntent({ ...intent, mark, testDraft: edited })
+            const proposalId = curation.fileMarkTestDraft({ agentQaRoot: deps.agentQaRoot, runId: mark.runId, proposal: edited.proposal,
+              identity: { uuid: intent.proposalUuid, at: mark.markedAt } })
             mark.disposition = { kind: 'drafted', fix: 'test-edit', proposalId, proposalKind: 'test-draft' }
           } else {
             mark.disposition = { kind: 'no-draftable-fix', checked: plan.kind === 'no-draftable-fix' ? plan.checked
               : { servedRecords: served.length, procedureReads: procedure === undefined ? 0 : 1, assertionDrift: true,
                 ...(member.rootCause === undefined ? {} : { rootCause: member.rootCause.class }) } }
           }
+        }
+        ledger.checkpointIntent({ ...intent, mark, stage: 'drafted' })
         }
         if (prior?.disposition.kind === 'drafted') {
           await curation.withdrawPendingProposal({ agentQaRoot: deps.agentQaRoot,

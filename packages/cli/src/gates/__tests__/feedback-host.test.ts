@@ -37,6 +37,42 @@ describe('419 feedback host', () => {
     expect(next).toMatchObject({ kind: 'marked', receipt: { supersedes: result.receipt.markId } })
     expect(showProposalEnvelope(f.agentQaRoot, result.receipt.disposition.proposalId, { now: Date.now() }).envelope.status).toBe('rejected')
   })
+  it('resumes the same frozen mark after a real busy knowledge lease without cleanup or a new ordinal', async () => {
+    const f = markFixture(); root = f.root
+    const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('expected authority')
+    try {
+      await expect(createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' }))
+        .rejects.toThrow('writer lease held')
+    } finally { LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: lease.leaseId }) }
+    const goldBefore = hashes(join(root, 'agent-qa-eval'))
+    const result = await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 1, evidence: { confirmed: 1 }, disposition: { kind: 'drafted' } } })
+    expect(hashes(join(root, 'agent-qa-eval'))).toEqual(goldBefore)
+    expect(readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1)
+    expect(files(f.runDir).some(path => path.endsWith('mark-intent.json'))).toBe(false)
+    expect(await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' }))
+      .toMatchObject({ kind: 'already-marked' })
+  })
+  it('resumes after proposal publication and before receipt with stable proposals, evidence and gold', async () => {
+    const f = markFixture(); root = f.root
+    await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })
+    const curation = { ...LOCAL_CURATION_CAPABILITIES,
+      withdrawPendingProposal: vi.fn(async () => { throw new Error('injected withdrawal failure') }) }
+    await expect(createFeedbackPortForHost({ ...f.deps, curation }).mark({ runId: f.handoff.runId, kind: 'false-pass' }))
+      .rejects.toThrow('injected withdrawal failure')
+    const goldBefore = hashes(join(root, 'agent-qa-eval'))
+    const proposalIds = files(join(f.agentQaRoot, 'proposals')).filter(path => path.endsWith('.json'))
+      .map(path => JSON.parse(readFileSync(path, 'utf8')).id).sort()
+    const word = vi.fn<typeof wordImprovementPlan>()
+    const result = await createFeedbackPortForHost({ ...f.deps, word }).mark({ runId: f.handoff.runId, kind: 'false-pass' })
+    expect(result).toMatchObject({ kind: 'marked', receipt: { ordinal: 2, disposition: { kind: 'drafted' } } })
+    expect(word).not.toHaveBeenCalled()
+    expect(hashes(join(root, 'agent-qa-eval'))).toEqual(goldBefore)
+    expect(files(join(f.agentQaRoot, 'proposals')).filter(path => path.endsWith('.json'))
+      .map(path => { const doc = JSON.parse(readFileSync(path, 'utf8')); return doc.id ?? doc.record?.id ?? doc.proposal?.proposalId }).sort()).toEqual(proposalIds)
+    expect(readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n')).toHaveLength(2)
+  })
 
   it('draft false-pass adds a caution, overturned gold and cancels this run helpful attribution', async () => {
     const f = markFixture(); root = f.root
