@@ -79,6 +79,8 @@ const FIXTURE_OP_SCOPES: Readonly<Record<string, readonly FunctionScope[]>> = Ob
   'authoring.draft.edit': ['test-write'],
   'authoring.draft.verify': ['test-write'],
   'runs.start': ['run'],
+  'runs.mark': ['knowledge-write'],
+  'knowledge.gates.list': ['read'],
   'config.field.set': ['config-write'],
   'config.target.create': ['config-write'],
   'config.target.edit': ['config-write'],
