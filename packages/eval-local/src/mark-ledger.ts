@@ -5,11 +5,10 @@ import { canonicalJson } from '@vostride/agent-qa-eval'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { AuthoringDraftEditOutputSchema, ImprovementPlanSchema, MarkReceiptSchema, type MarkAddress, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
+import { acquireMarkLock } from './mark-lock.js'
 
 export const MARKS_LEDGER_FILE = 'marks.jsonl'
 export const MARKS_LEDGER_LOCK_FILE = 'marks.jsonl.lock'
-const LOCK_WAIT_MS = 10_000
-const LOCK_RETRY_MS = 50
 const intentSchema = z.object({
   schemaVersion: z.literal(1), mark: MarkReceiptSchema,
   stage: z.enum(['prepared', 'evidence', 'drafted']),
@@ -142,19 +141,7 @@ export class FsMarkLedger {
     fn: (nextOrdinal: number) => Promise<Omit<MarkReceipt, 'ordinal'> | undefined>,
   ): Promise<MarkReceipt | undefined> {
     if (!existsSync(join(this.dir, HANDOFF_FILE))) throw new MarkLedgerNoRunError()
-    const started = Date.now()
-    let fd: number
-    while (true) {
-      try {
-        fd = openSync(this.lock, 'wx')
-        break
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-        const remaining = LOCK_WAIT_MS - (Date.now() - started)
-        if (remaining <= 0) throw new MarkLedgerBusyError()
-        await new Promise(resolve => setTimeout(resolve, Math.min(LOCK_RETRY_MS, remaining)))
-      }
-    }
+    const release = await acquireMarkLock(this.lock, this.runId, () => new MarkLedgerBusyError())
     try {
       // Freeze and draft inside this callback: the next host sees the entire prior receipt.
       const receipts = this.read()
@@ -189,7 +176,7 @@ export class FsMarkLedger {
     } finally {
       this.inTransaction = false
       this.intentValue = undefined
-      try { closeSync(fd) } finally { unlinkSync(this.lock) }
+      release()
     }
   }
 
