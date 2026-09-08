@@ -6,6 +6,7 @@ import {
   loadGuardrailPolicy, type AuditSink,
 } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import { withCurrentWriterAuthority, type CurrentWriterAuthority } from '../lease/writer-lease.js'
 
 export const POLICY_MATERIALIZE_EGRESS_CHANNEL = 'policy-materialize'
 
@@ -26,6 +27,7 @@ export function policyShelfPath(knowledgeRoot: string, scope: string): string {
 }
 
 export interface MaterializePolicyInput {
+  writerAuthority: CurrentWriterAuthority
   knowledgeRoot: string
   recordId: string
   scope: string
@@ -46,6 +48,10 @@ export type MaterializeOutcome =
  * commitArtifacts governs binary bundle artifacts, not policy text or git commits.
  */
 export function materializePolicy(input: MaterializePolicyInput): MaterializeOutcome {
+  return withCurrentWriterAuthority(input.knowledgeRoot, input.writerAuthority, () => materializeUnderAuthority(input))
+}
+
+function materializeUnderAuthority(input: MaterializePolicyInput): MaterializeOutcome {
   if ([input.ruleText, input.title ?? '', input.scope].some(text => /<!--|-->/.test(text))) {
     throw new PolicyTextRefusedError()
   }

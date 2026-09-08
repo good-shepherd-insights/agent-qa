@@ -463,7 +463,7 @@ async function applyPolicyArm(
   try {
     materialized = materializePolicy({ knowledgeRoot: input.knowledgeRoot, recordId,
       scope: scope.tier === 'global' ? 'global' : scope.key, ruleText: bundle.body,
-      title: bundle.summary, auditBaseDir: input.agentQaRoot })
+      title: bundle.summary, auditBaseDir: input.agentQaRoot, writerAuthority: authority })
   } catch (error) {
     if (!(error instanceof PolicyTextRefusedError)) throw error
   }

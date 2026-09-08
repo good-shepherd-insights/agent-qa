@@ -1,18 +1,54 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import type { GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { materializePolicy, PolicyTextRefusedError, policyShelfPath } from '../materialize.js'
+import { acquireWriterLease, releaseLease, WriterAuthorityLostError } from '../../lease/writer-lease.js'
 
 describe('materializePolicy sovereign authored shelf', () => {
   let root: string
-  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'policy-materialize-')) })
+  let writerAuthority: { leaseId: string; epoch: number }
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'policy-materialize-'))
+    const lease = acquireWriterLease(root)
+    if (lease.kind !== 'acquired') throw new Error('lease unavailable')
+    writerAuthority = lease
+  })
   afterEach(() => { rmSync(root, { recursive: true, force: true }) })
   function input(ruleText = 'Dismiss the cookie banner first') {
     return { knowledgeRoot: root, recordId: 'policy-fixture', scope: 'shop', ruleText,
-      auditBaseDir: join(root, 'runtime') }
+      auditBaseDir: join(root, 'runtime'), writerAuthority }
   }
+  it.each(['stale', 'released'])('refuses %s authority before creating or changing shelf bytes', state => {
+    if (state === 'released') releaseLease({ knowledgeRoot: root, leaseId: writerAuthority.leaseId })
+    else writerAuthority = { ...writerAuthority, epoch: writerAuthority.epoch + 1 }
+    expect(() => materializePolicy(input())).toThrow(WriterAuthorityLostError)
+    expect(existsSync(join(root, 'policies'))).toBe(false)
+    mkdirSync(join(root, 'policies'))
+    writeFileSync(policyShelfPath(root, 'shop'), 'Human text\r\n')
+    expect(() => materializePolicy(input())).toThrow(WriterAuthorityLostError)
+    expect(readFileSync(policyShelfPath(root, 'shop'), 'utf8')).toBe('Human text\r\n')
+  })
+  it('holds the current authority transaction throughout the actual read/check/write', () => {
+    let attempted = false
+    const auditSink = { appendExecutionAudit() {}, appendGuardrailAudit() {
+      attempted = true
+      // A second process with the exact current credentials cannot release the lease
+      // between the egress check and publication: it must contend on the same transaction.
+      const child = spawnSync(process.execPath, ['--input-type=module', '-e',
+        'import { releaseLease } from "./dist/index.js"; releaseLease(JSON.parse(process.argv[1]))',
+        JSON.stringify({ knowledgeRoot: root, leaseId: writerAuthority.leaseId })],
+      { cwd: new URL('../../..', import.meta.url), encoding: 'utf8', timeout: 5000 })
+      expect(child.status).not.toBe(0)
+      expect(child.stderr).toContain('MutationLockBusyError')
+    } }
+    expect(materializePolicy({ ...input('Contact owner@example.com'), auditSink }).kind).toBe('written')
+    expect(attempted).toBe(true)
+    expect(readFileSync(policyShelfPath(root, 'shop'), 'utf8')).toContain('Contact owner@example.com')
+    expect(releaseLease({ knowledgeRoot: root, leaseId: writerAuthority.leaseId }).kind).toBe('released')
+  })
   it('creates the shelf with a heading and an idempotent fenced section', () => {
     expect(materializePolicy(input()).kind).toBe('written')
     const path = policyShelfPath(root, 'shop')
