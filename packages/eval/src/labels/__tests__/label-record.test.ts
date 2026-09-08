@@ -3,6 +3,7 @@ import type {
   CompletedRunHandoff,
   Decision,
   SubActionEvidence,
+  MarkReceipt,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import {
@@ -19,6 +20,8 @@ import {
   LABEL_RECORD_SCHEMA_VERSION,
   projectPairLabelRecords,
   projectSilverLabelRecord,
+  projectUserMarkLabelRecord,
+  projectOverturnedVerdictLabelRecord,
   type StandaloneLabelRecord,
 } from '../label-record'
 import { collectSelfHealPairs, type MintedContrastivePair } from '../pair-matching'
@@ -258,5 +261,48 @@ describe('committedFileText (D-17 idempotence precondition)', () => {
     expect(first.endsWith('\n')).toBe(true)
     expect(first.endsWith('\n\n')).toBe(false)
     expect(JSON.parse(first)).toEqual({ a: { c: 3, d: 2 }, b: 1 })
+  })
+})
+
+describe('419 gold projections', () => {
+  const mark = { kind: 'false-pass', markId: 'mark_0123456789ab', correctedExpectation: 'Stay blocked' } as MarkReceipt
+
+  it.each(['false-fail', 'false-pass', 'confirmed-bug'] as const)('preserves the %s recorded verdict and adds only the appropriate correction', kind => {
+    const cassette = silverLeaf()
+    const input = { cassette, runId: RUN_ID, goldCassetteId: `${cassette.id}-gold-m01`, mark: { ...mark, kind } }
+    const record = projectUserMarkLabelRecord(input)
+    expect(record.label).toEqual({ ...cassette.label, sourceChannel: 'user-mark', tier: 'gold' })
+    expect(record.provenance.sourceCassetteId).toBe(cassette.id)
+    if (kind === 'false-fail') expect(record.correction).toEqual({ verdict: 'pass', overturnedVerdict: cassette.label.verdict, markId: mark.markId })
+    else expect(Object.hasOwn(record, 'correction')).toBe(false)
+    expect(Object.hasOwn(record, 'supersedes')).toBe(false)
+  })
+
+  it('stores the fail correction and expectation without mutating the observed cassette', () => {
+    const cassette = silverLeaf()
+    const before = JSON.stringify(cassette)
+    const record = projectOverturnedVerdictLabelRecord({ cassette, runId: RUN_ID, goldCassetteId: 'gold', mark, supersedes: 'earlier-gold' })
+    expect(record.label).toEqual({ ...cassette.label, sourceChannel: 'overturned-verdict', tier: 'gold' })
+    expect(record.correction).toEqual({ verdict: 'fail', overturnedVerdict: cassette.label.verdict, correctedExpectation: 'Stay blocked', markId: mark.markId })
+    expect(record.provenance.sourceCassetteId).toBe(cassette.id)
+    expect(record.supersedes).toBe('earlier-gold')
+    expect(JSON.stringify(cassette)).toBe(before)
+    const { correctedExpectation: _, ...withoutExpectation } = mark
+    const noText = projectOverturnedVerdictLabelRecord({ cassette, runId: RUN_ID, goldCassetteId: 'gold', mark: withoutExpectation })
+    expect(Object.hasOwn(noText.correction!, 'correctedExpectation')).toBe(false)
+  })
+
+  it('does not synthesize missing verifier evidence', () => {
+    const cassette = silverLeaf()
+    delete cassette.label.verdict
+    expect(() => projectOverturnedVerdictLabelRecord({ cassette, runId: RUN_ID, goldCassetteId: 'gold', mark })).toThrow('recorded verifier verdict')
+  })
+
+  it('keeps silver serialized bytes identical to the pre-419 shape', () => {
+    const cassette = silverLeaf()
+    expect(committedFileText(projectSilverLabelRecord({ cassette, runId: RUN_ID }))).toBe(committedFileText({
+      schemaVersion: 1, cassetteId: cassette.id, label: { ...cassette.label },
+      provenance: { runId: RUN_ID, runSlug: RUN_SLUG, capturedAtOrdinal: cassette.receipt.buildOrdinal, receiptDigest: sha256hex(canonicalJson(cassette.receipt)) },
+    }))
   })
 })

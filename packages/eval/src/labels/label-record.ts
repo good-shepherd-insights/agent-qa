@@ -21,6 +21,7 @@
  * cassette or an existing record.
  */
 import { sha256hex } from '@vostride/agent-qa-schema'
+import type { MarkReceipt } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
 import type { LeafCassette } from '../cassette/cassette'
 import type { CassetteLabelLeg, ContrastivePairing } from '../cassette/label-leg'
@@ -32,6 +33,7 @@ export const LABEL_RECORD_SCHEMA_VERSION = 1
 
 /** Run-anchored provenance stamped on every standalone record (ROOT-03 base). */
 export interface LabelProvenance {
+  sourceCassetteId?: string
   /** Source run identity as a plain wire string. */
   runId: string
   /** Traversal-safe slug derived from the run id. */
@@ -59,6 +61,8 @@ export interface PairStateStamp {
 
 /** The authoritative `labels/` unit: one standalone record per cassette id (D-01). */
 export interface StandaloneLabelRecord {
+  correction?: LabelCorrection
+  supersedes?: string
   /** Version gate (D-01). */
   schemaVersion: 1
   /** Deterministic cassette identity this record labels (D-01). */
@@ -72,6 +76,70 @@ export interface StandaloneLabelRecord {
   pairState?: PairStateStamp
   /** Run-anchored provenance (ROOT-03 base). */
   provenance: LabelProvenance
+}
+
+/** 2026-09-08, 419 D-06: the correction is separate from the observed action and verdict. */
+export interface LabelCorrection {
+  verdict: 'pass' | 'fail'
+  overturnedVerdict: { pass: boolean; reasoning: string }
+  correctedExpectation?: string
+  markId: string
+}
+
+export interface ProjectUserMarkLabelRecordInput {
+  cassette: LeafCassette
+  runId: string
+  goldCassetteId: string
+  mark: MarkReceipt
+  supersedes?: string
+}
+
+export interface ProjectOverturnedVerdictLabelRecordInput extends ProjectUserMarkLabelRecordInput {
+  correctedExpectation?: string
+}
+
+function recordedVerdict(cassette: LeafCassette): NonNullable<CassetteLabelLeg['verdict']> {
+  if (cassette.label.verdict === undefined) {
+    throw new Error('gold correction requires a recorded verifier verdict')
+  }
+  return { ...cassette.label.verdict }
+}
+
+export function projectUserMarkLabelRecord({
+  cassette, runId, goldCassetteId, mark, supersedes,
+}: ProjectUserMarkLabelRecordInput): StandaloneLabelRecord {
+  return {
+    schemaVersion: LABEL_RECORD_SCHEMA_VERSION,
+    cassetteId: goldCassetteId,
+    // All three kinds retain the recorded VerifierVerdict. false-fail corrects it
+    // to pass separately; confirmed-bug confirms FAIL; false-pass has a sibling correction.
+    label: { ...cassette.label, sourceChannel: 'user-mark', tier: 'gold' },
+    ...(mark.kind === 'false-fail' ? {
+      correction: { verdict: 'pass' as const, overturnedVerdict: recordedVerdict(cassette), markId: mark.markId },
+    } : {}),
+    ...(supersedes === undefined ? {} : { supersedes }),
+    provenance: { ...projectProvenance(cassette, runId), sourceCassetteId: cassette.id },
+  }
+}
+
+export function projectOverturnedVerdictLabelRecord({
+  cassette, runId, goldCassetteId, mark, supersedes,
+  correctedExpectation = mark.correctedExpectation,
+}: ProjectOverturnedVerdictLabelRecordInput): StandaloneLabelRecord {
+  if (mark.kind !== 'false-pass') throw new Error('overturned verdict requires a false-pass mark')
+  return {
+    schemaVersion: LABEL_RECORD_SCHEMA_VERSION,
+    cassetteId: goldCassetteId,
+    label: { ...cassette.label, sourceChannel: 'overturned-verdict', tier: 'gold' },
+    correction: {
+      verdict: 'fail',
+      overturnedVerdict: recordedVerdict(cassette),
+      ...(correctedExpectation === undefined ? {} : { correctedExpectation }),
+      markId: mark.markId,
+    },
+    ...(supersedes === undefined ? {} : { supersedes }),
+    provenance: { ...projectProvenance(cassette, runId), sourceCassetteId: cassette.id },
+  }
 }
 
 export interface ProjectPairLabelRecordsInput {

@@ -226,6 +226,7 @@ export { assembleReceipt, canonicalizeInputLeg } from './extract/receipt'
 export type { AssembleReceiptInput } from './extract/receipt'
 export {
   deriveLeafCassetteId,
+  deriveGoldCassetteId,
   deriveProcedureCassetteId,
   deriveRunSlug,
 } from './extract/ids'
@@ -277,9 +278,14 @@ export {
   LABEL_RECORD_SCHEMA_VERSION,
   projectPairLabelRecords,
   projectSilverLabelRecord,
+  projectUserMarkLabelRecord,
+  projectOverturnedVerdictLabelRecord,
 } from './labels/label-record'
 export type {
   LabelProvenance,
+  LabelCorrection,
+  ProjectUserMarkLabelRecordInput,
+  ProjectOverturnedVerdictLabelRecordInput,
   PairStateStamp,
   StandaloneLabelRecord,
 } from './labels/label-record'
@@ -366,6 +372,8 @@ export type {
 } from './labels/run-exclusion'
 export { committedFileText } from './labels/committed-file'
 export { buildSeedingPlan } from './labels/seeding-plan'
+export { buildGoldenTrajectoryPlan, resolveMarkedDecisions } from './labels/golden-plan'
+export type { GoldenTrajectoryPlan, GoldenTrajectoryTarget, BuildGoldenTrajectoryPlanInput } from './labels/golden-plan'
 export type {
   BuildSeedingPlanInput,
   SeedingParams,
