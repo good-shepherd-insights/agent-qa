@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { CandidateInjectionSchema, KnowledgeCandidateInjectionResultSchema } from '../knowledge/candidate-injection'
 import {
   GateReceiptSchema, PromotionReceiptSchema, receiptDigestOf, stampReceiptDigest,
@@ -9,6 +10,27 @@ function core() {
   return { schemaVersion: 1 as const, candidateId: 'candidate', verdict: 'pass' as const,
     producedAtOrdinal: 5, producedBy: { jobId: 'replay' } }
 }
+
+it('419 policy Gate-3 approvals retain honest identity without fabricating a run mark', () => {
+  const receipt = stampReceiptDigest({ ...core(), gate: 3 as const,
+    policyApproval: { proposalId: 'kp_fixture', recordId: 'candidate' } })
+  expect(GateReceiptSchema.parse(receipt)).toEqual(receipt)
+  expect(receiptDigestOf(receipt)).toBe(receipt.receiptDigest)
+  expect(receipt).not.toHaveProperty('runId')
+  expect(receipt).not.toHaveProperty('mark')
+  for (const altered of [
+    { ...receipt, policyApproval: undefined },
+    { ...receipt, runId: 'run' }, { ...receipt, mark: 'confirmed-bug' },
+    { ...receipt, stepId: '0:1' },
+    { ...receipt, policyApproval: { proposalId: 'kp_fixture' } },
+    { ...receipt, policyApproval: { proposalId: 'kp_fixture', recordId: 'foreign' } },
+    { ...core(), gate: 3, runId: 'run', receiptDigest: 'a'.repeat(64) },
+    { ...core(), gate: 3, mark: 'false-fail', receiptDigest: 'a'.repeat(64) },
+  ]) expect(GateReceiptSchema.safeParse(altered).success).toBe(false)
+  const changed = { ...receipt, policyApproval: { ...receipt.policyApproval, proposalId: 'kp_changed' } }
+  expect(receiptDigestOf(changed)).not.toBe(receipt.receiptDigest)
+  expect(JSON.stringify(z.toJSONSchema(GateReceiptSchema))).toContain('policyApproval')
+})
 function gate1() {
   const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
   return stampReceiptDigest({ ...core(), gate: 1 as const,

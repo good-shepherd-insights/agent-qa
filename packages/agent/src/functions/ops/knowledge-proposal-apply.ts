@@ -70,6 +70,9 @@ export const knowledgeProposalApplySpec: FunctionSpec<
    * `forget` and `write` are very different things to have committed.
    */
   classify(output): ClauseVerdict {
+    if (output.outcome === 'policy-materialize-refused') {
+      return { status: 'refused', outcome: 'policy-materialize-refused: policy text was not written; proposal remains pending' }
+    }
     return {
       status: 'executed',
       outcome: `${output.outcome}: ${output.proposal.verb} ${output.proposal.proposalId}`,

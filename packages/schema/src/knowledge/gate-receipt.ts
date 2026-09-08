@@ -147,9 +147,20 @@ export const gate2ArmSchema = z.object({
   attribution: z.string().optional(),
 }).strict()
 export const gate3ArmSchema = z.object({
-  ...receiptCoreShape, gate: z.literal(3), runId: z.string().min(1),
-  stepId: z.string().optional(), mark: z.enum(MARKS),
-}).strict()
+  ...receiptCoreShape, gate: z.literal(3), runId: z.string().min(1).optional(),
+  stepId: z.string().optional(), mark: z.enum(MARKS).optional(),
+  // 419 D-17: accepting a policy is not a run mark. Preserve its actual proposal identity.
+  policyApproval: z.object({ proposalId: z.string().min(1), recordId: z.string().min(1) }).strict().optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.policyApproval === undefined) {
+    if (value.runId === undefined || value.mark === undefined) {
+      ctx.addIssue({ code: 'custom', message: 'Gate 3 requires a complete run mark or policy approval' })
+    }
+  } else if (value.runId !== undefined || value.mark !== undefined || value.stepId !== undefined
+    || value.policyApproval.recordId !== value.candidateId) {
+    ctx.addIssue({ code: 'custom', message: 'policy approval must name this candidate and cannot carry a run mark' })
+  }
+})
 export const GateReceiptSchema = z.discriminatedUnion('gate', [
   gate1ArmSchema, gate2ArmSchema, gate3ArmSchema,
 ])

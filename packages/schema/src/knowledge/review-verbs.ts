@@ -248,7 +248,7 @@ export const KnowledgeProposeOutcomeSchema = z.discriminatedUnion('kind', [
 
 export type KnowledgeProposeOutcomeDto = z.infer<typeof KnowledgeProposeOutcomeSchema>
 
-export const KNOWLEDGE_APPLY_OUTCOMES = ['applied', 'already-applied'] as const
+export const KNOWLEDGE_APPLY_OUTCOMES = ['applied', 'already-applied', 'policy-materialize-refused'] as const
 
 export type KnowledgeApplyOutcomeKind = (typeof KNOWLEDGE_APPLY_OUTCOMES)[number]
 

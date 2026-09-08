@@ -80,6 +80,14 @@ function factInput(overrides: Partial<PromotionGateInput> = {}): PromotionGateIn
   }
 }
 
+it('419 policy acceptance receipts remain excluded from promotion of learned policy records', () => {
+  const approval = stampReceiptDigest({ schemaVersion: 1, gate: 3, candidateId: 'candidate',
+    verdict: 'pass', producedAtOrdinal: 5, producedBy: { opId: 'knowledge.proposal.apply' },
+    policyApproval: { proposalId: 'kp_policy', recordId: 'candidate' } } as const)
+  expect(evaluatePromotionGate({ ...factInput(), kind: 'policy', gateReceipts: [approval] }))
+    .toMatchObject({ verdict: 'hold', reason: 'kind-excluded' })
+})
+
 function cautionInput(overrides: Partial<PromotionGateInput> = {}): PromotionGateInput {
   return {
     kind: 'caution',

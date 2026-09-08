@@ -331,6 +331,68 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(results[0]!.commitReceipt?.gate3).toHaveLength(1)
   })
 
+  it('419 propose-only mark application refuses before commit or Gate-3 writes', async () => {
+    const proposalId = proposeMark(publish('CI checkout'), 'caution', true)
+    const before = hashTree(join(knowledgeRoot, 'memory'))
+    await expect(applyReview({ agentQaRoot, knowledgeRoot, proposalId, executionContext: 'ci' }))
+      .rejects.toMatchObject({ reason: 'propose-only' })
+    expect(hashTree(join(knowledgeRoot, 'memory'))).toBe(before)
+    expect(readPendingProposal(agentQaRoot, proposalId)).toBeDefined()
+  })
+
+  function publishPolicy(body = 'Dismiss the cookie banner before checkout') {
+    const result = publishBundle(storeConfig(), {
+      draft: makeBundleDraftFixture({ kind: 'policy', body, summary: 'Checkout rule',
+        scope: { tier: 'product', key: 'apply-storefront' } }),
+      discriminant: { kind: 'policy', ruleKey: 'checkout-rule' }, originClass: 'agent-verified',
+      createdAtOrdinal: 10, screenStates: [makeScreenStateFixture()], initialEvents: [],
+      relations: [], provenance: { mode: 'standalone', sourceDescription: 'policy fixture' }, artifacts: [],
+    })
+    if (result.kind !== 'published') throw new Error('policy fixture did not publish')
+    return result.id
+  }
+
+  it('419 policy accept materializes and supersedes to a reference with honest Gate-3 approval, never promotes', async () => {
+    const recordId = publishPolicy()
+    const proposalId = proposeAccept(recordId)
+    const result = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+    expect(result.outcome).toBe('applied')
+    expect(result.commitReceipt?.policy).toEqual({ recordId, scope: 'apply-storefront',
+      relPath: 'policies/apply-storefront.md', outcome: 'written' })
+    expect(readFileSync(join(knowledgeRoot, 'policies/apply-storefront.md'), 'utf8'))
+      .toContain(`<!-- agent-qa:policy ${recordId} -->`)
+    expect(rowsFor(recordId)[0]?.status).toBe('superseded')
+    const bundles = enumerateBundleDirs(knowledgeRoot).map(entry => ({ dir: entry.dir, loaded: loadBundle(entry.dir) }))
+    const reference = bundles.find(entry => entry.loaded.kind === 'loaded'
+      && entry.loaded.bundle.body === `policies/apply-storefront.md#agent-qa:policy ${recordId}`)
+    expect(reference?.loaded.kind).toBe('loaded')
+    const original = bundles.find(entry => entry.loaded.kind === 'loaded' && entry.loaded.bundle.manifest.id === recordId)!
+    const receipts = readGateReceipts(original.dir, recordId)!
+    expect(receipts).toEqual([expect.objectContaining({ gate: 3, verdict: 'pass',
+      producedBy: { opId: 'knowledge.proposal.apply' }, policyApproval: { proposalId, recordId } })])
+    expect(receipts[0]).not.toHaveProperty('runId')
+    expect(receipts[0]).not.toHaveProperty('mark')
+    for (const { loaded } of bundles) if (loaded.kind === 'loaded') {
+      expect(loaded.bundle.events.some(event => event.type === 'promoted')).toBe(false)
+    }
+    expect(result.commitReceipt?.promoted).toEqual([])
+    const repeated = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+    expect(repeated.outcome).toBe('already-applied')
+    expect(repeated.commitReceipt).toEqual(result.commitReceipt)
+  })
+
+  it('419 policy marker refusal commits nothing and restores its pending proposal', async () => {
+    const recordId = publishPolicy('This rule contains --> and cannot be materialized')
+    const proposalId = proposeAccept(recordId)
+    const before = hashTree(join(knowledgeRoot, 'memory'))
+    const result = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+    expect(result.outcome).toBe('policy-materialize-refused')
+    expect(result).not.toHaveProperty('commitReceipt')
+    expect(hashTree(join(knowledgeRoot, 'memory'))).toBe(before)
+    expect(existsSync(join(knowledgeRoot, 'policies'))).toBe(false)
+    expect(readPendingProposal(agentQaRoot, proposalId)).toBeDefined()
+  })
+
   /**
    * How many bundle DIRECTORIES exist, measured off the filesystem rather than off the fold.
    *

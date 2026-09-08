@@ -28,6 +28,15 @@ import { z } from 'zod'
 import { FunctionNotBoundError, invokeFunction } from '../invoke.js'
 import { createRegistryFromSpecs, resolveBindingStatus } from '../registry.js'
 import type { FunctionDeps, FunctionSpec, KnowledgeReviewPort } from '../spec.js'
+import { knowledgeProposalApplySpec } from '../ops/knowledge-proposal-apply.js'
+
+it('419 policy materialization refusal is classified as refused rather than executed', () => {
+  const verdict = knowledgeProposalApplySpec.classify({ outcome: 'policy-materialize-refused',
+    proposal: { schemaVersion: 1, proposalId: 'proposal-fixture', verb: 'accept',
+      targetRef: { grain: 'record', recordId: 'policy-fixture' }, deltas: [], status: 'pending', proposedAt: 1 } })
+  expect(verdict.status).toBe('refused')
+  expect(verdict.outcome).toContain('proposal remains pending')
+})
 
 const CALLER: FunctionCaller = {
   surface: 'test',

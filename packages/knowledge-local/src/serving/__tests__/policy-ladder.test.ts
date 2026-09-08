@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { readPolicyLadder } from '../policy-ladder.js'
+import { materializePolicy } from '../../policy/materialize.js'
 
 const INIT_GLOBAL_POLICY_SCAFFOLD = `<!--
 agent-qa policies — global scope
@@ -53,6 +54,16 @@ describe('authored policy ladder', () => {
     writeFileSync(file, text, 'utf8')
     return file
   }
+
+  it('419 materialized fenced policy round-trips through the actual ladder', () => {
+    materializePolicy({ knowledgeRoot, recordId: 'policy-roundtrip', scope: 'Shop Product',
+      title: 'Checkout safety', ruleText: 'Never submit real payment forms.', auditBaseDir: knowledgeRoot })
+    const ladder = readPolicyLadder(knowledgeRoot, 'Shop Product')
+    expect(ladder.text).toContain('Never submit real payment forms.')
+    expect(ladder.text).toContain('Checkout safety')
+    expect(ladder.text).not.toContain('<!--')
+    expect(ladder.files).toHaveLength(1)
+  })
 
   it('treats the exact init scaffold as an empty policy rung', () => {
     writePolicy('policies/global.md', INIT_GLOBAL_POLICY_SCAFFOLD)
