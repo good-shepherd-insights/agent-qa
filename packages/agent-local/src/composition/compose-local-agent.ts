@@ -190,6 +190,7 @@ import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
   NO_STANDING_APPROVALS,
   defaultGuardrailPolicyInput,
+  getActiveMaskingContext,
   loadGuardrailPolicy,
   scanConstructedArtifact,
   setActiveExecutionContextResolver,
@@ -216,6 +217,7 @@ import {
   CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
   DEFAULT_EMBEDDING_PROFILE,
   guardRunAnalysisArtifact,
+  maskPayloadStrings,
   sha256hex16,
   STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
@@ -2644,6 +2646,14 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   const chatModelsByName = new Map<string, ChatLanguageModel>()
   if (input.chatModel !== undefined) chatModelsByName.set(composedChatModelName, input.chatModel)
 
+  // Chat is a projection boundary: operation inputs and canonical records retain authored
+  // bytes, while answers and session events carry the active context's reversible markers.
+  // Resolve at use time because a host can bind a different masking scope for each turn.
+  const maskChatProjection = <T>(value: T): T => {
+    const context = getActiveMaskingContext()
+    return context === undefined ? value : maskPayloadStrings(value, text => context.mask(text))
+  }
+
   const chatSessionLog = createJsonlSessionLog({
     root: input.agentQaRoot,
     now: () => clock.now(),
@@ -2683,12 +2693,13 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         refusedLines: opened.refusedLines,
         append: async (event) => {
           turnIds.add(event.turnId)
-          await opened.append(event)
+          const projected = maskChatProjection(event)
+          await opened.append(projected)
           // 400-01 (D-03): the host's carbon copy, taken AFTER the write and never instead of it.
           // Swallowed by name: a surface's push channel is downstream of the durable log, and a
           // failing SSE write must not fail the turn whose event it was trying to announce.
           try {
-            input.observeSessionEvent?.(id, event)
+            input.observeSessionEvent?.(id, projected)
           } catch { /* a push channel's failure is not the turn's */ }
         },
         turnBoundary: () => opened.turnBoundary(),
@@ -2831,15 +2842,15 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // as data on this return — which is what `ChatInvokeAnswer` is. `foldFunctionResult` owns the
     // fail-closed rule so both composition roots get the same one rather than a copy each.
     //
-    // THE PAYLOAD CROSSES MASKED, exactly as `invokeFunction` returned it. Nothing unmasks on this
-    // path: it becomes `results[]` on the turn contract and reaches the session log in that form,
-    // and `unmaskForHumanOutput` runs at each surface's emit.
+    // invokeFunction validates canonical output; it does not promise masking. Classify those
+    // original bytes before projecting the answer into results[] and the durable clause_result.
+    // Human surfaces alone restore markers with unmaskForHumanOutput.
     invoke: async (functionId, invokeInput, caller) => {
       if (composedRegistry === undefined) {
         throw new TypeError('a chat turn ran before its registry finished composing')
       }
       const payload = await invokeFunction(composedRegistry, functionId, invokeInput, caller)
-      return { payload, ...foldFunctionResult(composedRegistry, functionId, payload) }
+      return maskChatProjection({ payload, ...foldFunctionResult(composedRegistry, functionId, payload) })
     },
     ...(chatPlanner === undefined ? {} : { planner: chatPlanner }),
     ...(chatCompaction === undefined ? {} : { compaction: chatCompaction }),
@@ -3311,7 +3322,11 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // 392 D-24: the turn engine assembled above. Bound HERE and therefore on BOTH hosts, so
       // `agent.ask` is a real capability wherever the composition root runs — and unbound nowhere,
       // which is what lets 397's parity suite read it off the registry with no chat-specific case.
-      chatTurn,
+      chatTurn: {
+        // The engine also echoes authored clause text on receipts and refusal answers. Mask
+        // the complete outward projection after execution, never the message it dispatches.
+        runTurn: async turnInput => maskChatProjection(await chatTurn.runTurn(turnInput)),
+      },
       // 393 D-01 / D-15: the keep-gate evaluator's two host halves, bound HERE and therefore on
       // BOTH hosts — the CLI and 386's daemon compose this same root, which is the whole point of
       // 385 D-15 (a second binding site would be a second answer to "is this draft worth keeping",
