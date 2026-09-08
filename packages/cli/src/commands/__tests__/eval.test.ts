@@ -76,6 +76,9 @@ import {
   committedLabelPath,
   computeReplayProfileFingerprintFor,
   loadStagedReport,
+  loadCassetteBundle,
+  FsScoreStore,
+  runCassetteReplay,
   readCommittedCorpus,
   resolveBaselineCache,
   runReplayGate,
@@ -89,6 +92,7 @@ import {
   EvalPartitionManifestConflictError,
   resolveEvalSession,
   resolveReplayProfileFingerprint,
+  resolveReplayPlanner,
   resolveTargetEnvironmentForProduct,
   runExtractVerb,
   runReplayVerb,
@@ -1094,13 +1098,19 @@ function buildHandoff(input: {
 function saveRun(
   dir: string,
   runId: string,
-  options: { scope?: ScopeKey; withCachedStep?: boolean; stepText?: string } = {},
+  options: { scope?: ScopeKey; withCachedStep?: boolean; stepText?: string; recordedModelId?: string } = {},
 ): void {
   const root = join(dir, '.agent-qa')
   const ref = new FsEvidenceArtifactStore({ root, runId }).persistDecisionScreenshot(BLOB_BYTES)
-  new FsHandoffStore({ root, runId }).save(
-    buildHandoff({ runId, screenshotRef: ref, ...options }),
-  )
+  const handoff = buildHandoff({ runId, screenshotRef: ref, ...options })
+  if (options.recordedModelId !== undefined) {
+    for (const test of handoff.tests) {
+      for (const step of test.steps) {
+        if (step.modelProfile !== undefined) step.modelProfile.modelId = options.recordedModelId
+      }
+    }
+  }
+  new FsHandoffStore({ root, runId }).save(handoff)
 }
 
 async function sessionFor(configPath: string): Promise<EvalSession> {
@@ -1606,7 +1616,7 @@ describe('runReplayVerb — offline sweep through the sanctioned composition (D-
 
 /** Extract + replay one recorded run so real replay.json/score.json records exist on disk. */
 async function scoredRecordsFixture(
-  plannerModelId: string = REPLAY_STUB_MODEL_ID,
+  plannerModelId: string = 'gpt-report-stub',
 ): Promise<{
   dir: string
   configPath: string
@@ -1614,36 +1624,16 @@ async function scoredRecordsFixture(
   ids: string[]
 }> {
   const { dir, configPath } = await writeReplayFixture('', plannerModelId)
-  saveRun(dir, 'run-alpha')
+  saveRun(dir, 'run-alpha', { recordedModelId: 'gpt-recorded-report-stub' })
   const session = await sessionFor(configPath)
   await runExtractVerb(session)
-  await runReplayVerb(session, {}, { plannerOverrides: replayStub(plannerModelId).overrides })
-  const ids = await stagedCassetteIds(dir)
-  // The host replay clock is intentionally real in this composition test. Pin its persisted
-  // timing fields before report assembly so arbitrary performance.now() decimals cannot form a
-  // 13-19 digit Luhn-valid run and make the committed-egress credit-card detector flaky.
-  for (const id of ids) {
-    const replayFile = join(replayDirFor(dir, id), 'replay.json')
-    const replay = JSON.parse(await readFile(replayFile, 'utf-8')) as unknown
-    const pinTiming = (value: unknown): void => {
-      if (Array.isArray(value)) {
-        for (const item of value) pinTiming(item)
-        return
-      }
-      if (value === null || typeof value !== 'object') return
-      const record = value as Record<string, unknown>
-      for (const [key, child] of Object.entries(record)) {
-        if (key === 'durationMs' || key === 'totalDurationMs') {
-          record[key] = 10
-        } else {
-          pinTiming(child)
-        }
-      }
-    }
-    pinTiming(replay)
-    await writeFile(replayFile, `${JSON.stringify(replay, null, 2)}\n`)
-  }
-  return { dir, configPath, session, ids }
+  // Deterministic timing is an input to the real producer. Rewriting replay.json after its
+  // scoringContext was recorded would correctly make that score stale.
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
+  try {
+    await runReplayVerb(session, {}, { plannerOverrides: replayStub(plannerModelId).overrides })
+  } finally { clock.mockRestore() }
+  return { dir, configPath, session, ids: await stagedCassetteIds(dir) }
 }
 
 /** Hand-write a persisted refusal replay record — refusal outcomes ARE entries (Pitfall 4). */
@@ -1699,34 +1689,67 @@ async function setStagedLabelPairing(
   )
 }
 
-/** Set or clear the persisted ScoreRecord judge identity block (D-16 receipt). */
+/** Reproduce the requested judge identity through real replay, adjudication and score storage. */
 async function setScoreJudgeBlock(
   dir: string,
   cassetteId: string,
   judge: JudgeIdentityBlock | undefined,
 ): Promise<void> {
-  const scoreFile = join(replayDirFor(dir, cassetteId), 'score.json')
-  const document = JSON.parse(await readFile(scoreFile, 'utf-8')) as Record<string, unknown>
-  if (judge === undefined) delete document.judge
-  else document.judge = judge
-  await writeFile(scoreFile, `${JSON.stringify(document, null, 2)}\n`)
+  const root = join(dir, '.agent-qa')
+  const bundle = loadCassetteBundle(join(root, 'eval', 'cassettes',
+    ...cassetteId.split('/').map(segment => slugBranch(segment))))
+  if (bundle.kind !== 'loaded') throw new Error('expected guarded report fixture cassette')
+  const planner = await resolveReplayPlanner(await sessionFor(join(dir, 'agent-qa.config.yaml')))
+  const judgeStub = judge === undefined ? undefined : replayStub(judge.judgeModelId, () => ({
+    ...clickGenerateResult(),
+    content: [{ type: 'text', text: JSON.stringify({ verdict: 'equivalent', confidence: 'high',
+      rationale: 'Equivalent fixture decision' }) }],
+  }))
+  await runCassetteReplay({
+    cassette: bundle.cassette, artifacts: bundle.artifacts, ...planner,
+    modelOverrides: replayStub(planner.profile.model).overrides,
+    clock: { now: () => 100 }, replayOutputBaseDir: join(root, 'eval', 'report-fixture-audit'),
+    recordStore: new FsReplayRecordStore({ root }), scoreStore: new FsScoreStore({ root }),
+    ...(judge === undefined ? {} : { judge: {
+      profile: { ...planner.profile, model: judge.judgeModelId }, auth: planner.auth,
+      modelOverrides: judgeStub!.overrides,
+      allowSameFamily: judge.familyOverride === 'same-family-allowed',
+    } }),
+  })
+  const stored = JSON.parse(await readFile(join(replayDirFor(dir, cassetteId), 'score.json'), 'utf8'))
+  expect(stored.judge).toEqual(judge)
+  expect(stored.scoringContext).toBeDefined()
 }
 
 const JUDGE_BLOCK_A: JudgeIdentityBlock = {
-  judgeModelId: 'judge-fixture-a',
-  judgeFamily: 'family-a',
+  judgeModelId: 'claude-report-fixture',
+  judgeFamily: 'claude',
   judgeVersion: 1,
   confidenceThreshold: 'high',
 }
 
 const JUDGE_BLOCK_B: JudgeIdentityBlock = {
-  judgeModelId: 'judge-fixture-b',
-  judgeFamily: 'family-b',
+  judgeModelId: 'gemini-report-fixture',
+  judgeFamily: 'gemini',
   judgeVersion: 1,
   confidenceThreshold: 'high',
 }
 
 describe('runReportVerb — one batch, one report, one headline (D-13/D-14)', () => {
+  it('refuses post-stamp replay tampering without rewriting the producer score', async () => {
+    const { dir, session, ids } = await scoredRecordsFixture()
+    const leafId = ids.find(id => id.endsWith('-leaf'))!
+    const scoreFile = join(replayDirFor(dir, leafId), 'score.json')
+    const originalScore = await readFile(scoreFile, 'utf8')
+    const replayFile = join(replayDirFor(dir, leafId), 'replay.json')
+    const replay = JSON.parse(await readFile(replayFile, 'utf8'))
+    replay.totalDurationMs += 1
+    await writeFile(replayFile, JSON.stringify(replay))
+    const result = await runReportVerb(session)
+    expect(result.report.honesty.neverScoredCounts['stale-scoring-context']).toBe(1)
+    expect(await readFile(scoreFile, 'utf8')).toBe(originalScore)
+  })
+
   it('assembles ONE whole-corpus report from every persisted replay record (the Wave 0 gap)', async () => {
     const { dir, session, ids } = await scoredRecordsFixture()
     expect(ids).toHaveLength(2)
@@ -2870,17 +2893,21 @@ describe('eval --source committed — the whole committed corpus in ONE batch (4
   it('report joins label legs from the committed source and reports the source', async () => {
     const { session, committedRoot, leafId, procedureId } = await committedCorpusFixture()
     await runReplayVerb(session, {}, { plannerOverrides: replayStub().overrides })
-    // The pairing lands ONLY on the committed bundle: a negative decision in the report is proof
-    // the label leg was joined from the committed root and not from staging.
+    // The pairing lands ONLY on the authoritative committed label, leaving the recorded
+    // cassette and staged label unchanged.
     await setBundlePairingAt(
-      join(committedBundleDir(committedRoot, leafId), 'cassette.json'),
+      join(committedRoot, committedLabelPath('default', leafId)),
       'contrastive-negative',
       procedureId,
     )
 
     const committed = await runReportVerb(session, {}, { source: 'committed' })
     expect(committed.source).toBe('committed')
-    expect(committed.entries).toBe(2)
+    const members = readCommittedCorpus(committedRoot).snapshot.entries.map(entry => entry.cassetteId)
+    expect(members).toEqual([leafId])
+    expect(members).not.toContain(procedureId)
+    expect(committed.entries).toBe(members.length)
+    expect(committed.batchKey).toBe(computeBatchKey(members))
     expect(committed.report.recovery.negativeDecisionCount).toBe(1)
 
     const staged = await runReportVerb(session)
@@ -4542,7 +4569,7 @@ describe('runReportVerb --commit --baseline — designation through the refusing
     // No single identity is fabricated (T-372-20) — the mixture rides as data instead.
     expect(result.report.judge).toBeUndefined()
     expect(result.report.judgeIdentity).toBe('mixed')
-    expect(result.report.mixedJudgeModelIds).toEqual(['judge-fixture-a', 'judge-fixture-b'])
+    expect(result.report.mixedJudgeModelIds).toEqual([JUDGE_BLOCK_A.judgeModelId, JUDGE_BLOCK_B.judgeModelId])
 
     // The report still commits: a refused comparator is still honest history (D-18's posture).
     expect(result.committed?.kind).toBe('committed')
@@ -4554,7 +4581,7 @@ describe('runReportVerb --commit --baseline — designation through the refusing
       result.baseline?.kind === 'refused'
       && result.baseline.refusal.kind === 'mixed-judge-identity'
       && result.baseline.refusal.judgeModelIds,
-    ).toEqual(['judge-fixture-a', 'judge-fixture-b'])
+    ).toEqual([JUDGE_BLOCK_A.judgeModelId, JUDGE_BLOCK_B.judgeModelId])
     // A refused designation leaves NO file behind — the refusal precedes every write.
     expect(existsSync(join(dir, 'agent-qa-eval', 'reports', 'baselines'))).toBe(false)
 
