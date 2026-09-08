@@ -62,7 +62,8 @@ import type {
   InputRequiredResult,
   StandardSchemaWithJSON,
 } from '@modelcontextprotocol/server'
-import { ProposalsShowOutputSchema } from '@vostride/agent-qa-schema'
+import { ProposalsShowOutputSchema, remediesRenderableBy } from '@vostride/agent-qa-schema'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
 import { maskedToolError, maskedToolResult } from './masked-result.js'
 
@@ -216,7 +217,10 @@ export const APPLY_REFUSAL_STATUS = 'confirmation-required'
  * throw here would move it to module-import time where it would take the whole package down with a
  * message naming no tool.
  */
-export function composeApplyToolOutput(opOutput: StandardSchemaWithJSON): StandardSchemaWithJSON {
+export function composeApplyToolOutput(
+  opOutput: StandardSchemaWithJSON,
+  refusal: Record<string, unknown> = APPLY_REFUSAL_JSON_SCHEMA,
+): StandardSchemaWithJSON {
   let converted: Record<string, unknown>
   try {
     converted = opOutput['~standard'].jsonSchema.output({
@@ -230,8 +234,49 @@ export function composeApplyToolOutput(opOutput: StandardSchemaWithJSON): Standa
   const { $schema: _dialect, ...outcome } = converted
   return fromJsonSchema({
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    anyOf: [outcome, APPLY_REFUSAL_JSON_SCHEMA],
+    anyOf: [outcome, refusal],
   } as unknown as Parameters<typeof fromJsonSchema>[0])
+}
+
+/** 419 D-20: no proposal/confirmation fiction on the sovereign mark door. */
+export const CREDENTIAL_REFUSAL_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', const: 'credential-required' },
+    applied: { type: 'boolean', const: false },
+    instruction: { type: 'string' },
+  },
+  required: ['status', 'applied', 'instruction'],
+  additionalProperties: false,
+} as const
+
+/** Shared by the hidden-name dispatch guard and the handler's independent guard. */
+export function credentialRequiredRefusal(maskText: (text: string) => string): CallToolResult {
+  const remedies = remediesRenderableBy('mcp', [
+    { kind: 'present-bearer-scope', params: { scope: 'knowledge-write' } },
+  ])
+  const instruction = 'agent_qa_mark_run requires a declared bearer; '
+    + remedies.map(() => 'present a bearer whose scopes include `knowledge-write`').join('; ')
+  return {
+    ...maskedToolResult({ status: 'credential-required', applied: false, instruction }, maskText),
+    isError: true,
+  }
+}
+
+/** A bearer is the trust grant; a mark has no proposal_id or second confirmation round. */
+export function createMarkToolHandler(deps: {
+  readonly caller: FunctionCaller
+  readonly invoke: ApplyToolInvoke
+  readonly maskText: (text: string) => string
+}) {
+  return async (args: unknown): Promise<CallToolResult> => {
+    if (deps.caller.credential === undefined) return credentialRequiredRefusal(deps.maskText)
+    try {
+      return maskedToolResult(await deps.invoke('runs.mark', args), deps.maskText)
+    } catch (err) {
+      return maskedToolError(err, deps.maskText)
+    }
+  }
 }
 
 /** What a caller sends to an apply tool. `confirmed` is `unknown` on purpose — see the handler. */

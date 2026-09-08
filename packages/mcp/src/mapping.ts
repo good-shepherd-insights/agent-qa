@@ -7,8 +7,8 @@
 // module is where that data lives so a single artifact can be pinned by the bump guard and ranged
 // over by 397's parity suite. Anything that is not data belongs in `projection.ts` or `catalog.ts`.
 //
-// THE SET IS COMPLETE AS OF PLAN 04. Twelve tools over twenty-two registry ops; the other TWENTY
-// ops are listed below in `UNPROJECTED_OPS` with a reason each. Twenty-two plus twenty is the
+// 2026-09-08, 419 D-19/D-20: fourteen tools over twenty-four registry ops; the other TWENTY-FOUR
+// ops are listed below in `UNPROJECTED_OPS` with a reason each. Twenty-four plus twenty-four is the
 // registry's own count, and `__tests__/mapping-bump-guard.test.ts` asserts that partition against
 // the registry's enumeration rather than against the arithmetic in this sentence.
 //
@@ -78,6 +78,8 @@ import {
   KnowledgeChangeFoldInputSchema,
   KnowledgeChangeFoldOutputSchema,
   KnowledgeForgetProposeInputSchema,
+  KnowledgeGatesListInputSchema,
+  KnowledgeGatesListResultSchema,
   KnowledgeProposalApplyInputSchema,
   KnowledgeProposeOutcomeSchema,
   KnowledgeRejectProposeInputSchema,
@@ -90,11 +92,13 @@ import {
   RunsDigestInputSchema,
   RunsListInputSchema,
   RunsListOutputSchema,
+  RunsMarkInputSchema,
+  RunsMarkOutcomeSchema,
   RunsStartInputSchema,
   TOOL_FOLD_DISCRIMINANT,
 } from '@vostride/agent-qa-schema'
 
-import { APPLY_TOOL_INPUT_SCHEMA, composeApplyToolOutput } from './apply-refusal.js'
+import { APPLY_TOOL_INPUT_SCHEMA, CREDENTIAL_REFUSAL_JSON_SCHEMA, composeApplyToolOutput } from './apply-refusal.js'
 
 /**
  * What a tool DOES, coarsely — the axis annotations are derived along (`projection.ts`).
@@ -127,6 +131,12 @@ export interface ToolProjection {
   /** The registry op ids this tool projects. Length 1 = 1:1; length > 1 = a declared fold. */
   readonly ops: readonly string[]
   readonly kind: ToolProjectionKind
+  /**
+   * 2026-09-08, 419 D-20: present iff a FunctionCaller credential is required.
+   * Scopes cannot express this: the anonymous grant already holds knowledge-write.
+   * Listing and dispatch both read this signal, independently of trustMode.
+   */
+  readonly credential?: 'required'
   /**
    * A union fold's discriminant key — absent on a 1:1 tool AND on the pipeline.
    *
@@ -210,6 +220,11 @@ export interface ToolOpContracts {
  * drift apart silently.
  */
 export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = Object.freeze({
+  'runs.mark': Object.freeze({ input: RunsMarkInputSchema, output: RunsMarkOutcomeSchema }),
+  'knowledge.gates.list': Object.freeze({
+    input: KnowledgeGatesListInputSchema,
+    output: KnowledgeGatesListResultSchema,
+  }),
   'authoring.draft.write': Object.freeze({
     input: AuthoringDraftWriteInputSchema,
     output: AuthoringDraftWriteOutputSchema,
@@ -373,6 +388,17 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
     kind: 'apply',
   }),
   Object.freeze({
+    name: 'agent_qa_mark_run',
+    ops: Object.freeze(['runs.mark']),
+    kind: 'apply',
+    credential: 'required',
+  }),
+  Object.freeze({
+    name: 'agent_qa_list_knowledge_gates',
+    ops: Object.freeze(['knowledge.gates.list']),
+    kind: 'read',
+  }),
+  Object.freeze({
     name: 'agent_qa_get_entity',
     ops: Object.freeze(['entities.resolve', 'entities.get']),
     kind: 'read',
@@ -422,6 +448,11 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
  *     The OUTPUT is still the op's own contract, untouched.
  */
 export const AGENT_QA_COMPOSED_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = Object.freeze({
+  // A mark addresses a run/member/step, never a proposal. Preserve the op's wire keys.
+  agent_qa_mark_run: Object.freeze({
+    input: RunsMarkInputSchema,
+    output: composeApplyToolOutput(RunsMarkOutcomeSchema, CREDENTIAL_REFUSAL_JSON_SCHEMA),
+  }),
   agent_qa_refine_test: Object.freeze({
     input: AuthoringRefineFoldInputSchema,
     output: AuthoringRefineFoldOutputSchema,
@@ -743,11 +774,6 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
   }),
   Object.freeze({
     opId: 'knowledge.bundles.list',
-    reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
-    adjudication: '397',
-  }),
-  Object.freeze({
-    opId: 'knowledge.gates.list',
     reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
     adjudication: '397',
   }),

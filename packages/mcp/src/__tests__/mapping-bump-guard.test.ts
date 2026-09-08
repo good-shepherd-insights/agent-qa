@@ -2,8 +2,8 @@
 //
 // WHY A COUNT WOULD NOT HAVE DONE. D-04 rejects a count-only guard by name, and the reason is the
 // door-enumeration weakness this project has measured before: a count admits CANCELLING changes.
-// Rename one tool and add nothing, or swap one tool's op for another's, and a count of twelve stays
-// twelve while the vocabulary every downstream consumer binds against has silently moved. So the
+// Rename one tool and add nothing, or swap one tool's op for another's, and a count of fourteen stays
+// fourteen while the vocabulary every downstream consumer binds against has silently moved. So the
 // pin is the exact sorted NAME list plus each tool's exact OP SET — the one place in this
 // repository where those names are restated, and that restatement IS the pin.
 //
@@ -22,6 +22,8 @@
 // lands unprojected on `runs.detail`'s footing — a completed run's whole used-and-learned
 // projection, three served channels and a retrieval trace per step, is a large one-shot payload
 // rather than a mid-flight read.
+// RE-MEASURED 2026-09-08 (419 D-19/D-20): fourteen tools; 48 declarations / 24 projected /
+// 24 unprojected. runs.mark arrives projected; knowledge.gates.list moves to the read door.
 // The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
@@ -132,8 +134,10 @@ const PINNED_TOOL_NAMES: readonly string[] = [
   'agent_qa_apply_proposal',
   'agent_qa_get_entity',
   'agent_qa_get_run_digest',
+  'agent_qa_list_knowledge_gates',
   'agent_qa_list_proposals',
   'agent_qa_list_runs',
+  'agent_qa_mark_run',
   'agent_qa_propose_config_change',
   'agent_qa_propose_knowledge_change',
   'agent_qa_refine_test',
@@ -148,6 +152,8 @@ const PINNED_TOOL_OPS: Readonly<Record<string, readonly string[]>> = {
   agent_qa_apply_proposal: ['knowledge.proposal.apply'],
   agent_qa_get_entity: ['entities.resolve', 'entities.get'],
   agent_qa_get_run_digest: ['runs.digest'],
+  agent_qa_list_knowledge_gates: ['knowledge.gates.list'],
+  agent_qa_mark_run: ['runs.mark'],
   agent_qa_list_proposals: ['proposals.list'],
   agent_qa_list_runs: ['runs.list'],
   agent_qa_propose_config_change: [
@@ -277,11 +283,11 @@ describe('the pinned catalogue (D-04)', () => {
   })
 
   // The MCPS-02 boundary, asserted with BOTH comparisons rather than inferred from the exact count.
-  // Twelve is one step inside each bound, so neither can be crossed silently: a thirteenth tool
+  // Fourteen is one step inside each bound, so neither can be crossed silently: a thirteenth tool
   // still passes here and reds the exact pin, and a drop to seven reds here.
   it('holds a tool count inside the MCPS-02 band, at both ends', () => {
     const count = AGENT_QA_TOOL_PROJECTIONS.length
-    expect(count).toBe(12)
+    expect(count).toBe(14)
     expect(count).toBeGreaterThanOrEqual(MCPS_02_MIN_TOOLS)
     expect(count).toBeLessThanOrEqual(MCPS_02_MAX_TOOLS)
   })
@@ -388,10 +394,10 @@ describe('the partition law (D-03 / D-15)', () => {
   it('measures the registry at the count this suite header records', () => {
     // The denominator, stated where a reader can see it move. Not a rule — a MEASUREMENT, and the
     // sentence in the header is only true while this cell is green.
-    // 2026-09-06, 416 D-17: knowledge.gates.list joins the unprojected reads (47/22/25).
-    expect(declarations().length).toBe(47)
-    expect(projectedOpIds().length).toBe(22)
-    expect(UNPROJECTED_OPS.length).toBe(25)
+    // 2026-09-08, 419 D-19/D-20: mark arrives and gates becomes projected (48/24/24).
+    expect(declarations().length).toBe(48)
+    expect(projectedOpIds().length).toBe(24)
+    expect(UNPROJECTED_OPS.length).toBe(24)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -584,4 +590,9 @@ describe('the degradation list names tools that exist (D-16)', () => {
       expect(entry.adjudication).toBe('397')
     }
   })
+})
+
+const PINNED_CREDENTIAL_REQUIRED = ['agent_qa_mark_run']
+it('419 D-20 pins the credential-required vocabulary', () => {
+  expect(AGENT_QA_TOOL_PROJECTIONS.filter(row => row.credential === 'required').map(row => row.name)).toEqual(PINNED_CREDENTIAL_REQUIRED)
 })

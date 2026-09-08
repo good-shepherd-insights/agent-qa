@@ -328,7 +328,7 @@ const REACHED_THE_GATE: readonly GateAnswerKind[] = Object.freeze([
 // ---- Leg 2: structural schema equality, per OP, through the one lens (plan 06, D-06) -----------
 //
 // THE UNIVERSE HERE IS PER-OP, AND THAT IS THE WHOLE DIFFERENCE from the fidelity suite in
-// `packages/mcp`. That suite ranges the twelve TOOLS and asks whether each advertisement matches
+// `packages/mcp`. That suite ranges the fourteen TOOLS and asks whether each advertisement matches
 // the contracts behind it; this leg ranges the twenty-two projected OPS and asks, of each
 // capability, whether the shape a caller is shown for it is the shape `invokeFunction` validates it
 // with. The two universes answer different questions — a fold's arm is one tool and several

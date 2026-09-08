@@ -46,7 +46,7 @@ import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
 import { MCP_APPS_EXTENSION_ID, appResourceUriFor, registerAppResources } from './app-resource.js'
-import { createApplyToolHandler, summarizeProposalForApply } from './apply-refusal.js'
+import { createApplyToolHandler, createMarkToolHandler, credentialRequiredRefusal, summarizeProposalForApply } from './apply-refusal.js'
 import type { ApplyToolCallContext, ApplyToolInput } from './apply-refusal.js'
 import { liveLinkLineFor } from './live-link.js'
 import type { LiveLinkSupplier } from './live-link.js'
@@ -543,7 +543,7 @@ interface V1RedirectDeps {
  *     is the sentence — which is history, not a grant. Throwing before any dispatch is also what
  *     makes "never invokes anything" structural (T-398-12).
  */
-function installV1NameRedirect(server: McpServer, deps: V1RedirectDeps): void {
+function installV1NameRedirect(server: McpServer, deps: V1RedirectDeps, caller: FunctionCaller): void {
   const dispatch = server.server as unknown as LowLevelDispatch
   const sdkHandler = dispatch._requestHandlers?.get(TOOLS_CALL_METHOD)
   if (typeof sdkHandler !== 'function') {
@@ -561,6 +561,10 @@ function installV1NameRedirect(server: McpServer, deps: V1RedirectDeps): void {
   dispatch.removeRequestHandler(TOOLS_CALL_METHOD)
   dispatch.setRequestHandler(TOOLS_CALL_METHOD, (request: unknown, ctx: unknown) => {
     const name = callToolName(request)
+    // D-20: hidden tools still refuse a direct call by name, before SDK unknown-tool dispatch.
+    if (caller.credential === undefined && AGENT_QA_TOOL_PROJECTIONS.some(
+      projection => projection.name === name && projection.credential === 'required',
+    )) return credentialRequiredRefusal(deps.maskText)
     const entry = name === undefined ? undefined : v1RedirectFor(name, deps.registered)
     if (entry === undefined) return sdkHandler(request, ctx)
 
@@ -653,11 +657,19 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
     const specs = resolveSpecs(projection, declarations)
     if (specs === undefined) continue
     if (!visibleToCaller(requiredScopeUnion(specs), deps.caller.grantedScopes)) continue
+    // D-20 / Pitfall 8: anonymous knowledge-write is not a declared bearer credential.
+    if (projection.credential === 'required' && deps.caller.credential === undefined) continue
 
     registered.add(projection.name)
     const config = toRegisterToolConfig(projection, specs, advertised, deps.maskText)
 
     if (projection.kind === 'apply') {
+      if (projection.credential === 'required') {
+        server.registerTool(projection.name, config, createMarkToolHandler({
+          caller: deps.caller, invoke, maskText: deps.maskText,
+        }))
+        continue
+      }
       // D-11's refuse-and-teach primitive, bound to THIS family's apply op. One primitive, two
       // tools: there is no second refusal shape to keep in step and no family-specific branch
       // anywhere below it. It does not pass through the generic handler above, which is why it
@@ -686,7 +698,7 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
 
   // D-15: the retired v1 names, answered at the dispatch edge with `registered` — the set the loop
   // above just built out of `visibleToCaller`'s verdicts — as the authority on what may be named.
-  installV1NameRedirect(server, { registered, maskText: deps.maskText })
+  installV1NameRedirect(server, { registered, maskText: deps.maskText }, deps.caller)
 
   // D-13: the six entity Resource Templates, gated by the SAME visibility law and resolving through
   // the SAME wall. Registered here rather than by the host so a `resource_link` in any tool result

@@ -42,11 +42,11 @@ import {
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { STANDING_APPROVAL_SCOPE, FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { APPLY_REFUSAL_JSON_SCHEMA } from '../apply-refusal.js'
+import { APPLY_REFUSAL_JSON_SCHEMA, CREDENTIAL_REFUSAL_JSON_SCHEMA } from '../apply-refusal.js'
 import { buildAgentQaMcpServer } from '../catalog.js'
 // 2026-08-16 (Phase 397 D-06): the three normalisations this file authored now live beside the
 // package's other source, because 397's conformance suite compares the same two sides from
@@ -89,7 +89,7 @@ function builtInRegistry(): FunctionRegistry {
 }
 
 function callerWith(grantedScopes: readonly FunctionScope[]): FunctionCaller {
-  return { surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent' }
+  return { surface: 'mcp', grantedScopes, safeMode: false, origin: 'agent', credential: { scope: STANDING_APPROVAL_SCOPE } }
 }
 
 const EVERY_SCOPE = [...FunctionScopeSchema.options] as readonly FunctionScope[]
@@ -162,7 +162,7 @@ describe('the advertised catalogue is what the mapping declares', () => {
 })
 
 describe('the advertised schema equals the function layer\'s own projection (D-16)', () => {
-  // ALL TWELVE, ranged over the mapping rather than sampled. A subset here would be a cell that
+  // ALL FOURTEEN, ranged over the mapping rather than sampled. A subset here would be a cell that
   // holds for the tools somebody happened to think about.
   it('matches the registry projection for every tool, on both sides', async () => {
     const advertised = new Map((await advertise()).map((tool) => [tool.name, tool]))
@@ -179,7 +179,7 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
       // no other caller of the same op. The op's own document is still what the RECEIPT arm is, and
       // that is compared below rather than exempted.
       const composition = compositionOf(projection)
-      const inputComparable = projection.kind !== 'apply'
+      const inputComparable = projection.kind !== 'apply' || projection.credential === 'required'
 
       if (inputComparable && composition !== 'union') {
         const armDeclaration = declared.get(projection.ops[0]!)!
@@ -224,7 +224,7 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
           expect(arms.length, `${projection.name} output arms`).toBe(2)
           expect(arms[0], `${projection.name} receipt arm`).toEqual(distinct[0])
           expect(arms[1], `${projection.name} refusal arm`).toEqual(
-            APPLY_REFUSAL_JSON_SCHEMA as unknown as JsonDocument,
+            (projection.credential === 'required' ? CREDENTIAL_REFUSAL_JSON_SCHEMA : APPLY_REFUSAL_JSON_SCHEMA) as unknown as JsonDocument,
           )
           checked += 1
         } else if (distinct.length === 1) {
@@ -240,10 +240,9 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
     // Integrity: the loop above would pass vacuously over an empty advertisement, and a cell that
     // can pass by checking nothing is the cell most likely to. The arithmetic, so a future reader
     // can tell a real change from a broken loop:
-    //   inputs  — 7 single/pipeline tools (12 less the 2 apply doors and the 3 folds) + 12 fold
-    //             arms (2 + 7 + 3)                                                      = 19
-    //   outputs — 12 tools less the 2 declared degradations                             = 10
-    expect(checked).toBe(29)
+    //   inputs  — 9 single/pipeline/mark tools + 12 fold arms (2 + 7 + 3) = 21
+    //   outputs — 14 tools less the 2 declared degradations              = 12
+    expect(checked).toBe(33)
   })
 
   // IDENTITY, NOT AGREEMENT — and this cell exists because the one above it was measured BLIND to
@@ -277,8 +276,8 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
       expect(advertised!.output, `${projection.name} output identity`).toBe(own.output)
       checked += 2
     }
-    // 7 non-union, non-apply tools contributing both sides.
-    expect(checked).toBe(14)
+    // 8 non-union, non-apply tools contributing both sides.
+    expect(checked).toBe(16)
   })
 
   // Pitfall 3, and the field-level half of D-16's "descriptions live on the zod schemas" clause.
