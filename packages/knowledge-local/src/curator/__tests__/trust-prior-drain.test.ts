@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { canonicalJson, type Delta, type TrustPriorTable } from '@vostride/agent-qa-schema'
+import { asRecordId, canonicalJson, type Delta, type TrustPriorTable } from '@vostride/agent-qa-schema'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enqueueArtifactFreeCandidateProjection } from '../../__tests__/fixtures/curation-candidate-fixture.js'
@@ -14,6 +14,7 @@ import { rebuildIndex } from '../../index-rebuild.js'
 import type { CommitIntent } from '../../journal/intent-journal.js'
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
 import { listQueuedCandidates } from '../../queue/curation-queue.js'
+import { enqueueCanaryOutcome } from '../../queue/canary-queue.js'
 import { applyReview } from '../../review/apply-review.js'
 import { proposeReview } from '../../review/propose-review.js'
 import type { CuratorAuthor } from '../author-contract.js'
@@ -100,6 +101,26 @@ describe('420 drain, review and maintenance prior snapshot', () => {
     expect(persisted(f.knowledgeRoot).row.trust).toBe(0.925)
   })
 
+  it('passes the host snapshot into canary-created stores and their replay', async () => {
+    const f = fixture()
+    const priors = hostSnapshot()
+    await drainQueue({ ...f, priors })
+    const before = persisted(f.knowledgeRoot)
+    const outcome = { candidateId: asRecordId(before.bundle.manifest.id), runId: 'prior-canary',
+      testId: 'checkout', testIndex: 0, stepIndex: 0, buildOrdinal: 43,
+      runOutcome: 'negative' as const, benefit: 'exercised-harmed' as const,
+      stateValidity: 'unknown' as const, briefDigest: 'prior-brief',
+      attribution: 'Checkout evidence', exercisedAnchor: before.bundle.frontmatter.anchors[0]!.raw }
+    enqueueCanaryOutcome(f.knowledgeRoot, outcome)
+    expect(await drainQueue({ ...f, priors })).toMatchObject({ committed: 1, failures: 0 })
+    const first = persisted(f.knowledgeRoot)
+    expect(first.row.trust).toBe(0.74)
+    enqueueCanaryOutcome(f.knowledgeRoot, outcome)
+    expect(await drainQueue({ ...f, priors })).toMatchObject({ committed: 1, failures: 0 })
+    expect(persisted(f.knowledgeRoot).row).toEqual(first.row)
+    expect(f.author).toHaveBeenCalledTimes(1)
+  })
+
   it('applies review with one resolver call and the same host prior as the drain', async () => {
     const f = fixture()
     const priors = hostSnapshot()
@@ -113,7 +134,7 @@ describe('420 drain, review and maintenance prior snapshot', () => {
       proposalId: proposal.proposal.proposalId, resolveTrustPriors: resolver }
     expect(await applyReview(options)).toMatchObject({ outcome: 'applied' })
     expect(resolver).toHaveBeenCalledTimes(1)
-    expect(persisted(f.knowledgeRoot).row.trust).toBe(0.94)
+    expect(persisted(f.knowledgeRoot).row.trust).toBe((2.7 + 2) / 5)
     const bytes = readFileSync(join(before.entry.dir, 'evidence/outcomes.jsonl'), 'utf8')
     expect(await applyReview(options)).toMatchObject({ outcome: 'already-applied' })
     expect(readFileSync(join(before.entry.dir, 'evidence/outcomes.jsonl'), 'utf8')).toBe(bytes)

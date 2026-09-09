@@ -1000,6 +1000,7 @@ export function commitCurationDelta(
     preconditions: injectionRestricted ? [] : checkpoint.preconditions,
   }
   const disposed = disposeDelta({
+    ...(deps.priors === undefined ? {} : { priors: deps.priors }),
     delta: dispositionDelta,
     checkpoint: dispositionCheckpoint,
     profile: deps.profile,

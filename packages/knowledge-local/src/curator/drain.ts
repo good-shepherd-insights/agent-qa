@@ -12,6 +12,7 @@ import {
   type PromotionGateHoldReason,
   type PromotionPath,
   type ResolvePromotionPosture,
+  type TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import { openKnowledgeReader, type KnowledgeReader } from '../index-reader.js'
@@ -84,6 +85,7 @@ import {
 import type { DispositionDrainState } from './disposition.js'
 import { constructFallbackDeltas } from './fallback.js'
 import { createLocalKnowledgeStore } from './knowledge-store.js'
+import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import type { CanaryAuthorityHooks } from './knowledge-store.js'
 import {
   runMaintenanceTail,
@@ -243,6 +245,8 @@ export interface DrainOptions {
   embeddingCapability?: AcquireEmbedderOutcome
   /** Built once per drain on the host; synchronous per candidate inside the gate. */
   resolvePromotionPosture?: ResolvePromotionPosture
+  /** Already-resolved host snapshot; the host retains this data across queue retries. */
+  priors?: TrustPriorTable
   /** Default inline preserves one-shot behavior; daemon sessions skip for their own cadence. */
   maintenance?: 'inline' | 'skip'
   signal?: AbortSignal
@@ -848,16 +852,19 @@ function reconcileDependencies(
   operations: DrainOperations,
   knowledgeRoot: string,
   writerAuthority: CurrentWriterAuthority,
+  priors?: TrustPriorTable,
 ) {
   return {
     knowledgeRoot,
     writerAuthority,
     hasIndexRow: (bundleId: string) => operations.hasIndexRow(knowledgeRoot, bundleId),
     applyIndexDelta: (intent: CommitIntent) => {
-      operations.applyIndexDeltaForBundle({ knowledgeRoot, bundleId: intent.bundleId })
+      operations.applyIndexDeltaForBundle({ knowledgeRoot, bundleId: intent.bundleId,
+        ...(priors === undefined ? {} : { priors }) })
     },
     deriveIndexRowFromBundle: (bundleId: string) => {
-      operations.deriveIndexRowFromBundle({ knowledgeRoot, bundleId })
+      operations.deriveIndexRowFromBundle({ knowledgeRoot, bundleId,
+        ...(priors === undefined ? {} : { priors }) })
     },
   }
 }
@@ -877,6 +884,7 @@ function budgetMs(options: DrainOptions): number {
  * job boundaries, so an in-flight model request always finishes under its own model-layer policy.
  */
 export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
+  const priors = snapshotTrustPriors(options.priors)
   const operations: DrainOperations = { ...DEFAULT_OPERATIONS, ...options.operations }
   const now = options.now ?? Date.now
   const startedAt = now()
@@ -912,7 +920,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
   try {
     try {
       result.reconcile = operations.reconcileOnDrainStart(
-        reconcileDependencies(operations, options.knowledgeRoot, lease),
+        reconcileDependencies(operations, options.knowledgeRoot, lease, priors),
       )
     } catch (error) {
       recordFailure(result, 'reconcile', error)
@@ -990,6 +998,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             ...(options.agentQaRoot === undefined ? {} : { agentQaRoot: options.agentQaRoot }),
             policy: options.policy,
             writerLeaseId: lease.leaseId,
+            ...(priors === undefined ? {} : { resolveTrustPriors: () => priors }),
             ...(options.resolvePromotionPosture === undefined
               ? {}
               : { resolvePromotionPosture: options.resolvePromotionPosture }),
@@ -1137,6 +1146,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
               profile: resolveDispositionProfile(executionContext),
               drainState,
               policy: options.policy,
+              ...(priors === undefined ? {} : { priors }),
               ...(options.resolvePromotionPosture === undefined
                 ? {}
                 : { resolvePromotionPosture: options.resolvePromotionPosture }),
@@ -1230,6 +1240,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     } else {
       const maintenance = await runMaintenanceTail({
         knowledgeRoot: options.knowledgeRoot,
+        ...(priors === undefined ? {} : { priors }),
         lease,
         ...(options.embeddingCapability === undefined
           ? {}

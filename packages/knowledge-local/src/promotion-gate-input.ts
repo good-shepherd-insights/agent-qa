@@ -46,6 +46,7 @@ function memoryOffForBundle(
   const anchors = bundle.frontmatter.anchors.map(({ normalized }) => normalized)
   const markerPrefix = `thrash:${supersessionKey(anchors)}:window:`
   const scope = canonicalJson(bundle.frontmatter.scope)
+  // The lineage scan exposes status and identity only; this memory-off check never reads trust.
   return scanCanonicalBundles(knowledgeRoot).some((candidate) =>
     candidate.kind === 'unknown'
     && candidate.status !== 'deprecated'

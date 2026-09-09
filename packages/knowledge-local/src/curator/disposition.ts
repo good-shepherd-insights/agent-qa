@@ -18,6 +18,7 @@ import {
   type ProcedureBodyPayload,
   type RecordId,
   type ScopeKey,
+  type TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import { readFileSync } from 'node:fs'
@@ -32,6 +33,7 @@ import {
   type LoadedBundle,
 } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
+import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import type {
   CurationCandidateArtifact,
   CurationCaptureReceipt,
@@ -135,6 +137,7 @@ export interface DisposeDeltaInput {
   checkpoint: AuthoredDeltaCheckpoint
   profile: DispositionProfile
   knowledgeRoot: string
+  priors?: TrustPriorTable
   /**
    * Verified queue evidence needed for anchor and new-ordinal checks. Optional only for the
    * non-mutating delta shapes; Add and Supersede fail closed when it is absent.
@@ -241,7 +244,7 @@ function deltaTargetIds(delta: Delta): RecordId[] {
   return [...ids]
 }
 
-function truthLookup(knowledgeRoot: string): TruthLookup {
+function truthLookup(knowledgeRoot: string, priors?: TrustPriorTable): TruthLookup {
   const cache = new Map<RecordId, BundleTruth | undefined>()
   return (id) => {
     if (cache.has(id)) return cache.get(id)
@@ -249,7 +252,9 @@ function truthLookup(knowledgeRoot: string): TruthLookup {
     for (const entry of enumerateBundleDirs(knowledgeRoot)) {
       const loaded = loadBundle(entry.dir)
       if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== id) continue
-      const trust = deriveBundleTrust(loaded.bundle)
+      // BundleTruth consumes lifecycle and validity ordinals only, never numerical trust.
+      // Still carry the caller's snapshot so extending this projection cannot mix defaults.
+      const trust = deriveBundleTrust(loaded.bundle, priors)
       const truth: BundleTruth = {
         dir: entry.dir,
         bundle: loaded.bundle,
@@ -270,6 +275,7 @@ function truthLookup(knowledgeRoot: string): TruthLookup {
 function canonicalBundles(input: DisposeDeltaInput): readonly CanonicalBundleSnapshot[] {
   if (input.drainState.canonicalBundles === undefined) {
     input.drainState.onCanonicalBundleScan?.()
+    // The lineage scan projects status/events/identity only; no numerical trust enters checks.
     input.drainState.canonicalBundles = scanCanonicalBundles(input.knowledgeRoot)
   }
   return input.drainState.canonicalBundles
@@ -1285,11 +1291,12 @@ function procedureArtifactEgressBlocked(
  * decision is made from the persisted checkpoint and canonical bundle tree, never an index row.
  */
 export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
+  const priors = snapshotTrustPriors(input.priors)
   const procedureReject = disposeProcedureExtraction(input)
   if (procedureReject !== undefined) {
     return { kind: 'noop', reason: procedureReject }
   }
-  const lookup = truthLookup(input.knowledgeRoot)
+  const lookup = truthLookup(input.knowledgeRoot, priors)
   const measurement = disposeMeasurementDrift(input, lookup)
   const dispositionInput = measurement.input
   const state: EvaluationState = {}

@@ -36,11 +36,13 @@ import type {
   KnowledgeProposalV1,
   ProposalOrigin,
   ResolvePromotionPosture,
+  TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, readGateReceipts } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
 import { createLocalKnowledgeStore, KnowledgePromotionError } from '../curator/knowledge-store.js'
+import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import { diffSince } from '../diff-since.js'
 import { resolveDispositionProfile } from '../curator/author-contract.js'
 import { materializePolicy, policyShelfPath, PolicyTextRefusedError } from '../policy/materialize.js'
@@ -205,6 +207,8 @@ export interface ApplyReviewInput {
   readonly executionContext?: 'local-interactive' | 'local-headless' | 'ci' | 'cloud'
   readonly delegate?: ApplyDelegate
   readonly resolvePromotionPosture?: ResolvePromotionPosture
+  /** Host data resolver, snapshotted once before claiming or awaiting another apply. */
+  readonly resolveTrustPriors?: () => TrustPriorTable | undefined
   /**
    * The lease this caller ALREADY holds, when it is the holder (387-08 D-18).
    *
@@ -265,6 +269,7 @@ function locateRecord(knowledgeRoot: string, recordId: string) {
     return {
       dir: entry.dir,
       product: entry.product,
+      // Record lookup reads lifecycle only; numerical trust is neither returned nor consulted.
       status: deriveBundleTrust(outcome.bundle).status,
       provenance: outcome.bundle.provenance,
       bundle: outcome.bundle,
@@ -363,6 +368,9 @@ function reviewStore(
     ...(input.resolvePromotionPosture === undefined
       ? {}
       : { resolvePromotionPosture: input.resolvePromotionPosture }),
+    ...(input.resolveTrustPriors === undefined
+      ? {}
+      : { resolveTrustPriors: input.resolveTrustPriors }),
   })
 }
 
@@ -397,6 +405,7 @@ function currentOrdinal(knowledgeRoot: string): number {
 /** commit() returns void: read the committed additions/confirmations, excluding retired victims. */
 function readBackCommittedIds(knowledgeRoot: string, preOrdinal: number, proposal: KnowledgeProposalV1): string[] {
   const ids = new Set(proposal.deltas.flatMap(delta => delta.kind === 'Confirm' ? [delta.targetId] : []))
+  // diffSince also computes trust for its public DTO; this readback consumes change/identity only.
   for (const row of diffSince({ knowledgeRoot, sinceOrdinal: preOrdinal })) {
     if (row.change === 'added' || row.change === 'confirmed' || row.change === 'superseded') {
       ids.add(asRecordId(row.recordId))
@@ -539,6 +548,7 @@ async function applyPolicyArm(
   const preOrdinal = currentOrdinal(input.knowledgeRoot)
   const store = await commitInProcess(input, { ...proposal, deltas: [...proposal.deltas, reference] },
     authority, preOrdinal + 1)
+  // Select the replacement by lifecycle/identity; the DTO's computed trust is never consumed.
   const superseded = diffSince({ knowledgeRoot: input.knowledgeRoot, sinceOrdinal: preOrdinal })
     .find(row => row.recordId === recordId && row.change === 'superseded')
   const replacement = superseded?.byRecordId === undefined ? undefined
@@ -714,6 +724,8 @@ function assertSingleWritePath(input: ApplyReviewInput): void {
  */
 export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewResult> {
   assertSingleWritePath(input)
+  const priors = snapshotTrustPriors(input.resolveTrustPriors?.())
+  input = { ...input, ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: () => priors }) }
   const claim = await settleClaim(input)
   if (claim.kind === 'already-applied') {
     return {
