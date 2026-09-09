@@ -64,6 +64,12 @@ describe('420 neutral trust priors', () => {
     expect(fold([], { ...opts, originClass: 'import' }, priors).trust).toBe(1)
   })
 
+  it('keeps the positive endpoint finite when incomplete alpha underflows', () => {
+    expect(fold([], { ...opts, evidenceIncomplete: true }, {
+      'agent-verified': { alpha: Number.MIN_VALUE, beta: 0 },
+    }).trust).toBe(1)
+  })
+
   it.each([
     null, [], 1, 'private-input', { unknown: { alpha: 1, beta: 1 } },
     { user: undefined }, { user: null }, { user: [] }, { user: { alpha: 1 } },
