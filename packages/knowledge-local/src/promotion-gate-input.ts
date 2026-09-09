@@ -4,15 +4,24 @@ import { basename, dirname, join } from 'node:path'
 import {
   canonicalJson,
   guardDistilledObservation,
+  guardTrustPriorTable,
   isPromotionReceipt,
   survivingOutcomeEvents,
   supersessionKey,
 } from '@vostride/agent-qa-schema'
-import type { GateReceipt, PromotionCandidateProvenance, PromotionGateInput, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
+import type { GateReceipt, PromotionCandidateProvenance, PromotionGateInput, ResolvePromotionPosture, TrustPriorTable } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, readGateReceipts } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import { scanCanonicalBundles } from './lineage-fold.js'
+
+/** Copy host-owned data before any asynchronous work or writer mutation can observe it. */
+export function snapshotTrustPriors(priors: TrustPriorTable | undefined): TrustPriorTable | undefined {
+  if (priors === undefined) return undefined
+  const snapshot = guardTrustPriorTable(priors)
+  for (const row of Object.values(snapshot)) Object.freeze(row)
+  return Object.freeze(snapshot)
+}
 
 function promotionObservations(
   bundleDir: string,
@@ -57,8 +66,9 @@ export function assemblePromotionGateInput(input: {
   bundleDir: string
   bundle: LoadedBundle
   resolvePromotionPosture?: ResolvePromotionPosture
+  priors?: TrustPriorTable
 }): PromotionGateInput {
-  const trust = deriveBundleTrust(input.bundle)
+  const trust = deriveBundleTrust(input.bundle, input.priors)
   const survivingEvents = survivingOutcomeEvents(input.bundle.events)
   const runLinkedProvenance = input.bundle.provenance.mode === 'run-linked'
     ? input.bundle.provenance

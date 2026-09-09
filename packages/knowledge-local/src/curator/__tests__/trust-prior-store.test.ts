@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { asEvidenceToken, canonicalJson, stampReceiptDigest, type Delta, type TrustPriorTable } from '@vostride/agent-qa-schema'
+import { asEvidenceToken, asRecordId, canonicalJson, stampReceiptDigest, type Delta, type TrustPriorTable } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeBundleDraftFixture } from '../../__tests__/fixtures/bundle-fixture.js'
 import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
@@ -29,7 +29,7 @@ function fixture() {
   const bundle = makeBundleDraftFixture({ subtype: 'content' })
   const delta: Delta = { kind: 'Add', origin: 'agent', scope: bundle.scope, citedIds: [], bundle,
     authorship: { path: 'llm', model: { id: 'prior-store-fixture' }, executionContext: 'local-interactive' } }
-  return { config, delta, release: () => releaseLease({ knowledgeRoot, leaseId: lease.leaseId, epoch: lease.epoch }) }
+  return { config, delta, release: () => releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
 }
 
 function persisted(knowledgeRoot: string) {
@@ -56,7 +56,7 @@ describe('420 store prior snapshot', () => {
     expect(resolver).toHaveBeenCalledTimes(1)
     mutable['agent-verified']!.alpha = 0
     await store.commit([f.delta])
-    await store.commit([{ kind: 'Noop', origin: 'agent', scope: f.delta.scope, citedIds: [], reason: 'snapshot check' }])
+    await store.commit([{ kind: 'Noop', origin: 'agent', scope: f.delta.scope, citedIds: [] }])
     expect(resolver).toHaveBeenCalledTimes(1)
     expect(observed[0]).toEqual(prior())
     expect(observed[1]).toBe(observed[0])
@@ -86,13 +86,13 @@ describe('420 store prior snapshot', () => {
     await store.commit([f.delta])
     const { bundle } = persisted(f.config.knowledgeRoot)
     mutable['agent-verified']!.alpha = 0
-    await expect(store.promote(bundle.manifest.id, [stampReceiptDigest({ schemaVersion: 1,
-      gate: 3, candidateId: bundle.manifest.id, verdict: 'pass', producedAtOrdinal: 43,
+    await expect(store.promote(asRecordId(bundle.manifest.id), [stampReceiptDigest({ schemaVersion: 1,
+      gate: 3, candidateId: asRecordId(bundle.manifest.id), verdict: 'pass', producedAtOrdinal: 43,
       producedBy: { opId: 'prior-promotion' }, runId: 'prior-run', mark: 'confirmed-bug' })]))
       .resolves.toMatchObject({ kind: 'promoted' })
     const first = persisted(f.config.knowledgeRoot)
     const bytes = readFileSync(join(first.entry.dir, 'evidence/outcomes.jsonl'), 'utf8')
-    await expect(store.promote(bundle.manifest.id)).resolves.toMatchObject({ kind: 'already-active' })
+    await expect(store.promote(asRecordId(bundle.manifest.id))).resolves.toMatchObject({ kind: 'already-active' })
     expect(readFileSync(join(first.entry.dir, 'evidence/outcomes.jsonl'), 'utf8')).toBe(bytes)
     expect(persisted(f.config.knowledgeRoot).row.trust).toBe(0.925)
     expect(resolver).toHaveBeenCalledTimes(1)
@@ -106,7 +106,7 @@ describe('420 store prior snapshot', () => {
     const store = createLocalKnowledgeStore(options)
     await store.commit([f.delta])
     const { bundle } = persisted(f.config.knowledgeRoot)
-    const outcome = { candidateId: bundle.manifest.id, runId: 'prior-canary', testIndex: 0,
+    const outcome = { candidateId: asRecordId(bundle.manifest.id), runId: 'prior-canary', testIndex: 0,
       stepIndex: 0, buildOrdinal: 44, runOutcome: 'negative' as const, testId: 'prior-test',
       benefit: 'exercised-harmed' as const, stateValidity: 'unknown' as const,
       briefDigest: 'prior-brief', attribution: 'exercised candidate',
@@ -129,7 +129,7 @@ describe('420 store prior snapshot', () => {
       const store = createLocalKnowledgeStore(options)
       await store.commit([f.delta])
       const first = persisted(f.config.knowledgeRoot)
-      await store.commit([{ kind: 'Confirm', origin: 'system', scope: f.delta.scope, citedIds: [first.bundle.manifest.id], targetId: first.bundle.manifest.id, evidenceToken: asEvidenceToken('prior-confirm') }])
+      await store.commit([{ kind: 'Confirm', origin: 'system', scope: f.delta.scope, citedIds: [asRecordId(first.bundle.manifest.id)], targetId: asRecordId(first.bundle.manifest.id), evidenceToken: asEvidenceToken('prior-confirm') }])
       const actual = persisted(f.config.knowledgeRoot)
       const { trust, ...rest } = actual.row
       results.push({ trust, rest, events: canonicalJson(actual.bundle.events) })

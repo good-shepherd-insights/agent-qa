@@ -35,6 +35,7 @@ import type {
   RecordId,
   ResolvePromotionPosture,
   ScreenState,
+  TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 import {
   defaultGuardrailPolicyInput,
@@ -51,6 +52,7 @@ import {
 } from '../bundle-scan.js'
 import { readCurrentEpoch, withCurrentWriterAuthority } from '../lease/writer-lease.js'
 import { claimedCandidateDir } from '../queue/queue-layout.js'
+import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import { buildGateInconsistencyProposal, fileGateInconsistencyProposal } from '../review/gate-inconsistency.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -119,6 +121,8 @@ export interface CreateLocalKnowledgeStoreConfig {
   agentQaRoot?: string
   screenStates?: readonly ScreenState[]
   resolvePromotionPosture?: ResolvePromotionPosture
+  /** Resolved once at construction; only neutral immutable data reaches folds and projections. */
+  resolveTrustPriors?: () => TrustPriorTable | undefined
   onPromotionOutcome?: (report: PromotionOutcomeReport) => void
   onInconsistencyFiled?: (result: ReturnType<typeof fileGateInconsistencyProposal>) => void
   /** Fault-injection seam; production callers must omit it. */
@@ -214,7 +218,7 @@ interface ResolvedTruth {
   observedOrdinal: number
 }
 
-function resolveTruth(knowledgeRoot: string, id: RecordId): ResolvedTruth | undefined {
+function resolveTruth(knowledgeRoot: string, id: RecordId, priors?: TrustPriorTable): ResolvedTruth | undefined {
   let target: ReturnType<typeof resolveProductQualifiedBundleDir>
   try {
     target = resolveProductQualifiedBundleDir({ knowledgeRoot, recordId: id })
@@ -227,7 +231,7 @@ function resolveTruth(knowledgeRoot: string, id: RecordId): ResolvedTruth | unde
   }
   const loaded = loadBundle(target.dir)
   if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== id) return undefined
-  const trust = deriveBundleTrust(loaded.bundle)
+  const trust = deriveBundleTrust(loaded.bundle, priors)
   return {
     id,
     bundle: loaded.bundle,
@@ -367,14 +371,15 @@ function currentAuthority(
 function bridgeDelta(
   config: CreateLocalKnowledgeStoreConfig,
   delta: Delta,
+  priors?: TrustPriorTable,
 ): { job: CommitCurationJob; checkpoint: AuthoredDeltaCheckpoint } {
   const neighbors = delta.citedIds
-    .map((id) => resolveTruth(config.knowledgeRoot, id))
+    .map((id) => resolveTruth(config.knowledgeRoot, id, priors))
     .filter((truth): truth is ResolvedTruth => truth !== undefined)
   const target = targetId(delta)
   const targetTruth = target === undefined
     ? undefined
-    : neighbors.find(({ id }) => id === target) ?? resolveTruth(config.knowledgeRoot, target)
+    : neighbors.find(({ id }) => id === target) ?? resolveTruth(config.knowledgeRoot, target, priors)
   const observedOrdinals = [...neighbors, ...(targetTruth === undefined ? [] : [targetTruth])]
     .map(({ observedOrdinal }) => observedOrdinal)
   const buildOrdinal = config.sourceBuildOrdinal
@@ -455,6 +460,7 @@ function unreachableCanaryOutcome(outcome: never): never {
 export function createLocalKnowledgeStore(
   config: CreateLocalKnowledgeStoreConfig,
 ): KnowledgePort {
+  const priors = snapshotTrustPriors(config.resolveTrustPriors?.())
   const operation = config.operations?.commitCurationDelta ?? commitCurationDelta
   const policy = config.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
@@ -488,7 +494,7 @@ export function createLocalKnowledgeStore(
     reportHold(error)
     if (!expectedPromotionHold(error) || error.reason !== 'gate-inconsistent'
       || config.agentQaRoot === undefined) return
-    const current = resolveTruth(config.knowledgeRoot, outcome.candidateId)
+    const current = resolveTruth(config.knowledgeRoot, outcome.candidateId, priors)
     if (current === undefined) throw new KnowledgePromotionError(outcome.candidateId, 'not-found')
     const standing = (readGateReceipts(current.bundleDir, outcome.candidateId) ?? [])
       .filter((line): line is GateReceipt => !isPromotionReceipt(line))
@@ -516,7 +522,7 @@ export function createLocalKnowledgeStore(
       throw new KnowledgePromotionError(candidateId, 'propose-only')
     }
 
-    const resolved = resolveTruth(config.knowledgeRoot, candidateId)
+    const resolved = resolveTruth(config.knowledgeRoot, candidateId, priors)
     if (resolved === undefined) {
       throw new KnowledgePromotionError(candidateId, 'not-found')
     }
@@ -535,6 +541,7 @@ export function createLocalKnowledgeStore(
         bundleDir: resolved.bundleDir,
         bundle: resolved.bundle,
         resolvePromotionPosture: config.resolvePromotionPosture,
+        ...(priors === undefined ? {} : { priors }),
       })
       const setAside = foldBundleTrust(
         survivingOutcomeEvents(resolved.bundle.events)
@@ -544,6 +551,7 @@ export function createLocalKnowledgeStore(
           evidenceIncomplete: resolved.bundle.manifest.evidenceIncomplete,
           createdAtOrdinal: resolved.bundle.frontmatter.createdAtOrdinal,
         },
+        priors,
       )
       // 416-DOOR: door-1-2 revalidation
       const revalidated = evaluatePromotionGate({ ...gateInput, status: setAside.status })
@@ -562,6 +570,7 @@ export function createLocalKnowledgeStore(
         }
         // Still authorized: heal append-before-projection retries.
         applyIndexDeltaForBundleWithinCurrentAuthority({
+          ...(priors === undefined ? {} : { priors }),
           knowledgeRoot: config.knowledgeRoot,
           bundleId: candidateId,
           product: resolved.product,
@@ -597,6 +606,7 @@ export function createLocalKnowledgeStore(
         }
       }
       applyIndexDeltaForBundleWithinCurrentAuthority({
+        ...(priors === undefined ? {} : { priors }),
         knowledgeRoot: config.knowledgeRoot,
         bundleId: candidateId,
         product: resolved.product,
@@ -610,6 +620,7 @@ export function createLocalKnowledgeStore(
       bundleDir: resolved.bundleDir,
       bundle: resolved.bundle,
       resolvePromotionPosture: config.resolvePromotionPosture,
+      ...(priors === undefined ? {} : { priors }),
     }))
     if (gate.verdict === 'hold') {
       throw new KnowledgePromotionError(candidateId, gate.reason)
@@ -655,6 +666,7 @@ export function createLocalKnowledgeStore(
     }
     if (receipt.kind === 'not-found') throw new KnowledgePromotionError(candidateId, receipt.kind)
     applyIndexDeltaForBundleWithinCurrentAuthority({
+      ...(priors === undefined ? {} : { priors }),
       knowledgeRoot: config.knowledgeRoot,
       bundleId: candidateId,
       product: resolved.product,
@@ -681,7 +693,7 @@ export function createLocalKnowledgeStore(
       if (draft(delta)?.kind === 'procedure') {
         throw new KnowledgeUnsupportedDeltaError(delta.kind)
       }
-      const { job, checkpoint } = bridgeDelta(config, delta)
+      const { job, checkpoint } = bridgeDelta(config, delta, priors)
       const outcome = operation(
         {
           knowledgeRoot: config.knowledgeRoot,
@@ -690,6 +702,7 @@ export function createLocalKnowledgeStore(
           profile,
           drainState,
           policy,
+          ...(priors === undefined ? {} : { priors }),
           ...(config.resolvePromotionPosture === undefined
             ? {}
             : { resolvePromotionPosture: config.resolvePromotionPosture }),
@@ -734,7 +747,7 @@ export function createLocalKnowledgeStore(
       return commitWithProfile(deltas, resolveDispositionProfile(config.executionContext))
     },
     async recordCanaryOutcome(outcome: CanaryOutcome): Promise<void> {
-      const resolved = resolveTruth(config.knowledgeRoot, outcome.candidateId)
+      const resolved = resolveTruth(config.knowledgeRoot, outcome.candidateId, priors)
       if (resolved === undefined) {
         throw new KnowledgePromotionError(outcome.candidateId, 'not-found')
       }
@@ -808,9 +821,9 @@ export function createLocalKnowledgeStore(
             // retain truthful stale evidence, but never await a receipt we cannot write.
             // Valid/unknown states likewise keep single-sample contradiction.
             if (outcome.corpusDigest !== undefined && outcome.stateValidity === 'stale') {
-              const current = resolveTruth(config.knowledgeRoot, outcome.candidateId)
+              const current = resolveTruth(config.knowledgeRoot, outcome.candidateId, priors)
               if (current === undefined) throw new KnowledgePromotionError(outcome.candidateId, 'not-found')
-              const validity = deriveBundleTrust(current.bundle).validity
+              const validity = deriveBundleTrust(current.bundle, priors).validity
               const insideWindow = (ordinal: number) => ordinal >= validity.openedAtOrdinal
                 && (validity.closedAtOrdinal === undefined || ordinal <= validity.closedAtOrdinal)
               const priorRuns = new Set((readGateReceipts(current.bundleDir, outcome.candidateId) ?? [])
@@ -857,6 +870,7 @@ export function createLocalKnowledgeStore(
             }
             config.canaryAuthorityHooks?.beforeIndexProjection?.()
             applyIndexDeltaForBundleWithinCurrentAuthority({
+              ...(priors === undefined ? {} : { priors }),
               knowledgeRoot: config.knowledgeRoot,
               bundleId: outcome.candidateId,
               product: resolved.product,
@@ -874,7 +888,7 @@ export function createLocalKnowledgeStore(
         if (resolveDispositionProfile(config.executionContext).mode === 'propose-only') {
           throw new KnowledgePromotionError(candidateId, 'propose-only')
         }
-        const resolved = resolveTruth(config.knowledgeRoot, candidateId)
+        const resolved = resolveTruth(config.knowledgeRoot, candidateId, priors)
         if (resolved === undefined) throw new KnowledgePromotionError(candidateId, 'not-found')
         // Validate the entire batch before its first append; a later malformed item must not
         // leave earlier caller evidence durable. Appenders independently repeat these checks.
@@ -897,7 +911,7 @@ export function createLocalKnowledgeStore(
     async recordGateReceipt(receipt: GateReceipt): Promise<GateReceiptRecordOutcome> {
       return withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
         const candidateId = asRecordId(receipt.candidateId)
-        const resolved = resolveTruth(config.knowledgeRoot, candidateId)
+        const resolved = resolveTruth(config.knowledgeRoot, candidateId, priors)
         if (resolved === undefined) throw new KnowledgePromotionError(candidateId, 'not-found')
         return checkedAppend(candidateId, appendGateReceipt(bundleStoreConfig(resolved.product), candidateId, receipt))
       })
