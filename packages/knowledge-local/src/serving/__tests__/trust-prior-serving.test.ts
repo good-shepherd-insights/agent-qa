@@ -39,7 +39,7 @@ describe('420 serving prior continuity', () => {
     const config = { knowledgeRoot: f.knowledgeRoot, priors: prior() }
     const expected = (1.8 + 1.25) / (2 + 2.5)
     expect(hydrateRows(config, readIndexRows(config), true)[0]!.entry.trust).toBe(expected)
-    expect((await openKnowledgeReader(config).search('Sign in', {}))[0]!.trust).toBe(expected)
+    expect((await openKnowledgeReader(config).search('Sign in', { scope: f.bundle.frontmatter.scope }))[0]!.trust).toBe(expected)
   })
 
   it('scan list and direct fallback agree with serving', async () => {
@@ -63,10 +63,14 @@ describe('420 serving prior continuity', () => {
     const before = await openKnowledgeReader({ knowledgeRoot: f.knowledgeRoot }).getRunBrief(f.bundle.frontmatter.scope, 2000)
     const authoredBefore = await createAuthoringReader({ knowledgeRoot: f.knowledgeRoot }).getAuthoringBrief('Sign in', f.bundle.frontmatter.scope)
     mutable['agent-observed']!.alpha = 0
-    expect((await serving.search('Sign in', {}))[0]!.trust).toBe(deriveBundleTrust(f.bundle, prior()).trust)
+    expect((await serving.search('Sign in', { scope: f.bundle.frontmatter.scope }))[0]!.trust).toBe(deriveBundleTrust(f.bundle, prior()).trust)
     const after = await serving.getRunBrief(f.bundle.frontmatter.scope, 2000)
-    expect(after.block).toEqual(before.block)
-    expect(await authoring.getAuthoringBrief('Sign in', f.bundle.frontmatter.scope)).toEqual(authoredBefore)
+    expect(after.brief.tiers).toEqual(before.brief.tiers)
+    expect(after.brief.lines.map(({ trust, ...line }) => line)).toEqual(before.brief.lines.map(({ trust, ...line }) => line))
+    expect(after.brief.lines[0]!.trust).toBe(deriveBundleTrust(f.bundle, prior()).trust)
+    const authored = await authoring.getAuthoringBrief('Sign in', f.bundle.frontmatter.scope)
+    expect(authored.facts[0]!.trust).toBe(deriveBundleTrust(f.bundle, prior()).trust)
+    expect({ ...authored, facts: authored.facts.map(({ trust, ...line }) => line) }).toEqual({ ...authoredBefore, facts: authoredBefore.facts.map(({ trust, ...line }) => line) })
     expect(await serving.read(f.id)).toEqual(await openKnowledgeReader({ knowledgeRoot: f.knowledgeRoot }).read(f.id))
   })
 
@@ -76,8 +80,8 @@ describe('420 serving prior continuity', () => {
       expect(canonicalJson(deriveBundleTrust(f.bundle))).toBe(f.expectedBytes)
       const original = openKnowledgeReader({ knowledgeRoot: f.knowledgeRoot })
       const empty = openKnowledgeReader({ knowledgeRoot: f.knowledgeRoot, priors: {} })
-      expect(await empty.search('Sign in', {})).toEqual(await original.search('Sign in', {}))
-      expect((await empty.search('Sign in', {}))[0]!.trust).toBe(f.expected.trust)
+      expect(await empty.search('Sign in', { scope: f.bundle.frontmatter.scope })).toEqual(await original.search('Sign in', { scope: f.bundle.frontmatter.scope }))
+      expect((await empty.search('Sign in', { scope: f.bundle.frontmatter.scope }))[0]!.trust).toBe(f.expected.trust)
       expect(listBundles(f.knowledgeRoot, {})[0]!.trust).toBe(f.expected.trust)
       expect(scanBundles({ knowledgeRoot: f.knowledgeRoot, priors: {} })[0]!.trust).toBe(f.expected.trust)
     }
@@ -86,8 +90,8 @@ describe('420 serving prior continuity', () => {
   it('keeps product scope candidate history and integrity admission', async () => {
     const f = await persist('agent-observed-clean', 0)
     const config = { knowledgeRoot: f.knowledgeRoot, priors: prior() }
-    expect(await openKnowledgeReader(config).search('Sign in', { includeCandidates: true })).toEqual([])
-    expect(await openKnowledgeReader({ ...config, product: 'foreign' }).search('Sign in', {})).toEqual([])
+    expect(await openKnowledgeReader(config).search('Sign in', { scope: f.bundle.frontmatter.scope, includeCandidates: true })).toEqual([])
+    expect(await openKnowledgeReader({ ...config, product: 'foreign' }).search('Sign in', { scope: f.bundle.frontmatter.scope })).toEqual([])
     expect(listBundles(f.knowledgeRoot, prior())).toHaveLength(1)
     writeFileSync(join(f.dir, 'record.md'), 'corrupt fixture')
     expect(hydrateRows(config, readIndexRows(config), false)).toEqual([])

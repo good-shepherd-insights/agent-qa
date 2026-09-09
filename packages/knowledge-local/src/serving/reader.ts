@@ -21,6 +21,7 @@ import {
   type ScopeKey,
   type ScreenState,
   type SearchOptions,
+  type TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import {
@@ -42,7 +43,7 @@ import {
   type KnowledgeReader,
   type OpenKnowledgeReaderOptions,
 } from '../index-reader.js'
-import { assemblePromotionGateInput } from '../promotion-gate-input.js'
+import { assemblePromotionGateInput, snapshotTrustPriors } from '../promotion-gate-input.js'
 import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
 import { selectCautions } from './get-cautions.js'
 import { admitsProcedure, matchProcedure } from './get-procedure.js'
@@ -54,6 +55,8 @@ const CHARS_PER_TOKEN_ESTIMATE = 4
 
 export interface OpenServingKnowledgeReaderConfig {
   knowledgeRoot: string
+  /** Neutral host data, snapshotted when this reader is opened. */
+  priors?: TrustPriorTable
   product?: string
   scopeDefaults?: {
     asOfBuild?: number
@@ -164,12 +167,13 @@ export function hydrateRows(
     if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(found.dir).ok) return []
 
     const { bundle } = loaded
-    const trust = deriveBundleTrust(bundle)
+    const trust = deriveBundleTrust(bundle, config.priors)
     const vetted = trust.status === 'candidate' && isVettedCandidate(
       assemblePromotionGateInput({
         knowledgeRoot: config.knowledgeRoot,
         bundleDir: found.dir,
         bundle,
+        priors: config.priors,
       }),
     )
     // 2026-09-08, 418 D-15/D-16: offline-only actives keep attracting live credit.
@@ -301,7 +305,7 @@ function searchEntries(
       ) {
         return false
       }
-      const trust = deriveBundleTrust(bundle)
+      const trust = deriveBundleTrust(bundle, config.priors)
       if (
         options.asOfBuild !== undefined
         && !validAtBuild(
@@ -362,7 +366,7 @@ function findReadableBundle(
     return undefined
   }
 
-  const trust = deriveBundleTrust(hydrated.bundle)
+  const trust = deriveBundleTrust(hydrated.bundle, config.priors)
   const asOfBuild = options?.asOfBuild ?? config.scopeDefaults?.asOfBuild
   if (
     asOfBuild !== undefined
@@ -531,5 +535,5 @@ export function openKnowledgeReader(
   // KnowledgeHintReader composition seam used by the runner.
   return typeof configOrKnowledgeRoot === 'string'
     ? openIndexKnowledgeReader(configOrKnowledgeRoot, opts)
-    : servingReader(configOrKnowledgeRoot)
+    : servingReader({ ...configOrKnowledgeRoot, priors: snapshotTrustPriors(configOrKnowledgeRoot.priors) })
 }

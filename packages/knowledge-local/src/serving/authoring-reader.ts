@@ -19,6 +19,7 @@ import type { EmbedderPort } from '../embedder-port.js'
 import { indexDbPath, openIndexReaderConnection } from '../index-open.js'
 import { foldQuarantineLedgerState, readQuarantineLedger } from '../quarantine/ledger.js'
 import { hasDenseCandidates } from '../retrieve.js'
+import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import { denseLeg, type RetrievalLegScope } from '../retrieval/legs.js'
 import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
 import {
@@ -308,6 +309,7 @@ export function createAuthoringReader(
   config: OpenServingKnowledgeReaderConfig,
   deps: AuthoringReaderDependencies = {},
 ): AuthoringReadPort {
+  config = { ...config, priors: snapshotTrustPriors(config.priors) }
   return {
     async getAuthoringBrief(intent: string, scope: ScopeKey): Promise<AuthoringBrief> {
       const entries = hydrateRows(config, readIndexRows(config, scope), false)

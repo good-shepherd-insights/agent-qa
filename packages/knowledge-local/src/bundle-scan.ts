@@ -17,6 +17,7 @@ import type {
   BundleStatus,
   DerivedTrustState,
   RecordId,
+  TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
@@ -36,6 +37,7 @@ export interface KnowledgeHit {
 
 export interface ScanBundlesOptions {
   knowledgeRoot: string
+  priors?: TrustPriorTable
   text?: string
   anchor?: Anchor
   product?: string
@@ -44,6 +46,7 @@ export interface ScanBundlesOptions {
 
 export interface ScanBundleByIdOptions {
   knowledgeRoot: string
+  priors?: TrustPriorTable
   bundleId: string
 }
 
@@ -206,11 +209,11 @@ function anchorMatches(bundle: LoadedBundle, queryAnchor: Anchor | undefined): b
   })
 }
 
-function servableHit(dir: EnumeratedBundleDir): KnowledgeHit | undefined {
+function servableHit(dir: EnumeratedBundleDir, priors?: TrustPriorTable): KnowledgeHit | undefined {
   const outcome = loadBundle(dir.dir)
   if (outcome.kind !== 'loaded') return undefined
   if (!verifyBundleIntegrity(dir.dir).ok) return undefined
-  const trustState = deriveBundleTrust(outcome.bundle)
+  const trustState = deriveBundleTrust(outcome.bundle, priors)
   return isServable(trustState)
     ? toHit(outcome.bundle, trustState, dir.product)
     : undefined
@@ -235,7 +238,7 @@ function scanBundlesWithPosture(
     if (outcome.kind !== 'loaded') continue
     if (!verifyBundleIntegrity(entry.dir).ok) continue
 
-    const trustState = deriveBundleTrust(outcome.bundle)
+    const trustState = deriveBundleTrust(outcome.bundle, opts.priors)
     if (servingOnly && !isServable(trustState)) continue
     if (!textMatches(outcome.bundle, queryTokens)) continue
     if (!anchorMatches(outcome.bundle, queryAnchor)) continue
@@ -263,7 +266,7 @@ export function scanBundlesForRetrieval(opts: ScanBundlesOptions): KnowledgeHit[
 export function scanBundleById(opts: ScanBundleByIdOptions): KnowledgeHit | undefined {
   for (const entry of enumerateBundleDirs(opts.knowledgeRoot)) {
     if (basename(entry.dir) !== opts.bundleId) continue
-    const hit = servableHit(entry)
+    const hit = servableHit(entry, opts.priors)
     if (hit !== undefined) return hit
   }
   return undefined
