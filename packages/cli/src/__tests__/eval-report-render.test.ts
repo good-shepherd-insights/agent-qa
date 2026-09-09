@@ -41,6 +41,9 @@ function fixtureReport(): EvalBatchReport {
     recoveredPositiveCount: 1,
     eligiblePositiveCount: 1,
     recoveryAccuracy: 1,
+    weightSum: 2 / 3,
+    weightedAccuracy: 1,
+    pairsWithoutWeight: 1,
     negativeDecisionCount: 1,
     negativeFullMatchCount: 1,
   }
