@@ -8,6 +8,8 @@ export { computeSoftWeight, SOFT_VERDICT_FACTORS, SOFT_TIER_FACTORS } from './la
 export type { ComputeSoftWeightInput, SoftRecoveringDecisionEvidence } from './labels/soft-weight'
 
 export { canonicalJson, canonicalValue } from './canonical-json'
+export { calibrateLabels, CHANNEL_TO_ORIGIN_CLASS, LABEL_CALIBRATION_STATUSES } from './labels/calibration'
+export type { CalibrationObservation, CalibrationSkipReason, LabelCalibrationInput, LabelCalibrationReport, LabelCalibrationStatus, NoisyChannelCalibration } from './labels/calibration'
 
 export { computeReplayDrift } from './replay/drift'
 export type { ReplayDrift } from './replay/drift'

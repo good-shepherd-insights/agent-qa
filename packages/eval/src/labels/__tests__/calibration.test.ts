@@ -4,7 +4,7 @@ import * as core from '../../index'
 import { makeArtifactRefV2Handoff } from '../../__tests__/fixtures/handoff-fixtures'
 
 function fixture(n = 1, correct = n, channel: 'recorded-verdict' | 'self-heal-pair' = 'recorded-verdict') {
-  const snapshot: core.CommittedCorpusSnapshot = { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }
+  const snapshot = { entries: [] as core.CorpusEntry[], labelsById: new Map<string, core.StandaloneLabelRecord>(), cassettesById: new Map<string, core.LeafCassette>(), blobPresentById: new Map<string, boolean>(), excludedLabelIds: undefined as ReadonlySet<string> | undefined }
   const marks: MarkReceipt[] = []
   for (let i = 0; i < n; i++) {
     const handoff = makeArtifactRefV2Handoff()
@@ -15,7 +15,7 @@ function fixture(n = 1, correct = n, channel: 'recorded-verdict' | 'self-heal-pa
     const product = i % 2 ? 'one' : 'two'
     const record = core.projectSilverLabelRecord({ cassette, runId: handoff.runId })
     if (channel === 'self-heal-pair') record.label = { ...record.label, sourceChannel: channel, tier: 'near-gold', pairing: { relation: 'contrastive-negative', pairedCassetteId: 'partner' } }
-    snapshot.entries.push(core.projectCorpusEntry({ cassette, product, runId: handoff.runId }))
+    snapshot.entries.push(core.projectCorpusEntry({ cassette, product, runId: handoff.runId, assignment: { split: 'natural' } }))
     snapshot.labelsById.set(cassette.id, record)
     snapshot.cassettesById.set(cassette.id, cassette)
     const mark: MarkReceipt = { schemaVersion: 1, markId: `mark_${i.toString(16).padStart(12, '0')}`, runId: asRunId(handoff.runId), runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0,
@@ -25,7 +25,7 @@ function fixture(n = 1, correct = n, channel: 'recorded-verdict' | 'self-heal-pa
     for (const row of plan.cases) {
       snapshot.entries.push(row.corpusEntry); snapshot.labelsById.set(row.cassetteId, row.labelRecord)
       snapshot.cassettesById.set(row.cassetteId, { ...cassette, id: row.cassetteId })
-      mark.gold.push({ cassetteId: row.cassetteId, sourceCassetteId: cassette.id, channel: row.labelRecord.label.sourceChannel as 'user-mark', product })
+      mark.gold.push({ cassetteId: row.cassetteId, sourceCassetteId: cassette.id, channel: row.labelRecord.label.sourceChannel as 'user-mark' })
     }
     marks.push(mark)
   }
@@ -45,6 +45,7 @@ describe('420 held-out calibration', () => {
       expect(report.channels['recorded-verdict']).not.toHaveProperty('precision')
       expect(report.priors).toEqual({})
     } else {
+      if (report.channels['recorded-verdict'].status !== 'calibrated') throw new Error('Expected calibrated channel')
       expect(report.channels['recorded-verdict'].precision).toBe(1)
       expect(report.channels['recorded-verdict'].wilson95).toEqual(core.wilsonInterval(n, n))
     }
@@ -109,17 +110,18 @@ describe('420 held-out calibration', () => {
     const input = fixture(2, 2, 'self-heal-pair')
     for (const mark of input.marks) input.snapshot.labelsById.get(mark.gold[0]!.sourceCassetteId)!.label.verdict!.pass = true
     const report = calibrate(input, { minGold: { value: 2, source: 'flag' } })
-    expect(report?.channels['self-heal-pair'].precision).toBe(1)
+    expect(report?.channels['self-heal-pair']).toMatchObject({ precision: 1 })
     expect(report.priors['agent-observed']).toEqual({ alpha: 2, beta: 0 })
   })
   it.each([0, 18, 20])('preserves prior mass with %i correct of 20', correct => {
     const report = calibrate(fixture(20, correct))
-    expect(report?.priors['agent-verified'].alpha).toBeCloseTo(correct / 20 * 3)
-    expect(report.priors['agent-verified'].beta).toBeCloseTo((1 - correct / 20) * 3)
-    expect(report.priors['agent-verified'].alpha + report.priors['agent-verified'].beta).toBe(3)
+    const prior = report?.priors['agent-verified']!
+    expect(prior.alpha).toBeCloseTo(correct / 20 * 3)
+    expect(prior.beta).toBeCloseTo((1 - correct / 20) * 3)
+    expect(prior.alpha + prior.beta).toBe(3)
     expect(report.unchangedOrigins).toEqual(['user', 'import'])
     expect(report.priors).not.toHaveProperty('user')
-    if (correct !== 18) expect(Object.values(report.priors['agent-verified'])).toContain(0)
+    if (correct !== 18) expect(Object.values(prior)).toContain(0)
   })
   it('keeps coarse classifier producer observations independent and deduplicated', () => {
     const input = fixture(2, 1)
@@ -140,6 +142,17 @@ describe('420 held-out calibration', () => {
     expect(report).toBeDefined()
     expect(report).toEqual(before)
     expect(calibrate(input, { minGold: { value: 2, source: 'flag' } }).goldSetDigest).toBe(before.goldSetDigest)
+  })
+  it('skips contradictory producer observations without picking an input order', () => {
+    const input = fixture(), runId = input.marks[0]!.runId
+    const observations = [
+      { runId, testIndex: 0, producer: 'analyze-run', class: 'app_bug' },
+      { runId, testIndex: 0, producer: 'analyze-run', class: 'test_bug' },
+    ]
+    const report = calibrate(input, { observations })
+    expect(report?.rootCauseClassifierAccuracy['analyze-run']).toEqual({ n: 0, correct: 0 })
+    expect(report.skippedCounts['conflicting-observation']).toBe(1)
+    expect(calibrate(input, { observations: observations.reverse() })).toEqual(report)
   })
 })
 
