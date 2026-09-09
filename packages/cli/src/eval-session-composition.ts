@@ -1005,7 +1005,7 @@ export function feedbackSeedHostOptions(session: EvalSession) {
 }
 
 // Preserve the existing eval composition boundary; the DATA bridge imports this lazily.
-export { runReplayGate, serializeReplayGateReceipt } from '@vostride/agent-qa-eval-local'
+export { runReplayGate, serializeReplayGateReceipt, readLabelCalibration } from '@vostride/agent-qa-eval-local'
 export type { RunReplayGateInput, RunReplayGateResult } from '@vostride/agent-qa-eval-local'
 export type ReplayGateVerbResult = import('./gates/replay-gate-host.js').ReplayGateVerbResult & {
   maxScreens: number
@@ -1015,6 +1015,7 @@ export type ReplayGateVerbResult = import('./gates/replay-gate-host.js').ReplayG
 }
 
 export interface ReplayGateVerbOptions {
+  resolveTrustPriors?: import('./curation/trust-priors.js').ResolveTrustPriors
   /** Host runtime artifacts and audit root; config and committed roots remain config-relative. */
   agentQaRoot?: string
   k?: number
@@ -1084,6 +1085,7 @@ export async function runReplayGateVerb(
   )?.artefact
   const { createReplayGateHost } = await import('./gates/replay-gate-host.js')
   const result = await createReplayGateHost({
+    ...(opts.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: opts.resolveTrustPriors }),
     configPath: session.configPath,
     agentQaRoot: opts.agentQaRoot ?? resolve(session.configDir, '.agent-qa'),
     record: opts.dryRun !== true,

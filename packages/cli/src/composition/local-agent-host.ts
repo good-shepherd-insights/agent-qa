@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { AUTHORING_DRAFT_EDIT_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
 import { AuthoringDraftEditOutputSchema } from '@vostride/agent-qa-schema'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
+import { trustPriorsForHost, type TrustPriorDisclosure } from '../curation/trust-priors.js'
 // The CLI's half of the local host (Phase 384 plan 01, superseded in place by 385 plan 09, D-15).
 //
 // What used to live here — the runs reader, the knowledge listing binding and the registry
@@ -314,6 +315,7 @@ export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
  * sites and the daemon's composition defer for the same reason.
  */
 function createComposedRunExecution(input: {
+  readonly resolveTrustPriors?: ComposeLocalAgentInput['resolveTrustPriors']
   readonly configPath: string
   readonly agentQaRoot: string
   readonly resolveExecutionContext: ComposeLocalAgentInput['resolveExecutionContext']
@@ -361,6 +363,7 @@ function createComposedRunExecution(input: {
       try {
         const outcome = await runInProcessCliRun(
           {
+            ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
             configPath,
             agentQaRoot: input.agentQaRoot,
             executionContext:
@@ -3640,14 +3643,16 @@ export function createChatConfirmPort(
   }
 }
 
-export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {
+export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost & { trustPriorDisclosure: TrustPriorDisclosure } {
+  const trustPriors = trustPriorsForHost({ configPath: input.configPath })
+  const resolveTrustPriors = trustPriors.resolve
   const resolvePromotionPosture = input.resolvePromotionPosture ?? (async () =>
     buildPromotionPostureResolver({ configPath: input.configPath,
       knowledgeRoot: await knowledgeRoot(), agentQaRoot: input.agentQaRoot,
       canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
       lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
       currentBuildOrdinal: product => latestBuildOrdinal({ root: input.agentQaRoot, product }),
-      replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot }),
+      replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot, resolveTrustPriors }),
     })
       .then(result => promotionPostureResolverForHost(result, message => console.warn(message))))
   // Narrowed once, here, so the hook closures below close over a value TypeScript knows is present
@@ -3672,12 +3677,14 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
 
   const host = composeLocalAgent({
     feedback: createFeedbackPortForHost({
+      resolveTrustPriors,
       configPath: input.configPath, agentQaRoot: input.agentQaRoot, randomUuid: randomUUID,
       invokeAuthoringDraftEdit: async draftInput => AuthoringDraftEditOutputSchema.parse(
         await invokeFunction(host.registry, AUTHORING_DRAFT_EDIT_FUNCTION_ID, draftInput, CLI_FUNCTION_CALLER),
       ),
     }),
     resolvePromotionPosture,
+    resolveTrustPriors,
     agentQaRoot: input.agentQaRoot,
     mintQuarantineIdentityPath: createQuarantineIdentityMint(input.configPath),
     // 401-05 (D-01/D-07): the default is the in-process policy-gated drive, and since 401-10 it is
@@ -3685,6 +3692,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // rather than merely unreferenced. `input.runExecution` stays the injectable override, which is
     // what cells substitute.
     runExecution: input.runExecution ?? createComposedRunExecution({
+      resolveTrustPriors,
       configPath: input.configPath,
       agentQaRoot: input.agentQaRoot,
       resolveExecutionContext: input.resolveExecutionContext,
@@ -3843,5 +3851,5 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // absent field still defaults to "prompt where there is somebody to prompt".
     ...(doorConfirm === undefined ? {} : { confirm: doorConfirm }),
   })
-  return host
+  return Object.assign(host, { trustPriorDisclosure: trustPriors.disclosure })
 }

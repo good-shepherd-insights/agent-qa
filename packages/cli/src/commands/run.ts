@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 import { randomUUID } from 'node:crypto'
 import { resolve as resolvePath } from 'node:path'
 import { Command, InvalidArgumentError } from 'commander'
@@ -2008,6 +2009,7 @@ export const isMintedCliRunId = isCanonicalRunId
 
 /** What the mode-aware default producer is handed. */
 export interface PatternMemberProductionContext {
+  readonly resolveTrustPriors?: ResolveTrustPriors
   readonly inputs: RunInvocationInputs
   readonly runId: string
   readonly opts?: RunOptions
@@ -2074,6 +2076,7 @@ export async function produceMembersFromPatterns(
       }),
     )
     return produceDirectRunMembers({
+      ...(context.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: context.resolveTrustPriors }),
       inputs: context.inputs,
       bindings: parseResult.bindings,
       ...(product === undefined ? {} : { product }),
@@ -2091,6 +2094,7 @@ export async function produceMembersFromPatterns(
       configDir: context.inputs.configDir,
     })
     return produceSuiteRunMembers({
+      ...(context.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: context.resolveTrustPriors }),
       suiteFiles: suites,
       preflight,
       config: context.inputs.config,
@@ -2219,6 +2223,7 @@ export async function resolveSuitePreflight(input: {
  * throws carrying the same rendered lines and the same code.
  */
 export interface SuiteRunMemberProductionInput {
+  readonly resolveTrustPriors?: ResolveTrustPriors
   readonly suiteFiles: readonly string[]
   readonly preflight: SuitePreflight
   readonly config: AgentQaConfig
@@ -2264,6 +2269,7 @@ export async function produceSuiteRunMembers(
   const config = input.config
   const configDir = input.configDir
   const configFilePath = input.configFilePath
+  const resolveTrustPriors = input.resolveTrustPriors ?? trustPriorsForHost({ configPath: configFilePath }).resolve
   const configContent = input.configContent
   const effectiveLogLevel = input.effectiveLogLevel
   const runId = input.runId
@@ -3422,6 +3428,7 @@ export async function produceSuiteRunMembers(
     bindKnowledge: (buildOrdinal: number) => {
       for (const prepared of preparedSuites) {
         const knowledge = openRunKnowledgeComposition({
+          resolveTrustPriors,
           knowledgeRoot,
           // 407 D-13: the hosted runtime root the embedder probe discovers its worker under —
           // the same `resolvePath(configDir, '.agent-qa')` idiom every other door here uses.
@@ -3477,6 +3484,7 @@ export async function produceSuiteRunMembers(
  * two assignments, named.
  */
 export interface DirectRunMemberProductionInput {
+  readonly resolveTrustPriors?: ResolveTrustPriors
   /** The resolved preflight — the producer never re-resolves a config a door already read. */
   readonly inputs: RunInvocationInputs
   /** The parsed bindings. `refuseZeroRunnableTests` has already had its say about an empty one. */
@@ -3621,6 +3629,7 @@ export async function produceDirectRunMembers(
     rawEnvFileContent,
     resolvedEnvFilePath,
   } = input.inputs
+  const resolveTrustPriors = input.resolveTrustPriors ?? trustPriorsForHost({ configPath: configFilePath }).resolve
   const opts: RunOptions = input.opts ?? ({} as RunOptions)
   const reporterSelection: ReporterSelection = input.reporterSelection
     ?? { console: false, junit: false, stdoutLive: false, dashboard: false }
@@ -3966,6 +3975,7 @@ export async function produceDirectRunMembers(
         testCapabilityNotes += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
       }
       const knowledge = openRunKnowledgeComposition({
+        resolveTrustPriors,
         knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
         // 407 D-13: same hosted runtime root as the suite door — both doors resolve the rung.
         agentQaRoot: resolvePath(configDir, '.agent-qa'),

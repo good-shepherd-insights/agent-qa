@@ -89,6 +89,7 @@ import {
   resolveRunInvocationInputs,
 } from '../commands/run.js'
 import type { ProducedCliRunMembers, RunInvocationInputs, RunOptions } from '../commands/run.js'
+import type { ResolveTrustPriors } from '../curation/trust-priors.js'
 
 /**
  * The box a door reads when no post-verdict step was ever composed for this run — a denial, an
@@ -185,6 +186,7 @@ export interface CliRunOutcome {
  * What a door hands over to get a run. Everything here is something only a DOOR can answer.
  */
 export interface InProcessCliRunExecutionOptions {
+  readonly resolveTrustPriors?: ResolveTrustPriors
   /** The config runs resolve against unless `request.configPath` names another. */
   readonly configPath: string
   /** `<configDir>/.agent-qa` — the root the function layer's evidence check reads (Pitfall 5). */
@@ -432,6 +434,7 @@ export async function runInProcessCliRun(
   // `agent-qa run`'s `--list-tests`/`--dry-run`/parse-error preflight a thing this seam repeats.
   const produced = options.produceMembers === undefined
     ? await produceMembersFromPatterns({
+        ...(options.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: options.resolveTrustPriors }),
         inputs: options.inputs ?? await resolveRunInvocationInputs({
           configPath,
           ...(request.patterns === undefined ? {} : { patterns: request.patterns }),

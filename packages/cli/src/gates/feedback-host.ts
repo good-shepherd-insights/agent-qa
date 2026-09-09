@@ -1,4 +1,5 @@
 import { dirname, resolve } from 'node:path'
+import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
 import { chainJobIdsForRun, RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
@@ -9,6 +10,7 @@ import { wordImprovementPlan } from './feedback-wording.js'
 import { canonicalJson, resolveEvalSession, markedDecisionCount, resolveMarkedDecisions, resolveProductPartition, FsHandoffSource, FsMarkLedger, freezeGoldenTrajectory, slugBranch } from '../eval-session-composition.js'
 
 export interface FeedbackHostDeps {
+  resolveTrustPriors?: ResolveTrustPriors
   configPath: string
   agentQaRoot: string
   invokeAuthoringDraftEdit?: (input: AuthoringDraftEditInput) => Promise<AuthoringDraftEditOutput>
@@ -43,6 +45,7 @@ export function resolveMarkMember(handoff: CompletedRunHandoff, testId?: string)
 
 /** One lazy host, shared by every function surface. Freeze/evidence stay under the run lock. */
 export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort {
+  const resolveTrustPriors = deps.resolveTrustPriors ?? trustPriorsForHost(deps).resolve
   const curation = deps.curation ?? LOCAL_CURATION_CAPABILITIES
   const ledgerFor = (runId: string) => new FsMarkLedger({ root: deps.agentQaRoot, runId })
   return {
@@ -128,7 +131,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           mark.disposition = { kind: 'confirmed-bug', confirmedRecords: mark.evidence.confirmed }
         } else {
           const step = member.steps[targets[0]!.stepIndex]!
-          const reader = deps.reader ?? createKnowledgeReader(() => knowledgeRoot)
+          const reader = deps.reader ?? createKnowledgeReader(() => knowledgeRoot, undefined, undefined, resolveTrustPriors)
           const evidenceRef = step.subActions.find(action => action.decisionScreenshotRef !== undefined)?.decisionScreenshotRef
           const readFacts = async (recordId: string) => {
             // showRecord supplies the existing guarded read. The private capability adds only
@@ -149,6 +152,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           intent = ledger.checkpointIntent({ ...intent, mark, plan })
           if (plan.kind === 'knowledge') {
             const review = createKnowledgeReview({ agentQaRoot: deps.agentQaRoot, resolveKnowledgeRoot: () => knowledgeRoot,
+              resolveTrustPriors,
               proposalIdentity: { uuid: intent.proposalUuid, at: mark.markedAt } })
             const proposed = await review.propose({ verb: 'mark', input: { target: plan.target,
               mark: { runId: mark.runId, testIndex: mark.testIndex,

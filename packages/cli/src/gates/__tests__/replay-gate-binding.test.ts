@@ -69,6 +69,7 @@ describe('417/418 production replay gate binding', () => {
     expect(run).toHaveBeenCalledWith(resolved, 'candidate', {
       agentQaRoot: '/runtime/custom',
       onProgress: expect.any(Function),
+      resolveTrustPriors: expect.any(Function),
     })
     const receipt = { gate: 1 }
     run.mockResolvedValueOnce({ kind: 'receipt', receipt } as session.ReplayGateVerbResult)

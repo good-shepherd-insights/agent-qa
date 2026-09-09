@@ -2,6 +2,7 @@
 // reader projection in, a gate receipt to the leased writer capability out. Eval execution
 // stays behind the existing session composition boundary, loaded only when invoked.
 import { dirname, resolve } from 'node:path'
+import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 import type { KnowledgeReaderPort, ReplayGatePort } from '@vostride/agent-qa-agent'
 import {
   createKnowledgeReader,
@@ -22,6 +23,7 @@ import type {
 } from '../eval-session-composition.js'
 
 export interface ReplayGateHostDeps {
+  resolveTrustPriors?: ResolveTrustPriors
   configPath: string
   agentQaRoot: string
   record: boolean
@@ -54,17 +56,20 @@ export interface ReplayGateHost {
   port: ReplayGatePort
   run(candidateId: string): Promise<ReplayGateVerbResult>
 }
-/** Binding is free: resolve current configuration only when an operator invokes the gate. */
+/** Cache prior data at binding; resolve the eval session only when an operator invokes the gate. */
 export function createReplayGatePortForHost(input: {
+  resolveTrustPriors?: ResolveTrustPriors
   configPath: string
   agentQaRoot: string
 }): ReplayGatePort {
+  const resolveTrustPriors = input.resolveTrustPriors ?? trustPriorsForHost(input).resolve
   return {
     async runReplayGate(candidateId) {
       const { resolveEvalSession, runReplayGateVerb } =
         await import('../eval-session-composition.js')
       const session = await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
       const result = await runReplayGateVerb(session, candidateId, {
+        resolveTrustPriors,
         agentQaRoot: input.agentQaRoot,
         onProgress: () => undefined,
       })
@@ -74,9 +79,10 @@ export function createReplayGatePortForHost(input: {
   }
 }
 export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
+  const resolveTrustPriors = deps.resolveTrustPriors ?? trustPriorsForHost(deps).resolve
   const configDir = dirname(resolve(deps.configPath))
   const knowledgeRoot = resolveConfiguredKnowledgeRoot(deps.session.config, configDir)
-  const reader = deps.reader ?? createKnowledgeReader(() => knowledgeRoot)
+  const reader = deps.reader ?? createKnowledgeReader(() => knowledgeRoot, undefined, undefined, resolveTrustPriors)
   const curation = deps.curation ?? LOCAL_CURATION_CAPABILITIES
   async function run(candidateId: string): Promise<ReplayGateVerbResult> {
     const read = reader.candidateInjection
@@ -129,6 +135,7 @@ export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
     }
     try {
       const outcome = await curation.recordGateReceipt({
+        resolveTrustPriors,
         receipt,
         lease: { leaseId: lease.leaseId, epoch: lease.epoch },
         knowledgeRoot,
