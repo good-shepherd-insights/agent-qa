@@ -18,10 +18,10 @@ import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 // node builtins directly.
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import {
   HANDOFF_FILE,
   RUNS_SUBDIR,
@@ -100,6 +100,7 @@ import {
   listCommittedReports,
   listNoiseFloorArtefacts,
   loadCassetteBundles,
+  loadLabelEvidence,
   loadReplayRecord,
   loadScoreRecord,
   readCommittedCorpus,
@@ -1505,18 +1506,28 @@ export async function runSeedVerb(
   // the exclusion files in place ON PURPOSE — the operator learns what was excluded from the very
   // invocation that refused to partition. Never reorder (A) after (B).
   const admitted: { runSlug: string; handoff: CompletedRunHandoff; product: string }[] = []
+  const initialCommitted = readCommittedCorpus(committedRoot)
 
   for (const runSlug of runSlugs) {
     try {
       const handoffPath = resolve(runsRoot, runSlug, HANDOFF_FILE)
+      const located = relative(realpathSync(agentQaRoot), realpathSync(handoffPath))
+      if (located === '..' || located.startsWith('../') || located.startsWith('..\\') || isAbsolute(located)) {
+        throw new Error('seed handoff path is outside the operator run root')
+      }
       // The version-guarded loader is the ONE handoff read path (D-02 typed per-run skips).
       const handoff = loadCompletedRunHandoff(handoffPath)
+      if (slugBranch(handoff.runId) !== runSlug) throw new Error('seed handoff run identity does not match its directory')
       const product = resolveProductPartition(handoff.scope)
       // The product filter runs BEFORE the verdict read so `--product` still narrows the sweep
       // and a partition nobody asked about costs no artifact read.
       if (filters.product !== undefined && product !== filters.product) {
         result.runsFiltered++
         continue
+      }
+      const verified = loadLabelEvidence({ snapshot: initialCommitted.snapshot, agentQaRoot, incoming: handoff })
+      if (!verified.handoffs.some(value => value.runId === handoff.runId)) {
+        throw new Error('seed incoming handoff evidence could not be positively verified before admission')
       }
       // 413 D-04: resolve this run's verdicts and decide admission BEFORE anything touches the
       // write-once root — an admitted run cannot be un-seeded without a reviewed deletion, so the
@@ -1575,6 +1586,12 @@ export async function runSeedVerb(
   for (const { runSlug, handoff, product } of admitted) {
     let report: ReturnType<typeof seedCommittedCorpus>
     try {
+      const committed = readCommittedCorpus(committedRoot)
+      const evidence = loadLabelEvidence({ snapshot: committed.snapshot, agentQaRoot, incoming: handoff })
+      for (const refusal of evidence.refusals) result.notices.push(`SOFT evidence ${refusal.runId}: ${refusal.reason}`)
+      if (!evidence.handoffs.some(value => value.runId === handoff.runId)) {
+        throw new Error('seed incoming handoff evidence could not be positively verified')
+      }
       const manifest = manifests.get(product)
       if (manifest === undefined) {
         throw new Error(`no committed partition manifest for product ${product}`)
@@ -1590,6 +1607,7 @@ export async function runSeedVerb(
       // eval core is the ONLY decision-maker (D-16); the CLI executes the plan verbatim.
       const plan = buildSeedingPlan({
         handoff,
+        populationContext: { snapshot: committed.snapshot, handoffs: evidence.handoffs, marks: evidence.marks },
         cassettes: extraction.cassettes,
         // 414 D-07: the split comes from the product's COMMITTED manifest params — the cli adds
         // no selection or relabel logic of its own.
@@ -1606,6 +1624,9 @@ export async function runSeedVerb(
         committedRoot,
         seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', runSlug),
       })
+      for (const skip of report.softEvidence?.skips ?? []) {
+        result.notices.push(`SOFT evidence ${skip.runId}/${skip.testIndex}/${skip.stepIndex}/${skip.attempt}: ${skip.reason}`)
+      }
     } catch (err) {
       result.runsSkipped.push({
         runSlug,

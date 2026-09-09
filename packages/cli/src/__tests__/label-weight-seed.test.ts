@@ -1,8 +1,8 @@
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as model from '@vostride/agent-qa-model'
-import { canonicalJson, computeCorpusDigest, createLabelRevision, deriveLeafCassetteId, deriveRunSlug } from '@vostride/agent-qa-eval'
+import { canonicalJson, collectSoftPopulation, committedFileText, computeCorpusDigest, createLabelRevision, deriveRunSlug } from '@vostride/agent-qa-eval'
 import { committedLabelPath, loadLabelEvidence, readCommittedCorpus } from '@vostride/agent-qa-eval-local'
 import { asRef, screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
@@ -121,7 +121,7 @@ describe('420 actual CLI seed weights', () => {
       const desired = { ...label, weight: { ...label.weight!, value: 0.3 } }
       const revision = createLabelRevision(label, desired)
       const path = join(f.committedRoot, committedLabelPath('default', label.cassetteId)).replace(/\.json$/, `--revision-${revision.revision!.id}.json`)
-      writeFileSync(path, `${canonicalJson(revision)}\n`)
+      writeFileSync(path, committedFileText(revision))
     }
     const before = bytes(f.committedRoot)
     const again = await runSeedVerb(session)
@@ -142,5 +142,67 @@ describe('420 actual CLI seed weights', () => {
     const report = await runSeedVerb(session, {}, fractions)
     expect(report.refusals.filter(row => row.kind === 'egress-blocked')).toHaveLength(2)
     expect(readCommittedCorpus(f.committedRoot).snapshot.labelsById.size).toBe(0)
+  })
+
+  it('joins committed source runs once, includes an extraction-skipped step, and preserves old weights as population grows', async () => {
+    const f = fixture()
+    const skipped = structuredClone(f.step)
+    skipped.stepIndex = 1
+    // No recorded exchange means no leaf cassette; the complete structured recovery remains evidence.
+    delete skipped.subActions[1]!.exchanges
+    f.member.steps.push(skipped)
+    f.save()
+    const { session, read } = await seed(f)
+    const originalBytes = bytes(f.committedRoot)
+    const next = fixture()
+    const recovering = next.step.subActions[1]!
+    recovering.plannedAction = { type: 'navigate', to: 'url', url: 'https://example.test/other' }
+    next.step.selfHeal!.recoveringDecision.plannedAction = recovering.plannedAction
+    next.save()
+    cpSync(next.runDir, join(f.agentQaRoot, 'runs', deriveRunSlug(next.handoff.runId)), { recursive: true })
+    const report = await runSeedVerb(session, { run: next.handoff.runId })
+    expect(report).toMatchObject({ runsSkipped: [], refusals: [], seededCount: 2 })
+    const after = readCommittedCorpus(f.committedRoot)
+    const incoming = [...after.snapshot.labelsById.values()].filter(label => label.provenance.runId === next.handoff.runId)
+    expect(incoming).toHaveLength(2)
+    expect(incoming[0]!.weight).toMatchObject({ k: 1, n: 3 })
+    expect(incoming[1]!.weight).toEqual(incoming[0]!.weight)
+    expect(incoming[0]!.weight!.value).toBeCloseTo(0.3, 14)
+    const population = collectSoftPopulation(loadLabelEvidence({ snapshot: after.snapshot, agentQaRoot: f.agentQaRoot, incoming: next.handoff }))
+    expect(population.observations).toHaveLength(3)
+    expect(incoming[0]!.weight!.evidenceDigest).toBe(population.evidenceDigest)
+    expect(incoming[0]!.weight!.corpusDigest).toBe(computeCorpusDigest(after.snapshot.entries))
+    const again = await runSeedVerb(session)
+    expect(again).toMatchObject({ runsSkipped: [], refusals: [], seededCount: 0, unchangedCount: 4 })
+    for (const [path, content] of originalBytes) expect(readFileSync(path!).toString('hex')).toBe(content)
+    for (const [id, label] of read.snapshot.labelsById) expect(after.snapshot.labelsById.get(id)).toEqual(label)
+  })
+
+  it('refuses an escaped incoming handoff before admission or partition writes', async () => {
+    const f = fixture(), outside = fixture()
+    rmSync(join(f.runDir, 'handoff.json'))
+    symlinkSync(join(outside.runDir, 'handoff.json'), join(f.runDir, 'handoff.json'))
+    const session = await resolveEvalSession({ configPath: f.configPath })
+    const report = await runSeedVerb(session, {}, fractions)
+    expect(report.runsSkipped).toHaveLength(1)
+    expect(report.runsAdmitted).toEqual([])
+    expect(existsSync(f.committedRoot)).toBe(false)
+  })
+
+  it('preserves recorded masked planner evidence through both new weight blocks and the egress checkpoint', async () => {
+    const f = fixture()
+    const session = await resolveEvalSession({ configPath: f.configPath })
+    const masking = session.maskingContextFactory()
+    masking.register('operator-private-model-fixture-420')
+    const masked = masking.mask('operator-private-model-fixture-420')
+    f.step.subActions[1]!.callRecord = { resolvedModelId: masked }
+    f.save()
+    const report = await runSeedVerb(session, {}, fractions)
+    expect(report).toMatchObject({ runsSkipped: [], refusals: [], seededCount: 2 })
+    const rows = [...readCommittedCorpus(f.committedRoot).snapshot.labelsById.values()]
+    expect(rows).toHaveLength(2)
+    for (const label of rows) expect(label.weight?.capabilityEvidence).toEqual({ kind: 'model-identity',
+      modelIdentity: { provider: 'openai', modelId: masked } })
+    for (const path of files(f.committedRoot)) expect(readFileSync(path).toString()).not.toContain('operator-private-model-fixture-420')
   })
 })

@@ -99,6 +99,7 @@ export type SeedingRefusal =
   | { cassetteId: string; kind: 'missing-cassette' }
 
 export interface SeedingReport {
+  softEvidence?: SeedingPlan['softEvidence']
   product: string
   runId: string
   committedRoot: string
@@ -199,7 +200,9 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
 
     const texts: { relPath: string; text: string }[] = [
       { relPath: committedCassettePath(product, cassetteId), text: committedFileText(extracted.cassette) },
-      { relPath: committedLabelPath(product, cassetteId), text: committedFileText(planCase.labelRecord) },
+      { relPath: planCase.labelRecord.revision === undefined ? committedLabelPath(product, cassetteId)
+        : committedLabelPath(product, cassetteId).replace(/\.json$/, `--revision-${planCase.labelRecord.revision.id}.json`),
+        text: committedFileText(planCase.labelRecord) },
       { relPath: committedCorpusPath(product, cassetteId), text: committedFileText(planCase.corpusEntry) },
     ]
 
@@ -271,6 +274,7 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
   // (4) The report: every skip, refusal, and count visible — never silent (T-371-18).
   return {
     product,
+    ...(input.plan.softEvidence ? { softEvidence: input.plan.softEvidence } : {}),
     runId: input.plan.runId,
     committedRoot: input.committedRoot,
     seededCount,

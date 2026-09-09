@@ -24,7 +24,12 @@
  * clock APIs here — the CLI and eval-local resolve the committed manifest,
  * the ISO capture time and the target environment and pass them in.
  */
-import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, MarkReceipt } from '@vostride/agent-qa-schema'
+import { canonicalJson } from '../canonical-json'
+import { computeCorpusDigest } from '../census/corpus-digest'
+import type { CommittedCorpusSnapshot } from '../census/derive-census'
+import { collectSoftPopulation, type SoftPopulation } from './soft-population'
+import { computeSoftWeight } from './soft-weight'
 import type { LeafCassette } from '../cassette/cassette'
 import type { ExtractedCassette } from '../extract/extract-run'
 import { deriveRunSlug } from '../extract/ids'
@@ -54,6 +59,7 @@ export interface SeedingPlanCase {
 
 /** The complete deterministic description of what joins the committed corpus. */
 export interface SeedingPlan {
+  softEvidence?: Pick<SoftPopulation, 'skips' | 'missingEvidenceCounts'>
   product: string
   runId: string
   runSlug: string
@@ -70,6 +76,12 @@ export interface SeedingPlan {
 }
 
 export interface BuildSeedingPlanInput {
+  /** Host-loaded committed evidence; derived label weights are never population inputs. */
+  populationContext?: {
+    snapshot: CommittedCorpusSnapshot
+    handoffs: readonly CompletedRunHandoff[]
+    marks: readonly MarkReceipt[]
+  }
   handoff: CompletedRunHandoff
   cassettes: readonly ExtractedCassette[]
   /**
@@ -168,6 +180,14 @@ export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan {
       recoveringCassette,
       runId,
     })
+    const member = handoff.tests.find(test => test.testIndex === pair.testIndex)!
+    if (member.isRerun && member.rerunAttempt !== undefined) {
+      const rerun = { attempt: member.rerunAttempt,
+        ...(member.rerunOrigin ? { originalAttempt: member.rerunOrigin.attempt,
+          originalEvidenceDigest: member.rerunOrigin.evidenceDigest } : {}) }
+      failedRecord.provenance.rerun = rerun
+      recoveringRecord.provenance.rerun = rerun
+    }
     admit(failedCassette, failedRecord, true)
     admit(recoveringCassette, recoveringRecord, true)
   }
@@ -182,11 +202,51 @@ export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan {
     return 0
   })
 
+  const snapshot = input.populationContext?.snapshot
+  const population = collectSoftPopulation({
+    handoffs: [...(input.populationContext?.handoffs ?? []), handoff],
+    marks: input.populationContext?.marks,
+  })
+  const membership = new Map((snapshot?.entries ?? []).map(entry => [entry.cassetteId, entry]))
+  for (const item of cases) membership.set(item.cassetteId, item.corpusEntry)
+  const corpusDigest = computeCorpusDigest([...membership.values()])
+  for (const pair of pairs) {
+    const attempt = handoff.tests.find(test => test.testIndex === pair.testIndex)?.rerunAttempt ?? 0
+    const observation = population.observations.find(row => row.runId === runId && row.product === product
+      && row.testIndex === pair.testIndex && row.stepIndex === pair.stepIndex && row.attempt === attempt
+      && row.failedScreenStateHash === pair.failedScreenStateHash
+      && row.recoveringCassetteId === pair.recoveringCassetteId)
+    if (!observation) continue // The population's typed skips disclose incomplete evidence.
+    const sameState = population.observations.filter(row => row.product === product
+      && row.failedScreenStateHash === pair.failedScreenStateHash)
+    const wanted = canonicalJson(observation.recoveringAction)
+    const weight = computeSoftWeight({ n: sameState.length,
+      k: sameState.filter(row => canonicalJson(row.recoveringAction) === wanted).length,
+      corpusDigest, evidenceDigest: population.evidenceDigest, recoveringDecision: observation.recoveringDecision })
+    for (const id of [pair.failedCassetteId, pair.recoveringCassetteId]) {
+      cases.find(item => item.cassetteId === id)!.labelRecord.weight = weight
+    }
+  }
+  // Seeding preserves historical observations, including operator-refreshed effective weights.
+  // Population growth is refreshed only by calibration; changed source still hits write-once.
+  for (const item of cases) {
+    const prior = snapshot?.labelsById.get(item.cassetteId)
+    const priorEntry = snapshot?.entries.find(entry => entry.cassetteId === item.cassetteId)
+    const priorCassette = snapshot?.cassettesById.get(item.cassetteId)
+    if (prior && priorEntry && priorCassette
+      && canonicalJson(priorCassette) === canonicalJson(leavesById.get(item.cassetteId))
+      && canonicalJson(priorEntry) === canonicalJson(item.corpusEntry)
+      && canonicalJson(prior.provenance.rerun ?? null) === canonicalJson(item.labelRecord.provenance.rerun ?? null)) {
+      item.labelRecord = prior
+    }
+  }
+
   return {
     product,
     runId,
     runSlug,
     cases,
+    softEvidence: { skips: population.skips, missingEvidenceCounts: population.missingEvidenceCounts },
     pairSkips: skips,
     silverExclusions: exclusions,
     pairCounts: {
