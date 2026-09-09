@@ -60,7 +60,8 @@ interface GcBundle {
   recordId: RecordId
   dir: string
   bundle: LoadedBundle
-  trust: DerivedTrustState
+  // GC selection depends only on lifecycle and horizon, never numerical trust.
+  trust: Pick<DerivedTrustState, 'status' | 'validity'>
 }
 
 function compareText(left: string, right: string): number {

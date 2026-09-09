@@ -30,6 +30,9 @@ export interface InspectRecordsOptions {
   filter: InspectFilter
 }
 
+// Maintenance exposes lifecycle and evidence counts, never the numerical trust scalar.
+type InspectionTrustState = Pick<DerivedTrustState, 'status' | 'counters' | 'validity'>
+
 const TRUST_NARRATIVE_REL_PATH = 'evidence/evidence.md'
 
 function compareText(left: string, right: string): number {
@@ -140,7 +143,7 @@ function readTrustNarrative(dir: string, bundle: LoadedBundle): string | undefin
 export function toInspectRecordView(
   entry: EnumeratedBundleDir,
   bundle: LoadedBundle,
-  trust: DerivedTrustState,
+  trust: InspectionTrustState,
 ): InspectRecordView {
   const survivingEvents = survivingOutcomeEvents(bundle.events)
   const evidenceTokens = [...new Set(
@@ -199,7 +202,7 @@ export function inspectRecords(options: InspectRecordsOptions): InspectRecordVie
     const visibleBundle = visibleEvents === bundle.events
       ? bundle
       : { ...bundle, events: visibleEvents }
-    const trust = deriveBundleTrust(visibleBundle)
+    const trust: InspectionTrustState = deriveBundleTrust(visibleBundle)
     if (!auditVisibility && !isServable(trust)) continue
     if (filter.scope !== undefined && filter.scope !== bundle.frontmatter.scope.key) continue
     if (filter.kind !== undefined && filter.kind !== bundle.frontmatter.kind) continue

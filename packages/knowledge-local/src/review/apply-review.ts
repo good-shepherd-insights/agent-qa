@@ -405,7 +405,7 @@ function currentOrdinal(knowledgeRoot: string): number {
 /** commit() returns void: read the committed additions/confirmations, excluding retired victims. */
 function readBackCommittedIds(knowledgeRoot: string, preOrdinal: number, proposal: KnowledgeProposalV1): string[] {
   const ids = new Set(proposal.deltas.flatMap(delta => delta.kind === 'Confirm' ? [delta.targetId] : []))
-  // diffSince also computes trust for its public DTO; this readback consumes change/identity only.
+  // diffSince projects surviving events and receipts into change/identity; it does not fold trust.
   for (const row of diffSince({ knowledgeRoot, sinceOrdinal: preOrdinal })) {
     if (row.change === 'added' || row.change === 'confirmed' || row.change === 'superseded') {
       ids.add(asRecordId(row.recordId))

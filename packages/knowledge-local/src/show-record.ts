@@ -50,6 +50,7 @@ export function showRecord(options: ShowRecordOptions): KnowledgeRecordShowResul
     return KnowledgeRecordShowResultSchema.parse({
       kind: 'found',
       schemaVersion: 1,
+      // The shared projection accepts only lifecycle and counters; no numerical prior is used.
       record: toInspectRecordView(entry, bundle, deriveBundleTrust(bundle)),
       // The bundle's own committed provenance, verbatim. A record shown without it is an
       // assertion; shown with it, it is evidence — and paraphrasing it here would have made

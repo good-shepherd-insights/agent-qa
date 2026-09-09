@@ -151,7 +151,7 @@ export function resolveProductQualifiedBundleDir(input: {
 }
 
 /** The single withdrawn-fact firewall reused by degraded and indexed reader paths. */
-export function isServable(trust: DerivedTrustState): boolean {
+export function isServable(trust: Pick<DerivedTrustState, 'status' | 'validity'>): boolean {
   return (
     (trust.status === 'active' || trust.status === 'candidate')
     && trust.validity.closedAtOrdinal === undefined

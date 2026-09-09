@@ -110,7 +110,8 @@ export function scanCanonicalBundles(knowledgeRoot: string): CanonicalBundleSnap
     .flatMap((entry): CanonicalBundleSnapshot[] => {
       const loaded = loadBundle(entry.dir)
       if (loaded.kind !== 'loaded') return []
-      const trust = deriveBundleTrust(loaded.bundle)
+      // Lineage counts events and status; it has no numerical trust projection.
+      const status = deriveBundleTrust(loaded.bundle).status
       return [{
         recordId: asRecordId(loaded.bundle.manifest.id),
         kind: loaded.bundle.frontmatter.kind,
@@ -118,7 +119,7 @@ export function scanCanonicalBundles(knowledgeRoot: string): CanonicalBundleSnap
         scope: loaded.bundle.frontmatter.scope,
         createdAtOrdinal: loaded.bundle.manifest.createdAtOrdinal,
         events: loaded.bundle.events,
-        status: trust.status,
+        status,
         ...(loaded.bundle.provenance.mode === 'run-linked'
           && loaded.bundle.provenance.curationJobId !== undefined
           ? { curationJobId: loaded.bundle.provenance.curationJobId }
