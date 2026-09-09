@@ -1,3 +1,4 @@
+import { rebuildAuthorizedIndex as rebuildIndex } from './fixtures/authorized-rebuild.js'
 import {
   cpSync,
   readFileSync,
@@ -25,7 +26,6 @@ import {
   buildRetrievalQuery,
   openIndexReaderConnection,
   openKnowledgeReader,
-  rebuildIndex,
   resolveActiveProfile,
   retrieve,
   vecTableName,

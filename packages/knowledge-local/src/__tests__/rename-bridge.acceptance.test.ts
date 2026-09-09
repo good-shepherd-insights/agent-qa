@@ -303,7 +303,7 @@ describe('rename bridge fixture acceptance (DCAY-03/DCAY-04 D-22)', () => {
       curationJobId: job.candidateId,
     })
 
-    const rebuilt = await rebuildIndex({ knowledgeRoot })
+    const rebuilt = await rebuildIndex({ writerAuthority: { knowledgeRoot, leaseId, epoch }, knowledgeRoot })
     expect(rebuilt.scanIssues).toEqual([])
 
     const reader = openKnowledgeReader(knowledgeRoot)

@@ -1,3 +1,4 @@
+import { effectivePriorDigest } from '../trust-prior-context.js'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -74,7 +75,8 @@ describe('420 neutral prior bundle and SQLite projections', () => {
           const value = persist(root, entry)
           const options = { knowledgeRoot: value.knowledgeRoot, priors }
           expect((await rebuildIndex(options)).projected).toBe(1)
-          const { trust: numerical, ...rest } = assertProjection(value, entry.snapshots.at(-1)!.expectedBytes, priors)
+          const { trust: numerical, trust_prior_digest: priorDigest, ...rest } = assertProjection(value, entry.snapshots.at(-1)!.expectedBytes, priors)
+          expect(priorDigest).toBe(effectivePriorDigest(priors))
           if (original === undefined) original = rest
           else expect(rest).toEqual(original)
           expect((await rebuildIndex(options)).projected).toBe(0)
@@ -99,8 +101,9 @@ describe('420 neutral prior bundle and SQLite projections', () => {
           for (const priors of [undefined, {}, calibrated, undefined]) {
             const input = { knowledgeRoot: value.knowledgeRoot, bundleId: value.bundleId, product: 'baseline', priors }
             withCurrentWriterAuthority(value.knowledgeRoot, authority, () => project(input))
-            const { trust: numerical, ...rest } = assertProjection(value, entry.snapshots.at(-1)!.expectedBytes, priors)
+            const { trust: numerical, trust_prior_digest: priorDigest, ...rest } = assertProjection(value, entry.snapshots.at(-1)!.expectedBytes, priors)
             expect(Number.isFinite(numerical)).toBe(true)
+            expect(priorDigest).toBe(effectivePriorDigest(priors))
             if (original === undefined) original = rest
             else expect(rest).toEqual(original)
           }

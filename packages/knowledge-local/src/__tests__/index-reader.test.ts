@@ -11,6 +11,7 @@ import {
 import type { Anchor } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { rebuildAuthorizedIndex } from './fixtures/authorized-rebuild.js'
 import * as knowledgeLocal from '../index.js'
 import { appendOutcomeEvent } from '../bundle-append.js'
 import {
@@ -171,7 +172,7 @@ describe('IDX-02 degrading knowledge reader', () => {
 
   it('opens a healthy rebuilt index with the connection-local vec0 capability', async () => {
     publish()
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    await rebuildAuthorizedIndex({ knowledgeRoot })
 
     const reader = readerApi().openKnowledgeReader(knowledgeRoot)
     try {
@@ -184,7 +185,7 @@ describe('IDX-02 degrading knowledge reader', () => {
 
   it('degrades a structurally incomplete index at open and serves from bundles', async () => {
     const published = publish()
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    await rebuildAuthorizedIndex({ knowledgeRoot })
     const db = new DatabaseSync(knowledgeLocal.indexDbPath(knowledgeRoot))
     try {
       db.exec('DROP TABLE fts_records')
@@ -206,7 +207,7 @@ describe('IDX-02 degrading knowledge reader', () => {
 
   it('permanently degrades a live reader when an index query fails', async () => {
     const published = publish()
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    await rebuildAuthorizedIndex({ knowledgeRoot })
     const reader = readerApi().openKnowledgeReader(knowledgeRoot)
     expect(reader).toMatchObject({ source: 'index' })
 
@@ -272,7 +273,7 @@ describe('IDX-02 degrading knowledge reader', () => {
     },
   ])('degrades a $name schema version and serves the authoritative scan', async ({ mutate }) => {
     const published = publish()
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    await rebuildAuthorizedIndex({ knowledgeRoot })
     const writer = knowledgeLocal.openIndexWriter(knowledgeRoot)
     try {
       mutate(writer.db)
@@ -291,7 +292,7 @@ describe('IDX-02 degrading knowledge reader', () => {
 
   it('degrades a real exclusive-lock timeout as locked and keeps serving', async () => {
     const published = publish()
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    await rebuildAuthorizedIndex({ knowledgeRoot })
     const locker = new DatabaseSync(knowledgeLocal.indexDbPath(knowledgeRoot), { timeout: 100 })
     locker.exec('PRAGMA journal_mode=DELETE; BEGIN EXCLUSIVE')
 
@@ -324,7 +325,7 @@ describe('IDX-02 degrading knowledge reader', () => {
   it('serves indexed get-by-id, BM25 lexical, and canonical anchor lookups', async () => {
     const signIn = publishNamed('Storefront Product', 'Sign in', '#sign-in')
     const checkout = publishNamed('Checkout Product', 'Checkout now', '#checkout-now')
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    await rebuildAuthorizedIndex({ knowledgeRoot })
 
     const reader = readerApi().openKnowledgeReader(knowledgeRoot)
     try {
@@ -357,7 +358,7 @@ describe('IDX-02 degrading knowledge reader', () => {
   it('returns every ordinary-token match in deterministic BM25 and bundle-id order', async () => {
     const alpha = publishNamed('Recall Product', 'Recall alpha')
     const bravo = publishNamed('Recall Product', 'Recall bravo')
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    await rebuildAuthorizedIndex({ knowledgeRoot })
 
     const reader = readerApi().openKnowledgeReader(knowledgeRoot)
     try {
@@ -381,7 +382,7 @@ describe('IDX-02 degrading knowledge reader', () => {
     const literalAnd = publishNamed('FTS Product', 'Conjunction AND sentinel')
     const literalNot = publishNamed('FTS Product', 'Negation NOT sentinel')
     const literalNear = publishNamed('FTS Product', 'Proximity NEAR sentinel')
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    await rebuildAuthorizedIndex({ knowledgeRoot })
 
     const reader = readerApi().openKnowledgeReader(knowledgeRoot)
     try {
@@ -425,7 +426,7 @@ describe('IDX-02 degrading knowledge reader', () => {
     const first = publishNamed('Dense Product', 'Dense first')
     const second = publishNamed('Dense Product', 'Dense second')
     const third = publishNamed('Dense Product', 'Dense third')
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder })
+    await rebuildAuthorizedIndex({ knowledgeRoot, embedder })
     const target = knowledgeLocal.scanBundleById({ knowledgeRoot, bundleId: second.id })
     expect(target).toBeDefined()
     const query = await embedder.embedQuery(target!.embeddingInput)
@@ -473,7 +474,7 @@ describe('IDX-02 degrading knowledge reader', () => {
   it('rechecks every indexed result path and drops a post-rebuild supersession', async () => {
     const embedder = makeFakeEmbedder()
     const published = publishNamed('Withdrawn Product', 'Withdraw stale fact', '#withdraw-stale')
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder })
+    await rebuildAuthorizedIndex({ knowledgeRoot, embedder })
     const source = knowledgeLocal.scanBundleById({ knowledgeRoot, bundleId: published.id })
     expect(source).toBeDefined()
     const query = await embedder.embedQuery(source!.embeddingInput)
@@ -518,7 +519,7 @@ describe('IDX-02 degrading knowledge reader', () => {
 
   it('refreshes bundle-derived fields and rejects an integrity-tampered bundle', async () => {
     const published = publishNamed('Authority Product', 'Authoritative state')
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    await rebuildAuthorizedIndex({ knowledgeRoot })
     const writer = knowledgeLocal.openIndexWriter(knowledgeRoot)
     try {
       writer.db.prepare(`

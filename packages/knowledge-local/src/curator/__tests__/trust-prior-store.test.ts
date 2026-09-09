@@ -1,3 +1,4 @@
+import { effectivePriorDigest } from '../../trust-prior-context.js'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -131,7 +132,8 @@ describe('420 store prior snapshot', () => {
       const first = persisted(f.config.knowledgeRoot)
       await store.commit([{ kind: 'Confirm', origin: 'system', scope: f.delta.scope, citedIds: [asRecordId(first.bundle.manifest.id)], targetId: asRecordId(first.bundle.manifest.id), evidenceToken: asEvidenceToken('prior-confirm') }])
       const actual = persisted(f.config.knowledgeRoot)
-      const { trust, ...rest } = actual.row
+      const { trust, trust_prior_digest: priorDigest, ...rest } = actual.row
+      expect(priorDigest).toBe(effectivePriorDigest(priors))
       results.push({ trust, rest, events: canonicalJson(actual.bundle.events) })
       f.release()
     }

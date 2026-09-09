@@ -467,7 +467,7 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
   it('proves positive then zero recall across FTS, dense, graph, renderings, and anchors', async () => {
     const corpus = publishCorpus()
     await expect(
-      rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder }),
+      rebuildIndex({ writerAuthority: { knowledgeRoot, leaseId, epoch }, knowledgeRoot, embedder: denseHarness.embedder }),
     ).resolves.toMatchObject({ projected: 3, scanIssues: [], pendingEmbeddings: 0 })
 
     const before = await recallByServingLegs(DEPRECATION_ORDINAL - 1)
@@ -492,7 +492,7 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
     })
 
     await expect(
-      rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder }),
+      rebuildIndex({ writerAuthority: { knowledgeRoot, leaseId, epoch }, knowledgeRoot, embedder: denseHarness.embedder }),
     ).resolves.toMatchObject({ scanIssues: [], pendingEmbeddings: 0 })
 
     await expectZeroRecall(corpus.trigger.id, DEPRECATION_ORDINAL + 1)
@@ -514,7 +514,7 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
 
   it('preserves audit truth and prevents resurrection across full rebuild and maintenance', async () => {
     const corpus = publishCorpus()
-    await rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder })
+    await rebuildIndex({ writerAuthority: { knowledgeRoot, leaseId, epoch }, knowledgeRoot, embedder: denseHarness.embedder })
     const job = deprecationJob('audit-and-rebuild')
     expect(
       commitCurationDelta(
@@ -523,7 +523,7 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
         deprecationCheckpoint(corpus.trigger.id, job),
       ),
     ).toMatchObject({ kind: 'applied', deltaKind: 'Deprecate' })
-    await rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder })
+    await rebuildIndex({ writerAuthority: { knowledgeRoot, leaseId, epoch }, knowledgeRoot, embedder: denseHarness.embedder })
 
     expectStructurallyForgotten(corpus.trigger.id)
     const loaded = loadBundle(corpus.trigger.dir)
@@ -567,7 +567,7 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
     }
 
     await expect(
-      rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder }),
+      rebuildIndex({ writerAuthority: { knowledgeRoot, leaseId, epoch }, knowledgeRoot, embedder: denseHarness.embedder }),
     ).resolves.toMatchObject({
       projected: 3,
       scanIssues: [],
@@ -583,7 +583,7 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
 
     // rebuildIndex always runs pending-vector backfill and vec reconciliation after projection.
     await expect(
-      rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder }),
+      rebuildIndex({ writerAuthority: { knowledgeRoot, leaseId, epoch }, knowledgeRoot, embedder: denseHarness.embedder }),
     ).resolves.toMatchObject({
       projected: 0,
       backfilled: 0,
@@ -596,7 +596,7 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
 
   it('closes the crash gap before the writer pass and then physically removes stale rows', async () => {
     const corpus = publishCorpus()
-    await rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder })
+    await rebuildIndex({ writerAuthority: { knowledgeRoot, leaseId, epoch }, knowledgeRoot, embedder: denseHarness.embedder })
     const before = recallProjectionState(corpus.trigger.id)
     expect(before).toMatchObject({
       status: 'active',
@@ -658,7 +658,7 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
     await expectZeroRecall(corpus.trigger.id, DEPRECATION_ORDINAL + 1)
 
     await expect(
-      rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder }),
+      rebuildIndex({ writerAuthority: { knowledgeRoot, leaseId, epoch }, knowledgeRoot, embedder: denseHarness.embedder }),
     ).resolves.toMatchObject({
       projected: 1,
       scanIssues: [],

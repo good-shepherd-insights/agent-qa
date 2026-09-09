@@ -1,3 +1,4 @@
+import { rebuildAuthorizedIndex } from './fixtures/authorized-rebuild.js'
 import { rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -112,14 +113,14 @@ describe('active embedding profile resolution', () => {
     }
 
     await expect(
-      knowledgeLocal.rebuildIndex({
+      rebuildAuthorizedIndex({
         knowledgeRoot,
         embedder: makeFakeEmbedder(DEFAULT_EMBEDDING_PROFILE.dim),
       }),
     ).rejects.toThrow('embedder returned 384 dimensions; expected 512')
 
     const floorEmbedder = makeFakeEmbedder(STATIC_FLOOR_EMBEDDING_PROFILE.dim)
-    const report = await knowledgeLocal.rebuildIndex({
+    const report = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: floorEmbedder,
     })

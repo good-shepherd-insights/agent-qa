@@ -1,3 +1,4 @@
+import { rebuildAuthorizedIndex as rebuildIndex } from './fixtures/authorized-rebuild.js'
 /**
  * Reader-open health and per-hit authority have deliberately different lifetimes: a healthy
  * derived index may lag append-only bundle mutations, so every result face must re-check current
@@ -16,7 +17,6 @@ import {
   appendOutcomeEvent,
   appendRelation,
   openKnowledgeReader,
-  rebuildIndex,
   scanBundleById,
   type BundleStoreConfig,
   type KnowledgeReader,

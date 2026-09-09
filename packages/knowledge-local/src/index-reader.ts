@@ -52,6 +52,11 @@ import { requestRebuild } from './rebuild-marker.js'
 import type { RebuildReason } from './rebuild-marker.js'
 import { buildLexicalMatchExpression } from './retrieval/fts-match.js'
 import { assemblePromotionGateInput, snapshotTrustPriors } from './promotion-gate-input.js'
+import {
+  effectivePriorDigest,
+  indexTrustEpochMatches,
+  TrustPriorEpochMismatch,
+} from './trust-prior-context.js'
 
 export interface KnowledgeSearchOptions {
   product?: string
@@ -430,6 +435,26 @@ function indexReader(
   let closed = false
   const { db } = connection
   const activeProfile = resolveActiveProfile(db)
+  const priorDigest = effectivePriorDigest(priors)
+  let snapshotDepth = 0
+
+  function assertTrustEpoch(): void {
+    if (!indexTrustEpochMatches(db, priorDigest)) throw new TrustPriorEpochMismatch()
+  }
+
+  function readSnapshot<TResult>(operation: () => TResult): TResult {
+    // Calls made through a retrieval context share its already-pinned WAL snapshot.
+    if (snapshotDepth > 0) return operation()
+    return withReadSnapshot(db, () => {
+      assertTrustEpoch()
+      snapshotDepth += 1
+      try {
+        return operation()
+      } finally {
+        snapshotDepth -= 1
+      }
+    })
+  }
 
   function recheckCurrent<THit extends KnowledgeHit>(
     hits: readonly THit[],
@@ -449,8 +474,8 @@ function indexReader(
     const tableName = vecTableName(activeProfile)
     const expectedBytes = activeProfile.dim * Float32Array.BYTES_PER_ELEMENT
 
-    return withReadSnapshot(db, () => {
-      // This must be the first SQL read so it establishes the same WAL snapshot as MATCH.
+    return readSnapshot(() => {
+      // The trust epoch and vector cleanup stamp must share the MATCH snapshot.
       if (!isEmbeddingVecCleanupCurrent(db)) return []
 
       const products = opts.product === undefined
@@ -631,20 +656,34 @@ function indexReader(
     async [RUN_RETRIEVAL]<TResult>(
       operation: KnowledgeRetrievalOperation<TResult>,
     ): Promise<TResult> {
-      return withAsyncReadSnapshot(db, () =>
-        operation({
-          knowledgeRoot,
-          priors,
-          source: 'index',
-          vec: connection.vec,
-          connection,
-          reader,
-          scan: undefined,
-          recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit, priors),
-        }))
+      return withAsyncReadSnapshot(db, async () => {
+        assertTrustEpoch()
+        snapshotDepth += 1
+        try {
+          return await operation({
+            knowledgeRoot,
+            priors,
+            source: 'index',
+            vec: connection.vec,
+            connection,
+            reader: snapshotReader,
+            scan: undefined,
+            recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit, priors),
+          })
+        } finally {
+          snapshotDepth -= 1
+        }
+      })
     },
   }
-  return reader
+  const snapshotReader: InternalKnowledgeReader = {
+    ...reader,
+    getById: (id) => readSnapshot(() => reader.getById(id)),
+    searchLexical: (text, opts) => readSnapshot(() => reader.searchLexical(text, opts)),
+    lookupAnchor: (anchor, opts) => readSnapshot(() => reader.lookupAnchor(anchor, opts)),
+    searchDense: (embedding, opts) => readSnapshot(() => reader.searchDense(embedding, opts)),
+  }
+  return snapshotReader
 }
 
 /**
@@ -666,11 +705,13 @@ function operationDegradingReader(
       return operation(delegate)
     } catch (error) {
       closeBestEffort(connection)
-      requestRebuildBestEffort(
-        knowledgeRoot,
-        'corrupt',
-        `derived index operation failed: ${errorMessage(error)}`,
-      )
+      if (!(error instanceof TrustPriorEpochMismatch)) {
+        requestRebuildBestEffort(
+          knowledgeRoot,
+          'corrupt',
+          `derived index operation failed: ${errorMessage(error)}`,
+        )
+      }
       delegate = scanReader(knowledgeRoot, priors)
       return operation(delegate)
     }
@@ -685,11 +726,13 @@ function operationDegradingReader(
       return await operation(delegate)
     } catch (error) {
       closeBestEffort(connection)
-      requestRebuildBestEffort(
-        knowledgeRoot,
-        'corrupt',
-        `derived index operation failed: ${errorMessage(error)}`,
-      )
+      if (!(error instanceof TrustPriorEpochMismatch)) {
+        requestRebuildBestEffort(
+          knowledgeRoot,
+          'corrupt',
+          `derived index operation failed: ${errorMessage(error)}`,
+        )
+      }
       delegate = scanReader(knowledgeRoot, priors)
       return operation(delegate)
     }

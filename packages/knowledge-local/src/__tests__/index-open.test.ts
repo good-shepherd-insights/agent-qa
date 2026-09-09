@@ -137,6 +137,7 @@ describe('index-open', () => {
         'bundle_id',
         'product',
         'mutable_state_hash',
+        'trust_prior_digest',
         'kind',
         'subtype',
         'scope_tier',

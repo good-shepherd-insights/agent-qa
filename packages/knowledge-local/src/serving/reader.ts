@@ -45,6 +45,7 @@ import {
 } from '../index-reader.js'
 import { assemblePromotionGateInput, snapshotTrustPriors } from '../promotion-gate-input.js'
 import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
+import { effectivePriorDigest, indexTrustEpochMatches } from '../trust-prior-context.js'
 import { selectCautions } from './get-cautions.js'
 import { admitsProcedure, matchProcedure } from './get-procedure.js'
 import { assembleRunBrief } from './get-run-brief.js'
@@ -116,6 +117,7 @@ export function readIndexRows(
 
   const reader = openIndexReaderConnection(config.knowledgeRoot)
   try {
+    reader.db.exec('BEGIN')
     const boundProduct = productSlug(config)
     const predicate = scopeLadderPredicate({
       ...(boundProduct === undefined ? {} : { productRow: boundProduct }),
@@ -125,6 +127,30 @@ export function readIndexRows(
         ? {}
         : { parentScopes: config.scopeDefaults.parentScopes }),
     })
+    // Pin eligibility before selection: rehydrating mismatched selected rows cannot recover
+    // canonical bundles that another epoch's index omitted. Keep the shared SQL scope wall.
+    if (!indexTrustEpochMatches(reader.db, effectivePriorDigest(config.priors))) {
+      const admits = reader.db.prepare(`
+        SELECT 1 FROM (SELECT ? AS product, ? AS scope_tier, ? AS scope_key) r
+        WHERE ${predicate.sql}
+      `)
+      return enumerateBundleDirs(config.knowledgeRoot).flatMap(({ dir, product }) => {
+        const loaded = loadBundle(dir)
+        if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(dir).ok) return []
+        const { scope: bundleScope } = loaded.bundle.frontmatter
+        if (admits.get(product, bundleScope.tier, bundleScope.key, ...predicate.binds) === undefined) {
+          return []
+        }
+        return [{
+          bundle_id: loaded.bundle.manifest.id,
+          product,
+          scope_tier: bundleScope.tier,
+          scope_key: bundleScope.key,
+        }]
+      }).sort((left, right) => (
+        compareText(left.product, right.product) || compareText(left.bundle_id, right.bundle_id)
+      ))
+    }
     return reader.db.prepare(`
       SELECT r.bundle_id, r.product, r.scope_tier, r.scope_key
       FROM records r
@@ -137,6 +163,7 @@ export function readIndexRows(
       scope_key: String(row.scope_key),
     }))
   } finally {
+    // Closing also releases the read transaction, including on hydration/selection failure.
     reader.db.close()
   }
 }

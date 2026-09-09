@@ -1,3 +1,4 @@
+import { rebuildAuthorizedIndex as rebuildIndex } from './fixtures/authorized-rebuild.js'
 import { rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   openKnowledgeReader,
-  rebuildIndex,
   scanBundleById,
   type BundleStoreConfig,
   type PublishBundleInput,

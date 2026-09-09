@@ -1,3 +1,4 @@
+import { rebuildAuthorizedIndex } from './fixtures/authorized-rebuild.js'
 import { rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -81,7 +82,7 @@ describe('embedding profile stamp transitions', () => {
 
   async function publishAndBuild(): Promise<PublishedBundle> {
     const published = publishFixture()
-    const report = await knowledgeLocal.rebuildIndex({
+    const report = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
       vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
@@ -257,7 +258,7 @@ describe('embedding profile stamp transitions', () => {
       clearTransitionEpoch: true,
     })
 
-    const report = await knowledgeLocal.rebuildIndex({
+    const report = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
       vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
@@ -309,7 +310,7 @@ describe('embedding profile stamp transitions', () => {
       clearTransitionEpoch: true,
     })
 
-    const first = await knowledgeLocal.rebuildIndex({
+    const first = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
       vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
@@ -317,7 +318,7 @@ describe('embedding profile stamp transitions', () => {
     expect(first).toMatchObject({ vec: 'brute', projected: 0, backfilled: 1 })
     const before = Buffer.from(readProfileState().embedding as Uint8Array)
 
-    const second = await knowledgeLocal.rebuildIndex({
+    const second = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
       vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
@@ -396,7 +397,7 @@ describe('embedding profile stamp transitions', () => {
 
   it('keeps vec cleanup pending after a brute transition and completes it on next vec0 writer', async () => {
     publishFixture()
-    const first = await knowledgeLocal.rebuildIndex({
+    const first = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
     })
@@ -458,7 +459,7 @@ describe('embedding profile stamp transitions', () => {
 
   it('marks cleanup pending before an ordinary brute rewrite and heals on next vec0 rebuild', async () => {
     publishFixture()
-    const first = await knowledgeLocal.rebuildIndex({
+    const first = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
     })
@@ -496,7 +497,7 @@ describe('embedding profile stamp transitions', () => {
         return replacement
       },
     }
-    const bruteRebuild = await knowledgeLocal.rebuildIndex({
+    const bruteRebuild = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: replacementEmbedder,
       vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
@@ -514,7 +515,7 @@ describe('embedding profile stamp transitions', () => {
     expect(Buffer.from(healedByBrute.embedding as Uint8Array)).toEqual(replacementBytes)
     expect(Buffer.from(healedByBrute.embedding as Uint8Array)).not.toEqual(originalBytes)
 
-    const vecRebuild = await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    const vecRebuild = await rebuildAuthorizedIndex({ knowledgeRoot })
     expect(vecRebuild).toMatchObject({ vec: 'vec0', projected: 0, backfilled: 0 })
     expect(readVecCleanupEpoch()).toBe('1')
 
@@ -556,7 +557,7 @@ describe('embedding profile stamp transitions', () => {
   it('rejects stale vec0 hits across a brute transition before rebuild and heals ordinarily', async () => {
     const published = publishFixture()
     const embedder = makeFakeEmbedder()
-    const first = await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder })
+    const first = await rebuildAuthorizedIndex({ knowledgeRoot, embedder })
     if (first.vec !== 'vec0') return
 
     const source = knowledgeLocal.scanBundleById({
@@ -590,7 +591,7 @@ describe('embedding profile stamp transitions', () => {
       expect(reader).toMatchObject({ source: 'index', vec: 'vec0' })
       expect(reader.searchDense(query, { product: source!.product, k: 1 })).toEqual([])
 
-      const bruteRebuild = await knowledgeLocal.rebuildIndex({
+      const bruteRebuild = await rebuildAuthorizedIndex({
         knowledgeRoot,
         embedder,
         vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
@@ -604,7 +605,7 @@ describe('embedding profile stamp transitions', () => {
       expect(readProfileState().embedStatus).toBe('present')
       expect(reader.searchDense(query, { product: source!.product, k: 1 })).toEqual([])
 
-      const vecRebuild = await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+      const vecRebuild = await rebuildAuthorizedIndex({ knowledgeRoot })
       expect(vecRebuild).toMatchObject({
         vec: 'vec0',
         projected: 0,
@@ -622,7 +623,7 @@ describe('embedding profile stamp transitions', () => {
   it('rechecks cleanup when reusing a vec0 reader opened before a brute rewrite', async () => {
     const published = publishFixture()
     const originalEmbedder = makeFakeEmbedder()
-    const first = await knowledgeLocal.rebuildIndex({
+    const first = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: originalEmbedder,
     })
@@ -670,7 +671,7 @@ describe('embedding profile stamp transitions', () => {
           return replacement
         },
       }
-      const bruteRebuild = await knowledgeLocal.rebuildIndex({
+      const bruteRebuild = await rebuildAuthorizedIndex({
         knowledgeRoot,
         embedder: replacementEmbedder,
         vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
@@ -683,7 +684,7 @@ describe('embedding profile stamp transitions', () => {
       expect(readVecCleanupEpoch()).toBeUndefined()
       expect(reader.searchDense(originalQuery, { product: source!.product, k: 1 })).toEqual([])
 
-      const vecRebuild = await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+      const vecRebuild = await rebuildAuthorizedIndex({ knowledgeRoot })
       expect(vecRebuild).toMatchObject({
         vec: 'vec0',
         projected: 0,
@@ -703,7 +704,7 @@ describe('embedding profile stamp transitions', () => {
   it('rejects vec0 candidates without present exact-dimension canonical bytes', async () => {
     const published = publishFixture()
     const embedder = makeFakeEmbedder()
-    const first = await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder })
+    const first = await rebuildAuthorizedIndex({ knowledgeRoot, embedder })
     if (first.vec !== 'vec0') return
 
     const source = knowledgeLocal.scanBundleById({
@@ -756,7 +757,7 @@ describe('embedding profile stamp transitions', () => {
 
   it('clears active vec0 rows inside the transition transaction at writer open', async () => {
     publishFixture()
-    const first = await knowledgeLocal.rebuildIndex({
+    const first = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
     })
@@ -803,7 +804,7 @@ describe('embedding profile stamp transitions', () => {
 
   it('heals a pre-fix normalized index with poisoned active vec0 rows through an ordinary rebuild', async () => {
     publishFixture()
-    const first = await knowledgeLocal.rebuildIndex({
+    const first = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
     })
@@ -820,7 +821,7 @@ describe('embedding profile stamp transitions', () => {
     })
 
     if (vec === 'vec0') {
-      const second = await knowledgeLocal.rebuildIndex({
+      const second = await rebuildAuthorizedIndex({
         knowledgeRoot,
         embedder: makeFakeEmbedder(),
       })
@@ -968,7 +969,7 @@ describe('embedding profile stamp transitions', () => {
     )
     rewriteProfileState(LEGACY_DEFAULT_PROFILE_KEY, marker)
 
-    const report = await knowledgeLocal.rebuildIndex({
+    const report = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
       vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
@@ -1007,7 +1008,7 @@ describe('embedding profile stamp transitions', () => {
 
   it('replaces legacy canonical and active vec0 marker bytes on ordinary rebuild', async () => {
     publishFixture()
-    const first = await knowledgeLocal.rebuildIndex({
+    const first = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
     })
@@ -1022,7 +1023,7 @@ describe('embedding profile stamp transitions', () => {
       poisonActiveVec: true,
     })
 
-    const second = await knowledgeLocal.rebuildIndex({
+    const second = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
     })
@@ -1077,7 +1078,7 @@ describe('embedding profile stamp transitions', () => {
 
   it('evicts a vec0 row whose present canonical blob has the wrong length', async () => {
     const published = publishFixture()
-    const first = await knowledgeLocal.rebuildIndex({
+    const first = await rebuildAuthorizedIndex({
       knowledgeRoot,
       embedder: makeFakeEmbedder(),
     })
@@ -1102,7 +1103,7 @@ describe('embedding profile stamp transitions', () => {
         writer.close()
       }
 
-      const second = await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+      const second = await rebuildAuthorizedIndex({ knowledgeRoot })
       expect(second).toMatchObject({
         vec: 'vec0',
         projected: 0,
