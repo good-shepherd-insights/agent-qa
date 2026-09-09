@@ -63,7 +63,7 @@ it.each(['missing', 'malformed', 'run-mismatch', 'producer-spoof', 'foreign-memb
   const input = fixture(), path = join(input.run, 'analysis.json')
   if (mode === 'missing') rmSync(path)
   if (mode === 'malformed') writeFileSync(path, '{')
-  if (mode === 'run-mismatch') { input.analysis.runId = 'foreign'; input.saveAnalysis() }
+  if (mode === 'run-mismatch') { input.analysis.runId = asRunId('foreign'); input.saveAnalysis() }
   if (mode === 'producer-spoof') { input.analysis.verdicts[0]!.producer = 'deterministic-classifier'; input.saveAnalysis() }
   if (mode === 'foreign-member') { input.analysis.verdicts[0]!.perTest = 42; input.saveAnalysis() }
   if (mode === 'symlink') {
@@ -100,4 +100,29 @@ it.each(['identity', 'producer', 'member', 'ledger'] as const)('fails closed for
   expect(evidence).toBeDefined()
   expect(evidence.observations.filter((row: core.CalibrationObservation) => row.producer === 'deterministic-classifier')).toEqual([])
   expect(Object.keys(evidence.missingEvidenceCounts).length).toBeGreaterThan(0)
+})
+it('refuses a ledger outside the operator root before active-gold consumption', () => {
+  const input = fixture(), outside = mkdtempSync(join(tmpdir(), 'calibration-ledger-'))
+  roots.push(outside)
+  const path = join(input.run, 'marks.jsonl')
+  writeFileSync(join(outside, 'marks.jsonl'), input.marks.map(mark => JSON.stringify(mark)).join('\n') + '\n')
+  rmSync(path)
+  symlinkSync(join(outside, 'marks.jsonl'), path)
+  const evidence = input.read()
+  expect(evidence?.marks).toEqual([])
+  expect(evidence.observations).toEqual([])
+  expect(evidence.missingEvidenceCounts['path-refused']).toBe(1)
+  expect(core.calibrateLabels(evidence).channels['recorded-verdict'].n).toBe(0)
+})
+it('discloses absent deterministic observation and rejects source steps absent from guarded handoff', () => {
+  const input = fixture()
+  delete input.handoff.tests[0]!.rootCause
+  input.handoff.tests[0]!.steps.pop()
+  writeFileSync(join(input.run, 'handoff.json'), JSON.stringify(input.handoff))
+  const evidence = input.read()
+  expect(evidence?.missingEvidenceCounts['deterministic-missing']).toBe(1)
+  expect(evidence.missingEvidenceCounts['source-refused']).toBeGreaterThan(0)
+  const report = core.calibrateLabels(evidence)
+  expect(report.channels['recorded-verdict'].n).toBe(1)
+  expect(report.rootCauseClassifierAccuracy['deterministic-classifier'].n).toBe(0)
 })
