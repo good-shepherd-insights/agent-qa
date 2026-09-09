@@ -449,6 +449,7 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
   const generations = new Set(eligibleHistory.flatMap(record => record.revision?.generationId ? [record.revision.generationId] : []))
   if (calibration.kind === 'refused') {
     refusals.push({ path: join(labelsRoot, 'calibration.json'), reason: calibration.reason })
+    for (const id of calibration.targetCassetteIds ?? []) readInvalidIds.add(id)
     for (const record of validHistory) if (record.revision?.generationId) readInvalidIds.add(record.cassetteId)
   }
   const selected = selectEffectiveLabels(eligibleHistory, { committedGenerationIds: generations })

@@ -1,6 +1,8 @@
 // Neutral port type re-exports anchor the eval workspace dependency declared by this package.
 export { readLabelCalibration, LABEL_CALIBRATION_PATH } from './calibration-source.js'
 export type { LabelCalibrationArtifact, LabelCalibrationRead } from './calibration-source.js'
+export { runLabelCalibration } from './calibration-composition.js'
+export type { RunLabelCalibrationInput, RunLabelCalibrationResult } from './calibration-composition.js'
 export { loadLabelEvidence } from './label-evidence-source.js'
 export type { LoadLabelEvidenceInput, LabelEvidenceRead } from './label-evidence-source.js'
 export { freezeGoldenTrajectory } from './golden-composition.js'
@@ -163,6 +165,7 @@ export {
   committedCorpusPath,
   committedExclusionPath,
   committedLabelPath,
+  committedLabelRevisionPath,
   committedNoiseFloorPath,
   committedPartitionManifestPath,
   committedReportPath,

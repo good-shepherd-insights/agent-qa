@@ -60,6 +60,19 @@ it('refuses the whole marker with missing ancestry and suppresses embedded fallb
   expect(reader(f.root)?.kind).toBe('refused')
   expect(api.readCommittedCorpus(f.root).snapshot.entries).toEqual([])
 })
+it('never resurrects the base when every published revision file is missing', () => {
+  const f = setup()
+  write(f.root, 'labels/calibration.json', f.artifact)
+  expect(reader(f.root)?.kind).toBe('refused')
+  expect(api.readCommittedCorpus(f.root).snapshot.entries).toEqual([])
+})
+it('ignores an unlisted sibling even when it claims the published generation', () => {
+  const f = setup()
+  f.append(f.next); f.append(f.terminal)
+  f.append(createLabelRevision(f.next, { provenance: { ...f.base.provenance, rerun: { attempt: 7 } } }, f.terminal.revision!.generationId))
+  write(f.root, 'labels/calibration.json', f.artifact)
+  expect(api.readCommittedCorpus(f.root).snapshot.labelsById.get(f.base.cassetteId)).toEqual(f.terminal)
+})
 it.each(['schema', 'prior', 'count', 'digest', 'target', 'interval', 'unknown'])('refuses malformed %s without echoing persisted content', mutation => {
   const f = setup()
   f.append(f.next); f.append(f.terminal)
@@ -71,6 +84,8 @@ it.each(['schema', 'prior', 'count', 'digest', 'target', 'interval', 'unknown'])
   if (mutation === 'target') artifact.targetRevisions.push(artifact.targetRevisions[0])
   if (mutation === 'interval') artifact.channels['recorded-verdict'] = { status: 'calibrated', n: 20, n_gold: 20, precision: 0.5, wilson95: { low: 0.9, high: 0.1 } }
   if (mutation === 'unknown') artifact.secret = 'unsafe persisted content'
+  const { generationId: _generation, ...body } = artifact
+  artifact.generationId = sha256hex(canonicalJson(body))
   write(f.root, 'labels/calibration.json', artifact)
   expect(reader(f.root)).toMatchObject({ kind: 'refused', reason: expect.any(String) })
   expect(JSON.stringify(reader(f.root))).not.toContain('unsafe persisted content')

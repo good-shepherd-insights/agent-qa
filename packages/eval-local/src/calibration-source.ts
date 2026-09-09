@@ -15,7 +15,7 @@ export interface LabelCalibrationArtifact extends Omit<LabelCalibrationReport, '
 }
 export type LabelCalibrationRead =
   | { kind: 'absent' }
-  | { kind: 'refused'; reason: string }
+  | { kind: 'refused'; reason: string; targetCassetteIds?: readonly string[] }
   | { kind: 'loaded'; artifact: LabelCalibrationArtifact; authorizedRevisionIds: ReadonlySet<string> }
 
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
@@ -95,6 +95,7 @@ export function guardLabelCalibration(value: unknown): LabelCalibrationArtifact 
 /** Independent marker loading: never calls the corpus reader and never grants a whole generation. */
 export function readLabelCalibration(committedRoot: string): LabelCalibrationRead {
   const marker = join(committedRoot, LABEL_CALIBRATION_PATH)
+  let targetCassetteIds: string[] | undefined
   try {
     assertCalibrationPath(committedRoot, marker)
     try { lstatSync(marker) } catch (error) {
@@ -103,6 +104,7 @@ export function readLabelCalibration(committedRoot: string): LabelCalibrationRea
     }
     const artifact = guardLabelCalibration(JSON.parse(readFileSync(marker, 'utf8')))
     if (!artifact) return { kind: 'refused', reason: 'invalid label calibration artifact' }
+    targetCassetteIds = artifact.targetRevisions.map(target => target.cassetteId)
     const records = new Map<string, StandaloneLabelRecord>()
     function walk(directory: string): void {
       assertCalibrationPath(committedRoot, directory)
@@ -140,5 +142,5 @@ export function readLabelCalibration(committedRoot: string): LabelCalibrationRea
       for (const id of visited) authorizedRevisionIds.add(id)
     }
     return { kind: 'loaded', artifact, authorizedRevisionIds }
-  } catch { return { kind: 'refused', reason: 'label calibration or target history unavailable' } }
+  } catch { return { kind: 'refused', reason: 'label calibration or target history unavailable', targetCassetteIds } }
 }

@@ -100,6 +100,15 @@ export function committedLabelPath(product: string, cassetteId: string): string 
   return [COMMITTED_LABELS_DIR, slugBranch(product), ...sluggedJsonLeaf(cassetteId)].join('/')
 }
 
+/** Preserve validated cassette path segments; suffix only the JSON leaf, never slug the whole ID. */
+export function committedLabelRevisionPath(product: string, cassetteId: string, revisionId: string): string {
+  if (!BLOB_SHA_RE.test(revisionId) || !cassetteId.split('/').every(segment =>
+    segment.length > 0 && segment !== '.' && segment !== '..' && slugBranch(segment) === segment)) {
+    throw new TypeError('invalid label revision path')
+  }
+  return committedLabelPath(product, cassetteId).replace(/\.json$/, `--revision-${revisionId}.json`)
+}
+
 export function committedCorpusPath(product: string, cassetteId: string): string {
   return [COMMITTED_CORPUS_DIR, slugBranch(product), ...sluggedJsonLeaf(cassetteId)].join('/')
 }
