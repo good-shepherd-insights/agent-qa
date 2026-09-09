@@ -792,6 +792,8 @@ export type {
 // 381 procedure & guarded-replay contracts (D-03/D-04/D-06, Pitfall 6)
 export { curatorTier } from './knowledge/curator-tier'
 export type { CuratorTier, ProcedureParamType } from './knowledge/curator-tier'
+export { plannerCapabilityTier } from './knowledge/planner-tier'
+export type { PlannerCapability, PlannerCapabilityEvidence } from './knowledge/planner-tier'
 export {
   parseProcedureBody,
   procedureJsonValueSchema,

@@ -34,7 +34,7 @@ const CAPABLE_FAMILY_PREFIXES: readonly string[] = [
 ]
 
 /** A prefix only matches when the next character is a token boundary (or the end). */
-function matchesCapableFamily(key: string): boolean {
+export function matchesCapableFamily(key: string): boolean {
   const normalized = key.trim().toLowerCase()
   return CAPABLE_FAMILY_PREFIXES.some((prefix) => {
     if (!normalized.startsWith(prefix)) return false
