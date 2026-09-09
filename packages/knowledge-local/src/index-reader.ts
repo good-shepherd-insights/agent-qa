@@ -27,6 +27,7 @@ import type {
   BundleRelation,
   OriginClass,
   ScopeKey,
+  TrustPriorTable,
   VettedCandidateInput,
 } from '@vostride/agent-qa-schema'
 
@@ -50,7 +51,7 @@ import type { IndexReaderConnection, VecCapability } from './index-open.js'
 import { requestRebuild } from './rebuild-marker.js'
 import type { RebuildReason } from './rebuild-marker.js'
 import { buildLexicalMatchExpression } from './retrieval/fts-match.js'
-import { assemblePromotionGateInput } from './promotion-gate-input.js'
+import { assemblePromotionGateInput, snapshotTrustPriors } from './promotion-gate-input.js'
 
 export interface KnowledgeSearchOptions {
   product?: string
@@ -98,6 +99,7 @@ export type AuthoritativeKnowledgeHit<THit extends KnowledgeHit = KnowledgeHit> 
 /** Internal snapshot context that lets the public retrieve function compose on this facade. */
 export interface KnowledgeRetrievalContext {
   readonly knowledgeRoot: string
+  readonly priors?: TrustPriorTable
   readonly source: 'index' | 'scan'
   readonly vec: VecCapability | 'none'
   readonly connection: IndexReaderConnection | undefined
@@ -147,6 +149,8 @@ const RECORD_COLUMNS = `
 const MAX_SQL_LIMIT = 2_147_483_647
 
 export interface OpenKnowledgeReaderOptions {
+  /** Neutral host data retained across every read and index-to-scan transition. */
+  priors?: TrustPriorTable
   /** D-12 test seam. Production callers resolve sqlite-vec's pinned prebuild. */
   vecLoadablePath?: string
 }
@@ -237,6 +241,7 @@ function recheckAuthoritativeHits<THit extends KnowledgeHit>(
   knowledgeRoot: string,
   hits: readonly THit[],
   audit: boolean,
+  priors?: TrustPriorTable,
 ): Array<AuthoritativeKnowledgeHit<THit>> {
   const refreshed: Array<AuthoritativeKnowledgeHit<THit>> = []
   for (const hit of hits) {
@@ -247,7 +252,7 @@ function recheckAuthoritativeHits<THit extends KnowledgeHit>(
       if (!verifyBundleIntegrity(bundleDir).ok) continue
       const outcome = loadBundle(bundleDir)
       if (outcome.kind !== 'loaded' || outcome.bundle.manifest.id !== hit.bundleId) continue
-      const trust = deriveBundleTrust(outcome.bundle)
+      const trust = deriveBundleTrust(outcome.bundle, priors)
       if (!audit && !isServable(trust)) continue
 
       refreshed.push({
@@ -269,6 +274,7 @@ function recheckAuthoritativeHits<THit extends KnowledgeHit>(
           knowledgeRoot,
           bundleDir,
           bundle: outcome.bundle,
+          priors,
         }),
       } as AuthoritativeKnowledgeHit<THit>)
     } catch {
@@ -282,8 +288,9 @@ function recheckAuthoritativeHits<THit extends KnowledgeHit>(
 function recheckHits<THit extends KnowledgeHit>(
   knowledgeRoot: string,
   hits: readonly THit[],
+  priors?: TrustPriorTable,
 ): Array<RefreshedHit<THit>> {
-  return recheckAuthoritativeHits(knowledgeRoot, hits, false).map((hit) => {
+  return recheckAuthoritativeHits(knowledgeRoot, hits, false, priors).map((hit) => {
     const {
       anchors: _anchors,
       scope: _scope,
@@ -370,26 +377,26 @@ function cosineDistance(query: Float32Array, candidate: Float32Array): number | 
   return 1 - dot
 }
 
-function scanReader(knowledgeRoot: string): InternalKnowledgeReader {
+function scanReader(knowledgeRoot: string, priors?: TrustPriorTable): InternalKnowledgeReader {
   const reader: InternalKnowledgeReader = {
     source: 'scan',
     vec: 'none',
     getById(bundleId): KnowledgeHit | undefined {
-      return scanBundleById({ knowledgeRoot, bundleId })
+      return scanBundleById({ knowledgeRoot, bundleId, priors })
     },
     searchLexical(text, opts = {}): KnowledgeHit[] {
-      return scanBundles({ knowledgeRoot, text, ...opts })
+      return scanBundles({ knowledgeRoot, text, ...opts, priors })
     },
     lookupAnchor(anchor, opts = {}): KnowledgeHit[] {
       // D-16: vec:none is the only reader rung allowed to widen beyond full identity.
       // Normalize through the schema authority before the scan compares role + name.
-      return scanBundles({ knowledgeRoot, anchor: normalizeAnchor(anchor), ...opts })
+      return scanBundles({ knowledgeRoot, anchor: normalizeAnchor(anchor), ...opts, priors })
     },
     searchDense(): DenseHit[] {
       return []
     },
     recheck(hits): KnowledgeHit[] {
-      return recheckHits(knowledgeRoot, hits)
+      return recheckHits(knowledgeRoot, hits, priors)
     },
     close(): void {},
     async [RUN_RETRIEVAL]<TResult>(
@@ -397,16 +404,18 @@ function scanReader(knowledgeRoot: string): InternalKnowledgeReader {
     ): Promise<TResult> {
       return operation({
         knowledgeRoot,
+        priors,
         source: 'scan',
         vec: 'none',
         connection: undefined,
         reader,
         scan: (text, anchor) => scanBundlesForRetrieval({
           knowledgeRoot,
+          priors,
           ...(text === undefined ? {} : { text }),
           ...(anchor === undefined ? {} : { anchor }),
         }),
-        recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit),
+        recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit, priors),
       })
     },
   }
@@ -416,6 +425,7 @@ function scanReader(knowledgeRoot: string): InternalKnowledgeReader {
 function indexReader(
   knowledgeRoot: string,
   connection: IndexReaderConnection,
+  priors?: TrustPriorTable,
 ): InternalKnowledgeReader {
   let closed = false
   const { db } = connection
@@ -424,7 +434,7 @@ function indexReader(
   function recheckCurrent<THit extends KnowledgeHit>(
     hits: readonly THit[],
   ): Array<RefreshedHit<THit>> {
-    return recheckHits(knowledgeRoot, hits)
+    return recheckHits(knowledgeRoot, hits, priors)
   }
 
   function denseVec0(embedding: Float32Array, opts: DenseSearchOptions): DenseHit[] {
@@ -624,12 +634,13 @@ function indexReader(
       return withAsyncReadSnapshot(db, () =>
         operation({
           knowledgeRoot,
+          priors,
           source: 'index',
           vec: connection.vec,
           connection,
           reader,
           scan: undefined,
-          recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit),
+          recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit, priors),
         }))
     },
   }
@@ -643,8 +654,9 @@ function indexReader(
 function operationDegradingReader(
   knowledgeRoot: string,
   connection: IndexReaderConnection,
+  priors?: TrustPriorTable,
 ): InternalKnowledgeReader {
-  let delegate = indexReader(knowledgeRoot, connection)
+  let delegate = indexReader(knowledgeRoot, connection, priors)
   let closed = false
 
   function invoke<TResult>(operation: (reader: KnowledgeReader) => TResult): TResult {
@@ -659,7 +671,7 @@ function operationDegradingReader(
         'corrupt',
         `derived index operation failed: ${errorMessage(error)}`,
       )
-      delegate = scanReader(knowledgeRoot)
+      delegate = scanReader(knowledgeRoot, priors)
       return operation(delegate)
     }
   }
@@ -678,7 +690,7 @@ function operationDegradingReader(
         'corrupt',
         `derived index operation failed: ${errorMessage(error)}`,
       )
-      delegate = scanReader(knowledgeRoot)
+      delegate = scanReader(knowledgeRoot, priors)
       return operation(delegate)
     }
   }
@@ -743,9 +755,10 @@ function degrade(
   knowledgeRoot: string,
   reason: RebuildReason,
   detail: string,
+  priors?: TrustPriorTable,
 ): KnowledgeReader {
   requestRebuildBestEffort(knowledgeRoot, reason, detail)
-  return scanReader(knowledgeRoot)
+  return scanReader(knowledgeRoot, priors)
 }
 
 /**
@@ -865,12 +878,13 @@ export function openKnowledgeReader(
   knowledgeRoot: string,
   opts: OpenKnowledgeReaderOptions = {},
 ): KnowledgeReader {
+  const priors = snapshotTrustPriors(opts.priors)
   const result = classifyIndexFaceWithConnection(knowledgeRoot, opts)
   if (result.connection === undefined) {
     // The marker write lives HERE, in the serving facade, and not in the classifier: requesting a
     // rebuild is what a reader that just failed to serve from the index owes the drainer.
-    return degrade(knowledgeRoot, result.face.reason, result.face.detail)
+    return degrade(knowledgeRoot, result.face.reason, result.face.detail, priors)
   }
 
-  return operationDegradingReader(knowledgeRoot, result.connection)
+  return operationDegradingReader(knowledgeRoot, result.connection, priors)
 }

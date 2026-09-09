@@ -6,6 +6,7 @@ import {
   survivingOutcomeEvents,
   type IndexEntry,
   type KnowledgeCandidateInjectionResult,
+  type TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 import { renderObservationLine } from '@vostride/agent-qa-runner'
 import { deriveBundleTrust } from '../bundle-read.js'
@@ -16,6 +17,7 @@ import { renderBriefLine } from '../serving/brief-render.js'
 export interface CandidateInjectionForOptions {
   knowledgeRoot: string
   candidateId: string
+  priors?: TrustPriorTable
 }
 
 export function candidateInjectionFor(
@@ -26,7 +28,7 @@ export function candidateInjectionFor(
     const bundle = loadMaintenanceBundle(entry)
     if (bundle.manifest.id !== id) continue
     const frontmatter = bundle.frontmatter
-    const trust = deriveBundleTrust(bundle)
+    const trust = deriveBundleTrust(bundle, options.priors)
     const stampedEntry = {
       id, kind: frontmatter.kind, title: bundle.summary, summary: bundle.summary,
       trust: trust.trust, status: trust.status,

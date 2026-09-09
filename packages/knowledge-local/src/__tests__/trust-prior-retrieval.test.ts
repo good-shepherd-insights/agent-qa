@@ -62,7 +62,9 @@ describe('420 retrieval prior continuity', () => {
   it('reranks numerical trust before limiting indexed and scan results', async () => {
     const f = persist()
     const published = publishBundle(f, { ...baseline.cases[2]!.input,
-      draft: makeBundleDraftFixture({ summary: 'Sign in second control' }),
+      draft: makeBundleDraftFixture({ summary: 'Sign in second control',
+        anchors: [...f.bundle.frontmatter.anchors.map(({ raw }) => raw), { t: 'flow', name: 'second control' }],
+      }),
       discriminant: { kind: 'fact', subtype: 'selector', elementRef: { role: 'Button', name: 'Second' } },
       initialEvents: f.bundle.events,
     })
