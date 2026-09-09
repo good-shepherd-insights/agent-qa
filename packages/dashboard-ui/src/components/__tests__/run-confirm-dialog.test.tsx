@@ -94,6 +94,22 @@ afterEach(() => {
 })
 
 describe("the run trigger's confirm dialog", () => {
+  it.each(['fn:runs.mark', 'run:start', 'fn:runs.start', 'fn:runs.mark-extra'])('names the actual operation for %s without changing its answers', actionClass => {
+    const onAnswer = vi.fn()
+    const host = mount(<RunConfirmDialog confirmId="operation-copy" actionClass={actionClass} preview="Action preview" onAnswer={onAnswer} />)
+    const marking = actionClass === 'fn:runs.mark'
+    const title = marking ? 'Approval needed to record this mark' : 'Approval needed to start this run'
+    expect(host.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe(title)
+    expect(host.textContent).toContain(title)
+    expect(host.querySelector('[data-confirm-answer="accept"]')?.getAttribute('title')).toBe(marking ? 'allow this one mark' : 'allow this one run')
+    expect(host.querySelector('[data-confirm-answer="deny"]')?.getAttribute('title')).toBe(marking ? 'refuse — the mark is not recorded' : 'refuse — the run does not start')
+    expect(host.querySelector('[data-confirm-answer="accept-always"]')?.getAttribute('title')).toBe('record a standing approval for this action class')
+    for (const answer of CONFIRM_ANSWER_VOCABULARY) {
+      act(() => host.querySelector<HTMLButtonElement>(`[data-confirm-answer="${answer}"]`)!.click())
+      expect(onAnswer).toHaveBeenLastCalledWith('operation-copy', answer)
+    }
+    expect(host.textContent).not.toContain('Mark saved.')
+  })
   it("offers the confirm vocabulary's three answers and NO fourth", () => {
     const host = mount(
       <RunConfirmDialog
