@@ -111,6 +111,7 @@ import {
   readRunExclusions,
   runNoiseFloorMeasurement,
   runReleaseGate,
+  runLabelCalibration,
   seedCommittedCorpus,
   sweepCassetteReplays,
   writeBaselinePointer,
@@ -123,6 +124,7 @@ import type {
   ReleaseGateMode,
   RunNoiseFloorMeasurementResult,
   RunReleaseGateResult,
+  RunLabelCalibrationResult,
   SeedingRefusal,
   StageFeedbackEntryInput,
   WriteBaselinePointerOutcome,
@@ -812,6 +814,42 @@ export const FLOOR_DEFAULT_REPEATS = 3
 export const FLOOR_DEFAULT_SEEDS = [11, 29] as const
 // D-15: fixed resampling seed makes the bootstrap disclosure reproducible.
 export const FLOOR_DEFAULT_BOOTSTRAP_SEED = 7
+
+// 420 D-13: twenty joined gold sources per global noisy channel is the recorded floor.
+// Wilson intervals disclose finite-sample uncertainty; products never get separate tiny fits.
+export const LABEL_CALIBRATION_MIN_GOLD = 20
+
+export type CalibrateVerbResult = Extract<RunLabelCalibrationResult, { artifact: unknown }>
+  | { kind: Exclude<RunLabelCalibrationResult['kind'], 'dry-run' | 'committed' | 'unchanged'>; reason: string }
+
+/** Only the explicit operator command calls this producer; no model or credential resolution. */
+export async function runCalibrateVerb(session: EvalSession, opts: {
+  commit?: boolean; replace?: boolean; minGold?: number
+} = {}): Promise<CalibrateVerbResult> {
+  const minGold = opts.minGold ?? LABEL_CALIBRATION_MIN_GOLD
+  if (!Number.isSafeInteger(minGold) || minGold < 2) {
+    return { kind: 'refused', reason: '--min-gold must be a safe integer of at least 2.' }
+  }
+  if (opts.replace && !opts.commit) return { kind: 'refused', reason: '--replace requires --commit.' }
+  const result = await runLabelCalibration({
+    committedRoot: resolve(session.configDir, 'agent-qa-eval'),
+    agentQaRoot: resolve(session.configDir, '.agent-qa'),
+    reportOutputBaseDir: evalAuditDir(session.configDir, 'calibrate', 'labels'),
+    commit: opts.commit, replace: opts.replace,
+    minGold: { value: minGold, source: opts.minGold === undefined ? 'default' : 'cli' },
+  })
+  if ('artifact' in result) return result
+  // Never echo input-bearing paths or detector labels in either output format.
+  const reasons = {
+    refused: 'Calibration inputs unavailable or invalid; inspect committed labels and run evidence.',
+    busy: 'Another calibration publisher holds the lock; retry after it finishes.',
+    'input-drift': 'Calibration inputs changed; retry from the current snapshot.',
+    'publication-failed': 'Calibration publication interrupted; retry the identical command.',
+    'write-conflict': 'Calibration bytes conflict; review the dry-run, then use --commit --replace to replace the marker. Immutable revision conflicts require inspection.',
+    'egress-blocked': 'Calibration output was blocked by the egress checkpoint; inspect the local audit and mask source evidence before retrying.',
+  }
+  return { kind: result.kind, reason: reasons[result.kind] }
+}
 
 // 417 D-19: 51 demo collateral + one target + four cross-check screens = 56; next power of two.
 export const GATE1_DEFAULT_MAX_SCREENS = 64

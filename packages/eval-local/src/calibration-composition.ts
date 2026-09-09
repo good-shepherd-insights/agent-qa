@@ -163,6 +163,8 @@ export async function runLabelCalibration(input: RunLabelCalibrationInput): Prom
     input.onBoundary?.('before-marker')
     if (!unchangedInputs()) return { kind: 'input-drift', reason: 'Calibration inputs changed before publication.' }
     const temp = join(dirname(marker), `.calibration-${planned.artifact.generationId}.tmp`)
+    assertCalibrationPath(input.committedRoot, dirname(marker))
+    mkdirSync(dirname(marker), { recursive: true })
     writeCheckedTemp(input.committedRoot, temp, artifactPart.text); temps.push(temp)
     input.onBoundary?.('before-rename')
     if (!unchangedInputs()) return { kind: 'input-drift', reason: 'Calibration inputs changed before publication.' }

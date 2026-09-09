@@ -11,6 +11,7 @@ import { installEvalWarningLogger } from '../eval-warning-logger.js'
 import { renderCensusFloorLines, renderFloorSummary, renderReportEvidenceLines } from '../eval-report-render.js'
 import type {
   BaselineComparatorRefusal,
+  CalibrateVerbResult,
   CensusVerbResult,
   EvalCorpusSource,
   ExtractVerbResult,
@@ -419,12 +420,61 @@ function renderExtractSummary(result: ExtractVerbResult): void {
   console.log(pc.dim(`cassettes root: ${result.cassettesRoot}`))
 }
 
+function renderCalibrationSummary(result: Extract<CalibrateVerbResult, { artifact: unknown }>): void {
+  const report = result.artifact
+  console.log(`calibrate: ${result.kind} minGold=${report.minGold.value} (${report.minGold.source})`)
+  for (const channel of ['recorded-verdict', 'self-heal-pair'] as const) {
+    const row = report.channels[channel]
+    console.log(`${channel}: ${row.status} n_gold=${row.n_gold} precision=${row.status === 'calibrated' ? row.precision : 'n/a'} interval=${row.status === 'calibrated' ? `[${row.wilson95.lower},${row.wilson95.upper}]` : 'n/a'}`)
+  }
+  for (const channel of ['user-mark', 'overturned-verdict'] as const) {
+    const row = report.channels[channel]
+    console.log(`${channel}: n_gold=${row.n_gold} precision=${row.precision}`)
+  }
+  for (const [name, row] of [['false-pass', report.verifierFalsePassRate], ['false-fail', report.verifierFalseFailRate]] as const) {
+    console.log(`verifier ${name}: ${row.numerator}/${row.denominator} rate=${row.rate ?? 'n/a'}`)
+  }
+  console.log(`classifier grain: ${report.rootCauseClassifierGrain}`)
+  for (const [producer, row] of Object.entries(report.rootCauseClassifierAccuracy)) {
+    console.log(`${producer}: ${row.correct}/${row.n} accuracy=${row.accuracy ?? 'n/a'}`)
+  }
+  console.log(`SOFT refreshedCount=${result.refreshedCount}`)
+}
+
 export function createEvalCommand(): Command {
   const cmd = new Command('eval')
-    .description('Eval corpus and release measurements: extract, replay, seed, report, census, floor, gate')
+    .description('Eval corpus and release measurements: extract, replay, seed, calibrate, report, census, floor, gate')
   let restoreWarningLogger: (() => void) | undefined
   cmd.hook('preAction', () => { restoreWarningLogger = installEvalWarningLogger() })
   cmd.hook('postAction', () => { restoreWarningLogger?.() })
+
+  cmd.addCommand(new Command('calibrate')
+    .description('Preview global label precision and SOFT weight refresh; publish only with --commit')
+    .option('--commit', 'publish checked revisions and calibration.json')
+    .option('--replace', 'with --commit, replace a divergent calibration marker')
+    .option('--min-gold <n>', 'minimum joined gold sources per channel (recorded default: 20; minimum: 2)')
+    .option('--json', 'emit the typed result DTO to stdout')
+    .action(async (opts: { commit?: boolean; replace?: boolean; minGold?: string; json?: boolean }, command: Command) => {
+      let result: CalibrateVerbResult
+      const minGold = opts.minGold === undefined ? undefined : Number(opts.minGold)
+      if (opts.minGold !== undefined && (!/^\d+$/.test(opts.minGold.trim()) || !Number.isSafeInteger(minGold) || minGold! < 2)) {
+        result = { kind: 'refused', reason: '--min-gold must be a safe integer of at least 2.' }
+      } else if (opts.replace && !opts.commit) {
+        result = { kind: 'refused', reason: '--replace requires --commit.' }
+      } else {
+        try {
+          const { resolveEvalSession, runCalibrateVerb } = await import('../eval-session-composition.js')
+          const session = await resolveEvalSession({ configPath: getGlobalConfigPath(command), keyOnly: true })
+          result = await runCalibrateVerb(session, { commit: opts.commit, replace: opts.replace, minGold })
+        } catch {
+          result = { kind: 'refused', reason: 'Calibration unavailable; check the selected config and local corpus permissions, then retry.' }
+        }
+      }
+      if (opts.json) console.log(JSON.stringify(result, null, 2))
+      else if ('artifact' in result) renderCalibrationSummary(result)
+      else console.error(`calibrate: ${result.kind} — ${result.reason}`)
+      if (!('artifact' in result)) process.exitCode = 1
+    }))
 
   cmd.addCommand(
     new Command('extract')
