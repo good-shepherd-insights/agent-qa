@@ -57,7 +57,7 @@ export const MARK_LABELS = {
 } satisfies Record<Mark, string>
 export const MARK_CHIP_PREFIX = 'marked '
 export type OnMark = (testIndex: number, stepIndex: number | undefined, kind: Mark, note?: string,
-  correction?: Pick<RunsMarkInput, 'correctedExpectation' | 'correctedAction'>) => void
+  correction?: Pick<RunsMarkInput, 'correctedExpectation' | 'correctedAction'>) => Promise<'refreshed' | 'retained' | 'stale'>
 export interface MarkDenial { reason: string; remedies: readonly GateRemedy[] }
 
 export function markChipText(mark: RunDetailMemberMark): string {

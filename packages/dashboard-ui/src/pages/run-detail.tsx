@@ -132,34 +132,43 @@ export default function RunDetailPage() {
   const [detail, setDetail] = useState<RunDetailProjection | null | undefined>(undefined)
   const [markDenial, setMarkDenial] = useState<MarkDenial & { testIndex: number; stepIndex?: number }>()
   const [markPending, setMarkPending] = useState(false)
-  const markingRef = useRef(false)
+  const markingRef = useRef<object | undefined>(undefined)
+  const markGeneration = useRef(0)
   const markRunRef = useRef(id)
   useEffect(() => {
+    markGeneration.current += 1
     markRunRef.current = id
+    markingRef.current = undefined
+    setMarkPending(false)
     setMarkDenial(undefined)
     setDetail(undefined)
-    return () => { markRunRef.current = undefined }
+    return () => { markRunRef.current = undefined; markGeneration.current += 1 }
   }, [id])
 
-  const reloadDetail = useCallback(async () => {
+  const reloadDetail = useCallback(async (generation = markGeneration.current) => {
     if (!id) return undefined
     const projection = await fetchRunDetail(id)
-    if (markRunRef.current === id && projection.runId === id) setDetail(projection)
+    if (markRunRef.current !== id || markGeneration.current !== generation) return undefined
+    if (projection.runId === id) setDetail(projection)
     return projection
   }, [id])
 
   const onMark = useCallback<OnMark>(async (testIndex, stepIndex, kind, note, correction) => {
-    if (!id || detail?.runId !== id || markingRef.current) return
+    if (!id || detail?.runId !== id) return 'stale'
+    if (markingRef.current) return 'retained'
     const member = detail.members.find(entry => entry.testIndex === testIndex)
-    if (member?.marks === undefined) return
+    if (member?.marks === undefined) return 'retained'
     const address = { testIndex, ...(stepIndex === undefined ? {} : { stepIndex }) }
     // The wire addresses members by testId. Never silently mark a different member when a
     // suite has no unique testId for the selected row.
     if (detail.members.length > 1 && (!member.testId || detail.members.filter(entry => entry.testId === member.testId).length !== 1)) {
       setMarkDenial({ ...address, reason: 'This member has no unique mark address.', remedies: [] })
-      return
+      return 'retained'
     }
-    markingRef.current = true
+    const request = {}
+    const generation = markGeneration.current
+    const isCurrent = () => markRunRef.current === id && markGeneration.current === generation && markingRef.current === request
+    markingRef.current = request
     setMarkPending(true)
     setMarkDenial(undefined)
     try {
@@ -170,19 +179,30 @@ export default function RunDetailPage() {
         ...(note ? { note } : {}),
         ...correction,
       })
-      if (markRunRef.current !== id) return
+      if (!isCurrent()) return 'stale'
       if (outcome.kind === 'marked' || outcome.kind === 'already-marked') {
-        await reloadDetail()
+        const projection = await reloadDetail(generation)
+        if (!isCurrent()) return 'stale'
+        const addressed = projection?.runId === id
+          ? projection.members.find(entry => entry.testIndex === testIndex && entry.testId === member.testId)
+            ?.marks?.find(entry => entry.stepIndex === stepIndex)
+          : undefined
+        if (addressed?.markId === outcome.receipt.markId && addressed.ordinal === outcome.receipt.ordinal && addressed.kind === outcome.receipt.kind && addressed.kind === kind) return 'refreshed'
+        setMarkDenial({ ...address, reason: 'The matching mark receipt could not be refreshed. Reload this run before trying again.', remedies: [] })
       } else {
         setMarkDenial({ ...address, reason: `Mark refused: ${outcome.kind}.`, remedies: [] })
       }
+      return 'retained'
     } catch (error) {
-      if (markRunRef.current !== id) return
+      if (!isCurrent()) return 'stale'
       if (error instanceof MarkDeniedError) setMarkDenial({ ...address, reason: error.reason, remedies: error.remedies })
       else setMarkDenial({ ...address, reason: 'Could not complete the mark or refresh its receipt. Reload this run before trying again.', remedies: [] })
+      return 'retained'
     } finally {
-      markingRef.current = false
-      if (markRunRef.current !== undefined) setMarkPending(false)
+      if (isCurrent()) {
+        markingRef.current = undefined
+        setMarkPending(false)
+      }
     }
   }, [id, detail, reloadDetail])
   const [isLoading, setIsLoading] = useState(true)

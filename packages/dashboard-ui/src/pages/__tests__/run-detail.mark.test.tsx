@@ -340,6 +340,9 @@ describe('419-15 scoped draft lifecycle', () => {
   })
   for (const scope of [MEMBER_SCOPE, STEP_SCOPE]) {
     it.each(['denied', 'no-channel', 'ambiguous-correction', 'run-not-found', 'transport', 'refetch', 'wrong-run', 'missing', 'wrong-member', 'wrong-step', 'wrong-id', 'wrong-ordinal', 'wrong-kind'])('retains %s on ' + scope, async failure => {
+      const base = failure === 'wrong-member'
+        ? { ...initial, members: [...initial.members, member(8, { testId: generateTestId(), marks: [] })] }
+        : initial
       if (failure === 'denied' || failure === 'no-channel') markRunMock.mockRejectedValue(new MarkDeniedError({ reason: failure, remedies: [{ kind: 'answer-confirm' }] }))
       else if (failure === 'transport') markRunMock.mockRejectedValue(new Error('offline'))
       else if (failure === 'ambiguous-correction' || failure === 'run-not-found') markRunMock.mockResolvedValue({ kind: failure })
@@ -348,20 +351,19 @@ describe('419-15 scoped draft lifecycle', () => {
         let next = refreshed(scope)
         if (failure === 'wrong-run') next = { ...next, runId: generateRunId() }
         if (failure === 'missing') next = initial
-        if (failure === 'wrong-member') next = { ...next, members: [{ ...next.members[0], testIndex: 8 }] }
+        if (failure === 'wrong-member') next = { ...base, members: [base.members[0], { ...base.members[1], marks: next.members[0].marks }] }
         if (failure === 'wrong-step') next = { ...next, members: [{ ...next.members[0], marks: [{ ...marked, stepIndex: 3 }] }] }
         if (failure === 'wrong-id') next = refreshed(scope, { ...marked, markId: 'mark_1123456789ab' })
         if (failure === 'wrong-ordinal') next = refreshed(scope, { ...marked, ordinal: 3 })
         if (failure === 'wrong-kind') next = refreshed(scope, { ...marked, kind: 'false-pass' })
-        fetchRunDetailMock.mockResolvedValueOnce(initial)
+        fetchRunDetailMock.mockResolvedValueOnce(base)
         if (failure === 'refetch') fetchRunDetailMock.mockRejectedValueOnce(new Error('refresh failed'))
         else fetchRunDetailMock.mockResolvedValueOnce(next)
       }
       await renderAt(`/runs/${RUN_ID}`)
       await draft(scope)
       await click(`${scope} [data-mark-submit]`)
-      // A removed member cannot retain a mounted form; its replacement must not announce success.
-      if (failure !== 'wrong-member') {
+      {
         expectDraft(scope)
         expect(container!.querySelector<HTMLButtonElement>(`${scope} [data-mark-submit]`)?.disabled).toBe(false)
         expect(container!.querySelector(`${scope} [data-mark-status]`)?.textContent).toContain('Draft retained.')
@@ -396,6 +398,35 @@ describe('419-15 scoped draft lifecycle', () => {
     await click(`${MEMBER_SCOPE} [data-mark-submit]`)
     expect(container!.querySelector(`${MEMBER_SCOPE} [data-mark-note]`)).toBeNull()
     expect(container!.textContent).toContain('Mark saved. Receipt refreshed.')
+  })
+  it('keeps a second member draft and denial isolated across subsequent submissions', async () => {
+    const secondId = generateTestId()
+    fetchRunDetailMock.mockResolvedValue({ ...initial, members: [...initial.members, member(8, { testId: secondId, marks: [] })], steps: [...initial.steps, step(8, 2, 'Other cart')] })
+    markRunMock.mockRejectedValueOnce(new MarkDeniedError({ reason: 'First member denied', remedies: [] }))
+      .mockRejectedValueOnce(new MarkDeniedError({ reason: 'Second member denied', remedies: [] }))
+    await renderAt(`/runs/${RUN_ID}`)
+    const first = '[data-member="7"] [data-member-mark]'
+    const second = '[data-member="8"] [data-member-mark]'
+    await draft(first)
+    await draft(second)
+    await click(`${first} [data-mark-submit]`)
+    expect(container!.querySelector(`${second} [data-mark-denied]`)).toBeNull()
+    await click(`${second} [data-mark-submit]`)
+    expectDraft(first)
+    expectDraft(second)
+    expect(container!.querySelector(`${first} [data-mark-denied]`)?.textContent).toContain('First member denied')
+    expect(container!.querySelector(`${second} [data-mark-denied]`)?.textContent).toContain('Second member denied')
+    expect(markRunMock.mock.calls[1][1].testId).toBe(secondId)
+  })
+  it('refuses an ambiguous testId without a POST and retains the selected member draft', async () => {
+    fetchRunDetailMock.mockResolvedValue({ ...initial, members: [...initial.members, member(8, { testId: TEST_ID, marks: [] })] })
+    await renderAt(`/runs/${RUN_ID}`)
+    const scope = '[data-member="7"] [data-member-mark]'
+    await draft(scope)
+    await click(`${scope} [data-mark-submit]`)
+    expectDraft(scope)
+    expect(markRunMock).not.toHaveBeenCalled()
+    expect(container!.querySelector(`${scope} [data-mark-denied]`)?.textContent).toContain('no unique mark address')
   })
   it('keeps pending and result announcements local while retaining the other draft', async () => {
     const post = deferred<unknown>()
@@ -516,6 +547,8 @@ describe('419 page mark post/refetch', () => {
     expect(markRunMock).toHaveBeenCalledExactlyOnceWith(RUN_ID, { kind: 'false-fail', testId: TEST_ID })
     expect(fetchRunDetailMock).toHaveBeenCalledTimes(2)
     expect(container!.querySelector('[data-mark-chip]')?.textContent).toBe('marked false-fail by user · 2')
+    expect(container!.querySelector('[data-member-mark] [data-mark-note]')).not.toBeNull()
+    expect(container!.textContent).not.toContain('Mark saved.')
   })
   it('renders typed denial and remedy without a refetch or invented chip', async () => {
     markRunMock.mockRejectedValue(new MarkDeniedError({ reason: 'The safety gate denied this mark.', remedies: [{ kind: 'answer-confirm' }] }))

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MarkCorrectionFields, type MarkCorrection } from './mark-correction-fields'
 import { Link } from 'react-router'
 import { MARKS, type Mark, type RunDetailMemberMark } from '@vostride/agent-qa-schema'
@@ -30,6 +30,8 @@ function StepStatusIcon({ status }: { status: string }) {
   }
 }
 
+const MARK_ACTION_CLASS = 'inline-flex min-h-8 min-w-8 items-center justify-center rounded-[2px] border px-2 py-1 font-mono text-xs transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60'
+
 interface StepTreeItemProps {
   onMark?: OnMark
   marks?: readonly RunDetailMemberMark[]
@@ -49,6 +51,44 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect
   const [note, setNote] = useState('')
   const [correction, setCorrection] = useState<MarkCorrection>()
   const [correctionValid, setCorrectionValid] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [status, setStatus] = useState('')
+  const [resultVisible, setResultVisible] = useState(true)
+  const [lastDenial, setLastDenial] = useState<MarkDenial>()
+  const submission = useRef<object | undefined>(undefined)
+  useEffect(() => () => { submission.current = undefined }, [])
+  useEffect(() => { if (markDenial) setLastDenial(markDenial) }, [markDenial])
+  const edit = () => { setStatus(''); setResultVisible(false) }
+  const clearDraft = () => { setKind(undefined); setNote(''); setCorrection(undefined); setCorrectionValid(true) }
+  const submit = async () => {
+    if (!onMark || kind === undefined || step.testIndex === undefined || step.stepIndex === undefined || markPending || submission.current || !correctionValid) return
+    const request = {}
+    submission.current = request
+    setSubmitting(true)
+    setResultVisible(false)
+    setStatus('Mark submission pending.')
+    try {
+      const result = correction
+        ? await onMark(step.testIndex, step.stepIndex, kind, note || undefined, correction)
+        : await onMark(step.testIndex, step.stepIndex, kind, note || undefined)
+      if (submission.current !== request) return
+      if (result === 'refreshed') {
+        clearDraft()
+        setStatus('Mark saved. Receipt refreshed.')
+      } else if (result !== 'stale') {
+        setResultVisible(true)
+        setStatus('Draft retained. Check the result below before retrying.')
+      } else setStatus('')
+    } catch {
+      if (submission.current !== request) return
+      setResultVisible(true)
+      setStatus('Draft retained. Check the result below before retrying.')
+    } finally {
+      if (submission.current === request) { submission.current = undefined; setSubmitting(false) }
+    }
+  }
+  const denial = markDenial ?? lastDenial
+  const disabled = markPending || submitting
   const mark = marks?.find(entry => entry.stepIndex === step.stepIndex)
   // THE DURABLE SUB-ACTIONS, NOT THE v1 BLOB (405-08/405-11). The v1 sub-action array this row
   // used to read had no producer on this page, and 405-11 deleted it with the overview's readers.
@@ -113,33 +153,34 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect
       </button>
 
       {marks !== undefined && onMark && step.testIndex !== undefined && step.stepIndex !== undefined ? (
-        <div className="mx-3 mb-1.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
-          {MARKS.map(kind => (
-            <button key={kind} type="button" data-mark-kind={kind} data-mark-step={step.stepIndex}
-              className="rounded-[2px] border border-border/60 px-1.5 py-0.5 font-mono hover:bg-muted/60"
-              disabled={markPending} onClick={() => { setKind(current => current === kind ? undefined : kind); setNote(''); setCorrection(undefined); setCorrectionValid(true) }}>{MARK_LABELS[kind]}</button>
+        <div data-step-mark aria-busy={submitting} className="mx-3 mb-1.5 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+          {MARKS.map(choice => (
+            <button key={choice} type="button" data-mark-kind={choice} data-mark-step={step.stepIndex} aria-pressed={kind === choice}
+              className={`${MARK_ACTION_CLASS} ${kind === choice ? 'border-primary bg-primary/15 text-foreground' : 'border-border bg-background text-muted-foreground'}`}
+              disabled={disabled} onClick={() => { edit(); setKind(choice) }}>{MARK_LABELS[choice]}</button>
           ))}
           {kind === undefined ? null : (
             <div className="flex w-full flex-wrap items-center gap-1">
+              <p className="w-full">Selected: {kind}</p>
               <textarea data-mark-note aria-label="Optional step mark note" maxLength={2000}
                 className="w-full rounded-[2px] border border-border bg-background p-1 text-xs"
-                value={note} onChange={event => setNote(event.target.value)} disabled={markPending} />
-              <MarkCorrectionFields key={kind} disabled={markPending} onChange={(value, valid) => { setCorrection(value); setCorrectionValid(valid) }} />
-              <button type="button" data-mark-submit disabled={markPending || !correctionValid}
-                onClick={() => { if (correction) onMark(step.testIndex!, step.stepIndex!, kind, note || undefined, correction)
-                  else onMark(step.testIndex!, step.stepIndex!, kind, note || undefined); setKind(undefined) }}>Mark</button>
-              <button type="button" data-mark-cancel disabled={markPending}
-                onClick={() => { setKind(undefined); setNote('') }}>Cancel</button>
+                value={note} onChange={event => { edit(); setNote(event.target.value) }} disabled={disabled} />
+              <MarkCorrectionFields disabled={disabled} onChange={(value, valid) => { edit(); setCorrection(value); setCorrectionValid(valid) }} />
+              <button type="button" data-mark-submit className={`${MARK_ACTION_CLASS} border-border bg-background`} disabled={disabled || !correctionValid}
+                onClick={() => { void submit() }}>Record {kind} mark</button>
+              <button type="button" data-mark-cancel className={`${MARK_ACTION_CLASS} border-border bg-background`} disabled={disabled}
+                onClick={() => { edit(); clearDraft() }}>Cancel</button>
             </div>
           )}
           {mark === undefined ? null : (
             <>
               <span data-mark-chip>{markChipText(mark)}</span>
               <span data-mark-triage><MaskedText text={markTriageText(mark)} /></span>
-              {mark.disposition.kind === 'drafted' ? <Link data-mark-confirm-link to={routes.chat}>review in chat</Link> : null}
+              {mark.disposition.kind === 'drafted' ? <Link data-mark-confirm-link className={`${MARK_ACTION_CLASS} border-border bg-background`} to={routes.chat}>review in chat</Link> : null}
             </>
           )}
-          {markDenial === undefined ? null : <div data-mark-denied className="w-full"><DenialBlock neutralReason={markDenial.reason} remedies={markDenial.remedies} /></div>}
+          <p data-mark-status role="status" aria-live="polite" aria-atomic="true" className="w-full">{status}</p>
+          {!resultVisible || denial === undefined ? null : <div data-mark-denied role="alert" className="w-full"><DenialBlock neutralReason={denial.reason} remedies={denial.remedies} /></div>}
         </div>
       ) : null}
 
