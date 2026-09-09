@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { MemoryRouter, Route, Routes, useLocation } from "react-router"
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type {
   RunDetailMember,
@@ -206,7 +206,10 @@ function runRow(id: string, over: Record<string, unknown> = {}) {
 
 function LocationProbe() {
   const location = useLocation()
-  return <div data-testid="location" data-search={location.search} />
+  const navigate = useNavigate()
+  return <div data-testid="location" data-search={location.search}>
+    <button data-navigate onClick={event => navigate(event.currentTarget.dataset.to!)} />
+  </div>
 }
 
 let container: HTMLDivElement | null = null
@@ -274,6 +277,172 @@ beforeEach(() => {
   fetchRunArtifactMock.mockResolvedValue({ run: { id: RUN_ID }, artifact: null, children: [], missingSections: ["artifact"] })
   fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id) }))
   fetchRunDetailMock.mockResolvedValue(TWO_MEMBERS)
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: Error) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+const MEMBER_SCOPE = '[data-member-mark]'
+const STEP_SCOPE = '[data-step-id="7:2"]'
+const ACTION_TEXT = '{"type":"click","ref":"e1"}'
+async function input(selector: string, value: string) {
+  await act(async () => {
+    const field = container!.querySelector<HTMLTextAreaElement>(selector)!
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, value)
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+async function draft(scope: string) {
+  await click(`${scope} [data-mark-kind="false-fail"]`)
+  await input(`${scope} [data-mark-note]`, 'Keep this note')
+  await input(`${scope} [aria-label="Corrected expectation"]`, 'Keep this expectation')
+  await input(`${scope} [aria-label="Corrected action JSON"]`, ACTION_TEXT)
+}
+function expectDraft(scope: string, action = ACTION_TEXT) {
+  expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [data-mark-note]`)?.value).toBe('Keep this note')
+  expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [aria-label="Corrected expectation"]`)?.value).toBe('Keep this expectation')
+  expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [aria-label="Corrected action JSON"]`)?.value).toBe(action)
+}
+function refreshed(scope: string, receipt = marked): RunDetailProjection {
+  return { ...initial, members: [{ ...initial.members[0], marks: [{ ...receipt, ...(scope === STEP_SCOPE ? { stepIndex: 2 } : {}) }] }] }
+}
+async function navigateTo(id: string) {
+  container!.querySelector<HTMLButtonElement>('[data-navigate]')!.dataset.to = `/runs/${id}`
+  await click('[data-navigate]')
+}
+
+describe('419-15 scoped draft lifecycle', () => {
+  beforeEach(() => { fetchRunDetailMock.mockResolvedValue(initial) })
+  it.each([MEMBER_SCOPE, STEP_SCOPE])('retains the full %s draft through POST and authoritative refresh', async scope => {
+    const post = deferred<unknown>()
+    const refresh = deferred<RunDetailProjection>()
+    markRunMock.mockReturnValue(post.promise)
+    fetchRunDetailMock.mockResolvedValueOnce(initial).mockReturnValueOnce(refresh.promise)
+    await renderAt(`/runs/${RUN_ID}`)
+    await draft(scope)
+    await click(`${scope} [data-mark-submit]`)
+    expectDraft(scope)
+    expect(container!.querySelector(`${scope} [data-mark-status]`)?.textContent).toBe('Mark submission pending.')
+    expect(container!.querySelector(`${scope} [data-mark-status]`)?.getAttribute('aria-live')).toBe('polite')
+    expect(container!.querySelector(`${scope} [data-mark-status]`)?.getAttribute('aria-atomic')).toBe('true')
+    await click(`${scope} [data-mark-submit]`)
+    expect(markRunMock).toHaveBeenCalledTimes(1)
+    await act(async () => post.resolve({ kind: 'marked', receipt: marked }))
+    expectDraft(scope)
+    expect(container!.textContent).not.toContain('Mark saved.')
+    await act(async () => refresh.resolve(refreshed(scope)))
+    expect(container!.querySelector(`${scope} [data-mark-note]`)).toBeNull()
+    expect(container!.querySelector(`${scope} [data-mark-status]`)?.textContent).toBe('Mark saved. Receipt refreshed.')
+    expect(container!.querySelector(`${scope} [data-mark-chip]`)?.textContent).toContain('· 2')
+  })
+  for (const scope of [MEMBER_SCOPE, STEP_SCOPE]) {
+    it.each(['denied', 'no-channel', 'ambiguous-correction', 'run-not-found', 'transport', 'refetch', 'wrong-run', 'missing', 'wrong-member', 'wrong-step', 'wrong-id', 'wrong-ordinal', 'wrong-kind'])('retains %s on ' + scope, async failure => {
+      if (failure === 'denied' || failure === 'no-channel') markRunMock.mockRejectedValue(new MarkDeniedError({ reason: failure, remedies: [{ kind: 'answer-confirm' }] }))
+      else if (failure === 'transport') markRunMock.mockRejectedValue(new Error('offline'))
+      else if (failure === 'ambiguous-correction' || failure === 'run-not-found') markRunMock.mockResolvedValue({ kind: failure })
+      else {
+        markRunMock.mockResolvedValue({ kind: 'marked', receipt: marked })
+        let next = refreshed(scope)
+        if (failure === 'wrong-run') next = { ...next, runId: generateRunId() }
+        if (failure === 'missing') next = initial
+        if (failure === 'wrong-member') next = { ...next, members: [{ ...next.members[0], testIndex: 8 }] }
+        if (failure === 'wrong-step') next = { ...next, members: [{ ...next.members[0], marks: [{ ...marked, stepIndex: 3 }] }] }
+        if (failure === 'wrong-id') next = refreshed(scope, { ...marked, markId: 'mark_1123456789ab' })
+        if (failure === 'wrong-ordinal') next = refreshed(scope, { ...marked, ordinal: 3 })
+        if (failure === 'wrong-kind') next = refreshed(scope, { ...marked, kind: 'false-pass' })
+        fetchRunDetailMock.mockResolvedValueOnce(initial)
+        if (failure === 'refetch') fetchRunDetailMock.mockRejectedValueOnce(new Error('refresh failed'))
+        else fetchRunDetailMock.mockResolvedValueOnce(next)
+      }
+      await renderAt(`/runs/${RUN_ID}`)
+      await draft(scope)
+      await click(`${scope} [data-mark-submit]`)
+      // A removed member cannot retain a mounted form; its replacement must not announce success.
+      if (failure !== 'wrong-member') {
+        expectDraft(scope)
+        expect(container!.querySelector<HTMLButtonElement>(`${scope} [data-mark-submit]`)?.disabled).toBe(false)
+        expect(container!.querySelector(`${scope} [data-mark-status]`)?.textContent).toContain('Draft retained.')
+        expect(container!.querySelector(`${scope} [data-mark-denied]`)?.getAttribute('role')).toBe('alert')
+      }
+      expect(container!.textContent).not.toContain('Mark saved.')
+    })
+    it('keeps selection, invalid text and component identity until explicit cancel at ' + scope, async () => {
+      await renderAt(`/runs/${RUN_ID}`)
+      await draft(scope)
+      await input(`${scope} [aria-label="Corrected action JSON"]`, '{')
+      const field = container!.querySelector(`${scope} [aria-label="Corrected action JSON"]`)
+      await click(`${scope} [data-mark-kind="false-fail"]`)
+      await click(`${scope} [data-mark-kind="false-pass"]`)
+      expectDraft(scope, '{')
+      expect(container!.querySelector(`${scope} [aria-label="Corrected action JSON"]`)).toBe(field)
+      expect(container!.querySelector(`${scope} [data-mark-kind="false-pass"]`)?.getAttribute('aria-pressed')).toBe('true')
+      expect(container!.querySelector(`${scope} [data-mark-submit]`)?.textContent).toBe('Record false-pass mark')
+      expect(container!.querySelector<HTMLButtonElement>(`${scope} [data-mark-submit]`)?.disabled).toBe(true)
+      await click(`${scope} [data-mark-cancel]`)
+      await click(`${scope} [data-mark-kind="false-fail"]`)
+      expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [data-mark-note]`)?.value).toBe('')
+      expect(container!.querySelector<HTMLTextAreaElement>(`${scope} [aria-label="Corrected action JSON"]`)?.value).toBe('')
+      expect(markRunMock).not.toHaveBeenCalled()
+    })
+  }
+  it('clears an already-marked draft only after the matching receipt refresh', async () => {
+    markRunMock.mockResolvedValue({ kind: 'already-marked', receipt: marked })
+    fetchRunDetailMock.mockResolvedValueOnce(initial).mockResolvedValueOnce(refreshed(MEMBER_SCOPE))
+    await renderAt(`/runs/${RUN_ID}`)
+    await draft(MEMBER_SCOPE)
+    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
+    expect(container!.querySelector(`${MEMBER_SCOPE} [data-mark-note]`)).toBeNull()
+    expect(container!.textContent).toContain('Mark saved. Receipt refreshed.')
+  })
+  it('keeps pending and result announcements local while retaining the other draft', async () => {
+    const post = deferred<unknown>()
+    markRunMock.mockReturnValue(post.promise)
+    await renderAt(`/runs/${RUN_ID}`)
+    await draft(MEMBER_SCOPE)
+    await draft(STEP_SCOPE)
+    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
+    expect(container!.querySelector(`${STEP_SCOPE} [data-mark-status]`)?.textContent).toBe('')
+    expectDraft(STEP_SCOPE)
+    await act(async () => post.reject(new MarkDeniedError({ reason: 'Denied here', remedies: [] })))
+    expect(container!.querySelector(`${STEP_SCOPE} [data-mark-denied]`)).toBeNull()
+    expect(container!.querySelector(`${STEP_SCOPE} [data-mark-status]`)?.textContent).toBe('')
+    expectDraft(MEMBER_SCOPE)
+    await input(`${MEMBER_SCOPE} [data-mark-note]`, 'Edited')
+    expect(container!.querySelector(`${MEMBER_SCOPE} [data-mark-status]`)?.textContent).toBe('')
+    expect(container!.querySelector(`${MEMBER_SCOPE} [data-mark-denied]`)).toBeNull()
+  })
+  it.each(['post', 'refresh'])('ignores stale %s after A-to-B-to-A and does not release the newer guard', async boundary => {
+    const oldPost = deferred<unknown>()
+    const oldRefresh = deferred<RunDetailProjection>()
+    const newPost = deferred<unknown>()
+    const other = generateRunId()
+    markRunMock.mockReturnValueOnce(oldPost.promise).mockReturnValueOnce(newPost.promise)
+    fetchRunDetailMock.mockImplementation(async (id: string) => ({ ...initial, runId: id }))
+    await renderAt(`/runs/${RUN_ID}`)
+    await draft(MEMBER_SCOPE)
+    if (boundary === 'refresh') fetchRunDetailMock.mockReturnValueOnce(oldRefresh.promise)
+    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
+    if (boundary === 'refresh') await act(async () => oldPost.resolve({ kind: 'marked', receipt: marked }))
+    await navigateTo(other)
+    await navigateTo(RUN_ID)
+    await draft(MEMBER_SCOPE)
+    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
+    expect(markRunMock).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      if (boundary === 'post') oldPost.resolve({ kind: 'marked', receipt: marked })
+      else oldRefresh.resolve(refreshed(MEMBER_SCOPE))
+    })
+    expectDraft(MEMBER_SCOPE)
+    expect(container!.querySelector(`${MEMBER_SCOPE} [data-mark-status]`)?.textContent).toBe('Mark submission pending.')
+    expect(container!.querySelector('[data-mark-chip]')).toBeNull()
+    await click(`${MEMBER_SCOPE} [data-mark-submit]`)
+    expect(markRunMock).toHaveBeenCalledTimes(2)
+    await act(async () => newPost.resolve({ kind: 'run-not-found' }))
+    expectDraft(MEMBER_SCOPE)
+  })
 })
 
 afterEach(() => {
