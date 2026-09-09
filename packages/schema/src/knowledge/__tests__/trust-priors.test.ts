@@ -1,14 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { canonicalJson } from '../../index'
+import { canonicalJson, guardTrustPriorTable, type TrustPriorTable } from '../../index'
 import { BundleOutcomeEventSchema, type OriginClass } from '../outcome-event'
 import * as trust from '../trust-fold'
 
-type Priors = Partial<Record<OriginClass, { alpha: number; beta: number }>>
-const fold = trust.foldBundleTrust as (
-  events: Parameters<typeof trust.foldBundleTrust>[0],
-  opts: Parameters<typeof trust.foldBundleTrust>[1], priors?: Priors,
-) => ReturnType<typeof trust.foldBundleTrust>
+type Priors = TrustPriorTable
+const fold = trust.foldBundleTrust
 const opts = { originClass: 'agent-verified' as const, evidenceIncomplete: false, createdAtOrdinal: 10 }
 const baseline = JSON.parse(readFileSync(new URL(
   '../../../../knowledge-local/src/__tests__/fixtures/420-prior-baseline.json', import.meta.url,
@@ -80,7 +77,7 @@ describe('420 neutral trust priors', () => {
   })
 
   it('exports a neutral guard that returns only validated data', () => {
-    const guard = (trust as unknown as { guardTrustPriorTable: (value: unknown) => Priors }).guardTrustPriorTable
+    const guard = guardTrustPriorTable
     expect(guard).toBeTypeOf('function')
     expect(guard({})).toEqual({})
     expect(guard({ 'agent-observed': { alpha: 0, beta: 2 } })).toEqual({ 'agent-observed': { alpha: 0, beta: 2 } })

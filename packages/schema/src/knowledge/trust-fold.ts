@@ -15,6 +15,36 @@ export const ORIGIN_PRIORS = {
   import: { alpha: 0.5, beta: 1 },
 } as const satisfies Record<OriginClass, { alpha: number; beta: number }>
 
+/** Neutral pseudo-count data. Zero components are valid endpoint priors. */
+export type TrustPriorTable = Partial<Record<OriginClass, { alpha: number; beta: number }>>
+
+function priorDataObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+}
+
+/** Reject the whole supplied table, including unused rows, without exposing input bytes. */
+export function guardTrustPriorTable(value: unknown): TrustPriorTable {
+  try {
+    if (!priorDataObject(value)) throw new TypeError()
+    const table: TrustPriorTable = {}
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== 'string' || !Object.hasOwn(ORIGIN_PRIORS, key)) throw new TypeError()
+      const row: unknown = Object.getOwnPropertyDescriptor(value, key)?.value
+      if (!priorDataObject(row) || Reflect.ownKeys(row).length !== 2) throw new TypeError()
+      const alpha: unknown = Object.getOwnPropertyDescriptor(row, 'alpha')?.value
+      const beta: unknown = Object.getOwnPropertyDescriptor(row, 'beta')?.value
+      if (typeof alpha !== 'number' || typeof beta !== 'number'
+        || !Number.isFinite(alpha) || !Number.isFinite(beta) || alpha < 0 || beta < 0
+        || !Number.isFinite(alpha + beta) || alpha + beta <= 0) throw new TypeError()
+      table[key as OriginClass] = { alpha, beta }
+    }
+    return table
+  } catch {
+    throw new TypeError('Invalid trust prior table')
+  }
+}
+
 /**
  * PROVISIONAL D-08 prior discount; M3 owns calibration against evidence-complete
  * outcomes. It multiplies alpha only and is an internal constant, never a config key.
@@ -85,7 +115,9 @@ export function foldBundleTrust(
     evidenceIncomplete: boolean
     createdAtOrdinal: number
   },
+  priors?: TrustPriorTable,
 ): DerivedTrustState {
+  const suppliedPriors = priors === undefined ? undefined : guardTrustPriorTable(priors)
   const survivingEvents = survivingOutcomeEvents(events)
 
   const counters = {
@@ -154,7 +186,7 @@ export function foldBundleTrust(
     }
   }
 
-  const prior = ORIGIN_PRIORS[opts.originClass]
+  const prior = suppliedPriors?.[opts.originClass] ?? ORIGIN_PRIORS[opts.originClass]
   const alpha = prior.alpha * (
     opts.evidenceIncomplete ? EVIDENCE_INCOMPLETE_ALPHA_DISCOUNT : 1
   )
