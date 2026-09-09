@@ -1,4 +1,6 @@
 export type { ArtifactSource, HandoffSource } from './ports'
+export { collectSoftPopulation } from './labels/soft-population'
+export type { SoftPopulation, SoftObservation, SoftEvidenceSkip, SoftEvidenceSkipReason, CollectSoftPopulationInput } from './labels/soft-population'
 export { parseStandaloneLabelRecord, selectEffectiveLabels, deriveLabelRevisionId, createLabelRevision } from './labels/effective-labels'
 export type { LabelRecordParse, LabelHistoryRefusalReason, LabelHistoryRefusal, EffectiveLabelSelection } from './labels/effective-labels'
 export type { LabelWeight } from './labels/label-record'

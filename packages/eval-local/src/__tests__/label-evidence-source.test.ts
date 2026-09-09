@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as core from '@vostride/agent-qa-eval'
 import * as local from '../index.js'
-import { asRunId, screenStateHash, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import { asRunId, screenStateHash, sha256hex, type CompletedRunHandoff, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 import { makeLocalV2Handoff } from './fixtures/local-handoff-fixture.js'
 
@@ -13,10 +13,10 @@ export function recoveryHandoff(name = 'population-one', product = 'shop'): Comp
   member.steps = [member.steps[0]!]
   const step = member.steps[0]!
   const failed = step.subActions[0]!
-  failed.plannedAction = { type: 'wait', duration: 1 }
+  failed.plannedAction = { type: 'navigate', to: 'url', url: 'https://example.test/first' }
   failed.result = { success: false, error: 'did not advance' }
   const recovering = structuredClone(failed)
-  recovering.plannedAction = { type: 'wait', duration: 2 }
+  recovering.plannedAction = { type: 'navigate', to: 'url', url: 'https://example.test/second' }
   recovering.result = { success: true }
   step.subActions.push(recovering)
   step.selfHeal = {
@@ -51,21 +51,21 @@ describe('420 logical recovery population', () => {
     expect(result?.observations).toHaveLength(1)
     expect(result.observations[0]).toMatchObject({ product: 'shop', runId: handoff.runId,
       failedScreenStateHash: screenStateHash(handoff.tests[0]!.steps[0]!.subActions[0]!.stateBefore),
-      recoveringAction: { type: 'wait', duration: 2 }, attempt: 0 })
+      recoveringAction: { type: 'navigate', to: 'url', url: 'https://example.test/second' }, attempt: 0 })
   })
 
   it('isolates product and failed state and compares canonical actions with exact k/n', () => {
     const first = recoveryHandoff()
     const same = recoveryHandoff('population-two')
-    same.tests[0]!.steps[0]!.selfHeal!.recoveringDecision.plannedAction = { duration: 2, type: 'wait' }
+    same.tests[0]!.steps[0]!.selfHeal!.recoveringDecision.plannedAction = { url: 'https://example.test/second', type: 'navigate', to: 'url' }
     const otherAction = recoveryHandoff('population-three')
     const step = otherAction.tests[0]!.steps[0]!
-    step.selfHeal!.recoveringDecision.plannedAction = step.subActions[1]!.plannedAction = { type: 'wait', duration: 3 }
+    step.selfHeal!.recoveringDecision.plannedAction = step.subActions[1]!.plannedAction = { type: 'navigate', to: 'url', url: 'https://example.test/third' }
     const otherState = recoveryHandoff('population-four')
     otherState.tests[0]!.steps[0]!.subActions[0]!.stateBefore.url = 'https://example.test/other'
     const result = Reflect.get(core, 'collectSoftPopulation')?.({ handoffs: [first, same, otherAction, otherState, recoveryHandoff('population-five', 'other')] })
     expect(result?.observations).toHaveLength(5)
-    const wanted = result.observations.find((row: { runId: string }) => row.runId === first.runId)
+    const wanted = result.observations.find((row: { runId: string }) => row.runId === first.runId)!
     const population = result.observations.filter((row: typeof wanted) => row.product === wanted.product && row.failedScreenStateHash === wanted.failedScreenStateHash)
     expect(population).toHaveLength(3)
     expect(population.filter((row: typeof wanted) => core.canonicalJson(row.recoveringAction) === core.canonicalJson(wanted.recoveringAction))).toHaveLength(2)
@@ -80,7 +80,7 @@ describe('420 logical recovery population', () => {
     expect(result.missingEvidenceCounts['missing-original']).toBe(1)
   })
 
-  it.each(['missing-failed-state', 'missing-action', 'unverified-success', 'ambiguous-decision'])('discloses %s without inventing an observation', reason => {
+  it.each(['missing-failed-state', 'missing-action', 'unverified-success', 'ambiguous-decision'] as const)('discloses %s without inventing an observation', reason => {
     const handoff = recoveryHandoff()
     const step = handoff.tests[0]!.steps[0]!
     if (reason === 'missing-failed-state') Reflect.deleteProperty(step.subActions[0]!, 'stateBefore')
@@ -103,10 +103,52 @@ describe('420 logical recovery population', () => {
     const a = collect({ handoffs: [first, second] })
     const b = collect({ handoffs: [second, first, first] })
     expect(a.evidenceDigest).toEqual(b.evidenceDigest)
-    expect(a.observations.find((row: { runId: string }) => row.runId === first.runId).recoveringDecision.modelIdentity).toEqual({ provider: 'openai', modelId: 'gpt-5-mini' })
+    expect(a.observations.find((row: { runId: string }) => row.runId === first.runId)!.recoveringDecision.modelIdentity).toEqual({ provider: 'openai', modelId: 'gpt-5-mini' })
     delete step.modelProfile
     const missing = collect({ handoffs: [first] }).observations[0]
     expect(missing.recoveringDecision.modelIdentity).toBeUndefined()
+  })
+
+  it('counts distinct original attempts once despite repeated decision snapshots', () => {
+    const handoff = recoveryHandoff()
+    const member = handoff.tests[0]!, evidence = structuredClone(member.steps[0]!)
+    const decisions = evidence.subActions.map((sub, decisionOrdinal) => {
+      const facts = { runId: handoff.runId, testId: member.testId, testIndex: member.testIndex,
+        stepIndex: evidence.stepIndex, decisionOrdinal, evidence }
+      return { ...facts, screenStateHash: screenStateHash(sub.stateBefore), evidenceDigest: sha256hex(core.canonicalJson(facts)) }
+    })
+    const facts = { attempt: 0, outcome: 'failed' as const, decisions }
+    member.isRerun = true; member.rerunAttempt = 2
+    member.rerunOrigin = { ...facts, evidenceDigest: sha256hex(core.canonicalJson(facts)) }
+    const result = core.collectSoftPopulation({ handoffs: [handoff, handoff] })
+    expect(result.observations.map(row => row.attempt).sort()).toEqual([0, 2])
+    expect(result.missingEvidenceCounts).toEqual({})
+    expect(result.observations.find(row => row.attempt === 2)!.rerun).toEqual({ attempt: 2,
+      originalAttempt: 0, originalEvidenceDigest: member.rerunOrigin.evidenceDigest })
+  })
+
+  it('joins only the latest matching mark and never borrows another member or empty successor', () => {
+    const handoff = recoveryHandoff()
+    const sourceCassetteId = core.deriveLeafCassetteId({ runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0, decisionOrdinal: 1 })
+    const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_aaaaaaaaaaaa', runId: handoff.runId,
+      runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0, kind: 'false-pass',
+      origin: 'user', ordinal: 1, markedAt: 1, disposition: { kind: 'quarantined', class: 'flake' },
+      gold: [{ cassetteId: core.deriveGoldCassetteId({ leafCassetteId: sourceCassetteId, markOrdinal: 1 }), sourceCassetteId, channel: 'user-mark' }],
+      evidence: { confirmed: 0, overturned: 1 } }
+    const collect = (marks: MarkReceipt[]) => core.collectSoftPopulation({ handoffs: [handoff], marks }).observations[0]!.recoveringDecision
+    expect(collect([mark]).governingMark).toEqual({ markId: mark.markId, kind: mark.kind })
+    expect(collect([{ ...mark, testIndex: 1 }]).governingMark).toBeUndefined()
+    expect(collect([mark, { ...mark, markId: 'mark_bbbbbbbbbbbb', ordinal: 2, gold: [] }]).governingMark).toBeUndefined()
+  })
+
+  it('refuses conflicting immutable observations independently of input order', () => {
+    const first = recoveryHandoff(), conflicting = structuredClone(first)
+    conflicting.tests[0]!.steps[0]!.modelProfile!.provider = 'different-provider'
+    const a = core.collectSoftPopulation({ handoffs: [first, conflicting, first] })
+    const b = core.collectSoftPopulation({ handoffs: [conflicting, first] })
+    expect(a.observations).toEqual([])
+    expect(a).toEqual(b)
+    expect(a.missingEvidenceCounts['conflicting-observation']).toBe(1)
   })
 })
 
