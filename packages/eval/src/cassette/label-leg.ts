@@ -3,12 +3,23 @@ import type { VerifierVerdict, Verdict } from '@vostride/agent-qa-schema'
 /** Quality vocabulary reserved for every current and later label source (D-16). */
 export type LabelTier = 'gold' | 'near-gold' | 'silver'
 
+/** 420 D-01: reserved tiers, pinned independently by runtime and type oracles. */
+export const LABEL_TIERS = ['gold', 'near-gold', 'silver'] as const satisfies readonly LabelTier[]
+
 /** Channel that supplied the cassette label (D-16). */
 export type LabelSourceChannel =
   | 'recorded-verdict'
   | 'user-mark'
   | 'overturned-verdict'
   | 'self-heal-pair'
+
+/** 420 D-01: existing channels only; sovereign gold producers retain their identities. */
+export const LABEL_SOURCE_CHANNELS = [
+  'recorded-verdict',
+  'user-mark',
+  'overturned-verdict',
+  'self-heal-pair',
+] as const satisfies readonly LabelSourceChannel[]
 
 /** Optional relationship to the sibling in a contrastive example (D-17). */
 export interface ContrastivePairing {
