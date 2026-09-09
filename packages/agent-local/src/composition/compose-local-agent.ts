@@ -496,7 +496,7 @@ export interface LocalKnowledgeMaintenanceCapabilities {
 }
 
 interface ReceiptWriterInput extends Pick<CreateLocalKnowledgeStoreConfig,
-  'knowledgeRoot' | 'auditBaseDir' | 'executionContext' | 'policy' | 'resolvePromotionPosture' | 'sourceBuildOrdinal' | 'sourceRunId'> {
+  'knowledgeRoot' | 'auditBaseDir' | 'executionContext' | 'policy' | 'resolvePromotionPosture' | 'resolveTrustPriors' | 'sourceBuildOrdinal' | 'sourceRunId'> {
   /** The caller already holds this authority; these capabilities never acquire a lease. */
   lease: { leaseId: string; epoch: number }
 }
@@ -518,6 +518,7 @@ function receiptWriter(input: ReceiptWriterInput) {
     writerLeaseId: input.lease.leaseId,
     epoch: input.lease.epoch,
     ...(input.policy === undefined ? {} : { policy: input.policy }),
+    ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
     ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
     ...(input.sourceBuildOrdinal === undefined ? {} : { sourceBuildOrdinal: input.sourceBuildOrdinal }),
     ...(input.sourceRunId === undefined ? {} : { sourceRunId: input.sourceRunId }),
@@ -792,9 +793,11 @@ export function createKnowledgeReader(
   resolveKnowledgeRoot: () => Promise<string> | string,
   sightMemoryEntities?: SightMemoryEntities,
   resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>,
+  resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors'],
 ): KnowledgeReaderPort {
   return createKnowledgeReaderPort({
     resolveKnowledgeRoot,
+    ...(resolveTrustPriors === undefined ? {} : { resolveTrustPriors }),
     ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
     ...(sightMemoryEntities === undefined ? {} : { sightMemoryEntities }),
   })
@@ -803,6 +806,7 @@ export function createKnowledgeReader(
 // ---- knowledge review: the WRITE half of the verb family (387 KREV-01 / D-17 · D-18) --------
 
 export interface CreateKnowledgeReviewInput {
+  readonly resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors']
   /** Stable identity from the serialized mark intent, used only for resumable proposal publication. */
   readonly proposalIdentity?: { uuid: string; at: number }
   readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>
@@ -870,6 +874,7 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
     async apply(proposalId) {
       const { knowledgeRoot } = await roots()
       const result = await applyReview({
+        ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
         resolvePromotionPosture: await input.resolvePromotionPosture?.(),
         agentQaRoot: input.agentQaRoot,
         knowledgeRoot,
@@ -1672,6 +1677,8 @@ export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonl
   })
 
 export interface ComposeLocalAgentInput {
+  /** Immutable neutral data resolved by the host, reused until recomposition. */
+  readonly resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors']
   readonly feedback?: FeedbackPort
   /** DATA across the wall: host preparation may await; candidate evaluation is synchronous. */
   readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>
@@ -3129,6 +3136,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         input.knowledgeRoot,
         createMemorySightingHook(entityResolutionInput),
         input.resolvePromotionPosture,
+        input.resolveTrustPriors,
       ),
       config: input.config,
       entities: createEntityDirectory(entityResolutionInput),
@@ -3137,6 +3145,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // that is genuinely read-only — a listing, a remote surface — reports the four mutating
       // verbs as `unbound` BY NAME rather than as a hole in the catalogue.
       knowledgeReview: createKnowledgeReview({
+        ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
         ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
         agentQaRoot: input.agentQaRoot,
         resolveKnowledgeRoot: input.knowledgeRoot,

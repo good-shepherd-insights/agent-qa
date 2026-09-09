@@ -28,7 +28,7 @@ import {
   showRecord,
 } from '@vostride/agent-qa-knowledge-local/reader'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
-import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
+import type { ResolvePromotionPosture, TrustPriorTable } from '@vostride/agent-qa-schema'
 import {
   assertCommittedEgressSafe,
   defaultGuardrailPolicyInput,
@@ -46,6 +46,7 @@ import {
 export type SightMemoryEntities = (bundleIds: readonly string[]) => Promise<void>
 
 export interface ConstructKnowledgeReaderPortInput {
+  resolveTrustPriors?: () => TrustPriorTable | undefined
   /**
    * Which knowledge root this invocation serves from, resolved per call.
    *
@@ -76,6 +77,7 @@ export function createKnowledgeReaderPort(
     // 2026-09-07, 417 D-01: forward the candidate DATA verbatim after the same egress check.
     async candidateInjection({ candidateId }) {
       const dto = candidateInjectionFor({
+        ...(input.resolveTrustPriors === undefined ? {} : { priors: input.resolveTrustPriors() }),
         knowledgeRoot: await input.resolveKnowledgeRoot(), candidateId,
       })
       assertCommittedEgressSafe(
@@ -102,12 +104,13 @@ export function createKnowledgeReaderPort(
       return dto
     },
     async listBundles() {
-      const rows = listBundles(await input.resolveKnowledgeRoot())
+      const rows = listBundles(await input.resolveKnowledgeRoot(), input.resolveTrustPriors?.())
       await sight(rows.map((row) => row.bundleId))
       return rows
     },
     async inspectRecords({ filter }) {
       const records = inspectRecords({
+        ...(input.resolveTrustPriors === undefined ? {} : { priors: input.resolveTrustPriors() }),
         knowledgeRoot: await input.resolveKnowledgeRoot(),
         filter,
       })
@@ -128,6 +131,7 @@ export function createKnowledgeReaderPort(
     },
     async showRecord({ recordId }) {
       const result = showRecord({
+        ...(input.resolveTrustPriors === undefined ? {} : { priors: input.resolveTrustPriors() }),
         knowledgeRoot: await input.resolveKnowledgeRoot(),
         recordId,
       })

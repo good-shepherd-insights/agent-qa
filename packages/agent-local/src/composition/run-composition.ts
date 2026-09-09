@@ -102,6 +102,7 @@ import {
   type KnowledgeBudgets,
 } from './knowledge-budgets.js'
 import { constructKnowledgeReader } from './knowledge-reader.js'
+import type { ConstructKnowledgeReaderInput } from './knowledge-reader.js'
 import type { RunPresentationPorts } from './presentation-ports.js'
 
 // ---- Local structural types -----------------------------------------------------------------
@@ -163,6 +164,7 @@ export interface RunKnowledgeComposition {
 }
 
 export interface OpenRunKnowledgeCompositionInput {
+  resolveTrustPriors?: ConstructKnowledgeReaderInput['resolveTrustPriors']
   knowledgeRoot: string
   product?: string
   scope: ScopeKey
@@ -215,6 +217,7 @@ export function openRunKnowledgeComposition(
     recordCap: scaledRecordCap(input.capabilities),
   }
   const reader = constructKnowledgeReader({
+    ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
     knowledgeRoot: input.knowledgeRoot,
     ...(input.product === undefined ? {} : { product: input.product }),
     ...(input.parentScopes === undefined ? {} : { parentScopes: input.parentScopes }),
