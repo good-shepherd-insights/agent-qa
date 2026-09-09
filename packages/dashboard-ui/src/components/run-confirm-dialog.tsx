@@ -85,11 +85,18 @@ export function RunConfirmDialog({
   resolution,
   onAnswer,
 }: RunConfirmDialogProps) {
+  const marking = actionClass === 'fn:runs.mark'
+  const title = marking ? 'Approval needed to record this mark' : 'Approval needed to start this run'
+  const answers = marking ? RUN_CONFIRM_ANSWERS.map(entry => ({
+    ...entry,
+    hint: entry.answer === 'accept' ? 'allow this one mark'
+      : entry.answer === 'deny' ? 'refuse — the mark is not recorded' : entry.hint,
+  })) : RUN_CONFIRM_ANSWERS
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Approval needed to start this run"
+      aria-label={title}
       data-run-confirm-dialog
       data-confirm-id={confirmId}
       {...(resolution === undefined
@@ -98,7 +105,7 @@ export function RunConfirmDialog({
       className="fixed bottom-4 right-4 z-50 flex w-[22rem] flex-col gap-2 rounded-lg border border-sky-500/50 bg-background px-4 py-3 text-sm shadow-lg"
     >
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className="font-medium text-foreground">Approval needed to start this run</span>
+        <span className="font-medium text-foreground">{title}</span>
         <span className="font-mono text-xs text-muted-foreground">{actionClass}</span>
       </div>
       {/* The action's OWN disclosure, verbatim — the same string a later `grants.list` will show. */}
@@ -107,7 +114,7 @@ export function RunConfirmDialog({
       )}
       {resolution === undefined ? (
         <div className="flex flex-wrap gap-2">
-          {RUN_CONFIRM_ANSWERS.map(({ answer, label, hint }) => (
+          {answers.map(({ answer, label, hint }) => (
             <button
               key={answer}
               type="button"
