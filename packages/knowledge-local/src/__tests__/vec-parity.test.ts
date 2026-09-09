@@ -172,5 +172,7 @@ describe('IDX-01 vec0 and brute dense-search parity', () => {
       vecReader.close()
       bruteReader.close()
     }
-  }, 10_000)
+  // Full-workspace contention has exceeded 15s; this is a correctness oracle,
+  // with the distance tolerance above, rather than a wall-clock performance check.
+  }, 30_000)
 })
