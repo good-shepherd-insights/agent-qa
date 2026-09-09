@@ -8,6 +8,10 @@ import {
 } from '../versioning/create-version-guard'
 import type { MigrationRegistry } from '../versioning/create-version-guard'
 import { isVerdictClass } from '../verdict/verdict'
+import { canonicalJson } from '../determinism/canonical-json'
+import { sha256hex } from '../determinism/sha256'
+import { screenStateHash } from '../determinism/screen-hash'
+import type { StepEvidence } from './step-evidence'
 
 /**
  * Thrown when a stored handoff declares a `schemaVersion` this build cannot consume:
@@ -435,7 +439,56 @@ function hasCompleteStepShape(value: unknown): boolean {
   )
 }
 
-function hasCompleteTestShape(value: unknown): boolean {
+/** Strict only for the new block: historical handoff shapes retain their existing rules. */
+function hasRerunOriginShape(value: unknown, member: Record<string, unknown>, runId: string): boolean {
+  if (!isNonArrayObject(value)) return false
+  const safeIndex = (index: unknown): index is number =>
+    typeof index === 'number' && Number.isSafeInteger(index) && index >= 0
+  const digest = (hash: unknown): hash is string =>
+    typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash)
+  if (Object.keys(value).some(key => !['attempt', 'outcome', 'rootCause', 'evidenceDigest', 'decisions'].includes(key))) return false
+  if (member.isRerun !== true || !safeIndex(member.rerunAttempt) ||
+      !safeIndex(value.attempt) || value.attempt >= member.rerunAttempt) return false
+  if (value.outcome !== 'failed' && value.outcome !== 'timeout') return false
+  if (!safeIndex(member.testIndex) || !digest(value.evidenceDigest) || !Array.isArray(value.decisions)) return false
+  if ('rootCause' in value) {
+    const root = value.rootCause
+    if (!hasCompleteRootCauseShape(root) || !isNonArrayObject(root) ||
+        root.producer !== 'deterministic-classifier' || root.perTest !== member.testIndex ||
+        typeof root.confidence !== 'number' || !Number.isFinite(root.confidence) ||
+        root.confidence < 0 || root.confidence > 1 ||
+        !isNonArrayObject(root.evidence) || !Array.isArray(root.evidence.citedSteps) ||
+        !root.evidence.citedSteps.every(safeIndex)) return false
+  }
+  const seen = new Set<string>()
+  try {
+    for (const decision of value.decisions) {
+      if (!isNonArrayObject(decision) || Object.keys(decision).some(key =>
+        !['runId', 'testId', 'testIndex', 'stepIndex', 'decisionOrdinal', 'screenStateHash', 'evidenceDigest', 'evidence'].includes(key))) return false
+      if (decision.runId !== runId || decision.testId !== member.testId ||
+          decision.testIndex !== member.testIndex || !safeIndex(decision.stepIndex) ||
+          !safeIndex(decision.decisionOrdinal) || !digest(decision.screenStateHash) ||
+          !digest(decision.evidenceDigest) || !hasCompleteStepShape(decision.evidence)) return false
+      const step = decision.evidence as StepEvidence
+      if (step.stepIndex !== decision.stepIndex || 'rerunOrigin' in step || 'firstFailedAttempt' in step) return false
+      const action = step.subActions[decision.decisionOrdinal]
+      if (action === undefined || typeof action.result?.success !== 'boolean' ||
+          screenStateHash(action.stateBefore) !== decision.screenStateHash) return false
+      const key = `${decision.stepIndex}:${decision.decisionOrdinal}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      const { screenStateHash: _stateHash, evidenceDigest, ...facts } = decision
+      if (sha256hex(canonicalJson(facts)) !== evidenceDigest) return false
+    }
+    const { evidenceDigest, ...facts } = value
+    return sha256hex(canonicalJson(facts)) === evidenceDigest
+  } catch {
+    // Malformed/cyclic observation facts cannot establish an evidence identity.
+    return false
+  }
+}
+
+function hasCompleteTestShape(value: unknown, runId: string): boolean {
   if (!isNonArrayObject(value)) return false
 
   return (
@@ -462,7 +515,8 @@ function hasCompleteTestShape(value: unknown): boolean {
     (!('rerunAttempt' in value) ||
       (typeof value.rerunAttempt === 'number' &&
         Number.isInteger(value.rerunAttempt) &&
-        value.rerunAttempt >= 1))
+        value.rerunAttempt >= 1)) &&
+    (!('rerunOrigin' in value) || hasRerunOriginShape(value.rerunOrigin, value, runId))
   )
 }
 
@@ -547,7 +601,7 @@ function hasCompleteHandoffShape(value: unknown): boolean {
     typeof value.startedAt === 'number' &&
     typeof value.endedAt === 'number' &&
     Array.isArray(value.tests) &&
-    value.tests.every(hasCompleteTestShape) &&
+    value.tests.every(test => hasCompleteTestShape(test, value.runId as string)) &&
     (!('quarantineApplied' in value) ||
       (Array.isArray(value.quarantineApplied) &&
         value.quarantineApplied.every(hasQuarantineAppliedShape)))

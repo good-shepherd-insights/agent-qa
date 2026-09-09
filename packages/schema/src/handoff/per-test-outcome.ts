@@ -52,4 +52,30 @@ export interface PerTestOutcome {
   isRerun?: true
   /** Positive attempt index that produced the recorded outcome; absent on an ordinary member. */
   rerunAttempt?: number
+  /**
+   * 420 D-06: actual first failed attempt, independently of the final retry's verdict.
+   * Optional without a version bump: historic absence is missing evidence, never a guess.
+   * Decision addresses and masked recorded facts support an exact downstream receipt join;
+   * neither a cassette identity nor a historical receipt is invented here.
+   */
+  rerunOrigin?: {
+    attempt: number
+    outcome: 'failed' | 'timeout'
+    rootCause?: Verdict
+    /** SHA-256 of canonical JSON of this block with evidenceDigest omitted. */
+    evidenceDigest: string
+    decisions: Array<{
+      runId: string
+      testId: string
+      testIndex: number
+      stepIndex: number
+      decisionOrdinal: number
+      /** Recomputed from the masked recorded state, using screenStateHash. */
+      screenStateHash: string
+      /** Canonical address + evidence digest (both hash fields omitted). */
+      evidenceDigest: string
+      /** Actual step context, including receipt inputs; ordinal selects its subAction. */
+      evidence: StepEvidence
+    }>
+  }
 }
