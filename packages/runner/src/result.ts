@@ -153,4 +153,10 @@ export interface TestResult {
   retryCount?: number
   videoPath?: string
   failureSummary?: string
+  /** One detached actual failure, retained only when a subsequent attempt runs. */
+  firstFailedAttempt?: {
+    /** Zero-based member attempt index, independently of the final retryCount. */
+    attempt: number
+    result: Omit<TestResult, 'firstFailedAttempt'>
+  }
 }

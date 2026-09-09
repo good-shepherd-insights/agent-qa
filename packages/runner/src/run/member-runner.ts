@@ -973,6 +973,7 @@ export async function runMemberTest(
   })
   const maxRetries = (member.meta?.retries as number | undefined) ?? 0
   let lastResult: TestResult | undefined
+  let firstFailedAttempt: TestResult['firstFailedAttempt']
   let previousFailureSummary: string | undefined
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -989,12 +990,24 @@ export async function runMemberTest(
     const result = await runMemberAttempt(member, config, toolSchemaDigest, rerunContext)
 
     if (result.status === 'passed') {
-      return { ...result, duration: performance.now() - startTime, retryCount: attempt }
+      return {
+        ...result, duration: performance.now() - startTime, retryCount: attempt,
+        ...(firstFailedAttempt !== undefined ? { firstFailedAttempt } : {}),
+      }
     }
 
+    if (firstFailedAttempt === undefined && result.status === 'failed' && attempt < maxRetries) {
+      // Detach before another attempt can mutate adapter/step evidence. Only one attempt is
+      // retained; the snapshot cannot contain another retry snapshot (420 D-06).
+      const { firstFailedAttempt: _nested, ...original } = result
+      firstFailedAttempt = { attempt, result: structuredClone(original) }
+    }
     lastResult = result
     previousFailureSummary = result.failureSummary || undefined
   }
 
-  return { ...lastResult!, duration: performance.now() - startTime, retryCount: maxRetries }
+  return {
+    ...lastResult!, duration: performance.now() - startTime, retryCount: maxRetries,
+    ...(firstFailedAttempt !== undefined ? { firstFailedAttempt } : {}),
+  }
 }
