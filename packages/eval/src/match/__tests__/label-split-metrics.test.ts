@@ -113,4 +113,56 @@ describe('420 split metrics', () => {
     expect(legacy).not.toHaveProperty('calibration')
     expect(JSON.stringify(legacy)).toBe(bytes)
   })
+
+  it.each([
+    { split: 'natural' as const },
+    { split: 'held-out' as const, heldOutVisibility: 'shared' as const },
+    { split: 'held-out' as const, heldOutVisibility: 'private' as const },
+    { split: 'adversarial' as const },
+  ])('preserves raw, weighted, zero and legacy recovery in $split $heldOutVisibility', assignment => {
+    const entries = [...metricPair('legacy', true), ...metricPair('failed', false, 1 / 3)]
+      .map(entry => ({ ...entry, ...assignment }))
+    const report = buildEvalReport(entries)
+    const cell = assignment.split === 'held-out' ? report.perSplit['held-out'][assignment.heldOutVisibility!]
+      : report.perSplit[assignment.split]
+    expect(cell.recovery).toEqual({ selfHealPairCount: 2, eligiblePositiveCount: 2,
+      recoveredPositiveCount: 1, recoveryAccuracy: 0.5, weightSum: 1,
+      weightedAccuracy: 2 / 3, pairsWithoutWeight: 1,
+      negativeDecisionCount: 2, negativeFullMatchCount: 2 })
+    const zero = buildEvalReport(metricPair('zero', true, 0).map(entry => ({ ...entry, ...assignment })))
+    const zeroSplit = assignment.split === 'held-out' ? zero.perSplit['held-out'][assignment.heldOutVisibility!]
+      : zero.perSplit[assignment.split]
+    expect(zeroSplit.recovery).toMatchObject({ weightSum: 0, pairsWithoutWeight: 0, recoveryAccuracy: 1 })
+    expect(zeroSplit.recovery).not.toHaveProperty('weightedAccuracy')
+  })
+
+  it('folds procedure samples and excluded current/historical judge costs over actual decisions', () => {
+    const first = metricEntry('first'), second = metricEntry('second'), excluded = metricEntry('excluded')
+    if (!('granularity' in first.outcome) || first.outcome.granularity !== 'leaf'
+      || !('granularity' in second.outcome) || second.outcome.granularity !== 'leaf'
+      || excluded.score?.kind !== 'leaf' || excluded.score.entry.kind !== 'decision'
+      || excluded.score.entry.score.kind !== 'scored') throw new Error('fixture shape')
+    first.outcome.samples = [...first.outcome.samples, { ...first.outcome.samples[0]!, sampleIndex: 1 }]
+    excluded.score.entry.score.judgeSettled = { cause: 'partial-identity', axis: 'element-identity',
+      resolution: 'equivalent', judgeId: 'fixture', judgeVersion: 1, confidence: 'high',
+      usage: { calls: 1, inputTokens: 7, outputTokens: 3 } }
+    excluded.incurredJudgeScore = structuredClone(excluded.score)
+    excluded.scoringExcluded = true
+    const report = buildEvalReport([
+      { ...excluded, split: 'adversarial' },
+      { cassetteId: 'procedure', split: 'adversarial', outcome: {
+        granularity: 'procedure', cassetteId: 'procedure',
+        steps: [
+          { kind: 'decision', stepIndex: 0, decisionOrdinal: 0, result: first.outcome },
+          { kind: 'skipped', stepIndex: 1, reason: 'cache-served' },
+          { kind: 'decision', stepIndex: 2, decisionOrdinal: 1, result: second.outcome },
+        ], endState: { outcome: 'passed' }, totalDurationMs: 30,
+      } },
+    ])
+    expect(report.perSplit.adversarial.firstAttemptDecisionAccuracy).toEqual(zeroRate)
+    expect(report.perSplit.adversarial.perDecisionCost).toEqual({ decisionCount: 3,
+      promptTokens: 54 / 3, completionTokens: 26 / 3, totalTokens: 80 / 3, durationMs: 40 / 3 })
+    expect(report.headline.perDecisionCost).toEqual(report.perSplit.adversarial.perDecisionCost)
+    expect(report.totalCost).toMatchObject({ sampleCount: 4, totalTokens: 60 })
+  })
 })

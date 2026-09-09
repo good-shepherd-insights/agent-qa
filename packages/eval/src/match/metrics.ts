@@ -3,6 +3,7 @@ import { ORIGIN_PRIORS, sha256hex } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
 import type { CassetteLabelLeg } from '../cassette/label-leg'
 import type { LabelWeight } from '../labels/label-record'
+import type { CorpusSplit, HeldOutVisibility } from '../labels/corpus-entry'
 import { BRIEF_SOURCES } from '../replay/brief-tiers'
 import type { BriefSource } from '../replay/brief-tiers'
 import { REPLAY_REFUSAL_REASONS } from '../replay/result'
@@ -95,6 +96,8 @@ export interface ScoredBatchEntry {
   softWeight?: LabelWeight
   /** Refused or quarantined label evidence; incurred work remains reportable. */
   scoringExcluded?: boolean
+  split?: CorpusSplit
+  heldOutVisibility?: HeldOutVisibility
   product?: string
   outcome: ReplayCassetteOutcome
   score?: CassetteScore
@@ -118,6 +121,13 @@ export interface EvalBatchReport {
     perDecisionCost: PerDecisionCost
   }
   calibration: BatchCalibration
+  perSplit: {
+    natural: SplitMetricCell
+    'held-out': { shared: SplitMetricCell; private: SplitMetricCell }
+    adversarial: SplitMetricCell
+    /** Entries lacking a complete recorded split assignment, including staged entries. */
+    unassignedCount: number
+  }
   honesty: {
     tieCounts: Counts<TieCause>
     unscorableIdentityCounts: Counts<UnscorableIdentityCause>
@@ -193,6 +203,13 @@ export interface EvalBatchReport {
    * sorted and deduped. Data copied off the blocks, never a fabricated single identity.
    */
   mixedJudgeModelIds?: readonly string[]
+}
+
+interface SplitMetricCell {
+  firstAttemptDecisionAccuracy: RateMetric
+  verifierFalsePassRate: RateMetric
+  recovery: EvalBatchReport['recovery']
+  perDecisionCost: PerDecisionCost
 }
 
 function isReplayRefusal(outcome: ReplayCassetteOutcome): outcome is ReplayRefusal {
@@ -318,6 +335,133 @@ function copyCalibration(calibration: BatchCalibration | undefined): BatchCalibr
     ...(copiedRate === undefined ? {} : { verifierFalsePassRate: copiedRate }) }
 }
 
+function accuracyMetrics(entries: readonly ScoredBatchEntry[]) {
+  let numerator = 0, denominator = 0, negativeDecisionCount = 0, negativeFullMatchCount = 0
+  for (const entry of entries) {
+    if (!isScoringIncluded(entry)) continue
+    const negative = entry.label?.pairing?.relation === 'contrastive-negative'
+    for (const score of decisionScores(entry.score)) {
+      if (!isHeadlineApplicable(score, false)) continue
+      if (negative) {
+        negativeDecisionCount++
+        if (isDecisionFullMatch(score)) negativeFullMatchCount++
+      } else {
+        denominator++
+        if (isDecisionFullMatch(score)) numerator++
+      }
+    }
+  }
+  return { accuracy: rateMetric(numerator, denominator), negativeDecisionCount, negativeFullMatchCount }
+}
+
+/** Sample-only totals and distinct judge usage fold once over actual replay decisions. */
+function decisionCost(total: TotalCost, judge: JudgeCost, decisionCount: number): PerDecisionCost {
+  return {
+    decisionCount,
+    promptTokens: decisionCount === 0 ? 0 : (total.promptTokens + judge.inputTokens) / decisionCount,
+    completionTokens: decisionCount === 0 ? 0 : (total.completionTokens + judge.outputTokens) / decisionCount,
+    totalTokens: decisionCount === 0 ? 0 : (total.totalTokens + judge.inputTokens + judge.outputTokens) / decisionCount,
+    durationMs: decisionCount === 0 ? 0 : total.durationMs / decisionCount,
+  }
+}
+
+function entryCosts(entries: readonly ScoredBatchEntry[]): PerDecisionCost {
+  const total: TotalCost = { sampleCount: 0, samplesMissingTokenUsage: 0,
+    promptTokens: 0, completionTokens: 0, totalTokens: 0, durationMs: 0 }
+  const judge: JudgeCost = { calls: 0, inputTokens: 0, outputTokens: 0, outcomesMissingUsage: 0 }
+  let decisionCount = 0
+  for (const entry of entries) {
+    for (const result of decisionResults(entry.outcome)) {
+      decisionCount++
+      for (const sample of result.samples) {
+        total.durationMs += sample.durationMs
+        total.promptTokens += sample.tokenUsage?.promptTokens ?? 0
+        total.completionTokens += sample.tokenUsage?.completionTokens ?? 0
+        total.totalTokens += sample.tokenUsage?.totalTokens ?? 0
+      }
+    }
+    for (const score of [...decisionScores(entry.score), ...decisionScores(entry.incurredJudgeScore)]) {
+      if (score.kind === 'scored' && score.judgeSettled !== undefined) addJudgeUsage(judge, score.judgeSettled.usage)
+      else if (score.kind === 'unresolved-tie' && score.judgeOutcome !== undefined
+        && score.judgeOutcome.kind !== 'not-invoked') addJudgeUsage(judge, score.judgeOutcome.usage)
+    }
+  }
+  return decisionCost(total, judge, decisionCount)
+}
+
+function splitKey(entry: ScoredBatchEntry): 'natural' | 'shared' | 'private' | 'adversarial' | undefined {
+  if (entry.split === 'natural' || entry.split === 'adversarial') return entry.split
+  if (entry.split === 'held-out') return entry.heldOutVisibility
+  return undefined
+}
+
+function splitMetrics(entries: readonly ScoredBatchEntry[], representatives: readonly ScoredBatchEntry[]): EvalBatchReport['perSplit'] {
+  const cell = (key: ReturnType<typeof splitKey>): SplitMetricCell => {
+    const members = entries.filter(entry => splitKey(entry) === key)
+    return {
+      firstAttemptDecisionAccuracy: accuracyMetrics(members).accuracy,
+      verifierFalsePassRate: verifierRate(representatives.filter(entry => splitKey(entry) === key)),
+      recovery: recoveryMetrics(members),
+      perDecisionCost: entryCosts(members),
+    }
+  }
+  return { natural: cell('natural'), 'held-out': { shared: cell('shared'), private: cell('private') },
+    adversarial: cell('adversarial'), unassignedCount: entries.filter(entry => splitKey(entry) === undefined).length }
+}
+
+function recoveryMetrics(entries: readonly ScoredBatchEntry[]): EvalBatchReport['recovery'] {
+  const { negativeDecisionCount, negativeFullMatchCount } = accuracyMetrics(entries)
+  const byCassetteId = new Map(entries.map(entry => [entry.cassetteId, entry]))
+  const scoredPairs = new Set<string>()
+  for (const entry of entries) {
+    const pairing = entry.label?.pairing
+    if (pairing === undefined) continue
+    const paired = byCassetteId.get(pairing.pairedCassetteId)
+    if (hasDecisionScore(entry) && hasDecisionScore(paired)) {
+      scoredPairs.add(pairKey(entry.cassetteId, pairing.pairedCassetteId))
+    }
+  }
+
+  let eligiblePositiveCount = 0
+  let recoveredPositiveCount = 0
+  let weightSum = 0
+  let recoveredWeight = 0
+  let pairsWithoutWeight = 0
+  for (const entry of entries) {
+    const pairing = entry.label?.pairing
+    if (
+      pairing?.relation !== 'contrastive-positive' ||
+      !scoredPairs.has(pairKey(entry.cassetteId, pairing.pairedCassetteId))
+    ) {
+      continue
+    }
+    eligiblePositiveCount++
+    const prior = ORIGIN_PRIORS['agent-verified']
+    const weight = entry.softWeight?.value ?? prior.alpha / (prior.alpha + prior.beta)
+    if (!Number.isFinite(weight) || weight < 0 || weight > 1) throw new TypeError('invalid recovery weight')
+    if (entry.softWeight === undefined) pairsWithoutWeight++
+    weightSum += weight
+    if (decisionScores(entry.score).some(isDecisionFullMatch)) {
+      recoveredPositiveCount++
+      recoveredWeight += weight
+    }
+  }
+
+  return {
+    selfHealPairCount: scoredPairs.size,
+    recoveredPositiveCount,
+    eligiblePositiveCount,
+    negativeDecisionCount,
+    negativeFullMatchCount,
+    weightSum,
+    pairsWithoutWeight,
+    ...(weightSum === 0 ? {} : { weightedAccuracy: recoveredWeight / weightSum }),
+    ...(eligiblePositiveCount === 0
+      ? {}
+      : { recoveryAccuracy: recoveredPositiveCount / eligiblePositiveCount }),
+  }
+}
+
 /** sha256hex over the canonical sorted cassette-id list (D-13). */
 export function computeBatchKey(cassetteIds: readonly string[]): string {
   return sha256hex(canonicalJson([...cassetteIds].sort()))
@@ -416,12 +560,6 @@ export function buildEvalReport(
     totalTokens: 0,
     durationMs: 0,
   }
-
-  let accuracyNumerator = 0
-  let accuracyDenominator = 0
-  let negativeDecisionCount = 0
-  let negativeFullMatchCount = 0
-
   for (const entry of entries) {
     for (const historical of scoreEntries(entry.incurredJudgeScore)) {
       if (historical.kind !== 'decision') continue
@@ -439,10 +577,6 @@ export function buildEvalReport(
     if (isReplayRefusal(entry.outcome)) {
       refusalCounts[entry.outcome.reason]++
     }
-    // D-08: pair members are leaf cassettes carrying exactly one decision, so the per-entry
-    // relation read is exact for every decision the entry contributes.
-    const isContrastiveNegative = entry.label?.pairing?.relation === 'contrastive-negative'
-
     for (const scoreEntry of scoreEntries(entry.score)) {
       if (scoreEntry.kind === 'never-scored') {
         neverScoredCounts[scoreEntry.reason]++
@@ -466,8 +600,6 @@ export function buildEvalReport(
         continue
       }
       if (score.kind === 'miss-by-failure') {
-        if (isContrastiveNegative) negativeDecisionCount++
-        else accuracyDenominator++
         missByFailure.set(score.reason, (missByFailure.get(score.reason) ?? 0) + 1)
       } else if (score.kind === 'unresolved-tie') {
         tieCounts[score.cause]++
@@ -491,15 +623,6 @@ export function buildEvalReport(
           judgeHonesty.settled[settledStamp.cause]++
           judgeHonesty.invoked[settledStamp.cause]++
           addJudgeUsage(judgeHonesty.cost, settledStamp.usage)
-        }
-        if (isHeadlineApplicable(score, false)) {
-          if (isContrastiveNegative) {
-            negativeDecisionCount++
-            if (isDecisionFullMatch(score)) negativeFullMatchCount++
-          } else {
-            accuracyDenominator++
-            if (isDecisionFullMatch(score)) accuracyNumerator++
-          }
         }
       }
 
@@ -569,80 +692,22 @@ export function buildEvalReport(
     }
   }
 
-  const byCassetteId = new Map(entries.map(entry => [entry.cassetteId, entry]))
-  const scoredPairs = new Set<string>()
-  for (const entry of entries) {
-    const pairing = entry.label?.pairing
-    if (pairing === undefined) continue
-    const paired = byCassetteId.get(pairing.pairedCassetteId)
-    if (hasDecisionScore(entry) && hasDecisionScore(paired)) {
-      scoredPairs.add(pairKey(entry.cassetteId, pairing.pairedCassetteId))
-    }
-  }
-
-  let eligiblePositiveCount = 0
-  let recoveredPositiveCount = 0
-  let weightSum = 0
-  let recoveredWeight = 0
-  let pairsWithoutWeight = 0
-  for (const entry of entries) {
-    const pairing = entry.label?.pairing
-    if (
-      pairing?.relation !== 'contrastive-positive' ||
-      !scoredPairs.has(pairKey(entry.cassetteId, pairing.pairedCassetteId))
-    ) {
-      continue
-    }
-    eligiblePositiveCount++
-    const prior = ORIGIN_PRIORS['agent-verified']
-    const weight = entry.softWeight?.value ?? prior.alpha / (prior.alpha + prior.beta)
-    if (!Number.isFinite(weight) || weight < 0 || weight > 1) throw new TypeError('invalid recovery weight')
-    if (entry.softWeight === undefined) pairsWithoutWeight++
-    weightSum += weight
-    if (decisionScores(entry.score).some(isDecisionFullMatch)) {
-      recoveredPositiveCount++
-      recoveredWeight += weight
-    }
-  }
-
   const decisionCount = replayDecisions.length
-  const recovery: EvalBatchReport['recovery'] = {
-    selfHealPairCount: scoredPairs.size,
-    recoveredPositiveCount,
-    eligiblePositiveCount,
-    negativeDecisionCount,
-    negativeFullMatchCount,
-    weightSum,
-    pairsWithoutWeight,
-    ...(weightSum === 0 ? {} : { weightedAccuracy: recoveredWeight / weightSum }),
-    ...(eligiblePositiveCount === 0
-      ? {}
-      : { recoveryAccuracy: recoveredPositiveCount / eligiblePositiveCount }),
-  }
+  const recovery = recoveryMetrics(entries)
 
-  // D-04 fold: judge tokens enter the per-decision headline cost on top of the sample-derived
-  // sums, while totalCost stays sample-only (distinct-then-folded; never double-counted).
-  const foldedPromptTokens = totalCost.promptTokens + judgeHonesty.cost.inputTokens
-  const foldedCompletionTokens = totalCost.completionTokens + judgeHonesty.cost.outputTokens
-  const foldedTotalTokens =
-    totalCost.totalTokens + judgeHonesty.cost.inputTokens + judgeHonesty.cost.outputTokens
+  const representatives = verifierRepresentatives(entries)
 
   return {
     matcherVersion: MATCHER_CONFIG.matcherVersion,
     batchKey: computeBatchKey(entries.map(entry => entry.cassetteId)),
     ...(opts.runIdentity === undefined ? {} : { runIdentity: { ...opts.runIdentity } }),
     headline: {
-      firstAttemptDecisionAccuracy: rateMetric(accuracyNumerator, accuracyDenominator),
-      verifierFalsePassRate: verifierRate(verifierRepresentatives(entries)),
-      perDecisionCost: {
-        decisionCount,
-        promptTokens: decisionCount === 0 ? 0 : foldedPromptTokens / decisionCount,
-        completionTokens: decisionCount === 0 ? 0 : foldedCompletionTokens / decisionCount,
-        totalTokens: decisionCount === 0 ? 0 : foldedTotalTokens / decisionCount,
-        durationMs: decisionCount === 0 ? 0 : totalCost.durationMs / decisionCount,
-      },
+      firstAttemptDecisionAccuracy: accuracyMetrics(entries).accuracy,
+      verifierFalsePassRate: verifierRate(representatives),
+      perDecisionCost: decisionCost(totalCost, judgeHonesty.cost, decisionCount),
     },
     calibration: copyCalibration(opts.calibration),
+    perSplit: splitMetrics(entries, representatives),
     honesty: {
       tieCounts,
       unscorableIdentityCounts,
