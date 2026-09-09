@@ -517,8 +517,9 @@ export interface ReplayInvocationSpend {
 
 function replayInvocationSpend(
   entries: ScoredBatchEntry[], seed: number | undefined, modelCalls: number, started: number,
+  calibration?: EvalBatchReport['calibration'],
 ): ReplayInvocationSpend {
-  const report = buildEvalReport(entries, undefined, undefined, { declaredSeed: seed })
+  const report = buildEvalReport(entries, undefined, undefined, { declaredSeed: seed, calibration })
   const cost = report.totalCost
   const judgeCost = report.honesty.judge.cost
   return {
@@ -621,7 +622,7 @@ export async function runReplayVerb(
       replaysRoot,
       source,
       notices,
-      spend: replayInvocationSpend([], session.evalConfig.seed, 0, started),
+      spend: replayInvocationSpend([], session.evalConfig.seed, 0, started, activeCorpus?.calibration),
     }
   }
 
@@ -669,17 +670,10 @@ export async function runReplayVerb(
   // (7) fold judge dispositions FROM the persisted score records — never recomputed (D-04).
   const judge = zeroJudge(judgeResolution.judge !== undefined)
   let scored = 0
-  const spendEntries: ScoredBatchEntry[] = []
   for (const recordDir of replayedDirs) {
     const replay = loadReplayRecord(recordDir)
     const load = loadScoreRecord(recordDir)
-    if (replay.kind === 'loaded') {
-      spendEntries.push({
-        cassetteId: replay.outcome.cassetteId,
-        outcome: replay.outcome,
-        ...(load.kind === 'loaded' ? { score: load.record.score } : {}),
-      })
-    } else {
+    if (replay.kind !== 'loaded') {
       notices.push(`spend replay read refused under ${recordDir}: ${replay.refusal.detail}`)
     }
     if (load.kind === 'absent') continue
@@ -690,6 +684,12 @@ export async function runReplayVerb(
     scored++
     foldJudgeDispositions(load.record.score, judge)
   }
+  const spendBatch = assembleScoredBatch({ replaysRoot, cassettesRoot, source,
+    recordDirs: replayedDirs, labelRecords: activeCorpus?.snapshot.labelsById,
+    corpusEntriesById: activeCorpus?.corpusEntriesById,
+    excludedLabelIds: activeCorpus?.snapshot.excludedLabelIds,
+    calibration: activeCorpus?.calibration })
+  notices.push(...spendBatch.notices)
 
   return {
     batchKey,
@@ -702,7 +702,7 @@ export async function runReplayVerb(
     replaysRoot,
     source,
     notices,
-    spend: replayInvocationSpend(spendEntries, session.evalConfig.seed, modelCalls, started),
+    spend: replayInvocationSpend(spendBatch.entries, session.evalConfig.seed, modelCalls, started, spendBatch.calibration),
   }
 }
 
@@ -2129,9 +2129,14 @@ export async function runReportVerb(
       productByCassetteId: new Map(committedCorpus.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
       eligibleCassetteIds: new Set(committedCorpus.snapshot.entries.map(entry => entry.cassetteId)),
       labelRecords: committedCorpus.snapshot.labelsById,
+      corpusEntriesById: committedCorpus.corpusEntriesById,
+      excludedLabelIds: committedCorpus.snapshot.excludedLabelIds,
     }),
   })
   notices.push(...assemblyNotices)
+  if (assembled.some(entry => entry.split === undefined)) {
+    notices.push('corpus split ownership unknown; entries without corpus metadata are unassigned')
+  }
   if (missingBundleCount > 0) {
     notices.push(
       `${missingBundleCount} replay record(s) have no ${source} cassette bundle — label legs absent`,
@@ -2195,7 +2200,7 @@ export async function runReportVerb(
 
   // (5) Exactly ONE buildEvalReport call — one batch, one report, one headline (D-14). The CLI
   // never sums scores; every counter and rate is the aggregator's.
-  const report = buildEvalReport(entries, judgeForReport, mixedIdentity)
+  const report = buildEvalReport(entries, judgeForReport, mixedIdentity, { calibration: committedCorpus?.calibration })
   const vectors = decisionCorrectnessVectors(entries, partitionsById)
   const decisions = projectDecisionVectorsDocument({
     batchKey: report.batchKey, matcherVersion: report.matcherVersion, vectors,

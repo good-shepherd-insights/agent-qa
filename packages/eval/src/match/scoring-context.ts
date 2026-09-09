@@ -58,9 +58,11 @@ export function createScoringContext(input: ScoringInputs & {
 
 /** Score compatibility is independent of planner input and immutable recorded observations. */
 export function resolveScoringContext(input: ScoringInputs & {
-  record?: StoredScore; expectedJudgeRequest?: ScoringJudgeRequest
+  record?: StoredScore; expectedJudgeRequest?: ScoringJudgeRequest; scoringExcluded?: boolean
 }): { score?: CassetteScore; incurredJudgeScore?: CassetteScore; compatible: boolean } {
   const { cassette, record } = input
+  if (input.scoringExcluded === true) return { compatible: false,
+    ...(record === undefined ? {} : { incurredJudgeScore: record.score }) }
   const gold = cassette.granularity === 'leaf' ? effectiveGold(cassette, input.labelRecord) : undefined
   const refuse = (score: CassetteScore) => ({ score, compatible: false,
     ...(record === undefined ? {} : { incurredJudgeScore: record.score }) })

@@ -142,6 +142,7 @@ describe('assembleScoredBatch', () => {
     expect(result.entries).toHaveLength(3)
     expect(result.entries.find(entry => entry.cassetteId === leaf.cassette.id)).toEqual({
       cassetteId: leaf.cassette.id,
+      logicalSourceId: leaf.cassette.id,
       outcome: scoredOutcome,
       score: record.score,
       label: leaf.cassette.label,
@@ -149,10 +150,12 @@ describe('assembleScoredBatch', () => {
     })
     expect(result.entries.find(entry => entry.cassetteId === unscoredOutcome.cassetteId)).toEqual({
       cassetteId: unscoredOutcome.cassetteId,
+      logicalSourceId: unscoredOutcome.cassetteId,
       outcome: unscoredOutcome,
     })
     expect(result.entries.find(entry => entry.cassetteId === 'corrupt')).toEqual({
       cassetteId: 'corrupt',
+      logicalSourceId: 'corrupt',
       outcome: expect.objectContaining({ kind: 'integrity-refusal', reason: 'parse-failed' }),
     })
     expect(result.judgeBlocks).toEqual([judge])
@@ -178,7 +181,7 @@ describe('assembleScoredBatch', () => {
 
     const result = evalLocal.assembleScoredBatch({ replaysRoot, cassettesRoot, source: 'staged' })
 
-    expect(result.entries).toEqual([{ cassetteId: outcome.cassetteId, outcome }])
+    expect(result.entries).toEqual([{ cassetteId: outcome.cassetteId, logicalSourceId: outcome.cassetteId, outcome }])
     expect(result.judgeBlocks).toEqual([])
     expect(result.partitionsById.size).toBe(0)
     expect(result.missingBundleCount).toBe(1)
@@ -205,7 +208,7 @@ describe('assembleScoredBatch', () => {
       source: 'committed',
     })
 
-    expect(result.entries).toEqual([{ cassetteId: outcome.cassetteId, outcome }])
+    expect(result.entries).toEqual([{ cassetteId: outcome.cassetteId, logicalSourceId: outcome.cassetteId, outcome }])
     expect(result.missingBundleCount).toBe(1)
     expect(result.notices).toEqual([])
   })

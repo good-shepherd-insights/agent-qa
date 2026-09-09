@@ -7,6 +7,8 @@ import type {
   ScoredBatchEntry,
   StandaloneLabelRecord,
   ScoringJudgeRequest,
+  CorpusEntry,
+  EvalBatchReport,
 } from '@vostride/agent-qa-eval'
 
 import { loadCassetteBundle } from './cassette-loader.js'
@@ -49,6 +51,9 @@ export function assembleScoredBatch(input: {
   /** Latest committed mark generations only; historical bundles remain on disk. */
   eligibleCassetteIds?: ReadonlySet<string>
   labelRecords?: ReadonlyMap<string, StandaloneLabelRecord>
+  corpusEntriesById?: ReadonlyMap<string, CorpusEntry>
+  excludedLabelIds?: ReadonlySet<string>
+  calibration?: EvalBatchReport['calibration']
   expectedJudgeRequest?: ScoringJudgeRequest
 }): {
   entries: ScoredBatchEntry[]
@@ -56,6 +61,7 @@ export function assembleScoredBatch(input: {
   partitionsById: Map<string, string>
   missingBundleCount: number
   notices: string[]
+  calibration?: EvalBatchReport['calibration']
 } {
   const { replaysRoot, cassettesRoot, source } = input
   const notices: string[] = []
@@ -70,16 +76,17 @@ export function assembleScoredBatch(input: {
       notices.push(`${source} bundle read refused under ${bundleDir}: ${load.refusal.detail}`)
       continue
     }
-    if (input.eligibleCassetteIds !== undefined && !input.eligibleCassetteIds.has(load.cassette.id)) continue
+    if (input.eligibleCassetteIds !== undefined && !input.eligibleCassetteIds.has(load.cassette.id)
+      && !input.excludedLabelIds?.has(load.cassette.id)) continue
     if (load.cassette.granularity === 'leaf') {
       labelsById.set(load.cassette.id, input.labelRecords?.get(load.cassette.id)?.label ?? load.cassette.label)
     }
     cassettesById.set(load.cassette.id, load.cassette)
-    const product = input.productByCassetteId === undefined
+    const product = input.corpusEntriesById?.get(load.cassette.id)?.product ?? (input.productByCassetteId === undefined
       ? cassetteProductPartition(load.cassette)
-      : input.productByCassetteId.get(load.cassette.id)
-    if (product === undefined) throw new TypeError(`committed product absent for ${load.cassette.id}`)
-    partitionsById.set(load.cassette.id, product)
+      : input.productByCassetteId.get(load.cassette.id))
+    if (product === undefined && !input.excludedLabelIds?.has(load.cassette.id)) throw new TypeError(`committed product absent for ${load.cassette.id}`)
+    if (product !== undefined) partitionsById.set(load.cassette.id, product)
   }
 
   const entries: ScoredBatchEntry[] = []
@@ -92,7 +99,8 @@ export function assembleScoredBatch(input: {
       notices.push(`replay record read refused under ${recordDir}: ${load.refusal.detail}`)
     }
     const cassetteId = outcome.cassetteId
-    if (input.eligibleCassetteIds !== undefined && !input.eligibleCassetteIds.has(cassetteId)) continue
+    if (input.eligibleCassetteIds !== undefined && !input.eligibleCassetteIds.has(cassetteId)
+      && !input.excludedLabelIds?.has(cassetteId)) continue
 
     let score: CassetteScore | undefined
     const scoreLoad = loadScoreRecord(recordDir)
@@ -104,28 +112,39 @@ export function assembleScoredBatch(input: {
 
     const label = labelsById.get(cassetteId)
     const authoritative = input.labelRecords?.get(cassetteId)
+    const scoringExcluded = input.excludedLabelIds?.has(cassetteId) === true
+      || authoritative?.quarantine !== undefined
+    const corpusEntry = input.corpusEntriesById?.get(cassetteId)
     const cassette = cassettesById.get(cassetteId)
     const resolved = cassette === undefined ? undefined : resolveScoringContext({ cassette, outcome,
-      labelRecord: authoritative, expectedJudgeRequest: input.expectedJudgeRequest,
+      labelRecord: authoritative, scoringExcluded, expectedJudgeRequest: input.expectedJudgeRequest,
       record: scoreLoad.kind === 'loaded' ? scoreLoad.record : undefined })
     if (resolved !== undefined) score = resolved.score
-    if (scoreLoad.kind === 'loaded' && resolved?.compatible !== false && scoreLoad.record.judge !== undefined) {
+    if (scoringExcluded) score = undefined
+    if (!scoringExcluded && scoreLoad.kind === 'loaded' && resolved?.compatible !== false && scoreLoad.record.judge !== undefined) {
       judgeBlocks.push(scoreLoad.record.judge)
     }
     const product = partitionsById.get(cassetteId)
     if (!partitionsById.has(cassetteId)) missingBundleCount++
+    const incurredJudgeScore = resolved?.incurredJudgeScore
+      ?? (scoringExcluded && scoreLoad.kind === 'loaded' ? scoreLoad.record.score : undefined)
 
     entries.push({
       cassetteId,
+      logicalSourceId: authoritative?.provenance.sourceCassetteId ?? cassetteId,
+      ...(authoritative?.weight === undefined ? {} : { softWeight: authoritative.weight }),
+      ...(scoringExcluded ? { scoringExcluded: true } : {}),
+      ...(corpusEntry === undefined ? {} : { split: corpusEntry.split,
+        ...(corpusEntry.split !== 'held-out' ? {} : { heldOutVisibility: corpusEntry.heldOutVisibility }) }),
       outcome,
       ...(score !== undefined ? { score } : {}),
-      ...(resolved?.incurredJudgeScore === undefined ? {} : { incurredJudgeScore: resolved.incurredJudgeScore }),
+      ...(incurredJudgeScore === undefined ? {} : { incurredJudgeScore }),
       ...(label !== undefined ? { label } : {}),
       ...(product !== undefined ? { product } : {}),
     })
   }
 
-  return { entries, judgeBlocks, partitionsById, missingBundleCount, notices }
+  return { entries, judgeBlocks, partitionsById, missingBundleCount, notices, calibration: input.calibration }
 }
 
 /** The same report/vector projection serves fresh replay and guarded measured-run recovery. */
@@ -134,6 +153,9 @@ export function projectAssembledBatch(
   options: Parameters<typeof buildEvalReport>[3],
 ) {
   const { entries, judgeBlocks, partitionsById } = batch
+  if (entries.some(entry => entry.split === undefined)) {
+    batch.notices.push('corpus split ownership unknown; entries without corpus metadata are unassigned')
+  }
   entries.sort((a, b) => a.cassetteId < b.cassetteId ? -1 : a.cassetteId > b.cassetteId ? 1 : 0)
   let judge: JudgeIdentityBlock | undefined
   let identity: { judgeIdentity: 'mixed'; judgeModelIds: readonly string[] } | undefined
@@ -147,7 +169,7 @@ export function projectAssembledBatch(
     batch.notices.push('mixed judge identities across persisted score records — the report carries no judge block')
   }
   return {
-    report: buildEvalReport(entries, judge, identity, options),
+    report: buildEvalReport(entries, judge, identity, { ...options, calibration: options?.calibration ?? batch.calibration }),
     vectors: decisionCorrectnessVectors(entries, partitionsById),
     notices: batch.notices,
   }

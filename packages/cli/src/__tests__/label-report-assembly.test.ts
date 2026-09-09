@@ -6,9 +6,11 @@ import { calibrateLabels, canonicalJson, createLabelRevision, projectSilverLabel
 import { FsReplayRecordStore, FsScoreStore, committedLabelPath, readCommittedCorpus } from '@vostride/agent-qa-eval-local'
 import { sha256hex } from '@vostride/agent-qa-schema'
 import { resolveEvalSession, runReportVerb } from '../eval-session-composition.js'
+import { createFeedbackPortForHost } from '../gates/feedback-host.js'
+import { markFixture } from '../gates/__tests__/feedback-fixture.js'
 
 const { writeCommittedFloorFixture } = await import(new URL('../../../eval-local/src/__tests__/fixtures/floor-fixtures.js', import.meta.url).href)
-const { metricEntry } = await import(new URL('../../../eval/src/match/__tests__/fixtures/label-metric-fixtures.js', import.meta.url).href)
+const { metricEntry, weight } = await import(new URL('../../../eval/src/match/__tests__/fixtures/label-metric-fixtures.js', import.meta.url).href)
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 function write(path: string, value: unknown) {
@@ -71,4 +73,45 @@ it('copies guarded calibration once into the report and discloses unknown staged
   const staged = await runReportVerb(f.session)
   expect(staged.report.perSplit.unassignedCount).toBe(3)
   expect(staged.notices.some(line => line.includes('split ownership unknown'))).toBe(true)
+})
+
+it('counts both active gold clones as one verifier source after actual mark publication', async () => {
+  const f = markFixture(); roots.push(f.root)
+  writeFileSync(join(f.root, '.env.secrets.local'), '')
+  f.handoff.tests[0]!.steps[0]!.verifierVerdict.pass = true
+  f.save()
+  expect(await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId,
+    stepIndex: 0, kind: 'false-pass' })).toMatchObject({ kind: 'marked' })
+  const read = readCommittedCorpus(join(f.root, 'agent-qa-eval'))
+  expect(read.snapshot.entries).toHaveLength(2)
+  for (const entry of read.snapshot.entries) {
+    const scored = metricEntry(entry.cassetteId)
+    new FsReplayRecordStore({ root: f.agentQaRoot }).save(scored.outcome)
+    new FsScoreStore({ root: f.agentQaRoot }).save({ cassetteId: entry.cassetteId,
+      matcherVersion: 1, score: scored.score, diffs: [] })
+  }
+  const session = await resolveEvalSession({ configPath: f.configPath })
+  const { report } = await runReportVerb(session, {}, { source: 'committed' })
+  expect(report.headline.verifierFalsePassRate).toEqual({ numerator: 1, denominator: 1, rate: 1 })
+  expect(report.perSplit['held-out'].private.verifierFalsePassRate).toEqual({ numerator: 1, denominator: 1, rate: 1 })
+})
+
+it.each([undefined, 0])('distinguishes persisted recovery weight %s from legacy fallback', async value => {
+  const f = await fixture()
+  const read = readCommittedCorpus(f.committedRoot)
+  const [positive, negative] = [...read.snapshot.labelsById.values()]
+  for (const [record, partner, relation] of [[positive!, negative!, 'contrastive-positive'],
+    [negative!, positive!, 'contrastive-negative']] as const) {
+    const product = read.snapshot.entries.find(entry => entry.cassetteId === record.cassetteId)!.product
+    const revised = { ...record, label: { ...record.label, sourceChannel: 'self-heal-pair',
+      tier: 'near-gold', pairing: { relation, pairedCassetteId: partner.cassetteId } },
+      pairState: { sameState: true, screenStateHash: 'a'.repeat(64), pairedScreenStateHash: 'a'.repeat(64) },
+      ...(value === undefined ? {} : { weight: weight(value) }) }
+    write(join(f.committedRoot, committedLabelPath(product, record.cassetteId)), revised)
+  }
+  expect(readCommittedCorpus(f.committedRoot).refusals).toEqual([])
+  const { report } = await runReportVerb(f.session, {}, { source: 'committed' })
+  expect(report.recovery.eligiblePositiveCount).toBe(1)
+  expect(report.recovery.weightSum).toBe(value === undefined ? 2 / 3 : 0)
+  expect(report.recovery.pairsWithoutWeight).toBe(value === undefined ? 1 : 0)
 })

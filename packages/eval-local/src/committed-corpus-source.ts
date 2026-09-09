@@ -127,6 +127,9 @@ export interface CommittedReadRefusal {
 
 /** The loaded committed root: eval core's snapshot plus everything the read learned about it. */
 export interface CommittedCorpusRead {
+  /** Guarded ownership including scoring-excluded history, for incurred-cost reports. */
+  corpusEntriesById?: ReadonlyMap<string, CorpusEntry>
+  calibration?: EvalBatchReport['calibration']
   retiredMarkedCassetteIds?: ReadonlySet<string>
   snapshot: CommittedCorpusSnapshot
   productsSeen: readonly string[]
@@ -483,6 +486,12 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
   )
 
   return {
+    corpusEntriesById: new Map(entries.map(entry => [entry.cassetteId, entry])),
+    calibration: calibration.kind === 'loaded' ? {
+      status: calibration.artifact.channels['recorded-verdict'].status,
+      n_gold: calibration.artifact.channels['recorded-verdict'].n_gold,
+      verifierFalsePassRate: calibration.artifact.verifierFalsePassRate,
+    } : { status: 'uncalibrated' },
     snapshot: { entries: entries.filter(entry => !excludedLabelIds.has(entry.cassetteId)),
       labelsById, cassettesById, blobPresentById, labelHistory, excludedLabelIds },
     productsSeen,
