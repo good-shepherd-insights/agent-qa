@@ -95,6 +95,10 @@ export type CensusRung = RetrievalRung | 'legacy-no-rung'
 /** Loaded committed-root legs the census folds; eval-local produces this shape. */
 export interface CommittedCorpusSnapshot {
   entries: readonly CorpusEntry[]
+  /** Parsed persisted history, including refused records, for audit and calibration. */
+  labelHistory?: readonly unknown[]
+  /** Authoritative exclusion, distinct from the absence that permits legacy fallback. */
+  excludedLabelIds?: ReadonlySet<string>
   labelsById: ReadonlyMap<string, StandaloneLabelRecord>
   cassettesById: ReadonlyMap<string, LeafCassette>
   blobPresentById: ReadonlyMap<string, boolean>

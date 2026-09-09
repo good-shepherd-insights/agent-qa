@@ -21,9 +21,12 @@ import {
   guardDecisionVectorsDocument,
   guardNoiseFloorArtefact,
   parseCorpusEntry,
+  parseStandaloneLabelRecord,
+  selectEffectiveLabels,
   partitionManifestSchema,
   runExclusionRecordSchema,
 } from '@vostride/agent-qa-eval'
+import { slugBranch } from '@vostride/agent-qa-schema'
 import type {
   CommittedCorpusSnapshot,
   CorpusEntry,
@@ -49,6 +52,7 @@ import {
   COMMITTED_REPORTS_DIR,
   PARTITION_MANIFEST_FILE_PREFIX,
   committedPartitionManifestPath,
+  committedLabelPath,
   committedReportPath,
 } from './committed-root-store.js'
 import { listCassetteBundleDirs } from './replay-read.js'
@@ -75,15 +79,6 @@ export function readActiveCommittedCorpus(committedRoot: string, agentQaRoot: st
 
 /** Census, baseline pointers and per-profile floors are not batch reports (415 D-04). */
 const RESERVED_REPORT_DIRS = new Set(['census', 'baselines', 'noise-floor'])
-
-const labelRecordSchema = z
-  .object({
-    schemaVersion: z.number(),
-    cassetteId: z.string(),
-    label: z.object({ tier: z.enum(['gold', 'near-gold', 'silver']) }).passthrough(),
-    provenance: z.object({}).passthrough(),
-  })
-  .passthrough()
 
 const reportSchema = z
   .object({
@@ -354,13 +349,15 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
   const entries: CorpusEntry[] = []
   const schemaVersionsSeen: Record<string, number> = {}
   const labelsById = new Map<string, StandaloneLabelRecord>()
+  const labelHistory: unknown[] = []
+  const excludedLabelIds = new Set<string>()
   const cassettesById = new Map<string, LeafCassette>()
   const blobPresentById = new Map<string, boolean>()
 
   if (!existsSync(committedRoot)) {
     notices.push(`committed root absent: ${committedRoot}`)
     return {
-      snapshot: { entries, labelsById, cassettesById, blobPresentById },
+      snapshot: { entries, labelsById, cassettesById, blobPresentById, labelHistory, excludedLabelIds },
       productsSeen: [],
       notices,
       refusals,
@@ -397,20 +394,61 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
   }
 
   const labelsRoot = join(committedRoot, COMMITTED_LABELS_DIR)
+  const labelOwners = new Map<string, Set<string>>()
+  const idsByBasePath = new Map<string, Set<string>>()
+  for (const entry of entries) {
+    const owners = labelOwners.get(entry.cassetteId) ?? new Set<string>()
+    owners.add(slugBranch(entry.product))
+    labelOwners.set(entry.cassetteId, owners)
+    const path = join(committedRoot, committedLabelPath(entry.product, entry.cassetteId))
+    const ids = idsByBasePath.get(path) ?? new Set<string>()
+    ids.add(entry.cassetteId)
+    idsByBasePath.set(path, ids)
+  }
+  const readInvalidIds = new Set<string>()
+  const validHistory: StandaloneLabelRecord[] = []
   for (const product of listDirNames(labelsRoot)) {
     for (const path of listJsonFiles(join(labelsRoot, product))) {
+      const basePath = path.replace(/--revision-[^/]*\.json$/, '.json')
+      const pathIds = idsByBasePath.get(basePath) ?? new Set<string>()
+      const refuse = (reason: string, cassetteId?: string) => {
+        refusals.push({ path, reason })
+        for (const id of pathIds) readInvalidIds.add(id)
+        if (cassetteId !== undefined) readInvalidIds.add(cassetteId)
+      }
       const read = readJson(path)
       if (!read.ok) {
-        refusals.push({ path, reason: read.reason })
+        refuse('label record unreadable or invalid JSON')
         continue
       }
-      const parsed = labelRecordSchema.safeParse(read.value)
-      if (!parsed.success) {
-        refusals.push({ path, reason: `label record rejected: ${issueText(parsed.error)}` })
+      labelHistory.push(read.value)
+      const parsed = parseStandaloneLabelRecord(read.value)
+      if (!parsed.ok) {
+        const claimedId = typeof read.value === 'object' && read.value !== null && 'cassetteId' in read.value && typeof read.value.cassetteId === 'string' ? read.value.cassetteId : undefined
+        refuse(`label record rejected: ${parsed.issues}`, claimedId)
         continue
       }
-      labelsById.set(parsed.data.cassetteId, parsed.data as unknown as StandaloneLabelRecord)
+      const record = parsed.record
+      const expectedBase = join(committedRoot, committedLabelPath(product, record.cassetteId))
+      const expectedPath = record.revision === undefined ? expectedBase
+        : expectedBase.replace(/\.json$/, `--revision-${record.revision.id}.json`)
+      const owners = labelOwners.get(record.cassetteId)
+      if (path !== expectedPath || (owners !== undefined && (owners.size !== 1 || !owners.has(product)))) {
+        refuse('label path or product ownership mismatch', record.cassetteId)
+        continue
+      }
+      validHistory.push(record)
     }
+  }
+  // Generation-bearing refreshes stay invisible until the guarded publication loader
+  // explicitly authorizes their marker. Seed/base revisions require no marker.
+  const selected = selectEffectiveLabels(validHistory)
+  for (const [id, label] of selected.effective) {
+    if (!readInvalidIds.has(id)) labelsById.set(id, label)
+  }
+  for (const id of [...readInvalidIds, ...selected.excludedLabelIds]) excludedLabelIds.add(id)
+  for (const refusal of selected.refusals) {
+    refusals.push({ path: labelsRoot, reason: `label history rejected: ${refusal.reason}` })
   }
 
   for (const bundleDir of listCassetteBundleDirs(join(committedRoot, COMMITTED_CASSETTES_DIR))) {
@@ -435,7 +473,8 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
   )
 
   return {
-    snapshot: { entries, labelsById, cassettesById, blobPresentById },
+    snapshot: { entries: entries.filter(entry => !excludedLabelIds.has(entry.cassetteId)),
+      labelsById, cassettesById, blobPresentById, labelHistory, excludedLabelIds },
     productsSeen,
     notices,
     refusals,
