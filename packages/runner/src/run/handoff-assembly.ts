@@ -39,7 +39,7 @@ import type {
   StepEvidence,
   Verdict,
 } from '@vostride/agent-qa-schema'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, maskPayloadStrings } from '@vostride/agent-qa-schema'
+import { canonicalJson, CURRENT_HANDOFF_SCHEMA_VERSION, maskPayloadStrings, screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
 import type { MaskFn } from '@vostride/agent-qa-schema'
 import type { RunConfig, RunMemberDescriptor } from './ports.js'
 import type { StepResult, TestResult } from '../result.js'
@@ -234,6 +234,7 @@ export function assemblePerTestOutcome(
     quarantined?: true
   },
   rootCause?: Verdict,
+  origin?: { runId: string; outcome: 'failed' | 'timeout'; rootCause?: Verdict },
 ): PerTestOutcome {
   const synthDeps: SynthDeps = {
     scope: deps.scope,
@@ -248,6 +249,43 @@ export function assemblePerTestOutcome(
       ? maskStepNarration({ ...step.evidence, stepIndex: index }, deps.mask)
       : synthesizeStepEvidence(step, index, synthDeps),
   )
+  let rerunOrigin: PerTestOutcome['rerunOrigin']
+  const firstFailure = result.firstFailedAttempt
+  if (origin !== undefined && firstFailure !== undefined &&
+      Number.isSafeInteger(firstFailure.attempt) && firstFailure.attempt >= 0 &&
+      Number.isSafeInteger(result.retryCount) && firstFailure.attempt < result.retryCount!) {
+    const decisions: NonNullable<PerTestOutcome['rerunOrigin']>['decisions'] = []
+    firstFailure.result.steps.forEach((step, stepIndex) => {
+      // No recorded §A8 decision means no identity. Never mine legacy trace/failure prose.
+      if (step.evidence === undefined) return
+      // Reuse the final narration projection, then mask the whole origin-only copy. The
+      // original has no interpolation consumer: its receipt join uses these masked facts.
+      // Final step/action/interpolation bytes retain their existing G-381-3 contract.
+      const evidence = maskPayloadStrings(
+        maskStepNarration({ ...step.evidence, stepIndex }, deps.mask), deps.mask,
+      )
+      evidence.subActions.forEach((subAction, decisionOrdinal) => {
+        const facts = {
+          runId: origin.runId, testId: member.testId, testIndex: deps.testIndex,
+          stepIndex, decisionOrdinal, evidence,
+        }
+        decisions.push({
+          ...facts,
+          screenStateHash: screenStateHash(subAction.stateBefore),
+          evidenceDigest: sha256hex(canonicalJson(facts)),
+        })
+      })
+    })
+    const facts = {
+      attempt: firstFailure.attempt,
+      outcome: origin.outcome,
+      ...(origin.rootCause !== undefined
+        ? { rootCause: maskPayloadStrings(origin.rootCause, deps.mask) }
+        : {}),
+      decisions,
+    }
+    rerunOrigin = { ...facts, evidenceDigest: sha256hex(canonicalJson(facts)) }
+  }
   return {
     testId: member.testId,
     testName: member.name,
@@ -255,6 +293,7 @@ export function assemblePerTestOutcome(
     testIndex: deps.testIndex,
     outcome,
     steps,
+    ...(rerunOrigin !== undefined ? { rerunOrigin } : {}),
     ...(rootCause !== undefined ? { rootCause } : {}),
     ...(deps.quarantined === true ? { quarantined: true as const } : {}),
     // 2026-09-07, 418 D-09: approved member grain, for passing AND failing retries.

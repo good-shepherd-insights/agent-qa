@@ -453,6 +453,26 @@ export function startRun(config: RunConfig): RunSession {
         ...(member.baselineProbe === undefined ? {} : { baselineProbe: member.baselineProbe }),
       })
 
+      // 420 D-06: classify actual original evidence with this same member's baseline.
+      // The final retry keeps its own classification, outcome and canary markers.
+      const firstFailure = result.firstFailedAttempt
+      const originalOutcome = firstFailure === undefined
+        ? undefined
+        : deriveMemberOutcome(firstFailure.result)
+      const origin = firstFailure !== undefined &&
+        (originalOutcome === 'failed' || originalOutcome === 'timeout')
+        ? {
+            runId: config.runId,
+            outcome: originalOutcome,
+            rootCause: classifyRootCause({
+              result: firstFailure.result,
+              outcome: originalOutcome,
+              testIndex,
+              ...(member.baselineProbe === undefined ? {} : { baselineProbe: member.baselineProbe }),
+            }),
+          }
+        : undefined
+
       const perTest = assemblePerTestOutcome(
         member,
         result,
@@ -466,6 +486,7 @@ export function startRun(config: RunConfig): RunSession {
           ...(quarantineMarker !== undefined ? { quarantined: quarantineMarker } : {}),
         },
         rootCause,
+        origin,
       )
       outcomeSlots[i] = perTest
       memberOutcomeSlots[i] = outcome
