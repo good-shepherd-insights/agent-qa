@@ -99,6 +99,8 @@ export type SeedingRefusal =
   | { cassetteId: string; kind: 'missing-cassette' }
 
 export interface SeedingReport {
+  supersededOriginalCount: number
+  retirementCounts: NonNullable<SeedingPlan['retirementCounts']>
   softEvidence?: SeedingPlan['softEvidence']
   product: string
   runId: string
@@ -189,6 +191,7 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
   const refusals: SeedingRefusal[] = []
   let seededCount = 0
   let unchangedCount = 0
+  let supersededOriginalCount = 0
 
   for (const planCase of input.plan.cases) {
     const cassetteId = planCase.cassetteId
@@ -271,8 +274,34 @@ function executeSeedingPlan(input: SeedCommittedCorpusInput): SeedingReport {
     }
   }
 
+  // Label-only siblings retire exact originals without touching their other committed legs.
+  for (const revision of input.plan.labelRevisions ?? []) {
+    const cassetteId = revision.cassetteId
+    if (!revision.revision) throw new Error('label-only seeding operation requires a revision identity')
+    const path = committedLabelPath(product, cassetteId)
+      .replace(/\.json$/, `--revision-${revision.revision.id}.json`)
+    const text = committedFileText(revision)
+    try {
+      assertCommittedEgressSafe([{ label: `label-revision:${cassetteId}`, text }], checkpointOpts)
+    } catch (err) {
+      if (!(err instanceof CommittedEgressBlockedError)) throw err
+      refusals.push({ cassetteId, kind: 'egress-blocked',
+        detections: err.blocked.map(({ label, detector }) => ({ label, detector })) })
+      continue
+    }
+    if (store.previewText(path, text) === 'conflict') {
+      refusals.push({ cassetteId, kind: 'write-conflict', path })
+      continue
+    }
+    const outcome = store.writeText(path, text)
+    if (outcome.kind === 'write-conflict') refusals.push({ cassetteId, kind: 'write-conflict', path: outcome.path })
+    else if (outcome.kind === 'written') supersededOriginalCount++
+  }
+
   // (4) The report: every skip, refusal, and count visible — never silent (T-371-18).
   return {
+    supersededOriginalCount,
+    retirementCounts: input.plan.retirementCounts ?? { superseded: 0, missing: 0, conflict: 0 },
     product,
     ...(input.plan.softEvidence ? { softEvidence: input.plan.softEvidence } : {}),
     runId: input.plan.runId,

@@ -67,8 +67,8 @@ export interface SeedingPlanCase {
 /** The complete deterministic description of what joins the committed corpus. */
 export interface SeedingPlan {
   /** Label-only append operations; no cassette or membership rewrite. */
-  labelRevisions: StandaloneLabelRecord[]
-  retirementCounts: { superseded: number; missing: number; conflict: number }
+  labelRevisions?: StandaloneLabelRecord[]
+  retirementCounts?: { superseded: number; missing: number; conflict: number }
   softEvidence?: Pick<SoftPopulation, 'skips' | 'missingEvidenceCounts'>
   product: string
   runId: string
@@ -171,7 +171,7 @@ function matchesOriginal(input: BuildSeedingPlanInput, member: PerTestOutcome, d
     && entry.receiptDigest === provenance.receiptDigest && entry.captured_at_ordinal === provenance.capturedAtOrdinal)
 }
 
-function planRetirements(input: BuildSeedingPlanInput): Pick<SeedingPlan, 'labelRevisions' | 'retirementCounts'> {
+function planRetirements(input: BuildSeedingPlanInput): Required<Pick<SeedingPlan, 'labelRevisions' | 'retirementCounts'>> {
   const labelRevisions: StandaloneLabelRecord[] = []
   const retirementCounts = { superseded: 0, missing: 0, conflict: 0 }
   const snapshot = input.populationContext?.snapshot
@@ -215,7 +215,8 @@ function planRetirements(input: BuildSeedingPlanInput): Pick<SeedingPlan, 'label
  * (the sampler excludes selfHeal steps), so a duplicate means the
  * channel-purity invariant broke upstream.
  */
-export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan {
+export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan
+  & Required<Pick<SeedingPlan, 'labelRevisions' | 'retirementCounts'>> {
   const { handoff, cassettes, partition, capturedAt, targetEnvironment, params } = input
   const product = resolveProductPartition(handoff.scope)
   const runId = handoff.runId

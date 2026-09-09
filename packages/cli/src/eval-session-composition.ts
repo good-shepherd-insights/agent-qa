@@ -32,6 +32,7 @@ import {
   assertBaselineComparator,
   buildEvalReport,
   buildSeedingPlan,
+  admitSeedMember,
   canonicalJson,
   composeBaselineProfileKey,
   computeBatchKey,
@@ -69,6 +70,7 @@ import type {
   PartitionManifest,
   SeedPolicy,
   ScoredBatchEntry,
+  SilverExclusion,
   TargetEnvironment,
 } from '@vostride/agent-qa-eval'
 import {
@@ -1385,6 +1387,13 @@ export interface SeedRunVerdictRow {
 
 /** The seed verb's one DTO — per-handoff SeedingReports aggregated field-wise (D-04). */
 export interface SeedVerbResult {
+  /** Member-grain exclusions on a mixed run; persisted handoffs retain the source evidence. */
+  membersExcluded: { runSlug: string; product: string; testIndex: number;
+    verdict: { class: Verdict['class']; producer: Verdict['producer'] } }[]
+  admissionConflicts: { runSlug: string; product: string; path: string; reason: 'existing-run-exclusion' }[]
+  silverExclusionRows: (SilverExclusion & { runSlug: string; product: string })[]
+  supersededOriginalCount: number
+  retirementCounts: { missing: number; conflict: number }
   /** Run dirs (with a handoff document) that entered the sweep after `--run` narrowing. */
   runsSwept: number
   /** Per-run typed skips: unreadable / version-refused handoffs (D-02, never batch errors). */
@@ -1477,6 +1486,11 @@ export async function runSeedVerb(
     params.silverPerTestCap ?? session.evalConfig.seeding?.silverPerTestCap
 
   const result: SeedVerbResult = {
+    membersExcluded: [],
+    admissionConflicts: [],
+    silverExclusionRows: [],
+    supersededOriginalCount: 0,
+    retirementCounts: { missing: 0, conflict: 0 },
     runsSwept: runSlugs.length,
     runsSkipped: [],
     runsFiltered: 0,
@@ -1505,7 +1519,7 @@ export async function runSeedVerb(
   // identical regen answers `unchanged`), and a phase-(B) EvalPartitionFlagsRequiredError leaves
   // the exclusion files in place ON PURPOSE — the operator learns what was excluded from the very
   // invocation that refused to partition. Never reorder (A) after (B).
-  const admitted: { runSlug: string; handoff: CompletedRunHandoff; product: string }[] = []
+  const admitted: { runSlug: string; handoff: CompletedRunHandoff; product: string; testIndexes: Set<number> }[] = []
   const initialCommitted = readCommittedCorpus(committedRoot)
 
   for (const runSlug of runSlugs) {
@@ -1539,7 +1553,10 @@ export async function runSeedVerb(
         verdicts: resolveSeedVerdictRows(analysis.artifact, handoff),
       }
       const excluding = row.verdicts.filter(isExclusionVerdict)
-      if (excluding.length > 0) {
+      const memberVerdicts = resolveSeedMemberVerdicts(analysis.artifact, handoff)
+      const eligible = handoff.tests.filter(member => admitSeedMember(member, memberVerdicts.get(member.testIndex)))
+      const hasEligibleRerun = eligible.some(member => member.isRerun)
+      if (excluding.length > 0 && !hasEligibleRerun) {
         result.runsExcluded.push(row)
         // The digest names the EVIDENCE the decision was read from: the analysis bytes when an
         // artifact decided it, else the canonical resolved verdict rows the deterministic floor
@@ -1568,8 +1585,21 @@ export async function runSeedVerb(
         })
         continue
       }
+      const exclusionPath = committedExclusionPath(product, runSlug)
+      if (existsSync(join(committedRoot, exclusionPath))) {
+        result.admissionConflicts.push({ runSlug, product, path: exclusionPath, reason: 'existing-run-exclusion' })
+        result.notices.push(`seed ${runSlug}: existing run exclusion requires the reviewed exclusion path before admission`)
+        continue
+      }
+      const testIndexes = new Set(eligible.map(member => member.testIndex))
+      for (const member of handoff.tests) {
+        const verdict = memberVerdicts.get(member.testIndex)
+        if (!testIndexes.has(member.testIndex) && verdict) {
+          result.membersExcluded.push({ runSlug, product, testIndex: member.testIndex, verdict })
+        }
+      }
       result.runsAdmitted.push(row)
-      admitted.push({ runSlug, handoff, product })
+      admitted.push({ runSlug, handoff, product, testIndexes })
     } catch (err) {
       result.runsSkipped.push({
         runSlug,
@@ -1583,7 +1613,7 @@ export async function runSeedVerb(
   const manifests = ensurePartitionManifests(session, admitted, committedRoot, result, params)
 
   // ---- (C) seeding: eval core assigns every split from the committed manifest ------------------
-  for (const { runSlug, handoff, product } of admitted) {
+  for (const { runSlug, handoff, product, testIndexes } of admitted) {
     let report: ReturnType<typeof seedCommittedCorpus>
     try {
       const committed = readCommittedCorpus(committedRoot)
@@ -1592,12 +1622,20 @@ export async function runSeedVerb(
       if (!evidence.handoffs.some(value => value.runId === handoff.runId)) {
         throw new Error('seed incoming handoff evidence could not be positively verified')
       }
+      // Only filter AFTER the full incoming bytes have matched the guarded persisted handoff.
+      const admittedHandoff = { ...handoff, tests: handoff.tests.filter(member => testIndexes.has(member.testIndex)) }
+      const populationHandoffs = evidence.handoffs.map(source => {
+        if (source.runId === handoff.runId) return admittedHandoff
+        const sourceAnalysis = readRunAnalysisArtifact(runsRoot, slugBranch(source.runId), source.runId, result.notices)
+        const verdicts = resolveSeedMemberVerdicts(sourceAnalysis.artifact, source)
+        return { ...source, tests: source.tests.filter(member => admitSeedMember(member, verdicts.get(member.testIndex))) }
+      })
       const manifest = manifests.get(product)
       if (manifest === undefined) {
         throw new Error(`no committed partition manifest for product ${product}`)
       }
       const extraction = extractRunCassettes({
-        handoff,
+        handoff: admittedHandoff,
         artifacts: new FsRunArtifactSource({ root: agentQaRoot, runId: handoff.runId }),
       })
       // 414 D-04: the two optional provenance fields are resolved by the CALLER and stamped only
@@ -1606,8 +1644,8 @@ export async function runSeedVerb(
       const targetEnvironment = resolveTargetEnvironmentForProduct(session.config, product)
       // eval core is the ONLY decision-maker (D-16); the CLI executes the plan verbatim.
       const plan = buildSeedingPlan({
-        handoff,
-        populationContext: { snapshot: committed.snapshot, handoffs: evidence.handoffs, marks: evidence.marks },
+        handoff: admittedHandoff,
+        populationContext: { snapshot: committed.snapshot, handoffs: populationHandoffs, marks: evidence.marks },
         cassettes: extraction.cassettes,
         // 414 D-07: the split comes from the product's COMMITTED manifest params — the cli adds
         // no selection or relabel logic of its own.
@@ -1638,6 +1676,10 @@ export async function runSeedVerb(
     result.handoffsSeeded++
     result.seededCount += report.seededCount
     result.unchangedCount += report.unchangedCount
+    result.supersededOriginalCount += report.supersededOriginalCount
+    result.retirementCounts.missing += report.retirementCounts.missing
+    result.retirementCounts.conflict += report.retirementCounts.conflict
+    result.silverExclusionRows.push(...report.silverExclusions.map(row => ({ ...row, runSlug, product })))
     result.refusals.push(...report.refusals)
     result.pairSkips += report.pairSkips.length
     result.silverExclusions += report.silverExclusions.length
@@ -1884,6 +1926,15 @@ function resolveSeedVerdictRows(
   artifact: RunAnalysisArtifact | undefined,
   handoff: CompletedRunHandoff,
 ): SeedRunVerdictRow['verdicts'] {
+  return [...resolveSeedMemberVerdicts(artifact, handoff).entries()]
+    .sort(([first], [second]) => first - second)
+    .map(([, verdict]) => verdict)
+}
+
+function resolveSeedMemberVerdicts(
+  artifact: RunAnalysisArtifact | undefined,
+  handoff: CompletedRunHandoff,
+): Map<number, SeedRunVerdictRow['verdicts'][number]> {
   const byPerTest = new Map<number, SeedRunVerdictRow['verdicts'][number]>()
   for (const member of handoff.tests) {
     if (member.rootCause === undefined) continue
@@ -1895,9 +1946,7 @@ function resolveSeedVerdictRows(
   for (const verdict of resolveRunVerdicts(artifact, handoff)) {
     byPerTest.set(verdict.perTest, { class: verdict.class, producer: verdict.producer })
   }
-  return [...byPerTest.entries()]
-    .sort(([first], [second]) => first - second)
-    .map(([, verdict]) => verdict)
+  return byPerTest
 }
 
 // ---- the report verb (372-07, D-13/D-14) -------------------------------------------------------
