@@ -1,0 +1,146 @@
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as model from '@vostride/agent-qa-model'
+import { canonicalJson, computeCorpusDigest, createLabelRevision, deriveLeafCassetteId, deriveRunSlug } from '@vostride/agent-qa-eval'
+import { committedLabelPath, loadLabelEvidence, readCommittedCorpus } from '@vostride/agent-qa-eval-local'
+import { asRef, screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
+import { createFeedbackPortForHost } from '../gates/feedback-host.js'
+import { files, markFixture } from '../gates/__tests__/feedback-fixture.js'
+import { resolveEvalSession, runSeedVerb } from '../eval-session-composition.js'
+
+const roots: string[] = []
+const fractions = { heldOutFraction: 0.4, privateFraction: 0.5 }
+const bytes = (root: string) => files(root).map(path => [path, readFileSync(path).toString('hex')])
+beforeEach(() => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('provider access forbidden') })
+  vi.spyOn(model, 'createModel').mockImplementation(() => { throw new Error('model creation forbidden') })
+})
+afterEach(() => {
+  expect(globalThis.fetch).not.toHaveBeenCalled()
+  expect(model.createModel).not.toHaveBeenCalled()
+  vi.restoreAllMocks()
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+function fixture(full = false, rerun = false) {
+  const f = markFixture(); roots.push(f.root)
+  writeFileSync(join(f.root, '.env.secrets.local'), '')
+  const member = f.handoff.tests[0]!, step = member.steps[0]!
+  member.outcome = 'healed'
+  f.handoff.aggregateVerdict = 'healed'
+  step.verifierVerdict = { pass: true, reasoning: 'Recovery verified' }
+  step.modelProfile = { provider: 'openai', modelId: full ? 'gpt-5' : 'small-fixture', vision: true }
+  const failed = step.subActions[0]!
+  failed.callRecord = { resolvedModelId: 'wrong-failed-planner' }
+  failed.result = { success: false, error: 'First action rejected' }
+  const secondRef = asRef('e-continue-recovery')
+  failed.stateBefore.elements.push({ ...structuredClone(failed.stateBefore.elements[0]!), ref: secondRef,
+    name: 'Recovery', nameNormalized: 'recovery', labels: { ariaLabel: 'Recovery' } })
+  failed.stateBefore.refMap[secondRef] = structuredClone(failed.stateBefore.refMap[failed.stateBefore.elements[0]!.ref]!)
+  const recovering = structuredClone(failed)
+  recovering.plannedAction = { type: 'click', ref: secondRef }
+  recovering.result = { success: true }
+  recovering.callRecord = { resolvedModelId: full ? 'gpt-5' : 'small-fixture' }
+  // The pair's own states differ: its weight must use the FAILED population.
+  recovering.stateBefore.url = 'https://example.test/recovery'
+  step.subActions = [failed, recovering]
+  step.selfHeal = { failedDecision: { plan: failed.plan, plannedAction: failed.plannedAction, result: failed.result },
+    recoveringDecision: { plan: recovering.plan, plannedAction: recovering.plannedAction, result: recovering.result } }
+  if (rerun) {
+    member.isRerun = true; member.rerunAttempt = 2
+    const evidence = structuredClone(step)
+    delete evidence.selfHeal
+    evidence.verifierVerdict.pass = false
+    const facts = { runId: f.handoff.runId, testId: member.testId, testIndex: 0, stepIndex: 0, decisionOrdinal: 0, evidence }
+    const origin = { attempt: 0, outcome: 'failed' as const, decisions: [{ ...facts,
+      screenStateHash: screenStateHash(evidence.subActions[0]!.stateBefore), evidenceDigest: sha256hex(canonicalJson(facts)) }] }
+    member.rerunOrigin = { ...origin, evidenceDigest: sha256hex(canonicalJson(origin)) }
+  }
+  f.save()
+  return { ...f, step, member, committedRoot: join(f.root, 'agent-qa-eval') }
+}
+
+async function seed(f: ReturnType<typeof fixture>) {
+  const session = await resolveEvalSession({ configPath: f.configPath })
+  const report = await runSeedVerb(session, {}, fractions)
+  expect(report.runsSkipped).toEqual([])
+  expect(report.refusals).toEqual([])
+  const read = readCommittedCorpus(f.committedRoot)
+  expect(read.refusals).toEqual([])
+  const pair = [...read.snapshot.labelsById.values()].filter(row => row.label.sourceChannel === 'self-heal-pair')
+  expect(pair).toHaveLength(2)
+  return { session, report, read, pair }
+}
+
+describe('420 actual CLI seed weights', () => {
+  it('persists the full 0.75 gold/full vector on both members through actual mark and seed composition', async () => {
+    const f = fixture(true)
+    const marked = await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId,
+      stepIndex: 0, kind: 'false-pass' })
+    expect(marked.kind).toBe('marked')
+    const { pair, read } = await seed(f)
+    expect(pair[0]!.weight?.value).toBe(0.75)
+    expect(pair[1]!.weight).toEqual(pair[0]!.weight)
+    expect(pair[0]!.weight).toMatchObject({ k: 1, n: 1, alpha0: 2, beta0: 1,
+      verdictSource: 'user-gold', verdictFactor: 1, capabilityTier: 'full', tierFactor: 1,
+      corpusDigest: computeCorpusDigest(read.snapshot.entries), capabilityEvidence: {
+        kind: 'model-identity', modelIdentity: { provider: 'openai', modelId: 'gpt-5' } } })
+    expect(pair[0]!.weight!.evidenceDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(pair[0]!.pairState?.sameState).toBe(false)
+  })
+
+  it('persists the 0.45 silver/degraded vector and leaves cassette embedded labels unchanged', async () => {
+    const f = fixture()
+    const { pair, read } = await seed(f)
+    expect(pair[0]!.weight?.value).toBeCloseTo(0.45, 14)
+    expect(pair[0]!.weight).toMatchObject({ k: 1, n: 1, verdictFactor: 0.8, tierFactor: 0.75 })
+    expect(pair[1]!.weight).toEqual(pair[0]!.weight)
+    for (const row of pair) expect(read.snapshot.cassettesById.get(row.cassetteId)!.label.sourceChannel).toBe('recorded-verdict')
+  })
+
+  it('persists actual rerun provenance with the recovery weight and preserves identical reseed bytes', async () => {
+    const f = fixture(false, true)
+    const { pair, session, report } = await seed(f)
+    expect(pair[0]!.weight?.value).toBeCloseTo(0.45, 14)
+    expect(pair[0]!.provenance.rerun).toEqual({ attempt: 2, originalAttempt: 0,
+      originalEvidenceDigest: f.member.rerunOrigin!.evidenceDigest })
+    expect(pair[1]!.provenance.rerun).toEqual(pair[0]!.provenance.rerun)
+    const before = bytes(f.committedRoot)
+    const again = await runSeedVerb(session)
+    expect(again).toMatchObject({ seededCount: 0, unchangedCount: 2, refusals: [], runsSkipped: [] })
+    expect(again.partitions[0]!.saltDigest).toBe(report.partitions[0]!.saltDigest)
+    expect(bytes(f.committedRoot)).toEqual(before)
+  })
+
+  it('reuses effective revised weights on unchanged source without touching membership or any historical bytes', async () => {
+    const f = fixture()
+    const { pair, session, read } = await seed(f)
+    expect(pair[0]!.weight).toBeDefined()
+    for (const label of pair) {
+      const desired = { ...label, weight: { ...label.weight!, value: 0.3 } }
+      const revision = createLabelRevision(label, desired)
+      const path = join(f.committedRoot, committedLabelPath('default', label.cassetteId)).replace(/\.json$/, `--revision-${revision.revision!.id}.json`)
+      writeFileSync(path, `${canonicalJson(revision)}\n`)
+    }
+    const before = bytes(f.committedRoot)
+    const again = await runSeedVerb(session)
+    expect(again.refusals).toEqual([])
+    expect(again.unchangedCount).toBe(2)
+    expect(bytes(f.committedRoot)).toEqual(before)
+    const reread = readCommittedCorpus(f.committedRoot)
+    expect(computeCorpusDigest(reread.snapshot.entries)).toBe(computeCorpusDigest(read.snapshot.entries))
+    expect([...reread.snapshot.labelsById.values()].every(label => label.weight?.value === 0.3)).toBe(true)
+  })
+
+  it('checkpoints newly persisted planner evidence and blocks an unmasked value before either pair label lands', async () => {
+    const f = fixture()
+    // Public guardrail test vector, not a credential.
+    f.step.subActions[1]!.callRecord = { resolvedModelId: 'AKIAIOSFODNN7EXAMPLE' }
+    f.save()
+    const session = await resolveEvalSession({ configPath: f.configPath })
+    const report = await runSeedVerb(session, {}, fractions)
+    expect(report.refusals.filter(row => row.kind === 'egress-blocked')).toHaveLength(2)
+    expect(readCommittedCorpus(f.committedRoot).snapshot.labelsById.size).toBe(0)
+  })
+})
