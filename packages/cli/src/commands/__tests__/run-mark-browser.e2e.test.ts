@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 // Real Chromium, shipped UI and the composed mark/confirmation/detail routes. No provider calls.
 // An absent browser or stale build fails, never skips. Each cell owns an independent ledger.
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Page, type Locator } from 'playwright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -24,6 +24,12 @@ const RECHECK_DIR = process.env.AGENT_QA_MARK_UI_RECHECK_DIR
 const MEMBER = '[data-member-mark]'
 const STEP = '[data-step-id="0:0"] [data-step-mark]'
 const ACTION = '{"type":"click","ref":"e-continue"}'
+async function retainCapture(page: Page, name: string) {
+  if (!RECHECK_DIR) return
+  mkdirSync(RECHECK_DIR, { recursive: true })
+  await page.mouse.move(1400, 100)
+  await page.screenshot({ path: join(RECHECK_DIR, name), fullPage: true, animations: 'disabled' })
+}
 const closers: Array<() => Promise<void>> = []
 let browser: Browser
 beforeAll(async () => {
@@ -71,9 +77,17 @@ async function scene(noChannel = false) {
   const confirms = createConfirmRegistry({ timeoutMs: 20_000 })
   const door = composeDashboardDoor({ agentQaRoot: fixture.agentQaRoot, configPath: fixture.configPath,
     boundOrigin: () => undefined, confirms, runDetail: createDashboardRunDetailReader(db) })
+  const signals = ['SIGINT', 'SIGTERM'] as const
+  const beforeListeners = signals.map(signal => new Set(process.listeners(signal)))
   const server = await startServer({ db, port: 0, uiDir: UI_DIR, configPath: fixture.configPath,
     workspacePaths: resolveWorkspacePaths({ config, configPath: fixture.configPath }), agentHost: door.agentHost })
-  closers.push(async () => { server.close(); await door.host.close(); rmSync(fixture.root, { recursive: true, force: true }) })
+  const ownedListeners = signals.map((signal, index) => process.listeners(signal).filter(listener => !beforeListeners[index].has(listener)))
+  closers.push(async () => {
+    server.close()
+    await door.host.close()
+    signals.forEach((signal, index) => ownedListeners[index].forEach(listener => process.removeListener(signal, listener)))
+    rmSync(fixture.root, { recursive: true, force: true })
+  })
   const address = server.server.address()
   if (!address || typeof address === 'string') throw new Error('dashboard did not bind a port')
   const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 1100 } })
@@ -227,6 +241,7 @@ describe('419 real browser mark confirmation', () => {
 
   it('renders readable selected controls in both themes and retains requested captures', async () => {
     const s = await scene()
+    const measurements: unknown[] = []
     await waitChannel(s.page)
     for (const theme of ['dark', 'light']) {
       await s.page.evaluate(theme => localStorage.setItem('vite-ui-theme', theme), theme)
@@ -247,6 +262,8 @@ describe('419 real browser mark confirmation', () => {
           expect(await form.locator('label').filter({ hasText: label }).isVisible()).toBe(true)
         }
         expect(await form.locator('code').textContent()).toBe('{"type":"click","ref":"e1"}')
+        await s.page.mouse.move(1400, 100)
+        await form.evaluate(async element => { await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))) })
         const measures = await form.locator('[data-mark-kind], [data-mark-submit], [data-mark-cancel]').evaluateAll(elements => elements.map(element => {
           const style = getComputedStyle(element), bounds = element.getBoundingClientRect()
           return { text: element.textContent, font: parseFloat(style.fontSize), width: bounds.width, height: bounds.height, pressed: element.getAttribute('aria-pressed'), border: style.borderColor, background: style.backgroundColor }
@@ -258,9 +275,10 @@ describe('419 real browser mark confirmation', () => {
           expect(measure.height).toBeGreaterThanOrEqual(32)
         }
         expect(measures.find(m => m.pressed === 'true')?.border).not.toBe(measures.find(m => m.pressed === 'false')?.border)
-        console.log('MARK_UI_MEASUREMENTS', JSON.stringify({ theme, scope, measures }))
+        measurements.push({ theme, scope, measures })
       }
       // Explicit output opt-in must retain this browser scene, without touching prior evidence.
+      await retainCapture(s.page, `marks-${theme}.png`)
       if (RECHECK_DIR) expect(existsSync(join(RECHECK_DIR, `marks-${theme}.png`))).toBe(true)
     }
     expect(s.rows()).toHaveLength(0)
@@ -270,6 +288,7 @@ describe('419 real browser mark confirmation', () => {
     await member.locator('[data-mark-submit]').click()
     await s.page.getByRole('dialog', { name: 'Approval needed to record this mark', exact: true }).waitFor()
     expect(await s.page.locator('[data-run-confirm-dialog]').textContent()).toContain('Approval needed to record this mark')
+    await retainCapture(s.page, 'mark-confirmation.png')
     if (RECHECK_DIR) expect(existsSync(join(RECHECK_DIR, 'mark-confirmation.png'))).toBe(true)
     await tabTo(s.page, '[data-confirm-answer="accept"]')
     await s.page.keyboard.press('Enter')
@@ -295,5 +314,14 @@ describe('419 real browser mark confirmation', () => {
     await s.page.waitForURL('**/chat')
     expect(s.pageErrors).toEqual([])
     expect(s.outsideLoopback).toEqual([])
+    if (RECHECK_DIR) writeFileSync(join(RECHECK_DIR, 'measurements.json'), JSON.stringify({
+      captured: new Date().toISOString(), viewport: { width: 1440, height: 1100 },
+      chromium: browser.version(), executable: chromium.executablePath(),
+      freshness: buildFreshness(DASHBOARD_ANCHORED_BUILDS), measurements,
+      pageErrors: s.pageErrors, outsideLoopback: s.outsideLoopback,
+      keyboard: 'Tab and Enter reached both scopes and real accept/deny controls',
+      finalMarks: s.rows().map(({ kind, ordinal, stepIndex }) => ({ kind, ordinal, stepIndex })),
+      ownerPersonallyTested: false, assistiveTechnology: 'unverified',
+    }, null, 2))
   }, 60_000)
 })
