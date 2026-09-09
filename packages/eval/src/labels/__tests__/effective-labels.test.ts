@@ -84,6 +84,9 @@ describe('420 effective label histories', () => {
     expect(api.parseStandaloneLabelRecord).toBeTypeOf('function')
     const weight = { value: .75, k: 1, n: 1, verdictSource: 'user-gold', verdictFactor: 1, capabilityTier: 'full', tierFactor: 1, alpha0: 2, beta0: 1, corpusDigest: 'c'.repeat(64), evidenceDigest: 'd'.repeat(64), capabilityEvidence: { kind: 'missing' } } as const
     expect(api.parseStandaloneLabelRecord({ ...base(), weight }).ok).toBe(true)
+    const weighted = api.createLabelRevision(base(), { weight })
+    expect(api.createLabelRevision(weighted, { weight: { ...weight } })).toEqual(weighted)
+    expect(api.selectEffectiveLabels([base(), weighted]).effective.get(weighted.cassetteId)).toEqual(weighted)
     for (const patch of [{ value: NaN }, { value: 2 }, { verdictFactor: -1 }, { tierFactor: Infinity }, { k: 2 }, { n: .1 }, { n: Number.MAX_SAFE_INTEGER + 1 }, { alpha0: 0, beta0: 0 }, { alpha0: Number.MAX_VALUE, beta0: Number.MAX_VALUE }]) {
       expect(api.parseStandaloneLabelRecord({ ...base(), weight: { ...weight, ...patch } }).ok).toBe(false)
     }
@@ -91,5 +94,7 @@ describe('420 effective label histories', () => {
     const result = api.selectEffectiveLabels([base(), malformed])
     expect(result.effective.size).toBe(0)
     expect(result.refusals.map(row => row.reason)).toContain('invalid-record')
+    expect(api.parseStandaloneLabelRecord({ ...base(), quarantine: 'rerun-overturned' }).ok).toBe(false)
+    expect(api.selectEffectiveLabels([weighted, { ...weighted, weight: { ...weight, value: .5 } }]).refusals.map(row => row.reason)).toContain('conflicting-id')
   })
 })

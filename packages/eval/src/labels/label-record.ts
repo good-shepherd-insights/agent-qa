@@ -33,6 +33,7 @@ export const LABEL_RECORD_SCHEMA_VERSION = 1
 
 /** Run-anchored provenance stamped on every standalone record (ROOT-03 base). */
 export interface LabelProvenance {
+  rerun?: { attempt: number; originalAttempt?: number; originalEvidenceDigest?: string }
   sourceCassetteId?: string
   /** Source run identity as a plain wire string. */
   runId: string
@@ -61,6 +62,9 @@ export interface PairStateStamp {
 
 /** The authoritative `labels/` unit: one standalone record per cassette id (D-01). */
 export interface StandaloneLabelRecord {
+  revision?: { id: string; predecessorId: string; generationId?: string }
+  quarantine?: 'rerun-overturned'
+  weight?: LabelWeight
   correction?: LabelCorrection
   supersedes?: string
   /** Version gate (D-01). */
@@ -76,6 +80,25 @@ export interface StandaloneLabelRecord {
   pairState?: PairStateStamp
   /** Run-anchored provenance (ROOT-03 base). */
   provenance: LabelProvenance
+}
+
+/** Persisted evidence for the SOFT estimate; consumers never recalculate it. */
+export interface LabelWeight {
+  value: number
+  k: number
+  n: number
+  verdictSource: 'user-gold' | 'stable-pass-silver' | 'unverified'
+  verdictFactor: number
+  capabilityTier: 'full' | 'degraded' | 'floor'
+  tierFactor: number
+  alpha0: number
+  beta0: number
+  corpusDigest: string
+  evidenceDigest: string
+  capabilityEvidence: {
+    kind: 'model-identity' | 'deterministic' | 'missing'
+    modelIdentity?: { provider: string; modelId: string }
+  }
 }
 
 /** 2026-09-08, 419 D-06: the correction is separate from the observed action and verdict. */

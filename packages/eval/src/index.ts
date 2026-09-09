@@ -1,4 +1,7 @@
 export type { ArtifactSource, HandoffSource } from './ports'
+export { parseStandaloneLabelRecord, selectEffectiveLabels, deriveLabelRevisionId, createLabelRevision } from './labels/effective-labels'
+export type { LabelRecordParse, LabelHistoryRefusalReason, LabelHistoryRefusal, EffectiveLabelSelection } from './labels/effective-labels'
+export type { LabelWeight } from './labels/label-record'
 
 export { canonicalJson, canonicalValue } from './canonical-json'
 
