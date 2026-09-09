@@ -2912,7 +2912,9 @@ describe('eval --source committed — the whole committed corpus in ONE batch (4
 
     const staged = await runReportVerb(session)
     expect(staged.source).toBe('staged')
-    expect(staged.report.recovery.negativeDecisionCount).toBe(0)
+    // Phase420: authoritative standalone labels govern staged scores too; split ownership remains unknown.
+    expect(staged.report.recovery.negativeDecisionCount).toBe(1)
+    expect(staged.report.perSplit.unassignedCount).toBe(staged.entries)
   })
 
   it('accepts --source committed and rejects an unknown source with exit 1 on both verbs', async () => {

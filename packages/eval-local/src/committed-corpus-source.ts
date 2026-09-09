@@ -58,6 +58,7 @@ import {
 import { listCassetteBundleDirs } from './replay-read.js'
 import { FsMarkLedger } from './mark-ledger.js'
 import { readLabelCalibration } from './calibration-source.js'
+import { reportMetadataKind } from './report-metadata-guard.js'
 
 /** Gate-side effective view; raw committed history and the proposer reader remain unchanged. */
 export function readActiveCommittedCorpus(committedRoot: string, agentQaRoot: string): CommittedCorpusRead {
@@ -601,6 +602,10 @@ export function listCommittedReports(committedRoot: string): {
     const parsed = reportSchema.safeParse(read.value)
     if (!parsed.success) {
       refusals.push({ path, reason: `report rejected: ${issueText(parsed.error)}` })
+      continue
+    }
+    if (reportMetadataKind(read.value) === 'invalid') {
+      refusals.push({ path, reason: 'report label metadata incomplete or malformed' })
       continue
     }
     reports.push({ batchKey: name, report: parsed.data as unknown as EvalBatchReport, path })

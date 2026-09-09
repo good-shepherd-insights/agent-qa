@@ -570,9 +570,8 @@ export async function runReplayVerb(
   const { swept, loaded, loadRefusals } = loadCassetteBundles(cassettesRoot)
 
   // (3) filters on the LOADED set — the ONE D-02 vocabulary; a named miss is the only throw.
-  const activeCorpus = source === 'committed'
-    ? readActiveCommittedCorpus(resolve(session.configDir, 'agent-qa-eval'), agentQaRoot) : undefined
-  const activeIds = activeCorpus === undefined ? undefined : new Set(activeCorpus.snapshot.entries.map(entry => entry.cassetteId))
+  const activeCorpus = readActiveCommittedCorpus(resolve(session.configDir, 'agent-qa-eval'), agentQaRoot)
+  const activeIds = source !== 'committed' ? undefined : new Set(activeCorpus.snapshot.entries.map(entry => entry.cassetteId))
   let selected = activeIds === undefined ? loaded : loaded.filter(entry => activeIds.has(entry.cassette.id))
   if (filters.cassette !== undefined) {
     const named = filters.cassette
@@ -599,6 +598,7 @@ export async function runReplayVerb(
 
   const notices: string[] = []
   if (sourceRoot.notice !== undefined) notices.push(sourceRoot.notice)
+  notices.push(...activeCorpus.refusals.map(refusal => `committed read refused ${refusal.path}: ${refusal.reason}`))
   const zeroJudge = (configured: boolean): ReplayJudgeCounters => ({
     configured,
     invoked: 0,
@@ -686,7 +686,7 @@ export async function runReplayVerb(
   }
   const spendBatch = assembleScoredBatch({ replaysRoot, cassettesRoot, source,
     recordDirs: replayedDirs, labelRecords: activeCorpus?.snapshot.labelsById,
-    corpusEntriesById: activeCorpus?.corpusEntriesById,
+    corpusEntriesById: source === 'committed' ? activeCorpus.corpusEntriesById : undefined,
     excludedLabelIds: activeCorpus?.snapshot.excludedLabelIds,
     calibration: activeCorpus?.calibration })
   notices.push(...spendBatch.notices)
@@ -2116,8 +2116,9 @@ export async function runReportVerb(
   if (sourceRoot.notice !== undefined) notices.push(sourceRoot.notice)
 
   // (1)+(2) Join every persisted replay record to its score, judge identity, and cassette label.
-  const committedCorpus = source === 'committed'
-    ? readActiveCommittedCorpus(resolve(session.configDir, 'agent-qa-eval'), agentQaRoot) : undefined
+  const labelCorpus = readActiveCommittedCorpus(resolve(session.configDir, 'agent-qa-eval'), agentQaRoot)
+  const committedCorpus = source === 'committed' ? labelCorpus : undefined
+  notices.push(...labelCorpus.refusals.map(refusal => `committed read refused ${refusal.path}: ${refusal.reason}`))
   const {
     entries: assembled,
     judgeBlocks,
@@ -2125,12 +2126,12 @@ export async function runReportVerb(
     missingBundleCount,
     notices: assemblyNotices,
   } = assembleScoredBatch({ replaysRoot, cassettesRoot, source,
+    labelRecords: labelCorpus.snapshot.labelsById,
+    excludedLabelIds: labelCorpus.snapshot.excludedLabelIds,
     ...(committedCorpus === undefined ? {} : {
       productByCassetteId: new Map(committedCorpus.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
       eligibleCassetteIds: new Set(committedCorpus.snapshot.entries.map(entry => entry.cassetteId)),
-      labelRecords: committedCorpus.snapshot.labelsById,
       corpusEntriesById: committedCorpus.corpusEntriesById,
-      excludedLabelIds: committedCorpus.snapshot.excludedLabelIds,
     }),
   })
   notices.push(...assemblyNotices)
@@ -2200,7 +2201,7 @@ export async function runReportVerb(
 
   // (5) Exactly ONE buildEvalReport call — one batch, one report, one headline (D-14). The CLI
   // never sums scores; every counter and rate is the aggregator's.
-  const report = buildEvalReport(entries, judgeForReport, mixedIdentity, { calibration: committedCorpus?.calibration })
+  const report = buildEvalReport(entries, judgeForReport, mixedIdentity, { calibration: labelCorpus.calibration })
   const vectors = decisionCorrectnessVectors(entries, partitionsById)
   const decisions = projectDecisionVectorsDocument({
     batchKey: report.batchKey, matcherVersion: report.matcherVersion, vectors,

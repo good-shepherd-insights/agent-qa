@@ -3,12 +3,13 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { canonicalJson, computeBatchKey } from '@vostride/agent-qa-eval'
-import type { FloorRunInput, StandaloneLabelRecord, ScoringJudgeRequest } from '@vostride/agent-qa-eval'
+import type { FloorRunInput, StandaloneLabelRecord, ScoringJudgeRequest, CorpusEntry, EvalBatchReport } from '@vostride/agent-qa-eval'
 import { slugBranch } from '@vostride/agent-qa-schema'
 
 import { assembleScoredBatch, projectAssembledBatch } from './replay-batch-assembly.js'
 import { listReplayRecordDirs, loadReplayRecord, loadScoreRecord } from './replay-read.js'
 import { loadStagedReport } from './report-store.js'
+import { reportMetadataKind, legacyReportComparison } from './report-metadata-guard.js'
 
 interface MeasuredCostReceipt {
   index: number
@@ -54,6 +55,9 @@ export function readMeasuredFloorRun(input: {
   matcherVersion: number
   productByCassetteId: ReadonlyMap<string, string>
   labelRecords?: ReadonlyMap<string, StandaloneLabelRecord>
+  corpusEntriesById?: ReadonlyMap<string, CorpusEntry>
+  excludedLabelIds?: ReadonlySet<string>
+  calibration?: EvalBatchReport['calibration']
   expectedJudgeRequest?: ScoringJudgeRequest
   receipt: MeasuredCostReceipt
 }): FloorRunInput {
@@ -105,7 +109,9 @@ export function readMeasuredFloorRun(input: {
   const assemble = (products?: ReadonlyMap<string, string>) => {
     const batch = assembleScoredBatch({ replaysRoot, cassettesRoot: input.cassettesRoot,
       source: 'committed', recordDirs, productByCassetteId: products, expectedJudgeRequest: input.expectedJudgeRequest,
-      ...(products === undefined ? {} : { labelRecords: input.labelRecords,
+      labelRecords: input.labelRecords, excludedLabelIds: input.excludedLabelIds,
+      calibration: input.calibration,
+      ...(products === undefined ? {} : { corpusEntriesById: input.corpusEntriesById,
         eligibleCassetteIds: new Set(products.keys()) }) })
     if (batch.missingBundleCount !== 0 || batch.notices.length !== 0) refuse('cassette or score read refused')
     return projectAssembledBatch(batch, { declaredSeed: receipt.seed, runIdentity })
@@ -113,11 +119,13 @@ export function readMeasuredFloorRun(input: {
   // Both current committed ownership and the historical scope join are recognized. Every
   // other field must reproduce exactly from retained records before any in-memory correction.
   const corrected = assemble(productByCassetteId)
+  const legacy = reportMetadataKind(saved.report) === 'legacy'
   const matches = (candidate: typeof corrected) =>
-    canonicalJson(candidate.report) === canonicalJson(saved.report) &&
+    canonicalJson(legacy ? legacyReportComparison(candidate.report) : candidate.report) === canonicalJson(saved.report) &&
     canonicalJson(candidate.vectors) === canonicalJson(saved.decisions!.vectors)
-  if (!matches(corrected) && !matches(assemble())) refuse('saved report/decisions do not reproduce from complete records')
-  const { report, vectors } = corrected
+  if (!matches(corrected) && (!legacy || !matches(assemble()))) refuse('saved report/decisions do not reproduce from complete records')
+  const report = legacy ? saved.report : corrected.report
+  const { vectors } = corrected
   const cost = report.totalCost
   const judge = report.honesty.judge.cost
   if (receipt.decisions !== vectors.length || receipt.seedHonored !== report.seedHonored ||

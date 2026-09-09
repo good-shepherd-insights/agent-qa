@@ -52,6 +52,12 @@ it('suppresses a quarantined cached score but retains its incurred planner and j
   const f = await fixture()
   const read = readCommittedCorpus(f.committedRoot)
   const label = [...read.snapshot.labelsById.values()][0]!
+  const cached = metricEntry(label.cassetteId)
+  cached.score.entry.score.judgeSettled = { cause: 'partial-identity', axis: 'element-identity',
+    resolution: 'equivalent', judgeId: 'fixture', judgeVersion: 1, confidence: 'high',
+    usage: { calls: 1, inputTokens: 7, outputTokens: 3 } }
+  new FsScoreStore({ root: f.agentQaRoot }).save({ cassetteId: label.cassetteId,
+    matcherVersion: 1, score: cached.score, diffs: [] })
   const product = read.snapshot.entries.find(entry => entry.cassetteId === label.cassetteId)!.product
   const revision = createLabelRevision(label, { quarantine: 'rerun-overturned' })
   write(join(f.committedRoot, committedLabelPath(product, label.cassetteId)).replace(/\.json$/, `--revision-${revision.revision!.id}.json`), revision)
@@ -59,6 +65,18 @@ it('suppresses a quarantined cached score but retains its incurred planner and j
   expect(entries).toBe(3)
   expect(report.headline.firstAttemptDecisionAccuracy.denominator).toBe(2)
   expect(report.totalCost.totalTokens).toBe(45)
+  expect(report.honesty.judge.cost).toMatchObject({ calls: 1, inputTokens: 7, outputTokens: 3 })
+  expect(report.honesty.judge.settled['partial-identity']).toBe(0)
+})
+
+it('rejects partial Phase420 metadata on the actual from-committed command path', async () => {
+  const f = await fixture()
+  const current = await runReportVerb(f.session, {}, { source: 'committed' })
+  const malformed = structuredClone(current.report) as any
+  delete malformed.perSplit
+  write(join(f.committedRoot, 'reports', current.batchKey, 'report.json'), malformed)
+  await expect(runReportVerb(f.session, {}, { baseline: true, fromCommitted: current.batchKey, seedPolicy: 'none' }))
+    .rejects.toThrow('report label metadata incomplete or malformed')
 })
 
 it('copies guarded calibration once into the report and discloses unknown staged ownership', async () => {
@@ -71,8 +89,12 @@ it('copies guarded calibration once into the report and discloses unknown staged
     verifierFalsePassRate: { numerator: 0, denominator: 0 } })
   cpSync(join(f.committedRoot, 'cassettes'), join(f.agentQaRoot, 'eval/cassettes'), { recursive: true })
   const staged = await runReportVerb(f.session)
+  expect(staged.report.calibration).toEqual(report.calibration)
   expect(staged.report.perSplit.unassignedCount).toBe(3)
   expect(staged.notices.some(line => line.includes('split ownership unknown'))).toBe(true)
+  write(join(f.committedRoot, 'labels/calibration.json'), { invalid: true })
+  const invalid = await runReportVerb(f.session)
+  expect(invalid.notices.some(line => line.includes('invalid label calibration artifact'))).toBe(true)
 })
 
 it('counts both active gold clones as one verifier source after actual mark publication', async () => {

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import {
   committedFileText,
+  canonicalJson,
   buildEvalReport,
   computeBatchKey,
   computeCorpusDigest,
@@ -14,7 +15,7 @@ import {
 } from '@vostride/agent-qa-eval'
 import { resolveCapabilities } from '@vostride/agent-qa-model'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
-import { computeBriefDigest } from '@vostride/agent-qa-schema'
+import { computeBriefDigest, sha256hex } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import * as evalLocal from '../index.js'
@@ -114,6 +115,7 @@ describe('runNoiseFloorMeasurement', () => {
     const lines: string[] = []
     const fresh = await evalLocal.runNoiseFloorMeasurement({ ...input, onProgress: line => lines.push(line) })
     const retained = new Map<string, string>()
+    const historicalReportDigests: string[] = []
     const snapshot = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const path = join(dir, entry.name)
@@ -128,8 +130,14 @@ describe('runNoiseFloorMeasurement', () => {
         declaredSeed: fresh.artefact.runs[index]!.seed,
         runIdentity: { fingerprint: fresh.fingerprint, corpusDigest: fresh.artefact.corpusDigest },
       })
+      // Reproduce the pre-420 format while preserving every historical field.
+      const historical = structuredClone(old.report)
+      for (const key of ['calibration', 'perSplit']) Reflect.deleteProperty(historical, key)
+      Reflect.deleteProperty(historical.headline, 'verifierFalsePassRate')
+      for (const key of ['weightSum', 'pairsWithoutWeight', 'weightedAccuracy']) Reflect.deleteProperty(historical.recovery, key)
+      historicalReportDigests.push(sha256hex(canonicalJson(historical)))
       new evalLocal.FsReportStore({ root: input.agentQaRoot, outputDir: join(root, 'reports') })
-        .save(old.report, { schemaVersion: 1, batchKey: old.report.batchKey,
+        .save(historical, { schemaVersion: 1, batchKey: old.report.batchKey,
           matcherVersion: old.report.matcherVersion, vectors: old.vectors })
       expect(old.vectors.every(vector => vector.product === 'default')).toBe(true)
       snapshot(root)
@@ -142,7 +150,9 @@ describe('runNoiseFloorMeasurement', () => {
       fromMeasured, commit: true,
       maskingContextFactory: () => { throw new Error('replay safety setup forbidden during recovery') },
     })
-    expect(recovered.artefact).toEqual(fresh.artefact)
+    expect(recovered.artefact).toEqual({ ...fresh.artefact,
+      runs: fresh.artefact.runs.map((run, index) => ({ ...run, reportDigest: historicalReportDigests[index] })),
+    })
     expect(recovered.recovery).toEqual({ costLog: fromMeasured, modelCalls: 0 })
     expect(recovered.committed?.kind).toBe('written')
     expect(model).not.toHaveBeenCalled()

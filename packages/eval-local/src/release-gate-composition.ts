@@ -168,6 +168,8 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
         corpusDigest,
         productByCassetteId: new Map(corpus.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
         labelRecords: corpus.snapshot.labelsById,
+        corpusEntriesById: corpus.corpusEntriesById, excludedLabelIds: corpus.snapshot.excludedLabelIds,
+        calibration: corpus.calibration,
         clock: input.clock,
         onProgress: mode.onProgress,
       })

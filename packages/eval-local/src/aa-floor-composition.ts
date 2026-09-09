@@ -21,6 +21,7 @@ import type {
   FoldNoiseFloorInput,
   NoiseFloorArtefact,
   StandaloneLabelRecord,
+  CorpusEntry,
 } from '@vostride/agent-qa-eval'
 import type { ModelProfile, ModelProviderOverrides, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
@@ -66,6 +67,9 @@ export interface ReplayCorpusOnceInput {
   corpusDigest?: string
   productByCassetteId?: ReadonlyMap<string, string>
   labelRecords?: ReadonlyMap<string, StandaloneLabelRecord>
+  corpusEntriesById?: ReadonlyMap<string, CorpusEntry>
+  excludedLabelIds?: ReadonlySet<string>
+  calibration?: EvalBatchReport['calibration']
   clock?: () => number
   onProgress?: (cassetteId: string) => void
 }
@@ -194,6 +198,8 @@ export async function runNoiseFloorMeasurement(
         plannerModelId: input.profileKeyInputs.plannerModelId,
         matcherVersion: input.profileKeyInputs.matcherVersion, productByCassetteId,
         labelRecords: corpus.snapshot.labelsById, receipt,
+        corpusEntriesById: corpus.corpusEntriesById, excludedLabelIds: corpus.snapshot.excludedLabelIds,
+        calibration: corpus.calibration,
         expectedJudgeRequest: input.profileKeyInputs.judgeModelId === undefined ? null : {
           judgeModelId: input.profileKeyInputs.judgeModelId, allowSameFamily: input.judge?.allowSameFamily === true } }))
       input.onProgress?.(receipt.line)
@@ -218,6 +224,8 @@ export async function runNoiseFloorMeasurement(
       corpusDigest,
       productByCassetteId,
       labelRecords: corpus.snapshot.labelsById,
+      corpusEntriesById: corpus.corpusEntriesById, excludedLabelIds: corpus.snapshot.excludedLabelIds,
+      calibration: corpus.calibration,
       clock: input.clock,
       onProgress: input.onProgress,
     })
@@ -369,6 +377,8 @@ export async function replayCorpusOnce(
     cassettesRoot: input.cassettesRoot,
     source: input.source,
     recordDirs: sweep.recordedDirs,
+    corpusEntriesById: input.corpusEntriesById, excludedLabelIds: input.excludedLabelIds,
+    calibration: input.calibration,
     productByCassetteId: input.productByCassetteId,
     labelRecords: input.labelRecords,
     ...(input.productByCassetteId === undefined ? {} : { eligibleCassetteIds: new Set(input.productByCassetteId.keys()) }),

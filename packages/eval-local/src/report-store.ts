@@ -28,6 +28,7 @@ import { guardDecisionVectorsDocument } from '@vostride/agent-qa-eval'
 import type { DecisionVectorsDocument, EvalBatchReport } from '@vostride/agent-qa-eval'
 import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
+import { reportMetadataKind } from './report-metadata-guard.js'
 
 export const DEFAULT_EVAL_REPORTS_SUBDIR = 'eval/reports'
 
@@ -147,6 +148,9 @@ export function loadStagedReport(
   const parsed = stagedReportSchema.safeParse(value)
   if (!parsed.success) {
     return { kind: 'refused', file, reason: `report rejected: ${parsed.error.message}` }
+  }
+  if (reportMetadataKind(value) === 'invalid') {
+    return { kind: 'refused', file, reason: 'report label metadata incomplete or malformed' }
   }
   if (parsed.data.batchKey !== batchKey) {
     return { kind: 'refused', file, reason: 'report batchKey does not match the requested batchKey' }
