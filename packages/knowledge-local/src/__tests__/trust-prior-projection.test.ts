@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { BundleOutcomeEventSchema, canonicalJson, foldBundleTrust, type TrustPriorTable } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import { appendOutcomeEvent } from '../bundle-append.js'
-import { deriveBundleTrust, loadBundle, type LoadedBundle } from '../bundle-read.js'
+import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
 import { publishBundle, type PublishBundleInput } from '../bundle-publish.test-helper.js'
 import { applyIndexDeltaForBundle, applyIndexDeltaForBundleWithinCurrentAuthority, deriveIndexRowFromBundle } from '../curator/commit.js'
 import { indexDbPath } from '../index-open.js'
@@ -16,7 +16,7 @@ const fixture = JSON.parse(readFileSync(new URL('./fixtures/420-prior-baseline.j
   cases: { name: string; input: PublishBundleInput; appended: unknown[]; snapshots: { expectedBytes: string }[] }[]
 }
 const calibrated: TrustPriorTable = { 'agent-verified': { alpha: 2.7, beta: 0.3 } }
-const derive = deriveBundleTrust as (bundle: LoadedBundle, priors?: TrustPriorTable) => ReturnType<typeof deriveBundleTrust>
+const derive = deriveBundleTrust
 
 function persist(root: string, entry: typeof fixture.cases[number]) {
   const config = { knowledgeRoot: join(root, 'knowledge'), productKey: 'baseline', auditBaseDir: join(root, 'audit'), commitArtifacts: 'none' as const }

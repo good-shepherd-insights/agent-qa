@@ -16,6 +16,7 @@ import {
   anchorGraphNode,
   canonicalJson,
   guardDistilledObservation,
+  guardTrustPriorTable,
   recordGraphNode,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -25,6 +26,7 @@ import type {
   GraphNodeNaturalKey,
   GraphNodeType,
   Platform,
+  TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
@@ -95,6 +97,7 @@ export interface RebuildIndexHooks {
 
 export interface RebuildIndexOptions {
   knowledgeRoot: string
+  priors?: TrustPriorTable
   embedder?: EmbedderPort
   vecLoadablePath?: string
   writerAuthority?: WriterLeaseAuthority
@@ -103,6 +106,7 @@ export interface RebuildIndexOptions {
 
 export interface ProjectBundleIndexRowOptions {
   knowledgeRoot: string
+  priors?: TrustPriorTable
   bundleId: string
   /** Required whenever the same content-addressed id exists in more than one product. */
   product?: string
@@ -338,8 +342,9 @@ function upsertRecord(
   db: DatabaseSync,
   bundle: LoadedBundle,
   product: string,
+  priors?: TrustPriorTable,
 ): { recordRowid: number; status: BundleStatus } {
-  const trust = deriveBundleTrust(bundle)
+  const trust = deriveBundleTrust(bundle, priors)
   db.prepare(`
     INSERT INTO records (
       bundle_id, product, mutable_state_hash, kind, subtype, scope_tier, scope_key,
@@ -621,12 +626,14 @@ function projectBundle(
   authority?: MutationAuthorityContext,
   beforeCommit?: () => void,
   hooks?: RebuildIndexHooks,
+  priors?: TrustPriorTable,
 ): void {
   transaction(db, () => {
     const { recordRowid, status } = upsertRecord(
       db,
       projected.bundle,
       projected.product,
+      priors,
     )
     replaceFtsAndAnchors(db, projected.bundle, projected.product, recordRowid)
     if (isDeadStatus(status)) {
@@ -719,6 +726,7 @@ function projectBundleIndexRowWithAuthority(
   opts: ProjectBundleIndexRowOptions,
   authority?: MutationAuthorityContext,
 ): void {
+  const priors = opts.priors === undefined ? undefined : guardTrustPriorTable(opts.priors)
   const target = resolveProductQualifiedBundleDir({
     knowledgeRoot: opts.knowledgeRoot,
     recordId: opts.bundleId,
@@ -744,7 +752,7 @@ function projectBundleIndexRowWithAuthority(
   const writer = openIndexWriter(opts.knowledgeRoot)
   const activeProfile = resolveActiveProfile(writer.db)
   try {
-    projectBundle(writer.db, writer.vec, projected, activeProfile, authority)
+    projectBundle(writer.db, writer.vec, projected, activeProfile, authority, undefined, undefined, priors)
     emitRelationEdges(writer.db, [projected], authority)
     const scanIssues: string[] = []
     emitObservationEdges(
@@ -1326,6 +1334,7 @@ function reconcileVecRows(
 
 /** Hash-selected projection plus the independent D-02 backfill and D-10 reconciliation passes. */
 export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildReport> {
+  const priors = opts.priors === undefined ? undefined : guardTrustPriorTable(opts.priors)
   const writerAuthority = opts.writerAuthority
   if (
     writerAuthority !== undefined
@@ -1412,6 +1421,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         authority,
         opts.hooks?.beforeTransactionCommit,
         opts.hooks,
+        priors,
       )
       projected.push(item)
       report.projected += 1

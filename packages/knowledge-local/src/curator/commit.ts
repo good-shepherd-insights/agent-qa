@@ -25,6 +25,7 @@ import type {
   RecordId,
   ResolvePromotionPosture,
   ScreenState,
+  TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import { copyArtifacts } from '../artifact-copy.js'
@@ -195,6 +196,7 @@ export type CommitCurationOutcome =
 
 export interface ApplyIndexDeltaForBundleInput {
   knowledgeRoot: string
+  priors?: TrustPriorTable
   bundleId: string
   product?: string
   lexicalInput?: string
