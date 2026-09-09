@@ -23,19 +23,11 @@ import { getLoadablePath } from './sqlite-vec-loadable.js'
 
 export const INDEX_DB_FILE = 'knowledge.db'
 
-/**
- * Phase 379 round-4 embed-status vocabulary split; older disposable projections reset instead of
- * migrating in place. v3 projections carry an ambiguous terminal embed status (structural scrub
- * and SAFE-02 redaction conflated in 'suppressed') that cannot be split in place, so they reset
- * and re-derive from canonical bundles.
- */
-export const INDEX_SCHEMA_VERSION = 4
+/** Phase 420: disposable trust projections now carry their effective-prior identity. */
+export const INDEX_SCHEMA_VERSION = 5
 
-/**
- * Phase 379 readers reject pre-split projections until a writer performs the v4 reset — an
- * ambiguous v3 row must never be read as either suppression kind.
- */
-export const MIN_READABLE_INDEX_SCHEMA_VERSION = 4
+/** Pre-v5 projections cannot prove which host prior table produced their numbers. */
+export const MIN_READABLE_INDEX_SCHEMA_VERSION = 5
 
 /**
  * Phase 377 D-04 rendering epoch.
@@ -537,6 +529,7 @@ function bootstrapSchema(
       bundle_id TEXT NOT NULL UNIQUE,
       product TEXT NOT NULL,
       mutable_state_hash TEXT NOT NULL,
+      trust_prior_digest TEXT NOT NULL DEFAULT '',
       kind TEXT NOT NULL,
       subtype TEXT,
       scope_tier TEXT NOT NULL,

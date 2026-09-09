@@ -3,15 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
-import { type TrustPriorTable } from '@vostride/agent-qa-schema'
+import { ORIGIN_PRIORS, type TrustPriorTable } from '@vostride/agent-qa-schema'
 import { publishBundle, type PublishBundleInput } from '../bundle-publish.test-helper.js'
 import { indexDbPath, INDEX_SCHEMA_VERSION, MIN_READABLE_INDEX_SCHEMA_VERSION, INDEX_RENDERING_SCHEMA_VERSION } from '../index-open.js'
 import { rebuildIndex, projectBundleIndexRow } from '../index-rebuild.js'
 import { acquireWriterLease } from '../lease/writer-lease.js'
+import { effectivePriorDigest } from '../trust-prior-context.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
-const input = JSON.parse(readFileSync(new URL('./fixtures/420-prior-baseline.json', import.meta.url), 'utf8')).cases[0].input as PublishBundleInput
+const input = JSON.parse(readFileSync(new URL('./fixtures/420-prior-baseline.json', import.meta.url), 'utf8')).cases.find((entry: { name: string }) => entry.name === 'agent-observed-clean').input as PublishBundleInput
 const prior = (alpha = 1.8): TrustPriorTable => ({ 'agent-observed': { alpha, beta: 2 - alpha } })
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-prior-index-'))
@@ -30,6 +31,12 @@ function inspect(root: string) {
 }
 
 describe('420 prior-aware index refresh', () => {
+  it('canonicalizes effective defaults and rejects invalid host data', () => {
+    expect(effectivePriorDigest()).toBe(effectivePriorDigest({}))
+    expect(effectivePriorDigest()).toBe(effectivePriorDigest(ORIGIN_PRIORS))
+    expect(effectivePriorDigest(prior())).toBe(effectivePriorDigest({ ...ORIGIN_PRIORS, ...prior() }))
+    expect(() => effectivePriorDigest({ user: { alpha: NaN, beta: 1 } })).toThrow()
+  })
   it('invalidates old trust schema without changing rendering schema', () => {
     expect(INDEX_SCHEMA_VERSION).toBe(5)
     expect(MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(5)
@@ -77,5 +84,30 @@ describe('420 prior-aware index refresh', () => {
     expect(inspect(f.knowledgeRoot).epoch).toBeUndefined()
     await rebuildIndex({ ...f, priors: prior() })
     expect(inspect(f.knowledgeRoot).epoch).toEqual(expect.any(String))
+  })
+  it('refuses mixed rows at publication and repairs them on retry', async () => {
+    const f = fixture()
+    await rebuildIndex(f)
+    await rebuildIndex({ ...f, priors: prior(), hooks: { beforeMutationAuthority(family) {
+      if (family !== 'complete-trust-epoch') return
+      const db = new DatabaseSync(indexDbPath(f.knowledgeRoot))
+      db.prepare('UPDATE records SET trust_prior_digest = ?').run('interrupted-other-host')
+      db.close()
+    } } })
+    expect(inspect(f.knowledgeRoot).epoch).toBeUndefined()
+    await rebuildIndex({ ...f, priors: prior() })
+    expect(inspect(f.knowledgeRoot).epoch).toBe(effectivePriorDigest(prior()))
+  })
+  it('publishes only after removed bundles are removed and refuses stale authority', async () => {
+    const f = fixture()
+    await rebuildIndex(f)
+    await expect(rebuildIndex({ ...f, priors: prior(), writerAuthority: { ...f.writerAuthority, epoch: f.writerAuthority.epoch + 1 } })).rejects.toThrow()
+    expect(inspect(f.knowledgeRoot).epoch).toBe(effectivePriorDigest())
+    rmSync(f.dir, { recursive: true })
+    await expect(rebuildIndex({ ...f, priors: prior(), hooks: { beforeMutationAuthority(family) { if (family === 'remove-missing-bundles') throw new Error('removal interrupted') } } })).rejects.toThrow('removal interrupted')
+    expect(inspect(f.knowledgeRoot).epoch).toBeUndefined()
+    const report = await rebuildIndex({ ...f, priors: prior() })
+    expect(report.removed).toBe(1)
+    expect(inspect(f.knowledgeRoot)).toEqual({ rows: [], epoch: effectivePriorDigest(prior()) })
   })
 })

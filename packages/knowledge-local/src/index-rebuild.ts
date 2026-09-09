@@ -67,6 +67,8 @@ import {
   type WriterLeaseAuthority,
 } from './lease/writer-lease.js'
 import { clearRebuildRequest } from './rebuild-marker.js'
+import { effectivePriorDigest } from './trust-prior-context.js'
+import { snapshotTrustPriors } from './promotion-gate-input.js'
 
 export interface RebuildReport {
   projected: number
@@ -84,6 +86,7 @@ export type RebuildMutationFamily =
   | 'checkpoint-passive'
   | 'remove-missing-bundles'
   | 'complete-rendering-epoch'
+  | 'complete-trust-epoch'
   | 'clear-rebuild-request'
 
 export interface RebuildIndexHooks {
@@ -345,13 +348,16 @@ function upsertRecord(
   priors?: TrustPriorTable,
 ): { recordRowid: number; status: BundleStatus } {
   const trust = deriveBundleTrust(bundle, priors)
+  const digest = effectivePriorDigest(priors)
+  // A delta may change one row to another epoch, but cannot certify the full index.
+  db.prepare("DELETE FROM meta WHERE k = 'trust_prior_digest' AND v != ?").run(digest)
   db.prepare(`
     INSERT INTO records (
       bundle_id, product, mutable_state_hash, kind, subtype, scope_tier, scope_key,
       status, trust, confirmed, contradicted, helpful, harmful, last_confirmed_ordinal,
       opened_at_ordinal, closed_at_ordinal, created_at_ordinal, origin_class, summary,
-      embedding_input, situating_line, contextual_rendering
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      embedding_input, situating_line, contextual_rendering, trust_prior_digest
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(bundle_id) DO UPDATE SET
       product = excluded.product,
       mutable_state_hash = excluded.mutable_state_hash,
@@ -361,6 +367,7 @@ function upsertRecord(
       scope_key = excluded.scope_key,
       status = excluded.status,
       trust = excluded.trust,
+      trust_prior_digest = excluded.trust_prior_digest,
       confirmed = excluded.confirmed,
       contradicted = excluded.contradicted,
       helpful = excluded.helpful,
@@ -395,6 +402,7 @@ function upsertRecord(
     bundle.manifest.embeddingInput,
     '',
     bundle.manifest.embeddingInput,
+    digest,
   )
 
   const row = db
@@ -1334,7 +1342,8 @@ function reconcileVecRows(
 
 /** Hash-selected projection plus the independent D-02 backfill and D-10 reconciliation passes. */
 export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildReport> {
-  const priors = opts.priors === undefined ? undefined : guardTrustPriorTable(opts.priors)
+  const priors = snapshotTrustPriors(opts.priors)
+  const digest = effectivePriorDigest(priors)
   const writerAuthority = opts.writerAuthority
   if (
     writerAuthority !== undefined
@@ -1371,6 +1380,11 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
   let processedBundles = 0
 
   try {
+    // Invalidate before any row can commit. An interruption cannot look complete, even
+    // when retrying the same epoch after a partially completed prior pass.
+    transaction(writer.db, () => {
+      writer.db.prepare("DELETE FROM meta WHERE k = 'trust_prior_digest'").run()
+    }, authority)
     for (const entry of enumerateBundleDirs(opts.knowledgeRoot)) {
       const outcome = loadBundle(entry.dir)
       if (outcome.kind === 'incomplete') {
@@ -1395,13 +1409,22 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       relationSources.push(item)
       const current = writer.db
         .prepare(`
-          SELECT mutable_state_hash
+          SELECT mutable_state_hash, trust_prior_digest
           FROM records
           WHERE bundle_id = ?
         `)
         .get(outcome.bundle.manifest.id)
       processedBundles += 1
       if (current?.mutable_state_hash === outcome.bundle.manifest.mutableStateHash) {
+        if (current.trust_prior_digest !== digest) {
+          // Trust-only reprojection must not undo SAFE-02 lexical redaction or disturb
+          // rendering, graph, embedding provenance, counters or lifecycle fields.
+          transaction(writer.db, () => {
+            writer.db.prepare('UPDATE records SET trust = ?, trust_prior_digest = ? WHERE bundle_id = ?')
+              .run(deriveBundleTrust(outcome.bundle, priors).trust, digest, outcome.bundle.manifest.id)
+          }, authority, opts.hooks?.beforeTransactionCommit, { family: 'project-bundle', hooks: opts.hooks })
+          report.projected += 1
+        }
         if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
           withNamedMutationAuthority(
             authority,
@@ -1467,6 +1490,13 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       opts.hooks,
       () => writer.completeRenderingEpoch(),
     )
+    if (writerAuthority !== undefined && report.skippedIncomplete === 0 && report.scanIssues.length === 0) {
+      transaction(writer.db, () => {
+        const mixed = writer.db.prepare('SELECT 1 FROM records WHERE trust_prior_digest != ? LIMIT 1').get(digest)
+        if (mixed !== undefined) return
+        writer.db.prepare("INSERT INTO meta (k, v) VALUES ('trust_prior_digest', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(digest)
+      }, authority, undefined, { family: 'complete-trust-epoch', hooks: opts.hooks })
+    }
     report.pendingEmbeddings = selectPendingEmbeddingRows(writer.db).length
     report.maintenanceRemaining =
       report.pendingEmbeddings > 0

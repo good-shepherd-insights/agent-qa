@@ -439,8 +439,8 @@ describe('IDX-01 derived-index rebuild projection', () => {
   })
 
   it('marks a v2 index for schema reset and fully re-projects confirmation ordinals', async () => {
-    expect(INDEX_SCHEMA_VERSION).toBe(4)
-    expect(MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(4)
+    expect(INDEX_SCHEMA_VERSION).toBe(5)
+    expect(MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(5)
 
     const published = publish('Schema Reset Confirmation Product', {
       createdAtOrdinal: 1,
@@ -508,7 +508,7 @@ describe('IDX-01 derived-index rebuild projection', () => {
         reader.db
           .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
           .get(),
-      ).toEqual({ v: '4' })
+      ).toEqual({ v: String(INDEX_SCHEMA_VERSION) })
     } finally {
       reader.db.close()
     }
