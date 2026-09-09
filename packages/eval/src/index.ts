@@ -2,6 +2,8 @@ export type { ArtifactSource, HandoffSource } from './ports'
 export { parseStandaloneLabelRecord, selectEffectiveLabels, deriveLabelRevisionId, createLabelRevision } from './labels/effective-labels'
 export type { LabelRecordParse, LabelHistoryRefusalReason, LabelHistoryRefusal, EffectiveLabelSelection } from './labels/effective-labels'
 export type { LabelWeight } from './labels/label-record'
+export { computeSoftWeight, SOFT_VERDICT_FACTORS, SOFT_TIER_FACTORS } from './labels/soft-weight'
+export type { ComputeSoftWeightInput, SoftRecoveringDecisionEvidence } from './labels/soft-weight'
 
 export { canonicalJson, canonicalValue } from './canonical-json'
 
