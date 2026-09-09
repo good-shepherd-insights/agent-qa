@@ -383,7 +383,7 @@ export type {
   VerdictProducer,
 } from './labels/run-exclusion'
 export { committedFileText } from './labels/committed-file'
-export { buildSeedingPlan } from './labels/seeding-plan'
+export { buildSeedingPlan, admitSeedMember } from './labels/seeding-plan'
 export { activeMarkedCorpusEntries, buildGoldenTrajectoryPlan, markedDecisionCount, resolveMarkedDecisions } from './labels/golden-plan'
 export type { GoldenTrajectoryPlan, GoldenTrajectoryTarget, BuildGoldenTrajectoryPlanInput } from './labels/golden-plan'
 export type {

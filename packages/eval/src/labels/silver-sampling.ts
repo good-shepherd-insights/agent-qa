@@ -28,13 +28,14 @@
  * report already recorded that skip, and double-reporting would inflate it.
  */
 import { sha256hex } from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, PerTestOutcome } from '@vostride/agent-qa-schema'
+import type { StandaloneLabelRecord } from './label-record'
 import type { Cassette } from '../cassette/cassette'
 import type { ExtractedCassette } from '../extract/extract-run'
 import { deriveLeafCassetteId, deriveRunSlug } from '../extract/ids'
 import { classifySubAction } from '../extract/select'
 
-/** The six enumerated silver-exclusion cases (D-10/D-11), verbatim. */
+/** The seven enumerated silver-exclusion cases, including 420 D-06. */
 export type SilverExclusionReason =
   | 'test-not-passed'
   | 'step-verdict-failed'
@@ -42,6 +43,22 @@ export type SilverExclusionReason =
   | 'evidence-incomplete'
   | 'cap-exceeded'
   | 'procedure-granularity'
+  | 'rerun-overturn-quarantined'
+
+export const SILVER_EXCLUSION_REASONS = [
+  'test-not-passed', 'step-verdict-failed', 'self-heal-step', 'evidence-incomplete',
+  'cap-exceeded', 'procedure-granularity', 'rerun-overturn-quarantined',
+] as const satisfies readonly SilverExclusionReason[]
+
+export const LABEL_QUARANTINE_MARKERS = ['rerun-overturned'] as const satisfies readonly NonNullable<StandaloneLabelRecord['quarantine']>[]
+
+/** Only the original deterministic classification governs this silver branch. */
+export function isRerunSilverQuarantined(member: PerTestOutcome): boolean {
+  const original = member.rerunOrigin?.rootCause
+  return member.isRerun === true && member.outcome === 'passed'
+    && original?.producer === 'deterministic-classifier'
+    && (original.class === 'flake' || original.class === 'environment' || original.class === 'timeout')
+}
 
 /** Typed exclusion entry; locator fields present where the unit carries them. */
 export interface SilverExclusion {
@@ -167,6 +184,11 @@ export function selectSilverCassettes(input: SilverSamplingInput): SilverSelecti
             cassetteId,
             reason: 'evidence-incomplete',
           })
+          return
+        }
+        if (isRerunSilverQuarantined(test)) {
+          exclusions.push({ testId: test.testId, testIndex: test.testIndex,
+            stepIndex: step.stepIndex, cassetteId, reason: 'rerun-overturn-quarantined' })
           return
         }
         candidates.push({

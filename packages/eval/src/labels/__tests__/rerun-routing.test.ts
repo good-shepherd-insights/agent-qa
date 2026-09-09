@@ -111,12 +111,23 @@ describe('420 rerun routing', () => {
     }
   })
 
+  it('does not retire successful prefix decisions just because their member later failed', () => {
+    const f = fixture('flake')
+    const { evidenceDigest: _digest, ...origin } = f.member.rerunOrigin!
+    const { evidenceDigest: _decisionDigest, screenStateHash: stateHash, ...facts } = origin.decisions[0]!
+    facts.evidence.verifierVerdict.pass = true
+    facts.evidence.subActions[0]!.result.success = true
+    origin.decisions = [{ ...facts, screenStateHash: stateHash, evidenceDigest: sha256hex(canonicalJson(facts)) }]
+    f.member.rerunOrigin = { ...origin, evidenceDigest: sha256hex(canonicalJson(origin)) }
+    expect(f.plan()).toMatchObject({ labelRevisions: [], retirementCounts: { superseded: 0, missing: 0, conflict: 0 } })
+  })
+
   it('reuses an already quarantined effective terminal without another revision', () => {
     const f = fixture('flake')
     const revision = createLabelRevision(f.label, { quarantine: 'rerun-overturned' })
     const effective = selectEffectiveLabels([f.label, revision])
     expect(effective.excludedLabelIds.has(f.original.id)).toBe(true)
-    expect(f.plan({ ...f.snapshot, labelsById: effective.effective, excludedLabelIds: effective.excludedLabelIds }))
+    expect(f.plan({ ...f.snapshot, entries: [], labelsById: effective.effective, excludedLabelIds: effective.excludedLabelIds }))
       .toMatchObject({ labelRevisions: [], retirementCounts: { superseded: 0, missing: 0, conflict: 0 } })
   })
 

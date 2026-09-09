@@ -24,7 +24,8 @@
  * clock APIs here — the CLI and eval-local resolve the committed manifest,
  * the ISO capture time and the target environment and pass them in.
  */
-import type { CompletedRunHandoff, MarkReceipt } from '@vostride/agent-qa-schema'
+import { screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, MarkReceipt, PerTestOutcome, Verdict } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
 import { computeCorpusDigest } from '../census/corpus-digest'
 import type { CommittedCorpusSnapshot } from '../census/derive-census'
@@ -32,14 +33,20 @@ import { collectSoftPopulation, type SoftPopulation } from './soft-population'
 import { computeSoftWeight } from './soft-weight'
 import type { LeafCassette } from '../cassette/cassette'
 import type { ExtractedCassette } from '../extract/extract-run'
-import { deriveRunSlug } from '../extract/ids'
+import { deriveLeafCassetteId, deriveRunSlug } from '../extract/ids'
+import { projectInputLeg } from '../extract/input-leg'
+import { assembleReceipt } from '../extract/receipt'
+import { projectLabelLeg } from '../extract/label-leg'
+import { projectSidecarLeg } from '../extract/sidecar-leg'
+import { createLabelRevision } from './effective-labels'
+import { EXCLUSION_CLASSES } from './run-exclusion'
 import { projectCorpusEntry, resolveProductPartition } from './corpus-entry'
 import type { CorpusEntry, TargetEnvironment } from './corpus-entry'
 import { projectPairLabelRecords, projectSilverLabelRecord } from './label-record'
 import type { StandaloneLabelRecord } from './label-record'
 import { collectSelfHealPairs } from './pair-matching'
 import type { PairSkip } from './pair-matching'
-import { DEFAULT_SILVER_PER_TEST_CAP, selectSilverCassettes } from './silver-sampling'
+import { DEFAULT_SILVER_PER_TEST_CAP, isRerunSilverQuarantined, selectSilverCassettes } from './silver-sampling'
 import type { SilverExclusion } from './silver-sampling'
 import { assignSplit } from './split-assignment'
 import type { PartitionParams } from './split-assignment'
@@ -59,6 +66,9 @@ export interface SeedingPlanCase {
 
 /** The complete deterministic description of what joins the committed corpus. */
 export interface SeedingPlan {
+  /** Label-only append operations; no cassette or membership rewrite. */
+  labelRevisions: StandaloneLabelRecord[]
+  retirementCounts: { superseded: number; missing: number; conflict: number }
   softEvidence?: Pick<SoftPopulation, 'skips' | 'missingEvidenceCounts'>
   product: string
   runId: string
@@ -110,6 +120,90 @@ function requireLeaf(
     )
   }
   return cassette
+}
+
+/** Preserve ordinary exclusion policy; rerun passes and actual recovery evidence reach the factory. */
+export function admitSeedMember(
+  member: PerTestOutcome,
+  verdict?: Pick<Verdict, 'class' | 'producer'>,
+): boolean {
+  if (member.isRerun === true && (member.outcome === 'passed'
+    || member.steps.some(step => step.selfHeal !== undefined && step.verifierVerdict.pass))) return true
+  return verdict === undefined || !EXCLUSION_CLASSES.some(value => value === verdict.class)
+}
+
+function rerunProvenance(member: PerTestOutcome): StandaloneLabelRecord['provenance']['rerun'] {
+  if (!member.isRerun || member.rerunAttempt === undefined) return undefined
+  return { attempt: member.rerunAttempt, ...(member.rerunOrigin ? {
+    originalAttempt: member.rerunOrigin.attempt, originalEvidenceDigest: member.rerunOrigin.evidenceDigest,
+  } : {}) }
+}
+
+type OriginalDecision = NonNullable<PerTestOutcome['rerunOrigin']>['decisions'][number]
+
+/** Compare actual recorded legs, not a locator or final-attempt classification alone. */
+function matchesOriginal(input: BuildSeedingPlanInput, member: PerTestOutcome, decision: OriginalDecision,
+  cassette: LeafCassette, record: StandaloneLabelRecord, entry?: CorpusEntry): boolean {
+  const { screenStateHash: stateHash, evidenceDigest, ...facts } = decision
+  const subAction = decision.evidence.subActions[decision.decisionOrdinal]
+  if (!subAction?.exchanges || sha256hex(canonicalJson(facts)) !== evidenceDigest
+    || screenStateHash(subAction.stateBefore) !== stateHash || decision.runId !== input.handoff.runId
+    || decision.testId !== member.testId || decision.testIndex !== member.testIndex
+    || decision.evidence.stepIndex !== decision.stepIndex) return false
+  const address = { testIndex: decision.testIndex, stepIndex: decision.stepIndex, decisionOrdinal: decision.decisionOrdinal }
+  const inputLeg = projectInputLeg({ handoffTest: member, step: decision.evidence, subAction, ...address })
+  const receipt = assembleReceipt({ inputLeg, step: decision.evidence, subAction, handoff: input.handoff })
+  const provenance = projectSilverLabelRecord({ cassette, runId: decision.runId }).provenance
+  const { rerun: _rerun, ...recordProvenance } = record.provenance
+  return cassette.runId === decision.runId && cassette.testId === decision.testId
+    && cassette.testIndex === address.testIndex && cassette.stepIndex === address.stepIndex
+    && cassette.decisionOrdinal === address.decisionOrdinal
+    && canonicalJson(cassette.input) === canonicalJson(inputLeg)
+    && canonicalJson(cassette.receipt) === canonicalJson(receipt)
+    && canonicalJson(cassette.sidecar) === canonicalJson(projectSidecarLeg({ subAction }).leg)
+    && canonicalJson(cassette.label) === canonicalJson(projectLabelLeg({ step: decision.evidence, subAction }))
+    && canonicalJson(record.label) === canonicalJson(cassette.label)
+    && canonicalJson(recordProvenance) === canonicalJson(provenance)
+    && (entry === undefined ? record.quarantine === 'rerun-overturned'
+      && input.populationContext?.snapshot.excludedLabelIds?.has(cassette.id) === true
+      : entry.run_links.runId === decision.runId && entry.run_links.runSlug === provenance.runSlug
+    && entry.product === resolveProductPartition(input.handoff.scope)
+    && entry.receiptDigest === provenance.receiptDigest && entry.captured_at_ordinal === provenance.capturedAtOrdinal)
+}
+
+function planRetirements(input: BuildSeedingPlanInput): Pick<SeedingPlan, 'labelRevisions' | 'retirementCounts'> {
+  const labelRevisions: StandaloneLabelRecord[] = []
+  const retirementCounts = { superseded: 0, missing: 0, conflict: 0 }
+  const snapshot = input.populationContext?.snapshot
+  for (const member of input.handoff.tests.filter(isRerunSilverQuarantined)) {
+    const { evidenceDigest, ...origin } = member.rerunOrigin!
+    if (sha256hex(canonicalJson(origin)) !== evidenceDigest) { retirementCounts.conflict++; continue }
+    if (origin.decisions.length === 0) retirementCounts.missing++
+    const seen = new Set<string>()
+    for (const decision of origin.decisions) {
+      if (decision.evidence.verifierVerdict.pass
+        && decision.evidence.subActions[decision.decisionOrdinal]?.result.success === true) continue
+      const id = deriveLeafCassetteId({ runSlug: deriveRunSlug(decision.runId), ...decision })
+      const record = snapshot?.labelsById.get(id), cassette = snapshot?.cassettesById.get(id)
+      const entries = snapshot?.entries.filter(entry => entry.cassetteId === id) ?? []
+      if (seen.has(id)) { retirementCounts.conflict++; continue }
+      seen.add(id)
+      if (!record || !cassette || (entries.length === 0 && record.quarantine === undefined)) {
+        if (snapshot?.excludedLabelIds?.has(id)) retirementCounts.conflict++
+        else retirementCounts.missing++
+        continue
+      }
+      if (entries.length > 1 || record.cassetteId !== id || cassette.id !== id
+        || record.label.sourceChannel !== 'recorded-verdict' || record.label.tier !== 'silver'
+        || !matchesOriginal(input, member, decision, cassette, record, entries[0]!)) {
+        retirementCounts.conflict++; continue
+      }
+      const revision = createLabelRevision(record, { quarantine: 'rerun-overturned' })
+      if (revision !== record) { labelRevisions.push(revision); retirementCounts.superseded++ }
+    }
+  }
+  labelRevisions.sort((a, b) => a.cassetteId < b.cassetteId ? -1 : a.cassetteId > b.cassetteId ? 1 : 0)
+  return { labelRevisions, retirementCounts }
 }
 
 /**
@@ -181,10 +275,8 @@ export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan {
       runId,
     })
     const member = handoff.tests.find(test => test.testIndex === pair.testIndex)!
-    if (member.isRerun && member.rerunAttempt !== undefined) {
-      const rerun = { attempt: member.rerunAttempt,
-        ...(member.rerunOrigin ? { originalAttempt: member.rerunOrigin.attempt,
-          originalEvidenceDigest: member.rerunOrigin.evidenceDigest } : {}) }
+    const rerun = rerunProvenance(member)
+    if (rerun) {
       failedRecord.provenance.rerun = rerun
       recoveringRecord.provenance.rerun = rerun
     }
@@ -194,7 +286,10 @@ export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan {
 
   for (const cassetteId of selected) {
     const cassette = requireLeaf(leavesById, cassetteId)
-    admit(cassette, projectSilverLabelRecord({ cassette, runId }), false)
+    const record = projectSilverLabelRecord({ cassette, runId })
+    const rerun = rerunProvenance(handoff.tests.find(test => test.testIndex === cassette.testIndex)!)
+    if (rerun) record.provenance.rerun = rerun
+    admit(cassette, record, false)
   }
 
   cases.sort((a, b) => {
@@ -242,6 +337,7 @@ export function buildSeedingPlan(input: BuildSeedingPlanInput): SeedingPlan {
   }
 
   return {
+    ...planRetirements(input),
     product,
     runId,
     runSlug,
