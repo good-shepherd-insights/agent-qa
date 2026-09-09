@@ -4,6 +4,7 @@ export const AGENT_QA_EVAL_LOCAL_PACKAGE_NAME = '@vostride/agent-qa-eval-local'
 export const AGENT_QA_EVAL_LOCAL_PACKAGE_DIR = 'packages/eval-local'
 export const AGENT_QA_EVAL_LOCAL_PACKAGE_CLASSES = ['storageImplementation'] as const
 export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
+  'operator-only label calibration publication through eval-report egress, complete target authorization and guarded label evidence reads',
   'all eval filesystem IO behind the neutral handoff and artifact read ports',
   'handoff and artifact reads composed over runner-local stores',
   'cassette bundle writes under the runtime workdir staging root',

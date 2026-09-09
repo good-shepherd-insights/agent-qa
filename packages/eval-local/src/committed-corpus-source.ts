@@ -57,6 +57,7 @@ import {
 } from './committed-root-store.js'
 import { listCassetteBundleDirs } from './replay-read.js'
 import { FsMarkLedger } from './mark-ledger.js'
+import { readLabelCalibration } from './calibration-source.js'
 
 /** Gate-side effective view; raw committed history and the proposer reader remain unchanged. */
 export function readActiveCommittedCorpus(committedRoot: string, agentQaRoot: string): CommittedCorpusRead {
@@ -442,7 +443,15 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
   }
   // Generation-bearing refreshes stay invisible until the guarded publication loader
   // explicitly authorizes their marker. Seed/base revisions require no marker.
-  const selected = selectEffectiveLabels(validHistory)
+  const calibration = readLabelCalibration(committedRoot)
+  const authorized = calibration.kind === 'loaded' ? calibration.authorizedRevisionIds : new Set<string>()
+  const eligibleHistory = validHistory.filter(record => record.revision?.generationId === undefined || authorized.has(record.revision.id))
+  const generations = new Set(eligibleHistory.flatMap(record => record.revision?.generationId ? [record.revision.generationId] : []))
+  if (calibration.kind === 'refused') {
+    refusals.push({ path: join(labelsRoot, 'calibration.json'), reason: calibration.reason })
+    for (const record of validHistory) if (record.revision?.generationId) readInvalidIds.add(record.cassetteId)
+  }
+  const selected = selectEffectiveLabels(eligibleHistory, { committedGenerationIds: generations })
   for (const [id, label] of selected.effective) {
     if (!readInvalidIds.has(id)) labelsById.set(id, label)
   }
