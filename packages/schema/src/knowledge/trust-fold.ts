@@ -192,9 +192,14 @@ export function foldBundleTrust(
   )
   const positiveEvidence = counters.confirmed + SERVING_ATTRIBUTION_WEIGHT * counters.helpful
   const negativeEvidence = counters.contradicted + SERVING_ATTRIBUTION_WEIGHT * counters.harmful
-  const trust = (positiveEvidence + alpha) / (
-    positiveEvidence + negativeEvidence + alpha + prior.beta
-  )
+  // Discounting the smallest positive alpha can underflow. With no negative mass or
+  // observations the exact positive endpoint is still one; do not invent epsilon mass.
+  const trust = alpha === 0 && prior.beta === 0
+    && positiveEvidence === 0 && negativeEvidence === 0
+    ? 1
+    : (positiveEvidence + alpha) / (
+        positiveEvidence + negativeEvidence + alpha + prior.beta
+      )
 
   return {
     trust,
