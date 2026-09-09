@@ -1,7 +1,8 @@
-import { sha256hex } from '@vostride/agent-qa-schema'
+import { ORIGIN_PRIORS, sha256hex } from '@vostride/agent-qa-schema'
 
 import { canonicalJson } from '../canonical-json'
 import type { CassetteLabelLeg } from '../cassette/label-leg'
+import type { LabelWeight } from '../labels/label-record'
 import { BRIEF_SOURCES } from '../replay/brief-tiers'
 import type { BriefSource } from '../replay/brief-tiers'
 import { REPLAY_REFUSAL_REASONS } from '../replay/result'
@@ -37,6 +38,11 @@ interface RateMetric {
   denominator: number
   rate?: number
 }
+
+/** Summary copied from guarded calibration evidence; no correction or action payloads. */
+type BatchCalibration =
+  | { status: 'uncalibrated'; n_gold?: number; verifierFalsePassRate?: RateMetric }
+  | { status: 'calibrated'; n_gold: number; verifierFalsePassRate: RateMetric }
 
 interface TotalCost {
   sampleCount: number
@@ -84,6 +90,11 @@ interface JudgeHonesty {
 /** One replay outcome plus its optional matcher and label projections (D-14/D-15). */
 export interface ScoredBatchEntry {
   cassetteId: string
+  /** Authoritative source decision identity, shared by its active gold clones. */
+  logicalSourceId?: string
+  softWeight?: LabelWeight
+  /** Refused or quarantined label evidence; incurred work remains reportable. */
+  scoringExcluded?: boolean
   product?: string
   outcome: ReplayCassetteOutcome
   score?: CassetteScore
@@ -103,8 +114,10 @@ export interface EvalBatchReport {
   runIdentity?: { fingerprint: string; corpusDigest: string }
   headline: {
     firstAttemptDecisionAccuracy: RateMetric
+    verifierFalsePassRate: RateMetric
     perDecisionCost: PerDecisionCost
   }
+  calibration: BatchCalibration
   honesty: {
     tieCounts: Counts<TieCause>
     unscorableIdentityCounts: Counts<UnscorableIdentityCause>
@@ -152,6 +165,9 @@ export interface EvalBatchReport {
     recoveredPositiveCount: number
     eligiblePositiveCount: number
     recoveryAccuracy?: number
+    weightSum: number
+    weightedAccuracy?: number
+    pairsWithoutWeight: number
     /**
      * D-08 bucket: a full match on a contrastive-negative repeats the recorded mistake and is
      * excluded from the headline accuracy numerator AND denominator; counted here so the
@@ -252,7 +268,54 @@ function pairKey(first: string, second: string): string {
 }
 
 function hasDecisionScore(entry: ScoredBatchEntry | undefined): boolean {
-  return entry !== undefined && decisionScores(entry.score).length > 0
+  return entry !== undefined && isScoringIncluded(entry) && decisionScores(entry.score).length > 0
+}
+
+function isScoringIncluded(entry: ScoredBatchEntry): boolean {
+  return entry.scoringExcluded !== true && !isReplayRefusal(entry.outcome)
+}
+
+/** Resolve only the verifier population; other metric populations keep their own grain. */
+function verifierRepresentatives(entries: readonly ScoredBatchEntry[]): ScoredBatchEntry[] {
+  const bySource = new Map<string, ScoredBatchEntry>()
+  const rank = (entry: ScoredBatchEntry) => entry.label?.sourceChannel === 'overturned-verdict'
+    ? 2 : entry.label?.sourceChannel === 'user-mark' ? 1 : 0
+  for (const entry of entries) {
+    if (!isScoringIncluded(entry) || entry.label === undefined) continue
+    const key = entry.logicalSourceId ?? entry.cassetteId, previous = bySource.get(key)
+    if (previous === undefined || rank(entry) > rank(previous)
+      || (rank(entry) === rank(previous) && entry.cassetteId < previous.cassetteId)) {
+      bySource.set(key, entry)
+    }
+  }
+  return [...bySource.values()]
+}
+
+function verifierRate(representatives: readonly ScoredBatchEntry[]): RateMetric {
+  const passes = representatives.filter(entry => entry.label?.verdict?.pass === true)
+  return rateMetric(passes.filter(entry => entry.label?.sourceChannel === 'overturned-verdict').length, passes.length)
+}
+
+function copyCalibration(calibration: BatchCalibration | undefined): BatchCalibration {
+  if (calibration === undefined) return { status: 'uncalibrated' }
+  const { status, n_gold, verifierFalsePassRate: rate } = calibration
+  if (!['uncalibrated', 'calibrated'].includes(status)
+    || (n_gold !== undefined && (!Number.isSafeInteger(n_gold) || n_gold < 0))
+    || (status === 'calibrated' && (n_gold === undefined || rate === undefined))) {
+    throw new TypeError('invalid calibration summary')
+  }
+  if (rate !== undefined && (!Number.isSafeInteger(rate.numerator) || rate.numerator < 0
+    || !Number.isSafeInteger(rate.denominator) || rate.denominator < rate.numerator
+    || (rate.denominator === 0 ? rate.rate !== undefined : rate.rate !== rate.numerator / rate.denominator))) {
+    throw new TypeError('invalid calibration rate')
+  }
+  const copiedRate = rate === undefined ? undefined : {
+    numerator: rate.numerator, denominator: rate.denominator,
+    ...(rate.rate === undefined ? {} : { rate: rate.rate }),
+  }
+  if (status === 'calibrated') return { status, n_gold: n_gold!, verifierFalsePassRate: copiedRate! }
+  return { status, ...(n_gold === undefined ? {} : { n_gold }),
+    ...(copiedRate === undefined ? {} : { verifierFalsePassRate: copiedRate }) }
 }
 
 /** sha256hex over the canonical sorted cassette-id list (D-13). */
@@ -279,6 +342,7 @@ export function buildEvalReport(
     /** Observed load refusals excluded from entries; returned replay refusals stay in entries. */
     additionalRefusalCounts?: Readonly<Partial<EvalBatchReport['honesty']['refusalCounts']>>
     runIdentity?: EvalBatchReport['runIdentity']
+    calibration?: BatchCalibration
   } = {},
 ): EvalBatchReport {
   const additionalHarnessErrorCount = opts.additionalHarnessErrorCount ?? 0
@@ -390,6 +454,17 @@ export function buildEvalReport(
       }
 
       const score = scoreEntry.score
+      if (!isScoringIncluded(entry)) {
+        if (score.kind === 'scored' && score.judgeSettled !== undefined) {
+          judgeHonesty.invoked[score.judgeSettled.cause]++
+          addJudgeUsage(judgeHonesty.cost, score.judgeSettled.usage)
+        } else if (score.kind === 'unresolved-tie' && score.judgeOutcome !== undefined
+          && score.judgeOutcome.kind !== 'not-invoked') {
+          judgeHonesty.invoked[score.cause]++
+          addJudgeUsage(judgeHonesty.cost, score.judgeOutcome.usage)
+        }
+        continue
+      }
       if (score.kind === 'miss-by-failure') {
         if (isContrastiveNegative) negativeDecisionCount++
         else accuracyDenominator++
@@ -507,6 +582,9 @@ export function buildEvalReport(
 
   let eligiblePositiveCount = 0
   let recoveredPositiveCount = 0
+  let weightSum = 0
+  let recoveredWeight = 0
+  let pairsWithoutWeight = 0
   for (const entry of entries) {
     const pairing = entry.label?.pairing
     if (
@@ -516,7 +594,15 @@ export function buildEvalReport(
       continue
     }
     eligiblePositiveCount++
-    if (decisionScores(entry.score).some(isDecisionFullMatch)) recoveredPositiveCount++
+    const prior = ORIGIN_PRIORS['agent-verified']
+    const weight = entry.softWeight?.value ?? prior.alpha / (prior.alpha + prior.beta)
+    if (!Number.isFinite(weight) || weight < 0 || weight > 1) throw new TypeError('invalid recovery weight')
+    if (entry.softWeight === undefined) pairsWithoutWeight++
+    weightSum += weight
+    if (decisionScores(entry.score).some(isDecisionFullMatch)) {
+      recoveredPositiveCount++
+      recoveredWeight += weight
+    }
   }
 
   const decisionCount = replayDecisions.length
@@ -526,6 +612,9 @@ export function buildEvalReport(
     eligiblePositiveCount,
     negativeDecisionCount,
     negativeFullMatchCount,
+    weightSum,
+    pairsWithoutWeight,
+    ...(weightSum === 0 ? {} : { weightedAccuracy: recoveredWeight / weightSum }),
     ...(eligiblePositiveCount === 0
       ? {}
       : { recoveryAccuracy: recoveredPositiveCount / eligiblePositiveCount }),
@@ -544,6 +633,7 @@ export function buildEvalReport(
     ...(opts.runIdentity === undefined ? {} : { runIdentity: { ...opts.runIdentity } }),
     headline: {
       firstAttemptDecisionAccuracy: rateMetric(accuracyNumerator, accuracyDenominator),
+      verifierFalsePassRate: verifierRate(verifierRepresentatives(entries)),
       perDecisionCost: {
         decisionCount,
         promptTokens: decisionCount === 0 ? 0 : foldedPromptTokens / decisionCount,
@@ -552,6 +642,7 @@ export function buildEvalReport(
         durationMs: decisionCount === 0 ? 0 : totalCost.durationMs / decisionCount,
       },
     },
+    calibration: copyCalibration(opts.calibration),
     honesty: {
       tieCounts,
       unscorableIdentityCounts,

@@ -81,4 +81,43 @@ describe('420 calibrated batch metrics', () => {
     expect(JSON.stringify(report)).not.toContain('PRIVATE')
     expect(report).toHaveProperty('calibration.verifierFalsePassRate.numerator', 2)
   })
+
+  it('retains current and historical judge usage for a scoring-excluded replay', () => {
+    const entry = metricEntry('excluded')
+    if (entry.score?.kind !== 'leaf' || entry.score.entry.kind !== 'decision'
+      || entry.score.entry.score.kind !== 'scored') throw new Error('fixture shape')
+    entry.score.entry.score.judgeSettled = { cause: 'partial-identity',
+      axis: 'element-identity', resolution: 'equivalent', judgeId: 'fixture',
+      judgeVersion: 1, confidence: 'high',
+      usage: { calls: 1, inputTokens: 7, outputTokens: 3 } }
+    entry.incurredJudgeScore = structuredClone(entry.score)
+    entry.scoringExcluded = true
+    const report = buildEvalReport([entry])
+    expect(report.headline.firstAttemptDecisionAccuracy).toEqual({ numerator: 0, denominator: 0 })
+    expect(report.totalCost.totalTokens).toBe(15)
+    expect(report.honesty.judge.cost).toEqual({ calls: 2, inputTokens: 14,
+      outputTokens: 6, outcomesMissingUsage: 0 })
+    expect(report.honesty.judge.settled['partial-identity']).toBe(0)
+    expect(report.headline.perDecisionCost).toEqual({ decisionCount: 1,
+      promptTokens: 24, completionTokens: 11, totalTokens: 35, durationMs: 10 })
+  })
+
+  it.each([-1, 1.01, NaN, Infinity])('refuses invalid persisted weight %s', value => {
+    expect(() => buildEvalReport(metricPair('invalid', true, value))).toThrow(/weight/)
+  })
+
+  it('rejects inconsistent calibration numbers and preserves uncalibrated observed zeros', () => {
+    expect(() => buildEvalReport([], undefined, undefined, { calibration: {
+      status: 'calibrated', n_gold: 20,
+      verifierFalsePassRate: { numerator: 2, denominator: 20, rate: 0.2 },
+    } })).toThrow(/calibration/)
+    expect(() => buildEvalReport([], undefined, undefined, { calibration: {
+      status: 'uncalibrated', n_gold: -1,
+    } })).toThrow(/calibration/)
+    expect(buildEvalReport([], undefined, undefined, { calibration: {
+      status: 'uncalibrated', n_gold: 0,
+      verifierFalsePassRate: { numerator: 0, denominator: 0 },
+    } }).calibration).toEqual({ status: 'uncalibrated', n_gold: 0,
+      verifierFalsePassRate: { numerator: 0, denominator: 0 } })
+  })
 })

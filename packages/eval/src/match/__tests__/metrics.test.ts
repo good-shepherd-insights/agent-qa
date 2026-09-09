@@ -629,6 +629,9 @@ describe('buildEvalReport', () => {
       recoveredPositiveCount: 1,
       eligiblePositiveCount: 2,
       recoveryAccuracy: 0.5,
+      weightSum: 4 / 3,
+      weightedAccuracy: 0.5,
+      pairsWithoutWeight: 2,
       negativeDecisionCount: 2,
       negativeFullMatchCount: 2,
     })
@@ -640,6 +643,8 @@ describe('buildEvalReport', () => {
       eligiblePositiveCount: 0,
       negativeDecisionCount: 0,
       negativeFullMatchCount: 0,
+      weightSum: 0,
+      pairsWithoutWeight: 0,
     })
     expect(Object.hasOwn(pairless.recovery, 'recoveryAccuracy')).toBe(false)
   })
