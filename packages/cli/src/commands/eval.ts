@@ -483,7 +483,10 @@ export function createEvalCommand(): Command {
         else {
           console.log(`judge panel: ${result.status} n=${result.n} minN=${result.minN} (${result.minNSource})`)
           if (result.kind === 'capability-gap') console.log(`capability gap: ${result.reason}`)
-          else console.log(`selected=${result.counts.selected} eligible=${result.counts.eligible} refused=${result.counts.eligibilityRefused} attempted=${result.counts.attempted}`)
+          else {
+            console.log(`selected=${result.counts.selected} admitted=${result.counts.admitted} eligible=${result.counts.eligible} refused=${result.counts.eligibilityRefused} attempted=${result.counts.attempted}`)
+            console.log(`pooled agreement=${result.pooledAgreement ?? 'unavailable'} interval=${result.wilson95 ? `[${result.wilson95.lower},${result.wilson95.upper}]` : 'unavailable'}; abstention=${result.abstention.numerator}/${result.abstention.denominator}; member-pair disagreement=${result.disagreement.numerator}/${result.disagreement.denominator}`)
+          }
           console.log(`probe calls: ${result.cost.usage.calls}; bound=${result.cost.callBound} (eligible executable decisions × one question × members × two swaps)`)
           console.log('Agreement on selected executable gold; not a population accuracy estimate. Preview writes no committed artifact.')
         }

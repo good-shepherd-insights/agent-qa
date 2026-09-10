@@ -10,7 +10,7 @@ import type { StandaloneLabelRecord } from '../labels/label-record'
 import { computeDecisionIdentity } from '../replay/identity'
 import type { ReplaySample } from '../replay/result'
 import { isDecisionFullMatch, scoreReplaySample, type DecisionScore, type JudgeSettled, type ScoreDecisionContext } from '../match/score'
-import type { wilsonInterval } from '../stats/wilson'
+import { wilsonInterval } from '../stats/wilson'
 import { projectActionGoldValue } from '../extract/sidecar-leg'
 import type { JudgeTieEvidence } from './prompt'
 import type { JudgeEligibility, UsageAggregator } from './adjudicate'
@@ -121,6 +121,78 @@ export function prepareJudgeCalibrationProbe(row: JudgeCalibrationEvidence): Jud
   return { evidence: { stepText: cassette.input.stepText, question },
     axis: question.kind === 'element-equivalence' ? 'element-identity' : 'value',
     score }
+}
+
+function calibrationRate(numerator: number, denominator: number) {
+  return { numerator, denominator, ...(denominator ? { rate: numerator / denominator } : {}) }
+}
+
+/** Independent decision denominators; refusal is selection data, never a measured abstention. */
+export function summarizeJudgeCalibration(input: {
+  observations: readonly JudgeCalibrationProbeObservation[]
+  memberModelIds: readonly string[]
+  minN?: JudgeCalibrationMinimum
+  selected?: number
+}) {
+  const minimum = input.minN ?? resolveJudgeCalibrationMinimum()
+  resolveJudgeCalibrationMinimum(minimum.value)
+  const rows = input.observations
+  const selected = input.selected ?? rows.length
+  if (!Number.isSafeInteger(selected) || selected < rows.length) throw new TypeError('Invalid selected calibration count.')
+  if (new Set(rows.map(row => row.decisionId)).size !== rows.length) {
+    throw new TypeError('Calibration requires independent source decisions, not repeated observations.')
+  }
+  const attempted = rows.filter(row => row.kind === 'attempted')
+  const eligibilityRefused = rows.filter(row => row.kind === 'not-invoked').length
+  const counts = { selected, admitted: rows.length, eligible: rows.length - eligibilityRefused,
+    attempted: attempted.length, eligibilityRefused,
+    evidenceSkipped: selected - rows.length + rows.filter(row => row.kind === 'skipped').length,
+    truthComparable: attempted.filter(row => row.truth.kind === 'resolved').length,
+    unresolvedTruth: attempted.filter(row => row.truth.kind === 'unresolved').length }
+  const tally = (outcomes: { row: (typeof attempted)[number]; outcome: JudgePairwiseOutcome }[]) => {
+    let settled = 0, abstained = 0, errors = 0, numerator = 0, n = 0
+    for (const { row, outcome } of outcomes) {
+      if (outcome.kind === 'abstained') { abstained++; continue }
+      if (outcome.kind === 'error') { errors++; continue }
+      settled++
+      if (row.truth.kind !== 'resolved') continue
+      n++
+      if (judgeCalibrationFullMatch(row.probe.score, { axis: row.probe.axis, resolution: outcome.resolution }) === row.truth.fullMatch) numerator++
+    }
+    const wilson95 = wilsonInterval(numerator, n)
+    return { settled, abstained, errors, n, numerator, denominator: n,
+      ...(n ? { agreement: numerator / n, wilson95: wilson95! } : {}) }
+  }
+  const pooled = tally(attempted.map(row => ({ row, outcome: row.outcome })))
+  const perMember = input.memberModelIds.map(judgeModelId => ({ judgeModelId,
+    ...tally(attempted.flatMap(row => (row.usage.members ?? []).filter(member => member.judgeModelId === judgeModelId)
+      .map(member => ({ row, outcome: member.outcome })))) }))
+  const pairs = []
+  for (let a = 0; a < input.memberModelIds.length; a++) for (let b = a + 1; b < input.memberModelIds.length; b++) {
+    const memberModelIds = [input.memberModelIds[a]!, input.memberModelIds[b]!] as const
+    let numerator = 0, denominator = 0
+    for (const row of attempted) {
+      const left = row.usage.members?.find(member => member.judgeModelId === memberModelIds[0])?.outcome
+      const right = row.usage.members?.find(member => member.judgeModelId === memberModelIds[1])?.outcome
+      if (left?.kind !== 'settled' || right?.kind !== 'settled') continue
+      denominator++
+      if (left.resolution !== right.resolution) numerator++
+    }
+    pairs.push({ memberModelIds, ...calibrationRate(numerator, denominator) })
+  }
+  const usage: Omit<UsageAggregator, 'members'> = { calls: 0 }
+  for (const row of attempted) {
+    usage.calls += row.usage.calls
+    if (row.usage.inputTokens !== undefined) usage.inputTokens = (usage.inputTokens ?? 0) + row.usage.inputTokens
+    if (row.usage.outputTokens !== undefined) usage.outputTokens = (usage.outputTokens ?? 0) + row.usage.outputTokens
+  }
+  return { status: pooled.n >= minimum.value ? 'calibrated' as const : 'uncalibrated' as const,
+    n: pooled.n, minN: minimum.value, minNSource: minimum.source, counts, perMember, pooled,
+    ...(pooled.n ? { pooledAgreement: pooled.agreement!, wilson95: pooled.wilson95! } : {}),
+    abstention: calibrationRate(pooled.abstained, attempted.length),
+    disagreement: { ...calibrationRate(pairs.reduce((sum, pair) => sum + pair.numerator, 0),
+      pairs.reduce((sum, pair) => sum + pair.denominator, 0)), pairs },
+    cost: { callBound: attempted.length * input.memberModelIds.length * 2, usage } }
 }
 const hash = (value: unknown) => sha256hex(canonicalJson(value))
 const compare = (a: unknown, b: unknown) => canonicalJson(a) < canonicalJson(b) ? -1 : canonicalJson(a) > canonicalJson(b) ? 1 : 0

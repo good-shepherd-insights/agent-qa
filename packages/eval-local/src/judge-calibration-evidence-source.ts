@@ -25,6 +25,8 @@ export interface LoadJudgeCalibrationEvidenceInput {
   replayRunRoots?: readonly string[]
 }
 export interface JudgeCalibrationEvidenceRead {
+  /** Executable selected gold before saved-replay admission; not a sum of skip diagnostics. */
+  selected: number
   evidence: JudgeCalibrationEvidence[]
   skippedCounts: JudgeCalibrationDiagnostics
   corpusDigest: string
@@ -51,7 +53,7 @@ function inspectTree(root: string, path: string): void {
 export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidenceInput): JudgeCalibrationEvidenceRead {
   const skippedCounts: JudgeCalibrationDiagnostics = {}
   const skip = (reason: JudgeCalibrationSkipReason) => { skippedCounts[reason] = (skippedCounts[reason] ?? 0) + 1 }
-  const result: JudgeCalibrationEvidenceRead = { evidence: [], skippedCounts, corpusDigest: hash([]),
+  const result: JudgeCalibrationEvidenceRead = { selected: 0, evidence: [], skippedCounts, corpusDigest: hash([]),
     goldSetDigest: hash([]), replayEvidenceDigest: hash([]), evidenceDigest: hash([]),
     profileKey: composeBaselineProfileKey(input.profile), selectedInputs: [] }
   const finish = () => {
@@ -106,6 +108,7 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
   }
   const snapshot = { ...raw.snapshot, entries: activeMarkedCorpusEntries(raw.snapshot, marks), excludedLabelIds: excluded }
   const selection = selectJudgeCalibrationGold({ snapshot, marks })
+  result.selected = selection.gold.length
   Object.assign(skippedCounts, selection.skippedCounts)
   result.corpusDigest = selection.corpusDigest
   result.goldSetDigest = selection.goldSetDigest

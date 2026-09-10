@@ -61,11 +61,11 @@ it('keeps all refused histories n0 with zero bindings, cost and absent estimates
   expect(result).toMatchObject({ status: 'uncalibrated', n: 0, counts: { attempted: 0, eligibilityRefused: 2 }, cost: { callBound: 0, usage: { calls: 0 } } })
   expect(result).not.toHaveProperty('pooledAgreement'); expect(result).not.toHaveProperty('wilson95')
   expect(result.abstention).not.toHaveProperty('rate'); expect(result.disagreement).not.toHaveProperty('rate')
-  expect(binds.count).toBe(0); expect(f.calls()).toBe(0); expect(f.contexts).toHaveLength(0)
+  expect(binds.count).toBe(0); expect(f.calls()).toBe(0); expect(f.contexts).toHaveLength(1)
 })
 it('keeps sequential fresh scoped bindings, durable audit paths and disposal across decisions', async () => {
   const f = fixture([{}, {}]), result = await runJudgePanelCalibration(f.input)
-  expect(f.contexts).toHaveLength(2); expect(f.contexts[0]).not.toBe(f.contexts[1]); expect(f.disposes).toEqual([0, 1])
+  expect(f.contexts).toHaveLength(3); expect(f.contexts[1]).not.toBe(f.contexts[2]); expect(f.disposes).toEqual([1, 2, 0])
   expect(result.cost.usage.calls).toBe(8); expect(f.calls()).toBe(8); expect(binds.count).toBe(2)
   const audit = readFileSync(join(result.auditDirectory, 'guardrail_audit.jsonl'), 'utf8')
   expect(audit.trim().split('\n')).toHaveLength(8)
@@ -81,12 +81,12 @@ it('retains errored member call cost separately from abstention and pair denomin
   expect(result.cost.usage.calls).toBe(6); expect(f.calls()).toBe(6)
   expect(result.cost.usage.inputTokens).toBe(40)
   expect(JSON.stringify(result)).not.toContain('fixture-private-provider-error')
-  expect(f.disposes).toEqual([0])
+  expect(f.disposes).toEqual([1, 0])
 })
 it('disposes the fresh scope when binding throws without invoking a provider', async () => {
   const f = fixture(); binds.fail = true
   await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed; inspect the local audit and retry.')
-  expect(f.calls()).toBe(0); expect(f.disposes).toEqual([0])
+  expect(f.calls()).toBe(0); expect(f.disposes).toEqual([1, 0])
 })
 it('still probes a guarded ambiguous target with independently unresolved truth', async () => {
   const f = fixture([{}], ['equivalent', 'equivalent'], true)
@@ -104,6 +104,29 @@ it('masks credential-bearing receipt diagnostics at the direct composition bound
   expect(JSON.stringify(result)).not.toContain('fixture-private-api-key')
   expect(result.counts.eligibilityRefused).toBe(1)
   expect(f.calls()).toBe(0)
+})
+it('discloses selected gold independently from saved-evidence admission', async () => {
+  const f = fixture([{}, {}]); rmSync(f.rows[1]!.written.file)
+  const result = await runJudgePanelCalibration(f.input)
+  expect(result.counts).toMatchObject({ selected: 2, admitted: 1, evidenceSkipped: 1, attempted: 1 })
+  expect(result.skippedCounts['missing-replay']).toBeGreaterThan(0)
+  expect(f.calls()).toBe(4)
+})
+it('refuses credential-bearing canonical member identity without inventing or binding one', async () => {
+  const f = fixture()
+  f.input.members[0]!.profile.model = 'claude-sonnet-4/fixture-private-api-key'
+  await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed; inspect the local audit and retry.')
+  expect(binds.count).toBe(0); expect(f.calls()).toBe(0); expect(f.disposes).toEqual([0])
+})
+it('requires an explicit composite at the direct operator boundary', async () => {
+  const f = fixture(); f.input.members.pop()
+  await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed')
+  expect(binds.count).toBe(0); expect(f.calls()).toBe(0)
+})
+it('rejects a foreign panel profile before admitting or binding evidence', async () => {
+  const f = fixture(); f.input.profile.judgeModelId = 'foreign-panel'
+  await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed')
+  expect(binds.count).toBe(0); expect(f.calls()).toBe(0)
 })
 
 function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[], ambiguous = false) {

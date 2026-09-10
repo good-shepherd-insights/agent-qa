@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import {
   adjudicatePanelComparison, assessPanelEligibility, createPanelIdentity,
   prepareJudgeCalibrationProbe, resolveJudgeCalibrationMinimum,
+  summarizeJudgeCalibration,
   type BaselineProfileKeyInput, type JudgeCalibrationProbeObservation,
   type JudgeCalibrationMinimum, type UsageAggregator,
 } from '@vostride/agent-qa-eval'
@@ -26,9 +27,31 @@ export interface RunJudgePanelCalibrationInput {
 
 /** Operator-only forced probe. Credentials and source action content never enter its DTO. */
 export async function runJudgePanelCalibration(input: RunJudgePanelCalibrationInput) {
+  const disclosure = (input.maskingContextFactory ?? createMaskingContext)()
+  try {
+    for (const member of input.members) {
+      if (member.auth.kind === 'api-key') disclosure.register(member.auth.apiKey)
+      if (member.auth.kind === 'bearer-token') disclosure.register(member.auth.token)
+    }
+    if (input.members.length < 2) throw new Error('Explicit panel required')
+    // Never manufacture a replacement canonical identity from a credential-bearing ID.
+    if ([input.replayProfile.model, ...input.members.map(member => member.profile.model)]
+      .some(id => disclosure.mask(id) !== id)) throw new Error('Unsafe model identity')
+    const preview = await executeJudgePanelCalibration(input)
+    return JSON.parse(disclosure.mask(JSON.stringify(preview))) as typeof preview
+  } catch {
+    throw new Error('Judge calibration probe failed; inspect the local audit and retry.')
+  } finally { disclosure.dispose() }
+}
+
+async function executeJudgePanelCalibration(input: RunJudgePanelCalibrationInput) {
   const minN = input.minN ?? resolveJudgeCalibrationMinimum()
   resolveJudgeCalibrationMinimum(minN.value)
   if (input.profile.plannerModelId !== input.replayProfile.model) throw new Error('Calibration replay profile mismatch.')
+  const identity = createPanelIdentity(input.members.map(member => member.profile.model))
+  if (input.profile.judgeModelId !== identity.judgeModelId || input.profile.judgeVersion !== identity.judgeVersion) {
+    throw new Error('Calibration panel profile mismatch.')
+  }
   const read = loadJudgeCalibrationEvidence(input)
   const observations: JudgeCalibrationProbeObservation[] = []
   const auditDirectory = join(input.agentQaRoot, 'eval', 'calibrate', randomUUID())
@@ -63,24 +86,16 @@ export async function runJudgePanelCalibration(input: RunJudgePanelCalibrationIn
         return adjudicatePanelComparison(port, probe.evidence, usage)
       })
       observations.push({ ...common, kind: 'attempted', probe, outcome, usage })
+    } catch {
+      throw new Error('Judge calibration probe failed; inspect the local audit and retry.')
     } finally { masker.dispose() }
   }
-  const attempted = observations.filter(row => row.kind === 'attempted')
-  const eligibilityRefused = observations.filter(row => row.kind === 'not-invoked').length
-  const usage = attempted.reduce((sum, row) => {
-    sum.calls += row.usage.calls
-    if (row.usage.inputTokens !== undefined) sum.inputTokens = (sum.inputTokens ?? 0) + row.usage.inputTokens
-    if (row.usage.outputTokens !== undefined) sum.outputTokens = (sum.outputTokens ?? 0) + row.usage.outputTokens
-    return sum
-  }, { calls: 0 } as UsageAggregator)
-  return { kind: 'dry-run' as const, status: 'uncalibrated' as const, n: 0, minN: minN.value, minNSource: minN.source,
-    identity: createPanelIdentity(memberModelIds), profileKey: read.profileKey,
+  const summary = summarizeJudgeCalibration({ observations, memberModelIds, minN, selected: read.selected })
+  return { kind: 'dry-run' as const, ...summary,
+    identity, profileKey: read.profileKey,
     corpusDigest: read.corpusDigest, goldSetDigest: read.goldSetDigest,
     replayEvidenceDigest: read.replayEvidenceDigest, evidenceDigest: read.evidenceDigest,
-    counts: { selected: read.evidence.length, admitted: read.evidence.length,
-      eligible: read.evidence.length - eligibilityRefused, eligibilityRefused,
-      attempted: attempted.length, evidenceSkipped: observations.length - attempted.length - eligibilityRefused },
-    skippedCounts: read.skippedCounts, cost: { callBound: attempted.length * memberModelIds.length * 2, usage },
+    skippedCounts: read.skippedCounts,
     auditDirectory,
     // Explicit safe projection: no source actions, prompts, auth, or arbitrary provider detail.
     rows: observations.map(row => ({ decisionId: row.decisionId, replayedModelId: row.replayedModelId,

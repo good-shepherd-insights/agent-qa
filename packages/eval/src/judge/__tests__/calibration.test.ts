@@ -65,7 +65,9 @@ describe('judge calibration independent denominators', () => {
     expect(result).toMatchObject({ status: 'uncalibrated', pooledAgreement: 1, counts: { attempted: 1, truthComparable: 1 },
       cost: { usage: { calls: 6, inputTokens: 60, outputTokens: 12 } }, disagreement: { numerator: 2, denominator: 3, rate: 2 / 3 } })
     expect(result.wilson95).toEqual(wilsonInterval(1, 1))
-    expect(result.perMember.map((row: { agreement: number }) => row.agreement)).toEqual([1, 1, 0])
+    expect(result.wilson95!.lower).toBeCloseTo(0.2065493, 6)
+    expect(result.wilson95!.upper).toBeCloseTo(1, 12)
+    expect(result.perMember.map(row => row.agreement)).toEqual([1, 1, 0])
   })
   it.each([0, 19, 20, 21])('pins default independent n=%i boundary', n => {
     const result = summarize(Array.from({ length: n }, (_, index) => observation(String(index))))
@@ -88,7 +90,7 @@ describe('judge calibration independent denominators', () => {
   it('excludes zero-call refusals from every measured denominator and cost', () => {
     const measured = summarize([observation('known')]), mixed = summarize([refused('refused'), observation('known')])
     expect(mixed?.counts).toMatchObject({ selected: 2, eligible: 1, attempted: 1, eligibilityRefused: 1 })
-    for (const key of ['n', 'pooledAgreement', 'wilson95', 'perMember', 'abstention', 'disagreement', 'cost']) expect(mixed[key]).toEqual(measured[key])
+    for (const key of ['n', 'pooledAgreement', 'wilson95', 'perMember', 'abstention', 'disagreement', 'cost'] as const) expect(mixed[key]).toEqual(measured[key])
     const empty = summarize([refused('a'), refused('b')])
     expect(empty).toMatchObject({ status: 'uncalibrated', n: 0, counts: { attempted: 0, eligibilityRefused: 2 }, cost: { usage: { calls: 0 } } })
     for (const key of ['pooledAgreement', 'wilson95']) expect(empty).not.toHaveProperty(key)
@@ -101,7 +103,7 @@ describe('judge calibration independent denominators', () => {
     row.probe.score.axes.opClass = { kind: 'mismatch' } as never
     row.truth = { kind: 'resolved', fullMatch: false, provenance: 'deterministic-full-match' }
     expect(summarize([row])?.pooledAgreement).toBe(1)
-    expect(summarize([row]).perMember.every((member: { agreement: number }) => member.agreement === 1)).toBe(true)
+    expect(summarize([row]).perMember.every(member => member.agreement === 1)).toBe(true)
   })
   it('records override provenance and deterministic reruns without inflating independent n', () => {
     const rows = [observation('a'), observation('b')], before = JSON.stringify(rows)
@@ -109,6 +111,17 @@ describe('judge calibration independent denominators', () => {
     expect(summarize(rows, 3)).toMatchObject({ status: 'uncalibrated', minN: 3, minNSource: 'flag' })
     expect(summarize(rows, 2)).toEqual(summarize(rows, 2)); expect(JSON.stringify(rows)).toBe(before)
     expect(() => summarize([rows[0]!, rows[0]!])).toThrow('independent')
+  })
+  it('selects the anchored question first and explicitly skips a targetless valueless decision', () => {
+    const gold = select(fixture()).gold[0] as core.JudgeCalibrationGold
+    const action = gold.cassette.sidecar.goldAction
+    const candidate: core.ReplaySample = { sampleIndex: 0, durationMs: 1, outcome: { kind: 'decision', action,
+      identity: core.computeDecisionIdentity(action, gold.cassette.input.stateBefore.elements) } }
+    const row: core.JudgeCalibrationEvidence = { ...gold, candidate, replayedModelId: 'gpt-5', profileKey: 'fixture', replayDigest: 'a'.repeat(64), truth: core.resolveJudgeCalibrationTruth({ gold, candidate }) }
+    expect(core.prepareJudgeCalibrationProbe(row)?.evidence.question.kind).toBe('element-equivalence')
+    delete row.cassette.sidecar.goldAnchor
+    delete row.cassette.sidecar.goldValue
+    expect(core.prepareJudgeCalibrationProbe(row)).toBeUndefined()
   })
 })
 
