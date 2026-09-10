@@ -25,7 +25,7 @@ function fixture(kind: MarkReceipt['kind'] = 'confirmed-bug', correction?: Actio
   return { snapshot, marks: [mark], source }
 }
 const select = (input: ReturnType<typeof fixture>) => Reflect.get(core, 'selectJudgeCalibrationGold')?.(input)
-const truth = (gold: unknown, action: Action) => Reflect.get(core, 'resolveJudgeCalibrationTruth')?.({
+const truth = (gold: core.JudgeCalibrationGold, action: Action) => Reflect.get(core, 'resolveJudgeCalibrationTruth')?.({
   gold, candidate: { sampleIndex: 0, durationMs: 1, outcome: { kind: 'decision', action,
     identity: core.computeDecisionIdentity(action, (gold as { cassette: core.LeafCassette }).cassette.input.stateBefore.elements) } },
 })
@@ -56,7 +56,7 @@ describe('judge calibration independent source truth', () => {
     const input = fixture('false-pass', { type: 'click', ref: asRef('e-continue-1') }), selected = select(input)
     expect(selected?.gold).toHaveLength(1)
     expect(truth(selected.gold[0], { type: 'click', ref: asRef('e-continue-2') })).toMatchObject({ kind: 'unresolved', reason: 'truth-unresolved' })
-    expect(truth(selected.gold[0], { type: 'click', ref: asRef('e-continue-1') })).toMatchObject({ kind: 'resolved', fullMatch: true })
+    expect(truth(selected.gold[0], { type: 'click', ref: asRef('e-continue-1') })).toMatchObject({ kind: 'resolved', fullMatch: true, provenance: 'grounded-correction' })
   })
   it.each(['private', 'excluded', 'quarantine', 'foreign-step', 'missing-source'])('skips invalid %s gold', mode => {
     const input = fixture(), id = input.marks[0]!.gold[0]!.cassetteId
@@ -64,7 +64,7 @@ describe('judge calibration independent source truth', () => {
     if (mode === 'excluded') input.snapshot.excludedLabelIds = new Set([id])
     if (mode === 'quarantine') input.snapshot.labelsById.get(id)!.quarantine = { reason: 'fixture' } as never
     if (mode === 'foreign-step') input.snapshot.cassettesById.get(id)!.stepIndex = 99
-    if (mode === 'missing-source') input.snapshot.cassettesById.delete(input.source.id)
+    if (mode === 'missing-source') input.snapshot.cassettesById = new Map([...input.snapshot.cassettesById].filter(([id]) => id !== input.source.id))
     expect(select(input)?.gold).toEqual([])
     expect(Object.values(select(input)?.skippedCounts ?? {}).some(n => Number(n) > 0)).toBe(true)
   })

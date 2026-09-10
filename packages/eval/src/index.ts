@@ -1,4 +1,6 @@
 export type { ArtifactSource, HandoffSource } from './ports'
+export { selectJudgeCalibrationGold, resolveJudgeCalibrationTruth, judgeCalibrationFullMatch } from './judge/calibration'
+export type { JudgeCalibrationGold, JudgeCalibrationEvidence, JudgeCalibrationObservation, JudgeCalibrationTruth, JudgeCalibrationSkipReason, JudgeCalibrationDiagnostics } from './judge/calibration'
 export { collectSoftPopulation } from './labels/soft-population'
 export type { SoftPopulation, SoftObservation, SoftEvidenceSkip, SoftEvidenceSkipReason, CollectSoftPopulationInput } from './labels/soft-population'
 export { parseStandaloneLabelRecord, selectEffectiveLabels, deriveLabelRevisionId, createLabelRevision } from './labels/effective-labels'

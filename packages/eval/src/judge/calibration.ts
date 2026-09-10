@@ -1,0 +1,155 @@
+import { sha256hex, type MarkReceipt } from '@vostride/agent-qa-schema'
+import { canonicalJson } from '../canonical-json'
+import type { LeafCassette } from '../cassette/cassette'
+import type { CassetteReceipt } from '../cassette/receipt-leg'
+import type { CommittedCorpusSnapshot } from '../census/derive-census'
+import { computeCorpusDigest } from '../census/corpus-digest'
+import { deriveRunSlug } from '../extract/ids'
+import { effectiveGold } from '../labels/effective-gold'
+import type { StandaloneLabelRecord } from '../labels/label-record'
+import { computeDecisionIdentity } from '../replay/identity'
+import type { ReplaySample } from '../replay/result'
+import { isDecisionFullMatch, scoreReplaySample, type DecisionScore, type JudgeSettled, type ScoreDecisionContext } from '../match/score'
+
+export type JudgeCalibrationSkipReason = 'invalid-gold' | 'missing-source' | 'conflicting-gold'
+  | 'missing-executable-correction' | 'invalid-executable-correction' | 'invalid-recorded-model'
+  | 'corpus-refused' | 'path-refused' | 'marks-unreadable' | 'handoff-refused'
+  | 'missing-replay' | 'malformed-replay' | 'foreign-replay' | 'stale-replay' | 'ambiguous-replay'
+  | 'missing-profile-proof' | 'foreign-profile' | 'missing-candidate'
+export type JudgeCalibrationDiagnostics = Partial<Record<JudgeCalibrationSkipReason, number>>
+export interface JudgeCalibrationGold {
+  sourceCassetteId: string
+  goldCassetteId: string
+  decisionId: string
+  markId: string
+  markOrdinal: number
+  cassette: LeafCassette
+  labelRecord: StandaloneLabelRecord
+  recordedModelId?: string
+  recordedReceipt: { cassetteId: string; receipt: CassetteReceipt }
+}
+export type JudgeCalibrationTruth =
+  | { kind: 'resolved'; fullMatch: boolean; provenance: 'deterministic-full-match' | 'grounded-correction' }
+  | { kind: 'unresolved'; reason: 'truth-unresolved' }
+export interface JudgeCalibrationEvidence extends JudgeCalibrationGold {
+  candidate: ReplaySample
+  replayedModelId: string
+  profileKey: string
+  replayDigest: string
+  truth: JudgeCalibrationTruth
+}
+/** One source decision, never one copy per panel member. Unresolved truth is still probed. */
+export interface JudgeCalibrationObservation extends JudgeCalibrationEvidence {
+  fullMatch?: boolean
+}
+const hash = (value: unknown) => sha256hex(canonicalJson(value))
+const compare = (a: unknown, b: unknown) => canonicalJson(a) < canonicalJson(b) ? -1 : canonicalJson(a) > canonicalJson(b) ? 1 : 0
+
+/** Governing marks and executable actions only; verifier verdicts are never equivalence truth. */
+export function selectJudgeCalibrationGold(input: { snapshot: CommittedCorpusSnapshot; marks: readonly MarkReceipt[] }) {
+  const { snapshot } = input
+  const skippedCounts: JudgeCalibrationDiagnostics = {}
+  const skip = (reason: JudgeCalibrationSkipReason) => { skippedCounts[reason] = (skippedCounts[reason] ?? 0) + 1 }
+  const latest = new Map<string, MarkReceipt[]>()
+  for (const mark of input.marks) {
+    const key = canonicalJson([mark.runId, mark.testIndex, mark.stepIndex ?? null])
+    const previous = latest.get(key)
+    if (!previous || mark.ordinal > previous[0]!.ordinal) latest.set(key, [mark])
+    else if (mark.ordinal === previous[0]!.ordinal && !previous.some(row => canonicalJson(row) === canonicalJson(mark))) previous.push(mark)
+  }
+  const active = (id: string) => snapshot.entries.some(entry => entry.cassetteId === id)
+    && !snapshot.excludedLabelIds?.has(id) && !snapshot.labelsById.get(id)?.quarantine
+  const rows = new Map<string, JudgeCalibrationGold[]>()
+  const governing = [...latest.values()].flat().sort(compare)
+  for (const mark of governing) for (const ref of [...mark.gold].sort(compare)) {
+    const cassette = snapshot.cassettesById.get(ref.cassetteId), label = snapshot.labelsById.get(ref.cassetteId)
+    const entries = snapshot.entries.filter(entry => entry.cassetteId === ref.cassetteId)
+    if (!cassette || !label || !active(ref.cassetteId) || cassette.id !== ref.cassetteId
+      || cassette.granularity !== 'leaf' || label.cassetteId !== cassette.id
+      || cassette.runId !== mark.runId || cassette.testIndex !== mark.testIndex
+      || (mark.stepIndex !== undefined && cassette.stepIndex !== mark.stepIndex)
+      || label.provenance.sourceCassetteId !== ref.sourceCassetteId || label.provenance.runId !== mark.runId
+      || label.provenance.runSlug !== deriveRunSlug(mark.runId) || label.label.sourceChannel !== ref.channel
+      || !entries.every(entry => entry.split === 'held-out' && entry.heldOutVisibility === 'private'
+        && entry.run_links.runId === mark.runId && entry.run_links.runSlug === deriveRunSlug(mark.runId))) {
+      skip('invalid-gold'); continue
+    }
+    const source = snapshot.cassettesById.get(ref.sourceCassetteId), sourceLabel = snapshot.labelsById.get(ref.sourceCassetteId)
+    if (!source || !sourceLabel || !active(ref.sourceCassetteId) || source.id !== ref.sourceCassetteId
+      || sourceLabel.cassetteId !== source.id || sourceLabel.provenance.sourceCassetteId !== undefined
+      || source.runId !== cassette.runId || source.testIndex !== cassette.testIndex || source.testId !== cassette.testId
+      || source.stepIndex !== cassette.stepIndex || source.decisionOrdinal !== cassette.decisionOrdinal
+      || canonicalJson(source.input) !== canonicalJson(cassette.input)
+      || canonicalJson(source.sidecar) !== canonicalJson(cassette.sidecar)
+      || sourceLabel.provenance.runId !== mark.runId || sourceLabel.provenance.runSlug !== deriveRunSlug(mark.runId)
+      || !snapshot.entries.filter(entry => entry.cassetteId === source.id).every(entry =>
+        entry.run_links.runId === mark.runId && entry.run_links.runSlug === deriveRunSlug(mark.runId))) {
+      skip('missing-source'); continue
+    }
+    if (mark.kind !== 'confirmed-bug' && label.correction?.correctedAction === undefined) {
+      skip('missing-executable-correction'); continue
+    }
+    const effective = effectiveGold(cassette, label)
+    if (effective.kind === 'refused') { skip(effective.reason === 'missing-executable-correction' ? effective.reason : 'invalid-executable-correction'); continue }
+    const recordedModelId = source.receipt.model.declared?.modelId ?? source.receipt.model.resolvedModelId
+    if (recordedModelId !== undefined && (typeof recordedModelId !== 'string' || !recordedModelId.trim() || /[\u0000-\u001f\u007f]/.test(recordedModelId))) {
+      skip('invalid-recorded-model'); continue
+    }
+    const row: JudgeCalibrationGold = {
+      sourceCassetteId: source.id, goldCassetteId: cassette.id,
+      decisionId: canonicalJson([source.id, source.runId, source.testIndex, source.stepIndex, source.decisionOrdinal]),
+      markId: mark.markId, markOrdinal: mark.ordinal, cassette: effective.cassette, labelRecord: label,
+      ...(recordedModelId === undefined ? {} : { recordedModelId }),
+      recordedReceipt: { cassetteId: source.id, receipt: source.receipt },
+    }
+    rows.set(source.id, [...(rows.get(source.id) ?? []), row])
+  }
+  const gold: JudgeCalibrationGold[] = []
+  for (const group of rows.values()) {
+    if (new Set(group.map(row => canonicalJson(row.cassette.sidecar))).size > 1) { skip('conflicting-gold'); continue }
+    // User-mark wins over its overturned sibling, then stable canonical identity.
+    group.sort((a, b) => Number(a.labelRecord.label.sourceChannel !== 'user-mark') - Number(b.labelRecord.label.sourceChannel !== 'user-mark') || compare(a.goldCassetteId, b.goldCassetteId))
+    gold.push(group[0]!)
+  }
+  gold.sort((a, b) => compare(a.decisionId, b.decisionId))
+  const goldSetDigest = hash({ governing: governing.map(mark => ({ runId: mark.runId, testIndex: mark.testIndex,
+    stepIndex: mark.stepIndex ?? null, markId: mark.markId, ordinal: mark.ordinal, kind: mark.kind,
+    gold: [...mark.gold].sort(compare) })), gold })
+  return { gold, skippedCounts, goldSetDigest, corpusDigest: computeCorpusDigest(snapshot.entries) }
+}
+
+/** Always recompute judge-free truth from the action and its recorded screen. */
+export function resolveJudgeCalibrationTruth(input: { gold: JudgeCalibrationGold; candidate: ReplaySample; context?: ScoreDecisionContext }): JudgeCalibrationTruth {
+  const { cassette } = input.gold
+  const candidate = input.candidate.outcome.kind !== 'decision' ? input.candidate : {
+    ...input.candidate, outcome: { ...input.candidate.outcome,
+      identity: computeDecisionIdentity(input.candidate.outcome.action, cassette.input.stateBefore.elements) },
+  }
+  const score = scoreReplaySample(cassette.sidecar, candidate, input.context ?? {
+    priorIdentities: 'leaf-no-history', screenStateHash: cassette.receipt.screenStateHash,
+    stateMetadata: cassette.input.stateBefore.metadata,
+  })
+  if (candidate.outcome.kind === 'decision'
+    && input.gold.labelRecord.correction?.correctedAction !== undefined
+    && candidate.outcome.identity.target !== undefined
+    && canonicalJson(candidate.outcome.action) === canonicalJson(cassette.sidecar.goldAction)) {
+    const fullMatch = score.kind === 'scored' ? isDecisionFullMatch(score)
+      : score.kind === 'unresolved-tie' && judgeCalibrationFullMatch(score, {
+        axis: score.cause === 'value-mid-band' ? 'value' : 'element-identity', resolution: 'equivalent',
+      })
+    if (fullMatch) return { kind: 'resolved', fullMatch, provenance: 'grounded-correction' }
+  }
+  if (score.kind === 'scored' || score.kind === 'miss-by-failure') return {
+    kind: 'resolved', fullMatch: isDecisionFullMatch(score), provenance: 'deterministic-full-match',
+  }
+  return { kind: 'unresolved', reason: 'truth-unresolved' }
+}
+
+/** Use the production full-match predicate for the panel's one-axis prediction too. */
+export function judgeCalibrationFullMatch(score: DecisionScore, result: Pick<JudgeSettled, 'axis' | 'resolution'>): boolean {
+  const partial = score.kind === 'scored' ? score : score.kind === 'unresolved-tie' ? score.partial : undefined
+  if (!partial) return false
+  return isDecisionFullMatch({ ...partial, kind: 'scored', matcherVersion: score.matcherVersion,
+    judgeSettled: { ...result, cause: score.kind === 'unresolved-tie' ? score.cause : 'partial-identity',
+      judgeId: 'calibration-prediction', judgeVersion: 0, confidence: 'high' } })
+}
