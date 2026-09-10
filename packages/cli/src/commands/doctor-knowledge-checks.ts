@@ -269,7 +269,7 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
   return { ...check,
     get fixInstructions() {
       return context.priors().kind === 'refused'
-        ? `Inspect the selected committed artifact at ${displayPath(resolve(dirname(context.agentQaRoot), 'agent-qa-eval/labels/calibration.json'))} and its referenced revisions without changing them. Follow docs/label-calibration.md#inspection-and-recovery; marker replacement is a separate explicit operator action.`
+        ? `Inspect the calibration marker and its referenced revisions in the selected committed eval root ${displayPath(resolve(dirname(context.agentQaRoot), 'agent-qa-eval'))} without changing them. Follow docs/label-calibration.md#inspection-and-recovery; marker replacement is a separate explicit operator action.`
         : check.fixInstructions
     },
     check: async () => {
