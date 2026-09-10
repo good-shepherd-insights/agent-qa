@@ -56,6 +56,17 @@ it('refuses a self-consistent composite override request', async () => {
   expect(resolveScoringContext({ ...f, expectedJudgeRequest: judgeRequest }).compatible).toBe(false)
 })
 
+it.each(['incomplete', 'reordered', 'over-cap'])('refuses corrupted no-consensus groups: %s', async change => {
+  const f = await panelScoreFixture(root(), ['different', 'different'], true)
+  const raw = JSON.parse(readFileSync(f.written.file, 'utf8'))
+  const stamp = raw.score.entry.score.judgeSettled ?? raw.score.entry.score.judgeOutcome
+  if (change === 'incomplete') stamp.members.pop()
+  if (change === 'reordered') [stamp.members[2], stamp.members[3]] = [stamp.members[3], stamp.members[2]]
+  if (change === 'over-cap') stamp.members.push(...structuredClone(stamp.members.slice(0, 2)))
+  writeFileSync(f.written.file, JSON.stringify(raw))
+  expect(loadScoreRecord(f.written.dir).kind).toBe('refused')
+})
+
 it('keeps singleton identity and historical single bytes unchanged', async () => {
   const f = await panelScoreFixture(root(), ['different'])
   expect(f.record.judge).toEqual(createPanelIdentity(['claude-sonnet-4-5']))

@@ -12,7 +12,7 @@ import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { basename, join } from 'node:path'
 
 import type { ReplayCassetteOutcome, ReplayRefusal } from '@vostride/agent-qa-eval'
-import { scoringContextSchema } from '@vostride/agent-qa-eval'
+import { scoringContextSchema, hasValidScoreJudgeMetadata } from '@vostride/agent-qa-eval'
 
 import { CASSETTE_FILE } from './cassette-store.js'
 import { REPLAY_RECORD_FILE } from './replay-record-store.js'
@@ -90,6 +90,9 @@ export function loadScoreRecord(dir: string): ScoreRecordLoad {
 
   const read = readDocument(path, basename(dir))
   if (read.kind === 'refused') return read
+  if (!hasValidScoreJudgeMetadata(read.document)) {
+    return { kind: 'refused', refusal: refusal(basename(dir), `Invalid score judge metadata at ${path}`) }
+  }
   if (typeof read.document === 'object' && read.document !== null && 'scoringContext' in read.document &&
     !scoringContextSchema.safeParse(read.document.scoringContext).success) {
     return { kind: 'refused', refusal: refusal(basename(dir), `Invalid scoring context at ${path}`) }

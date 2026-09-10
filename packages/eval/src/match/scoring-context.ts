@@ -3,16 +3,108 @@ import { z } from 'zod'
 import { canonicalJson } from '../canonical-json'
 import type { Cassette } from '../cassette/cassette'
 import { JUDGE_CONFIG } from '../judge/config'
+import { createPanelIdentity } from '../judge/panel'
+import { resolveJudgeFamilies, judgeFamiliesIntersect } from '../judge/family'
 import { effectiveGold } from '../labels/effective-gold'
 import type { StandaloneLabelRecord } from '../labels/label-record'
 import type { ReplayCassetteOutcome } from '../replay/result'
 import { MATCHER_CONFIG } from './config'
 import { scoreCassetteReplay, type CassetteScore, type DecisionScoreEntry, type JudgeIdentityBlock } from './score'
+import { JUDGE_ABSTENTION_CAUSES } from './score'
+
+const count = z.number().int().nonnegative().safe()
+const confidence = z.enum(['high', 'medium', 'low'])
+const memberIdentity = z.object({ judgeModelId: z.string().min(1), judgeFamily: z.string().min(1) }).strict()
+/** Explicit additive identity admission, shared by independent storage boundaries. */
+export const judgeIdentitySchema = z.object({
+  judgeModelId: z.string(), judgeFamily: z.string(), judgeVersion: count,
+  confidenceThreshold: confidence,
+  familyOverride: z.literal('same-family-allowed').optional(),
+  panelSize: count.optional(), members: z.array(memberIdentity).optional(),
+}).strict().refine(judge => {
+  if (!judge.judgeModelId.startsWith('panel:')) return judge.panelSize === undefined && judge.members === undefined
+  const members = judge.members
+  if (members === undefined || members.length < 2 || members.length > JUDGE_CONFIG.maxPanelMembers ||
+    judge.panelSize !== members.length || judge.familyOverride !== undefined || judge.judgeVersion < 2) return false
+  const ids = members.map(member => member.judgeModelId)
+  if (new Set(ids).size !== ids.length) return false
+  const families = ids.map(resolveJudgeFamilies)
+  if (families.some((family, index) => family.size === 0 ||
+    families.slice(0, index).some(previous => judgeFamiliesIntersect(previous, family)))) return false
+  const canonical = createPanelIdentity(ids)
+  return judge.judgeModelId === canonical.judgeModelId && judge.judgeFamily === canonical.judgeFamily &&
+    canonicalJson(members) === canonicalJson(canonical.members)
+}, 'panel identity must be canonical, complete and disjoint')
+
+export const judgeUsageSchema = z.object({ calls: count, inputTokens: count.optional(), outputTokens: count.optional() }).strict()
+export const judgeMemberOutcomeSchema = z.object({
+  ...memberIdentity.shape,
+  outcome: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('settled'), resolution: z.enum(['equivalent', 'different']), confidence }).strict(),
+    z.object({ kind: z.literal('abstained'), cause: z.enum(JUDGE_ABSTENTION_CAUSES), confidence: confidence.optional() }).strict(),
+    z.object({ kind: z.literal('error'), reason: z.enum(['provider-error', 'unparseable-output']), detail: z.string() }).strict(),
+  ]),
+  usage: judgeUsageSchema.optional(),
+}).strict()
+
+function object(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Validate additive panel fields without rewriting legacy score documents or their digests. */
+export function hasValidScoreJudgeMetadata(record: unknown): boolean {
+  if (!object(record)) return false
+  const parsedJudge = record.judge === undefined ? undefined : judgeIdentitySchema.safeParse(record.judge)
+  if (parsedJudge !== undefined && !parsedJudge.success) return false
+  const judge = parsedJudge?.data
+  const score = record.score
+  if (!object(score)) return false
+  const entries = score.kind === 'leaf' ? [score.entry] : score.kind === 'procedure' ? score.entries : []
+  if (!Array.isArray(entries)) return false
+  for (const entry of entries) {
+    if (!object(entry)) return false
+    if (entry.kind !== 'decision') continue
+    if (!object(entry.score)) return false
+    for (const stamp of [entry.score.judgeSettled, entry.score.judgeOutcome]) {
+      if (stamp === undefined) continue
+      if (!object(stamp)) return false
+      if (stamp.usage !== undefined && !judgeUsageSchema.safeParse(stamp.usage).success) return false
+      if (judge?.panelSize === undefined) {
+        if (stamp.members !== undefined || (typeof stamp.judgeId === 'string' && stamp.judgeId.startsWith('panel:'))) return false
+        continue
+      }
+      if (stamp.kind === 'not-invoked') continue
+      if (stamp.judgeId !== judge.judgeModelId || stamp.judgeVersion !== judge.judgeVersion) return false
+      if (stamp.kind === 'abstained' && !z.enum(JUDGE_ABSTENTION_CAUSES).safeParse(stamp.cause).success) return false
+      if (stamp.kind === 'judge-error' && (!z.enum(['provider-error', 'unparseable-output']).safeParse(stamp.reason).success ||
+        typeof stamp.detail !== 'string')) return false
+      if (stamp.confidence !== undefined && !confidence.safeParse(stamp.confidence).success) return false
+      if (stamp.members === undefined) {
+        // Evidence refusal can precede every call; it has no comparison group.
+        if (stamp.kind !== 'abstained' || !['missing-evidence', 'candidate-overflow'].includes(String(stamp.cause)) ||
+          (object(stamp.usage) && stamp.usage.calls !== 0)) return false
+        continue
+      }
+      const members = z.array(judgeMemberOutcomeSchema).safeParse(stamp.members)
+      if (!members.success) return false
+      const limit = (entry.score.kind === 'unresolved-tie' ? entry.score.cause : stamp.cause) === 'no-consensus'
+        ? JUDGE_CONFIG.maxDistinctCandidates : 1
+      if (members.data.length < judge.panelSize || members.data.length % judge.panelSize !== 0 ||
+        members.data.length > judge.panelSize * limit) return false
+      if (!members.data.every((member, index) => {
+        const expected = judge.members![index % judge.panelSize!]
+        return member.judgeModelId === expected.judgeModelId && member.judgeFamily === expected.judgeFamily
+      })) return false
+    }
+  }
+  return true
+}
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/)
 export const scoringJudgeRequestSchema = z.object({
   judgeModelId: z.string().min(1), allowSameFamily: z.boolean(),
-}).strict()
+}).strict().refine(request => !request.judgeModelId.startsWith('panel:') || !request.allowSameFamily,
+  'composite judge requests cannot allow same-family judging')
 export type ScoringJudgeRequest = z.infer<typeof scoringJudgeRequestSchema> | null
 /** Additive score-file context. Absence remains readable for uncorrected legacy scores. */
 export const scoringContextSchema = z.object({
@@ -68,8 +160,9 @@ export function resolveScoringContext(input: ScoringInputs & {
     ...(record === undefined ? {} : { incurredJudgeScore: record.score }) })
   // Eligibility refusals retain their precise reason even when an older score exists.
   if (gold?.kind === 'refused') return refuse(scoreCassetteReplay(cassette, input.outcome, input.labelRecord))
-  const currentJudge = record?.judge === undefined || (record.judge.judgeVersion === JUDGE_CONFIG.judgeVersion &&
-    record.judge.confidenceThreshold === JUDGE_CONFIG.confidenceThreshold)
+  const currentJudge = record === undefined || (hasValidScoreJudgeMetadata(record) &&
+    (record.judge === undefined || (record.judge.judgeVersion === JUDGE_CONFIG.judgeVersion &&
+    record.judge.confidenceThreshold === JUDGE_CONFIG.confidenceThreshold)))
   const expectedJudge = input.expectedJudgeRequest
   const legacyJudgeMatches = expectedJudge === undefined || (expectedJudge === null ? record?.judge === undefined
     : record?.judge?.judgeModelId === expectedJudge.judgeModelId &&
