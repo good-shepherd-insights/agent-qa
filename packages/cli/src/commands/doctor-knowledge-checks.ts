@@ -32,6 +32,7 @@ import {
   type EmbeddingProfile,
   type RecordedRetrievalRung,
   type RetrievalRungReason,
+  type PromotionJudgePosture,
 } from '@vostride/agent-qa-schema'
 import {
   LOCAL_KNOWLEDGE_PROBES,
@@ -294,12 +295,11 @@ function createLearningAvailabilityCheck(context: KnowledgeCheckContext): Doctor
         return { status: 'warn', message: `deterministic-verdict-floor — no eval root at ${displayPath(learning.committedRoot)}` }
       }
       if (learning.kind === 'unavailable') {
-        return { status: 'fail', message: `posture-unavailable — ${learningRefusalLabel(learning.refusals[0])}` }
+        const panel = learning.judge?.panelSize === undefined ? '' : `; judge ${judgeLabelOf(learning.judge)}`
+        return { status: 'fail', message: `posture-unavailable — ${learningRefusalLabel(learning.refusals[0])}${panel}` }
       }
       const { replayGateAvailable, judge, canary } = learning.host
-      const judgeLabel = judge.judgeFamily
-        ?? (judge.reason === 'no-judge-configured' ? 'none'
-          : judge.reason === 'no-eligible-judge' ? 'ineligible' : 'not reported')
+      const judgeLabel = judgeLabelOf(judge)
       if (replayGateAvailable) {
         const evidence = canary.kind === 'provided' ? canary.attributedRows ?? 'not reported' : 'none'
         // 2026-09-08, 418 D-04/D-14/D-21: cumulative since-v4 counts only.
@@ -324,7 +324,7 @@ function createLearningAvailabilityCheck(context: KnowledgeCheckContext): Doctor
       if (judge.reason === 'no-eligible-judge') {
         return {
           status: 'warn',
-          message: 'deterministic-verdict-floor — no replay gate bound; configured judge ineligible',
+          message: `deterministic-verdict-floor — no replay gate bound; configured judge ${judgeLabel}`,
         }
       }
       return {
@@ -335,6 +335,16 @@ function createLearningAvailabilityCheck(context: KnowledgeCheckContext): Doctor
       }
     },
   }
+}
+
+/** Copy the complete declared family list; never infer an eligible subset for display. */
+function judgeLabelOf(judge: PromotionJudgePosture): string {
+  if (judge.reason === 'no-eligible-judge' && judge.panelSize !== undefined) {
+    const families = judge.members?.map(member => member.judgeFamily || 'unknown').join(', ') ?? 'unknown'
+    return `ineligible (panel: ${families})`
+  }
+  return judge.judgeFamily ?? (judge.reason === 'no-judge-configured' ? 'none'
+    : judge.reason === 'no-eligible-judge' ? 'ineligible' : 'not reported')
 }
 
 /** Refusals retain diagnostic detail internally; this row never echoes arbitrary input. */

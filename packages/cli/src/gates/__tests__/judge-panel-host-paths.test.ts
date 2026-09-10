@@ -102,7 +102,7 @@ async function exercisePort(port: ReplayGatePort) {
     return { kind: 'appended' as const }
   })
   vi.spyOn(bridge, 'createReplayGateHost').mockImplementation(input => realHost({ ...input,
-    reader: { candidateInjection: async () => ({ kind: 'found', injection: { candidateId } }) } as KnowledgeReaderPort,
+    reader: { candidateInjection: async () => ({ kind: 'found', injection: { candidateId } }) } as unknown as KnowledgeReaderPort,
     curation: { recordGateReceipt: record,
       maintenance: { acquireWriterLease: () => ({ kind: 'acquired', leaseId: 'fixture', epoch: 1 }),
         releaseLease: () => ({ kind: 'released' }) } } as unknown as bridge.ReplayGateHostDeps['curation'],
@@ -176,7 +176,7 @@ describe('421 production panel host paths', () => {
     await host.close()
   })
 
-  it('post-run tail prepares one snapshot for its sweep and per-run fold', async () => {
+  it('post-run tail prepares the shared snapshot for its sweep', async () => {
     const proof = capturePosture()
     const swept = vi.fn(async () => undefined)
     const tail = runPostRunTail({ runId: 'panel-host-run', configPath, configDir: root, agentQaRoot,
@@ -185,7 +185,7 @@ describe('421 production panel host paths', () => {
         composeHost: () => fakeHost(),
         acquireWriterLease: () => ({ kind: 'acquired', leaseId: 'fixture', epoch: 1 }),
         releaseLease: () => ({ kind: 'released' }), runCurationTail: swept },
-    } as Parameters<typeof runPostRunTail>[0])
+    } as unknown as Parameters<typeof runPostRunTail>[0])
     await tail.drain()
     expect(swept).toHaveBeenCalledTimes(1)
     expect(proof.shared).toHaveBeenCalledTimes(1)
@@ -214,27 +214,27 @@ describe('421 production panel host paths', () => {
     const proof = capturePosture()
     let composed: ComposeLocalAgentInput | undefined
     let stop: (() => void) | undefined
-    const ready = Promise.withResolvers<void>()
+    let markReady!: () => void
+    const ready = new Promise<void>(resolve => { markReady = resolve })
     const running = runDaemonHost({ configPath, agentQaRoot, knowledgeRoot,
       config: { getMasked: async () => ({ schemaVersion: 1, configPath, entries: [] }) },
       model: () => ({ modelId: 'fixture', generate: async () => { throw new Error('unexpected model') } }),
       runExecution: {} as NonNullable<Parameters<typeof runDaemonHost>[0]['runExecution']>,
       logger: { info: vi.fn(), error: vi.fn() },
       operations: {
-        setInterval: () => 1, clearInterval: () => undefined,
-        setTimeout: () => 1, clearTimeout: () => undefined,
+        setInterval: () => 1 as unknown as ReturnType<typeof setInterval>, clearInterval: () => undefined,
+        setTimeout: () => 1 as unknown as ReturnType<typeof setTimeout>, clearTimeout: () => undefined,
         onSignal: (signal, listener) => { if (signal === 'SIGTERM') stop = listener },
         offSignal: () => undefined,
-        trace: step => { if (step === 'registration-written') ready.resolve() },
+        trace: step => { if (step === 'registration-written') markReady() },
         startHeartbeatSupervisor: async () => ({ exited: Promise.resolve(), stop: async () => undefined }),
         startInvokeServer: async () => ({ socketPath: join(agentQaRoot, 'fake.sock'), close: async () => undefined }),
         writeDaemonRegistration: () => undefined,
-        reconcileRunOutcomesProjection: async () => undefined,
         composeLocalAgent: input => { composed = input; return fakeHost() },
-        drainQueue: async () => ({ kind: 'drained', processed: 0, failures: 0, quarantined: 0, promotions: [] }),
+        drainQueue: (async () => ({ kind: 'drained', failures: 0, quarantined: 0, promotions: [] })) as unknown as DaemonHostOperations['drainQueue'],
       } as Partial<DaemonHostOperations>,
     })
-    await Promise.race([ready.promise, running.then(code => { throw new Error(`daemon exited early: ${code}`) })])
+    await Promise.race([ready, running.then(code => { throw new Error(`daemon exited early: ${code}`) })])
     try {
       await composed!.resolvePromotionPosture!()
       expect(proof.shared).toHaveBeenCalled()
@@ -254,7 +254,7 @@ describe('421 production panel host paths', () => {
     }
     const proof = capturePosture()
     const checks = createKnowledgeChecks({ configPath, config: { knowledge: { dir: 'agent-qa-knowledge' } },
-      probes: { classifyIndexFace: () => ({ source: 'scan', reason: 'absent', filePresent: false }),
+      probes: { classifyIndexFace: () => ({ source: 'scan', reason: 'absent', detail: 'fixture', filePresent: false }),
         resolveEmbedderCapability: async () => ({ kind: 'deferred', reason: 'load-failure' }),
         readWriterLease: () => ({ kind: 'absent' }) } })
     const row = await checks[3].check()
@@ -265,5 +265,20 @@ describe('421 production panel host paths', () => {
     expect(llm.resolveModelAuth).not.toHaveBeenCalled()
     writeConfig()
     await exercisePort(proof.ports[0])
+  })
+
+  it.each([
+    { ids: ['claude-fixture', 'unrecognized-fixture'], families: 'claude, unknown' },
+    { ids: ['deepseek-r1-distill-llama', 'llama-fixture'], families: 'deepseek,llama, llama' },
+  ])('doctor keeps unknown and lineage member disclosures complete: %j', async ({ ids, families }) => {
+    writeConfig(ids)
+    const checks = createKnowledgeChecks({ configPath, config: { knowledge: { dir: 'agent-qa-knowledge' } },
+      probes: { classifyIndexFace: () => ({ source: 'scan', reason: 'absent', detail: 'fixture', filePresent: false }),
+        resolveEmbedderCapability: async () => ({ kind: 'deferred', reason: 'load-failure' }),
+        readWriterLease: () => ({ kind: 'absent' }) } })
+    expect(await checks[3].check()).toMatchObject({ status: 'fail',
+      message: expect.stringContaining(`judge ineligible (panel: ${families})`) })
+    expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 })
