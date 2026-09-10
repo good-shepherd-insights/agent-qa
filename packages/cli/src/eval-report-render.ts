@@ -86,6 +86,59 @@ function rateLine(
   return `- ${name}: ${metric.numerator}/${metric.denominator} (rate: ${rate})`
 }
 
+const notSupplied = 'unavailable (not supplied)'
+
+function metricLine(name: string, metric?: { numerator: number; denominator: number; rate?: number }): string {
+  if (metric === undefined) return `${name}: ${notSupplied}`
+  const rate = metric.denominator === 0 ? 'unavailable (zero denominator)' : metric.rate ?? notSupplied
+  return `${name}: ${metric.numerator}/${metric.denominator} (rate: ${rate})`
+}
+
+function recoveryLines(name: string, recovery?: EvalBatchReport['recovery']): string[] {
+  const weightSum = recovery?.weightSum
+  const weighted = weightSum === 0 ? 'unavailable (zero weightSum)' : recovery?.weightedAccuracy ?? notSupplied
+  return [
+    metricLine(`${name}.recoveryAccuracy`, recovery === undefined ? undefined : {
+      numerator: recovery.recoveredPositiveCount, denominator: recovery.eligiblePositiveCount,
+      ...(recovery.recoveryAccuracy === undefined ? {} : { rate: recovery.recoveryAccuracy }),
+    }),
+    `${name}.weightedAccuracy: ${weighted} (weightSum: ${weightSum ?? notSupplied})`,
+    `${name}.pairsWithoutWeight: ${recovery?.pairsWithoutWeight ?? notSupplied}`,
+  ]
+}
+
+function splitLines(name: string, cell?: EvalBatchReport['perSplit']['natural']): string[] {
+  const cost = cell?.perDecisionCost
+  return [
+    metricLine(`${name}.firstAttemptDecisionAccuracy`, cell?.firstAttemptDecisionAccuracy),
+    metricLine(`${name}.verifierFalsePassRate`, cell?.verifierFalsePassRate),
+    ...recoveryLines(`${name}.recovery`, cell?.recovery),
+    `${name}.perDecisionCost: ` + (cost === undefined ? notSupplied
+      : `decisionCount=${cost.decisionCount} promptTokens=${cost.promptTokens} `
+        + `completionTokens=${cost.completionTokens} totalTokens=${cost.totalTokens} durationMs=${cost.durationMs}`),
+  ]
+}
+
+/** Shared text projection: absent historical measurements stay absent; no rates are inferred. */
+export function renderReportLabelMetricLines(report: EvalBatchReport): string[] {
+  // The batch currently copies false-pass calibration, not channel precision. If supplied by a
+  // historical/future DTO, precision is copied too; never infer it as one minus false-pass rate.
+  const calibration: (EvalBatchReport['calibration'] & { precision?: number }) | undefined = report.calibration
+  return [
+    metricLine('verifierFalsePassRate', report.headline.verifierFalsePassRate),
+    `calibration.status: ${calibration?.status ?? notSupplied}`,
+    `calibration.n_gold: ${calibration?.n_gold ?? notSupplied}`,
+    `calibration.precision: ${calibration?.precision ?? notSupplied}`,
+    metricLine('calibration.verifierFalsePassRate', calibration?.verifierFalsePassRate),
+    ...recoveryLines('recovery', report.recovery),
+    ...splitLines('perSplit.natural', report.perSplit?.natural),
+    ...splitLines('perSplit.held-out.shared', report.perSplit?.['held-out']?.shared),
+    ...splitLines('perSplit.held-out.private', report.perSplit?.['held-out']?.private),
+    ...splitLines('perSplit.adversarial', report.perSplit?.adversarial),
+    `perSplit.unassignedCount: ${report.perSplit?.unassignedCount ?? notSupplied}`,
+  ]
+}
+
 /**
  * Render one EvalBatchReport DTO to its committed markdown projection. Locked structure (D-13):
  * H1 + Provenance, Headline, Honesty Counters (with the full judge disposition table incl.
@@ -141,6 +194,7 @@ export function renderEvalReportMarkdown(report: EvalBatchReport): string {
   lines.push(`  - totalTokens: ${headline.perDecisionCost.totalTokens}`)
   lines.push(`  - durationMs: ${headline.perDecisionCost.durationMs}`)
   lines.push('')
+  lines.push('### Label metrics', '', ...renderReportLabelMetricLines(report).map(line => `- ${line}`), '')
 
   // Honesty counters: every group visible, judge dispositions per TieCause, distinct judge cost.
   const honesty = report.honesty

@@ -14,6 +14,7 @@ function measured() {
   report.headline.verifierFalsePassRate = { numerator: 2, denominator: 5, rate: 0.123 }
   report.calibration = { status: 'calibrated', n_gold: 23,
     verifierFalsePassRate: { numerator: 3, denominator: 23, rate: 0.456 } }
+  Object.assign(report.calibration, { precision: 0.876 })
   report.recovery = { ...report.recovery, recoveredPositiveCount: 2, eligiblePositiveCount: 7,
     recoveryAccuracy: 0.234, weightedAccuracy: 0.345, weightSum: 7.5, pairsWithoutWeight: 3 }
   const cells = [report.perSplit.natural, report.perSplit['held-out'].shared,
@@ -30,6 +31,7 @@ function measured() {
 const disclosure = [
   'verifierFalsePassRate: 2/5 (rate: 0.123)',
   'calibration.status: calibrated', 'calibration.n_gold: 23',
+  'calibration.precision: 0.876',
   'calibration.verifierFalsePassRate: 3/23 (rate: 0.456)',
   'recovery.recoveryAccuracy: 2/7 (rate: 0.234)',
   'recovery.weightedAccuracy: 0.345 (weightSum: 7.5)', 'recovery.pairsWithoutWeight: 3',
@@ -68,6 +70,18 @@ describe('420 label report projections', () => {
       expect(legacy).toContain(`perSplit.${split}.firstAttemptDecisionAccuracy: unavailable (not supplied)`)
     }
     expect(legacy).not.toContain('weightSum: 0')
+  })
+  it('retains weighted zero and reports absent rates even with nonzero denominators', () => {
+    const report = buildEvalReport([])
+    report.headline.verifierFalsePassRate = { numerator: 0, denominator: 3 }
+    report.recovery.weightSum = 4
+    report.recovery.weightedAccuracy = 0
+    const text = renderEvalReportMarkdown(report)
+    expect(text).toContain('verifierFalsePassRate: 0/3 (rate: unavailable (not supplied))')
+    expect(text).toContain('recovery.weightedAccuracy: 0 (weightSum: 4)')
+    expect(text).toContain('calibration.status: uncalibrated')
+    expect(text).toContain('calibration.precision: unavailable (not supplied)')
+    expect(text).toContain('calibration.n_gold: unavailable (not supplied)')
   })
   it.each(['measured', 'empty', 'legacy'] as const)('actual console and JSON routes preserve %s DTO disclosure', async kind => {
     const report = kind === 'measured' ? measured() : kind === 'empty' ? buildEvalReport([]) : oldReport()

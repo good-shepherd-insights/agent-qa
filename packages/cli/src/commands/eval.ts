@@ -8,7 +8,7 @@
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import { installEvalWarningLogger } from '../eval-warning-logger.js'
-import { renderCensusFloorLines, renderFloorSummary, renderReportEvidenceLines } from '../eval-report-render.js'
+import { renderCensusFloorLines, renderFloorSummary, renderReportEvidenceLines, renderReportLabelMetricLines } from '../eval-report-render.js'
 import type {
   BaselineComparatorRefusal,
   CalibrateVerbResult,
@@ -275,6 +275,7 @@ function renderReportSummary(
       + `completionTokens=${cost.completionTokens} totalTokens=${cost.totalTokens} `
       + `durationMs=${cost.durationMs}`,
   )
+  for (const line of renderReportLabelMetricLines(report)) console.log(line)
   console.log(`ties: ${renderCounters(report.honesty.tieCounts)}`)
   console.log(`refusals: ${renderCounters(report.honesty.refusalCounts)}`)
   const judge = report.honesty.judge
