@@ -808,7 +808,17 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     return abstain('cap-exceeded')
   }
   const spend = receipt.spend!
+  if (input.planner.profile.model !== identity.plannerModelId)
+    throw new TypeError('Gate 1 replay planner differs from its cache identity')
+  const judgeCanRun = [...assessments.values()].some(row => row.eligible)
   const auth = await input.planner.resolveAuth()
+  const judgeBindings = []
+  for (const member of members) {
+    // Refused declarations still stamp no-eligible-judge, without credentials.
+    // Replay rechecks the identical planner/recorded IDs before it can bind a port.
+    judgeBindings.push({ profile: member.profile, modelOverrides: member.modelOverrides,
+      auth: judgeCanRun ? await member.resolveAuth() : { kind: 'none' as const } })
+  }
   const replay: ReplayBag = {
     profile: input.planner.profile,
     auth,
@@ -820,11 +830,9 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       },
     },
     ...(input.clock === undefined ? {} : { clock: { now: input.clock } }),
-    ...([...assessments.values()].some(row => row.eligible) && members.length > 0
+    ...(members.length > 0
       ? {
-          judge: { members: await Promise.all(members.map(async member => ({
-            profile: member.profile, auth: await member.resolveAuth(), modelOverrides: member.modelOverrides,
-          }))) },
+          judge: { members: judgeBindings },
         }
       : {}),
   }

@@ -97,7 +97,10 @@ it.each([
   { ids: ['claude-fixture', 'gemini-fixture'], recorded: 'mystery-recorded' },
   { ids: ['deepseek-r1-distill-qwen-32b', 'claude-fixture'], recorded: 'qwen-recorded' },
 ])('421 discloses composite refusal without override or judge calls: %j', async options => {
-  const { input, judges, members } = await fixture(options)
+  const { f, input, judges, members } = await fixture(options)
+  input.planner.modelOverrides = { languageModels: respondingStub(call =>
+    actionGenerateResult('web', JSON.stringify(call.prompt).includes('gate1-target-run') ? 'e-twin' : 'e-continue'),
+  'gpt-fixture').languageModels }
   const result = await local.runReplayGate(input)
   if (result.kind !== 'receipt') throw new Error(JSON.stringify(result))
   expect(result.receipt).toMatchObject({ degradation: 'replay-diff', judge: { eligibility: 'no-eligible-judge' } })
@@ -105,6 +108,10 @@ it.each([
   expect(result.receipt.reasons).not.toContain('baseline-uncached')
   expect(judges.every(judge => judge.captured.length === 0)).toBe(true)
   expect(members.every(member => member.resolveAuth.mock.calls.length === 0)).toBe(true)
+  const score = local.loadScoreRecord(join(f.agentQaRoot, 'eval/gate1', slugBranch(f.injection.candidateId),
+    'candidate-arm/replays', f.targetId))
+  expect(score).toMatchObject({ kind: 'loaded', record: { score: { entry: { score: {
+    kind: 'unresolved-tie', judgeOutcome: { kind: 'not-invoked', reason: 'no-eligible-judge' } } } } } })
 })
 
 it.each([['different', 'unsure'], ['different', 'equivalent'], ['different', 'error']] as const)(

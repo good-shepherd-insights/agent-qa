@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { renderGate1Line } from '@vostride/agent-qa-eval'
-import { CommittedEgressBlockedError } from '@vostride/agent-qa-safety'
+import { CommittedEgressBlockedError, createMaskingContext } from '@vostride/agent-qa-safety'
 import {
   asEvidenceToken,
   asRecordId,
+  asRef,
+  slugBranch,
   GATE1_REASONS,
   GateReceiptSchema,
   receiptDigestOf,
@@ -27,6 +29,7 @@ import {
 } from '../../eval-session-composition.js'
 import { createReplayGateHost, type ReplayGateHostDeps } from '../replay-gate-host.js'
 import * as bridge from '../replay-gate-host.js'
+import * as evalSession from '../../eval-session-composition.js'
 import * as llm from '../../llm-utils.js'
 import * as fsPromises from 'node:fs/promises'
 
@@ -61,7 +64,7 @@ describe('417 DATA replay gate bridge', () => {
   let deps: ReplayGateHostDeps
   let calls: string[]
   beforeEach(async () => {
-    root = mkdtempSync(join(tmpdir(), '417-gate-host-'))
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-gate-host-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     const fixture = createPromotionFloorFixture({
       knowledgeRoot,
@@ -129,6 +132,7 @@ describe('417 DATA replay gate bridge', () => {
     }
   })
   afterEach(() => {
+    vi.mocked(fsPromises.readFile).mockClear()
     vi.restoreAllMocks()
     rmSync(root, { recursive: true, force: true })
   })
@@ -351,10 +355,103 @@ describe('417 DATA replay gate bridge', () => {
       candidateId, verdict: 'pass' as const, producedAtOrdinal: 44, producedBy: {},
       runId: 'fixture-run', mark: 'confirmed-bug' as const })
     deps.runReplayGate = vi.fn(async () => ({ kind: 'receipt', receipt,
-      lines: [], notices: [], refusals: [], modelCalls: 0, wallClockMs: 0 })) as ReplayGateHostDeps['runReplayGate']
+      lines: [], notices: [], refusals: [], modelCalls: 0, wallClockMs: 0 })) as unknown as ReplayGateHostDeps['runReplayGate']
     await expect(createReplayGateHost(deps).run(candidateId)).rejects.toThrow('Gate 1')
     expect(calls).toEqual([])
   })
+  it.each(['panel', 'singleton', 'lineage', 'provider-error'] as const)(
+    '421 production port records real %s evidence from both replay arms', async mode => {
+      const local = await import('@vostride/agent-qa-eval-local')
+      writeFileSync(join(root, '.env.secrets.local'), '')
+      const { createPanelIdentity } = await import('@vostride/agent-qa-eval')
+      const { familyStubProfile, respondingStub, actionGenerateResult, judgeGenerateResult, noneAuth } =
+        await import(new URL('../../../../eval-local/src/__tests__/fixtures/replay-fixtures.js', import.meta.url).href)
+      const f = writeGate1Fixture(join(root, 'replay-fixture'))
+      renameSync(f.committedRoot, join(root, 'agent-qa-eval'))
+      f.committedRoot = join(root, 'agent-qa-eval')
+      f.cassettesRoot = join(f.committedRoot, 'cassettes')
+      // The real published candidate owns this receipt; the fixture reader supplies
+      // its reproducible target and rendered injection DATA, without replacing the host.
+      f.injection.candidateId = candidateId
+      f.injection.line.id = asRecordId(candidateId)
+      const ids = mode === 'singleton' ? ['claude-fixture'] : mode === 'lineage'
+        ? ['deepseek-r1-distill-qwen-32b', 'claude-fixture'] : ['claude-fixture', 'gemini-fixture']
+      writeFileSync(deps.configPath, readFileSync(deps.configPath, 'utf8').replace('use:\n', 'use:\n  llm: planner\n') +
+        '\nregistry:\n  llms:\n' + [{ name: 'planner', model: 'gpt-fixture' },
+          ...ids.map((model, i) => ({ name: `judge-${i}`, model }))].map(row =>
+          `    - name: ${row.name}\n      provider: openai-compatible\n      model: ${row.model}\n      baseURL: http://localhost:1/v1\n`).join('') +
+        '\neval:\n  judges: [' + ids.map((_, i) => `judge-${i}`).join(', ') + ']\n')
+      const auth = vi.spyOn(llm, 'resolveModelAuth').mockResolvedValue({ kind: 'unauthenticated',
+        credentialKey: 'fixture', provider: 'openai-compatible', optional: true, message: 'fixture' })
+      for (const { cassette } of f.selected) {
+        cassette.receipt.model.declared.modelId = 'qwen-recorded'
+        if (cassette.id === f.targetId) {
+          cassette.input.stateBefore.elements.push({ ...structuredClone(cassette.input.stateBefore.elements[0]), ref: asRef('e-twin') })
+          cassette.input.stateBefore.refMap[asRef('e-twin')] = structuredClone(cassette.input.stateBefore.refMap[asRef('e-continue')])
+        }
+        new local.FsCassetteStore({ root, outputDir: f.cassettesRoot }).write({ cassette, blobs: [] })
+      }
+      const planner = respondingStub((call: { prompt: unknown }) => {
+        const text = JSON.stringify(call.prompt)
+        return actionGenerateResult('web', text.includes('gate1-target-run') && !text.includes(f.injection.renderedLine)
+          ? 'e-twin' : 'e-continue')
+      }, 'gpt-fixture')
+      let warmed = false
+      const judges = ids.map((id, index) => respondingStub(() => {
+        if (warmed && mode === 'provider-error' && index === 1) throw new Error('fixture provider unavailable')
+        return judgeGenerateResult('different', 'high')
+      }, id))
+      const plannerOverrides = { languageModels: planner.languageModels }
+      const judgeOverrides = { languageModels: Object.assign({}, ...judges.map(judge => judge.languageModels)) }
+      const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
+      const identity = await evalSession.resolveGateProfileIdentity(session, plannerOverrides)
+      const { judgeMemberModelIds: _members, ...floorIdentity } = identity
+      expect(local.writeNoiseFloorArtefact({ artefact: { ...f.artefact, ...floorIdentity },
+        committedRoot: f.committedRoot, reportOutputBaseDir: join(root, 'floor-audit') }).kind).toBe('written')
+      const runRoot = join(deps.agentQaRoot, 'eval/gate', slugBranch(identity.profileKey))
+      await local.replayCorpusOnce({ selected: f.selected, cassettesRoot: f.cassettesRoot, agentQaRoot: deps.agentQaRoot,
+        runRoot, profile: familyStubProfile('gpt-fixture'), auth: noneAuth, modelOverrides: plannerOverrides,
+        judge: { members: ids.map(id => ({ profile: familyStubProfile(id), auth: noneAuth, modelOverrides: judgeOverrides })) },
+        seed: 11, k: 1, maskingContextFactory: createMaskingContext, replayOutputBaseDir: runRoot, source: 'committed', corpusDigest: f.corpusDigest })
+      warmed = true
+      for (const judge of judges) judge.captured.length = 0
+      auth.mockClear()
+      const originalHost = bridge.createReplayGateHost
+      const bound = vi.spyOn(bridge, 'createReplayGateHost').mockImplementation(input => originalHost({ ...input,
+        reader: { ...createKnowledgeReader(() => knowledgeRoot), candidateInjection: async () => ({ kind: 'found', injection: f.injection }) },
+        curation: LOCAL_CURATION_CAPABILITIES }))
+      const originalVerb = evalSession.runReplayGateVerb
+      vi.spyOn(evalSession, 'runReplayGateVerb').mockImplementation((session, id, opts) => originalVerb(session, id,
+        { ...opts, plannerOverrides, judgeOverrides }))
+      const port = bridge.createReplayGatePortForHost({ configPath: deps.configPath, agentQaRoot: deps.agentQaRoot })
+      expect(auth).not.toHaveBeenCalled()
+      expect(bound).not.toHaveBeenCalled()
+      const receipt = await port.runReplayGate(asRecordId(candidateId))
+      expect(receipt.gate).toBe(1)
+      if (receipt.gate !== 1) throw new Error('expected Gate 1')
+      expect(receipt.crossCheck).toBe(mode === 'lineage' ? 'not-run' : 'flipped')
+      const panel = createPanelIdentity(ids)
+      if (mode === 'lineage') {
+        expect(receipt).toMatchObject({ degradation: 'replay-diff', reasons: expect.arrayContaining(['same-family-refused']),
+          judge: { eligibility: 'no-eligible-judge', panelSize: 2, members: panel.members } })
+        expect(judges.every(judge => judge.captured.length === 0)).toBe(true)
+        expect(auth.mock.calls.map(([name]) => name)).toEqual(['planner'])
+      } else {
+        expect(receipt.judgeId).toBe(`${panel.judgeModelId}|family=${panel.judgeFamily}|judgeVersion=2`)
+        expect(auth.mock.calls.map(([name]) => name)).toEqual(['planner', ...ids.map((_, i) => `judge-${i}`)])
+        expect(judges.every(judge => judge.captured.length > 0)).toBe(true)
+        if (mode === 'singleton') expect(Object.keys(receipt.judge!).sort()).toEqual(['eligibility', 'overrideConfigured'])
+        else expect(receipt.judge).toMatchObject({ panelSize: 2, members: panel.members })
+      }
+      const read = gateReceiptsFor({ knowledgeRoot, candidateId })
+      expect(read).toMatchObject({ kind: 'found', lines: [receipt], status: 'candidate' })
+      expect(GateReceiptSchema.parse(receipt)).toEqual(receipt)
+      expect(receiptDigestOf(receipt)).toBe(receipt.receiptDigest)
+      const without = local.loadScoreRecord(join(deps.agentQaRoot, 'eval/gate1', slugBranch(candidateId),
+        'cross-check/without/sample-1/replays', f.targetId))
+      if (mode === 'provider-error') expect(without).toMatchObject({ kind: 'loaded', record: { score: { entry: { score: {
+        kind: 'unresolved-tie', judgeOutcome: { kind: 'abstained', cause: 'below-quorum' } } } } } })
+    })
   it('reads the real appended receipt and duplicate back, holding at gate2-receipt-required', async () => {
     // A Gate 1 pass cannot bypass the independent confirmed-evidence prerequisite.
     const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(knowledgeRoot)

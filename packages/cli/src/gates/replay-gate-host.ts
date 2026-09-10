@@ -74,9 +74,16 @@ export function createReplayGatePortForHost(input: {
         onProgress: () => undefined,
       })
       if (result.kind === 'refused') throw new Error(result.refusal.reason)
-      return result.receipt
+      return checkedReceipt(result.receipt, candidateId)
     },
   }
+}
+function checkedReceipt(value: unknown, candidateId: string): GateReceipt {
+  const receipt = GateReceiptSchema.parse(value)
+  if (receipt.gate !== 1 || receipt.candidateId !== candidateId ||
+    receipt.receiptDigest !== receiptDigestOf(receipt))
+    throw new Error('Gate 1 returned a foreign candidate, wrong gate or invalid receipt digest')
+  return receipt
 }
 export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
   const resolveTrustPriors = deps.resolveTrustPriors ?? trustPriorsForHost(deps).resolve
@@ -98,6 +105,8 @@ export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
         notices: [],
         exit: 2,
       }
+    if (found.injection.candidateId !== candidateId)
+      throw new Error('Gate 1 reader returned a foreign candidate')
     const runGate =
       deps.runReplayGate ?? (await import('../eval-session-composition.js')).runReplayGate
     const result = await runGate({
@@ -109,10 +118,7 @@ export function createReplayGateHost(deps: ReplayGateHostDeps): ReplayGateHost {
       producedBy: { opId: 'eval.replay-gate' },
     })
     if (result.kind === 'refused') return { ...result, exit: 2 }
-    const receipt = GateReceiptSchema.parse(result.receipt)
-    if (receipt.candidateId !== candidateId || receipt.receiptDigest !== receiptDigestOf(receipt)) {
-      throw new Error('Gate 1 returned a foreign candidate or invalid receipt digest')
-    }
+    const receipt = checkedReceipt(result.receipt, candidateId)
     const answer: Extract<ReplayGateVerbResult, { kind: 'receipt' }> = {
       kind: 'receipt',
       receipt,

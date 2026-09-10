@@ -7,6 +7,8 @@ import * as host from '../replay-gate-host.js'
 import * as session from '../../eval-session-composition.js'
 
 afterEach(() => vi.restoreAllMocks())
+const { completeGate1Receipt } = await import(new URL(
+  '../../../../knowledge-local/src/curator/__tests__/fixtures/promotion-floor-fixture.js', import.meta.url).href)
 
 // 2026-09-07, 418 D-13: tail and maintenance bind lazy capability so receipt
 // posture reaches the law. The 417 no-automatic-replay/no-spend boundary still
@@ -71,8 +73,10 @@ describe('417/418 production replay gate binding', () => {
       onProgress: expect.any(Function),
       resolveTrustPriors: expect.any(Function),
     })
-    const receipt = { gate: 1 }
+    const receipt = completeGate1Receipt('candidate')
     run.mockResolvedValueOnce({ kind: 'receipt', receipt } as session.ReplayGateVerbResult)
-    expect(await port.runReplayGate(asRecordId('candidate'))).toBe(receipt)
+    expect(await port.runReplayGate(asRecordId('candidate'))).toEqual(receipt)
+    run.mockResolvedValueOnce({ kind: 'receipt', receipt: { ...receipt, judgeId: 'substituted' } } as session.ReplayGateVerbResult)
+    await expect(port.runReplayGate(asRecordId('candidate'))).rejects.toThrow('invalid receipt digest')
   })
 })
