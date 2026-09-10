@@ -164,6 +164,17 @@ describe('420 held-out calibration', () => {
 it('420 exact channel mapping', () => {
   expect(Reflect.get(core, 'CHANNEL_TO_ORIGIN_CLASS')).toEqual({ 'recorded-verdict': 'agent-verified', 'self-heal-pair': 'agent-observed', 'user-mark': 'user', 'overturned-verdict': 'user' })
 })
+it('420 exact channel mapping keys', () => {
+  expect(Object.keys(core.CHANNEL_TO_ORIGIN_CLASS).sort()).toEqual([
+    'overturned-verdict', 'recorded-verdict', 'self-heal-pair', 'user-mark',
+  ])
+})
+it.each([
+  ['recorded-verdict', 'agent-verified'], ['self-heal-pair', 'agent-observed'],
+  ['user-mark', 'user'], ['overturned-verdict', 'user'],
+] as const)('420 exact channel mapping value %s', (channel, origin) => {
+  expect(Reflect.get(core.CHANNEL_TO_ORIGIN_CLASS, channel)).toBe(origin)
+})
 it('420 exact calibration status', () => {
   expect(Reflect.get(core, 'LABEL_CALIBRATION_STATUSES')).toEqual(['uncalibrated', 'calibrated'])
 })
