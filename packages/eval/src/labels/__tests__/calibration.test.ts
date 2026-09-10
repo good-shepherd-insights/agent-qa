@@ -37,6 +37,9 @@ function calibrate(input: ReturnType<typeof fixture>, extra: Record<string, unkn
 }
 
 describe('420 held-out calibration', () => {
+  it.each([0, 3, 20])('preserves the complete pre-extraction calibration output for n=%i', n => {
+    expect(core.canonicalJson(calibrate(fixture(n, Math.floor(n / 2))))).toMatchSnapshot()
+  })
   it.each([19, 20, 21])('gates globally at %i source observations', n => {
     const report = calibrate(fixture(n))
     expect(report?.channels['recorded-verdict']).toMatchObject({ n, n_gold: n, status: n < 20 ? 'uncalibrated' : 'calibrated' })
