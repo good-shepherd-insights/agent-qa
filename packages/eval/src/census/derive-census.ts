@@ -35,6 +35,7 @@ import { countGateSet } from '../gate/gate-set'
 import type { GateSetCounts } from '../gate/gate-set'
 import type { CorpusEntry } from '../labels/corpus-entry'
 import type { StandaloneLabelRecord } from '../labels/label-record'
+import { parseStandaloneLabelRecord } from '../labels/effective-labels'
 import type { PartitionManifest } from '../labels/partition-manifest'
 import { EXCLUSION_CLASSES, VERDICT_PRODUCERS } from '../labels/run-exclusion'
 import type { ExclusionClass, RunExclusionRecord, VerdictProducer } from '../labels/run-exclusion'
@@ -126,6 +127,17 @@ export interface CensusCampaignInput {
 
 /** Per-product counters; markedGold is the presence-conditional compatibility extension. */
 export interface CensusProductBlock {
+  /** Committed membership and label audit, separate from the scorable population below. */
+  labelAudit?: {
+    committedMembers: number
+    scorableMembers: number
+    rerunPairs: number
+    rerunMarkedLabels: number
+    rerunOverturnedOriginals: number
+    rerunOverturnQuarantined: number
+    refusedHistories: number
+    retiredMarkedLabels: number
+  }
   markedGold?: { 'user-mark': number; 'overturned-verdict': number }
   total: number
   scorableByTier: { tier1: number; tier2: number; tier3: number }
@@ -218,6 +230,9 @@ export interface CorpusCensus {
 
 export interface DeriveCensusInput {
   snapshot: CommittedCorpusSnapshot
+  /** Guarded full membership, including excluded owners; never used to admit scoring rows. */
+  corpusEntriesById?: ReadonlyMap<string, CorpusEntry>
+  retiredMarkedCassetteIds?: ReadonlySet<string>
   campaign?: CensusCampaignInput
   reports?: readonly {
     report: EvalBatchReport
@@ -498,6 +513,56 @@ function foldPartition(
   return partition
 }
 
+/** Effective labels count once; raw refused history can name only a known committed owner. */
+function foldLabelAudit(input: DeriveCensusInput, products: Record<string, CensusProductBlock>): void {
+  const { snapshot } = input
+  const members = input.corpusEntriesById ?? new Map(snapshot.entries.map(row => [row.cassetteId, row]))
+  const scorable = new Set(snapshot.entries.map(row => row.cassetteId))
+  const refused = new Set<string>()
+  for (const id of snapshot.excludedLabelIds ?? []) {
+    if (!snapshot.labelsById.has(id)) refused.add(id)
+  }
+  for (const raw of snapshot.labelHistory ?? []) {
+    if (!parseStandaloneLabelRecord(raw).ok && typeof raw === 'object' && raw !== null
+      && 'cassetteId' in raw && typeof raw.cassetteId === 'string') refused.add(raw.cassetteId)
+  }
+  const audits = new Map<string, NonNullable<CensusProductBlock['labelAudit']>>()
+  const pairs = new Map<string, Set<string>>()
+  for (const [id, entry] of members) {
+    const audit = audits.get(entry.product) ?? { committedMembers: 0, scorableMembers: 0,
+      rerunPairs: 0, rerunMarkedLabels: 0, rerunOverturnedOriginals: 0,
+      rerunOverturnQuarantined: 0, refusedHistories: 0, retiredMarkedLabels: 0 }
+    audits.set(entry.product, audit)
+    audit.committedMembers += 1
+    if (scorable.has(id)) audit.scorableMembers += 1
+    if (refused.has(id)) audit.refusedHistories += 1
+    if (input.retiredMarkedCassetteIds?.has(id)) audit.retiredMarkedLabels += 1
+    const label = snapshot.labelsById.get(id)
+    if (label?.quarantine === 'rerun-overturned') {
+      audit.rerunOverturnedOriginals += 1
+      if (snapshot.excludedLabelIds?.has(id)) audit.rerunOverturnQuarantined += 1
+    }
+    if (label?.provenance.rerun === undefined) continue
+    audit.rerunMarkedLabels += 1
+    const pairedId = label.label.pairing?.pairedCassetteId
+    const sibling = pairedId === undefined ? undefined : snapshot.labelsById.get(pairedId)
+    if (pairedId === undefined || pairedId === id || members.get(pairedId)?.product !== entry.product
+      || sibling?.label.pairing?.pairedCassetteId !== id
+      || label.label.sourceChannel !== 'self-heal-pair' || sibling.label.sourceChannel !== 'self-heal-pair') continue
+    const seen = pairs.get(entry.product) ?? new Set<string>()
+    seen.add(JSON.stringify([id, pairedId].sort()))
+    pairs.set(entry.product, seen)
+    audit.rerunPairs = seen.size
+  }
+  for (const [product, audit] of audits) {
+    if (audit.rerunMarkedLabels === 0 && audit.rerunOverturnedOriginals === 0
+      && audit.refusedHistories === 0 && audit.retiredMarkedLabels === 0) continue
+    const block = products[product] ?? projectBlock(newAccumulator())
+    block.labelAudit = audit
+    products[product] = block
+  }
+}
+
 /** Fold the loaded committed root into the D-16 per-product census. */
 export function deriveCensus(input: DeriveCensusInput): CorpusCensus {
   const { snapshot } = input
@@ -549,6 +614,7 @@ export function deriveCensus(input: DeriveCensusInput): CorpusCensus {
   for (const product of [...accumulators.keys()].sort()) {
     products[product] = projectBlock(accumulators.get(product)!)
   }
+  foldLabelAudit(input, products)
 
   const crossCheck: CensusCrossCheckLine[] = (input.reports ?? []).map((entry) => ({
     batchKey: entry.report.batchKey,

@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canonicalJson, deriveLeafCassetteId, deriveRunSlug } from '@vostride/agent-qa-eval'
@@ -6,6 +6,7 @@ import { readActiveCommittedCorpus, readCommittedCorpus } from '@vostride/agent-
 import type { Action } from '@vostride/agent-qa-schema'
 import { createFeedbackPortForHost } from '../feedback-host.js'
 import { files, markFixture } from './feedback-fixture.js'
+import { resolveEvalSession, runCensusVerb } from '../../eval-session-composition.js'
 
 describe('420 gold tracer', () => {
   let root: string | undefined
@@ -125,6 +126,13 @@ describe('420 gold tracer', () => {
       expect(active.snapshot.entries).toEqual([])
       expect([...active.retiredMarkedCassetteIds!].sort())
         .toEqual(first.receipt.gold.map(item => item.cassetteId).sort())
+      writeFileSync(join(root, '.env.secrets.local'), '')
+      const census = (await runCensusVerb(await resolveEvalSession({ configPath: f.configPath }))).census
+      expect(census.entryCount).toBe(0)
+      expect(census.products.default).toMatchObject({ total: 0, labelAudit: {
+        committedMembers: 2, scorableMembers: 0, retiredMarkedLabels: 2,
+        rerunPairs: 0, rerunOverturnedOriginals: 0, refusedHistories: 0 } })
+      expect(bytes(evalRoot)).toEqual(before)
     },
   )
 })

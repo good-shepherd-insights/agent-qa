@@ -2456,7 +2456,7 @@ export async function runCensusVerb(
   // exclusion the guard rejects must be NAMED, because silently dropped it reads as "this product
   // is unpartitioned" or "this run was never excluded" — a false count, not a missing one
   // (T-414-41).
-  const read = readCommittedCorpus(committedRoot)
+  const read = readActiveCommittedCorpus(committedRoot, resolve(session.configDir, '.agent-qa'))
   const manifestRead = readPartitionManifests(committedRoot)
   const exclusionRead = readRunExclusions(committedRoot)
   notices.push(...read.notices, ...manifestRead.notices)
@@ -2528,6 +2528,8 @@ export async function runCensusVerb(
   // (4) The ONE pure fold — every counter, rate and tally in the DTO is the derivation's.
   const census = deriveCensus({
     snapshot: read.snapshot,
+    ...(read.corpusEntriesById === undefined ? {} : { corpusEntriesById: read.corpusEntriesById }),
+    ...(read.retiredMarkedCassetteIds === undefined ? {} : { retiredMarkedCassetteIds: read.retiredMarkedCassetteIds }),
     ...(campaign === undefined ? {} : { campaign }),
     reports,
     manifests: manifestRead.manifests,

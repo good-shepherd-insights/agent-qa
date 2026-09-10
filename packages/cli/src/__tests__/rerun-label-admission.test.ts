@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as model from '@vostride/agent-qa-model'
 import { asRef, screenStateHash, sha256hex, type Verdict } from '@vostride/agent-qa-schema'
 import { buildSeedingPlan, canonicalJson, committedFileText, deriveRunSlug, extractRunCassettes,
-  projectCorpusEntry, projectSilverLabelRecord, projectRunExclusion } from '@vostride/agent-qa-eval'
+  projectCorpusEntry, projectSilverLabelRecord, projectRunExclusion, renderCensusMarkdown } from '@vostride/agent-qa-eval'
 import { committedLabelPath, FsRunArtifactSource, readCommittedCorpus, readRunExclusions,
-  seedCommittedCorpus, writeRunExclusion } from '@vostride/agent-qa-eval-local'
+  seedCommittedCorpus, writeRunExclusion, commitCensus } from '@vostride/agent-qa-eval-local'
 import { files, markFixture } from '../gates/__tests__/feedback-fixture.js'
-import { resolveEvalSession, runSeedVerb } from '../eval-session-composition.js'
+import { resolveEvalSession, runSeedVerb, runCensusVerb } from '../eval-session-composition.js'
 
 const roots: string[] = []
 const fractions = { heldOutFraction: 0.4, privateFraction: 0.5 }
@@ -90,6 +90,22 @@ function fixture(existingOriginal = true) {
 }
 
 describe('420 member admission through actual seed', () => {
+  it('censuses full committed ownership without scoring quarantines and refuses old census overwrite', async () => {
+    const f = fixture()
+    const session = await resolveEvalSession({ configPath: f.configPath })
+    await runSeedVerb(session, {}, fractions)
+    const result = await runCensusVerb(session)
+    expect(result.census.products.default).toMatchObject({ total: 3, labelAudit: {
+      committedMembers: 4, scorableMembers: 3, rerunPairs: 1, rerunMarkedLabels: 3,
+      rerunOverturnedOriginals: 1, rerunOverturnQuarantined: 1, refusedHistories: 0 } })
+    const legacy = structuredClone(result.census)
+    delete legacy.products.default!.labelAudit
+    expect(commitCensus({ census: legacy, markdown: renderCensusMarkdown(legacy),
+      committedRoot: f.committedRoot, censusOutputBaseDir: join(f.agentQaRoot, 'eval', 'audit') }).kind).toBe('committed')
+    const before = bytes(f.committedRoot)
+    expect((await runCensusVerb(session, { commit: true })).committed?.kind).toBe('write-conflict')
+    expect(bytes(f.committedRoot)).toEqual(before)
+  })
   it('admits only eligible mixed members, retires one exact original and repeats byte-identically', async () => {
     const f = fixture(), originalBytes = bytes(f.committedRoot)
     const session = await resolveEvalSession({ configPath: f.configPath })
