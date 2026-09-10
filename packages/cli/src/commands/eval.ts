@@ -467,30 +467,32 @@ export function createEvalCommand(): Command {
           result = { kind: 'refused', reason: '--min-n requires --judge-panel; --min-gold is only for label calibration.' }
         } else if (opts.minN !== undefined && (!/^\d+$/.test(opts.minN.trim()) || !Number.isSafeInteger(minN) || minN! < 2)) {
           result = { kind: 'refused', reason: '--min-n must be a safe integer of at least 2.' }
-        } else if (opts.commit || opts.replace) {
-          result = { kind: 'refused', reason: 'Judge panel publication is unavailable; omit --commit and --replace to preview.' }
+        } else if (opts.replace && !opts.commit) {
+          result = { kind: 'refused', reason: '--replace requires --commit.' }
         } else {
           try {
             const { resolveEvalSession, runJudgeCalibrateVerb } = await import('../eval-session-composition.js')
             const session = await resolveEvalSession({ configPath: getGlobalConfigPath(command) })
-            result = await runJudgeCalibrateVerb(session, { minN })
+            result = await runJudgeCalibrateVerb(session, { minN, commit: opts.commit, replace: opts.replace })
           } catch {
             result = { kind: 'refused', reason: 'Judge calibration unavailable; check the selected config and local corpus permissions, then retry.' }
           }
         }
         if (opts.json) console.log(JSON.stringify(result, null, 2))
-        else if (result.kind === 'refused') console.error(`calibrate: refused — ${result.reason}`)
+        else if (!('status' in result) && !('artifact' in result)) console.error(`calibrate: ${result.kind} — ${'reason' in result ? result.reason : 'path' in result ? result.path : 'committed egress blocked'}`)
         else {
-          console.log(`judge panel: ${result.status} n=${result.n} minN=${result.minN} (${result.minNSource})`)
-          if (result.kind === 'capability-gap') console.log(`capability gap: ${result.reason}`)
+          const report = 'artifact' in result ? result.artifact : result
+          console.log(`judge panel: ${report.status} n=${report.n} minN=${report.minN} (${report.minNSource})`)
+          if (report.status === 'capability-gap') console.log(`capability gap: ${report.reason}`)
           else {
-            console.log(`selected=${result.counts.selected} admitted=${result.counts.admitted} eligible=${result.counts.eligible} refused=${result.counts.eligibilityRefused} attempted=${result.counts.attempted}`)
-            console.log(`pooled agreement=${result.pooledAgreement ?? 'unavailable'} interval=${result.wilson95 ? `[${result.wilson95.lower},${result.wilson95.upper}]` : 'unavailable'}; abstention=${result.abstention.numerator}/${result.abstention.denominator}; member-pair disagreement=${result.disagreement.numerator}/${result.disagreement.denominator}`)
+            console.log(`selected=${report.counts.selected} admitted=${report.counts.admitted} eligible=${report.counts.eligible} refused=${report.counts.eligibilityRefused} attempted=${report.counts.attempted}`)
+            console.log(`pooled agreement=${report.pooledAgreement ?? 'unavailable'} interval=${report.wilson95 ? `[${report.wilson95.lower},${report.wilson95.upper}]` : 'unavailable'}; abstention=${report.abstention.numerator}/${report.abstention.denominator}; member-pair disagreement=${report.disagreement.numerator}/${report.disagreement.denominator}`)
           }
-          console.log(`probe calls: ${result.cost.usage.calls}; bound=${result.cost.callBound} (eligible executable decisions × one question × members × two swaps)`)
-          console.log('Agreement on selected executable gold; not a population accuracy estimate. Preview writes no committed artifact.')
+          console.log(`probe calls: ${report.cost.usage.calls}; bound=${report.cost.callBound} (eligible executable decisions × one question × members × two swaps)`)
+          console.log('Agreement on selected executable gold; not a population accuracy estimate.')
+          console.log('path' in result ? `artifact: ${result.kind} ${result.path}` : 'No committed artifact created.')
         }
-        if (result.kind === 'refused') process.exitCode = 1
+        if (!('status' in result) && !('artifact' in result)) process.exitCode = 1
         return
       }
       let result: CalibrateVerbResult

@@ -102,7 +102,7 @@ export async function preflightJudgePanel(
     const identity = complete ? createPanelIdentity(modelIds) : undefined
     // A credential embedded in a model id cannot be published as a canonical identity.
     // Never fabricate a replacement identity from masked model ids.
-    const safeIdentity = modelIds.every(id => masker.mask(id) === id) ? identity : undefined
+    const safeIdentity = [replayProfile.model, ...modelIds].every(id => masker.mask(id) === id) ? identity : undefined
     const gap = (reason: JudgeCalibrationGapReason): JudgePanelPreflightResult => ({
       kind: 'capability-gap', status: 'capability-gap', reason, minN, entries,
       ...(safeIdentity === undefined ? {} : { identity: safeIdentity }),

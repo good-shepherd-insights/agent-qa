@@ -114,7 +114,7 @@ import {
   runNoiseFloorMeasurement,
   runReleaseGate,
   runLabelCalibration,
-  runJudgePanelCalibration,
+  runJudgeCalibration,
   seedCommittedCorpus,
   sweepCassetteReplays,
   writeBaselinePointer,
@@ -889,28 +889,35 @@ export type CalibrateVerbResult = Extract<RunLabelCalibrationResult, { artifact:
 
 /** The explicit operator panel preview uses credentials only for the declared judge bindings. */
 export async function runJudgeCalibrateVerb(session: EvalSession, opts: {
-  minN?: number; judgeOverrides?: ModelProviderOverrides
-} = {}) {
+  minN?: number; judgeOverrides?: ModelProviderOverrides; commit?: boolean; replace?: boolean
+} = {}): Promise<import('@vostride/agent-qa-eval-local').RunJudgeCalibrationResult & {
+  entries?: Awaited<ReturnType<typeof preflightJudgePanel>>['entries']
+}> {
+  if (opts.replace && !opts.commit) return { kind: 'refused' as const, reason: '--replace requires --commit.' }
   const preflight = await preflightJudgePanel(session, { minN: opts.minN })
-  if (preflight.kind === 'capability-gap') return { kind: preflight.kind, status: preflight.status,
-    reason: preflight.reason, minN: preflight.minN.value, minNSource: preflight.minN.source,
-    entries: preflight.entries, ...(preflight.identity ? { identity: preflight.identity } : {}),
-    n: 0, cost: { callBound: 0, usage: { calls: 0 } } }
-  const fingerprint = computeReplayProfileFingerprintFor({ profile: preflight.replayProfile,
+  if (preflight.kind === 'capability-gap' && !preflight.identity) return {
+    ...await runJudgeCalibration({ kind: 'capability-gap', reason: preflight.reason,
+      minN: preflight.minN, commit: opts.commit, replace: opts.replace }), entries: preflight.entries }
+  const replayProfile = preflight.kind === 'eligible' ? preflight.replayProfile : await resolveReplayProfileDeclaration(session)
+  const fingerprint = computeReplayProfileFingerprintFor({ profile: replayProfile,
     seedPolicy: session.evalConfig.seed === undefined ? 'none' : 'declared' })
-  const result = await runJudgePanelCalibration({
+  const context = {
     committedRoot: resolve(session.configDir, 'agent-qa-eval'), agentQaRoot: resolve(session.configDir, '.agent-qa'),
-    replayProfile: preflight.replayProfile,
     // Saved evidence must prove this actual planner/profile; judging does not rerun a planner.
-    profile: { plannerModelId: preflight.replayProfile.model, fingerprint,
+    profile: { plannerModelId: replayProfile.model, fingerprint,
       matcherVersion: (await import('@vostride/agent-qa-eval')).projectMatcherConfigContract().version,
-      judgeModelId: preflight.identity.judgeModelId, judgeVersion: preflight.identity.judgeVersion },
-    members: preflight.members.map(member => ({ ...member, modelOverrides: opts.judgeOverrides })),
-    minN: preflight.minN, maskingContextFactory: session.maskingContextFactory,
-  })
+      judgeModelId: preflight.identity!.judgeModelId, judgeVersion: preflight.identity!.judgeVersion },
+    identity: preflight.identity!, minN: preflight.minN,
+  }
+  const result = await runJudgeCalibration(preflight.kind === 'eligible'
+    ? { kind: 'probe', commit: opts.commit, replace: opts.replace, probe: { ...context, replayProfile,
+      members: preflight.members.map(member => ({ ...member, modelOverrides: opts.judgeOverrides })),
+      maskingContextFactory: session.maskingContextFactory } }
+    : { kind: 'capability-gap', reason: preflight.reason, minN: preflight.minN,
+      publication: context, commit: opts.commit, replace: opts.replace })
   const masker = session.maskingContextFactory()
   try {
-    for (const member of preflight.members) {
+    for (const member of preflight.kind === 'eligible' ? preflight.members : []) {
       if (member.auth.kind === 'api-key') masker.register(member.auth.apiKey)
       if (member.auth.kind === 'bearer-token') masker.register(member.auth.token)
     }

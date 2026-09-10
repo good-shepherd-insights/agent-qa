@@ -13,6 +13,47 @@ import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { bindJudgePanel, type JudgeBindingInput } from './judge-binding.js'
 import { loadJudgeCalibrationEvidence } from './judge-calibration-evidence-source.js'
 import { assertCalibrationPath } from './calibration-source.js'
+import { createJudgeCalibrationArtifact, publishJudgeCalibration, JudgeCalibrationEvidenceError,
+  type JudgeCalibrationReadInput, type JudgeCalibrationPublication } from './judge-calibration-source.js'
+
+export type RunJudgeCalibrationResult = Awaited<ReturnType<typeof runJudgePanelCalibration>>
+  | JudgeCalibrationPublication
+  | { kind: 'capability-gap'; status: 'capability-gap'; reason: 'panel-not-configured' | 'no-credential' | 'single-family-host';
+      minN: number; minNSource: JudgeCalibrationMinimum['source']; n: 0; identity?: JudgeCalibrationReadInput['identity'];
+      cost: { callBound: number; usage: { calls: number } }; artifactDisposition: 'not-created' }
+
+/** Publication routing is separate from the forced probe, so a missing composite does no IO. */
+export async function runJudgeCalibration(input: {
+  commit?: boolean; replace?: boolean
+} & (
+  | { kind: 'capability-gap'; reason: 'panel-not-configured' | 'no-credential' | 'single-family-host'; minN: JudgeCalibrationMinimum;
+      publication?: JudgeCalibrationReadInput }
+  | { kind: 'probe'; probe: RunJudgePanelCalibrationInput }
+)): Promise<RunJudgeCalibrationResult> {
+  if (input.replace && !input.commit) return { kind: 'refused' as const, reason: '--replace requires --commit.' }
+  if (input.kind === 'capability-gap' && (!input.publication || !input.commit)) return {
+    kind: 'capability-gap' as const, status: 'capability-gap' as const, reason: input.reason,
+    minN: input.minN.value, minNSource: input.minN.source, n: 0,
+    cost: { callBound: 0, usage: { calls: 0 } }, artifactDisposition: 'not-created' as const,
+    ...(input.publication ? { identity: input.publication.identity } : {}),
+  }
+  if (input.kind === 'probe' && !input.commit) return runJudgePanelCalibration(input.probe)
+  try {
+    const preview = input.kind === 'probe' ? await runJudgePanelCalibration(input.probe) : undefined
+    const context: JudgeCalibrationReadInput = input.kind === 'probe'
+      ? { ...input.probe, identity: preview!.identity, minN: input.probe.minN ?? resolveJudgeCalibrationMinimum() }
+      : input.publication!
+    if (input.kind === 'capability-gap' && input.reason === 'panel-not-configured') throw new Error('No composite')
+    const artifact = createJudgeCalibrationArtifact(context, preview ?? { status: 'capability-gap',
+      reason: input.kind === 'capability-gap' && input.reason === 'single-family-host' ? 'single-family-host' : 'no-credential' })
+    // The post-probe reread must prove the snapshot actually measured, not a newer one.
+    if (preview && (['profileKey', 'corpusDigest', 'goldSetDigest', 'replayEvidenceDigest', 'evidenceDigest'] as const)
+      .some(key => artifact[key] !== preview[key])) return { kind: 'input-drift' as const, reason: 'Judge calibration evidence changed during the probe; retry.' }
+    return await publishJudgeCalibration({ ...context, artifact, replace: input.replace,
+      auditDirectory: preview?.auditDirectory ?? join(context.agentQaRoot, 'eval', 'calibrate', randomUUID()) })
+  } catch (error) { return { kind: 'refused' as const, reason: 'Judge calibration evidence unavailable or invalid; inspect the selected corpus and saved replays.',
+    ...(error instanceof JudgeCalibrationEvidenceError ? { skippedCounts: error.skippedCounts } : {}) } }
+}
 
 export interface RunJudgePanelCalibrationInput {
   committedRoot: string
