@@ -7,6 +7,11 @@ import * as ai from 'ai'
 import * as composition from '../eval-session-composition.js'
 import * as llm from '../llm-utils.js'
 
+vi.mock('ai', async importOriginal => ({
+  ...await importOriginal<typeof import('ai')>(),
+  generateText: vi.fn(() => { throw new Error('generate called') }),
+}))
+
 const secret = 'fixture-sensitive-value-42110'
 const authFetch = vi.fn<typeof fetch>()
 const configs: llm.NamedLLMConfigLike[] = [
@@ -40,7 +45,7 @@ beforeEach(() => {
     provider: 'openai-compatible', apiKey: secret }))
   vi.spyOn(model, 'createModel').mockImplementation(() => { throw new Error('model called') })
   vi.spyOn(local, 'bindJudgePanel').mockImplementation(() => { throw new Error('bind called') })
-  vi.spyOn(ai, 'generateText').mockImplementation(() => { throw new Error('generate called') })
+  vi.mocked(ai.generateText).mockClear()
   authFetch.mockClear()
 })
 afterEach(() => {
