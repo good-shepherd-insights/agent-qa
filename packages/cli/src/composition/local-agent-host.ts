@@ -315,7 +315,7 @@ export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
  * sites and the daemon's composition defer for the same reason.
  */
 function createComposedRunExecution(input: {
-  readonly resolveTrustPriors?: ComposeLocalAgentInput['resolveTrustPriors']
+  readonly trustPriors: ReturnType<typeof trustPriorsForHost>
   readonly configPath: string
   readonly agentQaRoot: string
   readonly resolveExecutionContext: ComposeLocalAgentInput['resolveExecutionContext']
@@ -363,7 +363,7 @@ function createComposedRunExecution(input: {
       try {
         const outcome = await runInProcessCliRun(
           {
-            ...(input.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: input.resolveTrustPriors }),
+            resolveTrustPriors: input.trustPriors.resolve,
             configPath,
             agentQaRoot: input.agentQaRoot,
             executionContext:
@@ -425,6 +425,7 @@ function createComposedRunExecution(input: {
                 '../curation/post-run-tail-composition.js'
               )
               const tail = composeCliPostRunTail({
+                trustPriors: input.trustPriors,
                 canaryAblation: createCanaryAblationForHost({ configPath: context.configFilePath, agentQaRoot: input.agentQaRoot }),
                 runId: context.runId,
                 configDir: context.configDir,
@@ -481,6 +482,8 @@ function createComposedRunExecution(input: {
 }
 
 export interface ComposeCliLocalAgentInput {
+  /** An enclosing host supplies its ready snapshot, including the matching disclosure. */
+  trustPriors?: ReturnType<typeof trustPriorsForHost>
   /** An enclosing drain may supply its already-memoised preparation. */
   resolvePromotionPosture?: ComposeLocalAgentInput['resolvePromotionPosture']
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. */
@@ -3644,7 +3647,7 @@ export function createChatConfirmPort(
 }
 
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost & { trustPriorDisclosure: TrustPriorDisclosure } {
-  const trustPriors = trustPriorsForHost({ configPath: input.configPath })
+  const trustPriors = input.trustPriors ?? trustPriorsForHost({ configPath: input.configPath })
   const resolveTrustPriors = trustPriors.resolve
   const resolvePromotionPosture = input.resolvePromotionPosture ?? (async () =>
     buildPromotionPostureResolver({ configPath: input.configPath,
@@ -3692,7 +3695,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // rather than merely unreferenced. `input.runExecution` stays the injectable override, which is
     // what cells substitute.
     runExecution: input.runExecution ?? createComposedRunExecution({
-      resolveTrustPriors,
+      trustPriors,
       configPath: input.configPath,
       agentQaRoot: input.agentQaRoot,
       resolveExecutionContext: input.resolveExecutionContext,

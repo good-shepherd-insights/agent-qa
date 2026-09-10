@@ -82,6 +82,12 @@ import { buildPromotionPostureResolver, promotionPostureResolverForHost } from '
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import type { ScopeKey } from '@vostride/agent-qa-schema'
+import {
+  buildTrustPriorsResolver,
+  TrustPriorsRefusedError,
+  type trustPriorsForHost,
+  type TrustPriorDisclosure,
+} from './trust-priors.js'
 
 /**
  * What became of the durable hand-off.
@@ -184,6 +190,7 @@ export interface PostRunTailOperations {
 }
 
 export interface PostRunTailHostInput {
+  readonly trustPriors?: ReturnType<typeof trustPriorsForHost>
   readonly resolvePromotionPosture?: () => Promise<RunCurationTailOptions['resolvePromotionPosture']>
   readonly agentQaRoot: string
   readonly configPath: string
@@ -234,6 +241,7 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
     loadCompletedRunHandoff: curationDefaults.loadCompletedRunHandoff,
     resolveKnowledgeRoot: curationDefaults.resolveKnowledgeRoot,
     composeHost: (input) => composeCliLocalAgent({
+      ...(input.trustPriors === undefined ? {} : { trustPriors: input.trustPriors }),
       ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
       agentQaRoot: input.agentQaRoot,
       configPath: input.configPath,
@@ -298,6 +306,7 @@ export interface RunPostRunTailOptions extends Pick<
 > {
   /** The resolved project config file; the composition resolves everything else from it. */
   configPath: string
+  trustPriors?: ReturnType<typeof trustPriorsForHost>
   canaryAblation?: import('./canary-credit.js').CanaryAblation
   /**
    * What the post-verdict step's enqueue answered (404 D-05).
@@ -336,6 +345,7 @@ export interface RunPostRunTailOptions extends Pick<
  * enqueue happened in the shell whatever the flag said (RESEARCH Pitfall 8).
  */
 export interface PostRunTailHandle {
+  readonly trustPriorDisclosure?: TrustPriorDisclosure
   /**
    * Pump this run's chain.
    *
@@ -433,6 +443,13 @@ const PUMP_EXIT_STARVES_OWN_CHAIN: Record<ChainPumpExit, boolean> = {
 }
 
 export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
+  // Read at composition; surface refusal inside each leg's verdict-preserving catch.
+  const trustPriors = opts.trustPriors ?? buildTrustPriorsResolver({ configPath: opts.configPath })
+  const snapshot = () => {
+    if (trustPriors.kind === 'refused') throw new TrustPriorsRefusedError()
+    return trustPriors
+  }
+  const resolveTrustPriors = trustPriors.kind === 'ready' ? trustPriors.resolve : undefined
   /**
    * Resolved on first use, INSIDE a leg's own try (JOBQ-06).
    *
@@ -473,8 +490,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   let posturePromise: ReturnType<typeof buildPromotionPostureResolver> | undefined
   let resolvePromotionPosture: RunCurationTailOptions['resolvePromotionPosture']
   const preparePromotionPosture = (currentBuildOrdinal?: number, scope?: ScopeKey) => {
+    snapshot()
     posturePromise ??= buildPromotionPostureResolver({ configPath: opts.configPath,
-      replayGate: createReplayGatePortForHost({ configPath: opts.configPath, agentQaRoot: opts.agentQaRoot }),
+      replayGate: createReplayGatePortForHost({ configPath: opts.configPath, agentQaRoot: opts.agentQaRoot, resolveTrustPriors }),
       knowledgeRoot, agentQaRoot: opts.agentQaRoot,
       canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
       lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
@@ -508,6 +526,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     const deadlineMs = input.deadlineMs ?? drainDeadlineMs
     const runPromotionPosture = await preparePromotionPosture(handoff.buildOrdinal, handoff.scope)
     const folded = await ops().curateCompletedRun({
+      resolveTrustPriors,
       ...(input.runId !== opts.runId || opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
       ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),
       ...(runPromotionPosture === undefined ? {} : { resolvePromotionPosture: runPromotionPosture }),
@@ -532,6 +551,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
 
   const openHost = (): LocalAgentHost => {
     host ??= ops().composeHost({
+      trustPriors: snapshot(),
       resolvePromotionPosture: preparePromotionPosture,
       agentQaRoot: opts.agentQaRoot,
       configPath: opts.configPath,
@@ -544,6 +564,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   }
 
   return {
+    trustPriorDisclosure: trustPriors.kind === 'ready' ? trustPriors.disclosure : undefined,
     async drain(input: {
       readonly takeLease?: () => CurationWriterAuthority | undefined
       readonly withoutLease?: 'consult' | 'skip'
@@ -734,6 +755,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // (Pitfall 11). This run's own directory is already receipted by the fold the chain
         // just ran, so the sweep skips it rather than folding it twice.
         await ops().runCurationTail({
+          resolveTrustPriors,
           resolvePromotionPostureForRun: preparePromotionPosture,
           ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),
           ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
@@ -856,7 +878,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           // older/missing receipts keep the pre-v4 line. Notification vocabulary is unchanged.
           const receipt = readCurationTailReceipt(completedRunDir(opts.agentQaRoot, opts.runId))
           opts.log.info?.(renderChainTerminalLine(status.notification,
-            receipt?.runId === opts.runId ? receipt : undefined))
+            { ...(receipt?.runId === opts.runId ? receipt : {}),
+              trustPriorDisclosure: snapshot().disclosure }))
           await printDigestBlock(openedHost)
           return
         }
@@ -1017,7 +1040,7 @@ export function renderPostProcessingSummaryLine(
  */
 export function renderChainTerminalLine(
   notification: RunNotification,
-  report?: { canary: CanaryCreditCounters },
+  report?: { canary?: CanaryCreditCounters; trustPriorDisclosure?: TrustPriorDisclosure },
 ): string {
   const { verdictSummary, stages } = notification
   const classes = Object.entries(verdictSummary.byClass)

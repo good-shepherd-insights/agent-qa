@@ -73,6 +73,7 @@ import {
   type RemoveRegistrationOutcome,
 } from '../daemon/registration.js'
 import { daemonSocketOwnershipFor, unlinkDaemonSocket } from '../daemon/server.js'
+import { trustPriorsForHost } from '../curation/trust-priors.js'
 
 // The eleven maintenance verbs, taken off the local host's curation capabilities rather than
 // imported from the knowledge package directly (D-14). Bound once here so every call site below is
@@ -406,9 +407,14 @@ function recordInlineDrainSession(
   })
 }
 
-async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
+async function drainInline(
+  paths: KnowledgePaths,
+  options: DrainOptions,
+  trustPriors: ReturnType<typeof trustPriorsForHost>,
+): Promise<void> {
+  const resolveTrustPriors = trustPriors.resolve
   const posture = await buildPromotionPostureResolver({ configPath: paths.configPath,
-    replayGate: createReplayGatePortForHost({ configPath: paths.configPath, agentQaRoot: paths.runtimeRoot }),
+    replayGate: createReplayGatePortForHost({ configPath: paths.configPath, agentQaRoot: paths.runtimeRoot, resolveTrustPriors }),
     knowledgeRoot: paths.knowledgeRoot, agentQaRoot: paths.runtimeRoot,
     canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
     lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
@@ -418,6 +424,7 @@ async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promis
   const seenCandidateIds = new Set<string>()
   let inlineAuthority: { leaseId: string; epoch: number } | undefined
   const report = await drainQueue({
+    priors: resolveTrustPriors(),
     ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
     knowledgeRoot: paths.knowledgeRoot,
     auditBaseDir: paths.auditBaseDir,
@@ -766,7 +773,11 @@ function refuseDrainRouting(
  * that inherited a dead daemon's pid both looked "live", so the command delegated to a host that
  * could never answer and reported it as an error instead of finishing the work itself.
  */
-async function routeDrain(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
+async function routeDrain(
+  paths: KnowledgePaths,
+  options: DrainOptions,
+  trustPriors: ReturnType<typeof trustPriorsForHost>,
+): Promise<void> {
   const classified = await classifyDrainHost(paths)
   if (classified.kind === 'live-confirmed') {
     await drainViaDaemon(paths, options)
@@ -774,7 +785,7 @@ async function routeDrain(paths: KnowledgePaths, options: DrainOptions): Promise
   }
   if (refuseDrainRouting(classified, options)) return
   if (classified.kind === 'absent') {
-    await drainInline(paths, options)
+    await drainInline(paths, options, trustPriors)
     return
   }
 
@@ -833,7 +844,7 @@ async function routeDrain(paths: KnowledgePaths, options: DrainOptions): Promise
   }
   const inline = routed()
   reportStrandedQuarantine(inline)
-  await drainInline(paths, inline)
+  await drainInline(paths, inline, trustPriors)
 }
 
 function reportDrainError(error: unknown): void {
@@ -1215,7 +1226,8 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
           return
         }
 
-        await routeDrain(paths, options)
+        const trustPriors = trustPriorsForHost({ configPath: paths.configPath })
+        await routeDrain(paths, options, trustPriors)
       } catch (error) {
         reportDrainError(error)
       }
@@ -1228,8 +1240,9 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .action(async (options: RebuildOptions, rebuildCommand: Command) => {
       try {
         const paths = await resolveKnowledgePaths(rebuildCommand)
+        const trustPriors = trustPriorsForHost({ configPath: paths.configPath })
         const result = await withWriterLease('rebuild-index', paths.knowledgeRoot, (writerAuthority) => (
-          rebuildIndex({ knowledgeRoot: paths.knowledgeRoot, writerAuthority })
+          rebuildIndex({ knowledgeRoot: paths.knowledgeRoot, writerAuthority, priors: trustPriors.resolve() })
         ))
         if (result.kind === 'refused') return
         if (options.json === true) emitJson(result.value)

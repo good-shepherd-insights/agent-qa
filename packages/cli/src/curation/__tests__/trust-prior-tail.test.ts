@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Command } from 'commander'
+import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { calibrateLabels, canonicalJson } from '@vostride/agent-qa-eval'
 import { sha256hex } from '@vostride/agent-qa-schema'
@@ -50,7 +51,7 @@ function tail(f: ReturnType<typeof fixture>, held = false) {
   const defaults = defaultPostRunTailOperations()
   let hostInput: PostRunTailHostInput | undefined
   let pumped = false
-  const close = vi.fn(async () => undefined)
+  const close = vi.fn<() => Promise<void>>(async () => undefined)
   const fold = vi.fn(defaults.curateCompletedRun)
   const sweep = vi.fn(defaults.runCurationTail)
   const release = vi.fn(defaults.releaseLease)
@@ -94,6 +95,9 @@ it('keeps one snapshot across inline job fold, reader, drain, janitor and local 
   expect(h.handle.report().drain).toBe('drained')
   const local = vi.mocked(composeLocalAgent).mock.calls.at(-1)![0]
   expect(local.resolveTrustPriors?.()).toEqual(old.priors)
+  expect(h.handle.trustPriorDisclosure?.digest).toBe(old.generationId)
+  expect(h.hostInput().trustPriors?.resolve).toBe(local.resolveTrustPriors)
+  expect(h.hostInput().trustPriors?.disclosure).toBe(h.handle.trustPriorDisclosure)
   expect(h.fold.mock.calls[0]![0].resolveTrustPriors).toBe(local.resolveTrustPriors)
   expect(h.sweep.mock.calls[0]![0].resolveTrustPriors).toBe(local.resolveTrustPriors)
   const read = vi.mocked(LOCAL_CURATION_CAPABILITIES.openKnowledgeReader).mock.calls.at(-1)![0] as unknown as { priors?: unknown }
@@ -133,6 +137,32 @@ it('reports malformed tail calibration without acquiring authority or changing t
   expect(h.handle.report().drain).toBe('not-attempted')
 })
 
+it('carries the enclosing local host resolver and disclosure through runExecution into its later tail', async () => {
+  const { createInProcessFixture } = await import('../../composition/__tests__/in-process-run-fixture.js')
+  const { composeCliLocalAgent } = await import('../../composition/local-agent-host.js')
+  const driveModule = await import('../../composition/in-process-run-execution.js')
+  const tailModule = await import('../post-run-tail-composition.js')
+  const f = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' }); roots.push(f.project)
+  const old = artifact(f.project)
+  const drive = vi.spyOn(driveModule, 'runInProcessCliRun').mockResolvedValue({ runId: 'fixture-run' } as never)
+  const composed = vi.spyOn(tailModule, 'composeCliPostRunTail').mockReturnValue({ drain: vi.fn(async () => undefined), finish: vi.fn(async () => undefined), report: vi.fn() })
+  const host = composeCliLocalAgent({ configPath: f.configPath, agentQaRoot: f.agentQaRoot, confirm: undefined })
+  try {
+    const local = vi.mocked(composeLocalAgent).mock.calls.at(-1)![0]
+    artifact(f.project, 0.25)
+    await local.runExecution!.execute({ patterns: [f.testPattern] })
+    const invocation = drive.mock.calls[0]![0]
+    await invocation.postRunTail!({ runId: 'fixture-run', configDir: f.project, configFilePath: f.configPath,
+      auditSink: {}, postVerdict: { takeAcquiredLease: () => undefined } } as never)
+    const ready = composed.mock.calls[0]![0].trustPriors
+    expect(ready?.resolve).toBe(local.resolveTrustPriors)
+    expect(ready?.resolve).toBe(invocation.resolveTrustPriors)
+    expect(ready?.resolve()).toEqual(old.priors)
+    expect(ready?.disclosure).toBe(host.trustPriorDisclosure)
+    expect(readLabelCalibration).toHaveBeenCalledTimes(1)
+  } finally { await host.close() }
+})
+
 async function command(f: ReturnType<typeof fixture>, verb: string) {
   const previous = process.exitCode
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
@@ -160,17 +190,23 @@ it('uses one invocation snapshot for operator reindex even when calibration chan
   expect(vi.mocked(rebuildIndex).mock.calls[1]![0].priors).toEqual(artifact(f.root, 0.25).priors)
 })
 
-it.each(['absent', 'dead-pid'] as const)('keeps invocation priors through inline maintenance routing and daemon recovery (%s)', async kind => {
+it.each(['absent', 'unreachable-lease-stale'] as const)('keeps invocation priors through inline maintenance routing and daemon recovery (%s)', async kind => {
   const f = fixture(); const old = artifact(f.root)
-  const classify = vi.spyOn(registration, 'classifyDaemonRegistration').mockImplementationOnce(async () => {
-    artifact(f.root, 0.25)
-    return kind === 'absent' ? { kind: 'absent' } : { kind: 'dead-pid', registration: { schemaVersion: 1, pid: 9876, socketPath: join(f.agentQaRoot, 'daemon.sock'), startedAtMs: 1 } } as never
+  if (kind !== 'absent') registration.writeDaemonRegistration(f.agentQaRoot, {
+    schemaVersion: registration.DAEMON_REGISTRATION_SCHEMA_VERSION, instanceId: randomUUID(),
+    pid: 9876, socketPath: join(f.agentQaRoot, 'daemon.sock'), startedAtMs: 1,
   })
-  const remove = vi.spyOn(registration, 'removeObsoleteDaemonRegistrationIfExpected').mockReturnValue({ kind: 'removed' } as never)
+  const classifyHost = registration.classifyDaemonRegistration
+  const classify = vi.spyOn(registration, 'classifyDaemonRegistration').mockImplementationOnce(async input => {
+    artifact(f.root, 0.25)
+    return classifyHost({ ...input, operations: { fetchIdentity: async () => { throw new Error('fixture daemon unreachable') } } })
+  })
+  const remove = vi.spyOn(registration, 'removeRegistrationIfOwned')
   expect((await command(f, 'drain')).exit).toBe(0)
   expect(vi.mocked(drainQueue).mock.calls.at(-1)![0].priors).toEqual(old.priors)
   expect(classify).toHaveBeenCalledTimes(1)
   expect(remove).toHaveBeenCalledTimes(kind === 'absent' ? 0 : 1)
+  expect(registration.readDaemonRegistration(f.agentQaRoot).kind).toBe('absent')
   expect(readLabelCalibration).toHaveBeenCalledTimes(1)
 })
 

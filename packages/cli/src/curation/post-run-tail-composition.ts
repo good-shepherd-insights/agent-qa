@@ -49,6 +49,7 @@ import {
  * roots below are derived from them here so no caller derives them again.
  */
 export interface ComposeCliPostRunTailInput {
+  readonly trustPriors?: import('./post-run-tail.js').RunPostRunTailOptions['trustPriors']
   readonly maxAblations?: number
   readonly canaryAblation?: import('./canary-credit.js').CanaryAblation
   readonly runId: string
@@ -93,6 +94,7 @@ export interface ComposeCliPostRunTailInput {
  */
 export function composeCliPostRunTail(input: ComposeCliPostRunTailInput): PostRunTailHandle {
   return runPostRunTail({
+    ...(input.trustPriors === undefined ? {} : { trustPriors: input.trustPriors }),
     ...(input.maxAblations === undefined ? {} : { maxAblations: input.maxAblations }),
     canaryAblation: input.canaryAblation ?? createCanaryAblationForHost({
       configPath: resolve(input.configFilePath), agentQaRoot: resolve(input.configDir, '.agent-qa'),
