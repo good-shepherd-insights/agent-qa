@@ -1656,6 +1656,7 @@ async function executeSuites(
   globalOpts: { config?: string; verbose?: boolean; quiet?: boolean; logLevel?: string },
   configContent: string,
   effectiveLogLevel: string,
+  trustPriors: ReturnType<typeof trustPriorsForHost> | undefined,
   variableContext?: {
     envFileVars: Record<string, string>
     inlineVars: Record<string, string>
@@ -1783,6 +1784,7 @@ async function executeSuites(
   const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
   const executionContext = resolveRunExecutionContext()
   const produced = await produceSuiteRunMembers({
+    resolveTrustPriors: trustPriors?.resolve,
     suiteFiles,
     preflight,
     config,
@@ -1899,6 +1901,7 @@ async function executeSuites(
           // and it ran under `--detach` too (Pitfall 8). What is detach-gated is the in-process
           // chain drain, and neither leg can replace the code frozen on the line above.
           const postRunTail = composeCliPostRunTail({
+            trustPriors,
             ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
             runId,
             configDir,
@@ -4572,9 +4575,14 @@ export function createRunCommand(): Command {
           composedAnalytics ??= await composeAnalyticsHost({ surface: 'cli', config })
         )
 
+        // One accepted calibration for this invocation, including both halves of --all.
+        // Read-only discovery commands never compose a run or its post-verdict tail.
+        const trustPriors = opts.dryRun || opts.listTests
+          ? undefined : trustPriorsForHost({ configPath: configFilePath })
+
         // Handle suite execution (early return)
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length === 0) {
-          const exitCode = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics)
+          const exitCode = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, trustPriors, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics)
           const suiteReporterSelection = resolveReporterSelection(opts, Boolean(config.services?.dashboard)).selection
           if (suiteReporterSelection) {
             await maybePrintPostRunUpdateNotice({
@@ -4591,7 +4599,7 @@ export function createRunCommand(): Command {
         // Handle --all: run suites first, then fall through to test execution
         let suitesFailed = false
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length > 0) {
-          suitesFailed = (await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics)) !== 0
+          suitesFailed = (await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, trustPriors, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics)) !== 0
         }
 
         const files = discoveredTestFiles
@@ -4805,6 +4813,7 @@ export function createRunCommand(): Command {
         // `RunsStartInput` reaches through `produceMembersFromPatterns`. Two copies of this chain
         // would be two answers to what a member of this run is.
         const produced = await produceDirectRunMembers({
+          resolveTrustPriors: trustPriors?.resolve,
           inputs,
           bindings: filtered,
           ...(directRunProduct === undefined ? {} : { product: directRunProduct }),
@@ -4932,6 +4941,7 @@ export function createRunCommand(): Command {
                 // 388-02: the same shared tail as the multi-suite site above, and the same 404
                 // D-05 posture — the enqueue happened in the shell, so this handle has two legs.
                 const postRunTail = composeCliPostRunTail({
+                  trustPriors,
                   ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
                   runId: singleRunId,
                   configDir,
