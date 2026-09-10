@@ -36,6 +36,8 @@
 // Phase 418-05 intentionally discloses the resolved canary ablation cap. Only the
 // two affected golden stderr fields gained that exact line; the historical capture
 // was not regenerated, and every comparison below remains byte-exact.
+// Phase 420-20 D-19 adds the cached provisional trust-prior text to those same two
+// stderr fields. All other historical data and the six exact comparisons are retained.
 // 418 CR-02 additionally requires one strict originating-run canary-policy.json per
 // produced handoff. The capture helper checks its exact contents and run identity;
 // the inventory below adds its explicit cardinality, without filtering the file.
