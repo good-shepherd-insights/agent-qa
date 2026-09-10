@@ -48,9 +48,10 @@ function persist(entry = baseline.cases.find(row => row.name === 'agent-observed
 
 // Complete no-prior call census. Immediate status projections may stay; maintenance
 // boundaries must expose only these fields so a future scalar use fails the compiler.
+// Canary facts now receive the caller's prior argument, so they need no no-prior exception.
 const statusOnlyCalls: Record<string, number> = {
   'gc.ts': 1, 'inspect.ts': 1, 'show-record.ts': 1, 'lineage-fold.ts': 1,
-  'gates/canary-posture-facts.ts': 1, 'gates/gate-receipt-read.ts': 1,
+  'gates/gate-receipt-read.ts': 1,
   'rollback.ts': 3, 'review/propose-review.ts': 1, 'review/apply-review.ts': 1,
 }
 
