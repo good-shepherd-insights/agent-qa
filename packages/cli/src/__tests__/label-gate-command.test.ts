@@ -67,7 +67,7 @@ it.each([0, 1, 2] as const)('actual saved JSON/text carry all eleven rows at unc
     if (json.kind !== 'verdict') throw new Error(JSON.stringify(json))
     expect(json.verdict.labelMetrics.rows.map(row => row.metric)).toEqual(labelMetricIds)
     expect(json.modelCalls).toBe(0)
-    const text = await f.command(args)
+    const text: string = await f.command(args)
     expect(process.exitCode).toBe(exit)
     for (const row of json.verdict.labelMetrics.rows) {
       const line = text.split('\n').find(line => line.startsWith(`label-metric: ${row.metric} `))!

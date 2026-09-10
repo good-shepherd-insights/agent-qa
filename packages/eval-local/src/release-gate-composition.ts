@@ -134,6 +134,29 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
     }
   }
 
+  // Only proven foreign profile evidence stops before replay. Historical v1/absent pointers,
+  // stale corpora, floors and ordinary pairing failures still reach the existing pure gate.
+  if (pointer.kind === 'v2') {
+    const designated = pointer.pointer
+    if (designated.profileKey !== expectedProfileKey
+      || composeBaselineProfileKey(designated) !== expectedProfileKey) {
+      return { kind: 'refused', refusal: { path: pointerFile,
+        reason: `baseline profileKey mismatch: designated=${designated.profileKey} expected=${expectedProfileKey}; re-designate this profile's baseline` }, notices }
+    }
+    if (baseline !== undefined) {
+      const report = baseline.report
+      const saved = report.runIdentity === undefined ? undefined : runIdentitySchema.safeParse(report.runIdentity)
+      if (report.matcherVersion !== designated.matcherVersion
+        || report.judge?.judgeModelId !== designated.judgeModelId
+        || report.judge?.judgeVersion !== designated.judgeVersion
+        || (saved !== undefined && (!saved.success || saved.data.fingerprint !== fingerprint))) {
+        return { kind: 'refused', refusal: {
+          path: join(input.committedRoot, committedReportPath(designated.batchKey, 'report.json')),
+          reason: `baseline report profile identity differs from ${expectedProfileKey}; re-designate this profile's baseline` }, notices }
+      }
+    }
+  }
+
   let current: ComputeGateVerdictInput['current']
   let currentReportFile: string
   let modelCalls = 0
