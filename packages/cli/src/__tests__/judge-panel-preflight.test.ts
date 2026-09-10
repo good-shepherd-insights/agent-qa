@@ -197,6 +197,19 @@ describe('judge panel preflight', () => {
       .rejects.toThrow('Cannot resolve the replay profile for judge panel preflight. Check use.llm and its registry.llms entry.')
     expect(auth.mock.calls.map(call => call[0])).toEqual(['a', 'b'])
   })
+  it('suppresses a gap identity when the replay model contains a resolved member credential', async () => {
+    const lateSecret = 'late-planner-sentinel-42112'
+    named.mockImplementation(async name => ({ config: { ...configs.find(row => row.name === name)!,
+      ...(name === 'planner' ? { model: `gpt-5/${lateSecret}` } : {}) }, allConfigs: configs, defaultName: 'planner' }))
+    auth.mockImplementation(async name => name === 'b'
+      ? { kind: 'api-key', credentialKey: name, provider: 'gemini', apiKey: lateSecret }
+      : { kind: 'unauthenticated', credentialKey: name, provider: 'anthropic-compatible', optional: true, message: secret })
+    const result = await composition.preflightJudgePanel(session({ judges: ['a', 'b'] }), {}, deps)
+    expect(result).toMatchObject({ reason: 'no-credential' })
+    expect(result).not.toHaveProperty('identity')
+    expect(JSON.stringify(result)).not.toContain(lateSecret)
+    expect(auth.mock.calls.map(call => call[0])).toEqual(['a', 'b'])
+  })
   it('rejects invalid minimum before any resolution', async () => {
     await expect(composition.preflightJudgePanel(session({ judges: ['a', 'b'] }), { minN: 1 }, deps)).rejects.toThrow('min-n')
     expect(named).not.toHaveBeenCalled()
