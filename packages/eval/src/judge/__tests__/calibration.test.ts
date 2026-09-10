@@ -86,6 +86,8 @@ describe('judge calibration independent source truth', () => {
       sideEffect: { kind: 'none' }, loop: { kind: 'not-flagged' } as never }
     const overlay = (value: core.DecisionScore) => Reflect.get(core, 'judgeCalibrationFullMatch')?.(value, { axis: 'element-identity', resolution: 'equivalent' })
     expect(overlay(score)).toBe(true)
+    const full = { ...score, axes: { ...score.axes, elementIdentity: { kind: 'scored', level: 'full', numeric: 1, tier: 2 } } } as core.DecisionScore
+    expect(Reflect.get(core, 'judgeCalibrationFullMatch')?.(full, { axis: 'element-identity', resolution: 'different' })).toBe(false)
     expect(overlay({ ...score, axes: { ...score.axes, opClass: { kind: 'mismatch' } as never } })).toBe(false)
     expect(overlay({ ...score, axes: { ...score.axes, value: { kind: 'scored', f1: 0, band: 'low' } } })).toBe(false)
     expect(overlay({ ...score, sideEffect: { kind: 'unexpected' } as never })).toBe(false)

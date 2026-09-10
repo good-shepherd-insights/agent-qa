@@ -147,6 +147,9 @@ export function resolveJudgeCalibrationTruth(input: { gold: JudgeCalibrationGold
 
 /** Use the production full-match predicate for the panel's one-axis prediction too. */
 export function judgeCalibrationFullMatch(score: DecisionScore, result: Pick<JudgeSettled, 'axis' | 'resolution'>): boolean {
+  // Forced probes can disagree with a deterministic full match. A negative prediction
+  // must not inherit the already-full axis (production tie stamps only upgrade ties).
+  if (result.resolution === 'different') return false
   const partial = score.kind === 'scored' ? score : score.kind === 'unresolved-tie' ? score.partial : undefined
   if (!partial) return false
   return isDecisionFullMatch({ ...partial, kind: 'scored', matcherVersion: score.matcherVersion,
