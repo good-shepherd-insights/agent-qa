@@ -11,6 +11,8 @@ import {
 import {
   applyBriefDelta,
   assessJudgeEligibility,
+  assessPanelEligibility,
+  createPanelIdentity,
   buildEvalReport,
   computeCorpusDigest,
   computeDecisionIdentity,
@@ -559,12 +561,25 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       refusal: { path: input.committedRoot, reason: 'noise floor or minimum gate set unavailable' },
       notices,
     }
-  const eligibility = assessJudgeEligibility({
-    judgeModelId: identity.judgeModelId,
-    replayedModelId: identity.plannerModelId,
-  })
-  const sameFamilyRefused =
-    input.judgeOverrideConfigured &&
+  const members = input.judgeMembers ?? (input.judge === undefined ? [] : [input.judge])
+  const memberModelIds = members.map(member => member.profile.model)
+  const panel = members.length > 1 ? createPanelIdentity(memberModelIds) : undefined
+  const declaredJudgeId = members.length === 0 ? identity.judgeModelId
+    : createPanelIdentity(memberModelIds).judgeModelId
+  if (declaredJudgeId !== identity.judgeModelId ||
+    (identity.judgeMemberModelIds !== undefined &&
+      JSON.stringify([...identity.judgeMemberModelIds].sort()) !== JSON.stringify([...memberModelIds].sort())))
+    throw new TypeError('Gate 1 judge declaration differs from its cache identity')
+  const assess = (cassette?: LeafCassette) => {
+    const common = { replayedModelId: identity.plannerModelId,
+      recordedModelId: cassette?.receipt.model.declared?.modelId ?? cassette?.receipt.model.resolvedModelId }
+    return panel === undefined
+      ? assessJudgeEligibility({ ...common, judgeModelId: declaredJudgeId })
+      : assessPanelEligibility({ ...common, memberModelIds })
+  }
+  const eligibility = assess()
+  let sameFamilyRefused =
+    (panel !== undefined || input.judgeOverrideConfigured) &&
     !eligibility.eligible &&
     eligibility.reason === 'no-eligible-judge'
   const emptyFold = foldPerAxisScore([], floor.axes)
@@ -598,6 +613,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     judge: {
       eligibility: eligibility.eligible ? 'eligible' : eligibility.reason,
       overrideConfigured: input.judgeOverrideConfigured,
+      ...(panel === undefined ? {} : { panelSize: panel.panelSize, members: [...panel.members!] }),
     },
     ...(eligibility.eligible
       ? {
@@ -695,24 +711,37 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
         ? 'default'
         : 'floor'
       : input.baselineSeed.source
-  const cache = resolveBaselineCache({
+  // Each cached score was judged against its own recorded model as well as the
+  // actual replay planner. An ineligible row must carry no eligible judge stamp.
+  const assessments = new Map(allIds.map(id => [id, assess(bundles.get(id)!.cassette)]))
+  if (panel !== undefined && [...assessments.values()].some(row => !row.eligible)) {
+    receipt.judge!.eligibility = 'no-eligible-judge'
+    receipt.degradation = 'replay-diff'
+    sameFamilyRefused = true
+    delete receipt.judgeId
+  }
+  const resolutions = allIds.map(id => {
+    const rowEligibility = assessments.get(id)!
+    return resolveBaselineCache({
     agentQaRoot: input.agentQaRoot,
     ...identity,
-    ...(eligibility.eligible
+    ...(rowEligibility.eligible
       ? {
           judgeIdentity: {
-            judgeModelId: eligibility.judgeModelId,
+            judgeModelId: rowEligibility.judgeModelId,
             judgeVersion: JUDGE_CONFIG.judgeVersion,
           },
         }
       : {}),
     gateRootSeed: seed,
     gateRootSeedSource: seedSource,
-    cassettes: allIds.map((id) => ({
+    cassettes: [{
       id,
       promptInputHash: bundles.get(id)!.cassette.receipt.promptInputHash,
-    })),
+    }],
+    })
   })
+  const cache = { rows: resolutions.flatMap(result => result.rows) }
   // D-01 + literal D-06: extraction cannot inherit a committed-profile baseline,
   // even when a stale/colliding directory happens to contain an identically slugged id.
   if (located.kind === 'extracted') {
@@ -749,8 +778,8 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     return abstain('baseline-uncached')
   }
   const cacheById = new Map(cache.rows.map((row) => [row.cassetteId, row]))
-  const baselineJudgeRequest = identity.judgeModelId === undefined ? null : {
-    judgeModelId: identity.judgeModelId, allowSameFamily: false }
+  const baselineJudgeRequest = declaredJudgeId === undefined ? null : {
+    judgeModelId: declaredJudgeId, allowSameFamily: false }
   const baselineArms = new Map(
     cache.rows.map((row) => [
       row.cassetteId,
@@ -791,13 +820,11 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       },
     },
     ...(input.clock === undefined ? {} : { clock: { now: input.clock } }),
-    ...(eligibility.eligible && input.judge
+    ...([...assessments.values()].some(row => row.eligible) && members.length > 0
       ? {
-          judge: {
-            profile: input.judge.profile,
-            auth: await input.judge.resolveAuth(),
-            modelOverrides: input.judge.modelOverrides,
-          },
+          judge: { members: await Promise.all(members.map(async member => ({
+            profile: member.profile, auth: await member.resolveAuth(), modelOverrides: member.modelOverrides,
+          }))) },
         }
       : {}),
   }

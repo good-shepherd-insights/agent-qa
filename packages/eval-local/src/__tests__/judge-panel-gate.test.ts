@@ -6,8 +6,8 @@ import { asRef, GateReceiptSchema, receiptDigestOf, slugBranch } from '@vostride
 import { composeBaselineProfileKey, createPanelIdentity, JUDGE_CONFIG } from '@vostride/agent-qa-eval'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import * as local from '../index.js'
-import { writeGate1Fixture, gate1Responder, judgeStub } from './fixtures/gate1-fixtures.js'
-import { actionGenerateResult, familyStubProfile, noneAuth, respondingStub } from './fixtures/replay-fixtures.js'
+import { writeGate1Fixture, gate1Responder } from './fixtures/gate1-fixtures.js'
+import { actionGenerateResult, familyStubProfile, judgeGenerateResult, noneAuth, respondingStub } from './fixtures/replay-fixtures.js'
 import { incrementingClock } from './fixtures/floor-fixtures.js'
 
 const roots: string[] = []
@@ -35,9 +35,12 @@ async function fixture(options: { ids?: string[]; recorded?: string; warm?: bool
       ? actionGenerateResult('web', 'e-twin') : gate1Responder(f)(call)
   }
   const planner = respondingStub(respond, profile.model)
-  const judges = ids.map((id, index) => options.votes?.[index] === 'error'
-    ? respondingStub(() => { throw new Error('fixture judge unavailable') }, id)
-    : judgeStub(id, options.votes?.[index] ?? 'different'))
+  let warmed = false
+  const judges = ids.map((id, index) => respondingStub(() => {
+    const vote = warmed ? options.votes?.[index] ?? 'different' : 'different'
+    if (vote === 'error') throw new Error('fixture judge unavailable')
+    return judgeGenerateResult(vote, 'high')
+  }, id))
   const members = ids.map((id, index) => ({ profile: familyStubProfile(id),
     modelOverrides: { languageModels: judges[index]!.languageModels }, resolveAuth: vi.fn(async () => noneAuth) }))
   const identity = { ...f.identity, plannerModelId: profile.model,
@@ -57,6 +60,7 @@ async function fixture(options: { ids?: string[]; recorded?: string; warm?: bool
     seed: 11, k: 1, maskingContextFactory: createMaskingContext, replayOutputBaseDir: runRoot,
     source: 'committed', corpusDigest: f.corpusDigest, clock: incrementingClock() })
   planner.captured.length = 0
+  warmed = true
   for (const judge of judges) judge.captured.length = 0
   const input: local.RunReplayGateInput = { injection: f.injection, committedRoot: f.committedRoot,
     agentQaRoot: f.agentQaRoot, identity, planner: { profile, resolveAuth: vi.fn(async () => noneAuth),
@@ -114,7 +118,7 @@ it.each([['different', 'unsure'], ['different', 'equivalent'], ['different', 'er
     expect(score).toMatchObject({ kind: 'loaded', record: { score: { entry: { score: {
       kind: 'unresolved-tie', judgeOutcome: { kind: 'abstained', cause: b === 'equivalent' ? 'panel-disagreement' : 'below-quorum',
         members: expect.arrayContaining([expect.objectContaining({ judgeModelId: 'gemini-fixture',
-          outcome: expect.objectContaining({ kind: b === 'error' ? 'judge-error' : b === 'unsure' ? 'abstained' : 'settled' }) })]) } } } } } })
+          outcome: expect.objectContaining({ kind: b === 'error' ? 'error' : b === 'unsure' ? 'abstained' : 'settled' }) })]) } } } } } })
   })
 
 it.each([[], ['claude-fixture']])('421 keeps absent/singleton receipt field sets: %j', async (...ids) => {
@@ -134,5 +138,24 @@ it('421 cold panel cache spends nothing and preserves every warmup selection', a
   expect(result.receipt.judge).toMatchObject({ eligibility: 'eligible', panelSize: 2 })
   expect(result.notices.join('\n')).toContain("--judge 'first' --judge 'second'")
   expect(planner.captured).toHaveLength(0)
+  expect(members.every(member => member.resolveAuth.mock.calls.length === 0)).toBe(true)
+})
+
+it('421 rejects another panel in the same cache directory before any credential work', async () => {
+  const { input, members, planner } = await fixture()
+  members[1]!.profile = familyStubProfile('gemini-other')
+  const ids = members.map(member => member.profile.model)
+  input.identity = { ...input.identity, judgeModelId: createPanelIdentity(ids).judgeModelId, judgeMemberModelIds: ids }
+  const result = await local.runReplayGate(input)
+  if (result.kind !== 'receipt') throw new Error(JSON.stringify(result))
+  expect(result.receipt.reasons).toEqual(['baseline-uncached'])
+  expect(planner.captured).toHaveLength(0)
+  expect(members.every(member => member.resolveAuth.mock.calls.length === 0)).toBe(true)
+})
+
+it('421 refuses mismatched raw member transport instead of inventing members from the composite', async () => {
+  const { input, members } = await fixture()
+  input.judgeMembers = members.slice(0, 1)
+  await expect(local.runReplayGate(input)).rejects.toThrow('judge declaration differs')
   expect(members.every(member => member.resolveAuth.mock.calls.length === 0)).toBe(true)
 })

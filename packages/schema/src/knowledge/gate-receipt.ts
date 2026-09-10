@@ -132,7 +132,13 @@ export const gate1ArmSchema = z.object({
   baselineSource: z.object({
     runRoot: z.string(), seed: z.number().int(), seedSource: z.string(),
   }).strict().optional(),
-  judge: z.object({ eligibility: z.string(), overrideConfigured: z.boolean() }).strict().optional(),
+  judge: z.object({
+    eligibility: z.string(), overrideConfigured: z.boolean(),
+    panelSize: z.number().int().min(2).optional(),
+    members: z.array(z.object({ judgeModelId: z.string().min(1), judgeFamily: z.string() }).strict()).optional(),
+  }).strict().refine(judge => judge.panelSize === undefined
+    ? judge.members === undefined : judge.members?.length === judge.panelSize,
+  'panel size and complete member metadata must appear together').optional(),
 }).strict()
 export const gate2ArmSchema = z.object({
   ...receiptCoreShape, gate: z.literal(2), attributedObservationId: z.string().min(1),
