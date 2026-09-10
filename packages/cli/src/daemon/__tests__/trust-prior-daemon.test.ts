@@ -13,6 +13,13 @@ vi.mock('@vostride/agent-qa-eval-local', async original => {
   const actual = await original<typeof import('@vostride/agent-qa-eval-local')>()
   return { ...actual, readLabelCalibration: vi.fn(actual.readLabelCalibration) }
 })
+vi.mock('@vostride/agent-qa-agent-local', async original => {
+  const actual = await original<typeof import('@vostride/agent-qa-agent-local')>()
+  return { ...actual, LOCAL_CURATION_CAPABILITIES: { ...actual.LOCAL_CURATION_CAPABILITIES,
+    openKnowledgeReader: vi.fn(actual.LOCAL_CURATION_CAPABILITIES.openKnowledgeReader),
+    drainQueue: vi.fn(actual.LOCAL_CURATION_CAPABILITIES.drainQueue),
+  } }
+})
 import { readLabelCalibration } from '@vostride/agent-qa-eval-local'
 
 const roots: string[] = []
@@ -92,14 +99,15 @@ it('keeps one daemon prior snapshot across two drains, review composition and ma
     await first.drain(); await first.maintenance()
     expect(first.input.resolveTrustPriors?.()).toEqual(old.priors)
     for (const [input] of first.drainQueue.mock.calls) {
-      expect(input.resolveTrustPriors).toBe(first.input.resolveTrustPriors)
-      expect(input.resolveTrustPriors?.()).toEqual(old.priors)
+      expect(input.priors).toBe(first.input.resolveTrustPriors?.())
+      expect(input.priors).toEqual(old.priors)
       expect(input.lease).toEqual(await first.input.resolveWriterAuthority!())
     }
-    expect(first.runMaintenanceTail.mock.calls[0]![0].resolveTrustPriors).toBe(first.input.resolveTrustPriors)
+    expect(first.runMaintenanceTail.mock.calls[0]![0].priors).toBe(first.input.resolveTrustPriors?.())
     expect(first.authorFactory).toHaveBeenCalledTimes(1)
     expect(readLabelCalibration).toHaveBeenCalledTimes(1)
-    expect(first.errors).toEqual([])
+    expect(first.errors).toHaveLength(2)
+    for (const error of first.errors) expect(error).toMatch(/^curation: posture unavailable: noise-floor:/)
   } finally { await first.stop() }
   const second = await start(f)
   try { expect(second.input.resolveTrustPriors?.()).toEqual(artifact(f.project, 0.25).priors); expect(readLabelCalibration).toHaveBeenCalledTimes(2) }
@@ -128,6 +136,25 @@ it('refuses malformed calibration before acquiring the daemon writer lease', asy
     config: { getMasked: async () => ({ schemaVersion: 1, configPath: f.configPath, entries: [] }) },
     model: async () => { throw new Error('unexpected model') }, operations: { acquireWriterLease: acquire } })).rejects.toThrow('Trust prior calibration is invalid or unavailable')
   expect(acquire).not.toHaveBeenCalled()
+})
+
+it('hands the cached table into the real completed-run reader and drain under the daemon lease', async () => {
+  const { markFixture } = await import('../../gates/__tests__/feedback-fixture.js')
+  const marked = markFixture(); roots.push(marked.root)
+  const f = { ...project(), project: marked.root, configPath: marked.configPath, agentQaRoot: marked.agentQaRoot }
+  const old = artifact(f.project)
+  const reader = vi.mocked(LOCAL_CURATION_CAPABILITIES.openKnowledgeReader)
+  const drain = vi.mocked(LOCAL_CURATION_CAPABILITIES.drainQueue)
+  const host = await start(f)
+  try {
+    artifact(f.project, 0.25)
+    await host.input.postRun!.curateRun!({ runId: marked.handoff.runId, executionContext: 'local-headless' })
+    const readerInput = reader.mock.calls.at(-1)![0] as unknown as { priors?: unknown }
+    expect(readerInput.priors).toEqual(old.priors)
+    expect(drain.mock.calls.at(-1)![0].priors).toBe(host.input.resolveTrustPriors?.())
+    expect(drain.mock.calls.at(-1)![0].lease).toEqual(await host.input.resolveWriterAuthority!())
+    expect(readLabelCalibration).toHaveBeenCalledTimes(1)
+  } finally { await host.stop() }
 })
 
 it('preserves default priors and no calibration read for a legacy daemon without configPath', async () => {

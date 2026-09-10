@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util'
 import type { ResolvePromotionPosture, ScopeKey } from '@vostride/agent-qa-schema'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
+import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 
 import type {
   ConfigReaderPort,
@@ -609,6 +610,7 @@ async function resolveDraftApply(
  * and never a dead daemon; that is what 401-11's `CliRunInputError` conversion bought.
  */
 async function composeDaemonRunExecution(input: {
+  readonly resolveTrustPriors?: ResolveTrustPriors
   readonly configPath: string
   readonly agentQaRoot: string
   readonly analytics: CliAnalyticsHost | undefined
@@ -686,6 +688,7 @@ async function composeDaemonRunExecution(input: {
       try {
         const finished = await runInProcessCliRun(
           {
+            resolveTrustPriors: input.resolveTrustPriors,
             configPath,
             agentQaRoot: input.agentQaRoot,
             // D-07: THE POSTURE TRAVELS EXPLICITLY, and this literal is the whole of truth 1. The
@@ -768,6 +771,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   // D-09: this is deliberately the first effect and is never injectable or TTY-dependent.
   LOCAL_DAEMON_CAPABILITIES.pinLocalHeadlessExecutionContext()
 
+  // Validate before acquiring authority. A legacy host without a config has no eval root.
+  const trustPriors = input.configPath === undefined
+    ? undefined : trustPriorsForHost({ configPath: input.configPath })
+  const resolveTrustPriors = trustPriors?.resolve
+
   const operations = { ...defaultOperations(), ...input.operations }
   const logger = input.logger ?? DEFAULT_LOGGER
   const instanceId = randomUUID()
@@ -792,6 +800,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let runExecution = input.runExecution
   if (runExecution === undefined && input.configPath !== undefined) {
     runExecution = await composeDaemonRunExecution({
+      resolveTrustPriors,
       configPath: input.configPath,
       agentQaRoot: input.agentQaRoot,
       analytics: input.analytics,
@@ -988,7 +997,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
           lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
           currentBuildOrdinal: product => latestBuildOrdinal({ root: input.agentQaRoot, product }),
-          replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot }),
+          replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot, resolveTrustPriors }),
         })
         .then(posture => promotionPostureResolverForHost(posture, message => logger.error(message),
           currentBuildOrdinal, scope?.tier === 'product' ? scope.key : null))
@@ -1645,6 +1654,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       let report: Awaited<ReturnType<DaemonHostOperations['drainQueue']>>
       try {
         report = await operations.drainQueue({
+          priors: resolveTrustPriors?.(),
           knowledgeRoot: input.knowledgeRoot,
           auditBaseDir: input.agentQaRoot,
           agentQaRoot: input.agentQaRoot,
@@ -2147,6 +2157,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     const draftAuthoring = await resolveDraftAuthoring(input.configPath)
     const draftApply = await resolveDraftApply(input.configPath)
     localAgent = operations.composeLocalAgent({
+      resolveTrustPriors,
       resolvePromotionPosture: resolveHostPromotionPosture,
       agentQaRoot: input.agentQaRoot,
       config: input.config,
@@ -2189,6 +2200,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           )
           const resolvePromotionPosture = await resolveHostPromotionPosture(handoff.buildOrdinal, handoff.scope)
           const folded = await curateCompletedRun({
+            resolveTrustPriors,
             operations: curationOperations,
             ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
             runDir: completedRunDir(input.agentQaRoot, curatedRunId),
@@ -2235,6 +2247,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       clock: SYSTEM_CLOCK,
       idSource: DIGEST_JOB_ID_SOURCE,
     })
+    Object.assign(localAgent, { trustPriorDisclosure: trustPriors?.disclosure })
     operations.trace?.('local-agent-composed')
     const jobs = await localAgent.jobs()
     operations.trace?.('jobs-opened')
@@ -2325,6 +2338,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           : { kind: 'deferred' as const, reason: 'worker-unavailable' as const }
         try {
           await operations.runMaintenanceTail({
+            priors: resolveTrustPriors?.(),
             knowledgeRoot: input.knowledgeRoot,
             lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
             embeddingCapability,

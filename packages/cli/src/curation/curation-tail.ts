@@ -56,6 +56,7 @@ import { emitCurationCandidates, type EmitReport } from './emit-candidates.js'
 import { exercisedAnchors } from './handoff-anchors.js'
 import { renderPromotionLine } from './promotion-posture.js'
 import { readRunCanaryPolicy } from './canary-run-state.js'
+import type { ResolveTrustPriors } from './trust-priors.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
 /**
@@ -131,6 +132,7 @@ export interface CurationWriterAuthority {
 }
 
 export interface RunCurationTailOptions {
+  resolveTrustPriors?: ResolveTrustPriors
   maxAblations?: number
   /** Built once by the caller; synchronous per candidate inside writer authority. */
   resolvePromotionPosture?: ResolvePromotionPosture
@@ -395,6 +397,7 @@ type CurationAuthorCapability =
   Parameters<LocalCurationCapabilities['drainQueue']>[0]['author']
 
 export interface CurateCompletedRunInput {
+  resolveTrustPriors?: ResolveTrustPriors
   maxAblations?: number
   resolvePromotionPosture?: ResolvePromotionPosture
   /** The run's own directory (`<agentQaRoot>/runs/<slug>`), derived by the caller. */
@@ -638,7 +641,8 @@ export async function curateCompletedRun(
       // beside (never inside) the noop warn and the complete predicate below.
       input.log.info?.(candidateSummaryLine(receiptIdentity.runId, candidates))
       // D-20: candidate and canary drops share this scope and crash boundary.
-      const reader = operations.openKnowledgeReader({ knowledgeRoot: input.knowledgeRoot })
+      const reader = operations.openKnowledgeReader({ knowledgeRoot: input.knowledgeRoot,
+        priors: input.resolveTrustPriors?.() })
       const ablation = operations.canaryAblation
       const recordedPolicy = readRunCanaryPolicy(input.runDir, String(input.handoff.runId))
       const caps = ablation === undefined ? undefined : recordedPolicy ?? (input.maxAblations !== undefined
@@ -691,6 +695,7 @@ export async function curateCompletedRun(
             })
           : operations.buildCuratorAuthor(input.modelDeps))
       const drain = await operations.drainQueue({
+        priors: input.resolveTrustPriors?.(),
         ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
         knowledgeRoot: input.knowledgeRoot,
         auditBaseDir: input.agentQaRoot,
@@ -910,6 +915,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       const resolvePromotionPosture = opts.resolvePromotionPostureForRun === undefined
         ? opts.resolvePromotionPosture : await opts.resolvePromotionPostureForRun(handoff.buildOrdinal, handoff.scope)
       const folded = await curateCompletedRun({
+        resolveTrustPriors: opts.resolveTrustPriors,
         ...(runDir !== currentRunDir || opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
         ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
         runDir,
