@@ -37,7 +37,7 @@ export interface ReadGatePostureForInput {
   scope: ScopeKey
   /** REQUIRED integer floor, >= 1. No default exists anywhere (D-12). */
   minimumGateSet: number
-  /** Model identities only — the fold makes no provider call. */
+  /** Complete raw judge declaration and recorded identity; passed intact to the pure fold. */
   judge: JudgeCapabilityInput
   /** Canary evidence as DATA; eval never imports knowledge-local. */
   canary: CanaryEvidenceSummary

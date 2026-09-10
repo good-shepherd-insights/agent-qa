@@ -86,7 +86,7 @@ afterEach(() => {
 
 describe('buildPromotionPostureResolver', () => {
   it.each([false, true])('421 preserves panel facts with a missing floor or ready posture (floor: %s)', async hasFloor => {
-    const panelConfig = config.replace('use:\n', `    - name: judge-a\n      provider: openai-compatible\n      model: claude-fixture\n    - name: judge-b\n      provider: openai-compatible\n      model: gpt-judge\nuse:\n`)
+    const panelConfig = config.replace('use:\n', `    - name: judge-a\n      provider: openai-compatible\n      baseURL: http://127.0.0.1:1/v1\n      model: claude-fixture\n    - name: judge-b\n      provider: openai-compatible\n      baseURL: http://127.0.0.1:1/v1\n      model: gpt-judge\nuse:\n`)
       + '\neval:\n  judges: [judge-b, judge-a]\n  judgeAllowSameFamily: true\n'
     const f = fixture({ config: panelConfig })
     const identity = await resolveGateProfileIdentity(await resolveEvalSession({ configPath: f.configPath, keyOnly: true }))

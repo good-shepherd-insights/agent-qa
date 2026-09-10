@@ -37,6 +37,17 @@ export interface PromotionJudgePosture {
   capable: boolean
   reason: 'eligible' | 'no-judge-configured' | 'no-eligible-judge'
   judgeFamily?: string
+  /** Composite-only disclosure, copied from the gate's capability assessment. */
+  judgeModelId?: string
+  panelSize?: number
+  members?: readonly { judgeModelId: string; judgeFamily: string }[]
+  families?: {
+    judge?: string
+    replayed?: string
+    recorded?: string
+    members?: readonly { judgeModelId: string; judgeFamily?: string }[]
+    offendingPair?: readonly [string, string]
+  }
 }
 export interface PromotionCanaryPosture {
   kind: 'provided' | 'not-provided'
@@ -74,6 +85,8 @@ export interface UnavailablePromotionGatePosture {
   kind: 'unavailable'
   replayGateAvailable: boolean
   refusals: readonly string[]
+  /** Declared panel capability remains knowable without a measured floor. */
+  judge?: PromotionJudgePosture
 }
 export type PromotionGatePosture = ResolvedPromotionGatePosture | UnavailablePromotionGatePosture
 

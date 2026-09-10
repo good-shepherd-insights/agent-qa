@@ -37,6 +37,8 @@ import type { ScopeKey } from '@vostride/agent-qa-schema'
 import { computeCorpusDigest } from '../census/corpus-digest'
 import type { CommittedCorpusSnapshot } from '../census/derive-census'
 import { assessJudgeEligibility } from '../judge/adjudicate'
+import { assessPanelEligibility, createPanelIdentity } from '../judge/panel'
+import type { JudgeFamilyDisclosure, JudgeMemberIdentity } from '../match/score'
 import { resolveProductPartition } from '../labels/corpus-entry'
 import type { PartitionManifest } from '../labels/partition-manifest'
 import { countGateSet } from './gate-set'
@@ -48,6 +50,10 @@ export interface JudgeCapabilityInput {
   plannerModelId: string
   /** Absent means no judge is configured — an answer, not an error. */
   judgeModelId?: string
+  /** Raw declarations, never the composite locator parsed back into models. */
+  judgeMemberModelIds?: readonly string[]
+  /** Recorded-side identity when available to the caller. */
+  recordedModelId?: string
   /** Explicit default-off opt-in; disclosed on the posture either way. */
   allowSameFamily?: boolean
 }
@@ -64,10 +70,14 @@ export interface JudgeCapability {
   allowSameFamily: boolean
   /** Present on the capable arm. */
   judgeFamily?: string
+  /** Composite-only identity, retained even when the whole declaration is refused. */
+  judgeModelId?: string
+  panelSize?: number
+  members?: readonly JudgeMemberIdentity[]
   /** Present only when the opt-in actually lifted a refusal that would have fired. */
   familyOverride?: 'same-family-allowed'
   /** Present on the `no-eligible-judge` refusal, verbatim from the assessment. */
-  families?: { judge?: string; replayed?: string; recorded?: string }
+  families?: JudgeFamilyDisclosure
 }
 
 /**
@@ -136,13 +146,22 @@ function echoOf(manifest: PartitionManifest | undefined): PartitionEcho {
   }
 }
 
-function judgeCapabilityOf(input: JudgeCapabilityInput): JudgeCapability {
+export function judgeCapabilityOf(input: JudgeCapabilityInput): JudgeCapability {
   const allowSameFamily = input.allowSameFamily === true
-  const eligibility = assessJudgeEligibility({
-    judgeModelId: input.judgeModelId,
+  const memberModelIds = input.judgeMemberModelIds
+  const panel = memberModelIds !== undefined && memberModelIds.length > 1
+    ? createPanelIdentity(memberModelIds) : undefined
+  const panelFacts = panel === undefined ? {} : {
+    judgeModelId: panel.judgeModelId, panelSize: panel.panelSize, members: panel.members,
+  }
+  const assessment = {
     replayedModelId: input.plannerModelId,
+    recordedModelId: input.recordedModelId,
     allowSameFamily,
-  })
+  }
+  const eligibility = memberModelIds === undefined
+    ? assessJudgeEligibility({ ...assessment, judgeModelId: input.judgeModelId })
+    : assessPanelEligibility({ ...assessment, memberModelIds })
 
   if (eligibility.eligible) {
     return {
@@ -150,6 +169,7 @@ function judgeCapabilityOf(input: JudgeCapabilityInput): JudgeCapability {
       reason: 'eligible',
       allowSameFamily,
       judgeFamily: eligibility.judgeFamily,
+      ...panelFacts,
       ...(eligibility.familyOverride === undefined
         ? {}
         : { familyOverride: eligibility.familyOverride }),
@@ -165,6 +185,7 @@ function judgeCapabilityOf(input: JudgeCapabilityInput): JudgeCapability {
     reason: 'no-eligible-judge',
     allowSameFamily,
     families: eligibility.families,
+    ...panelFacts,
   }
 }
 

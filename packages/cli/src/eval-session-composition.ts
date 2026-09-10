@@ -190,6 +190,7 @@ export type { WriteBaselinePointerOutcome } from '@vostride/agent-qa-eval-local'
 // Keep the surface firewall self-shrinking; new CLI files do not gain eval imports.
 export { computeCorpusDigest, selectGateSet } from '@vostride/agent-qa-eval'
 export type { JudgeCapabilityInput } from '@vostride/agent-qa-eval'
+export { judgeCapabilityOf } from '@vostride/agent-qa-eval'
 export { readActiveCommittedCorpus, readCommittedCorpus, readGatePostureFor, resolveMinimumGateSet } from '@vostride/agent-qa-eval-local'
 
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */

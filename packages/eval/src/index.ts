@@ -516,7 +516,7 @@ export type {
   GateSetVerdict,
   SelectGateSetInput,
 } from './gate/gate-set'
-export { readGatePosture } from './gate/gate-posture'
+export { readGatePosture, judgeCapabilityOf } from './gate/gate-posture'
 export type {
   CanaryEvidenceSummary,
   GatePosture,

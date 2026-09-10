@@ -35,7 +35,7 @@ type ResolveAtBuildOrdinal = (
 
 export type PromotionPostureResolution =
   | { kind: 'no-eval-root'; committedRoot: string }
-  | { kind: 'unavailable'; committedRoot: string; refusals: readonly string[]; resolve: ResolvePromotionPosture }
+  | { kind: 'unavailable'; committedRoot: string; refusals: readonly string[]; judge?: PromotionJudgePosture; resolve: ResolvePromotionPosture }
   | { kind: 'ready'; committedRoot: string; host: PromotionPostureHostFacts; resolve: ResolveAtBuildOrdinal }
 
 /** Prepare before each operation or drain; candidate reads stay synchronous under authority. */
@@ -54,24 +54,41 @@ export async function buildPromotionPostureResolver(input: {
   const agentQaRoot = input.agentQaRoot ?? resolve(dirname(resolve(configPath)), '.agent-qa')
   if (!existsSync(committedRoot)) return { kind: 'no-eval-root', committedRoot }
   const replayGateAvailable = replayGate !== undefined
+  let panelJudge: PromotionJudgePosture | undefined
   const unavailable = (refusals: readonly string[]): UnavailablePromotionGatePosture => ({
     kind: 'unavailable', replayGateAvailable, refusals,
+    ...(panelJudge === undefined ? {} : { judge: structuredClone(panelJudge) }),
   })
   const refused = (refusals: readonly string[]): PromotionPostureResolution => ({
     kind: 'unavailable', committedRoot, refusals, resolve: () => unavailable(refusals),
+    ...(panelJudge === undefined ? {} : { judge: structuredClone(panelJudge) }),
   })
   const refusalLines = (rows: readonly { path: string; reason: string }[]) =>
     rows.map(row => `${row.path}: ${row.reason}`)
   const judgeFacts = (judge: PromotionJudgePosture): PromotionJudgePosture => ({
     capable: judge.capable, reason: judge.reason,
     ...(judge.judgeFamily === undefined ? {} : { judgeFamily: judge.judgeFamily }),
+    ...(judge.panelSize === undefined ? {} : {
+      judgeModelId: judge.judgeModelId, panelSize: judge.panelSize,
+      members: structuredClone(judge.members),
+      ...(judge.families === undefined ? {} : { families: structuredClone(judge.families) }),
+    }),
   })
   try {
     const { resolveEvalSession, resolveGateProfileIdentity, readActiveCommittedCorpus,
       readGatePostureFor, resolveMinimumGateSet, selectGateSet, computeCorpusDigest, resolveGate2Caps,
+      judgeCapabilityOf,
     } = await import('../eval-session-composition.js')
     const session = await resolveEvalSession({ configPath, keyOnly: true })
     const identity = await resolveGateProfileIdentity(session)
+    const judge: JudgeCapabilityInput = {
+      plannerModelId: identity.plannerModelId,
+      ...(identity.judgeModelId === undefined ? {} : { judgeModelId: identity.judgeModelId }),
+      ...(identity.judgeMemberModelIds === undefined ? {} : { judgeMemberModelIds: identity.judgeMemberModelIds }),
+      allowSameFamily: session.evalConfig.judgeAllowSameFamily === true,
+    }
+    const capability = judgeCapabilityOf(judge)
+    if (capability.panelSize !== undefined) panelJudge = judgeFacts(capability)
     const caps = resolveGate2Caps(session)
     const notices: string[] = []
     const validOrdinal = (value: number | undefined): value is number =>
@@ -93,11 +110,6 @@ export async function buildPromotionPostureResolver(input: {
     const minimumGateSet = floor.minimumGateSet
     const corpus = readActiveCommittedCorpus(committedRoot, agentQaRoot)
     if (corpus.refusals.length > 0) return refused(refusalLines(corpus.refusals))
-    const judge: JudgeCapabilityInput = {
-      plannerModelId: identity.plannerModelId,
-      ...(identity.judgeModelId === undefined ? {} : { judgeModelId: identity.judgeModelId }),
-      allowSameFamily: session.evalConfig.judgeAllowSameFamily === true,
-    }
     const canary = { kind: 'not-provided' as const, rarePathEligible: false }
     // Probe once so even a host with no candidates discloses refused manifests.
     const hostRead = readGatePostureFor({
