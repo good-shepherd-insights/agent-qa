@@ -13,7 +13,7 @@ const { spawnSync } = require('node:child_process')
 const root = process.cwd()
 const sha = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 const subjects = ['packages/eval/src/judge/panel.ts', 'packages/eval/src/match/score.ts',
-  'packages/eval/src/judge/config.ts']
+  'packages/eval/src/judge/config.ts', 'packages/eval/src/judge/calibration.ts']
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-qa-panel-selftest-'))
 console.log(`Selftest evidence: ${work}`)
 function git(cwd, args) {
@@ -23,7 +23,7 @@ function git(cwd, args) {
 test('panel mutation registration and isolated failure restoration', () => {
   assert.equal(JSON.parse(fs.readFileSync('package.json', 'utf8')).scripts['validate:panel-mutation'],
     'bash scripts/421-panel-mutation.sh', 'panel mutation must be registered')
-  for (const mode of ['', 'neutered', 'fatal', 'SIGINT', 'SIGTERM', 'SIGHUP', 'invalid']) {
+  for (const mode of ['neutered', '', 'fatal', 'SIGINT', 'SIGTERM', 'SIGHUP', 'invalid']) {
     const copy = path.join(work, mode || 'normal')
     fs.mkdirSync(path.join(copy, 'packages/eval'), { recursive: true })
     fs.mkdirSync(path.join(copy, 'scripts'))
