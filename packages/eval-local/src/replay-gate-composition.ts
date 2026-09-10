@@ -564,6 +564,8 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
   const members = input.judgeMembers ?? (input.judge === undefined ? [] : [input.judge])
   const memberModelIds = members.map(member => member.profile.model)
   const panel = members.length > 1 ? createPanelIdentity(memberModelIds) : undefined
+  if (identity.judgeModelId?.startsWith('panel:') && panel === undefined)
+    throw new TypeError('Gate 1 composite judge identity requires explicit raw members')
   const declaredJudgeId = members.length === 0 ? identity.judgeModelId
     : createPanelIdentity(memberModelIds).judgeModelId
   if (declaredJudgeId !== identity.judgeModelId ||

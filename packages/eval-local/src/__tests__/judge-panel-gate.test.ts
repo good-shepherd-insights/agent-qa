@@ -163,6 +163,13 @@ it('421 rejects another panel in the same cache directory before any credential 
 it('421 refuses mismatched raw member transport instead of inventing members from the composite', async () => {
   const { input, members } = await fixture()
   input.judgeMembers = members.slice(0, 1)
-  await expect(local.runReplayGate(input)).rejects.toThrow('judge declaration differs')
+  await expect(local.runReplayGate(input)).rejects.toThrow('requires explicit raw members')
   expect(members.every(member => member.resolveAuth.mock.calls.length === 0)).toBe(true)
+})
+
+it('421 rejects a composite identity with no raw member declaration', async () => {
+  const { input } = await fixture()
+  delete input.judgeMembers
+  delete input.identity.judgeMemberModelIds
+  await expect(local.runReplayGate(input)).rejects.toThrow('requires explicit raw members')
 })
