@@ -78,6 +78,28 @@ describe('panel comparison accounting', () => {
     expect(score.judgeOutcome.members?.map(member => member.outcome.kind)).toEqual(['error', 'error', 'error'])
     expect(JSON.stringify(score)).not.toContain('private-provider-material')
   })
+
+  it('retains a late member error after an early majority with partial known usage', async () => {
+    const fixture = partialTieFixture()
+    const calls: string[] = []
+    const result = await adjudicateCassetteScore({ ...fixture, eligibility, port: {
+      judgeModelId: createPanelIdentity(ids).judgeModelId,
+      members: ids.map((id, index) => ({ judgeModelId: id, async call(request) {
+        calls.push(`${id}:${request.order}`)
+        return index === 2 ? callError : verdict('equivalent', 'high', request.order === 'ab' ? { calls: 1, outputTokens: 5 } : undefined)
+      } })),
+    } })
+    expect(calls).toHaveLength(6)
+    const score = adjudicatedLeafScore(result)
+    if (score.kind !== 'scored') throw new Error('expected majority settlement')
+    expect(score.judgeSettled?.members?.map(member => member.outcome.kind)).toEqual(['settled', 'settled', 'error'])
+    expect(score.judgeSettled?.usage).toEqual({ calls: 6, outputTokens: 10 })
+    expect(isDecisionFullMatch(score)).toBe(true)
+    expect(isDecisionFullMatch({ ...score, axes: { ...score.axes, opClass: { kind: 'mismatch', goldClass: 'activate', candidateClass: 'fill' } } })).toBe(false)
+    expect(isDecisionFullMatch({ ...score, axes: { ...score.axes, value: { kind: 'scored', f1: 0.1, band: 'low' } } })).toBe(false)
+    expect(isDecisionFullMatch({ ...score, loop: { kind: 'flagged', priorStepIndex: 0 } })).toBe(false)
+    expect(isDecisionFullMatch({ ...score, sideEffect: { kind: 'flagged', reason: 'unsafe', riskFamily: 'destructive' } })).toBe(false)
+  })
 })
 
 describe('assessJudgeEligibility', () => {

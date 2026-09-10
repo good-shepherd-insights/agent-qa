@@ -136,6 +136,23 @@ const zeroTieCauseCounts = {
 } as const
 
 describe('buildEvalReport judge honesty surface', () => {
+  it('folds panel cost only from top-level usage and preserves decision-grain counters', () => {
+    const members = [
+      { judgeModelId: 'claude-judge', judgeFamily: 'claude', outcome: { kind: 'error', reason: 'provider-error', detail: 'failed' }, usage: { calls: 2 } },
+      { judgeModelId: 'gemini-judge', judgeFamily: 'gemini', outcome: { kind: 'abstained', cause: 'unsure-verdict' }, usage: { calls: 2, inputTokens: 10 } },
+    ] as const
+    const report = buildEvalReport([scoredEntry('panel-tie', tieScore('partial-identity', {
+      kind: 'abstained', cause: 'below-quorum', judgeId: 'panel:claude+gemini', judgeVersion: 2,
+      members, usage: { calls: 4, inputTokens: 10 },
+    }))])
+    expect(report.honesty.judge.invoked['partial-identity']).toBe(1)
+    expect(report.honesty.judge.abstained['partial-identity']).toBe(1)
+    expect(report.honesty.judge.errors['partial-identity']).toBe(0)
+    expect(report.honesty.judge.cost).toEqual({ calls: 4, inputTokens: 10, outputTokens: 0, outcomesMissingUsage: 0 })
+    const zero = buildEvalReport([scoredEntry('no-tie', settledScore())])
+    expect(zero.honesty.judge.invoked).toEqual(zeroTieCauseCounts)
+    expect(zero.honesty.judge.cost).toEqual({ calls: 0, inputTokens: 0, outputTokens: 0, outcomesMissingUsage: 0 })
+  })
   it('counts every judge disposition per cause and not-invoked per reason', () => {
     const report = buildEvalReport([
       scoredEntry('settled', judgeSettledScore(stamp())),

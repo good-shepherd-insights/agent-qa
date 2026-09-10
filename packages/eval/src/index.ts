@@ -176,7 +176,7 @@ export type {
   JudgeQuestion,
   JudgeTieEvidence,
 } from './judge/prompt'
-export { adjudicateCassetteScore, assessJudgeEligibility, judgePairwise } from './judge/adjudicate'
+export { adjudicateCassetteScore, adjudicatePanelComparison, assessJudgeEligibility, judgePairwise } from './judge/adjudicate'
 export type { UsageAggregator } from './judge/adjudicate'
 export type { AdjudicationResult, JudgeEligibility } from './judge/adjudicate'
 

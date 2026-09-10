@@ -266,7 +266,13 @@ async function callJudge(
 ): Promise<JudgeCallResult> {
   const payload = buildJudgePrompt(evidence, order)
   usage.calls += 1
-  const result = await port.call(payload)
+  let result: JudgeCallResult
+  try {
+    result = await port.call(payload)
+  } catch {
+    // A failing physical call must not skip its swap or disclose arbitrary transport text.
+    return { kind: 'call-error', reason: 'provider-error', detail: 'judge provider call failed' }
+  }
   if (result.kind === 'verdict' && result.usage !== undefined) {
     if (result.usage.inputTokens !== undefined) {
       usage.inputTokens = (usage.inputTokens ?? 0) + result.usage.inputTokens
@@ -313,17 +319,12 @@ export async function judgePairwise(
 }
 
 /** Pool the SAME question before the existing tie dispatcher selects a result. */
-async function judgeComparison(port: AdjudicationPort, evidence: JudgeTieEvidence, usage: UsageAggregator): Promise<PairwiseOutcome> {
+export async function adjudicatePanelComparison(port: AdjudicationPort, evidence: JudgeTieEvidence, usage: UsageAggregator = { calls: 0 }): Promise<PairwiseOutcome> {
   if (!('members' in port)) return judgePairwise(port, evidence, usage)
   const members: JudgeMemberOutcome[] = []
   for (const member of port.members) {
     const memberUsage: UsageAggregator = { calls: 0 }
-    let outcome: PairwiseOutcome
-    try {
-      outcome = await judgePairwise(member, evidence, memberUsage)
-    } catch (error) {
-      outcome = { kind: 'error', reason: 'provider-error', detail: describeThrown(error) }
-    }
+    const outcome = await judgePairwise(member, evidence, memberUsage)
     usage.calls += memberUsage.calls
     if (memberUsage.inputTokens !== undefined) usage.inputTokens = (usage.inputTokens ?? 0) + memberUsage.inputTokens
     if (memberUsage.outputTokens !== undefined) usage.outputTokens = (usage.outputTokens ?? 0) + memberUsage.outputTokens
@@ -506,7 +507,7 @@ async function adjudicateNoConsensus(
         candidate,
       },
     }
-    const pairwise = await judgeComparison(port, evidence, usage)
+    const pairwise = await adjudicatePanelComparison(port, evidence, usage)
     if (pairwise.kind === 'error') {
       return stampError(tie, port, usage, pairwise.reason, pairwise.detail)
     }
@@ -596,7 +597,7 @@ async function dispatchTie(
     return stampAbstention(tie, port, usage, 'missing-evidence')
   }
   const evidence: JudgeTieEvidence = { stepText: context.stepText, question }
-  const pairwise = await judgeComparison(port, evidence, usage)
+  const pairwise = await adjudicatePanelComparison(port, evidence, usage)
   const axis = tie.cause === 'partial-identity' ? 'element-identity' : 'value'
   return resolvePairwise(pairwise, tie, tie.partial, axis, port, usage)
 }
