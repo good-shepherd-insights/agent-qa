@@ -25,6 +25,8 @@ export interface ArmDecision {
   origin: Gate1HarmOrigin
   entry?: CorpusEntry
   label?: CassetteLabelLeg
+  /** Persisted disclosure only; categorical harm remains governed by weightFor. */
+  softWeight?: number
   baseline: ArmOutcome
   candidate: ArmOutcome
 }
@@ -38,6 +40,7 @@ export interface DiffedDecision {
   decisionOrdinal: number
   origin: Gate1HarmOrigin
   weight: DecisionWeight
+  softWeight?: number
   labelTier?: LabelTier
   sourceChannel?: LabelSourceChannel
   verdictPresent: boolean
@@ -105,6 +108,7 @@ export function diffArms(rows: readonly ArmDecision[]): DiffedDecision[] {
       decisionOrdinal: row.decisionOrdinal,
       origin: row.origin,
       weight: weightFor(label),
+      ...(row.softWeight === undefined ? {} : { softWeight: row.softWeight }),
       verdictPresent: label?.verdict !== undefined,
       ...(label === undefined ? {} : { labelTier: label.tier, sourceChannel: label.sourceChannel }),
       ...(entry === undefined ? {} : { split: entry.split }),

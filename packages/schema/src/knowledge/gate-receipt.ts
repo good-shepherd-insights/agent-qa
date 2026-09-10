@@ -68,6 +68,7 @@ export const gate1HarmedSchema = z.object({
   origin: z.enum(GATE1_HARM_ORIGINS), labelTier: z.string().optional(),
   sourceChannel: z.string().optional(), verdictPresent: z.boolean(), split: z.string().optional(),
   heldOutVisibility: z.string().optional(), axes: z.array(z.enum(PER_AXIS_SCORE_AXES)).min(1),
+  softWeight: z.number().finite().min(0).max(1).optional(),
 }).strict()
 export const axisScoreSchema = z.object({
   baseline: z.number(), candidate: z.number(), delta: z.number(), floor: z.number(),
