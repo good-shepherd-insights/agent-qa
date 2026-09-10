@@ -98,6 +98,23 @@ function completeGate1() {
 }
 
 describe('417 additive Gate-1 contract', () => {
+  it('421 preserves strict panel metadata and singleton bytes', () => {
+    const single = completeGate1()
+    expect(GateReceiptSchema.parse(single)).toEqual(single)
+    expect(single.judge).not.toHaveProperty('panelSize')
+    const judge = { eligibility: 'eligible', overrideConfigured: false, panelSize: 2,
+      members: [{ judgeModelId: 'claude-fixture', judgeFamily: 'claude' },
+        { judgeModelId: 'gemini-fixture', judgeFamily: 'gemini' }] }
+    const panel = { ...single, judge }
+    expect(GateReceiptSchema.safeParse(panel).success).toBe(true)
+    expect(GateReceiptSchema.parse(panel)).toEqual(panel)
+    for (const invalid of [
+      { ...judge, panelSize: 1 }, { ...judge, panelSize: 3 },
+      { ...judge, members: undefined }, { ...judge, panelSize: undefined },
+      { ...judge, members: [{ ...judge.members[0], extra: true }, judge.members[1]] },
+      { ...judge, members: [{ judgeFamily: 'claude' }, judge.members[1]] },
+    ]) expect(GateReceiptSchema.safeParse({ ...single, judge: invalid }).success).toBe(false)
+  })
   it('round-trips every new field and preserves the historical complete arm', () => {
     expect(GateReceiptSchema.parse(completeGate1())).toEqual(completeGate1())
     expect(GateReceiptSchema.parse(gate1())).toEqual(gate1())
