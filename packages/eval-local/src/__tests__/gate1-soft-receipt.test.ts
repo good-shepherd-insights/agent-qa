@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createLabelRevision, projectSilverLabelRecord, type StandaloneLabelRecord } from '@vostride/agent-qa-eval'
 import { GateReceiptSchema, receiptDigestOf } from '@vostride/agent-qa-schema'
-import { committedLabelPath } from '../committed-root-store.js'
+import { committedCorpusPath, committedLabelPath } from '../committed-root-store.js'
 import { readActiveCommittedCorpus } from '../committed-corpus-source.js'
 import { runReplayGate, serializeReplayGateReceipt, type RunReplayGateInput } from '../replay-gate-composition.js'
 import { gate1Responder, warmGateRoot, writeGate1Fixture } from './fixtures/gate1-fixtures.js'
@@ -117,6 +117,21 @@ it('quarantined target cannot return through handoff extraction', async () => {
 
 it('a genuinely non-corpus extracted target retains its existing eligibility', async () => {
   const { run } = await fixture({ targetInCorpus: false, handoffForTarget: true })
+  const got = await run()
+  expect(got.reasons).toEqual(['baseline-uncached'])
+  expect(got.spend?.modelCalls).toBe(0)
+})
+
+it('excludes a quarantined original while preserving its non-corpus target sibling', async () => {
+  const { f, record, save, run } = await fixture({ targetDecisions: 2, handoffForTarget: true })
+  const original = record(f.targetId)
+  save(original)
+  save(createLabelRevision(original, { quarantine: 'rerun-overturned' }))
+  const siblingId = f.targetIds[1]!
+  rmSync(join(f.committedRoot, committedCorpusPath('alpha', siblingId)))
+  const read = readActiveCommittedCorpus(f.committedRoot, f.agentQaRoot)
+  expect(read.snapshot.excludedLabelIds?.has(original.cassetteId)).toBe(true)
+  expect(read.corpusEntriesById?.has(siblingId)).toBe(false)
   const got = await run()
   expect(got.reasons).toEqual(['baseline-uncached'])
   expect(got.spend?.modelCalls).toBe(0)

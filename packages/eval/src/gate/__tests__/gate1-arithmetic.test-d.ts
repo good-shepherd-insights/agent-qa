@@ -14,4 +14,5 @@ expectTypeOf<Exclude<DecisionHeadline, (typeof DECISION_HEADLINES)[number]>>().t
 // prettier-ignore
 expectTypeOf<Extract<DecisionHeadline, 'unlabelled'>>().toEqualTypeOf<never>()
 // prettier-ignore
-expectTypeOf<keyof ArmDecision>().toEqualTypeOf<'cassetteId' | 'stepIndex' | 'decisionOrdinal' | 'origin' | 'entry' | 'label' | 'baseline' | 'candidate'>()
+expectTypeOf<keyof ArmDecision>().toEqualTypeOf<'cassetteId' | 'stepIndex' | 'decisionOrdinal' | 'origin' | 'entry' | 'label' | 'softWeight' | 'baseline' | 'candidate'>()
+expectTypeOf<ArmDecision['softWeight']>().toEqualTypeOf<number | undefined>()

@@ -63,14 +63,19 @@ it.each(['gold', 'near-gold', 'silver'] as const)(
     })
     let firstHarm: unknown
     for (const value of [undefined, 0, 0.25, 1]) {
-      if (value !== undefined) { record = createLabelRevision(record, { weight: weight(value) }); save() }
+      if (value !== undefined) {
+        record = createLabelRevision(record, { weight: weight(value) })
+        save()
+      }
       const got = await host.run(published.id)
       expect(got).toMatchObject({ kind: 'receipt', exit: 1, recorded: 'appended' })
       if (got.kind !== 'receipt' || got.receipt.gate !== 1) throw new Error('expected Gate 1')
       expect(got.receipt).toMatchObject({ verdict: 'fail', reasons: ['collateral-harm'] })
       const harm = got.receipt.harmed![0]!
-      if (value === undefined) { firstHarm = harm; expect(Object.hasOwn(harm, 'softWeight')).toBe(false) }
-      else expect(harm).toEqual({ ...firstHarm as object, softWeight: value })
+      if (value === undefined) {
+        firstHarm = harm
+        expect(Object.hasOwn(harm, 'softWeight')).toBe(false)
+      } else expect(harm).toEqual({ ...firstHarm as object, softWeight: value })
       const read = gateReceiptsFor({ knowledgeRoot, candidateId: published.id })
       if (read.kind !== 'found') throw new Error('missing persisted receipt')
       const saved = read.lines.find(line => line.receiptDigest === got.receipt.receiptDigest)

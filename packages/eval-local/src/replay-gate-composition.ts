@@ -286,6 +286,7 @@ function harm(row: DiffedDecision): NonNullable<Gate1Receipt['harmed']>[number] 
     verdictPresent,
     split,
     heldOutVisibility,
+    softWeight,
   } = row
   return {
     cassetteId,
@@ -297,6 +298,7 @@ function harm(row: DiffedDecision): NonNullable<Gate1Receipt['harmed']>[number] 
     verdictPresent,
     ...(split === undefined ? {} : { split }),
     ...(heldOutVisibility === undefined ? {} : { heldOutVisibility }),
+    ...(softWeight === undefined ? {} : { softWeight }),
     axes: row.flippedWorse,
   }
 }
@@ -661,7 +663,12 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     )
     return abstain('target-unavailable')
   }
-  const targets = located.cassettes
+  // Explicitly excluded corpus history cannot regain scoring eligibility through
+  // a local handoff. Genuinely non-corpus target siblings keep their existing path.
+  const targets = located.cassettes.filter(({ cassette }) =>
+    !corpus.snapshot.excludedLabelIds?.has(cassette.id) &&
+    !corpus.retiredMarkedCassetteIds?.has(cassette.id))
+  if (targets.length === 0) return abstain('target-unavailable')
   for (const target of targets) bundles.set(target.cassette.id, target)
   const allIds = [
     ...new Set([
@@ -800,13 +807,15 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     const { cassette, artifacts } = bundles.get(id)!
     const baseline = cacheById.get(id)!
     const entry = corpus.snapshot.entries.find((row) => row.cassetteId === id)
+    const labelRecord = corpus.snapshot.labelsById.get(cassette.id)
     const row: ArmDecision = {
       cassetteId: id,
       stepIndex: cassette.stepIndex,
       decisionOrdinal: cassette.decisionOrdinal,
       origin: targetIds.has(id) ? 'target-step' : 'gate-set',
       entry,
-      label: corpus.snapshot.labelsById.get(cassette.id)?.label ?? cassette.label,
+      label: labelRecord?.label ?? cassette.label,
+      ...(labelRecord?.weight === undefined ? {} : { softWeight: labelRecord.weight.value }),
       baseline: baselineArms.get(id)!,
       candidate: { kind: 'refused', reason: 'baseline refused' },
     }
