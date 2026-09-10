@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { asRunId, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import { asRunId, type CompletedRunHandoff, type MarkReceipt } from '@vostride/agent-qa-schema'
+import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { buildSeedingPlan, committedFileText, extractRunCassettes, computeCorpusDigest } from '@vostride/agent-qa-eval'
 import * as api from '../index.js'
 import * as safety from '@vostride/agent-qa-safety'
@@ -106,6 +107,7 @@ it('serializes two actual writers captured against the same input and converges 
   const results = await Promise.all([f.invoke({ commit: true }), f.invoke({ commit: true })])
   expect(results.map(result => result.kind).sort()).toEqual(['committed', 'input-drift'])
   const winner = results.find(result => result.kind === 'committed')!
+  if (winner.kind !== 'committed') throw new Error('no winning generation')
   const before = bytes(f.root)
   expect(await f.invoke({ commit: true })).toMatchObject({ kind: 'unchanged', refreshedCount: 0, artifact: winner.artifact })
   expect(bytes(f.root)).toEqual(before)
@@ -113,6 +115,44 @@ it('serializes two actual writers captured against the same input and converges 
   expect(read.refusals).toEqual([])
   expect(read.snapshot.labelsById.size).toBe(2)
   expect(new Set([...read.snapshot.labelsById.values()].map(label => label.revision?.generationId))).toEqual(new Set([winner.artifact.generationId]))
+})
+
+it('refuses a real gold mark published after capture without mixing staged weights into the corpus', async () => {
+  const f = setup()
+  new FsEvidenceArtifactStore({ root: f.agentQaRoot, runId: f.handoff.runId }).persistDecisionScreenshot(LOCAL_FIXTURE_BLOB_BYTES)
+  const originalLabels = api.readCommittedCorpus(f.committedRoot).snapshot.labelsById
+  const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_aaaaaaaaaaaa', runId: f.handoff.runId,
+    runSlug: f.handoff.runId, testIndex: 0, stepIndex: 0, kind: 'confirmed-bug', origin: 'user',
+    ordinal: 1, markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },
+    gold: [], evidence: { confirmed: 0, overturned: 0 } }
+  expect(await f.invoke({ commit: true, onBoundary: stage => {
+    if (stage !== 'before-marker') return
+    const frozen = api.freezeGoldenTrajectory({ agentQaRoot: f.agentQaRoot, committedRoot: f.committedRoot,
+      product: 'shop', handoff: f.handoff, mark, auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } })
+    expect(frozen.kind).toBe('frozen')
+    if (frozen.kind !== 'frozen') throw new Error('gold publication refused')
+    write(f.agentQaRoot, `runs/${f.handoff.runId}/marks.jsonl`, JSON.stringify({ ...mark, gold: frozen.cases }) + '\n')
+  } })).toMatchObject({ kind: 'input-drift' })
+  expect(api.readLabelCalibration(f.committedRoot).kind).toBe('absent')
+  const read = api.readCommittedCorpus(f.committedRoot)
+  expect(read.refusals).toEqual([])
+  for (const [id, label] of originalLabels) expect(read.snapshot.labelsById.get(id)).toEqual(label)
+  expect(read.snapshot.labelsById.size).toBeGreaterThan(originalLabels.size)
+  expect(await f.invoke({ commit: true })).toMatchObject({ kind: 'committed' })
+  const after = bytes(f.root)
+  expect(await f.invoke({ commit: true })).toMatchObject({ kind: 'unchanged', refreshedCount: 0 })
+  expect(bytes(f.root)).toEqual(after)
+})
+
+it('keeps artifact bytes independent of wall clock and file creation order', async () => {
+  const f = setup(), initial = await f.invoke(), originals = bytes(f.committedRoot)
+  for (const [path, text] of Object.entries(originals).reverse()) {
+    rmSync(join(f.committedRoot, path))
+    write(f.committedRoot, path, text)
+  }
+  vi.spyOn(Date, 'now').mockReturnValue(9_999_999_999_999)
+  expect(await f.invoke()).toEqual(initial)
+  expect(bytes(f.committedRoot)).toEqual(originals)
 })
 
 it.each([false, true])('refuses each egress part before authoritative writes (commit=%s)', async commit => {

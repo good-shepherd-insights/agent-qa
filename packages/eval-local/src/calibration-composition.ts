@@ -123,7 +123,18 @@ export async function runLabelCalibration(input: RunLabelCalibrationInput): Prom
   if (input.replace && !input.commit) return { kind: 'refused', reason: '--replace requires --commit' }
   let planned: ReturnType<typeof prepare>
   try { planned = prepare(input) } catch { return { kind: 'refused', reason: 'Calibration inputs unavailable or invalid; inspect committed labels and run evidence.' } }
-  if (!input.commit) return { kind: 'dry-run', artifact: planned.artifact, refreshedCount: planned.refreshedCount }
+  if (!input.commit) {
+    try {
+      // Preview discloses the same data as publication but must not create audit bytes.
+      assertCommittedEgressSafe([...planned.parts, { label: 'label-calibration', text: committedFileText(planned.artifact) }], {
+        channel: REPORT_EGRESS_CHANNEL, policy: input.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
+      })
+      return { kind: 'dry-run', artifact: planned.artifact, refreshedCount: planned.refreshedCount }
+    } catch (error) {
+      if (error instanceof CommittedEgressBlockedError) return { kind: 'egress-blocked', detections: error.blocked.map(({ label, detector }) => ({ label, detector })) }
+      return { kind: 'refused', reason: 'Calibration preview could not be checked safely.' }
+    }
+  }
   const lock = join(input.committedRoot, LOCK_PATH), marker = join(input.committedRoot, LABEL_CALIBRATION_PATH)
   let release: (() => void) | undefined, lockInode: number | undefined
   const temps: string[] = []
@@ -170,10 +181,11 @@ export async function runLabelCalibration(input: RunLabelCalibrationInput): Prom
     if (!unchangedInputs()) return { kind: 'input-drift', reason: 'Calibration inputs changed before publication.' }
     assertCalibrationPath(input.committedRoot, marker)
     renameSync(temp, marker)
+    input.onBoundary?.('after-marker')
     return { kind: 'committed', artifact: planned.artifact, refreshedCount: planned.refreshedCount }
   } catch (error) {
     if (error instanceof CommittedEgressBlockedError) return { kind: 'egress-blocked', detections: error.blocked.map(({ label, detector }) => ({ label, detector })) }
-    return { kind: 'publication-failed', reason: 'Calibration publication interrupted; prior selection remains intact. Retry the identical command.' }
+    return { kind: 'publication-failed', reason: 'Calibration publication interrupted; a complete generation remains selected. Retry the identical command.' }
   } finally {
     for (const temp of temps) { try { unlinkSync(temp) } catch { /* Already renamed or externally removed. */ } }
     release?.()
