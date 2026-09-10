@@ -287,10 +287,12 @@ function parse(log) {
   if ((clean.match(/^TypeCheckError:/gm) ?? []).length !== diagnostics.length) throw new Error('Unparsed type diagnostic')
   if (/^(?:Error|SyntaxError|ReferenceError|RangeError|TypeError):/m.test(clean)) throw new Error('Unrelated tool error')
   const selectedTypes = selected.filter(row => [types, calibrationTypes].includes(row[1])).length
-  return { clean, failures, diagnostics, selected: selected.length, selectedTypes, digest: sha(JSON.stringify(diagnostics)) }
+  return { clean, failures, diagnostics, selected: selected.length, selectedTypes,
+    selectedNames: selected.map(row => `${row[1]} > ${row[2]}`).sort(), digest: sha(JSON.stringify(diagnostics)) }
 }
 function checkGreen(result) {
   const parsed = parse(result.log)
+  if (JSON.stringify(parsed.selectedNames) !== JSON.stringify(result.expectedNames)) throw new Error('Missing or unexpected selected cell')
   if (result.exit !== 0 || parsed.selected !== result.expectedCells || parsed.failures.length || parsed.diagnostics.length ||
     (result.withTypes && (parsed.selectedTypes !== result.expectedTypes || !parsed.clean.includes('Type Errors  no errors')))) throw new Error('Preflight/restored instrument did not pass')
 }
@@ -298,6 +300,7 @@ function checkRed(result, leg) {
   if (result.exit === 0) throw new Error('suite stayed green')
   if (result.exit !== 1) throw new Error(`Unexpected tool exit ${result.exit}`)
   const parsed = parse(result.log)
+  if (JSON.stringify(parsed.selectedNames) !== JSON.stringify(result.expectedNames)) throw new Error('Missing or unexpected selected cell')
   if (parsed.selected !== result.expectedCells) throw new Error('Missing selected runtime/type cells')
   const expected = leg.target === 'constitution' ? [{ file: config, title: hashTitle }]
     : [...(leg.target === 'list' ? [{ file: result.runtime, title: leg.title }] : []),
@@ -323,6 +326,12 @@ async function instrument(leg, label) {
   const runtimeFile = calibration ? calibrationRuntime : runtime
   const typeFile = calibration ? calibrationTypes : types
   const expectedTypes = calibration ? 2 : 3
+  const titles = calibration ? ['judge calibration gaps exact', 'judge calibration statuses exact']
+    : ['panel pooling modes exact', 'panel abstention causes exact']
+  const expectedNames = withTypes ? [...titles.map(title => `${runtimeFile} > ${title}`),
+    ...titles.map(title => `${typeFile} > ${title} type bars`),
+    ...(calibration ? [] : [`${typeFile} > panel abstentions preserve transport and not-invoked distinctions`])].sort()
+    : [`${config} > ${hashTitle}`]
   const args = [path.join(root, 'node_modules/vitest/vitest.mjs'), 'run',
     ...(withTypes ? [runtimeFile, typeFile, '--typecheck'] : [config, '--typecheck.enabled=false']),
     '--reporter=verbose', '--maxWorkers=1', '-t', withTypes ? (calibration ? 'judge calibration ' : 'panel ') : 'requires every material change to carry a pinned judge-version bump']
@@ -339,7 +348,7 @@ async function instrument(leg, label) {
   })
   fs.closeSync(fd)
   const record = { command: [process.execPath, ...args], exit, withTypes, runtime: runtimeFile,
-    types: typeFile, expectedCells: withTypes ? 2 + expectedTypes : 1, expectedTypes,
+    types: typeFile, expectedCells: withTypes ? 2 + expectedTypes : 1, expectedTypes, expectedNames,
     elapsedMs: Date.now() - start, logPath }
   fs.writeFileSync(path.join(work, `${label}.json`), JSON.stringify(record, null, 2) + '\n')
   console.log(`${label}: exit=${exit} elapsedMs=${record.elapsedMs}`)
@@ -377,6 +386,18 @@ async function main() {
       fs.writeFileSync(leg.subject, mutate(fs.readFileSync(snapshot.path, 'utf8'), leg))
       if (sha(fs.readFileSync(leg.subject)) === snapshot.hash) throw new Error('Mutation changed no bytes')
     }
+    // Interruption controls must restore changed bytes for every old/new subject,
+    // not merely re-write the unchanged snapshots of subjects after the first leg.
+    if (mode === 'fatal' || mode.startsWith('SIG')) {
+      for (const file of subjects) {
+        const control = legs.find(candidate => candidate.subject === file)
+        const original = owned.get(file)
+        if (file !== leg.subject) fs.writeFileSync(file, mutate(fs.readFileSync(original.path, 'utf8'), control))
+        const digest = sha(fs.readFileSync(file))
+        if (digest === original.hash) throw new Error(`Interruption control changed no bytes: ${file}`)
+        console.log(`MUTATED ${file} sha256=${digest}`)
+      }
+    }
     if (mode === 'fatal') throw new Error(`intentional fatal after ${leg.id} mutation`)
     if (mode.startsWith('SIG')) {
       process.kill(process.pid, mode)
@@ -389,6 +410,10 @@ async function main() {
     mustReject('unrelated error', () => checkRed({ ...result, log: result.log + '\nError: unrelated\n' }, leg))
     mustReject('wrong named cell', () => checkRed({ ...result,
       log: result.log.replace(/^( FAIL  src\/[^ ]+ > .+)$/m, '$1 trailing') }, leg))
+    mustReject('zero selected cells', () => checkRed({ ...result,
+      log: result.log.replace(/^\s*[✓×] (?: TS  )?src\/[^ ]+ > .+$/gm, '') }, leg))
+    mustReject('wrong selected cell', () => checkRed({ ...result,
+      log: result.log.replace(/^(\s*[✓×] (?: TS  )?src\/[^ ]+ > .+)$/m, '$1 trailing') }, leg))
     if (leg.target !== 'constitution') mustReject('missing type assertion', () => checkRed({ ...result,
       log: result.log.replace(/^TypeCheckError:[\s\S]*?^ ❯ src\/judge\/__tests__\/(?:panel|calibration)-closed-sets.test-d.ts:[^\n]+$/gm, '') }, leg))
     if (leg.target !== 'constitution') mustReject('altered compiler diagnostic', () => checkRed({ ...result,
