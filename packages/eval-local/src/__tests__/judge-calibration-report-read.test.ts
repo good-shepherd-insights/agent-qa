@@ -17,7 +17,7 @@ const calibrated = { status: 'calibrated', n: 3, pooledAgreement: 2 / 3, wilson9
 
 function fixture(reader: 'staged' | 'committed', calibration: unknown, judge = panel) {
   const dir = mkdtempSync(join(tmpdir(), 'calibration-report-')); roots.push(dir)
-  const report = buildEvalReport([], judge)
+  const report = buildEvalReport([], structuredClone(judge))
   if (calibration !== undefined) Object.assign(report.judge!, { calibration })
   const bytes = JSON.stringify(report, null, 2) + '\n'
   const file = reader === 'staged' ? new FsReportStore({ root: dir }).save(report).file

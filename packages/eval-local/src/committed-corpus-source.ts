@@ -19,7 +19,6 @@ import { join } from 'node:path'
 import {
   activeMarkedCorpusEntries,
   guardDecisionVectorsDocument,
-  judgeIdentitySchema,
   guardNoiseFloorArtefact,
   parseCorpusEntry,
   parseStandaloneLabelRecord,
@@ -60,6 +59,7 @@ import { listCassetteBundleDirs } from './replay-read.js'
 import { FsMarkLedger } from './mark-ledger.js'
 import { readLabelCalibration, type LabelCalibrationRead } from './calibration-source.js'
 import { reportMetadataKind } from './report-metadata-guard.js'
+import { reportJudgeSchema } from './report-store.js'
 
 /** Gate-side effective view; raw committed history and the proposer reader remain unchanged. */
 export function readActiveCommittedCorpus(committedRoot: string, agentQaRoot: string, calibrationRead?: LabelCalibrationRead): CommittedCorpusRead {
@@ -98,9 +98,9 @@ const reportSchema = z
         refusalCounts: z.record(z.string(), z.number()),
       })
       .passthrough(),
-    judge: judgeIdentitySchema.optional(),
+    judge: reportJudgeSchema.optional(),
   })
-  .passthrough()
+  .passthrough().refine(report => report.judgeIdentity !== 'mixed' || report.judge === undefined)
 
 const baselinePointerSchema = z
   .object({

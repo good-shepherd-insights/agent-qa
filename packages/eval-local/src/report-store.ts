@@ -56,6 +56,37 @@ export type StagedReportLoad =
   | { kind: 'absent'; file: string }
   | { kind: 'refused'; file: string; reason: string }
 
+const calibrationCount = z.number().int().nonnegative().safe()
+const calibrationUnit = z.number().finite().min(0).max(1)
+const copiedInterval = z.object({ lower: calibrationUnit, upper: calibrationUnit,
+  halfWidth: calibrationUnit.max(0.5) }).strict().refine(value => value.lower <= value.upper
+    && value.upper - value.lower <= 2 * value.halfWidth + Number.EPSILON * 4)
+const copiedMember = z.object({ judgeModelId: z.string(), n: calibrationCount,
+  agreement: calibrationUnit.optional(), wilson95: copiedInterval.optional() }).strict()
+  .refine(value => value.n === 0 ? value.agreement === undefined && value.wilson95 === undefined
+    : value.agreement !== undefined && value.wilson95 !== undefined)
+const copiedCalibration = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('calibrated'), n: calibrationCount.min(1),
+    pooledAgreement: calibrationUnit, wilson95: copiedInterval,
+    perMember: z.array(copiedMember).min(2).max(3) }).strict(),
+  z.object({ status: z.literal('uncalibrated'), n: calibrationCount,
+    provenance: z.literal('unavailable').optional() }).strict()
+    .refine(value => value.provenance === undefined || value.n === 0),
+  z.object({ status: z.literal('capability-gap'),
+    reason: z.enum(['panel-not-configured', 'no-credential', 'single-family-host']) }).strict(),
+])
+
+/** Independent report admission preserves copied precision and never reads calibration storage. */
+export const reportJudgeSchema = judgeIdentitySchema.safeExtend({ calibration: copiedCalibration.optional() })
+  .refine(judge => {
+    const calibration = judge.calibration
+    if (calibration === undefined) return true
+    if (judge.panelSize === undefined || judge.members === undefined) return false
+    if (calibration.status !== 'calibrated') return true
+    return calibration.perMember.length === judge.members.length
+      && calibration.perMember.every((member, index) => member.judgeModelId === judge.members![index]!.judgeModelId)
+  }, 'calibration requires the complete recorded composite identity')
+
 // A light read boundary, not a format migration. Passthrough at every checked object
 // retains the full report: seed evidence, honesty, judge provenance, costs and future fields.
 const stagedReportSchema = z.object({
@@ -68,8 +99,8 @@ const stagedReportSchema = z.object({
   // reach the comparator's renderer as though its judge-id list were a string array.
   judgeIdentity: z.literal('mixed').optional(),
   mixedJudgeModelIds: z.array(z.string()).optional(),
-  judge: judgeIdentitySchema.passthrough().optional(),
-}).passthrough()
+  judge: reportJudgeSchema.optional(),
+}).passthrough().refine(report => report.judgeIdentity !== 'mixed' || report.judge === undefined)
 
 const replayGenerationSchema = z
   .object({

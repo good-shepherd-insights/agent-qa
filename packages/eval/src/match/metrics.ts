@@ -25,6 +25,16 @@ import type {
   TieCause,
 } from './score'
 import type { ElementIdentityVerdict } from './tiers'
+import type { JudgeCalibrationGapReason } from '../judge/calibration'
+
+/** Report-only copied disclosure; never part of a score or request identity. */
+type ReportJudgeCalibration =
+  | { status: 'calibrated'; n: number; pooledAgreement: number;
+      wilson95: { lower: number; upper: number; halfWidth: number };
+      perMember: readonly { judgeModelId: string; n: number; agreement?: number;
+        wilson95?: { lower: number; upper: number; halfWidth: number } }[] }
+  | { status: 'uncalibrated'; n: number; provenance?: 'unavailable' }
+  | { status: 'capability-gap'; reason: JudgeCalibrationGapReason }
 
 type UnscorableIdentityCause = Extract<
   ElementIdentityVerdict,
@@ -189,7 +199,7 @@ export interface EvalBatchReport {
   }
   totalCost: TotalCost
   /** D-16 report-level judge identity receipt; absent when no judge existed for the batch. */
-  judge?: JudgeIdentityBlock
+  judge?: JudgeIdentityBlock & { calibration?: ReportJudgeCalibration }
   /**
    * 413-15 mixed-identity marker — the D-16 receipt's sibling for the case where one report's
    * persisted score records carried canonically DIFFERING judge identity blocks. Present ONLY
