@@ -24,6 +24,8 @@
 import {
   adjudicateCassetteScore,
   assessJudgeEligibility,
+  assessPanelEligibility,
+  createPanelIdentity,
   buildDecisionDiff,
   computeReplayProfileFingerprint,
   createScoringContext,
@@ -47,6 +49,7 @@ import type {
   ReplayResult,
   SeedPolicy,
   StandaloneLabelRecord,
+  ScoringJudgeRequest,
 } from '@vostride/agent-qa-eval'
 import {
   createModel,
@@ -64,7 +67,8 @@ import type { DeclaredModelProfile, ScreenState } from '@vostride/agent-qa-schem
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 
-import { bindJudgePort } from './judge-binding.js'
+import { bindJudgePanel, bindJudgePort } from './judge-binding.js'
+import type { JudgeBindingInput } from './judge-binding.js'
 import type { FsReplayRecordStore } from './replay-record-store.js'
 import type { FsScoreStore } from './score-store.js'
 
@@ -112,12 +116,8 @@ export interface RunCassetteReplayInput {
    * verbatim into assessJudgeEligibility — it lifts ONLY known-same-family refusal and stamps
    * the D-16 identity block with familyOverride; unknown families stay forbidden.
    */
-  judge?: {
-    profile: ModelProfile
-    auth: ResolvedModelAuth
-    modelOverrides?: ModelProviderOverrides
-    allowSameFamily?: boolean
-  }
+  judge?: (JudgeBindingInput & { allowSameFamily?: boolean }) |
+    { members: readonly JudgeBindingInput[]; allowSameFamily?: boolean }
   /**
    * Phase 372 D-06 seam (G1): the CLI injects a run-parity seeded masking-context factory
    * (secret store + sensitive env + auth-state strings) so replayed prompts and judge calls see
@@ -126,6 +126,17 @@ export interface RunCassetteReplayInput {
    * (replay + judge adjudication) so each scope gets a fresh disposable context.
    */
   maskingContextFactory?: () => ReturnType<typeof createMaskingContext>
+}
+
+/** Persist the declared identity, including a refused panel; singletons retain old bytes. */
+export function replayJudgeRequest(judge: RunCassetteReplayInput['judge']): ScoringJudgeRequest {
+  if (judge === undefined) return null
+  if ('members' in judge) {
+    if (judge.members.length === 0) return null
+    return { judgeModelId: createPanelIdentity(judge.members.map(member => member.profile.model)).judgeModelId,
+      allowSameFamily: judge.members.length === 1 && judge.allowSameFamily === true }
+  }
+  return { judgeModelId: judge.profile.model, allowSameFamily: judge.allowSameFamily === true }
 }
 
 /** The platform the action-tool slice is derived for — the cassette's recorded observation platform. */
@@ -387,18 +398,25 @@ export async function runCassetteReplay(
     // judge port never binds and the batch proceeds deterministically (soft-but-loud: the refusal
     // is data on every tie's stamp, never a thrown error).
     const recordedModelId = recordedReceiptModelId(input.cassette)
-    const eligibility = assessJudgeEligibility({
-      ...(input.judge !== undefined ? { judgeModelId: input.judge.profile.model } : {}),
+    const declaration = input.judge
+    const members = declaration !== undefined && 'members' in declaration ? declaration.members : undefined
+    const single = members === undefined ? declaration as (JudgeBindingInput & { allowSameFamily?: boolean }) | undefined
+      : members.length === 1 ? { ...members[0], allowSameFamily: declaration?.allowSameFamily } : undefined
+    const panel = members !== undefined && members.length > 1 ? members : undefined
+    const eligibilityInput = {
       replayedModelId: input.profile.model,
       ...(recordedModelId !== undefined ? { recordedModelId } : {}),
-      ...(input.judge?.allowSameFamily !== undefined
-        ? { allowSameFamily: input.judge.allowSameFamily }
+      ...(declaration?.allowSameFamily !== undefined
+        ? { allowSameFamily: declaration.allowSameFamily }
         : {}),
-    })
-    const port =
-      eligibility.eligible && input.judge !== undefined
-        ? bindJudgePort({ ...input.judge, modelCallObservation: input.modelCallObservation })
-        : undefined
+    }
+    const eligibility = panel === undefined
+      ? assessJudgeEligibility({ ...eligibilityInput, judgeModelId: single?.profile.model })
+      : assessPanelEligibility({ ...eligibilityInput, memberModelIds: panel.map(member => member.profile.model) })
+    const port = !eligibility.eligible ? undefined : panel !== undefined
+      ? bindJudgePanel(panel.map(member => ({ ...member, modelCallObservation: input.modelCallObservation })))
+      : single === undefined ? undefined
+      : bindJudgePort({ ...single, modelCallObservation: input.modelCallObservation })
 
     // The judge safety scope (Pitfall 1): the replay scope closed before scoring, so adjudication
     // gets its OWN fresh masking context and a replay-scoped JsonlAuditSink — the ALS-resolved
@@ -431,8 +449,7 @@ export async function runCassetteReplay(
       score: adjudicated.score,
       diffs: decisionDiffs(scoringCassette, outcome, adjudicated.score),
       scoringContext: createScoringContext({ cassette: input.cassette, outcome, labelRecord: input.labelRecord,
-        ...adjudicated, judgeRequest: input.judge === undefined ? null : {
-          judgeModelId: input.judge.profile.model, allowSameFamily: input.judge.allowSameFamily === true } }),
+        ...adjudicated, judgeRequest: replayJudgeRequest(input.judge) }),
       ...(adjudicated.judge !== undefined ? { judge: adjudicated.judge } : {}),
     })
   }

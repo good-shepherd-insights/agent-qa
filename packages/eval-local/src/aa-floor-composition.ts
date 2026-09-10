@@ -39,7 +39,7 @@ import type { WriteNoiseFloorArtefactOutcome } from './noise-floor-writer.js'
 import { readMeasuredCostReceipts, readMeasuredFloorRun } from './measured-floor-read.js'
 
 import { assembleScoredBatch, projectAssembledBatch } from './replay-batch-assembly.js'
-import { computeReplayProfileFingerprintFor } from './replay-composition.js'
+import { computeReplayProfileFingerprintFor, replayJudgeRequest } from './replay-composition.js'
 import type { RunCassetteReplayInput } from './replay-composition.js'
 import { FsReplayRecordStore } from './replay-record-store.js'
 import { loadCassetteBundles, sweepCassetteReplays } from './replay-sweep.js'
@@ -382,8 +382,7 @@ export async function replayCorpusOnce(
     productByCassetteId: input.productByCassetteId,
     labelRecords: input.labelRecords,
     ...(input.productByCassetteId === undefined ? {} : { eligibleCassetteIds: new Set(input.productByCassetteId.keys()) }),
-    expectedJudgeRequest: input.judge === undefined ? null : {
-      judgeModelId: input.judge.profile.model, allowSameFamily: input.judge.allowSameFamily === true },
+    expectedJudgeRequest: replayJudgeRequest(input.judge),
   })
   const { report, vectors, notices } = projectAssembledBatch(batch, {
     declaredSeed: input.seed,

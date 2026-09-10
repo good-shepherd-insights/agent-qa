@@ -48,6 +48,9 @@ import type {
   JudgeConfidence,
   JudgeErrorReason,
   JudgeIdentityBlock,
+  JudgeFamilyDisclosure,
+  JudgeMemberOutcome,
+  JudgePairwiseOutcome,
   JudgeOutcome,
   JudgeSettled,
   JudgeTokenUsage,
@@ -64,8 +67,9 @@ import type {
   ReplaySampleOutcome,
 } from '../replay/result'
 import { JUDGE_CONFIG } from './config'
-import { resolveJudgeFamily } from './family'
-import type { JudgeFamily } from './family'
+import { displayJudgeFamilies, judgeFamiliesIntersect, resolveJudgeFamilies } from './family'
+import { poolPanel } from './panel'
+import type { JudgePanelPort } from './panel'
 import type { JudgeCallResult, JudgePort } from './port'
 import { buildJudgePrompt } from './prompt'
 import type {
@@ -83,7 +87,9 @@ export type JudgeEligibility =
   | {
       eligible: true
       judgeModelId: string
-      judgeFamily: JudgeFamily
+      judgeFamily: string
+      panelSize?: number
+      members?: JudgeIdentityBlock['members']
       /** Present ONLY when the allowSameFamily opt-in lifted a refusal that would have fired. */
       familyOverride?: 'same-family-allowed'
     }
@@ -91,7 +97,7 @@ export type JudgeEligibility =
   | {
       eligible: false
       reason: 'no-eligible-judge'
-      families: { judge?: string; replayed?: string; recorded?: string }
+      families: JudgeFamilyDisclosure
     }
 
 /**
@@ -117,10 +123,13 @@ export function assessJudgeEligibility(input: {
     return { eligible: false, reason: 'no-judge-configured' }
   }
 
-  const judge = resolveJudgeFamily(judgeModelId)
-  const replayed = resolveJudgeFamily(replayedModelId)
+  const judgeSet = resolveJudgeFamilies(judgeModelId)
+  const replayedSet = resolveJudgeFamilies(replayedModelId)
+  const recordedSet = recordedModelId === undefined ? undefined : resolveJudgeFamilies(recordedModelId)
+  const judge = displayJudgeFamilies(judgeSet)
+  const replayed = displayJudgeFamilies(replayedSet)
   const recorded =
-    recordedModelId === undefined ? undefined : resolveJudgeFamily(recordedModelId)
+    recordedSet === undefined ? undefined : displayJudgeFamilies(recordedSet)
 
   const refusal = (): JudgeEligibility => ({
     eligible: false,
@@ -143,7 +152,8 @@ export function assessJudgeEligibility(input: {
 
   // Known-equal arms: the ONLY refusals the explicit opt-in may lift.
   const knownSameFamily =
-    judge === replayed || (recorded !== undefined && recorded === judge)
+    judgeFamiliesIntersect(judgeSet, replayedSet) ||
+    (recordedSet !== undefined && judgeFamiliesIntersect(recordedSet, judgeSet))
   if (knownSameFamily && allowSameFamily !== true) {
     return refusal()
   }
@@ -175,10 +185,11 @@ const CONFIDENCE_RANK: Record<JudgeConfidence, number> = {
 }
 
 /** Mutable per-decision call accounting; token fields stay absent until a call reports them. */
-interface UsageAggregator {
+export interface UsageAggregator {
   calls: number
   inputTokens?: number
   outputTokens?: number
+  members?: JudgeMemberOutcome[]
 }
 
 function snapshotUsage(usage: UsageAggregator): JudgeTokenUsage | undefined {
@@ -244,10 +255,8 @@ function valueQuestion(
 
 // --- the ONE pairwise judgment procedure (shared by all tie causes) ----------
 
-type PairwiseOutcome =
-  | { kind: 'settled'; resolution: 'equivalent' | 'different'; confidence: JudgeConfidence }
-  | { kind: 'abstained'; cause: JudgeAbstentionCause; confidence?: JudgeConfidence }
-  | { kind: 'error'; reason: JudgeErrorReason; detail: string }
+type PairwiseOutcome = JudgePairwiseOutcome
+type AdjudicationPort = JudgePort | JudgePanelPort
 
 async function callJudge(
   port: JudgePort,
@@ -274,10 +283,10 @@ async function callJudge(
  * pure classification — infra error, explicit unsure, swap disagreement, minimum-category
  * threshold on the LOWER of the two confidences (D-09), else the swap-surviving verdict.
  */
-async function judgePairwise(
+export async function judgePairwise(
   port: JudgePort,
   evidence: JudgeTieEvidence,
-  usage: UsageAggregator,
+  usage: UsageAggregator = { calls: 0 },
 ): Promise<PairwiseOutcome> {
   const first = await callJudge(port, evidence, 'ab', usage)
   const second = await callJudge(port, evidence, 'ba', usage)
@@ -303,6 +312,30 @@ async function judgePairwise(
   return { kind: 'settled', resolution: first.verdict, confidence }
 }
 
+/** Pool the SAME question before the existing tie dispatcher selects a result. */
+async function judgeComparison(port: AdjudicationPort, evidence: JudgeTieEvidence, usage: UsageAggregator): Promise<PairwiseOutcome> {
+  if (!('members' in port)) return judgePairwise(port, evidence, usage)
+  const members: JudgeMemberOutcome[] = []
+  for (const member of port.members) {
+    const memberUsage: UsageAggregator = { calls: 0 }
+    let outcome: PairwiseOutcome
+    try {
+      outcome = await judgePairwise(member, evidence, memberUsage)
+    } catch (error) {
+      outcome = { kind: 'error', reason: 'provider-error', detail: describeThrown(error) }
+    }
+    usage.calls += memberUsage.calls
+    if (memberUsage.inputTokens !== undefined) usage.inputTokens = (usage.inputTokens ?? 0) + memberUsage.inputTokens
+    if (memberUsage.outputTokens !== undefined) usage.outputTokens = (usage.outputTokens ?? 0) + memberUsage.outputTokens
+    const snapshot = snapshotUsage(memberUsage)
+    members.push({ judgeModelId: member.judgeModelId,
+      judgeFamily: displayJudgeFamilies(resolveJudgeFamilies(member.judgeModelId)) ?? '', outcome,
+      ...(snapshot === undefined ? {} : { usage: snapshot }) })
+  }
+  usage.members = [...(usage.members ?? []), ...members]
+  return poolPanel(members)
+}
+
 // --- typed stamping ----------------------------------------------------------
 
 function settleScore(
@@ -311,7 +344,7 @@ function settleScore(
   axis: JudgeSettled['axis'],
   resolution: JudgeSettled['resolution'],
   confidence: JudgeConfidence,
-  port: JudgePort,
+  port: AdjudicationPort,
   usage: UsageAggregator,
 ): DecisionScore {
   const snapshot = snapshotUsage(usage)
@@ -327,13 +360,14 @@ function settleScore(
       judgeVersion: JUDGE_CONFIG.judgeVersion,
       confidence,
       ...(snapshot === undefined ? {} : { usage: snapshot }),
+      ...(usage.members === undefined ? {} : { members: usage.members }),
     },
   }
 }
 
 function stampAbstention(
   tie: UnresolvedTie,
-  port: JudgePort,
+  port: AdjudicationPort,
   usage: UsageAggregator,
   cause: JudgeAbstentionCause,
   confidence?: JudgeConfidence,
@@ -348,13 +382,14 @@ function stampAbstention(
       judgeId: port.judgeModelId,
       judgeVersion: JUDGE_CONFIG.judgeVersion,
       ...(snapshot === undefined ? {} : { usage: snapshot }),
+      ...(usage.members === undefined ? {} : { members: usage.members }),
     },
   }
 }
 
 function stampError(
   tie: UnresolvedTie,
-  port: JudgePort,
+  port: AdjudicationPort,
   usage: UsageAggregator,
   reason: JudgeErrorReason,
   detail: string,
@@ -369,6 +404,7 @@ function stampError(
       judgeId: port.judgeModelId,
       judgeVersion: JUDGE_CONFIG.judgeVersion,
       ...(snapshot === undefined ? {} : { usage: snapshot }),
+      ...(usage.members === undefined ? {} : { members: usage.members }),
     },
   }
 }
@@ -402,7 +438,7 @@ function resolvePairwise(
   tie: UnresolvedTie,
   breakdown: DecisionPartialBreakdown,
   axis: JudgeSettled['axis'],
-  port: JudgePort,
+  port: AdjudicationPort,
   usage: UsageAggregator,
 ): DecisionScore {
   switch (pairwise.kind) {
@@ -433,7 +469,7 @@ function resolvePairwise(
 async function adjudicateNoConsensus(
   tie: UnresolvedTie,
   context: TieContext,
-  port: JudgePort,
+  port: AdjudicationPort,
   usage: UsageAggregator,
 ): Promise<DecisionScore> {
   const seen = new Set<string>()
@@ -470,7 +506,7 @@ async function adjudicateNoConsensus(
         candidate,
       },
     }
-    const pairwise = await judgePairwise(port, evidence, usage)
+    const pairwise = await judgeComparison(port, evidence, usage)
     if (pairwise.kind === 'error') {
       return stampError(tie, port, usage, pairwise.reason, pairwise.detail)
     }
@@ -545,7 +581,7 @@ async function adjudicateNoConsensus(
 async function dispatchTie(
   tie: UnresolvedTie,
   context: TieContext,
-  port: JudgePort,
+  port: AdjudicationPort,
   usage: UsageAggregator,
 ): Promise<DecisionScore> {
   if (tie.cause === 'no-consensus') {
@@ -560,7 +596,7 @@ async function dispatchTie(
     return stampAbstention(tie, port, usage, 'missing-evidence')
   }
   const evidence: JudgeTieEvidence = { stepText: context.stepText, question }
-  const pairwise = await judgePairwise(port, evidence, usage)
+  const pairwise = await judgeComparison(port, evidence, usage)
   const axis = tie.cause === 'partial-identity' ? 'element-identity' : 'value'
   return resolvePairwise(pairwise, tie, tie.partial, axis, port, usage)
 }
@@ -573,7 +609,7 @@ async function dispatchTie(
 async function adjudicateTie(
   tie: UnresolvedTie,
   context: TieContext,
-  port: JudgePort,
+  port: AdjudicationPort,
 ): Promise<DecisionScore> {
   const usage: UsageAggregator = { calls: 0 }
   try {
@@ -657,7 +693,7 @@ async function adjudicateLeaf(
   cassette: LeafCassette,
   outcome: ReplayCassetteOutcome,
   score: Extract<CassetteScore, { kind: 'leaf' }>,
-  port: JudgePort,
+  port: AdjudicationPort,
 ): Promise<CassetteScore> {
   const entry = score.entry
   if (entry.kind !== 'decision' || entry.score.kind !== 'unresolved-tie') return score
@@ -692,7 +728,7 @@ async function adjudicateProcedure(
   cassette: ProcedureCassette,
   outcome: ReplayCassetteOutcome,
   score: Extract<CassetteScore, { kind: 'procedure' }>,
-  port: JudgePort,
+  port: AdjudicationPort,
 ): Promise<CassetteScore> {
   const result = procedureResult(outcome)
   const history = collectProcedurePriorIdentities(cassette)
@@ -774,7 +810,7 @@ export async function adjudicateCassetteScore(input: {
   outcome: ReplayCassetteOutcome
   score: CassetteScore
   eligibility: JudgeEligibility
-  port?: JudgePort
+  port?: AdjudicationPort
 }): Promise<AdjudicationResult> {
   const { cassette, outcome, score, eligibility, port } = input
   if (score.kind === 'replay-refusal' || score.kind === 'shape-mismatch') {
@@ -797,6 +833,7 @@ export async function adjudicateCassetteScore(input: {
     judge: {
       judgeModelId: eligibility.judgeModelId,
       judgeFamily: eligibility.judgeFamily,
+      ...(eligibility.panelSize === undefined ? {} : { panelSize: eligibility.panelSize, members: eligibility.members }),
       judgeVersion: JUDGE_CONFIG.judgeVersion,
       confidenceThreshold: JUDGE_CONFIG.confidenceThreshold,
       // Owner override of D-10 (2026-07-12): the disclosure rides every scored entry.

@@ -6,7 +6,7 @@
 // bump-guard test, and a shipped version's pinned entry is never replaced. Phase 371 commits
 // the artifact projection of this constitution into the gate-set root.
 
-import { JUDGE_FAMILY_MAP } from './family'
+import { JUDGE_FAMILY_MAP, JUDGE_LINEAGE_OVERRIDES } from './family'
 
 // The judge's byte-stable system tier. SECURITY posture mirrors the runner verifier's
 // JUDGE_STABLE_TIER: everything inside the data frames is untrusted application data,
@@ -24,11 +24,16 @@ Return a JSON object with exactly these fields:
 - rationale (string): the specific evidence backing your verdict`
 
 export const JUDGE_CONFIG = Object.freeze({
-  judgeVersion: 1,
+  judgeVersion: 2,
   // D-09 conservative minimum category: only high-confidence swap-surviving verdicts score.
   confidenceThreshold: 'high',
   // D-03 bound (spec Appendix #3, k=3): more distinct candidates than this abstains.
   maxDistinctCandidates: 3,
+  // Three disjoint families, sequential swaps: at most six calls per comparison.
+  maxPanelMembers: 3,
+  lineageOverrides: JUDGE_LINEAGE_OVERRIDES,
+  pooling: Object.freeze({ verdict: 'max', score: 'avg' } as const),
+  scorePoolingReservation: 'avg is reserved; no scored judge question has a live producer',
   // Embedded by reference so family-map edits are guarded by the same pinned hash
   // (the OP_CLASS_MAP-in-MATCHER_CONFIG precedent).
   familyMap: JUDGE_FAMILY_MAP,

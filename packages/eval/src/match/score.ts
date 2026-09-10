@@ -62,12 +62,38 @@ export type JudgeAbstentionCause =
   | 'candidate-overflow'
   | 'missing-evidence'
   | 'residual-tie'
+  | 'below-quorum'
+  | 'panel-disagreement'
 
 /** D-11 infra-failure reasons, structurally distinct from calibrated abstention. */
 export type JudgeErrorReason = 'provider-error' | 'unparseable-output'
 
 /** D-06/D-12 reasons a judge never ran: unconfigured, or family-eligibility refused it. */
 export type JudgeNotInvokedReason = 'no-judge-configured' | 'no-eligible-judge'
+
+/** One member's swap-surviving result; errors remain distinct from abstentions. */
+export type JudgePairwiseOutcome =
+  | { kind: 'settled'; resolution: 'equivalent' | 'different'; confidence: JudgeConfidence }
+  | { kind: 'abstained'; cause: JudgeAbstentionCause; confidence?: JudgeConfidence }
+  | { kind: 'error'; reason: JudgeErrorReason; detail: string }
+
+export interface JudgeMemberIdentity {
+  judgeModelId: string
+  judgeFamily: string
+}
+
+export interface JudgeMemberOutcome extends JudgeMemberIdentity {
+  outcome: JudgePairwiseOutcome
+  usage?: JudgeTokenUsage
+}
+
+export interface JudgeFamilyDisclosure {
+  judge?: string
+  replayed?: string
+  recorded?: string
+  members?: readonly { judgeModelId: string; judgeFamily?: string }[]
+  offendingPair?: readonly [string, string]
+}
 
 /**
  * D-02 provenance stamp: a judge-settled result stays a normal `scored` verdict and judge
@@ -83,6 +109,7 @@ export interface JudgeSettled {
   judgeVersion: number
   confidence: JudgeConfidence
   usage?: JudgeTokenUsage
+  members?: readonly JudgeMemberOutcome[]
 }
 
 /**
@@ -98,6 +125,7 @@ export type JudgeOutcome =
       judgeId: string
       judgeVersion: number
       usage?: JudgeTokenUsage
+      members?: readonly JudgeMemberOutcome[]
     }
   | {
       kind: 'judge-error'
@@ -106,11 +134,12 @@ export type JudgeOutcome =
       judgeId: string
       judgeVersion: number
       usage?: JudgeTokenUsage
+      members?: readonly JudgeMemberOutcome[]
     }
   | {
       kind: 'not-invoked'
       reason: JudgeNotInvokedReason
-      families?: { judge?: string; replayed?: string; recorded?: string }
+      families?: JudgeFamilyDisclosure
     }
 
 /**
@@ -124,6 +153,8 @@ export interface JudgeIdentityBlock {
   judgeFamily: string
   judgeVersion: number
   confidenceThreshold: JudgeConfidence
+  panelSize?: number
+  members?: readonly JudgeMemberIdentity[]
   /**
    * Owner override of D-10 (2026-07-12): present ONLY when the explicit allowSameFamily
    * opt-in lifted a known-same-family refusal — the persisted score and the committed report

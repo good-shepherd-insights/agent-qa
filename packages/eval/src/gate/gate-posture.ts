@@ -37,7 +37,6 @@ import type { ScopeKey } from '@vostride/agent-qa-schema'
 import { computeCorpusDigest } from '../census/corpus-digest'
 import type { CommittedCorpusSnapshot } from '../census/derive-census'
 import { assessJudgeEligibility } from '../judge/adjudicate'
-import type { JudgeFamily } from '../judge/family'
 import { resolveProductPartition } from '../labels/corpus-entry'
 import type { PartitionManifest } from '../labels/partition-manifest'
 import { countGateSet } from './gate-set'
@@ -64,7 +63,7 @@ export interface JudgeCapability {
   /** ALWAYS present: the same-family opt-in is never silent. */
   allowSameFamily: boolean
   /** Present on the capable arm. */
-  judgeFamily?: JudgeFamily
+  judgeFamily?: string
   /** Present only when the opt-in actually lifted a refusal that would have fired. */
   familyOverride?: 'same-family-allowed'
   /** Present on the `no-eligible-judge` refusal, verbatim from the assessment. */

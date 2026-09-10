@@ -33,6 +33,15 @@ export const JUDGE_FAMILY_MAP: Readonly<Record<JudgeFamily, readonly string[]>> 
 
 const BOUNDARIES = new Set(['-', '_', '.', '/', ':'])
 
+/** Additive lineage only: these overrides can forbid more models, never permit more. */
+export const JUDGE_LINEAGE_OVERRIDES: readonly {
+  token: string
+  families: readonly JudgeFamily[]
+}[] = Object.freeze([
+  Object.freeze({ token: 'deepseek-r1-distill-llama', families: Object.freeze(['deepseek', 'llama'] as const) }),
+  Object.freeze({ token: 'deepseek-r1-distill-qwen', families: Object.freeze(['deepseek', 'qwen'] as const) }),
+])
+
 function matchesAtBoundary(id: string, token: string): boolean {
   let from = 0
   for (;;) {
@@ -62,4 +71,24 @@ export function resolveJudgeFamily(modelId: string): JudgeFamily | undefined {
   }
 
   return best?.family
+}
+
+/** The base longest-token identity union every matching forbidding lineage override. */
+export function resolveJudgeFamilies(modelId: string): ReadonlySet<JudgeFamily> {
+  const base = resolveJudgeFamily(modelId)
+  const families = new Set<JudgeFamily>(base === undefined ? [] : [base])
+  for (const override of JUDGE_LINEAGE_OVERRIDES) {
+    if (matchesAtBoundary(modelId.toLowerCase(), override.token)) {
+      for (const family of override.families) families.add(family)
+    }
+  }
+  return families
+}
+
+export function judgeFamiliesIntersect(a: ReadonlySet<JudgeFamily>, b: ReadonlySet<JudgeFamily>): boolean {
+  return [...a].some(family => b.has(family))
+}
+
+export function displayJudgeFamilies(families: ReadonlySet<JudgeFamily>): string | undefined {
+  return families.size === 0 ? undefined : [...families].sort().join(',')
 }

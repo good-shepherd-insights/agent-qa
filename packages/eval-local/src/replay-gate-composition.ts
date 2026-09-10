@@ -71,7 +71,7 @@ import {
   type CommittedReadRefusal,
 } from './committed-corpus-source.js'
 import { loadCassetteBundles } from './replay-sweep.js'
-import { runCassetteReplay, type RunCassetteReplayInput } from './replay-composition.js'
+import { runCassetteReplay, replayJudgeRequest, type RunCassetteReplayInput } from './replay-composition.js'
 import { FsReplayRecordStore } from './replay-record-store.js'
 import { FsScoreStore, type ScoreRecord } from './score-store.js'
 import { loadScoreRecord } from './replay-read.js'
@@ -847,8 +847,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     seedHonored &&= honored(sample)
     const score = loadScoreRecord(join(outputDir, ...id.split('/').map(slugBranch)))
     row.candidate = arm(candidateCassette, candidate, score.kind === 'loaded' ? score.record : undefined,
-      corpus.snapshot.labelsById.get(cassette.id), replay.judge === undefined ? null : {
-        judgeModelId: replay.judge.profile.model, allowSameFamily: replay.judge.allowSameFamily === true })
+      corpus.snapshot.labelsById.get(cassette.id), replayJudgeRequest(replay.judge))
     const cost = buildEvalReport([
       {
         cassetteId: id,

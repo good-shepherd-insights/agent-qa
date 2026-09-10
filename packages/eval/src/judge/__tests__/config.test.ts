@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import { canonicalJson } from '../../canonical-json'
 import { JUDGE_CONFIG } from '../config'
-import { JUDGE_FAMILY_MAP } from '../family'
+import { JUDGE_FAMILY_MAP, JUDGE_LINEAGE_OVERRIDES, resolveJudgeFamilies } from '../family'
 import type { JudgeFamily } from '../family'
 
 const PINNED_CONFIG_MATERIAL_HASHES: Readonly<Record<number, string>> = Object.freeze({
@@ -11,6 +11,7 @@ const PINNED_CONFIG_MATERIAL_HASHES: Readonly<Record<number, string>> = Object.f
   // an existing entry, because every persisted judge verdict stamps the judgeVersion it
   // was decided under and historical scores remain bound to that constitution.
   1: 'b89e9dad4e1837d84ba93187e9299bb7dd4df12d584078dd4788ea5158bbc51d',
+  2: '04ddea86ff73229268aabeaa1547f70adc2f9c6af29e7277cedaec8225474ba6',
 })
 
 const JUDGE_FAMILY_NAMES: { [F in JudgeFamily]: true } = {
@@ -48,7 +49,11 @@ describe('JUDGE_CONFIG', () => {
   })
 
   it('keeps the constitution internally consistent', () => {
-    expect(JUDGE_CONFIG.judgeVersion).toBe(1)
+    expect(JUDGE_CONFIG.judgeVersion).toBe(2)
+    expect(JUDGE_CONFIG.maxPanelMembers).toBe(3)
+    expect(JUDGE_CONFIG.pooling).toEqual({ verdict: 'max', score: 'avg' })
+    expect(JUDGE_CONFIG.scorePoolingReservation).toContain('reserved')
+    expect(JUDGE_CONFIG.lineageOverrides).toBe(JUDGE_LINEAGE_OVERRIDES)
     expect(['high', 'medium', 'low']).toContain(JUDGE_CONFIG.confidenceThreshold)
     expect(JUDGE_CONFIG.confidenceThreshold).toBe('high')
     expect(Number.isInteger(JUDGE_CONFIG.maxDistinctCandidates)).toBe(true)
@@ -67,6 +72,23 @@ describe('JUDGE_CONFIG', () => {
         expect(token).toBe(token.toLowerCase())
       }
     }
+  })
+
+  it('freezes the exact two forbidding lineage unions without changing historical material', () => {
+    expect(JUDGE_LINEAGE_OVERRIDES).toEqual([
+      { token: 'deepseek-r1-distill-llama', families: ['deepseek', 'llama'] },
+      { token: 'deepseek-r1-distill-qwen', families: ['deepseek', 'qwen'] },
+    ])
+    expect([...resolveJudgeFamilies('deepseek-r1-distill-llama')].sort()).toEqual(['deepseek', 'llama'])
+    expect([...resolveJudgeFamilies('deepseek-r1-distill-qwen')].sort()).toEqual(['deepseek', 'qwen'])
+    expect(Object.isFrozen(JUDGE_CONFIG.pooling)).toBe(true)
+    expect(Object.isFrozen(JUDGE_LINEAGE_OVERRIDES)).toBe(true)
+    for (const override of JUDGE_LINEAGE_OVERRIDES) {
+      expect(Object.isFrozen(override)).toBe(true)
+      expect(Object.isFrozen(override.families)).toBe(true)
+    }
+    const { judgeVersion, maxPanelMembers, lineageOverrides, pooling, scorePoolingReservation, ...v1 } = JUDGE_CONFIG
+    expect(sha256hex(canonicalJson(v1))).toBe(PINNED_CONFIG_MATERIAL_HASHES[1])
   })
 
   it('carries the constitution content the prompt assembly depends on', () => {

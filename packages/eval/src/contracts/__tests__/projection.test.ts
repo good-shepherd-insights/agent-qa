@@ -29,7 +29,7 @@ describe('contract projection', () => {
 
   it('derives D-04 version-suffixed file names', () => {
     expect(contractFileName(projectMatcherConfigContract())).toBe('matcher-config.v1.json')
-    expect(contractFileName(projectJudgeConfigContract())).toBe('judge-config.v1.json')
+    expect(contractFileName(projectJudgeConfigContract())).toBe('judge-config.v2.json')
   })
 
   it('is JSON-serializable and canonically stable', () => {

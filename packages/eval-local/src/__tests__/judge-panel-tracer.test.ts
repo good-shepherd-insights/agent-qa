@@ -74,9 +74,7 @@ it('panel tracer persists one shared comparison', async () => {
   const order: string[] = []
   const claude = member('claude-judge', order)
   const llama = member('llama-judge', order)
-  // The extra single fields allow the pre-panel implementation to execute the real path
-  // during RED; it must fail on the missing composite, never a fixture/load exception.
-  const result = await trace({ ...claude.binding, members: [claude.binding, llama.binding] } as RunCassetteReplayInput['judge'])
+  const result = await trace({ members: [claude.binding, llama.binding] })
   expect(result.record.judge).toMatchObject({ judgeModelId: 'panel:claude-judge+llama-judge',
     judgeFamily: 'claude+llama', judgeVersion: 2, panelSize: 2,
     members: [{ judgeModelId: 'claude-judge', judgeFamily: 'claude' },
@@ -98,4 +96,37 @@ it('panel tracer persists one shared comparison', async () => {
     expect(prompts[0]).toContain('name=next')
     expect(prompts[0]).not.toBe(prompts[1])
   }
+})
+
+it.each(['gpt-judge', 'gemini-judge', 'claude-second', 'unknown-judge'])(
+  'refuses the whole declaration before any judge call: %s', async modelId => {
+    const order: string[] = []
+    const a = member('claude-judge', order)
+    const b = member(modelId, order)
+    const result = await trace({ members: [a.binding, b.binding], allowSameFamily: true })
+    expect(order).toEqual([])
+    expect(result.record.judge).toBeUndefined()
+    expect(result.record.score).toMatchObject({ entry: { score: { judgeOutcome: {
+      kind: 'not-invoked', reason: 'no-eligible-judge', families: { members: [
+        { judgeModelId: 'claude-judge' }, { judgeModelId: modelId },
+      ] },
+    } } } })
+  },
+)
+
+it('serializes a singleton exactly like direct single at version 2', async () => {
+  const direct = await trace(member('claude-judge', []).binding)
+  const singleton = await trace({ members: [member('claude-judge', []).binding] })
+  expect(singleton.scoreBytes).toBe(direct.scoreBytes)
+  expect(singleton.reportBytes).toBe(direct.reportBytes)
+  expect(singleton.record.judge?.judgeVersion).toBe(2)
+  expect(singleton.record.judge).not.toHaveProperty('panelSize')
+  expect(singleton.record.judge).not.toHaveProperty('members')
+})
+
+it('treats an empty declaration as no judge', async () => {
+  const direct = await trace()
+  const empty = await trace({ members: [] })
+  expect(empty.scoreBytes).toBe(direct.scoreBytes)
+  expect(empty.reportBytes).toBe(direct.reportBytes)
 })

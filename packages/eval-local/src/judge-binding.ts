@@ -13,10 +13,12 @@ import type { SystemModelMessage } from 'ai'
 import { z } from 'zod'
 
 import type {
+  JudgePanelPort,
   JudgeCallResult,
   JudgePort,
   JudgeTokenUsage,
 } from '@vostride/agent-qa-eval'
+import { createPanelIdentity } from '@vostride/agent-qa-eval'
 import { createModel } from '@vostride/agent-qa-model'
 import type {
   ModelCallObservation,
@@ -33,6 +35,12 @@ export interface JudgeBindingInput {
   /** Optional provider overrides — the captured-boundary stub seam for tests (createModel passthrough). */
   modelOverrides?: ModelProviderOverrides
   modelCallObservation?: ModelCallObservation
+}
+
+/** N existing bindings in declaration order, each retaining bindJudgePort's fresh copy. */
+export function bindJudgePanel(inputs: readonly JudgeBindingInput[]): JudgePanelPort {
+  return { judgeModelId: createPanelIdentity(inputs.map(input => input.profile.model)).judgeModelId,
+    members: inputs.map(bindJudgePort) }
 }
 
 // The closed D-09 verdict schema: forced explicit-unsure vocabulary + categorical confidence.

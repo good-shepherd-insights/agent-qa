@@ -163,7 +163,10 @@ export type {
 } from './judge/port'
 export { JUDGE_CONFIG } from './judge/config'
 export type { JudgeConfig } from './judge/config'
-export { JUDGE_FAMILY_MAP, resolveJudgeFamily } from './judge/family'
+export { JUDGE_FAMILY_MAP, JUDGE_LINEAGE_OVERRIDES, resolveJudgeFamily, resolveJudgeFamilies } from './judge/family'
+export { assessPanelEligibility, createPanelIdentity, poolPanel } from './judge/panel'
+export type { JudgePanelPort, PanelMemberOutcome, PanelPoolingMode } from './judge/panel'
+export type { JudgePairwiseOutcome, JudgeMemberIdentity, JudgeMemberOutcome, JudgeFamilyDisclosure } from './match/score'
 export type { JudgeFamily } from './judge/family'
 export { buildJudgePrompt } from './judge/prompt'
 export type {
@@ -172,7 +175,8 @@ export type {
   JudgeQuestion,
   JudgeTieEvidence,
 } from './judge/prompt'
-export { adjudicateCassetteScore, assessJudgeEligibility } from './judge/adjudicate'
+export { adjudicateCassetteScore, assessJudgeEligibility, judgePairwise } from './judge/adjudicate'
+export type { UsageAggregator } from './judge/adjudicate'
 export type { AdjudicationResult, JudgeEligibility } from './judge/adjudicate'
 
 export type { CassetteInputLeg } from './cassette/input-leg'
