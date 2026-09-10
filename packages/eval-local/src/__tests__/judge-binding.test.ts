@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { bindJudgePort } from '../judge-binding.js'
+import { bindJudgePanel, bindJudgePort } from '../judge-binding.js'
 import {
   allContentParts,
   capturingStub,
@@ -118,7 +118,7 @@ describe('bindJudgePort provider boundary', () => {
     ).resolves.toMatchObject({ kind: 'call-error', reason: 'unparseable-output' })
   })
 
-  it('mints call-error{provider-error} with the thrown message when doGenerate throws', async () => {
+  it('mints a safe call-error{provider-error} when doGenerate throws', async () => {
     const stub = throwingStub()
     const port = bindJudgePort({
       profile: stubProfile(),
@@ -131,8 +131,24 @@ describe('bindJudgePort provider boundary', () => {
     expect(result.kind).toBe('call-error')
     if (result.kind !== 'call-error') throw new Error('expected a call-error result')
     expect(result.reason).toBe('provider-error')
-    expect(result.detail).toContain('planner must not be invoked')
+    expect(result.detail).toBe('judge provider call failed')
     expect(stub.calls()).toBeGreaterThan(0)
+  })
+
+  it('binds independent fresh profiles without mutating caller capabilities', async () => {
+    const profile = stubProfile()
+    Object.freeze(profile)
+    const stub = capturingStub(() => judgeGenerateResult('equivalent', 'high'))
+    let observed = 0
+    const panel = bindJudgePanel([0, 1].map(() => ({ profile, auth: noneAuth,
+      modelOverrides: { languageModels: stub.languageModels },
+      modelCallObservation: { onProviderCall: () => { observed++ } },
+    })))
+    expect(panel.members[0]).not.toBe(panel.members[1])
+    for (const member of panel.members) await member.call({ system: SYSTEM, prompt: FRAMED_PROMPT, order: 'ab' })
+    expect(observed).toBe(2)
+    expect(stub.captured).toHaveLength(2)
+    expect(profile.capabilities).toBeUndefined()
   })
 
   it('keeps sequential order-swapped calls independent — two captures with their own prompts', async () => {
