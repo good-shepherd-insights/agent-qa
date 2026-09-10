@@ -166,6 +166,7 @@ describe('buildConfigVisibilityOracle (the schema-derived rule)', () => {
       'registry.llms.0.model',
       'registry.llms.0.baseURL',
       'eval.judge',
+      'eval.judges.0',
     ]) {
       expect(visibility.classify(key), key).toBe('constrained')
     }
@@ -1487,6 +1488,7 @@ const DECLARED_STRING_LEAF_PATHS: readonly string[] = [
   'analytics.passRateScope.attributes.*',
   'analytics.passRateScope.attributes.*.regex',
   'eval.judge',
+  'eval.judges.*',
   'knowledge.dir',
   'plugins.auth.*.package',
   'plugins.auth.*.path',
@@ -1592,6 +1594,7 @@ describe('the registered URL-name set cannot silently go stale', () => {
       'registry.llms.*.model',
       'plugins.auth.*.package',
       'eval.judge',
+      'eval.judges.*',
     ]) {
       expect(declared.has(path), path).toBe(true)
     }
@@ -1668,6 +1671,36 @@ describe('the registered URL-name set cannot silently go stale', () => {
     expect(isCredentialBearingUrlField('services.dashboard.workspace')).toBe(false)
     expect(isMaskedConfigPath('services.dashboard.baseUrl', visibility)).toBe(false)
     expect(isMaskedConfigPath('services.dashboard.workspace', visibility)).toBe(false)
+  })
+
+  it('registers panel members as inert registry names while masking adjacent credentials', () => {
+    const resolved = {
+      eval: { judges: ['judge-anthropic', 'judge-openai'] },
+      registry: { providers: { acme: { apiKey: SECRET } } },
+    }
+    const config = buildMaskedResolvedConfig({
+      configPath: '/workspace/agent-qa.config.yaml',
+      visibility,
+      resolved,
+      layers: [{ source: 'config-file', values: resolved }],
+    })
+    // Names select registry entries; they are neither provider addresses nor credentials.
+    for (const [index, name] of resolved.eval.judges.entries()) {
+      const key = `eval.judges.${index}`
+      expect(visibility.classify(key)).toBe('constrained')
+      expect(isCredentialBearingUrlField(key)).toBe(false)
+      expect(isMaskedConfigPath(key, visibility)).toBe(false)
+      expect(config.entries).toContainEqual({
+        key, value: name, source: 'config-file', masked: false,
+      })
+    }
+    expect(config.entries).toContainEqual({
+      key: 'registry.providers.acme.apiKey',
+      value: CONFIG_MASK_PLACEHOLDER,
+      source: 'config-file',
+      masked: true,
+    })
+    expect(JSON.stringify(config)).not.toContain(SECRET)
   })
 
   it('registers the D-06 token entry as inert, and holds no field a token VALUE could occupy', () => {

@@ -543,11 +543,16 @@ describe('417 DATA replay gate bridge', () => {
         if (spend) {
           await input.composition.planner.resolveAuth()
           expect(auth).toHaveBeenCalledTimes(1)
+          expect(auth).toHaveBeenNthCalledWith(1, 'planner', expect.objectContaining({ model: 'gpt-stub' }))
           const masker = input.session.maskingContextFactory()
           expect(masker.mask(secret)).not.toContain(secret)
           masker.dispose()
+          expect(auth).toHaveBeenCalledTimes(1)
           await input.composition.judge!.resolveAuth()
-          expect(auth).toHaveBeenCalledTimes(3)
+          // Identity preparation is declaration-only: each model resolves credentials
+          // only when its own lazy callback reaches the spend boundary.
+          expect(auth).toHaveBeenCalledTimes(2)
+          expect(auth).toHaveBeenNthCalledWith(2, 'judge', expect.objectContaining({ model: 'claude-stub' }))
         }
         return {
           kind: 'refused',
@@ -562,7 +567,7 @@ describe('417 DATA replay gate bridge', () => {
     spend = true
     reads.mockClear()
     await runReplayGateVerb(session, candidateId, { agentQaRoot: join(root, 'custom-runtime') })
-    expect(auth).toHaveBeenCalledTimes(3)
+    expect(auth.mock.calls.map(([name]) => name)).toEqual(['planner', 'judge'])
   })
   it('keeps the bridge behind the existing eval session seam with DATA-only imports', () => {
     const source = readFileSync(new URL('../replay-gate-host.ts', import.meta.url), 'utf8')
