@@ -56,6 +56,11 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], members = ['claude-
     registry: { llms: ['gpt-5', ...members].map((model, i) => ({ name: `model${i}`, provider: 'openai-compatible', model, baseURL: 'http://127.0.0.1:1/v1', vision: false })) },
     use: { llm: 'model0', mobile: { appState: 'preserve' } }, eval: { judges: members.map((_, i) => `model${i + 1}`) } }))
   const rows = models.map((model, index) => addEvidence(project, index, model, members))
+  if (rows.length > 0) {
+    const historical = readFileSync(new URL('../../../../../demo/init/agent-qa-eval/contracts/judge-config.v1.json', import.meta.url), 'utf8')
+    expect(sha256hex(historical)).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
+    writeFileSync(join(project, 'agent-qa-eval/contracts/judge-config.v1.json'), historical)
+  }
   for (const row of rows) {
     row.report.runIdentity!.corpusDigest = core.computeCorpusDigest(local.readActiveCommittedCorpus(row.committedRoot, row.root).snapshot.entries)
     row.saveReport()

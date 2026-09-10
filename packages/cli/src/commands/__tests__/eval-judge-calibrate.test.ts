@@ -160,6 +160,9 @@ it('publishes through the public command and regenerates unchanged without chang
 it.each([undefined, [], ['model1']].flatMap(judges => [false, true].flatMap(replace => [false, true].map(json => ({ judges, replace, json })))))('keeps no-composite public matrix %j a successful zero-write gap', async ({ judges, replace, json }) => {
   const f = fixture()
   await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
+  const historical = readFileSync(new URL('../../../../../../demo/init/agent-qa-eval/contracts/judge-config.v1.json', import.meta.url), 'utf8')
+  expect(sha256hex(historical)).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
+  writeFileSync(join(f.committedRoot, 'contracts/judge-config.v1.json'), historical)
   // Existing unrelated bytes are protected even when they are outside panel admission.
   writeFileSync(join(f.committedRoot, 'labels/calibration.json'), JSON.stringify(core.calibrateLabels({ snapshot: {
     entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })))
