@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import { assessJudgeEligibility } from '../adjudicate'
-import { assessPanelEligibility, createPanelIdentity } from '../panel'
+import { assessPanelEligibility, createPanelIdentity, poolPanel } from '../panel'
+import type { PanelMemberOutcome } from '../panel'
+import type { JudgePairwiseOutcome } from '../../match/score'
 
 describe('assessPanelEligibility', () => {
   it('discloses the same canonical first offending pair for shuffled declarations', () => {
@@ -103,5 +105,80 @@ describe('createPanelIdentity', () => {
     expect(identity.members?.map(member => member.judgeModelId))
       .toEqual(['Z/llama', 'a/qwen', '\uE000/gemini', '𐀀/claude'])
     expect(createPanelIdentity([...ids].reverse())).toEqual(identity)
+  })
+})
+
+const equivalent: JudgePairwiseOutcome = { kind: 'settled', resolution: 'equivalent', confidence: 'high' }
+const different: JudgePairwiseOutcome = { kind: 'settled', resolution: 'different', confidence: 'high' }
+const unsure: JudgePairwiseOutcome = { kind: 'abstained', cause: 'unsure-verdict' }
+const error: JudgePairwiseOutcome = { kind: 'error', reason: 'provider-error', detail: 'fixture error' }
+
+function members(outcomes: readonly JudgePairwiseOutcome[]): PanelMemberOutcome[] {
+  return outcomes.map((outcome, index) => ({ judgeModelId: `claude-fixture-${index}`,
+    judgeFamily: 'claude', outcome, usage: { calls: 2, inputTokens: 10, outputTokens: 5 } }))
+}
+
+describe('poolPanel verdict majority', () => {
+  it.each<{ name: string; outcomes: JudgePairwiseOutcome[]; expected: JudgePairwiseOutcome }>([
+    { name: '2:0', outcomes: [equivalent, equivalent], expected: equivalent },
+    { name: '0:2', outcomes: [different, different], expected: different },
+    { name: '2:1', outcomes: [equivalent, equivalent, different], expected: equivalent },
+    { name: '1:2', outcomes: [equivalent, different, different], expected: different },
+    { name: '1:1', outcomes: [equivalent, different], expected: { kind: 'abstained', cause: 'panel-disagreement' } },
+    { name: '2:2 pure law only', outcomes: [equivalent, different, equivalent, different], expected: { kind: 'abstained', cause: 'panel-disagreement' } },
+    { name: 'zero members', outcomes: [], expected: { kind: 'abstained', cause: 'below-quorum' } },
+    { name: 'zero settled', outcomes: [unsure, unsure], expected: { kind: 'abstained', cause: 'below-quorum' } },
+    { name: 'one settled plus error', outcomes: [equivalent, error], expected: { kind: 'abstained', cause: 'below-quorum' } },
+    { name: 'two settled plus abstention', outcomes: [equivalent, unsure, equivalent], expected: equivalent },
+    { name: 'two settled plus error', outcomes: [different, error, different], expected: different },
+    { name: 'all errors', outcomes: [error, error, error], expected: { kind: 'abstained', cause: 'below-quorum' } },
+  ])('$name is independent of declaration order', ({ outcomes, expected }) => {
+    expect(poolPanel(members(outcomes))).toEqual(expected)
+    expect(poolPanel(members([...outcomes].reverse()), 'max')).toEqual(expected)
+    expect(poolPanel(members([...outcomes.slice(1), ...outcomes.slice(0, 1)]))).toEqual(expected)
+  })
+
+  it('uses the minimum majority confidence without adding dissenting confidence', () => {
+    const medium: JudgePairwiseOutcome = { ...equivalent, confidence: 'medium' }
+    const lowDissent: JudgePairwiseOutcome = { ...different, confidence: 'low' }
+    for (const outcomes of [[medium, equivalent, lowDissent], [lowDissent, equivalent, medium]]) {
+      expect(poolPanel(members(outcomes))).toEqual(medium)
+    }
+    expect(poolPanel(members([{ ...different, confidence: 'low' }, different, equivalent])))
+      .toEqual({ ...different, confidence: 'low' })
+  })
+
+  it('retains original settled, abstained and error outcomes with all incurred usage', () => {
+    const input = members([equivalent, unsure, error])
+    const before = structuredClone(input)
+    poolPanel(input)
+    expect(input).toStrictEqual(before)
+    expect(input.map(member => member.outcome)).toEqual([equivalent, unsure, error])
+    expect(input.map(member => member.usage)).toEqual([
+      { calls: 2, inputTokens: 10, outputTokens: 5 },
+      { calls: 2, inputTokens: 10, outputTokens: 5 },
+      { calls: 2, inputTokens: 10, outputTokens: 5 },
+    ])
+  })
+})
+
+describe('poolPanel reserved numeric average', () => {
+  it.each([
+    { scores: [0, 0], expected: 0 },
+    { scores: [1, 1], expected: 1 },
+    { scores: [0, 1], expected: 0.5 },
+    { scores: [0.2, 0.4, 0.9], expected: 0.5 },
+  ])('averages $scores to $expected', ({ scores, expected }) => {
+    expect(poolPanel(scores, 'avg')).toBeCloseTo(expected, 14)
+    expect(poolPanel([...scores].reverse(), 'avg')).toBeCloseTo(expected, 14)
+  })
+
+  it.each([[], [0], [0.5], [1]])('requires two numeric scores: %j', (...scores) => {
+    expect(poolPanel(scores, 'avg')).toEqual({ kind: 'abstained', cause: 'below-quorum' })
+  })
+
+  it.each([NaN, Infinity, -Infinity, -0.01, 1.01])('rejects invalid score %s explicitly', score => {
+    expect(poolPanel([0.5, score], 'avg')).toEqual({ kind: 'invalid-input', reason: 'invalid-score', index: 1 })
+    expect(poolPanel([score], 'avg')).toEqual({ kind: 'invalid-input', reason: 'invalid-score', index: 0 })
   })
 })
