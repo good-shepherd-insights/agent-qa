@@ -336,6 +336,25 @@ describe('417 DATA replay gate bridge', () => {
     await expect(createReplayGateHost(deps).run(candidateId)).rejects.toThrow('foreign candidate')
     expect(calls).toEqual([])
   })
+  it('421 rejects a foreign candidate projection before replay or credential work', async () => {
+    const reader = createKnowledgeReader(() => knowledgeRoot)
+    const found = await reader.candidateInjection!({ candidateId })
+    if (found.kind !== 'found') throw new Error('fixture candidate missing')
+    deps.reader = { ...reader, candidateInjection: async () => ({ ...found,
+      injection: { ...found.injection, candidateId: 'foreign' } }) }
+    await expect(createReplayGateHost(deps).run(candidateId)).rejects.toThrow('foreign candidate')
+    expect(deps.runReplayGate).not.toHaveBeenCalled()
+    expect(calls).toEqual([])
+  })
+  it('421 refuses another gate even when candidate and digest are valid', async () => {
+    const receipt = stampReceiptDigest({ schemaVersion: 1 as const, gate: 3 as const,
+      candidateId, verdict: 'pass' as const, producedAtOrdinal: 44, producedBy: {},
+      runId: 'fixture-run', mark: 'confirmed-bug' as const })
+    deps.runReplayGate = vi.fn(async () => ({ kind: 'receipt', receipt,
+      lines: [], notices: [], refusals: [], modelCalls: 0, wallClockMs: 0 })) as ReplayGateHostDeps['runReplayGate']
+    await expect(createReplayGateHost(deps).run(candidateId)).rejects.toThrow('Gate 1')
+    expect(calls).toEqual([])
+  })
   it('reads the real appended receipt and duplicate back, holding at gate2-receipt-required', async () => {
     // A Gate 1 pass cannot bypass the independent confirmed-evidence prerequisite.
     const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(knowledgeRoot)
