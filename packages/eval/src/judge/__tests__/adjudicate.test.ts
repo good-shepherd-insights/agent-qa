@@ -28,6 +28,57 @@ import { JUDGE_CONFIG } from '../config'
 import type { JudgeCallRequest, JudgeCallResult, JudgePort } from '../port'
 import { buildJudgePrompt } from '../prompt'
 import type { JudgeTieEvidence } from '../prompt'
+import { assessPanelEligibility, createPanelIdentity } from '../panel'
+import { buildEvalReport } from '../../match/metrics'
+
+describe('panel comparison accounting', () => {
+  const ids = ['claude-sonnet-4', 'gemini-2.5-pro', 'llama-3']
+  const eligibility = assessPanelEligibility({ memberModelIds: ids, replayedModelId: 'gpt-5' })
+
+  it.each(['partial', 'value', 'no-consensus'] as const)('pools each %s comparison in member/swap order with one decision cost', async cause => {
+    const fixture = cause === 'partial' ? partialTieFixture() : cause === 'value' ? valueTieFixture()
+      : leafTieFixture(buttonSidecar(), leafOutcome([1, 2, 3].map(ordinal =>
+        decisionOutcome(buttonAction, { opClass: 'click', target: { ...buttonAnchor, ordinal } })),
+      { noConsensus: true }))
+    const order: string[] = []
+    const panel = { judgeModelId: createPanelIdentity(ids).judgeModelId, members: ids.map(id => ({
+      judgeModelId: id,
+      async call(request: JudgeCallRequest) {
+        order.push(`${id}:${request.order}`)
+        return verdict('different', 'high', { calls: 99, inputTokens: 3 })
+      },
+    })) }
+    const result = await adjudicateCassetteScore({ ...fixture, eligibility, port: panel })
+    const score = adjudicatedLeafScore(result)
+    const comparisons = cause === 'no-consensus' ? 3 : 1
+    expect(order).toEqual(Array.from({ length: comparisons }, () => ids.flatMap(id => [`${id}:ab`, `${id}:ba`])).flat())
+    if (score.kind !== 'scored') throw new Error('expected a pooled different score')
+    expect(score.judgeSettled?.members).toHaveLength(comparisons * 3)
+    expect(score.judgeSettled?.usage).toEqual({ calls: comparisons * 6, inputTokens: comparisons * 18 })
+    const report = buildEvalReport([{ cassetteId: fixture.cassette.id, outcome: fixture.outcome, score: result.score }])
+    expect(Object.values(report.honesty.judge.invoked).reduce((a, b) => a + b)).toBe(1)
+    expect(report.honesty.judge.cost).toEqual({ calls: comparisons * 6, inputTokens: comparisons * 18, outputTokens: 0, outcomesMissingUsage: 0 })
+  })
+
+  it('attempts both swaps for every failing member and retains typed errors under below-quorum', async () => {
+    const fixture = valueTieFixture()
+    const order: string[] = []
+    const result = await adjudicateCassetteScore({ ...fixture, eligibility, port: {
+      judgeModelId: createPanelIdentity(ids).judgeModelId,
+      members: ids.map(id => ({ judgeModelId: id, async call(request) {
+        order.push(`${id}:${request.order}`)
+        throw new Error('private-provider-material')
+      } })),
+    } })
+    expect(order).toEqual(ids.flatMap(id => [`${id}:ab`, `${id}:ba`]))
+    const score = adjudicatedLeafScore(result)
+    if (score.kind !== 'unresolved-tie') throw new Error('expected unresolved tie')
+    expect(score.judgeOutcome).toMatchObject({ kind: 'abstained', cause: 'below-quorum', usage: { calls: 6 } })
+    if (score.judgeOutcome?.kind !== 'abstained') throw new Error('expected abstention')
+    expect(score.judgeOutcome.members?.map(member => member.outcome.kind)).toEqual(['error', 'error', 'error'])
+    expect(JSON.stringify(score)).not.toContain('private-provider-material')
+  })
+})
 
 describe('assessJudgeEligibility', () => {
   it('refuses with no-judge-configured when no judge model id is supplied (D-06)', () => {
