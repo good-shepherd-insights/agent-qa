@@ -930,6 +930,10 @@ export async function runJudgeCalibrateVerb(session: EvalSession, opts: {
 
 export type JudgeCalibrateVerbResult = Awaited<ReturnType<typeof runJudgeCalibrateVerb>>
 
+// Doctor's independent read-only calibration projection uses this same composition boundary.
+export { readJudgeCalibration, computeReplayProfileFingerprintFor }
+export { projectMatcherConfigContract } from '@vostride/agent-qa-eval'
+
 /** Only the explicit operator command calls this producer; no model or credential resolution. */
 export async function runCalibrateVerb(session: EvalSession, opts: {
   commit?: boolean; replace?: boolean; minGold?: number

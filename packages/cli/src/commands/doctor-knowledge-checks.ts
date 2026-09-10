@@ -36,6 +36,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import {
   LOCAL_KNOWLEDGE_PROBES,
+  buildRunMaskingContext,
   type AcquireEmbedderOutcome,
   type IndexFace,
   type ReadEmbedderWorkerRegistrationOutcome,
@@ -135,6 +136,7 @@ interface KnowledgeCheckContext {
   relativeRoot: string
   relativeIndexPath: string
   priors: () => TrustPriorsResolution
+  panel: () => Promise<string>
   probe: () => Promise<KnowledgeProbe>
 }
 
@@ -280,8 +282,43 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
       ? 'label calibration: invalid or unavailable; trust priors: unavailable'
       : `${priors.calibration}; ${formatTrustPriorDisclosure(priors.disclosure)}`
     return { ...row, status: priors.kind === 'refused' && row.status !== 'skip' ? 'fail' : row.status,
-      message: `${row.message}; ${disclosure}` }
+      message: `${row.message}; ${disclosure}${await context.panel()}` }
   } }
+}
+
+/** Independent of floor and knowledge availability; presence is local, never authentication.
+ * Only family vocabulary and guarded summary values reach the row, never binding DATA. */
+async function doctorPanelDisclosure(input: CreateKnowledgeChecksInput): Promise<string> {
+  const unavailable = '; judge panel: calibration: uncalibrated n=0 (unavailable)'
+  try {
+    const { selectedEvalJudgeNames, resolveEvalSession, preflightJudgePanel,
+      computeReplayProfileFingerprintFor,
+      projectMatcherConfigContract, readJudgeCalibration,
+    } = await import('../eval-session-composition.js')
+    const names = selectedEvalJudgeNames((input.config?.eval ?? {}) as import('../eval-session-composition.js').EvalCliConfig)
+    if (names.length === 0) return '; judge panel: capability gap: panel-not-configured'
+    if (names.length === 1) return ''
+    const session = await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
+    // Key-only resolution avoids auth plugins and execution setup. Preflight registers every
+    // locally resolved credential in this disposable masker before creating disclosure.
+    session.maskingContextFactory = () => buildRunMaskingContext({ env: process.env })
+    const preflight = await preflightJudgePanel(session)
+    const families = preflight.entries.map(entry => entry.families.join('+') || 'unknown').join(', ')
+    const prefix = `; judge panel: ${names.length} members (${families}) · calibration: `
+    if (preflight.kind === 'capability-gap') return `${prefix}capability gap: ${preflight.reason}`
+    const replayProfile = preflight.replayProfile
+    const fingerprint = computeReplayProfileFingerprintFor({ profile: replayProfile,
+      seedPolicy: session.evalConfig.seed === undefined ? 'none' : 'declared' })
+    const read = readJudgeCalibration({ committedRoot: resolve(session.configDir, 'agent-qa-eval'),
+      agentQaRoot: resolve(session.configDir, '.agent-qa'), identity: preflight.identity,
+      profile: { plannerModelId: replayProfile.model, fingerprint,
+        matcherVersion: projectMatcherConfigContract().version,
+        judgeModelId: preflight.identity.judgeModelId, judgeVersion: preflight.identity.judgeVersion } })
+    if (read.kind !== 'loaded') return `${prefix}uncalibrated n=0 (unavailable)`
+    const artifact = read.artifact
+    return prefix + (artifact.status === 'capability-gap' ? `capability gap: ${artifact.reason}`
+      : `${artifact.status} n=${artifact.n}`)
+  } catch { return unavailable }
 }
 
 function createLearningAvailabilityCheck(context: KnowledgeCheckContext): DoctorCheck {
@@ -384,6 +421,7 @@ export function createKnowledgeChecks(
 
   let pending: Promise<KnowledgeProbe> | undefined
   let cachedPriors: TrustPriorsResolution | undefined
+  let pendingPanel: Promise<string> | undefined
   const priors = () => cachedPriors ??= buildTrustPriorsResolver({ configPath: input.configPath, inspectCalibration: true })
 
   async function runProbe(root: string): Promise<KnowledgeProbe> {
@@ -447,6 +485,7 @@ export function createKnowledgeChecks(
     relativeRoot: knowledgeRoot === null ? '' : displayPath(knowledgeRoot),
     relativeIndexPath: knowledgeRoot === null ? '' : displayPath(indexDbPath(knowledgeRoot)),
     priors,
+    panel: () => pendingPanel ??= doctorPanelDisclosure(input),
     probe: () => {
       if (knowledgeRoot === null) throw new TypeError('no knowledge root to probe')
       pending ??= runProbe(knowledgeRoot)

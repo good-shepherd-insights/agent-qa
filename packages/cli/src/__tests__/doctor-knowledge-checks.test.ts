@@ -24,7 +24,7 @@ import { completedRunsRoot, CURATION_TAIL_RECEIPT_FILE, readCurationTailReceipt 
 import { promotionHostProof } from './promotion-host-proof.js'
 import { publishBundleForTest, appendPromotionReceipt } from '@vostride/agent-qa-knowledge-local'
 
-const PRIOR_SUFFIX = '; label calibration: absent; trust priors: provisional'
+const PRIOR_SUFFIX = '; label calibration: absent; trust priors: provisional; judge panel: capability gap: panel-not-configured'
 
 const STATIC_PROFILE: EmbeddingProfile = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' }
 

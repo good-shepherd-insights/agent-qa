@@ -6,7 +6,7 @@ import * as model from '@vostride/agent-qa-model'
 import * as local from '@vostride/agent-qa-eval-local'
 import * as core from '@vostride/agent-qa-eval'
 import * as llm from '../llm-utils.js'
-import { resolveEvalSession, resolveGateProfileIdentity } from '../eval-session-composition.js'
+import { resolveEvalSession, resolveGateProfileIdentity, resolveReplayProfileFingerprint } from '../eval-session-composition.js'
 import { createKnowledgeChecks, type KnowledgeCheckProbes } from '../commands/doctor-knowledge-checks.js'
 
 const roots: string[] = []
@@ -52,8 +52,10 @@ it.each(['absent-root', 'missing-floor', 'refused-posture', 'absent-knowledge'])
   expect(row.message).toContain('label calibration: absent')
   expect(row.message).not.toContain(secret)
 })
-it.each([undefined, []])('does not auto-assemble declaration %j when credentials are available', async judges => {
-  const f = fixture(judges ?? []), row = await createKnowledgeChecks(f)[3].check()
+it.each([{ judges: undefined }, { judges: [] }])('does not auto-assemble declaration %j when credentials are available', async ({ judges }) => {
+  const f = fixture(judges ?? [])
+  if (judges === undefined) { f.config.eval = {}; writeFileSync(f.configPath, JSON.stringify(f.config)) }
+  const row = await createKnowledgeChecks(f)[3].check()
   expect(row.message).toContain('capability gap: panel-not-configured')
   expect(row.message).not.toContain('members (')
   expect(llm.resolveModelAuth).not.toHaveBeenCalled()
@@ -81,6 +83,7 @@ it('copies an explicitly recorded minimum policy without a floor and never rewri
   const f = fixture(), committedRoot = join(f.root, 'agent-qa-eval'); mkdirSync(committedRoot)
   const session = await resolveEvalSession({ configPath: f.configPath, keyOnly: true })
   const profile = await resolveGateProfileIdentity(session)
+  profile.fingerprint = await resolveReplayProfileFingerprint(session, 'none')
   const input = { committedRoot, agentQaRoot: join(f.root, '.agent-qa'), profile,
     identity: core.createPanelIdentity(['claude-sonnet-4', 'gemini-2.5']), minN: core.resolveJudgeCalibrationMinimum(20) }
   const artifact = local.createJudgeCalibrationArtifact(input, { status: 'capability-gap', reason: 'single-family-host' })
