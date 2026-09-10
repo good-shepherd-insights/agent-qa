@@ -43,7 +43,7 @@ function fixture(model: core.CassetteModelReceipt = { declared: { provider: 'ope
     samples: [{ sampleIndex: 0, durationMs: 1, outcome: { kind: 'decision', action: cassette.sidecar.goldAction, identity } }],
     agreement: { k: 1, agreementRate: 1, noConsensus: false, harnessErrorCount: 0, modal: { identity, count: 1 } },
     modalDecision: identity, promptDrift: core.computeReplayDrift(cassette.input, cassette.receipt.promptInputHash),
-    briefSource: 'recorded-proof', replayedModel: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' }, unconsumedExchanges: [], totalDurationMs: 1 }
+    briefSource: 'proof', replayedModel: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' }, unconsumedExchanges: [], totalDurationMs: 1 }
   const score = core.scoreCassetteReplay(cassette, outcome, labelRecord)
   const record: local.ScoreRecord = { cassetteId: cassette.id, matcherVersion: 1, score, diffs: [],
     scoringContext: core.createScoringContext({ cassette, outcome, labelRecord, score, judgeRequest: null }) }
@@ -67,6 +67,7 @@ function fixture(model: core.CassetteModelReceipt = { declared: { provider: 'ope
 
 it('loads one private executable decision with exact published saved replay proof', () => {
   const f = fixture(), result = f.read()
+  expect(result?.skippedCounts).toEqual({})
   expect(result?.evidence).toHaveLength(1)
   expect(result.evidence[0]).toMatchObject({ sourceCassetteId: f.source.id, goldCassetteId: f.cassette.id,
     replayedModelId: f.outcome.replayedModel.modelId, recordedModelId: 'gpt-5', truth: { kind: 'resolved', fullMatch: true } })
@@ -83,7 +84,7 @@ it.each([
   expect(result.evidence[0].recordedModelId).toBe(expected)
   if (expected === undefined) expect(result.evidence[0]).not.toHaveProperty('recordedModelId')
 })
-it.each(['model', 'profile', 'corpus', 'source', 'gold', 'decision', 'malformed', 'publication', 'context', 'digest', 'missing', 'ambiguous'])(
+it.each(['model', 'profile', 'corpus', 'source', 'gold', 'decision', 'malformed', 'publication', 'context', 'digest', 'missing', 'ambiguous', 'score-decision', 'no-consensus', 'forged-modal'])(
   'rejects %s evidence with explicit diagnostics', mode => {
     const f = fixture(), raw = JSON.parse(readFileSync(f.written.file, 'utf8'))
     if (mode === 'model') { raw.replayedModel.modelId = 'foreign'; writeFileSync(f.written.file, JSON.stringify(raw)); f.saveReport() }
@@ -96,6 +97,19 @@ it.each(['model', 'profile', 'corpus', 'source', 'gold', 'decision', 'malformed'
     if (mode === 'publication') rmSync(f.publication.file.replace(/\.json$/, '.publication.json'))
     if (mode === 'context') { delete f.record.scoringContext; writeFileSync(f.scoreFile, JSON.stringify(f.record)); f.saveReport() }
     if (mode === 'digest') { raw.samples[0].durationMs++; writeFileSync(f.written.file, JSON.stringify(raw)) }
+    if (mode === 'score-decision') {
+      if (f.record.score.kind !== 'leaf') throw new Error('Expected leaf')
+      f.record.score.entry.decisionOrdinal = 99
+      f.record.scoringContext = core.createScoringContext({ cassette: f.cassette, labelRecord: f.labelRecord, outcome: f.outcome, score: f.record.score, judgeRequest: null })
+      writeFileSync(f.scoreFile, JSON.stringify(f.record)); f.saveReport()
+    }
+    if (mode === 'no-consensus' || mode === 'forged-modal') {
+      if (mode === 'no-consensus') raw.agreement.noConsensus = true
+      else raw.agreement.modal.count = 0
+      writeFileSync(f.written.file, JSON.stringify(raw))
+      f.record.scoringContext = core.createScoringContext({ cassette: f.cassette, labelRecord: f.labelRecord, outcome: raw, score: f.record.score, judgeRequest: null })
+      writeFileSync(f.scoreFile, JSON.stringify(f.record)); f.saveReport()
+    }
     if (mode === 'missing') rmSync(f.written.file)
     if (mode === 'ambiguous') {
       const destination = join(f.root, 'eval/floor', slugBranch(core.composeBaselineProfileKey(f.input.profile)), 'r0-seed17')
@@ -103,6 +117,14 @@ it.each(['model', 'profile', 'corpus', 'source', 'gold', 'decision', 'malformed'
     }
     const result = f.read()
     expect(result?.evidence).toEqual([])
+    const expectedReason: Partial<Record<string, core.JudgeCalibrationSkipReason>> = {
+      profile: 'foreign-profile', corpus: 'stale-replay', model: 'foreign-replay', source: 'foreign-replay',
+      gold: 'foreign-replay', decision: 'foreign-replay', malformed: 'malformed-replay',
+      publication: 'missing-profile-proof', context: 'stale-replay', digest: 'stale-replay',
+      missing: 'missing-replay', ambiguous: 'ambiguous-replay', 'score-decision': 'stale-replay',
+      'no-consensus': 'ambiguous-replay', 'forged-modal': 'malformed-replay',
+    }
+    expect(result.skippedCounts[expectedReason[mode]!]).toBe(1)
     expect(Object.values(result.skippedCounts).some(value => Number(value) > 0)).toBe(true)
   },
 )
@@ -131,4 +153,25 @@ it('refuses an explicit escaped replay root and malformed ledger/handoff', () =>
 })
 it('keeps private judge calibration out of the learner reader', () => {
   expect(Reflect.get(reader, 'loadJudgeCalibrationEvidence')).toBeUndefined()
+})
+it('changes evidence digest when actual recorded identity changes or disappears', () => {
+  const f = fixture(), before = f.read()
+  const path = join(f.committedRoot, local.committedCassettePath('shop', f.source.id))
+  const raw = JSON.parse(readFileSync(path, 'utf8'))
+  raw.receipt.model = { resolvedModelId: 'new-unknown-model' }; writeFileSync(path, JSON.stringify(raw))
+  const changed = f.read()
+  expect(changed.evidence[0].recordedModelId).toBe('new-unknown-model')
+  expect(changed.evidenceDigest).not.toBe(before.evidenceDigest)
+  raw.receipt.model = {}; writeFileSync(path, JSON.stringify(raw))
+  expect(f.read().evidence[0]).not.toHaveProperty('recordedModelId')
+  expect(f.read().evidenceDigest).not.toBe(changed.evidenceDigest)
+})
+it('honors committed run exclusions and refuses malformed exclusion evidence', () => {
+  const f = fixture(), path = join(f.committedRoot, 'exclusions/shop/fixture.json')
+  mkdirSync(join(f.committedRoot, 'exclusions/shop'), { recursive: true })
+  writeFileSync(path, JSON.stringify({ schemaVersion: 1, runId: f.handoff.runId, runSlug: core.deriveRunSlug(f.handoff.runId),
+    product: 'shop', verdicts: [{ class: 'test_bug', producer: 'analyze-run' }], analysisDigest: 'b'.repeat(64), reason: 'excluded-verdict-class' }))
+  expect(f.read()?.evidence).toEqual([])
+  writeFileSync(path, '{')
+  expect(f.read()?.skippedCounts['corpus-refused']).toBeGreaterThan(0)
 })

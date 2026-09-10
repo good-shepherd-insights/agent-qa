@@ -1,4 +1,6 @@
 // Neutral port type re-exports anchor the eval workspace dependency declared by this package.
+export { loadJudgeCalibrationEvidence } from './judge-calibration-evidence-source.js'
+export type { LoadJudgeCalibrationEvidenceInput, JudgeCalibrationEvidenceRead } from './judge-calibration-evidence-source.js'
 export { readLabelCalibration, LABEL_CALIBRATION_PATH } from './calibration-source.js'
 export type { LabelCalibrationArtifact, LabelCalibrationRead } from './calibration-source.js'
 export { runLabelCalibration } from './calibration-composition.js'
