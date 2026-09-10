@@ -187,12 +187,13 @@ describe('runReleaseGate', () => {
     expect(result.verdict.inconclusive).toContainEqual({ reason: 'missing-baseline', detail: expect.any(String) })
   })
 
-  it('lets the pure gate reject a mismatched body in the expected pointer file', async () => {
+  it('refuses a mismatched body in the expected pointer file before replay', async () => {
     const f = await fixture()
     rewrite(f.pointerFile, value => { value.profileKey = 'planner=another|fingerprint=another' })
-    const result = requireVerdict(await evalLocal.runReleaseGate(f.input))
-    expect(result.verdict.exit).toBe(2)
-    expect(result.verdict.inconclusive).toContainEqual({ reason: 'incomparable-baseline', detail: expect.stringContaining('profileKey') })
+    const result = await evalLocal.runReleaseGate(f.input)
+    expect(result).toMatchObject({ kind: 'refused', refusal: { path: f.pointerFile,
+      reason: expect.stringContaining('profileKey') } })
+    expect(f.stub.captured).toHaveLength(0)
   })
 
   it.each(['pointer', 'floor'] as const)('names both corpus digests for a stale %s', async leg => {
