@@ -199,6 +199,7 @@ describe('resolveEvalJudge — named-LLM chain + family preflight (D-03/D-10)', 
 
     const resolved = await resolveEvalJudge(session)
     expect(resolved.judge).toBeDefined()
+    if (!resolved.judge || 'members' in resolved.judge) throw new Error('expected direct singleton')
     expect(resolved.judge?.profile.model).toBe('claude-judge')
     expect(resolved.judge?.profile.provider).toBe('openai-compatible')
     expect(resolved.judge?.auth.kind).toBe('none')

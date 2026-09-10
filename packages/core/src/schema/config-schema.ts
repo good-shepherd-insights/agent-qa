@@ -50,7 +50,8 @@ const AgentQaConfigSchemaInner = z.object({
   // D-03 (Phase 372): eval substrate params. `judge` references a NAMED registry.llms entry;
   // strict so unknown eval subkeys are rejected.
   eval: z.object({
-    judge: z.string().optional(),
+    judge: z.string().min(1).refine(name => name.trim().length > 0).optional(),
+    judges: z.array(z.string().min(1).refine(name => name.trim().length > 0)).max(3).optional(),
     // Owner override of D-10 (2026-07-12): explicit default-off opt-in that lets a
     // KNOWN-same-family judge run; the eligibility law discloses the override on every
     // scored entry (familyOverride) and the report projection renders one honesty line.
@@ -75,6 +76,10 @@ const AgentQaConfigSchemaInner = z.object({
   }).strict().optional(),
 }).strict()
 .superRefine((val, ctx) => {
+  if (val.eval?.judge !== undefined && val.eval.judges !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['eval'],
+      message: 'Set either eval.judge or eval.judges, never both; remove one declaration.' })
+  }
   const llms = val.registry?.llms ?? []
   const names = llms.map(c => c.name)
   const dupes = names.filter((n, i) => names.indexOf(n) !== i)

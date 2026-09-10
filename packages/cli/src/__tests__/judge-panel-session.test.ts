@@ -61,7 +61,15 @@ describe('explicit judge declarations', () => {
     const configPath = await fixture({ judge: 'a', judges: ['b'] })
     await rm(join(root, 'secrets.fixture'))
     await expect(composition.resolveEvalSession({ configPath, flags: { judge: ['b'] } }))
-      .rejects.toThrow(/judge.*judges|judges.*judge/)
+      .rejects.toBeInstanceOf(composition.EvalJudgeDeclarationError)
+    expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+  })
+  it('refuses malformed runtime flags and more than three names without pruning', async () => {
+    const configPath = await fixture({})
+    for (const judge of [['a', 'b', 'a', 'b'], [''], [3], null]) {
+      await expect(composition.resolveEvalSession({ configPath, keyOnly: true,
+        flags: { judge: judge as unknown as string[] } })).rejects.toBeInstanceOf(composition.EvalJudgeDeclarationError)
+    }
     expect(llm.resolveModelAuth).not.toHaveBeenCalled()
   })
   it.each([{ judge: 'same' }, { judges: ['same', 'a'] }])('flags replace the entire config %j', async block => {

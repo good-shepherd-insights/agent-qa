@@ -525,7 +525,7 @@ export function createEvalCommand(): Command {
       .option('--run <slug>', 'narrow to cassettes extracted from one recorded run')
       .option('--cassette <id>', 'replay exactly one staged cassette by id')
       .option('--product <slug>', 'narrow by product scope')
-      .option('--judge <name>', 'override the eval.judge named LLM config')
+      .option('--judge <name>', 'replace the configured judges (repeat for a panel)', collectJudgeName)
       .option('--k <n>', 'sample budget per cassette', parseIntegerFlag('--k'))
       .option('--seed <n>', 'replay sampling seed', parseIntegerFlag('--seed'))
       .option(
@@ -540,7 +540,7 @@ export function createEvalCommand(): Command {
             run?: string
             cassette?: string
             product?: string
-            judge?: string
+            judge?: string[]
             k?: number
             seed?: number
             source?: string
@@ -850,10 +850,10 @@ export function createEvalCommand(): Command {
       .option('--report <batchKey>', 'compare a staged report with zero model calls; gate root first')
       .option('--staged-dir <dir>', 'with --report, read only this directory, relative to config')
       .option('--seed <n>', 'sampling seed (flag, config, measured floor, then recorded default 11)')
-      .option('--judge <name>', 'override the eval.judge named LLM config')
+      .option('--judge <name>', 'replace the configured judges (repeat for a panel)', collectJudgeName)
       .option('--json', 'emit the typed result DTO to stdout')
       .action(async (opts: {
-        report?: string; stagedDir?: string; seed?: string; judge?: string; json?: boolean
+        report?: string; stagedDir?: string; seed?: string; judge?: string[]; json?: boolean
       }, command: Command) => {
         try {
           // Parse in the action: Commander option-parser exits would bypass the exit-2 catch.
@@ -889,7 +889,7 @@ export function createEvalCommand(): Command {
       .argument('<candidateId>')
       .option('--k <n>', 'cross-check samples per arm (odd, at least 3; flag, eval.k, default 3)')
       .option('--max-screens <n>', 'cap on replayed screens (flag, recorded default 64)')
-      .option('--judge <name>', 'override eval.judge (same-family judges are refused)')
+      .option('--judge <name>', 'replace the configured judges (repeat for a disjoint panel)', collectJudgeName)
       .option('--dry-run', 'print the receipt without recording it')
       .option('--json', 'emit the schema-validated receipt DTO to stdout')
       .action(
@@ -898,7 +898,7 @@ export function createEvalCommand(): Command {
           opts: {
             k?: string
             maxScreens?: string
-            judge?: string
+            judge?: string[]
             dryRun?: boolean
             json?: boolean
           },
@@ -948,4 +948,8 @@ export function createEvalCommand(): Command {
   )
 
   return cmd
+}
+
+function collectJudgeName(name: string, previous: string[] = []): string[] {
+  return [...previous, name]
 }

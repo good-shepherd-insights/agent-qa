@@ -109,6 +109,7 @@ import {
   readActiveCommittedCorpus,
   readPartitionManifests,
   readRunExclusions,
+  replayJudgeRequest,
   runNoiseFloorMeasurement,
   runReleaseGate,
   runLabelCalibration,
@@ -148,7 +149,7 @@ import type {
   Verdict,
 } from '@vostride/agent-qa-schema'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
-import { resolveConfig } from './config.js'
+import { loadConfigFile, resolveConfig } from './config.js'
 import { listTargets, resolveTarget } from './targets.js'
 export { renderCensusMarkdown }
 import { renderEvalReportMarkdown } from './eval-report-render.js'
@@ -193,6 +194,7 @@ export { readActiveCommittedCorpus, readCommittedCorpus, readGatePostureFor, res
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */
 export interface EvalCliConfig {
   judge?: string
+  judges?: readonly string[]
   /** Owner override of D-10 (2026-07-12): explicit default-off same-family judging opt-in. */
   judgeAllowSameFamily?: boolean
   k?: number
@@ -203,6 +205,44 @@ export interface EvalCliConfig {
 }
 
 /** The one resolved session every eval verb consumes (D-05). */
+export interface EvalSessionFlags {
+  judge?: string | readonly string[]
+  k?: number
+  seed?: number
+  silverCap?: number
+}
+
+export class EvalJudgeDeclarationError extends TypeError {
+  constructor(message: string) { super(message); this.name = 'EvalJudgeDeclarationError' }
+}
+
+/** Validate the whole declaration before overrides; aliases retain multiplicity and order. */
+export function selectedEvalJudgeNames(config: Pick<EvalCliConfig, 'judge' | 'judges'>): readonly string[] {
+  if (config.judge !== undefined && config.judges !== undefined) {
+    throw new EvalJudgeDeclarationError('Set either eval.judge or eval.judges, never both; remove one declaration.')
+  }
+  if (config.judge !== undefined && typeof config.judge !== 'string') {
+    throw new EvalJudgeDeclarationError('eval.judge must be one nonempty registry name; use eval.judges for a list.')
+  }
+  const names = config.judge !== undefined ? [config.judge] : config.judges === undefined ? [] : config.judges
+  if (!Array.isArray(names) || names.some(name => typeof name !== 'string' || name.trim().length === 0)) {
+    throw new EvalJudgeDeclarationError('eval.judges must be an array of nonempty registry names.')
+  }
+  if (names.length > JUDGE_CONFIG.maxPanelMembers) {
+    throw new EvalJudgeDeclarationError(`Choose at most ${JUDGE_CONFIG.maxPanelMembers} explicit judge names.`)
+  }
+  return [...names]
+}
+
+function withJudgeOverrides(
+  judge: import('@vostride/agent-qa-eval-local').RunCassetteReplayInput['judge'],
+  modelOverrides?: ModelProviderOverrides,
+): import('@vostride/agent-qa-eval-local').RunCassetteReplayInput['judge'] {
+  if (judge === undefined || modelOverrides === undefined) return judge
+  return 'members' in judge ? { ...judge, members: judge.members.map(member => ({ ...member, modelOverrides })) }
+    : { ...judge, modelOverrides }
+}
+
 export interface EvalSession {
   config: AgentQaConfig
   configPath: string
@@ -226,18 +266,21 @@ export interface EvalSession {
  */
 export async function resolveEvalSession(input: {
   configPath?: string
-  flags?: { judge?: string; k?: number; seed?: number; silverCap?: number }
+  flags?: EvalSessionFlags
   /** Declaration-only host probes neither read secrets/auth state nor create a run masker. */
   keyOnly?: boolean
 } = {}): Promise<EvalSession> {
   const configPath = input.configPath ?? 'agent-qa.config.yaml'
   const configDir = dirname(resolve(configPath))
+  const raw = await loadConfigFile(configPath) as { eval?: EvalCliConfig } | null
+  if (raw?.eval && typeof raw.eval === 'object') selectedEvalJudgeNames(raw.eval)
   const config = await resolveConfig({ configPath, loadAuthPlugins: input.keyOnly !== true })
+  const evalConfig = mergeEvalConfig(config.eval, input.flags)
 
   if (input.keyOnly === true) {
     return {
       config, configPath, configDir,
-      evalConfig: mergeEvalConfig(config.eval, input.flags),
+      evalConfig,
       maskingContextFactory: () => { throw new Error('A key-only eval session cannot create a run masker') },
       executionContext: resolveRunExecutionContext(),
     }
@@ -252,7 +295,7 @@ export async function resolveEvalSession(input: {
     config,
     configPath,
     configDir,
-    evalConfig: mergeEvalConfig(config.eval, input.flags),
+    evalConfig,
     maskingContextFactory: () =>
       buildRunMaskingContext({ secretStore, env: process.env, authStatePayloads }),
     executionContext: resolveRunExecutionContext(),
@@ -618,7 +661,7 @@ export async function runReplayVerb(
       loadRefusals,
       replayRefusals: {},
       scored: 0,
-      judge: zeroJudge(session.evalConfig.judge !== undefined),
+      judge: zeroJudge(selectedEvalJudgeNames(session.evalConfig).length > 0),
       replaysRoot,
       source,
       notices,
@@ -651,10 +694,7 @@ export async function runReplayVerb(
       ...(session.evalConfig.seed !== undefined ? { seed: session.evalConfig.seed } : {}),
       ...(judgeResolution.judge !== undefined
         ? {
-            judge: {
-              ...judgeResolution.judge,
-              ...(opts.judgeOverrides !== undefined ? { modelOverrides: opts.judgeOverrides } : {}),
-            },
+            judge: withJudgeOverrides(judgeResolution.judge, opts.judgeOverrides),
           }
         : {}),
       maskingContextFactory: session.maskingContextFactory,
@@ -748,16 +788,24 @@ function foldJudgeDispositions(score: CassetteScore, judge: ReplayJudgeCounters)
  * the refusal-style notice regardless — the opt-in never relaxes unknown ⇒ forbidden.
  */
 export async function resolveEvalJudge(session: EvalSession): Promise<{
-  judge?: { profile: ModelProfile; auth: ResolvedModelAuth; allowSameFamily?: boolean }
+  judge?: import('@vostride/agent-qa-eval-local').RunCassetteReplayInput['judge']
   notice?: string
 }> {
-  if (!session.evalConfig.judge) {
+  const names = selectedEvalJudgeNames(session.evalConfig)
+  if (names.length === 0) {
     return {
       notice: 'no judge configured — unresolved ties will record not-invoked{no-judge-configured}',
     }
   }
 
-  const resolved = await resolveNamedProfile(session.evalConfig.judge, session.configPath)
+  if (names.length > 1) {
+    const members = []
+    for (const name of names) members.push(await resolveNamedProfile(name, session.configPath))
+    return { judge: { members }, ...(session.evalConfig.judgeAllowSameFamily === true
+      ? { notice: 'eval.judgeAllowSameFamily is ignored for a composite judge panel; every member must be disjoint.' }
+      : {}) }
+  }
+  const resolved = await resolveNamedProfile(names[0], session.configPath)
   const planner = await resolveReplayPlanner(session)
   const judgeFamily = resolveJudgeFamily(resolved.profile.model)
   const plannerFamily = resolveJudgeFamily(planner.profile.model)
@@ -1074,7 +1122,7 @@ export async function runReplayGateVerb(
       modelOverrides: opts.judgeOverrides,
       resolveAuth: async () => {
         const resolved = await resolveEvalJudge(await prepare())
-        if (resolved.judge === undefined) throw new Error('configured Gate 1 judge disappeared')
+        if (resolved.judge === undefined || 'members' in resolved.judge) throw new Error('configured Gate 1 judge changed')
         return resolved.judge.auth
       },
     }
@@ -1182,9 +1230,8 @@ export async function runFloorVerb(
   const planner = opts.fromMeasured === undefined ? await resolveReplayPlanner(session)
     : { profile: await resolveReplayProfileDeclaration(session) }
   const judgeResolution = opts.fromMeasured === undefined ? await resolveEvalJudge(session) : {}
-  const judge = judgeResolution.judge === undefined ? undefined
-    : { ...judgeResolution.judge, modelOverrides: opts.judgeOverrides }
-  let judgeModelId = judge?.profile.model
+  const judge = withJudgeOverrides(judgeResolution.judge, opts.judgeOverrides)
+  let judgeModelId = replayJudgeRequest(judge)?.judgeModelId
   if (opts.fromMeasured !== undefined && session.evalConfig.judge) {
     const { resolveNamedConfig } = await import('./llm-utils.js')
     judgeModelId = (await resolveNamedConfig(session.evalConfig.judge, session.configPath)).config.model
@@ -1318,8 +1365,7 @@ export async function runGateVerb(
     if (judgeResolution.notice !== undefined) notices.push(judgeResolution.notice)
     mode = {
       kind: 'fresh', ...planner, modelOverrides: opts.plannerOverrides,
-      judge: judgeResolution.judge === undefined ? undefined
-        : { ...judgeResolution.judge, modelOverrides: opts.judgeOverrides },
+      judge: withJudgeOverrides(judgeResolution.judge, opts.judgeOverrides),
       maskingContextFactory: session.maskingContextFactory,
       seed, cassettesRoot: resolveCassettesRoot(session, 'committed').cassettesRoot,
       replayOutputBaseDir: evalAuditDir(session.configDir, 'gate', profileKey),
@@ -2643,9 +2689,11 @@ async function readAuthStatePayloadsBestEffort(authStateDir: string): Promise<un
 /** Field-wise merge of flag overrides over the config eval block — flags win (D-03). */
 function mergeEvalConfig(
   fromConfig: AgentQaConfig['eval'],
-  flags?: { judge?: string; k?: number; seed?: number; silverCap?: number },
+  flags?: EvalSessionFlags,
 ): EvalCliConfig {
-  const judge = flags?.judge ?? fromConfig?.judge
+  const configured = selectedEvalJudgeNames(fromConfig ?? {})
+  const names = flags?.judge === undefined ? configured
+    : selectedEvalJudgeNames(typeof flags.judge === 'string' ? { judge: flags.judge } : { judges: flags.judge })
   const judgeAllowSameFamily = fromConfig?.judgeAllowSameFamily
   const k = flags?.k ?? fromConfig?.k
   const seed = flags?.seed ?? fromConfig?.seed
@@ -2653,7 +2701,7 @@ function mergeEvalConfig(
   const maxScreens = fromConfig?.gate1?.maxScreens
 
   return {
-    ...(judge !== undefined ? { judge } : {}),
+    ...(names.length === 1 ? { judge: names[0] } : names.length > 1 ? { judges: names } : {}),
     ...(judgeAllowSameFamily !== undefined ? { judgeAllowSameFamily } : {}),
     ...(k !== undefined ? { k } : {}),
     ...(seed !== undefined ? { seed } : {}),
