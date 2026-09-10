@@ -58,7 +58,7 @@ function tail(f: ReturnType<typeof markFixture>, snapshot: ReturnType<typeof tru
     readPostProcessingStatus: async (): Promise<PostProcessingStatus> => ({ runId: f.handoff.runId,
       chips: { analysis: 'done', curation: mode === 'failed' ? 'failed' : 'pending' },
       ...(mode === 'done' || mode === 'failed' ? { notification: { ...notification(mode), runId: f.handoff.runId } } : {}) }),
-    readRunDigest: async () => ({ proposals: { pendingOverall: 0 } }),
+    readRunDigest: async () => ({ pendingProposalCount: 0 }),
   } as unknown as PostRunTailOperations
   const handle = composeCliPostRunTail({ runId: f.handoff.runId, configDir: f.root, configFilePath: f.configPath,
     knowledgeConfig: { dir: 'agent-qa-knowledge' }, auditSink: {} as never, log: { info, warn }, operations, trustPriors: snapshot })

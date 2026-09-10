@@ -318,7 +318,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
     expect(lines).toHaveLength(2)
     // The exit line first — untouched vocabulary, and NO pointer on this leg: the digest
     // itself is one line down, so a fetch command would be noise (the D-17 either/or).
-    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending')
+    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · trust priors: provisional')
     expect(lines[0]).not.toContain('agent-qa digest')
     expect(lines[0]).not.toContain('pending overall')
 
@@ -424,7 +424,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
 
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toHaveLength(2)
-    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending')
+    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · trust priors: provisional')
     expect(lines[1]).not.toContain('analysis — ')
     expect(lines[1]).toContain('2 pending overall')
   })
@@ -462,7 +462,8 @@ describe('the extended exit line — everything else gets count + command (D-17,
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toEqual([
       'post-processing — analysis: pending · curation: pending'
-      + ` · proposals: 2 pending · digest: ${FETCH_COMMAND}`,
+      + ' · trust priors: provisional'
+        + ` · proposals: 2 pending · digest: ${FETCH_COMMAND}`,
     ])
     // The digest IS read on this leg — the count on the line is its answer, not a guess — and
     // exactly once, because the pointer and the (unprinted) block share one read.

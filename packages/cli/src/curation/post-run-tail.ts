@@ -86,6 +86,7 @@ import {
   buildTrustPriorsResolver,
   TrustPriorsRefusedError,
   type trustPriorsForHost,
+  formatTrustPriorDisclosure,
   type TrustPriorDisclosure,
 } from './trust-priors.js'
 
@@ -889,7 +890,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // one copy-paste away); when it did, the digest prints one line down and a pointer
         // would be noise. EITHER/OR, one story.
         opts.log.info?.(
-          renderPostProcessingSummaryLine(status, postureOf(drainOutcome))
+          renderPostProcessingSummaryLine(status, postureOf(drainOutcome), snapshot().disclosure)
           + (analyzeRunCompleted
             ? ''
             : renderDigestPointer(opts.runId, await readDigest(openedHost))),
@@ -1015,6 +1016,7 @@ function postureOf(outcome: PostRunDrainOutcome): PostRunPendingPosture {
 export function renderPostProcessingSummaryLine(
   status: PostProcessingStatus,
   posture: PostRunPendingPosture,
+  trustPriorDisclosure?: TrustPriorDisclosure,
 ): string {
   const stage = (label: keyof PostProcessingChips, chip: string): string => {
     const suffix = chip === 'pending' ? PENDING_POSTURE_SUFFIX[STAGE_DRAINER[label]][posture] : ''
@@ -1023,6 +1025,7 @@ export function renderPostProcessingSummaryLine(
   return `post-processing — ${[
     stage('analysis', status.chips.analysis),
     stage('curation', status.chips.curation),
+    formatTrustPriorDisclosure(trustPriorDisclosure),
   ].join(SUMMARY_SEPARATOR)}`
 }
 
@@ -1072,6 +1075,7 @@ export function renderChainTerminalLine(
     `analysis: ${stages.analysis.status}`,
     `curation: ${stages.curation.status}`
       + (curationCounts === '' ? '' : ` (${curationCounts})`),
+    formatTrustPriorDisclosure(report?.trustPriorDisclosure),
   ].join(SUMMARY_SEPARATOR)}`
 }
 
