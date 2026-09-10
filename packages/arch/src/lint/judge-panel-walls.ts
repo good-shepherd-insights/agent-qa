@@ -10,6 +10,16 @@ function analysis(source: CalibrationSource) {
   host.getSourceFile = file => file === source.file ? ast : undefined
   const checker = ts.createProgram([source.file], { noLib: true, noResolve: true }, host).getTypeChecker()
   const declarations = (node: ts.Node) => checker.getSymbolAtLocation(node)?.declarations ?? []
+  const writes = new Set<ts.Symbol>()
+  const indexWrites = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
+      && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
+      const symbol = checker.getSymbolAtLocation(node.left)
+      if (symbol) writes.add(symbol)
+    }
+    ts.forEachChild(node, indexWrites)
+  }
+  indexWrites(ast)
   const unwrap = (node: ts.Node): ts.Node => ts.isParenthesizedExpression(node) || ts.isAsExpression(node)
     || ts.isNonNullExpression(node) || ts.isSatisfiesExpression(node) || ts.isAwaitExpression(node)
     ? unwrap(node.expression) : node
@@ -66,13 +76,21 @@ function analysis(source: CalibrationSource) {
       // Shorthand properties have a property symbol; resolve their value symbol instead.
       const symbol = ts.isShorthandPropertyAssignment(node.parent)
         ? checker.getShorthandAssignmentValueSymbol(node.parent) : checker.getSymbolAtLocation(node)
+      if (symbol && writes.has(symbol)) return ['?']
       const declaration = symbol?.declarations?.[0]
       if (!declaration) return [node.text === 'undefined' ? 'undefined' : '?']
       if (bindings.has(declaration)) return bindings.get(declaration)!
       if (ts.isImportSpecifier(declaration)) return [`import:${(declaration.propertyName ?? declaration.name).text}`]
       if (ts.isNamespaceImport(declaration)) return ['namespace']
       if (ts.isFunctionDeclaration(declaration)) return [`function:${declaration.name?.text}`]
-      if (ts.isParameter(declaration)) return [`parameter:${declaration.type?.getText(ast) ?? '?'}`]
+      if (ts.isParameter(declaration)) {
+        const callback = declaration.parent
+        const call = callback.parent
+        if (!declaration.type && ts.isCallExpression(call) && ts.isPropertyAccessExpression(call.expression)
+          && ['map', 'flatMap', 'forEach'].includes(call.expression.name.text))
+          return next(call.expression.expression).map(path => path + '[]')
+        return [`parameter:${declaration.type?.getText(ast) ?? '?'}`]
+      }
       if (ts.isBindingElement(declaration)) {
         const container = declaration.parent.parent
         if (ts.isVariableDeclaration(container)) {
@@ -147,6 +165,8 @@ export function judgePanelWalls(sources: readonly CalibrationSource[]): JudgePan
     const edges = calibrationImports(source)
     const addEdge = (rule: string, line: number) => hits.push({ file: source.file, rule, line })
     for (const edge of edges) {
+      if (source.file.startsWith('packages/core/src/schema/')
+        && /^(?:@vostride\/agent-qa-model|@ai-sdk\/|(?:node:)?(?:fs|http|https|net)(?:$|\/))/.test(edge.specifier)) addEdge('core-judge-host', edge.line)
       if (/^packages\/(?:knowledge(?:-local)?|agent(?:-local)?|schema)\//.test(source.file)
         && /^@vostride\/agent-qa-eval(?:-local)?(?:$|\/)/.test(edge.specifier)
         && edge.specifier !== '@vostride/agent-qa-eval-local/reader') addEdge('learner-eval-writer', edge.line)
@@ -154,7 +174,7 @@ export function judgePanelWalls(sources: readonly CalibrationSource[]): JudgePan
         && /(?:agent-qa-knowledge|\/knowledge(?:-local)?\/)/.test(edge.specifier)) addEdge('eval-knowledge-edge', edge.line)
       if (source.file === local + 'reader.ts' && /calibration|judge-binding|eval-local$/.test(edge.specifier)) addEdge('private-reader', edge.line)
     }
-    if (!/assessPanelEligibility|createModel|bindJudgePanel|judgePairwise|adjudicate|plannerFamily|judgeFamily/.test(source.text)) continue
+    if (!/assessPanelEligibility|createModel|bindJudgePanel|judgePairwise|adjudicate|Judge(?:Panel)?Port|AdjudicationPort|plannerFamily|judgeFamily/.test(source.text)) continue
     const a = analysis(source)
     const add = (rule: string, node: ts.Node) => addEdge(rule, a.ast.getLineAndCharacterOfPosition(node.getStart(a.ast)).line + 1)
     const calls: ts.CallExpression[] = []
@@ -163,6 +183,13 @@ export function judgePanelWalls(sources: readonly CalibrationSource[]): JudgePan
       if (source.file.startsWith('packages/core/src/schema/') &&
         (ts.isPropertyAssignment(node) || ts.isPropertySignature(node)) &&
         ['plannerFamily', 'judgeFamily'].includes(a.key(node.name) ?? '')) add('caller-family', node)
+      if (source.file.startsWith(local) && ts.isBinaryExpression(node)
+        && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
+        for (const path of a.origin(node.left)) {
+          if (/parameter:Run(?:CassetteReplay|ReplayGate|JudgePanelCalibration)Input\..*(?:model|modelId|plannerModelId)$/.test(path))
+            add('identity-mutation', node)
+        }
+      }
     })
     const eligibility = calls.filter(call => a.callName(call).includes('assessPanelEligibility'))
     if (source.file.startsWith(local)) for (const call of eligibility) {
@@ -212,6 +239,8 @@ export function judgePanelWalls(sources: readonly CalibrationSource[]): JudgePan
       a.walk(node, child => {
         if (ts.isCallExpression(child) && (a.callName(child).some(name => executionNames.has(name))
           || (ts.isIdentifier(child.expression) && executionNames.has(child.expression.text)))) found = true
+        if (ts.isCallExpression(child) && ts.isPropertyAccessExpression(child.expression) && child.expression.name.text === 'call'
+          && a.origin(child.expression.expression).some(path => /parameter:(?:JudgePort|JudgePanelPort|AdjudicationPort)(?:$|\.)/.test(path))) found = true
         if (ts.isIdentifier(child)) {
           const value = a.valueOf(child)
           if (value && value !== child && hasExecution(value, seen)) found = true

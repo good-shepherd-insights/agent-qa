@@ -64,6 +64,11 @@ describe('421 judge panel walls', () => {
     expect(check('const key = "plannerFamily"; const shape = { [key]: z.string(), judgeFamily: z.string() }',
       'packages/core/src/schema/config-schema.ts')).toContain('caller-family')
   })
+  it('keeps config and registry declarations free of model/provider and filesystem bindings', () => {
+    for (const specifier of ['@vostride/agent-qa-model', '@ai-sdk/openai', 'node:fs']) {
+      expect(check(`const host = await import('${specifier}')`, 'packages/core/src/schema/registry-schema.ts')).toContain('core-judge-host')
+    }
+  })
   it.each(['"gpt-forged"', 'input.judge.members[0].profile.model', 'profile.model', 'replayedModelId'])(
     'rejects wrong replay provenance %s despite matching identifier names', value => {
       expect(check(replay(value, 'const profile = { model: "gpt-forged" }; const replayedModelId = "gpt-forged"'))).toContain('replay-provenance')
@@ -71,6 +76,10 @@ describe('421 judge panel walls', () => {
   it('accepts aliases of actual replay profile and rejects lexical shadowing', () => {
     expect(check(replay('id', 'const { profile: actual } = input; const id = actual.model'))).toEqual([])
     expect(check(replay('id', 'const actual = input.profile; function inner(actual: Fake) { const id = actual.model; assess({ replayedModelId: id }); } const id = actual.model'))).toContain('replay-provenance')
+  })
+  it('refuses reassigned model aliases and mutation of the actual profile identity', () => {
+    expect(check(replay('id', 'let id = input.profile.model; id = "forged"'))).toContain('replay-provenance')
+    expect(check(replay('input.profile.model', 'input.profile.model = "forged"'))).toContain('identity-mutation')
   })
   it.each([
     "import { assessPanelEligibility as hidden } from '@vostride/agent-qa-eval'; const call = hidden;",
@@ -131,6 +140,8 @@ describe('421 judge panel walls', () => {
   it('rejects async member scheduling even without Promise.all but preserves legal unrelated concurrency', () => {
     expect(check('members.forEach(async member => { await judgePairwise(member, evidence) })', 'packages/eval/src/judge/plant.ts')).toContain('judge-concurrency')
     expect(check('await Promise.all(files.map(file => readFile(file)))', local + 'judge-calibration-composition.ts')).toEqual([])
+    expect(check('function compare(panel: JudgePanelPort) { return Promise.all(panel.members.map(member => member.call(request))) }',
+      'packages/eval/src/judge/adjudicate.ts')).toContain('judge-concurrency')
   })
   it('accepts completed real source including captured-provider and operator seams', () => {
     expect(sources.length).toBeGreaterThan(500)
