@@ -2,8 +2,13 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { scoreCassetteReplay } from '@vostride/agent-qa-eval'
-import { asRef } from '@vostride/agent-qa-schema'
+import { committedFileText, contractFileName, projectJudgeConfigContract, scoreCassetteReplay } from '@vostride/agent-qa-eval'
+import { asRef, sha256hex } from '@vostride/agent-qa-schema'
+import { assertCommittedEgressSafe, defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
+import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import * as publicApi from '../index.js'
+import { FsCommittedRootStore, committedContractPath } from '../committed-root-store.js'
+import { AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT } from '../ownership-contract.js'
 import { runCassetteReplay } from '../replay-composition.js'
 import type { RunCassetteReplayInput } from '../replay-composition.js'
 import { FsReplayRecordStore } from '../replay-record-store.js'
@@ -129,4 +134,46 @@ it('treats an empty declaration as no judge', async () => {
   const empty = await trace({ members: [] })
   expect(empty.scoreBytes).toBe(direct.scoreBytes)
   expect(empty.reportBytes).toBe(direct.reportBytes)
+})
+
+it('publishes the frozen v2 constitution and sanctioned public panel binding', () => {
+  expect(publicApi).toHaveProperty('bindJudgePanel', expect.any(Function))
+  const oldFile = new URL('../../../../../demo/init/agent-qa-eval/contracts/judge-config.v1.json', import.meta.url)
+  const before = readFileSync(oldFile, 'utf8')
+  expect(sha256hex(before)).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
+  const projection = projectJudgeConfigContract()
+  const text = committedFileText(projection)
+  expect(projection).toMatchObject({ version: 2, config: { judgeVersion: 2,
+    maxPanelMembers: 3, pooling: { verdict: 'max', score: 'avg' },
+    lineageOverrides: [
+      { token: 'deepseek-r1-distill-llama', families: ['deepseek', 'llama'] },
+      { token: 'deepseek-r1-distill-qwen', families: ['deepseek', 'qwen'] },
+    ],
+  } })
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-panel-contract-'))
+  roots.push(root)
+  assertCommittedEgressSafe([{ label: 'judge-config-v2', text }], {
+    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput), channel: 'eval-report',
+    auditSink: new JsonlAuditSink(join(root, 'audit')),
+  })
+  const store = new FsCommittedRootStore({ committedRoot: root })
+  const path = committedContractPath(contractFileName(projection))
+  expect(store.writeText(path, text)).toEqual({ kind: 'written' })
+  expect(store.writeText(path, text)).toEqual({ kind: 'unchanged' })
+  expect(readFileSync(join(root, path), 'utf8')).toBe(text)
+  expect(readFileSync(new URL('../../../../../demo/init/agent-qa-eval/contracts/judge-config.v2.json', import.meta.url), 'utf8')).toBe(text)
+  expect(readFileSync(oldFile, 'utf8')).toBe(before)
+  const bindingSource = readFileSync(new URL('../judge-binding.ts', import.meta.url), 'utf8')
+  expect(bindingSource.match(/\bcreateModel\s*\(/g)).toHaveLength(1)
+  expect(AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT.internalDependencies).toEqual([
+    '@vostride/agent-qa-eval', '@vostride/agent-qa-model', '@vostride/agent-qa-runner',
+    '@vostride/agent-qa-runner-local', '@vostride/agent-qa-safety',
+    '@vostride/agent-qa-safety-local', '@vostride/agent-qa-schema',
+  ])
+  expect(AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT.externalDependencies).toEqual(['ai', 'zod'])
+  const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
+  expect(Object.keys(manifest.dependencies).sort()).toEqual([
+    ...AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT.internalDependencies,
+    ...AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT.externalDependencies,
+  ].sort())
 })
