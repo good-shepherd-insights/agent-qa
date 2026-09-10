@@ -43,7 +43,9 @@ export function assessPanelEligibility(input: {
   recordedModelId?: string
   allowSameFamily?: boolean
 }): JudgeEligibility {
-  const { memberModelIds, replayedModelId, recordedModelId } = input
+  const { replayedModelId, recordedModelId } = input
+  // Stable disclosure and first collision, without deduplicating resolved aliases.
+  const memberModelIds = [...input.memberModelIds].sort(compareCodePoints)
   if (memberModelIds.length <= 1) return assessJudgeEligibility({ ...input, judgeModelId: memberModelIds[0] })
   const sets = memberModelIds.map(resolveJudgeFamilies)
   const replayed = resolveJudgeFamilies(replayedModelId)
