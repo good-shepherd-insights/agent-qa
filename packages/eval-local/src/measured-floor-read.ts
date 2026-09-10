@@ -114,7 +114,13 @@ export function readMeasuredFloorRun(input: {
       ...(products === undefined ? {} : { corpusEntriesById: input.corpusEntriesById,
         eligibleCassetteIds: new Set(products.keys()) }) })
     if (batch.missingBundleCount !== 0 || batch.notices.length !== 0) refuse('cassette or score read refused')
-    return projectAssembledBatch(batch, { declaredSeed: receipt.seed, runIdentity })
+    const assembled = projectAssembledBatch(batch, { declaredSeed: receipt.seed, runIdentity })
+    // Calibration is historical disclosure, not a value reconstructed from score records.
+    // The staged guard already admitted it; preserve it without consulting today's artifact.
+    if (saved.report.judge?.calibration !== undefined && assembled.report.judge !== undefined) {
+      assembled.report.judge = { ...assembled.report.judge, calibration: saved.report.judge.calibration }
+    }
+    return assembled
   }
   // Both current committed ownership and the historical scope join are recognized. Every
   // other field must reproduce exactly from retained records before any in-memory correction.

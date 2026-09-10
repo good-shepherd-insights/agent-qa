@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import * as core from '@vostride/agent-qa-eval'
@@ -50,6 +50,8 @@ it.each(['no-credential', 'single-family-host'] as const)('copies a real guarded
   const artifact = local.createJudgeCalibrationArtifact(f.input, { status: 'capability-gap', reason })
   const path = join(f.input.committedRoot, local.judgeCalibrationPath(artifact.profileKey))
   mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, JSON.stringify(artifact))
+  expect(local.readJudgeCalibration({ ...f.input, minN: core.resolveJudgeCalibrationMinimum() }).kind).toBe('refused')
+  expect(local.readJudgeCalibration({ ...f.input, minN: undefined }).kind).toBe('loaded')
   const result = await runReportVerb(f.session)
   expect(result.report.judge?.calibration).toEqual({ status: 'capability-gap', reason })
   expect(renderEvalReportMarkdown(result.report)).toContain(`- judge calibration: capability-gap reason=${reason}`)
@@ -92,6 +94,40 @@ it('keeps singleton and direct-single reports unchanged and no-composite calibra
   expect(result.report.judge).toEqual(f.record.judge)
   expect(renderEvalReportMarkdown(result.report)).not.toContain('judge calibration:')
   expect(reader.read).not.toHaveBeenCalled()
+  f.session.evalConfig = { judge: 'a' }
+  const direct = await runReportVerb(f.session)
+  expect(JSON.stringify(direct.report)).toBe(JSON.stringify(result.report))
+  expect(renderEvalReportMarkdown(direct.report)).toBe(renderEvalReportMarkdown(result.report))
   expect(await runJudgeCalibrateVerb(f.session, { commit: true, replace: true })).toMatchObject({ kind: 'capability-gap', reason: 'panel-not-configured', artifactDisposition: 'not-created' })
   expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+})
+
+it('refuses mixed persisted identities before calibration lookup', async () => {
+  const f = await fixture()
+  const other = await panelScoreFixture(join(f.root, 'other'), ['different'])
+  cpSync(other.replaysRoot, join(f.replaysRoot, 'second-identity'), { recursive: true })
+  const result = await runReportVerb(f.session)
+  expect(result.report.judgeIdentity).toBe('mixed')
+  expect(result.report.judge).toBeUndefined()
+  expect(core.assertBaselineComparator(result.report)).toMatchObject({ ok: false, refusal: { kind: 'mixed-judge-identity' } })
+  expect(reader.read).not.toHaveBeenCalled()
+  expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+})
+it('does not create a panel block for a judge-free batch even with a panel configured', async () => {
+  const f = await fixture()
+  rmSync(f.replaysRoot, { recursive: true })
+  const result = await runReportVerb(f.session)
+  expect(result.report.judge).toBeUndefined()
+  expect(renderEvalReportMarkdown(result.report)).not.toContain('judge calibration:')
+  expect(reader.read).not.toHaveBeenCalled()
+  expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+})
+it('does not select calibration for a later config with a different actual replay model', async () => {
+  const f = await fixture()
+  const config = JSON.parse(readFileSync(f.session.configPath, 'utf8'))
+  config.registry.llms[0].model = 'gpt-other'
+  writeFileSync(f.session.configPath, JSON.stringify(config))
+  const result = await runReportVerb(f.session)
+  expect(result.report.judge?.calibration).toEqual({ status: 'uncalibrated', n: 0, provenance: 'unavailable' })
+  expect(reader.read).not.toHaveBeenCalled()
 })

@@ -169,13 +169,18 @@ function checkEgress(artifact: JudgeCalibrationArtifact, policy?: GuardrailPolic
     ...(auditDirectory ? { auditSink: new JsonlAuditSink(auditDirectory) } : {}),
   })
 }
-export function readJudgeCalibration(input: JudgeCalibrationReadInput): JudgeCalibrationRead {
+export function readJudgeCalibration(input: Omit<JudgeCalibrationReadInput, 'minN'> & {
+  /** Operators may require an exact minimum; report consumers retain the recorded policy. */
+  minN?: JudgeCalibrationMinimum
+}): JudgeCalibrationRead {
   try {
-    const expected = envelope(input)
+    const expected = envelope({ ...input, minN: input.minN ?? { value: JUDGE_CALIBRATION_MIN_N, source: 'default' } })
     const text = checkedText(input.committedRoot, join(input.committedRoot, judgeCalibrationPath(expected.profileKey)))
     if (text === undefined) return { kind: 'absent' }
     const artifact = guardJudgeCalibration(JSON.parse(text))
-    if (!artifact || !admitted(input, artifact)) return { kind: 'refused', reason: 'Judge calibration identity or evidence is invalid or stale.' }
+    if (!artifact || !admitted({ ...input, minN: input.minN ?? {
+      value: artifact.minN, source: artifact.minNSource,
+    } }, artifact)) return { kind: 'refused', reason: 'Judge calibration identity or evidence is invalid or stale.' }
     checkEgress(artifact)
     return { kind: 'loaded', artifact }
   } catch { return { kind: 'refused', reason: 'Judge calibration or evidence unavailable; inspect the profile and local corpus.' } }

@@ -61,14 +61,17 @@ const calibrationUnit = z.number().finite().min(0).max(1)
 const copiedInterval = z.object({ lower: calibrationUnit, upper: calibrationUnit,
   halfWidth: calibrationUnit.max(0.5) }).strict().refine(value => value.lower <= value.upper
     && value.upper - value.lower <= 2 * value.halfWidth + Number.EPSILON * 4)
+// Check possible integer agreement counts only; never replace the copied estimate or interval.
+const consistentAgreement = (n: number, agreement: number) => agreement === Math.round(n * agreement) / n
 const copiedMember = z.object({ judgeModelId: z.string(), n: calibrationCount,
   agreement: calibrationUnit.optional(), wilson95: copiedInterval.optional() }).strict()
   .refine(value => value.n === 0 ? value.agreement === undefined && value.wilson95 === undefined
-    : value.agreement !== undefined && value.wilson95 !== undefined)
+    : value.agreement !== undefined && value.wilson95 !== undefined && consistentAgreement(value.n, value.agreement))
 const copiedCalibration = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('calibrated'), n: calibrationCount.min(1),
+  z.object({ status: z.literal('calibrated'), n: calibrationCount.min(2),
     pooledAgreement: calibrationUnit, wilson95: copiedInterval,
-    perMember: z.array(copiedMember).min(2).max(3) }).strict(),
+    perMember: z.array(copiedMember).min(2).max(3) }).strict()
+    .refine(value => consistentAgreement(value.n, value.pooledAgreement)),
   z.object({ status: z.literal('uncalibrated'), n: calibrationCount,
     provenance: z.literal('unavailable').optional() }).strict()
     .refine(value => value.provenance === undefined || value.n === 0),
@@ -83,8 +86,9 @@ export const reportJudgeSchema = judgeIdentitySchema.safeExtend({ calibration: c
     if (calibration === undefined) return true
     if (judge.panelSize === undefined || judge.members === undefined) return false
     if (calibration.status !== 'calibrated') return true
+    const memberIds = calibration.perMember.map(member => member.judgeModelId).sort()
     return calibration.perMember.length === judge.members.length
-      && calibration.perMember.every((member, index) => member.judgeModelId === judge.members![index]!.judgeModelId)
+      && memberIds.every((id, index) => id === judge.members![index]!.judgeModelId)
   }, 'calibration requires the complete recorded composite identity')
 
 // A light read boundary, not a format migration. Passthrough at every checked object

@@ -35,12 +35,12 @@ function fixture(reader: 'staged' | 'committed', calibration: unknown, judge = p
   return { dir, report, bytes, file, read }
 }
 
-it('fresh floor reports disclose calibration and measured recovery retains the guarded copied history', async () => {
+it.each(['absent', 'gap'])('fresh floor reports disclose %s and measured recovery retains guarded copied history', async mode => {
   const root = mkdtempSync(join(tmpdir(), 'calibration-floor-')); roots.push(root)
   const corpus = writeCommittedFloorFixture(root, handoff => {
     handoff.tests[0]!.steps[0]!.modelProfile!.modelId = 'llama-recorded'
   })
-  const planner = capturingStub(actionGenerateResult, 'gpt-replay-stub')
+  const planner = capturingStub(() => actionGenerateResult(), 'gpt-replay-stub')
   const members = ['claude-judge-stub', 'gemini-judge-stub'].map(model => {
     const stub = capturingStub(() => judgeGenerateResult('equivalent', 'high'), model)
     return { profile: familyStubProfile(model), auth: noneAuth, modelOverrides: { languageModels: stub.languageModels } }
@@ -53,6 +53,15 @@ it('fresh floor reports disclose calibration and measured recovery retains the g
       judgeModelId: judge.judgeModelId, judgeVersion: judge.judgeVersion },
     seeds: [11, 29], repeats: 3, bootstrapSeed: 97, commit: false,
     reportOutputBaseDir: join(root, 'audit'), clock: incrementingClock() }
+  if (mode === 'gap') {
+    const artifact = local.createJudgeCalibrationArtifact({ committedRoot: input.committedRoot, agentQaRoot: input.agentQaRoot,
+      identity: judge, minN: { value: 20, source: 'flag' }, profile: { ...input.profileKeyInputs,
+        fingerprint: local.computeReplayProfileFingerprintFor({ profile: input.profile,
+          modelOverrides: input.modelOverrides, seedPolicy: 'declared' }) } },
+    { status: 'capability-gap', reason: 'no-credential' })
+    const path = join(input.committedRoot, local.judgeCalibrationPath(artifact.profileKey))
+    mkdirSync((await import('node:path')).dirname(path), { recursive: true }); writeFileSync(path, JSON.stringify(artifact))
+  }
   const lines: string[] = []
   const fresh = await local.runNoiseFloorMeasurement({ ...input, onProgress: line => lines.push(line) })
   for (const runRoot of fresh.runRoots) {
@@ -60,7 +69,8 @@ it('fresh floor reports disclose calibration and measured recovery retains the g
     const reportFiles = (await import('node:fs')).readdirSync(join(runRoot, 'reports')).filter(name => /^[a-f0-9]{64}\.json$/.test(name))
     expect(reportFiles).toHaveLength(1)
     const report = JSON.parse(readFileSync(join(runRoot, 'reports', reportFiles[0]!), 'utf8'))
-    expect(report.judge.calibration).toEqual({ status: 'uncalibrated', n: 0, provenance: 'unavailable' })
+    expect(report.judge.calibration).toEqual(mode === 'gap' ? { status: 'capability-gap', reason: 'no-credential' }
+      : { status: 'uncalibrated', n: 0, provenance: 'unavailable' })
   }
   const fromMeasured = join(root, 'cost.log'); writeFileSync(fromMeasured, lines.join('\n'))
   const read = vi.spyOn(calibrationSource, 'readJudgeCalibration').mockImplementation(() => { throw new Error('history must not read newer artifacts') })
@@ -72,7 +82,9 @@ it('fresh floor reports disclose calibration and measured recovery retains the g
 })
 
 for (const reader of ['staged', 'committed'] as const) {
-  it.each([calibrated, { status: 'uncalibrated', n: 7 },
+  it.each([calibrated, { ...calibrated, perMember: [...calibrated.perMember].reverse() },
+    { ...calibrated, perMember: [calibrated.perMember[0], { judgeModelId: panel.members![1]!.judgeModelId, n: 0 }] },
+    { status: 'uncalibrated', n: 7 },
     { status: 'uncalibrated', n: 0, provenance: 'unavailable' },
     ...['panel-not-configured', 'no-credential', 'single-family-host'].map(reason => ({ status: 'capability-gap', reason })),
   ])(`${reader} preserves copied calibration exactly: %j`, calibration => {

@@ -181,6 +181,16 @@ export function renderEvalReportMarkdown(report: EvalBatchReport): string {
       )
     }
   }
+  const calibration = report.judge?.calibration
+  if (calibration !== undefined) {
+    lines.push('- judge calibration: ' + (calibration.status === 'capability-gap'
+      ? `capability-gap reason=${calibration.reason}`
+      : calibration.status === 'uncalibrated'
+        ? `uncalibrated n=${calibration.n}` + (calibration.provenance === 'unavailable' ? ' (unavailable)' : ' (copied)')
+        : `calibrated n=${calibration.n} pooledAgreement=${calibration.pooledAgreement} `
+          + `wilson95=[${calibration.wilson95.lower},${calibration.wilson95.upper}] `
+          + `halfWidth=${calibration.wilson95.halfWidth} (copied)`))
+  }
   lines.push('')
 
   // Headline: accuracy WITH its denominator (D-14 honesty) + the per-decision cost fields.

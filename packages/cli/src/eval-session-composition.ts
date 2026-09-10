@@ -47,6 +47,7 @@ import {
   guardClassifierRepeatability,
   guardCampaignManifest,
   JUDGE_CONFIG,
+  judgeIdentitySchema,
   partitionParamsOf,
   projectBaselinePointer,
   projectDecisionVectorsDocument,
@@ -86,6 +87,8 @@ import {
   FsRunArtifactSource,
   FsScoreStore,
   assembleScoredBatch,
+  copyJudgeCalibrationToReport,
+  readJudgeCalibration,
   ablateCanaryStep,
   isNovelState,
   stageFeedbackEntry,
@@ -2275,10 +2278,11 @@ export async function runReportVerb(
     judgeIdentity = 'absent'
     notices.push('no judge identity on any persisted score record — the report carries no judge block')
   } else {
-    const first = canonicalJson(judgeBlocks[0])
-    if (judgeBlocks.every(block => canonicalJson(block) === first)) {
+    const identities = judgeBlocks.map(block => judgeIdentitySchema.strip().parse(block))
+    const first = canonicalJson(identities[0])
+    if (identities.every(block => canonicalJson(block) === first)) {
       judgeIdentity = 'present'
-      judgeForReport = judgeBlocks[0]
+      judgeForReport = identities[0]
     } else {
       judgeIdentity = 'mixed'
       // 413-15: the report carries the mixture as DATA — the distinct persisted ids, sorted —
@@ -2298,6 +2302,29 @@ export async function runReportVerb(
   // (5) Exactly ONE buildEvalReport call — one batch, one report, one headline (D-14). The CLI
   // never sums scores; every counter and rate is the aggregator's.
   const report = buildEvalReport(entries, judgeForReport, mixedIdentity, { calibration: labelCorpus.calibration })
+  if (report.judge?.panelSize !== undefined) {
+    // Key-only declarations select evidence; credentials and model binding are never needed.
+    let calibrationRead: ReturnType<typeof readJudgeCalibration> | undefined
+    try {
+      const replayProfile = await resolveReplayProfileDeclaration(session)
+      const actualModels = entries.flatMap(entry => {
+        if ('kind' in entry.outcome) return []
+        const results = entry.outcome.granularity === 'leaf' ? [entry.outcome]
+          : entry.outcome.steps.flatMap(step => step.kind === 'decision' ? [step.result] : [])
+        return results.map(result => result.replayedModel.modelId)
+      })
+      if (actualModels.length === 0 || actualModels.some(model => model !== replayProfile.model)) {
+        throw new Error('report replay profile unavailable')
+      }
+      const fingerprint = computeReplayProfileFingerprintFor({ profile: replayProfile,
+        seedPolicy: session.evalConfig.seed === undefined ? 'none' : 'declared', modelOverrides: opts.plannerOverrides })
+      calibrationRead = readJudgeCalibration({ committedRoot: resolve(session.configDir, 'agent-qa-eval'), agentQaRoot,
+        identity: report.judge, profile: { plannerModelId: replayProfile.model, fingerprint,
+          matcherVersion: report.matcherVersion, judgeModelId: report.judge.judgeModelId, judgeVersion: report.judge.judgeVersion } })
+    } catch { /* Missing profile evidence is unavailable, never a fabricated identity. */ }
+    copyJudgeCalibrationToReport(report, calibrationRead)
+    if (calibrationRead?.kind !== 'loaded') notices.push('judge calibration unavailable: no matching guarded artifact')
+  }
   const vectors = decisionCorrectnessVectors(entries, partitionsById)
   const decisions = projectDecisionVectorsDocument({
     batchKey: report.batchKey, matcherVersion: report.matcherVersion, vectors,

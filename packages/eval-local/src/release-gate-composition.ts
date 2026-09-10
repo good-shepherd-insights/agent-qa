@@ -174,6 +174,7 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
     let run: Awaited<ReturnType<typeof replayCorpusOnce>>
     try {
       run = await replayCorpusOnce({
+        committedRoot: input.committedRoot,
         selected,
         loadRefusals: loaded.loadRefusals,
         cassettesRoot: mode.cassettesRoot,

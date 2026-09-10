@@ -38,7 +38,8 @@ import { writeNoiseFloorArtefact } from './noise-floor-writer.js'
 import type { WriteNoiseFloorArtefactOutcome } from './noise-floor-writer.js'
 import { readMeasuredCostReceipts, readMeasuredFloorRun } from './measured-floor-read.js'
 
-import { assembleScoredBatch, projectAssembledBatch } from './replay-batch-assembly.js'
+import { assembleScoredBatch, projectAssembledBatch, copyJudgeCalibrationToReport } from './replay-batch-assembly.js'
+import { readJudgeCalibration } from './judge-calibration-source.js'
 import { computeReplayProfileFingerprintFor, replayJudgeRequest } from './replay-composition.js'
 import type { RunCassetteReplayInput } from './replay-composition.js'
 import { FsReplayRecordStore } from './replay-record-store.js'
@@ -48,6 +49,7 @@ import { FsReportStore, type ReplayGeneration } from './report-store.js'
 import { FsScoreStore } from './score-store.js'
 
 export interface ReplayCorpusOnceInput {
+  committedRoot?: string
   selected: readonly LoadedCassetteBundle[]
   /** Bundle-load refusals excluded from selected; never include returned replay refusals. */
   loadRefusals?: Readonly<Partial<EvalBatchReport['honesty']['refusalCounts']>>
@@ -207,6 +209,7 @@ export async function runNoiseFloorMeasurement(
     }
     if (input.auth === undefined) throw new TypeError('fresh floor measurement requires resolved model auth')
     const run = await replayCorpusOnce({
+      committedRoot: input.committedRoot,
       selected,
       loadRefusals: loaded.loadRefusals,
       cassettesRoot: input.cassettesRoot,
@@ -390,6 +393,17 @@ export async function replayCorpusOnce(
     ...(input.loadRefusals === undefined ? {} : { additionalRefusalCounts: input.loadRefusals }),
     ...(runIdentity === undefined ? {} : { runIdentity }),
   })
+  if (report.judge?.panelSize !== undefined) {
+    const read = input.committedRoot === undefined ? undefined : readJudgeCalibration({
+      committedRoot: input.committedRoot, agentQaRoot: input.agentQaRoot, identity: report.judge,
+      profile: { plannerModelId: input.profile.model, matcherVersion: report.matcherVersion,
+        judgeModelId: report.judge.judgeModelId, judgeVersion: report.judge.judgeVersion,
+        fingerprint: computeReplayProfileFingerprintFor({ profile: input.profile,
+          modelOverrides: input.modelOverrides, seedPolicy: 'declared' }) },
+    })
+    copyJudgeCalibrationToReport(report, read)
+    if (read?.kind !== 'loaded') notices.push('judge calibration unavailable: no matching guarded artifact')
+  }
   const staged = new FsReportStore({
     root: input.agentQaRoot,
     outputDir: join(input.runRoot, 'reports'),
