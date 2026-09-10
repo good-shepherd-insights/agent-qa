@@ -487,6 +487,9 @@ export type {
   GateInconclusiveReason,
   GateRegression,
   GateVerdict,
+  LabelMetricId,
+  LabelMetricRow,
+  LabelMetricComparison,
   ComputeGateVerdictInput,
 } from './gate/release-gate'
 

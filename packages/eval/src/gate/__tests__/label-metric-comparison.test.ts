@@ -69,6 +69,48 @@ function oldVerdict(verdict: GateVerdict) {
 }
 
 describe('same-profile label metric disclosure', () => {
+  it.each(ids)('keeps independent %s changes out of every release decision', metric => {
+    for (const exit of [0, 1, 2] as const) {
+      const original = oldVerdict(computeGateVerdict(fixture(exit)))
+      for (const side of ['baseline', 'current'] as const) {
+        for (const value of [0, 1, undefined]) {
+          const input = fixture(exit), report = input[side].report
+          if (metric === 'verifierFalsePassRate') {
+            Reflect.set(report.headline, 'verifierFalsePassRate', value === undefined ? undefined
+              : { numerator: value * 4, denominator: 4, rate: value })
+          } else if (metric === 'recovery.raw') {
+            report.recovery.recoveredPositiveCount = (value ?? 0) * report.recovery.eligiblePositiveCount
+            report.recovery.recoveryAccuracy = value
+          } else if (metric === 'recovery.weighted') report.recovery.weightedAccuracy = value
+          else if (metric.startsWith('perDecisionCost.')) {
+            const unit = metric.slice('perDecisionCost.'.length)
+            Reflect.set(report.totalCost, unit, value === undefined ? undefined : value * 1e8)
+          } else {
+            const split = metric.slice('perSplit.'.length)
+            const cell = split === 'natural' ? report.perSplit.natural : split === 'adversarial'
+              ? report.perSplit.adversarial : split === 'held-out.shared'
+                ? report.perSplit['held-out'].shared : report.perSplit['held-out'].private
+            Reflect.set(cell, 'firstAttemptDecisionAccuracy', value === undefined ? undefined
+              : { numerator: value * 4, denominator: 4, rate: value })
+          }
+          expect(oldVerdict(computeGateVerdict(input))).toEqual(original)
+        }
+      }
+    }
+  })
+
+  it('accepts zero costs and fractional cost averages without dividing them again', () => {
+    const input = fixture()
+    input.baseline.report.totalCost.promptTokens = 1
+    input.baseline.report.honesty.judge.cost.inputTokens = 0
+    input.baseline.report.headline.perDecisionCost.promptTokens = 0.25
+    input.current.report.totalCost.promptTokens = 0
+    input.current.report.honesty.judge.cost.inputTokens = 0
+    input.current.report.headline.perDecisionCost.promptTokens = 0
+    expect(computeGateVerdict(input).labelMetrics.rows[3]).toMatchObject({ status: 'comparable',
+      baseline: { numerator: 1, denominator: 4, rate: 0.25 }, current: { numerator: 0, denominator: 8, rate: 0 }, delta: -0.25 })
+  })
+
   it('provides all eleven comparable rows with own denominators and calibration provenance', () => {
     const input = fixture()
     const before = structuredClone(input)
