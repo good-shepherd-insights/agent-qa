@@ -218,11 +218,12 @@ clean_gate () {
   fi
 }
 
-# All selected members have a predecessor. Anchor to the named ONE-line array and remove only
-# its comma/member pair: the explicit type union and all production arms remain unchanged.
+# All selected members have a predecessor. Anchor to the named array, bounded by its closing
+# bracket across either layout, and remove only its comma/member pair. The explicit type union
+# and all production arms remain unchanged; run_leg still rejects an edit that changes nothing.
 remove_member () {
   local subject="$1" array="$2" member="$3"
-  perl -pi -e "s/^(export const $array = \[.*), '\Q$member\E'/\${1}/" "$REPO_ROOT/$subject"
+  perl -0777 -pi -e "s/^(export const $array = \[[^\]]*?),\s*'\Q$member\E'/\${1}/m" "$REPO_ROOT/$subject"
 }
 
 apply_mutation () {
