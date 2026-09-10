@@ -9,14 +9,10 @@ export function calibrationImports(source: CalibrationSource, runtimeOnly = fals
   const ast = ts.createSourceFile(source.file, source.text, ts.ScriptTarget.Latest, true)
   const hits: { file: string; line: number; specifier: string }[] = []
   const visit = (node: ts.Node): void => {
-    if (runtimeOnly && ts.isImportDeclaration(node) && node.importClause) {
-      const clause = node.importClause
-      if (clause.isTypeOnly || (!clause.name && clause.namedBindings
-        && ts.isNamedImports(clause.namedBindings) && clause.namedBindings.elements.every(name => name.isTypeOnly))) return
-    }
-    if (runtimeOnly && ts.isExportDeclaration(node) && (node.isTypeOnly
-      || (node.exportClause && ts.isNamedExports(node.exportClause)
-        && node.exportClause.elements.every(name => name.isTypeOnly)))) return
+    // verbatimModuleSyntax erases only statement-level type imports/exports.
+    // Empty lists and inline `type` names still emit a runtime module edge.
+    if (runtimeOnly && ts.isImportDeclaration(node) && node.importClause?.isTypeOnly) return
+    if (runtimeOnly && ts.isExportDeclaration(node) && node.isTypeOnly) return
     let literal: ts.Node | undefined
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) literal = node.moduleSpecifier
     if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
