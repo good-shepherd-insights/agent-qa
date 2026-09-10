@@ -504,7 +504,7 @@
       "classifies": true,
       "id": "knowledge.gates.list",
       "inputSchemaDigest": "3d7f0e0bc33415cdda6cbc7996e50d2c130d39fdc01d75982faa529d72cf3a29",
-      "outputSchemaDigest": "a3c7490b5e9003ebbebd3dbea6e9cd87f519b2fb904399842f46e0cbd269e262",
+      "outputSchemaDigest": "51bcf729b44d10746dc3d79a7b5a3e154f2ca3c64f578c759632dc871ac3d394",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_list_knowledge_gates"
