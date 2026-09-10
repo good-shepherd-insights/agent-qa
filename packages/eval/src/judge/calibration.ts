@@ -10,6 +10,44 @@ import type { StandaloneLabelRecord } from '../labels/label-record'
 import { computeDecisionIdentity } from '../replay/identity'
 import type { ReplaySample } from '../replay/result'
 import { isDecisionFullMatch, scoreReplaySample, type DecisionScore, type JudgeSettled, type ScoreDecisionContext } from '../match/score'
+import type { wilsonInterval } from '../stats/wilson'
+
+export type JudgeCalibrationGapReason = 'panel-not-configured' | 'no-credential' | 'single-family-host'
+export const JUDGE_CALIBRATION_GAP_REASONS = [
+  'panel-not-configured', 'no-credential', 'single-family-host',
+] as const satisfies readonly JudgeCalibrationGapReason[]
+export type JudgeCalibrationStatus = 'calibrated' | 'uncalibrated' | 'capability-gap'
+export const JUDGE_CALIBRATION_STATUSES = [
+  'calibrated', 'uncalibrated', 'capability-gap',
+] as const satisfies readonly JudgeCalibrationStatus[]
+
+/** Independent reporting floor: twenty decisions support a useful Wilson interval,
+ * but do not establish population accuracy or replace disclosure of its uncertainty. */
+export const JUDGE_CALIBRATION_MIN_N = 20
+export interface JudgeCalibrationMinimum { value: number; source: 'default' | 'flag' }
+export function resolveJudgeCalibrationMinimum(override?: number): JudgeCalibrationMinimum {
+  if (override !== undefined && (!Number.isSafeInteger(override) || override < 2)) {
+    throw new TypeError('min-n must be a safe integer at least 2')
+  }
+  return { value: override ?? JUDGE_CALIBRATION_MIN_N, source: override === undefined ? 'default' : 'flag' }
+}
+
+/** Safe, serializable entry diagnostics. No resolver messages or credential payloads. */
+export interface JudgeCalibrationEntryDiagnostic {
+  index: number
+  name: string
+  modelId?: string
+  families: readonly string[]
+  credential: 'present' | 'missing' | 'unauthenticated' | 'resolution-failed'
+  failures: readonly ('config-unresolved' | 'no-credential' | 'unknown-family' | 'replay-family-collision' | 'member-family-collision')[]
+}
+export type JudgeCalibrationResult =
+  | { status: 'calibrated'; n: number; pooledAgreement: number;
+      wilson95: NonNullable<ReturnType<typeof wilsonInterval>>;
+      perMember: readonly { judgeModelId: string; n: number; agreement: number;
+        wilson95: NonNullable<ReturnType<typeof wilsonInterval>> }[] }
+  | { status: 'uncalibrated'; n: number }
+  | { status: 'capability-gap'; reason: JudgeCalibrationGapReason }
 
 export type JudgeCalibrationSkipReason = 'invalid-gold' | 'missing-source' | 'conflicting-gold'
   | 'missing-executable-correction' | 'invalid-executable-correction' | 'invalid-recorded-model'

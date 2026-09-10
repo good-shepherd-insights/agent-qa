@@ -1,5 +1,6 @@
 export type { ArtifactSource, HandoffSource } from './ports'
-export { selectJudgeCalibrationGold, resolveJudgeCalibrationTruth, judgeCalibrationFullMatch } from './judge/calibration'
+export { selectJudgeCalibrationGold, resolveJudgeCalibrationTruth, judgeCalibrationFullMatch, JUDGE_CALIBRATION_GAP_REASONS, JUDGE_CALIBRATION_STATUSES, JUDGE_CALIBRATION_MIN_N, resolveJudgeCalibrationMinimum } from './judge/calibration'
+export type { JudgeCalibrationGapReason, JudgeCalibrationStatus, JudgeCalibrationMinimum, JudgeCalibrationEntryDiagnostic, JudgeCalibrationResult } from './judge/calibration'
 export type { JudgeCalibrationGold, JudgeCalibrationEvidence, JudgeCalibrationObservation, JudgeCalibrationTruth, JudgeCalibrationSkipReason, JudgeCalibrationDiagnostics } from './judge/calibration'
 export { collectSoftPopulation } from './labels/soft-population'
 export type { SoftPopulation, SoftObservation, SoftEvidenceSkip, SoftEvidenceSkipReason, CollectSoftPopulationInput } from './labels/soft-population'
