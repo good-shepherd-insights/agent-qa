@@ -825,7 +825,7 @@ export function createEvalCommand(): Command {
           const bootstrapSeed = opts.bootstrapSeed === undefined ? undefined
             : parseIntegerFlag('--bootstrap-seed')(opts.bootstrapSeed)
           const { resolveEvalSession, runFloorVerb } = await import('../eval-session-composition.js')
-          const session = await resolveEvalSession({ configPath: getGlobalConfigPath(command) })
+          const session = await resolveEvalSession({ configPath: getGlobalConfigPath(command), keyOnly: opts.fromMeasured !== undefined })
           const result = await runFloorVerb(session, {
             repeats, seeds, bootstrapSeed, commit: opts.commit,
             explanation: opts.explanation, classifierRepeatability: opts.classifierRepeatability,
@@ -861,6 +861,7 @@ export function createEvalCommand(): Command {
           const { resolveEvalSession, runGateVerb } = await import('../eval-session-composition.js')
           const session = await resolveEvalSession({
             configPath: getGlobalConfigPath(command), flags: { judge: opts.judge },
+            keyOnly: opts.report !== undefined,
           })
           const result = await runGateVerb(session, { report: opts.report, stagedDir: opts.stagedDir, seed })
           if (opts.json) {

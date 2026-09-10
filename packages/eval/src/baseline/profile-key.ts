@@ -21,6 +21,7 @@ import { sha256hex } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import { canonicalJson } from '../canonical-json'
+import { createPanelIdentity } from '../judge/panel'
 
 /** Single version gate for the committed pointer document (D-19). */
 export const BASELINE_POINTER_SCHEMA_VERSION = 2 as const
@@ -51,6 +52,8 @@ export interface BaselineProfileKeyInput {
   matcherVersion: number
   judgeModelId?: string
   judgeVersion?: number
+  /** Raw declarations stay separate from their escaped composite; never parse a profile key. */
+  judgeMemberModelIds?: readonly string[]
 }
 
 /** The committed body of `reports/baselines/<slugBranch(profileKey)>.json`. */
@@ -68,9 +71,20 @@ export interface BaselinePointer {
 
 /** Compose the D-19 profile key; absent judge fields read `none`, never empty. */
 export function composeBaselineProfileKey(input: BaselineProfileKeyInput): string {
-  const judgeModelId = input.judgeModelId ?? 'none'
-  const judgeVersion = input.judgeVersion ?? 'none'
+  const judge = profileJudgeIdentity(input)
+  const judgeModelId = judge.judgeModelId ?? 'none'
+  const judgeVersion = judge.judgeVersion ?? 'none'
   return `planner=${input.plannerModelId}|fingerprint=${input.fingerprint}|matcher=${input.matcherVersion}|judge=${judgeModelId}|judgeVersion=${judgeVersion}`
+}
+
+function profileJudgeIdentity(input: BaselineProfileKeyInput): { judgeModelId?: string; judgeVersion?: number } {
+  if (input.judgeMemberModelIds === undefined) return input
+  const identity = input.judgeMemberModelIds.length === 0 ? undefined : createPanelIdentity(input.judgeMemberModelIds)
+  if ((input.judgeModelId !== undefined && input.judgeModelId !== identity?.judgeModelId)
+    || (input.judgeVersion !== undefined && input.judgeVersion !== identity?.judgeVersion)) {
+    throw new TypeError('Judge declaration and stamped profile identity differ')
+  }
+  return identity === undefined ? {} : { judgeModelId: identity.judgeModelId, judgeVersion: identity.judgeVersion }
 }
 
 /**
@@ -80,6 +94,7 @@ export function composeBaselineProfileKey(input: BaselineProfileKeyInput): strin
 export function projectBaselinePointer(
   input: BaselineProfileKeyInput & { batchKey: string; corpusDigest: string },
 ): BaselinePointer {
+  const judge = profileJudgeIdentity(input)
   return {
     schemaVersion: BASELINE_POINTER_SCHEMA_VERSION,
     profileKey: composeBaselineProfileKey(input),
@@ -88,8 +103,8 @@ export function projectBaselinePointer(
     corpusDigest: input.corpusDigest,
     plannerModelId: input.plannerModelId,
     matcherVersion: input.matcherVersion,
-    ...(input.judgeModelId === undefined ? {} : { judgeModelId: input.judgeModelId }),
-    ...(input.judgeVersion === undefined ? {} : { judgeVersion: input.judgeVersion }),
+    ...(judge.judgeModelId === undefined ? {} : { judgeModelId: judge.judgeModelId }),
+    ...(judge.judgeVersion === undefined ? {} : { judgeVersion: judge.judgeVersion }),
   }
 }
 

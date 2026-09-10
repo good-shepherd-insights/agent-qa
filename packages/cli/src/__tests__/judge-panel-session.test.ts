@@ -66,7 +66,7 @@ describe('explicit judge declarations', () => {
   })
   it('refuses malformed runtime flags and more than three names without pruning', async () => {
     const configPath = await fixture({})
-    for (const judge of [['a', 'b', 'a', 'b'], [''], [3], null]) {
+    for (const judge of [['a', 'b', 'a', 'b'], [''], [3], null, Array(2)]) {
       await expect(composition.resolveEvalSession({ configPath, keyOnly: true,
         flags: { judge: judge as unknown as string[] } })).rejects.toBeInstanceOf(composition.EvalJudgeDeclarationError)
     }

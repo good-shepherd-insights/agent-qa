@@ -37,6 +37,7 @@ import {
   composeBaselineProfileKey,
   computeBatchKey,
   computeCorpusDigest,
+  createPanelIdentity,
   decisionCorrectnessVectors,
   deriveCensus,
   renderCensusMarkdown,
@@ -225,7 +226,7 @@ export function selectedEvalJudgeNames(config: Pick<EvalCliConfig, 'judge' | 'ju
     throw new EvalJudgeDeclarationError('eval.judge must be one nonempty registry name; use eval.judges for a list.')
   }
   const names = config.judge !== undefined ? [config.judge] : config.judges === undefined ? [] : config.judges
-  if (!Array.isArray(names) || names.some(name => typeof name !== 'string' || name.trim().length === 0)) {
+  if (!Array.isArray(names) || Array.from(names).some(name => typeof name !== 'string' || name.trim().length === 0)) {
     throw new EvalJudgeDeclarationError('eval.judges must be an array of nonempty registry names.')
   }
   if (names.length > JUDGE_CONFIG.maxPanelMembers) {
@@ -1099,37 +1100,31 @@ export async function runReplayGateVerb(
   // when the composition crosses its spend boundary, before resolving provider credentials.
   let execution: Promise<EvalSession> | undefined
   let maskingContextFactory = session.maskingContextFactory
+  const names = selectedEvalJudgeNames(session.evalConfig)
   const prepare = () =>
     (execution ??= resolveEvalSession({
       configPath: session.configPath,
-      flags: { judge: session.evalConfig.judge },
-    }).then((full) => {
+      flags: { judge: names },
+    }).then(async (full) => {
+      if ((await resolveGateProfileIdentity(full, opts.plannerOverrides)).profileKey !== identity.profileKey) {
+        throw new EvalJudgeDeclarationError('Gate profile identity changed before execution; re-run eval replay-gate.')
+      }
       maskingContextFactory = full.maskingContextFactory
       return full
     }))
-  let judge: import('@vostride/agent-qa-eval-local').RunReplayGateInput['judge']
-  if (session.evalConfig.judge !== undefined) {
-    const { resolveNamedConfig } = await import('./llm-utils.js')
-    const { config } = await resolveNamedConfig(session.evalConfig.judge, session.configPath)
-    judge = {
-      profile: {
-        provider: config.provider,
-        model: config.model,
-        auth: { mode: 'none' },
-        ...(config.baseURL === undefined ? {} : { baseURL: config.baseURL }),
-        ...(config.providerHeaders === undefined ? {} : { headers: config.providerHeaders }),
-      },
+  const declarations = await resolveEvalJudgeDeclarations(session)
+  const lazyJudges = declarations.map(({ name, profile }) => ({
+      profile,
       modelOverrides: opts.judgeOverrides,
       resolveAuth: async () => {
-        const resolved = await resolveEvalJudge(await prepare())
-        if (resolved.judge === undefined || 'members' in resolved.judge) throw new Error('configured Gate 1 judge changed')
-        return resolved.judge.auth
+        const full = await prepare()
+        return (await resolveNamedProfile(name, full.configPath)).auth
       },
-    }
-  }
+  }))
   const committedRoot = resolve(session.configDir, 'agent-qa-eval')
   const floor = listNoiseFloorArtefacts(committedRoot).artefacts.find(
-    (entry) => entry.artefact.profileKey === identity.profileKey,
+    (entry) => entry.path === join(committedRoot, committedNoiseFloorPath(identity.profileKey))
+      && entry.artefact.profileKey === identity.profileKey,
   )?.artefact
   const { createReplayGateHost } = await import('./gates/replay-gate-host.js')
   const result = await createReplayGateHost({
@@ -1140,7 +1135,8 @@ export async function runReplayGateVerb(
     session: { ...session, maskingContextFactory: () => maskingContextFactory() },
     composition: {
       identity,
-      baselineWarmup: { configPath: session.configPath, judge: session.evalConfig.judge },
+      baselineWarmup: { configPath: session.configPath,
+        ...(names.length > 1 ? { judges: names } : { judge: names[0] }) },
       k,
       kSource,
       maxScreens,
@@ -1149,8 +1145,8 @@ export async function runReplayGateVerb(
         modelOverrides: opts.plannerOverrides,
         resolveAuth: async () => (await resolveReplayPlanner(await prepare())).auth,
       },
-      judge,
-      judgeOverrideConfigured: session.evalConfig.judgeAllowSameFamily === true,
+      ...(lazyJudges.length > 1 ? { judgeMembers: lazyJudges } : { judge: lazyJudges[0] }),
+      judgeOverrideConfigured: names.length <= 1 && session.evalConfig.judgeAllowSameFamily === true,
       baselineSeed:
         session.evalConfig.seed !== undefined
           ? { seed: session.evalConfig.seed, source: 'config' }
@@ -1166,7 +1162,8 @@ export async function runReplayGateVerb(
     maxScreensSource,
     k,
     kSource,
-    notices: [...result.notices, capNotice],
+    notices: [...result.notices, ...(names.length > 1 && session.evalConfig.judgeAllowSameFamily === true
+      ? ['eval.judgeAllowSameFamily is ignored for a composite judge panel; every member must be disjoint.'] : []), capNotice],
     ...(result.kind === 'receipt' ? { lines: [...result.lines, capNotice] } : {}),
   }
 }
@@ -1231,18 +1228,15 @@ export async function runFloorVerb(
     : { profile: await resolveReplayProfileDeclaration(session) }
   const judgeResolution = opts.fromMeasured === undefined ? await resolveEvalJudge(session) : {}
   const judge = withJudgeOverrides(judgeResolution.judge, opts.judgeOverrides)
-  let judgeModelId = replayJudgeRequest(judge)?.judgeModelId
-  if (opts.fromMeasured !== undefined && session.evalConfig.judge) {
-    const { resolveNamedConfig } = await import('./llm-utils.js')
-    judgeModelId = (await resolveNamedConfig(session.evalConfig.judge, session.configPath)).config.model
+  const { plannerModelId, matcherVersion, judgeModelId, judgeVersion, profileKey } =
+    await resolveGateProfileIdentity(session, opts.plannerOverrides)
+  if (opts.fromMeasured === undefined && replayJudgeRequest(judge)?.judgeModelId !== judgeModelId) {
+    throw new EvalJudgeDeclarationError('Floor judge identity changed before execution; re-run eval floor.')
   }
-  const fingerprint = await resolveReplayProfileFingerprint(session, 'declared', opts.plannerOverrides)
   const profileKeyInputs = {
-    plannerModelId: await resolvePlannerModelId(session),
-    matcherVersion: buildEvalReport([]).matcherVersion,
-    ...(judgeModelId === undefined ? {} : { judgeModelId, judgeVersion: JUDGE_CONFIG.judgeVersion }),
+    plannerModelId, matcherVersion,
+    ...(judgeModelId === undefined ? {} : { judgeModelId, judgeVersion }),
   }
-  const profileKey = composeBaselineProfileKey({ ...profileKeyInputs, fingerprint })
   const costLines: string[] = []
   const result = await runNoiseFloorMeasurement({
     committedRoot: resolve(session.configDir, 'agent-qa-eval'),
@@ -2370,22 +2364,38 @@ export async function resolveGateProfileIdentity(
   plannerModelId: string
   judgeModelId?: string
   judgeVersion?: number
+  judgeMemberModelIds?: readonly string[]
   fingerprint: string
   matcherVersion: number
   profileKey: string
 }> {
   const plannerModelId = await resolvePlannerModelId(session)
   const fingerprint = await resolveReplayProfileFingerprint(session, 'declared', modelOverrides)
-  let judgeModelId: string | undefined
-  if (session.evalConfig.judge) {
-    const { resolveNamedConfig } = await import('./llm-utils.js')
-    judgeModelId = (await resolveNamedConfig(session.evalConfig.judge, session.configPath)).config.model
-  }
+  const judgeProfiles = await resolveEvalJudgeDeclarations(session)
+  const judgeMemberModelIds = judgeProfiles.map(member => member.profile.model)
+  const judgeIdentity = judgeMemberModelIds.length === 0 ? undefined : createPanelIdentity(judgeMemberModelIds)
+  const judgeModelId = judgeIdentity?.judgeModelId
   const identity = {
     plannerModelId, fingerprint, matcherVersion: buildEvalReport([]).matcherVersion,
     ...(judgeModelId === undefined ? {} : { judgeModelId, judgeVersion: JUDGE_CONFIG.judgeVersion }),
   }
-  return { ...identity, profileKey: composeBaselineProfileKey(identity) }
+  return { ...identity, profileKey: composeBaselineProfileKey(identity),
+    ...(judgeMemberModelIds.length > 1 ? { judgeMemberModelIds } : {}) }
+}
+
+/** Named registry lookup only: neither plugin loading, credentials nor models belong in a key. */
+async function resolveEvalJudgeDeclarations(session: EvalSession): Promise<{ name: string; profile: ModelProfile }[]> {
+  const { resolveNamedConfig } = await import('./llm-utils.js')
+  const members = []
+  for (const name of selectedEvalJudgeNames(session.evalConfig)) {
+    const { config } = await resolveNamedConfig(name, session.configPath, { keyOnly: true })
+    members.push({ name, profile: {
+      provider: config.provider, model: config.model, auth: { mode: 'none' as const },
+      ...(config.baseURL === undefined ? {} : { baseURL: config.baseURL }),
+      ...(config.providerHeaders === undefined ? {} : { headers: config.providerHeaders }),
+    } })
+  }
+  return members
 }
 
 /**
@@ -2424,7 +2434,7 @@ async function resolveBaselinePlannerConfig(session: EvalSession) {
     )
   }
   const { resolveNamedConfig } = await import('./llm-utils.js')
-  const { config } = await resolveNamedConfig(plannerName, session.configPath)
+  const { config } = await resolveNamedConfig(plannerName, session.configPath, { keyOnly: true })
   return config
 }
 

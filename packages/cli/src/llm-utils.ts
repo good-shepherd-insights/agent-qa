@@ -92,6 +92,7 @@ export async function loadAuthPluginsForRawConfig(raw: unknown, configPath = 'ag
 export async function resolveNamedConfig(
   configName?: string,
   configPath = 'agent-qa.config.yaml',
+  options: { keyOnly?: boolean } = {},
 ): Promise<{
   config: NamedLLMConfigLike
   allConfigs: NamedLLMConfigLike[]
@@ -99,8 +100,10 @@ export async function resolveNamedConfig(
 }> {
   const { loadConfigFile } = await import('./config.js')
   const raw = (await loadConfigFile(configPath)) as Record<string, unknown> | null
-  await loadAuthPluginsForRawConfig(raw, configPath)
-  await loadProviderPluginsForRawConfig(raw, configPath)
+  if (options.keyOnly !== true) {
+    await loadAuthPluginsForRawConfig(raw, configPath)
+    await loadProviderPluginsForRawConfig(raw, configPath)
+  }
   const llms = ((raw as any)?.registry?.llms as Array<NamedLLMConfigLike & Record<string, unknown>> | undefined)
     ?.map(normalizeLLMConfig)
   const defaultLLM = (raw as any)?.use?.llm as string | undefined

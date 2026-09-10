@@ -14,7 +14,7 @@ import * as plugins from '../provider-plugins.js'
 import * as core from '@vostride/agent-qa-core'
 import * as host from '../gates/replay-gate-host.js'
 import { resolveEvalSession, resolveGateProfileIdentity, runFloorVerb, runGateVerb,
-  runReplayGateVerb, runReportVerb } from '../eval-session-composition.js'
+  runReplayGateVerb } from '../eval-session-composition.js'
 
 let root: string
 beforeEach(async () => {
@@ -52,7 +52,7 @@ it('identity-only reads never load auth or provider plugins', async () => {
   const file = JSON.parse(await readFile(s.configPath, 'utf8'))
   file.plugins = { auth: [{ path: './unloadable-auth.fixture.js' }], providers: [{ path: './unloadable-provider.fixture.js' }] }
   await writeFile(s.configPath, JSON.stringify(file))
-  const authPlugins = vi.spyOn(core, 'loadLLMAuthPlugins').mockResolvedValue(undefined)
+  const authPlugins = vi.spyOn(core, 'loadLLMAuthPlugins').mockResolvedValue([])
   const providerPlugins = vi.spyOn(plugins, 'loadProviderPluginsForRawConfig').mockResolvedValue(undefined)
   const keyOnly = await resolveEvalSession({ configPath: s.configPath, keyOnly: true })
   await resolveGateProfileIdentity(keyOnly)
@@ -93,7 +93,8 @@ it('preserves flag replacement through lazy member auth and warm-up hints', asyn
   const s = await resolveEvalSession({ configPath: configured.configPath, keyOnly: true, flags: { judge: ['b', 'a'] } })
   const capture = vi.spyOn(host, 'createReplayGateHost').mockImplementation(() => ({
     run: async () => ({ kind: 'refused', refusal: { path: root, reason: 'fixture' }, notices: [], exit: 2 }),
-  }) as ReturnType<typeof host.createReplayGateHost>)
+    port: { runReplayGate: async () => { throw new Error('fixture uses run') } },
+  }))
   await runReplayGateVerb(s, 'candidate-fixture', { dryRun: true })
   const input = capture.mock.calls[0][0].composition
   expect(input.judgeMembers?.map(member => member.profile.model)).toEqual(['gemini-judge', 'claude-judge'])
@@ -108,7 +109,8 @@ it('refuses registry identity drift before lazy credentials', async () => {
   const s = await session()
   const capture = vi.spyOn(host, 'createReplayGateHost').mockImplementation(() => ({
     run: async () => ({ kind: 'refused', refusal: { path: root, reason: 'fixture' }, notices: [], exit: 2 }),
-  }) as ReturnType<typeof host.createReplayGateHost>)
+    port: { runReplayGate: async () => { throw new Error('fixture uses run') } },
+  }))
   await runReplayGateVerb(s, 'candidate-fixture')
   await session(['a', 'b'], ['claude-changed', 'gemini-judge'])
   await expect(capture.mock.calls[0][0].composition.planner.resolveAuth()).rejects.toThrow(/identity.*changed/)
@@ -132,7 +134,8 @@ async function comparisonFixture() {
   const decisions = projectDecisionVectorsDocument({ batchKey: report.batchKey, matcherVersion: report.matcherVersion, vectors })
   new local.FsReportStore({ root: join(root, '.agent-qa') }).save(report, decisions)
   const pointer = projectBaselinePointer({ ...identity, corpusDigest, batchKey: report.batchKey })
-  const floor = foldNoiseFloorArtefact({ profile: { ...identity, judgeModelId: stamp.judgeModelId, judgeVersion: stamp.judgeVersion },
+  const { judgeMemberModelIds: _members, ...floorProfile } = identity
+  const floor = foldNoiseFloorArtefact({ profile: floorProfile,
     corpusDigest, partitionVersion: 1, seeds: [11, 29], repeats: 3, bootstrapSeed: 17,
     runs: [11, 11, 11, 29].map((seed, index) => ({ index, seed, report, vectors, wallClockMs: 0 })),
     splitByCassetteId: new Map(), censusByProduct: { fixture: { natural: 24, heldOutShared: 0, heldOutPrivate: 0 } } })
@@ -163,6 +166,28 @@ it('refuses a foreign full key at a colliding baseline slug', async () => {
   await writeFile(file, JSON.stringify(foreign))
   expect(await runGateVerb(f.s, { report: f.report.batchKey })).toMatchObject({ kind: 'refused',
     refusal: { reason: expect.stringContaining('profileKey mismatch') } })
+})
+
+it('cannot reuse a single-judge baseline or cache for a composite profile', async () => {
+  const f = await comparisonFixture()
+  const singleSession = { ...f.s, evalConfig: { judge: 'a' } }
+  const single = await resolveGateProfileIdentity(singleSession)
+  expect(single.profileKey).not.toBe(f.identity.profileKey)
+  const singleReport = { ...f.report, judge: createPanelIdentity(['claude-judge']) }
+  const pointer = projectBaselinePointer({ ...single, corpusDigest: f.pointer.corpusDigest, batchKey: f.report.batchKey })
+  expect(local.commitEvalReport({ ...f, report: singleReport, markdown: '# Single fixture\n' }).kind).toBe('committed')
+  expect(local.writeBaselinePointer({ ...f, report: singleReport, pointer }).kind).toBe('written')
+  const gate = await runGateVerb(f.s, { report: f.report.batchKey })
+  expect(gate).toMatchObject({ kind: 'verdict', verdict: { exit: 2,
+    inconclusive: expect.arrayContaining([expect.objectContaining({ reason: 'missing-baseline' })]) } })
+  const singleCache = join(root, '.agent-qa', 'eval', 'gate', slugBranch(single.profileKey))
+  new local.FsReportStore({ root, outputDir: join(singleCache, 'reports') }).save(singleReport, f.decisions)
+  expect(local.listBaselineRunRoots(join(root, '.agent-qa'), single.profileKey)).toHaveLength(1)
+  const cache = local.resolveBaselineCache({ ...f.identity, agentQaRoot: join(root, '.agent-qa'),
+    gateRootSeed: 11, gateRootSeedSource: 'fixture', cassettes: [{ id: f.decisions.vectors[0].cassetteId, promptInputHash: 'fixture' }],
+    judgeIdentity: { judgeModelId: f.identity.judgeModelId!, judgeVersion: JUDGE_CONFIG.judgeVersion } })
+  expect(cache.roots).toEqual([])
+  expect(cache.rows).toMatchObject([{ kind: 'uncached' }])
 })
 
 it('never designates a report mixing single and composite identities', async () => {

@@ -205,18 +205,21 @@ export interface RunReplayGateInput {
     matcherVersion: number
     judgeModelId?: string
     judgeVersion?: number
+    judgeMemberModelIds?: readonly string[]
     fingerprint: string
     profileKey: string
   }
   planner: Planner
   judge?: Planner
+  /** Complete explicit lazy declaration; Gate 1 evaluates the raw members as a unit. */
+  judgeMembers?: readonly Planner[]
   judgeOverrideConfigured: boolean
   k: number
   kSource: Gate1KSource
   maxScreens: number
   baselineSeed: { seed?: number; source: 'flag' | 'config' } | { floorSeeds: readonly number[] }
   /** Effective CLI selection for a copyable, spend-bearing cache recovery command. */
-  baselineWarmup?: { configPath: string; judge?: string }
+  baselineWarmup?: { configPath: string; judge?: string; judges?: readonly string[] }
   maskingContextFactory?: RunCassetteReplayInput['maskingContextFactory']
   producedBy: { opId: string }
   clock?: () => number
@@ -735,10 +738,9 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
       input.baselineWarmup === undefined
         ? ''
         : ` --config ${quote(input.baselineWarmup.configPath)}`
-    const judge =
-      input.baselineWarmup?.judge === undefined
-        ? ''
-        : ` --judge ${quote(input.baselineWarmup.judge)}`
+    const judge = (input.baselineWarmup?.judges ??
+      (input.baselineWarmup?.judge === undefined ? [] : [input.baselineWarmup.judge]))
+      .map(name => ` --judge ${quote(name)}`).join('')
     notices.push(
       `uncached: ${uncached.map((row) => row.cassetteId).join(', ')}`,
       `agent-qa${config} eval gate --seed ${seed}${judge}`,
