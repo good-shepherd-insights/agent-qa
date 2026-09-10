@@ -10,10 +10,19 @@ vi.mock('@vostride/agent-qa-eval-local', async original => {
   const actual = await original<typeof import('@vostride/agent-qa-eval-local')>()
   return { ...actual, readLabelCalibration: vi.fn(actual.readLabelCalibration) }
 })
+vi.mock('@vostride/agent-qa-agent-local', async original => {
+  const actual = await original<typeof import('@vostride/agent-qa-agent-local')>()
+  return { ...actual, LOCAL_CURATION_CAPABILITIES: { ...actual.LOCAL_CURATION_CAPABILITIES,
+    readLowerTrustShares: vi.fn(actual.LOCAL_CURATION_CAPABILITIES.readLowerTrustShares) } }
+})
 import { readLabelCalibration } from '@vostride/agent-qa-eval-local'
+import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import * as replayHost from '../gates/replay-gate-host.js'
+import { markFixture } from '../gates/__tests__/feedback-fixture.js'
+import { createFeedbackPortForHost } from '../gates/feedback-host.js'
 
 const roots: string[] = []
-afterEach(() => { vi.clearAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 function project(knowledge = true) {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-doctor-calibration-')); roots.push(root)
   if (knowledge) mkdirSync(join(root, 'knowledge'))
@@ -82,4 +91,40 @@ it.each([false, true])('refuses malformed evidence explicitly with knowledge=%s 
   expect(row.status).toBe(knowledge ? 'fail' : 'skip')
   expect(tree(p.root)).toEqual(before)
   expect(readLabelCalibration).toHaveBeenCalledTimes(1)
+})
+
+it('binds the exact captured table across lower-trust facts and the lazy replay projection', async () => {
+  const p = project(), old = artifact(true, true); write(p.root, old)
+  const lower = vi.mocked(LOCAL_CURATION_CAPABILITIES.readLowerTrustShares)
+  const replay = vi.spyOn(replayHost, 'createReplayGatePortForHost')
+  const checks = createKnowledgeChecks({ ...p, probes: { ...probes, buildPromotionPosture: async input => {
+    write(p.root, artifact(false, false))
+    input.lowerTrustShares!({ knowledgeRoot: join(p.root, 'knowledge') })
+    return { kind: 'no-eval-root', committedRoot: join(p.root, 'agent-qa-eval') }
+  } } })
+  const row = await checks[3].check()
+  const resolve = lower.mock.calls[0]![0].resolveTrustPriors
+  expect(resolve?.()).toEqual(old.priors)
+  expect(replay.mock.calls[0]![0].resolveTrustPriors).toBe(resolve)
+  expect(row.message).toContain(`calibrated@${old.generationId}`)
+  await Promise.all(checks.map(check => check.check()))
+  expect(readLabelCalibration).toHaveBeenCalledTimes(1)
+})
+
+it('detects a real governing mark change and discloses unavailable evidence without writing', async () => {
+  const f = markFixture(); roots.push(f.root)
+  await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })
+  // The saved empty-gold identity must now be stale against this actual committed gold join.
+  write(f.root, artifact(true))
+  vi.clearAllMocks()
+  const input = { configPath: f.configPath, config: { knowledge: { dir: 'agent-qa-knowledge' } }, probes }
+  const before = tree(f.root)
+  const row = await createKnowledgeChecks(input)[3].check()
+  expect(row.message).toContain('goldDigest stale')
+  expect(tree(f.root)).toEqual(before)
+  expect(readLabelCalibration).toHaveBeenCalledTimes(1)
+  writeFileSync(join(f.runDir, 'handoff.json'), '{broken')
+  const unavailableBefore = tree(f.root)
+  expect((await createKnowledgeChecks(input)[3].check()).message).toContain('goldDigest unavailable')
+  expect(tree(f.root)).toEqual(unavailableBefore)
 })

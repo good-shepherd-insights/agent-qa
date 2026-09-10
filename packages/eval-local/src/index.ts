@@ -203,5 +203,5 @@ export type {
   ResolveMinimumGateSetOutcome,
   RunExclusionRead,
 } from './committed-corpus-source.js'
-export { loadCalibrationEvidence } from './calibration-evidence-source.js'
+export { loadCalibrationEvidence, readCalibrationGoldIdentity } from './calibration-evidence-source.js'
 export type { CalibrationEvidenceRead, CalibrationEvidenceMissingReason } from './calibration-evidence-source.js'

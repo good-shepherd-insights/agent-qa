@@ -58,13 +58,9 @@ const ordered = <T>(values: readonly T[]): T[] => [...values].sort((a, b) => {
   return first < second ? -1 : first > second ? 1 : 0
 })
 
-/** Selected committed marks measure their joined noisy sources, not all runtime traffic. */
-export function calibrateLabels(input: LabelCalibrationInput): LabelCalibrationReport {
+/** Governing gold/source join shared by calibration and read-only identity inspection. */
+function selectCalibrationGold(input: Pick<LabelCalibrationInput, 'snapshot' | 'marks'>) {
   const { snapshot } = input
-  // Twenty held-out sources is the fixed global-by-channel reporting floor.
-  const minGold = input.minGold ?? { value: 20, source: 'default' as const }
-  if (!Number.isSafeInteger(minGold.value) || minGold.value < 2
-    || !['default', 'flag'].includes(minGold.source)) throw new TypeError('Invalid minGold')
   const skippedCounts: LabelCalibrationReport['skippedCounts'] = {}
   const skip = (reason: CalibrationSkipReason) => { skippedCounts[reason] = (skippedCounts[reason] ?? 0) + 1 }
   const latest = new Map<string, MarkReceipt[]>()
@@ -98,10 +94,7 @@ export function calibrateLabels(input: LabelCalibrationInput): LabelCalibrationR
       claims.set(ref.sourceCassetteId, group)
     }
   }
-  const scores = { 'recorded-verdict': { n: 0, correct: 0 }, 'self-heal-pair': { n: 0, correct: 0 } }
-  const falsePass: Rate = { numerator: 0, denominator: 0 }
-  const falseFail: Rate = { numerator: 0, denominator: 0 }
-  const members = new Map<string, Set<boolean>>()
+  const sources: { source: NonNullable<ReturnType<typeof snapshot.labelsById.get>>; cassette: NonNullable<ReturnType<typeof snapshot.cassettesById.get>>; marks: MarkReceipt[]; truth: boolean; channel: 'recorded-verdict' | 'self-heal-pair' }[] = []
   for (const [sourceId, marks] of claims) {
     const source = snapshot.labelsById.get(sourceId), cassette = snapshot.cassettesById.get(sourceId)
     const sourceEntries = snapshot.entries.filter(entry => entry.cassetteId === sourceId)
@@ -117,6 +110,31 @@ export function calibrateLabels(input: LabelCalibrationInput): LabelCalibrationR
     const channel = source.label.sourceChannel
     if (channel !== 'recorded-verdict' && channel !== 'self-heal-pair') { skip('missing-source'); continue }
     evidence.push({ sourceId, channel, verdict: source.label.verdict?.pass ?? null, relation: source.label.pairing?.relation ?? null })
+    sources.push({ source, cassette, marks, truth, channel })
+  }
+  return { sources, goldIds, skippedCounts,
+    goldSetDigest: sha256hex(canonicalJson([...new Set(evidence.map(value => canonicalJson(value)))].sort())) }
+}
+
+/** Current effective identity only; no precision, priors or refreshed records are derived. */
+export function calibrationGoldSetDigest(input: Pick<LabelCalibrationInput, 'snapshot' | 'marks'>): string {
+  return selectCalibrationGold(input).goldSetDigest
+}
+
+/** Selected committed marks measure their joined noisy sources, not all runtime traffic. */
+export function calibrateLabels(input: LabelCalibrationInput): LabelCalibrationReport {
+  const { snapshot } = input
+  // Twenty held-out sources is the fixed global-by-channel reporting floor.
+  const minGold = input.minGold ?? { value: 20, source: 'default' as const }
+  if (!Number.isSafeInteger(minGold.value) || minGold.value < 2
+    || !['default', 'flag'].includes(minGold.source)) throw new TypeError('Invalid minGold')
+  const { sources, goldIds, skippedCounts, goldSetDigest } = selectCalibrationGold(input)
+  const skip = (reason: CalibrationSkipReason) => { skippedCounts[reason] = (skippedCounts[reason] ?? 0) + 1 }
+  const scores = { 'recorded-verdict': { n: 0, correct: 0 }, 'self-heal-pair': { n: 0, correct: 0 } }
+  const falsePass: Rate = { numerator: 0, denominator: 0 }
+  const falseFail: Rate = { numerator: 0, denominator: 0 }
+  const members = new Map<string, Set<boolean>>()
+  for (const { source, cassette, marks, truth, channel } of sources) {
     const prediction = channel === 'recorded-verdict' ? source.label.verdict?.pass
       : source.label.pairing ? source.label.pairing.relation === 'contrastive-positive' : undefined
     if (prediction === undefined) skip(channel === 'recorded-verdict' ? 'missing-verdict' : 'missing-pairing')
@@ -169,7 +187,7 @@ export function calibrateLabels(input: LabelCalibrationInput): LabelCalibrationR
       'user-mark': { n_gold: goldIds['user-mark'].size, precision: 'by-construction' },
       'overturned-verdict': { n_gold: goldIds['overturned-verdict'].size, precision: 'by-construction' } },
     minGold: { ...minGold }, corpusDigest: computeCorpusDigest(snapshot.entries),
-    goldSetDigest: sha256hex(canonicalJson([...new Set(evidence.map(value => canonicalJson(value)))].sort())),
+    goldSetDigest,
     priors, unchangedOrigins: ['user', 'import'], verifierFalsePassRate: falsePass, verifierFalseFailRate: falseFail,
     rootCauseClassifierAccuracy: accuracies, rootCauseClassifierGrain: 'member/producer:app_bug-binary', skippedCounts,
   }

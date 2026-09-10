@@ -101,6 +101,7 @@ describe('420 held-out calibration', () => {
     expect(report?.channels['user-mark'].n_gold).toBe(1)
     expect(report.channels['recorded-verdict'].n).toBe(1)
     expect(report.goldSetDigest).not.toBe(before.goldSetDigest)
+    expect(core.calibrationGoldSetDigest(input)).toBe(report.goldSetDigest)
   })
   it('skips conflicting overlapping address truths instead of inventing precedence', () => {
     const input = fixture(), mark = input.marks[0]!
@@ -144,6 +145,7 @@ describe('420 held-out calibration', () => {
     const report = calibrate(input)
     expect(report).toBeDefined()
     expect(report).toEqual(before)
+    expect(core.calibrationGoldSetDigest(input)).toBe(before.goldSetDigest)
     expect(calibrate(input, { minGold: { value: 2, source: 'flag' } }).goldSetDigest).toBe(before.goldSetDigest)
   })
   it('skips contradictory producer observations without picking an input order', () => {

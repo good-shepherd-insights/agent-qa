@@ -41,6 +41,7 @@ import {
   type ReadWriterLeaseOutcome,
 } from '@vostride/agent-qa-agent-local'
 
+import { buildTrustPriorsResolver, formatTrustPriorDisclosure, type TrustPriorsResolution } from '../curation/trust-priors.js'
 import { resolveRawConfigKnowledgeRoot } from '../config.js'
 import { buildPromotionPostureResolver, type PromotionPostureResolution } from '../curation/promotion-posture.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
@@ -115,6 +116,7 @@ interface DaemonHalf {
 }
 
 interface KnowledgeProbe {
+  trustPriors: TrustPriorsResolution
   learning: PromotionPostureResolution
   face: IndexFace
   embedder: AcquireEmbedderOutcome
@@ -131,6 +133,7 @@ interface KnowledgeCheckContext {
   knowledgeRoot: string | null
   relativeRoot: string
   relativeIndexPath: string
+  priors: () => TrustPriorsResolution
   probe: () => Promise<KnowledgeProbe>
 }
 
@@ -262,6 +265,19 @@ function createRetrievalRungCheck(context: KnowledgeCheckContext): DoctorCheck {
 }
 
 function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
+  const check = createLearningAvailabilityCheck(context)
+  return { ...check, check: async () => {
+    const priors = context.knowledgeRoot === null ? context.priors() : (await context.probe()).trustPriors
+    const row = await check.check()
+    const disclosure = priors.kind === 'refused'
+      ? 'label calibration: invalid or unavailable; trust priors: unavailable'
+      : `${priors.calibration}; ${formatTrustPriorDisclosure(priors.disclosure)}`
+    return { ...row, status: priors.kind === 'refused' && row.status !== 'skip' ? 'fail' : row.status,
+      message: `${row.message}; ${disclosure}` }
+  } }
+}
+
+function createLearningAvailabilityCheck(context: KnowledgeCheckContext): DoctorCheck {
   return {
     name: 'Learning mode',
     fixInstructions: LEARNING_MODE_FIX,
@@ -332,7 +348,7 @@ function learningRefusalLabel(refusal: string | undefined): string {
  * The probe is memoised because the rows are views of one host state:
  * probing per row could report an index face to the store row and a different one to the rung row
  * if a drain landed between them, which is the disagreement this whole design exists to prevent.
- * It is also lazy, so a host with no knowledge root never touches the substrate at all.
+ * It is also lazy; an absent knowledge root probes only calibration disclosure.
  */
 export function createKnowledgeChecks(
   input: CreateKnowledgeChecksInput,
@@ -351,17 +367,22 @@ export function createKnowledgeChecks(
   const buildPosture = probes.buildPromotionPosture ?? buildPromotionPostureResolver
 
   let pending: Promise<KnowledgeProbe> | undefined
+  let cachedPriors: TrustPriorsResolution | undefined
+  const priors = () => cachedPriors ??= buildTrustPriorsResolver({ configPath: input.configPath, inspectCalibration: true })
 
   async function runProbe(root: string): Promise<KnowledgeProbe> {
+    const trustPriors = priors()
     const face = classify(root)
     let learning: PromotionPostureResolution
     try {
+      if (trustPriors.kind === 'refused') throw new Error(trustPriors.reason)
+      const resolveTrustPriors = trustPriors.resolve
       learning = await buildPosture({ configPath: input.configPath,
         knowledgeRoot: root, agentQaRoot,
-        canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
-        lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
+        canaryFacts: facts => LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts({ ...facts, resolveTrustPriors }),
+        lowerTrustShares: facts => LOCAL_CURATION_CAPABILITIES.readLowerTrustShares({ ...facts, resolveTrustPriors }),
         currentBuildOrdinal: product => latestBuildOrdinal({ root: agentQaRoot, product }),
-        replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot }),
+        replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot, resolveTrustPriors }),
       })
     } catch (error) {
       const refusals = [error instanceof Error ? error.message : String(error)]
@@ -395,6 +416,7 @@ export function createKnowledgeChecks(
 
     return {
       learning,
+      trustPriors,
       face,
       embedder,
       rung: foldRetrievalRung(face, embedder, preferredProfile),
@@ -408,6 +430,7 @@ export function createKnowledgeChecks(
     knowledgeRoot,
     relativeRoot: knowledgeRoot === null ? '' : displayPath(knowledgeRoot),
     relativeIndexPath: knowledgeRoot === null ? '' : displayPath(indexDbPath(knowledgeRoot)),
+    priors,
     probe: () => {
       if (knowledgeRoot === null) throw new TypeError('no knowledge root to probe')
       pending ??= runProbe(knowledgeRoot)

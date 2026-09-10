@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import { canonicalJson, deriveRunSlug, resolveProductPartition, type CalibrationObservation, type LabelCalibrationInput } from '@vostride/agent-qa-eval'
+import { calibrationGoldSetDigest, canonicalJson, deriveRunSlug, resolveProductPartition, type CalibrationObservation, type LabelCalibrationInput } from '@vostride/agent-qa-eval'
 import { HANDOFF_FILE, RUNS_SUBDIR, loadCompletedRunHandoff } from '@vostride/agent-qa-runner-local'
 import { ANALYSIS_FILE, admitAnalysisArtifactForRun, guardRunAnalysisArtifact, type CompletedRunHandoff, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { readActiveCommittedCorpus, readCommittedCorpus } from './committed-corpus-source.js'
+import { assertCalibrationPath, type LabelCalibrationRead } from './calibration-source.js'
 import { FsMarkLedger, MARKS_LEDGER_FILE } from './mark-ledger.js'
 
 export type CalibrationEvidenceMissingReason = 'corpus-refused' | 'invalid-run-link' | 'path-refused'
@@ -22,12 +23,12 @@ function contained(root: string, path: string): boolean {
 }
 
 /** Guard persisted observations independently; a winning merged verdict loses producer evidence. */
-export function loadCalibrationEvidence(input: { committedRoot: string; agentQaRoot: string }): CalibrationEvidenceRead {
+export function loadCalibrationEvidence(input: { committedRoot: string; agentQaRoot: string; calibrationRead?: LabelCalibrationRead }): CalibrationEvidenceRead {
   const missingEvidenceCounts: CalibrationEvidenceRead['missingEvidenceCounts'] = {}
   const missing = (reason: CalibrationEvidenceMissingReason) => {
     missingEvidenceCounts[reason] = (missingEvidenceCounts[reason] ?? 0) + 1
   }
-  const raw = readCommittedCorpus(input.committedRoot)
+  const raw = readCommittedCorpus(input.committedRoot, input.calibrationRead)
   const links = new Map<string, { products: Set<string>; invalid: boolean }>()
   for (const entry of raw.snapshot.entries) {
     const { runId, runSlug } = entry.run_links
@@ -53,7 +54,7 @@ export function loadCalibrationEvidence(input: { committedRoot: string; agentQaR
       return { snapshot: { ...raw.snapshot, entries: [] }, marks: [], observations: [], missingEvidenceCounts }
     }
   }
-  const active = readActiveCommittedCorpus(input.committedRoot, input.agentQaRoot)
+  const active = readActiveCommittedCorpus(input.committedRoot, input.agentQaRoot, input.calibrationRead)
   for (const _refusal of active.refusals) missing('corpus-refused')
   const result: CalibrationEvidenceRead = { snapshot: active.snapshot, marks: [], observations: [], missingEvidenceCounts }
   const excluded = new Set(active.snapshot.excludedLabelIds)
@@ -116,4 +117,31 @@ export function loadCalibrationEvidence(input: { committedRoot: string; agentQaR
   result.marks.sort(compare)
   result.observations.sort(compare)
   return result
+}
+
+/** Guarded diagnostic read using the caller's already validated calibration generation. */
+export function readCalibrationGoldIdentity(input: {
+  committedRoot: string; agentQaRoot: string; calibrationRead: LabelCalibrationRead
+}): { kind: 'loaded'; goldSetDigest: string } | { kind: 'unavailable' } {
+  if (input.calibrationRead.kind === 'refused') return { kind: 'unavailable' }
+  try {
+    assertCalibrationPath(input.committedRoot, input.committedRoot)
+    const inspect = (directory: string): void => {
+      assertCalibrationPath(input.committedRoot, directory)
+      if (!existsSync(directory)) return
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (entry.name === 'blobs') continue
+        const path = join(directory, entry.name)
+        assertCalibrationPath(input.committedRoot, path)
+        if (entry.isDirectory()) inspect(path)
+      }
+    }
+    for (const name of ['labels', 'corpus', 'cassettes']) inspect(join(input.committedRoot, name))
+    const evidence = loadCalibrationEvidence(input)
+    // Missing/invalid governing evidence cannot certify a current or stale identity.
+    const unavailable = Object.entries(evidence.missingEvidenceCounts).some(([reason, n]) =>
+      n && !['analysis-missing', 'analyze-run-missing', 'deterministic-missing'].includes(reason))
+    if (unavailable) return { kind: 'unavailable' }
+    return { kind: 'loaded', goldSetDigest: calibrationGoldSetDigest(evidence) }
+  } catch { return { kind: 'unavailable' } }
 }

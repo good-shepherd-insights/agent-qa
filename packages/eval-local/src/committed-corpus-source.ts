@@ -57,12 +57,12 @@ import {
 } from './committed-root-store.js'
 import { listCassetteBundleDirs } from './replay-read.js'
 import { FsMarkLedger } from './mark-ledger.js'
-import { readLabelCalibration } from './calibration-source.js'
+import { readLabelCalibration, type LabelCalibrationRead } from './calibration-source.js'
 import { reportMetadataKind } from './report-metadata-guard.js'
 
 /** Gate-side effective view; raw committed history and the proposer reader remain unchanged. */
-export function readActiveCommittedCorpus(committedRoot: string, agentQaRoot: string): CommittedCorpusRead {
-  const read = readCommittedCorpus(committedRoot)
+export function readActiveCommittedCorpus(committedRoot: string, agentQaRoot: string, calibrationRead?: LabelCalibrationRead): CommittedCorpusRead {
+  const read = readCommittedCorpus(committedRoot, calibrationRead)
   const runs = new Set([...read.snapshot.labelsById.values()].filter(label =>
     label.provenance.sourceCassetteId !== undefined).map(label => label.provenance.runId))
   const marks = []
@@ -348,7 +348,7 @@ function blobsPresent(bundleDir: string): boolean {
  * Never throws for content: every parse or guard failure lands in `refusals`, and a missing root
  * yields an empty snapshot with a notice naming it.
  */
-export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead {
+export function readCommittedCorpus(committedRoot: string, calibrationRead?: LabelCalibrationRead): CommittedCorpusRead {
   const notices: string[] = []
   const refusals: CommittedReadRefusal[] = []
   const entries: CorpusEntry[] = []
@@ -447,7 +447,7 @@ export function readCommittedCorpus(committedRoot: string): CommittedCorpusRead 
   }
   // Generation-bearing refreshes stay invisible until the guarded publication loader
   // explicitly authorizes their marker. Seed/base revisions require no marker.
-  const calibration = readLabelCalibration(committedRoot)
+  const calibration = calibrationRead ?? readLabelCalibration(committedRoot)
   const authorized = calibration.kind === 'loaded' ? calibration.authorizedRevisionIds : new Set<string>()
   const eligibleHistory = validHistory.filter(record => record.revision?.generationId === undefined || authorized.has(record.revision.id))
   const generations = new Set(eligibleHistory.flatMap(record => record.revision?.generationId ? [record.revision.generationId] : []))

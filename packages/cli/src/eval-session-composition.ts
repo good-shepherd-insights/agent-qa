@@ -1005,7 +1005,7 @@ export function feedbackSeedHostOptions(session: EvalSession) {
 }
 
 // Preserve the existing eval composition boundary; the DATA bridge imports this lazily.
-export { runReplayGate, serializeReplayGateReceipt, readLabelCalibration } from '@vostride/agent-qa-eval-local'
+export { runReplayGate, serializeReplayGateReceipt, readLabelCalibration, readCalibrationGoldIdentity } from '@vostride/agent-qa-eval-local'
 export type { RunReplayGateInput, RunReplayGateResult } from '@vostride/agent-qa-eval-local'
 export type ReplayGateVerbResult = import('./gates/replay-gate-host.js').ReplayGateVerbResult & {
   maxScreens: number

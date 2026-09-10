@@ -1,7 +1,7 @@
 // 2026-09-07, 418 D-13/D-14: bundle-local DATA only; no eligibility decisions.
 import {
   asRecordId, isPromotionReceipt, standingReceiptsByGate, strongestPromotionPath,
-  survivingOutcomeEvents, type GateReceipt, type ScopeKey,
+  survivingOutcomeEvents, type GateReceipt, type ScopeKey, type TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 import { deriveBundleTrust, readGateReceipts } from '../bundle-read.js'
 import { enumerateMaintenanceBundleDirs, loadMaintenanceBundle } from '../maintenance-scan.js'
@@ -31,13 +31,13 @@ export interface StandingReceiptDigest {
 
 export interface LowerTrustShare { product: string; active: number; lowerTrust: number }
 
-function readBundles(knowledgeRoot: string) {
+function readBundles(knowledgeRoot: string, resolveTrustPriors?: () => TrustPriorTable | undefined) {
   // Unlike the tolerant catalog listing, this strict walk cannot undercount a cap
   // or publish a clean share when a bundle's committed evidence is unreadable.
   return enumerateMaintenanceBundleDirs(knowledgeRoot).map(entry => {
     const bundle = loadMaintenanceBundle(entry)
     const lines = readGateReceipts(entry.dir, bundle.manifest.id) ?? []
-    return { ...entry, bundle, lines, active: deriveBundleTrust(bundle).status === 'active' }
+    return { ...entry, bundle, lines, active: deriveBundleTrust(bundle, resolveTrustPriors?.()).status === 'active' }
   })
 }
 
@@ -47,9 +47,10 @@ function latest(ordinals: number[]): number | undefined {
 
 export function canaryPostureFactsFor(input: {
   knowledgeRoot: string; candidateId: string; scope: ScopeKey; agentQaRoot?: string
+  resolveTrustPriors?: () => TrustPriorTable | undefined
 }): CanaryPostureFacts {
   const id = asRecordId(input.candidateId)
-  const rows = readBundles(input.knowledgeRoot)
+  const rows = readBundles(input.knowledgeRoot, input.resolveTrustPriors)
   const candidate = rows.find(row => row.bundle.manifest.id === id)
   if (candidate === undefined) return { kind: 'not-found' }
   const scope = candidate.bundle.frontmatter.scope
@@ -96,9 +97,9 @@ export function standingReceiptDigestsFor(input: { knowledgeRoot: string }): Sta
   })))
 }
 
-export function lowerTrustSharesFor(input: { knowledgeRoot: string }): LowerTrustShare[] {
+export function lowerTrustSharesFor(input: { knowledgeRoot: string; resolveTrustPriors?: () => TrustPriorTable | undefined }): LowerTrustShare[] {
   const products = new Map<string, LowerTrustShare>()
-  for (const row of readBundles(input.knowledgeRoot)) {
+  for (const row of readBundles(input.knowledgeRoot, input.resolveTrustPriors)) {
     const share = products.get(row.product) ?? { product: row.product, active: 0, lowerTrust: 0 }
     products.set(row.product, share)
     if (!row.active) continue

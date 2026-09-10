@@ -24,6 +24,8 @@ import { completedRunsRoot, CURATION_TAIL_RECEIPT_FILE, readCurationTailReceipt 
 import { promotionHostProof } from './promotion-host-proof.js'
 import { publishBundleForTest, appendPromotionReceipt } from '@vostride/agent-qa-knowledge-local'
 
+const PRIOR_SUFFIX = '; label calibration: absent; trust priors: provisional'
+
 const STATIC_PROFILE: EmbeddingProfile = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' }
 
 /** `ready` carries a live `EmbedderPort`; no row reads it, so the cells hand over a stub. */
@@ -122,7 +124,7 @@ describe('createKnowledgeChecks', () => {
       { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
       { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
       { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
-      { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE },
+      { status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE + PRIOR_SUFFIX },
     ])
   })
 
@@ -131,7 +133,7 @@ describe('createKnowledgeChecks', () => {
     const classifyIndexFace = vi.fn(() => ({ source: 'index' as const }))
     const buildPromotionPosture = vi.fn()
     const { store, embedder, rung, learning } = await runChecks(project, baseProbes({ classifyIndexFace, buildPromotionPosture }))
-    expect(learning).toEqual({ status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE })
+    expect(learning).toEqual({ status: 'skip', message: NO_KNOWLEDGE_ROOT_MESSAGE + PRIOR_SUFFIX })
     expect(buildPromotionPosture).not.toHaveBeenCalled()
     expect(store.status).toBe('skip')
     expect(embedder.status).toBe('skip')
@@ -356,7 +358,7 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'no-eval-root', committedRoot }),
     }))
-    expect(learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), committedRoot)}` })
+    expect(learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), committedRoot)}` + PRIOR_SUFFIX })
   })
 
   it('passes the production replay port to the posture probe', async () => {
@@ -384,9 +386,9 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'ready', committedRoot: join(project.projectRoot, 'agent-qa-eval'), host, resolve: () => undefined }),
     }))
-    expect(learning).toEqual({ status, message: replayGateAvailable
+    expect(learning).toEqual({ status, message: (replayGateAvailable
       ? `${message.slice(0, -1)}; since-v4 ride-along 0; cap-exceeded 0; lower-trust none; staged 0)`
-      : message })
+      : message) + PRIOR_SUFFIX })
   })
 
   it('folds only validated v4 receipts into since-v4 counts and renders per-product shares', async () => {
@@ -412,7 +414,7 @@ describe('createKnowledgeChecks', () => {
       buildPromotionPosture: async () => ({ kind: 'ready', committedRoot: '', host, resolve: () => undefined }),
     }))
     expect(checks).toHaveLength(4)
-    expect(learning).toEqual({ status: 'pass', message: 'gated (Gate 1 bound; judge none; canary evidence none; since-v4 ride-along 3; cap-exceeded 1; lower-trust 1/4 active in example-web, 0/0 active in empty-product; staged 3)' })
+    expect(learning).toEqual({ status: 'pass', message: 'gated (Gate 1 bound; judge none; canary evidence none; since-v4 ride-along 3; cap-exceeded 1; lower-trust 1/4 active in example-web, 0/0 active in empty-product; staged 3)' + PRIOR_SUFFIX })
   })
 
   it('discloses actual on-disk shares through the production doctor facts binding without replay or writes', async () => {
@@ -469,7 +471,7 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'unavailable', committedRoot: join(project.projectRoot, 'agent-qa-eval'), refusals, resolve: () => undefined }),
     }))
-    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — noise-floor: no artefact for the active profile' })
+    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — noise-floor: no artefact for the active profile' + PRIOR_SUFFIX })
     expect(refusals).toEqual(['noise-floor: no artefact for profile X', 'second refusal'])
   })
 
@@ -483,7 +485,7 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'unavailable', committedRoot: join(project.projectRoot, 'agent-qa-eval'), refusals, resolve: () => undefined }),
     }))
-    expect(learning).toEqual({ status: 'fail', message: `posture-unavailable — ${cause}` })
+    expect(learning).toEqual({ status: 'fail', message: `posture-unavailable — ${cause}` + PRIOR_SUFFIX })
     expect(refusals).toEqual([refusal])
   })
 
@@ -492,7 +494,7 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => { throw new Error('posture read refused for private-model: Bearer synthetic-receipt-token') },
     }))
-    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — eval posture could not be resolved' })
+    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — eval posture could not be resolved' + PRIOR_SUFFIX })
   })
 
   it('probes each axis exactly once across all four rows', async () => {
@@ -586,7 +588,7 @@ describe('createKnowledgeChecks', () => {
     expect(second.embedder).toEqual(first.embedder)
     expect(second.rung).toEqual(first.rung)
     expect(second.learning).toEqual(first.learning)
-    expect(first.learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), join(project.projectRoot, 'agent-qa-eval'))}` })
+    expect(first.learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), join(project.projectRoot, 'agent-qa-eval'))}` + PRIOR_SUFFIX })
 
     expect(afterFirst).toEqual(before)
     expect(afterSecond).toEqual(before)
