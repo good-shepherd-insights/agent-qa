@@ -38,6 +38,18 @@ function git(args) {
   return result.stdout.trim()
 }
 const plain = text => text.replace(/\x1b\[[0-9;]*m/g, '')
+const existingEmptyPackage = '@vostride/agent-qa-tools-local'
+function isDisclosedEmptyLine(gate, line) {
+  const prefix = `${existingEmptyPackage}:test:`
+  return gate.kind === 'turbo-test' && gate.emptyPackages?.includes(existingEmptyPackage)
+    && line.startsWith(prefix) && line.slice(prefix.length).trim() === 'No test files found, exiting with code 0'
+}
+function hasTestFiles(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).some(entry => {
+    const file = path.join(directory, entry.name)
+    return entry.isDirectory() ? hasTestFiles(file) : /\.(?:test|spec)(?:-d)?\.[cm]?[jt]sx?$/.test(entry.name)
+  })
+}
 
 // The result validator is shared by real gates and subprocess controls.
 function validateOutput(gate, output) {
@@ -52,12 +64,15 @@ function validateOutput(gate, output) {
   if (gate.kind === 'turbo-test' || gate.kind === 'vitest') {
     requireMatch(/Test Files\s+[1-9]\d* passed/, 'Positive test-file summary missing')
     requireMatch(/Tests\s+[1-9]\d* passed/, 'Positive test summary missing')
-    if (/Tests\s+[^\n]*\d+ failed|Test Files\s+[^\n]*\d+ failed|No test files found/.test(output)) errors.push('Failed or empty test selection')
+    const checkedOutput = output.split('\n').filter(line => !isDisclosedEmptyLine(gate, line)).join('\n')
+    if (/Tests\s+[^\n]*\d+ failed|Test Files\s+[^\n]*\d+ failed|No test files found/.test(checkedOutput)) errors.push('Failed or empty test selection')
     // Named standalone gates have no optional lanes; the full workspace retains its historic skips.
     if (gate.kind === 'vitest' && /(?:Tests|Test Files)\s+[^\n]*\d+ skipped/.test(output)) errors.push('Requested named gate skipped cells')
     for (const name of gate.packages ?? []) {
       const lines = output.split('\n').filter(line => line.startsWith(`${name}:test:`)).join('\n')
-      if (!/Tests\s+[1-9]\d* passed/.test(lines) || !/Test Files\s+[1-9]\d* passed/.test(lines)) {
+      if (name === existingEmptyPackage && gate.emptyPackages?.includes(name)) {
+        if (!lines.split('\n').some(line => isDisclosedEmptyLine(gate, line))) errors.push(`Existing empty task lacks explicit outcome: ${name}`)
+      } else if (!/Tests\s+[1-9]\d* passed/.test(lines) || !/Test Files\s+[1-9]\d* passed/.test(lines)) {
         errors.push(`Workspace package lacks positive test summaries: ${name}`)
       }
     }
@@ -140,6 +155,7 @@ async function runGate(gate, out, sourceHead, initialHashes) {
     signal: processResult.signal, validation_errors: errors, started_at: started,
     finished_at: new Date().toISOString(), elapsed_seconds: Number(((performance.now() - start) / 1000).toFixed(3)),
     exit_code: verdict(processCode, errors), timed_out: false, turbo_force: 'true', log,
+    empty_test_packages: gate.emptyPackages ?? [],
     summaries: output.split('\n').filter(line => /Tasks:|Cached:|Test Files |Tests |^(?:# |ℹ )(tests|pass|fail|skipped)|^PASS L|^PANEL_|validation passed/.test(line)),
     subjects_before: initialHashes, subjects_after: after, ...(namespaceFiles ? { namespace_files: namespaceFiles } : {}) }
   fs.writeFileSync(path.join(out, `${gate.label}.json`), JSON.stringify(record, null, 2) + '\n', { flag: 'wx' })
@@ -214,11 +230,16 @@ async function main() {
     : fs.mkdtempSync(path.join(os.tmpdir(), 'agent-qa-panel-final-'))
   fs.mkdirSync(out, { recursive: true })
   const initialHashes = hashes()
-  // Workspace globs are the existing packages/* and tools/*; demand every test task's own result.
+  // Require every real suite. Only the existing, still-empty tools-local script is disclosed separately.
+  gates[2].emptyPackages = []
   gates[2].packages = ['packages', 'tools'].flatMap(base => fs.readdirSync(base).flatMap(name => {
     const file = path.join(base, name, 'package.json')
     if (!fs.existsSync(file)) return []
     const manifest = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (base === 'packages' && name === 'tools-local' && manifest.name === existingEmptyPackage
+      && manifest.scripts?.test === 'vitest run --passWithNoTests' && !hasTestFiles(path.join(base, name, 'src'))) {
+      gates[2].emptyPackages.push(manifest.name)
+    }
     return manifest.scripts?.test ? [manifest.name] : []
   }))
   if (!gates[2].packages.length) throw new Error('Workspace test inventory empty')
