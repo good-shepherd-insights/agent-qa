@@ -3,6 +3,7 @@ import { asRef, type Action, type MarkReceipt } from '@vostride/agent-qa-schema'
 import * as core from '../../index'
 import { MATCHER_CONFIG } from '../../match/config'
 import { makeArtifactRefV2Handoff } from '../../__tests__/fixtures/handoff-fixtures'
+import { wilsonInterval } from '../../stats/wilson'
 
 function fixture(kind: MarkReceipt['kind'] = 'confirmed-bug', correction?: Action) {
   const handoff = makeArtifactRefV2Handoff()
@@ -28,6 +29,87 @@ const select = (input: ReturnType<typeof fixture>) => Reflect.get(core, 'selectJ
 const truth = (gold: core.JudgeCalibrationGold, action: Action) => Reflect.get(core, 'resolveJudgeCalibrationTruth')?.({
   gold, candidate: { sampleIndex: 0, durationMs: 1, outcome: { kind: 'decision', action,
     identity: core.computeDecisionIdentity(action, (gold as { cassette: core.LeafCassette }).cassette.input.stateBefore.elements) } },
+})
+
+const memberIds = ['claude-sonnet-4', 'gemini-2.5', 'llama-3']
+function observation(id: string, verdicts: ('equivalent' | 'different' | 'error' | 'unsure')[] = ['equivalent', 'equivalent', 'different']): core.JudgeCalibrationProbeObservation {
+  const members: core.JudgeMemberOutcome[] = verdicts.map((verdict, index) => ({
+    judgeModelId: memberIds[index]!, judgeFamily: ['claude', 'gemini', 'llama'][index]!,
+    outcome: verdict === 'error' ? { kind: 'error', reason: 'provider-error', detail: 'fixed provider error' }
+      : verdict === 'unsure' ? { kind: 'abstained', cause: 'unsure-verdict' }
+      : { kind: 'settled', resolution: verdict, confidence: 'high' },
+    usage: { calls: 2, inputTokens: 20, outputTokens: 4 },
+  }))
+  return { decisionId: id, replayedModelId: 'gpt-5', truth: { kind: 'resolved', fullMatch: true, provenance: 'deterministic-full-match' },
+    eligibility: core.assessPanelEligibility({ memberModelIds: memberIds.slice(0, verdicts.length), replayedModelId: 'gpt-5' }),
+    kind: 'attempted', outcome: core.poolPanel(members), usage: { calls: verdicts.length * 2, inputTokens: verdicts.length * 20, outputTokens: verdicts.length * 4, members },
+    probe: { axis: 'element-identity', evidence: { stepText: 'Click continue', question: { kind: 'element-equivalence', gold: { role: 'button', nameNormalized: 'continue', ordinal: 0 }, candidate: { role: 'button', nameNormalized: 'continue', ordinal: 0 } } },
+      score: { kind: 'scored', matcherVersion: MATCHER_CONFIG.matcherVersion, tierReached: 2,
+        axes: { elementIdentity: { kind: 'scored', level: 'full', numeric: 1, tier: 2 } as never,
+          opClass: { kind: 'match' } as never, value: { kind: 'not-applicable' } },
+        sideEffect: { kind: 'none' }, loop: { kind: 'not-flagged' } as never } } }
+}
+function refused(id: string): core.JudgeCalibrationProbeObservation {
+  return { decisionId: id, replayedModelId: 'gpt-5', recordedModelId: 'claude-sonnet-4',
+    truth: { kind: 'resolved', fullMatch: true, provenance: 'deterministic-full-match' },
+    eligibility: core.assessPanelEligibility({ memberModelIds: memberIds, replayedModelId: 'gpt-5', recordedModelId: 'claude-sonnet-4' }),
+    kind: 'not-invoked', reason: 'no-eligible-judge' }
+}
+const summarize = (observations: readonly core.JudgeCalibrationProbeObservation[], minN?: number) =>
+  Reflect.get(core, 'summarizeJudgeCalibration')?.({ observations, memberModelIds: memberIds, minN: core.resolveJudgeCalibrationMinimum(minN) })
+
+describe('judge calibration independent denominators', () => {
+  it('counts one independent observation for a three-member majority and six physical calls', () => {
+    const result = summarize([observation('one')])
+    expect(result?.n).toBe(1)
+    expect(result).toMatchObject({ status: 'uncalibrated', pooledAgreement: 1, counts: { attempted: 1, truthComparable: 1 },
+      cost: { usage: { calls: 6, inputTokens: 60, outputTokens: 12 } }, disagreement: { numerator: 2, denominator: 3, rate: 2 / 3 } })
+    expect(result.wilson95).toEqual(wilsonInterval(1, 1))
+    expect(result.perMember.map((row: { agreement: number }) => row.agreement)).toEqual([1, 1, 0])
+  })
+  it.each([0, 19, 20, 21])('pins default independent n=%i boundary', n => {
+    const result = summarize(Array.from({ length: n }, (_, index) => observation(String(index))))
+    expect(result?.n).toBe(n)
+    expect(result.status).toBe(n >= 20 ? 'calibrated' : 'uncalibrated')
+    expect(result.minN).toBe(20); expect(result.minNSource).toBe('default')
+    if (!n) { expect(result).not.toHaveProperty('pooledAgreement'); expect(result).not.toHaveProperty('wilson95') }
+  })
+  it('keeps unresolved truth in invocation and abstention counts but outside agreement', () => {
+    const row = observation('unresolved', ['equivalent', 'error', 'unsure'])
+    row.truth = { kind: 'unresolved', reason: 'truth-unresolved' }
+    const result = summarize([row, observation('known')])
+    expect(result?.n).toBe(1)
+    expect(result).toMatchObject({ counts: { attempted: 2, unresolvedTruth: 1, truthComparable: 1 },
+      abstention: { numerator: 1, denominator: 2, rate: 0.5 },
+      disagreement: { numerator: 2, denominator: 3 }, cost: { usage: { calls: 12, inputTokens: 120 } } })
+    expect(result.perMember[1]).toMatchObject({ settled: 1, errors: 1, abstained: 0, n: 1 })
+    expect(result.perMember[2]).toMatchObject({ settled: 1, errors: 0, abstained: 1, n: 1 })
+  })
+  it('excludes zero-call refusals from every measured denominator and cost', () => {
+    const measured = summarize([observation('known')]), mixed = summarize([refused('refused'), observation('known')])
+    expect(mixed?.counts).toMatchObject({ selected: 2, eligible: 1, attempted: 1, eligibilityRefused: 1 })
+    for (const key of ['n', 'pooledAgreement', 'wilson95', 'perMember', 'abstention', 'disagreement', 'cost']) expect(mixed[key]).toEqual(measured[key])
+    const empty = summarize([refused('a'), refused('b')])
+    expect(empty).toMatchObject({ status: 'uncalibrated', n: 0, counts: { attempted: 0, eligibilityRefused: 2 }, cost: { usage: { calls: 0 } } })
+    for (const key of ['pooledAgreement', 'wilson95']) expect(empty).not.toHaveProperty(key)
+    expect(empty.abstention).not.toHaveProperty('rate'); expect(empty.disagreement).not.toHaveProperty('rate')
+    expect(empty.perMember.every((row: { abstained: number; errors: number }) => row.abstained === 0 && row.errors === 0)).toBe(true)
+  })
+  it('uses whole-action full match when equivalent elements have an operation mismatch', () => {
+    const row = observation('wrong-op')
+    if (row.kind !== 'attempted' || row.probe.score.kind !== 'scored') throw new Error('fixture')
+    row.probe.score.axes.opClass = { kind: 'mismatch' } as never
+    row.truth = { kind: 'resolved', fullMatch: false, provenance: 'deterministic-full-match' }
+    expect(summarize([row])?.pooledAgreement).toBe(1)
+    expect(summarize([row]).perMember.every((member: { agreement: number }) => member.agreement === 1)).toBe(true)
+  })
+  it('records override provenance and deterministic reruns without inflating independent n', () => {
+    const rows = [observation('a'), observation('b')], before = JSON.stringify(rows)
+    expect(summarize(rows, 2)?.status).toBe('calibrated')
+    expect(summarize(rows, 3)).toMatchObject({ status: 'uncalibrated', minN: 3, minNSource: 'flag' })
+    expect(summarize(rows, 2)).toEqual(summarize(rows, 2)); expect(JSON.stringify(rows)).toBe(before)
+    expect(() => summarize([rows[0]!, rows[0]!])).toThrow('independent')
+  })
 })
 
 describe('judge calibration independent source truth', () => {
