@@ -6,7 +6,7 @@ import type { JudgeCalibrationGapReason, JudgeCalibrationStatus } from '../../in
 it('judge calibration gaps exact type bars', () => {
   expectTypeOf<JudgeCalibrationGapReason>().toEqualTypeOf<'panel-not-configured' | 'no-credential' | 'single-family-host'>()
   expectTypeOf<(typeof JUDGE_CALIBRATION_GAP_REASONS)[number]>().toEqualTypeOf<'panel-not-configured' | 'no-credential' | 'single-family-host'>()
-  expectTypeOf<Exclude<JudgeCalibrationGapReason, (typeof JUDGE_CALIBRATION_GAP_REASONS)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<JudgeCalibrationGapReason, (typeof JUDGE_CALIBRATION_GAP_REASONS)[number]>>().toBeNever()
   expectTypeOf<Exclude<'panel-not-configured' | 'no-credential' | 'single-family-host', JudgeCalibrationGapReason>>().toBeNever()
   expectTypeOf<Exclude<JudgeCalibrationGapReason, 'panel-not-configured' | 'no-credential' | 'single-family-host'>>().toBeNever()
   expectTypeOf<Exclude<'panel-not-configured' | 'no-credential' | 'single-family-host', (typeof JUDGE_CALIBRATION_GAP_REASONS)[number]>>().toBeNever()
@@ -15,7 +15,7 @@ it('judge calibration gaps exact type bars', () => {
 it('judge calibration statuses exact type bars', () => {
   expectTypeOf<JudgeCalibrationStatus>().toEqualTypeOf<'calibrated' | 'uncalibrated' | 'capability-gap'>()
   expectTypeOf<(typeof JUDGE_CALIBRATION_STATUSES)[number]>().toEqualTypeOf<'calibrated' | 'uncalibrated' | 'capability-gap'>()
-  expectTypeOf<Exclude<JudgeCalibrationStatus, (typeof JUDGE_CALIBRATION_STATUSES)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<JudgeCalibrationStatus, (typeof JUDGE_CALIBRATION_STATUSES)[number]>>().toBeNever()
   expectTypeOf<Exclude<'calibrated' | 'uncalibrated' | 'capability-gap', JudgeCalibrationStatus>>().toBeNever()
   expectTypeOf<Exclude<JudgeCalibrationStatus, 'calibrated' | 'uncalibrated' | 'capability-gap'>>().toBeNever()
   expectTypeOf<Exclude<'calibrated' | 'uncalibrated' | 'capability-gap', (typeof JUDGE_CALIBRATION_STATUSES)[number]>>().toBeNever()
