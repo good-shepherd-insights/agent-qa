@@ -456,8 +456,40 @@ export function createEvalCommand(): Command {
     .option('--commit', 'publish checked revisions and calibration.json')
     .option('--replace', 'with --commit, replace a divergent calibration marker')
     .option('--min-gold <n>', 'minimum joined gold sources per channel (recorded default: 20; minimum: 2)')
+    .option('--judge-panel', 'probe the explicit judge panel against executable gold; preview incurs bounded model calls')
+    .option('--min-n <n>', 'minimum independent judge observations (recorded default: 20; minimum: 2)')
     .option('--json', 'emit the typed result DTO to stdout')
-    .action(async (opts: { commit?: boolean; replace?: boolean; minGold?: string; json?: boolean }, command: Command) => {
+    .action(async (opts: { commit?: boolean; replace?: boolean; minGold?: string; judgePanel?: boolean; minN?: string; json?: boolean }, command: Command) => {
+      if (opts.judgePanel || opts.minN !== undefined) {
+        let result: import('../eval-session-composition.js').JudgeCalibrateVerbResult | { kind: 'refused'; reason: string }
+        const minN = opts.minN === undefined ? undefined : Number(opts.minN)
+        if (!opts.judgePanel || opts.minGold !== undefined) {
+          result = { kind: 'refused', reason: '--min-n requires --judge-panel; --min-gold is only for label calibration.' }
+        } else if (opts.minN !== undefined && (!/^\d+$/.test(opts.minN.trim()) || !Number.isSafeInteger(minN) || minN! < 2)) {
+          result = { kind: 'refused', reason: '--min-n must be a safe integer of at least 2.' }
+        } else if (opts.commit || opts.replace) {
+          result = { kind: 'refused', reason: 'Judge panel publication is unavailable; omit --commit and --replace to preview.' }
+        } else {
+          try {
+            const { resolveEvalSession, runJudgeCalibrateVerb } = await import('../eval-session-composition.js')
+            const session = await resolveEvalSession({ configPath: getGlobalConfigPath(command) })
+            result = await runJudgeCalibrateVerb(session, { minN })
+          } catch {
+            result = { kind: 'refused', reason: 'Judge calibration unavailable; check the selected config and local corpus permissions, then retry.' }
+          }
+        }
+        if (opts.json) console.log(JSON.stringify(result, null, 2))
+        else if (result.kind === 'refused') console.error(`calibrate: refused — ${result.reason}`)
+        else {
+          console.log(`judge panel: ${result.status} n=${result.n} minN=${result.minN} (${result.minNSource})`)
+          if (result.kind === 'capability-gap') console.log(`capability gap: ${result.reason}`)
+          else console.log(`selected=${result.counts.selected} eligible=${result.counts.eligible} refused=${result.counts.eligibilityRefused} attempted=${result.counts.attempted}`)
+          console.log(`probe calls: ${result.cost.usage.calls}; bound=${result.cost.callBound} (eligible executable decisions × one question × members × two swaps)`)
+          console.log('Agreement on selected executable gold; not a population accuracy estimate. Preview writes no committed artifact.')
+        }
+        if (result.kind === 'refused') process.exitCode = 1
+        return
+      }
       let result: CalibrateVerbResult
       const minGold = opts.minGold === undefined ? undefined : Number(opts.minGold)
       if (opts.minGold !== undefined && (!/^\d+$/.test(opts.minGold.trim()) || !Number.isSafeInteger(minGold) || minGold! < 2)) {

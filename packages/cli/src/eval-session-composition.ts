@@ -114,6 +114,7 @@ import {
   runNoiseFloorMeasurement,
   runReleaseGate,
   runLabelCalibration,
+  runJudgePanelCalibration,
   seedCommittedCorpus,
   sweepCassetteReplays,
   writeBaselinePointer,
@@ -219,6 +220,7 @@ export class EvalJudgeDeclarationError extends TypeError {
 }
 
 export { preflightJudgePanel } from './judge-panel-preflight.js'
+import { preflightJudgePanel } from './judge-panel-preflight.js'
 export type { JudgePanelPreflightDeps, JudgePanelPreflightResult } from './judge-panel-preflight.js'
 // Preflight consumes pure contracts through this existing surface composition boundary.
 export { createPanelIdentity }
@@ -884,6 +886,39 @@ export const LABEL_CALIBRATION_MIN_GOLD = 20
 
 export type CalibrateVerbResult = Extract<RunLabelCalibrationResult, { artifact: unknown }>
   | { kind: Exclude<RunLabelCalibrationResult['kind'], 'dry-run' | 'committed' | 'unchanged'>; reason: string }
+
+/** The explicit operator panel preview uses credentials only for the declared judge bindings. */
+export async function runJudgeCalibrateVerb(session: EvalSession, opts: {
+  minN?: number; judgeOverrides?: ModelProviderOverrides
+} = {}) {
+  const preflight = await preflightJudgePanel(session, { minN: opts.minN })
+  if (preflight.kind === 'capability-gap') return { kind: preflight.kind, status: preflight.status,
+    reason: preflight.reason, minN: preflight.minN.value, minNSource: preflight.minN.source,
+    entries: preflight.entries, ...(preflight.identity ? { identity: preflight.identity } : {}),
+    n: 0, cost: { callBound: 0, usage: { calls: 0 } } }
+  const fingerprint = computeReplayProfileFingerprintFor({ profile: preflight.replayProfile,
+    seedPolicy: session.evalConfig.seed === undefined ? 'none' : 'declared' })
+  const result = await runJudgePanelCalibration({
+    committedRoot: resolve(session.configDir, 'agent-qa-eval'), agentQaRoot: resolve(session.configDir, '.agent-qa'),
+    replayProfile: preflight.replayProfile,
+    // Saved evidence must prove this actual planner/profile; judging does not rerun a planner.
+    profile: { plannerModelId: preflight.replayProfile.model, fingerprint,
+      matcherVersion: (await import('@vostride/agent-qa-eval')).projectMatcherConfigContract().version,
+      judgeModelId: preflight.identity.judgeModelId, judgeVersion: preflight.identity.judgeVersion },
+    members: preflight.members.map(member => ({ ...member, modelOverrides: opts.judgeOverrides })),
+    minN: preflight.minN, maskingContextFactory: session.maskingContextFactory,
+  })
+  const masker = session.maskingContextFactory()
+  try {
+    for (const member of preflight.members) {
+      if (member.auth.kind === 'api-key') masker.register(member.auth.apiKey)
+      if (member.auth.kind === 'bearer-token') masker.register(member.auth.token)
+    }
+    return JSON.parse(masker.mask(JSON.stringify({ ...result, entries: preflight.entries }))) as typeof result & { entries: typeof preflight.entries }
+  } finally { masker.dispose() }
+}
+
+export type JudgeCalibrateVerbResult = Awaited<ReturnType<typeof runJudgeCalibrateVerb>>
 
 /** Only the explicit operator command calls this producer; no model or credential resolution. */
 export async function runCalibrateVerb(session: EvalSession, opts: {

@@ -11,6 +11,10 @@ import { computeDecisionIdentity } from '../replay/identity'
 import type { ReplaySample } from '../replay/result'
 import { isDecisionFullMatch, scoreReplaySample, type DecisionScore, type JudgeSettled, type ScoreDecisionContext } from '../match/score'
 import type { wilsonInterval } from '../stats/wilson'
+import { projectActionGoldValue } from '../extract/sidecar-leg'
+import type { JudgeTieEvidence } from './prompt'
+import type { JudgeEligibility, UsageAggregator } from './adjudicate'
+import type { JudgePairwiseOutcome } from '../match/score'
 
 export type JudgeCalibrationGapReason = 'panel-not-configured' | 'no-credential' | 'single-family-host'
 export const JUDGE_CALIBRATION_GAP_REASONS = [
@@ -79,6 +83,44 @@ export interface JudgeCalibrationEvidence extends JudgeCalibrationGold {
 /** One source decision, never one copy per panel member. Unresolved truth is still probed. */
 export interface JudgeCalibrationObservation extends JudgeCalibrationEvidence {
   fullMatch?: boolean
+}
+
+export interface JudgeCalibrationProbe {
+  evidence: JudgeTieEvidence
+  axis: JudgeSettled['axis']
+  score: DecisionScore
+}
+export type JudgeCalibrationProbeObservation = {
+  decisionId: string
+  replayedModelId: string
+  recordedModelId?: string
+  truth: JudgeCalibrationTruth
+  eligibility: JudgeEligibility
+} & (
+  | { kind: 'not-invoked'; reason: 'no-eligible-judge' }
+  | { kind: 'skipped'; reason: 'missing-evidence' }
+  | { kind: 'attempted'; probe: JudgeCalibrationProbe; outcome: JudgePairwiseOutcome; usage: UsageAggregator }
+)
+
+/** Select one existing question; all scoring and evidence projection stays neutral. */
+export function prepareJudgeCalibrationProbe(row: JudgeCalibrationEvidence): JudgeCalibrationProbe | undefined {
+  if (row.candidate.outcome.kind !== 'decision') return undefined
+  const { cassette, candidate } = row
+  const target = row.candidate.outcome.identity.target
+  const anchor = cassette.sidecar.goldAnchor
+  const candidateValue = projectActionGoldValue(row.candidate.outcome.action)
+  const question = anchor && target ? { kind: 'element-equivalence' as const,
+    gold: { role: anchor.role, nameNormalized: anchor.nameNormalized, ordinal: anchor.ordinal }, candidate: target }
+    : cassette.sidecar.goldValue !== undefined && candidateValue !== undefined
+      ? { kind: 'value-equivalence' as const, goldValue: cassette.sidecar.goldValue, candidateValue }
+      : undefined
+  if (!question) return undefined
+  const score = scoreReplaySample(cassette.sidecar, candidate, { priorIdentities: 'leaf-no-history',
+    screenStateHash: cassette.receipt.screenStateHash, stateMetadata: cassette.input.stateBefore.metadata })
+  if (score.kind === 'never-scored') return undefined
+  return { evidence: { stepText: cassette.input.stepText, question },
+    axis: question.kind === 'element-equivalence' ? 'element-identity' : 'value',
+    score }
 }
 const hash = (value: unknown) => sha256hex(canonicalJson(value))
 const compare = (a: unknown, b: unknown) => canonicalJson(a) < canonicalJson(b) ? -1 : canonicalJson(a) > canonicalJson(b) ? 1 : 0
