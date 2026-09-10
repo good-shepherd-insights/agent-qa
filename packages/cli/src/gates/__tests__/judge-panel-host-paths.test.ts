@@ -7,7 +7,9 @@ import type { ReplayGatePort, KnowledgeReaderPort } from '@vostride/agent-qa-age
 import * as local from '@vostride/agent-qa-agent-local'
 import type { ComposeLocalAgentInput, LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { createPanelIdentity } from '@vostride/agent-qa-eval'
-import { asRecordId, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { asRecordId, asRef, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import * as evalLocal from '@vostride/agent-qa-eval-local'
+import * as model from '@vostride/agent-qa-model'
 import type { GateReceipt } from '@vostride/agent-qa-schema'
 import * as session from '../../eval-session-composition.js'
 import * as llm from '../../llm-utils.js'
@@ -33,6 +35,10 @@ const { completeGate1Receipt } = await import(new URL(
 ).href)
 const { writeGate1Fixture } = await import(new URL(
   '../../../../eval-local/src/__tests__/fixtures/gate1-fixtures.js', import.meta.url,
+).href)
+const { makeReplayHandoff, memArtifacts, extractStoreLoad, capturingStub,
+  actionGenerateResult, judgeGenerateResult } = await import(new URL(
+  '../../../../eval-local/src/__tests__/fixtures/replay-fixtures.js', import.meta.url,
 ).href)
 
 const INITIAL = ['claude-fixture', 'gemini-fixture']
@@ -152,6 +158,64 @@ function capturePosture() {
 }
 
 describe('421 production panel host paths', () => {
+  it('public replay and saved report retain the same complete panel without report-time binding or auth', async () => {
+    vi.mocked(llm.resolveModelAuth).mockImplementation(async name => ({ kind: 'unauthenticated',
+      credentialKey: name, provider: 'openai-compatible', optional: true, message: 'fixture' }))
+    const handoff = makeReplayHandoff({ vision: false })
+    const step = handoff.tests[0]!.steps[0]!
+    step.modelProfile!.modelId = 'gpt-recorded'
+    const state = step.subActions[0]!.stateBefore!
+    state.elements.push({ ...state.elements[0]!, ref: asRef('e-next'), name: 'Next', nameNormalized: 'next' })
+    state.refMap[asRef('e-next')] = state.refMap[asRef('e-continue')]!
+    extractStoreLoad(handoff, memArtifacts(), agentQaRoot)
+    const order: string[] = []
+    const planner = capturingStub(() => actionGenerateResult('web', 'e-next'), 'gpt-fixture')
+    const judges = INITIAL.map(id => capturingStub(() => { order.push(id); return judgeGenerateResult('equivalent', 'high') }, id))
+    const sweep = vi.spyOn(evalLocal, 'sweepCassetteReplays')
+    writeFileSync(join(root, '.env.secrets.local'), '')
+    const resolved = await session.resolveEvalSession({ configPath })
+    expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+    const replay = await session.runReplayVerb(resolved, {}, { source: 'staged',
+      plannerOverrides: { languageModels: planner.languageModels },
+      judgeOverrides: { languageModels: Object.assign({}, ...judges.map(row => row.languageModels)) } })
+    expect(replay.replayed).toBe(1)
+    expect(replay.judge.invoked).toBeGreaterThan(0)
+    expect(sweep).toHaveBeenCalledTimes(1)
+    expect(sweep.mock.calls[0]![0].judge).toMatchObject({ members: INITIAL.map(id => ({ profile: { model: id } })) })
+    expect(order).toEqual(INITIAL.flatMap(id => [id, id]))
+    vi.mocked(llm.resolveModelAuth).mockClear()
+    const factory = vi.spyOn(model, 'createModel').mockImplementation(() => { throw new Error('report model forbidden') })
+    const bind = vi.spyOn(evalLocal, 'bindJudgePanel').mockImplementation(() => { throw new Error('report binding forbidden') })
+    const report = await session.runReportVerb(resolved, {}, { source: 'staged' })
+    expect(report.report.judge).toMatchObject(createPanelIdentity(INITIAL))
+    expect(report.judgeIdentity).toBe('present')
+    expect(factory).not.toHaveBeenCalled()
+    expect(bind).not.toHaveBeenCalled()
+    expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('operator calibration crosses the sanctioned composition seam with actual key-only planner and complete members', async () => {
+    vi.mocked(llm.resolveModelAuth).mockImplementation(async name => ({ kind: 'api-key',
+      credentialKey: name, provider: 'openai-compatible', apiKey: 'operator-fixture-value' }))
+    const named = vi.spyOn(llm, 'resolveNamedConfig')
+    const factory = vi.spyOn(model, 'createModel').mockImplementation(() => { throw new Error('unexpected factory') })
+    const run = vi.spyOn(evalLocal, 'runJudgeCalibration').mockRejectedValue(new Error('captured operator boundary'))
+    writeFileSync(join(root, '.env.secrets.local'), '')
+    const resolved = await session.resolveEvalSession({ configPath })
+    expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+    await expect(session.runJudgeCalibrateVerb(resolved)).rejects.toThrow('captured operator boundary')
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run.mock.calls[0]![0]).toMatchObject({ kind: 'probe', probe: {
+      profile: { plannerModelId: 'gpt-fixture', judgeModelId: createPanelIdentity(INITIAL).judgeModelId, judgeVersion: 2 },
+      replayProfile: { model: 'gpt-fixture' }, members: INITIAL.map(id => ({ profile: { model: id } })),
+    } })
+    expect(named.mock.calls.every(call => call[2]?.keyOnly === true)).toBe(true)
+    expect(vi.mocked(llm.resolveModelAuth).mock.calls.map(call => call[0])).toEqual(['judge-0', 'judge-1'])
+    expect(factory).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
   it('local-agent host supplies the shared lazy port to its operation resolver', async () => {
     const proof = capturePosture()
     let composed: ComposeLocalAgentInput | undefined
