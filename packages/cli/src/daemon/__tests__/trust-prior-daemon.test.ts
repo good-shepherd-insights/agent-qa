@@ -163,3 +163,28 @@ it('preserves default priors and no calibration read for a legacy daemon without
   try { await host.drain(); await host.maintenance(); expect(host.input.resolveTrustPriors?.()).toBeUndefined(); expect(readLabelCalibration).not.toHaveBeenCalled() }
   finally { await host.stop() }
 })
+
+it.each([false, true])('daemon selects request B priors before the producer (malformed=%s)', async malformed => {
+  const a = project(), b = project()
+  const old = artifact(a.project), selected = artifact(b.project, 0.25)
+  if (malformed) writeFileSync(join(b.project, 'agent-qa-eval/labels/calibration.json'), '{"private":"invalid B"}')
+  const run = await import('../../commands/run.js')
+  const producer = vi.spyOn(run, 'produceMembersFromPatterns').mockRejectedValue(new Error('captured producer boundary'))
+  const host = await start(a)
+  try {
+    artifact(a.project, 0.5)
+    await expect(host.input.runExecution!.execute({ configPath: b.configPath, patterns: [b.testPattern] }))
+      .rejects.toThrow(malformed ? 'Trust prior calibration is invalid or unavailable' : 'captured producer boundary')
+    expect(readLabelCalibration).toHaveBeenCalledTimes(2)
+    if (malformed) expect(producer).not.toHaveBeenCalled()
+    else {
+      expect(producer.mock.calls[0]![0].inputs.configFilePath).toBe(b.configPath)
+      expect(producer.mock.calls[0]![0].resolveTrustPriors?.()).toEqual(selected.priors)
+      expect(producer.mock.calls[0]![0].resolveTrustPriors).not.toBe(host.input.resolveTrustPriors)
+    }
+    expect(host.input.resolveTrustPriors?.()).toEqual(old.priors)
+    await expect(host.input.runExecution!.execute({ patterns: [a.testPattern] })).rejects.toThrow('captured producer boundary')
+    expect(producer.mock.calls.at(-1)![0].resolveTrustPriors).toBe(host.input.resolveTrustPriors)
+    expect(readLabelCalibration).toHaveBeenCalledTimes(2)
+  } finally { await host.stop() }
+})

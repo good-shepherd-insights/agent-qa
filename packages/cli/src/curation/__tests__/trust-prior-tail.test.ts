@@ -137,29 +137,35 @@ it('reports malformed tail calibration without acquiring authority or changing t
   expect(h.handle.report().drain).toBe('not-attempted')
 })
 
-it('carries the enclosing local host resolver and disclosure through runExecution into its later tail', async () => {
+it.each([false, true])('carries the selected local snapshot into its delayed tail (other project=%s)', async otherProject => {
   const { createInProcessFixture } = await import('../../composition/__tests__/in-process-run-fixture.js')
   const { composeCliLocalAgent } = await import('../../composition/local-agent-host.js')
   const driveModule = await import('../../composition/in-process-run-execution.js')
   const tailModule = await import('../post-run-tail-composition.js')
   const f = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' }); roots.push(f.project)
   const old = artifact(f.project)
+  const selected = otherProject ? createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' }) : f
+  if (otherProject) roots.push(selected.project)
+  const selectedArtifact = otherProject ? artifact(selected.project, 0.5) : old
   const drive = vi.spyOn(driveModule, 'runInProcessCliRun').mockResolvedValue({ runId: 'fixture-run' } as never)
   const composed = vi.spyOn(tailModule, 'composeCliPostRunTail').mockReturnValue({ drain: vi.fn(async () => undefined), finish: vi.fn(async () => undefined), report: vi.fn() })
   const host = composeCliLocalAgent({ configPath: f.configPath, agentQaRoot: f.agentQaRoot, confirm: undefined })
   try {
     const local = vi.mocked(composeLocalAgent).mock.calls.at(-1)![0]
     artifact(f.project, 0.25)
-    await local.runExecution!.execute({ patterns: [f.testPattern] })
+    await local.runExecution!.execute({ configPath: selected.configPath, patterns: [selected.testPattern] })
     const invocation = drive.mock.calls[0]![0]
-    await invocation.postRunTail!({ runId: 'fixture-run', configDir: f.project, configFilePath: f.configPath,
+    writeFileSync(join(selected.project, 'agent-qa-eval/labels/calibration.json'), '{"private":"malformed replacement"}')
+    await invocation.postRunTail!({ runId: 'fixture-run', configDir: selected.project, configFilePath: selected.configPath,
       auditSink: {}, postVerdict: { takeAcquiredLease: () => undefined } } as never)
     const ready = composed.mock.calls[0]![0].trustPriors
-    expect(ready?.resolve).toBe(local.resolveTrustPriors)
+    if (!otherProject) expect(ready?.resolve).toBe(local.resolveTrustPriors)
     expect(ready?.resolve).toBe(invocation.resolveTrustPriors)
-    expect(ready?.resolve()).toEqual(old.priors)
-    expect(ready?.disclosure).toBe(host.trustPriorDisclosure)
-    expect(readLabelCalibration).toHaveBeenCalledTimes(1)
+    expect(ready?.resolve()).toEqual(selectedArtifact.priors)
+    expect(ready?.disclosure.digest).toBe(selectedArtifact.generationId)
+    expect(host.trustPriorDisclosure.digest).toBe(old.generationId)
+    expect(local.resolveTrustPriors?.()).toEqual(old.priors)
+    expect(readLabelCalibration).toHaveBeenCalledTimes(otherProject ? 2 : 1)
   } finally { await host.close() }
 })
 

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { AUTHORING_DRAFT_EDIT_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
 import { AuthoringDraftEditOutputSchema } from '@vostride/agent-qa-schema'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
-import { trustPriorsForHost, type TrustPriorDisclosure } from '../curation/trust-priors.js'
+import { bindTrustPriorsToConfig, trustPriorsForHost, type TrustPriorDisclosure } from '../curation/trust-priors.js'
 // The CLI's half of the local host (Phase 384 plan 01, superseded in place by 385 plan 09, D-15).
 //
 // What used to live here — the runs reader, the knowledge listing binding and the registry
@@ -322,6 +322,7 @@ function createComposedRunExecution(input: {
   readonly confirm: ComposeLocalAgentInput['confirm']
   readonly runBridge?: ComposeCliLocalAgentInput['runBridge']
 }): RunExecutionPort {
+  const selectTrustPriors = bindTrustPriorsToConfig(input)
   return {
     // `gate` is the composition's answer to the run gate's standing-approvals question, resolved
     // per call and handed down here (401-08, D-08). This door does not resolve it and must not:
@@ -358,12 +359,13 @@ function createComposedRunExecution(input: {
         ...(request.patterns === undefined ? {} : { patterns: request.patterns }),
         warn,
       })
+      const trustPriors = selectTrustPriors(inputs.configFilePath)
 
       let startedRunId: string | undefined
       try {
         const outcome = await runInProcessCliRun(
           {
-            resolveTrustPriors: input.trustPriors.resolve,
+            resolveTrustPriors: trustPriors.resolve,
             configPath,
             agentQaRoot: input.agentQaRoot,
             executionContext:
@@ -425,7 +427,7 @@ function createComposedRunExecution(input: {
                 '../curation/post-run-tail-composition.js'
               )
               const tail = composeCliPostRunTail({
-                trustPriors: input.trustPriors,
+                trustPriors,
                 canaryAblation: createCanaryAblationForHost({ configPath: context.configFilePath, agentQaRoot: input.agentQaRoot }),
                 runId: context.runId,
                 configDir: context.configDir,

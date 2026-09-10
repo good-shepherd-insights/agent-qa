@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from 'node:util'
 import type { ResolvePromotionPosture, ScopeKey } from '@vostride/agent-qa-schema'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
-import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
+import { bindTrustPriorsToConfig, trustPriorsForHost } from '../curation/trust-priors.js'
 
 import type {
   ConfigReaderPort,
@@ -610,7 +610,7 @@ async function resolveDraftApply(
  * and never a dead daemon; that is what 401-11's `CliRunInputError` conversion bought.
  */
 async function composeDaemonRunExecution(input: {
-  readonly resolveTrustPriors?: ResolveTrustPriors
+  readonly trustPriors: ReturnType<typeof trustPriorsForHost>
   readonly configPath: string
   readonly agentQaRoot: string
   readonly analytics: CliAnalyticsHost | undefined
@@ -627,6 +627,7 @@ async function composeDaemonRunExecution(input: {
    */
   readonly resolveWriterAuthority: () => CurationWriterAuthority | undefined
 }): Promise<RunExecutionPort> {
+  const selectTrustPriors = bindTrustPriorsToConfig(input)
   const { resolveRunInvocationInputs } = await import('../commands/run.js')
   const { refuseUnhonourableRequestFields, runInProcessCliRun } =
     await import('../composition/in-process-run-execution.js')
@@ -679,6 +680,7 @@ async function composeDaemonRunExecution(input: {
         ...(request.patterns === undefined ? {} : { patterns: request.patterns }),
         warn: (message: string) => input.logger.info(message),
       })
+      const trustPriors = selectTrustPriors(inputs.configFilePath)
 
       // Read ONCE per run, here, so the conditional spread and the value it spreads are the same
       // reading — two calls could straddle a lease this daemon lost between them.
@@ -688,7 +690,7 @@ async function composeDaemonRunExecution(input: {
       try {
         const finished = await runInProcessCliRun(
           {
-            resolveTrustPriors: input.resolveTrustPriors,
+            resolveTrustPriors: trustPriors.resolve,
             configPath,
             agentQaRoot: input.agentQaRoot,
             // D-07: THE POSTURE TRAVELS EXPLICITLY, and this literal is the whole of truth 1. The
@@ -800,7 +802,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let runExecution = input.runExecution
   if (runExecution === undefined && input.configPath !== undefined) {
     runExecution = await composeDaemonRunExecution({
-      resolveTrustPriors,
+      trustPriors: trustPriors!,
       configPath: input.configPath,
       agentQaRoot: input.agentQaRoot,
       analytics: input.analytics,

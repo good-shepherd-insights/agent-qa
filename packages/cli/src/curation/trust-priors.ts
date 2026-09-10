@@ -69,3 +69,14 @@ export function trustPriorsForHost(input: { configPath: string }): Extract<Trust
   if (result.kind === 'refused') throw new TrustPriorsRefusedError()
   return result
 }
+
+/** Bind the host cache to its selected eval root; another project gets a run-local snapshot. */
+export function bindTrustPriorsToConfig(input: {
+  configPath: string
+  trustPriors: ReturnType<typeof trustPriorsForHost>
+}): (configPath: string) => ReturnType<typeof trustPriorsForHost> {
+  const hostRoot = resolve(dirname(resolve(input.configPath)), 'agent-qa-eval')
+  return configPath => resolve(dirname(resolve(configPath)), 'agent-qa-eval') === hostRoot
+    ? input.trustPriors
+    : trustPriorsForHost({ configPath })
+}

@@ -38,8 +38,8 @@ function fixture(precision = 0.75): LabelCalibrationArtifact {
   }
   return { ...body, generationId: sha256hex(canonicalJson(body)) }
 }
-function writeArtifact(value: unknown) {
-  const path = join(root, 'agent-qa-eval/labels/calibration.json')
+function writeArtifact(value: unknown, project = root) {
+  const path = join(project, 'agent-qa-eval/labels/calibration.json')
   mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, JSON.stringify(value))
 }
 async function build() {
@@ -242,4 +242,37 @@ it('production direct member retains composition priors until its serving reader
   expect(result.failureSummary).toContain('captured serving boundary')
   expect(vi.mocked(openRunKnowledgeComposition).mock.calls.at(-1)![0].resolveTrustPriors?.()).toEqual(fixture().priors)
   expect(readLabelCalibration).toHaveBeenCalledTimes(1)
+})
+
+it.each([false, true])('local host selects request B priors before the producer (malformed=%s)', async malformed => {
+  const { createInProcessFixture } = await import('../../composition/__tests__/in-process-run-fixture.js')
+  const run = await import('../../commands/run.js')
+  const a = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' })
+  const b = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' })
+  writeArtifact(fixture(), a.project)
+  writeArtifact(malformed ? { privateCorrection: 'invalid B' } : fixture(0.25), b.project)
+  const producer = vi.spyOn(run, 'produceMembersFromPatterns').mockRejectedValue(new Error('captured producer boundary'))
+  const host = composeCliLocalAgent({ configPath: a.configPath, agentQaRoot: a.agentQaRoot })
+  try {
+    const local = vi.mocked(composeLocalAgent).mock.calls.at(-1)![0]
+    writeArtifact(fixture(0.5), a.project)
+    await expect(local.runExecution!.execute({ configPath: b.configPath, patterns: [b.testPattern] }))
+      .rejects.toThrow(malformed ? 'Trust prior calibration is invalid or unavailable' : 'captured producer boundary')
+    expect(readLabelCalibration).toHaveBeenCalledTimes(2)
+    if (malformed) expect(producer).not.toHaveBeenCalled()
+    else {
+      expect(producer.mock.calls[0]![0].inputs.configFilePath).toBe(b.configPath)
+      expect(producer.mock.calls[0]![0].resolveTrustPriors?.()).toEqual(fixture(0.25).priors)
+      expect(producer.mock.calls[0]![0].resolveTrustPriors).not.toBe(local.resolveTrustPriors)
+    }
+    expect(local.resolveTrustPriors?.()).toEqual(fixture().priors)
+    expect(host.trustPriorDisclosure.digest).toBe(fixture().generationId)
+    await expect(local.runExecution!.execute({ configPath: join(a.project, '.', 'agent-qa.config.yaml'), patterns: [a.testPattern] }))
+      .rejects.toThrow('captured producer boundary')
+    expect(producer.mock.calls.at(-1)![0].resolveTrustPriors).toBe(local.resolveTrustPriors)
+    expect(readLabelCalibration).toHaveBeenCalledTimes(2)
+  } finally {
+    await host.close()
+    rmSync(a.project, { recursive: true, force: true }); rmSync(b.project, { recursive: true, force: true })
+  }
 })
