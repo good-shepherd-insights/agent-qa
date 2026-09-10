@@ -21,7 +21,7 @@ const work = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-qa-panel-mutation-'))
 console.log(`Evidence: ${work}`)
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 const subjects = ['packages/eval/src/judge/panel.ts', 'packages/eval/src/match/score.ts',
-  'packages/eval/src/judge/config.ts']
+  'packages/eval/src/judge/config.ts', 'packages/eval/src/judge/calibration.ts']
 const owned = new Map()
 let child, cleanupActive = false
 function restore() {
@@ -56,6 +56,8 @@ process.on('exit', () => {
 
 const runtime = 'src/judge/__tests__/panel-closed-sets.test.ts'
 const types = 'src/judge/__tests__/panel-closed-sets.test-d.ts'
+const calibrationRuntime = 'src/judge/__tests__/calibration-closed-sets.test.ts'
+const calibrationTypes = 'src/judge/__tests__/calibration-closed-sets.test-d.ts'
 const config = 'src/judge/__tests__/config.test.ts'
 const hashTitle = 'JUDGE_CONFIG > requires every material change to carry a pinned judge-version bump'
 const legs = []
@@ -72,8 +74,14 @@ inventory(subjects[1], 'JudgeAbstentionCause', 'JUDGE_ABSTENTION_CAUSES', [
   'missing-evidence', 'residual-tie', 'below-quorum', 'panel-disagreement',
 ], 'panel abstention causes exact')
 legs.push({ subject: subjects[2], target: 'constitution', operation: 'perturb', title: hashTitle })
+inventory(subjects[3], 'JudgeCalibrationGapReason', 'JUDGE_CALIBRATION_GAP_REASONS', [
+  'panel-not-configured', 'no-credential', 'single-family-host',
+], 'judge calibration gaps exact')
+inventory(subjects[3], 'JudgeCalibrationStatus', 'JUDGE_CALIBRATION_STATUSES', [
+  'calibrated', 'uncalibrated', 'capability-gap',
+], 'judge calibration statuses exact')
 legs.forEach((leg, index) => { leg.id = `P${String(index + 1).padStart(2, '0')}` })
-if (legs.length !== 25) throw new Error('Expected exactly 25 mutation legs')
+if (legs.length !== 41) throw new Error('Expected exactly 41 mutation legs')
 
 function mutate(text, leg) {
   if (leg.target === 'constitution') {
@@ -214,31 +222,31 @@ function parse(log) {
   if (!selected.length || /No test files found|Tests\s+no tests/.test(clean)) throw new Error('No selected named tests')
   if ((clean.match(/^TypeCheckError:/gm) ?? []).length !== diagnostics.length) throw new Error('Unparsed type diagnostic')
   if (/^(?:Error|SyntaxError|ReferenceError|RangeError|TypeError):/m.test(clean)) throw new Error('Unrelated tool error')
-  const selectedTypes = selected.filter(row => row[1] === types).length
+  const selectedTypes = selected.filter(row => [types, calibrationTypes].includes(row[1])).length
   return { clean, failures, diagnostics, selected: selected.length, selectedTypes, digest: sha(JSON.stringify(diagnostics)) }
 }
 function checkGreen(result) {
   const parsed = parse(result.log)
-  if (result.exit !== 0 || parsed.selected !== (result.withTypes ? 5 : 1) || parsed.failures.length || parsed.diagnostics.length ||
-    (result.withTypes && (parsed.selectedTypes !== 3 || !parsed.clean.includes('Type Errors  no errors')))) throw new Error('Preflight/restored instrument did not pass')
+  if (result.exit !== 0 || parsed.selected !== result.expectedCells || parsed.failures.length || parsed.diagnostics.length ||
+    (result.withTypes && (parsed.selectedTypes !== result.expectedTypes || !parsed.clean.includes('Type Errors  no errors')))) throw new Error('Preflight/restored instrument did not pass')
 }
 function checkRed(result, leg) {
   if (result.exit === 0) throw new Error('suite stayed green')
   if (result.exit !== 1) throw new Error(`Unexpected tool exit ${result.exit}`)
   const parsed = parse(result.log)
-  if (parsed.selected !== (result.withTypes ? 5 : 1)) throw new Error('Missing selected runtime/type cells')
+  if (parsed.selected !== result.expectedCells) throw new Error('Missing selected runtime/type cells')
   const expected = leg.target === 'constitution' ? [{ file: config, title: hashTitle }]
-    : [...(leg.target === 'list' ? [{ file: runtime, title: leg.title }] : []),
-      { file: types, title: leg.title + ' type bars' }]
+    : [...(leg.target === 'list' ? [{ file: result.runtime, title: leg.title }] : []),
+      { file: result.types, title: leg.title + ' type bars' }]
   const key = rows => [...new Set(rows.map(row => `${row.file} > ${row.title}`))].sort().join('\n')
   if (key(parsed.failures) !== key(expected)) throw new Error(`Unexpected named failures: ${key(parsed.failures)}`)
   const pin = measured[leg.id]
   if (!pin || pin.count !== parsed.diagnostics.length || pin.digest !== parsed.digest) throw new Error(`Unknown compiler diagnostics: ${leg.id} ${parsed.digest}`)
   if (leg.target !== 'constitution') {
-    if (parsed.selectedTypes !== 3) throw new Error('Missing selected type cells')
-    if (!parsed.diagnostics.some(row => row.pointer.startsWith(types + ':'))) throw new Error('Missing intended type assertion')
+    if (parsed.selectedTypes !== result.expectedTypes) throw new Error('Missing selected type cells')
+    if (!parsed.diagnostics.some(row => row.pointer.startsWith(result.types + ':'))) throw new Error('Missing intended type assertion')
     for (const diagnostic of parsed.diagnostics) {
-      if (diagnostic.pointer.startsWith(types + ':')) {
+      if (diagnostic.pointer.startsWith(result.types + ':')) {
         if (!/^TypeCheckError: (Type .* does not satisfy the constraint|This expression is not callable\.)/s.test(diagnostic.message)) throw new Error('Unknown assertion diagnostic')
       }
     }
@@ -247,9 +255,13 @@ function checkRed(result, leg) {
 }
 async function instrument(leg, label) {
   const withTypes = leg.target !== 'constitution'
+  const calibration = leg.subject === subjects[3]
+  const runtimeFile = calibration ? calibrationRuntime : runtime
+  const typeFile = calibration ? calibrationTypes : types
+  const expectedTypes = calibration ? 2 : 3
   const args = [path.join(root, 'node_modules/vitest/vitest.mjs'), 'run',
-    ...(withTypes ? [runtime, types, '--typecheck'] : [config, '--typecheck.enabled=false']),
-    '--reporter=verbose', '--maxWorkers=1', '-t', withTypes ? 'panel ' : 'requires every material change to carry a pinned judge-version bump']
+    ...(withTypes ? [runtimeFile, typeFile, '--typecheck'] : [config, '--typecheck.enabled=false']),
+    '--reporter=verbose', '--maxWorkers=1', '-t', withTypes ? (calibration ? 'judge calibration ' : 'panel ') : 'requires every material change to carry a pinned judge-version bump']
   const logPath = path.join(work, `${label}.log`)
   const fd = fs.openSync(logPath, 'wx')
   const start = Date.now()
@@ -262,7 +274,9 @@ async function instrument(leg, label) {
     child.on('exit', (code, signal) => { clearTimeout(timer); child = undefined; resolve(code ?? `signal:${signal}`) })
   })
   fs.closeSync(fd)
-  const record = { command: [process.execPath, ...args], exit, withTypes, elapsedMs: Date.now() - start, logPath }
+  const record = { command: [process.execPath, ...args], exit, withTypes, runtime: runtimeFile,
+    types: typeFile, expectedCells: withTypes ? 2 + expectedTypes : 1, expectedTypes,
+    elapsedMs: Date.now() - start, logPath }
   fs.writeFileSync(path.join(work, `${label}.json`), JSON.stringify(record, null, 2) + '\n')
   console.log(`${label}: exit=${exit} elapsedMs=${record.elapsedMs}`)
   if (timedOut) throw new Error('Instrument timed out')
@@ -289,6 +303,7 @@ async function main() {
   }
   fs.writeFileSync(path.join(work, 'subjects.json'), JSON.stringify(Object.fromEntries(owned), null, 2) + '\n')
   checkGreen(await instrument(legs[0], 'preflight-vocabulary'))
+  checkGreen(await instrument(legs[25], 'preflight-calibration'))
   checkGreen(await instrument(legs[24], 'preflight-constitution'))
   const ledger = []
   for (const leg of legs) {
@@ -311,10 +326,11 @@ async function main() {
     mustReject('wrong named cell', () => checkRed({ ...result,
       log: result.log.replace(/^( FAIL  src\/[^ ]+ > .+)$/m, '$1 trailing') }, leg))
     if (leg.target !== 'constitution') mustReject('missing type assertion', () => checkRed({ ...result,
-      log: result.log.replace(/^TypeCheckError:[\s\S]*?^ ❯ src\/judge\/__tests__\/panel-closed-sets.test-d.ts:[^\n]+$/gm, '') }, leg))
+      log: result.log.replace(/^TypeCheckError:[\s\S]*?^ ❯ src\/judge\/__tests__\/(?:panel|calibration)-closed-sets.test-d.ts:[^\n]+$/gm, '') }, leg))
     if (leg.target !== 'constitution') mustReject('altered compiler diagnostic', () => checkRed({ ...result,
       log: result.log.replace('TypeCheckError:', 'TypeCheckError: altered') }, leg))
-    ledger.push({ ...leg, exit: result.exit, failures: parsed.failures, diagnostics: parsed.diagnostics, digest: parsed.digest })
+    ledger.push({ ...leg, exit: result.exit, failures: parsed.failures, diagnostics: parsed.diagnostics,
+      digest: parsed.digest, restoreDigest: snapshot.hash })
     fs.writeFileSync(path.join(work, 'ledger.json'), JSON.stringify(ledger, null, 2) + '\n')
     console.log(`NAMED RED ${leg.id}: ${parsed.failures.map(row => row.title).join(' | ')}; diagnostics=${parsed.digest}`)
     restore()
@@ -322,7 +338,7 @@ async function main() {
   }
   restore()
   owned.clear()
-  console.log(`PANEL_MUTATION_OK legs=${ledger.length} named-red=25 byte-identical-restoration=25`)
+  console.log(`PANEL_MUTATION_OK legs=${ledger.length} named-red=41 byte-identical-restoration=41`)
 }
 main().catch(error => fatal(error.message))
 NODE

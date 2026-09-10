@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import * as calibration from '../calibration'
 
+// Hand-spelled runtime inventories are independent of both production unions and lists.
 it('judge calibration gaps exact', () => {
   expect(calibration.JUDGE_CALIBRATION_GAP_REASONS).toEqual([
     'panel-not-configured', 'no-credential', 'single-family-host',
