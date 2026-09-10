@@ -424,6 +424,7 @@ function renderExtractSummary(result: ExtractVerbResult): void {
 function renderCalibrationSummary(result: Extract<CalibrateVerbResult, { artifact: unknown }>): void {
   const report = result.artifact
   console.log(`calibrate: ${result.kind} minGold=${report.minGold.value} (${report.minGold.source})`)
+  console.log('Precision on selected operator marks; not an unbiased estimate for all runtime traffic.')
   for (const channel of ['recorded-verdict', 'self-heal-pair'] as const) {
     const row = report.channels[channel]
     console.log(`${channel}: ${row.status} n_gold=${row.n_gold} precision=${row.status === 'calibrated' ? row.precision : 'n/a'} interval=${row.status === 'calibrated' ? `[${row.wilson95.lower},${row.wilson95.upper}]` : 'n/a'}`)
@@ -440,6 +441,7 @@ function renderCalibrationSummary(result: Extract<CalibrateVerbResult, { artifac
     console.log(`${producer}: ${row.correct}/${row.n} accuracy=${row.accuracy ?? 'n/a'}`)
   }
   console.log(`SOFT refreshedCount=${result.refreshedCount}`)
+  console.log('SOFT verdict and capability factors remain provisional evidence discounts, not measured recovery probabilities.')
 }
 
 export function createEvalCommand(): Command {
@@ -450,7 +452,7 @@ export function createEvalCommand(): Command {
   cmd.hook('postAction', () => { restoreWarningLogger?.() })
 
   cmd.addCommand(new Command('calibrate')
-    .description('Preview global label precision and SOFT weight refresh; publish only with --commit')
+    .description('Preview precision on selected operator marks and SOFT weight refresh; publish only with --commit')
     .option('--commit', 'publish checked revisions and calibration.json')
     .option('--replace', 'with --commit, replace a divergent calibration marker')
     .option('--min-gold <n>', 'minimum joined gold sources per channel (recorded default: 20; minimum: 2)')

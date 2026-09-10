@@ -72,6 +72,8 @@ describe('420 explicit operator calibration CLI', () => {
     expect(output.stdout).toContain('recorded-verdict: uncalibrated n_gold=0')
     expect(output.stdout).toContain('precision=n/a interval=n/a')
     expect(output.stdout).toContain('SOFT refreshedCount=2')
+    expect(output.stdout).toContain('Precision on selected operator marks; not an unbiased estimate for all runtime traffic.')
+    expect(output.stdout).toContain('SOFT verdict and capability factors remain provisional evidence discounts')
     expect(output.stdout).toContain('member/producer:app_bug-binary')
     expect(output.stdout).toContain('verifier false-pass')
     expect(output.stdout).toContain('verifier false-fail')
