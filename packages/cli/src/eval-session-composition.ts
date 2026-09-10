@@ -218,6 +218,9 @@ export class EvalJudgeDeclarationError extends TypeError {
   constructor(message: string) { super(message); this.name = 'EvalJudgeDeclarationError' }
 }
 
+export { preflightJudgePanel } from './judge-panel-preflight.js'
+export type { JudgePanelPreflightDeps, JudgePanelPreflightResult } from './judge-panel-preflight.js'
+
 /** Validate the whole declaration before overrides; aliases retain multiplicity and order. */
 export function selectedEvalJudgeNames(config: Pick<EvalCliConfig, 'judge' | 'judges'>): readonly string[] {
   if (config.judge !== undefined && config.judges !== undefined) {
@@ -2414,8 +2417,11 @@ export async function resolveReplayProfileFingerprint(
 }
 
 /** Shared unresolved declaration for fingerprinting and credential-free offline gate reads. */
-async function resolveReplayProfileDeclaration(session: EvalSession): Promise<ModelProfile> {
-  const config = await resolveBaselinePlannerConfig(session)
+export async function resolveReplayProfileDeclaration(
+  session: EvalSession,
+  namedResolver?: typeof import('./llm-utils.js').resolveNamedConfig,
+): Promise<ModelProfile> {
+  const config = await resolveBaselinePlannerConfig(session, namedResolver)
   return {
     provider: config.provider,
     model: config.model,
@@ -2426,7 +2432,10 @@ async function resolveReplayProfileDeclaration(session: EvalSession): Promise<Mo
 }
 
 /** The model-id and fingerprint readers share the same named-config validation. */
-async function resolveBaselinePlannerConfig(session: EvalSession) {
+async function resolveBaselinePlannerConfig(
+  session: EvalSession,
+  namedResolver?: typeof import('./llm-utils.js').resolveNamedConfig,
+) {
   const plannerName = session.config.use?.llm
   if (!plannerName) {
     throw new Error(
@@ -2435,7 +2444,7 @@ async function resolveBaselinePlannerConfig(session: EvalSession) {
     )
   }
   const { resolveNamedConfig } = await import('./llm-utils.js')
-  const { config } = await resolveNamedConfig(plannerName, session.configPath, { keyOnly: true })
+  const { config } = await (namedResolver ?? resolveNamedConfig)(plannerName, session.configPath, { keyOnly: true })
   return config
 }
 
