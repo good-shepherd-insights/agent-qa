@@ -106,7 +106,11 @@ function guardArtifact(value: unknown): JudgeCalibrationArtifact | undefined {
   const expectedPairs = ids.flatMap((left, i) => ids.slice(i + 1).map(right => [left, right].sort().join('\0'))).sort()
   const pairs = a.disagreement.pairs
   if (!same(pairs.map(pair => [...pair.memberModelIds].sort().join('\0')).sort(), expectedPairs)
-    || pairs.some(pair => pair.denominator > Math.min(...pair.memberModelIds.map(memberId => a.perMember.find(member => member.judgeModelId === memberId)!.settled)))
+    || pairs.some(pair => {
+      const settled = pair.memberModelIds.map(memberId => a.perMember.find(member => member.judgeModelId === memberId)!.settled)
+      return pair.denominator > Math.min(...settled)
+        || pair.denominator < Math.max(0, settled[0]! + settled[1]! - c.attempted)
+    })
     || a.disagreement.numerator !== pairs.reduce((n, pair) => n + pair.numerator, 0)
     || a.disagreement.denominator !== pairs.reduce((n, pair) => n + pair.denominator, 0)) return undefined
   return a

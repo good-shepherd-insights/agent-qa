@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -7,7 +7,8 @@ import * as local from '../index.js'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { asRunId, asRef, sha256hex, slugBranch, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { createMaskingContext, getActiveMaskingContext, getActiveAuditSink } from '@vostride/agent-qa-safety'
-import { runJudgePanelCalibration } from '../judge-calibration-composition.js'
+import { runJudgePanelCalibration, runJudgeCalibration } from '../judge-calibration-composition.js'
+import * as publication from '../judge-calibration-source.js'
 import { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } from './fixtures/local-handoff-fixture.js'
 import { capturingStub, judgeGenerateResult } from './fixtures/replay-fixtures.js'
 
@@ -127,6 +128,61 @@ it('rejects a foreign panel profile before admitting or binding evidence', async
   const f = fixture(); f.input.profile.judgeModelId = 'foreign-panel'
   await expect(runJudgePanelCalibration(f.input)).rejects.toThrow('Judge calibration probe failed')
   expect(binds.count).toBe(0); expect(f.calls()).toBe(0)
+})
+
+function committedBytes(root: string): [string, string][] {
+  if (!existsSync(root)) return []
+  return readdirSync(root, { withFileTypes: true }).flatMap(entry => {
+    const path = join(root, entry.name)
+    return entry.isDirectory() ? committedBytes(path) : [[path, readFileSync(path).toString('hex')]] as [string, string][]
+  })
+}
+it.each([false, true])('bypasses the writer entirely for no-composite gaps with replace=%s', async replace => {
+  const f = fixture(), before = committedBytes(f.input.committedRoot)
+  const writer = vi.spyOn(publication, 'publishJudgeCalibration')
+  const result = await runJudgeCalibration({ kind: 'capability-gap', reason: 'panel-not-configured',
+    minN: core.resolveJudgeCalibrationMinimum(), commit: true, replace })
+  expect(result).toMatchObject({ kind: 'capability-gap', reason: 'panel-not-configured', artifactDisposition: 'not-created' })
+  expect(result).not.toHaveProperty('profileKey'); expect(result).not.toHaveProperty('path'); expect(result).not.toHaveProperty('identity')
+  expect(writer).not.toHaveBeenCalled(); expect(binds.count).toBe(0); expect(f.calls()).toBe(0)
+  expect(committedBytes(f.input.committedRoot)).toEqual(before)
+  expect(existsSync(join(f.input.committedRoot, 'reports/judge-calibration'))).toBe(false)
+})
+it('publishes and reads an exact measured artifact while retaining labels and report history', async () => {
+  const f = fixture([{}, {}]), before = committedBytes(f.input.committedRoot)
+  const result = await runJudgeCalibration({ kind: 'probe', probe: { ...f.input, minN: core.resolveJudgeCalibrationMinimum(2) }, commit: true })
+  expect(result.kind).toBe('committed')
+  if (!('artifact' in result)) throw new Error('expected artifact')
+  expect(result.artifact).toMatchObject({ status: 'calibrated', n: 2, pooledAgreement: 1, cost: { usage: { calls: 8 } } })
+  expect(publication.readJudgeCalibration({ ...f.input, identity: core.createPanelIdentity(f.input.members.map(m => m.profile.model)), minN: core.resolveJudgeCalibrationMinimum(2) }))
+    .toEqual({ kind: 'loaded', artifact: result.artifact })
+  for (const [path, bytes] of before) expect(readFileSync(path).toString('hex')).toBe(bytes)
+  expect(committedBytes(f.input.committedRoot).length).toBe(before.length + 1)
+})
+it('publishes guarded valid-composite gaps with zero probes and no estimates', async () => {
+  const f = fixture(), context = { ...f.input, identity: core.createPanelIdentity(f.input.members.map(m => m.profile.model)), minN: core.resolveJudgeCalibrationMinimum() }
+  const options = { kind: 'capability-gap' as const, reason: 'no-credential' as const, minN: context.minN, publication: context, commit: true }
+  const result = await runJudgeCalibration(options)
+  expect(result.kind).toBe('committed')
+  if (!('artifact' in result)) throw new Error('expected artifact')
+  expect(result.artifact).toMatchObject({ status: 'capability-gap', reason: 'no-credential', n: 0, selected: 1, admitted: 1, cost: { callBound: 0, usage: { calls: 0 } } })
+  expect(result.artifact).not.toHaveProperty('pooledAgreement'); expect(result.artifact).not.toHaveProperty('wilson95')
+  expect(publication.readJudgeCalibration(context)).toEqual({ kind: 'loaded', artifact: result.artifact })
+  expect((await runJudgeCalibration(options)).kind).toBe('unchanged')
+  const changed = { ...options, minN: core.resolveJudgeCalibrationMinimum(2), publication: { ...context, minN: core.resolveJudgeCalibrationMinimum(2) } }
+  expect((await runJudgeCalibration(changed)).kind).toBe('write-conflict')
+  expect((await runJudgeCalibration({ ...changed, replace: true })).kind).toBe('committed')
+  expect(f.calls()).toBe(0); expect(binds.count).toBe(0)
+})
+it('refuses unavailable saved evidence on valid-composite gap publication with its typed diagnostics', async () => {
+  const f = fixture(); rmSync(f.rows[0]!.written.file)
+  const before = committedBytes(f.input.committedRoot)
+  const result = await runJudgeCalibration({ kind: 'capability-gap', reason: 'no-credential', commit: true,
+    minN: core.resolveJudgeCalibrationMinimum(), publication: { ...f.input,
+      identity: core.createPanelIdentity(f.input.members.map(m => m.profile.model)), minN: core.resolveJudgeCalibrationMinimum() } })
+  expect(result).toMatchObject({ kind: 'refused', skippedCounts: { 'missing-replay': 1 } })
+  expect(committedBytes(f.input.committedRoot)).toEqual(before)
+  expect(f.calls()).toBe(0); expect(binds.count).toBe(0)
 })
 
 function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[], ambiguous = false) {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Command } from 'commander'
@@ -138,6 +138,58 @@ it('publishes through the public command and regenerates unchanged without chang
   expect(second.result.kind).toBe('unchanged')
   expect(second.result.artifact).toEqual(first.result.artifact)
   for (const [path, content] of before) expect(readFileSync(path!).toString('hex')).toBe(content)
+  const conflict = await invoke(f.configPath, ['--judge-panel', '--commit', '--min-n', '2', '--json'])
+  expect(conflict.exit).toBe(1); expect(conflict.result.kind).toBe('write-conflict')
+  const replaced = await invoke(f.configPath, ['--judge-panel', '--commit', '--replace', '--min-n', '2', '--json'])
+  expect(replaced.exit).toBe(0); expect(replaced.result.kind).toBe('committed')
+  expect(local.readJudgeCalibration({ ...f.rows[0]!.input, identity: replaced.result.artifact.identity,
+    minN: core.resolveJudgeCalibrationMinimum(2) })).toEqual({ kind: 'loaded', artifact: replaced.result.artifact })
+  for (const [path, content] of before) expect(readFileSync(path!).toString('hex')).toBe(content)
+})
+
+it.each([undefined, [], ['model1']] as const)('keeps declaration %j a successful zero-write gap in both commit modes', async judges => {
+  const f = fixture()
+  await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
+  const before = bytes(f.committedRoot)
+  const config = JSON.parse(readFileSync(f.configPath, 'utf8')); config.eval = judges === undefined ? {} : { judges }
+  writeFileSync(f.configPath, JSON.stringify(config))
+  boundary.calls = boundary.binds = boundary.comparisons = 0
+  vi.mocked(llm.resolveModelAuth).mockClear()
+  for (const extra of [[], ['--replace']]) {
+    const output = await invoke(f.configPath, ['--judge-panel', '--commit', ...extra, '--json'])
+    expect(output.exit).toBe(0)
+    expect(output.result).toMatchObject({ kind: 'capability-gap', reason: 'panel-not-configured', artifactDisposition: 'not-created' })
+    for (const field of ['identity', 'artifact', 'profileKey', 'path']) expect(output.result).not.toHaveProperty(field)
+    expect(bytes(f.committedRoot)).toEqual(before)
+  }
+  expect(llm.resolveModelAuth).not.toHaveBeenCalled(); expect(boundary.calls).toBe(0); expect(boundary.binds).toBe(0)
+  rmSync(f.committedRoot, { recursive: true })
+  for (const extra of [[], ['--replace']]) {
+    expect((await invoke(f.configPath, ['--judge-panel', '--commit', ...extra, '--json'])).exit).toBe(0)
+    expect(existsSync(f.committedRoot)).toBe(false)
+  }
+  const human = await invoke(f.configPath, ['--judge-panel', '--commit'])
+  expect(human.stdout).toContain('panel-not-configured'); expect(human.stdout).toContain('No committed artifact created.')
+})
+it('routes a credential gap through the same public checked writer with zero provider calls', async () => {
+  const f = fixture(), before = bytes(f.committedRoot)
+  vi.mocked(llm.resolveModelAuth).mockImplementation(async name => ({ kind: 'missing', credentialKey: name,
+    provider: 'openai-compatible', required: true, message: 'fixture missing' }))
+  const first = await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
+  expect(first.exit).toBe(0)
+  expect(first.result).toMatchObject({ kind: 'committed', artifact: { status: 'capability-gap', reason: 'no-credential', n: 0, selected: 1,
+    cost: { callBound: 0, usage: { calls: 0 } } } })
+  expect(first.result.artifact).not.toHaveProperty('pooledAgreement')
+  expect((await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])).result.kind).toBe('unchanged')
+  expect((await invoke(f.configPath, ['--judge-panel', '--commit', '--min-n', '2', '--json'])).result.kind).toBe('write-conflict')
+  expect((await invoke(f.configPath, ['--judge-panel', '--commit', '--replace', '--min-n', '2', '--json'])).result.kind).toBe('committed')
+  expect(boundary.calls).toBe(0); expect(boundary.binds).toBe(0)
+  for (const [path, content] of before) expect(readFileSync(path!).toString('hex')).toBe(content)
+})
+it('refuses replace without commit before any config or auth work', async () => {
+  const output = await invoke('/missing/config', ['--judge-panel', '--replace', '--json'])
+  expect(output.exit).toBe(1); expect(output.result.reason).toContain('--replace requires --commit')
+  expect(llm.resolveModelAuth).not.toHaveBeenCalled()
 })
 
 function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[]) {

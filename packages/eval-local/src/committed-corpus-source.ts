@@ -81,7 +81,7 @@ export function readActiveCommittedCorpus(committedRoot: string, agentQaRoot: st
 }
 
 /** Census, baseline pointers and per-profile floors are not batch reports (415 D-04). */
-const RESERVED_REPORT_DIRS = new Set(['census', 'baselines', 'noise-floor'])
+const RESERVED_REPORT_DIRS = new Set(['census', 'baselines', 'noise-floor', 'judge-calibration'])
 
 const reportSchema = z
   .object({
@@ -569,7 +569,7 @@ export function readRunExclusions(committedRoot: string): RunExclusionRead {
 
 /**
  * List every committed batch report under `reports/`, one per batchKey dir. The reserved `census/`
- * and `baselines/` and `noise-floor/` dirs are NOT batch reports and are skipped by name.
+ * and `baselines/`, `noise-floor/`, `judge-calibration/` dirs are not batch reports.
  */
 export function listCommittedReports(committedRoot: string): {
   reports: CommittedReportEntry[]
