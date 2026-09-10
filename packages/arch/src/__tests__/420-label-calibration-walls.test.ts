@@ -1,6 +1,7 @@
 import { globSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import ts from 'typescript'
 import { calibrationBoundaryHits, calibrationClosure, calibrationFoldCalls, calibrationImports, calibrationPureHits,
   type CalibrationSource } from '../lint/label-calibration-walls.js'
 
@@ -60,6 +61,29 @@ const priorEntrypoints = [
 ]
 
 describe('420 label calibration walls', () => {
+  it.each(["import {} from 'node:fs'", "export {} from 'node:fs'",
+    "import { type Stats } from 'node:fs'", "export { type Stats } from 'node:fs'"])(
+    'retains emitted runtime edges for %s under verbatim module syntax', text => {
+      const source = { file: 'packages/eval/src/labels/plant.ts', text }
+      const emitted = ts.transpileModule(text, { compilerOptions: {
+        module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext, verbatimModuleSyntax: true,
+      } }).outputText
+      expect(emitted).toContain("from 'node:fs'")
+      expect(calibrationImports(source, true).map(hit => hit.specifier)).toEqual(['node:fs'])
+      expect(calibrationPureHits([source]).map(hit => hit.specifier)).toEqual(['node:fs'])
+    },
+  )
+  it.each(["import type { Stats } from 'node:fs'", "export type { Stats } from 'node:fs'"])(
+    'excludes erased statement-level type edges for %s', text => {
+      const source = { file: 'packages/eval/src/labels/plant.ts', text }
+      const emitted = ts.transpileModule(text, { compilerOptions: {
+        module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext, verbatimModuleSyntax: true,
+      } }).outputText
+      expect(emitted).not.toContain('node:fs')
+      expect(calibrationImports(source, true)).toEqual([])
+      expect(calibrationPureHits([source])).toEqual([])
+    },
+  )
   it('registers the calibration wall in validate:arch and its mutation entrypoint', () => {
     const { scripts } = JSON.parse(readFileSync(`${repoRoot}/package.json`, 'utf8'))
     expect(scripts['validate:arch'].split(/\s+/)).toContain(
