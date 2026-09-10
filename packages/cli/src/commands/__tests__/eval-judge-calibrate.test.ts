@@ -125,6 +125,21 @@ it('offers an explicit judge panel preview and independent minimum on the calibr
   expect(command.helpInformation()).toContain('--min-n <n>')
 })
 
+it('publishes through the public command and regenerates unchanged without changing labels', async () => {
+  const f = fixture(), before = bytes(f.committedRoot)
+  const first = await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
+  expect(first.exit).toBe(0)
+  expect(first.result.kind).toBe('committed')
+  expect(first.result.artifact.status).toBe('uncalibrated')
+  expect(first.result.artifact.n).toBe(1)
+  expect(first.result.artifact).not.toHaveProperty('auditDirectory')
+  expect(boundary.calls).toBe(4)
+  const second = await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
+  expect(second.result.kind).toBe('unchanged')
+  expect(second.result.artifact).toEqual(first.result.artifact)
+  for (const [path, content] of before) expect(readFileSync(path!).toString('hex')).toBe(content)
+})
+
 function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[]) {
   const root = join(project, '.agent-qa')
   const committedRoot = join(project, 'agent-qa-eval')
