@@ -427,18 +427,18 @@ function renderCalibrationSummary(result: Extract<CalibrateVerbResult, { artifac
   console.log('Precision on selected operator marks; not an unbiased estimate for all runtime traffic.')
   for (const channel of ['recorded-verdict', 'self-heal-pair'] as const) {
     const row = report.channels[channel]
-    console.log(`${channel}: ${row.status} n_gold=${row.n_gold} precision=${row.status === 'calibrated' ? row.precision : 'n/a'} interval=${row.status === 'calibrated' ? `[${row.wilson95.lower},${row.wilson95.upper}]` : 'n/a'}`)
+    console.log(`${channel}: ${row.status} n_gold=${row.n_gold} precision=${row.status === 'calibrated' ? row.precision : 'unavailable (below minimum)'} interval=${row.status === 'calibrated' ? `[${row.wilson95.lower},${row.wilson95.upper}]` : 'unavailable (below minimum)'}`)
   }
   for (const channel of ['user-mark', 'overturned-verdict'] as const) {
     const row = report.channels[channel]
     console.log(`${channel}: n_gold=${row.n_gold} precision=${row.precision}`)
   }
   for (const [name, row] of [['false-pass', report.verifierFalsePassRate], ['false-fail', report.verifierFalseFailRate]] as const) {
-    console.log(`verifier ${name}: ${row.numerator}/${row.denominator} rate=${row.rate ?? 'n/a'}`)
+    console.log(`verifier ${name}: ${row.numerator}/${row.denominator} rate=${row.rate ?? 'unavailable (zero denominator)'}`)
   }
   console.log(`classifier grain: ${report.rootCauseClassifierGrain}`)
   for (const [producer, row] of Object.entries(report.rootCauseClassifierAccuracy)) {
-    console.log(`${producer}: ${row.correct}/${row.n} accuracy=${row.accuracy ?? 'n/a'}`)
+    console.log(`${producer}: ${row.correct}/${row.n} accuracy=${row.accuracy ?? 'unavailable (zero denominator)'}`)
   }
   console.log(`SOFT refreshedCount=${result.refreshedCount}`)
   console.log('SOFT verdict and capability factors remain provisional evidence discounts, not measured recovery probabilities.')
