@@ -133,13 +133,13 @@ export function bindJudgePort(input: JudgeBindingInput): JudgePort {
           return {
             kind: 'call-error',
             reason: 'unparseable-output',
-            detail: error.message,
+            detail: 'judge output failed the closed verdict schema',
           }
         }
         return {
           kind: 'call-error',
           reason: 'provider-error',
-          detail: error instanceof Error ? error.message : String(error),
+          detail: 'judge provider call failed',
         }
       }
     },

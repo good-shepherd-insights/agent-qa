@@ -413,10 +413,21 @@ export async function runCassetteReplay(
     const eligibility = panel === undefined
       ? assessJudgeEligibility({ ...eligibilityInput, judgeModelId: single?.profile.model })
       : assessPanelEligibility({ ...eligibilityInput, memberModelIds: panel.map(member => member.profile.model) })
+    const observedBinding = (member: JudgeBindingInput): JudgeBindingInput => {
+      const hooks = [...new Set([
+        input.modelCallObservation?.onProviderCall,
+        member.modelCallObservation?.onProviderCall,
+      ].filter(hook => hook !== undefined))]
+      return { ...member, modelCallObservation: { onProviderCall: () => {
+        for (const hook of hooks) {
+          try { hook() } catch { /* Observation cannot interrupt another counter or provider call. */ }
+        }
+      } } }
+    }
     const port = !eligibility.eligible ? undefined : panel !== undefined
-      ? bindJudgePanel(panel.map(member => ({ ...member, modelCallObservation: input.modelCallObservation })))
+      ? bindJudgePanel(panel.map(observedBinding))
       : single === undefined ? undefined
-      : bindJudgePort({ ...single, modelCallObservation: input.modelCallObservation })
+      : bindJudgePort(observedBinding(single))
 
     // The judge safety scope (Pitfall 1): the replay scope closed before scoring, so adjudication
     // gets its OWN fresh masking context and a replay-scoped JsonlAuditSink — the ALS-resolved

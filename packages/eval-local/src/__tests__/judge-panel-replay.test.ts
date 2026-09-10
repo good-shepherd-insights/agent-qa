@@ -46,7 +46,10 @@ async function run(judge?: RunCassetteReplayInput['judge'], sensitive = false, o
       const context = createMaskingContext()
       context.register(secret)
       const dispose = context.dispose.bind(context)
-      context.dispose = () => { disposed[index] = true; dispose() }
+      context.dispose = () => {
+        disposed[index] = true
+        dispose()
+      }
       return context
     },
   })
@@ -88,12 +91,22 @@ describe('panel replay at the sanctioned model boundary', () => {
       expect(text).toContain(`${JUDGE_CONFIG.promptTemplate.frameBegin}\n${hostile}`)
     }
     expect(result.audit.length).toBeGreaterThan(0)
+    const repeated = await run({ members: ids.slice(0, size).map(id => ({ profile: familyStubProfile(id), auth: noneAuth,
+      modelOverrides: { languageModels: capturingStub(() => judgeGenerateResult('equivalent', 'high'), id).languageModels },
+    })) }, true)
+    const rows = (audit: typeof result.audit) => audit.map(({ ts: _ts, ...row }) => row)
+    expect(rows(repeated.audit)).toEqual(rows(result.audit))
+    const noJudge = await run(undefined, true)
+    expect(result.audit.length).toBeGreaterThan(noJudge.audit.length)
   })
 
   it('refuses the whole ineligible panel without binding any member', async () => {
     let bindings = 0
     const result = await run({ members: [plannerId, ids[0]!].map(id => ({ profile: familyStubProfile(id), auth: noneAuth,
-      get modelOverrides() { bindings++; throw new Error('ineligible member bound') },
+      get modelOverrides(): never {
+        bindings++
+        throw new Error('ineligible member bound')
+      },
     })) })
     expect(bindings).toBe(0)
     expect(result.scoreBytes).toContain('no-eligible-judge')
@@ -114,6 +127,7 @@ describe('panel replay at the sanctioned model boundary', () => {
     const noJudge = await run()
     const empty = await run({ members: [] })
     expect(empty.scoreBytes).toBe(noJudge.scoreBytes)
+    expect(empty.replayBytes).toBe(noJudge.replayBytes)
     expect(empty.reportBytes).toBe(noJudge.reportBytes)
   })
 
