@@ -52,7 +52,7 @@ describe('JUDGE_CONFIG', () => {
     expect(JUDGE_CONFIG.judgeVersion).toBe(2)
     expect(JUDGE_CONFIG.maxPanelMembers).toBe(3)
     expect(JUDGE_CONFIG.pooling).toEqual({ verdict: 'max', score: 'avg' })
-    expect(JUDGE_CONFIG.scorePoolingReservation).toContain('reserved')
+    expect(JUDGE_CONFIG.scorePoolingReservation).toContain('avg is reserved')
     expect(JUDGE_CONFIG.lineageOverrides).toBe(JUDGE_LINEAGE_OVERRIDES)
     expect(['high', 'medium', 'low']).toContain(JUDGE_CONFIG.confidenceThreshold)
     expect(JUDGE_CONFIG.confidenceThreshold).toBe('high')
