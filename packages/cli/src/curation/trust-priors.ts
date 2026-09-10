@@ -8,7 +8,7 @@ export interface TrustPriorDisclosure {
   readonly digest?: string
   readonly nByOrigin: Readonly<Record<'agent-verified' | 'agent-observed', number>>
 }
-const REFUSAL = 'Trust prior calibration is invalid or unavailable; repair the committed calibration before composing this host.'
+const REFUSAL = 'Trust prior calibration is invalid or unavailable; inspect the selected config\'s agent-qa-eval/labels/calibration.json and follow docs/label-calibration.md#inspection-and-recovery before composing this host.'
 export type TrustPriorsResolution =
   | { readonly kind: 'ready'; readonly resolve: ResolveTrustPriors; readonly disclosure: TrustPriorDisclosure; readonly calibration?: string }
   | { readonly kind: 'refused'; readonly reason: typeof REFUSAL }

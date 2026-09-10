@@ -97,6 +97,24 @@ plus `trust priors: provisional` or `trust priors: calibrated@<generation> (...)
 Chain terminal and partial/handoff summaries disclose the same host snapshot. Doctor is
 read-only and never refreshes a stale artifact.
 
+## Inspection and recovery
+
+For an invalid or unavailable calibration, first inspect the selected config's directory:
+`agent-qa-eval/labels/calibration.json` and the immutable revisions it references. Keep this
+inspection read-only. Check that the marker is readable, that the expected generation is
+present, and that its referenced revisions are intact. Compare with the matching committed
+version or a known-good backup; preserve the current files and authoritative history.
+Repair access problems or restore the exact matching committed bytes from that trusted
+source before retrying `agent-qa --config <selected-config> doctor`. A noise-floor publication
+does not repair label calibration. Do not delete the marker or revisions to obtain fallback
+priors, and do not construct a new marker by hand.
+
+Once the committed generation is readable, preview `agent-qa --config <selected-config>
+eval calibrate` and review the result. Publishing a different generation is a separate,
+explicit operator action: `agent-qa --config <selected-config> eval calibrate --commit --replace`.
+It is not part of doctor or read-only inspection. Restart or compose the affected host to
+adopt the reviewed replacement.
+
 ## Reports and gates
 
 Reports retain first-attempt accuracy and per-decision cost, and add source-grained

@@ -266,7 +266,13 @@ function createRetrievalRungCheck(context: KnowledgeCheckContext): DoctorCheck {
 
 function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
   const check = createLearningAvailabilityCheck(context)
-  return { ...check, check: async () => {
+  return { ...check,
+    get fixInstructions() {
+      return context.priors().kind === 'refused'
+        ? `Inspect the selected committed artifact at ${displayPath(resolve(dirname(context.agentQaRoot), 'agent-qa-eval/labels/calibration.json'))} and its referenced revisions without changing them. Follow docs/label-calibration.md#inspection-and-recovery; marker replacement is a separate explicit operator action.`
+        : check.fixInstructions
+    },
+    check: async () => {
     const priors = context.knowledgeRoot === null ? context.priors() : (await context.probe()).trustPriors
     const row = await check.check()
     const disclosure = priors.kind === 'refused'
