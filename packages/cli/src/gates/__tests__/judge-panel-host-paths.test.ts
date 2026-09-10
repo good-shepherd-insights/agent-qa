@@ -1,0 +1,269 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Command } from 'commander'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ReplayGatePort, KnowledgeReaderPort } from '@vostride/agent-qa-agent'
+import * as local from '@vostride/agent-qa-agent-local'
+import type { ComposeLocalAgentInput, LocalAgentHost } from '@vostride/agent-qa-agent-local'
+import { createPanelIdentity } from '@vostride/agent-qa-eval'
+import { asRecordId, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import type { GateReceipt } from '@vostride/agent-qa-schema'
+import * as session from '../../eval-session-composition.js'
+import * as llm from '../../llm-utils.js'
+import * as bridge from '../replay-gate-host.js'
+import * as posture from '../../curation/promotion-posture.js'
+import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
+import { defaultPostRunTailOperations, runPostRunTail } from '../../curation/post-run-tail.js'
+import { runDaemonHost } from '../../daemon/host.js'
+import type { DaemonHostOperations } from '../../daemon/host.js'
+import { registerKnowledgeMaintainCommands } from '../../commands/knowledge-maintain.js'
+import { createKnowledgeChecks } from '../../commands/doctor-knowledge-checks.js'
+
+vi.mock('@vostride/agent-qa-agent-local', async importOriginal => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-agent-local')>()
+  return { ...actual, composeLocalAgent: vi.fn(actual.composeLocalAgent),
+    LOCAL_CURATION_CAPABILITIES: { ...actual.LOCAL_CURATION_CAPABILITIES,
+      drainQueue: vi.fn(async () => ({ kind: 'drained', processed: 0, failures: 0, quarantined: 0, promotions: [] })),
+    } }
+})
+
+const { completeGate1Receipt } = await import(new URL(
+  '../../../../knowledge-local/src/curator/__tests__/fixtures/promotion-floor-fixture.js', import.meta.url,
+).href)
+const { writeGate1Fixture } = await import(new URL(
+  '../../../../eval-local/src/__tests__/fixtures/gate1-fixtures.js', import.meta.url,
+).href)
+
+const INITIAL = ['claude-fixture', 'gemini-fixture']
+const CHANGED = ['claude-fixture', 'mistral-fixture', 'qwen-fixture']
+const candidateId = asRecordId('panel-host-candidate')
+const realHost = bridge.createReplayGateHost
+const realPosture = posture.buildPromotionPostureResolver
+let root: string
+let configPath: string
+let agentQaRoot: string
+let knowledgeRoot: string
+
+function writeConfig(ids = INITIAL) {
+  writeFileSync(configPath, `workspace:
+  testMatch: [tests/**/*.yaml]
+  suiteMatch: [suites/**/*.suite.yaml]
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
+registry:
+  llms:
+${[{ name: 'planner', model: 'gpt-fixture' }, ...ids.map((model, i) => ({ name: `judge-${i}`, model }))]
+    .map(row => `    - name: ${row.name}\n      provider: openai-compatible\n      model: ${row.model}\n      baseURL: http://127.0.0.1:1/v1\n`).join('')}use:
+  llm: planner
+  mobile:
+    appState: preserve
+knowledge:
+  dir: agent-qa-knowledge
+eval:
+  judges: [${ids.map((_, i) => `judge-${i}`).join(', ')}]
+`)
+}
+
+function fakeHost(): LocalAgentHost {
+  return { jobs: async () => ({
+    queue: { runNextJob: async () => ({ ran: false, reason: 'no-job' }),
+      recoverAbandonedClaims: async () => ({ recovered: 0 }),
+      nextRunnableAt: async () => undefined },
+    store: { adoptEpoch: async () => ({ epoch: 1 }) }, idSource: local.DIGEST_JOB_ID_SOURCE,
+  }), close: async () => undefined, registry: {} } as unknown as LocalAgentHost
+}
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'panel-host-'))
+  configPath = join(root, 'agent-qa.config.yaml')
+  agentQaRoot = join(root, '.agent-qa')
+  knowledgeRoot = join(root, 'agent-qa-knowledge')
+  mkdirSync(knowledgeRoot)
+  mkdirSync(join(root, 'agent-qa-eval'))
+  writeConfig()
+  vi.spyOn(llm, 'resolveModelAuth').mockImplementation(async () => { throw new Error('unexpected credentials') })
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => { throw new Error('unexpected network') })
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+})
+afterEach(() => {
+  vi.restoreAllMocks()
+  rmSync(root, { recursive: true, force: true })
+})
+
+/** Invoke the actual shared port, actual key-only verb, and actual validated recording bridge. */
+async function exercisePort(port: ReplayGatePort) {
+  const recorded: GateReceipt[] = []
+  const identities: string[] = []
+  const resolve = vi.spyOn(session, 'resolveEvalSession')
+  const record = vi.fn(async (input: { receipt: GateReceipt }) => {
+    recorded.push(input.receipt)
+    return { kind: 'appended' as const }
+  })
+  vi.spyOn(bridge, 'createReplayGateHost').mockImplementation(input => realHost({ ...input,
+    reader: { candidateInjection: async () => ({ kind: 'found', injection: { candidateId } }) } as KnowledgeReaderPort,
+    curation: { recordGateReceipt: record,
+      maintenance: { acquireWriterLease: () => ({ kind: 'acquired', leaseId: 'fixture', epoch: 1 }),
+        releaseLease: () => ({ kind: 'released' }) } } as unknown as bridge.ReplayGateHostDeps['curation'],
+    runReplayGate: async execution => {
+      const ids = recorded.length === 0 ? INITIAL : CHANGED
+      const identity = createPanelIdentity(ids)
+      expect(execution.judgeMembers?.map(member => member.profile.model)).toEqual(ids)
+      expect(execution.identity.judgeMemberModelIds).toEqual(ids)
+      expect(execution.identity.plannerModelId).toBe('gpt-fixture')
+      expect(execution.identity.judgeModelId).toBe(identity.judgeModelId)
+      identities.push(execution.identity.profileKey)
+      // The invocation accepted these declarations already. Disk changes cannot replace its bag.
+      writeConfig(CHANGED)
+      await Promise.resolve()
+      expect(execution.judgeMembers?.map(member => member.profile.model)).toEqual(ids)
+      expect(execution.identity.judgeModelId).toBe(identity.judgeModelId)
+      const { receiptDigest: _digest, ...body } = completeGate1Receipt(candidateId)
+      const receipt = stampReceiptDigest({ ...body,
+        judgeId: `${identity.judgeModelId}|family=${identity.judgeFamily}|judgeVersion=2`,
+        judge: { eligibility: 'eligible', overrideConfigured: false, panelSize: ids.length, members: identity.members },
+      })
+      return { kind: 'receipt', receipt, lines: [], notices: [], refusals: [], modelCalls: 0, wallClockMs: 0 }
+    },
+  }))
+  expect(resolve).not.toHaveBeenCalled()
+  const first = await port.runReplayGate(candidateId)
+  const second = await port.runReplayGate(candidateId)
+  expect(resolve.mock.calls).toEqual([
+    [{ configPath, keyOnly: true }], [{ configPath, keyOnly: true }],
+  ])
+  expect(identities[0]).not.toBe(identities[1])
+  expect(recorded).toEqual([first, second])
+  expect(record).toHaveBeenCalledTimes(2)
+  expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+  expect(globalThis.fetch).not.toHaveBeenCalled()
+}
+
+function capturePosture() {
+  const ports: ReplayGatePort[] = []
+  const shared = vi.spyOn(bridge, 'createReplayGatePortForHost')
+  const build = vi.spyOn(posture, 'buildPromotionPostureResolver').mockImplementation(async input => {
+    expect(input.replayGate).toBeDefined()
+    ports.push(input.replayGate!)
+    return realPosture(input)
+  })
+  return { build, ports, shared }
+}
+
+describe('421 production panel host paths', () => {
+  it('local-agent host supplies the shared lazy port to its operation resolver', async () => {
+    const proof = capturePosture()
+    let composed: ComposeLocalAgentInput | undefined
+    vi.mocked(local.composeLocalAgent).mockImplementation(input => { composed = input; return fakeHost() })
+    composeCliLocalAgent({ configPath, agentQaRoot,
+      model: () => ({ modelId: 'fixture', generate: async () => { throw new Error('unexpected model') } }) })
+    expect(proof.shared).not.toHaveBeenCalled()
+    await composed!.resolvePromotionPosture!()
+    expect(proof.shared).toHaveBeenCalledTimes(1)
+    await exercisePort(proof.ports[0])
+  })
+
+  it('one-shot tail host composes the same local-agent operation route', async () => {
+    const proof = capturePosture()
+    let composed: ComposeLocalAgentInput | undefined
+    vi.mocked(local.composeLocalAgent).mockImplementation(input => { composed = input; return fakeHost() })
+    const host = defaultPostRunTailOperations().composeHost({ configPath, agentQaRoot,
+      curateRun: async () => ({ curated: 0, deprecated: 0, complete: true }) })
+    await composed!.resolvePromotionPosture!()
+    expect(proof.shared).toHaveBeenCalledTimes(1)
+    await exercisePort(proof.ports[0])
+    await host.close()
+  })
+
+  it('post-run tail prepares one snapshot for its sweep and per-run fold', async () => {
+    const proof = capturePosture()
+    const swept = vi.fn(async () => undefined)
+    const tail = runPostRunTail({ runId: 'panel-host-run', configPath, configDir: root, agentQaRoot,
+      knowledgeConfig: { dir: 'agent-qa-knowledge' }, log: { warn: vi.fn() },
+      operations: { resolveKnowledgeRoot: () => knowledgeRoot,
+        composeHost: () => fakeHost(),
+        acquireWriterLease: () => ({ kind: 'acquired', leaseId: 'fixture', epoch: 1 }),
+        releaseLease: () => ({ kind: 'released' }), runCurationTail: swept },
+    } as Parameters<typeof runPostRunTail>[0])
+    await tail.drain()
+    expect(swept).toHaveBeenCalledTimes(1)
+    expect(proof.shared).toHaveBeenCalledTimes(1)
+    await exercisePort(proof.ports[0])
+  })
+
+  it('knowledge-maintain drain supplies the shared panel-aware port', async () => {
+    const proof = capturePosture()
+    const program = new Command().option('--config <path>').exitOverride()
+    const knowledge = new Command('knowledge')
+    registerKnowledgeMaintainCommands(knowledge)
+    program.addCommand(knowledge)
+    const exit = process.exitCode
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await program.parseAsync(['node', 'agent-qa', '--config', configPath, 'knowledge', 'drain'])
+      expect(process.exitCode).toBe(exit)
+      expect(proof.shared).toHaveBeenCalledTimes(1)
+      expect(local.LOCAL_CURATION_CAPABILITIES.drainQueue).toHaveBeenCalled()
+      await exercisePort(proof.ports[0])
+    } finally { process.exitCode = exit }
+  })
+
+  it('daemon host publishes the shared operation resolver without a worker or provider', async () => {
+    const proof = capturePosture()
+    let composed: ComposeLocalAgentInput | undefined
+    let stop: (() => void) | undefined
+    const ready = Promise.withResolvers<void>()
+    const running = runDaemonHost({ configPath, agentQaRoot, knowledgeRoot,
+      config: { getMasked: async () => ({ schemaVersion: 1, configPath, entries: [] }) },
+      model: () => ({ modelId: 'fixture', generate: async () => { throw new Error('unexpected model') } }),
+      runExecution: {} as NonNullable<Parameters<typeof runDaemonHost>[0]['runExecution']>,
+      logger: { info: vi.fn(), error: vi.fn() },
+      operations: {
+        setInterval: () => 1, clearInterval: () => undefined,
+        setTimeout: () => 1, clearTimeout: () => undefined,
+        onSignal: (signal, listener) => { if (signal === 'SIGTERM') stop = listener },
+        offSignal: () => undefined,
+        trace: step => { if (step === 'registration-written') ready.resolve() },
+        startHeartbeatSupervisor: async () => ({ exited: Promise.resolve(), stop: async () => undefined }),
+        startInvokeServer: async () => ({ socketPath: join(agentQaRoot, 'fake.sock'), close: async () => undefined }),
+        writeDaemonRegistration: () => undefined,
+        reconcileRunOutcomesProjection: async () => undefined,
+        composeLocalAgent: input => { composed = input; return fakeHost() },
+        drainQueue: async () => ({ kind: 'drained', processed: 0, failures: 0, quarantined: 0, promotions: [] }),
+      } as Partial<DaemonHostOperations>,
+    })
+    await Promise.race([ready.promise, running.then(code => { throw new Error(`daemon exited early: ${code}`) })])
+    try {
+      await composed!.resolvePromotionPosture!()
+      expect(proof.shared).toHaveBeenCalled()
+      await exercisePort(proof.ports.at(-1)!)
+    } finally { stop!(); await expect(running).resolves.toBe(0) }
+  })
+
+  it.each([false, true])('doctor names every ineligible family even with unavailable floor (floor: %s)', async hasFloor => {
+    writeConfig(['claude-fixture', 'gpt-judge'])
+    if (hasFloor) {
+      const identity = await session.resolveGateProfileIdentity(await session.resolveEvalSession({ configPath, keyOnly: true }))
+      mkdirSync(join(root, 'agent-qa-eval/reports/noise-floor'), { recursive: true })
+      const fixture = writeGate1Fixture(join(root, 'floor-fixture'))
+      writeFileSync(join(root, 'agent-qa-eval/reports/noise-floor/fixture.json'), JSON.stringify({
+        ...fixture.artefact, profileKey: identity.profileKey,
+      }))
+    }
+    const proof = capturePosture()
+    const checks = createKnowledgeChecks({ configPath, config: { knowledge: { dir: 'agent-qa-knowledge' } },
+      probes: { classifyIndexFace: () => ({ source: 'scan', reason: 'absent', filePresent: false }),
+        resolveEmbedderCapability: async () => ({ kind: 'deferred', reason: 'load-failure' }),
+        readWriterLease: () => ({ kind: 'absent' }) } })
+    const row = await checks[3].check()
+    expect(row.message).toContain('judge ineligible (panel: claude, openai)')
+    expect(row.status).toBe(hasFloor ? 'pass' : 'fail')
+    expect(proof.shared).toHaveBeenCalledTimes(1)
+    // Doctor only composes. Exercising the captured port below is a separate fake invocation.
+    expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+    writeConfig()
+    await exercisePort(proof.ports[0])
+  })
+})
