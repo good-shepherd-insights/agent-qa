@@ -186,6 +186,21 @@ function selftest() {
       'another package cannot stand in for the expected package')
     assert.deepEqual(validateOutput(gates[0], fixture('Tasks: 22 successful, 22 total\nCached: 0 cached, 22 total\n').stdout), [])
   })
+  test('final runner discloses only the existing empty tools-local task alongside real suites', () => {
+    const empty = '@vostride/agent-qa-tools-local'
+    const gate = { ...gates[2], packages: ['fixture', empty], emptyPackages: [empty] }
+    const tasks = 'Tasks: 46 successful, 46 total\nCached: 0 cached, 46 total\n'
+    const positive = 'fixture:test: Test Files 2 passed (2)\nfixture:test: Tests 36 passed (36)\n'
+    const emptyResult = `${empty}:test: No test files found, exiting with code 0\n`
+    assert.deepEqual(validateOutput(gate, fixture(tasks + positive + emptyResult).stdout), [],
+      'the existing empty tools-local task must be disclosed without rejecting real complete suites')
+    assert.ok(validateOutput(gate, fixture(tasks + positive).stdout).length, 'missing empty-task evidence must fail')
+    assert.ok(validateOutput(gate, fixture(tasks + emptyResult).stdout).length, 'no real tests must fail')
+    assert.ok(validateOutput(gate, fixture(tasks + positive + emptyResult + 'other:test: No test files found, exiting with code 0\n').stdout).length,
+      'an unexpected empty package must fail')
+    assert.ok(validateOutput({ ...gate, emptyPackages: [] }, fixture(tasks + positive + emptyResult).stdout).length,
+      'a package expected to contain tests cannot claim the empty-task exception')
+  })
 }
 async function main() {
   const args = process.argv.slice(2)
