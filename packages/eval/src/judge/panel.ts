@@ -76,11 +76,18 @@ export function assessPanelEligibility(input: {
 
 /** Binary max means a strict settled majority with a quorum of two, never a confidence sum. */
 export function poolPanel(members: readonly PanelMemberOutcome[], mode?: 'max'): JudgePairwiseOutcome
-export function poolPanel(scores: readonly number[], mode: 'avg'): number | undefined
-export function poolPanel(input: readonly PanelMemberOutcome[] | readonly number[], mode: PanelPoolingMode = 'max'): JudgePairwiseOutcome | number | undefined {
+export function poolPanel(scores: readonly number[], mode: 'avg'):
+  | number
+  | { kind: 'abstained'; cause: 'below-quorum' }
+  | { kind: 'invalid-input'; reason: 'invalid-score'; index: number }
+export function poolPanel(input: readonly PanelMemberOutcome[] | readonly number[], mode: PanelPoolingMode = 'max'):
+  | JudgePairwiseOutcome | number
+  | { kind: 'invalid-input'; reason: 'invalid-score'; index: number } {
   if (mode === 'avg') {
     const scores = input as readonly number[]
-    if (scores.length === 0 || scores.some(score => !Number.isFinite(score) || score < 0 || score > 1)) return undefined
+    const index = scores.findIndex(score => !Number.isFinite(score) || score < 0 || score > 1)
+    if (index !== -1) return { kind: 'invalid-input', reason: 'invalid-score', index }
+    if (scores.length < 2) return { kind: 'abstained', cause: 'below-quorum' }
     return scores.reduce((sum, score) => sum + score, 0) / scores.length
   }
   const settled = (input as readonly PanelMemberOutcome[]).map(member => member.outcome)
