@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { buildEvalReport, canonicalJson, createScoringContext } from '@vostride/agent-qa-eval'
+import { buildEvalReport, canonicalJson, createScoringContext, composeBaselineProfileKey, createPanelIdentity } from '@vostride/agent-qa-eval'
 import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
 import { baselineScoreSchema } from '../baseline-cache-guards.js'
 import { resolveBaselineCache } from '../baseline-cache-read.js'
@@ -13,7 +13,8 @@ const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 async function fixture(verdicts = ['unsure', 'error']) {
   const root = mkdtempSync(join(tmpdir(), 'panel-cache-')); roots.push(root)
-  const profileKey = 'panel-fixture-profile'
+  const profileKey = composeBaselineProfileKey({ plannerModelId: 'gpt-5', fingerprint: 'a'.repeat(64),
+    matcherVersion: 1, ...createPanelIdentity(['claude-sonnet-4-5', 'gemini-2.5-pro']) })
   const run = join(root, 'eval/floor', slugBranch(profileKey), 'r0-seed29')
   const f = await panelScoreFixture(run, verdicts)
   const report = buildEvalReport([{ cassetteId: f.cassette.id, outcome: f.outcome, score: f.record.score }], f.record.judge)
@@ -39,12 +40,13 @@ it.each([
   expect(cached.rows[0].kind === 'cached' && cached.rows[0].score).toEqual(f.record)
 })
 
-it.each(['size', 'unknown-cause', 'member', 'member-error', 'usage', 'foreign-request', 'old-version', 'digest', 'missing-context'])(
+it.each(['size', 'unknown-kind', 'unknown-cause', 'member', 'member-error', 'usage', 'foreign-request', 'old-version', 'digest', 'replay-digest', 'missing-context'])(
   'refuses corrupt or stale cache panel evidence: %s', async corruption => {
     const f = await fixture()
     const raw = JSON.parse(readFileSync(f.written.file, 'utf8'))
     const stamp = raw.score.entry.score.judgeOutcome
     if (corruption === 'size') raw.judge.panelSize++
+    if (corruption === 'unknown-kind') stamp.kind = 'unknown'
     if (corruption === 'unknown-cause') stamp.cause = 'unknown'
     if (corruption === 'member') stamp.members[0].judgeModelId = 'foreign'
     if (corruption === 'member-error') stamp.members[1].outcome.reason = 'unknown'
@@ -52,6 +54,7 @@ it.each(['size', 'unknown-cause', 'member', 'member-error', 'usage', 'foreign-re
     if (corruption === 'foreign-request') raw.scoringContext.judgeRequest.judgeModelId = 'foreign'
     if (corruption === 'old-version') { raw.judge.judgeVersion = 1; stamp.judgeVersion = 1 }
     if (corruption === 'digest') raw.scoringContext.finalScoreDigest = 'f'.repeat(64)
+    if (corruption === 'replay-digest') raw.scoringContext.replayDigest = 'f'.repeat(64)
     if (corruption === 'missing-context') delete raw.scoringContext
     writeFileSync(f.written.file, JSON.stringify(raw))
     expect(resolveBaselineCache(f.input).rows[0].kind).toBe('uncached')

@@ -8,7 +8,15 @@ import {
   REPLAY_REFUSAL_REASONS,
   projectMatcherConfigContract,
   scoringContextSchema,
+  judgeIdentitySchema,
+  judgeMemberOutcomeSchema,
+  judgeUsageSchema,
+  hasValidScoreJudgeMetadata,
+  JUDGE_ABSTENTION_CAUSES,
+  JUDGE_CONFIG,
+  canonicalJson,
 } from '@vostride/agent-qa-eval'
+import { sha256hex } from '@vostride/agent-qa-schema'
 import { TIER_ORDER } from '@vostride/agent-qa-safety'
 
 const integer = z.number().int().nonnegative().safe()
@@ -135,9 +143,8 @@ const tieCause = z.enum(['partial-identity', 'value-mid-band', 'no-consensus'])
 const judgeStamp = z.object({
   judgeId: z.string(),
   judgeVersion: integer,
-  usage: z
-    .object({ calls: integer, inputTokens: integer.optional(), outputTokens: integer.optional() })
-    .optional(),
+  usage: judgeUsageSchema.optional(),
+  members: z.array(judgeMemberOutcomeSchema).optional(),
 })
 const decisionScore = z.discriminatedUnion('kind', [
   breakdown.extend({
@@ -163,14 +170,7 @@ const decisionScore = z.discriminatedUnion('kind', [
         judgeStamp.extend({
           kind: z.literal('abstained'),
           confidence: confidence.optional(),
-          cause: z.enum([
-            'unsure-verdict',
-            'below-threshold',
-            'swap-disagreement',
-            'candidate-overflow',
-            'missing-evidence',
-            'residual-tie',
-          ]),
+          cause: z.enum(JUDGE_ABSTENTION_CAUSES),
         }),
         judgeStamp.extend({
           kind: z.literal('judge-error'),
@@ -214,7 +214,7 @@ const scoreEntry = z.discriminatedUnion('kind', [
   }),
 ])
 
-export const baselineScoreSchema = z
+const baselineScoreShape = z
   .object({
     cassetteId: z.string().min(1),
     matcherVersion: integer,
@@ -237,15 +237,7 @@ export const baselineScoreSchema = z
         }),
       }),
     ),
-    judge: z
-      .object({
-        judgeModelId: z.string(),
-        judgeFamily: z.string(),
-        judgeVersion: integer,
-        confidenceThreshold: confidence,
-        familyOverride: z.literal('same-family-allowed').optional(),
-      })
-      .optional(),
+    judge: judgeIdentitySchema.optional(),
   })
   .refine((record) => {
     const entry = record.score.entry
@@ -262,3 +254,20 @@ export const baselineScoreSchema = z
       )
     )
   }, 'nested score identities must match the admitted record')
+/** Validate original bytes: shape parsing must not strip additive fields before digest checks. */
+export const baselineScoreSchema = z.custom<z.infer<typeof baselineScoreShape>>(value =>
+  baselineScoreShape.safeParse(value).success && hasValidScoreJudgeMetadata(value))
+  .refine(record => {
+    const judge = record.judge
+    // Historical single/no-judge records remain readable; a panel has always had context.
+    if (judge !== undefined && (judge.judgeVersion !== JUDGE_CONFIG.judgeVersion ||
+      judge.confidenceThreshold !== JUDGE_CONFIG.confidenceThreshold)) return false
+    const context = record.scoringContext
+    if (context === undefined) return judge?.panelSize === undefined
+    return context.matcherVersion === record.matcherVersion &&
+      context.finalScoreDigest === sha256hex(canonicalJson(record.score)) &&
+      context.judgeIdentityDigest === sha256hex(canonicalJson(judge ?? null)) &&
+      // A configured but ineligible judge can honestly leave no identity stamp.
+      (judge === undefined || context.judgeRequest?.judgeModelId === judge.judgeModelId) &&
+      (judge?.panelSize === undefined || context.judgeRequest?.allowSameFamily === false)
+  }, 'cached score context must bind the current judge, request and final score')

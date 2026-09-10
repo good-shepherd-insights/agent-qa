@@ -133,12 +133,12 @@ export function resolveBaselineCache(input: {
       }
       const score = loadScoreRecord(dir)
       if (score.kind !== 'loaded') {
-        miss('missing or refused score record')
+        miss(score.kind === 'refused' ? 'invalid score record: malformed judge metadata or scoring context' : 'missing or refused score record')
         continue
       }
       if (!baselineScoreSchema.safeParse(score.record).success) {
         miss(
-          'invalid score record: malformed score, diffs, or nested cassetteId/matcherVersion identities',
+          'invalid score record: malformed score, diffs, judge context, or nested cassetteId/matcherVersion identities',
         )
         continue
       }
@@ -148,6 +148,11 @@ export function resolveBaselineCache(input: {
       }
       if (score.record.matcherVersion !== input.matcherVersion) {
         miss('score matcherVersion mismatch')
+        continue
+      }
+      if (score.record.scoringContext !== undefined && score.record.scoringContext.replayDigest !==
+        sha256hex(canonicalJson({ ...replay, executionSeed: undefined }))) {
+        miss('score replayDigest mismatch')
         continue
       }
       const judge = score.record.judge

@@ -75,6 +75,12 @@ export function hasValidScoreJudgeMetadata(record: unknown): boolean {
       }
       if (stamp.kind === 'not-invoked') continue
       if (stamp.judgeId !== judge.judgeModelId || stamp.judgeVersion !== judge.judgeVersion) return false
+      if (stamp === entry.score.judgeSettled) {
+        if (!z.enum(['element-identity', 'value']).safeParse(stamp.axis).success ||
+          !z.enum(['equivalent', 'different']).safeParse(stamp.resolution).success ||
+          !confidence.safeParse(stamp.confidence).success ||
+          !z.enum(['partial-identity', 'value-mid-band', 'no-consensus']).safeParse(stamp.cause).success) return false
+      } else if (stamp.kind !== 'abstained' && stamp.kind !== 'judge-error') return false
       if (stamp.kind === 'abstained' && !z.enum(JUDGE_ABSTENTION_CAUSES).safeParse(stamp.cause).success) return false
       if (stamp.kind === 'judge-error' && (!z.enum(['provider-error', 'unparseable-output']).safeParse(stamp.reason).success ||
         typeof stamp.detail !== 'string')) return false
