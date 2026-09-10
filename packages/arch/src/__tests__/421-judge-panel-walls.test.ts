@@ -1,11 +1,33 @@
 import { globSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { judgePanelWalls } from '../lint/judge-panel-walls.js'
 import { calibrationBoundaryHits, calibrationClosure } from '../lint/label-calibration-walls.js'
+import { calibrationImports } from '../lint/label-calibration-walls.js'
+import { ARCH_MANIFEST } from '../manifest.js'
+import { findSetMismatchOffenders } from '../lint/reconcile-deps.js'
+import { findSurfaceFirewallOffenders } from '../lint/surface-firewall.js'
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url))
 const read = (file: string) => readFileSync(`${root}/${file}`, 'utf8')
+const digest = (text: string) => createHash('sha256').update(text).digest('hex')
+// Phase 421 introduced no runtime dependency or SDK change. These independently pinned
+// sets also prevent editing both package.json and ownership metadata to bless a new edge.
+const dependencyPins = {
+  eval: '3dfdd67ac8febb33dc7f7d027408677ff5f7852b02c6df15d221b5395c9b5371',
+  'eval-local': '2a080fb9e46b9858ba6d8f2fb2739fa273db8d458e9ca9ed17545389c0d0216d',
+  'knowledge-local': '65a609c2ac046b32cde426e3b4d7d7752dc432995c65f333f93a7c97f946ff3c',
+  'agent-local': 'b2e720e8c49b10e5882523a1cffdfa8e502619dd3e1e799e1078eba3dc6d01d0',
+  cli: '35c501c849cd79e5986cff27141aa2b641c7a3fac3447cdc15be5125c50e168a',
+}
+const internalPins: Record<string, string> = {
+  eval: 'f09db8107041e27d15929be67224e779d7ecaca3b45594f7c63cee45c9c200ed',
+  'eval-local': 'deedee0b56409517d1fca91bbe7f4b7c56984409290a66d6beddccbaaa843f45',
+  'knowledge-local': '1fb4bd85868bfa9e2497d7462fd3ccb7cc66f1f2042db976379a0bfb9f7d6087',
+  'agent-local': 'ffe54e4e45a22c4544b49e376470cea3421d2b9e03f0bd903755b0af711db469',
+  cli: '72c3719b1219ba5143c261ebbdf966e1bab08190d422b9cc261c7bb09218b248',
+}
 const local = 'packages/eval-local/src/'
 const sources = [...globSync('packages/*/src/**/*.{ts,tsx}', { cwd: root })]
   .filter(file => !file.startsWith('packages/arch/') && !file.includes('__tests__') && !/\.test\.|\.d\.ts$/.test(file))
@@ -13,9 +35,31 @@ const sources = [...globSync('packages/*/src/**/*.{ts,tsx}', { cwd: root })]
 const check = (text: string, file = local + 'replay-composition.ts') => judgePanelWalls([{ file, text }]).map(hit => hit.rule)
 const replay = (value: string, extra = '') => `import { assessPanelEligibility as assess } from '@vostride/agent-qa-eval'
   function runCassetteReplay(input: RunCassetteReplayInput) { ${extra}
-    assess({ replayedModelId: ${value}, memberModelIds: input.judge.members.map(m => m.profile.model) }) }`
+    assess({ replayedModelId: ${value}, recordedModelId: input.cassette.receipt.model.declared?.modelId ?? input.cassette.receipt.model.resolvedModelId,
+      memberModelIds: input.judge.members.map(m => m.profile.model) }) }`
 
 describe('421 judge panel walls', () => {
+  it.each(Object.entries(dependencyPins))('pins runtime versions and exact ownership edges for %s', (pkg, pin) => {
+    const dependencies = JSON.parse(read(`packages/${pkg}/package.json`)).dependencies
+    expect(digest(JSON.stringify(Object.entries(dependencies).sort()))).toBe(pin)
+    const contract = ARCH_MANIFEST.packages.find(row => row.packageDir === `packages/${pkg}`)!
+    expect(digest(JSON.stringify([...contract.internalDependencies].sort()))).toBe(internalPins[pkg])
+    // CLI's package dependencies predate and exceed its direct-import ownership set;
+    // pin both independently instead of broadening the direct-import contract.
+    const declared = [...contract.internalDependencies, ...contract.externalDependencies]
+    expect(findSetMismatchOffenders('judge-dependency-edge', [...declared, 'new-sdk'], declared))
+      .toEqual(['judge-dependency-edge: unexpected new-sdk'])
+  })
+  it('retains the exact existing firewall ledger and rejects new direct/aliased/dynamic CLI imports', () => {
+    expect(digest(read('packages/arch/src/lint/surface-firewall-ledger.ts'))).toBe('33be3af90770bf9d5d297a69e762b05d8658525a67e8a801d164acae70c08c82')
+    for (const text of ["import { loadJudgeCalibrationEvidence as data } from '@vostride/agent-qa-eval-local'",
+      "const data = await import('@vostride/agent-qa-eval-local')"]) {
+      const hits = calibrationImports({ file: 'packages/cli/src/judge-new.ts', text })
+      expect(findSurfaceFirewallOffenders([{ packageDir: 'packages/cli', hits }], [])).toEqual([
+        'packages/cli | packages/cli/src/judge-new.ts:1 | @vostride/agent-qa-eval-local | surface-firewall un-ledgered internal import',
+      ])
+    }
+  })
   it('rejects caller-controlled family declarations', () => {
     expect(check('const key = "plannerFamily"; const shape = { [key]: z.string(), judgeFamily: z.string() }',
       'packages/core/src/schema/config-schema.ts')).toContain('caller-family')
@@ -41,6 +85,13 @@ describe('421 judge panel walls', () => {
     expect(check(source.text.replace('recordedReceiptModelId(input.cassette)', "'gpt-forged'"))).toContain('recorded-provenance')
     expect(check(source.text.replace('...(recordedModelId !== undefined ? { recordedModelId } : {}),', ''))).toContain('recorded-provenance')
     expect(check(source.text.replace('cassette.receipt.model.declared?.modelId ?? cassette.receipt.model.resolvedModelId', "'gpt-forged'"))).toContain('recorded-provenance')
+  })
+  it('rejects forged member IDs and removal of production eligibility', () => {
+    for (const name of ['replay-composition.ts', 'replay-gate-composition.ts', 'judge-calibration-composition.ts']) {
+      const source = sources.find(row => row.file === local + name)!
+      expect(check(source.text.replace(/assessPanelEligibility\(/g, 'unreviewedEligibility('), source.file)).toContain('eligibility-site')
+    }
+    expect(check(replay('input.profile.model').replace('input.judge.members.map(m => m.profile.model)', '["claude-forged", "gemini-forged"]'))).toContain('member-provenance')
   })
   it('accepts Gate identity aliases but rejects a same-named forged identity', () => {
     const source = sources.find(row => row.file === local + 'replay-gate-composition.ts')!
