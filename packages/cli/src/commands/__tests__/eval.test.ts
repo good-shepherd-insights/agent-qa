@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import {
   assignSplit,
+  JUDGE_CONFIG,
   buildEvalReport,
   canonicalJson,
   committedFileText,
@@ -1724,14 +1725,14 @@ async function setScoreJudgeBlock(
 const JUDGE_BLOCK_A: JudgeIdentityBlock = {
   judgeModelId: 'claude-report-fixture',
   judgeFamily: 'claude',
-  judgeVersion: 1,
+  judgeVersion: JUDGE_CONFIG.judgeVersion,
   confidenceThreshold: 'high',
 }
 
 const JUDGE_BLOCK_B: JudgeIdentityBlock = {
   judgeModelId: 'gemini-report-fixture',
   judgeFamily: 'gemini',
-  judgeVersion: 1,
+  judgeVersion: JUDGE_CONFIG.judgeVersion,
   confidenceThreshold: 'high',
 }
 
@@ -4528,12 +4529,14 @@ describe('runReportVerb --commit --baseline — designation through the refusing
 
   it('refuses a same-family report as a comparator, keeps the report as history (D-18/D-20)', async () => {
     const { dir, configPath, session, ids } = await scoredRecordsFixture(BASELINE_PLANNER_MODEL_ID)
-    for (const id of ids) await setScoreJudgeBlock(dir, id, FIXTURE_JUDGE_BLOCK)
+    // This cell produces fresh replay scores; the copied v1 census fixture stays unchanged.
+    const currentJudge = { ...FIXTURE_JUDGE_BLOCK, judgeVersion: JUDGE_CONFIG.judgeVersion }
+    for (const id of ids) await setScoreJudgeBlock(dir, id, currentJudge)
 
     const result = await runReportVerb(session, {}, { commit: true, baseline: true })
 
     expect(result.judgeIdentity).toBe('present')
-    // The report itself still commits — the v50 39/45 artefact stays history (D-18).
+    // The new report itself still commits, following the v50 history-preservation law (D-18).
     expect(result.committed?.kind).toBe('committed')
     expect(result.baseline?.kind).toBe('refused')
     expect(

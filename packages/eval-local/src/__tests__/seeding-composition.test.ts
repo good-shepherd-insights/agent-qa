@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import {
   buildSeedingPlan,
+  JUDGE_CONFIG,
   committedFileText,
   extractRunCassettes,
   projectJudgeConfigContract,
@@ -202,7 +203,7 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
     expect(report.scaffold).toEqual({ gitignore: 'written', marker: 'written' })
     expect(report.contracts).toEqual([
       { fileName: 'matcher-config.v1.json', outcome: 'written' },
-      { fileName: 'judge-config.v1.json', outcome: 'written' },
+      { fileName: `judge-config.v${JUDGE_CONFIG.judgeVersion}.json`, outcome: 'written' },
     ])
 
     // Never-silent pass-through of the plan's accounting, verbatim.
@@ -218,7 +219,7 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
       schemaVersion: 1,
     })
     expect(existsSync(join(root, committedContractPath('matcher-config.v1.json')))).toBe(true)
-    expect(existsSync(join(root, committedContractPath('judge-config.v1.json')))).toBe(true)
+    expect(existsSync(join(root, committedContractPath(`judge-config.v${JUDGE_CONFIG.judgeVersion}.json`)))).toBe(true)
 
     // Every case's whole unit landed: cassette + label + corpus + blob.
     for (const planCase of plan.cases) {
@@ -312,7 +313,7 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
     expect(second.scaffold).toEqual({ gitignore: 'unchanged', marker: 'unchanged' })
     expect(second.contracts).toEqual([
       { fileName: 'matcher-config.v1.json', outcome: 'unchanged' },
-      { fileName: 'judge-config.v1.json', outcome: 'unchanged' },
+      { fileName: `judge-config.v${JUDGE_CONFIG.judgeVersion}.json`, outcome: 'unchanged' },
     ])
 
     // Read-back byte comparison, not just report counts.
@@ -365,7 +366,7 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
     expect(matcher).toEqual(JSON.parse(JSON.stringify(projectMatcherConfigContract())))
 
     const judge = JSON.parse(
-      await readFile(join(root, committedContractPath('judge-config.v1.json')), 'utf8'),
+      await readFile(join(root, committedContractPath(`judge-config.v${JUDGE_CONFIG.judgeVersion}.json`)), 'utf8'),
     )
     expect(judge).toEqual(JSON.parse(JSON.stringify(projectJudgeConfigContract())))
   })

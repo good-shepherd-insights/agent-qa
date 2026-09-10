@@ -317,7 +317,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
       expect(got).toMatchObject({
         verdict: 'pass',
         crossCheck: 'flipped',
-        judgeId: 'claude-fixture|family=claude|judgeVersion=1',
+        judgeId: `claude-fixture|family=claude|judgeVersion=${JUDGE_CONFIG.judgeVersion}`,
         judge: { eligibility: 'eligible' },
       })
       expect(got.degradation).toBeUndefined()
@@ -1237,7 +1237,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     const got = receipt(await evalLocal.runReplayGate(input))
     expect(got.verdict).toBe('pass')
     expect(got.judge?.eligibility).toBe('eligible')
-    expect(got.judgeId).toBe('claude-fixture|family=claude|judgeVersion=1')
+    expect(got.judgeId).toBe(`claude-fixture|family=claude|judgeVersion=${JUDGE_CONFIG.judgeVersion}`)
     expect(got.degradation).toBeUndefined()
     expect(judge.captured).toHaveLength(2)
     expect(got.spend).toMatchObject({

@@ -6,7 +6,7 @@ import { asRef } from '@vostride/agent-qa-schema'
 import {
   adjudicateCassetteScore, buildEvalReport, computeDecisionIdentity,
   decisionCorrectnessVectors, effectiveGold, extractRunCassettes, scoreCassetteReplay,
-  createScoringContext,
+  createScoringContext, JUDGE_CONFIG,
   type LeafReplayResult, type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
 import { FsCassetteStore, FsReplayRecordStore, FsScoreStore, assembleScoredBatch, loadScoreRecord } from '../index.js'
@@ -83,7 +83,10 @@ it.each(['correction', 'replay', 'matcher', 'judge', 'judge-version', 'judge-thr
       new FsReplayRecordStore({ root: f.root, outputDir: f.replaysRoot }).save(replay)
     }
     if (change === 'matcher') old.matcherVersion = 2
-    if (change === 'judge-version') old.judge!.judgeVersion = 2
+    if (change === 'judge-version') {
+      old.judge!.judgeVersion = JUDGE_CONFIG.judgeVersion + 1
+      expect(old.judge!.judgeVersion).not.toBe(JUDGE_CONFIG.judgeVersion)
+    }
     if (change === 'judge-threshold') old.judge!.confidenceThreshold = 'medium'
     if (change === 'missing-context') Reflect.deleteProperty(old, 'scoringContext')
     if (change === 'old-gold') old.scoringContext = createScoringContext({ cassette: f.cassette,

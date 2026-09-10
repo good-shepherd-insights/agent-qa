@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  buildEvalReport, decisionCorrectnessVectors, extractRunCassettes,
+  buildEvalReport, decisionCorrectnessVectors, extractRunCassettes, JUDGE_CONFIG,
   guardDecisionVectorsDocument, projectDecisionVectorsDocument, resolveProductPartition,
 } from '@vostride/agent-qa-eval'
 import type { JudgeIdentityBlock, LeafReplayResult } from '@vostride/agent-qa-eval'
@@ -114,7 +114,7 @@ describe('assembleScoredBatch', () => {
     const judge: JudgeIdentityBlock = {
       judgeModelId: 'claude-judge-stub',
       judgeFamily: 'claude',
-      judgeVersion: 1,
+      judgeVersion: JUDGE_CONFIG.judgeVersion,
       confidenceThreshold: 'high',
     }
     const record: ScoreRecord = {
