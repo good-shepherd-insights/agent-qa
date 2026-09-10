@@ -14,7 +14,16 @@ import { files as filesUnder } from '../../gates/__tests__/feedback-fixture.js'
 import { runJudgeCalibrateVerb, resolveEvalSession } from '../../eval-session-composition.js'
 import { getActiveMaskingContext, getActiveAuditSink } from '@vostride/agent-qa-safety'
 
-const boundary = vi.hoisted(() => ({ calls: 0, binds: 0, comparisons: 0, overrides: {} as import('@vostride/agent-qa-model').ModelProviderOverrides }))
+const boundary = vi.hoisted(() => ({ calls: 0, binds: 0, comparisons: 0, publications: 0,
+  inputs: [] as unknown[], overrides: {} as import('@vostride/agent-qa-model').ModelProviderOverrides }))
+vi.mock('@vostride/agent-qa-eval-local', async original => {
+  const actual = await original<typeof import('@vostride/agent-qa-eval-local')>()
+  return { ...actual, runJudgeCalibration: (...args: Parameters<typeof actual.runJudgeCalibration>) => {
+    boundary.inputs.push(args[0])
+    if (args[0].kind === 'probe' || args[0].publication !== undefined) boundary.publications++
+    return actual.runJudgeCalibration(...args)
+  } }
+})
 vi.mock('@vostride/agent-qa-model', async original => {
   const actual = await original<typeof import('@vostride/agent-qa-model')>()
   return { ...actual, createModel: (...args: Parameters<typeof actual.createModel>) => {
@@ -35,6 +44,7 @@ const digest = (value: unknown) => sha256hex(core.canonicalJson(value))
 const bytes = (root: string) => filesUnder(root).map(path => [path, readFileSync(path).toString('hex')])
 beforeEach(() => {
   boundary.calls = boundary.binds = boundary.comparisons = 0
+  boundary.publications = 0; boundary.inputs = []
   vi.spyOn(console, 'log').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('network forbidden') })
@@ -147,29 +157,41 @@ it('publishes through the public command and regenerates unchanged without chang
   for (const [path, content] of before) expect(readFileSync(path!).toString('hex')).toBe(content)
 })
 
-it.each([undefined, [], ['model1']] as const)('keeps declaration %j a successful zero-write gap in both commit modes', async judges => {
+it.each([undefined, [], ['model1']].flatMap(judges => [false, true].flatMap(replace => [false, true].map(json => ({ judges, replace, json })))))('keeps no-composite public matrix %j a successful zero-write gap', async ({ judges, replace, json }) => {
   const f = fixture()
   await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
+  // Existing unrelated bytes are protected even when they are outside panel admission.
+  writeFileSync(join(f.committedRoot, 'labels/calibration.json'), JSON.stringify(core.calibrateLabels({ snapshot: {
+    entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })))
+  for (const [name, judge] of [['historical-single', core.createPanelIdentity(['claude-sonnet-4'])], ['historical-none', undefined]] as const) {
+    const dir = join(f.committedRoot, 'reports', name); mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'report.json'), JSON.stringify(core.buildEvalReport([], judge)))
+  }
   const before = bytes(f.committedRoot)
   const config = JSON.parse(readFileSync(f.configPath, 'utf8')); config.eval = judges === undefined ? {} : { judges }
   writeFileSync(f.configPath, JSON.stringify(config))
   boundary.calls = boundary.binds = boundary.comparisons = 0
+  boundary.publications = 0; boundary.inputs = []
   vi.mocked(llm.resolveModelAuth).mockClear()
-  for (const extra of [[], ['--replace']]) {
-    const output = await invoke(f.configPath, ['--judge-panel', '--commit', ...extra, '--json'])
+  const flags = ['--judge-panel', '--commit', ...(replace ? ['--replace'] : []), ...(json ? ['--json'] : [])]
+  for (const existing of [true, false]) {
+    if (!existing) rmSync(f.committedRoot, { recursive: true })
+    const output = await invoke(f.configPath, flags)
     expect(output.exit).toBe(0)
-    expect(output.result).toMatchObject({ kind: 'capability-gap', reason: 'panel-not-configured', artifactDisposition: 'not-created' })
-    for (const field of ['identity', 'artifact', 'profileKey', 'path']) expect(output.result).not.toHaveProperty(field)
-    expect(bytes(f.committedRoot)).toEqual(before)
+    if (json) {
+      expect(output.result).toMatchObject({ kind: 'capability-gap', reason: 'panel-not-configured', artifactDisposition: 'not-created' })
+      for (const field of ['identity', 'artifact', 'profileKey', 'path']) expect(output.result).not.toHaveProperty(field)
+    } else {
+      expect(output.stdout).toContain('panel-not-configured'); expect(output.stdout).toContain('No committed artifact created.')
+      expect(output.stdout).not.toMatch(/panel:claude|profileKey|judge-calibration\//)
+    }
+    if (existing) expect(bytes(f.committedRoot)).toEqual(before)
+    else expect(existsSync(f.committedRoot)).toBe(false)
   }
-  expect(llm.resolveModelAuth).not.toHaveBeenCalled(); expect(boundary.calls).toBe(0); expect(boundary.binds).toBe(0)
-  rmSync(f.committedRoot, { recursive: true })
-  for (const extra of [[], ['--replace']]) {
-    expect((await invoke(f.configPath, ['--judge-panel', '--commit', ...extra, '--json'])).exit).toBe(0)
-    expect(existsSync(f.committedRoot)).toBe(false)
-  }
-  const human = await invoke(f.configPath, ['--judge-panel', '--commit'])
-  expect(human.stdout).toContain('panel-not-configured'); expect(human.stdout).toContain('No committed artifact created.')
+  expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+  expect(boundary).toMatchObject({ calls: 0, binds: 0, comparisons: 0, publications: 0 })
+  expect(boundary.inputs).toEqual(Array.from({ length: 2 }, () => ({ kind: 'capability-gap', reason: 'panel-not-configured',
+    minN: { value: 20, source: 'default' }, commit: true, replace: replace || undefined })))
 })
 it('routes a credential gap through the same public checked writer with zero provider calls', async () => {
   const f = fixture(), before = bytes(f.committedRoot)
@@ -180,6 +202,8 @@ it('routes a credential gap through the same public checked writer with zero pro
   expect(first.result).toMatchObject({ kind: 'committed', artifact: { status: 'capability-gap', reason: 'no-credential', n: 0, selected: 1,
     cost: { callBound: 0, usage: { calls: 0 } } } })
   expect(first.result.artifact).not.toHaveProperty('pooledAgreement')
+  expect(local.readJudgeCalibration({ ...f.rows[0]!.input, identity: first.result.artifact.identity })).toEqual({ kind: 'loaded', artifact: first.result.artifact })
+  expect(boundary.publications).toBe(1)
   expect((await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])).result.kind).toBe('unchanged')
   expect((await invoke(f.configPath, ['--judge-panel', '--commit', '--min-n', '2', '--json'])).result.kind).toBe('write-conflict')
   expect((await invoke(f.configPath, ['--judge-panel', '--commit', '--replace', '--min-n', '2', '--json'])).result.kind).toBe('committed')
