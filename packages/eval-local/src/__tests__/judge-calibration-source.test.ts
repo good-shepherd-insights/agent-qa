@@ -126,6 +126,8 @@ it('validates measured counts, rates and Wilson intervals independently of the p
     (a: typeof artifact) => { a.perMember[0]!.settled = 3 },
     (a: typeof artifact) => { a.perMember[0]!.judgeModelId = 'foreign' },
     (a: typeof artifact) => { a.disagreement.pairs[0]!.denominator = 3 },
+    (a: typeof artifact) => { a.disagreement.pairs[0]!.denominator = 0; delete a.disagreement.pairs[0]!.rate;
+      a.disagreement.denominator = 0; delete a.disagreement.rate },
     (a: typeof artifact) => { a.cost.usage.calls = 9 },
     (a: typeof artifact) => { a.status = 'uncalibrated' },
   ]
