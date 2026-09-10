@@ -55,7 +55,8 @@
     "release:publish": "node scripts/release/publish.mjs",
     "release:github": "node scripts/release/github-release.mjs",
     "lint:namespace": "! grep -r '@agent-qa/' packages/ --include='*.ts' --include='*.json' --include='*.js' -l --exclude-dir=node_modules --exclude-dir=dist",
-    "validate:label-mutation": "bash scripts/420-label-mutation.sh"
+    "validate:label-mutation": "bash scripts/420-label-mutation.sh",
+    "validate:panel-mutation": "bash scripts/421-panel-mutation.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
