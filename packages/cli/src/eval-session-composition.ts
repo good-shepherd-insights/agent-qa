@@ -220,6 +220,16 @@ export class EvalJudgeDeclarationError extends TypeError {
 
 export { preflightJudgePanel } from './judge-panel-preflight.js'
 export type { JudgePanelPreflightDeps, JudgePanelPreflightResult } from './judge-panel-preflight.js'
+// Preflight consumes pure contracts through this existing surface composition boundary.
+export { createPanelIdentity }
+export type { JudgeIdentityBlock, ModelProfile, ResolvedModelAuth }
+export {
+  assessPanelEligibility, judgeFamiliesIntersect, resolveJudgeFamilies,
+  resolveJudgeCalibrationMinimum,
+} from '@vostride/agent-qa-eval'
+export type {
+  JudgeCalibrationEntryDiagnostic, JudgeCalibrationGapReason, JudgeCalibrationMinimum,
+} from '@vostride/agent-qa-eval'
 
 /** Validate the whole declaration before overrides; aliases retain multiplicity and order. */
 export function selectedEvalJudgeNames(config: Pick<EvalCliConfig, 'judge' | 'judges'>): readonly string[] {

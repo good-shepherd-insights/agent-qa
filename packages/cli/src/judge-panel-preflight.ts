@@ -3,10 +3,8 @@ import {
   resolveJudgeCalibrationMinimum,
   type JudgeCalibrationEntryDiagnostic, type JudgeCalibrationGapReason,
   type JudgeCalibrationMinimum, type JudgeIdentityBlock,
-} from '@vostride/agent-qa-eval'
-import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
-import {
   resolveReplayProfileDeclaration, selectedEvalJudgeNames, type EvalSession,
+  type ModelProfile, type ResolvedModelAuth,
 } from './eval-session-composition.js'
 import {
   resolveNamedConfig, resolveModelAuth, toModelProfileAndAuth,
