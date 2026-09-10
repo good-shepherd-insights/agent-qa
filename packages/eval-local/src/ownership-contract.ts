@@ -29,9 +29,10 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // maxRetries 0, one structured Output.object verdict per order-tagged request, parsed against
   // a closed zod schema with typed call-error degradation (the port never throws, D-11). Prompt
   // content arrives fully built from eval core (D-15) — the binding transports, never assembles.
-  // Invoked only inside the single sanctioned replay-composition helper's flow (370-07 composes
-  // it); the forbidden provider-invocation clause below still holds.
-  'the tier-4 judge-port binding through createModel inside the sanctioned replay-composition flow',
+  // bindJudgePanel composes N existing bindJudgePort handles at this same factory site.
+  // Replay, Gate 1 and operator calibration invoke them only inside runSafetyScope;
+  // this exception does not authorize another factory or general provider invocation.
+  'the tier-4 judge-port binding through createModel, including bindJudgePanel as N existing bindings during replay, Gate 1 and operator calibration inside runSafetyScope',
   // Phase 371 ROOT-01/D-15/D-17: the write-once committed eval-root store under agent-qa-eval/ —
   // scaffolded gitignore covering every blobs/ dir, schemaVersion root marker, per-segment slugged
   // paths, byte-compare idempotence, typed write-conflict refusal; content policy (the

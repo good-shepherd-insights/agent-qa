@@ -75,7 +75,7 @@ export type {
 export { runReleaseGate } from './release-gate-composition.js'
 export type { ReleaseGateMode, RunReleaseGateInput, RunReleaseGateResult } from './release-gate-composition.js'
 
-export { bindJudgePort } from './judge-binding.js'
+export { bindJudgePort, bindJudgePanel } from './judge-binding.js'
 export type { JudgeBindingInput } from './judge-binding.js'
 
 export {

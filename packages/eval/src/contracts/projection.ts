@@ -28,7 +28,11 @@ export function projectMatcherConfigContract(): ContractProjection {
   }
 }
 
-export function projectJudgeConfigContract(): ContractProjection {
+/** Complete frozen constitution, including lineage, cap and reserved score pooling. */
+export function projectJudgeConfigContract(): ContractProjection & {
+  kind: 'judge-config'
+  config: JudgeConfig
+} {
   return {
     schemaVersion: CONTRACT_PROJECTION_SCHEMA_VERSION,
     kind: 'judge-config',
