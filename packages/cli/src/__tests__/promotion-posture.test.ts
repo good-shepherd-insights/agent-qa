@@ -12,6 +12,8 @@ import { acquireWriterLease, appendGateReceipt, buildGateInconsistencyProposal,
   createLocalKnowledgeStore, deriveBundleTrust, fileGateInconsistencyProposal, loadBundle,
   proposalsDir, publishBundleForTest, rejectPendingProposal } from '@vostride/agent-qa-knowledge-local'
 import { readCommittedCorpus, readGatePostureFor } from '@vostride/agent-qa-eval-local'
+import { createPanelIdentity } from '@vostride/agent-qa-eval'
+import { resolveEvalSession, resolveGateProfileIdentity } from '../eval-session-composition.js'
 
 vi.mock('@vostride/agent-qa-eval-local', async importOriginal => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-eval-local')>()
@@ -83,6 +85,29 @@ afterEach(() => {
 })
 
 describe('buildPromotionPostureResolver', () => {
+  it.each([false, true])('421 preserves panel facts with a missing floor or ready posture (floor: %s)', async hasFloor => {
+    const panelConfig = config.replace('use:\n', `    - name: judge-a\n      provider: openai-compatible\n      model: claude-fixture\n    - name: judge-b\n      provider: openai-compatible\n      model: gpt-judge\nuse:\n`)
+      + '\neval:\n  judges: [judge-b, judge-a]\n  judgeAllowSameFamily: true\n'
+    const f = fixture({ config: panelConfig })
+    const identity = await resolveGateProfileIdentity(await resolveEvalSession({ configPath: f.configPath, keyOnly: true }))
+    if (hasFloor) {
+      mkdirSync(join(f.committedRoot, 'reports/noise-floor'), { recursive: true })
+      writeFileSync(join(f.committedRoot, 'reports/noise-floor', floorName), JSON.stringify({ ...floor, profileKey: identity.profileKey }))
+    }
+    const result = await build(f.configPath)
+    expect(result?.kind).toBe(hasFloor ? 'ready' : 'unavailable')
+    const panel = createPanelIdentity(['claude-fixture', 'gpt-judge'])
+    const expected = { capable: false, reason: 'no-eligible-judge', judgeModelId: panel.judgeModelId,
+      panelSize: 2, members: panel.members,
+      families: { members: panel.members, replayed: 'openai', offendingPair: ['gpt-judge', 'gpt-5.6-terra'] } }
+    expect(result.kind === 'ready' ? result.host.judge : result.judge).toMatchObject(expected)
+    expect(result.resolve(candidate)).toMatchObject({ kind: hasFloor ? 'resolved' : 'unavailable', judge: expected })
+    if (hasFloor) {
+      rmSync(join(f.committedRoot, 'reports/noise-floor', floorName))
+      expect(result.resolve(candidate)).toMatchObject({ kind: 'unavailable', judge: expected })
+    }
+  })
+
   async function rarePath(options: {
     now?: number | ((product: string) => number | undefined)
     facts?: Record<string, number>

@@ -17,6 +17,7 @@ import type { ScopeKey } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { canonicalJson } from '../../canonical-json'
+import { assessPanelEligibility, createPanelIdentity } from '../../judge/panel'
 import { computeCorpusDigest } from '../../census/corpus-digest'
 import type { CommittedCorpusSnapshot } from '../../census/derive-census'
 import type { CorpusEntry, CorpusEntryBase } from '../../labels/corpus-entry'
@@ -88,6 +89,45 @@ function postureInput(overrides: Partial<ReadGatePostureInput> = {}): ReadGatePo
 }
 
 describe('readGatePosture', () => {
+  it.each([
+    ['gpt-5', 'gemini-2.5'],
+    ['gpt-5', 'gemini-2.5', 'mistral-large'],
+  ])('retains the complete eligible declared panel %j', (...memberModelIds) => {
+    const input = { plannerModelId: PLANNER_MODEL, judgeMemberModelIds: memberModelIds }
+    const actual = readGatePosture(postureInput({ judge: input })).judge
+    const identity = createPanelIdentity(memberModelIds)
+    expect(actual).toEqual({ capable: true, reason: 'eligible', allowSameFamily: false,
+      judgeModelId: identity.judgeModelId, judgeFamily: identity.judgeFamily,
+      panelSize: memberModelIds.length, members: identity.members })
+  })
+
+  it.each([
+    { ids: ['gpt-5', 'unknown-fixture'] },
+    { ids: ['gpt-5', 'claude-opus-4'] },
+    { ids: ['deepseek-r1-distill-llama', 'llama-3'] },
+    { ids: ['gpt-5', 'gemini-2.5'], recorded: 'gemini-recorded' },
+  ])('refuses the whole panel with execution-equivalent disclosure: %j', ({ ids, recorded }) => {
+    const eligibility = assessPanelEligibility({ memberModelIds: ids,
+      replayedModelId: PLANNER_MODEL, recordedModelId: recorded, allowSameFamily: true })
+    expect(eligibility.eligible).toBe(false)
+    const actual = readGatePosture(postureInput({ judge: { plannerModelId: PLANNER_MODEL,
+      judgeMemberModelIds: ids, recordedModelId: recorded, allowSameFamily: true } })).judge
+    expect(actual).toMatchObject({ capable: false, reason: 'no-eligible-judge',
+      panelSize: ids.length, members: createPanelIdentity(ids).members,
+      families: 'families' in eligibility ? eligibility.families : undefined })
+    expect(actual).not.toHaveProperty('familyOverride')
+  })
+
+  it('normalizes singleton declarations without adding panel fields or changing bytes', () => {
+    const single = readGatePosture(postureInput({ judge: {
+      plannerModelId: PLANNER_MODEL, judgeModelId: CROSS_FAMILY_JUDGE } })).judge
+    const declared = readGatePosture(postureInput({ judge: {
+      plannerModelId: PLANNER_MODEL, judgeMemberModelIds: [CROSS_FAMILY_JUDGE] } })).judge
+    expect(JSON.stringify(declared)).toBe(JSON.stringify(single))
+    expect(declared).toEqual({ capable: true, reason: 'eligible', allowSameFamily: false,
+      judgeFamily: 'openai' })
+  })
+
   it('resolves a product-tier key to its own partition and echoes the manifest as a digest', () => {
     const entries = [
       natural('c1'),

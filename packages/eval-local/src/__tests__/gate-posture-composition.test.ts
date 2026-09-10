@@ -8,6 +8,8 @@ import {
   countGateSet,
   extractRunCassettes,
   projectPartitionManifest,
+  assessPanelEligibility,
+  createPanelIdentity,
 } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
@@ -125,6 +127,20 @@ describe('readGatePostureFor (414 D-15, ROOT-10)', () => {
     expect(result.posture.canary).toEqual({ kind: 'not-provided' })
     // T-414-15: the salt never travels; the echo carries its digest.
     expect(JSON.stringify(result.posture)).not.toContain(TEST_PARTITION.saltHex)
+  })
+
+  it.each([false, true])('keeps the entire refused panel across the disk fold (absent root: %s)', absent => {
+    const ids = ['claude-opus-4', 'gemini-2.5']
+    const result = readGatePostureFor({ committedRoot: absent ? join(root, 'absent') : root,
+      scope: { tier: 'product', key: PRODUCT }, minimumGateSet: 1,
+      judge: { plannerModelId: PLANNER_MODEL_ID, judgeMemberModelIds: ids,
+        recordedModelId: 'gemini-recorded' }, canary: { kind: 'not-provided' } })
+    const eligibility = assessPanelEligibility({ memberModelIds: ids,
+      replayedModelId: PLANNER_MODEL_ID, recordedModelId: 'gemini-recorded' })
+    expect(result.posture.judge).toMatchObject({ capable: false, reason: 'no-eligible-judge',
+      panelSize: 2, members: createPanelIdentity(ids).members,
+      families: 'families' in eligibility ? eligibility.families : undefined })
+    expect(result.posture.gateSetNonEmpty).toBe(!absent)
   })
 
   it('answers over an absent root with zeros, an absent partition and the read notice', () => {

@@ -29,7 +29,7 @@ expectTypeOf<keyof ResolvedPromotionGatePosture>().toEqualTypeOf<
   'minimumGateSet' | 'counts' | 'scope' | 'judge' | 'canary'
 >()
 expectTypeOf<keyof UnavailablePromotionGatePosture>().toEqualTypeOf<
-  'kind' | 'replayGateAvailable' | 'refusals'
+  'kind' | 'replayGateAvailable' | 'refusals' | 'judge'
 >()
 expectTypeOf<PromotionGatePosture['kind']>().toEqualTypeOf<'resolved' | 'unavailable'>()
 
