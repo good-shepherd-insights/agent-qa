@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveJudgeFamily } from '../family'
+import { resolveJudgeFamilies, resolveJudgeFamily } from '../family'
 
 describe('resolveJudgeFamily', () => {
   it('resolves known families across real BYOM id shapes', () => {
@@ -39,5 +39,26 @@ describe('resolveJudgeFamily', () => {
     expect(resolveJudgeFamily('Claude-Sonnet-4-5')).toBe('claude')
     expect(resolveJudgeFamily('GPT-4O-MINI')).toBe('openai')
     expect(resolveJudgeFamily('US.Anthropic.CLAUDE-OPUS-4')).toBe('claude')
+  })
+})
+
+describe('resolveJudgeFamilies', () => {
+  it.each([
+    ['claude-sonnet-4-5', ['claude']],
+    ['gpt-4o-mini', ['openai']],
+    ['o1', ['openai']], ['o3-mini', ['openai']], ['o4-mini', ['openai']],
+    ['gemini-2.5-pro', ['gemini']],
+    ['llama-3.3-70b', ['llama']], ['llama3', ['llama']],
+    ['qwen2.5-72b', ['qwen']], ['deepseek-r1', ['deepseek']],
+    ['mistral-large', ['mistral']], ['mixtral-8x7b', ['mistral']],
+    ['pixtral-large', ['mistral']],
+    ['deepseek-r1-distill-llama-70b', ['deepseek', 'llama']],
+    ['vendor/DEEPSEEK-R1-DISTILL-QWEN-32B', ['deepseek', 'qwen']],
+    ['xdeepseek-r1-distill-llama', ['llama']],
+    ['deepseek-r1-distillx-qwen', ['deepseek']],
+    ['megaclaude', []], ['notgpt-model', []], ['gemma-3', []],
+    ['', []], ['fixture-planner', []],
+  ])('preserves the base law and additive lineage for %s', (id, expected) => {
+    expect([...resolveJudgeFamilies(id as string)].sort()).toEqual(expected)
   })
 })
