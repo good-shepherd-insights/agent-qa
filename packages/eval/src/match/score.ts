@@ -65,6 +65,18 @@ export type JudgeAbstentionCause =
   | 'below-quorum'
   | 'panel-disagreement'
 
+/** Governed persisted vocabulary, pinned independently by runtime and type instruments. */
+export const JUDGE_ABSTENTION_CAUSES = [
+  'unsure-verdict',
+  'below-threshold',
+  'swap-disagreement',
+  'candidate-overflow',
+  'missing-evidence',
+  'residual-tie',
+  'below-quorum',
+  'panel-disagreement',
+] as const satisfies readonly JudgeAbstentionCause[]
+
 /** D-11 infra-failure reasons, structurally distinct from calibrated abstention. */
 export type JudgeErrorReason = 'provider-error' | 'unparseable-output'
 

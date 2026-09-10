@@ -14,6 +14,9 @@ export interface JudgePanelPort {
 export type PanelMemberOutcome = JudgeMemberOutcome
 export type PanelPoolingMode = 'max' | 'avg'
 
+/** Binary verdict pooling and the reserved numeric score pooling contract. */
+export const PANEL_POOLING_MODES = ['max', 'avg'] as const satisfies readonly PanelPoolingMode[]
+
 function compareCodePoints(a: string, b: string): number {
   const left = Array.from(a, char => char.codePointAt(0)!)
   const right = Array.from(b, char => char.codePointAt(0)!)
