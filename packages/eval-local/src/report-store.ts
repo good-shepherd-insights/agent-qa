@@ -24,7 +24,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
-import { guardDecisionVectorsDocument } from '@vostride/agent-qa-eval'
+import { guardDecisionVectorsDocument, judgeIdentitySchema } from '@vostride/agent-qa-eval'
 import type { DecisionVectorsDocument, EvalBatchReport } from '@vostride/agent-qa-eval'
 import { sha256hex, slugBranch } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
@@ -68,13 +68,7 @@ const stagedReportSchema = z.object({
   // reach the comparator's renderer as though its judge-id list were a string array.
   judgeIdentity: z.literal('mixed').optional(),
   mixedJudgeModelIds: z.array(z.string()).optional(),
-  judge: z.object({
-    judgeModelId: z.string(),
-    judgeFamily: z.string(),
-    judgeVersion: z.number(),
-    confidenceThreshold: z.string(),
-    familyOverride: z.literal('same-family-allowed').optional(),
-  }).passthrough().optional(),
+  judge: judgeIdentitySchema.passthrough().optional(),
 }).passthrough()
 
 const replayGenerationSchema = z

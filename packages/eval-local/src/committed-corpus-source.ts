@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import {
   activeMarkedCorpusEntries,
   guardDecisionVectorsDocument,
+  judgeIdentitySchema,
   guardNoiseFloorArtefact,
   parseCorpusEntry,
   parseStandaloneLabelRecord,
@@ -97,16 +98,7 @@ const reportSchema = z
         refusalCounts: z.record(z.string(), z.number()),
       })
       .passthrough(),
-    judge: z
-      .object({
-        judgeModelId: z.string(),
-        judgeFamily: z.string(),
-        judgeVersion: z.number(),
-        confidenceThreshold: z.string(),
-        familyOverride: z.literal('same-family-allowed').optional(),
-      })
-      .strict()
-      .optional(),
+    judge: judgeIdentitySchema.optional(),
   })
   .passthrough()
 

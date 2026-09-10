@@ -1,4 +1,4 @@
-import { buildEvalReport, canonicalJson, decisionCorrectnessVectors, resolveProductPartition, resolveScoringContext } from '@vostride/agent-qa-eval'
+import { buildEvalReport, canonicalJson, decisionCorrectnessVectors, judgeIdentitySchema, resolveProductPartition, resolveScoringContext } from '@vostride/agent-qa-eval'
 import type {
   Cassette,
   CassetteLabelLeg,
@@ -152,7 +152,10 @@ export function projectAssembledBatch(
   batch: ReturnType<typeof assembleScoredBatch>,
   options: Parameters<typeof buildEvalReport>[3],
 ) {
-  const { entries, judgeBlocks, partitionsById } = batch
+  const { entries, partitionsById } = batch
+  // Compare only the score identity contract. Later report disclosure (such as copied
+  // calibration) is not part of the identity that produced these decisions.
+  const judgeBlocks = batch.judgeBlocks.map(block => judgeIdentitySchema.strip().parse(block))
   if (entries.some(entry => entry.split === undefined)) {
     batch.notices.push('corpus split ownership unknown; entries without corpus metadata are unassigned')
   }

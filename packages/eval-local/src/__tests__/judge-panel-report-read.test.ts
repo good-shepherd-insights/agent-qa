@@ -55,7 +55,7 @@ it.each(['staged', 'committed'] as const)('independently refuses malformed panel
   }
 })
 
-it.each([['claude-sonnet-4-5'], ['claude-sonnet-4-5', 'llama-3.3']])('preserves mixed persisted identities: %j', ids => {
+it.each([{ ids: ['claude-sonnet-4-5'] }, { ids: ['claude-sonnet-4-5', 'llama-3.3'] }])('preserves mixed persisted identities: $ids', ({ ids }) => {
   const judge = createPanelIdentity(['claude-sonnet-4-5', 'gemini-2.5-pro'])
   const other = createPanelIdentity(ids)
   const { report } = projectAssembledBatch({ entries: [], judgeBlocks: [judge, other],
