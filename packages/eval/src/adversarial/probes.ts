@@ -45,7 +45,41 @@ import type {
 } from '../labels/corpus-entry'
 import { ADVERSARIAL_GENERATOR_VERSION } from './generate'
 import type { AdversarialSeed } from './generate'
+import type { JudgeCalibrationGapReason } from '../judge/calibration'
 import { ADVERSARIAL_PROMPT_HASH, ADVERSARIAL_PROMPT_VERSION } from './probe-prompt'
+
+/**
+ * 422 D-09: why a host has no model that may author probes.
+ *
+ * DERIVED FROM THE JUDGE PREFLIGHT'S VOCABULARY RATHER THAN RE-DECLARED. The three situations
+ * are the same three — nothing declared, nothing credentialed, nothing family-disjoint — and a
+ * second spelling of the same words is a second thing to keep in step. The import is TYPE-ONLY,
+ * so this browser-safe module gains no dependency on the calibration module at run time, and
+ * `NO_PROBE_MODEL_REASONS` below is spelled by hand so a widening of the judge union cannot
+ * silently widen this one: the pin in `probe-contract.test.ts` is what decides that.
+ *
+ * ONE WORD READS DIFFERENTLY HERE, DELIBERATELY. For a panel, `no-credential` means ANY member
+ * lacks one — a panel is refused whole. For a probe author it means NO member has one, because
+ * one usable author is the whole capability. The word names the host's situation either way;
+ * the quantifier belongs to the reader, and each reader states it.
+ */
+export type NoProbeModelReason = JudgeCalibrationGapReason
+
+/** Declaration-order projection of `NoProbeModelReason` (the 414 D-22 bar idiom). */
+export const NO_PROBE_MODEL_REASONS: readonly NoProbeModelReason[] = []
+
+/**
+ * The provider-neutral capability gap (D-09).
+ *
+ * Lives beside the request contracts on purpose: a staging report, a job checkpoint and a chain
+ * line all have to say "no probes, and here is why" without any of them naming a provider, a
+ * registry entry or a credential. The host preflight that DECIDES this carries diagnostics
+ * beside it; those are the host's, and they are masked. This is the part that travels.
+ */
+export interface NoProbeModelGap {
+  kind: 'no-probe-model'
+  reason: NoProbeModelReason
+}
 
 /**
  * Longest accessible name a probe may author.

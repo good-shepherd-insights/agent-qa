@@ -31,8 +31,10 @@ import {
   ADVERSARIAL_PROMPT_VERSION,
   computeAdversarialPromptHash,
 } from '../probe-prompt'
-import { buildProbeRequest, deriveProbeCassette, deriveProbeCassetteId } from '../probes'
-import type { AdversarialProbe } from '../probes'
+import {
+  buildProbeRequest, deriveProbeCassette, deriveProbeCassetteId, NO_PROBE_MODEL_REASONS,
+} from '../probes'
+import type { AdversarialProbe, NoProbeModelGap } from '../probes'
 import { makeAdversarialSeedFixture } from './fixtures'
 
 /**
@@ -207,6 +209,43 @@ describe('422-04 generator metadata admission across both derivation paths', () 
         text: AUTHORED_TEXT,
       }),
     ).not.toBe(probe.corpusEntry.cassetteId)
+  })
+})
+
+/**
+ * 422-05-T2 — the no-probe-model vocabulary, pinned by hand.
+ *
+ * THE THREE WORDS ARE SPELLED OUT rather than read from the judge-calibration constant they are
+ * typed against. `NoProbeModelReason` is DERIVED from `JudgeCalibrationGapReason` so the two
+ * cannot drift apart by accident, and that is exactly why the runtime list needs an independent
+ * oracle: a fourth judge gap reason added for a panel-only situation would otherwise become a
+ * fourth persisted probe gap reason with nothing to notice. A list built from the production
+ * constant would agree with it however it changes.
+ */
+describe('422-05 the no-probe-model gap vocabulary', () => {
+  it('carries exactly the three gap words, closed in both directions', () => {
+    expect([...NO_PROBE_MODEL_REASONS].sort()).toEqual([
+      'no-credential',
+      'panel-not-configured',
+      'single-family-host',
+    ])
+    // Declaration order is the ORDER a host should read them in: nothing declared, then nothing
+    // credentialed, then nothing family-disjoint — each reachable only once the prior is false.
+    expect([...NO_PROBE_MODEL_REASONS]).toEqual([
+      'panel-not-configured',
+      'no-credential',
+      'single-family-host',
+    ])
+  })
+
+  it('shapes every gap as the neutral two-field DTO and nothing more', () => {
+    for (const reason of NO_PROBE_MODEL_REASONS) {
+      const gap: NoProbeModelGap = { kind: 'no-probe-model', reason }
+      // A gap crosses package and process boundaries as DATA: a report, a job checkpoint and a
+      // chain line each render it, and none of them may learn a provider name from it.
+      expect(Object.keys(JSON.parse(JSON.stringify(gap))).sort()).toEqual(['kind', 'reason'])
+      expect(gap.kind).toBe('no-probe-model')
+    }
   })
 })
 
