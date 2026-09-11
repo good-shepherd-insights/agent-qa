@@ -781,8 +781,25 @@ export async function stageAdversarialProposal(
   const entries = reader.listEntries(input.product)
   const candidates: AdversarialSeed[] = []
   const existingCassetteIds = new Set<string>()
+  /**
+   * D-11: every `(seed, kind, promptVersion)` tuple this corpus has already ASKED about.
+   *
+   * Read from COMMITTED bytes and from STAGED bytes, before a single call is made. This is the
+   * one set that makes a re-run free: a derived cassette id cannot serve here, because a probe's
+   * id is a function of the text the model happened to return, so there is no id to look up
+   * until after the money is spent. The tuple is the only thing knowable in advance.
+   */
+  const decidedProbeTuples = new Set<string>()
+  const rememberProbeTuple = (generator: CorpusGenerator | undefined): void => {
+    if (generator === undefined || generator.promptVersion === undefined) return
+    if (!isProbeGeneratorKind(generator.kind)) return
+    decidedProbeTuples.add(
+      adversarialProbeTupleKey(generator.seedCassetteId, generator.kind, generator.promptVersion),
+    )
+  }
   for (const entry of entries) {
     existingCassetteIds.add(entry.cassetteId)
+    if (entry.split === 'adversarial') rememberProbeTuple(entry.generator)
     if (entry.split !== 'natural') continue
     const cassette = reader.loadCassette(entry.cassetteId)
     if (cassette.kind !== 'loaded' || cassette.cassette.granularity !== 'leaf') continue
@@ -795,7 +812,14 @@ export async function stageAdversarialProposal(
   }
   // Anything already staged is also already derived: D-04's idempotence key spans both.
   for (const batch of listStagedAdversarial({ agentQaRoot: input.agentQaRoot, product: input.product })) {
-    for (const staged of batch.manifest.cases) existingCassetteIds.add(staged.cassetteId)
+    for (const staged of batch.manifest.cases) {
+      existingCassetteIds.add(staged.cassetteId)
+      if (staged.promptVersion !== undefined && isProbeGeneratorKind(staged.kind)) {
+        decidedProbeTuples.add(
+          adversarialProbeTupleKey(staged.seedCassetteId, staged.kind, staged.promptVersion),
+        )
+      }
+    }
   }
   // ...and so is anything a previous refresh recorded, under ANY generation or policy (D-08).
   const records = readAdversarialRefreshRecords({
@@ -977,16 +1001,125 @@ export async function stageAdversarialProposal(
     })
   }
 
-  // 422-06-T1 (RED): the authored half is DECLARED and not yet pulled. The port is accepted and
-  // never called, so every cell that counts provider calls fails on the behaviour it names
-  // rather than on a module that does not load.
-  void input.probeAuthor
-  void buildProbeRequest
-  void deriveProbeCassette
-  void PROBE_GENERATOR_KINDS
-  void ADVERSARIAL_PROMPT_VERSION
-  void adversarialProbeTupleKey
-  const authoringModel: AuthoringModel | undefined = undefined
+  // -------------------------------------------------------------------------
+  // The AUTHORED half (D-09/D-10/D-11). Everything above this line is pure and
+  // recomputable; nothing below it is.
+  //
+  // WHY THE PROBE BUDGET IS NOT THE SEED CAP. A probe tuple is keyed by
+  // `(seed, kind, promptVersion)` and a table tuple by `(seed, mutator)` under a table
+  // generation — different keys about different work. Gating probes behind the deterministic
+  // seed filter would make a seed whose eleven families are all settled permanently unreachable
+  // to a NEW prompt generation, which is exactly the starvation 422-03 removed one level up. So
+  // the probe phase walks every eligible candidate in id order and is bounded by its own budget.
+  //
+  // ORDER INSIDE THE LOOP IS THE CONTRACT. A decided tuple costs nothing; an inapplicable seed
+  // costs nothing; only a tuple that WOULD be authored can hit the cap. Checking the budget
+  // first would spend rows of `probe-cap-exceeded` on seeds that were never going to be asked.
+  // -------------------------------------------------------------------------
+  let authoringModel: AuthoringModel | undefined
+  if (input.probeAuthor !== undefined && input.authoringModel !== undefined) {
+    authoringModel = input.authoringModel
+    const probeSeeds = [...candidates].sort((left, right) =>
+      left.cassette.id < right.cassette.id ? -1 : left.cassette.id > right.cassette.id ? 1 : 0,
+    )
+    for (const seed of probeSeeds) {
+      for (const kind of PROBE_GENERATOR_KINDS) {
+        const promptVersion = ADVERSARIAL_PROMPT_VERSION
+        const row = { seedCassetteId: seed.cassette.id, kind, promptVersion }
+        if (decidedProbeTuples.has(adversarialProbeTupleKey(seed.cassette.id, kind, promptVersion))) {
+          probeSkips.push({ ...row, reason: 'tuple-already-decided' })
+          continue
+        }
+        const request = buildProbeRequest({ seed, kind, authoringModel })
+        if (typeof request === 'string') {
+          probeSkips.push({ ...row, reason: request })
+          continue
+        }
+        if (spend.modelCalls >= probeCap.value) {
+          probeSkips.push({ ...row, reason: 'probe-cap-exceeded' })
+          continue
+        }
+        // THE SPEND IS COUNTED HERE, BEFORE THE CALL RETURNS. A run that dies inside `author`
+        // paid for whatever it paid for; counting only answers would let an interruption
+        // under-report its own bill, and a budget that can be under-reported is not a budget.
+        spend.modelCalls += 1
+        decidedProbeTuples.add(adversarialProbeTupleKey(seed.cassette.id, kind, promptVersion))
+        let response: ProbeText
+        try {
+          response = await input.probeAuthor.author(request)
+        } catch {
+          // The provider failed, or the port refused. Either way the tuple is CONSUMED for this
+          // prompt generation: retrying it inside the same refresh would spend twice on one
+          // question. The exception text is never carried — it can name a model or a credential.
+          probeSkips.push({ ...row, reason: 'authoring-model-unidentified' })
+          continue
+        }
+        spend.promptTokens += response.usage.promptTokens
+        spend.completionTokens += response.usage.completionTokens
+        const derivation = deriveProbeCassette({
+          seed,
+          request,
+          response,
+          product: input.product,
+        })
+        if (derivation.outcome === 'refused') {
+          probeRefusals.push({ ...row, reason: derivation.reason })
+          continue
+        }
+        const probe = derivation.probe
+        const texts = {
+          cassette: committedFileText(probe.cassette),
+          label: committedFileText(probe.labelRecord),
+          entry: committedFileText(probe.corpusEntry),
+        }
+        // THE SAME loaded policy, on the SAME channel, over the SAME three documents. A probe is
+        // the one case in this pipeline whose text was written by a model that was just asked to
+        // author bait, so scanning it through a second, gentler path would invert the priority.
+        const probeCaseRefusals = scanCase(
+          {
+            cassetteId: probe.cassette.id,
+            seedCassetteId: probe.seedCassetteId,
+            kind: probe.kind,
+            scanView: cassetteEgressText(probe.cassette),
+            texts,
+          },
+          { policy: input.policy, ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }) },
+        )
+        if (probeCaseRefusals.length > 0) {
+          refusals.push(...probeCaseRefusals)
+          continue
+        }
+        const probeBlobs = resolveSeedBlobs(
+          input.committedRoot,
+          input.product,
+          probe.seedCassetteId,
+          probe.blobShas,
+        )
+        if ('skipReason' in probeBlobs) {
+          stagingSkips.push({
+            cassetteId: probe.cassette.id,
+            seedCassetteId: probe.seedCassetteId,
+            reason: probeBlobs.skipReason,
+          })
+          continue
+        }
+        publishable.push({
+          manifestCase: {
+            cassetteId: probe.cassette.id,
+            seedCassetteId: probe.seedCassetteId,
+            kind: probe.kind,
+            promptVersion,
+            cassetteTextHash: textHash(texts.cassette),
+            labelTextHash: textHash(texts.label),
+            entryTextHash: textHash(texts.entry),
+            seedProvenance: seedProvenancePin(probe.labelRecord),
+            blobShas: [...probe.blobShas],
+          },
+          texts,
+        })
+      }
+    }
+  }
 
   // One deterministic order for the manifest, the directory layout and the digest.
   publishable.sort((left, right) =>
@@ -1026,13 +1159,7 @@ export async function stageAdversarialProposal(
 
   const base: Omit<StageAdversarialProposalResult, 'kind'> = {
     product: input.product,
-    staged: publishable.map(row => ({
-      cassetteId: row.manifestCase.cassetteId,
-      seedCassetteId: row.manifestCase.seedCassetteId,
-      mutator: row.manifestCase.mutator,
-      kind: row.manifestCase.kind,
-      tableEntryId: row.manifestCase.tableEntryId,
-    })),
+    staged: publishable.map(row => stagedCaseOf(row.manifestCase)),
     refusals,
     skips: [...settledSkips, ...generated.skips],
     stagingSkips,
