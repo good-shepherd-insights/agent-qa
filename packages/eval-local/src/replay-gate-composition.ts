@@ -55,6 +55,8 @@ import type {
   ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
 import {
+  deriveMemoryOnPathSites,
+  failingStepOf,
   GateReceiptSchema,
   slugBranch,
   stampReceiptDigest,
@@ -387,9 +389,57 @@ export function resolveFailingPathCandidate(input: {
   recordId: string
   authorization?: FailingPathCandidateAuthorization
 }): FailingPathCandidateAdmission {
-  return input.authorization === undefined
-    ? { kind: 'absent' }
-    : { kind: 'refused', reason: 'failing-path candidate authorization is not implemented' }
+  const authorization = input.authorization
+  if (authorization === undefined) return { kind: 'absent' }
+  const malformed = { kind: 'refused', reason: 'failing-path authorization is malformed' } as const
+  if (typeof authorization !== 'object' || authorization === null) return malformed
+  const { recordId, runId, perTest } = authorization
+  if (
+    typeof recordId !== 'string' ||
+    recordId === '' ||
+    typeof runId !== 'string' ||
+    runId === '' ||
+    typeof perTest !== 'object' ||
+    perTest === null ||
+    typeof perTest.testId !== 'string' ||
+    !Array.isArray(perTest.steps) ||
+    perTest.steps.some(
+      (step) =>
+        typeof step !== 'object' ||
+        step === null ||
+        !Number.isSafeInteger(step.stepIndex) ||
+        typeof step.verifierVerdict?.pass !== 'boolean' ||
+        !Array.isArray(step.servedBrief?.channel1),
+    )
+  )
+    return malformed
+  // Identity first: an authorization for a different record, run or member is not evidence
+  // about this decision, however well-formed it is.
+  if (recordId !== input.recordId)
+    return { kind: 'refused', reason: 'failing-path authorization names another record' }
+  if (runId !== input.cassette.runId || perTest.testId !== input.cassette.input.testId)
+    return { kind: 'refused', reason: 'failing-path authorization names another run or member' }
+  // WHICH step failed is RECOMPUTED with the one exported rule, never declared.
+  const failing = failingStepOf(perTest)
+  if (failing === undefined)
+    return { kind: 'refused', reason: 'failing-path authorization records no step' }
+  // `failingStepOf` answers the LAST step when nothing failed (the timeout anchor), so the
+  // verdict itself has to be read: a verified-passing step is not a failing path.
+  if (failing.verifierVerdict.pass)
+    return { kind: 'refused', reason: 'failing-path authorization cites a verified-passing step' }
+  if (failing.stepIndex !== input.cassette.stepIndex)
+    return {
+      kind: 'refused',
+      reason: 'failing-path authorization cites a step other than the removal target',
+    }
+  // Served membership is RE-READ from that step's own brief, with the same derivation the
+  // circularity guard uses, so a caller cannot assert that a record was on the path.
+  const site = deriveMemoryOnPathSites([failing]).find((row) => row.recordId === input.recordId)
+  if (site === undefined)
+    return { kind: 'refused', reason: 'failing-path record was not served on the failing step' }
+  if (site.trust !== 'candidate')
+    return { kind: 'refused', reason: 'failing-path record is not an ordinary candidate' }
+  return { kind: 'authorized', stepIndex: failing.stepIndex }
 }
 
 /** 418 D-02: share the exact removal proof between sample one and subsequent samples.
@@ -406,15 +456,31 @@ export function resolveActiveRecordRemoval(input: {
   const brief = cassette.input.servedBrief
   const channel1Position = brief.channel1.findIndex((line) => line.id === input.recordId)
   const line = brief.channel1[channel1Position]
+  // 422 D-18: a PRESENT authorization that does not establish the removal refuses in its own
+  // words, before any admission rule runs — including the active and served-canary rules a
+  // broken authorization must never be able to fall back onto.
+  const authorized = resolveFailingPathCandidate({
+    cassette,
+    recordId: input.recordId,
+    authorization: input.failingPathCandidate,
+  })
+  if (authorized.kind === 'refused') return { kind: 'unavailable', reason: authorized.reason }
   if (
     line === undefined ||
     !(
       line.status === 'active' ||
-      (input.servedCanary === true && line.status === 'candidate' && line.servedAsCanary === true)
+      (input.servedCanary === true && line.status === 'candidate' && line.servedAsCanary === true) ||
+      (authorized.kind === 'authorized' && line.status === 'candidate')
     ) ||
     (line.tier !== 'L0' && line.tier !== 'L1' && line.tier !== 'L2')
   )
-    return { kind: 'unavailable', reason: 'active record brief line unavailable' }
+    return {
+      kind: 'unavailable',
+      reason:
+        line !== undefined && line.status === 'candidate' && authorized.kind === 'absent'
+          ? 'candidate removal requires an explicit failing-path authorization'
+          : 'active record brief line unavailable',
+    }
   const turns = brief.proof?.promptTurns ?? []
   const turn =
     turns.find((row) => row.turnOrdinal === cassette.decisionOrdinal) ??
@@ -488,6 +554,9 @@ export async function removalFlipsOutcome(
         cassette,
         recordId: input.recordId,
         servedCanary: input.mode.servedCanary,
+        // Re-checked PER TARGET: the authorization names one decision, so a second cassette
+        // gets its own admission and its own refusal rather than riding the first one's.
+        failingPathCandidate: input.failingPathCandidate,
       })
       if (removal.kind === 'unavailable') {
         result.notices.push(`brief-line-not-found: ${cassette.id}: ${removal.reason}`)
