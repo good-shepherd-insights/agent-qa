@@ -63,6 +63,7 @@ import {
   type Gate1KSource,
   type Gate1Reason,
   type Gate1Receipt,
+  type PerTestOutcome,
 } from '@vostride/agent-qa-schema'
 import { resolveBaselineCache, type BaselineCacheRow } from './baseline-cache-read.js'
 import {
@@ -326,6 +327,13 @@ export interface RemovalFlipsOutcomeInput {
   existing?: { withRecord: ReplaySample; withoutRecord: ReplaySample }
   replay: ReplayBag
   gate1Dir: string
+  /**
+   * 2026-09-11, 422 D-18: the ONE way an ORDINARY candidate — served on channel 1 without a
+   * canary flag — becomes ablatable. Deliberately a sibling of `mode`, not a third mode arm:
+   * the served-canary rule above is an opt-in FLAG, and this is positive PROOF. Absent, the
+   * arbiter removes nothing that the active and served-canary rules did not already admit.
+   */
+  failingPathCandidate?: FailingPathCandidateAuthorization
 }
 export interface RemovalFlipsOutcomeResult {
   crossCheck: Exclude<CrossCheck, 'not-run'>
@@ -340,6 +348,50 @@ export interface RemovalFlipsOutcomeResult {
   notices: string[]
 }
 
+/**
+ * 2026-09-11, 422 D-18: the arbiter's authorization to ablate an ORDINARY candidate.
+ *
+ * Ordinary candidate memory is the user's, and this is the one path in the phase that deletes
+ * it from a replayed input. So the authorization carries the run's OWN recorded bytes and
+ * DECLARES nothing that code can recompute: which step failed is re-derived with the single
+ * exported `failingStepOf` rule, and whether the record was on that step's path is re-read
+ * from that step's own served brief with `deriveMemoryOnPathSites`. A caller can therefore
+ * name a record and hand over evidence, but it cannot assert either fact.
+ */
+export interface FailingPathCandidateAuthorization {
+  /** The record to ablate. Must be the record `removalFlipsOutcome` was asked to remove. */
+  readonly recordId: string
+  /** The run that recorded {@link perTest}. Must be the target cassette's own run. */
+  readonly runId: string
+  /** The run's own recorded member outcome — the source of the two recomputed facts above. */
+  readonly perTest: PerTestOutcome
+}
+
+/**
+ * Three outcomes, never two. `absent` (no authorization was offered) and `refused` (one was,
+ * and it did not establish the removal) both leave memory intact, but they are different
+ * facts about the caller and the gate reports them apart.
+ */
+export type FailingPathCandidateAdmission =
+  | { kind: 'authorized'; stepIndex: number }
+  | { kind: 'absent' }
+  | { kind: 'refused'; reason: string }
+
+/**
+ * Evaluate a D-18 authorization against the decision it claims to authorize. Every refusal
+ * names its own cause, because "removed nothing" for six different reasons is one fact a
+ * reader cannot act on.
+ */
+export function resolveFailingPathCandidate(input: {
+  cassette: LeafCassette
+  recordId: string
+  authorization?: FailingPathCandidateAuthorization
+}): FailingPathCandidateAdmission {
+  return input.authorization === undefined
+    ? { kind: 'absent' }
+    : { kind: 'refused', reason: 'failing-path candidate authorization is not implemented' }
+}
+
 /** 418 D-02: share the exact removal proof between sample one and subsequent samples.
  * Internal to eval-local; ordinary callers retain the active-record admission rule.
  */
@@ -347,6 +399,8 @@ export function resolveActiveRecordRemoval(input: {
   cassette: LeafCassette
   recordId: string
   servedCanary?: true
+  /** 422 D-18: positive proof for an ordinary candidate; see the interface above. */
+  failingPathCandidate?: FailingPathCandidateAuthorization
 }): { kind: 'removed'; delta: DeclaredBriefDelta } | { kind: 'unavailable'; reason: string } {
   const { cassette } = input
   const brief = cassette.input.servedBrief
