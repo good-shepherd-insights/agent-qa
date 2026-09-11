@@ -492,6 +492,7 @@ export function createEvalCommand(): Command {
           }
           else {
             console.log(`selected=${report.counts.selected} admitted=${report.counts.admitted} eligible=${report.counts.eligible} refused=${report.counts.eligibilityRefused} attempted=${report.counts.attempted}`)
+            console.log(`evidence-skipped=${report.counts.evidenceSkipped} truth-comparable=${report.counts.truthComparable} unresolved-truth=${report.counts.unresolvedTruth}; use --json for per-member denominators and skip reasons.`)
             console.log(`pooled agreement=${report.pooledAgreement ?? 'unavailable'} interval=${report.wilson95 ? `[${report.wilson95.lower},${report.wilson95.upper}]` : 'unavailable'}; abstention=${report.abstention.numerator}/${report.abstention.denominator}; member-pair disagreement=${report.disagreement.numerator}/${report.disagreement.denominator}`)
           }
           console.log(`probe calls: ${report.cost.usage.calls}; bound=${report.cost.callBound} (eligible executable decisions × one question × members × two swaps)`)

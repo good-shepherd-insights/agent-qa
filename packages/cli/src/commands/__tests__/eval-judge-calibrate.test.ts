@@ -231,6 +231,15 @@ it('keeps genuine absence optional and independently admits only mixed-history e
   expect(result.rows.find((row: { kind: string }) => row.kind === 'attempted')).not.toHaveProperty('recordedModelId')
   expect(boundary).toMatchObject({ binds: 2, comparisons: 1, calls: 4 })
 })
+
+it('explains the measured denominator in human output for mixed admitted and refused decisions', async () => {
+  const f = fixture([{}, { resolvedModelId: 'claude-sonnet-4' }])
+  const output = await invoke(f.configPath, ['--judge-panel'])
+  expect(output.stdout).toContain('selected=2 admitted=2 eligible=1 refused=1 attempted=1')
+  expect(output.stdout).toContain('evidence-skipped=0 truth-comparable=1 unresolved-truth=0')
+  expect(output.stdout).toContain('use --json for per-member denominators and skip reasons')
+  expect(boundary).toMatchObject({ calls: 4, comparisons: 1 })
+})
 it.each([['--judge-panel', '--min-gold', '2'], ['--min-n', '2'], ['--judge-panel', '--min-n', '1']])('rejects mixed or invalid mode flags before any resolution %j', async (...flags) => {
   const { result, exit } = await invoke('/missing/config', [...flags, '--json'])
   expect(result.kind).toBe('refused'); expect(exit).toBe(1)
