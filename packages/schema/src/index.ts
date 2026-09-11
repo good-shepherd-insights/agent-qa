@@ -311,12 +311,39 @@ export type {
   ActionAnchorElementInput,
   FingerprintEvidenceLike,
   AnalysisArtifactAdmission,
+  AnalysisValidationOptions,
   AnalysisValidationReject,
   AnalysisValidationResult,
   FailureFingerprintInput,
   RunAnalysisArtifact,
   VerdictGroundingQuote,
   VerdictSentenceParts,
+} from './verdict/index'
+// 422 D-17/D-19/D-20: the circularity guard's evidence vocabulary. `memoryOnPath` membership is
+// derived by CODE from the run's own served briefs and the per-record cross-check is folded
+// under one law, so a producer composing evidence and the validator checking it cannot drift.
+export {
+  aggregateMisdirectionEvidence,
+  deriveMemoryOnPath,
+  deriveMemoryOnPathSites,
+  guardMisdirectionEvidence,
+  memoryOnPathTrustOf,
+  misdirectionSourceDigest,
+  MisdirectionEvidenceError,
+  MisdirectionEvidenceSchema,
+  MisdirectionRecordResultSchema,
+} from './verdict/index'
+export type {
+  MemoryOnPathEntry,
+  MemoryOnPathSite,
+  MemoryOnPathTrust,
+  MisdirectionAggregate,
+  MisdirectionAggregationInput,
+  MisdirectionBacking,
+  MisdirectionEvidence,
+  MisdirectionRecordResult,
+  MisdirectionRootPosture,
+  MisdirectionSamples,
 } from './verdict/index'
 export type {
   DeltaEnvelope,

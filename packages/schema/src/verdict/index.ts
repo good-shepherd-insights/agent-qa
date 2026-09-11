@@ -36,6 +36,33 @@ export {
   validateAnalysisAgainstHandoff,
 } from './validate-analysis'
 export type {
+  AnalysisValidationOptions,
   AnalysisValidationReject,
   AnalysisValidationResult,
 } from './validate-analysis'
+// 422 D-17/D-19/D-20: the circularity guard's evidence vocabulary. Membership derivation and
+// the per-record cross-check fold are CODE, exported here so the one law the validator applies
+// is the same law a producer composes its evidence with — never a second spelling.
+export {
+  aggregateMisdirectionEvidence,
+  deriveMemoryOnPath,
+  deriveMemoryOnPathSites,
+  guardMisdirectionEvidence,
+  memoryOnPathTrustOf,
+  misdirectionSourceDigest,
+  MisdirectionEvidenceError,
+  MisdirectionEvidenceSchema,
+  MisdirectionRecordResultSchema,
+} from './misdirection-evidence'
+export type {
+  MemoryOnPathEntry,
+  MemoryOnPathSite,
+  MemoryOnPathTrust,
+  MisdirectionAggregate,
+  MisdirectionAggregationInput,
+  MisdirectionBacking,
+  MisdirectionEvidence,
+  MisdirectionRecordResult,
+  MisdirectionRootPosture,
+  MisdirectionSamples,
+} from './misdirection-evidence'

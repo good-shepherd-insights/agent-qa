@@ -20,13 +20,24 @@
 // check; resolving a parsed address against the entity directory is a host concern that
 // happens at read time (plan 05), never inside schema.
 
-import type { ServedBrief } from '../brief/served-brief'
 import { canonicalJson } from '../determinism/canonical-json'
 import { parseEntityUri } from '../entity/uri'
 import type { CompletedRunHandoff } from '../handoff/completed-run-handoff'
 import type { PerTestOutcome } from '../handoff/per-test-outcome'
 import type { StepEvidence } from '../handoff/step-evidence'
 import type { RunAnalysisArtifact } from './analysis-artifact'
+import { failingStepOf } from './fingerprint-input'
+import {
+  aggregateMisdirectionEvidence,
+  deriveMemoryOnPath,
+  deriveMemoryOnPathSites,
+  misdirectionSourceDigest,
+} from './misdirection-evidence'
+import type {
+  MemoryOnPathEntry,
+  MemoryOnPathSite,
+  MisdirectionRootPosture,
+} from './misdirection-evidence'
 import type { VerdictSentenceParts } from './sentence-parts'
 import { isVerdictClass, VERDICT_CLASSES } from './verdict'
 import type { Verdict } from './verdict'
@@ -80,6 +91,28 @@ export type AnalysisValidationResult =
   | { readonly ok: false; readonly rejects: readonly AnalysisValidationReject[] }
 
 /**
+ * The caller-declared posture this validation runs under (422 D-19/D-20). Both members are
+ * FAIL-CLOSED by default: an unstated root posture is an ordinary `'eval-root'` (so the BYOM
+ * exemption is never granted by silence), and an unstated producer is HISTORICAL (so bytes
+ * written before 422 keep their boolean-only acceptance exactly as Phase 389 wrote it).
+ */
+export interface AnalysisValidationOptions {
+  /**
+   * D-19. `'no-eval-root'` — the run had no evaluation root, so nothing COULD be
+   * cross-checked and `backing: 'declared-only'` is admitted. `'broken-eval-root'` — a root
+   * existed but could not be used; the evidence is equally empty and the posture is unbacked,
+   * so `declared-only` is refused. `'eval-root'` (default) — an ordinary gated run.
+   */
+  readonly rootPosture?: MisdirectionRootPosture
+  /**
+   * D-20. True when the artifact was authored by a CURRENT gated producer, which must ship a
+   * complete per-record cross-check for every record the run put on the failing path. False
+   * (default) preserves historical boolean-only wire acceptance.
+   */
+  readonly gatedProducerEvidence?: boolean
+}
+
+/**
  * The classes whose §A9 routing moves NO trust: app_bug/flake/environment/config_error all
  * mean "the memory was not the problem" — which is exactly the claim a misdirected author
  * would make to shield the record that misled it, so these are the classes the
@@ -115,43 +148,145 @@ export function searchedTestOutcomeTexts(test: PerTestOutcome): string[] {
   return [test.outcome]
 }
 
-/**
- * The deterministic "candidate/low-trust memory on the failing path" determination
- * (spec §A9 / memory.md §7.2), computed from the served brief's own trust markers:
- * a channel-1 line whose fold status is `'candidate'` (pre-promotion, unconfirmed), or one
- * served as a CANARY (a low-trust record deliberately served on probation to gather
- * outcome evidence). Both are the store's own declarations that the record's trust was
- * not established when it was put on this step's path — no minted threshold, no second
- * spelling of the trust fold.
- */
-function briefCarriesCandidateOrLowTrust(brief: ServedBrief): boolean {
-  return brief.channel1.some(
-    (line) => line.status === 'candidate' || line.servedAsCanary,
-  )
-}
-
 /** Bound a quoted string for a reject reason — the reason names the quote, not reprints it. */
 function quoteForReason(quote: string): string {
   return quote.length <= 80 ? quote : `${quote.slice(0, 80)}…`
 }
 
 /**
- * The step a verdict's evidence touches: `citedSteps` plus the grounding quote's own step.
- * The misdirection rule ranges over ALL of them — a served candidate record on any cited
- * step is on the failing path.
+ * The steps a verdict's evidence touches: `citedSteps`, the grounding quote's own step, and —
+ * the 422 D-17 widening — the run's ACTUAL failing step, whether or not the author cited it.
+ *
+ * The widening is the whole point. Before it, an author could dodge the misdirection gate by
+ * citing a clean neighbouring step and never mentioning the step that actually failed with a
+ * candidate record in its brief. `failingStepOf` is the one exported spelling of "which step
+ * this failure is about" (390 FLAK-01), so the gate and the failure fingerprint agree about
+ * the step by construction rather than by coincidence.
+ *
+ * Returned in the test's own step order, deduplicated — steps, not indexes, because every
+ * caller below needs the served brief.
  */
-function citedStepIndexes(verdict: Verdict, parts: VerdictSentenceParts | undefined): number[] {
-  const indexes = [...verdict.evidence.citedSteps]
+function pathStepsOf(
+  verdict: Verdict,
+  parts: VerdictSentenceParts | undefined,
+  test: PerTestOutcome,
+): StepEvidence[] {
+  const indexes = new Set<number>(verdict.evidence.citedSteps)
   if (parts !== undefined && 'stepIndex' in parts.groundingQuote) {
-    indexes.push(parts.groundingQuote.stepIndex)
+    indexes.add(parts.groundingQuote.stepIndex)
   }
-  return indexes
+  const failing = failingStepOf(test)
+  if (failing !== undefined) indexes.add(failing.stepIndex)
+  return test.steps.filter((step) => indexes.has(step.stepIndex))
+}
+
+/** Render an on-path set for a reject reason: `rec_a(candidate), rec_b(low-trust-active)`. */
+function renderMemoryOnPath(entries: readonly MemoryOnPathEntry[]): string {
+  if (entries.length === 0) return 'no low-trust record'
+  return entries.map((entry) => `${entry.recordId}(${entry.trust})`).join(', ')
+}
+
+/** Order-insensitive equality of a declared `memoryOnPath` against the recomputed set. */
+function sameMemoryOnPath(
+  declared: readonly MemoryOnPathEntry[],
+  recomputed: readonly MemoryOnPathEntry[],
+): boolean {
+  const key = (entries: readonly MemoryOnPathEntry[]): string =>
+    entries
+      .map((entry) => `${entry.recordId} ${entry.trust}`)
+      .slice()
+      .sort()
+      .join('')
+  return declared.length === recomputed.length && key(declared) === key(recomputed)
+}
+
+/** What the per-test walk needs beyond the two documents' per-test slices. */
+interface ValidationContext {
+  readonly runId: string
+  readonly handoffBaseDigest: string
+  readonly options: AnalysisValidationOptions
+}
+
+/**
+ * The 422 circularity gate, applied once the class is known to move no trust AND the run's own
+ * briefs put at least one low-trust record on the verdict's failing path.
+ *
+ * The order is the law's order: the D-19 absence exemption is decided FIRST (a run with no
+ * evaluation root never had rows to ship, so demanding them would refuse the only honest
+ * answer it can give), historical bytes then keep Phase 389's boolean-only acceptance, and
+ * only a declared CURRENT gated producer is held to the complete D-20 ledger.
+ */
+function validateMisdirectionEvidence(
+  verdict: Verdict,
+  perTest: number,
+  verdictClass: string,
+  sites: readonly MemoryOnPathSite[],
+  context: ValidationContext,
+  reject: (reason: string) => void,
+): void {
+  const block = verdict.misdirectionRuledOut
+  const posture = context.options.rootPosture ?? 'eval-root'
+
+  if (block?.backing === 'declared-only') {
+    if (posture !== 'no-eval-root') {
+      reject(
+        'misdirectionRuledOut.backing "declared-only" is available only to a run with no ' +
+          `evaluation root; this run's posture is "${posture}", so the claim is unbacked — ` +
+          'cross-check every record on the failing path or answer unknown',
+      )
+    }
+    return
+  }
+
+  if (context.options.gatedProducerEvidence !== true) return
+
+  if (block === undefined) {
+    reject(
+      `class "${verdictClass}" claims no trust change while candidate/low-trust memory was ` +
+        'served on the failing path, but no misdirectionRuledOut evidence accompanies the ' +
+        'claim — cross-check every record this run put on that path',
+    )
+    return
+  }
+
+  const aggregate = aggregateMisdirectionEvidence({
+    runId: context.runId,
+    perTest,
+    handoffBaseDigest: context.handoffBaseDigest,
+    sites,
+    results: block.results,
+  })
+  switch (aggregate.outcome) {
+    case 'held':
+      return
+    case 'flipped':
+      reject(
+        `the misdirection cross-check FLIPPED for ${aggregate.suspect.join(', ')} — the ` +
+          `served memory is suspect, so class "${verdictClass}" cannot claim no trust ` +
+          'change; answer unknown and let the record take the harm',
+      )
+      return
+    case 'unknown':
+      reject(
+        'the misdirection cross-check did not resolve for every record on the failing path ' +
+          `(inconclusive: ${aggregate.inconclusive.join(', ') || 'none'}; not-run: ` +
+          `${aggregate.notRun.join(', ') || 'none'}; unchecked: ` +
+          `${aggregate.unchecked.join(', ') || 'none'}) — an unresolved sibling is not a held ` +
+          'exoneration',
+      )
+      return
+    case 'evidence-refused':
+      reject(
+        'misdirectionRuledOut evidence failed key integrity: ' + aggregate.problems.join('; '),
+      )
+  }
 }
 
 function validateOneTest(
   verdict: Verdict,
   parts: VerdictSentenceParts | undefined,
   test: PerTestOutcome | undefined,
+  context: ValidationContext,
   rejects: AnalysisValidationReject[],
 ): void {
   const perTest = verdict.perTest
@@ -199,16 +334,30 @@ function validateOneTest(
     }
   }
 
-  if (NO_TRUST_CHANGE_CLASSES.has(verdictClass) && verdict.memoryMisdirectionRuledOut !== true) {
-    const citedSteps = citedStepIndexes(verdict, parts)
-      .map((index) => test.steps.find((step) => step.stepIndex === index))
-      .filter((step): step is StepEvidence => step !== undefined)
-    if (citedSteps.some((step) => briefCarriesCandidateOrLowTrust(step.servedBrief))) {
+  // 422 D-17: membership is RECOMPUTED from the run's own served briefs, over the cited
+  // steps, the grounding step AND the actual failing step. A declared `memoryOnPath` is
+  // compared against it and never substituted for it.
+  const pathSteps = pathStepsOf(verdict, parts, test)
+  const sites = deriveMemoryOnPathSites(pathSteps)
+  const recomputed = deriveMemoryOnPath(pathSteps)
+
+  if (verdict.memoryOnPath !== undefined && !sameMemoryOnPath(verdict.memoryOnPath, recomputed)) {
+    reject(
+      `memoryOnPath declares ${renderMemoryOnPath(verdict.memoryOnPath)} but this run's own ` +
+        `served briefs put ${renderMemoryOnPath(recomputed)} on the failing path — ` +
+        'membership is recomputed from the briefs, never taken from the verdict',
+    )
+  }
+
+  if (NO_TRUST_CHANGE_CLASSES.has(verdictClass) && sites.length > 0) {
+    if (verdict.memoryMisdirectionRuledOut !== true) {
       reject(
         `class "${verdictClass}" claims no trust change while candidate/low-trust memory ` +
           'was served on the failing path, but memoryMisdirectionRuledOut is not true — ' +
           'rule misdirection out explicitly or answer unknown',
       )
+    } else {
+      validateMisdirectionEvidence(verdict, perTest, verdictClass, sites, context, reject)
     }
   }
 }
@@ -260,13 +409,22 @@ function validateGroundingQuote(
 
 /**
  * Validate an analysis artifact against the run's handoff — pure and synchronous over its
- * two arguments, per-test granular, reject reasons shaped for the repair loop.
+ * arguments, per-test granular, reject reasons shaped for the repair loop.
+ *
+ * `options` is additive and fail-closed (422): omitting it reproduces the pre-422 acceptance
+ * surface exactly, so every existing caller keeps compiling and keeps its answers.
  */
 export function validateAnalysisAgainstHandoff(
   artifact: RunAnalysisArtifact,
   handoff: CompletedRunHandoff,
+  options: AnalysisValidationOptions = {},
 ): AnalysisValidationResult {
   const rejects: AnalysisValidationReject[] = []
+  const context: ValidationContext = {
+    runId: handoff.runId,
+    handoffBaseDigest: misdirectionSourceDigest(handoff),
+    options,
+  }
   const testsByIndex = new Map(handoff.tests.map((test) => [test.testIndex, test]))
   // Duplicate perTest entries are refused upstream by `guardRunAnalysisArtifact` — the
   // rule's one owner (G-389-3B / WR-02). This two-document boundary deliberately does not
@@ -279,6 +437,7 @@ export function validateAnalysisAgainstHandoff(
       verdict,
       partsByPerTest.get(verdict.perTest),
       testsByIndex.get(verdict.perTest),
+      context,
       rejects,
     )
   }
