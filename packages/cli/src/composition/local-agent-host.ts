@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { AUTHORING_DRAFT_EDIT_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
 import { AuthoringDraftEditOutputSchema } from '@vostride/agent-qa-schema'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
-import { bindTrustPriorsToConfig, trustPriorsForHost, type TrustPriorDisclosure } from '../curation/trust-priors.js'
+import { bindTrustPriorsToConfig, trustPriorsForHost, type ResolveTrustPriors, type TrustPriorDisclosure } from '../curation/trust-priors.js'
 // The CLI's half of the local host (Phase 384 plan 01, superseded in place by 385 plan 09, D-15).
 //
 // What used to live here — the runs reader, the knowledge listing binding and the registry
@@ -27,7 +27,7 @@ import { bindTrustPriorsToConfig, trustPriorsForHost, type TrustPriorDisclosure 
 
 import { spawnSync } from 'node:child_process'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from '../curation/promotion-posture.js'
-import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
+import { createReplayGatePortForHost, type ReplayGateClaimAuthority } from '../gates/replay-gate-host.js'
 import { createHash } from 'node:crypto'
 import {
   closeSync,
@@ -65,11 +65,15 @@ import type {
   ConfigValidationIssue,
   DraftApplyPortLike,
   JobModelCapability,
+  KnowledgeReaderPort,
+  PostRunJobCapabilities,
+  ProposeCorpusPosture,
   TestDraftApplyRequestLike,
   TestDraftApplyResultLike,
 } from '@vostride/agent-qa-agent'
 import {
   composeLocalAgent,
+  createKnowledgeReader,
   LOCAL_CURATION_CAPABILITIES,
   latestBuildOrdinal,
   resolveRunExecutionContext,
@@ -726,6 +730,14 @@ export interface ComposeCliLocalAgentInput {
       readonly deprecated: number
       /** The fold's own completeness, carried rather than dropped (WR-03). */
       readonly complete: boolean
+      /**
+       * The candidates the fold's own COMMITTED receipt names (422 D-13).
+       *
+       * Additive-optional, and the distinction is carried rather than flattened: absent means
+       * the binding reported no candidate ids at all, `[]` means it reported that there were
+       * none. See the capability's own comment in `agent` for why those are not one answer.
+       */
+      readonly candidateIds?: readonly string[]
     }>
     /**
      * REQUIRED wherever the binding is supplied (388-10, UF-388-01): what this binding does
@@ -734,6 +746,15 @@ export interface ComposeCliLocalAgentInput {
      * declaration to it.
      */
     candidateProse: CandidateProsePosture
+    /**
+     * The writer lease THIS host holds while the chain drains (422 D-14).
+     *
+     * Supplied by the leg that owns the pump, never by this file: the terminal's lease is taken
+     * inside `runPostRunTail`'s drain and the daemon's is the one it acquired at startup, and
+     * both are resolved at the Gate-1 claim rather than captured here. Absent leaves the
+     * standalone posture — correct for a composition with no lease behind it.
+     */
+    resolveClaimAuthority?: () => ReplayGateClaimAuthority | undefined
   }
 }
 
@@ -3646,6 +3667,77 @@ export function createChatConfirmPort(
       )
     }),
   }
+}
+
+// ---- 422 D-13 / D-14: the proposal stage's host-owned capabilities -------------------------
+//
+// ONE builder, TWO hosts. The terminal (`composeCliLocalAgent` below) and the daemon
+// (`daemon/host.ts`) both compose these members from this function and from nowhere else, so
+// "the two hosts agree" is a property of there being one construction site rather than a claim
+// a reviewer has to re-derive by reading two literals side by side. A capability bound on the
+// terminal and forgotten on the daemon is a silent behavioural split between two ways of running
+// the same product, and 422-08 shipped the whole Gate-1 leg unbound on BOTH because each host
+// composed its own `postRun` literal.
+//
+// Everything here is a CLI concern by construction: a replay gate needs an eval session, the
+// committed corpus digest needs the committed root, and the adversarial staging seam lives behind
+// an operator-admission boundary neither `agent` nor `agent-local` may name. What crosses into the
+// composition is data and neutral closures.
+
+export interface ProposalStageCapabilitiesInput {
+  configPath: string
+  agentQaRoot: string
+  /** Which knowledge root this host serves from, resolved per call (the reader's own idiom). */
+  resolveKnowledgeRoot: () => Promise<string> | string
+  resolveTrustPriors?: ResolveTrustPriors
+  resolvePromotionPosture?: ComposeLocalAgentInput['resolvePromotionPosture']
+  /**
+   * The writer lease this host ALREADY HOLDS, resolved at the Gate-1 claim (422 D-14).
+   *
+   * A function and never a value: both hosts compose this bundle BEFORE they acquire their
+   * lease, so a value read here is `undefined` forever and every Gate-1 write would ask the
+   * writer for a lease the very same process already holds — which it answers `held`, by the
+   * caller, against itself. Absent leaves the standalone acquire/finally-release posture, which
+   * is correct for a host that owns no lease and wrong for one that does.
+   */
+  resolveClaimAuthority?: () => ReplayGateClaimAuthority | undefined
+}
+
+/**
+ * The five members 422-07 and 422-08 declared and left unbound, as ONE value.
+ *
+ * `Required<Pick<...>>` rather than a restatement: every member is the capability's own declared
+ * type, so a shape change in `agent` fails to compile here instead of drifting into a second
+ * spelling of a contract that has one owner.
+ */
+export type ProposalStageCapabilities = Required<
+  Pick<
+    PostRunJobCapabilities,
+    | 'runReplayGate'
+    | 'listBundles'
+    | 'gateReceiptsFor'
+    | 'readProposeCorpusPosture'
+    | 'stageAdversarialProposal'
+  >
+>
+
+export function proposalStageCapabilities(
+  _input: ProposalStageCapabilitiesInput,
+): ProposalStageCapabilities {
+  throw new Error('proposalStageCapabilities is not bound yet')
+}
+
+/**
+ * The operator's `eval.gate1.maxPerJob`, resolved by the HOST (422 D-14).
+ *
+ * DATA rather than a reader on the capability, because the handler must not learn to read
+ * configuration; `undefined` means the recorded default and the difference is disclosed on the
+ * durable charge as `cap.source`.
+ */
+export async function resolveProposeGate1MaxPerJob(
+  _configPath: string,
+): Promise<number | undefined> {
+  return undefined
 }
 
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost & { trustPriorDisclosure: TrustPriorDisclosure } {

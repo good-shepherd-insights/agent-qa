@@ -429,6 +429,16 @@ export interface CurateCompletedRunReport {
   drainKind: 'drained' | 'handed-off' | 'aborted'
   /** The same field list the incomplete warning renders; present only when incomplete. */
   incompleteDetails?: string
+  /**
+   * The candidates the COMMITTED receipt names, forwarded to the proposal stage (422 D-13).
+   *
+   * The receipt's own `candidateIds` and never a second projection of the emit report: the
+   * receipt is what a later reader can check this claim against, and a fold that wrote no
+   * receipt has nothing to name. So this is present exactly when `complete` is `true`, and its
+   * ABSENCE on an incomplete fold is the honest answer rather than an empty list — `[]` would
+   * say the fold reported that there were none.
+   */
+  candidateIds?: readonly string[]
 }
 
 /**

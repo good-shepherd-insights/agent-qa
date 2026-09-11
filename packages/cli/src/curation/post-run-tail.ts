@@ -80,7 +80,7 @@ import { NON_SIGNAL_CLASSES } from './emit-canary-outcomes.js'
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
-import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
+import { createReplayGatePortForHost, type ReplayGateClaimAuthority } from '../gates/replay-gate-host.js'
 import type { ScopeKey } from '@vostride/agent-qa-schema'
 import {
   buildTrustPriorsResolver,
@@ -200,6 +200,15 @@ export interface PostRunTailHostInput {
    * posture from what the tail HAS rather than assert one it intends (388-10, UF-388-01).
    */
   readonly maskingContext?: RunCurationTailOptions['maskingContext']
+  /**
+   * The writer lease the PUMP holds, resolved at the Gate-1 claim (422 D-14).
+   *
+   * Threaded through the host input rather than rebuilt inside `composeHost` for the same reason
+   * `curateRun` is: the lease belongs to the drain leg below, which takes it AFTER this host has
+   * been composed. A closure is what lets the composition happen first and the lease be read
+   * later; a value would be `undefined` forever.
+   */
+  readonly resolveClaimAuthority?: () => ReplayGateClaimAuthority | undefined
   readonly curateRun: (input: {
     readonly runId: string
     readonly executionContext: unknown
@@ -209,6 +218,8 @@ export interface PostRunTailHostInput {
     readonly deprecated: number
     /** The fold's own completeness, carried rather than dropped (WR-03). */
     readonly complete: boolean
+    /** The committed receipt's candidates, forwarded to the third stage (422 D-13). */
+    readonly candidateIds?: readonly string[]
   }>
 }
 
