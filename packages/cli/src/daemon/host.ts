@@ -73,6 +73,7 @@ import {
   type CurationTailOperations,
   type CurationWriterAuthority,
 } from '../curation/curation-tail.js'
+import { misdirectionPreparationCapabilities } from '../curation/misdirection-tail.js'
 import { exercisedAnchors } from '../curation/handoff-anchors.js'
 import {
   appendDrainSessionReceipt,
@@ -735,9 +736,21 @@ async function composeDaemonRunExecution(input: {
             // supplies no `afterVerdict`. The step performs it on every door, so the daemon's own
             // pump has something to drain. What this door still supplies is no TAIL: 388 D-13 —
             // the daemon emits no chips, and its pump drains under the lease it already holds.
-            ...(daemonAuthority === undefined
-              ? {}
-              : { postProcessing: { writerAuthority: daemonAuthority } }),
+            //
+            // 422-14 (D-18): and the pre-analysis circularity arbiter, composed from THE SAME
+            // BUILDER the terminal composes from, so the two hosts' objects can be compared
+            // against each other rather than against two literals. `postProcessing` stops being
+            // conditional on the lease: the lease decides who DRAINS, and the arbiter decides what
+            // the first analysis is allowed to read — a daemon holding no lease must still
+            // arbitrate, or the circularity guard would be a property of which process happened to
+            // start the run.
+            postProcessing: {
+              misdirection: misdirectionPreparationCapabilities({
+                configPath: inputs.configFilePath,
+                agentQaRoot: input.agentQaRoot,
+              }),
+              ...(daemonAuthority === undefined ? {} : { writerAuthority: daemonAuthority }),
+            },
             onSession: (session) => { startedRunId = session.id as unknown as string },
             warn: (message: string) => input.logger.info(message),
           },

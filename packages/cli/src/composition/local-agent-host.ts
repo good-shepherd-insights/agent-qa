@@ -128,6 +128,7 @@ export {
   type ProposalStageCapabilitiesInput,
 } from './proposal-stage-capabilities.js'
 import { proposalStageCapabilities, resolveProposeGate1MaxPerJob } from './proposal-stage-capabilities.js'
+import { misdirectionPreparationCapabilities } from '../curation/misdirection-tail.js'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
 import type {
   ConfigScaffoldContentPortLike,
@@ -387,6 +388,18 @@ function createComposedRunExecution(input: {
             executionContext:
               (input.resolveExecutionContext?.() ?? resolveRunExecutionContext()) as RunExecutionContext,
             trust: { trustMode: inputs.config.safety?.trustMode === true },
+            // 422-14 (D-18): the pre-analysis circularity arbiter, composed from the ONE builder
+            // the daemon composes from too. Parity is a property of there being a single
+            // construction site rather than a claim a reviewer re-derives by reading two literals
+            // — and the capability a run's post-verdict step arbitrates through is exactly the
+            // sort of thing 422-08's window recorded as bound on one host and forgotten on the
+            // other. The run's own resolved config file, not the one this door was handed.
+            postProcessing: {
+              misdirection: misdirectionPreparationCapabilities({
+                configPath: inputs.configFilePath,
+                agentQaRoot: input.agentQaRoot,
+              }),
+            },
             ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
             // Conditionally spread on this file's own house rule: an absent authority must be an
             // ABSENT field, so the gate's `NO_STANDING_APPROVALS` default lives in one place.

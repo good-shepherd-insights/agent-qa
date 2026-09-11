@@ -61,7 +61,10 @@ import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agen
  * factory owes.
  */
 const drive = vi.hoisted(() => ({
-  runInProcessCliRun: vi.fn(async () => ({ runId: 'r_422-14-hosts', exitCode: 0 })),
+  runInProcessCliRun: vi.fn(async (_options: unknown, _request: unknown) => ({
+    runId: 'r_422-14-hosts',
+    exitCode: 0,
+  })),
 }))
 vi.mock('@vostride/agent-qa-agent-local', async (original) => {
   const actual = await original<typeof import('@vostride/agent-qa-agent-local')>()
@@ -92,6 +95,7 @@ import {
   runMisdirectionCheck,
 } from '../../eval-session-composition.js'
 
+import type { InProcessCliRunExecutionOptions } from '../../composition/in-process-run-execution.js'
 import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
@@ -117,10 +121,9 @@ const TEST_CONFIG: ConfigReaderPort = {
 const projects: string[] = []
 
 /** The options the LAST host dispatch handed the run drive. */
-function driveOptions(): NonNullable<Parameters<typeof runInProcessCliRunType>[0]> {
-  return drive.runInProcessCliRun.mock.calls.at(-1)![0] as never
+function driveOptions(): InProcessCliRunExecutionOptions {
+  return drive.runInProcessCliRun.mock.calls.at(-1)![0] as InProcessCliRunExecutionOptions
 }
-declare const runInProcessCliRunType: typeof import('../../composition/in-process-run-execution.js')['runInProcessCliRun']
 
 beforeEach(() => {
   vi.clearAllMocks()
