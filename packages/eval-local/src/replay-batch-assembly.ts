@@ -13,6 +13,8 @@ import type {
 
 import { loadCassetteBundle } from './cassette-loader.js'
 import type { JudgeCalibrationRead } from './judge-calibration-source.js'
+import { sha256hex } from '@vostride/agent-qa-schema'
+import { loadStagedReport, type ReplayGeneration } from './report-store.js'
 import {
   listCassetteBundleDirs,
   listReplayRecordDirs,
@@ -194,4 +196,44 @@ export function copyJudgeCalibrationToReport(report: EvalBatchReport, read?: Jud
         ...(member.wilson95 === undefined ? {} : { wilson95: { ...member.wilson95 } }),
       })) }
   report.judge = { ...report.judge, calibration }
+}
+
+/** Existing producer publication must bind the full profile to these exact saved inputs. */
+export function readReportProfileProof(input: {
+  agentQaRoot: string
+  replaysRoot: string
+  report: EvalBatchReport
+  entries: readonly ScoredBatchEntry[]
+  fingerprint: string
+  corpusDigest: string
+  seed?: number
+}): { runIdentity: NonNullable<EvalBatchReport['runIdentity']>; replayGeneration: ReplayGeneration } | undefined {
+  // Legacy standalone replays have no full-profile publication. A model ID is insufficient.
+  if (input.seed === undefined || input.entries.length === 0) return undefined
+  const loaded = loadStagedReport(input.agentQaRoot, input.report.batchKey)
+  if (loaded.kind !== 'loaded' || !loaded.replayGeneration) return undefined
+  const { report, replayGeneration } = loaded
+  if (report.runIdentity?.fingerprint !== input.fingerprint
+    || report.runIdentity.corpusDigest !== input.corpusDigest
+    || report.matcherVersion !== input.report.matcherVersion
+    || report.judgeIdentity === 'mixed'
+    || canonicalJson(report.judge && judgeIdentitySchema.strip().parse(report.judge))
+      !== canonicalJson(input.report.judge)
+    || replayGeneration.seed !== input.seed
+    || replayGeneration.records.length !== input.entries.length) return undefined
+  const records = listReplayRecordDirs(input.replaysRoot).map(dir => ({
+    replay: loadReplayRecord(dir), score: loadScoreRecord(dir),
+  }))
+  for (const entry of input.entries) {
+    const refs = replayGeneration.records.filter(ref => ref.cassetteId === entry.cassetteId)
+    const matching = records.filter(row => row.replay.kind === 'loaded' && row.replay.outcome.cassetteId === entry.cassetteId)
+    if (refs.length !== 1 || matching.length !== 1) return undefined
+    const row = matching[0]!, ref = refs[0]!
+    if (row.replay.kind !== 'loaded' || row.score.kind !== 'loaded'
+      || canonicalJson(row.replay.outcome) !== canonicalJson(entry.outcome)
+      || Reflect.get(row.replay.outcome, 'executionSeed') !== input.seed
+      || sha256hex(canonicalJson(row.replay.outcome)) !== ref.replayDigest
+      || sha256hex(canonicalJson(row.score.record)) !== ref.scoreDigest) return undefined
+  }
+  return { runIdentity: report.runIdentity, replayGeneration }
 }

@@ -84,6 +84,7 @@ import {
   FsCassetteStore,
   FsReplayRecordStore,
   FsReportStore,
+  readReportProfileProof,
   FsRunArtifactSource,
   FsScoreStore,
   assembleScoredBatch,
@@ -2307,6 +2308,8 @@ export async function runReportVerb(
   // (5) Exactly ONE buildEvalReport call — one batch, one report, one headline (D-14). The CLI
   // never sums scores; every counter and rate is the aggregator's.
   const report = buildEvalReport(entries, judgeForReport, mixedIdentity, { calibration: labelCorpus.calibration })
+  const reportSeedPolicy: SeedPolicy = session.evalConfig.seed !== undefined ? 'declared' : 'none'
+  let reportProfileProof: ReturnType<typeof readReportProfileProof>
   if (report.judge?.panelSize !== undefined) {
     // Key-only declarations select evidence; credentials and model binding are never needed.
     let calibrationRead: ReturnType<typeof readJudgeCalibration> | undefined
@@ -2322,7 +2325,10 @@ export async function runReportVerb(
         throw new Error('report replay profile unavailable')
       }
       const fingerprint = computeReplayProfileFingerprintFor({ profile: replayProfile,
-        seedPolicy: 'declared', modelOverrides: opts.plannerOverrides })
+        seedPolicy: reportSeedPolicy, modelOverrides: opts.plannerOverrides })
+      reportProfileProof = readReportProfileProof({ agentQaRoot, replaysRoot, report, entries, fingerprint,
+        corpusDigest: computeCorpusDigest(labelCorpus.snapshot.entries), seed: session.evalConfig.seed })
+      if (!reportProfileProof) throw new Error('report full profile proof unavailable')
       calibrationRead = readJudgeCalibration({ committedRoot: resolve(session.configDir, 'agent-qa-eval'), agentQaRoot,
         identity: report.judge, profile: { plannerModelId: replayProfile.model, fingerprint,
           matcherVersion: report.matcherVersion, judgeModelId: report.judge.judgeModelId, judgeVersion: report.judge.judgeVersion } })
@@ -2336,7 +2342,8 @@ export async function runReportVerb(
   })
 
   // (6) The staged report ALWAYS lands (uncommitted runtime staging, batchKey-derived filename).
-  const staged = new FsReportStore({ root: agentQaRoot }).save(report, decisions)
+  if (reportProfileProof) report.runIdentity = reportProfileProof.runIdentity
+  const staged = new FsReportStore({ root: agentQaRoot }).save(report, decisions, reportProfileProof?.replayGeneration)
 
   // (7) `--commit`: render the deterministic markdown projection and route all THREE parts through
   // commitEvalReport's egress checkpoint into the committed root (D-13) — the typed outcome
@@ -2368,9 +2375,8 @@ export async function runReportVerb(
         `baseline pointer skipped: report commit outcome was ${committed?.kind ?? 'absent'}`,
       )
     } else {
-      const seedPolicy: SeedPolicy = session.evalConfig.seed !== undefined ? 'declared' : 'none'
       const designation = await designateReportBaseline(
-        session, report, seedPolicy, opts.plannerOverrides, notices,
+        session, report, reportSeedPolicy, opts.plannerOverrides, notices,
       )
       profileKey = designation.profileKey
       baseline = designation.baseline

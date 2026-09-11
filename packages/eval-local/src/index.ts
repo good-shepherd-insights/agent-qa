@@ -70,7 +70,7 @@ export type {
   SweepCassetteReplaysResult,
 } from './replay-sweep.js'
 
-export { assembleScoredBatch, cassetteProductPartition, copyJudgeCalibrationToReport } from './replay-batch-assembly.js'
+export { assembleScoredBatch, cassetteProductPartition, copyJudgeCalibrationToReport, readReportProfileProof } from './replay-batch-assembly.js'
 
 export { FloorProtocolError, replayCorpusOnce, runNoiseFloorMeasurement } from './aa-floor-composition.js'
 export type {

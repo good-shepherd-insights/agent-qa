@@ -194,6 +194,12 @@ atomic publication. Invocation audit paths do not alter canonical artifact bytes
 New composite reports copy guarded calibration disclosure: `calibrated`, `uncalibrated`
 or `capability-gap`. Absent/refused current artifacts read `uncalibrated n=0 (unavailable)`;
 renderers never recompute estimates. Single-judge reports omit the panel calibration block.
+Report lookup uses the report's own seed policy (`none` without `eval.seed`, otherwise
+`declared`), consistent with baseline designation. Copying requires an existing guarded
+producer publication binding that full fingerprint, corpus and judge identity to every
+selected replay/score digest and the execution seed. Ordinary standalone replay history
+without that proof remains unavailable, even if its model ID matches. Rebuilding a report
+preserves validated publication proof; it never invents proof from current configuration.
 Old committed reports remain readable and byte-identical. A later artifact replacement does
 not revise those copied historical values; regenerating divergent committed report bytes
 still conflicts. Baseline designation can select already-committed history separately.

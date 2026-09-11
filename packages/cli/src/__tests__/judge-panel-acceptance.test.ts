@@ -135,8 +135,20 @@ it('public report refuses a mixed panel and singleton baseline without rewriting
   expect(f.rows.map(item => readFileSync(item.scoreFile, 'utf8'))).toEqual(before)
   expect(boundary).toMatchObject({ calls: 0, binds: 0, comparisons: 0 })
 })
-function stageReports(f: ReturnType<typeof fixture>) {
+function stageReports(f: ReturnType<typeof fixture>, proveProfile = false) {
   for (const [i, row] of f.rows.entries()) cpSync(row.replaysRoot, join(f.project, '.agent-qa/eval/replays', String(i)), { recursive: true })
+  if (proveProfile) {
+    const first = f.rows[0]!
+    const config = JSON.parse(readFileSync(f.configPath, 'utf8')); config.eval.seed = 17
+    writeFileSync(f.configPath, JSON.stringify(config))
+    const report = core.buildEvalReport(f.rows.map(row => ({ cassetteId: row.cassette.id,
+      outcome: row.outcome, score: row.record.score })), first.record.judge)
+    report.runIdentity = first.report.runIdentity
+    new local.FsReportStore({ root: first.root }).save(report, undefined, { seed: 17,
+      records: f.rows.map(row => ({ cassetteId: row.cassette.id,
+        replayDigest: digest(JSON.parse(readFileSync(row.written.file, 'utf8'))),
+        scoreDigest: digest(JSON.parse(readFileSync(row.scoreFile, 'utf8'))) })) })
+  }
 }
 it.each([19, 20])('public calibrate/commit/read/report/doctor copies independent fake n=%s', async n => {
   const f = fixture(Array.from({ length: n }, () => ({})))
@@ -149,7 +161,7 @@ it.each([19, 20])('public calibrate/commit/read/report/doctor copies independent
   expect(boundary.calls).toBe(n * 4)
   expect(new Set(f.rows.map(row => row.cassette.id)).size).toBe(n)
   expect(local.readJudgeCalibration({ ...f.rows[0]!.input, identity: artifact.identity })).toEqual({ kind: 'loaded', artifact })
-  stageReports(f)
+  stageReports(f, true)
   boundary.calls = boundary.binds = boundary.comparisons = 0
   const reported = await invoke(f.configPath, ['report', '--source', 'committed'])
   expect(reported.exit).toBe(0)
