@@ -74,8 +74,16 @@ const AgentQaConfigSchemaInner = z.object({
     // before the rest are counted and deferred; recorded default lives in eval core
     // (ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH). Strict, and positive-integer only: a cap
     // that silently fell back to the default because the operator typed `0` is not a cap.
+    // 2026-09-11, 422 D-04/D-10: `maxProbeCalls` bounds PROVIDER CALLS one refresh may make to
+    // author probes; recorded default lives in eval-local
+    // (ADVERSARIAL_DEFAULT_MAX_PROBE_CALLS). It is a SECOND budget beside the seed cap on
+    // purpose — deterministic seeds cost CPU and authored probes cost money no later run can
+    // recover — and it is held to the same positive-integer strictness for the sharper version
+    // of the same reason: a cap that silently fell back to the default because the operator
+    // typed `0` would buy calls they refused.
     adversarial: z.object({
       maxSeedsPerRefresh: z.number().int().positive().optional(),
+      maxProbeCalls: z.number().int().positive().optional(),
     }).strict().optional(),
     seeding: z.object({
       silverPerTestCap: z.number().int().positive().optional(),

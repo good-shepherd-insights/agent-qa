@@ -176,7 +176,7 @@ function fixture(count = SEED_COUNT): Fixture {
   return { root, committedRoot, agentQaRoot, seedIds: [...seedIds].sort() }
 }
 
-function stage(
+async function stage(
   f: Fixture,
   opts: {
     mutators: readonly ('confusable' | 'injection-template')[]
@@ -186,8 +186,8 @@ function stage(
     product?: string
     committedRoot?: string
   },
-): StageAdversarialProposalResult {
-  return stageAdversarialProposal({
+): Promise<StageAdversarialProposalResult> {
+  return await stageAdversarialProposal({
     agentQaRoot: f.agentQaRoot,
     committedRoot: opts.committedRoot ?? f.committedRoot,
     product: opts.product ?? 'default',
@@ -216,13 +216,13 @@ function stateFiles(f: Fixture, product = 'default'): string[] {
 }
 
 describe('422 adversarial refresh bounding and recovery', () => {
-  it('caps a refresh at eight novel seeds, records the overflow, and advances to the later seeds next time', () => {
+  it('caps a refresh at eight novel seeds, records the overflow, and advances to the later seeds next time', async () => {
     const f = fixture()
     // The recorded default is the number an operator's review budget is sized against: eight
     // seeds is at most 88 deterministic variants across the eleven frozen families.
     expect(ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH).toBe(8)
 
-    const first = stage(f, { mutators: ['confusable'] })
+    const first = await stage(f, { mutators: ['confusable'] })
     expect(first.kind).toBe('staged')
     expect(first.cap).toEqual({ value: 8, source: 'default' })
     expect(first.rootPosture).toBe('available')
@@ -248,7 +248,7 @@ describe('422 adversarial refresh bounding and recovery', () => {
 
     // The whole point: refresh two reaches the seeds the cap deferred instead of re-spending
     // itself on the eight it already settled.
-    const second = stage(f, { mutators: ['confusable'] })
+    const second = await stage(f, { mutators: ['confusable'] })
     expect(second.kind).toBe('staged')
     expect(second.eligibleSeeds).toBe(SEED_COUNT - 8)
     expect(second.seedsConsidered).toBe(SEED_COUNT - 8)
@@ -256,7 +256,7 @@ describe('422 adversarial refresh bounding and recovery', () => {
     expect(stagedSeedIds(second)).toEqual(f.seedIds.slice(8))
     expect(second.batchDigest).not.toBe(first.batchDigest)
 
-    const third = stage(f, { mutators: ['confusable'] })
+    const third = await stage(f, { mutators: ['confusable'] })
     expect(third.kind).toBe('nothing-derived')
     expect(third.eligibleSeeds).toBe(0)
     expect(third.seedsConsidered).toBe(0)
@@ -268,9 +268,9 @@ describe('422 adversarial refresh bounding and recovery', () => {
     expect([...new Set(third.skips.map(skip => skip.seedCassetteId))].sort()).toEqual([...f.seedIds])
   })
 
-  it('settles refusals durably so a later refresh advances past them, and reopens them under a new policy', () => {
+  it('settles refusals durably so a later refresh advances past them, and reopens them under a new policy', async () => {
     const f = fixture()
-    const first = stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
+    const first = await stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
 
     // Nothing publishable: every selected seed was refused by the host policy.
     expect(first.kind).toBe('nothing-derived')
@@ -280,12 +280,12 @@ describe('422 adversarial refresh bounding and recovery', () => {
 
     // A refused tuple is a COMPLETED outcome for this generation and this policy. Without that
     // record the same eight seeds would be re-selected and re-refused forever.
-    const second = stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
+    const second = await stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
     expect(second.seedsConsidered).toBe(SEED_COUNT - 8)
     expect(refusedSeedIds(second)).toEqual(f.seedIds.slice(8))
     expect(refusedSeedIds(second).some(id => refusedSeedIds(first).includes(id))).toBe(false)
 
-    const third = stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
+    const third = await stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
     expect(third.kind).toBe('nothing-derived')
     expect(third.seedsConsidered).toBe(0)
     // Nothing was scanned, so nothing may be reported as refused NOW — but an empty batch with
@@ -300,15 +300,15 @@ describe('422 adversarial refresh bounding and recovery', () => {
 
     // "The host blocked this" is a statement about a POLICY. Loosen it and every refusal is
     // open again — the cap applies to the reopened population exactly as it did the first time.
-    const relaxed = stage(f, { mutators: ['injection-template'], policy: ROUTE_POLICY })
+    const relaxed = await stage(f, { mutators: ['injection-template'], policy: ROUTE_POLICY })
     expect(relaxed.kind).toBe('staged')
     expect(relaxed.eligibleSeeds).toBe(SEED_COUNT)
     expect(stagedSeedIds(relaxed)).toEqual(f.seedIds.slice(0, 8))
   })
 
-  it('publishes one identical record for a repeated refresh and refuses conflicting bytes under one digest', () => {
+  it('publishes one identical record for a repeated refresh and refuses conflicting bytes under one digest', async () => {
     const f = fixture(2)
-    const first = stage(f, { mutators: ['confusable'] })
+    const first = await stage(f, { mutators: ['confusable'] })
     expect(first.kind).toBe('staged')
     expect(stateFiles(f)).toHaveLength(1)
 
@@ -335,7 +335,7 @@ describe('422 adversarial refresh bounding and recovery', () => {
     expect(JSON.parse(readFileSync(file, 'utf8')).excessSeeds).toBe(99)
   })
 
-  it('keeps every older committed id while a new table generation reopens its tuples', () => {
+  it('keeps every older committed id while a new table generation reopens its tuples', async () => {
     const policyDigest = computeAdversarialPolicyDigest(ROUTE_POLICY)
     const record: AdversarialRefreshRecord = {
       schemaVersion: 1,
@@ -370,7 +370,7 @@ describe('422 adversarial refresh bounding and recovery', () => {
     expect([...derivedAdversarialCassetteIds([record])]).toEqual(['gen1-derived'])
   })
 
-  it('resolves the seed cap with its source and refuses every invalid numeric boundary', () => {
+  it('resolves the seed cap with its source and refuses every invalid numeric boundary', async () => {
     expect(resolveAdversarialSeedCap({})).toEqual({
       value: ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH,
       source: 'default',
@@ -383,12 +383,12 @@ describe('422 adversarial refresh bounding and recovery', () => {
     }
   })
 
-  it('distinguishes a healthy empty root from an unavailable one by gate posture, not reader length', () => {
+  it('distinguishes a healthy empty root from an unavailable one by gate posture, not reader length', async () => {
     const f = fixture(1)
 
     // A product with no committed entries reads empty — and the ROOT is healthy, so the
     // refresh reports an honest empty result and a resolved source digest.
-    const healthy = stage(f, { mutators: ['confusable'], product: 'other-product' })
+    const healthy = await stage(f, { mutators: ['confusable'], product: 'other-product' })
     expect(healthy.rootPosture).toBe('available')
     expect(healthy.kind).toBe('nothing-derived')
     expect(healthy.eligibleSeeds).toBe(0)
@@ -399,7 +399,7 @@ describe('422 adversarial refresh bounding and recovery', () => {
     // settles nothing — a settle record here would be evidence manufactured from silence.
     const broken = join(f.root, 'no-marker-root')
     mkdirSync(broken, { recursive: true })
-    const unavailable = stage(f, { mutators: ['confusable'], product: 'default', committedRoot: broken })
+    const unavailable = await stage(f, { mutators: ['confusable'], product: 'default', committedRoot: broken })
     expect(unavailable.rootPosture).toBe('unavailable')
     expect(unavailable.kind).toBe('nothing-derived')
     expect(unavailable.sourceDigest).toBeUndefined()

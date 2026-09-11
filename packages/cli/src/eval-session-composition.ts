@@ -60,6 +60,7 @@ import {
   SEED_POLICIES,
 } from '@vostride/agent-qa-eval'
 import type {
+  AuthoringModel,
   BaselineComparatorRefusal,
   ClassifierRepeatability,
   CassetteScore,
@@ -69,12 +70,23 @@ import type {
   EvalBatchReport,
   ExclusionClass,
   JudgeIdentityBlock,
+  NoProbeModelGap,
   PartitionManifest,
+  ProbeAuthorPort,
   SeedPolicy,
   ScoredBatchEntry,
   SilverExclusion,
   TargetEnvironment,
 } from '@vostride/agent-qa-eval'
+// TYPE-ONLY, and deliberately so: `adversarial-probe-preflight.ts` and
+// `adversarial-probe-author.ts` reach their pure contracts THROUGH this composition boundary
+// (422-05), so a value import here would be a runtime cycle. The verb imports the two functions
+// dynamically at call time, the same way the command layer imports this module.
+import type {
+  AdversarialProbeAuthorSelection,
+  AdversarialProbeCapability,
+} from './adversarial-probe-preflight.js'
+import type { ProbeCallAttempt } from './adversarial-probe-author.js'
 import {
   COMMITTED_CASSETTES_DIR,
   DEFAULT_EVAL_CASSETTES_SUBDIR,
@@ -99,6 +111,7 @@ import {
   listStagedAdversarial,
   loadAdversarialGuardrailPolicy,
   refreshAdversarialSplit,
+  resolveAdversarialProbeCallCap,
   resolveAdversarialSeedCap,
   stageAdversarialProposal,
   FEEDBACK_STAGING_SUBDIR,
@@ -133,8 +146,12 @@ import {
   writeRunExclusion,
 } from '@vostride/agent-qa-eval-local'
 import type {
+  AdversarialProbeCallCap,
+  AdversarialProbeRefusal,
+  AdversarialProbeSkip,
   AdversarialRefusal,
   AdversarialSeedCap,
+  AdversarialSpend,
   AdversarialStagingSkip,
   StageAdversarialProposalResult,
   StagedAdversarialCase,
@@ -1180,6 +1197,30 @@ export interface AdversarialVerbResult {
   staleReceipts: ReturnType<typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts> | null
   /** Admission stales standing receipts; the operator re-measures with this (415 D-12). */
   floorCommand: string
+  /**
+   * 422 D-09: why this host authored no probes, or ABSENT when the capability was never
+   * consulted — the admit branch derives nothing, so it asks nothing.
+   */
+  noProbeModel?: NoProbeModelGap
+  /** The identity that authored this refresh's probes (D-11). */
+  authoringModel?: AuthoringModel
+  /** The resolved provider-call cap and where it came from (D-04/D-10). */
+  probeCap: AdversarialProbeCallCap
+  /** What this invocation actually spent at a provider. Zero on every admit branch. */
+  spend: AdversarialSpend
+  probeSkips: readonly AdversarialProbeSkip[]
+  probeRefusals: readonly AdversarialProbeRefusal[]
+}
+
+/**
+ * What the verb hands the author binding (D-10).
+ *
+ * `onCallAttempted` is 422-05's pre-invocation seam, and the verb fills it with the one check
+ * that must happen at the tightest possible instant: that a durable reservation is already held
+ * for the tuple about to be authored. A binding that drops it spends unreserved.
+ */
+export interface AdversarialProbeAuthorBinding {
+  onCallAttempted: (attempt: ProbeCallAttempt) => void
 }
 
 export interface AdversarialVerbOptions {
@@ -1193,6 +1234,18 @@ export interface AdversarialVerbOptions {
   mutators?: readonly import('@vostride/agent-qa-eval').AdversarialMutator[]
   /** `--max-seeds`; overrides `eval.adversarial.maxSeedsPerRefresh`, which overrides the default. */
   maxSeeds?: number
+  /** `--max-probe-calls`; overrides `eval.adversarial.maxProbeCalls`, which overrides the default. */
+  maxProbeCalls?: number
+  /**
+   * Test seam for the resolved probe capability. Production resolves it from the session through
+   * the same preflight `doctor` and the chain line read, so all three answer one gap (D-09).
+   */
+  probeCapability?: AdversarialProbeCapability
+  /** Test seam for the author binding. Production binds through `createAdversarialProbeAuthor`. */
+  bindProbeAuthor?: (
+    author: AdversarialProbeAuthorSelection,
+    binding: AdversarialProbeAuthorBinding,
+  ) => ProbeAuthorPort
   /** Test seam for the loaded policy; production loads the host's. */
   policy?: import('@vostride/agent-qa-schema').GuardrailPolicy
   auditSink?: import('@vostride/agent-qa-safety-local').JsonlAuditSink
@@ -1228,10 +1281,22 @@ export async function runAdversarialVerb(
         ? { value: session.evalConfig.adversarial.maxSeedsPerRefresh, source: 'config' }
         : {},
   )
+  // D-10: the SECOND budget, resolved by the same three-step precedence and disclosed the same
+  // way. It bounds provider calls, which the seed cap does not and must not — a host that wants
+  // many deterministic seeds and no spend has to be able to say so.
+  const probeCap = resolveAdversarialProbeCallCap(
+    opts.maxProbeCalls !== undefined
+      ? { value: opts.maxProbeCalls, source: 'flag' }
+      : session.evalConfig.adversarial?.maxProbeCalls !== undefined
+        ? { value: session.evalConfig.adversarial.maxProbeCalls, source: 'config' }
+        : {},
+  )
   const base: AdversarialVerbResult = {
     kind: 'refused', product, stagingDir, staged: [], admitted: [], unchanged: [], remaining: [],
     refusals: [], settledRefusals: [], stagingSkips: [], skips: [], seedsConsidered: 0,
     seedsDeferred: 0, eligibleSeeds: 0, cap, writesStarted: false, staleReceipts: [], floorCommand,
+    probeCap, spend: { modelCalls: 0, promptTokens: 0, completionTokens: 0 },
+    probeSkips: [], probeRefusals: [],
   }
   const digest = readCanaryCorpusDigest(session)
   if (digest.kind !== 'digest') {
@@ -1293,7 +1358,12 @@ export async function runAdversarialVerb(
     }
   }
 
-  const result = stageAdversarialProposal({
+  // D-09/D-10: who — if anyone — may author probes for this host, and the port that binds them.
+  // Resolved BEFORE staging so an unauthorised host learns its gap for free, and so the gap
+  // travels on the batch rather than being inferred from an empty probe list.
+  const probe = await resolveProbeBinding(session, opts, product)
+
+  const result = await stageAdversarialProposal({
     agentQaRoot: opts.agentQaRoot,
     committedRoot,
     product,
@@ -1303,6 +1373,15 @@ export async function runAdversarialVerb(
     // Only a NON-default cap is pushed down: the composition owns the recorded default, and
     // handing it back an unattributed value would have it record an operator choice nobody made.
     ...(cap.source === 'default' ? {} : { maxSeeds: cap.value, maxSeedsSource: cap.source }),
+    ...(probeCap.source === 'default'
+      ? {}
+      : { maxProbeCalls: probeCap.value, maxProbeCallsSource: probeCap.source }),
+    ...(probe.noProbeModel === undefined ? {} : { noProbeModel: probe.noProbeModel }),
+    // A DRY RUN authors nothing. A preview that spends money is not a preview, and there is no
+    // way to un-spend it once the batch it previewed is discarded.
+    ...(probe.author === undefined || opts.dryRun === true
+      ? {}
+      : { probeAuthor: probe.author, authoringModel: probe.authoringModel! }),
     ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
   })
   return {
@@ -1323,7 +1402,55 @@ export async function runAdversarialVerb(
     previousCorpusDigest: digest.corpusDigest,
     // Staging commits nothing, so nothing it does can stale a standing receipt.
     staleReceipts: [],
+    ...(result.noProbeModel === undefined ? {} : { noProbeModel: result.noProbeModel }),
+    ...(result.authoringModel === undefined ? {} : { authoringModel: result.authoringModel }),
+    probeCap: result.probeCap,
+    spend: result.spend,
+    probeSkips: result.probeSkips,
+    probeRefusals: result.probeRefusals,
   }
+}
+
+/**
+ * Resolve the probe capability and bind its author (D-09/D-10).
+ *
+ * Imported DYNAMICALLY on purpose: the preflight and the author binding both reach their pure
+ * contracts through this module, so a top-level value import would close a runtime cycle. The
+ * command layer already imports this module the same way.
+ */
+async function resolveProbeBinding(
+  session: EvalSession,
+  opts: AdversarialVerbOptions,
+  product: string,
+): Promise<{
+  author?: ProbeAuthorPort
+  authoringModel?: AuthoringModel
+  noProbeModel?: NoProbeModelGap
+}> {
+  const capability = opts.probeCapability
+    ?? await (await import('./adversarial-probe-preflight.js')).resolveAdversarialProbeCapability(session)
+  if (capability.kind !== 'probe-author') {
+    return { noProbeModel: { kind: 'no-probe-model', reason: capability.reason } }
+  }
+  const bind = opts.bindProbeAuthor ?? await defaultProbeAuthorBinder(session, opts, product)
+  const binding: AdversarialProbeAuthorBinding = { onCallAttempted: () => {} }
+  return { author: bind(capability.author, binding), authoringModel: capability.author.authoringModel }
+}
+
+async function defaultProbeAuthorBinder(
+  session: EvalSession,
+  opts: AdversarialVerbOptions,
+  product: string,
+): Promise<(author: AdversarialProbeAuthorSelection, binding: AdversarialProbeAuthorBinding) => ProbeAuthorPort> {
+  const { createAdversarialProbeAuthor } = await import('./adversarial-probe-author.js')
+  const auditDir = join(opts.agentQaRoot, 'eval/audit/adversarial-probe', slugBranch(product))
+  return (author, binding) => createAdversarialProbeAuthor({
+    author,
+    executionContext: session.executionContext,
+    maskingContextFactory: session.maskingContextFactory,
+    auditDir,
+    onCallAttempted: binding.onCallAttempted,
+  })
 }
 
 /** Read staged batches back for the operator's review listing; never an admission. */

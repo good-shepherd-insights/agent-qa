@@ -57,10 +57,10 @@ function renderAdversarialSummary(result: AdversarialVerbResult): void {
     console.log(`tables v${result.tableVersion} ${result.tableHash ?? ''}`.trimEnd())
   }
   for (const row of result.staged) {
-    console.log(`staged ${row.cassetteId} ${row.mutator}/${row.kind} (${row.tableEntryId}) from ${row.seedCassetteId}`)
+    console.log(`staged ${row.cassetteId} ${adversarialProvenanceOf(row)} from ${row.seedCassetteId}`)
   }
   for (const row of result.admitted) {
-    console.log(`admitted ${row.cassetteId} ${row.mutator}/${row.kind} from ${row.seedCassetteId}`)
+    console.log(`admitted ${row.cassetteId} ${adversarialProvenanceOf(row)} from ${row.seedCassetteId}`)
   }
   // Four counts, four lines: an unchanged member moved no digest and a remaining one has not
   // landed, and folding either into "admitted" is how a partial admission reads as a whole one.
@@ -77,6 +77,23 @@ function renderAdversarialSummary(result: AdversarialVerbResult): void {
     counts[skip.reason] = (counts[skip.reason] ?? 0) + 1
     return counts
   }, {})
+  // D-09/D-10: what this refresh spent, and — when it spent nothing — WHY. An empty probe list
+  // with no gap line cannot be told apart from a host that simply had nothing new to author.
+  if (result.noProbeModel !== undefined) {
+    console.log(`no probe model: ${result.noProbeModel.reason} (deterministic families are unaffected)`)
+  }
+  if (result.authoringModel !== undefined) {
+    console.log(`probe author family ${result.authoringModel.family}`)
+  }
+  console.log(`probe calls ${result.spend.modelCalls}/${result.probeCap.value} (${result.probeCap.source}); reported tokens ${result.spend.promptTokens} in, ${result.spend.completionTokens} out`)
+  for (const row of result.probeRefusals) {
+    console.log(`probe refused ${row.seedCassetteId} ${row.kind} v${row.promptVersion}: ${row.reason}`)
+  }
+  const probeSkips = result.probeSkips.reduce<Record<string, number>>((counts, skip) => {
+    counts[skip.reason] = (counts[skip.reason] ?? 0) + 1
+    return counts
+  }, {})
+  if (result.probeSkips.length > 0) console.log(`probe tuples not authored ${renderCounters(probeSkips)}`)
   console.log(`seed cap ${result.cap.value} (${result.cap.source}); eligible ${result.eligibleSeeds}`)
   console.log(`seeds considered ${result.seedsConsidered}, deferred ${result.seedsDeferred}, skips ${renderCounters(seedSkips)}`)
   if (result.batchDigest !== undefined) {
@@ -103,6 +120,19 @@ function renderAdversarialSummary(result: AdversarialVerbResult): void {
   if (result.remaining.length > 0 && result.writesStarted) {
     console.log(`Writes began and ${result.remaining.length} reviewed case(s) did not land. The reviewed batch is still at ${result.stagingDir}/${result.batchDigest ?? ''}. Resolve the reported issue, then re-run: eval adversarial --admit --batch ${result.batchDigest ?? '<digest>'}`)
   }
+}
+
+/**
+ * 422 D-05/D-11: one line, two provenance shapes.
+ *
+ * A table variant is named by its family and the entry that was drawn; a probe has neither and
+ * is named by the frozen prompt generation it was authored under. Printing `undefined/kind` for
+ * a probe would make a real derivation look like a broken one.
+ */
+function adversarialProvenanceOf(row: AdversarialVerbResult['staged'][number]): string {
+  return row.mutator === undefined
+    ? `probe/${row.kind} (prompt v${String(row.promptVersion ?? 0)})`
+    : `${row.mutator}/${row.kind} (${row.tableEntryId ?? ''})`
 }
 
 /** Typed integer flag parser (D-08): a non-integer `--k`/`--seed` is a loud invalid-value error. */
@@ -796,11 +826,16 @@ export function createEvalCommand(): Command {
         'cap on NOVEL seeds this refresh derives from; overrides eval.adversarial.maxSeedsPerRefresh (422 D-04)',
         parseIntegerFlag('--max-seeds'),
       )
+      .option(
+        '--max-probe-calls <count>',
+        'cap on PROVIDER CALLS this refresh may make to author probes; overrides eval.adversarial.maxProbeCalls (422 D-10)',
+        parseIntegerFlag('--max-probe-calls'),
+      )
       .option('--dry-run', 'derive and check without writing anything')
       .option('--json', 'emit the typed result DTO to stdout')
       .action(
         async (
-          opts: { admit?: boolean; batch?: string; product?: string; maxSeeds?: number; dryRun?: boolean; json?: boolean },
+          opts: { admit?: boolean; batch?: string; product?: string; maxSeeds?: number; maxProbeCalls?: number; dryRun?: boolean; json?: boolean },
           command: Command,
         ) => {
           try {
@@ -820,14 +855,24 @@ export function createEvalCommand(): Command {
             if (opts.maxSeeds !== undefined && opts.maxSeeds < 1) {
               throw new TypeError(`--max-seeds must be a positive integer, got "${opts.maxSeeds}".`)
             }
+            // Same reasoning one budget over: admission authors nothing, so a probe-call cap
+            // there would cap nothing. A silently ignored budget flag is worse than a refused one.
+            if (opts.maxProbeCalls !== undefined && opts.admit === true) {
+              throw new TypeError('--max-probe-calls applies to staging only; admission authors nothing')
+            }
+            if (opts.maxProbeCalls !== undefined && opts.maxProbeCalls < 1) {
+              throw new TypeError(`--max-probe-calls must be a positive integer, got "${opts.maxProbeCalls}".`)
+            }
             const configPath = getGlobalConfigPath(command)
             const { resolveEvalSession, runAdversarialVerb, adversarialHostOptions } = await import(
               '../eval-session-composition.js'
             )
-            // No model call happens on either branch, so a key-only session is sufficient.
+            // 422 D-10: the STAGE branch may now author probes, so it needs a session that can
+            // resolve credentials and mint a run masker. Admission derives nothing and authors
+            // nothing, so it stays key-only — it must not read a secret it has no use for.
             const session = await resolveEvalSession({
               ...(configPath === undefined ? {} : { configPath }),
-              keyOnly: true,
+              keyOnly: opts.admit === true,
             })
             const result = await runAdversarialVerb(session, {
               ...adversarialHostOptions(session),
@@ -835,6 +880,7 @@ export function createEvalCommand(): Command {
               ...(opts.admit === undefined ? {} : { admit: opts.admit }),
               ...(opts.batch === undefined ? {} : { batch: opts.batch }),
               ...(opts.maxSeeds === undefined ? {} : { maxSeeds: opts.maxSeeds }),
+              ...(opts.maxProbeCalls === undefined ? {} : { maxProbeCalls: opts.maxProbeCalls }),
               ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
             })
             if (opts.json) console.log(JSON.stringify(result, null, 2))

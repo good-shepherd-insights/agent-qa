@@ -215,19 +215,27 @@ export type {
 // The MAIN entry publishes it because the CLI's operator verb composes it; nothing here is
 // reachable from the proposer's `/reader` door.
 export {
+  ADVERSARIAL_DEFAULT_MAX_PROBE_CALLS,
   ADVERSARIAL_EGRESS_CHANNEL,
   ADVERSARIAL_MANIFEST_FILE,
   ADVERSARIAL_STAGING_SUBDIR,
+  adversarialProbeTupleKey,
   computeAdversarialBatchDigest,
   listStagedAdversarial,
   loadAdversarialGuardrailPolicy,
   refreshAdversarialSplit,
+  resolveAdversarialProbeCallCap,
   stageAdversarialProposal,
 } from './adversarial-composition.js'
 export type {
   AdversarialBatchManifest,
   AdversarialBatchManifestCase,
+  AdversarialProbeCallCap,
+  AdversarialProbeRefusal,
+  AdversarialProbeSkip,
+  AdversarialProbeSkipReason,
   AdversarialRefusal,
+  AdversarialSpend,
   AdversarialStagingSkip,
   RefreshAdversarialSplitInput,
   RefreshAdversarialSplitResult,

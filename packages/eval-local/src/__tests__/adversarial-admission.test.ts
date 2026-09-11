@@ -149,8 +149,8 @@ function fixture(count: number): Fixture {
   return { root, committedRoot, agentQaRoot, seedIds: [...seedIds].sort() }
 }
 
-function stage(f: Fixture, mutator: 'confusable' | 'invisible' = 'confusable') {
-  const staged = stageAdversarialProposal({
+async function stage(f: Fixture, mutator: 'confusable' | 'invisible' = 'confusable') {
+  const staged = await stageAdversarialProposal({
     agentQaRoot: f.agentQaRoot,
     committedRoot: f.committedRoot,
     product: 'default',
@@ -190,9 +190,9 @@ function committedIds(committedRoot: string): string[] {
 }
 
 describe('422 adversarial admission — fixed batch, recoverable commit', () => {
-  it('keeps the case committed before an injected failure and finishes the original batch on retry', () => {
+  it('keeps the case committed before an injected failure and finishes the original batch on retry', async () => {
     const f = fixture(3)
-    const staged = stage(f)
+    const staged = await stage(f)
     expect(staged.staged).toHaveLength(3)
     const batch = staged.batchDigest!
     const reviewed = staged.staged.map(row => row.cassetteId).sort()
@@ -239,9 +239,9 @@ describe('422 adversarial admission — fixed batch, recoverable commit', () => 
     expect(listStagedAdversarial({ agentQaRoot: f.agentQaRoot, product: 'default' })).toEqual([])
   })
 
-  it('refuses a committed id whose bytes differ, overwriting no history and moving no digest', () => {
+  it('refuses a committed id whose bytes differ, overwriting no history and moving no digest', async () => {
     const f = fixture(2)
-    const staged = stage(f)
+    const staged = await stage(f)
     const batch = staged.batchDigest!
 
     // Land exactly one case, then let its committed bytes drift — a hand edit, or a case
@@ -277,9 +277,9 @@ describe('422 adversarial admission — fixed batch, recoverable commit', () => 
     expect(retried.nextCorpusDigest).toBe(corpusDigest(f.committedRoot))
   })
 
-  it('leaves the digest stable for an absent batch and for one already fully committed', () => {
+  it('leaves the digest stable for an absent batch and for one already fully committed', async () => {
     const f = fixture(2)
-    const staged = stage(f)
+    const staged = await stage(f)
     const batch = staged.batchDigest!
 
     // An absent batch admits nothing and touches nothing.
@@ -313,9 +313,9 @@ describe('422 adversarial admission — fixed batch, recoverable commit', () => 
     expect(duplicate.nextCorpusDigest).toBe(settled)
   })
 
-  it('never draws a case staged during the admission into the reviewed batch', () => {
+  it('never draws a case staged during the admission into the reviewed batch', async () => {
     const f = fixture(2)
-    const reviewedBatch = stage(f, 'confusable')
+    const reviewedBatch = await stage(f, 'confusable')
     const reviewedIds = reviewedBatch.staged.map(row => row.cassetteId).sort()
 
     let later: ReturnType<typeof stage> | undefined
@@ -323,7 +323,14 @@ describe('422 adversarial admission — fixed batch, recoverable commit', () => 
       afterCaseCommitted: () => {
         // A second batch appears mid-admission. It is real, reviewable, and none of this
         // admission's business: membership was fixed by the manifest, not by the corpus.
+        //
+        // 422-06: staging is now `async` because it may author probes. This host binds NO
+        // author, so the coroutine reaches no `await` and its whole body — the derivation, the
+        // scan and the publishing rename — runs synchronously inside this hook, exactly as it
+        // did before. The `expect` on the next line is the proof, not the assumption: the batch
+        // directory has to exist at this instant for the scenario to be the one under test.
         later ??= stage(f, 'invisible')
+        expect(listStagedAdversarial({ agentQaRoot: f.agentQaRoot, product: 'default' })).toHaveLength(2)
       },
     })
 
@@ -331,7 +338,8 @@ describe('422 adversarial admission — fixed batch, recoverable commit', () => 
     expect(admitted.admitted.map(row => row.cassetteId).sort()).toEqual(reviewedIds)
     expect(admitted.remaining).toEqual([])
     expect(later).toBeDefined()
-    const laterIds = later!.staged.map(row => row.cassetteId)
+    const laterBatch = await later!
+    const laterIds = laterBatch.staged.map(row => row.cassetteId)
     expect(laterIds.length).toBeGreaterThan(0)
     expect(laterIds.some(id => reviewedIds.includes(id))).toBe(false)
     expect(committedIds(f.committedRoot)).toEqual(reviewedIds)
@@ -340,6 +348,6 @@ describe('422 adversarial admission — fixed batch, recoverable commit', () => 
     expect(
       listStagedAdversarial({ agentQaRoot: f.agentQaRoot, product: 'default' })
         .map(row => row.manifest.batchDigest),
-    ).toEqual([later!.batchDigest])
+    ).toEqual([laterBatch.batchDigest])
   })
 })

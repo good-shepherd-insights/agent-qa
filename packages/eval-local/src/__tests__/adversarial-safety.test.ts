@@ -143,8 +143,8 @@ function fixture() {
   return { root, committedRoot, agentQaRoot, handoff, seed }
 }
 
-function stageInjection(f: ReturnType<typeof fixture>) {
-  const staged = stageAdversarialProposal({
+async function stageInjection(f: ReturnType<typeof fixture>) {
+  const staged = await stageAdversarialProposal({
     agentQaRoot: f.agentQaRoot,
     committedRoot: f.committedRoot,
     product: 'default',
@@ -187,9 +187,9 @@ function caseDir(f: ReturnType<typeof fixture>, batchDigest: string): string {
 }
 
 describe('422 adversarial same-byte safety boundary', () => {
-  it('refuses staged injection bytes when the host policy moved from route to block, admitting nothing', () => {
+  it('refuses staged injection bytes when the host policy moved from route to block, admitting nothing', async () => {
     const f = fixture()
-    const staged = stageInjection(f)
+    const staged = await stageInjection(f)
     const before = corpusDigest(f.committedRoot)
     const bytes = tree(f.committedRoot)
 
@@ -224,9 +224,9 @@ describe('422 adversarial same-byte safety boundary', () => {
 
   it.each(['cassette.json', 'label.json', 'entry.json'] as const)(
     'refuses a batch whose %s was altered after review, before any committed byte moves',
-    name => {
+    async name => {
       const f = fixture()
-      const staged = stageInjection(f)
+      const staged = await stageInjection(f)
       const before = tree(f.committedRoot)
       const file = join(caseDir(f, staged.batchDigest!), name)
       const document = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
@@ -241,9 +241,9 @@ describe('422 adversarial same-byte safety boundary', () => {
     },
   )
 
-  it('treats a recomputed manifest as a different batch, never as admission authority', () => {
+  it('treats a recomputed manifest as a different batch, never as admission authority', async () => {
     const f = fixture()
-    const staged = stageInjection(f)
+    const staged = await stageInjection(f)
     const before = tree(f.committedRoot)
     const dir = join(f.agentQaRoot, 'eval/adversarial/default', staged.batchDigest!)
     const manifest = JSON.parse(
@@ -290,9 +290,9 @@ describe('422 adversarial same-byte safety boundary', () => {
     expect(tree(f.committedRoot)).toEqual(before)
   })
 
-  it('refuses a broken blob closure before any root write', () => {
+  it('refuses a broken blob closure before any root write', async () => {
     const f = fixture()
-    const staged = stageInjection(f)
+    const staged = await stageInjection(f)
     const blob = join(f.committedRoot, committedBlobPath('default', f.seed.id, LOCAL_FIXTURE_BLOB_SHA))
     writeFileSync(blob, 'not the recorded bytes')
 
@@ -306,9 +306,9 @@ describe('422 adversarial same-byte safety boundary', () => {
     ).toBe(false)
   })
 
-  it('refuses a staged document replaced by a symlink, and a batch digest shaped like a path', () => {
+  it('refuses a staged document replaced by a symlink, and a batch digest shaped like a path', async () => {
     const f = fixture()
-    const staged = stageInjection(f)
+    const staged = await stageInjection(f)
     const before = tree(f.committedRoot)
 
     expect(refresh(f, '../../etc/passwd')).toMatchObject({

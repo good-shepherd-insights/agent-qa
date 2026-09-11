@@ -36,28 +36,40 @@ import { dirname, join, resolve } from 'node:path'
 import {
   ADVERSARIAL_INAPPLICABILITIES,
   ADVERSARIAL_MUTATORS,
+  ADVERSARIAL_PROMPT_VERSION,
   ADVERSARIAL_TABLE_HASH,
   ADVERSARIAL_TABLE_VERSION,
   ADVERSARIAL_TABLES,
   GENERATOR_KINDS,
+  PROBE_GENERATOR_KINDS,
+  buildProbeRequest,
   canonicalJson,
   cassetteEgressText,
   committedFileText,
   deriveAdversarialCassetteId,
+  deriveProbeCassette,
   deriveRunSlug,
   generateAdversarialVariants,
   guardCassette,
   guardCorpusEntry,
+  isProbeGeneratorKind,
   parseStandaloneLabelRecord,
   type AdversarialCorpusEntry,
   type AdversarialMutator,
   type AdversarialSeed,
   type AdversarialSeedSkip,
+  type AuthoringModel,
   type CorpusGenerator,
   type ExtractedBlob,
   type ExtractedCassette,
   type GeneratorKind,
   type LeafCassette,
+  type NoProbeModelGap,
+  type ProbeAuthorPort,
+  type ProbeGeneratorKind,
+  type ProbeInapplicability,
+  type ProbeRefusal,
+  type ProbeText,
   type SeedingPlan,
   type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
@@ -119,14 +131,29 @@ export interface AdversarialSeedProvenancePin {
   tier: string
 }
 
-/** One reviewed case, pinned by content address (D-02). */
+/**
+ * One reviewed case, pinned by content address (D-02).
+ *
+ * TWO DERIVATION PATHS, TWO PROVENANCE SHAPES (D-05/D-11). A table-drawn variant names
+ * `mutator` + `tableEntryId`; an LLM-authored probe names `promptVersion` and neither of the
+ * other two, because no frozen table drew its text. The pair is mutually exclusive and
+ * `listStagedAdversarial` refuses a case that carries both or neither — a manifest case whose
+ * provenance cannot be true is exactly what a refusal is for.
+ *
+ * The author's model id is deliberately NOT pinned here. It is already on the corpus entry,
+ * where the egress checkpoint scans it, and a configured model id can itself embed a
+ * credential (422-05); the manifest is written after that scan and is not itself scanned.
+ */
 export interface AdversarialBatchManifestCase {
   cassetteId: string
   seedCassetteId: string
-  mutator: AdversarialMutator
+  /** Table path only: the mutation family. Absent on a probe. */
+  mutator?: AdversarialMutator
   kind: GeneratorKind
-  /** Disclosure of the drawn table entry; not part of the derived identity (D-08). */
-  tableEntryId: string
+  /** Table path only. Disclosure of the drawn table entry; not part of the derived identity (D-08). */
+  tableEntryId?: string
+  /** Probe path only: the frozen prompt generation the text was authored under (D-11). */
+  promptVersion?: number
   cassetteTextHash: string
   labelTextHash: string
   entryTextHash: string
@@ -152,9 +179,10 @@ export interface AdversarialBatchManifest {
 const manifestCaseSchema = z.object({
   cassetteId: z.string().min(1),
   seedCassetteId: z.string().min(1),
-  mutator: z.enum(ADVERSARIAL_MUTATORS),
+  mutator: z.enum(ADVERSARIAL_MUTATORS).optional(),
   kind: z.enum(GENERATOR_KINDS),
-  tableEntryId: z.string().min(1),
+  tableEntryId: z.string().min(1).optional(),
+  promptVersion: z.number().int().nonnegative().optional(),
   cassetteTextHash: digestField,
   labelTextHash: digestField,
   entryTextHash: digestField,
@@ -218,6 +246,81 @@ export interface AdversarialStagingSkip {
     | 'committed-conflict'
 }
 
+// ---------------------------------------------------------------------------
+// The AUTHORED half (D-09/D-10/D-11): bounded provider spend, accounted for.
+// ---------------------------------------------------------------------------
+
+/**
+ * Recorded default cap on PROVIDER CALLS one refresh may make (D-04/D-10).
+ *
+ * The rationale, stated rather than tuned: a refresh authors at most one probe per
+ * `(seed, kind, promptVersion)` tuple, and the two frozen probe kinds over two seeds is four
+ * requested generations. It is deliberately INDEPENDENT of
+ * `ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH` — eight deterministic seeds cost nothing but CPU,
+ * while four authored probes cost four provider calls that no later run can recover. Two
+ * budgets, because the two halves are bounded for two different reasons.
+ *
+ * It counts CALLS and not tokens. A provider that reports no usage yields zero tokens
+ * (422-05), which UNDER-states spend; an unreported token must never be readable as "free", so
+ * the budget is denominated in the one quantity this layer always knows exactly.
+ */
+export const ADVERSARIAL_DEFAULT_MAX_PROBE_CALLS = 4
+
+/** The resolved probe-call cap and where the operator set it (the seed-cap idiom). */
+export interface AdversarialProbeCallCap {
+  value: number
+  source: 'flag' | 'config' | 'default'
+}
+
+/**
+ * What a refresh SPENT at a provider.
+ *
+ * `modelCalls` is the authoritative number and is counted at RESERVATION time, not at answer
+ * time: a call that was announced and never answered still cost whatever it cost, and counting
+ * only answers would let an interrupted refresh under-report its bill. Token counts are carried
+ * exactly as the provider reported them and are never inferred.
+ */
+export interface AdversarialSpend {
+  modelCalls: number
+  promptTokens: number
+  completionTokens: number
+}
+
+/**
+ * Why a `(seed, kind, promptVersion)` tuple yielded no authored probe.
+ *
+ * The first members are the pure contract's own seed law, re-reported verbatim so a staging
+ * report speaks ONE vocabulary about table families and probes alike. The last two are this
+ * layer's: a tuple already decided by a previous refresh, and a tuple this refresh's call
+ * budget deferred to the next one.
+ */
+export type AdversarialProbeSkipReason =
+  | ProbeInapplicability
+  | 'tuple-already-decided'
+  | 'probe-cap-exceeded'
+
+/** An honest row for every probe tuple that produced no case. */
+export interface AdversarialProbeSkip {
+  seedCassetteId: string
+  kind: ProbeGeneratorKind
+  promptVersion: number
+  reason: AdversarialProbeSkipReason
+}
+
+/**
+ * An authored RESPONSE the pure contract refused.
+ *
+ * Distinct from `AdversarialRefusal`, which is a POLICY block with a firing detector. This one
+ * says the model's answer was not a usable probe — too long, not a name, folded back onto the
+ * recorded identity. It names no text either, for the same reason.
+ */
+export interface AdversarialProbeRefusal {
+  seedCassetteId: string
+  kind: ProbeGeneratorKind
+  promptVersion: number
+  reason: ProbeRefusal
+}
+
 export interface StageAdversarialProposalInput {
   agentQaRoot: string
   committedRoot: string
@@ -230,6 +333,23 @@ export interface StageAdversarialProposalInput {
   maxSeeds?: number
   /** Where `maxSeeds` came from, recorded beside the refresh. Absent with a value means 'flag'. */
   maxSeedsSource?: 'flag' | 'config'
+  /**
+   * D-10: the bound author, or nothing.
+   *
+   * A PORT and never a model: this package constructs no provider client and sees no profile,
+   * credential or provider name. Absent means this refresh authors nothing at all — the frozen
+   * families still derive, because a host with no eligible author is not a host with no
+   * adversarial corpus.
+   */
+  probeAuthor?: ProbeAuthorPort
+  /** D-11: the identity every authored entry stamps. Required with `probeAuthor`. */
+  authoringModel?: AuthoringModel
+  /** D-09: the host's capability gap, reported on the batch when there is no author. */
+  noProbeModel?: NoProbeModelGap
+  /** D-04/D-10: the per-refresh provider-CALL cap; absent resolves to the recorded default. */
+  maxProbeCalls?: number
+  /** Where `maxProbeCalls` came from. Absent with a value means 'flag'. */
+  maxProbeCallsSource?: 'flag' | 'config'
   /** Derive and scan, publish nothing — neither staged bytes nor a settle record. */
   dryRun?: boolean
 }
@@ -237,9 +357,13 @@ export interface StageAdversarialProposalInput {
 export interface StagedAdversarialCase {
   cassetteId: string
   seedCassetteId: string
-  mutator: AdversarialMutator
+  /** Table path only. */
+  mutator?: AdversarialMutator
   kind: GeneratorKind
-  tableEntryId: string
+  /** Table path only. */
+  tableEntryId?: string
+  /** Probe path only: the frozen prompt generation this text was authored under (D-11). */
+  promptVersion?: number
 }
 
 export interface StageAdversarialProposalResult {
@@ -274,6 +398,24 @@ export interface StageAdversarialProposalResult {
   stateRecordDigest?: string
   /** Refusals a previous refresh settled under this policy; disclosed, never re-asserted. */
   settledRefusals: readonly AdversarialSettledRefusal[]
+  /**
+   * D-09: why this host authored no probes.
+   *
+   * ABSENT means the capability was never consulted (an admission, or a caller that declined to
+   * resolve credentials) — which is a different fact from "consulted, and there is no author".
+   * Collapsing the two would let a host that never asked read as a host that has nothing.
+   */
+  noProbeModel?: NoProbeModelGap
+  /** The identity that authored this refresh's probes; absent when none were authored. */
+  authoringModel?: AuthoringModel
+  /** The resolved provider-call cap and its source, recorded beside every refresh. */
+  probeCap: AdversarialProbeCallCap
+  /** What this refresh actually spent at a provider. */
+  spend: AdversarialSpend
+  /** Every probe tuple that produced no case, and why. */
+  probeSkips: readonly AdversarialProbeSkip[]
+  /** Authored responses the pure contract refused. */
+  probeRefusals: readonly AdversarialProbeRefusal[]
 }
 
 /** A staged batch loaded back from disk with its bytes verified against the manifest pins. */
@@ -458,6 +600,46 @@ export function computeAdversarialBatchDigest(
     .digest('hex')
 }
 
+/**
+ * Resolve the per-refresh provider-call cap (D-04/D-10).
+ *
+ * Every rejected boundary is rejected LOUDLY, exactly as the seed cap is: zero, negative,
+ * fractional, nonfinite and beyond-safe-integer budgets are a TypeError rather than a silent
+ * fallback. A budget that quietly becomes four because the operator typed `0` is a budget the
+ * operator does not have — and here the silent version would buy provider calls they refused.
+ */
+export function resolveAdversarialProbeCallCap(input: {
+  value?: number
+  source?: 'flag' | 'config'
+}): AdversarialProbeCallCap {
+  if (input.value === undefined) {
+    return { value: ADVERSARIAL_DEFAULT_MAX_PROBE_CALLS, source: 'default' }
+  }
+  if (!Number.isSafeInteger(input.value) || input.value < 1) {
+    throw new TypeError('adversarial probe call cap must be a positive safe integer')
+  }
+  return { value: input.value, source: input.source ?? 'flag' }
+}
+
+/**
+ * D-11's idempotence key: `(seed, kind, promptVersion)` and NOTHING else.
+ *
+ * Not the authored text — that is part of the derived IDENTITY, so keying on it would make
+ * every answer a new tuple and no refresh could ever recognise that it had already asked. Not
+ * the author either: a second host with a second model must not buy a second copy of a probe
+ * this corpus already holds. A future `promptVersion` IS a new tuple, deliberately — different
+ * instructions are a different case, not a duplicate.
+ */
+export function adversarialProbeTupleKey(
+  seedCassetteId: string,
+  kind: ProbeGeneratorKind,
+  promptVersion: number,
+): string {
+  // U+001F, the `adversarialTupleKey` separator: no cassette id, kind or version can contain
+  // it, so `(a, bc)` and `(ab, c)` can never collide into one key.
+  return [seedCassetteId, kind, String(promptVersion)].join('\u001F')
+}
+
 // ---------------------------------------------------------------------------
 // The ONE checkpoint helper both legs call (D-03).
 // ---------------------------------------------------------------------------
@@ -548,15 +730,30 @@ function resolveSeedBlobs(
  * entry is structurally unreachable — the proposer's door is the same door this uses.
  * Nothing under the committed root is written, read-modified, or re-digested.
  */
-export function stageAdversarialProposal(
+export async function stageAdversarialProposal(
   input: StageAdversarialProposalInput,
-): StageAdversarialProposalResult {
+): Promise<StageAdversarialProposalResult> {
   // D-04: resolved BEFORE any read, so an invalid cap is a loud refusal rather than a refresh
-  // that silently ran under the default.
+  // that silently ran under the default. The provider budget resolves in the same breath and
+  // for the sharper version of the same reason: an invalid one must not buy a single call.
   const cap = resolveAdversarialSeedCap({
     ...(input.maxSeeds === undefined ? {} : { value: input.maxSeeds }),
     ...(input.maxSeedsSource === undefined ? {} : { source: input.maxSeedsSource }),
   })
+  const probeCap = resolveAdversarialProbeCallCap({
+    ...(input.maxProbeCalls === undefined ? {} : { value: input.maxProbeCalls }),
+    ...(input.maxProbeCallsSource === undefined ? {} : { source: input.maxProbeCallsSource }),
+  })
+  const spend: AdversarialSpend = { modelCalls: 0, promptTokens: 0, completionTokens: 0 }
+  const probeSkips: AdversarialProbeSkip[] = []
+  const probeRefusals: AdversarialProbeRefusal[] = []
+  const probeDisclosure = {
+    ...(input.noProbeModel === undefined ? {} : { noProbeModel: input.noProbeModel }),
+    probeCap,
+    spend,
+    probeSkips,
+    probeRefusals,
+  }
   const empty: Omit<StageAdversarialProposalResult, 'kind'> = {
     product: input.product,
     staged: [],
@@ -571,6 +768,7 @@ export function stageAdversarialProposal(
     cap,
     eligibleSeeds: 0,
     settledRefusals: [],
+    ...probeDisclosure,
   }
   // The gate's own read, not the reader's length: an unmarked or refusing root reads empty
   // through the proposer port and must not be mistaken for a healthy corpus with nothing in it.
@@ -779,6 +977,17 @@ export function stageAdversarialProposal(
     })
   }
 
+  // 422-06-T1 (RED): the authored half is DECLARED and not yet pulled. The port is accepted and
+  // never called, so every cell that counts provider calls fails on the behaviour it names
+  // rather than on a module that does not load.
+  void input.probeAuthor
+  void buildProbeRequest
+  void deriveProbeCassette
+  void PROBE_GENERATOR_KINDS
+  void ADVERSARIAL_PROMPT_VERSION
+  void adversarialProbeTupleKey
+  const authoringModel: AuthoringModel | undefined = undefined
+
   // One deterministic order for the manifest, the directory layout and the digest.
   publishable.sort((left, right) =>
     left.manifestCase.cassetteId < right.manifestCase.cassetteId
@@ -836,6 +1045,8 @@ export function stageAdversarialProposal(
     cap,
     eligibleSeeds,
     settledRefusals,
+    ...probeDisclosure,
+    ...(authoringModel === undefined ? {} : { authoringModel }),
   }
 
   /**
@@ -967,6 +1178,25 @@ export function listStagedAdversarial(input: {
           corpusEntry.generator.mutator !== manifestCase.mutator
         ) {
           throw new TypeError('adversarial staged provenance mismatch')
+        }
+        // D-05/D-11: a manifest case names ONE derivation path. A table case that also claims a
+        // prompt version, or a probe case that also claims a mutation family, is provenance that
+        // cannot be true — and the reviewed batch is exactly where that must be caught, because
+        // admission copies these bytes into a git-tracked root.
+        if (manifestCase.promptVersion === undefined) {
+          if (manifestCase.mutator === undefined || manifestCase.tableEntryId === undefined) {
+            throw new TypeError('adversarial staged provenance mismatch')
+          }
+        } else {
+          if (
+            manifestCase.mutator !== undefined ||
+            manifestCase.tableEntryId !== undefined ||
+            !isProbeGeneratorKind(manifestCase.kind) ||
+            corpusEntry.generator.promptVersion !== manifestCase.promptVersion ||
+            corpusEntry.generator.authoringModel === undefined
+          ) {
+            throw new TypeError('adversarial staged provenance mismatch')
+          }
         }
         return { manifest: manifestCase, caseDir, cassette, labelRecord: parsedLabel.record, corpusEntry, texts }
       })
@@ -1344,9 +1574,10 @@ function stagedCaseOf(manifestCase: AdversarialBatchManifestCase): StagedAdversa
   return {
     cassetteId: manifestCase.cassetteId,
     seedCassetteId: manifestCase.seedCassetteId,
-    mutator: manifestCase.mutator,
     kind: manifestCase.kind,
-    tableEntryId: manifestCase.tableEntryId,
+    ...(manifestCase.mutator === undefined ? {} : { mutator: manifestCase.mutator }),
+    ...(manifestCase.tableEntryId === undefined ? {} : { tableEntryId: manifestCase.tableEntryId }),
+    ...(manifestCase.promptVersion === undefined ? {} : { promptVersion: manifestCase.promptVersion }),
   }
 }
 
