@@ -3065,3 +3065,19 @@ export { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 export { createModel } from '@vostride/agent-qa-model'
 export type { AgentQaConfig as FeedbackWordingConfig } from '@vostride/agent-qa-core'
 export type { RunMaskingContext as FeedbackMaskingContext } from '@vostride/agent-qa-agent-local'
+// 2026-09-11, 422 D-09/D-10: the adversarial probe preflight and the author binding reach the
+// pure probe contracts through this same composition boundary the judge preflight uses. The
+// FUNC-02 surface firewall ledgers this file for `@vostride/agent-qa-eval` and only ever
+// shrinks, so a new CLI file may never name that package itself.
+export { renderAdversarialProbePrompt } from '@vostride/agent-qa-eval'
+export type {
+  AuthoringModel, GenerationRequest, ProbeAuthorPort, ProbeGeneratorKind, ProbeText, ProbeUsage,
+} from '@vostride/agent-qa-eval'
+export { resolveAdversarialProbeCapability } from './adversarial-probe-preflight.js'
+export type {
+  AdversarialProbeAuthorSelection, AdversarialProbeCapability, AdversarialProbePreflightDeps,
+} from './adversarial-probe-preflight.js'
+export { createAdversarialProbeAuthor } from './adversarial-probe-author.js'
+export type {
+  AdversarialProbeAuthorInput, ProbeCallAttempt,
+} from './adversarial-probe-author.js'
