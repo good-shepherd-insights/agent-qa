@@ -311,6 +311,30 @@ describe('422 adversarial tracer — stage, review, admit', () => {
     const admission = guardrailRows(f.agentQaRoot).slice(generation.length)
     expect(admission.some(row => row.channel.startsWith('eval-adversarial:') && row.action === 'route')).toBe(true)
   })
+
+  // 422-01-T2 at the public surface: the same-byte boundary must hold through the verb, not
+  // only through the composition it calls.
+  it('refuses a batch altered after review, leaving the committed corpus digest where it was', async () => {
+    const f = fixture()
+    const s = await session(f)
+    const staged = await runAdversarialVerb(s, { ...adversarialHostOptions(s), product: 'default' })
+    const batch = staged.batchDigest!
+    const before = tree(f.committedRoot)
+
+    const caseFile = join(f.agentQaRoot, 'eval/adversarial/default', batch, 'case-0000', 'entry.json')
+    const entry = JSON.parse(readFileSync(caseFile, 'utf8')) as Record<string, unknown>
+    entry.product = 'smuggled'
+    writeFileSync(caseFile, JSON.stringify(entry))
+
+    const refused = await runAdversarialVerb(s, {
+      ...adversarialHostOptions(s), product: 'default', admit: true, batch,
+    })
+    expect(refused).toMatchObject({ kind: 'refused', reason: 'staging-integrity' })
+    expect(refused.admitted).toEqual([])
+    expect(refused.writesStarted).toBe(false)
+    expect(tree(f.committedRoot)).toEqual(before)
+    expect(openCorpusReader(f.committedRoot).listEntries('default').map(row => row.split)).toEqual(['natural'])
+  })
 })
 
 // Keep a reference so an unused-import lint never quietly drops the root-resolution helper.
