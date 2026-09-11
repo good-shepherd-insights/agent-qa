@@ -375,8 +375,23 @@ export function readMisdirectionRunState(runDir: string, runId: string): Misdire
  * rename is what makes a reader see either the whole old handoff or the whole new one.
  */
 export function persistMisdirectionSidecar(
-  _handoffPath: string,
-  _rows: readonly MisdirectionRecordResult[],
+  handoffPath: string,
+  rows: readonly MisdirectionRecordResult[],
 ): void {
-  // DECLARED, UNIMPLEMENTED (RED).
+  const value = rows.map((row) => MisdirectionRecordResultSchema.parse(row))
+  const raw: unknown = JSON.parse(readFileSync(handoffPath, 'utf8'))
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('completed run handoff is not an object')
+  }
+  const next = { ...(raw as Record<string, unknown>), misdirectionEvidence: value }
+  const dir = dirname(handoffPath)
+  const staged = join(dir, `.handoff.json.${randomUUID()}.tmp`)
+  try {
+    writeFileSync(staged, `${JSON.stringify(next)}\n`, { encoding: 'utf8', mode: 0o600 })
+    fsyncPath(staged)
+    renameSync(staged, handoffPath)
+    fsyncPath(dir)
+  } finally {
+    rmSync(staged, { force: true })
+  }
 }

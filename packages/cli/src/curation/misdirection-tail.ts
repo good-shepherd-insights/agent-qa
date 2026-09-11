@@ -181,9 +181,33 @@ export interface MisdirectionExposure {
  * root and no provider — which is why a handoff with nothing to check keeps a handoff with NO
  * sidecar member at all rather than an empty one.
  */
-export function misdirectionExposures(_handoff: CompletedRunHandoff): MisdirectionExposure[] {
-  // DECLARED, UNIMPLEMENTED (RED).
-  return []
+export function misdirectionExposures(handoff: CompletedRunHandoff): MisdirectionExposure[] {
+  const tests = Array.isArray(handoff.tests) ? handoff.tests : []
+  const rows: MisdirectionExposure[] = []
+  for (const test of [...tests].sort((left, right) => left.testIndex - right.testIndex)) {
+    if (!Array.isArray(test.steps) || test.steps.length === 0) continue
+    const failing = failingStepOf(test)
+    // `failingStepOf` answers the LAST step when nothing failed (the timeout anchor), so the
+    // verdict is read separately: a verified-passing step is not a failing path and owes nothing.
+    if (failing === undefined || failing.verifierVerdict.pass) continue
+    const briefDigest = computeBriefDigest(failing.servedBrief)
+    for (const site of deriveMemoryOnPathSites([failing])) {
+      rows.push({
+        perTest: test.testIndex,
+        testId: test.testId,
+        stepIndex: site.stepIndex,
+        recordId: site.recordId,
+        trust: site.trust,
+        briefDigest,
+      })
+    }
+  }
+  return rows.sort(
+    (left, right) =>
+      left.perTest - right.perTest ||
+      left.stepIndex - right.stepIndex ||
+      (left.recordId < right.recordId ? -1 : left.recordId > right.recordId ? 1 : 0),
+  )
 }
 
 export interface PrepareMisdirectionEvidenceInput {
@@ -247,10 +271,191 @@ function keyOf(exposure: MisdirectionExposure, runId: string, decisionOrdinal: n
  * process did not see finish is not a call this process may assume did not happen.
  */
 export async function prepareMisdirectionEvidence(
-  _input: PrepareMisdirectionEvidenceInput,
+  input: PrepareMisdirectionEvidenceInput,
 ): Promise<PrepareMisdirectionEvidenceResult> {
-  // DECLARED, UNIMPLEMENTED (RED).
-  return NOT_CONSULTED
+  const { handoff } = input
+  if (handoff.gateRun === true || handoff.excludedFromOutcomes === true) return NOT_CONSULTED
+  const exposures = misdirectionExposures(handoff)
+  if (exposures.length === 0) return NOT_CONSULTED
+
+  const runId = String(handoff.runId)
+  const handoffBaseDigest = misdirectionSourceDigest(handoff)
+  const notices: string[] = []
+
+  let posture: MisdirectionRootPostureRead
+  try {
+    posture = await input.arbiter.rootPosture()
+  } catch (error) {
+    posture = { kind: 'broken-eval-root', reason: errorText(error) }
+  }
+
+  // D-19. An absent root earns the declared-only exemption; a present-but-broken root does not,
+  // and both record an EMPTY ledger rather than an absent one — the arbiter ran, and said so.
+  if (posture.kind !== 'eval-root') {
+    if (posture.kind === 'broken-eval-root') {
+      notices.push(`${MISDIRECTION_POSTURE_UNAVAILABLE}: ${posture.reason}`)
+    } else {
+      notices.push(MISDIRECTION_NO_EVAL_ROOT)
+    }
+    persistMisdirectionSidecar(input.handoffPath, [])
+    return {
+      posture: posture.kind,
+      rows: [],
+      ...(posture.kind === 'no-eval-root' ? { backing: 'declared-only' as const } : {}),
+      persisted: true,
+      notices,
+    }
+  }
+
+  const state = readMisdirectionRunState(input.runDir, runId)
+  const cap = state.policy === undefined ? await resolveDurableCap(input, runId) : {
+    maxChecks: state.policy.maxChecks,
+    source: state.policy.source,
+  }
+
+  const completedByKey = new Map(
+    state.completions.map((row) => [misdirectionCheckKeyDigest(row), row] as const),
+  )
+  const interruptedKeys = new Set(
+    state.interrupted.map((row) => misdirectionCheckKeyDigest(row)),
+  )
+  const interruptedByKey = new Map(
+    state.interrupted.map((row) => [misdirectionCheckKeyDigest(row), row] as const),
+  )
+  let budget = Math.max(0, cap.maxChecks - state.spent)
+
+  /** One `locate` per STEP, memoised: the live decision is a fact about the step, not the record. */
+  const located = new Map<string, MisdirectionLocated>()
+  const locate = async (exposure: MisdirectionExposure): Promise<MisdirectionLocated> => {
+    const stepKey = `${exposure.testId}${String(exposure.stepIndex)}`
+    const seen = located.get(stepKey)
+    if (seen !== undefined) return seen
+    let answer: MisdirectionLocated
+    try {
+      answer = await input.arbiter.locate({
+        agentQaRoot: input.agentQaRoot,
+        runId,
+        testId: exposure.testId,
+        stepIndex: exposure.stepIndex,
+      })
+    } catch (error) {
+      answer = { kind: 'unavailable', reason: errorText(error) }
+    }
+    located.set(stepKey, answer)
+    return answer
+  }
+
+  const rows: MisdirectionRecordResult[] = []
+  const emitted = new Set<string>()
+  for (const exposure of exposures) {
+    const decision = await locate(exposure)
+    if (decision.kind !== 'located') {
+      // NO ROW WITHOUT A LOCATED DECISION IDENTITY. Inventing a decision ordinal to carry a
+      // refusal would bind the row to a decision the run never made; the record instead reads
+      // `unchecked` at fold time, which is what 422-11's aggregation already says about it, and
+      // the cause stays visible here.
+      notices.push(`${exposure.recordId} at step ${String(exposure.stepIndex)}: ${decision.reason}`)
+      continue
+    }
+    const key = keyOf(exposure, runId, decision.decisionOrdinal)
+    const digest = misdirectionCheckKeyDigest(key)
+    // EXACT keys dedupe; the same record on another step does not, because its key differs.
+    if (emitted.has(digest)) continue
+    emitted.add(digest)
+
+    const completed = completedByKey.get(digest)
+    if (completed !== undefined) {
+      rows.push(completed)
+      continue
+    }
+    const identities = {
+      ...key,
+      // Re-stated after the spread: the durable key carries the record id as a plain string (the
+      // store has no business knowing about brands), and the evidence row's own type is branded.
+      recordId: exposure.recordId,
+      handoffBaseDigest,
+      briefDigest: exposure.briefDigest,
+      corpusDigest: posture.corpusDigest,
+      profileDigest: posture.profileDigest,
+    }
+    if (interruptedKeys.has(digest)) {
+      // The charge was taken and the answer never arrived. Reported, never re-spent.
+      const prior = interruptedByKey.get(digest)!
+      rows.push({
+        ...identities,
+        briefDigest: prior.briefDigest,
+        corpusDigest: prior.corpusDigest,
+        profileDigest: prior.profileDigest,
+        crossCheck: 'not-run',
+        seedHonored: false,
+        reason: MISDIRECTION_INTERRUPTED,
+      })
+      continue
+    }
+    if (budget <= 0) {
+      // Every excess exposure is RETAINED as an explicit not-run result rather than dropped, so
+      // the fold sees an unchecked record instead of a silently shorter ledger.
+      const row: MisdirectionRecordResult = {
+        ...identities,
+        crossCheck: 'not-run',
+        seedHonored: false,
+        reason: MISDIRECTION_CAP_EXCEEDED,
+      }
+      saveCompletedMisdirectionCheck(input.runDir, row)
+      rows.push(row)
+      continue
+    }
+
+    // THE CHARGE, BEFORE THE CALL.
+    reserveMisdirectionCheck(input.runDir, { schemaVersion: 1, ...identities })
+    budget -= 1
+    let checked: MisdirectionChecked
+    try {
+      checked = await input.arbiter.check({
+        agentQaRoot: input.agentQaRoot,
+        runId,
+        testId: exposure.testId,
+        stepIndex: exposure.stepIndex,
+        decisionOrdinal: decision.decisionOrdinal,
+        recordId: exposure.recordId,
+        // BUILT HERE, FROM THE LOADED HANDOFF. Nobody hands this in — see the header.
+        authorization: {
+          recordId: exposure.recordId,
+          runId,
+          perTest: memberOf(handoff, exposure.testId, exposure.perTest)!,
+        },
+      })
+    } catch (error) {
+      notices.push(`${exposure.recordId} at step ${String(exposure.stepIndex)}: ${errorText(error)}`)
+      rows.push({
+        ...identities,
+        crossCheck: 'not-run',
+        seedHonored: false,
+        reason: MISDIRECTION_INTERRUPTED,
+      })
+      continue
+    }
+    const row: MisdirectionRecordResult =
+      checked.kind === 'checked'
+        ? {
+            ...identities,
+            crossCheck: checked.crossCheck,
+            seedHonored: checked.seedHonored,
+            ...(checked.reason === undefined ? {} : { reason: checked.reason }),
+            samples: checked.samples,
+          }
+        : {
+            ...identities,
+            crossCheck: 'inconclusive',
+            seedHonored: false,
+            reason: checked.reason,
+          }
+    saveCompletedMisdirectionCheck(input.runDir, row)
+    rows.push(row)
+  }
+
+  persistMisdirectionSidecar(input.handoffPath, rows)
+  return { posture: 'eval-root', rows, persisted: true, cap, notices }
 }
 
 async function resolveDurableCap(
