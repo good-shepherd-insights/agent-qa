@@ -94,6 +94,12 @@ import {
   isNovelState,
   stageFeedbackEntry,
   admitStagedFeedback,
+  ADVERSARIAL_EGRESS_CHANNEL,
+  ADVERSARIAL_STAGING_SUBDIR,
+  listStagedAdversarial,
+  loadAdversarialGuardrailPolicy,
+  refreshAdversarialSplit,
+  stageAdversarialProposal,
   FEEDBACK_STAGING_SUBDIR,
   readCommittedCorpusDigest,
   cassetteProductPartition,
@@ -126,6 +132,10 @@ import {
   writeRunExclusion,
 } from '@vostride/agent-qa-eval-local'
 import type {
+  AdversarialRefusal,
+  AdversarialStagingSkip,
+  StageAdversarialProposalResult,
+  StagedAdversarialCase,
   CommitCensusOutcome,
   CommitEvalReportOutcome,
   ReleaseGateMode,
@@ -1109,6 +1119,163 @@ export async function runSeedFromFeedbackVerb(session: EvalSession, opts: {
     return { ...base, kind: 'refused', reason: 'feedback-unavailable',
       failures: [{ phase: 'before-write', reason: 'feedback-unavailable' }], previousCorpusDigest: digest.corpusDigest }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 422 D-01/D-02/D-03: the `eval adversarial` operator verb.
+//
+// Two branches, one host composition. STAGE is the default and writes only local audit data;
+// ADMIT requires an explicit `--batch <digest>` and is the SOLE production caller of
+// `refreshAdversarialSplit`. `--dry-run` performs no model call and no write on either branch
+// — this whole path makes no model call at all, which is why the session is resolved
+// key-only by the command layer.
+//
+// The policy is LOADED here and handed down as a required parameter (D-03): the composition
+// below never defaults one, so a host that tightens `injectionShape` to `block` binds at
+// admission even for bytes staged under the old setting.
+// ---------------------------------------------------------------------------
+
+export { ADVERSARIAL_EGRESS_CHANNEL, ADVERSARIAL_STAGING_SUBDIR }
+export type { AdversarialRefusal, AdversarialStagingSkip, StagedAdversarialCase }
+
+export interface AdversarialVerbResult {
+  kind: 'staged' | 'unchanged' | 'nothing-derived' | 'dry-run' | 'admitted' | 'refused'
+  reason?: string
+  product: string
+  batchDigest?: string
+  stagingDir: string
+  /** Cases in the reviewed batch (stage branch) — the operator's review list. */
+  staged: readonly StagedAdversarialCase[]
+  /** Cases whose bytes actually landed in the committed root (admit branch). */
+  admitted: readonly StagedAdversarialCase[]
+  refusals: readonly AdversarialRefusal[]
+  stagingSkips: readonly AdversarialStagingSkip[]
+  skips: StageAdversarialProposalResult['skips']
+  seedsConsidered: number
+  seedsDeferred: number
+  tableVersion?: number
+  tableHash?: string
+  previousCorpusDigest?: string
+  nextCorpusDigest?: string
+  writesStarted: boolean
+  /** Admission stales standing receipts; the operator re-measures with this (415 D-12). */
+  floorCommand: string
+}
+
+export interface AdversarialVerbOptions {
+  agentQaRoot: string
+  product?: string
+  /** Explicit operator admission. Without it the verb stages and commits nothing. */
+  admit?: boolean
+  /** REQUIRED with `admit`: the exact reviewed batch digest. */
+  batch?: string
+  dryRun?: boolean
+  mutators?: readonly import('@vostride/agent-qa-eval').AdversarialMutator[]
+  maxSeeds?: number
+  /** Test seam for the loaded policy; production loads the host's. */
+  policy?: import('@vostride/agent-qa-schema').GuardrailPolicy
+  auditSink?: import('@vostride/agent-qa-safety-local').JsonlAuditSink
+}
+
+export function adversarialHostOptions(session: EvalSession) {
+  return { agentQaRoot: resolve(session.configDir, '.agent-qa') }
+}
+
+export async function runAdversarialVerb(
+  session: EvalSession,
+  opts: AdversarialVerbOptions,
+): Promise<AdversarialVerbResult> {
+  const committedRoot = resolve(session.configDir, 'agent-qa-eval')
+  const product = opts.product ?? 'default'
+  const stagingDir = join(opts.agentQaRoot, ADVERSARIAL_STAGING_SUBDIR, slugBranch(product))
+  const configArg = `'${resolve(session.configPath).replaceAll("'", "'\"'\"'")}'`
+  const floorCommand = `agent-qa --config ${configArg} eval floor`
+  const base: AdversarialVerbResult = {
+    kind: 'refused', product, stagingDir, staged: [], admitted: [], refusals: [], stagingSkips: [],
+    skips: [], seedsConsidered: 0, seedsDeferred: 0, writesStarted: false, floorCommand,
+  }
+  const digest = readCanaryCorpusDigest(session)
+  if (digest.kind !== 'digest') {
+    const reason = digest.kind === 'no-eval-root' ? 'no-eval-root' : 'corpus-unavailable'
+    return { ...base, kind: 'refused', reason }
+  }
+  const policy = opts.policy ?? loadAdversarialGuardrailPolicy()
+  const auditSink =
+    opts.auditSink ??
+    new JsonlAuditSink(join(opts.agentQaRoot, 'eval/audit/adversarial', slugBranch(product)))
+
+  if (opts.admit === true) {
+    if (opts.batch === undefined) {
+      return { ...base, kind: 'refused', reason: 'admit-requires-batch' }
+    }
+    const refreshed = refreshAdversarialSplit({
+      agentQaRoot: opts.agentQaRoot,
+      committedRoot,
+      product,
+      batchDigest: opts.batch,
+      policy,
+      auditSink,
+      seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', 'adversarial'),
+      ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
+    })
+    return {
+      ...base,
+      kind: refreshed.kind,
+      ...(refreshed.reason === undefined ? {} : { reason: refreshed.reason }),
+      batchDigest: refreshed.batchDigest,
+      admitted: refreshed.admitted,
+      refusals: refreshed.refusals,
+      stagingSkips: refreshed.stagingSkips,
+      writesStarted: refreshed.writesStarted,
+      ...(refreshed.previousCorpusDigest === undefined ? {} : { previousCorpusDigest: refreshed.previousCorpusDigest }),
+      ...(refreshed.nextCorpusDigest === undefined ? {} : { nextCorpusDigest: refreshed.nextCorpusDigest }),
+    }
+  }
+
+  const result = stageAdversarialProposal({
+    agentQaRoot: opts.agentQaRoot,
+    committedRoot,
+    product,
+    policy,
+    auditSink,
+    ...(opts.mutators === undefined ? {} : { mutators: opts.mutators }),
+    ...(opts.maxSeeds === undefined ? {} : { maxSeeds: opts.maxSeeds }),
+    ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
+  })
+  return {
+    ...base,
+    kind: result.kind,
+    ...(result.batchDigest === undefined ? {} : { batchDigest: result.batchDigest }),
+    staged: result.staged,
+    refusals: result.refusals,
+    stagingSkips: result.stagingSkips,
+    skips: result.skips,
+    seedsConsidered: result.seedsConsidered,
+    seedsDeferred: result.seedsDeferred,
+    tableVersion: result.tableVersion,
+    tableHash: result.tableHash,
+    previousCorpusDigest: digest.corpusDigest,
+  }
+}
+
+/** Read staged batches back for the operator's review listing; never an admission. */
+export function listAdversarialBatches(session: EvalSession, opts: { agentQaRoot: string; product?: string }) {
+  void session
+  return listStagedAdversarial(opts).map(batch => ({
+    dir: batch.dir,
+    batchDigest: batch.manifest.batchDigest,
+    product: batch.manifest.product,
+    tableVersion: batch.manifest.tableVersion,
+    tableHash: batch.manifest.tableHash,
+    stagedAt: batch.manifest.stagedAt,
+    cases: batch.manifest.cases.map(row => ({
+      cassetteId: row.cassetteId,
+      seedCassetteId: row.seedCassetteId,
+      mutator: row.mutator,
+      kind: row.kind,
+      tableEntryId: row.tableEntryId,
+    })),
+  }))
 }
 
 /** Resolve the existing host roots once for the command; the verb also accepts explicit test DATA. */

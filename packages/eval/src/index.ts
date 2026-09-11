@@ -302,12 +302,15 @@ export type {
 } from './labels/silver-sampling'
 export {
   LABEL_RECORD_SCHEMA_VERSION,
+  deriveAdversarialLabel,
   projectPairLabelRecords,
   projectSilverLabelRecord,
   projectUserMarkLabelRecord,
   projectOverturnedVerdictLabelRecord,
 } from './labels/label-record'
 export type {
+  DeriveAdversarialLabelInput,
+  LabelDerivation,
   LabelProvenance,
   LabelCorrection,
   ProjectUserMarkLabelRecordInput,
@@ -315,7 +318,39 @@ export type {
   PairStateStamp,
   StandaloneLabelRecord,
 } from './labels/label-record'
+
+// 2026-09-11, 422 D-05/D-07/D-08: the pure adversarial derivation surface. Tables are a
+// frozen code object, generation is a pure function of committed bytes plus a seeded draw,
+// and neither names a host module — eval-local composes the IO around them.
 export {
+  ADVERSARIAL_TABLES,
+  ADVERSARIAL_TABLE_HASH,
+  ADVERSARIAL_TABLE_HASHES,
+  ADVERSARIAL_TABLE_VERSION,
+  computeAdversarialTableHash,
+} from './adversarial/tables'
+export type {
+  AdversarialApplication,
+  AdversarialFamilyTable,
+  AdversarialTableEntry,
+} from './adversarial/tables'
+export {
+  ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH,
+  ADVERSARIAL_GENERATED_MUTATORS,
+  ADVERSARIAL_GENERATOR_VERSION,
+  deriveAdversarialCassetteId,
+  generateAdversarialVariants,
+} from './adversarial/generate'
+export type {
+  AdversarialSeed,
+  AdversarialSeedSkip,
+  AdversarialSeedSkipReason,
+  AdversarialVariant,
+  GenerateAdversarialVariantsInput,
+  GenerateAdversarialVariantsResult,
+} from './adversarial/generate'
+export {
+  ADVERSARIAL_MUTATORS,
   CORPUS_ENTRY_SCHEMA_VERSION,
   CORPUS_SPLITS,
   GENERATOR_KINDS,
@@ -326,6 +361,7 @@ export {
 } from './labels/corpus-entry'
 export type {
   AdversarialCorpusEntry,
+  AdversarialMutator,
   CorpusEntry,
   CorpusEntryBase,
   CorpusGenerator,

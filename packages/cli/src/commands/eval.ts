@@ -20,6 +20,7 @@ import type {
   SeedPolicy,
   SeedVerbResult,
   SeedFromFeedbackVerbResult,
+  AdversarialVerbResult,
 } from '../eval-session-composition.js'
 
 // The auth.ts parent-opts idiom: the global `--config` lives on the program two levels above a
@@ -42,6 +43,44 @@ function renderFeedbackSeedSummary(result: SeedFromFeedbackVerbResult): void {
     console.log(`Writes began; inspect the admitted entries and remaining staging at ${result.stagingDir}. Resolve the reported filesystem issue, then preview remaining feedback with eval seed --from-feedback --dry-run. Recheck the corpus digest before measuring the floor.`)
   }
   console.log(`re-measure the floor: ${result.floorCommand}`)
+}
+
+/**
+ * 422 D-01/D-02: faithful projection of the adversarial verb DTO — stage counts, the reviewed
+ * batch digest the operator passes back to `--admit`, every typed refusal and skip, and the
+ * floor re-measure command an admission owes (415 D-12 / 418 D-21 idiom).
+ */
+function renderAdversarialSummary(result: AdversarialVerbResult): void {
+  if (result.reason !== undefined) console.log(`adversarial ${result.kind}: ${result.reason}`)
+  if (result.kind === 'nothing-derived') console.log(`no new adversarial variants for ${result.product}`)
+  if (result.tableVersion !== undefined) {
+    console.log(`tables v${result.tableVersion} ${result.tableHash ?? ''}`.trimEnd())
+  }
+  for (const row of result.staged) {
+    console.log(`staged ${row.cassetteId} ${row.mutator}/${row.kind} (${row.tableEntryId}) from ${row.seedCassetteId}`)
+  }
+  for (const row of result.admitted) {
+    console.log(`admitted ${row.cassetteId} ${row.mutator}/${row.kind} from ${row.seedCassetteId}`)
+  }
+  for (const refusal of result.refusals) {
+    console.log(`refused ${refusal.cassetteId}: ${refusal.detector} ${refusal.action} (seed ${refusal.seedCassetteId})`)
+  }
+  for (const skip of result.stagingSkips) console.log(`skipped ${skip.cassetteId}: ${skip.reason}`)
+  const seedSkips = result.skips.reduce<Record<string, number>>((counts, skip) => {
+    counts[skip.reason] = (counts[skip.reason] ?? 0) + 1
+    return counts
+  }, {})
+  console.log(`seeds considered ${result.seedsConsidered}, deferred ${result.seedsDeferred}, skips ${renderCounters(seedSkips)}`)
+  if (result.batchDigest !== undefined) {
+    console.log(`batch ${result.batchDigest}`)
+    if (result.admitted.length === 0 && result.staged.length > 0) {
+      console.log(`review ${result.stagingDir}/${result.batchDigest}, then admit with: eval adversarial --admit --batch ${result.batchDigest}`)
+    }
+  }
+  if (result.previousCorpusDigest !== undefined) {
+    console.log(`corpus digest ${result.previousCorpusDigest} → ${result.nextCorpusDigest ?? 'unchanged'}`)
+  }
+  if (result.admitted.length > 0) console.log(`re-measure the floor: ${result.floorCommand}`)
 }
 
 /** Typed integer flag parser (D-08): a non-integer `--k`/`--seed` is a loud invalid-value error. */
@@ -717,6 +756,54 @@ export function createEvalCommand(): Command {
           } catch (err) {
             // D-08: typed named-input/config errors are the only failure modes — seeding
             // refusals are data and never reach this catch.
+            console.error(pc.red(err instanceof Error ? err.message : String(err)))
+            process.exitCode = 1
+          }
+        },
+      ),
+  )
+
+  cmd.addCommand(
+    new Command('adversarial')
+      .description('Stage a reviewable adversarial batch, or admit one reviewed batch (422 D-01)')
+      .option('--admit', 'commit the reviewed batch; requires --batch <digest>')
+      .option('--batch <digest>', 'the exact reviewed batch digest to admit')
+      .option('--product <slug>', 'product partition to derive from (default: default)')
+      .option('--dry-run', 'derive and check without writing anything')
+      .option('--json', 'emit the typed result DTO to stdout')
+      .action(
+        async (
+          opts: { admit?: boolean; batch?: string; product?: string; dryRun?: boolean; json?: boolean },
+          command: Command,
+        ) => {
+          try {
+            // Staging is the default; admission is an explicit operator act naming ONE batch.
+            if (opts.batch !== undefined && opts.admit !== true) {
+              throw new TypeError('--batch applies to --admit only; staging derives its own batch digest')
+            }
+            if (opts.admit === true && opts.batch === undefined) {
+              throw new TypeError('--admit requires --batch <digest>; admission never picks a batch for you')
+            }
+            const configPath = getGlobalConfigPath(command)
+            const { resolveEvalSession, runAdversarialVerb, adversarialHostOptions } = await import(
+              '../eval-session-composition.js'
+            )
+            // No model call happens on either branch, so a key-only session is sufficient.
+            const session = await resolveEvalSession({
+              ...(configPath === undefined ? {} : { configPath }),
+              keyOnly: true,
+            })
+            const result = await runAdversarialVerb(session, {
+              ...adversarialHostOptions(session),
+              ...(opts.product === undefined ? {} : { product: opts.product }),
+              ...(opts.admit === undefined ? {} : { admit: opts.admit }),
+              ...(opts.batch === undefined ? {} : { batch: opts.batch }),
+              ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
+            })
+            if (opts.json) console.log(JSON.stringify(result, null, 2))
+            else renderAdversarialSummary(result)
+            if (result.kind === 'refused') process.exitCode = 2
+          } catch (err) {
             console.error(pc.red(err instanceof Error ? err.message : String(err)))
             process.exitCode = 1
           }

@@ -101,6 +101,46 @@ export const GENERATOR_KINDS = [
  */
 export type TargetEnvironment = 'shared' | 'local'
 
+/**
+ * 2026-09-11, 422 D-05: the mutation FAMILY a derived entry came from.
+ *
+ * `GeneratorKind` names the FIELD that was perturbed and stays at six
+ * members; the family that supplied the perturbation rides beside it as its
+ * own closed set, so a new family is an additive field value rather than a
+ * widening of the six-member union every census and gate-set already reads.
+ * The eleven members are the frozen table families of
+ * `../adversarial/tables`; `tables.ts` imports this union rather than
+ * declaring a second one, so the table map and the persisted vocabulary are
+ * one definition under the D-22 bar.
+ */
+export type AdversarialMutator =
+  | 'confusable'
+  | 'invisible'
+  | 'tag-block'
+  | 'injection-template'
+  | 'benign-case'
+  | 'benign-whitespace'
+  | 'benign-punctuation'
+  | 'benign-digit'
+  | 'benign-truncate'
+  | 'benign-plural'
+  | 'benign-synonym'
+
+/** Declaration-order projection of `AdversarialMutator` (D-22). */
+export const ADVERSARIAL_MUTATORS = [
+  'confusable',
+  'invisible',
+  'tag-block',
+  'injection-template',
+  'benign-case',
+  'benign-whitespace',
+  'benign-punctuation',
+  'benign-digit',
+  'benign-truncate',
+  'benign-plural',
+  'benign-synonym',
+] as const satisfies readonly AdversarialMutator[]
+
 /** Adversarial provenance: which generator minted this entry, from what seed (D-21). */
 export interface CorpusGenerator {
   /** Closed-set generator family (D-21/D-22). */
@@ -109,6 +149,22 @@ export interface CorpusGenerator {
   seedCassetteId: string
   /** Version of that generator's recipe; a change is a named migration. */
   generatorVersion: number
+  /**
+   * 2026-09-11, 422 D-05: the mutation family. ADDITIVE-OPTIONAL — zero
+   * committed entries carry it before 422, so no
+   * CORPUS_ENTRY_SCHEMA_VERSION bump is owed and a pre-422 entry still
+   * parses through the same guard arm.
+   */
+  mutator?: AdversarialMutator
+  /**
+   * 2026-09-11, 422 D-08: the frozen table GENERATION this variant was
+   * derived under. A bump mints new derived ids, so the previous
+   * generation's committed entries keep gating until a reviewed rotation
+   * retires them.
+   */
+  tableVersion?: number
+  /** 2026-09-11, 422 D-08: pinned hash of that generation's frozen tables. */
+  tableHash?: string
 }
 
 /**

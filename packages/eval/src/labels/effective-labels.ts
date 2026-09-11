@@ -4,6 +4,7 @@ import { canonicalJson } from '../canonical-json'
 import { cassetteSchema } from '../cassette/schema'
 import { actionWireSchema } from '../cassette/action-wire-schema'
 import type { StandaloneLabelRecord } from './label-record'
+import { ADVERSARIAL_MUTATORS, GENERATOR_KINDS } from './corpus-entry'
 
 const digest = z.string().regex(/^[0-9a-f]{64}$/)
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
@@ -20,7 +21,25 @@ const weightSchema = z.object({
   }).strict(),
 }).strict().refine(w => w.k <= w.n && Number.isFinite(w.alpha0 + w.beta0) && w.alpha0 + w.beta0 > 0)
 
+// 2026-09-11, 422 D-06: the derived-gold marker, read STRICTLY. A derived record that names
+// an unknown mutator, a non-digest table hash, or any key outside this shape is refused by the
+// same reader every other persisted label goes through — a fresh committed-reader readback of a
+// derived record is therefore already executable, rather than silently falling back to legacy
+// bytes. Optional, so every pre-422 record still parses byte-for-byte as before.
+const derivedFromSchema = z.object({
+  seedCassetteId: z.string().min(1),
+  generator: z.object({
+    kind: z.enum(GENERATOR_KINDS),
+    seedCassetteId: z.string().min(1),
+    generatorVersion: count,
+    mutator: z.enum(ADVERSARIAL_MUTATORS).optional(),
+    tableVersion: count.optional(),
+    tableHash: digest.optional(),
+  }).strict(),
+}).strict()
+
 const recordSchema = z.object({
+  derivedFrom: derivedFromSchema.optional(),
   schemaVersion: z.literal(1), cassetteId: z.string().min(1),
   label: cassetteSchema.options[0].shape.label,
   supersedes: z.string().min(1).optional(),

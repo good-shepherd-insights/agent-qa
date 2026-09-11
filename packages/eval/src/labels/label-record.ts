@@ -27,6 +27,7 @@ import type { LeafCassette } from '../cassette/cassette'
 import type { CassetteLabelLeg, ContrastivePairing } from '../cassette/label-leg'
 import { deriveRunSlug } from '../extract/ids'
 import type { MintedContrastivePair } from './pair-matching'
+import type { CorpusGenerator } from './corpus-entry'
 
 /** Single version gate for the standalone label record document (D-01). */
 export const LABEL_RECORD_SCHEMA_VERSION = 1
@@ -60,9 +61,26 @@ export interface PairStateStamp {
   pairedScreenStateHash: string
 }
 
+/**
+ * 2026-09-11, 422 D-06: where a derived adversarial record's gold CAME FROM.
+ *
+ * ADDITIVE-OPTIONAL on the record, so no `LABEL_RECORD_SCHEMA_VERSION` bump is owed — zero
+ * pre-422 records carry it. It is deliberately NOT a fifth `LabelSourceChannel`: the channel
+ * and tier of a derived record are the SEED's, unchanged (420 D-01 pinned four channels),
+ * because the derivation perturbs the surface and not the evidence that produced the label.
+ */
+export interface LabelDerivation {
+  /** The natural cassette whose gold this record clones. */
+  seedCassetteId: string
+  /** The generator provenance, identical to the corpus entry's (D-05). */
+  generator: CorpusGenerator
+}
+
 /** The authoritative `labels/` unit: one standalone record per cassette id (D-01). */
 export interface StandaloneLabelRecord {
   revision?: { id: string; predecessorId: string; generationId?: string }
+  /** 422 D-06: present only on a derived adversarial record. */
+  derivedFrom?: LabelDerivation
   quarantine?: 'rerun-overturned'
   weight?: LabelWeight
   correction?: LabelCorrection
@@ -262,6 +280,61 @@ export function projectPairLabelRecords({
       runId,
     }),
   ]
+}
+
+export interface DeriveAdversarialLabelInput {
+  /** The DERIVED cassette this record labels. */
+  cassette: LeafCassette
+  /** The seed's effective standalone record — its strongest gold. */
+  seedLabel: StandaloneLabelRecord
+  /** Generator provenance, minted by the pure derivation engine. */
+  generator: CorpusGenerator
+}
+
+/**
+ * 422 D-06: clone a seed's gold onto its derived adversarial cassette.
+ *
+ * The expectation under a perturbed surface IS the seed's expectation — a planner that
+ * changes its decision because a glyph changed, or because an instruction was injected into
+ * an accessible name, has regressed. So the label leg, the tier, the source channel and any
+ * executable `correction` travel unchanged, and the provenance keeps the SEED's run identity
+ * and build ordinal so ROOT-03's "no run that bred a candidate may gate it" exclusion still
+ * excludes the breeding run.
+ *
+ * What does NOT travel: `revision` / `supersedes` (the derived record is a fresh root, not a
+ * successor in the seed's history), `quarantine` and `weight` (both are facts measured about
+ * the SEED's own evidence), and `pairState` / `label.pairing` (they name a partner cassette
+ * that has no derived counterpart — carrying them would point at a sibling that was never
+ * derived). `receiptDigest` is recomputed because it describes the derived receipt.
+ *
+ * The factory is PURE and lives here beside the other projections (v50 D-09): the generator
+ * never mints a label, and no channel widening happens anywhere.
+ */
+export function deriveAdversarialLabel({
+  cassette,
+  seedLabel,
+  generator,
+}: DeriveAdversarialLabelInput): StandaloneLabelRecord {
+  const {
+    revision: _revision,
+    supersedes: _supersedes,
+    quarantine: _quarantine,
+    weight: _weight,
+    pairState: _pairState,
+    ...carried
+  } = seedLabel
+  const { pairing: _pairing, ...label } = seedLabel.label
+  return {
+    ...carried,
+    cassetteId: cassette.id,
+    label,
+    derivedFrom: { seedCassetteId: generator.seedCassetteId, generator },
+    provenance: {
+      ...seedLabel.provenance,
+      sourceCassetteId: generator.seedCassetteId,
+      receiptDigest: sha256hex(canonicalJson(cassette.receipt)),
+    },
+  }
 }
 
 /**

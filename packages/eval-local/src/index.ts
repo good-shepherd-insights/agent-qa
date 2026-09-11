@@ -211,5 +211,31 @@ export type {
   ResolveMinimumGateSetOutcome,
   RunExclusionRead,
 } from './committed-corpus-source.js'
+// 2026-09-11, 422 D-01/D-02/D-03: the adversarial staging + operator-admission composition.
+// The MAIN entry publishes it because the CLI's operator verb composes it; nothing here is
+// reachable from the proposer's `/reader` door.
+export {
+  ADVERSARIAL_EGRESS_CHANNEL,
+  ADVERSARIAL_MANIFEST_FILE,
+  ADVERSARIAL_STAGING_SUBDIR,
+  computeAdversarialBatchDigest,
+  listStagedAdversarial,
+  loadAdversarialGuardrailPolicy,
+  refreshAdversarialSplit,
+  stageAdversarialProposal,
+} from './adversarial-composition.js'
+export type {
+  AdversarialBatchManifest,
+  AdversarialBatchManifestCase,
+  AdversarialRefusal,
+  AdversarialStagingSkip,
+  RefreshAdversarialSplitInput,
+  RefreshAdversarialSplitResult,
+  StageAdversarialProposalInput,
+  StageAdversarialProposalResult,
+  StagedAdversarialBatch,
+  StagedAdversarialCase,
+} from './adversarial-composition.js'
+
 export { loadCalibrationEvidence, readCalibrationGoldIdentity } from './calibration-evidence-source.js'
 export type { CalibrationEvidenceRead, CalibrationEvidenceMissingReason } from './calibration-evidence-source.js'

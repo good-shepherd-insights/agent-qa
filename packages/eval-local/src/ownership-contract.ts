@@ -94,6 +94,20 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // does not exist, so the port leaks neither the content nor the EXISTENCE of the unseen set.
   // Filtering only: the visibility predicate is eval core's, and no derivation happens here.
   'the proposer-side /reader subpath — visibility-filtered reads over the committed root whose return types cannot carry a private held-out entry, its cassette or its label',
+  // Phase 422 D-01/D-02/D-03 (ADV-01/ADV-03/ADV-04): adversarial STORAGE, in two halves that
+  // must not be confused. (1) Staging is LOCAL AUDIT DATA under
+  // `.agent-qa/eval/adversarial/<product>/<batchDigest>` — the 418 D-21 feedback layout, same
+  // write-once temporary-then-rename publication, same guarded path checks — holding the
+  // derived cassette, its cloned standalone label and its corpus entry as the exact reviewable
+  // bytes, pinned by content address in a batch manifest. Blob bytes are VALIDATED against the
+  // seed's committed blobs and never copied into staging. (2) Admission is the operator's act
+  // alone: `refreshAdversarialSplit` rechecks the same bytes on the `eval-adversarial` channel
+  // under the policy loaded AT ADMISSION and then delegates every committed write to the
+  // existing single sanctioned seeding helper — it opens no second writer and mints no third
+  // channel. Generation, eligibility, target selection and the label clone are eval core's;
+  // this composition executes and stores, never decides. The provider-invocation clause above
+  // is UNAMENDED: nothing in the adversarial path constructs a model.
+  'the adversarial batch staging store under .agent-qa/eval/adversarial/ and the operator-only admission recheck on the eval-adversarial channel, delegating committed writes to the single sanctioned seeding helper',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single

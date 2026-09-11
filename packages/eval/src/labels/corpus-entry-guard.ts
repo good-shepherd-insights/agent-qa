@@ -35,7 +35,7 @@ import type {
   NaturalCorpusEntry,
   TargetEnvironment,
 } from './corpus-entry'
-import { GENERATOR_KINDS, HELD_OUT_VISIBILITIES } from './corpus-entry'
+import { ADVERSARIAL_MUTATORS, GENERATOR_KINDS, HELD_OUT_VISIBILITIES } from './corpus-entry'
 
 const LOWER_HEX_64 = /^[0-9a-f]{64}$/
 const digestSchema = z
@@ -97,11 +97,19 @@ const adversarialArmSchema = z
   .object({
     ...v2BaseShape,
     split: z.literal('adversarial'),
+    // 2026-09-11, 422 D-05/D-08: three ADDITIVE-OPTIONAL generator fields. Strict keeps
+    // the admission narrow in BOTH directions — a pre-422 entry naming none of them still
+    // parses (old bytes stay readable), and an entry naming an unknown mutator or a
+    // non-digest table hash is refused with an issue path naming the offending field
+    // rather than collapsing into an `invalid_union` at <root>.
     generator: z
       .object({
         kind: z.enum(GENERATOR_KINDS),
         seedCassetteId: z.string(),
         generatorVersion: z.number().int().nonnegative(),
+        mutator: z.enum(ADVERSARIAL_MUTATORS).optional(),
+        tableVersion: z.number().int().nonnegative().optional(),
+        tableHash: digestSchema.optional(),
       })
       .strict(),
   })
