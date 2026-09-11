@@ -92,6 +92,35 @@ it.each([false, true])('publishes and rereads legitimate nonexecutable exclusion
   expect(changed.goldSetDigest).not.toBe(read.goldSetDigest)
   expect(publication.readJudgeCalibration({ ...f.input, identity: preview.identity }).kind).toBe('refused')
 })
+it.each(['omitted', 'different'] as const)('rejects %s diagnostics against real positive semantic exclusions', async mutation => {
+  const f = fixture([{}, {}], undefined, false, [1])
+  const preview = await runJudgePanelCalibration(f.input)
+  expect(preview.skippedCounts).toEqual({ 'missing-executable-correction': 2 })
+  const input = { ...f.input, identity: preview.identity, minN: core.resolveJudgeCalibrationMinimum() }
+  const valid = publication.createJudgeCalibrationArtifact(input, preview)
+  const artifact = structuredClone(valid)
+  if (mutation === 'omitted') delete artifact.skippedCounts
+  else artifact.skippedCounts = { 'missing-executable-correction': 999 }
+  const { generationId: _generationId, ...body } = artifact
+  artifact.generationId = publication.judgeCalibrationGenerationId(body)
+  expect(publication.guardJudgeCalibration(artifact)).toEqual(artifact)
+  const path = join(f.input.committedRoot, publication.judgeCalibrationPath(artifact.profileKey))
+  const publish = (candidate: typeof artifact) => publication.publishJudgeCalibration({ ...input,
+    artifact: candidate, auditDirectory: join(f.input.agentQaRoot, 'eval/calibrate/counts') })
+  expect((await publish(artifact)).kind).toBe('refused')
+  expect(existsSync(path)).toBe(false)
+  mkdirSync(join(f.input.committedRoot, 'reports/judge-calibration'), { recursive: true })
+  writeFileSync(path, JSON.stringify(artifact))
+  const tamperedBytes = readFileSync(path, 'utf8')
+  expect(publication.readJudgeCalibration(input).kind).toBe('refused')
+  expect(readFileSync(path, 'utf8')).toBe(tamperedBytes)
+  rmSync(path)
+  expect((await publish(valid)).kind).toBe('committed')
+  const validBytes = readFileSync(path, 'utf8')
+  expect(publication.readJudgeCalibration(input)).toEqual({ kind: 'loaded', artifact: valid })
+  expect((await publish(valid)).kind).toBe('unchanged')
+  expect(readFileSync(path, 'utf8')).toBe(validBytes)
+})
 it('preserves independently measured rates when refused receipt rows are present', async () => {
   const only = fixture([{}]), mixed = fixture([{}, { resolvedModelId: 'claude-sonnet-4' }])
   const a = await runJudgePanelCalibration(only.input), b = await runJudgePanelCalibration(mixed.input)

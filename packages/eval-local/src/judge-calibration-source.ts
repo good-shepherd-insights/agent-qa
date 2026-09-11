@@ -161,7 +161,9 @@ export function createJudgeCalibrationArtifact(input: JudgeCalibrationReadInput,
 
 function admitted(input: JudgeCalibrationReadInput, artifact: JudgeCalibrationArtifact): boolean {
   const expected = { ...envelope(input), ...evidenceIdentity(input) }
-  return Object.entries(expected).every(([key, value]) => same(Reflect.get(artifact, key), value))
+  // Absence is evidence too: omitted diagnostics must not admit an invented artifact count.
+  return same(artifact.skippedCounts, expected.skippedCounts)
+    && Object.entries(expected).every(([key, value]) => same(Reflect.get(artifact, key), value))
 }
 function checkedText(root: string, path: string): string | undefined {
   assertCalibrationPath(root, path)

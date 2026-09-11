@@ -30,6 +30,23 @@ function resign(a: JudgeCalibrationArtifact) {
 }
 function put(path: string, value: unknown) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, JSON.stringify(value)) }
 
+it.each(['publication', 'reread'] as const)('rejects invented exclusions against actual zero evidence at %s', async boundary => {
+  const f = fixture()
+  expect(evidenceSource.loadJudgeCalibrationEvidence(f.input).skippedCounts).toEqual({})
+  expect(f.artifact).not.toHaveProperty('skippedCounts')
+  const artifact = resign({ ...f.artifact, skippedCounts: { 'missing-executable-correction': 999 } })
+  expect(guardJudgeCalibration(artifact)).toEqual(artifact)
+  if (boundary === 'publication') {
+    expect(await f.publish({ artifact })).toMatchObject({ kind: 'refused' })
+    expect(existsSync(f.path)).toBe(false)
+  } else {
+    put(f.path, artifact)
+    const before = readFileSync(f.path, 'utf8')
+    expect(readJudgeCalibration(f.input).kind).toBe('refused')
+    expect(readFileSync(f.path, 'utf8')).toBe(before)
+  }
+})
+
 it.each(['invalid-gold', 'missing-source', 'conflicting-gold', 'invalid-executable-correction',
   'invalid-recorded-model', 'corpus-refused', 'path-refused', 'marks-unreadable', 'handoff-refused',
   'missing-replay', 'malformed-replay', 'foreign-replay', 'stale-replay', 'ambiguous-replay',
@@ -60,6 +77,8 @@ it('publishes exact identity-bearing gap bytes, reads them and regenerates uncha
   expect(readJudgeCalibration(f.input)).toEqual({ kind: 'loaded', artifact: f.artifact })
   expect(await f.publish({ auditDirectory: join(f.input.agentQaRoot, 'eval/calibrate/another') })).toMatchObject({ kind: 'unchanged' })
   expect(readFileSync(f.path)).toEqual(before)
+  expect(createJudgeCalibrationArtifact(f.input, { status: 'capability-gap', reason: 'no-credential' })).toEqual(f.artifact)
+  expect(f.artifact).not.toHaveProperty('skippedCounts')
   expect(f.artifact).not.toHaveProperty('pooledAgreement')
   expect(f.artifact).not.toHaveProperty('auditDirectory')
   expect(f.artifact.cost).toEqual({ callBound: 0, usage: { calls: 0 } })
