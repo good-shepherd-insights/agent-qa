@@ -410,7 +410,9 @@ describe('422 adversarial probe staging — the author port, bounded and account
     expect(stub.factoryCalls).toEqual([])
     expect(result.kind).toBe('staged')
     expect(result.noProbeModel).toEqual({ kind: 'no-probe-model', reason: 'panel-not-configured' })
-    expect(result.spend).toEqual({ modelCalls: 0, promptTokens: 0, completionTokens: 0 })
+    // A refresh that asked nothing has nothing unknown: `usageKnown` is true because there is
+    // no call whose tokens went unreported, not because zero is being read as a report.
+    expect(result.spend).toEqual({ modelCalls: 0, promptTokens: 0, completionTokens: 0, usageKnown: true })
     expect(result.authoringModel).toBeUndefined()
     // The model-free half is untouched: a host without an author still gets its frozen families.
     expect(tableCases(result).length).toBeGreaterThan(0)
