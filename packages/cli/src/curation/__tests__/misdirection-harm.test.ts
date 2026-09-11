@@ -272,13 +272,24 @@ function project(source: CompletedRunHandoff): CanaryOutcome[] {
   })
 }
 
-/** A scripted eval root: one corpus digest, never a replay, never a provider call. */
-function evalRoot(corpusDigest = 'c'.repeat(64)) {
+/**
+ * A scripted eval root: one corpus digest, never a replay, never a provider call.
+ *
+ * `'no-eval-root'` is the BYOM / absent-root shape — the capability answers `no-eval-root`, so
+ * the emitted outcome carries no corpus digest and the writer has nothing to mint a Gate-2
+ * receipt from. The harmed OUTCOME is emitted either way. (A literal rather than `undefined`,
+ * which a default parameter would silently read as "give me the default".)
+ */
+function evalRoot(corpusDigest: string | 'no-eval-root' = 'c'.repeat(64)) {
   return {
     isNovel: vi.fn(async () => false),
     stage: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
     ablate: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
-    corpusDigest: vi.fn(async () => ({ kind: 'digest' as const, corpusDigest })),
+    corpusDigest: vi.fn(async () =>
+      corpusDigest === 'no-eval-root'
+        ? ({ kind: 'no-eval-root' } as const)
+        : ({ kind: 'digest', corpusDigest } as const),
+    ),
   }
 }
 
@@ -561,6 +572,195 @@ describe('422-16 D-20 — flipped evidence emits harm independently of the class
   })
 })
 
+// -------------------------------------------------------------------------------------------
+// 422-16-T2 — idempotence, mixed records, and the blast radius of the new precedence
+// -------------------------------------------------------------------------------------------
+
+describe('422-16 D-20 — only the flipped rows move, and they move exactly once', () => {
+  let runDir: string
+
+  beforeEach(() => {
+    runDir = mkdtempSync(join(tmpdir(), 'agent-qa-422-16-once-'))
+    lookupSpy.anchorsById.clear()
+    lookupSpy.anchorsById.set(CANDIDATE, [CHECKOUT_ANCHOR])
+    lookupSpy.anchorsById.set(SIBLING, [CHECKOUT_ANCHOR])
+    lookupSpy.anchorsById.set(ORDINARY, [UNRELATED_ANCHOR])
+  })
+  afterEach(() => rmSync(runDir, { recursive: true, force: true }))
+
+  it('leaves a NON-causal sibling exactly where it was on a step with no exercised anchors', async () => {
+    // The pre-422-16 emitter returned before touching the anchor store when a step exercised
+    // nothing, so an unresolvable sibling on such a step reported nothing at all. A causal
+    // record on the same step must not drag that sibling into a lookup it never faced: an
+    // `unresolved` row is what withholds the tail's receipt and refolds the run.
+    const anchorless = step({
+      pass: false,
+      anchorless: true,
+      lines: [
+        { id: CANDIDATE, status: 'candidate', servedAsCanary: true },
+        { id: 'candidate-never-published', status: 'candidate', servedAsCanary: true },
+      ],
+    })
+    const base = handoff([anchorless], rootCause('app_bug'))
+    const emit = vi.fn()
+    const withFlip = await emitCanaryOutcomes({
+      handoff: withEvidence(base, [evidenceRow(base, { recordId: CANDIDATE })]),
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir,
+      emit,
+      credit: { maxAblations: 1, ablation: evalRoot() },
+    })
+    const without = await emitCanaryOutcomes({
+      handoff: base,
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir,
+      emit: vi.fn(),
+      credit: { maxAblations: 1, ablation: evalRoot() },
+    })
+    expect(withFlip.emitted).toBe(1)
+    expect(emit).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ candidateId: CANDIDATE, runOutcome: 'negative' }),
+    )
+    // The sibling's treatment is IDENTICAL with and without the ledger — that is the claim.
+    expect(withFlip.unresolved).toBe(without.unresolved)
+    expect(withFlip.unresolved).toBe(0)
+    expect(withFlip.details.filter((row) => row.misdirectionFlipped !== true)).toEqual(
+      without.details,
+    )
+  })
+
+  it('emits ONE row for a record both emitters select, and names the cross-check in it', async () => {
+    // `app_bug` is attributable, so the served-canary path would already have produced a
+    // negative for this record. The causal path must take it over rather than duplicate it.
+    const base = handoff([step({ pass: false })], rootCause('app_bug'))
+    const emit = vi.fn()
+    const report = await emitCanaryOutcomes({
+      handoff: withEvidence(base, [evidenceRow(base)]),
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir,
+      emit,
+      credit: { maxAblations: 1, ablation: evalRoot() },
+    })
+    expect(report.details).toHaveLength(1)
+    expect(report.details[0]).toMatchObject({ candidateId: CANDIDATE, misdirectionFlipped: true })
+    expect(emit).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        candidateId: CANDIDATE,
+        runOutcome: 'negative',
+        attribution: expect.stringContaining('after the misdirection cross-check flipped'),
+      }),
+    )
+  })
+
+  it('moves the flipped record and leaves a held and a not-run sibling exactly as they were', async () => {
+    const lines = [
+      { id: CANDIDATE, status: 'candidate' as const, servedAsCanary: true },
+      { id: SIBLING, status: 'candidate' as const, servedAsCanary: true },
+      { id: ORDINARY, status: 'candidate' as const, servedAsCanary: true },
+    ]
+    const base = handoff([step({ pass: false, lines })], rootCause('environment'))
+    const emit = vi.fn()
+    const report = await emitCanaryOutcomes({
+      handoff: withEvidence(base, [
+        evidenceRow(base, { recordId: CANDIDATE, crossCheck: 'flipped' }),
+        evidenceRow(base, { recordId: SIBLING, crossCheck: 'held', decisionOrdinal: 1 }),
+        evidenceRow(base, { recordId: ORDINARY, crossCheck: 'not-run', decisionOrdinal: 2 }),
+      ]),
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir,
+      emit,
+      credit: { maxAblations: 1, ablation: evalRoot() },
+    })
+    // Exact sets on both sides of the line, never counts.
+    expect(report.details.filter((row) => row.outcome.kind === 'emitted').map((row) => row.candidateId))
+      .toEqual([CANDIDATE])
+    expect(report.details.filter((row) => row.outcome.kind === 'non-signal').map((row) => row.candidateId))
+      .toEqual([SIBLING, ORDINARY])
+    expect(report.canary.nonSignal.environment).toBe(2)
+  })
+
+  it('keeps two failing steps as two supported observations of one record', async () => {
+    const lines = [{ id: CANDIDATE, status: 'candidate' as const, servedAsCanary: true }]
+    const base = handoff(
+      [step({ pass: false, lines }), step({ stepIndex: 1, pass: false, lines })],
+      rootCause('timeout'),
+    )
+    const emit = vi.fn()
+    await emitCanaryOutcomes({
+      handoff: withEvidence(base, [
+        evidenceRow(base, { stepIndex: 0 }),
+        evidenceRow(base, { stepIndex: 1 }),
+      ]),
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir,
+      emit,
+      credit: { maxAblations: 1, ablation: evalRoot() },
+    })
+    expect(emit.mock.calls.map(([outcome]) => (outcome as CanaryOutcome).stepIndex)).toEqual([0, 1])
+  })
+
+  it('answers per MEMBER: a flip on one member never accuses the same record on another', async () => {
+    const lines = [{ id: CANDIDATE, status: 'candidate' as const, servedAsCanary: true }]
+    const base = handoff([step({ pass: false, lines })], rootCause('flake'))
+    base.tests.push({
+      ...base.tests[0]!,
+      testIndex: 1,
+      testId: 'checkout::sibling-member',
+      rootCause: rootCause('flake', 'deterministic-classifier', 1),
+      steps: [step({ pass: false, lines })],
+    })
+    const emit = vi.fn()
+    await emitCanaryOutcomes({
+      handoff: withEvidence(base, [evidenceRow(base, { perTest: 0 })]),
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir,
+      emit,
+      credit: { maxAblations: 1, ablation: evalRoot() },
+    })
+    expect(emit.mock.calls.map(([outcome]) => (outcome as CanaryOutcome).testIndex)).toEqual([0])
+  })
+
+  it('spends no ablation allowance: a capped positive sibling is exactly as capped as before', async () => {
+    const base = handoff(
+      [
+        step({
+          pass: true,
+          lines: [
+            { id: SIBLING, status: 'candidate', servedAsCanary: true },
+            { id: ORDINARY, status: 'candidate', servedAsCanary: true },
+          ],
+        }),
+        step({ stepIndex: 1, pass: false }),
+      ],
+      rootCause('environment', 'deterministic-classifier'),
+    )
+    lookupSpy.anchorsById.set(ORDINARY, [CHECKOUT_ANCHOR])
+    const ablation = evalRoot()
+    ablation.isNovel = vi.fn(async () => false)
+    const emit = vi.fn()
+    const report = await emitCanaryOutcomes({
+      handoff: withEvidence(base, [evidenceRow(base, { stepIndex: 1 })]),
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir,
+      emit,
+      credit: {
+        maxAblations: 1,
+        ablation,
+        readBundleStateDigests: () => ({ kind: 'not-found' }),
+      },
+    })
+    // The causal harm is a NEGATIVE row, and negatives are never replayed — the arbiter
+    // already did the removal. So the Gate-2 allowance is untouched by it.
+    for (const call of ablation.ablate.mock.calls) {
+      expect(call[0]).not.toMatchObject({ candidateId: CANDIDATE, stepIndex: 1 })
+    }
+    expect(
+      report.details.filter((row) => row.misdirectionFlipped === true).map((row) => row.candidateId),
+    ).toEqual([CANDIDATE])
+    expect(report.details.filter((row) => row.misdirectionFlipped !== true)).toHaveLength(2)
+  })
+})
+
 describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
   const roots: string[] = []
   afterEach(() => {
@@ -666,6 +866,10 @@ describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
   async function harmOnce(
     seeded: ReturnType<typeof seedStore>,
     leg: 'control' | 'arm',
+    overrides: {
+      ablation?: ReturnType<typeof evalRoot>
+      readBundleStateDigests?: () => { kind: 'found'; digests: string[] } | { kind: 'not-found' }
+    } = {},
   ): Promise<CanaryOutcome[]> {
     const runDir = mkdtempSync(join(tmpdir(), `agent-qa-422-16-${leg}-`))
     roots.push(runDir)
@@ -690,12 +894,19 @@ describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
       knowledgeRoot: seeded.knowledgeRoot,
       runDir,
       emit: (outcome) => emitted.push(outcome),
-      credit: { maxAblations: 1, ablation: evalRoot() },
+      credit: {
+        maxAblations: 1,
+        ablation: overrides.ablation ?? evalRoot(),
+        ...(overrides.readBundleStateDigests === undefined
+          ? {}
+          : { readBundleStateDigests: overrides.readBundleStateDigests }),
+      },
     })
     expect(report.emitted, `${leg} emitted`).toBe(1)
     expect(emitted[0]).toMatchObject({ runOutcome: 'negative', benefit: 'exercised-harmed' })
     return emitted
   }
+
 
   it('lands one contradicted event and one Gate-2 fail receipt, and introduces nothing the existing harm law does not', async () => {
     const seeded = seedStore()
@@ -725,5 +936,64 @@ describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
       status: 'active',
     })
     expect(armConsequences).toEqual(seeded.consequences(seeded.control))
+  })
+
+  it('survives a REPEATED drain: the same observation lands one event and one receipt', async () => {
+    const seeded = seedStore()
+    // Two folds of the same run produce the same bytes (the emitter is a pure projection over
+    // the handoff), so the second drain hands the writer an outcome it has already recorded.
+    const first = await harmOnce(seeded, 'arm')
+    const second = await harmOnce(seeded, 'arm')
+    expect(second).toEqual(first)
+
+    await seeded.store.recordCanaryOutcome(first[0]!)
+    await seeded.store.recordCanaryOutcome(second[0]!)
+
+    const consequences = seeded.consequences(seeded.arm)
+    expect(consequences.events.filter((type) => type === 'contradicted')).toHaveLength(1)
+    expect(consequences.gate2).toEqual([
+      { verdict: 'fail', benefit: 'exercised-harmed', stateValidity: 'unknown' },
+    ])
+  })
+
+  it('completes a receipt the first attempt never wrote, without duplicating the event', async () => {
+    const seeded = seedStore()
+    // The retry window this exercises: the outcome event is durable and the Gate-2 receipt is
+    // not, because the first attempt ran against a root that could answer no corpus digest.
+    // The recovery attempt has one, and must add the receipt WITHOUT a second contradiction.
+    const rootless = await harmOnce(seeded, 'arm', { ablation: evalRoot('no-eval-root') })
+    expect(rootless[0]).not.toHaveProperty('corpusDigest')
+    await seeded.store.recordCanaryOutcome(rootless[0]!)
+    const partial = seeded.consequences(seeded.arm)
+    expect(partial.events.filter((type) => type === 'contradicted')).toHaveLength(1)
+    expect(partial.gate2).toEqual([])
+
+    const recovered = await harmOnce(seeded, 'arm')
+    expect(recovered[0]).toMatchObject({ corpusDigest: 'c'.repeat(64) })
+    await seeded.store.recordCanaryOutcome(recovered[0]!)
+
+    const consequences = seeded.consequences(seeded.arm)
+    expect(consequences.events.filter((type) => type === 'contradicted')).toHaveLength(1)
+    expect(consequences.gate2).toEqual([
+      { verdict: 'fail', benefit: 'exercised-harmed', stateValidity: 'unknown' },
+    ])
+  })
+
+  it('keeps 418 stale policy: a STALE observation abstains rather than contradicting', async () => {
+    const seeded = seedStore()
+    // Not a carve-out this plan added — the existing negative arm holds a stale observation at
+    // `abstain` until enough independent runs agree (418 D-08/D-12). Causal precedence decides
+    // WHETHER the harmed outcome is emitted; it never decides what the writer does with it.
+    const stale = await harmOnce(seeded, 'arm', {
+      readBundleStateDigests: () => ({ kind: 'found', digests: ['f'.repeat(64)] }),
+    })
+    expect(stale[0]).toMatchObject({ stateValidity: 'stale' })
+    await seeded.store.recordCanaryOutcome(stale[0]!)
+
+    const consequences = seeded.consequences(seeded.arm)
+    expect(consequences.events.filter((type) => type === 'contradicted')).toHaveLength(0)
+    expect(consequences.gate2).toEqual([
+      { verdict: 'abstain', benefit: 'exercised-harmed', stateValidity: 'stale' },
+    ])
   })
 })

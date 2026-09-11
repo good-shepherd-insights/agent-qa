@@ -234,6 +234,40 @@ describe('418 credit pass', () => {
     expect(ablation.ablate).toHaveBeenNthCalledWith(2, expect.objectContaining({ candidateId: 'candidate-b' }))
     expect(ablation.corpusDigest).toHaveBeenCalledTimes(1)
   })
+  // 422-16 (D-20): credit and harm are the two signs of ONE accounting, and D-20's causal
+  // precedence adds rows on the harm side. These cells state how the two paths meet, rather
+  // than leaving the answer to be inferred from two files that could drift apart.
+  it('422-16 never lets one observation take both credit and harm', async () => {
+    const ablation = capability()
+    const harmed = row('candidate-checkout', 'negative')
+    if (harmed.kind === 'outcome') harmed.outcome.stepIndex = 1
+    const report = await credit([row('candidate-checkout'), harmed], ablation)
+    // A row carries exactly ONE runOutcome, so the benefit is a function of that one word.
+    // There is no arm in which a single (record, member, step) observation is both credited
+    // and harmed — a causal flip makes the row negative, and negatives are never ablated.
+    expect(report.attributions.map(attribution =>
+      attribution.kind === 'outcome'
+        ? `${attribution.outcome.stepIndex}:${attribution.outcome.benefit}`
+        : 'not-an-outcome')).toEqual(['0:exercised-benefited', '1:exercised-harmed'])
+    expect(ablation.ablate).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ candidateId: 'candidate-checkout', stepIndex: 0 }))
+    expect(report.counters).toMatchObject({ credited: 1, ablationCapExceeded: 0 })
+  })
+
+  it('422-16 spends no Gate-2 allowance on harm, however many harmed rows arrive', async () => {
+    const ablation = capability()
+    const report = await credit(
+      [row('a', 'negative'), row('b', 'negative'), row('c', 'negative')], ablation,
+      { maxAblations: 1 })
+    // The arbiter already did the removal that proved harm; replaying to re-prove it would
+    // spend a second provider budget on a question already answered.
+    expect(ablation.ablate).not.toHaveBeenCalled()
+    expect(report.counters).toMatchObject({ credited: 0, ablationCapExceeded: 0, ablationError: 0 })
+    for (const attribution of report.attributions) {
+      expect(attribution).toMatchObject({ outcome: { benefit: 'exercised-harmed' } })
+    }
+  })
+
   it('unresolved rows pass through untouched and never touch the eval root', async () => {
     const unresolved: ProjectedCanaryAttribution = { kind: 'unresolved', source: 'served-brief',
       candidateId: asRecordId('missing'), testId: 'checkout', testIndex: 0, stepIndex: 0, reason: 'not-found' }
