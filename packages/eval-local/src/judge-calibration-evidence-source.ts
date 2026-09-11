@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  activeMarkedCorpusEntries, canonicalJson, composeBaselineProfileKey, computeDecisionIdentity,
+  activeMarkedCorpusEntries, assessPanelEligibility, canonicalJson, composeBaselineProfileKey, computeDecisionIdentity,
+  createPanelIdentity, JUDGE_CONFIG,
   createScoringContext, deriveRunSlug, representativeDecisionSample, resolveJudgeCalibrationTruth,
   resolveProductPartition, selectJudgeCalibrationGold,
   type BaselineProfileKeyInput, type JudgeCalibrationDiagnostics, type JudgeCalibrationEvidence,
@@ -200,6 +201,7 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
         failures.add('stale-replay'); continue
       }
       const replayDigest = hash(replay), scoreDigest = hash(score)
+      const unjudgedRefusal = isUnjudgedPanelRefusal(score, gold, replay, input.profile)
       const proofs = publications.filter(publication => publication.root === root && publication.load.kind === 'loaded')
       if (publications.some(publication => publication.root === root && publication.load.kind !== 'loaded')) failures.add('missing-profile-proof')
       let matched = false
@@ -209,8 +211,11 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
         const { report, replayGeneration } = loaded
         if (report.runIdentity?.fingerprint !== input.profile.fingerprint
           || report.matcherVersion !== input.profile.matcherVersion || report.judgeIdentity === 'mixed'
-          || report.judge?.judgeModelId !== input.profile.judgeModelId || report.judge?.judgeVersion !== input.profile.judgeVersion
-          || score.judge?.judgeModelId !== input.profile.judgeModelId || score.judge?.judgeVersion !== input.profile.judgeVersion) {
+          || (!(unjudgedRefusal && report.judge === undefined) &&
+            (report.judge?.judgeModelId !== input.profile.judgeModelId || report.judge?.judgeVersion !== input.profile.judgeVersion))
+          || (!unjudgedRefusal && (score.judge?.judgeModelId !== input.profile.judgeModelId || score.judge?.judgeVersion !== input.profile.judgeVersion))
+          || (input.profile.judgeModelId?.startsWith('panel:') && canonicalJson(score.scoringContext.judgeRequest)
+            !== canonicalJson({ judgeModelId: input.profile.judgeModelId, allowSameFamily: false }))) {
           failures.add('foreign-profile'); continue
         }
         if (report.runIdentity.corpusDigest !== result.corpusDigest) { failures.add('stale-replay'); continue }
@@ -251,6 +256,37 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
     result.selectedInputs.push(candidates[0]!.identity)
   }
   return finish()
+}
+
+/** Absence is honest only for a currently ineligible declared panel, never an inferred judge. */
+function isUnjudgedPanelRefusal(score: ScoreRecord, gold: JudgeCalibrationGold, replay: LeafReplayResult,
+  profile: BaselineProfileKeyInput): boolean {
+  if (score.judge !== undefined || !profile.judgeModelId?.startsWith('panel:')
+    || profile.judgeVersion !== JUDGE_CONFIG.judgeVersion || score.score.kind !== 'leaf'
+    || score.score.entry.kind !== 'decision') return false
+  let memberModelIds: string[]
+  try { memberModelIds = profile.judgeModelId.slice('panel:'.length).split('+').map(decodeURIComponent) }
+  catch { return false }
+  if (memberModelIds.length < 2 || memberModelIds.length > JUDGE_CONFIG.maxPanelMembers
+    || new Set(memberModelIds).size !== memberModelIds.length
+    || createPanelIdentity(memberModelIds).judgeModelId !== profile.judgeModelId) return false
+  const recordedModelId = gold.recordedReceipt.receipt.model.declared?.modelId
+    ?? gold.recordedReceipt.receipt.model.resolvedModelId
+  const eligibility = assessPanelEligibility({ memberModelIds, replayedModelId: replay.replayedModel.modelId,
+    ...(recordedModelId === undefined ? {} : { recordedModelId }) })
+  if (eligibility.eligible || eligibility.reason !== 'no-eligible-judge') return false
+  const decision = score.score.entry.score
+  if ('judgeSettled' in decision) return false
+  if ('judgeOutcome' in decision && decision.judgeOutcome !== undefined) {
+    if (decision.judgeOutcome.kind !== 'not-invoked' || decision.judgeOutcome.reason !== 'no-eligible-judge') return false
+    const declaredIds = decision.judgeOutcome.families?.members?.map(member => member.judgeModelId)
+    if (!declaredIds || canonicalJson([...declaredIds].sort()) !== canonicalJson([...memberModelIds].sort())) return false
+    const declaredEligibility = assessPanelEligibility({ memberModelIds: declaredIds,
+      replayedModelId: replay.replayedModel.modelId, ...(recordedModelId === undefined ? {} : { recordedModelId }) })
+    return !declaredEligibility.eligible && declaredEligibility.reason === 'no-eligible-judge'
+      && canonicalJson(decision.judgeOutcome.families) === canonicalJson(declaredEligibility.families)
+  }
+  return true
 }
 
 function evidenceRow(gold: JudgeCalibrationGold, candidate: JudgeCalibrationEvidence['candidate'], replay: LeafReplayResult,
