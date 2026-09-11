@@ -86,15 +86,21 @@ import { z } from 'zod'
 import {
   adversarialRefreshRecordDigest,
   adversarialTupleKey,
+  completeProbeCall,
   computeAdversarialPolicyDigest,
   derivedAdversarialCassetteIds,
+  probeReservationOf,
   publishAdversarialRefreshRecord,
   readAdversarialRefreshRecords,
+  readProbeAttempt,
+  reserveProbeCall,
   resolveAdversarialSeedCap,
   settledAdversarialTupleIndex,
   type AdversarialRefreshRecord,
   type AdversarialRefreshTuple,
   type AdversarialSeedCap,
+  type ProbeCompletion,
+  type ProbeReservationKey,
 } from './adversarial-state.js'
 import { committedBlobPath, committedCassettePath, committedCorpusPath, committedLabelPath } from './committed-root-store.js'
 import { openCorpusReader } from './corpus-reader.js'
@@ -284,6 +290,15 @@ export interface AdversarialSpend {
   modelCalls: number
   promptTokens: number
   completionTokens: number
+  /**
+   * Whether every call counted above reported its token usage.
+   *
+   * `false` is a statement, not a warning: a call that was announced and never answered, or one
+   * that failed, has UNKNOWN tokens, and the alternative to saying so is reporting `0` — which
+   * makes a real charge indistinguishable from a free one. It is exactly the reason the budget
+   * is denominated in calls rather than in tokens.
+   */
+  usageKnown: boolean
 }
 
 /**
@@ -297,6 +312,13 @@ export interface AdversarialSpend {
 export type AdversarialProbeSkipReason =
   | ProbeInapplicability
   | 'tuple-already-decided'
+  /**
+   * A durable reservation exists with no completion: a previous run announced this call and
+   * never recorded an answer. It is CHARGED and it is NOT re-authored — re-asking would buy the
+   * same question twice — and it is its own reason precisely because "asked and lost" is a
+   * different fact from "asked and answered" and from "never asked".
+   */
+  | 'tuple-interrupted'
   | 'probe-cap-exceeded'
 
 /** An honest row for every probe tuple that produced no case. */
@@ -416,6 +438,12 @@ export interface StageAdversarialProposalResult {
   probeSkips: readonly AdversarialProbeSkip[]
   /** Authored responses the pure contract refused. */
   probeRefusals: readonly AdversarialProbeRefusal[]
+  /**
+   * Calls a PREVIOUS run announced and never recorded an answer for, still charged against
+   * their tuples. Reported separately from `spend.modelCalls`, which counts only what THIS
+   * refresh asked: folding them together would claim this run made a call it did not.
+   */
+  interruptedProbeCalls: number
 }
 
 /** A staged batch loaded back from disk with its bytes verified against the manifest pins. */
@@ -744,9 +772,12 @@ export async function stageAdversarialProposal(
     ...(input.maxProbeCalls === undefined ? {} : { value: input.maxProbeCalls }),
     ...(input.maxProbeCallsSource === undefined ? {} : { source: input.maxProbeCallsSource }),
   })
-  const spend: AdversarialSpend = { modelCalls: 0, promptTokens: 0, completionTokens: 0 }
+  const spend: AdversarialSpend = {
+    modelCalls: 0, promptTokens: 0, completionTokens: 0, usageKnown: true,
+  }
   const probeSkips: AdversarialProbeSkip[] = []
   const probeRefusals: AdversarialProbeRefusal[] = []
+  let interruptedProbeCalls = 0
   const probeDisclosure = {
     ...(input.noProbeModel === undefined ? {} : { noProbeModel: input.noProbeModel }),
     probeCap,
@@ -769,6 +800,7 @@ export async function stageAdversarialProposal(
     eligibleSeeds: 0,
     settledRefusals: [],
     ...probeDisclosure,
+    interruptedProbeCalls: 0,
   }
   // The gate's own read, not the reader's length: an unmarked or refusing root reads empty
   // through the proposer port and must not be mistaken for a healthy corpus with nothing in it.
@@ -1035,27 +1067,91 @@ export async function stageAdversarialProposal(
           probeSkips.push({ ...row, reason: request })
           continue
         }
-        if (spend.modelCalls >= probeCap.value) {
-          probeSkips.push({ ...row, reason: 'probe-cap-exceeded' })
+        const reservationKey: ProbeReservationKey = {
+          product: input.product,
+          seedCassetteId: seed.cassette.id,
+          kind,
+          promptVersion,
+        }
+        // WHAT THE DURABLE STORE ALREADY KNOWS, BEFORE ANY BUDGET IS SPENT.
+        //
+        // A COMPLETED `derived` attempt is re-derivable for free: the text is the only part of a
+        // probe that is not a pure function of its inputs, so with the text on disk the case can
+        // be rebuilt exactly. That is what makes the window between the call and the publication
+        // recoverable at all — recomputation alone would have to buy the answer again.
+        //
+        // An INTERRUPTED attempt is charged and stays charged. Re-authoring it would buy one
+        // question twice, and there is no way to know whether the lost response was ever
+        // generated; the honest move is to report it and leave the window closed.
+        const attempt = readProbeAttempt({ agentQaRoot: input.agentQaRoot, key: reservationKey })
+        let response: ProbeText | undefined
+        if (attempt.kind === 'interrupted') {
+          interruptedProbeCalls += 1
+          probeSkips.push({ ...row, reason: 'tuple-interrupted' })
           continue
         }
-        // THE SPEND IS COUNTED HERE, BEFORE THE CALL RETURNS. A run that dies inside `author`
-        // paid for whatever it paid for; counting only answers would let an interruption
-        // under-report its own bill, and a budget that can be under-reported is not a budget.
-        spend.modelCalls += 1
-        decidedProbeTuples.add(adversarialProbeTupleKey(seed.cassette.id, kind, promptVersion))
-        let response: ProbeText
-        try {
-          response = await input.probeAuthor.author(request)
-        } catch {
-          // The provider failed, or the port refused. Either way the tuple is CONSUMED for this
-          // prompt generation: retrying it inside the same refresh would spend twice on one
-          // question. The exception text is never carried — it can name a model or a credential.
-          probeSkips.push({ ...row, reason: 'authoring-model-unidentified' })
-          continue
+        if (attempt.kind === 'completed') {
+          const completion = attempt.completion
+          if (
+            completion.outcome !== 'derived' ||
+            completion.text === undefined ||
+            completion.promptTokens === undefined ||
+            completion.completionTokens === undefined
+          ) {
+            probeSkips.push({ ...row, reason: 'tuple-already-decided' })
+            continue
+          }
+          response = {
+            text: completion.text,
+            usage: {
+              promptTokens: completion.promptTokens,
+              completionTokens: completion.completionTokens,
+            },
+          }
+        } else {
+          if (spend.modelCalls >= probeCap.value) {
+            probeSkips.push({ ...row, reason: 'probe-cap-exceeded' })
+            continue
+          }
+          // THE ALLOWANCE IS MADE DURABLE FIRST, AND THE COUNT MOVES WITH IT. A run that dies
+          // inside `author` paid for whatever it paid for; counting only answers would let an
+          // interruption under-report its own bill, and a budget that can be under-reported is
+          // not a budget. `reserveProbeCall` is exclusive, so a concurrent owner observes this
+          // reservation rather than opening a second call for the same tuple.
+          const reserved = reserveProbeCall({
+            agentQaRoot: input.agentQaRoot,
+            reservation: probeReservationOf(reservationKey, {
+              promptHash: request.promptHash,
+              author: authoringModel,
+            }),
+          })
+          if (reserved.kind === 'already-reserved') {
+            interruptedProbeCalls += 1
+            probeSkips.push({ ...row, reason: 'tuple-interrupted' })
+            continue
+          }
+          spend.modelCalls += 1
+          decidedProbeTuples.add(adversarialProbeTupleKey(seed.cassette.id, kind, promptVersion))
+          try {
+            response = await input.probeAuthor.author(request)
+          } catch {
+            // The provider failed, or the port refused. The call is an ANSWER — control came
+            // back — so the outcome is durable and the tuple is consumed for this prompt
+            // generation. Its tokens are UNKNOWN and are left absent rather than written as
+            // zero; the exception text is never carried, because it can name a model or a
+            // credential.
+            completeProbeCall({
+              agentQaRoot: input.agentQaRoot,
+              key: reservationKey,
+              completion: { schemaVersion: 1, outcome: 'error' },
+            })
+            spend.usageKnown = false
+            probeSkips.push({ ...row, reason: 'tuple-already-decided' })
+            continue
+          }
+          spend.promptTokens += response.usage.promptTokens
+          spend.completionTokens += response.usage.completionTokens
         }
-        spend.promptTokens += response.usage.promptTokens
-        spend.completionTokens += response.usage.completionTokens
         const derivation = deriveProbeCassette({
           seed,
           request,
@@ -1063,6 +1159,9 @@ export async function stageAdversarialProposal(
           product: input.product,
         })
         if (derivation.outcome === 'refused') {
+          recordProbeOutcome(input.agentQaRoot, attempt, reservationKey, {
+            schemaVersion: 1, outcome: 'invalid', detail: derivation.reason,
+          })
           probeRefusals.push({ ...row, reason: derivation.reason })
           continue
         }
@@ -1086,6 +1185,9 @@ export async function stageAdversarialProposal(
           { policy: input.policy, ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }) },
         )
         if (probeCaseRefusals.length > 0) {
+          recordProbeOutcome(input.agentQaRoot, attempt, reservationKey, {
+            schemaVersion: 1, outcome: 'refused', detail: probeCaseRefusals[0]!.detector,
+          })
           refusals.push(...probeCaseRefusals)
           continue
         }
@@ -1103,6 +1205,17 @@ export async function stageAdversarialProposal(
           })
           continue
         }
+        // The durable output, written ONCE. A later refresh that finds it re-derives this exact
+        // case with no call at all, which is what makes the crash between the answer and the
+        // reviewed batch a recoverable one rather than a second bill.
+        recordProbeOutcome(input.agentQaRoot, attempt, reservationKey, {
+          schemaVersion: 1,
+          outcome: 'derived',
+          text: probe.text,
+          cassetteId: probe.cassette.id,
+          promptTokens: probe.usage.promptTokens,
+          completionTokens: probe.usage.completionTokens,
+        })
         publishable.push({
           manifestCase: {
             cassetteId: probe.cassette.id,
@@ -1173,6 +1286,7 @@ export async function stageAdversarialProposal(
     eligibleSeeds,
     settledRefusals,
     ...probeDisclosure,
+    interruptedProbeCalls,
     ...(authoringModel === undefined ? {} : { authoringModel }),
   }
 
@@ -1686,6 +1800,22 @@ function blobsCommitted(
   } catch {
     return false
   }
+}
+
+/**
+ * Write a completion for a call THIS refresh made, and never for one it only read back.
+ *
+ * A tuple whose completion was already on disk is being re-derived for free; writing a second
+ * completion for it would be a write-once conflict over bytes that are already true.
+ */
+function recordProbeOutcome(
+  agentQaRoot: string,
+  attempt: { kind: string },
+  key: ProbeReservationKey,
+  completion: ProbeCompletion,
+): void {
+  if (attempt.kind === 'completed') return
+  completeProbeCall({ agentQaRoot, key, completion })
 }
 
 /** Cleanup is not un-admission: the bytes are already verified in the committed root. */

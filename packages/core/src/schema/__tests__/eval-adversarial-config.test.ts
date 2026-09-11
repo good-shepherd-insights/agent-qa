@@ -73,3 +73,53 @@ describe('eval.adversarial seed cap', () => {
     })
   })
 })
+
+// 422-06-T2 — the SECOND adversarial budget.
+//
+// `maxSeedsPerRefresh` bounds how much a reviewer must read; `maxProbeCalls` bounds what a
+// refresh may SPEND at a provider. They are separate knobs because the two costs are separate
+// and a host must be able to want many deterministic seeds and no provider calls at all. The
+// strictness matters more here than one knob over: a seed cap that silently fell back to the
+// default wastes review attention, while a call budget that did would buy calls the operator
+// explicitly refused, and nothing can un-buy them.
+describe('eval.adversarial probe-call budget', () => {
+  it.each([{ maxProbeCalls: 4 }, { maxProbeCalls: 1 }, {}])(
+    'round-trips the optional positive integer budget %j',
+    (adversarial) => {
+      expect(AgentQaConfigSchema.parse({ ...minimalConfig, eval: { adversarial } }).eval?.adversarial)
+        .toEqual(adversarial)
+    },
+  )
+
+  it('refuses zero, negative, fractional, string and nonfinite budgets', () => {
+    for (const value of [0, -1, -4, 0.5, '4', null, Infinity, -Infinity, Number.NaN]) {
+      const parsed = AgentQaConfigSchema.safeParse({
+        ...minimalConfig,
+        eval: { adversarial: { maxProbeCalls: value } },
+      })
+      expect(parsed.success, `maxProbeCalls=${String(value)}`).toBe(false)
+    }
+  })
+
+  it('keeps the two budgets independent, and refuses a near-miss spelling of either', () => {
+    const parsed = AgentQaConfigSchema.parse({
+      ...minimalConfig,
+      eval: { adversarial: { maxSeedsPerRefresh: 8, maxProbeCalls: 2 } },
+    })
+    expect(parsed.eval?.adversarial).toEqual({ maxSeedsPerRefresh: 8, maxProbeCalls: 2 })
+    // Setting one must never imply the other: a host that caps review volume has said nothing
+    // about what it is willing to spend.
+    expect(AgentQaConfigSchema.parse({
+      ...minimalConfig, eval: { adversarial: { maxSeedsPerRefresh: 8 } },
+    }).eval?.adversarial).toEqual({ maxSeedsPerRefresh: 8 })
+    expect(AgentQaConfigSchema.parse({
+      ...minimalConfig, eval: { adversarial: { maxProbeCalls: 2 } },
+    }).eval?.adversarial).toEqual({ maxProbeCalls: 2 })
+    // A typo is a loud parse failure, never a budget the operator believes is in force.
+    for (const key of ['maxProbeCall', 'probeCalls', 'maxProbecalls']) {
+      expect(AgentQaConfigSchema.safeParse({
+        ...minimalConfig, eval: { adversarial: { [key]: 2 } },
+      }).success, key).toBe(false)
+    }
+  })
+})

@@ -1295,7 +1295,7 @@ export async function runAdversarialVerb(
     kind: 'refused', product, stagingDir, staged: [], admitted: [], unchanged: [], remaining: [],
     refusals: [], settledRefusals: [], stagingSkips: [], skips: [], seedsConsidered: 0,
     seedsDeferred: 0, eligibleSeeds: 0, cap, writesStarted: false, staleReceipts: [], floorCommand,
-    probeCap, spend: { modelCalls: 0, promptTokens: 0, completionTokens: 0 },
+    probeCap, spend: { modelCalls: 0, promptTokens: 0, completionTokens: 0, usageKnown: true },
     probeSkips: [], probeRefusals: [],
   }
   const digest = readCanaryCorpusDigest(session)

@@ -248,14 +248,21 @@ export type {
 // re-deciding what it already decided. Published beside the staging composition for the same
 // reason — the CLI's operator verb resolves the cap and renders the overflow.
 export {
+  ADVERSARIAL_PROBE_SCHEMA_VERSION,
+  ADVERSARIAL_PROBE_SUBDIR,
   ADVERSARIAL_STATE_SCHEMA_VERSION,
   ADVERSARIAL_STATE_SUBDIR,
   adversarialRefreshRecordDigest,
   adversarialTupleKey,
+  completeProbeCall,
   computeAdversarialPolicyDigest,
   derivedAdversarialCassetteIds,
+  probeReservationOf,
   publishAdversarialRefreshRecord,
   readAdversarialRefreshRecords,
+  readProbeAttempt,
+  readProbeAttempts,
+  reserveProbeCall,
   resolveAdversarialSeedCap,
   settledAdversarialTuples,
 } from './adversarial-state.js'
@@ -264,6 +271,11 @@ export type {
   AdversarialRefreshTuple,
   AdversarialSeedCap,
   AdversarialTupleOutcome,
+  ProbeAttemptState,
+  ProbeCompletion,
+  ProbeCompletionOutcome,
+  ProbeReservation,
+  ProbeReservationKey,
 } from './adversarial-state.js'
 
 export { loadCalibrationEvidence, readCalibrationGoldIdentity } from './calibration-evidence-source.js'

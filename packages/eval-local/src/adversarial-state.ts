@@ -36,7 +36,14 @@ import { closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFil
 import { createHash, randomUUID } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 
-import { ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH, ADVERSARIAL_MUTATORS, canonicalJson, type AdversarialMutator } from '@vostride/agent-qa-eval'
+import {
+  ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH,
+  ADVERSARIAL_MUTATORS,
+  PROBE_GENERATOR_KINDS,
+  canonicalJson,
+  type AdversarialMutator,
+  type ProbeGeneratorKind,
+} from '@vostride/agent-qa-eval'
 import { slugBranch, type GuardrailPolicy } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
@@ -348,4 +355,140 @@ export function derivedAdversarialCassetteIds(
     }
   }
   return ids
+}
+
+// ---------------------------------------------------------------------------
+// 422 D-04/D-11: the PROBE RESERVATION store — an ask that is durable before it is asked.
+//
+// WHY THIS IS A SECOND STORE AND NOT AN ARM OF THE RECORD ABOVE. `AdversarialRefreshRecord` is
+// named by its own content digest, which is exactly what lets two concurrent refreshes over one
+// unchanged corpus publish the same bytes instead of fighting. A reservation cannot work that
+// way: its content is a claim about work that has NOT happened yet, so the outcome is unknown at
+// the moment the name would have to be computed, and content-addressing a row whose content
+// changes is a contradiction. 422-03 recorded that its record "will need a reservation arm"; the
+// truthful answer is that it needs a SIBLING, and the property that makes the record good is
+// precisely the property that stops it from carrying one.
+//
+// THREE STATES, ENCODED STRUCTURALLY. `unattempted` is no reservation. `completed` is a
+// reservation plus a completion. `interrupted` is a reservation with NO completion — and it is
+// derived rather than written, because the one thing a dying process cannot do is record that it
+// died. A status field would have to be updated by the very code that failed to run.
+//
+// WHAT A RESERVATION MAY SAY. Its KEY is `(product, seed, kind, promptVersion)` and nothing else
+// (D-11): not the returned text, which does not exist yet, and not the author, because a second
+// host with a second model must not buy a second copy of a probe this corpus already holds. Its
+// BODY names the author by DIGEST and family rather than by raw model id — a configured model id
+// can itself embed a credential (422-05), and this file is written before any egress scan runs.
+// ---------------------------------------------------------------------------
+
+/**
+ * Probe reservations live beside the refresh-state tree, never inside a staged batch: a batch is
+ * reviewable data an operator may delete, and the record of what was already PAID FOR must
+ * outlive that even more emphatically than the record of what was already decided.
+ */
+export const ADVERSARIAL_PROBE_SUBDIR = 'eval/adversarial-probes'
+
+export const ADVERSARIAL_PROBE_SCHEMA_VERSION = 1
+
+/** D-11's idempotence key, as durable fields. */
+export interface ProbeReservationKey {
+  product: string
+  seedCassetteId: string
+  kind: ProbeGeneratorKind
+  promptVersion: number
+}
+
+/** The row written BEFORE a provider is contacted. Its existence is the charge. */
+export interface ProbeReservation extends ProbeReservationKey {
+  schemaVersion: 1
+  /** The frozen prompt hash the request was rendered from. */
+  promptHash: string
+  /** sha256 of the configured model id — never the id, which can embed a credential. */
+  authorDigest: string
+  /** The resolved provider family, which cannot. */
+  authorFamily: string
+}
+
+/**
+ * What a provider call resolved to.
+ *
+ * All four are ANSWERS — the port returned control. `derived` carries the authored text so a
+ * later refresh can re-derive the same case for free; `refused` is a policy block, `invalid` an
+ * answer the pure contract rejected, and `error` a call that failed. None of the last three
+ * carries text: a refused surface is data, not a diagnostic.
+ */
+export type ProbeCompletionOutcome = 'derived' | 'refused' | 'invalid' | 'error'
+
+export interface ProbeCompletion {
+  schemaVersion: 1
+  outcome: ProbeCompletionOutcome
+  /** Present only on `derived`: the authored text and the id it produced. */
+  text?: string
+  cassetteId?: string
+  /** Reported spend, present only when the provider reported it. ABSENT is not zero. */
+  promptTokens?: number
+  completionTokens?: number
+  /** The firing detector or the refusal reason; never the refused text. */
+  detail?: string
+}
+
+/**
+ * The store's answer about one tuple.
+ *
+ * `usageKnown` is on every arm and is never inferred from a zero: an interrupted attempt and a
+ * failed one both have unknown tokens, and reporting them as `0` would make a real charge read
+ * as a free one.
+ */
+export type ProbeAttemptState =
+  | { kind: 'unattempted'; usageKnown: false }
+  | { kind: 'interrupted'; reservation: ProbeReservation; usageKnown: false }
+  | { kind: 'completed'; reservation: ProbeReservation; completion: ProbeCompletion; usageKnown: boolean }
+
+/** Build the durable reservation for one tuple. Pure; the author is reduced to a digest here. */
+export function probeReservationOf(
+  key: ProbeReservationKey,
+  input: { promptHash: string; author: { id: string; family: string } },
+): ProbeReservation {
+  return {
+    schemaVersion: ADVERSARIAL_PROBE_SCHEMA_VERSION,
+    ...key,
+    promptHash: input.promptHash,
+    authorDigest: createHash('sha256').update(input.author.id, 'utf8').digest('hex'),
+    authorFamily: input.author.family,
+  }
+}
+
+/** 422-06-T2 (RED): declared, inert. */
+export function readProbeAttempt(_input: {
+  agentQaRoot: string
+  key: ProbeReservationKey
+}): ProbeAttemptState {
+  return { kind: 'unattempted', usageKnown: false }
+}
+
+/** 422-06-T2 (RED): declared, inert. */
+export function readProbeAttempts(_input: {
+  agentQaRoot: string
+  product: string
+}): ProbeAttemptState[] {
+  return []
+}
+
+/** 422-06-T2 (RED): declared, inert. */
+export function reserveProbeCall(input: {
+  agentQaRoot: string
+  reservation: ProbeReservation
+}): { kind: 'reserved' | 'already-reserved'; state: ProbeAttemptState } {
+  void input
+  return { kind: 'reserved', state: { kind: 'unattempted', usageKnown: false } }
+}
+
+/** 422-06-T2 (RED): declared, inert. */
+export function completeProbeCall(input: {
+  agentQaRoot: string
+  key: ProbeReservationKey
+  completion: ProbeCompletion
+}): 'published' | 'unchanged' {
+  void input
+  return 'published'
 }
