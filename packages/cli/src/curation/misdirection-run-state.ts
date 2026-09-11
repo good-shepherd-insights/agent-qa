@@ -359,6 +359,35 @@ export function readMisdirectionRunState(runDir: string, runId: string): Misdire
 }
 
 /**
+ * The evaluation-root posture this run's arbiter last operated under (D-19).
+ *
+ * DECLARED, UNIMPLEMENTED (RED).
+ */
+export interface MisdirectionRunPostureRecord {
+  readonly schemaVersion: 1
+  readonly runId: string
+  readonly kind: 'eval-root' | 'no-eval-root' | 'broken-eval-root'
+  readonly corpusDigest?: string
+  readonly profileDigest?: string
+  readonly reason?: string
+}
+
+export function readMisdirectionRunPosture(
+  _runDir: string,
+  _runId: string,
+): MisdirectionRunPostureRecord | undefined {
+  // DECLARED, UNIMPLEMENTED (RED).
+  return undefined
+}
+
+export function writeMisdirectionRunPosture(
+  _runDir: string,
+  _record: MisdirectionRunPostureRecord,
+): void {
+  // DECLARED, UNIMPLEMENTED (RED).
+}
+
+/**
  * Publish the run's arbiter rows onto its own `handoff.json`, atomically (D-18).
  *
  * THE SIDECAR IS WRITTEN BEFORE THE ENQUEUE MINTS ITS DIGEST, which is the whole ordering this
