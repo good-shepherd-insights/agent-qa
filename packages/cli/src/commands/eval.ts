@@ -483,7 +483,13 @@ export function createEvalCommand(): Command {
         else {
           const report = 'artifact' in result ? result.artifact : result
           console.log(`judge panel: ${report.status} n=${report.n} minN=${report.minN} (${report.minNSource})`)
-          if (report.status === 'capability-gap') console.log(`capability gap: ${report.reason}`)
+          if (report.status === 'capability-gap') {
+            console.log(`capability gap: ${report.reason}`)
+            if (report.reason === 'panel-not-configured') console.log('Configure at least two explicit eval.judges entries naming registry.llms members.')
+            for (const entry of 'entries' in result ? result.entries ?? [] : []) {
+              if (entry.failures.length) console.log(`member ${entry.index + 1}: ${entry.name}${entry.modelId ? ` (${entry.modelId})` : ''}; credential=${entry.credential}; ${entry.failures.join(', ')}`)
+            }
+          }
           else {
             console.log(`selected=${report.counts.selected} admitted=${report.counts.admitted} eligible=${report.counts.eligible} refused=${report.counts.eligibilityRefused} attempted=${report.counts.attempted}`)
             console.log(`pooled agreement=${report.pooledAgreement ?? 'unavailable'} interval=${report.wilson95 ? `[${report.wilson95.lower},${report.wilson95.upper}]` : 'unavailable'}; abstention=${report.abstention.numerator}/${report.abstention.denominator}; member-pair disagreement=${report.disagreement.numerator}/${report.disagreement.denominator}`)

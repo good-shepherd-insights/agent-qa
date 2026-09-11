@@ -243,6 +243,23 @@ it('returns the no-configuration gap successfully without provider calls', async
   const { result, exit } = await invoke(f.configPath)
   expect(exit).toBe(0); expect(result).toMatchObject({ status: 'capability-gap', reason: 'panel-not-configured', cost: { usage: { calls: 0 } } })
   expect(llm.resolveModelAuth).not.toHaveBeenCalled()
+  expect((await invoke(f.configPath, ['--judge-panel'])).stdout).toContain('Configure at least two explicit eval.judges entries')
+})
+
+it('renders only masked member recovery diagnostics for a credential gap without calls', async () => {
+  const f = fixture(), config = JSON.parse(readFileSync(f.configPath, 'utf8'))
+  config.registry.llms[1].name = `member-${secret}`
+  config.eval.judges[0] = `member-${secret}`
+  writeFileSync(f.configPath, JSON.stringify(config))
+  vi.mocked(llm.resolveModelAuth).mockImplementation(async name => name === `member-${secret}`
+    ? { kind: 'missing', credentialKey: name, provider: 'openai-compatible', required: true, message: secret }
+    : { kind: 'api-key', credentialKey: name, provider: 'openai-compatible', apiKey: secret })
+  const output = await invoke(f.configPath, ['--judge-panel'])
+  expect(output.exit).toBe(0)
+  expect(output.stdout).toContain('member 1: member-<SECRET_')
+  expect(output.stdout).toContain('credential=missing; no-credential')
+  expect(output.stdout).not.toContain(secret)
+  expect(boundary).toMatchObject({ calls: 0, binds: 0 })
 })
 import { createEvalCommand } from '../eval.js'
 
