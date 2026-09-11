@@ -237,7 +237,14 @@ export interface EvalCliConfig {
   k?: number
   seed?: number
   seeding?: { silverPerTestCap?: number }
-  gate1?: { maxScreens?: number }
+  /**
+   * 422-09: the schema's OWN block by indexed access, on the `gate2`/`adversarial` idiom beside
+   * it. It was a restatement — `{ maxScreens?: number }` — and 422-08's `maxPerJob` landed in the
+   * schema without landing here, so the config accepted a bound no reader could ever see. A
+   * restatement of a shape with one owner is a second place for it to drift, and this is what
+   * that drift costs.
+   */
+  gate1?: NonNullable<AgentQaConfig['eval']>['gate1']
   gate2?: NonNullable<AgentQaConfig['eval']>['gate2']
   /** 422 D-04: the per-refresh novel-seed cap for `eval adversarial`. */
   adversarial?: NonNullable<AgentQaConfig['eval']>['adversarial']
@@ -3205,7 +3212,6 @@ function mergeEvalConfig(
   const k = flags?.k ?? fromConfig?.k
   const seed = flags?.seed ?? fromConfig?.seed
   const silverPerTestCap = flags?.silverCap ?? fromConfig?.seeding?.silverPerTestCap
-  const maxScreens = fromConfig?.gate1?.maxScreens
 
   return {
     ...(names.length === 1 ? { judge: names[0] } : names.length > 1 ? { judges: names } : {}),
@@ -3215,8 +3221,9 @@ function mergeEvalConfig(
     ...(fromConfig?.gate2 === undefined ? {} : { gate2: fromConfig.gate2 }),
     ...(fromConfig?.adversarial === undefined ? {} : { adversarial: fromConfig.adversarial }),
     ...(silverPerTestCap !== undefined ? { seeding: { silverPerTestCap } } : {}),
-    ...(fromConfig?.gate1 !== undefined
-      ? { gate1: { ...(maxScreens === undefined ? {} : { maxScreens }) } } : {}),
+    // 422-09: forwarded WHOLE, exactly as `gate2` and `adversarial` above are. The field-by-field
+    // rebuild this replaces silently dropped every member the schema gained after it was written.
+    ...(fromConfig?.gate1 === undefined ? {} : { gate1: fromConfig.gate1 }),
   }
 }
 // Gate hosts reach eval/runtime storage only through this established composition boundary.

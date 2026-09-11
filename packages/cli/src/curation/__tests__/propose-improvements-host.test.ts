@@ -28,15 +28,19 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { chainJobIdsForRun, stampReceiptDigest } from '@vostride/agent-qa-agent'
+import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import type {
   ConfigReaderPort,
   JobModelCapability,
-  KnowledgeBundleSummary,
-  KnowledgeGatesListResult,
   ProposeGate1Report,
 } from '@vostride/agent-qa-agent'
-import type { GateReceipt, GateVerdict } from '@vostride/agent-qa-schema'
+import { stampReceiptDigest } from '@vostride/agent-qa-schema'
+import type {
+  GateReceipt,
+  GateVerdict,
+  KnowledgeBundleSummary,
+  KnowledgeGatesListResult,
+} from '@vostride/agent-qa-schema'
 
 vi.mock('@vostride/agent-qa-agent-local', async (original) => {
   const actual = await original<typeof import('@vostride/agent-qa-agent-local')>()
@@ -454,10 +458,13 @@ describe('the third stage runs after the fold and reads back real receipts (422 
     const jobs = await host.jobs()
     const fence = await jobs.store.adoptEpoch(5)
     const chain = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+    // The key `chainJobIdsForRun` PREDICTS for this run's second stage, so the row this fold
+    // runs is the row the tail's own chain addresses — and its successor's id is therefore the
+    // third id the same derivation names, rather than an id only this fixture could produce.
     await jobs.queue.enqueue(
       'curate-memory',
       { runId: RUN_ID, executionContext: 'local-headless' },
-      String(chain.curateMemory),
+      `${String(chain.analyzeRun)}->curate-memory`,
     )
     const fold = await jobs.queue.runNextJob({ fence })
     const proposal = await jobs.queue.runNextJob({ fence })
@@ -469,7 +476,12 @@ describe('the third stage runs after the fold and reads back real receipts (422 
       fold,
       proposal,
       chain,
-      checkpoint: read.found ? (read.record.value as ProposalCheckpoint) : undefined,
+      // The DURABLE record, read back off the store through the same envelope every other
+      // checkpoint reader peels — not the handler's return value, which would prove only that
+      // the handler computed something.
+      checkpoint: read.found
+        ? ((read.payload as { value: ProposalCheckpoint }).value)
+        : undefined,
     }
   }
 

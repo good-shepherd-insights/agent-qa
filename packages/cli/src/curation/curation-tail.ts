@@ -797,7 +797,17 @@ export async function curateCompletedRun(
       { knowledgeRoot: input.knowledgeRoot },
     ).catch(() => undefined)
   }
-  return { curated, deprecated, complete: true, drainKind }
+  // 422 D-13: the receipt's OWN array, read back off the value that was just committed rather
+  // than re-projected from the emit report. The two are equal today by construction, and that is
+  // exactly why the second projection must not exist: a later reader can check this claim against
+  // the receipt on disk, and it can only do that while the claim IS the receipt.
+  return {
+    curated,
+    deprecated,
+    complete: true,
+    drainKind,
+    candidateIds: completedReceipt.candidateIds,
+  }
 }
 
 /**

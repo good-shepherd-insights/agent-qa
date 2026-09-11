@@ -259,6 +259,13 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
       configPath: input.configPath,
       model: () => resolvePostRunJobModel(input.configPath),
       postRun: {
+        // 422-09 (D-14): the lease this tail's drain holds, handed to the composition as a
+        // CLOSURE so the Gate-1 bridge resolves it at the claim. The host is composed before the
+        // take (385 D-02 — the enqueue must not wait on a lease it does not need), so a value
+        // read at this line is `undefined` for the whole life of the process.
+        ...(input.resolveClaimAuthority === undefined
+          ? {}
+          : { resolveClaimAuthority: input.resolveClaimAuthority }),
         curateRun: input.curateRun,
         // Derived from presence, never hard-coded (388-10): the tail declares what it HAS,
         // not what it intends. Both production sites in `run.ts` pass a masking context
@@ -558,7 +565,16 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     // WR-03: the fold already told us whether it wrote a receipt. Dropping `complete` here is
     // what let `incompleteWarning` print "curation incomplete; it will resume" while the
     // durable notification row recorded the same stage as `done`.
-    return { curated: folded.curated, deprecated: folded.deprecated, complete: folded.complete }
+    //
+    // 422 D-13: and the receipt's candidates travel with it, spread on presence so an incomplete
+    // fold forwards NO field rather than an empty list. The successor's payload reader keeps the
+    // same distinction one edge further along.
+    return {
+      curated: folded.curated,
+      deprecated: folded.deprecated,
+      complete: folded.complete,
+      ...(folded.candidateIds === undefined ? {} : { candidateIds: folded.candidateIds }),
+    }
   }
 
   const openHost = (): LocalAgentHost => {
@@ -570,6 +586,10 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       // The same conditional spread the fold is threaded with: composeHost derives the
       // posture from this value's PRESENCE, so the tail never asserts a masker it lacks.
       ...(opts.maskingContext === undefined ? {} : { maskingContext: opts.maskingContext }),
+      // The SAME `heldAuthority` closure `curateRun` reads above, and for the same reason: the
+      // fold and the Gate-1 write happen under one lease, and a second way to learn which lease
+      // is a second answer to who is writing (422 D-14).
+      resolveClaimAuthority: () => heldAuthority,
       curateRun,
     })
     return host

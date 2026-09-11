@@ -1921,6 +1921,34 @@ export interface ComposeLocalAgentInput {
      * name the seam it lives behind.
      */
     readonly stageAdversarialProposal?: PostRunJobCapabilities['stageAdversarialProposal']
+    /**
+     * The 422 D-14 Gate-1 leg's four ports, passed straight through (422-09).
+     *
+     * NEUTRAL FORWARDING, and the neutrality is the contract rather than a style note: every one
+     * of these needs a committed corpus, a screening run and a writer this package may not name,
+     * and a version of this file that could construct them could not be this file. What crosses
+     * here is four closures and a number; what stays on the other side is every fact about where
+     * they read from.
+     *
+     * Each is OPTIONAL and each is spread on presence, because a host that binds none is the
+     * shipped posture — the stage runs, screens nothing, and says so by omitting the member.
+     */
+    readonly runReplayGate?: PostRunJobCapabilities['runReplayGate']
+    readonly listBundles?: PostRunJobCapabilities['listBundles']
+    readonly gateReceiptsFor?: PostRunJobCapabilities['gateReceiptsFor']
+    readonly readProposeCorpusPosture?: PostRunJobCapabilities['readProposeCorpusPosture']
+    /**
+     * The operator's per-job Gate-1 bound, as a FACTORY resolved once at queue open.
+     *
+     * A factory on the exact `model` / `analysisTokenBudget` idiom, for the same reason those are:
+     * reading it needs a configuration read, and paying for one at composition would charge every
+     * host that only lists the registry. The capability itself is plain data — a number the
+     * handler reads and never a reader it calls.
+     */
+    readonly proposeGate1MaxPerJob?: () =>
+      | Promise<number | undefined>
+      | number
+      | undefined
   }
   /**
    * D-01's TokenAccounting substrate for the analyze-run author (389 plan 06). OPTIONAL
@@ -2471,6 +2499,8 @@ export function postRunCapabilities(
    * stage's Gate-1 leg is the typed no-op it already is on a host that binds no replay gate.
    */
   jobStore?: Pick<JobStorePort, 'readCheckpoint'>,
+  /** The RESOLVED per-job Gate-1 bound, awaited from the input factory at the same open (422-09). */
+  proposeGate1MaxPerJob?: number,
 ): PostRunJobCapabilities | undefined {
   const postRun = input.postRun
   if (postRun === undefined) return undefined
@@ -2499,6 +2529,18 @@ export function postRunCapabilities(
     ...(postRun.stageAdversarialProposal === undefined
       ? {}
       : { stageAdversarialProposal: postRun.stageAdversarialProposal }),
+    // 422-09 (D-14): the Gate-1 leg's four ports and its bound, forwarded on the same
+    // presence-spread idiom one line up. The handler's own `screenGate1` requires ALL FOUR before
+    // it screens anything, so a host that binds three of them is a host that screens nothing —
+    // which is why they are forwarded one by one rather than as a bundle a caller could
+    // half-populate without noticing.
+    ...(postRun.runReplayGate === undefined ? {} : { runReplayGate: postRun.runReplayGate }),
+    ...(postRun.listBundles === undefined ? {} : { listBundles: postRun.listBundles }),
+    ...(postRun.gateReceiptsFor === undefined ? {} : { gateReceiptsFor: postRun.gateReceiptsFor }),
+    ...(postRun.readProposeCorpusPosture === undefined
+      ? {}
+      : { readProposeCorpusPosture: postRun.readProposeCorpusPosture }),
+    ...(proposeGate1MaxPerJob === undefined ? {} : { proposeGate1MaxPerJob }),
     // 389 D-09: the artifact's path is DERIVED from the artifact's own runId through the
     // same `runs/<slug>/` law as the handoff read above — `slugBranch` is the traversal
     // guard (T-389-01), and a job payload never carries a path.
@@ -3732,6 +3774,12 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     const analysisTokenBudget = input.analysisTokenBudget === undefined
       ? undefined
       : await input.analysisTokenBudget()
+    // 422-09: resolved at the SAME open, for the same reason — the capability member is a number
+    // the handler reads synchronously, and resolving it per job would read configuration inside a
+    // claim that must not depend on a file the operator can edit mid-drain.
+    const proposeGate1MaxPerJob = input.postRun?.proposeGate1MaxPerJob === undefined
+      ? undefined
+      : await input.postRun.proposeGate1MaxPerJob()
     const store = createSqliteJobStore({
       path: join(input.agentQaRoot, AGENT_JOB_STORE_DB_FILE),
       clock,
@@ -3741,7 +3789,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     try {
       const kinds = input.jobKinds
         ?? createRealJobKindRegistry(
-          postRunCapabilities(input, knowledgeRoot, analysisTokenBudget, store),
+          postRunCapabilities(input, knowledgeRoot, analysisTokenBudget, store, proposeGate1MaxPerJob),
         )
       // Resolved ONCE and used for both the queue and the published field: the value a watcher
       // derives ids from has to be the value the queue mints them with, and two spellings of the
