@@ -1,18 +1,31 @@
-// The post-run chain's identity, pinned where it is derived (JOBK-03, D-02/D-03).
+// The post-run chain's identity, pinned where it is derived (JOBK-03, D-02/D-03; 422 D-13).
 //
-// Two claims: the derivation hands back exactly two keys, and the terminal list is not a second
-// opinion about membership — it IS the kind set the derivation asks the id source for, so a chain
-// that grows an id without extending the list, or extends the list without deriving the id, reds
-// here by name rather than reporting a terminal one job early.
+// Two claims about identity: the derivation hands back exactly three keys, and the terminal list is
+// not a second opinion about membership — it IS the kind set the derivation asks the id source for,
+// so a chain that grows an id without extending the list, or extends the list without deriving the
+// id, reds here by name rather than reporting a terminal one job early.
 //
-// 2026-09-01 (Phase 409): the third chain id left with the Issue-slot cleanup — see
-// DELETION-INVENTORY.md.
+// 2026-09-11 (Phase 422, D-13): the chain grew a THIRD stage. `propose-improvements` is a kind this
+// build has declared since 385; what 422 adds is the successor edge from `curate-memory` and the
+// derived id that addresses the row that edge mints. The widening is authorised, and it is pinned
+// here by literal so a FOURTH id cannot arrive unannounced.
+//
+// A second family of claims lives here too, and it is the one the widening most endangers: the
+// chain terminal is now usually reported by a job that did NOT do the analysis and did NOT do the
+// curation. Everything the record says about the first two stages therefore has to travel forward
+// on the third job's payload. A builder that read only what the finishing job published would
+// report a completed curation as a failure and lose its counts — the exact trap 422-PATTERNS names.
 
 import { asJobId } from '@vostride/agent-qa-schema'
 import type { JobKind } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { chainJobIdsForRun, POST_RUN_CHAIN_TERMINAL_KINDS } from '../chain-identity.js'
+import {
+  buildChainTerminalNotification,
+  chainJobIdsForRun,
+  POST_RUN_CHAIN_TERMINAL_KINDS,
+  UNKNOWN_VERDICTS_MARKER,
+} from '../chain-identity.js'
 import type { JobIdSource } from '../engine.js'
 
 const RUN_ID = 'run-1'
@@ -41,14 +54,15 @@ function recordingIdSource(): {
   }
 }
 
-describe('the post-run chain ids (JOBK-03, D-02/D-03)', () => {
-  it('derives exactly two chain ids, keyed analyzeRun and curateMemory', () => {
+describe('the post-run chain ids (JOBK-03, D-02/D-03; 422 D-13)', () => {
+  it('derives exactly three chain ids, keyed analyzeRun, curateMemory and proposeImprovements', () => {
     const { idSource } = recordingIdSource()
 
-    // Sorted against a literal rather than counted, so a third key names itself in the diff.
+    // Sorted against a literal rather than counted, so a fourth key names itself in the diff.
     expect(Object.keys(chainJobIdsForRun(RUN_ID, idSource)).sort()).toEqual([
       'analyzeRun',
       'curateMemory',
+      'proposeImprovements',
     ])
   })
 
@@ -58,23 +72,158 @@ describe('the post-run chain ids (JOBK-03, D-02/D-03)', () => {
 
     // Declaration order: the terminal list is an authored array, so its order is part of what
     // this pins, exactly as the literal-list rule asks (D-01).
-    expect([...POST_RUN_CHAIN_TERMINAL_KINDS]).toEqual(['analyze-run', 'curate-memory'])
+    expect([...POST_RUN_CHAIN_TERMINAL_KINDS]).toEqual([
+      'analyze-run',
+      'curate-memory',
+      'propose-improvements',
+    ])
     // …and the coupling, which is the point of the cell. Either half moving without the other
     // reds this line, and the diff says which kind arrived or went missing.
     expect(asked.map((call) => call.kind).sort()).toEqual([...POST_RUN_CHAIN_TERMINAL_KINDS].sort())
   })
 
-  it('derives two distinct ids whose successor key is built from the head id', () => {
+  it('derives three distinct ids, each successor key built from its own predecessor id', () => {
     const { asked, idSource } = recordingIdSource()
     const ids = chainJobIdsForRun(RUN_ID, idSource)
 
-    // Adjacency: the second id is not an independent hash of the run, it is addressed FROM the
-    // first. Two ids that collided would collapse the chain onto one row; a successor key that
-    // forgot the head would address a row the engine's own `successorsOf` never mints.
-    expect(ids.analyzeRun).not.toBe(ids.curateMemory)
+    // Adjacency, now over a chain of three: each id after the head is not an independent hash of
+    // the run, it is addressed FROM the id before it. Two ids that collided would collapse two
+    // stages onto one row; a successor key that forgot its predecessor would address a row the
+    // engine's own `successorsOf` never mints.
+    expect(new Set([ids.analyzeRun, ids.curateMemory, ids.proposeImprovements]).size).toBe(3)
     expect(asked.map((call) => call.key)).toEqual([
       RUN_ID,
       `${String(ids.analyzeRun)}->curate-memory`,
+      `${String(ids.curateMemory)}->propose-improvements`,
     ])
+  })
+})
+
+/** The upstream truth a real curate-memory success hands its proposal successor (422 D-13). */
+function upstreamPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    from: 'curate-memory',
+    predecessor: 'job_curate',
+    runId: RUN_ID,
+    executionContext: 'local-headless',
+    candidateIds: ['cand-1', 'cand-2'],
+    upstream: {
+      verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },
+      analysisStatus: 'done',
+      curation: { curated: 4, deprecated: 2, complete: true },
+    },
+    ...overrides,
+  }
+}
+
+describe('the chain terminal notification carries upstream truth forward (422 D-13, D-15)', () => {
+  it('reports every earlier stage from the proposal job payload, not from what IT published', () => {
+    const record = buildChainTerminalNotification({
+      runId: RUN_ID,
+      finishingKind: 'propose-improvements',
+      finished: 'done',
+      payload: upstreamPayload(),
+      // The terminal trap in one line: the finishing job published only ITS own checkpoint. A
+      // builder reading `bundle-committed` off this map finds nothing, and a builder that then
+      // inferred curation from the finishing kind would call a completed fold a failure.
+      publishedValues: new Map([['proposals-authored', { runId: RUN_ID, proposed: 3, skipped: 1 }]]),
+    })
+
+    expect(record.schemaVersion).toBe(3)
+    expect(record.outcome).toBe('done')
+    expect(record.verdictSummary).toEqual({ total: 2, byClass: { timeout: 1, unknown: 1 } })
+    // Whole-record equality on the stages rather than field spot-checks: a builder that kept the
+    // status and dropped the counts would satisfy any per-field check written afterwards.
+    expect(record.stages).toEqual({
+      analysis: { status: 'done' },
+      curation: { status: 'done', curated: 4, deprecated: 2 },
+      proposals: { status: 'done', proposed: 3, skipped: 1 },
+    })
+  })
+
+  it('records the proposal stage as failed without disowning the curation it cannot undo', () => {
+    const record = buildChainTerminalNotification({
+      runId: RUN_ID,
+      finishingKind: 'propose-improvements',
+      finished: 'failed',
+      payload: upstreamPayload(),
+      publishedValues: new Map(),
+    })
+
+    // The bundle is committed and on disk. A terminal that reported `curation: failed` because the
+    // stage AFTER it died would be the record retracting durable work that really happened.
+    expect(record.stages.curation).toEqual({ status: 'done', curated: 4, deprecated: 2 })
+    expect(record.stages.proposals).toEqual({ status: 'failed' })
+    expect(record.outcome).toBe('failed')
+  })
+
+  it('reports a dead analysis honestly from the third job, two payload generations apart', () => {
+    const viaUpstream = buildChainTerminalNotification({
+      runId: RUN_ID,
+      finishingKind: 'propose-improvements',
+      finished: 'done',
+      payload: upstreamPayload({
+        upstream: {
+          analysisStatus: 'failed',
+          curation: { curated: 0, deprecated: 0, complete: true },
+        },
+      }),
+      publishedValues: new Map([['proposals-authored', { runId: RUN_ID, proposed: 0, skipped: 0 }]]),
+    })
+
+    // The chain proceeded with no verdicts and the record says so, even though the job that
+    // reported the terminal is two stages downstream of the one that died.
+    expect(viaUpstream.stages.analysis).toEqual({ status: 'failed' })
+    expect(viaUpstream.verdictSummary).toEqual({ total: 0, byClass: {} })
+    expect(viaUpstream.outcome).toBe('failed')
+
+    // The 388 marker still travels on the payload root for a chain whose curate-memory stage was
+    // reached by the FALLBACK; a build that read only the new nested field would lose it.
+    const viaMarker = buildChainTerminalNotification({
+      runId: RUN_ID,
+      finishingKind: 'propose-improvements',
+      finished: 'done',
+      payload: upstreamPayload({ verdicts: UNKNOWN_VERDICTS_MARKER }),
+      publishedValues: new Map([['proposals-authored', { runId: RUN_ID }]]),
+    })
+    expect(viaMarker.stages.analysis).toEqual({ status: 'failed' })
+  })
+
+  it('omits the proposal stage entirely when the chain never reached it', () => {
+    // curate-memory's permanent failure halts the chain, so the proposal job is never enqueued.
+    // ABSENT is the honest report: a `failed` proposal stage would claim a stage that never ran,
+    // and a `done` one would be a straight fabrication.
+    const halted = buildChainTerminalNotification({
+      runId: RUN_ID,
+      finishingKind: 'curate-memory',
+      finished: 'failed',
+      payload: { runId: RUN_ID, verdictSummary: { total: 1, byClass: { flake: 1 } } },
+      publishedValues: new Map([['candidates-authored', { runId: RUN_ID }]]),
+    })
+
+    expect(Object.keys(halted.stages).sort()).toEqual(['analysis', 'curation'])
+    expect(halted.stages.proposals).toBeUndefined()
+    expect(halted.stages.curation).toEqual({ status: 'failed' })
+    expect(halted.outcome).toBe('failed')
+  })
+
+  it('still reads counts off the finishing job when curate-memory itself is the terminal', () => {
+    // The 388 path, unchanged: a scripted chain whose curate-memory completes without chaining
+    // reports its own published counts. The widening must not cost the shorter chain its record.
+    const record = buildChainTerminalNotification({
+      runId: RUN_ID,
+      finishingKind: 'curate-memory',
+      finished: 'done',
+      payload: { runId: RUN_ID, verdictSummary: { total: 0, byClass: {} } },
+      publishedValues: new Map([
+        ['bundle-committed', { runId: RUN_ID, curated: 1, deprecated: 0 }],
+      ]),
+    })
+
+    expect(record.stages).toEqual({
+      analysis: { status: 'done' },
+      curation: { status: 'done', curated: 1, deprecated: 0 },
+    })
+    expect(record.outcome).toBe('done')
   })
 })
