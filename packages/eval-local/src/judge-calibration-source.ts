@@ -42,7 +42,8 @@ const identitySchema = z.object({ judgeModelId: id, judgeFamily: z.string(), jud
 const common = { schemaVersion: z.literal(JUDGE_CALIBRATION_SCHEMA_VERSION), generationId: digest,
   profileKey: id, profile: profileSchema, identity: identitySchema, constitutionDigest: digest,
   corpusDigest: digest, goldSetDigest: digest, replayEvidenceDigest: digest, evidenceDigest: digest,
-  minN: count.min(2), minNSource: z.enum(['default', 'flag']), selected: count, admitted: count, cost }
+  minN: count.min(2), minNSource: z.enum(['default', 'flag']), selected: count, admitted: count, cost,
+  skippedCounts: z.object({ 'missing-executable-correction': count.min(1) }).strict().optional() }
 const schema = z.union([
   z.object({ ...common, status: z.literal('capability-gap'), reason: z.enum(['no-credential', 'single-family-host']), n: z.literal(0) }).strict(),
   z.object({ ...common, status: z.enum(['calibrated', 'uncalibrated']), n: count,
@@ -133,10 +134,14 @@ function evidenceIdentity(input: JudgeCalibrationReadInput) {
   assertCalibrationPath(input.committedRoot, input.committedRoot)
   if (!lstatSync(input.committedRoot).isDirectory()) throw new Error('committed corpus unavailable')
   const read = loadJudgeCalibrationEvidence(input)
-  if (Object.values(read.skippedCounts).some(n => n !== undefined && n > 0)) throw new JudgeCalibrationEvidenceError(read.skippedCounts)
+  // This semantic exclusion has no executable action oracle. All admission failures still refuse.
+  if (Object.entries(read.skippedCounts).some(([reason, n]) => reason !== 'missing-executable-correction'
+    && n !== undefined && n > 0)) throw new JudgeCalibrationEvidenceError(read.skippedCounts)
+  const missingCorrection = read.skippedCounts['missing-executable-correction']
   return { corpusDigest: read.corpusDigest, goldSetDigest: read.goldSetDigest,
     replayEvidenceDigest: read.replayEvidenceDigest, evidenceDigest: read.evidenceDigest,
-    selected: read.selected, admitted: read.evidence.length }
+    selected: read.selected, admitted: read.evidence.length,
+    ...(missingCorrection ? { skippedCounts: { 'missing-executable-correction': missingCorrection } } : {}) }
 }
 
 /** Project only measured summary data; raw rows, credentials and audit paths cannot cross. */

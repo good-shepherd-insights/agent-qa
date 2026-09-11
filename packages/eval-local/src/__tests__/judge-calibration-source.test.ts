@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createPanelIdentity, resolveJudgeCalibrationMinimum, wilsonInterval } from '@vostride/agent-qa-eval'
 import { sha256hex } from '@vostride/agent-qa-schema'
+import * as evidenceSource from '../judge-calibration-evidence-source.js'
 import { createJudgeCalibrationArtifact, guardJudgeCalibration, judgeCalibrationGenerationId,
   judgeCalibrationPath, publishJudgeCalibration, readJudgeCalibration, type JudgeCalibrationArtifact } from '../judge-calibration-source.js'
 
@@ -28,6 +29,24 @@ function resign(a: JudgeCalibrationArtifact) {
   return a
 }
 function put(path: string, value: unknown) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, JSON.stringify(value)) }
+
+it.each(['invalid-gold', 'missing-source', 'conflicting-gold', 'invalid-executable-correction',
+  'invalid-recorded-model', 'corpus-refused', 'path-refused', 'marks-unreadable', 'handoff-refused',
+  'missing-replay', 'malformed-replay', 'foreign-replay', 'stale-replay', 'ambiguous-replay',
+  'missing-profile-proof', 'foreign-profile', 'missing-candidate'] as const)(
+  'still refuses %s alongside a legitimate semantic exclusion', async reason => {
+    const f = fixture()
+    await f.publish()
+    const before = readFileSync(f.path, 'utf8')
+    const read = evidenceSource.loadJudgeCalibrationEvidence(f.input)
+    vi.spyOn(evidenceSource, 'loadJudgeCalibrationEvidence').mockReturnValue({ ...read,
+      skippedCounts: { 'missing-executable-correction': 2, [reason]: 1 } })
+    expect(() => createJudgeCalibrationArtifact(f.input, { status: 'capability-gap', reason: 'no-credential' })).toThrow()
+    expect(readJudgeCalibration(f.input).kind).toBe('refused')
+    expect((await f.publish()).kind).toBe('publication-failed')
+    expect(readFileSync(f.path, 'utf8')).toBe(before)
+  },
+)
 
 it('reads absent without creating an artifact or report directory', () => {
   const f = fixture()

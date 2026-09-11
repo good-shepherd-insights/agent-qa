@@ -116,6 +116,9 @@ saved replay candidate, and independent truth are separate inputs. Corrected use
 supply executable gold; confirmed-bug marks use their confirmed action. Gold without a
 usable action, missing/foreign/stale/ambiguous replay or identity evidence is counted in
 typed skip diagnostics. A source decision is counted once, not once per member or gold copy.
+Only `missing-executable-correction` is a publishable semantic exclusion: its gold siblings
+remain disclosed in artifact `skippedCounts` and bound into the gold/evidence digests,
+without contributing to measured `n`. Other nonzero admission diagnostics refuse publication.
 
 Saved calibration evidence comes from floor/gate runs and uses their `declared` seed
 policy, including when `eval.seed` is absent. For each source decision, automatic selection

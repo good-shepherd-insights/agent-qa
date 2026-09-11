@@ -212,6 +212,7 @@ export function selectJudgeCalibrationGold(input: { snapshot: CommittedCorpusSna
   const active = (id: string) => snapshot.entries.some(entry => entry.cassetteId === id)
     && !snapshot.excludedLabelIds?.has(id) && !snapshot.labelsById.get(id)?.quarantine
   const rows = new Map<string, JudgeCalibrationGold[]>()
+  const semanticExclusions: unknown[] = []
   const governing = [...latest.values()].flat().sort(compare)
   for (const mark of governing) for (const ref of [...mark.gold].sort(compare)) {
     const cassette = snapshot.cassettesById.get(ref.cassetteId), label = snapshot.labelsById.get(ref.cassetteId)
@@ -239,10 +240,14 @@ export function selectJudgeCalibrationGold(input: { snapshot: CommittedCorpusSna
       skip('missing-source'); continue
     }
     if (mark.kind !== 'confirmed-bug' && label.correction?.correctedAction === undefined) {
+      semanticExclusions.push({ cassette, label, source, sourceLabel })
       skip('missing-executable-correction'); continue
     }
     const effective = effectiveGold(cassette, label)
-    if (effective.kind === 'refused') { skip(effective.reason === 'missing-executable-correction' ? effective.reason : 'invalid-executable-correction'); continue }
+    if (effective.kind === 'refused') {
+      if (effective.reason === 'missing-executable-correction') semanticExclusions.push({ cassette, label, source, sourceLabel })
+      skip(effective.reason === 'missing-executable-correction' ? effective.reason : 'invalid-executable-correction'); continue
+    }
     const recordedModelId = source.receipt.model.declared?.modelId ?? source.receipt.model.resolvedModelId
     if (recordedModelId !== undefined && (typeof recordedModelId !== 'string' || !recordedModelId.trim() || /[\u0000-\u001f\u007f]/.test(recordedModelId))) {
       skip('invalid-recorded-model'); continue
@@ -266,7 +271,8 @@ export function selectJudgeCalibrationGold(input: { snapshot: CommittedCorpusSna
   gold.sort((a, b) => compare(a.decisionId, b.decisionId))
   const goldSetDigest = hash({ governing: governing.map(mark => ({ runId: mark.runId, testIndex: mark.testIndex,
     stepIndex: mark.stepIndex ?? null, markId: mark.markId, ordinal: mark.ordinal, kind: mark.kind,
-    gold: [...mark.gold].sort(compare) })), gold })
+    gold: [...mark.gold].sort(compare) })), gold,
+    ...(semanticExclusions.length ? { semanticExclusions: semanticExclusions.sort(compare) } : {}) })
   return { gold, skippedCounts, goldSetDigest, corpusDigest: computeCorpusDigest(snapshot.entries) }
 }
 

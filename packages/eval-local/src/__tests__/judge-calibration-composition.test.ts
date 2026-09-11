@@ -25,10 +25,10 @@ vi.mock('../judge-binding.js', async original => {
 const roots: string[] = []
 const digest = (value: unknown) => sha256hex(core.canonicalJson(value))
 afterEach(() => { binds.count = 0; binds.fail = false; vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
-function fixture(models: core.CassetteModelReceipt[] = [{}], verdicts: ('equivalent' | 'different' | 'error' | 'unsure')[] = ['equivalent', 'equivalent'], ambiguous = false) {
+function fixture(models: core.CassetteModelReceipt[] = [{}], verdicts: ('equivalent' | 'different' | 'error' | 'unsure')[] = ['equivalent', 'equivalent'], ambiguous = false, excluded: readonly number[] = []) {
   const project = mkdtempSync(join(tmpdir(), 'judge-probe-')); roots.push(project)
   const memberIds = ['claude-sonnet-4', 'gemini-2.5', 'llama-3'].slice(0, verdicts.length)
-  const rows = models.map((model, index) => addEvidence(project, index, model, memberIds, ambiguous))
+  const rows = models.map((model, index) => addEvidence(project, index, model, memberIds, ambiguous, excluded.includes(index)))
   for (const row of rows) { row.report.runIdentity!.corpusDigest = core.computeCorpusDigest(local.readActiveCommittedCorpus(row.committedRoot, row.root).snapshot.entries); row.saveReport() }
   const contexts: ReturnType<typeof createMaskingContext>[] = []
   const disposes: number[] = []
@@ -50,6 +50,48 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], verdicts: ('equival
       contexts.push(context); context.dispose = () => { disposes.push(index); dispose() }; return context } }
   return { input, rows, contexts, disposes, calls: () => calls }
 }
+it.each([false, true])('publishes and rereads legitimate nonexecutable exclusions: all excluded=%s', async allExcluded => {
+  const f = fixture([{}, {}], undefined, false, allExcluded ? [0, 1] : [1])
+  const n = allExcluded ? 0 : 1, skips = { 'missing-executable-correction': allExcluded ? 4 : 2 }
+  const read = local.loadJudgeCalibrationEvidence(f.input)
+  expect(read.evidence).toHaveLength(n)
+  expect(read.skippedCounts).toEqual(skips)
+  const preview = await runJudgePanelCalibration(f.input)
+  expect(preview).toMatchObject({ status: 'uncalibrated', n, minN: 20, skippedCounts: skips,
+    counts: { selected: n, admitted: n, attempted: n }, cost: { usage: { calls: n * 4 } } })
+  expect(f.calls()).toBe(n * 4)
+  const result = await runJudgeCalibration({ kind: 'probe', probe: f.input, commit: true })
+  expect(result.kind).toBe('committed')
+  if (result.kind !== 'committed') throw new Error('expected publication')
+  expect(result.artifact).toMatchObject({ status: 'uncalibrated', n, skippedCounts: skips })
+  expect(f.calls()).toBe(n * 8)
+  expect(publication.readJudgeCalibration({ ...f.input, identity: preview.identity })).toEqual({ kind: 'loaded', artifact: result.artifact })
+  // A valid excluded label change still has to invalidate the measured evidence generation.
+  const row = f.rows[1]!
+  const labelPath = join(row.committedRoot, local.committedLabelPath('shop', row.cassette.id))
+  const originalLabel = readFileSync(labelPath, 'utf8')
+  const label = JSON.parse(originalLabel)
+  label.provenance.receiptDigest = 'f'.repeat(64)
+  expect(core.parseStandaloneLabelRecord(label).ok).toBe(true)
+  for (const stage of ['after-lock', 'before-rename']) {
+    // Remove only the artifact to exercise both publication boundaries instead of unchanged.
+    rmSync(join(f.input.committedRoot, result.path))
+    const drift = await publication.publishJudgeCalibration({ ...f.input, identity: preview.identity,
+      minN: core.resolveJudgeCalibrationMinimum(), artifact: result.artifact,
+      auditDirectory: join(f.input.agentQaRoot, 'eval/calibrate/drift'),
+      onBoundary: at => { if (at === stage) writeFileSync(labelPath, JSON.stringify(label)) } })
+    expect(drift.kind).toBe('input-drift')
+    writeFileSync(labelPath, originalLabel)
+    expect((await publication.publishJudgeCalibration({ ...f.input, identity: preview.identity,
+      minN: core.resolveJudgeCalibrationMinimum(), artifact: result.artifact,
+      auditDirectory: join(f.input.agentQaRoot, 'eval/calibrate/restore') })).kind).toBe('committed')
+  }
+  writeFileSync(labelPath, JSON.stringify(label))
+  const changed = local.loadJudgeCalibrationEvidence(f.input)
+  expect(changed.skippedCounts).toEqual(skips)
+  expect(changed.goldSetDigest).not.toBe(read.goldSetDigest)
+  expect(publication.readJudgeCalibration({ ...f.input, identity: preview.identity }).kind).toBe('refused')
+})
 it('preserves independently measured rates when refused receipt rows are present', async () => {
   const only = fixture([{}]), mixed = fixture([{}, { resolvedModelId: 'claude-sonnet-4' }])
   const a = await runJudgePanelCalibration(only.input), b = await runJudgePanelCalibration(mixed.input)
@@ -185,7 +227,7 @@ it('refuses unavailable saved evidence on valid-composite gap publication with i
   expect(f.calls()).toBe(0); expect(binds.count).toBe(0)
 })
 
-function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[], ambiguous = false) {
+function addEvidence(project: string, index: number, model: core.CassetteModelReceipt, members: readonly string[], ambiguous = false, excluded = false) {
   const root = join(project, '.agent-qa')
   const committedRoot = join(project, 'agent-qa-eval')
   const handoff = makeLocalV2Handoff({ runId: asRunId(`judge-calibration-local-${index}`), scope: { tier: 'product', key: 'shop' } })
@@ -206,12 +248,12 @@ function addEvidence(project: string, index: number, model: core.CassetteModelRe
   const seeded = local.seedCommittedCorpus({ plan, cassettes, committedRoot, seedingOutputBaseDir: join(root, 'seed') })
   if (seeded.refusals.length) throw new Error('Fixture seed refused')
   const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_abcdef012345', runId: handoff.runId,
-    runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0, kind: 'confirmed-bug', origin: 'user', ordinal: 1,
+    runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0, kind: excluded ? 'false-pass' : 'confirmed-bug', origin: 'user', ordinal: 1,
     markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, gold: [], evidence: { confirmed: 0, overturned: 0 } }
   const frozen = core.buildGoldenTrajectoryPlan({ handoff, cassettes, mark, product: 'shop' })
   const freeze = local.seedCommittedCorpus({ plan: { ...plan, cases: frozen.cases }, cassettes: frozen.goldCassettes, committedRoot, seedingOutputBaseDir: join(root, 'gold-seed') })
   if (freeze.refusals.length) throw new Error('Fixture gold refused')
-  mark.gold = frozen.cases.map(row => ({ cassetteId: row.cassetteId, sourceCassetteId: source.id, channel: 'user-mark' }))
+  mark.gold = frozen.cases.map(row => ({ cassetteId: row.cassetteId, sourceCassetteId: source.id, channel: row.labelRecord.label.sourceChannel as 'user-mark' | 'overturned-verdict' }))
   const marks = [mark]
   const saveMarks = () => writeFileSync(join(run, 'marks.jsonl'), marks.map(value => JSON.stringify(value)).join('\n') + '\n')
   saveMarks()
@@ -227,7 +269,7 @@ function addEvidence(project: string, index: number, model: core.CassetteModelRe
   const score = core.scoreCassetteReplay(cassette, outcome, labelRecord)
   const record: local.ScoreRecord = { cassetteId: cassette.id, matcherVersion: 1, score, judge, diffs: [],
     scoringContext: core.createScoringContext({ cassette, outcome, labelRecord, score, judge, judgeRequest: { judgeModelId: judge.judgeModelId, allowSameFamily: false } }) }
-  const profile = { plannerModelId: outcome.replayedModel.modelId, fingerprint: local.computeReplayProfileFingerprintFor({ profile: { provider: 'openai-compatible', model: 'gpt-5', baseURL: 'http://127.0.0.1:1/v1', auth: { mode: 'none' } }, seedPolicy: 'none' }), matcherVersion: 1, judgeModelId: judge.judgeModelId, judgeVersion: judge.judgeVersion }
+  const profile = { plannerModelId: outcome.replayedModel.modelId, fingerprint: local.computeReplayProfileFingerprintFor({ profile: { provider: 'openai-compatible', model: 'gpt-5', baseURL: 'http://127.0.0.1:1/v1', auth: { mode: 'none' } }, seedPolicy: 'declared' }), matcherVersion: 1, judgeModelId: judge.judgeModelId, judgeVersion: judge.judgeVersion }
   const profileKey = core.composeBaselineProfileKey(profile)
   const runRoot = join(root, 'eval/floor', slugBranch(profileKey), `r${index}-seed17`)
   const replaysRoot = join(runRoot, 'replays')
