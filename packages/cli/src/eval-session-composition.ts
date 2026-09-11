@@ -116,6 +116,7 @@ import {
   stageAdversarialProposal,
   FEEDBACK_STAGING_SUBDIR,
   readCommittedCorpusDigest,
+  readProbeAttempt,
   cassetteProductPartition,
   commitCensus,
   commitEvalReport,
@@ -1433,7 +1434,27 @@ async function resolveProbeBinding(
     return { noProbeModel: { kind: 'no-probe-model', reason: capability.reason } }
   }
   const bind = opts.bindProbeAuthor ?? await defaultProbeAuthorBinder(session, opts, product)
-  const binding: AdversarialProbeAuthorBinding = { onCallAttempted: () => {} }
+  // 422-05's pre-invocation seam, filled with the one check that belongs at the tightest
+  // possible instant. The reservation itself is written one layer down, where the durable store
+  // and the budget live; this fires immediately before `createModel` and refuses a call that is
+  // not already accounted for. A throw here prevents the spend outright, so an unreserved call
+  // cannot reach a provider even if some future caller reaches the port by another route.
+  const binding: AdversarialProbeAuthorBinding = {
+    onCallAttempted: attempt => {
+      const state = readProbeAttempt({
+        agentQaRoot: opts.agentQaRoot,
+        key: {
+          product,
+          seedCassetteId: attempt.seedCassetteId,
+          kind: attempt.kind,
+          promptVersion: attempt.promptVersion,
+        },
+      })
+      if (state.kind === 'unattempted') {
+        throw new Error('This probe call holds no durable reservation. Nothing reaches a provider before the spend is recorded.')
+      }
+    },
+  }
   return { author: bind(capability.author, binding), authoringModel: capability.author.authoringModel }
 }
 

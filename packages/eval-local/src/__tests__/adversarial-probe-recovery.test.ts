@@ -309,7 +309,7 @@ describe('422 adversarial probe reservations — one call per tuple, honest inte
       agentQaRoot: f.agentQaRoot,
       reservation: probeReservationOf(key, { promptHash: ADVERSARIAL_PROMPT_HASH, author: AUTHOR }),
     })
-    expect(first.kind).toBe('reserved')
+    expect(first.kind).toBe('claimed')
 
     // A SECOND owner, with a different author, asks for the same tuple. It is refused the
     // allowance and handed the reservation that exists — not a second one beside it.
@@ -317,7 +317,7 @@ describe('422 adversarial probe reservations — one call per tuple, honest inte
       agentQaRoot: f.agentQaRoot,
       reservation: probeReservationOf(key, { promptHash: ADVERSARIAL_PROMPT_HASH, author: OTHER_AUTHOR }),
     })
-    expect(second.kind).toBe('already-reserved')
+    expect(second.kind).toBe('already-claimed')
     expect(second.state.kind).toBe('interrupted')
     if (second.state.kind === 'interrupted') {
       expect(second.state.reservation.authorFamily).toBe(AUTHOR.family)

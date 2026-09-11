@@ -115,7 +115,17 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // by table generation and guardrail-policy digest. It lives BESIDE the staging tree because a
   // staged batch is reviewable data an operator may delete, and the record of what was already
   // decided must outlive it. Nothing here derives, scans or admits.
-  'the adversarial batch staging store under .agent-qa/eval/adversarial/, the durable per-product refresh-state store under .agent-qa/eval/adversarial-state/, and the operator-only admission recheck on the eval-adversarial channel, delegating committed writes to the single sanctioned seeding helper',
+  // Phase 422 D-04/D-10/D-11 (422-06): a FOURTH half — the probe-reservation store under
+  // `.agent-qa/eval/adversarial-probes/<product>/<tupleDigest>.{reservation,completion}.json`. It
+  // exists because the refresh record above CANNOT carry it: that record is named by its own
+  // content digest, and a row claiming work that has not happened yet has no content to be named
+  // by. A reservation is claimed exclusively BEFORE the composition calls a `ProbeAuthorPort`,
+  // and its completion is written once afterwards; a reservation with no completion IS the
+  // interrupted state, derived rather than written, because a dying process cannot record that
+  // it died. The provider-invocation clause below remains UNAMENDED and is not weakened: this
+  // package still constructs no model, resolves no credential and names no provider — it calls a
+  // port the CLI bound (D-10), and it stores what that call cost.
+  'the adversarial batch staging store under .agent-qa/eval/adversarial/, the durable per-product refresh-state store under .agent-qa/eval/adversarial-state/, the probe-reservation store under .agent-qa/eval/adversarial-probes/, and the operator-only admission recheck on the eval-adversarial channel, delegating committed writes to the single sanctioned seeding helper',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single

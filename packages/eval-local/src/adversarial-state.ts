@@ -458,37 +458,220 @@ export function probeReservationOf(
   }
 }
 
-/** 422-06-T2 (RED): declared, inert. */
-export function readProbeAttempt(_input: {
+const probeReservationSchema = z.object({
+  schemaVersion: z.literal(ADVERSARIAL_PROBE_SCHEMA_VERSION),
+  product: z.string().min(1),
+  seedCassetteId: z.string().min(1),
+  kind: z.enum(PROBE_GENERATOR_KINDS),
+  promptVersion: z.number().int().nonnegative(),
+  promptHash: digestField,
+  authorDigest: digestField,
+  authorFamily: z.string().min(1),
+}).strict()
+
+const probeCompletionSchema = z.object({
+  schemaVersion: z.literal(ADVERSARIAL_PROBE_SCHEMA_VERSION),
+  outcome: z.enum(['derived', 'refused', 'invalid', 'error']),
+  text: z.string().min(1).optional(),
+  cassetteId: z.string().min(1).optional(),
+  promptTokens: z.number().int().nonnegative().optional(),
+  completionTokens: z.number().int().nonnegative().optional(),
+  detail: z.string().min(1).optional(),
+}).strict()
+
+/** The tuple's address on disk. NOT content-addressed: this names the QUESTION, not the answer. */
+function probeTupleDigest(key: ProbeReservationKey): string {
+  return createHash('sha256')
+    .update(
+      canonicalJson({
+        product: key.product,
+        seedCassetteId: key.seedCassetteId,
+        kind: key.kind,
+        promptVersion: key.promptVersion,
+      }),
+      'utf8',
+    )
+    .digest('hex')
+}
+
+function probeStateDir(agentQaRoot: string, product: string): string {
+  return join(realpathSync(agentQaRoot), ADVERSARIAL_PROBE_SUBDIR, slugBranch(product))
+}
+
+function reservationFileName(key: ProbeReservationKey): string {
+  return `${probeTupleDigest(key)}.reservation.json`
+}
+
+function completionFileName(key: ProbeReservationKey): string {
+  return `${probeTupleDigest(key)}.completion.json`
+}
+
+/** Write `text` at `file` exactly once, fsynced, with its directory fsynced behind it. */
+function linkOnce(dir: string, file: string, text: string): 'published' | 'exists' {
+  mkdirSync(dir, { recursive: true })
+  const temporary = join(dir, `.${randomUUID()}.tmp`)
+  try {
+    writeFileSync(temporary, text, { flag: 'wx', mode: 0o600 })
+    const fd = openSync(temporary, 'r')
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    let outcome: 'published' | 'exists' = 'published'
+    try {
+      linkSync(temporary, file)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      outcome = 'exists'
+    }
+    const directory = openSync(dir, 'r')
+    try {
+      fsyncSync(directory)
+    } finally {
+      closeSync(directory)
+    }
+    return outcome
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+}
+
+function readJsonIfPresent(file: string): unknown {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+/**
+ * Whether a completion's tokens are actually KNOWN.
+ *
+ * `derived`, `refused` and `invalid` all came back from a provider that reported usage, so both
+ * counts are present. `error` never does. The predicate reads the FIELDS rather than the outcome
+ * word, so a completion that somehow lacks them is reported as unknown rather than as zero.
+ */
+function completionUsageKnown(completion: ProbeCompletion): boolean {
+  return completion.promptTokens !== undefined && completion.completionTokens !== undefined
+}
+
+function attemptStateFrom(dir: string, key: ProbeReservationKey): ProbeAttemptState {
+  const rawReservation = readJsonIfPresent(join(dir, reservationFileName(key)))
+  if (rawReservation === undefined) return { kind: 'unattempted', usageKnown: false }
+  const reservation = probeReservationSchema.parse(rawReservation) as ProbeReservation
+  const rawCompletion = readJsonIfPresent(join(dir, completionFileName(key)))
+  // THE DERIVATION THAT MATTERS. A reservation with no completion is `interrupted`, and it is
+  // read that way rather than written that way because the one thing a dying process cannot do
+  // is record that it died. A status field would have to be updated by the code that failed.
+  if (rawCompletion === undefined) return { kind: 'interrupted', reservation, usageKnown: false }
+  const completion = probeCompletionSchema.parse(rawCompletion) as ProbeCompletion
+  return { kind: 'completed', reservation, completion, usageKnown: completionUsageKnown(completion) }
+}
+
+/** What the durable store says about ONE tuple. An absent tree is an empty history, not a failure. */
+export function readProbeAttempt(input: {
   agentQaRoot: string
   key: ProbeReservationKey
 }): ProbeAttemptState {
-  return { kind: 'unattempted', usageKnown: false }
+  if (!pathPresent(input.agentQaRoot)) return { kind: 'unattempted', usageKnown: false }
+  const dir = probeStateDir(input.agentQaRoot, input.key.product)
+  requireDirectories(dir)
+  if (!pathPresent(dir)) return { kind: 'unattempted', usageKnown: false }
+  return attemptStateFrom(dir, input.key)
 }
 
-/** 422-06-T2 (RED): declared, inert. */
-export function readProbeAttempts(_input: {
+/**
+ * Every attempt this product has on disk, in tuple-digest order.
+ *
+ * The disclosure surface: a report that wants to say "these calls were made and this one is
+ * still unanswered" reads it here. A PRESENT but malformed row is a failure, never silently
+ * dropped — this is the evidence a later refresh declines to spend on.
+ */
+export function readProbeAttempts(input: {
   agentQaRoot: string
   product: string
 }): ProbeAttemptState[] {
-  return []
+  if (!pathPresent(input.agentQaRoot)) return []
+  const dir = probeStateDir(input.agentQaRoot, input.product)
+  requireDirectories(dir)
+  if (!pathPresent(dir)) return []
+  const reservations = readdirSync(dir, { withFileTypes: true })
+    .filter(entry => {
+      if (entry.name.startsWith('.')) return false
+      if (!entry.isFile()) throw new TypeError('unexpected adversarial probe state path')
+      return entry.name.endsWith('.reservation.json')
+    })
+    .map(entry => entry.name)
+    .sort()
+  return reservations.map(name => {
+    const reservation = probeReservationSchema.parse(
+      JSON.parse(readFileSync(join(dir, name), 'utf8')),
+    ) as ProbeReservation
+    if (reservationFileName(reservation) !== name) {
+      throw new TypeError('adversarial probe reservation identity mismatch')
+    }
+    if (slugBranch(reservation.product) !== slugBranch(input.product)) {
+      throw new TypeError('adversarial probe reservation product mismatch')
+    }
+    return attemptStateFrom(dir, reservation)
+  })
 }
 
-/** 422-06-T2 (RED): declared, inert. */
+/**
+ * Claim the allowance for ONE tuple, exclusively, BEFORE anything reaches a provider.
+ *
+ * `already-claimed` is not an error and is not a retry: it is the answer a concurrent owner —
+ * or a later run over the same disk — must get, together with the reservation that actually
+ * exists. Unlike the refresh record above this one is NOT content-addressed, so differing bytes
+ * under one name are not a conflict: two hosts with two authors asking the same question is
+ * exactly the race this arbitrates, and the first claim wins outright.
+ */
 export function reserveProbeCall(input: {
   agentQaRoot: string
   reservation: ProbeReservation
-}): { kind: 'reserved' | 'already-reserved'; state: ProbeAttemptState } {
-  void input
-  return { kind: 'reserved', state: { kind: 'unattempted', usageKnown: false } }
+}): { kind: 'claimed' | 'already-claimed'; state: ProbeAttemptState } {
+  const reservation = probeReservationSchema.parse(input.reservation) as ProbeReservation
+  mkdirSync(input.agentQaRoot, { recursive: true })
+  const dir = probeStateDir(input.agentQaRoot, reservation.product)
+  requireDirectories(dir)
+  const file = join(dir, reservationFileName(reservation))
+  const outcome = linkOnce(dir, file, `${canonicalJson(reservation)}\n`)
+  return {
+    kind: outcome === 'published' ? 'claimed' : 'already-claimed',
+    state: attemptStateFrom(dir, reservation),
+  }
 }
 
-/** 422-06-T2 (RED): declared, inert. */
+/**
+ * Record what ONE reserved call resolved to, write-once.
+ *
+ * Two refusals, both deliberate. A completion for a tuple nothing reserved is refused, because
+ * it would show an answer nobody was ever charged for. A SECOND, different completion for one
+ * tuple is refused, because the completion is the reason a tuple is closed and overwriting it
+ * would erase why — the same law the refresh record keeps, for the same reason. An identical
+ * re-write is `unchanged`: a retry that recomputes the same answer is a no-op, not a conflict.
+ */
 export function completeProbeCall(input: {
   agentQaRoot: string
   key: ProbeReservationKey
   completion: ProbeCompletion
 }): 'published' | 'unchanged' {
-  void input
-  return 'published'
+  const completion = probeCompletionSchema.parse(input.completion) as ProbeCompletion
+  if (!pathPresent(input.agentQaRoot)) {
+    throw new TypeError('adversarial probe completion without a reservation')
+  }
+  const dir = probeStateDir(input.agentQaRoot, input.key.product)
+  requireDirectories(dir)
+  if (!pathPresent(join(dir, reservationFileName(input.key)))) {
+    throw new TypeError('adversarial probe completion without a reservation')
+  }
+  const file = join(dir, completionFileName(input.key))
+  const text = `${canonicalJson(completion)}\n`
+  if (linkOnce(dir, file, text) === 'published') return 'published'
+  if (readFileSync(file, 'utf8') !== text) {
+    throw new Error('adversarial probe completion conflict')
+  }
+  return 'unchanged'
 }

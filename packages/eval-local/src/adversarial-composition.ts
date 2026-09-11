@@ -1125,7 +1125,7 @@ export async function stageAdversarialProposal(
               author: authoringModel,
             }),
           })
-          if (reserved.kind === 'already-reserved') {
+          if (reserved.kind === 'already-claimed') {
             interruptedProbeCalls += 1
             probeSkips.push({ ...row, reason: 'tuple-interrupted' })
             continue
