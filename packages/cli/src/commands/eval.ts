@@ -452,9 +452,9 @@ export function createEvalCommand(): Command {
   cmd.hook('postAction', () => { restoreWarningLogger?.() })
 
   cmd.addCommand(new Command('calibrate')
-    .description('Preview precision on selected operator marks and SOFT weight refresh; publish only with --commit')
-    .option('--commit', 'publish checked revisions and calibration.json')
-    .option('--replace', 'with --commit, replace a divergent calibration marker')
+    .description('Preview label precision and SOFT weight refresh, or probe judge-panel agreement with --judge-panel; publish only with --commit')
+    .option('--commit', 'publish checked label revisions and labels/calibration.json, or reports/judge-calibration/<profile>.json with --judge-panel')
+    .option('--replace', 'with --commit, replace the selected mode’s divergent calibration artifact')
     .option('--min-gold <n>', 'minimum joined gold sources per channel (recorded default: 20; minimum: 2)')
     .option('--judge-panel', 'probe the explicit judge panel against executable gold; preview incurs bounded model calls')
     .option('--min-n <n>', 'minimum independent judge observations (recorded default: 20; minimum: 2)')
