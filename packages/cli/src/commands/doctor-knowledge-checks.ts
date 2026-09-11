@@ -308,7 +308,7 @@ async function doctorPanelDisclosure(input: CreateKnowledgeChecksInput): Promise
     if (preflight.kind === 'capability-gap') return `${prefix}capability gap: ${preflight.reason}`
     const replayProfile = preflight.replayProfile
     const fingerprint = computeReplayProfileFingerprintFor({ profile: replayProfile,
-      seedPolicy: session.evalConfig.seed === undefined ? 'none' : 'declared' })
+      seedPolicy: 'declared' })
     const read = readJudgeCalibration({ committedRoot: resolve(session.configDir, 'agent-qa-eval'),
       agentQaRoot: resolve(session.configDir, '.agent-qa'), identity: preflight.identity,
       profile: { plannerModelId: replayProfile.model, fingerprint,

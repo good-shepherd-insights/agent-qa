@@ -83,7 +83,7 @@ it('copies an explicitly recorded minimum policy without a floor and never rewri
   const f = fixture(), committedRoot = join(f.root, 'agent-qa-eval'); mkdirSync(committedRoot)
   const session = await resolveEvalSession({ configPath: f.configPath, keyOnly: true })
   const profile = await resolveGateProfileIdentity(session)
-  profile.fingerprint = await resolveReplayProfileFingerprint(session, 'none')
+  profile.fingerprint = await resolveReplayProfileFingerprint(session, 'declared')
   const input = { committedRoot, agentQaRoot: join(f.root, '.agent-qa'), profile,
     identity: core.createPanelIdentity(['claude-sonnet-4', 'gemini-2.5']), minN: core.resolveJudgeCalibrationMinimum(20) }
   const artifact = local.createJudgeCalibrationArtifact(input, { status: 'capability-gap', reason: 'single-family-host' })

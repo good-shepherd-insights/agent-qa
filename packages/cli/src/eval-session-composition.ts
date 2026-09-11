@@ -902,8 +902,9 @@ export async function runJudgeCalibrateVerb(session: EvalSession, opts: {
     ...await runJudgeCalibration({ kind: 'capability-gap', reason: preflight.reason,
       minN: preflight.minN, commit: opts.commit, replace: opts.replace }), entries: preflight.entries }
   const replayProfile = preflight.kind === 'eligible' ? preflight.replayProfile : await resolveReplayProfileDeclaration(session)
+  // Calibration discovers saved floor/gate runs, whose producer always declares seeds.
   const fingerprint = computeReplayProfileFingerprintFor({ profile: replayProfile,
-    seedPolicy: session.evalConfig.seed === undefined ? 'none' : 'declared' })
+    seedPolicy: 'declared' })
   const context = {
     committedRoot: resolve(session.configDir, 'agent-qa-eval'), agentQaRoot: resolve(session.configDir, '.agent-qa'),
     // Saved evidence must prove this actual planner/profile; judging does not rerun a planner.
@@ -2321,7 +2322,7 @@ export async function runReportVerb(
         throw new Error('report replay profile unavailable')
       }
       const fingerprint = computeReplayProfileFingerprintFor({ profile: replayProfile,
-        seedPolicy: session.evalConfig.seed === undefined ? 'none' : 'declared', modelOverrides: opts.plannerOverrides })
+        seedPolicy: 'declared', modelOverrides: opts.plannerOverrides })
       calibrationRead = readJudgeCalibration({ committedRoot: resolve(session.configDir, 'agent-qa-eval'), agentQaRoot,
         identity: report.judge, profile: { plannerModelId: replayProfile.model, fingerprint,
           matcherVersion: report.matcherVersion, judgeModelId: report.judge.judgeModelId, judgeVersion: report.judge.judgeVersion } })

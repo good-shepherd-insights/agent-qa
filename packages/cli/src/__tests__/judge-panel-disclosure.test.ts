@@ -33,7 +33,7 @@ async function fixture(verdicts = ['different', 'different'], judges: string[] =
   const session = await resolveEvalSession({ configPath, keyOnly: true })
   const profile = { plannerModelId: 'gpt-5', matcherVersion: 1,
     judgeModelId: f.record.judge.judgeModelId, judgeVersion: f.record.judge.judgeVersion,
-    fingerprint: local.computeReplayProfileFingerprintFor({ profile: { provider: 'openai-compatible', model: 'gpt-5', baseURL: 'http://127.0.0.1:1/v1', auth: { mode: 'none' } }, seedPolicy: 'none' }) }
+    fingerprint: local.computeReplayProfileFingerprintFor({ profile: { provider: 'openai-compatible', model: 'gpt-5', baseURL: 'http://127.0.0.1:1/v1', auth: { mode: 'none' } }, seedPolicy: 'declared' }) }
   return { ...f, root, session, input: { agentQaRoot: join(root, '.agent-qa'), committedRoot: join(root, 'agent-qa-eval'),
     profile, identity: f.record.judge, minN: core.resolveJudgeCalibrationMinimum(20) } }
 }

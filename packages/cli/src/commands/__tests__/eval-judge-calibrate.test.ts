@@ -9,9 +9,9 @@ import * as llm from '../../llm-utils.js'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { asRunId, sha256hex, slugBranch, type MarkReceipt } from '@vostride/agent-qa-schema'
 const { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } = await import(new URL('../../../../eval-local/src/__tests__/fixtures/local-handoff-fixture.js', import.meta.url).href)
-const { capturingStub, judgeGenerateResult } = await import(new URL('../../../../eval-local/src/__tests__/fixtures/replay-fixtures.js', import.meta.url).href)
+const { capturingStub, judgeGenerateResult, actionGenerateResult } = await import(new URL('../../../../eval-local/src/__tests__/fixtures/replay-fixtures.js', import.meta.url).href)
 import { files as filesUnder } from '../../gates/__tests__/feedback-fixture.js'
-import { runJudgeCalibrateVerb, resolveEvalSession } from '../../eval-session-composition.js'
+import { runJudgeCalibrateVerb, resolveEvalSession, resolveReplayProfileDeclaration } from '../../eval-session-composition.js'
 import { getActiveMaskingContext, getActiveAuditSink } from '@vostride/agent-qa-safety'
 
 const boundary = vi.hoisted(() => ({ calls: 0, binds: 0, comparisons: 0, publications: 0,
@@ -85,6 +85,48 @@ async function invoke(configPath: string, flags = ['--judge-panel', '--json']) {
   const stdout = vi.mocked(console.log).mock.calls.map(row => row.join(' ')).join('\n')
   return { stdout, result: flags.includes('--json') ? JSON.parse(stdout) : undefined, exit: process.exitCode }
 }
+
+// Use the actual saved-run producer; transport alone is replaced by the existing fake factory.
+async function produceSavedRun(f: ReturnType<typeof fixture>, floor = false) {
+  const session = await resolveEvalSession({ configPath: f.configPath })
+  const profile = await resolveReplayProfileDeclaration(session)
+  const root = join(f.project, '.agent-qa')
+  rmSync(join(root, 'eval/floor'), { recursive: true, force: true })
+  const planner = capturingStub(() => actionGenerateResult(), profile.model)
+  boundary.overrides.languageModels = { ...boundary.overrides.languageModels, ...planner.languageModels }
+  const snapshot = local.readActiveCommittedCorpus(f.committedRoot, root)
+  const identity = core.createPanelIdentity(f.stubs.map(stub => Object.keys(stub.languageModels)[0]!))
+  const profileInputs = { plannerModelId: profile.model, matcherVersion: 1,
+    judgeModelId: identity.judgeModelId, judgeVersion: identity.judgeVersion }
+  const fingerprint = local.computeReplayProfileFingerprintFor({ profile, seedPolicy: 'declared' })
+  const profileKey = core.composeBaselineProfileKey({ ...profileInputs, fingerprint })
+  const common = { committedRoot: f.committedRoot, cassettesRoot: join(f.committedRoot, 'cassettes'),
+    agentQaRoot: root, profile, auth: { kind: 'none' as const }, clock: () => 0,
+    maskingContextFactory: session.maskingContextFactory,
+    judge: { members: identity.members!.map(member => ({ profile: { ...profile, model: member.judgeModelId }, auth: { kind: 'none' as const } })) } }
+  const produced = floor ? await local.runNoiseFloorMeasurement({ ...common, profileKeyInputs: profileInputs,
+    seeds: [11, 29], repeats: 3, bootstrapSeed: 7, commit: false, reportOutputBaseDir: join(root, 'floor-audit') })
+    : await local.replayCorpusOnce({ ...common, runRoot: join(root, 'eval/gate', slugBranch(profileKey)),
+      selected: local.loadCassetteBundles(common.cassettesRoot).loaded,
+      corpusDigest: core.computeCorpusDigest(snapshot.snapshot.entries), source: 'committed', seed: 11,
+      labelRecords: snapshot.snapshot.labelsById, corpusEntriesById: snapshot.corpusEntriesById,
+      excludedLabelIds: snapshot.snapshot.excludedLabelIds,
+      productByCassetteId: new Map(snapshot.snapshot.entries.map(entry => [entry.cassetteId, entry.product])),
+      replayOutputBaseDir: join(root, 'gate-audit') })
+  boundary.calls = boundary.binds = boundary.comparisons = 0
+  return { produced, profile: { ...profileInputs, fingerprint }, identity, agentQaRoot: root, committedRoot: f.committedRoot }
+}
+
+it('admits actual saved gate output without eval.seed through preview, publication and read-back', async () => {
+  const f = fixture()
+  const saved = await produceSavedRun(f)
+  expect(local.loadJudgeCalibrationEvidence(saved)).toMatchObject({ selected: 1, evidence: [expect.anything()] })
+  const preview = await invoke(f.configPath)
+  expect(preview.result.counts).toMatchObject({ selected: 1, admitted: 1, attempted: 1 })
+  const committed = await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
+  expect(committed.result.kind).toBe('committed')
+  expect(local.readJudgeCalibration(saved)).toEqual({ kind: 'loaded', artifact: committed.result.artifact })
+})
 
 it('forces four calls on a guarded deterministic non-tie without changing committed bytes', async () => {
   const f = fixture(), before = bytes(f.committedRoot)
@@ -255,7 +297,7 @@ function addEvidence(project: string, index: number, model: core.CassetteModelRe
   const score = core.scoreCassetteReplay(cassette, outcome, labelRecord)
   const record: local.ScoreRecord = { cassetteId: cassette.id, matcherVersion: 1, score, judge, diffs: [],
     scoringContext: core.createScoringContext({ cassette, outcome, labelRecord, score, judge, judgeRequest: { judgeModelId: judge.judgeModelId, allowSameFamily: false } }) }
-  const profile = { plannerModelId: outcome.replayedModel.modelId, fingerprint: local.computeReplayProfileFingerprintFor({ profile: { provider: 'openai-compatible', model: 'gpt-5', baseURL: 'http://127.0.0.1:1/v1', auth: { mode: 'none' } }, seedPolicy: 'none' }), matcherVersion: 1, judgeModelId: judge.judgeModelId, judgeVersion: judge.judgeVersion }
+  const profile = { plannerModelId: outcome.replayedModel.modelId, fingerprint: local.computeReplayProfileFingerprintFor({ profile: { provider: 'openai-compatible', model: 'gpt-5', baseURL: 'http://127.0.0.1:1/v1', auth: { mode: 'none' } }, seedPolicy: 'declared' }), matcherVersion: 1, judgeModelId: judge.judgeModelId, judgeVersion: judge.judgeVersion }
   const profileKey = core.composeBaselineProfileKey(profile)
   const runRoot = join(root, 'eval/floor', slugBranch(profileKey), `r${index}-seed17`)
   const replaysRoot = join(runRoot, 'replays')
