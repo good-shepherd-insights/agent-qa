@@ -754,14 +754,63 @@ function readMisdirectionPosture(
  * path — an exposure dropped here would be an exposure the record stops disclosing — and it stops
  * claiming `memoryMisdirectionRuledOut`, which is the whole content of what was refused.
  */
-function honestUnknownFloor(refused: Verdict): Verdict {
+function honestUnknownFloor(refused: Verdict, test: PerTestOutcome | undefined): Verdict {
   const floor = deterministicVerdict(
     'unknown',
     UNKNOWN_SIGNAL_RATIONALE,
-    [...refused.evidence.citedSteps],
+    capturedStepsOnly(refused.evidence.citedSteps, test),
     refused.perTest,
   )
   return { ...floor, memoryMisdirectionRuledOut: false }
+}
+
+/**
+ * Keep only the steps the member actually captured, in the member's own order.
+ *
+ * A citation is carried onto a floor verdict to preserve the disclosure it covered, and one way
+ * to earn a refusal in the first place is to cite a step that does not exist. Carrying that
+ * forward would persist an artifact the validator rejects for a reason this arm did not create.
+ */
+function capturedStepsOnly(
+  cited: readonly number[],
+  test: PerTestOutcome | undefined,
+): number[] {
+  if (test === undefined) return []
+  const captured = new Set(test.steps.map((step) => step.stepIndex))
+  return test.steps
+    .map((step) => step.stepIndex)
+    .filter((stepIndex) => captured.has(stepIndex) && cited.includes(stepIndex))
+}
+
+/**
+ * Give a member the author degraded back the citation of the claim that was refused (422-15).
+ *
+ * ONLY under a published ledger, and only for a member that actually fell to the floor. The
+ * widening exists so the circularity disclosure survives the fall: without it a member refused
+ * because a record on a CITED step flipped lands as an `unknown` beside the failing step's own
+ * held ledger, with no trace of the record that caused it. For a run whose arbiter never ran
+ * there is no disclosure to preserve, and the floor stays byte-identical to what 389 wrote.
+ */
+function widenRefusedFloorPaths(
+  verdicts: readonly Verdict[],
+  degradedPaths: readonly { readonly perTest: number; readonly citedSteps: readonly number[] }[],
+  handoff: CompletedRunHandoff,
+): Verdict[] {
+  if (degradedPaths.length === 0) return [...verdicts]
+  const testsByIndex = new Map(handoff.tests.map((test) => [test.testIndex, test]))
+  return verdicts.map((verdict) => {
+    const refused = degradedPaths.find((path) => path.perTest === verdict.perTest)
+    if (refused === undefined || verdict.class !== 'unknown') return verdict
+    const widened = capturedStepsOnly(
+      [...verdict.evidence.citedSteps, ...refused.citedSteps],
+      testsByIndex.get(verdict.perTest),
+    )
+    if (widened.length === verdict.evidence.citedSteps.length) return verdict
+    return {
+      ...verdict,
+      evidence: { ...verdict.evidence, citedSteps: widened },
+    } as Verdict
+  })
 }
 
 /**
@@ -825,7 +874,9 @@ function enforceMisdirectionFloor(input: {
     )
     if (newlyRefused.size > 0) {
       downgraded = input.verdicts.map((verdict) =>
-        newlyRefused.has(verdict.perTest) ? honestUnknownFloor(verdict) : verdict,
+        newlyRefused.has(verdict.perTest)
+          ? honestUnknownFloor(verdict, testsByIndex.get(verdict.perTest))
+          : verdict,
       )
     }
   }
@@ -983,7 +1034,14 @@ function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler
                     capabilities.readEvidenceBlob?.(payload.runId, sha),
                 }),
           })
-          verdicts = result.verdicts
+          // 422-15: a member the author refused keeps the citation of the claim it refused, so
+          // the circularity disclosure computed below still covers every exposure that claim did.
+          // Gated on a published ledger: with none there is nothing to disclose and the floor
+          // stays exactly the array 389 wrote.
+          verdicts =
+            publishedEvidence === undefined
+              ? result.verdicts
+              : widenRefusedFloorPaths(result.verdicts, result.degradedPaths, handoff)
           for (const parts of result.authoredParts) authoredParts.set(parts.perTest, parts)
         }
 

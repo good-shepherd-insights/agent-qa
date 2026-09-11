@@ -314,6 +314,19 @@ export interface AuthorRunAnalysisResult {
   /** Analyzed tests that failed validation after the single repair and kept their floor. */
   readonly degradedTests: number[]
   /**
+   * For each degraded member, the cited steps of the LAST candidate the author built for it.
+   *
+   * The floor a refused member falls back to cites nothing, which is correct for a verdict that
+   * asserts nothing — but the circularity disclosure is computed over the verdict's PATH, so a
+   * floor with no citation discloses only the failing step's exposures. A claim refused because a
+   * record on a cited step flipped would then land as an `unknown` beside a HELD ledger, having
+   * forgotten the record that caused it. The handler unions these back in (422-15).
+   */
+  readonly degradedPaths: readonly {
+    readonly perTest: number
+    readonly citedSteps: readonly number[]
+  }[]
+  /**
    * What this authorship SPENT, recorded once (422 D-20).
    *
    * Once, because `recordLlmAuthorship` memoizes: a resumed job reads the recorded value and
@@ -664,6 +677,15 @@ function candidateOf(entry: AuthoredTestEntry): CandidatePair {
 interface AttemptOutcome {
   readonly accepted: Map<number, CandidatePair>
   readonly rejects: { perTest: number; reason: string }[]
+  /**
+   * The cited steps of the candidate built for each pending test — accepted or refused.
+   *
+   * Kept because a REFUSED claim's citation is the only record of which steps the analysis was
+   * actually about, and the floor it degrades to cites nothing. The circularity disclosure is
+   * computed over a verdict's path, so a floor that forgot the citation would also forget every
+   * exposure outside the failing step — including, in the worst case, the record that flipped.
+   */
+  readonly citedByTest: Map<number, readonly number[]>
 }
 
 /**
@@ -688,6 +710,7 @@ function evaluateAttempt(
     return {
       accepted: new Map(),
       rejects: [...pending].map((perTest) => ({ perTest, reason })),
+      citedByTest: new Map(),
     }
   }
 
@@ -702,6 +725,7 @@ function evaluateAttempt(
 
   const rejects: { perTest: number; reason: string }[] = []
   const candidates = new Map<number, CandidatePair>()
+  const citedByTest = new Map<number, readonly number[]>()
   const testsByIndex = new Map(handoff.tests.map((test) => [test.testIndex, test]))
   const rootPosture = input.rootPosture ?? 'eval-root'
   for (const perTest of pending) {
@@ -711,6 +735,7 @@ function evaluateAttempt(
       continue
     }
     const pair = candidateOf(entry)
+    citedByTest.set(perTest, [...pair.verdict.evidence.citedSteps])
     // THE STAMP GOES ON BEFORE THE GATE SEES THE CANDIDATE (422 D-17/D-18). Stamping after
     // validation would hand the gate a verdict carrying no evidence — which it would refuse for
     // the wrong reason, spending the one repair on a message the author cannot act on — and then
@@ -747,7 +772,7 @@ function evaluateAttempt(
     }
   }
 
-  return { accepted: candidates, rejects }
+  return { accepted: candidates, rejects, citedByTest }
 }
 
 function repairFeedback(rejects: readonly { perTest: number; reason: string }[]): string {
@@ -807,6 +832,7 @@ export async function authorRunAnalysis(
   const accepted = new Map<number, CandidatePair>()
   let pending = new Set(analyzed)
   let lastRejects: readonly { perTest: number; reason: string }[] = []
+  const lastCited = new Map<number, readonly number[]>()
   let modelCalls = 0
 
   for (let attempt = 0; attempt <= AUTHOR_REPAIR_CAP && pending.size > 0; attempt += 1) {
@@ -817,6 +843,7 @@ export async function authorRunAnalysis(
     const output = await model.generate(attemptRequest)
     modelCalls += 1
     const outcome = evaluateAttempt(output.text, pending, input)
+    for (const [perTest, cited] of outcome.citedByTest) lastCited.set(perTest, cited)
     for (const [perTest, pair] of outcome.accepted) accepted.set(perTest, pair)
     pending = new Set([...pending].filter((perTest) => !accepted.has(perTest)))
     lastRejects = outcome.rejects
@@ -841,6 +868,9 @@ export async function authorRunAnalysis(
       estimatedTokens: compacted.estimatedTokens,
     },
     degradedTests: analyzed.filter((testIndex) => !accepted.has(testIndex)),
+    degradedPaths: analyzed
+      .filter((testIndex) => !accepted.has(testIndex))
+      .map((perTest) => ({ perTest, citedSteps: lastCited.get(perTest) ?? [] })),
     usage: {
       modelCalls,
       repairCalls: Math.max(0, modelCalls - 1),
