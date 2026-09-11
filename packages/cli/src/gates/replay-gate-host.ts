@@ -22,8 +22,34 @@ import type {
   RunReplayGateResult,
 } from '../eval-session-composition.js'
 
+/**
+ * Writer authority the CALLER already holds, structurally the curation tail's
+ * `CurationWriterAuthority` (422 D-14).
+ *
+ * Declared here rather than imported so this DATA bridge keeps its one-way import list: the
+ * gate carries a lease it was lent, it does not reach into the curation subtree to learn what
+ * a lease is.
+ */
+export interface ReplayGateClaimAuthority {
+  readonly leaseId: string
+  readonly epoch: number
+}
+
 export interface ReplayGateHostDeps {
   resolveTrustPriors?: ResolveTrustPriors
+  /**
+   * Borrowed writer authority, resolved at CLAIM time and never captured at composition
+   * (422 D-14).
+   *
+   * A FUNCTION rather than a value, and that is the whole contract: the host that owns the
+   * pump composes this bridge BEFORE it acquires its lease, so a value read at composition is
+   * always `undefined` and every borrowed call would fall back to acquiring a lease the same
+   * process already holds — which the writer answers `held`, by the caller, against itself.
+   *
+   * Answering `undefined` at invocation is the STANDALONE posture and is not a failure: the
+   * operator's `eval replay-gate` verb owns no lease and must acquire and release its own.
+   */
+  resolveClaimAuthority?: () => ReplayGateClaimAuthority | undefined
   configPath: string
   agentQaRoot: string
   record: boolean
@@ -61,6 +87,8 @@ export function createReplayGatePortForHost(input: {
   resolveTrustPriors?: ResolveTrustPriors
   configPath: string
   agentQaRoot: string
+  /** See {@link ReplayGateHostDeps.resolveClaimAuthority} — consulted per call, never here. */
+  resolveClaimAuthority?: () => ReplayGateClaimAuthority | undefined
 }): ReplayGatePort {
   const resolveTrustPriors = input.resolveTrustPriors ?? trustPriorsForHost(input).resolve
   return {

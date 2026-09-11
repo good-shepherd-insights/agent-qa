@@ -193,6 +193,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // because this list is compared by exact equality against the barrel's own order.
   'FunctionOriginError',
   'FunctionScopeError',
+  // 422 D-14: the Gate-1 acknowledgement refusal. An error CLASS, in ASCII sort position, and
+  // it opens no path around the dispatch for the same reason every other refusal here does not:
+  // it carries a candidate id and the writer's own word for the refusal, and nothing callable.
+  'Gate1ReceiptNotPersistedError',
   'IncompleteJobKindDeclarationError',
   'InconsistentJobKindDeclarationError',
   'JobCancellationNotRequestedError',

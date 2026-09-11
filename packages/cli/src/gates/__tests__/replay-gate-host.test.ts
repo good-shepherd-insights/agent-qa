@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Gate1ReceiptNotPersistedError } from '@vostride/agent-qa-agent'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { renderGate1Line } from '@vostride/agent-qa-eval'
@@ -27,7 +28,11 @@ import {
   runReplayGateVerb,
   serializeReplayGateReceipt,
 } from '../../eval-session-composition.js'
-import { createReplayGateHost, type ReplayGateHostDeps } from '../replay-gate-host.js'
+import {
+  createReplayGateHost,
+  type ReplayGateClaimAuthority,
+  type ReplayGateHostDeps,
+} from '../replay-gate-host.js'
 import * as bridge from '../replay-gate-host.js'
 import * as evalSession from '../../eval-session-composition.js'
 import * as llm from '../../llm-utils.js'
@@ -685,6 +690,144 @@ describe('417 DATA replay gate bridge', () => {
     await runReplayGateVerb(session, candidateId, { agentQaRoot: join(root, 'custom-runtime') })
     expect(auth.mock.calls.map(([name]) => name)).toEqual(['planner', 'judge'])
   })
+
+  // ---- 422 D-14: borrowed claim-time authority and mandatory persistence acknowledgement ----
+  //
+  // Two separate claims, and they are separate on purpose. The FIRST is about whose fence the
+  // write happens under: a job running inside the pump already holds the writer lease, so a gate
+  // that acquired its own would be told `held` — by itself — and would print a receipt nobody
+  // recorded. The SECOND is about what the PORT is allowed to hand back: the verb may render a
+  // receipt it could not record (an operator wants to see what would have been written), but a
+  // caller that treats that as a screening result has spent replay work and recorded evidence
+  // the store will never agree with.
+
+  it.each(['pass', 'fail', 'abstain'] as const)(
+    '422 records a borrowed %s receipt under the lender epoch, acquiring and releasing nothing',
+    async (verdict) => {
+      const receipt = completeGate1Receipt(candidateId, { verdict })
+      deps.runReplayGate = async () => ({
+        kind: 'receipt', receipt, lines: [], notices: [], refusals: [], modelCalls: 0, wallClockMs: 0,
+      })
+      const host = createReplayGateHost({
+        ...deps,
+        resolveClaimAuthority: () => ({ leaseId: 'pump-lease', epoch: 7 }),
+      })
+      expect(await host.run(candidateId)).toMatchObject({ kind: 'receipt', recorded: 'appended' })
+      expect(deps.curation!.recordGateReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({ lease: { leaseId: 'pump-lease', epoch: 7 }, receipt }),
+      )
+      // ZERO acquire, ZERO release: the caller still owns its fence when this returns.
+      expect(calls).toEqual(['write'])
+      expect(deps.curation!.maintenance.acquireWriterLease).not.toHaveBeenCalled()
+      expect(deps.curation!.maintenance.releaseLease).not.toHaveBeenCalled()
+      // Every verdict reaches the writer — a fail and an abstain are gate results, not non-events.
+      expect(await host.port.runReplayGate(asRecordId(candidateId))).toEqual(receipt)
+      expect(deps.curation!.recordGateReceipt).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it('422 resolves borrowed authority at invocation, never when the bridge is composed', async () => {
+    let held: ReplayGateClaimAuthority | undefined
+    const resolveClaimAuthority = vi.fn(() => held)
+    const host = createReplayGateHost({ ...deps, resolveClaimAuthority })
+    // The pump composes this bridge BEFORE it takes its lease. A value captured here would be
+    // `undefined` forever, and every borrowed call would try to acquire what it already holds.
+    expect(resolveClaimAuthority).not.toHaveBeenCalled()
+    held = { leaseId: 'pump-lease', epoch: 9 }
+    await host.run(candidateId)
+    expect(resolveClaimAuthority).toHaveBeenCalledTimes(1)
+    expect(calls).toEqual(['write'])
+    expect(deps.curation!.recordGateReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ lease: { leaseId: 'pump-lease', epoch: 9 } }),
+    )
+  })
+
+  it('422 refuses a stale borrowed fence, releasing nothing it never acquired', async () => {
+    deps.curation = {
+      ...deps.curation!,
+      recordGateReceipt: vi.fn(async () => {
+        calls.push('write')
+        throw new Error('writer authority lost; held epoch 7, observed 9')
+      }),
+    }
+    const host = createReplayGateHost({
+      ...deps,
+      resolveClaimAuthority: () => ({ leaseId: 'pump-lease', epoch: 7 }),
+    })
+    await expect(host.run(candidateId)).rejects.toThrow('writer authority lost')
+    expect(calls).toEqual(['write'])
+    // The borrowed path releases NOTHING on the error path either — the lease is not its to drop.
+    expect(deps.curation!.maintenance.releaseLease).not.toHaveBeenCalled()
+    await expect(host.port.runReplayGate(asRecordId(candidateId))).rejects.toThrow(
+      'writer authority lost',
+    )
+  })
+
+  it('422 refuses to hand a caller a receipt the writer never acknowledged', async () => {
+    deps.curation = {
+      ...deps.curation!,
+      maintenance: {
+        ...deps.curation!.maintenance,
+        acquireWriterLease: vi.fn(() => ({
+          kind: 'held' as const,
+          holder: { leaseId: 'other', epoch: 5, pid: 1, heartbeatAtMs: 0 },
+        })),
+      },
+    }
+    const host = createReplayGateHost(deps)
+    // The VERB still renders it: an operator is entitled to see what would have been recorded.
+    expect(await host.run(candidateId)).toMatchObject({ kind: 'receipt', recorded: 'lease-held' })
+    // The PORT does not, and the refusal names which refusal it met rather than collapsing
+    // a transient lease contention into the same fact as a deliberate dry run.
+    const refusal = await host.port.runReplayGate(asRecordId(candidateId)).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    expect(refusal).toBeInstanceOf(Gate1ReceiptNotPersistedError)
+    expect(refusal).toMatchObject({ candidateId, recorded: 'lease-held' })
+    expect(String(refusal)).toContain('establishes no screening result')
+    // The bytes of a receipt nothing stored never cross the port at all.
+    expect(Object.values(refusal as object)).not.toContainEqual(completeGate1Receipt(candidateId))
+  })
+
+  it('422 refuses a dry-run receipt at the port while the verb still renders it', async () => {
+    const host = createReplayGateHost({ ...deps, record: false })
+    expect(await host.run(candidateId)).toMatchObject({ recorded: 'dry-run' })
+    await expect(host.port.runReplayGate(asRecordId(candidateId))).rejects.toBeInstanceOf(
+      Gate1ReceiptNotPersistedError,
+    )
+    expect(calls).toEqual([])
+  })
+
+  it('422 lends the host port its claim authority per call and refuses an unrecorded receipt', async () => {
+    const receipt = completeGate1Receipt(candidateId)
+    let recorded: 'appended' | 'lease-refused' = 'lease-refused'
+    const verb = vi
+      .spyOn(evalSession, 'runReplayGateVerb')
+      .mockImplementation(async () => ({
+        kind: 'receipt' as const, receipt, recorded, lines: [], notices: [], exit: 0 as const,
+        maxScreens: 64, maxScreensSource: 'default' as const, k: 3, kSource: 'default' as const,
+      }))
+    let held: ReplayGateClaimAuthority | undefined
+    const resolveClaimAuthority = vi.fn(() => held)
+    const port = bridge.createReplayGatePortForHost({
+      configPath: deps.configPath,
+      agentQaRoot: deps.agentQaRoot,
+      resolveClaimAuthority,
+    })
+    expect(resolveClaimAuthority).not.toHaveBeenCalled()
+    held = { leaseId: 'pump-lease', epoch: 3 }
+    await expect(port.runReplayGate(asRecordId(candidateId))).rejects.toBeInstanceOf(
+      Gate1ReceiptNotPersistedError,
+    )
+    expect(verb.mock.calls[0]?.[2]).toMatchObject({
+      claimAuthority: { leaseId: 'pump-lease', epoch: 3 },
+    })
+    recorded = 'appended'
+    expect(await port.runReplayGate(asRecordId(candidateId))).toEqual(receipt)
+    expect(resolveClaimAuthority).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps the bridge behind the existing eval session seam with DATA-only imports', () => {
     const source = readFileSync(new URL('../replay-gate-host.ts', import.meta.url), 'utf8')
     expect(source).not.toMatch(/from ['"]@vostride\/agent-qa-(eval|knowledge)/)
