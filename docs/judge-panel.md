@@ -63,6 +63,9 @@ the combined family display and `judgeVersion: 2`. Scores, Gate-1 receipts and c
 carry that identity. A singleton has the plain single-judge block, without `panelSize`
 or composite members; direct/singleton equivalence is at the same constitution version.
 A mixed single/panel batch is `mixed-judge-identity`, not a synthesized comparator.
+The exported comparison helper also normalizes a one-member bound port before any calls.
+An empty port has no judge comparison: the helper throws before calls or usage stamping;
+normal replay handles an empty declaration as no judge before reaching that helper.
 
 Changing the panel, planner, profile fingerprint or judge version changes the profile key.
 The new profile needs its own measured floor and designated baseline; Gate 1's cache starts

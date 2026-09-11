@@ -12,7 +12,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ModelProfile } from '@vostride/agent-qa-model'
 import { resolveCapabilities } from '@vostride/agent-qa-model'
-import { buildJudgePrompt, JUDGE_CONFIG } from '@vostride/agent-qa-eval'
+import { adjudicatePanelComparison, judgePairwise, buildJudgePrompt, JUDGE_CONFIG, type UsageAggregator } from '@vostride/agent-qa-eval'
 import type { JudgeQuestion } from '@vostride/agent-qa-eval'
 
 // Capture only the arguments; every handle still comes from the real model factory.
@@ -37,6 +37,49 @@ import {
 import type { CapturedCallOptions, StubGenerateResult } from './fixtures/replay-fixtures.js'
 
 const SYSTEM = 'You are a strict equivalence judge. Respond with a JSON verdict object.'
+
+it.each(['equivalent', 'different', 'unsure', 'swap-disagreement', 'error'] as const)(
+  'public singleton binding/comparison equals direct judge outcome and usage: %s', async scenario => {
+    const evidence = { stepText: 'Compare saved values', question: {
+      kind: 'value-equivalence' as const, goldValue: 'gold value', candidateValue: 'candidate value',
+    } }
+    const makeInput = () => {
+      const stub = capturingStub(index => {
+        if (scenario === 'error') throw new Error('private fixture transport failure')
+        return judgeGenerateResult(scenario === 'swap-disagreement' ? (index === 0 ? 'equivalent' : 'different') : scenario, 'high')
+      })
+      return { stub, input: { profile: stubProfile(), auth: noneAuth,
+        modelOverrides: { languageModels: stub.languageModels } } }
+    }
+    const direct = makeInput(), singleton = makeInput()
+    const directUsage: UsageAggregator = { calls: 0 }, singletonUsage: UsageAggregator = { calls: 0 }
+    const expected = await judgePairwise(bindJudgePort(direct.input), evidence, directUsage)
+    const actual = await adjudicatePanelComparison(bindJudgePanel([singleton.input]), evidence, singletonUsage)
+    expect(actual).toEqual(expected)
+    expect(singletonUsage).toEqual(directUsage)
+    expect(singletonUsage.calls).toBe(2)
+    expect(singletonUsage).not.toHaveProperty('members')
+    expect(actual).not.toHaveProperty('members')
+    expect(singleton.stub.captured).toHaveLength(direct.stub.captured.length)
+    if (scenario === 'error') expect(actual).toMatchObject({ kind: 'error', reason: 'provider-error', detail: 'judge provider call failed' })
+    else {
+      expect(singleton.stub.captured).toHaveLength(2)
+      expect(singletonUsage).toEqual({ calls: 2, inputTokens: 20, outputTokens: 4 })
+      const prompts = singleton.stub.captured.map(boundaryUserText)
+      expect(prompts[0]).not.toBe(prompts[1])
+      expect(prompts).toEqual(direct.stub.captured.map(boundaryUserText))
+    }
+  },
+)
+it('public empty binding cannot adjudicate a question or stamp panel usage', async () => {
+  const before = factoryProfiles.length, usage: UsageAggregator = { calls: 0 }
+  const port = bindJudgePanel([])
+  await expect(adjudicatePanelComparison(port, { stepText: 'No judge', question: {
+    kind: 'value-equivalence', goldValue: 'a', candidateValue: 'a',
+  } }, usage)).rejects.toThrow('Cannot adjudicate a comparison without a judge')
+  expect(factoryProfiles).toHaveLength(before)
+  expect(usage).toEqual({ calls: 0 })
+})
 
 const FRAMED_PROMPT = [
   'Are ITEM A and ITEM B the same control?',

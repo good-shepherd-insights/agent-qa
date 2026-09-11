@@ -318,9 +318,11 @@ export async function judgePairwise(
   return { kind: 'settled', resolution: first.verdict, confidence }
 }
 
-/** Pool the SAME question before the existing tie dispatcher selects a result. */
+/** Pool the SAME question; an empty port has no comparison, a singleton uses the direct law. */
 export async function adjudicatePanelComparison(port: AdjudicationPort, evidence: JudgeTieEvidence, usage: UsageAggregator = { calls: 0 }): Promise<PairwiseOutcome> {
   if (!('members' in port)) return judgePairwise(port, evidence, usage)
+  if (port.members.length === 0) throw new TypeError('Cannot adjudicate a comparison without a judge')
+  if (port.members.length === 1) return judgePairwise(port.members[0]!, evidence, usage)
   const members: JudgeMemberOutcome[] = []
   for (const member of port.members) {
     const memberUsage: UsageAggregator = { calls: 0 }
