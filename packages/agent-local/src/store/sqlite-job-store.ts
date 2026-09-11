@@ -22,6 +22,7 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   JobCancellationNotRequestedError,
   MissingIdempotencyKeyError,
+  QuarantinedJobRequeueError,
   StaleJobStoreEpochError,
 } from '@vostride/agent-qa-agent'
 import type {
@@ -262,6 +263,26 @@ const QUARANTINE_SCAN_BOUND = 1_000
  */
 function isUnreadableKindRow(row: Record<string, unknown>): boolean {
   return !isJobKind(String(row.kind))
+}
+
+/**
+ * The conclusion a quarantined row is READ back with — derived, never a column (422 D-16).
+ *
+ * Derived because there is nowhere to put it: `AGENT_JOB_STORE_USER_VERSION` stays 3, and D-04
+ * says stamp and hard-fail rather than migrate, so adding a column would either break every v3
+ * database on disk or smuggle in the migration machinery this queue deliberately has none of. The
+ * durable record IS the three facts this reads — an unreadable kind, a permanent landing, and the
+ * fixed reason above — and the conclusion is their name rather than a fourth fact that could
+ * disagree with them. It is deliberately NOT "any row whose kind is unreadable": a retired-kind
+ * row still sitting queued has not been quarantined yet, and saying it had would be a receipt for
+ * an event that has not happened.
+ */
+function quarantineConclusionOf(row: Record<string, unknown>): JobConclusionKind | undefined {
+  if (!isUnreadableKindRow(row)) return undefined
+  if (String(row.status) !== 'failed') return undefined
+  if (String(row.last_failure_kind) !== 'permanent') return undefined
+  if (String(row.last_failure_reason) !== QUARANTINED_UNREADABLE_KIND_REASON) return undefined
+  return UNREADABLE_KIND_CONCLUSION
 }
 
 
@@ -564,6 +585,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   }
 
   function dumpRow(row: Record<string, unknown>): JobStoreDumpRow {
+    const conclusionKind = quarantineConclusionOf(row)
     return {
       id: String(row.id),
       kind: String(row.kind),
@@ -574,6 +596,9 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       attempts: toNumber(row.attempts),
       claimed: row.claimed_at !== null,
       cancelRequested: row.cancel_requested_at !== null,
+      // 422 D-16: OMITTED rather than `undefined` when there is nothing to say, so a reader that
+      // serializes this row does not publish an empty conclusion key for every ordinary job.
+      ...(conclusionKind === undefined ? {} : { conclusionKind }),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     }
@@ -770,6 +795,16 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         requireFence(fence)
         const row = requireRow(String(jobId))
         const status = String(row.status) as JobStatus
+        // 422 D-16, BEFORE the terminal check and before every write below. A quarantined row is
+        // terminal, so the ordinary path would accept it and then spend the whole remedy on it:
+        // the attempts reset, the checkpoint rows and files deleted, the run's chain-terminal
+        // notification disowned — and the next claim would quarantine it again, because no
+        // registered kind can run it. Refusing here, inside the transaction and ahead of the first
+        // mutation, is what makes "the history survives an operator's mistake" a store guarantee
+        // rather than a rule the surface has to remember. Checked on the RAW kind, never parsed.
+        if (isUnreadableKindRow(row)) {
+          throw new QuarantinedJobRequeueError(String(jobId), String(row.kind))
+        }
         // Read and written in ONE transaction for the same reason a cancel is: whether this
         // row is a drainer's is a fact about the instant of the write, and a status read
         // taken outside would let a claim land in between and be reset out from under it.

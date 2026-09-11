@@ -12,7 +12,11 @@
 
 import { JOB_CHECKPOINT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
-export { StaleJobStoreEpochError } from '@vostride/agent-qa-agent'
+// Both are the second case the rule above describes: the PORT declares them, this module
+// re-exports them. `QuarantinedJobRequeueError` is a condition of the requeue CONTRACT — every
+// store that implements `requeueTerminal` owes the same refusal — so a second class declared here
+// would let two stores disagree about what an operator is being told.
+export { QuarantinedJobRequeueError, StaleJobStoreEpochError } from '@vostride/agent-qa-agent'
 
 /**
  * The database on disk was written by a build that does not agree with this one (D-04).

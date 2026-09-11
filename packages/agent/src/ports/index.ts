@@ -4,7 +4,11 @@ export type { ReplayGatePort } from './gates.js'
 export type { ToolsPort } from './tools.js'
 export type { PersistencePort } from './persistence.js'
 export type { ClockPort } from './clock.js'
-export { JobCancellationNotRequestedError, StaleJobStoreEpochError } from './job-store.js'
+export {
+  JobCancellationNotRequestedError,
+  QuarantinedJobRequeueError,
+  StaleJobStoreEpochError,
+} from './job-store.js'
 export type {
   ChainTerminalRecord,
   ClaimNextOptions,

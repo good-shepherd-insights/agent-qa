@@ -21,7 +21,14 @@
 // concurrent enqueue a dedupe, not a conflict (D-08). Authority is only ever needed to
 // CLAIM or ADVANCE work, which is exactly the set of verbs that carries the fence.
 
-import type { Job, JobEnqueueRequest, JobId, JobKind, JobStatus } from '@vostride/agent-qa-schema'
+import type {
+  Job,
+  JobConclusionKind,
+  JobEnqueueRequest,
+  JobId,
+  JobKind,
+  JobStatus,
+} from '@vostride/agent-qa-schema'
 
 /**
  * The authority token a drain-side verb must present.
@@ -84,6 +91,39 @@ export class StaleJobStoreEpochError extends Error {
 export interface JobInsert extends JobEnqueueRequest {
   readonly id: JobId
   readonly summary: string
+}
+
+/**
+ * Refusal when an operator tries to requeue a row this build cannot read (422 D-16).
+ *
+ * A requeue is the one operator verb that DESTROYS history — it resets the attempt count, deletes
+ * every checkpoint row and file the last attempt recorded, and disowns the run's chain-terminal
+ * notification. For an ordinary terminal row that is the whole point: the row goes back so a fixed
+ * handler can run it again. For a quarantined row there is no handler to run it again — no kind
+ * registry contains its kind — so the reset would spend the remedy and buy nothing: the very next
+ * claim would quarantine the row a second time, and the spent attempt and the fixed reason that
+ * recorded WHY it was quarantined would be gone.
+ *
+ * Raised INSIDE the requeue's transaction and before any of those three media is touched, so a
+ * refused requeue leaves the store byte-identical. The message names the row's own kind because
+ * that is the fact an operator needs and cannot get from the refusal alone — it is read from the
+ * row this operator explicitly addressed, not from untrusted input arriving at a surface.
+ */
+export class QuarantinedJobRequeueError extends Error {
+  override readonly name = 'QuarantinedJobRequeueError'
+
+  constructor(
+    readonly jobId: string,
+    readonly unreadableKind: string,
+  ) {
+    super(
+      `Agent job ${jobId} cannot be requeued: it was recorded under kind ` +
+        `${JSON.stringify(unreadableKind)}, which this build does not read, so it was ` +
+        'quarantined at claim rather than handled. No registered kind can run it, and a requeue ' +
+        'would reset its spent attempt and delete the record of why it was quarantined without ' +
+        'making it runnable. Clear the row deliberately if it is no longer wanted.',
+    )
+  }
 }
 
 /**
@@ -292,6 +332,20 @@ export interface JobStoreDumpRow {
    * treat as a lifecycle stage.
    */
   readonly cancelRequested: boolean
+  /**
+   * What this row CONCLUDED, when the store can say it from the row alone (422 D-16).
+   *
+   * Present today for exactly one conclusion, `unreadable_kind`: a row written under a kind this
+   * build has since retired, landed permanently at claim without ever being parsed. It belongs on
+   * the DIAGNOSTIC projection rather than on `Job` because that is the only projection such a row
+   * can travel through at all — `Job.kind` is the strict five-kind enum, so a quarantined row is
+   * precisely the row the typed DTO cannot carry. Naming the column-shaped facts here is what lets
+   * a listing describe it instead of throwing on it.
+   *
+   * ABSENT means "this row concluded nothing the store can name", which includes an ordinary
+   * `done` row and a retired-kind row still sitting queued. It is not a summary of the status.
+   */
+  readonly conclusionKind?: JobConclusionKind
   readonly createdAt: string
   readonly updatedAt: string
 }

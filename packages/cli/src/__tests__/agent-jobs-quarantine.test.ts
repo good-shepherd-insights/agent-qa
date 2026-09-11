@@ -224,6 +224,7 @@ describe('agent-qa agent-jobs requeue over a quarantined row (422 D-16)', () => 
 
     const outcome = await requeueAgentJob('job_retired_head', harness.deps)
 
+
     expect(outcome.kind).toBe('refused')
     if (outcome.kind !== 'refused') return
     expect(outcome.reason).toBe('unreadable-kind')
@@ -231,8 +232,13 @@ describe('agent-qa agent-jobs requeue over a quarantined row (422 D-16)', () => 
     // knows why this row is different from every other terminal row they can requeue.
     expect(String(outcome.message)).toContain(RETIRED_KIND)
 
-    // Nothing moved: same rows, same attempts, same statuses, same conclusion.
-    expect(await listAgentJobs(harness.deps)).toEqual(before)
+    // Nothing moved: same rows, same attempts, same statuses, same conclusion — asserted over the
+    // whole row set rather than field by field, so a column this cell never thought to name cannot
+    // change unnoticed. The JOBS are compared and not the whole DTO: `epoch` is the writer lease's
+    // own counter, and taking a lease in order to be refused advances it whatever the refusal did.
+    const after = await listAgentJobs(harness.deps)
+    expect(after.jobs).toEqual(before.jobs)
+    expect(after.epoch).toBeGreaterThan(before.epoch)
   })
 
   it('exits 1 and writes the refusal to stderr, printing no success line', async () => {

@@ -30,7 +30,7 @@
 
 import { dirname, join, resolve } from 'node:path'
 
-import { createAgentJobQueue } from '@vostride/agent-qa-agent'
+import { QuarantinedJobRequeueError, createAgentJobQueue } from '@vostride/agent-qa-agent'
 import type {
   AgentJobQueue,
   ClockPort,
@@ -73,6 +73,16 @@ export interface AgentJobRow {
   readonly attempts: number
   readonly claimed: boolean
   readonly cancelRequested: boolean
+  /**
+   * What the store can say this row concluded, when it can say anything (422 D-16).
+   *
+   * Carried verbatim from the store's diagnostic projection rather than re-derived here. Today it
+   * is `unreadable_kind` and nothing else: the row's `kind` above is then a kind this build does
+   * not read, and printing that kind WITHOUT this field beside it is the failure mode — an
+   * operator sees an unfamiliar kind sitting at `failed` with a spent attempt and no way to tell
+   * a quarantine from a handler that crashed.
+   */
+  readonly conclusionKind?: string
   /** Present only when the payload names a run as a string — see `runIdOf`. */
   readonly runId?: string
 }
@@ -123,6 +133,17 @@ export type RequeueAgentJobOutcome =
   | { readonly kind: 'requeued' }
   | { readonly kind: 'not-terminal'; readonly status: JobStatus }
   | AgentJobsRefusal
+
+/**
+ * The refusal reason a quarantined row's requeue reports (422 D-16).
+ *
+ * A REFUSAL and not a `not-terminal` outcome, which is the difference between "somebody else owns
+ * this row, try later" and "this row can never be requeued by anyone". `not-terminal` exits 0
+ * because a campaign driver must not abort over a row a drainer legitimately holds; this one exits
+ * 1 through the channel every other refusal already uses, because the operator asked for something
+ * that will not become possible by waiting.
+ */
+export const UNREADABLE_KIND_REFUSAL_REASON = 'unreadable-kind'
 
 export interface ListAgentJobsOutcome {
   readonly epoch: number
@@ -413,6 +434,9 @@ export async function listAgentJobs(deps: AgentJobsOpsDeps): Promise<ListAgentJo
         attempts: row.attempts,
         claimed: row.claimed,
         cancelRequested: row.cancelRequested,
+        // Omitted when the store omitted it, so the DTO says "nothing concluded" the same way the
+        // projection does rather than inventing an empty string for every ordinary row.
+        ...(row.conclusionKind === undefined ? {} : { conclusionKind: row.conclusionKind }),
         ...(runId === undefined ? {} : { runId }),
       }
     })
@@ -479,7 +503,23 @@ export async function requeueAgentJob(
 ): Promise<RequeueAgentJobOutcome> {
   return withWriterLease(deps, async (lease, { jobs }): Promise<RequeueAgentJobOutcome> => {
     const fence = await jobs.store.adoptEpoch(lease.epoch)
-    const outcome = await jobs.store.requeueTerminal(asJobId(jobId), fence)
+    let outcome
+    try {
+      outcome = await jobs.store.requeueTerminal(asJobId(jobId), fence)
+    } catch (error) {
+      // 422 D-16. Caught by CLASS rather than by message, and translated into the refusal shape
+      // this command already renders and exits 1 on — a second error channel for one more refusal
+      // would give the operator two vocabularies for the same kind of "no". The store refused
+      // before it wrote anything, so there is nothing to undo here. Every other error keeps
+      // travelling: a store that failed for some unrelated reason must not be reported as a
+      // quarantine.
+      if (!(error instanceof QuarantinedJobRequeueError)) throw error
+      return {
+        kind: 'refused',
+        reason: UNREADABLE_KIND_REFUSAL_REASON,
+        message: error.message,
+      }
+    }
     if (outcome.outcome === 'not-terminal') {
       return { kind: 'not-terminal', status: outcome.status }
     }

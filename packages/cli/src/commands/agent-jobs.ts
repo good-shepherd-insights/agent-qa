@@ -86,13 +86,24 @@ function renderRefusal(refusal: Extract<PumpAgentJobsOutcome, { kind: 'refused' 
   return pc.red(`agent job queue: refusal [${refusal.reason}]: ${detail}`)
 }
 
+/**
+ * The listing, with the 422 D-16 conclusion column beside the kind it explains.
+ *
+ * The column is ALWAYS printed, not added only when some row has a conclusion. A table whose
+ * shape depended on its contents would mean an operator comparing two listings could not tell a
+ * queue with no quarantines from a build that does not report them, and a driver parsing columns
+ * by position would silently read the run id as a conclusion the first time one appeared.
+ */
 function renderList(result: ListAgentJobsOutcome): string {
   if (result.jobs.length === 0) return 'agent job queue: empty'
-  const header = ['id', 'kind', 'status', 'attempts', 'claimed', 'cancel-requested', 'run']
+  const header = [
+    'id', 'kind', 'status', 'conclusion', 'attempts', 'claimed', 'cancel-requested', 'run',
+  ]
   const rows = result.jobs.map((job) => [
     job.id,
     job.kind,
     job.status,
+    job.conclusionKind ?? '-',
     String(job.attempts),
     String(job.claimed),
     String(job.cancelRequested),
