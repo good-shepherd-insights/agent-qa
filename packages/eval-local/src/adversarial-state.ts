@@ -1,29 +1,85 @@
-// 422-03-T1 (RED): the durable adversarial refresh-state surface, declared and not yet
-// implemented. Every function below returns an inert value so the cells in
-// `__tests__/adversarial-recovery.test.ts` fail on the behaviour they name rather than on a
-// module that cannot load.
+// 2026-09-11, 422 D-04/D-08: the durable adversarial refresh record — what a capped refresh
+// already decided, so the next one does not spend its cap deciding it again.
+//
+// The problem this store exists to solve. A refresh is capped (D-04) because eleven frozen
+// families over a grown corpus produce more cases than any operator reviews. A cap alone,
+// however, starves the corpus: the seeds are selected in one deterministic order, so unless
+// something on disk records that a leading seed is DONE, the same leading seeds are re-selected
+// every time and the seeds behind them are never reached. Staged and committed cassette ids
+// cover the seeds that produced a variant. They say nothing about the ones that produced a
+// REFUSAL or an inapplicability — and those are exactly the seeds that would monopolise the cap
+// forever, because they leave no trace to skip.
+//
+// The key (D-08). A completed `(seed, mutator)` tuple is settled for the table GENERATION and
+// the guardrail POLICY it was decided under, and for nothing else:
+//
+//   * a `tableVersion` bump is a NEW generation. Its ids are different ids, so its tuples are
+//     open again — and it retires nothing: `derivedAdversarialCassetteIds` spans every
+//     generation, so an id committed under generation 1 is never re-derived beneath a later one.
+//   * a POLICY change reopens refusals, because "the host blocked this" is a statement about a
+//     policy and not about the bytes. A tightening and a loosening are both policy changes, and
+//     both deserve a fresh decision.
+//
+// Publication (S3, canary-run-state). A record is named by its own content digest and linked
+// into place write-once, with the file and its directory fsynced. Two refreshes racing over one
+// unchanged corpus derive the same ids and settle the same tuples, so they publish the SAME
+// bytes under the SAME name — an idempotent no-op rather than two competing histories. Different
+// bytes under one name is a conflict and throws; this record is the audit trail a later refresh
+// trusts, so overwriting it silently would let a bad write erase the reason a seed was skipped.
+//
+// Deliberately absent: a timestamp. `stagedAt` sits outside the batch digest for the same reason
+// (422-01) — a clock reading inside the canonical bytes would make two identical concurrent
+// refreshes conflict, which is precisely the collision this write-once shape exists to absorb.
+// A record's time is its file mtime and its commit, not a field the content address depends on.
 
-import { createHash } from 'node:crypto'
+import { closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import { dirname, join, resolve } from 'node:path'
 
-import { canonicalJson, type AdversarialMutator } from '@vostride/agent-qa-eval'
-import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
+import { ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH, ADVERSARIAL_MUTATORS, canonicalJson, type AdversarialMutator } from '@vostride/agent-qa-eval'
+import { slugBranch, type GuardrailPolicy } from '@vostride/agent-qa-schema'
+import { z } from 'zod'
 
-/** Durable refresh state lives beside the staging tree, never inside it. */
+/**
+ * Durable refresh state lives BESIDE the staging tree, never inside it: a staged batch
+ * directory is reviewable data an operator may delete after admitting or rejecting it, and the
+ * record of what was already decided must outlive that.
+ */
 export const ADVERSARIAL_STATE_SUBDIR = 'eval/adversarial-state'
 
 export const ADVERSARIAL_STATE_SCHEMA_VERSION = 1
 
-/** What a completed `(seed, mutator)` tuple resolved to. */
+/**
+ * The separator the settled-tuple key joins on — the `adversarialDrawKey` idiom. No cassette id
+ * and no mutator can contain U+001F, so `(a, bc)` and `(ab, c)` can never collide into one key.
+ */
+const TUPLE_KEY_SEPARATOR = '\u001F'
+
+const LOWER_HEX_64 = /^[0-9a-f]{64}$/
+const digestField = z.string().regex(LOWER_HEX_64)
+
+/**
+ * What a completed `(seed, mutator)` tuple resolved to.
+ *
+ * All three are COMPLETED work. `derived` produced reviewable bytes; `refused` was blocked by
+ * the loaded policy; `inapplicable` is the generator's own typed statement that the family
+ * cannot act on this seed. A tuple that is merely DEFERRED (`cap-exceeded`) or that was already
+ * settled earlier (`already-derived`) is not an outcome and never lands here — recording either
+ * would settle work nobody did.
+ */
 export type AdversarialTupleOutcome = 'derived' | 'refused' | 'inapplicable'
 
 export interface AdversarialRefreshTuple {
   seedCassetteId: string
   mutator: AdversarialMutator
+  /** The derived id this tuple addresses — stable across outcomes, because it is a function of the generation, not of the result (D-08). */
   cassetteId: string
   outcome: AdversarialTupleOutcome
+  /** The firing detector for `refused`, the inapplicability reason for `inapplicable`; absent for `derived`. */
   detail?: string
 }
 
+/** The resolved cap and where the operator set it — recorded so a refresh can explain itself. */
 export interface AdversarialSeedCap {
   value: number
   source: 'flag' | 'config' | 'default'
@@ -32,60 +88,264 @@ export interface AdversarialSeedCap {
 export interface AdversarialRefreshRecord {
   schemaVersion: 1
   product: string
+  /** The frozen table generation these outcomes were decided under. */
   tableVersion: number
+  /** The loaded guardrail policy these refusals were decided under. */
   policyDigest: string
+  /** The committed corpus digest this refresh read its seeds from. */
   sourceDigest: string
   cap: AdversarialSeedCap
+  /** Novel eligible seeds counted BEFORE the cap was applied. */
   eligibleSeeds: number
+  /** Novel eligible seeds the cap deferred to a later refresh. */
   excessSeeds: number
+  /** Immutable batch membership: the seed ids this refresh selected, ascending. */
   seedIds: readonly string[]
   tuples: readonly AdversarialRefreshTuple[]
 }
 
+const tupleSchema = z.object({
+  seedCassetteId: z.string().min(1),
+  mutator: z.enum(ADVERSARIAL_MUTATORS),
+  cassetteId: z.string().min(1),
+  outcome: z.enum(['derived', 'refused', 'inapplicable']),
+  detail: z.string().min(1).optional(),
+}).strict()
+
+const recordSchema = z.object({
+  schemaVersion: z.literal(ADVERSARIAL_STATE_SCHEMA_VERSION),
+  product: z.string().min(1),
+  tableVersion: z.number().int().nonnegative(),
+  policyDigest: digestField,
+  sourceDigest: digestField,
+  cap: z.object({
+    value: z.number().int().positive(),
+    source: z.enum(['flag', 'config', 'default']),
+  }).strict(),
+  eligibleSeeds: z.number().int().nonnegative(),
+  excessSeeds: z.number().int().nonnegative(),
+  seedIds: z.array(z.string().min(1)),
+  tuples: z.array(tupleSchema),
+}).strict()
+
+/**
+ * The digest of the LOADED policy (D-03/D-04).
+ *
+ * Refusals are settled against this value, so it must move whenever the decision would. It is
+ * taken over the whole resolved policy rather than over one detector's action: an allowlist
+ * entry changes what a detector sees just as surely as the detector's action does.
+ */
 export function computeAdversarialPolicyDigest(policy: GuardrailPolicy): string {
   return createHash('sha256').update(canonicalJson(policy), 'utf8').digest('hex')
 }
 
+/** The record's own content address — its file name, and the whole of its identity. */
 export function adversarialRefreshRecordDigest(record: AdversarialRefreshRecord): string {
   return createHash('sha256').update(canonicalJson(record), 'utf8').digest('hex')
 }
 
+/** The settled-tuple key. Public so a caller can build the same key it will be checked against. */
+export function adversarialTupleKey(seedCassetteId: string, mutator: AdversarialMutator): string {
+  return `${seedCassetteId}${TUPLE_KEY_SEPARATOR}${mutator}`
+}
+
+/**
+ * Resolve the per-refresh seed cap (D-04).
+ *
+ * Every rejected boundary is rejected LOUDLY: zero, negative, fractional, nonfinite and
+ * beyond-safe-integer caps are a TypeError rather than a silent fallback to the default. A cap
+ * that quietly becomes 8 because the operator typed `0` is a cap the operator does not have.
+ */
 export function resolveAdversarialSeedCap(input: {
   value?: number
   source?: 'flag' | 'config'
 }): AdversarialSeedCap {
-  void input
-  return { value: 25, source: 'default' }
+  if (input.value === undefined) {
+    return { value: ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH, source: 'default' }
+  }
+  if (!Number.isSafeInteger(input.value) || input.value < 1) {
+    throw new TypeError('adversarial seed cap must be a positive safe integer')
+  }
+  return { value: input.value, source: input.source ?? 'flag' }
 }
 
+// ---------------------------------------------------------------------------
+// Guarded local IO (the staging composition's posture, on this store's own tree).
+// ---------------------------------------------------------------------------
+
+function pathPresent(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
+/** Refuse links and wrong-kind ancestors rather than following a state path out of its root. */
+function requireDirectories(path: string): void {
+  const absolute = resolve(path)
+  const parent = dirname(absolute)
+  if (parent !== absolute) requireDirectories(parent)
+  if (pathPresent(absolute) && !lstatSync(absolute).isDirectory()) {
+    throw new TypeError('unsafe adversarial state directory')
+  }
+}
+
+/**
+ * The product's state directory under a REAL root.
+ *
+ * `realpathSync` matches the staging composition's posture and is not cosmetic: the
+ * ancestor-kind walk below refuses any non-directory component, and on macOS `/tmp` is itself a
+ * symlink — an unresolved path would make every host whose root sits under a linked ancestor
+ * look unsafe.
+ */
+function productStateDir(agentQaRoot: string, product: string): string {
+  return join(realpathSync(agentQaRoot), ADVERSARIAL_STATE_SUBDIR, slugBranch(product))
+}
+
+function recordText(record: AdversarialRefreshRecord): string {
+  return `${canonicalJson(record)}\n`
+}
+
+/**
+ * Every published refresh record for one product, in file-name order.
+ *
+ * An absent tree is an empty history, not a failure — the first refresh on a host has no state
+ * and must not be told the store is broken. A PRESENT but malformed record IS a failure: this
+ * is the evidence a later refresh skips seeds on, so a record it cannot read is never silently
+ * dropped.
+ */
 export function readAdversarialRefreshRecords(input: {
   agentQaRoot: string
   product: string
 }): AdversarialRefreshRecord[] {
-  void input
-  return []
+  if (!pathPresent(input.agentQaRoot)) return []
+  const dir = productStateDir(input.agentQaRoot, input.product)
+  requireDirectories(dir)
+  if (!pathPresent(dir)) return []
+  const names = readdirSync(dir, { withFileTypes: true })
+    .filter(entry => {
+      if (entry.name.startsWith('.')) return false
+      if (!entry.isFile()) throw new TypeError('unexpected adversarial state path')
+      return entry.name.endsWith('.json')
+    })
+    .map(entry => entry.name)
+    .sort()
+  return names.map(name => {
+    const record = recordSchema.parse(
+      JSON.parse(readFileSync(join(dir, name), 'utf8')),
+    ) as AdversarialRefreshRecord
+    if (`${adversarialRefreshRecordDigest(record)}.json` !== name) {
+      throw new TypeError('adversarial refresh record identity mismatch')
+    }
+    if (slugBranch(record.product) !== slugBranch(input.product)) {
+      throw new TypeError('adversarial refresh record product mismatch')
+    }
+    return record
+  })
 }
 
+/**
+ * Publish one refresh record write-once, under its own content address.
+ *
+ * `unchanged` means the identical record was already published — the concurrent-refresh case,
+ * and the re-run-over-an-unchanged-corpus case. Anything else under that name is a conflict.
+ */
 export function publishAdversarialRefreshRecord(input: {
   agentQaRoot: string
   record: AdversarialRefreshRecord
 }): 'published' | 'unchanged' {
-  void input
-  return 'published'
+  const record = recordSchema.parse(input.record) as AdversarialRefreshRecord
+  mkdirSync(input.agentQaRoot, { recursive: true })
+  const dir = productStateDir(input.agentQaRoot, record.product)
+  requireDirectories(dir)
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `${adversarialRefreshRecordDigest(record)}.json`)
+  const text = recordText(record)
+  const temporary = join(dir, `.${randomUUID()}.tmp`)
+  try {
+    writeFileSync(temporary, text, { flag: 'wx', mode: 0o600 })
+    const fd = openSync(temporary, 'r')
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    let published: 'published' | 'unchanged' = 'published'
+    try {
+      linkSync(temporary, file)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      if (readFileSync(file, 'utf8') !== text) {
+        throw new Error('adversarial refresh record conflict')
+      }
+      published = 'unchanged'
+    }
+    const directory = openSync(dir, 'r')
+    try {
+      fsyncSync(directory)
+    } finally {
+      closeSync(directory)
+    }
+    return published
+  } finally {
+    rmSync(temporary, { force: true })
+  }
 }
 
+/**
+ * The `(seed, mutator)` tuples already decided under THIS generation and THIS policy.
+ *
+ * A refresh skips these, which is what lets its cap reach the seeds behind them. Scoping by
+ * both keys is the whole contract: neither a new generation nor a new policy inherits a
+ * decision that was not made about it.
+ */
 export function settledAdversarialTuples(
   records: readonly AdversarialRefreshRecord[],
   scope: { tableVersion: number; policyDigest: string },
 ): ReadonlySet<string> {
-  void records
-  void scope
-  return new Set<string>()
+  return new Set(settledAdversarialTupleIndex(records, scope).keys())
 }
 
+/**
+ * The same scoped settlement, keyed so a caller can say WHY a tuple was skipped.
+ *
+ * A refresh that silently drops a settled seed reports an empty batch with no explanation,
+ * which is the disclosure regression a bounded refresh must not introduce: the operator has to
+ * be able to tell "nothing new applies" from "nothing ran".
+ */
+export function settledAdversarialTupleIndex(
+  records: readonly AdversarialRefreshRecord[],
+  scope: { tableVersion: number; policyDigest: string },
+): ReadonlyMap<string, AdversarialRefreshTuple> {
+  const settled = new Map<string, AdversarialRefreshTuple>()
+  for (const record of records) {
+    if (record.tableVersion !== scope.tableVersion) continue
+    if (record.policyDigest !== scope.policyDigest) continue
+    for (const tuple of record.tuples) {
+      settled.set(adversarialTupleKey(tuple.seedCassetteId, tuple.mutator), tuple)
+    }
+  }
+  return settled
+}
+
+/**
+ * Every id this product has EVER derived, across all generations and policies.
+ *
+ * Unscoped on purpose (D-08): a generation bump creates new ids beside the old, and the old
+ * ones are committed history. Re-deriving one would address bytes that already exist, so this
+ * set only ever grows.
+ */
 export function derivedAdversarialCassetteIds(
   records: readonly AdversarialRefreshRecord[],
 ): ReadonlySet<string> {
-  void records
-  return new Set<string>()
+  const ids = new Set<string>()
+  for (const record of records) {
+    for (const tuple of record.tuples) {
+      if (tuple.outcome === 'derived') ids.add(tuple.cassetteId)
+    }
+  }
+  return ids
 }

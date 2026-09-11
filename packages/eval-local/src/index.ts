@@ -236,6 +236,27 @@ export type {
   StagedAdversarialBatch,
   StagedAdversarialCase,
 } from './adversarial-composition.js'
+// 2026-09-11, 422 D-04/D-08: the durable refresh record a capped refresh reads to avoid
+// re-deciding what it already decided. Published beside the staging composition for the same
+// reason — the CLI's operator verb resolves the cap and renders the overflow.
+export {
+  ADVERSARIAL_STATE_SCHEMA_VERSION,
+  ADVERSARIAL_STATE_SUBDIR,
+  adversarialRefreshRecordDigest,
+  adversarialTupleKey,
+  computeAdversarialPolicyDigest,
+  derivedAdversarialCassetteIds,
+  publishAdversarialRefreshRecord,
+  readAdversarialRefreshRecords,
+  resolveAdversarialSeedCap,
+  settledAdversarialTuples,
+} from './adversarial-state.js'
+export type {
+  AdversarialRefreshRecord,
+  AdversarialRefreshTuple,
+  AdversarialSeedCap,
+  AdversarialTupleOutcome,
+} from './adversarial-state.js'
 
 export { loadCalibrationEvidence, readCalibrationGoldIdentity } from './calibration-evidence-source.js'
 export type { CalibrationEvidenceRead, CalibrationEvidenceMissingReason } from './calibration-evidence-source.js'

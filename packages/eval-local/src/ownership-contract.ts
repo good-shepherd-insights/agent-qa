@@ -107,7 +107,15 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // channel. Generation, eligibility, target selection and the label clone are eval core's;
   // this composition executes and stores, never decides. The provider-invocation clause above
   // is UNAMENDED: nothing in the adversarial path constructs a model.
-  'the adversarial batch staging store under .agent-qa/eval/adversarial/ and the operator-only admission recheck on the eval-adversarial channel, delegating committed writes to the single sanctioned seeding helper',
+  // Phase 422 D-04/D-08 (422-03): a THIRD half beside the two above — the durable per-product
+  // refresh record under `.agent-qa/eval/adversarial-state/<product>/<recordDigest>.json`. It is
+  // storage, not judgment: one write-once, content-addressed row per refresh carrying the
+  // resolved cap and its source, the novel-eligible and deferred seed counts, the immutable
+  // selected-seed membership, and one settled outcome per completed (seed, mutator) tuple keyed
+  // by table generation and guardrail-policy digest. It lives BESIDE the staging tree because a
+  // staged batch is reviewable data an operator may delete, and the record of what was already
+  // decided must outlive it. Nothing here derives, scans or admits.
+  'the adversarial batch staging store under .agent-qa/eval/adversarial/, the durable per-product refresh-state store under .agent-qa/eval/adversarial-state/, and the operator-only admission recheck on the eval-adversarial channel, delegating committed writes to the single sanctioned seeding helper',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single

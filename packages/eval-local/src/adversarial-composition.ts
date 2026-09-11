@@ -34,13 +34,16 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathS
 import { dirname, join, resolve } from 'node:path'
 
 import {
+  ADVERSARIAL_INAPPLICABILITIES,
   ADVERSARIAL_MUTATORS,
   ADVERSARIAL_TABLE_HASH,
   ADVERSARIAL_TABLE_VERSION,
+  ADVERSARIAL_TABLES,
   GENERATOR_KINDS,
   canonicalJson,
   cassetteEgressText,
   committedFileText,
+  deriveAdversarialCassetteId,
   deriveRunSlug,
   generateAdversarialVariants,
   guardCassette,
@@ -68,6 +71,19 @@ import {
 import { slugBranch, type GuardrailPolicy } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
+import {
+  adversarialRefreshRecordDigest,
+  adversarialTupleKey,
+  computeAdversarialPolicyDigest,
+  derivedAdversarialCassetteIds,
+  publishAdversarialRefreshRecord,
+  readAdversarialRefreshRecords,
+  resolveAdversarialSeedCap,
+  settledAdversarialTupleIndex,
+  type AdversarialRefreshRecord,
+  type AdversarialRefreshTuple,
+  type AdversarialSeedCap,
+} from './adversarial-state.js'
 import { committedBlobPath, committedCassettePath, committedCorpusPath, committedLabelPath } from './committed-root-store.js'
 import { openCorpusReader } from './corpus-reader.js'
 import { readCommittedCorpus } from './committed-corpus-source.js'
@@ -173,6 +189,19 @@ export interface AdversarialRefusal {
   action: 'block' | 'redact'
 }
 
+/**
+ * A refusal a PREVIOUS refresh already recorded under this same policy (D-04).
+ *
+ * Its own channel on purpose: re-listing it among `refusals` would assert that a detector fired
+ * during THIS refresh, when nothing was scanned. It names the identities and the detector, never
+ * the refused surface text — the same discipline `AdversarialRefusal` keeps.
+ */
+export interface AdversarialSettledRefusal {
+  seedCassetteId: string
+  mutator: AdversarialMutator
+  detector?: string
+}
+
 /** Everything that stopped a derived case short of publication for a non-policy reason. */
 export interface AdversarialStagingSkip {
   cassetteId: string
@@ -195,8 +224,11 @@ export interface StageAdversarialProposalInput {
   policy: GuardrailPolicy
   auditSink?: AuditSink
   mutators?: readonly AdversarialMutator[]
+  /** D-04: the per-refresh NOVEL-seed cap; absent resolves to the recorded default. */
   maxSeeds?: number
-  /** Derive and scan, publish nothing. */
+  /** Where `maxSeeds` came from, recorded beside the refresh. Absent with a value means 'flag'. */
+  maxSeedsSource?: 'flag' | 'config'
+  /** Derive and scan, publish nothing — neither staged bytes nor a settle record. */
   dryRun?: boolean
 }
 
@@ -221,6 +253,25 @@ export interface StageAdversarialProposalResult {
   seedsDeferred: number
   tableVersion: number
   tableHash: string
+  /**
+   * D-04: the committed root's GATE posture, not the reader's length.
+   *
+   * `openCorpusReader` answers an absent, unmarked or unreadable root with an empty list —
+   * byte-identical to a healthy root that genuinely holds no visible entry. Only the gate's own
+   * digest read establishes the root, and a refresh that cannot establish it settles nothing:
+   * a settle record written against silence is evidence manufactured from an outage.
+   */
+  rootPosture: 'available' | 'unavailable'
+  /** The corpus digest this refresh read its seeds from; absent when the posture is unavailable. */
+  sourceDigest?: string
+  /** The resolved cap and its source, recorded beside every refresh. */
+  cap: AdversarialSeedCap
+  /** NOVEL eligible seeds, counted BEFORE the cap; `seedsDeferred` is the overflow. */
+  eligibleSeeds: number
+  /** The durable refresh record this refresh published, if it published one. */
+  stateRecordDigest?: string
+  /** Refusals a previous refresh settled under this policy; disclosed, never re-asserted. */
+  settledRefusals: readonly AdversarialSettledRefusal[]
 }
 
 /** A staged batch loaded back from disk with its bytes verified against the manifest pins. */
@@ -329,6 +380,18 @@ function samePin(left: AdversarialSeedProvenancePin, right: AdversarialSeedProve
     left.sourceChannel === right.sourceChannel &&
     left.tier === right.tier
   )
+}
+
+/**
+ * Narrow a recorded `detail` back to the generator's closed inapplicability vocabulary.
+ *
+ * A record written by an older build may carry a member this build does not know. That is not a
+ * reason to drop the row — it is a reason not to re-report it as a vocabulary term the caller
+ * would then switch on. Such a row falls back to `already-derived`, which is true of every
+ * settled tuple by construction: its id is decided for this generation.
+ */
+function isInapplicability(value: string | undefined): value is AdversarialSeedSkip['reason'] {
+  return value !== undefined && (ADVERSARIAL_INAPPLICABILITIES as readonly string[]).includes(value)
 }
 
 function adversarialProductDir(agentQaRoot: string, product: string): string {
@@ -455,9 +518,37 @@ function resolveSeedBlobs(
 export function stageAdversarialProposal(
   input: StageAdversarialProposalInput,
 ): StageAdversarialProposalResult {
+  // D-04: resolved BEFORE any read, so an invalid cap is a loud refusal rather than a refresh
+  // that silently ran under the default.
+  const cap = resolveAdversarialSeedCap({
+    ...(input.maxSeeds === undefined ? {} : { value: input.maxSeeds }),
+    ...(input.maxSeedsSource === undefined ? {} : { source: input.maxSeedsSource }),
+  })
+  const empty: Omit<StageAdversarialProposalResult, 'kind'> = {
+    product: input.product,
+    staged: [],
+    refusals: [],
+    skips: [],
+    stagingSkips: [],
+    seedsConsidered: 0,
+    seedsDeferred: 0,
+    tableVersion: ADVERSARIAL_TABLE_VERSION,
+    tableHash: ADVERSARIAL_TABLE_HASH,
+    rootPosture: 'unavailable',
+    cap,
+    eligibleSeeds: 0,
+    settledRefusals: [],
+  }
+  // The gate's own read, not the reader's length: an unmarked or refusing root reads empty
+  // through the proposer port and must not be mistaken for a healthy corpus with nothing in it.
+  const posture = readCommittedCorpusDigest({ committedRoot: input.committedRoot })
+  if (posture.kind !== 'digest') return { ...empty, kind: 'nothing-derived' }
+  const sourceDigest = posture.corpusDigest
+  const policyDigest = computeAdversarialPolicyDigest(input.policy)
+
   const reader = openCorpusReader(input.committedRoot)
   const entries = reader.listEntries(input.product)
-  const seeds: AdversarialSeed[] = []
+  const candidates: AdversarialSeed[] = []
   const existingCassetteIds = new Set<string>()
   for (const entry of entries) {
     existingCassetteIds.add(entry.cassetteId)
@@ -465,7 +556,7 @@ export function stageAdversarialProposal(
     const cassette = reader.loadCassette(entry.cassetteId)
     if (cassette.kind !== 'loaded' || cassette.cassette.granularity !== 'leaf') continue
     const label = reader.loadLabel(entry.cassetteId)
-    seeds.push({
+    candidates.push({
       cassette: cassette.cassette,
       entry,
       ...(label.kind === 'loaded' ? { label: label.record } : {}),
@@ -475,21 +566,116 @@ export function stageAdversarialProposal(
   for (const batch of listStagedAdversarial({ agentQaRoot: input.agentQaRoot, product: input.product })) {
     for (const staged of batch.manifest.cases) existingCassetteIds.add(staged.cassetteId)
   }
+  // ...and so is anything a previous refresh recorded, under ANY generation or policy (D-08).
+  const records = readAdversarialRefreshRecords({
+    agentQaRoot: input.agentQaRoot,
+    product: input.product,
+  })
+  for (const id of derivedAdversarialCassetteIds(records)) existingCassetteIds.add(id)
+  const settled = settledAdversarialTupleIndex(records, {
+    tableVersion: ADVERSARIAL_TABLE_VERSION,
+    policyDigest,
+  })
+
+  // The seed-level filter the cap depends on. A seed whose every requested tuple is already
+  // decided — derived, refused or explicitly inapplicable — is NOT novel, and letting it into
+  // the generator would spend a cap slot to re-reach a conclusion already on disk. That is the
+  // starvation this plan exists to remove: without it the leading seeds are re-selected forever
+  // and the seeds behind them are never reached.
+  //
+  // A dropped seed is DISCLOSED, never silently forgotten: an empty batch with no rows cannot
+  // be told apart from a refresh that never ran. Derived and inapplicable settlements re-report
+  // through the generator's own closed vocabulary; a settled REFUSAL gets its own channel,
+  // because re-announcing it as a refusal would claim a detector fired on this run when none did.
+  const requested = ADVERSARIAL_MUTATORS.filter(
+    mutator => input.mutators === undefined || input.mutators.includes(mutator),
+  )
+  const settledSkips: AdversarialSeedSkip[] = []
+  const settledRefusals: AdversarialSettledRefusal[] = []
+  const seeds = candidates.filter(seed => {
+    const decided: { mutator: AdversarialMutator; tuple?: AdversarialRefreshTuple }[] = []
+    let novel = false
+    for (const mutator of requested) {
+      const tuple = settled.get(adversarialTupleKey(seed.cassette.id, mutator))
+      if (tuple !== undefined) {
+        decided.push({ mutator, tuple })
+        continue
+      }
+      const derivedId = deriveAdversarialCassetteId({
+        seedCassetteId: seed.cassette.id,
+        kind: ADVERSARIAL_TABLES[mutator].kind,
+        mutator,
+        tableVersion: ADVERSARIAL_TABLE_VERSION,
+      })
+      if (existingCassetteIds.has(derivedId)) {
+        decided.push({ mutator })
+        continue
+      }
+      novel = true
+    }
+    if (novel) return true
+    for (const row of decided) {
+      if (row.tuple?.outcome === 'refused') {
+        settledRefusals.push({
+          seedCassetteId: seed.cassette.id,
+          mutator: row.mutator,
+          ...(row.tuple.detail === undefined ? {} : { detector: row.tuple.detail }),
+        })
+        continue
+      }
+      settledSkips.push({
+        seedCassetteId: seed.cassette.id,
+        mutator: row.mutator,
+        reason:
+          row.tuple?.outcome === 'inapplicable' && isInapplicability(row.tuple.detail)
+            ? row.tuple.detail
+            : 'already-derived',
+      })
+    }
+    return false
+  })
 
   const generated = generateAdversarialVariants({
     product: input.product,
     seeds,
     existingCassetteIds,
     ...(input.mutators === undefined ? {} : { mutators: input.mutators }),
-    ...(input.maxSeeds === undefined ? {} : { maxSeeds: input.maxSeeds }),
+    maxSeeds: cap.value,
   })
+  // Novel eligible seeds, counted before the cap: the generator only defers a seed that passed
+  // its own eligibility check, so considered + deferred is exactly that population.
+  const eligibleSeeds = generated.seedsConsidered + generated.seedsDeferred
 
   const refusals: AdversarialRefusal[] = []
   const stagingSkips: AdversarialStagingSkip[] = []
+  const tuples: AdversarialRefreshTuple[] = []
   const publishable: {
     manifestCase: AdversarialBatchManifestCase
     texts: { cassette: string; label: string; entry: string }
   }[] = []
+
+  // A family the generator explicitly could not act on is a COMPLETED decision for this
+  // generation, so it settles. `cap-exceeded` is a deferral and `already-derived` is a decision
+  // taken earlier — neither is work this refresh did, and recording either would manufacture a
+  // settlement. Seed-level rows carry no mutator and settle nothing: an ineligible seed can
+  // become eligible when its corpus entry changes.
+  for (const outcome of generated.outcomes) {
+    if (outcome.kind !== 'inapplicable') continue
+    if (outcome.mutator === undefined) continue
+    if (outcome.reason === 'cap-exceeded' || outcome.reason === 'already-derived') continue
+    tuples.push({
+      seedCassetteId: outcome.seedCassetteId,
+      mutator: outcome.mutator,
+      cassetteId: deriveAdversarialCassetteId({
+        seedCassetteId: outcome.seedCassetteId,
+        kind: ADVERSARIAL_TABLES[outcome.mutator].kind,
+        mutator: outcome.mutator,
+        tableVersion: ADVERSARIAL_TABLE_VERSION,
+      }),
+      outcome: 'inapplicable',
+      detail: outcome.reason,
+    })
+  }
 
   for (const variant of generated.variants) {
     const texts = {
@@ -509,6 +695,16 @@ export function stageAdversarialProposal(
     )
     if (caseRefusals.length > 0) {
       refusals.push(...caseRefusals)
+      // A refusal is a decision the LOADED POLICY made about these bytes. It settles under that
+      // policy's digest and reopens the moment the host changes it — which is the only way a
+      // refused family ever gets a second hearing, and the only way it stops eating the cap.
+      tuples.push({
+        seedCassetteId: variant.seedCassetteId,
+        mutator: variant.mutator,
+        cassetteId: variant.cassette.id,
+        outcome: 'refused',
+        detail: caseRefusals[0]!.detector,
+      })
       continue
     }
     const resolved = resolveSeedBlobs(
@@ -518,6 +714,8 @@ export function stageAdversarialProposal(
       variant.blobShas,
     )
     if ('skipReason' in resolved) {
+      // Deliberately NOT settled: an unresolvable blob is an operational failure that a repaired
+      // root fixes. Settling it would turn a transient disk problem into a permanent exclusion.
       stagingSkips.push({
         cassetteId: variant.cassette.id,
         seedCassetteId: variant.seedCassetteId,
@@ -525,6 +723,12 @@ export function stageAdversarialProposal(
       })
       continue
     }
+    tuples.push({
+      seedCassetteId: variant.seedCassetteId,
+      mutator: variant.mutator,
+      cassetteId: variant.cassette.id,
+      outcome: 'derived',
+    })
     publishable.push({
       manifestCase: {
         cassetteId: variant.cassette.id,
@@ -551,6 +755,33 @@ export function stageAdversarialProposal(
         : 0,
   )
 
+  // Immutable batch membership: every seed this refresh actually SELECTED, ascending. A seed
+  // the cap deferred, or one that was ineligible, emits a single mutator-less row and is not a
+  // member — so a retry after an interruption reconstructs the same membership from the same
+  // corpus rather than drifting onto a different eight.
+  const seedIds = [
+    ...new Set(
+      generated.outcomes.flatMap(outcome =>
+        outcome.mutator === undefined ? [] : [outcome.seedCassetteId],
+      ),
+    ),
+  ].sort()
+
+  const record: AdversarialRefreshRecord = {
+    schemaVersion: 1,
+    product: input.product,
+    tableVersion: ADVERSARIAL_TABLE_VERSION,
+    policyDigest,
+    sourceDigest,
+    cap,
+    eligibleSeeds,
+    excessSeeds: generated.seedsDeferred,
+    seedIds,
+    tuples: [...tuples].sort((left, right) =>
+      left.cassetteId < right.cassetteId ? -1 : left.cassetteId > right.cassetteId ? 1 : 0,
+    ),
+  }
+
   const base: Omit<StageAdversarialProposalResult, 'kind'> = {
     product: input.product,
     staged: publishable.map(row => ({
@@ -561,14 +792,31 @@ export function stageAdversarialProposal(
       tableEntryId: row.manifestCase.tableEntryId,
     })),
     refusals,
-    skips: generated.skips,
+    skips: [...settledSkips, ...generated.skips],
     stagingSkips,
     seedsConsidered: generated.seedsConsidered,
     seedsDeferred: generated.seedsDeferred,
     tableVersion: ADVERSARIAL_TABLE_VERSION,
     tableHash: ADVERSARIAL_TABLE_HASH,
+    rootPosture: 'available',
+    sourceDigest,
+    cap,
+    eligibleSeeds,
+    settledRefusals,
   }
-  if (publishable.length === 0) return { ...base, kind: 'nothing-derived' }
+
+  /**
+   * Settle what this refresh decided. A DRY RUN settles nothing — it published no bytes, so
+   * claiming its conclusions would let a preview silently retire seeds. An empty tuple list
+   * settles nothing either: there is no decision to record.
+   */
+  function settle(): { stateRecordDigest?: string } {
+    if (input.dryRun === true || record.tuples.length === 0) return {}
+    publishAdversarialRefreshRecord({ agentQaRoot: input.agentQaRoot, record })
+    return { stateRecordDigest: adversarialRefreshRecordDigest(record) }
+  }
+
+  if (publishable.length === 0) return { ...base, kind: 'nothing-derived', ...settle() }
 
   const cases = publishable.map(row => row.manifestCase)
   const batchDigest = computeAdversarialBatchDigest(input.product, cases)
@@ -577,7 +825,9 @@ export function stageAdversarialProposal(
   if (input.dryRun === true) return { ...base, kind: 'dry-run', batchDigest, dir }
 
   requireDirectories(productDir)
-  if (pathPresent(dir)) return { ...base, kind: 'unchanged', batchDigest, dir }
+  // An already-published batch still settles: the previous run may have been interrupted
+  // between the staging rename and its record, and the decisions are the same either way.
+  if (pathPresent(dir)) return { ...base, kind: 'unchanged', batchDigest, dir, ...settle() }
 
   const manifest: AdversarialBatchManifest = {
     schemaVersion: 1,
@@ -603,10 +853,12 @@ export function stageAdversarialProposal(
     }
     // Publish once, fully validated. An existing published batch is nonempty and cannot be
     // replaced by rename; a competitor is reported as 'unchanged', never as a fresh stage.
-    if (pathPresent(dir)) return { ...base, kind: 'unchanged', batchDigest, dir }
+    if (pathPresent(dir)) return { ...base, kind: 'unchanged', batchDigest, dir, ...settle() }
     renameSync(temporary, dir)
     temporary = undefined
-    return { ...base, kind: 'staged', batchDigest, dir }
+    // Settle AFTER the bytes are published: an interruption before this point leaves nothing
+    // settled and the retry re-derives the same batch, which is the recoverable order.
+    return { ...base, kind: 'staged', batchDigest, dir, ...settle() }
   } finally {
     if (temporary !== undefined) rmSync(temporary, { recursive: true, force: true })
   }

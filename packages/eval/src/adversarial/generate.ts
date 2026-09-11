@@ -71,8 +71,15 @@ export const ADVERSARIAL_GENERATOR_VERSION = 2
  * beside `GATE1_DEFAULT_MAX_SCREENS` / `GATE2_DEFAULT_MAX_ABLATIONS`: a refresh over a grown
  * corpus must be bounded work, and the seeds it does not reach are COUNTED and wait for the
  * next one rather than being dropped.
+ *
+ * 2026-09-11, 422-03: lowered from 25 to 8. The unit that matters is REVIEW volume, not seeds:
+ * eleven frozen families derive at most one variant each per seed, so eight seeds is at most 88
+ * cases in front of an operator who must read injection-shaped text before any of it reaches a
+ * git-tracked root. 25 was 275. The number is a declared review budget, not a learned threshold
+ * — nothing measures it, so it is stated here and overridable per host through
+ * `eval.adversarial.maxSeedsPerRefresh` and `--max-seeds`.
  */
-export const ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH = 25
+export const ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH = 8
 
 /**
  * The families this engine derives. 422-01 derived two of eleven and reported the rest as a

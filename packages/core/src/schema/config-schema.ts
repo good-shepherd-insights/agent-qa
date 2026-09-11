@@ -70,6 +70,13 @@ const AgentQaConfigSchemaInner = z.object({
       canaryHorizonBuilds: z.number().int().positive().optional(),
       maxLowerTrustPerScope: z.number().int().positive().optional(),
     }).strict().optional(),
+    // 2026-09-11, 422 D-04: how many NOVEL seeds one adversarial refresh may derive from
+    // before the rest are counted and deferred; recorded default lives in eval core
+    // (ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH). Strict, and positive-integer only: a cap
+    // that silently fell back to the default because the operator typed `0` is not a cap.
+    adversarial: z.object({
+      maxSeedsPerRefresh: z.number().int().positive().optional(),
+    }).strict().optional(),
     seeding: z.object({
       silverPerTestCap: z.number().int().positive().optional(),
     }).strict().optional(),

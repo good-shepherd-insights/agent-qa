@@ -261,6 +261,11 @@ describe('422 adversarial refresh bounding and recovery', () => {
     expect(third.eligibleSeeds).toBe(0)
     expect(third.seedsConsidered).toBe(0)
     expect(third.seedsDeferred).toBe(0)
+    // A settled seed is skipped WITHOUT spending a cap slot, and still says so: one row per
+    // decided family, so "nothing new applies" never reads the same as "nothing ran".
+    expect(third.skips).toHaveLength(SEED_COUNT)
+    expect(third.skips.every(skip => skip.reason === 'already-derived')).toBe(true)
+    expect([...new Set(third.skips.map(skip => skip.seedCassetteId))].sort()).toEqual([...f.seedIds])
   })
 
   it('settles refusals durably so a later refresh advances past them, and reopens them under a new policy', () => {
@@ -283,7 +288,15 @@ describe('422 adversarial refresh bounding and recovery', () => {
     const third = stage(f, { mutators: ['injection-template'], policy: BLOCK_POLICY })
     expect(third.kind).toBe('nothing-derived')
     expect(third.seedsConsidered).toBe(0)
+    // Nothing was scanned, so nothing may be reported as refused NOW — but an empty batch with
+    // no rows at all is indistinguishable from a refresh that never ran, so every settled
+    // refusal is disclosed on its own channel, naming the detector and never the surface.
     expect(third.refusals).toEqual([])
+    expect([...new Set(third.settledRefusals.map(row => row.seedCassetteId))].sort())
+      .toEqual([...f.seedIds])
+    for (const row of third.settledRefusals) {
+      expect(row).toMatchObject({ mutator: 'injection-template', detector: 'injectionShape' })
+    }
 
     // "The host blocked this" is a statement about a POLICY. Loosen it and every refusal is
     // open again — the cap applies to the reopened population exactly as it did the first time.
