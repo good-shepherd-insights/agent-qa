@@ -11,7 +11,42 @@
 import type { CompletedRunHandoff } from '../handoff/completed-run-handoff'
 import type { PerTestOutcome } from '../handoff/per-test-outcome'
 import type { RunAnalysisArtifact } from './analysis-artifact'
+import type {
+  MemoryOnPathEntry,
+  MisdirectionEvidence,
+} from './misdirection-evidence'
 import type { Verdict } from './verdict'
+
+/**
+ * What a RESOLVED verdict says about circularity (422 D-17/D-19) — three arms, not two.
+ *
+ * `not-recorded` is every verdict written before 422 and every verdict from a producer that
+ * shipped no ledger. It is NOT `declared-only`: that word is D-19's specific claim that an
+ * evaluation root was ABSENT, and handing it to a verdict that never made it would be the
+ * reader inventing a backing. It is certainly not `held`.
+ */
+export type ResolvedMisdirection =
+  | { readonly state: 'not-recorded' }
+  | {
+      readonly state: 'declared-only'
+      readonly evidence: MisdirectionEvidence
+      readonly memoryOnPath?: readonly MemoryOnPathEntry[]
+    }
+  | {
+      readonly state: 'measured'
+      readonly evidence: MisdirectionEvidence
+      readonly memoryOnPath?: readonly MemoryOnPathEntry[]
+    }
+
+/**
+ * Read a resolved verdict's circularity evidence without inventing any (422 D-17).
+ *
+ * STUB — the arms are declared so the contract is stable; the reading lands in this plan's
+ * GREEN commit.
+ */
+export function resolveVerdictMisdirection(_verdict: Verdict): ResolvedMisdirection {
+  return { state: 'not-recorded' }
+}
 
 /**
  * Members whose outcome is worth a root-cause verdict — the complement of the runner's own

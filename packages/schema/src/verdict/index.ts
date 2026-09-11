@@ -11,7 +11,8 @@ export {
   guardRunAnalysisArtifact,
 } from './analysis-artifact'
 export type { AnalysisArtifactAdmission, RunAnalysisArtifact } from './analysis-artifact'
-export { resolveRunVerdicts } from './resolved-verdicts'
+export { resolveRunVerdicts, resolveVerdictMisdirection } from './resolved-verdicts'
+export type { ResolvedMisdirection } from './resolved-verdicts'
 export { failureFingerprint } from './failure-fingerprint'
 export type { FailureFingerprintInput } from './failure-fingerprint'
 // 393 D-13: the SIBLING coverage recipe, beside the frozen failure recipe and never extending
