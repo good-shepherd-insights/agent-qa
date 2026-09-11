@@ -630,8 +630,10 @@ export {
   CENSUS_SCHEMA_VERSION,
   classifyStaticScorability,
   deriveCensus,
+  projectAdversarialGenerationMix,
 } from './census/derive-census'
 export type {
+  AdversarialGenerationMix,
   CensusCampaignInput,
   CensusCampaignSummary,
   CensusCrossCheckLine,

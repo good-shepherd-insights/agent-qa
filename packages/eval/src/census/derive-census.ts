@@ -33,7 +33,19 @@ import type { CassetteSidecarLeg } from '../cassette/sidecar-leg'
 import type { LabelTier } from '../cassette/label-leg'
 import { countGateSet } from '../gate/gate-set'
 import type { GateSetCounts } from '../gate/gate-set'
-import type { CorpusEntry } from '../labels/corpus-entry'
+import {
+  ADVERSARIAL_MUTATORS,
+  GENERATOR_KINDS,
+  GENERATOR_PROVENANCES,
+  generatorProvenance,
+} from '../labels/corpus-entry'
+import type {
+  AdversarialMutator,
+  CorpusEntry,
+  CorpusGenerator,
+  GeneratorKind,
+  GeneratorProvenance,
+} from '../labels/corpus-entry'
 import type { StandaloneLabelRecord } from '../labels/label-record'
 import { parseStandaloneLabelRecord } from '../labels/effective-labels'
 import type { PartitionManifest } from '../labels/partition-manifest'
@@ -82,6 +94,155 @@ export interface ExclusionCensusBlock {
 // run-exclusion document that admits them, and the census imports them back.
 // The list the census COUNTS and the list a committed exclusion may NAME are
 // therefore one spelling that cannot drift.
+
+/**
+ * 2026-09-12, 422 D-05/D-08/D-11/D-12: how an adversarial population was GENERATED.
+ *
+ * The shape is one projection used by two populations — the committed corpus (this file) and a
+ * scored replay batch (`../match/metrics`) — because "which generations are in here" is one
+ * question and two spellings of it would eventually answer it two ways. What each caller may NOT
+ * do is hand the other's population in: the census counts committed membership, the report counts
+ * what was actually scored, and the two are different sets.
+ *
+ * Three separations are structural rather than documented, and every one of them exists because a
+ * plausible generation histogram is worse than a missing one:
+ *
+ *   - CLOSED sets read zero; OPEN sets read absent. `byKind` and `byMutator` are seeded from the
+ *     closed vocabularies, so a declared family that produced nothing states `0` instead of
+ *     vanishing. `byTableVersion`, `byPromptVersion`, `byAuthoringModel` and `byAuthoringFamily`
+ *     are keyed by what was actually OBSERVED — nobody can enumerate the table generations that
+ *     do not exist, so a generation with no member is ABSENT rather than a zero that would read
+ *     as "that generation was attempted and produced nothing".
+ *   - PROBE-AUTHORED never sums with TABLE-DERIVED. 422-04 made the two structurally
+ *     distinguishable (a probe names `promptVersion` and carries no
+ *     `mutator`/`tableVersion`/`tableHash`) precisely so a reader can tell a deterministic
+ *     fuzzer's output from an LLM's. `byMutator` and `byTableVersion` therefore sum to
+ *     `byProvenance.table`, and the two probe axes to `byProvenance.probe` — never to `total`.
+ *   - A LEGACY stamp is binned into no family at all. A pre-422 entry names a kind and a seed and
+ *     nothing else; it counts as `byProvenance.absent` and reaches no mutator and no generation,
+ *     because its family is UNKNOWN and a guess dressed as a count is the failure this whole
+ *     block exists to avoid.
+ *
+ * `tableHashesByVersion` is the tamper disclosure (T-422-19-01): a generation is supposed to name
+ * exactly one frozen table, so two distinct hashes under one version is a fact a reader must be
+ * able to SEE rather than a discrepancy that averages away inside a count.
+ */
+export interface AdversarialGenerationMix {
+  /** Members of the population this mix describes; equals the adversarial arm's own total. */
+  total: number
+  /**
+   * Members whose generator metadata the caller could not supply at all. Always `0` for the
+   * committed census (an adversarial entry structurally carries a generator); nonzero only where
+   * a scored entry's corpus membership was not resolvable, which is NOT the same fact as a
+   * legacy entry that names no family.
+   */
+  metadataUnavailable: number
+  /** Which provenance shape each member's stamp actually carries (422-04). */
+  byProvenance: Counts<GeneratorProvenance>
+  /** The perturbed FIELD, over every member that names a generator. Closed set; zeros retained. */
+  byKind: Counts<GeneratorKind>
+  /** The mutation FAMILY, over the table arm only. Closed set; zeros retained. */
+  byMutator: Counts<AdversarialMutator>
+  /** Frozen table generation → committed count. Open set; an uncommitted generation is absent. */
+  byTableVersion: Readonly<Record<string, number>>
+  /** Sorted distinct pinned table hashes seen under each generation (T-422-19-01). */
+  tableHashesByVersion: Readonly<Record<string, readonly string[]>>
+  /** Frozen prompt version → count, over the probe arm only. Open set. */
+  byPromptVersion: Readonly<Record<string, number>>
+  /** Authoring model identity → count, over the probe arm only (D-11 disclosure). */
+  byAuthoringModel: Readonly<Record<string, number>>
+  /** Resolved provider family → count, over the probe arm only. */
+  byAuthoringFamily: Readonly<Record<string, number>>
+}
+
+function zeroGeneratorProvenances(): Counts<GeneratorProvenance> {
+  const counts = {} as Counts<GeneratorProvenance>
+  for (const value of GENERATOR_PROVENANCES) counts[value] = 0
+  return counts
+}
+
+function zeroGeneratorKinds(): Counts<GeneratorKind> {
+  const counts = {} as Counts<GeneratorKind>
+  for (const value of GENERATOR_KINDS) counts[value] = 0
+  return counts
+}
+
+function zeroAdversarialMutators(): Counts<AdversarialMutator> {
+  const counts = {} as Counts<AdversarialMutator>
+  for (const value of ADVERSARIAL_MUTATORS) counts[value] = 0
+  return counts
+}
+
+function bump(counts: Map<string, number>, key: string): void {
+  counts.set(key, (counts.get(key) ?? 0) + 1)
+}
+
+/** Sorted-key projection of an observed-value map; an unobserved key never appears (D-04). */
+function sortedStringSets(
+  sets: ReadonlyMap<string, Set<string>>,
+): Readonly<Record<string, readonly string[]>> {
+  const result: Record<string, readonly string[]> = {}
+  for (const key of [...sets.keys()].sort()) result[key] = [...sets.get(key)!].sort()
+  return result
+}
+
+/**
+ * Fold one adversarial population's generator stamps into the disclosed mix.
+ *
+ * `undefined` in the input means the CALLER had no generator for that member — a distinct fact
+ * from a member whose stamp names no family, and kept distinct as `metadataUnavailable` so a
+ * report over entries whose corpus membership was unresolvable cannot read as a corpus of
+ * pre-422 legacy entries.
+ */
+export function projectAdversarialGenerationMix(
+  generators: readonly (CorpusGenerator | undefined)[],
+): AdversarialGenerationMix {
+  const byProvenance = zeroGeneratorProvenances()
+  const byKind = zeroGeneratorKinds()
+  const byMutator = zeroAdversarialMutators()
+  const byTableVersion = new Map<string, number>()
+  const tableHashes = new Map<string, Set<string>>()
+  const byPromptVersion = new Map<string, number>()
+  const byAuthoringModel = new Map<string, number>()
+  const byAuthoringFamily = new Map<string, number>()
+  let metadataUnavailable = 0
+
+  for (const generator of generators) {
+    if (generator === undefined) {
+      metadataUnavailable += 1
+      continue
+    }
+    byKind[generator.kind] += 1
+    const provenance = generatorProvenance(generator)
+    byProvenance[provenance] += 1
+    if (provenance === 'table') {
+      // Guarded by the provenance rule: a `table` stamp names all three fields or it is not one.
+      byMutator[generator.mutator!] += 1
+      const version = String(generator.tableVersion!)
+      bump(byTableVersion, version)
+      const hashes = tableHashes.get(version) ?? new Set<string>()
+      hashes.add(generator.tableHash!)
+      tableHashes.set(version, hashes)
+    } else if (provenance === 'probe') {
+      bump(byPromptVersion, String(generator.promptVersion!))
+      bump(byAuthoringModel, generator.authoringModel!.id)
+      bump(byAuthoringFamily, generator.authoringModel!.family)
+    }
+  }
+
+  return {
+    total: generators.length,
+    metadataUnavailable,
+    byProvenance,
+    byKind,
+    byMutator,
+    byTableVersion: sortedCounts(byTableVersion),
+    tableHashesByVersion: sortedStringSets(tableHashes),
+    byPromptVersion: sortedCounts(byPromptVersion),
+    byAuthoringModel: sortedCounts(byAuthoringModel),
+    byAuthoringFamily: sortedCounts(byAuthoringFamily),
+  }
+}
 
 /**
  * The tier a cassette can reach from its committed bytes alone, mirroring the `runMatchTiers`
@@ -161,6 +322,16 @@ export interface CensusProductBlock {
   fieldCoverage: { capturedAt: RateMetric; targetEnvironment: RateMetric }
   /** What the committed exclusion records say about this product (414 D-02). */
   exclusions: ExclusionCensusBlock
+  /**
+   * 422 D-05/D-08/D-11: how this product's COMMITTED adversarial members were generated.
+   *
+   * Present only when the product actually holds at least one committed adversarial entry —
+   * absent is not zero. A product that has never admitted an adversarial case carries no block
+   * at all, so a census of a root that never refreshed cannot be mistaken for a census of a
+   * refresh that produced nothing, and every census document committed before 422 keeps its
+   * bytes under the existing write-once schema-version-2 key.
+   */
+  adversarialGenerationMix?: AdversarialGenerationMix
 }
 
 /**
@@ -435,6 +606,12 @@ function foldCampaign(
 function projectBlock(accumulator: ProductAccumulator): CensusProductBlock {
   const tier2 = accumulator.staticScorability['tier2-anchor']
   const tier3 = accumulator.staticScorability['tier3-annotation']
+  // 422 D-05/D-08: the COMMITTED adversarial members, and nothing else. A staged or refused case
+  // never reached `accumulator.entries` — the census folds the committed root — so the arithmetic
+  // below cannot count work an operator has not admitted.
+  const adversarialGenerators = accumulator.entries
+    .filter(entry => entry.split === 'adversarial')
+    .map(entry => entry.generator)
 
   return {
     total: accumulator.total,
@@ -468,6 +645,11 @@ function projectBlock(accumulator: ProductAccumulator): CensusProductBlock {
       byClass: accumulator.exclusionByClass,
       byProducer: accumulator.exclusionByProducer,
     },
+    // Absent, never a block of zeros: a product with no committed adversarial member has no
+    // generation mix to state, and the omission keeps pre-422 census bytes byte-identical.
+    ...(adversarialGenerators.length === 0
+      ? {}
+      : { adversarialGenerationMix: projectAdversarialGenerationMix(adversarialGenerators) }),
   }
 }
 

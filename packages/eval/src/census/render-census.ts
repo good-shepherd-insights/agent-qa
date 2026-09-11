@@ -15,7 +15,7 @@
 // campaign prints '- none supplied' rather than a row of zeros that reads like a campaign that
 // measured nothing.
 
-import type { CensusCrossCheckLine, CorpusCensus } from './derive-census'
+import type { AdversarialGenerationMix, CensusCrossCheckLine, CorpusCensus } from './derive-census'
 
 /** The bullet body of a counter group, sorted — honest '- none' when empty (D-04). */
 function counterBullets(counts: Readonly<Record<string, number>>): string[] {
@@ -44,6 +44,49 @@ function rateLine(
 ): string {
   const rate = metric.rate === undefined ? 'n/a (zero denominator)' : `${metric.rate}`
   return `- ${name}: ${metric.numerator}/${metric.denominator} (rate: ${rate})`
+}
+
+/**
+ * 422 D-05/D-08/D-11: the committed generation mix, printed so the reader can see the three
+ * separations the DTO makes rather than having to reconstruct them.
+ *
+ * The heading is spelled IN FULL here so it is greppable in this file's raw source. An open-set
+ * group with no observed value prints '- none' — which is the honest statement "no member named
+ * one", distinct from the closed-set groups below it where every declared member prints its own
+ * count including zero.
+ */
+function generationMixLines(mix: AdversarialGenerationMix): string[] {
+  const lines = ['### Adversarial generation mix', '']
+  lines.push(`- total: ${mix.total}`)
+  lines.push(`- metadataUnavailable: ${mix.metadataUnavailable}`)
+  lines.push('')
+  lines.push(...counterLines('Generation mix by provenance', mix.byProvenance))
+  lines.push(...counterLines('Generation mix by kind', mix.byKind))
+  lines.push(...counterLines('Generation mix by mutator', mix.byMutator))
+  lines.push('### Generation mix by table version', '')
+  const versions = Object.keys(mix.byTableVersion).sort()
+  if (versions.length === 0) {
+    lines.push('- none')
+  } else {
+    for (const version of versions) lines.push(`- v${version}: ${mix.byTableVersion[version]}`)
+  }
+  lines.push('')
+  // One generation is supposed to name exactly one frozen table; two spellings under one version
+  // is the tamper signal, so the hashes print rather than collapsing into the count above.
+  lines.push('- tableHashesByVersion:')
+  const hashed = Object.keys(mix.tableHashesByVersion).sort()
+  if (hashed.length === 0) {
+    lines.push('  - none')
+  } else {
+    for (const version of hashed) {
+      lines.push(`  - v${version}: ${[...mix.tableHashesByVersion[version]!].join(', ')}`)
+    }
+  }
+  lines.push('')
+  lines.push(...counterLines('Generation mix by prompt version', mix.byPromptVersion))
+  lines.push(...counterLines('Generation mix by authoring model', mix.byAuthoringModel))
+  lines.push(...counterLines('Generation mix by authoring family', mix.byAuthoringFamily))
+  return lines
 }
 
 /** One cross-check line: the two populations printed side by side, never reconciled (F7). */
@@ -155,6 +198,12 @@ export function renderCensusMarkdown(census: CorpusCensus): string {
     lines.push('')
     lines.push(...counterLines('By class', block.exclusions.byClass))
     lines.push(...counterLines('By producer', block.exclusions.byProducer))
+
+    // 422 D-05/D-08: absent when the product holds no committed adversarial member. Nothing is
+    // printed rather than a section of zeros, for the same reason the DTO omits the block.
+    if (block.adversarialGenerationMix !== undefined) {
+      lines.push(...generationMixLines(block.adversarialGenerationMix))
+    }
   }
 
   // Campaign: an absent manifest states its absence rather than printing zeros (D-04).

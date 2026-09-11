@@ -210,6 +210,9 @@ export type { ReplayRecordLoad } from '@vostride/agent-qa-eval-local'
 // against the census DTO through the composition root rather than minting a second edge of its
 // own, exactly as `commands/eval.ts` types against the verb DTOs. Type-only, erased at build.
 export type {
+  // 422 D-05/D-08: the committed adversarial generation mix reaches the console through this
+  // same ledgered root, so the census summary can print it without minting a second edge.
+  AdversarialGenerationMix,
   BaselineComparatorRefusal,
   CensusCrossCheckLine,
   CorpusCensus,

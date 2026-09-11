@@ -454,6 +454,20 @@ function renderCensusSummary(result: CensusVerbResult): void {
         + `runsExcluded=${renderCounters(block.runsExcluded)} `
         + `rungs=${renderCounters(block.rungMix)}`,
     )
+    // 422 D-05/D-08: printed only when the product actually holds a committed adversarial
+    // member. A line of zeros here would tell the reader a refresh happened and yielded nothing.
+    // The table and probe arms stay side by side and are never added together.
+    const mix = block.adversarialGenerationMix
+    if (mix !== undefined) {
+      console.log(
+        `${product} adversarial generation: total=${mix.total} `
+          + `provenance=${renderCounters(mix.byProvenance)} `
+          + `tableVersions=${renderCounters({ ...mix.byTableVersion })} `
+          + `mutators=${renderCounters(mix.byMutator)} `
+          + `promptVersions=${renderCounters({ ...mix.byPromptVersion })} `
+          + `authoringModels=${renderCounters({ ...mix.byAuthoringModel })}`,
+      )
+    }
   }
   const campaign = census.campaign
   if (!campaign.present) {
