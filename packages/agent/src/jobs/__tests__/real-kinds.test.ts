@@ -208,6 +208,12 @@ describe('the real post-run kinds (388 D-04)', () => {
   it('publishes bundle-committed with the counts when the fold completed', async () => {
     // The ACCEPT half, unchanged from before the gate: a complete fold still lands the job
     // `complete` with its counts on the checkpoint the chain terminal reads.
+    //
+    // 2026-09-11 (422 D-13): `next` is no longer empty here. The fold's success is what mints
+    // the third stage, so an empty successor list at THIS point would now mean the proposal job
+    // never exists. The checkpoint claim — the subject of this cell — is untouched; the `next`
+    // line moved from "nothing follows" to "exactly the one thing that follows", which is the
+    // same declared-equals-produced assertion one edge further along.
     const { context, published } = contextFor({ runId: RUN_ID, executionContext: 'local-headless' })
     const outcome = await createRealJobKindRegistry({
       loadCompletedRunHandoff: () => HANDOFF,
@@ -216,7 +222,7 @@ describe('the real post-run kinds (388 D-04)', () => {
     }).require('curate-memory').handler(context)
 
     if (outcome.status !== 'complete') throw new Error(`expected complete, got ${outcome.status}`)
-    expect(outcome.next).toEqual([])
+    expect(successorKinds(outcome.next)).toEqual(['propose-improvements'])
     expect(published).toEqual([
       { checkpointId: 'candidates-authored', value: { runId: RUN_ID } },
       { checkpointId: 'bundle-committed', value: { runId: RUN_ID, curated: 4, deprecated: 2 } },

@@ -275,6 +275,14 @@ export const RunNotificationSchema = z.object({
       curated: z.number().int().nonnegative().optional(),
       deprecated: z.number().int().nonnegative().optional(),
     }).strict(),
+    // 422 D-13: optional here for the same reason it is optional on the record — absent MEANS
+    // not recorded. It has to be declared all the same: this object is `.strict()`, so a wire
+    // contract that simply ignored the third stage would REFUSE every record that carries one.
+    proposals: z.object({
+      status: z.enum(['done', 'failed']),
+      proposed: z.number().int().nonnegative().optional(),
+      skipped: z.number().int().nonnegative().optional(),
+    }).strict().optional(),
   }).strict(),
 }).strict() satisfies z.ZodType<RunNotification>
 

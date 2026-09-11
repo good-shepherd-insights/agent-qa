@@ -873,13 +873,16 @@ export interface PostProcessingJobRow {
  * chained yet. Padding either of them with a synthetic row would erase exactly the distinction
  * the projection reads.
  *
- * This state carries exactly one member per chip stage and the chain derives exactly one id per
- * stage, so the projection and the chain agree member for member: every id handed to `readChain`
- * has a member here to report its row, and there is no derived id whose absence this state
- * declines to describe.
+ * This state carries exactly one member per CHIP STAGE, which since 422 D-13 is a strict subset
+ * of the stages the chain runs: the chain derives a third id for the proposal stage and this
+ * state deliberately does not report its row. The chips are what a surface renders, and widening
+ * them is a change to a published vocabulary that D-13 did not authorise — so the third id is
+ * handed to `readChain` (the reader is entitled to know the whole chain it is looking at) and
+ * the projection stays two-wide. `notification.stages.proposals` is where the third stage's
+ * outcome reaches a reader, and it reaches it as the durable record rather than as a chip.
  *
- * 2026-09-01 (Phase 409): the chain's third derived id left with the Issue-slot cleanup — see
- * `DELETION-INVENTORY.md`.
+ * 2026-09-01 (Phase 409): the chain's third derived id left with the Issue-slot cleanup.
+ * 2026-09-11 (Phase 422, D-13): a third derived id returns, without a third chip.
  */
 export interface PostProcessingChainState {
   readonly analyzeRun?: PostProcessingJobRow
@@ -910,12 +913,13 @@ export interface PostProcessingReaderPort {
   readonly idSource: JobIdSource
   /**
    * Durable state for the ids given, or `undefined` when this project holds no queue database
-   * at all. `ChainJobIds` is two-wide and the reader reads a row for every member — chain
-   * identity is still the job-kind layer's to derive, and this port only reads what it is
-   * handed.
+   * at all. Chain identity is still the job-kind layer's to derive, and this port only reads
+   * what it is handed — which since 422 D-13 is three ids, of which the state above reports the
+   * two that have chips. An implementation is free to read fewer rows than it is handed ids;
+   * what it may not do is derive an id of its own.
    *
-   * 2026-09-01 (Phase 409): the width dropped from three when the chain's third derived id left
-   * with the Issue-slot cleanup — see `DELETION-INVENTORY.md`.
+   * 2026-09-01 (Phase 409): the width dropped from three to two.
+   * 2026-09-11 (Phase 422, D-13): three again, and no longer equal to the state's member count.
    *
    * `undefined` is a distinct answer from an empty state and both are honest: the first says
    * nothing has ever been enqueued here, the second says this chain's rows are not among the

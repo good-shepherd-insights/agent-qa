@@ -294,17 +294,19 @@ export interface ChainTerminalRecord {
    * Every job the chain COULD have enqueued, whether or not it did.
    *
    * Candidates rather than members, because a derived chain id is not a promise that a row
-   * exists. `chainJobIdsForRun` derives BOTH of the chain's ids from the run id alone, up
-   * front, while the rows appear one at a time: the successor is enqueued only once the
-   * analysis chains, and a deduped or halted chain leaves a derived id no row will ever carry.
-   * The store's rule is therefore stated over the candidates that EXIST — a successor that has
-   * not been written yet cannot be read as a finished one, so the terminal cannot fire a job
-   * early. The head is the one exception and is checked by name: a chain whose analyze-run row
-   * was never written is not a run's chain at all.
+   * exists. `chainJobIdsForRun` derives EVERY one of the chain's ids from the run id alone, up
+   * front, while the rows appear one at a time: each successor is enqueued only once its
+   * predecessor chains, and a deduped or halted chain leaves a derived id no row will ever
+   * carry. The store's rule is therefore stated over the candidates that EXIST — a successor
+   * that has not been written yet cannot be read as a finished one, so the terminal cannot fire
+   * a job early. The head is the one exception and is checked by name: a chain whose analyze-run
+   * row was never written is not a run's chain at all.
    *
-   * 2026-09-01 (Phase 409): the chain addresses two ids, not three. The reserved slot this
-   * comment used to justify the name with left with the Issue-slot cleanup, and the
-   * candidate/member distinction survives on its own merit — see `DELETION-INVENTORY.md`.
+   * 2026-09-01 (Phase 409): the chain narrowed to two ids.
+   * 2026-09-11 (Phase 422, D-13): three again, the third being the proposal stage the fold now
+   * chains to. The candidate/member distinction is what carries that widening for free — a
+   * chain halted at a permanently failed fold has no proposal row, and the rule reads it as the
+   * absence it is rather than as an unfinished stage that blocks the record forever.
    */
   readonly candidateJobIds: readonly JobId[]
   /** Canonical JSON of the `RunNotification` this terminal would record. */

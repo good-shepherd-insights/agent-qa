@@ -26,7 +26,7 @@ import type { Verdict } from '../verdict/verdict'
  * last version's shape then fails to typecheck at its construction site, which is where the
  * mistake is, instead of at the reader that could only report it as corrupt bytes.
  */
-export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 2
+export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 3
 
 /** Whether the chain as a whole finished clean. Every stage done ⇒ `done` (D-12). */
 export type RunNotificationOutcome = 'done' | 'failed'
@@ -48,7 +48,16 @@ export interface RunNotificationVerdictSummary {
 }
 
 /**
- * The two stages the chain actually runs (narrowed to two in v2 — Phase 404, D-01).
+ * The stages the chain actually runs: two always, a third when the chain reached it.
+ *
+ * Narrowed to two in v2 (Phase 404, D-01); re-widened in v3 with an OPTIONAL third (Phase 422,
+ * D-13). The optionality is the contract, not a convenience. `proposals` absent means the
+ * proposal stage WAS NOT RECORDED — which is the truth for every row written before v3 and for
+ * every chain that halted at a permanently failed fold — and it is deliberately distinct from
+ * `{status: 'failed'}`, which claims a stage that ran and did not finish. The v2 → v3 migration
+ * therefore leaves the member absent rather than filling it in; a walk that synthesized a
+ * successful historical stage would be this build inventing work nobody did, on every row ever
+ * written, and the read-side surfaces cannot tell an invented stage from a recorded one.
  *
  * A stage record carries its STATUS and, for curation, the counts it committed. It carries NO
  * failure text, and that absence is a decision rather than an omission (404 D-21, T-404-01):
@@ -74,6 +83,17 @@ export interface RunNotificationStages {
     status: RunNotificationStageStatus
     curated?: number
     deprecated?: number
+  }
+  /**
+   * The adversarial proposal stage (422 D-13). ABSENT means NOT RECORDED — see the interface
+   * comment — and the counts follow curation's rule exactly: present only for a stage that got
+   * far enough to have them, because zeros on a stage that never staged anything would claim it
+   * proposed nothing, which is a different sentence from never having reached the port at all.
+   */
+  proposals?: {
+    status: RunNotificationStageStatus
+    proposed?: number
+    skipped?: number
   }
 }
 
@@ -130,6 +150,29 @@ export const RUN_NOTIFICATION_MIGRATIONS: Record<number, (doc: unknown) => unkno
     return {
       ...record,
       schemaVersion: 2,
+      stages: {
+        ...('analysis' in stages ? { analysis: stages.analysis } : {}),
+        ...('curation' in stages ? { curation: stages.curation } : {}),
+      },
+    }
+  },
+  /**
+   * v2 → v3 (Phase 422, D-13, 2026-09-11): the chain grows a third stage and the record grows an
+   * OPTIONAL member for it. The step is a version bump and NOTHING ELSE, which is the whole of
+   * its correctness: a v2 row was written by a chain that had no proposal stage, so the only
+   * honest thing this build can say about that run's proposals is nothing at all.
+   *
+   * Written as the same ALLOW-LIST the v1 step uses rather than as a passthrough, for the same
+   * reason: a v2 row that somehow carries a member neither version declares migrates to a stage
+   * set that is still missing it and is then refused BY NAME by the shape guard, instead of
+   * riding the spread through into a record several surfaces render.
+   */
+  2: (doc) => {
+    const record = isRecord(doc) ? doc : {}
+    const stages = isRecord(record.stages) ? record.stages : {}
+    return {
+      ...record,
+      schemaVersion: 3,
       stages: {
         ...('analysis' in stages ? { analysis: stages.analysis } : {}),
         ...('curation' in stages ? { curation: stages.curation } : {}),
@@ -211,7 +254,12 @@ export function guardRunNotification(value: unknown): RunNotification {
   if (!isRecord(stages)) {
     throw new RunNotificationSchemaError('it reports no stages')
   }
-  if (Object.keys(stages).sort().join(',') !== 'analysis,curation') {
+  // TWO admissible sets, never "anything plus the declared ones" (422 D-13). The optional third
+  // member widened what a stage set may BE by exactly one shape; a presence check for `proposals`
+  // beside a subset check for the rest would readmit the undeclared member this equality exists
+  // to refuse, which is the failure the exact-key idiom was chosen against in the first place.
+  const stageKeys = Object.keys(stages).sort().join(',')
+  if (stageKeys !== 'analysis,curation' && stageKeys !== 'analysis,curation,proposals') {
     throw new RunNotificationSchemaError(
       `its stage set is ${JSON.stringify(Object.keys(stages).sort())}`,
     )
@@ -229,6 +277,25 @@ export function guardRunNotification(value: unknown): RunNotification {
   }
   if ('deprecated' in curation && !isCount(curation.deprecated)) {
     throw new RunNotificationSchemaError('its deprecated count is not a count')
+  }
+
+  // Checked only when PRESENT, and then checked in full (422 D-13). An absent stage is the
+  // not-recorded fact above and needs no validation; a present one is rendered, so a malformed
+  // proposal stage is refused here rather than handed to a surface that would print `undefined`.
+  if ('proposals' in stages) {
+    const proposals = stages.proposals
+    if (
+      !isRecord(proposals) ||
+      (proposals.status !== 'done' && proposals.status !== 'failed')
+    ) {
+      throw new RunNotificationSchemaError('its proposal stage reports no outcome')
+    }
+    if ('proposed' in proposals && !isCount(proposals.proposed)) {
+      throw new RunNotificationSchemaError('its proposed count is not a count')
+    }
+    if ('skipped' in proposals && !isCount(proposals.skipped)) {
+      throw new RunNotificationSchemaError('its skipped count is not a count')
+    }
   }
 
   return migrated as unknown as RunNotification

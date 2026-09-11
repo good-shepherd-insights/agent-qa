@@ -29,6 +29,7 @@ import type {
   JobKind,
   PerTestOutcome,
   RunAnalysisArtifact,
+  RunNotificationVerdictSummary,
   Verdict,
   VerdictGroundingQuote,
   VerdictSentenceParts,
@@ -167,6 +168,14 @@ function analyzeRunFallback(input: FallbackContinuationInput): readonly ChainedJ
 const ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory']
 
 /**
+ * The 422 D-13 edge, declared once and read by the declaration, the real handler and the
+ * scripted stand-in alike — the same declared-equals-produced discipline the analyze-run edge
+ * above rests on. `propose-improvements` is a kind this build has declared since 385; what this
+ * constant adds is the successor relation that finally reaches it.
+ */
+const CURATE_MEMORY_SUCCESSORS: readonly JobKind[] = ['propose-improvements']
+
+/**
  * The host powers the two real post-run handlers need, injected by the composition (D-01).
  *
  * Both are things `agent` cannot do and must never learn to: reading a file is a host API in
@@ -209,6 +218,17 @@ export interface PostRunJobCapabilities {
     readonly curated: number
     readonly deprecated: number
     readonly complete: boolean
+    /**
+     * The candidates the fold's own receipt names, forwarded to the proposal stage (422 D-13).
+     *
+     * ADDITIVE-OPTIONAL rather than required, on this module's existing tolerance idiom, and the
+     * distinction is carried through rather than flattened: ABSENT means the binding reported no
+     * candidate ids at all, while `[]` means it reported that there were none. A required field
+     * would have forced every host and every harness that scripts a fold to invent a value for a
+     * question they are not the authority on — and the first thing a host invents here is `[]`,
+     * which is the one answer that is indistinguishable from a real empty fold.
+     */
+    readonly candidateIds?: readonly string[]
   }>
   /**
    * Put one run's analysis artifact durably on disk (389 D-09).
@@ -256,6 +276,27 @@ export interface PostRunJobCapabilities {
    * propose-improvements binds this seam; the five-kind chain is untouched.
    */
   runReplayGate?: ReplayGatePort['runReplayGate']
+  /**
+   * The third stage's work, as a NEUTRAL optional port (422 D-13).
+   *
+   * Optional on exactly the terms `readTestHistory` and `readEvidenceBlob` are: a host that does
+   * not bind it is not a broken host, it is a host that stages nothing. The stage still RUNS —
+   * it publishes its checkpoint, lands `done` and terminates the chain — and the record then
+   * reports a proposal stage that reached the port and proposed nothing, with no counts at all.
+   * That is a different sentence from `proposed: 0`, and the counts are omitted precisely so the
+   * two cannot be confused.
+   *
+   * Neutral in the same sense the two real handlers' other capabilities are: it names no store,
+   * no knowledge root and no model. The adversarial staging itself lives two packages away
+   * behind an operator admission seam this package may not reach, and binding it here would be
+   * the import edge the architecture refuses.
+   */
+  stageAdversarialProposal?(input: {
+    readonly runId: string
+    readonly executionContext: ExecutionContext | undefined
+    readonly candidateIds: readonly string[]
+    readonly upstream: ProposeImprovementsUpstream
+  }): Promise<{ readonly proposed: number; readonly skipped: number }>
 }
 
 /**
@@ -339,6 +380,95 @@ export function readAnalyzeRunPayload(value: unknown): AnalyzeRunPayload | undef
       ? { excludedFromOutcomes: true as const }
       : {}),
   }
+}
+
+/**
+ * What the two earlier stages already did, carried forward to the third (422 D-13).
+ *
+ * Every member is OPTIONAL and every absence is a real, different situation rather than a
+ * default: no `analysisStatus` means this payload does not say what became of the analysis, and
+ * no `curation` means it does not say what the fold committed. The terminal builder reads the
+ * absences as absences — it never fills them with zeros — because this block exists precisely so
+ * the record can report stages the finishing job did not run, and a block that guessed would be
+ * a more confident lie than saying nothing.
+ */
+export interface ProposeImprovementsUpstream {
+  readonly verdictSummary?: RunNotificationVerdictSummary
+  readonly analysisStatus?: 'done' | 'failed'
+  readonly curation?: {
+    readonly curated?: number
+    readonly deprecated?: number
+    readonly complete?: true
+  }
+}
+
+/**
+ * The claim shape propose-improvements is enqueued with (422 D-13).
+ *
+ * `runId` is the only member the stage cannot work without, and it is also what makes the job a
+ * RUN's chain member at all — the engine decides a chain terminal on it. Everything else
+ * degrades: `candidateIds` to the empty list, `upstream` to a block that claims nothing.
+ */
+export interface ProposeImprovementsPayload {
+  readonly runId: string
+  readonly executionContext: ExecutionContext | undefined
+  readonly candidateIds: readonly string[]
+  readonly upstream: ProposeImprovementsUpstream
+}
+
+/**
+ * Additive-tolerant, on exactly `readAnalyzeRunPayload`'s terms and for the same reason.
+ *
+ * These bytes come off a DURABLE queue: a job may have been written by an older build that had
+ * no `upstream` block, or a newer one carrying a key this build has never heard of. Refusing
+ * either would strand committed curation behind an unrunnable stage, so unknown keys are ignored
+ * and unreadable members degrade to absence. The strict half of the contract lives on the
+ * PRODUCER side — `realCurateMemoryHandler` below, where a bad shape means a bug in code that
+ * just ran and the refusal is actionable.
+ *
+ * A non-string candidate id is DROPPED rather than stringified: an id this build cannot read is
+ * not an id it may invent, and a `String(undefined)` reaching the staging port would address a
+ * candidate that does not exist.
+ */
+export function readProposeImprovementsPayload(
+  value: unknown,
+): ProposeImprovementsPayload | undefined {
+  const record = asRecord(value)
+  if (typeof record.runId !== 'string' || record.runId === '') return undefined
+
+  const upstreamSource = asRecord(record.upstream)
+  const curationSource = asRecord(upstreamSource.curation)
+  const summary = asRecord(upstreamSource.verdictSummary)
+  const curation = {
+    ...(isCount(curationSource.curated) ? { curated: curationSource.curated } : {}),
+    ...(isCount(curationSource.deprecated) ? { deprecated: curationSource.deprecated } : {}),
+    ...(curationSource.complete === true ? { complete: true as const } : {}),
+  }
+
+  return {
+    runId: record.runId,
+    executionContext:
+      typeof record.executionContext === 'string'
+        ? (record.executionContext as ExecutionContext)
+        : undefined,
+    candidateIds: Array.isArray(record.candidateIds)
+      ? record.candidateIds.filter((id): id is string => typeof id === 'string')
+      : [],
+    upstream: {
+      ...(isCount(summary.total)
+        ? { verdictSummary: summary as unknown as RunNotificationVerdictSummary }
+        : {}),
+      ...(upstreamSource.analysisStatus === 'done' || upstreamSource.analysisStatus === 'failed'
+        ? { analysisStatus: upstreamSource.analysisStatus }
+        : {}),
+      ...(Object.keys(curation).length === 0 ? {} : { curation }),
+    },
+  }
+}
+
+/** Non-negative whole numbers only — the counts idiom this module shares with the record. */
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
 
 /**
@@ -643,6 +773,97 @@ function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandl
       curated: counts.curated,
       deprecated: counts.deprecated,
     })
+    // 422 D-13. The successor is produced for EVERY completed fold, including one that curated
+    // nothing: zero work is still work that finished, and a successor gated on the counts would
+    // drop exactly the quiet runs — which reads, to every later reader, like a chain that stalled.
+    //
+    // What travels with it is the upstream truth, and it travels because it has to: the job that
+    // lands the chain terminal from here on is the proposal job, which did not do the analysis and
+    // did not do this fold. Whatever is not on this payload is not in the durable record.
+    return {
+      status: 'complete',
+      next: [
+        ...successorsOf(
+          { kind: 'curate-memory', allowedSuccessors: CURATE_MEMORY_SUCCESSORS },
+          String(context.job.id),
+          {
+            // Pitfall 6 / 386 D-09, one edge further along: without these two the
+            // daemon-claimed successor resolves a drain-scoped posture and cannot address
+            // the run it is proposing about.
+            runId: record.runId,
+            ...(record.executionContext === undefined
+              ? {}
+              : { executionContext: record.executionContext }),
+            // Absent when the fold reported none — see the capability's own comment for why the
+            // empty list and the missing field are deliberately not the same answer.
+            ...(counts.candidateIds === undefined
+              ? {}
+              : { candidateIds: [...counts.candidateIds] }),
+            upstream: {
+              ...(record.verdictSummary === undefined
+                ? {}
+                : { verdictSummary: record.verdictSummary }),
+              // The dead-analysis marker, restated where the next stage will look for it. The
+              // root of THIS payload belongs to the analysis; the root of the next belongs to
+              // the fold, so the fact has to be re-carried or it is lost at this edge.
+              analysisStatus: record.verdicts === UNKNOWN_VERDICTS_MARKER ? 'failed' : 'done',
+              curation: {
+                curated: counts.curated,
+                deprecated: counts.deprecated,
+                complete: true,
+              },
+            },
+          },
+        ),
+      ],
+    }
+  }
+}
+
+/**
+ * The real propose-improvements body (422 D-13).
+ *
+ * The third and last stage of the post-run chain. It runs on candidates the fold's receipt named
+ * and on the upstream truth the fold forwarded, and it stages its proposals through an OPTIONAL
+ * neutral port — so a host that binds nothing still lands the stage, publishes its checkpoint and
+ * terminates the chain honestly rather than leaving the run's record unwritten.
+ *
+ * It cannot undo the curation behind it, and nothing here tries. A permanent failure halts the
+ * chain (the declaration below), the committed bundle stays committed, and the terminal record
+ * reports a `done` curation beside a `failed` proposal stage — which is what actually happened.
+ *
+ * A port that throws is reported as nothing at all, exactly as the fold's is: the engine catches
+ * it, spends an attempt and decides between a retry and a permanent failure from the declared
+ * bound, because this handler cannot know whether a staging failure is transient.
+ */
+function realProposeImprovementsHandler(capabilities: PostRunJobCapabilities): JobHandler {
+  return async (context) => {
+    const payload = readProposeImprovementsPayload(context.payload)
+    if (payload === undefined) {
+      return permanently(
+        'the propose-improvements payload names no run, so there is no curated run to propose ' +
+          'improvements about',
+      )
+    }
+
+    const staged = capabilities.stageAdversarialProposal === undefined
+      ? undefined
+      : await capabilities.stageAdversarialProposal({
+          runId: payload.runId,
+          executionContext: payload.executionContext,
+          candidateIds: payload.candidateIds,
+          upstream: payload.upstream,
+        })
+
+    // Published AFTER the staging, on the fold's `bundle-committed` discipline: the checkpoint is
+    // named for an event, and counts recorded before the port answered would name an event that
+    // had not happened yet. The counts are omitted entirely when no port was bound, so the
+    // terminal record can tell "staged nothing" from "staged zero".
+    await context.publishCheckpoint('proposals-authored', {
+      runId: payload.runId,
+      candidateIds: [...payload.candidateIds],
+      ...(staged === undefined ? {} : { proposed: staged.proposed, skipped: staged.skipped }),
+    })
     return { status: 'complete', next: [] }
   }
 }
@@ -689,16 +910,25 @@ function declarationsFor(capabilities?: PostRunJobCapabilities) {
 
   // Two checkpoints, mirroring the v51 curation lifecycle: candidates are authored, then the
   // bundle is committed. The second is the one whose recovery actually matters.
+  //
+  // 422 D-13: it now chains onward to the proposal stage, and `halt-chain` survives that
+  // unchanged — deliberately. A fold that gave up permanently committed no bundle, so there is
+  // nothing for a proposal stage to propose about; handing it a successor would mint a job whose
+  // whole premise is a fold that did not happen.
   'curate-memory': {
     kind: 'curate-memory',
     checkpointed: true,
     checkpointSchedule: ['candidates-authored', 'bundle-committed'],
-    allowedSuccessors: [],
+    allowedSuccessors: CURATE_MEMORY_SUCCESSORS,
     maxAttempts: 3,
     backoff: { kind: 'exponential', initialDelayMs: 1_000, factor: 2, maxDelayMs: 30_000 },
     onPermanentFailure: 'halt-chain',
     handler: capabilities === undefined
-      ? standInHandler('curate-memory', ['candidates-authored', 'bundle-committed'], [])
+      ? standInHandler(
+          'curate-memory',
+          ['candidates-authored', 'bundle-committed'],
+          CURATE_MEMORY_SUCCESSORS,
+        )
       : realCurateMemoryHandler(capabilities),
   },
 
@@ -713,6 +943,9 @@ function declarationsFor(capabilities?: PostRunJobCapabilities) {
     handler: standInHandler('consolidate', ['consolidation-authored'], []),
   },
 
+  // The chain's tail since 422 D-13. It declares NO successor — a fourth stage would be one
+  // nothing derives an id for — and halts its chain on permanent failure, which here means only
+  // that nothing further is enqueued: the curation behind it is committed and stays committed.
   'propose-improvements': {
     kind: 'propose-improvements',
     checkpointed: true,
@@ -721,7 +954,9 @@ function declarationsFor(capabilities?: PostRunJobCapabilities) {
     maxAttempts: 2,
     backoff: { kind: 'fixed', delayMs: 5_000 },
     onPermanentFailure: 'halt-chain',
-    handler: standInHandler('propose-improvements', ['proposals-authored'], []),
+    handler: capabilities === undefined
+      ? standInHandler('propose-improvements', ['proposals-authored'], [])
+      : realProposeImprovementsHandler(capabilities),
   },
   } satisfies Record<JobKind, JobKindDeclaration>
 }
