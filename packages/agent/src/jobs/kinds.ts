@@ -25,8 +25,12 @@ import type {
   ChainedJobRequest,
   CompletedRunHandoff,
   ExecutionContext,
+  GateReceipt,
+  GateVerdict,
   JobHandlerOutcome,
   JobKind,
+  KnowledgeBundleSummary,
+  KnowledgeGatesListResult,
   PerTestOutcome,
   RunAnalysisArtifact,
   RunNotificationVerdictSummary,
@@ -35,6 +39,7 @@ import type {
   VerdictSentenceParts,
 } from '@vostride/agent-qa-schema'
 import {
+  asRecordId,
   canonicalJson,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   errorTextOf,
@@ -42,6 +47,7 @@ import {
   sha256hex,
   slugBranch,
 } from '@vostride/agent-qa-schema'
+import type { JobCheckpointReadOutcome } from '../ports/job-store.js'
 import { deterministicVerdict, UNKNOWN_SIGNAL_RATIONALE } from '@vostride/agent-qa-runner'
 
 import { authorRunAnalysis } from './analyze-run-author.js'
@@ -52,6 +58,7 @@ import { createJobKindRegistry } from './kind-registry.js'
 import type {
   FallbackContinuationInput,
   JobHandler,
+  JobHandlerContext,
   JobKindDeclaration,
   JobKindRegistry,
 } from './kind-registry.js'
@@ -274,8 +281,55 @@ export interface PostRunJobCapabilities {
   /**
    * 2026-09-07, 417 D-18: typed now, bound nowhere in 417. Phase 422's
    * propose-improvements binds this seam; the five-kind chain is untouched.
+   *
+   * 2026-09-11, 422 D-14: the proposal stage CALLS it. Its resolved receipt means the writer
+   * acknowledged persisting one (`ReplayGatePort`'s own contract) — anything else throws, and
+   * the handler reads the throw as a charged slot with an unknown outcome rather than as a
+   * screening result it may record.
    */
   runReplayGate?: ReplayGatePort['runReplayGate']
+  /**
+   * Every committed bundle, as the reader entry's listing row (422 D-14).
+   *
+   * Structurally `KnowledgeReaderPort['listBundles']`, declared here rather than imported so this
+   * module keeps naming only schema DTOs. OPTIONAL: unbound, the Gate-1 leg is a typed no-op.
+   */
+  listBundles?(): Promise<readonly KnowledgeBundleSummary[]>
+  /**
+   * One record's gate history, standing evidence and live verdict (422 D-14).
+   *
+   * The SELECTION reads this, not a store: a candidate is ungated when it carries no standing
+   * Gate-1 line under the current corpus digest, and that question is answerable from the
+   * committed receipts alone. OPTIONAL on the same terms as the listing.
+   */
+  gateReceiptsFor?(input: { readonly candidateId: string }): Promise<KnowledgeGatesListResult>
+  /**
+   * Which corpus this product's Gate-1 evidence is currently measured against (422 D-14).
+   *
+   * The digest is what makes a standing receipt a DECISION rather than a historical note: a
+   * receipt produced against a corpus that has since moved decided a different question. A
+   * posture that cannot resolve — a broken root, an unreadable floor — completes the stage
+   * `posture-unavailable` and spends nothing, which is a report rather than a retry loop.
+   */
+  readProposeCorpusPosture?(input: {
+    readonly product: string
+  }): Promise<ProposeCorpusPosture>
+  /**
+   * This job's durable Gate-1 charge, read back from the authoritative checkpoint (422 D-14).
+   *
+   * NARROW on purpose: one checkpoint, addressed by this job's own id, read-only. The handler is
+   * not handed a store, a checkpoint reader or a path — the composition that owns the store binds
+   * this one question, and `parseProposeGate1Allowance` below is the shape check it binds through.
+   */
+  readProposeGate1Allowance?(jobId: string): Promise<ProposeGate1AllowanceRead>
+  /**
+   * The operator's `eval.gate1.maxPerJob` override, already resolved by the host (422 D-14).
+   *
+   * DATA rather than a reader, because the handler must not learn to read configuration. Absent
+   * means the recorded default, and the difference is disclosed on the charge as `cap.source` so
+   * a reader can tell a deliberate bound from an inherited one.
+   */
+  proposeGate1MaxPerJob?: number
   /**
    * The third stage's work, as a NEUTRAL optional port (422 D-13).
    *
@@ -820,6 +874,317 @@ function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandl
   }
 }
 
+
+// ---- 422 D-14: the per-job Gate-1 allowance ------------------------------------------------
+//
+// THE PROBLEM THIS SHAPE EXISTS FOR. A Gate-1 call is replay work no later run can recover, so
+// the job needs a bound on how many it may spend. The naive bound — "look at what is still
+// ungated and stop at N" — is not a bound at all across a retry, because the thing that makes a
+// candidate look ungated is the very evidence an interrupted attempt failed to persist. Two
+// interruption windows make that concrete, and they fail in opposite directions:
+//
+//   1. The replay finished and the receipt write was refused or never answered. Nothing is
+//      standing, so a retry re-selects the same candidate and spends a second call for it.
+//   2. The receipt IS durable and the checkpoint recording the result never landed. The standing
+//      receipt correctly suppresses that candidate — and its allowance is now invisible, so the
+//      retry admits a DIFFERENT candidate and the job exceeds its own cap without ever
+//      re-screening anything.
+//
+// So the charge is durable and it precedes the spend: the selected slots are published as a
+// checkpoint BEFORE the first port call, and a resumed job reads that charge back and treats
+// every slot in it as consumed. It is an upper bound on calls that may have been attempted, not
+// evidence that any of them ran — which is why a resumed attempt reports three separate things
+// (acknowledged, recovered, unknown) rather than one count.
+//
+// 422-06 solved the structurally identical problem for probe authoring one wave earlier and its
+// answer is the same one: the interrupted state is DERIVED from a charge with no completion,
+// never written by the code that failed to run.
+
+/** The checkpoint the durable per-job Gate-1 charge is published on, before any invocation. */
+export const PROPOSE_GATE1_ALLOWANCE_CHECKPOINT = 'gate1-allowance-reserved'
+
+/**
+ * How many Gate-1 calls ONE proposal job may spend (422 D-14).
+ *
+ * Four, beside the phase's other two Gate-1-adjacent recorded defaults, and the unit is the one
+ * this layer always knows exactly: a CALL. A per-job bound rather than a per-run one because
+ * the job is what carries a durable charge; and a bound at all because a fold that committed
+ * forty candidates would otherwise hand the pump forty replays before the next run's tail could
+ * get a lease. The number is a STATED budget with a stated rationale — bounded per-job replay
+ * work — and not a measured one; nothing in this repo yet measures what a proposal stage should
+ * be allowed to spend.
+ */
+export const PROPOSE_DEFAULT_MAX_GATE1_PER_JOB = 4
+
+/** Where the bound came from, disclosed beside it so an operator can tell a default from a choice. */
+export interface ProposeGate1Cap {
+  readonly value: number
+  readonly source: 'config' | 'default'
+}
+
+/**
+ * The durable charge, published before the first Gate-1 invocation (422 D-14).
+ *
+ * Every member is part of the IDENTITY of the charge rather than decoration. `jobId` and `runId`
+ * are what let a resumed attempt refuse a reservation that belongs to somebody else instead of
+ * silently adopting it. `product` and `corpusDigest` freeze what the selection was made against,
+ * so a corpus that moved between the attempts cannot re-open a slot. `cap` travels with it
+ * because a config change during a retry must not enlarge a charge already made. And
+ * `selectedCandidateIds` is the charge itself: those slots are spent, whatever became of them.
+ */
+export interface ProposeGate1Allowance {
+  readonly jobId: string
+  readonly runId: string
+  readonly product: string
+  readonly corpusDigest: string
+  readonly cap: ProposeGate1Cap
+  readonly selectedCandidateIds: readonly string[]
+}
+
+/**
+ * What reading the persisted charge found.
+ *
+ * Three arms, and `unreadable` is NOT folded into `absent` — that is the whole safety property.
+ * An absent charge permits a first selection; a charge this build cannot read means a previous
+ * attempt may have spent slots this one cannot account for, and the only honest response is to
+ * spend nothing.
+ */
+export type ProposeGate1AllowanceRead =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'claimed'; readonly allowance: ProposeGate1Allowance }
+  | { readonly kind: 'unreadable'; readonly reason: string }
+
+/** What corpus the selection is made against, and whether it can be known at all. */
+export type ProposeCorpusPosture =
+  | { readonly kind: 'resolved'; readonly corpusDigest: string }
+  | { readonly kind: 'unavailable'; readonly reason: string }
+  | { readonly kind: 'no-root' }
+
+/** One candidate whose Gate-1 receipt exists and is readable, with the verdict it carries. */
+export interface ProposeGate1Screened {
+  readonly candidateId: string
+  readonly verdict: GateVerdict
+}
+
+/**
+ * What the proposal stage's Gate-1 leg did, as the durable record reports it (422 D-14).
+ *
+ * The four candidate-state members are deliberately NOT summable into one count:
+ *
+ *   `screenedGate1`          this attempt called the port and the writer acknowledged a receipt
+ *   `recoveredGate1Receipts` a valid receipt was already on disk under the saved identity —
+ *                            found, never generated here, and never claimed as this attempt's work
+ *   `interruptedGate1`       a charged slot with no acknowledged and no recovered receipt. UNKNOWN,
+ *                            which is its own outcome and not a quiet zero
+ *   `ungatedRemaining`       eligible work the cap did not admit; it waits for a later run's
+ *                            distinct job or the operator's replay-gate verb, and is never a refund
+ */
+export interface ProposeGate1Report {
+  readonly disposition:
+    | 'unbound'
+    | 'no-candidates'
+    | 'posture-unavailable'
+    | 'allowance-unavailable'
+    | 'claimed'
+    | 'resumed'
+  readonly reason?: string
+  readonly cap?: ProposeGate1Cap
+  readonly reservedGate1: readonly string[]
+  readonly screenedGate1: readonly ProposeGate1Screened[]
+  readonly recoveredGate1Receipts: readonly ProposeGate1Screened[]
+  readonly interruptedGate1: readonly string[]
+  readonly ungatedRemaining: readonly string[]
+  readonly kindExcluded: readonly string[]
+  readonly stale: readonly string[]
+}
+
+/** What `proposals-authored` carries. `gate1` is ABSENT when no gate capability was bound. */
+export interface ProposeImprovementsCheckpoint {
+  readonly runId: string
+  readonly candidateIds: readonly string[]
+  readonly proposed?: number
+  readonly skipped?: number
+  readonly gate1?: ProposeGate1Report
+}
+
+/**
+ * The record kinds Gate 1 does not judge (417 D-19's tier abstention, restated as a filter).
+ *
+ * Selecting one would buy a `tier-not-implemented` abstention for a full replay's price, which
+ * is the one way to spend a charged slot and learn nothing at all.
+ */
+const GATE1_EXCLUDED_RECORD_KINDS: readonly string[] = ['procedure', 'policy']
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
+/**
+ * Read the durable charge back out of a checkpoint read (422 D-14).
+ *
+ * STRICT, unlike this module's two payload readers, and the asymmetry is the point. Those read
+ * bytes off a durable queue that an older build may have written, where refusing would strand
+ * real work. This reads THIS job's own charge ledger, written by this build moments ago — so a
+ * shape this build cannot read is not a generation gap, it is a ledger that cannot be trusted to
+ * say what was already spent. Degrading it to `absent` would license a second selection against
+ * a charge that already exists, which is exactly the over-spend the ledger exists to prevent.
+ *
+ * Exported so the composition that owns the store can bind a one-line reader: the envelope peel
+ * and the shape check live HERE, where the shape is declared, rather than in each host.
+ */
+export function parseProposeGate1Allowance(
+  outcome: JobCheckpointReadOutcome,
+): ProposeGate1AllowanceRead {
+  if (!outcome.found) return { kind: 'absent' }
+  // Exactly one level, unconditionally — the engine's own rule. `publishCheckpoint` is the only
+  // writer of these bytes and it always wraps the value in a `JobCheckpointRecord`.
+  const value = asRecord((outcome.payload as { readonly value?: unknown } | undefined)?.value)
+  const cap = asRecord(value.cap)
+  const ids = value.selectedCandidateIds
+  const unreadable = (reason: string): ProposeGate1AllowanceRead => ({ kind: 'unreadable', reason })
+  if (
+    typeof value.jobId !== 'string' || value.jobId === '' ||
+    typeof value.runId !== 'string' || value.runId === '' ||
+    typeof value.product !== 'string' || value.product === '' ||
+    typeof value.corpusDigest !== 'string' || value.corpusDigest === '' ||
+    !isPositiveInteger(cap.value) ||
+    (cap.source !== 'config' && cap.source !== 'default') ||
+    !Array.isArray(ids) ||
+    !ids.every((id): id is string => typeof id === 'string' && id !== '')
+  ) {
+    return unreadable('the persisted Gate-1 allowance is not a readable charge')
+  }
+  if (ids.length > cap.value) {
+    return unreadable('the persisted Gate-1 allowance charges more slots than its own cap')
+  }
+  return {
+    kind: 'claimed',
+    allowance: {
+      jobId: value.jobId,
+      runId: value.runId,
+      product: value.product,
+      corpusDigest: value.corpusDigest,
+      cap: { value: cap.value, source: cap.source },
+      selectedCandidateIds: [...(ids as readonly string[])],
+    },
+  }
+}
+
+/** The one standing Gate-1 line, if the record carries one at all. */
+function standingGate1(standing: readonly GateReceipt[]): Extract<GateReceipt, { gate: 1 }> | undefined {
+  for (const receipt of standing) if (receipt.gate === 1) return receipt
+  return undefined
+}
+
+/**
+ * Payload candidates first, then the same product's older candidates (422 D-14/D-15).
+ *
+ * The payload's ids come first because they are the ones this run's fold just committed — the
+ * work the chain is actually about. The sweep exists so a corpus that accumulated ungated
+ * candidates while nobody was screening does not stay that way forever, and it is ordered
+ * OLDEST-first with the record id as a stable tie-break so two hosts walking one corpus at the
+ * same ordinal agree on what "next" means.
+ *
+ * The product comes from the payload rather than from configuration: a proposal job is about one
+ * run, a run is about one product, and a sweep scoped by anything else would spend this run's
+ * charge on a corpus it has no evidence about.
+ */
+function orderProposalCandidates(
+  bundles: readonly KnowledgeBundleSummary[],
+  payloadCandidateIds: readonly string[],
+): { readonly product: string | undefined; readonly ordered: readonly KnowledgeBundleSummary[] } {
+  const byId = new Map<string, KnowledgeBundleSummary>()
+  for (const bundle of bundles) if (!byId.has(bundle.bundleId)) byId.set(bundle.bundleId, bundle)
+  const named: KnowledgeBundleSummary[] = []
+  const seen = new Set<string>()
+  for (const id of payloadCandidateIds) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    const row = byId.get(id)
+    if (row !== undefined) named.push(row)
+  }
+  const product = named[0]?.product
+  if (product === undefined) return { product: undefined, ordered: [] }
+  const sweep = bundles
+    .filter(
+      (bundle) =>
+        bundle.product === product && !seen.has(bundle.bundleId) && bundle.status === 'candidate',
+    )
+    .sort(
+      (left, right) =>
+        left.openedAtOrdinal - right.openedAtOrdinal ||
+        (left.bundleId < right.bundleId ? -1 : left.bundleId > right.bundleId ? 1 : 0),
+    )
+  return { product, ordered: [...named, ...sweep] }
+}
+
+const NO_GATE1_WORK = {
+  reservedGate1: [] as readonly string[],
+  screenedGate1: [] as readonly ProposeGate1Screened[],
+  recoveredGate1Receipts: [] as readonly ProposeGate1Screened[],
+  interruptedGate1: [] as readonly string[],
+  ungatedRemaining: [] as readonly string[],
+  kindExcluded: [] as readonly string[],
+  stale: [] as readonly string[],
+} as const
+
+/**
+ * Reconcile a charge a previous attempt already made — WITHOUT spending anything (422 D-14).
+ *
+ * Zero port calls on this path, by construction rather than by a counter: `runReplayGate` is not
+ * reachable from here. The charge's own identity is what the standing receipts are checked
+ * against, so a corpus that moved between the attempts leaves a slot UNKNOWN rather than
+ * silently recovering a receipt about a different corpus.
+ */
+async function reconcileGate1Allowance(
+  allowance: ProposeGate1Allowance,
+  gateReceiptsFor: NonNullable<PostRunJobCapabilities['gateReceiptsFor']>,
+): Promise<ProposeGate1Report> {
+  const recovered: ProposeGate1Screened[] = []
+  const interrupted: string[] = []
+  for (const candidateId of allowance.selectedCandidateIds) {
+    let standing: Extract<GateReceipt, { gate: 1 }> | undefined
+    try {
+      const gates = await gateReceiptsFor({ candidateId })
+      standing = gates.kind === 'found' ? standingGate1(gates.standing) : undefined
+    } catch {
+      // An unreadable store makes the slot's outcome UNKNOWN, which is what `interrupted` says.
+      standing = undefined
+    }
+    if (standing !== undefined && standing.corpusVersion.corpusDigest === allowance.corpusDigest) {
+      recovered.push({ candidateId, verdict: standing.verdict })
+    } else {
+      interrupted.push(candidateId)
+    }
+  }
+  return {
+    ...NO_GATE1_WORK,
+    disposition: 'resumed',
+    cap: allowance.cap,
+    reservedGate1: [...allowance.selectedCandidateIds],
+    recoveredGate1Receipts: recovered,
+    interruptedGate1: interrupted,
+  }
+}
+
+/**
+ * Select, charge, then spend — in that order, and never the other way round (422 D-14/D-15).
+ */
+async function screenGate1(
+  capabilities: PostRunJobCapabilities,
+  context: JobHandlerContext,
+  payload: ProposeImprovementsPayload,
+): Promise<ProposeGate1Report> {
+  void capabilities
+  void context
+  void payload
+  return { ...NO_GATE1_WORK, disposition: 'unbound' }
+}
+
+function errorTextOfUnknown(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 /**
  * The real propose-improvements body (422 D-13).
  *
@@ -846,6 +1211,11 @@ function realProposeImprovementsHandler(capabilities: PostRunJobCapabilities): J
       )
     }
 
+    // 422 D-14: the Gate-1 leg runs FIRST and charges its own allowance before it spends one.
+    // It is deliberately ahead of the staging: a screening refusal must not be erasable by a
+    // staging success published over the top of it, and both land on one checkpoint below.
+    const gate1 = await screenGate1(capabilities, context, payload)
+
     const staged = capabilities.stageAdversarialProposal === undefined
       ? undefined
       : await capabilities.stageAdversarialProposal({
@@ -859,11 +1229,17 @@ function realProposeImprovementsHandler(capabilities: PostRunJobCapabilities): J
     // named for an event, and counts recorded before the port answered would name an event that
     // had not happened yet. The counts are omitted entirely when no port was bound, so the
     // terminal record can tell "staged nothing" from "staged zero".
-    await context.publishCheckpoint('proposals-authored', {
+    //
+    // `gate1` is omitted on exactly the same terms: a host that bound no gate capability did not
+    // screen zero candidates, it did not screen. Absence is what says so, and it is what keeps
+    // every record written before this widening describing the same thing it always did.
+    const checkpoint: ProposeImprovementsCheckpoint = {
       runId: payload.runId,
       candidateIds: [...payload.candidateIds],
       ...(staged === undefined ? {} : { proposed: staged.proposed, skipped: staged.skipped }),
-    })
+      ...(gate1.disposition === 'unbound' ? {} : { gate1 }),
+    }
+    await context.publishCheckpoint('proposals-authored', checkpoint)
     return { status: 'complete', next: [] }
   }
 }
@@ -946,16 +1322,25 @@ function declarationsFor(capabilities?: PostRunJobCapabilities) {
   // The chain's tail since 422 D-13. It declares NO successor — a fourth stage would be one
   // nothing derives an id for — and halts its chain on permanent failure, which here means only
   // that nothing further is enqueued: the curation behind it is committed and stays committed.
+  //
+  // 422 D-14 adds `gate1-allowance-reserved` AHEAD of `proposals-authored`, and the order is the
+  // contract rather than a listing convention: the charge is what a resumed attempt reads to
+  // learn what a previous one may already have spent, so it has to be durable before any call
+  // is made and therefore before the checkpoint that reports the result.
   'propose-improvements': {
     kind: 'propose-improvements',
     checkpointed: true,
-    checkpointSchedule: ['proposals-authored'],
+    checkpointSchedule: [PROPOSE_GATE1_ALLOWANCE_CHECKPOINT, 'proposals-authored'],
     allowedSuccessors: [],
     maxAttempts: 2,
     backoff: { kind: 'fixed', delayMs: 5_000 },
     onPermanentFailure: 'halt-chain',
     handler: capabilities === undefined
-      ? standInHandler('propose-improvements', ['proposals-authored'], [])
+      ? standInHandler(
+          'propose-improvements',
+          [PROPOSE_GATE1_ALLOWANCE_CHECKPOINT, 'proposals-authored'],
+          [],
+        )
       : realProposeImprovementsHandler(capabilities),
   },
   } satisfies Record<JobKind, JobKindDeclaration>
