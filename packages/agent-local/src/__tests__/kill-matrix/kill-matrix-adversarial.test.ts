@@ -35,12 +35,19 @@
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
-import { createRealJobKindRegistry } from '@vostride/agent-qa-agent'
-import type { JobKindDeclaration } from '@vostride/agent-qa-agent'
+import { StaleJobStoreEpochError, createRealJobKindRegistry } from '@vostride/agent-qa-agent'
+import type { JobKindDeclaration, JobModelCapability } from '@vostride/agent-qa-agent'
+import { jobSchema } from '@vostride/agent-qa-schema'
 import type { JobKind } from '@vostride/agent-qa-schema'
 import { afterAll, describe, expect, it } from 'vitest'
 
+import { composeJobRecovery } from '../../composition/compose-job-recovery.js'
+import {
+  AGENT_JOB_STORE_DB_FILE,
+  AGENT_JOB_STORE_USER_VERSION,
+} from '../../store/sqlite-job-store.js'
 import { checkpointIdOfPrompt, readConsumptions, readInvocations } from './counting-model.js'
 import {
   JOB_CRASH_SIDES,
@@ -53,9 +60,11 @@ import {
 } from './crash-points.js'
 import type { JobStoreCall } from './crash-points.js'
 import {
+  KILL_MATRIX_CLOCK,
   KILL_MATRIX_ENV,
   KILL_MATRIX_EPOCH,
   KILL_MATRIX_ID_SOURCE,
+  KILL_MATRIX_INSTANT,
   fakeWriterLease,
   jobIdFor,
   openKillMatrixStore,
@@ -792,4 +801,234 @@ describe('a resume carrying a stale epoch, proven with a fake lease (D-07, JOBQ-
     expect(invocations[0]!.pid).toBe(markerPid)
     expect(authoredCheckpointIds(paths.invocations)).toEqual([checkpointId])
   }, LEG_TIMEOUT_MS)
+})
+
+// ---- LEG FAMILY 5: a retired-kind row at the head of the FIFO (Phase 422, D-16 / ADV-03) ----------
+//
+// The four families above all interrupt a job this build can READ. This one interrupts the queue
+// itself: a row written by an earlier build under a kind that has since been retired sits at the
+// head of the FIFO, and `rowToJob` parses every row that leaves the store through the shipped
+// five-kind contract. Before the quarantine, that parse threw INSIDE `claimNext`'s transaction, so
+// `inTransaction` rolled the claim back — the attempt the claim had just spent went with it, the
+// row returned to the queue exactly as it was found, and the next claim was offered the same row
+// again. That is the crash-loop D-18 exists to forbid, reached without a single crash, and it
+// starves every valid row behind it for as long as the poisoned row exists.
+//
+// The guarantee is therefore stated with BOTH halves, because each passes vacuously alone:
+//
+//   THE ATTEMPT COMMITS   "the queue no longer loops" is satisfied by a queue that refuses
+//                         everything. So the leg asserts the valid follower RAN, exactly once.
+//   THE HISTORY SURVIVES  "the poison row stopped being offered" is satisfied by deleting it. So
+//                         the leg asserts the original retired kind, its id and its payload bytes
+//                         are all still readable afterwards, and that the store is still stamped
+//                         at the version this build reads.
+//
+// No child processes: the failure this family describes is a transaction boundary, not a kill, and
+// a spawned host would measure the spawn.
+
+describe('a retired-kind row at the head of the FIFO (D-16, ADV-03)', () => {
+  // The Issue-slot kind retired in Phase 412 (see DELETION-INVENTORY.md). Spelled independently
+  // here rather than imported: it is precisely a kind no current vocabulary contains, so any
+  // constant this build still exported for it would be the bug.
+  const RETIRED_KIND = 'triage-issues'
+
+  // The FIXED, MASKED reason a quarantine records. Spelled out rather than imported for the same
+  // reason the kind is: an assertion that read the production constant would agree with whatever
+  // that constant became, including an interpolation of the unreadable bytes it exists to withhold.
+  const QUARANTINE_REASON =
+    'agent job quarantined at claim: this build does not read the kind recorded for this row, so '
+    + 'the row was landed permanently without being parsed. The original kind, id and payload are '
+    + 'preserved in the row for inspection.'
+
+  const NEVER_AUTHORS: JobModelCapability = {
+    modelId: 'test:none',
+    generate: () => Promise.reject(new Error('the stand-in never authors')),
+  }
+
+  /**
+   * Write one row under a kind the shipped contract does not contain.
+   *
+   * Raw SQL on purpose: `enqueue` parses what it inserted through `jobSchema` before returning it,
+   * so the store itself cannot produce this row. The bytes an EARLIER build left behind are the
+   * subject, and the only honest way to obtain them is to write them the way that build did.
+   */
+  function seedRetiredKindRow(
+    agentQaRoot: string,
+    id: string,
+    payload: unknown,
+    createdAt: string,
+  ): void {
+    const db = new DatabaseSync(join(agentQaRoot, AGENT_JOB_STORE_DB_FILE))
+    try {
+      db.prepare(
+        `INSERT INTO jobs
+           (id, kind, idempotency_key, status, summary, payload, attempts, claimed_at,
+            created_at, updated_at, last_failure_kind, last_failure_reason, cancel_requested_at)
+         VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?, NULL, NULL, NULL)`,
+      ).run(id, RETIRED_KIND, `retired-${id}`, `agent job ${RETIRED_KIND}`,
+        JSON.stringify(payload), createdAt, createdAt)
+    } finally {
+      db.close()
+    }
+  }
+
+  function readRawRows(agentQaRoot: string): readonly Record<string, unknown>[] {
+    const db = new DatabaseSync(join(agentQaRoot, AGENT_JOB_STORE_DB_FILE))
+    try {
+      return db.prepare('SELECT * FROM jobs ORDER BY created_at ASC, id ASC').all()
+    } finally {
+      db.close()
+    }
+  }
+
+  function stampedVersion(agentQaRoot: string): number {
+    const db = new DatabaseSync(join(agentQaRoot, AGENT_JOB_STORE_DB_FILE))
+    try {
+      return Number(db.prepare('PRAGMA user_version').get()?.user_version)
+    } finally {
+      db.close()
+    }
+  }
+
+  function recoveryHost(agentQaRoot: string): ReturnType<typeof composeJobRecovery> {
+    return composeJobRecovery({
+      agentQaRoot,
+      clock: KILL_MATRIX_CLOCK,
+      idSource: KILL_MATRIX_ID_SOURCE,
+      model: NEVER_AUTHORS,
+    })
+  }
+
+  it('lands every poisoned head permanently with its attempt spent and runs the valid follower', async () => {
+    const kind: JobKind = 'consolidate'
+    const paths = makeRoot('quarantine-retired-kind')
+    // Seeded FIRST, so the database exists, is stamped, and has adopted the epoch before any raw
+    // row is written into it.
+    const validJobId = String(await seedJob(paths.agentQaRoot, kind))
+
+    // TWO poisoned rows, both older than the valid one. One would be satisfied by an
+    // implementation that quarantines a row and then gives up on the rest of the claim; the FIFO
+    // order is what makes them heads rather than stragglers.
+    const poisonPayloads = {
+      job_retired_a: { runId: 'r_retired_a', note: 'written by a build that still had this kind' },
+      job_retired_b: { runId: 'r_retired_b', note: 'the second poisoned head' },
+    } as const
+    seedRetiredKindRow(paths.agentQaRoot, 'job_retired_a', poisonPayloads.job_retired_a,
+      '2025-12-31T23:59:58.000Z')
+    seedRetiredKindRow(paths.agentQaRoot, 'job_retired_b', poisonPayloads.job_retired_b,
+      '2025-12-31T23:59:59.000Z')
+
+    // (a) THE STALE FENCE, BEFORE ANY MUTATION. A quarantine is a write, so a claim carrying an
+    //     epoch the store does not recognise must be refused with nothing moved — otherwise the
+    //     new path would be a way for a host that lost its lease to land another writer's rows.
+    const stale = openKillMatrixStore(paths.agentQaRoot)
+    try {
+      await expect(stale.claimNext({ epoch: KILL_MATRIX_EPOCH + 7 })).rejects.toBeInstanceOf(
+        StaleJobStoreEpochError,
+      )
+    } finally {
+      stale.close()
+    }
+    for (const row of readRawRows(paths.agentQaRoot)) {
+      expect(row.attempts, 'a refused claim spends no attempt').toBe(0)
+      expect(row.status).toBe('queued')
+    }
+
+    // (b) THE DRAIN. One fenced pass over a queue whose two head rows cannot be parsed.
+    const host = recoveryHost(paths.agentQaRoot)
+    let drainError: unknown
+    let outcomes: readonly { ran: boolean }[] = []
+    try {
+      const fence = await host.store.adoptEpoch(KILL_MATRIX_EPOCH)
+      outcomes = await host
+        .resumePending(fence)
+        .catch((error: unknown) => {
+          drainError = error
+          return []
+        })
+    } finally {
+      host.close()
+    }
+    expect(
+      drainError,
+      `a poisoned head must be quarantined inside the claim, never surfaced: ${String(drainError)}`,
+    ).toBeUndefined()
+    // EXACTLY ONE execution: the valid follower, once. Two would mean the poisoned rows were
+    // handed to a handler; zero would mean the queue stopped at the head it could not read.
+    expect(outcomes).toHaveLength(1)
+    expect(outcomes[0]).toMatchObject({
+      ran: true,
+      disposition: 'completed',
+      job: { id: validJobId, kind, attempts: 1 },
+    })
+
+    // (c) THE DURABLE LANDING, read back through a fresh connection so it is the COMMIT that is
+    //     asserted rather than anything a live handle is holding open.
+    const rows = readRawRows(paths.agentQaRoot)
+    expect(rows.map((row) => String(row.id))).toEqual([
+      'job_retired_a',
+      'job_retired_b',
+      validJobId,
+    ])
+    for (const id of ['job_retired_a', 'job_retired_b'] as const) {
+      const row = rows.find((candidate) => String(candidate.id) === id)!
+      // THE ATTEMPT COMMITTED. This is the whole mechanism: the claim spent the attempt and the
+      // quarantine landed the row in the SAME transaction, so a thrown parser can no longer roll
+      // the spent attempt back and re-offer the row forever.
+      expect(Number(row.attempts), `${id} must have spent its claim`).toBe(1)
+      expect(String(row.status)).toBe('failed')
+      expect(row.claimed_at).toBeNull()
+      expect(String(row.last_failure_kind)).toBe('permanent')
+      // The reason is FIXED and carries none of the unreadable bytes it describes.
+      expect(String(row.last_failure_reason)).toBe(QUARANTINE_REASON)
+      expect(String(row.last_failure_reason)).not.toContain(RETIRED_KIND)
+      // THE HISTORY SURVIVED. Kind, id and payload are exactly the bytes the earlier build wrote.
+      expect(String(row.kind)).toBe(RETIRED_KIND)
+      expect(JSON.parse(String(row.payload))).toEqual(poisonPayloads[id])
+    }
+    const valid = rows.find((row) => String(row.id) === validJobId)!
+    expect(String(valid.status)).toBe('done')
+    expect(Number(valid.attempts)).toBe(1)
+
+    // (d) NO SILENT WIDENING. The store is still the version this build reads, and the retired
+    //     kind is still not a Job — the quarantine records an outcome, it does not admit a kind.
+    expect(stampedVersion(paths.agentQaRoot)).toBe(AGENT_JOB_STORE_USER_VERSION)
+    expect(AGENT_JOB_STORE_USER_VERSION).toBe(3)
+    const parsable = {
+      id: validJobId,
+      kind,
+      status: 'failed',
+      summary: 'agent job consolidate',
+      attempts: 1,
+      createdAt: KILL_MATRIX_INSTANT,
+      updatedAt: KILL_MATRIX_INSTANT,
+    }
+    expect(jobSchema.safeParse(parsable).success).toBe(true)
+    expect(
+      jobSchema.safeParse({ ...parsable, kind: RETIRED_KIND }).success,
+      'a quarantined kind must never become a valid Job',
+    ).toBe(false)
+    // The conclusion the quarantine names IS in the shipped vocabulary, so a reader can type the
+    // outcome without widening the kinds.
+    expect(jobSchema.safeParse({ ...parsable, conclusionKind: 'unreadable_kind' }).success).toBe(
+      true,
+    )
+    expect(jobSchema.safeParse({ ...parsable, conclusionKind: 'unreadable-kind' }).success).toBe(
+      false,
+    )
+
+    // (e) REOPEN AND DRAIN AGAIN. A landed row is permanent: it is never re-offered, so the second
+    //     pass spends no further attempt and runs nothing at all.
+    const second = recoveryHost(paths.agentQaRoot)
+    try {
+      const fence = await second.store.adoptEpoch(KILL_MATRIX_EPOCH)
+      expect(await second.resumePending(fence)).toEqual([])
+    } finally {
+      second.close()
+    }
+    const settled = readRawRows(paths.agentQaRoot)
+    for (const id of ['job_retired_a', 'job_retired_b'] as const) {
+      expect(Number(settled.find((row) => String(row.id) === id)!.attempts)).toBe(1)
+    }
+  })
 })
