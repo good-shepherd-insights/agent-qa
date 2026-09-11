@@ -28,6 +28,7 @@ import type { CassetteLabelLeg, ContrastivePairing } from '../cassette/label-leg
 import { deriveRunSlug } from '../extract/ids'
 import type { MintedContrastivePair } from './pair-matching'
 import type { CorpusGenerator } from './corpus-entry'
+import { generatorProvenance } from './corpus-entry'
 
 /** Single version gate for the standalone label record document (D-01). */
 export const LABEL_RECORD_SCHEMA_VERSION = 1
@@ -330,13 +331,18 @@ export function deriveAdversarialLabel({
       'adversarial derivation requires the seed label of the cassette the generator names',
     )
   }
-  if (
-    generator.mutator === undefined ||
-    generator.tableVersion === undefined ||
-    generator.tableHash === undefined
-  ) {
+  //
+  // 2026-09-11, 422-04: the completeness question is asked of `generatorProvenance` rather than
+  // re-spelled here. Two derivation paths now reach this factory and they stamp different
+  // provenance — a table-drawn variant names the mutation family and its generation, an
+  // LLM-authored probe names its author and the frozen prompt version. The rule stayed one
+  // function so widening it for probes could not accidentally relax it for tables: a stamp that
+  // is complete for the WRONG path is `malformed` and refused here exactly as a partial one is.
+  if (generatorProvenance(generator) !== 'table' && generatorProvenance(generator) !== 'probe') {
     throw new TypeError(
-      'adversarial derivation requires complete generator metadata (mutator, tableVersion, tableHash)',
+      'adversarial derivation requires complete generator provenance for its kind ' +
+        '(mutator + tableVersion + tableHash for a table family, ' +
+        'authoringModel + promptVersion for a probe)',
     )
   }
   const {

@@ -96,6 +96,29 @@ export const GENERATOR_KINDS = [
 ] as const satisfies readonly GeneratorKind[]
 
 /**
+ * 2026-09-11, 422 D-09/D-11/D-12: the two `GeneratorKind` members an LLM AUTHORS.
+ *
+ * DERIVED by `Extract` rather than declared a second time. A separate declaration would let
+ * the two lists drift — a probe kind renamed in `GeneratorKind` would leave this one naming a
+ * member that no longer exists — while the projection below keeps the `satisfies` bar pointing
+ * at the same six-member union every census and gate-set already reads. The union is NOT
+ * widened by 422 (D-05): the probe kinds have been declared since 414 and only now acquire a
+ * producer.
+ */
+export type ProbeGeneratorKind = Extract<GeneratorKind, 'judge-targeted' | 'optimized-trigger'>
+
+/** Declaration-order projection of `ProbeGeneratorKind` (D-22). */
+export const PROBE_GENERATOR_KINDS = [
+  'judge-targeted',
+  'optimized-trigger',
+] as const satisfies readonly ProbeGeneratorKind[]
+
+/** Is this generator kind authored by a model rather than drawn from a frozen table? */
+export function isProbeGeneratorKind(kind: GeneratorKind): kind is ProbeGeneratorKind {
+  return (PROBE_GENERATOR_KINDS as readonly GeneratorKind[]).includes(kind)
+}
+
+/**
  * Which environment the source run executed against (414 D-04). Optional
  * and never fabricated; 418 reads it for validity down-weighting.
  */
@@ -141,6 +164,23 @@ export const ADVERSARIAL_MUTATORS = [
   'benign-synonym',
 ] as const satisfies readonly AdversarialMutator[]
 
+/**
+ * 2026-09-11, 422 D-11: the model that AUTHORED an LLM-derived probe.
+ *
+ * Both fields are DISCLOSURE, not authority: `id` is the configured model identity the host
+ * resolved and `family` its resolved provider family. D-12 permits the configured judge to
+ * author probes aimed at itself precisely BECAUSE the entry names its author — a judge that
+ * fools itself is a result the number can attribute rather than a contamination it cannot see.
+ * Planner-family exclusion is the CLI preflight's job (D-09) and is deliberately not a
+ * property of these bytes.
+ */
+export interface AuthoringModel {
+  /** Configured model identity, exactly as the host resolved it. */
+  id: string
+  /** Resolved provider family, as the judge-family resolver spells it. */
+  family: string
+}
+
 /** Adversarial provenance: which generator minted this entry, from what seed (D-21). */
 export interface CorpusGenerator {
   /** Closed-set generator family (D-21/D-22). */
@@ -165,6 +205,59 @@ export interface CorpusGenerator {
   tableVersion?: number
   /** 2026-09-11, 422 D-08: pinned hash of that generation's frozen tables. */
   tableHash?: string
+  /**
+   * 2026-09-11, 422 D-11/D-12: the model that authored this probe's text.
+   * ADDITIVE-OPTIONAL and present only on the two probe kinds.
+   */
+  authoringModel?: AuthoringModel
+  /**
+   * 2026-09-11, 422 D-11: the frozen prompt VERSION the probe was authored under. Present
+   * only on the two probe kinds; a prompt re-wording bumps it and mints new probe ids.
+   */
+  promptVersion?: number
+}
+
+/**
+ * 2026-09-11, 422 D-05/D-11: what provenance a generator stamp actually carries.
+ *
+ * Two derivation paths now mint adversarial entries and they stamp DIFFERENT provenance. A
+ * table-drawn variant names `mutator` + `tableVersion` + `tableHash`; an LLM-authored probe has
+ * no mutation family at all and names `authoringModel` + `promptVersion` instead. A
+ * generation-only stamp is the legacy shape that predates 422 and stays readable forever.
+ *
+ * Everything else is `malformed` — and that deliberately includes a stamp that is complete but
+ * belongs to the OTHER path. A `judge-targeted` entry naming a `mutator` would claim a frozen
+ * table drew text no table contains, and a `confusable` entry naming an `authoringModel` would
+ * credit a model for a substitution made by a pure function. Both are provenance that cannot
+ * be true, which is exactly what a refusal is for.
+ */
+export type GeneratorProvenance = 'absent' | 'table' | 'probe' | 'malformed'
+
+/** Declaration-order projection of `GeneratorProvenance` (D-22). */
+export const GENERATOR_PROVENANCES = [
+  'absent',
+  'table',
+  'probe',
+  'malformed',
+] as const satisfies readonly GeneratorProvenance[]
+
+/**
+ * The ONE completeness rule. The corpus guard, the label factory and the strict label reader
+ * all ask this function rather than each re-spelling the field arithmetic — three spellings of
+ * "is this provenance complete" is three places for them to disagree.
+ */
+export function generatorProvenance(generator: CorpusGenerator): GeneratorProvenance {
+  const table = [generator.mutator, generator.tableVersion, generator.tableHash].filter(
+    field => field !== undefined,
+  ).length
+  const probe = [generator.authoringModel, generator.promptVersion].filter(
+    field => field !== undefined,
+  ).length
+  const probeKind = isProbeGeneratorKind(generator.kind)
+  if (table === 0 && probe === 0) return 'absent'
+  if (table === 3 && probe === 0) return probeKind ? 'malformed' : 'table'
+  if (probe === 2 && table === 0) return probeKind ? 'probe' : 'malformed'
+  return 'malformed'
 }
 
 /**
