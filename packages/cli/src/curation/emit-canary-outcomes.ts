@@ -491,6 +491,12 @@ function projectBriefAttributions(
       nonSignal(candidateId)
       continue
     }
+    // A step that exercised nothing can produce no contact match, so Pin 1 never looked a
+    // candidate up there and never reported it `unresolved`. A causal record on the same step
+    // must not drag its siblings into that lookup: an `unresolved` row withholds the tail's
+    // receipt and refolds the whole run, which would make this plan's precedence visible on
+    // records it says nothing about. The causal row alone proceeds without exercised anchors.
+    if (!causalRow && stepAnchors.length === 0) continue
     const resolution = resolveAnchors(candidateId)
     if (resolution.kind === 'unresolved') {
       projected.push({
