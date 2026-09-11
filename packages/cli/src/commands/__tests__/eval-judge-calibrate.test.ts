@@ -92,7 +92,13 @@ async function produceSavedRun(f: ReturnType<typeof fixture>, floor = false) {
   const profile = await resolveReplayProfileDeclaration(session)
   const root = join(f.project, '.agent-qa')
   rmSync(join(root, 'eval/floor'), { recursive: true, force: true })
-  const planner = capturingStub(() => actionGenerateResult(), profile.model)
+  const planner = capturingStub((index: number) => {
+    const generated = actionGenerateResult()
+    if (floor && index >= f.rows.length * 2) generated.content = [{ type: 'tool-call', toolCallId: 'repeat-action',
+      toolName: 'web_fill', input: JSON.stringify({ ref: 'e-continue', text: 'repeat variation', reasoning: 'Controlled alternate action',
+        confidence: 0.95, stepComplete: true, doesActionAdvanceUsTowardsGoal: true }) }]
+    return generated
+  }, profile.model)
   boundary.overrides.languageModels = { ...boundary.overrides.languageModels, ...planner.languageModels }
   const snapshot = local.readActiveCommittedCorpus(f.committedRoot, root)
   const identity = core.createPanelIdentity(f.stubs.map(stub => Object.keys(stub.languageModels)[0]!))
@@ -126,6 +132,24 @@ it('admits actual saved gate output without eval.seed through preview, publicati
   const committed = await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
   expect(committed.result.kind).toBe('committed')
   expect(local.readJudgeCalibration(saved)).toEqual({ kind: 'loaded', artifact: committed.result.artifact })
+})
+
+it('selects one independent observation from the actual default two-seed floor schedule', async () => {
+  const f = fixture([{}, {}])
+  const saved = await produceSavedRun(f, true)
+  if (!('runRoots' in saved.produced)) throw new Error('floor required')
+  expect(saved.produced.runRoots.map(root => root.split('/').at(-1))).toEqual(['r0-seed11', 'r1-seed11', 'r2-seed11', 'r3-seed29'])
+  const read = local.loadJudgeCalibrationEvidence(saved)
+  expect(read).toMatchObject({ selected: 2, evidence: [expect.anything(), expect.anything()], skippedCounts: {} })
+  expect(read.selectedInputs.every(row => row.replayFile.includes('/r0-seed11/'))).toBe(true)
+  expect(local.loadJudgeCalibrationEvidence({ ...saved, replayRunRoots: [saved.produced.runRoots[1]!] }).evidence[0]!.candidate)
+    .not.toEqual(read.evidence[0]!.candidate)
+  const preview = await invoke(f.configPath, ['--judge-panel', '--min-n', '2', '--json'])
+  expect(preview.result).toMatchObject({ status: 'calibrated', n: 2, counts: { selected: 2, admitted: 2, attempted: 2 }, cost: { usage: { calls: 8 } } })
+  const committed = await invoke(f.configPath, ['--judge-panel', '--min-n', '2', '--commit', '--json'])
+  expect(committed.result.kind).toBe('committed')
+  expect(local.readJudgeCalibration({ ...saved, minN: core.resolveJudgeCalibrationMinimum(2) })).toEqual({ kind: 'loaded', artifact: committed.result.artifact })
+  expect(local.loadJudgeCalibrationEvidence(saved).selectedInputs).toEqual(read.selectedInputs)
 })
 
 it('forces four calls on a guarded deterministic non-tie without changing committed bytes', async () => {

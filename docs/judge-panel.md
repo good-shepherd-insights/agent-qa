@@ -117,6 +117,22 @@ supply executable gold; confirmed-bug marks use their confirmed action. Gold wit
 usable action, missing/foreign/stale/ambiguous replay or identity evidence is counted in
 typed skip diagnostics. A source decision is counted once, not once per member or gold copy.
 
+Saved calibration evidence comes from floor/gate runs and uses their `declared` seed
+policy, including when `eval.seed` is absent. For each source decision, automatic selection
+prefers floor over gate, then the lowest numeric **global schedule index**. The default
+floor schedule is `r0-seed11`, `r1-seed11`, `r2-seed11`, `r3-seed29`: all four runs are
+guarded, and the first supplies one observation. Different actions in distinct schedule
+slots are legitimate repeat variation; selection never ranks outcome, agreement, truth or
+directory modification time. Repeats do not increase independent `n`.
+
+Each directory seed must match its publication seed. Duplicate publications, multiple
+seeds claiming one index, unknown floor entries, and malformed/foreign present evidence
+refuse rather than silently falling back to gate. Explicit library `replayRunRoots` selection
+retains exact-one admission. Calibration, doctor, reports and artifact rereads share this
+reader and its rule; chosen replay/report paths and exact digests remain in `selectedInputs`.
+Replacing chosen evidence invalidates the artifact until explicitly measured and published
+again. This fixed first-observation sample is reproducible, not a best-of-repeats estimate.
+
 Truth is recomputed with the judge-free production full-match predicate. A grounded exact
 correction can establish truth when it satisfies the other full-match conditions; a
 remaining tie stays `truth-unresolved`. The panel's answer never supplies its own truth.

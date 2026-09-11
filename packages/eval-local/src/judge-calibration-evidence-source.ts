@@ -113,6 +113,7 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
   result.corpusDigest = selection.corpusDigest
   result.goldSetDigest = selection.goldSetDigest
   let runRoots: readonly string[]
+  const coordinates = new Map<string, { index: number; seed?: number }>()
   try {
     // Guard parents before listBaselineRunRoots opens a profile directory.
     for (const kind of ['gate', 'floor']) assertCalibrationPath(input.agentQaRoot,
@@ -120,6 +121,20 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
     runRoots = input.replayRunRoots ?? listBaselineRunRoots(input.agentQaRoot, result.profileKey).map(run => run.root)
     for (const root of runRoots) inspectTree(input.agentQaRoot, root)
   } catch { skip('path-refused'); return finish() }
+  if (input.replayRunRoots === undefined) {
+    const floor = join(input.agentQaRoot, 'eval', 'floor', slugBranch(result.profileKey))
+    const indices = new Set<number>()
+    for (const entry of existsSync(floor) ? readdirSync(floor, { withFileTypes: true }) : []) {
+      const match = /^r(0|[1-9]\d*)-seed(0|-?[1-9]\d*)$/.exec(entry.name)
+      const index = Number(match?.[1]), seed = Number(match?.[2])
+      if (!entry.isDirectory() || !match || !Number.isSafeInteger(index) || !Number.isSafeInteger(seed) || indices.has(index)) {
+        skip('ambiguous-replay'); return finish()
+      }
+      indices.add(index)
+      coordinates.set(join(floor, entry.name), { index, seed })
+    }
+    coordinates.set(join(input.agentQaRoot, 'eval', 'gate', slugBranch(result.profileKey)), { index: Infinity })
+  }
   const publications = [...new Set(runRoots)].sort().flatMap(root => {
     const directory = join(root, 'reports')
     if (!existsSync(directory)) return []
@@ -127,9 +142,13 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
       root, load: loadStagedReport(input.agentQaRoot, name.slice(0, -5), directory),
     }))
   })
+  if (input.replayRunRoots === undefined && publications.some(publication => publication.load.kind !== 'loaded')) {
+    skip('missing-profile-proof'); return finish()
+  }
   for (const gold of selection.gold) {
-    const candidates: { evidence: JudgeCalibrationEvidence; identity: JudgeCalibrationEvidenceRead['selectedInputs'][number] }[] = []
+    const candidates: { root: string; evidence: JudgeCalibrationEvidence; identity: JudgeCalibrationEvidenceRead['selectedInputs'][number] }[] = []
     const failures = new Set<JudgeCalibrationSkipReason>()
+    let missingPublishedReplay = false
     for (const root of [...new Set(runRoots)].sort()) {
       const dir = join(root, 'replays', ...gold.goldCassetteId.split('/').map(slugBranch))
       const replayFile = join(dir, 'replay.json'), scoreFile = join(dir, 'score.json')
@@ -138,7 +157,12 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
         assertCalibrationPath(input.agentQaRoot, replayFile)
         assertCalibrationPath(input.agentQaRoot, scoreFile)
       } catch { failures.add('path-refused'); continue }
-      if (!existsSync(replayFile)) { failures.add('missing-replay'); continue }
+      if (!existsSync(replayFile)) {
+        const claimed = publications.some(publication => publication.root === root && publication.load.kind === 'loaded'
+          && publication.load.replayGeneration?.records.some(row => row.cassetteId === gold.goldCassetteId))
+        missingPublishedReplay ||= claimed
+        failures.add('missing-replay'); continue
+      }
       try {
         const value: unknown = JSON.parse(readFileSync(replayFile, 'utf8'))
         if (!baselineReplaySchema.safeParse(value).success || !value || typeof value !== 'object'
@@ -177,6 +201,7 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
       }
       const replayDigest = hash(replay), scoreDigest = hash(score)
       const proofs = publications.filter(publication => publication.root === root && publication.load.kind === 'loaded')
+      if (publications.some(publication => publication.root === root && publication.load.kind !== 'loaded')) failures.add('missing-profile-proof')
       let matched = false
       for (const publication of proofs) {
         const loaded = publication.load
@@ -190,17 +215,31 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
         }
         if (report.runIdentity.corpusDigest !== result.corpusDigest) { failures.add('stale-replay'); continue }
         if (!replayGeneration) { failures.add('missing-profile-proof'); continue }
+        if (coordinates.get(root)?.seed !== undefined && coordinates.get(root)!.seed !== replayGeneration.seed) {
+          failures.add('foreign-replay'); continue
+        }
         const refs = replayGeneration.records.filter(row => row.cassetteId === gold.goldCassetteId)
         if (refs.length !== 1 || refs[0]!.replayDigest !== replayDigest || refs[0]!.scoreDigest !== scoreDigest
           || Reflect.get(replay, 'executionSeed') !== replayGeneration.seed) { failures.add('stale-replay'); continue }
         const candidate = representativeDecisionSample(replay)
         if (!candidate) { failures.add('missing-candidate'); continue }
         matched = true
-        candidates.push({ evidence: evidenceRow(gold, candidate, replay, result.profileKey, replayDigest),
+        candidates.push({ root, evidence: evidenceRow(gold, candidate, replay, result.profileKey, replayDigest),
           identity: { decisionId: gold.decisionId, goldCassetteId: gold.goldCassetteId, replayFile,
             reportFile: loaded.file, replayDigest, scoreDigest, reportDigest: hash(report) } })
       }
-      if (!matched && failures.size === 0) failures.add('missing-profile-proof')
+      if (!matched && proofs.length === 0) failures.add('missing-profile-proof')
+    }
+    // Auto-selection samples the producer's first global schedule slot, never the verdict.
+    // Every present row must pass admission; malformed history cannot become a gate fallback.
+    if (input.replayRunRoots === undefined) {
+      const invalid = [...failures].filter(reason => reason !== 'missing-replay' || missingPublishedReplay)
+      if (invalid.length) { for (const reason of invalid.sort()) skip(reason); continue }
+      if (new Set(candidates.map(candidate => candidate.root)).size !== candidates.length) {
+        skip('ambiguous-replay'); continue
+      }
+      candidates.sort((a, b) => coordinates.get(a.root)!.index - coordinates.get(b.root)!.index)
+      if (candidates.length > 1) candidates.splice(1)
     }
     if (candidates.length !== 1) {
       if (candidates.length > 1) skip('ambiguous-replay')

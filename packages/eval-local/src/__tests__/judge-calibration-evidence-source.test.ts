@@ -115,7 +115,8 @@ it.each(['model', 'profile', 'corpus', 'source', 'gold', 'decision', 'malformed'
       const destination = join(f.root, 'eval/floor', slugBranch(core.composeBaselineProfileKey(f.input.profile)), 'r0-seed17')
       cpSync(f.runRoot, destination, { recursive: true })
     }
-    const result = f.read()
+    const result = mode === 'ambiguous' ? f.read({ replayRunRoots: [f.runRoot,
+      join(f.root, 'eval/floor', slugBranch(core.composeBaselineProfileKey(f.input.profile)), 'r0-seed17')] }) : f.read()
     expect(result?.evidence).toEqual([])
     const expectedReason: Partial<Record<string, core.JudgeCalibrationSkipReason>> = {
       profile: 'foreign-profile', corpus: 'stale-replay', model: 'foreign-replay', source: 'foreign-replay',
@@ -128,6 +129,37 @@ it.each(['model', 'profile', 'corpus', 'source', 'gold', 'decision', 'malformed'
     expect(Object.values(result.skippedCounts).some(value => Number(value) > 0)).toBe(true)
   },
 )
+
+it('ranks floor schedule indices numerically before gate without choosing a favorable verdict', () => {
+  const f = fixture()
+  const floor = join(f.root, 'eval/floor', slugBranch(core.composeBaselineProfileKey(f.input.profile)))
+  for (const index of [10, 2]) cpSync(f.runRoot, join(floor, `r${index}-seed17`), { recursive: true })
+  const first = f.read()
+  expect(first.evidence).toHaveLength(1)
+  expect(first.selectedInputs[0].replayFile).toContain('/r2-seed17/')
+  expect(f.read()).toEqual(first)
+  expect(f.read({ replayRunRoots: [f.runRoot, join(floor, 'r2-seed17')] }).skippedCounts['ambiguous-replay']).toBe(1)
+})
+
+it.each(['unknown', 'same-index-seed', 'wrong-seed', 'malformed', 'duplicate-publication'])('refuses %s floor history instead of falling back to a valid gate', mode => {
+  const f = fixture()
+  const floor = join(f.root, 'eval/floor', slugBranch(core.composeBaselineProfileKey(f.input.profile)))
+  const slot = join(floor, 'r0-seed17')
+  cpSync(f.runRoot, slot, { recursive: true })
+  if (mode === 'unknown') mkdirSync(join(floor, 'unknown-generation'))
+  if (mode === 'same-index-seed') cpSync(f.runRoot, join(floor, 'r0-seed29'), { recursive: true })
+  if (mode === 'wrong-seed') { rmSync(slot, { recursive: true }); cpSync(f.runRoot, join(floor, 'r0-seed29'), { recursive: true }) }
+  if (mode === 'malformed') writeFileSync(join(slot, 'replays', ...f.cassette.id.split('/').map(slugBranch), 'replay.json'), '{')
+  if (mode === 'duplicate-publication') {
+    const report = { ...f.report, batchKey: 'second-proof' }
+    new local.FsReportStore({ root: f.root, outputDir: join(slot, 'reports') }).save(report, undefined, {
+      seed: 17, records: [{ cassetteId: f.cassette.id, replayDigest: digest(JSON.parse(readFileSync(f.written.file, 'utf8'))), scoreDigest: digest(JSON.parse(readFileSync(f.scoreFile, 'utf8'))) }],
+    })
+  }
+  const result = f.read()
+  expect(result.evidence).toEqual([])
+  expect(Object.values(result.skippedCounts).some(count => Number(count) > 0)).toBe(true)
+})
 it('retains newest empty mark as governing retirement', () => {
   const f = fixture(), before = f.read()
   f.marks.push({ ...f.marks[0]!, ordinal: 2, gold: [] }); f.saveMarks()
