@@ -24,6 +24,12 @@ export type JobStatus =
   | 'failed'
   | 'cancelled'
 
+// 422 D-16 (ADV-03): `unreadable_kind` is the conclusion a row reaches when this build cannot
+// read the KIND it was written under — a kind an earlier build declared and this one has since
+// retired. It is a CONCLUSION and not a kind, which is the whole point: the five-kind vocabulary
+// below stays exactly as strict as it was, and the row that cannot join it gets an outcome
+// instead of an exemption. Nothing ever handles such a row; it is landed permanently at claim
+// with its attempt spent, so the queue neither loops on it nor pretends it never existed.
 export type JobConclusionKind =
   | 'no_issue'
   | 'needs_user_input'
@@ -32,6 +38,7 @@ export type JobConclusionKind =
   | 'model_capability_error'
   | 'provider_error'
   | 'insufficient_model_output'
+  | 'unreadable_kind'
 
 // 385 C6 (JOBQ-01): `attempts` is incremented at CLAIM (D-18), so a job that kills its host
 // every time still exhausts its bound instead of crash-looping. `createdAt`/`updatedAt` are
@@ -74,7 +81,11 @@ const jobStatusValues = [
   'cancelled',
 ] as const satisfies readonly JobStatus[]
 
-const jobConclusionKindValues = [
+// Exported on the same terms as `jobKindValues`: for sibling modules and for the contract tests
+// that pin this vocabulary EXACTLY, never on the package barrel. A consumer that needs to talk
+// about a conclusion has the `JobConclusionKind` type; publishing the array would invite the
+// parallel registry the comment above warns about.
+export const jobConclusionKindValues = [
   'no_issue',
   'needs_user_input',
   'insufficient_evidence',
@@ -82,7 +93,20 @@ const jobConclusionKindValues = [
   'model_capability_error',
   'provider_error',
   'insufficient_model_output',
+  'unreadable_kind',
 ] as const satisfies readonly JobConclusionKind[]
+
+/**
+ * Whether this build reads `value` as a job kind (422 D-16).
+ *
+ * A PREDICATE rather than the array, so a caller can ask the question without gaining a list it
+ * could iterate into a second registry. The store asks it of raw column bytes before those bytes
+ * reach `jobSchema`, which is what lets a row written under a retired kind be recognised and
+ * landed instead of throwing out of the transaction that had just spent its attempt.
+ */
+export function isJobKind(value: unknown): value is JobKind {
+  return typeof value === 'string' && (jobKindValues as readonly string[]).includes(value)
+}
 
 const jobIdSchema = z.string().transform(asJobId)
 

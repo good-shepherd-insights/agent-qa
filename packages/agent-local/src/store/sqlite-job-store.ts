@@ -42,8 +42,20 @@ import type {
   JobStoreFence,
   JobStorePort,
 } from '@vostride/agent-qa-agent'
-import { canonicalJson, guardRunNotification, jobSchema, sha256hex } from '@vostride/agent-qa-schema'
-import type { Job, JobId, JobStatus, RunNotification } from '@vostride/agent-qa-schema'
+import {
+  canonicalJson,
+  guardRunNotification,
+  isJobKind,
+  jobSchema,
+  sha256hex,
+} from '@vostride/agent-qa-schema'
+import type {
+  Job,
+  JobConclusionKind,
+  JobId,
+  JobStatus,
+  RunNotification,
+} from '@vostride/agent-qa-schema'
 
 import type { JobCheckpointStore } from './job-checkpoint-store.js'
 import { canonicalLogicalDump, createLogicalDump, selectOrderedRows } from './logical-dump.js'
@@ -204,6 +216,56 @@ const SCHEMA_STATEMENTS = [
 const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['done', 'failed', 'cancelled']
 
 /**
+ * The conclusion a quarantined row records (422 D-16). A CONCLUSION, never a kind.
+ *
+ * Declared as `JobConclusionKind` rather than inferred, so removing the member from the shipped
+ * vocabulary fails to compile HERE as well as in the schema's own contract tests — the store may
+ * not go on recording an outcome the contract no longer publishes.
+ */
+const UNREADABLE_KIND_CONCLUSION: JobConclusionKind = 'unreadable_kind'
+
+/**
+ * The FIXED reason a quarantine writes, carrying none of the bytes it is about (422 D-16).
+ *
+ * Masked deliberately. The unreadable kind is a string an EARLIER build — or anything with write
+ * access to this database — put in a column, and `last_failure_reason` is rendered on operator
+ * terminals and copied into logs. Interpolating it here would take the one field of the row this
+ * build refuses to trust and paste it into the one place an operator is most likely to read
+ * without thinking. The original kind stays in the `kind` column, where a reader has to ask for it
+ * and knows what it is when they do.
+ */
+export const QUARANTINED_UNREADABLE_KIND_REASON =
+  'agent job quarantined at claim: this build does not read the kind recorded for this row, so '
+  + 'the row was landed permanently without being parsed. The original kind, id and payload are '
+  + 'preserved in the row for inspection.'
+
+/**
+ * How many rows one claim will pass over before it gives up.
+ *
+ * The quarantine loop below is already monotone — every iteration either returns a claim or moves
+ * a row out of the claimable set — so this bound is unreachable by construction. It is here for
+ * the same reason `AGENT_JOBS_PUMP_BOUND` is: an unbounded loop inside a write transaction is not
+ * something to leave resting on an argument, and a store that somehow stopped shrinking its own
+ * queue must say so rather than spin holding the write lock.
+ */
+const QUARANTINE_SCAN_BOUND = 1_000
+
+/**
+ * Whether this row's kind is one this build cannot read (422 D-16).
+ *
+ * Asked of the RAW column, before `rowToJob`, and that ordering is the entire fix. `claimNext`
+ * spends the attempt at the claim (D-18) and then parses; a kind the contract does not contain
+ * threw out of `jobSchema.parse` INSIDE the transaction, so `inTransaction` rolled the spent
+ * attempt back with it and the very next claim was offered the same row again — a crash-loop
+ * reached with no crash, starving every valid row behind it. Recognising the row here means the
+ * quarantine and the attempt commit together.
+ */
+function isUnreadableKindRow(row: Record<string, unknown>): boolean {
+  return !isJobKind(String(row.kind))
+}
+
+
+/**
  * The run a job's payload column names, if it names one as a non-empty string.
  *
  * `chainTerminalFor`'s predicate verbatim (`engine.ts`), and it has to be verbatim: the key that
@@ -291,6 +353,17 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   )
   const markDone = db.prepare(
     "UPDATE jobs SET status = 'done', claimed_at = NULL, updated_at = ? WHERE id = ?",
+  )
+  // 422 D-16: the quarantine landing. Terminal, claim released, reason fixed — and the row's
+  // `kind`, `id` and `payload` untouched, because the point of landing it rather than deleting it
+  // is that an operator can still see what an earlier build wrote. `attempts` is not named here:
+  // the claim immediately above this statement already spent it, and this transaction commits
+  // both, which is the difference between a spent attempt and a rolled-back one.
+  const markQuarantined = db.prepare(
+    `UPDATE jobs
+     SET status = 'failed', claimed_at = NULL, last_failure_kind = 'permanent',
+         last_failure_reason = ?, updated_at = ?
+     WHERE id = ?`,
   )
   const touchJob = db.prepare('UPDATE jobs SET updated_at = ? WHERE id = ?')
   // Two statements, because the two dispositions are two different outcomes: a retryable
@@ -536,26 +609,47 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       // younger row, so claim-and-undo would burn the bound or starve the queue.
       const excludeKinds = options?.excludeKinds ?? []
       return inTransaction(() => {
+        // FIRST, and before the loop rather than inside it: a quarantine is a WRITE, so a caller
+        // whose epoch the store does not recognise must be refused having moved nothing at all.
         requireFence(fence)
-        const row =
-          excludeKinds.length === 0
-            ? selectClaimable.get()
-            : claimableStatementFor(excludeKinds.length).get(...excludeKinds)
-        if (row === undefined) {
-          return { claimed: false }
+        for (let scanned = 0; scanned <= QUARANTINE_SCAN_BOUND; scanned += 1) {
+          const row =
+            excludeKinds.length === 0
+              ? selectClaimable.get()
+              : claimableStatementFor(excludeKinds.length).get(...excludeKinds)
+          if (row === undefined) {
+            return { claimed: false }
+          }
+          // D-18: the attempt is counted HERE, at the claim, not when a failure is recorded.
+          // A job that kills its host on every attempt records no failures at all, so a
+          // failure-time counter would let it retry forever.
+          markClaimed.run(now, now, String(row.id))
+          const claimed = requireRow(String(row.id))
+          // 422 D-16: asked of the RAW row, BEFORE `rowToJob`. The landing joins the claim's own
+          // transaction, so the attempt this claim just spent commits with it instead of being
+          // rolled back by a parser throwing on the way out — and the loop then offers the next
+          // claimable row, so several poisoned heads cost one pass rather than one per row.
+          if (isUnreadableKindRow(claimed)) {
+            markQuarantined.run(QUARANTINED_UNREADABLE_KIND_REASON, now, String(row.id))
+            continue
+          }
+          // The payload travels with the claim, not on the job row's DTO: it is the opaque
+          // input this kind's handler reads, and the handler is the only thing that can.
+          return {
+            claimed: true,
+            job: rowToJob(claimed),
+            payload: JSON.parse(String(claimed.payload)) as unknown,
+          }
         }
-        // D-18: the attempt is counted HERE, at the claim, not when a failure is recorded.
-        // A job that kills its host on every attempt records no failures at all, so a
-        // failure-time counter would let it retry forever.
-        markClaimed.run(now, now, String(row.id))
-        const claimed = requireRow(String(row.id))
-        // The payload travels with the claim, not on the job row's DTO: it is the opaque
-        // input this kind's handler reads, and the handler is the only thing that can.
-        return {
-          claimed: true,
-          job: rowToJob(claimed),
-          payload: JSON.parse(String(claimed.payload)) as unknown,
-        }
+        // Unreachable by construction — every iteration above either returns or moves a row to a
+        // terminal status, which removes it from the claimable set. Recorded rather than trusted,
+        // and a throw rather than a silent `{claimed: false}`: reaching it means the claimable
+        // predicate stopped shrinking, and reporting an empty queue would hide that forever.
+        throw new Error(
+          `agent job claim scanned ${QUARANTINE_SCAN_BOUND} rows without reaching a claimable or `
+          + 'exhausted queue; the claimable set is not shrinking, so no row was claimed and the '
+          + 'transaction is rolled back rather than reporting an empty queue',
+        )
       })
     },
 
