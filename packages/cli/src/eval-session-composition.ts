@@ -1515,6 +1515,15 @@ export interface ReplayGateVerbOptions {
   resolveTrustPriors?: import('./curation/trust-priors.js').ResolveTrustPriors
   /** Host runtime artifacts and audit root; config and committed roots remain config-relative. */
   agentQaRoot?: string
+  /**
+   * 422 D-14: writer authority the CALLER already holds, passed straight to the bridge.
+   *
+   * ADDITIVE-OPTIONAL, so every existing caller — the `eval replay-gate` verb itself, every
+   * fixture — keeps the standalone acquire/finally-release posture untouched. Present, the
+   * bridge borrows it and takes no lease of its own; see `ReplayGateHostDeps.resolveClaimAuthority`
+   * for why the resolution happens at the claim rather than at composition.
+   */
+  claimAuthority?: import('./gates/replay-gate-host.js').ReplayGateClaimAuthority
   k?: number
   maxScreens?: number
   dryRun?: boolean
@@ -1577,6 +1586,11 @@ export async function runReplayGateVerb(
   const { createReplayGateHost } = await import('./gates/replay-gate-host.js')
   const result = await createReplayGateHost({
     ...(opts.resolveTrustPriors === undefined ? {} : { resolveTrustPriors: opts.resolveTrustPriors }),
+    // 422 D-14: the lease the caller lent this verb, re-presented to the bridge as a resolver
+    // over the value this call already holds. The bridge calls it once, at its own claim.
+    ...(opts.claimAuthority === undefined
+      ? {}
+      : { resolveClaimAuthority: () => opts.claimAuthority }),
     configPath: session.configPath,
     agentQaRoot: opts.agentQaRoot ?? resolve(session.configDir, '.agent-qa'),
     record: opts.dryRun !== true,
