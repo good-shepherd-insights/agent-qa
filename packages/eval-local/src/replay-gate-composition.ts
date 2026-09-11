@@ -55,6 +55,7 @@ import type {
   ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
 import {
+  computeBriefDigest,
   deriveMemoryOnPathSites,
   failingStepOf,
   GateReceiptSchema,
@@ -439,6 +440,17 @@ export function resolveFailingPathCandidate(input: {
     return { kind: 'refused', reason: 'failing-path record was not served on the failing step' }
   if (site.trust !== 'candidate')
     return { kind: 'refused', reason: 'failing-path record is not an ordinary candidate' }
+  // Last, and the reason the two derivations above mean anything: the brief they read must BE
+  // the brief the decision replays. Recomputed, never compared against the stored field — a
+  // lookalike assembled from a stale or edited handoff carries the old digest unchanged.
+  if (
+    computeBriefDigest(failing.servedBrief) !==
+    computeBriefDigest(input.cassette.input.servedBrief)
+  )
+    return {
+      kind: 'refused',
+      reason: 'failing-path authorization cites a different brief than the replayed decision',
+    }
   return { kind: 'authorized', stepIndex: failing.stepIndex }
 }
 
