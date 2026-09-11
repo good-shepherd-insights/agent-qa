@@ -49,6 +49,7 @@ export {
   deriveMemoryOnPathSites,
   guardMisdirectionEvidence,
   MEMORY_ON_PATH_TRUSTS,
+  MemoryOnPathEntrySchema,
   memoryOnPathTrustOf,
   MISDIRECTION_BACKINGS,
   MISDIRECTION_ROOT_POSTURES,

@@ -2,6 +2,7 @@ import type { ScopeKey } from '../identity/scope-key'
 import type { RunId } from '../run/run-id'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
 import type { QuarantineAppliedEntry } from '../quarantine/quarantine-ledger'
+import type { MisdirectionRecordResult } from '../verdict/misdirection-evidence'
 import type { PerTestOutcome } from './per-test-outcome'
 
 export const CURRENT_HANDOFF_SCHEMA_VERSION = 7
@@ -51,4 +52,22 @@ export interface CompletedRunHandoff {
    * handoff written before version 6.
    */
   quarantineApplied?: readonly QuarantineAppliedEntry[]
+  /**
+   * Phase 422 D-17/D-18: the circularity arbiter's per-record cross-check rows, recorded BESIDE
+   * the verdicts rather than only inside them, so a reader that never resolves a verdict can
+   * still see what was checked and what was not.
+   *
+   * ABSENT means the arbiter never ran — true of every handoff written before 422 and of every
+   * run with no low-trust memory to check. An EMPTY array means it ran and had nothing to
+   * record. The two are deliberately distinguishable, and the loader may neither synthesize the
+   * member nor drop it; `misdirectionEvidence: []` is not a synonym for silence.
+   *
+   * Each row binds the run's pre-execution IDENTITY through `handoffBaseDigest`
+   * ({@link import('../verdict/misdirection-evidence').misdirectionSourceDigest}), never this
+   * document's own digest — which now covers the sidecar, so digesting it here would hash a
+   * value containing its own hash.
+   *
+   * Optional-additive: {@link CURRENT_HANDOFF_SCHEMA_VERSION} stays 7 and no migration is owed.
+   */
+  misdirectionEvidence?: readonly MisdirectionRecordResult[]
 }

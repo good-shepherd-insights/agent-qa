@@ -333,6 +333,22 @@ const samplesSchema = z
   })
   .strict()
 
+/**
+ * The wire shape of ONE declared on-path entry (422-12).
+ *
+ * Minted here rather than hand-rolled at each boundary: three readers now validate a PRESENT
+ * `Verdict.memoryOnPath` — the handoff loader, the analysis-artifact guard and the strict
+ * cassette parser — and three hand-rolled spellings of a two-field shape are three guards free
+ * to drift from each other. The trust word is read from {@link MEMORY_ON_PATH_TRUSTS}, so the
+ * closed vocabulary is still declared exactly once.
+ */
+export const MemoryOnPathEntrySchema = z
+  .object({
+    recordId: recordIdSchema,
+    trust: z.enum(MEMORY_ON_PATH_TRUSTS),
+  })
+  .strict()
+
 /** The wire shape of one per-record row — every identity required, nothing extra tolerated. */
 export const MisdirectionRecordResultSchema = z
   .object({
