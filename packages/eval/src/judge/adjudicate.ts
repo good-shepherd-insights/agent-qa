@@ -68,7 +68,7 @@ import type {
 } from '../replay/result'
 import { JUDGE_CONFIG } from './config'
 import { displayJudgeFamilies, judgeFamiliesIntersect, resolveJudgeFamilies } from './family'
-import { poolPanel } from './panel'
+import { createPanelIdentity, poolPanel } from './panel'
 import type { JudgePanelPort } from './panel'
 import type { JudgeCallResult, JudgePort } from './port'
 import { buildJudgePrompt } from './prompt'
@@ -333,7 +333,10 @@ export async function adjudicatePanelComparison(port: AdjudicationPort, evidence
       judgeFamily: displayJudgeFamilies(resolveJudgeFamilies(member.judgeModelId)) ?? '', outcome,
       ...(snapshot === undefined ? {} : { usage: snapshot }) })
   }
-  usage.members = [...(usage.members ?? []), ...members]
+  // Execution follows the declaration; stored comparison groups follow canonical identity.
+  const identity = createPanelIdentity(members.map(member => member.judgeModelId))
+  const canonicalMembers = identity.members!.map(expected => members.find(member => member.judgeModelId === expected.judgeModelId)!)
+  usage.members = [...(usage.members ?? []), ...canonicalMembers]
   return poolPanel(members)
 }
 
