@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as model from '@vostride/agent-qa-model'
 import { computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
 import {
+  ADVERSARIAL_MUTATORS,
   ADVERSARIAL_TABLE_HASH,
   ADVERSARIAL_TABLE_VERSION,
   deriveAdversarialCassetteId,
@@ -34,6 +35,32 @@ import {
   resolveEvalSession,
   runAdversarialVerb,
 } from '../eval-session-composition.js'
+
+/**
+ * The families this fixture's single recorded control can carry (422-02). Four benign
+ * families need a distractor surface to land on without moving the gold's normalized
+ * identity, and this observation has none — so they are reported, not derived.
+ */
+const DERIVED_ON_THIS_SEED = [
+  'benign-case',
+  'benign-digit',
+  'benign-whitespace',
+  'confusable',
+  'injection-template',
+  'invisible',
+  'tag-block',
+]
+
+const INAPPLICABLE_ON_THIS_SEED = [
+  { mutator: 'benign-plural', reason: 'no-table-entry-applies' },
+  { mutator: 'benign-punctuation', reason: 'benign-surface-absent' },
+  { mutator: 'benign-synonym', reason: 'benign-surface-absent' },
+  { mutator: 'benign-truncate', reason: 'benign-surface-absent' },
+]
+
+function byMutator(left: { mutator?: string }, right: { mutator?: string }): number {
+  return String(left.mutator).localeCompare(String(right.mutator))
+}
 
 const roots: string[] = []
 
@@ -185,7 +212,16 @@ describe('422 adversarial tracer — stage, review, admit', () => {
     expect(staged.tableVersion).toBe(ADVERSARIAL_TABLE_VERSION)
     expect(staged.tableHash).toBe(ADVERSARIAL_TABLE_HASH)
     // One variant per (seed, mutator) — D-07's "exactly one", never N.
-    expect(staged.staged.map(row => row.mutator).sort()).toEqual(['confusable', 'injection-template'])
+    // 422-02 expanded the derived set from two families to all eleven. This seed's single
+    // recorded control supports seven of them; the four whose perturbation would move the
+    // gold's normalized identity report an explicit inapplicability instead of a variant.
+    expect(staged.staged.map(row => row.mutator).sort()).toEqual(DERIVED_ON_THIS_SEED)
+    expect(staged.skips.map(row => ({ mutator: row.mutator, reason: row.reason })).sort(byMutator))
+      .toEqual(INAPPLICABLE_ON_THIS_SEED)
+    // Every declared family is accounted for exactly once — derived or explained.
+    expect(
+      [...staged.staged.map(row => row.mutator), ...staged.skips.map(row => row.mutator)].sort(),
+    ).toEqual([...ADVERSARIAL_MUTATORS].sort())
     const confusable = staged.staged.find(row => row.mutator === 'confusable')!
     expect(confusable.seedCassetteId).toBe(f.seed.id)
     expect(confusable.cassetteId).toBe(
@@ -236,7 +272,7 @@ describe('422 adversarial tracer — stage, review, admit', () => {
     expect(admitted.kind).toBe('admitted')
     expect(admitted.refusals).toEqual([])
     expect(admitted.stagingSkips).toEqual([])
-    expect(admitted.admitted.map(row => row.mutator).sort()).toEqual(['confusable', 'injection-template'])
+    expect(admitted.admitted.map(row => row.mutator).sort()).toEqual(DERIVED_ON_THIS_SEED)
     expect(admitted.nextCorpusDigest).not.toBe(admitted.previousCorpusDigest)
 
     // A FRESH reader — the proposer's own door, opened after admission.

@@ -328,6 +328,7 @@ export {
   ADVERSARIAL_TABLE_HASHES,
   ADVERSARIAL_TABLE_VERSION,
   computeAdversarialTableHash,
+  encodeAdversarialTagBlock,
 } from './adversarial/tables'
 export type {
   AdversarialApplication,
@@ -338,10 +339,16 @@ export {
   ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH,
   ADVERSARIAL_GENERATED_MUTATORS,
   ADVERSARIAL_GENERATOR_VERSION,
+  ADVERSARIAL_INAPPLICABILITIES,
+  adversarialDrawKey,
+  applyAdversarialTableEntry,
   deriveAdversarialCassetteId,
+  drawAdversarialTableEntry,
   generateAdversarialVariants,
 } from './adversarial/generate'
 export type {
+  AdversarialGenerationOutcome,
+  AdversarialInapplicability,
   AdversarialSeed,
   AdversarialSeedSkip,
   AdversarialSeedSkipReason,

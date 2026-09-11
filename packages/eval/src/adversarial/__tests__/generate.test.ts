@@ -328,6 +328,7 @@ describe('422-02 adversarial generation — explicit outcomes for everything els
   it('serialises identically across two runs and across permuted input', () => {
     const alpha = richSeed()
     const beta = makeAdversarialSeedFixture({
+      runId: 'run / adversarial permutation 7',
       names: { [FIXTURE_REFS.status]: 'Saved item', [FIXTURE_REFS.root]: 'Basket' },
     })
     const ordered = generateAdversarialVariants({ product: 'fixture', seeds: [alpha, beta] })
@@ -352,6 +353,7 @@ describe('422-02 adversarial generation — explicit outcomes for everything els
   it('bounds a refresh by the seed cap and defers the rest as counted rows', () => {
     const alpha = richSeed()
     const beta = makeAdversarialSeedFixture({
+      runId: 'run / adversarial permutation 7',
       names: { [FIXTURE_REFS.status]: 'Saved item', [FIXTURE_REFS.root]: 'Basket' },
     })
     const capped = generateAdversarialVariants({

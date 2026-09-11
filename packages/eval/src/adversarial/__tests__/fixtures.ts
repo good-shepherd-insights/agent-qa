@@ -17,7 +17,7 @@
  * Pure: no clock, no host modules, no randomness. The handoff fixture's own timestamps are
  * the only time values anywhere in this file.
  */
-import { asRecordId, asRef, computeBriefDigest } from '@vostride/agent-qa-schema'
+import { asRecordId, asRef, asRunId, computeBriefDigest } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   ElementInfo,
@@ -131,6 +131,8 @@ function rewriteObservation(
 }
 
 export interface SeedFixtureOptions {
+  /** Override the recorded run id; the leaf cassette id is derived from its slug. */
+  runId?: string
   /** Rename recorded elements by ref before extraction; the tree is re-rendered to match. */
   names?: Readonly<Record<string, string>>
   /** Restrict the recorded observation to these refs — the sparse-surface fixtures. */
@@ -157,7 +159,9 @@ export interface SeedFixture extends AdversarialSeed {
 
 /** One real, extracted leaf seed, shaped by the options above. */
 export function makeAdversarialSeedFixture(options: SeedFixtureOptions = {}): SeedFixture {
-  const handoff: CompletedRunHandoff = makeArtifactRefV2Handoff()
+  const handoff: CompletedRunHandoff = makeArtifactRefV2Handoff(
+    options.runId === undefined ? {} : { runId: asRunId(options.runId) },
+  )
   const step = handoff.tests[0]!.steps[0]!
   if (options.proofBacked !== false) {
     step.servedBrief.proof = proof()
