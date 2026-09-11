@@ -30,8 +30,13 @@
 // callback hands its author — this module never imports a provider SDK.
 
 import type {
+  AnalysisValidationOptions,
   ArtifactRef,
   CompletedRunHandoff,
+  MisdirectionRecordResult,
+  MisdirectionRootPosture,
+  PerTestOutcome,
+  StepEvidence,
   Verdict,
   VerdictGroundingQuote,
   VerdictSentenceParts,
@@ -72,6 +77,80 @@ export const AUTHOR_REPAIR_CAP = 1
  * if image payloads dominate request cost without moving verdict quality.
  */
 export const MAX_AUTHOR_IMAGES = 6
+
+// ---------------------------------------------------------------------------------------
+// 422 D-17..D-20: the code-owned circularity stamp, applied BEFORE validation.
+//
+// The evidence a no-trust-change verdict rests on is produced by the pre-enqueue arbiter
+// (422-14) and travels on the run's own handoff. It reaches a verdict through THIS function and
+// through no other route: whatever the model answered about `memoryOnPath` or
+// `misdirectionRuledOut` is overwritten, so an authored copy can never become authority.
+//
+// It lives beside the validator call it precedes rather than in the handler, because the
+// ordering is the contract — a stamp applied after `validateAnalysisAgainstHandoff` would leave
+// the gate deciding about a verdict that carries no evidence while the persisted artifact ends
+// up carrying some, which is the one shape that looks right afterwards and was wrong at the
+// instant it mattered.
+// ---------------------------------------------------------------------------------------
+
+export interface MisdirectionStampInput {
+  readonly verdict: Verdict
+  /** The verdict's sentence parts, when they exist — the grounding quote joins the path. */
+  readonly parts: VerdictSentenceParts | undefined
+  readonly test: PerTestOutcome | undefined
+  /**
+   * The run-level ledger the arbiter published, or ABSENT when it never ran. Absent is not
+   * empty: a run with no member is a pre-422 run and nothing is stamped onto it at all.
+   */
+  readonly evidence: readonly MisdirectionRecordResult[] | undefined
+  readonly rootPosture: MisdirectionRootPosture
+}
+
+/**
+ * The steps a verdict's evidence touches — cited steps, the grounding quote's step, and the
+ * run's ACTUAL failing step.
+ *
+ * The TWIN of `pathStepsOf` inside `schema/src/verdict/validate-analysis.ts`, which is module
+ * private there. The two must agree: the stamp writes a `memoryOnPath` DECLARATION and the
+ * validator recomputes membership over its own path, so a rule that drifted here would make
+ * every stamped verdict disagree with its own recomputation. `misdirection-analysis.test.ts`
+ * measures the agreement against the real validator — including the case where the author cites
+ * a clean neighbour and never mentions the step that failed — rather than restating the rule.
+ */
+export function misdirectionPathSteps(
+  verdict: Verdict,
+  parts: VerdictSentenceParts | undefined,
+  test: PerTestOutcome,
+): StepEvidence[] {
+  // DECLARED, NOT YET IMPLEMENTED (RED).
+  void verdict
+  void parts
+  void test
+  return []
+}
+
+/**
+ * The validator posture this run is entitled to (422-11's two fail-closed options).
+ *
+ * ABSENT evidence keeps the historical surface byte-for-byte: `{}` is what every caller passed
+ * before 422 and what `validateAnalysisAgainstHandoff` defaults to, so a run whose arbiter never
+ * ran is validated exactly as it was. A PRESENT ledger — even an empty one — means the arbiter
+ * ran and said something, which is what makes this run's producer a current gated one.
+ */
+export function misdirectionValidationOptions(
+  evidence: readonly MisdirectionRecordResult[] | undefined,
+  rootPosture: MisdirectionRootPosture,
+): AnalysisValidationOptions {
+  // DECLARED, NOT YET IMPLEMENTED (RED).
+  void evidence
+  void rootPosture
+  return {}
+}
+
+export function stampVerdictMisdirectionEvidence(input: MisdirectionStampInput): Verdict {
+  // DECLARED, NOT YET IMPLEMENTED (RED).
+  return input.verdict
+}
 
 export interface AuthorTokenBudget {
   readonly estimate: (text: string) => number

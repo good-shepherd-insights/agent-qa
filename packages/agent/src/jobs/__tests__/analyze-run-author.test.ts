@@ -16,9 +16,10 @@
 
 import type {
   CompletedRunHandoff,
+  MisdirectionRecordResult,
   Verdict,
 } from '@vostride/agent-qa-schema'
-import { canonicalJson } from '@vostride/agent-qa-schema'
+import { asRecordId, canonicalJson, misdirectionSourceDigest } from '@vostride/agent-qa-schema'
 import { deterministicVerdict, UNKNOWN_SIGNAL_RATIONALE } from '@vostride/agent-qa-runner'
 import { describe, expect, it } from 'vitest'
 
@@ -29,6 +30,7 @@ import {
   AUTHOR_REPAIR_CAP,
   authorRunAnalysis,
   MAX_AUTHOR_IMAGES,
+  misdirectionValidationOptions,
 } from '../analyze-run-author.js'
 import { buildSyntheticHandoff } from './fixtures/synthetic-handoff.js'
 
@@ -450,5 +452,86 @@ describe('the D-02 vision leg and the L9 text-only degradations', () => {
     expect(second.images).toEqual(first.images)
     // One resolve per distinct sha, not per attempt.
     expect(reads).toBe(2)
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// 422-15: the arbiter's rows reach the author as DATA, and the posture switch is one decision.
+// ---------------------------------------------------------------------------------------
+
+const ALPHA = asRecordId('rec-alpha')
+
+function crossCheckRow(
+  handoff: CompletedRunHandoff,
+  overrides: Partial<MisdirectionRecordResult> = {},
+): MisdirectionRecordResult {
+  return {
+    runId: String(handoff.runId),
+    perTest: 0,
+    stepIndex: 0,
+    decisionOrdinal: 0,
+    recordId: ALPHA,
+    handoffBaseDigest: misdirectionSourceDigest(handoff),
+    briefDigest: 'brief-digest',
+    corpusDigest: 'corpus-digest',
+    profileDigest: 'profile-digest',
+    crossCheck: 'flipped',
+    seedHonored: true,
+    ...overrides,
+  }
+}
+
+describe('422-15 the circularity evidence enters the author as data (D-17/D-20)', () => {
+  it('switches the validator posture on the ledger alone, fail-closed on absence', () => {
+    // ONE decision point for the whole arm, so "the arm is off for a run that carries nothing"
+    // is a property of a function rather than a habit of three call sites.
+    expect(misdirectionValidationOptions(undefined, 'eval-root')).toEqual({})
+    expect(misdirectionValidationOptions(undefined, 'no-eval-root')).toEqual({})
+    expect(misdirectionValidationOptions([], 'no-eval-root')).toEqual({
+      gatedProducerEvidence: true,
+      rootPosture: 'no-eval-root',
+    })
+  })
+
+  it('renders the per-record rows into the prompt while KEEPING the boolean request', async () => {
+    // The rows are reasoning input, not an instruction: the author still has to answer
+    // `memoryMisdirectionRuledOut` for itself, and the code still decides what that is worth.
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const model = scriptedModel([outputOf([authoredEntry(0)])])
+
+    await authorRunAnalysis(
+      model.capability,
+      authorInput(handoff, { misdirectionEvidence: [crossCheckRow(handoff)] }),
+    )
+
+    const request = model.requests()[0] as JobModelRequest
+    expect(request.prompt).toContain(String(ALPHA))
+    expect(request.prompt).toContain('flipped')
+    expect(request.system ?? '').toContain('memoryMisdirectionRuledOut')
+  })
+
+  it('says nothing about a cross-check for a run whose arbiter never ran', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const model = scriptedModel([outputOf([authoredEntry(0)])])
+
+    await authorRunAnalysis(model.capability, authorInput(handoff))
+
+    const request = model.requests()[0] as JobModelRequest
+    expect(request.prompt).not.toContain(String(ALPHA))
+  })
+
+  it('reports the model calls it made ONCE, capped at one repair', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const clean = scriptedModel([outputOf([authoredEntry(0)])])
+    const repaired = scriptedModel(['not json at all', outputOf([authoredEntry(0)])])
+
+    const first = await authorRunAnalysis(clean.capability, authorInput(handoff))
+    const second = await authorRunAnalysis(repaired.capability, authorInput(handoff))
+
+    expect(first.usage.modelCalls).toBe(1)
+    expect(first.usage.repairCalls).toBe(0)
+    expect(second.usage.modelCalls).toBe(1 + AUTHOR_REPAIR_CAP)
+    expect(second.usage.repairCalls).toBe(AUTHOR_REPAIR_CAP)
+    expect(second.usage.estimatedTokens).toBe(second.compaction.estimatedTokens)
   })
 })
