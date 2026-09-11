@@ -695,7 +695,11 @@ export async function curateCompletedRun(
       // operator reads the fold rather than inferred from a trust move that appeared later.
       // Additive beside the candidate/cap lines and, like them, never a gate: the rows it
       // counts have already reached the writer by the time this renders.
-      const causalHarm = canaries.details.filter((row) => row.misdirectionFlipped === true)
+      // `?? []` is not paranoia about the shipped emitter, which always answers an array: the
+      // operation is a seam, and a caller's double may answer a partial report. A DIAGNOSTIC
+      // line must never be the thing that throws inside the fold's crash boundary and turns a
+      // healthy tail incomplete.
+      const causalHarm = (canaries.details ?? []).filter((row) => row.misdirectionFlipped === true)
       if (causalHarm.length > 0) {
         input.log.info?.(misdirectionHarmLine(receiptIdentity.runId, causalHarm))
       }
