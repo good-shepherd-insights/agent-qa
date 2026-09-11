@@ -86,6 +86,23 @@ export const ADVERSARIAL_MANIFEST_FILE = 'manifest.json'
 const LOWER_HEX_64 = /^[0-9a-f]{64}$/
 const digestField = z.string().regex(LOWER_HEX_64)
 
+/**
+ * The SEED's label identity as it stood when the batch was reviewed (D-06).
+ *
+ * This is the pin that a recomputed manifest cannot launder. Every other pin here describes
+ * STAGED bytes, so an operator who edits a staged document and regenerates the manifest gets
+ * a self-consistent manifest — with a different digest, which is already refused. This one is
+ * checked against the seed's COMMITTED label at admission, so a derived record whose
+ * provenance, channel or tier was rewritten to something the seed never had is refused even
+ * if every staged pin agrees with itself.
+ */
+export interface AdversarialSeedProvenancePin {
+  runId: string
+  capturedAtOrdinal: number
+  sourceChannel: string
+  tier: string
+}
+
 /** One reviewed case, pinned by content address (D-02). */
 export interface AdversarialBatchManifestCase {
   cassetteId: string
@@ -97,6 +114,8 @@ export interface AdversarialBatchManifestCase {
   cassetteTextHash: string
   labelTextHash: string
   entryTextHash: string
+  /** The ORIGINAL label identity the clone must still carry (D-06). */
+  seedProvenance: AdversarialSeedProvenancePin
   /** The derived cassette's blob closure, validated against the seed's committed bytes. */
   blobShas: readonly string[]
 }
@@ -123,6 +142,12 @@ const manifestCaseSchema = z.object({
   cassetteTextHash: digestField,
   labelTextHash: digestField,
   entryTextHash: digestField,
+  seedProvenance: z.object({
+    runId: z.string().min(1),
+    capturedAtOrdinal: z.number().int().nonnegative(),
+    sourceChannel: z.string().min(1),
+    tier: z.string().min(1),
+  }).strict(),
   blobShas: z.array(digestField),
 }).strict()
 
@@ -158,6 +183,8 @@ export interface AdversarialStagingSkip {
     | 'text-hash-mismatch'
     | 'manifest-digest-mismatch'
     | 'path-identity-mismatch'
+    | 'seed-label-unavailable'
+    | 'seed-provenance-mismatch'
 }
 
 export interface StageAdversarialProposalInput {
@@ -283,6 +310,25 @@ function readStagedFile(caseDir: string, name: string): string {
 
 function textHash(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
+}
+
+/** The four label facts D-06 forbids a derivation from changing. */
+function seedProvenancePin(record: StandaloneLabelRecord): AdversarialSeedProvenancePin {
+  return {
+    runId: record.provenance.runId,
+    capturedAtOrdinal: record.provenance.capturedAtOrdinal,
+    sourceChannel: record.label.sourceChannel,
+    tier: record.label.tier,
+  }
+}
+
+function samePin(left: AdversarialSeedProvenancePin, right: AdversarialSeedProvenancePin): boolean {
+  return (
+    left.runId === right.runId &&
+    left.capturedAtOrdinal === right.capturedAtOrdinal &&
+    left.sourceChannel === right.sourceChannel &&
+    left.tier === right.tier
+  )
 }
 
 function adversarialProductDir(agentQaRoot: string, product: string): string {
@@ -489,6 +535,7 @@ export function stageAdversarialProposal(
         cassetteTextHash: textHash(texts.cassette),
         labelTextHash: textHash(texts.label),
         entryTextHash: textHash(texts.entry),
+        seedProvenance: seedProvenancePin(variant.labelRecord),
         blobShas: [...variant.blobShas],
       },
       texts,
@@ -680,9 +727,15 @@ export function refreshAdversarialSplit(
       product: input.product,
       batchDigest: input.batchDigest,
     })[0]
-  } catch {
+  } catch (error) {
     // A tampered batch is an integrity refusal, not an operational failure — and it happens
     // BEFORE any committed byte is read for writing, so the corpus digest cannot have moved.
+    // An UNRELATED IO failure (an unreadable staging dir, a permissions error) is NOT laundered
+    // into a refusal: it propagates as the typed operational failure it is, because reporting
+    // "this batch is tampered" when the disk was merely unreadable would be a false accusation.
+    if (!(error instanceof TypeError) && !(error instanceof z.ZodError) && !(error instanceof SyntaxError)) {
+      throw error
+    }
     return {
       ...base,
       kind: 'refused',
@@ -705,7 +758,35 @@ export function refreshAdversarialSplit(
     blobs: ExtractedBlob[]
   }[] = []
 
+  // ONE fresh reader snapshot for the whole admission: the seed labels it answers with are
+  // COMMITTED bytes, which is what makes the provenance pin unforgeable from staging.
+  const committedReader = openCorpusReader(input.committedRoot)
+
   for (const staged of batch.cases) {
+    // D-06 against committed truth: the clone must still carry the SEED's run, build ordinal,
+    // channel and tier — both as reviewed (the manifest pin) and as the root records them now.
+    const seedLabel = committedReader.loadLabel(staged.manifest.seedCassetteId)
+    if (seedLabel.kind !== 'loaded') {
+      stagingSkips.push({
+        cassetteId: staged.manifest.cassetteId,
+        seedCassetteId: staged.manifest.seedCassetteId,
+        reason: 'seed-label-unavailable',
+      })
+      continue
+    }
+    const derivedPin = seedProvenancePin(staged.labelRecord)
+    if (
+      !samePin(derivedPin, staged.manifest.seedProvenance) ||
+      !samePin(derivedPin, seedProvenancePin(seedLabel.record)) ||
+      staged.labelRecord.derivedFrom?.seedCassetteId !== staged.manifest.seedCassetteId
+    ) {
+      stagingSkips.push({
+        cassetteId: staged.manifest.cassetteId,
+        seedCassetteId: staged.manifest.seedCassetteId,
+        reason: 'seed-provenance-mismatch',
+      })
+      continue
+    }
     // Exact-byte admission: the bytes about to be committed must re-serialize identically
     // from the parsed documents, or the reviewed text and the committed text are not one
     // thing. This is what makes "the operator reviewed THESE bytes" a checkable claim.
