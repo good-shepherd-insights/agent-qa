@@ -35,7 +35,9 @@ import {
   deterministicOverrideStrategy,
   foldFunctionResult,
   invokeFunction,
+  parseProposeGate1Allowance,
   projectPlannerTools,
+  PROPOSE_GATE1_ALLOWANCE_CHECKPOINT,
   RUNS_START_FUNCTION_ID,
   replayToModelMessages,
   splitClauses,
@@ -69,6 +71,7 @@ import type {
   JobIdSource,
   JobKindRegistry,
   JobModelCapability,
+  JobStorePort,
   KnowledgeReaderPort,
   PostRunJobCapabilities,
   RecurrenceLadder,
@@ -2458,10 +2461,32 @@ export function postRunCapabilities(
   knowledgeRoot: string,
   /** The RESOLVED budget, awaited from the input factory at the same open (see above). */
   analysisTokenBudget?: PostRunJobCapabilities['analysisTokenBudget'],
+  /**
+   * The job store this queue was opened over (422 D-14).
+   *
+   * Handed in rather than constructed here, because it is the SAME store the queue drains: the
+   * charge a proposal job reads back has to be the one its own `publishCheckpoint` wrote, and a
+   * second reader over a second handle would be a second opinion about what this job spent.
+   * OPTIONAL so every existing caller of this builder keeps compiling; absent, the proposal
+   * stage's Gate-1 leg is the typed no-op it already is on a host that binds no replay gate.
+   */
+  jobStore?: Pick<JobStorePort, 'readCheckpoint'>,
 ): PostRunJobCapabilities | undefined {
   const postRun = input.postRun
   if (postRun === undefined) return undefined
   return {
+    // 422 D-14: ONE narrow read — this job's own durable Gate-1 charge, addressed by its own id,
+    // through the authoritative `readCheckpoint` the store already publishes. The handler is
+    // handed no store, no checkpoint reader and no path; the shape check is `agent`'s, beside
+    // the shape it checks, so two hosts cannot disagree about what a readable charge is.
+    ...(jobStore === undefined
+      ? {}
+      : {
+          readProposeGate1Allowance: async (jobId: string) =>
+            parseProposeGate1Allowance(
+              await jobStore.readCheckpoint(asJobId(jobId), PROPOSE_GATE1_ALLOWANCE_CHECKPOINT),
+            ),
+        }),
     loadCompletedRunHandoff: (runId: string) =>
       loadCompletedRunHandoff(
         join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(runId), HANDOFF_FILE),
@@ -3715,7 +3740,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     let jobs: LocalAgentJobs
     try {
       const kinds = input.jobKinds
-        ?? createRealJobKindRegistry(postRunCapabilities(input, knowledgeRoot, analysisTokenBudget))
+        ?? createRealJobKindRegistry(
+          postRunCapabilities(input, knowledgeRoot, analysisTokenBudget, store),
+        )
       // Resolved ONCE and used for both the queue and the published field: the value a watcher
       // derives ids from has to be the value the queue mints them with, and two spellings of the
       // same default is how those two drift.

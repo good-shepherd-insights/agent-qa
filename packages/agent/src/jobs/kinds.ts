@@ -1175,10 +1175,149 @@ async function screenGate1(
   context: JobHandlerContext,
   payload: ProposeImprovementsPayload,
 ): Promise<ProposeGate1Report> {
-  void capabilities
-  void context
-  void payload
-  return { ...NO_GATE1_WORK, disposition: 'unbound' }
+  const runReplayGate = capabilities.runReplayGate
+  const readAllowance = capabilities.readProposeGate1Allowance
+  const listBundles = capabilities.listBundles
+  const gateReceiptsFor = capabilities.gateReceiptsFor
+  const readCorpusPosture = capabilities.readProposeCorpusPosture
+  // A host that bound no replay gate, no allowance reader, no corpus reader — a typed no-op,
+  // not a failure. It is the posture 417 shipped and 422-07 shipped after it, and a stage that
+  // refused to complete over it would strand the chain terminal for every such host.
+  if (
+    runReplayGate === undefined || readAllowance === undefined || listBundles === undefined ||
+    gateReceiptsFor === undefined || readCorpusPosture === undefined
+  ) {
+    return { ...NO_GATE1_WORK, disposition: 'unbound' }
+  }
+
+  const jobId = String(context.job.id)
+  // THE LEDGER IS READ FIRST, before anything is selected. A charge that already exists decides
+  // this attempt entirely; nothing below it may enlarge, refill or replace one.
+  let read: ProposeGate1AllowanceRead
+  try {
+    read = await readAllowance(jobId)
+  } catch (error) {
+    return {
+      ...NO_GATE1_WORK,
+      disposition: 'allowance-unavailable',
+      reason: `the persisted Gate-1 allowance could not be read: ${errorTextOfUnknown(error)}`,
+    }
+  }
+  if (read.kind === 'unreadable') {
+    return { ...NO_GATE1_WORK, disposition: 'allowance-unavailable', reason: read.reason }
+  }
+  if (read.kind === 'claimed') {
+    const allowance = read.allowance
+    if (allowance.jobId !== jobId || allowance.runId !== payload.runId) {
+      return {
+        ...NO_GATE1_WORK,
+        disposition: 'allowance-unavailable',
+        reason: 'the persisted Gate-1 allowance was charged for another job or run',
+      }
+    }
+    return await reconcileGate1Allowance(allowance, gateReceiptsFor)
+  }
+
+  const cap: ProposeGate1Cap = isPositiveInteger(capabilities.proposeGate1MaxPerJob)
+    ? { value: capabilities.proposeGate1MaxPerJob, source: 'config' }
+    : { value: PROPOSE_DEFAULT_MAX_GATE1_PER_JOB, source: 'default' }
+
+  const { product, ordered } = orderProposalCandidates(await listBundles(), payload.candidateIds)
+  if (product === undefined) {
+    return { ...NO_GATE1_WORK, disposition: 'no-candidates' }
+  }
+  const posture = await readCorpusPosture({ product })
+  if (posture.kind !== 'resolved') {
+    return {
+      ...NO_GATE1_WORK,
+      disposition: 'posture-unavailable',
+      cap,
+      reason: posture.kind === 'no-root'
+        ? 'no committed corpus root, so nothing can be screened against one'
+        : posture.reason,
+    }
+  }
+
+  const kindExcluded: string[] = []
+  const stale: string[] = []
+  const ungated: string[] = []
+  for (const row of ordered) {
+    if (GATE1_EXCLUDED_RECORD_KINDS.includes(row.kind)) {
+      kindExcluded.push(row.bundleId)
+      continue
+    }
+    if (row.status !== 'candidate') continue
+    const gates = await gateReceiptsFor({ candidateId: row.bundleId })
+    if (gates.kind !== 'found') continue
+    if (GATE1_EXCLUDED_RECORD_KINDS.includes(gates.recordKind)) {
+      kindExcluded.push(row.bundleId)
+      continue
+    }
+    const standing = standingGate1(gates.standing)
+    // A standing Gate-1 line under the CURRENT corpus digest is a decision, whatever it decided:
+    // a fail and an abstain are screening results, and re-buying them would spend the charge on
+    // a question this corpus has already answered.
+    if (standing !== undefined && standing.corpusVersion.corpusDigest === posture.corpusDigest) {
+      continue
+    }
+    if (standing !== undefined) stale.push(row.bundleId)
+    ungated.push(row.bundleId)
+  }
+
+  const selected = ungated.slice(0, cap.value)
+  const remaining = ungated.slice(cap.value)
+  if (selected.length === 0) {
+    return {
+      ...NO_GATE1_WORK,
+      disposition: 'claimed',
+      cap,
+      ungatedRemaining: remaining,
+      kindExcluded,
+      stale,
+    }
+  }
+
+  // THE CHARGE, durable, BEFORE the first call. `publishCheckpoint` resolves only once the store
+  // has it; if it throws, no call is made at all, and if the process dies between the write and
+  // the acknowledgement the next attempt reads the charge back and spends nothing.
+  const allowance: ProposeGate1Allowance = {
+    jobId,
+    runId: payload.runId,
+    product,
+    corpusDigest: posture.corpusDigest,
+    cap,
+    selectedCandidateIds: selected,
+  }
+  await context.publishCheckpoint(PROPOSE_GATE1_ALLOWANCE_CHECKPOINT, allowance)
+
+  const screened: ProposeGate1Screened[] = []
+  const interrupted: string[] = []
+  // SEQUENTIALLY, and once each. Concurrency here would put several replays under one writer
+  // lease at once for no gain the cap can express.
+  for (const candidateId of selected) {
+    try {
+      const receipt = await runReplayGate(asRecordId(candidateId))
+      // The port resolves only on an ACKNOWLEDGED receipt (422 D-14, the T1 contract), so this
+      // is a screening result the store agrees with rather than one this process remembers.
+      screened.push({ candidateId, verdict: receipt.verdict })
+    } catch {
+      // Refused, unknown, or lost. The slot stays charged and reports no screened success — the
+      // one thing that must never happen here is a refusal reading as a quiet nothing.
+      interrupted.push(candidateId)
+    }
+  }
+
+  return {
+    disposition: 'claimed',
+    cap,
+    reservedGate1: [...selected],
+    screenedGate1: screened,
+    recoveredGate1Receipts: [],
+    interruptedGate1: interrupted,
+    ungatedRemaining: remaining,
+    kindExcluded,
+    stale,
+  }
 }
 
 function errorTextOfUnknown(error: unknown): string {

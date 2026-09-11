@@ -60,8 +60,19 @@ const AgentQaConfigSchemaInner = z.object({
     k: z.number().int().positive().optional(),
     seed: z.number().int().optional(),
     // 2026-09-07, 417 D-19: Gate-1 screen cap; recorded default lives in the CLI.
+    // 2026-09-11, 422 D-14: `maxPerJob` bounds how many Gate-1 CALLS one post-run proposal job
+    // may make; recorded default lives beside the handler (PROPOSE_DEFAULT_MAX_GATE1_PER_JOB).
+    // A SECOND axis beside `maxScreens`, not a refinement of it — that one bounds how much a
+    // single screening looks at, this one bounds how many screenings a run's tail buys — and an
+    // operator can legitimately want a generous first and a tight second. Positive-integer only,
+    // for the sharper version of the usual reason: a bound that silently fell back to the
+    // recorded default because the operator typed `0` would buy replay work they refused. There
+    // is deliberately NO CLI flag: the bound is charged durably per job and read back by a
+    // resumed attempt, so a per-invocation flag would be a bound that could change between the
+    // attempt that spent it and the attempt that has to honour what was spent.
     gate1: z.object({
       maxScreens: z.number().int().positive().optional(),
+      maxPerJob: z.number().int().positive().optional(),
     }).strict().optional(),
     // 2026-09-07, 418 D-04/D-13/D-14: Gate-2 ablation cap, canary horizon (build ordinals)
     // and per-scope lower-trust cap; recorded defaults live in the CLI (GATE2_DEFAULT_*).

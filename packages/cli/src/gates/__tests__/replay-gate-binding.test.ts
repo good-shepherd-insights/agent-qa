@@ -74,9 +74,16 @@ describe('417/418 production replay gate binding', () => {
       resolveTrustPriors: expect.any(Function),
     })
     const receipt = completeGate1Receipt('candidate')
-    run.mockResolvedValueOnce({ kind: 'receipt', receipt } as session.ReplayGateVerbResult)
+    // 422 D-14: `recorded` is a REQUIRED member of the receipt arm and the production verb always
+    // supplies it; these fixtures used to omit it behind the cast. The port now reads it, because
+    // a receipt the writer refused is replay work spent and evidence nothing stored.
+    run.mockResolvedValueOnce({ kind: 'receipt', receipt, recorded: 'appended' } as session.ReplayGateVerbResult)
     expect(await port.runReplayGate(asRecordId('candidate'))).toEqual(receipt)
-    run.mockResolvedValueOnce({ kind: 'receipt', receipt: { ...receipt, judgeId: 'substituted' } } as session.ReplayGateVerbResult)
+    run.mockResolvedValueOnce({ kind: 'receipt', receipt, recorded: 'lease-held' } as session.ReplayGateVerbResult)
+    await expect(port.runReplayGate(asRecordId('candidate'))).rejects.toThrow(
+      'the writer did not acknowledge',
+    )
+    run.mockResolvedValueOnce({ kind: 'receipt', receipt: { ...receipt, judgeId: 'substituted' }, recorded: 'appended' } as session.ReplayGateVerbResult)
     await expect(port.runReplayGate(asRecordId('candidate'))).rejects.toThrow('invalid receipt digest')
   })
 })
