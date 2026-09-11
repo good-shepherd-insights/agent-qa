@@ -356,28 +356,69 @@ export type {
   GenerateAdversarialVariantsInput,
   GenerateAdversarialVariantsResult,
 } from './adversarial/generate'
+
+// 2026-09-11, 422 D-09..D-12: the pure PROBE surface. The prompt is a frozen, hash-pinned code
+// object and the request is a browser-safe DTO; the only model seam is `ProbeAuthorPort`, which
+// the CLI composition binds (D-10) and this package never constructs.
+export {
+  ADVERSARIAL_PROBE_PROMPT,
+  ADVERSARIAL_PROMPT_HASH,
+  ADVERSARIAL_PROMPT_HASHES,
+  ADVERSARIAL_PROMPT_VERSION,
+  computeAdversarialPromptHash,
+  renderAdversarialProbePrompt,
+} from './adversarial/probe-prompt'
+export type { ProbeKindPrompt, ProbePrompt, ProbePromptInput } from './adversarial/probe-prompt'
+export {
+  buildProbeRequest,
+  deriveProbeCassette,
+  deriveProbeCassetteId,
+  PROBE_INAPPLICABILITIES,
+  PROBE_MAX_TEXT_LENGTH,
+  PROBE_REFUSALS,
+} from './adversarial/probes'
+export type {
+  AdversarialProbe,
+  BuildProbeRequestInput,
+  DeriveProbeCassetteInput,
+  GenerationRequest,
+  ProbeAuthorPort,
+  ProbeDerivation,
+  ProbeInapplicability,
+  ProbeRefusal,
+  ProbeSurface,
+  ProbeText,
+  ProbeUsage,
+} from './adversarial/probes'
 export {
   ADVERSARIAL_MUTATORS,
   CORPUS_ENTRY_SCHEMA_VERSION,
   CORPUS_SPLITS,
   GENERATOR_KINDS,
+  GENERATOR_PROVENANCES,
+  generatorProvenance,
   HELD_OUT_VISIBILITIES,
+  isProbeGeneratorKind,
   isProposerVisibleEntry,
+  PROBE_GENERATOR_KINDS,
   projectCorpusEntry,
   resolveProductPartition,
 } from './labels/corpus-entry'
 export type {
   AdversarialCorpusEntry,
   AdversarialMutator,
+  AuthoringModel,
   CorpusEntry,
   CorpusEntryBase,
   CorpusGenerator,
   CorpusRunLinks,
   CorpusSplit,
   GeneratorKind,
+  GeneratorProvenance,
   HeldOutVisibility,
   NaturalCorpusEntry,
   PrivateHeldOutCorpusEntry,
+  ProbeGeneratorKind,
   ProjectCorpusEntryInput,
   ProposerVisibleCorpusEntry,
   SharedHeldOutCorpusEntry,

@@ -100,8 +100,17 @@ describe('422-04 the pure probe request', () => {
       expect(built.goldAnchor).toEqual(seed.cassette.sidecar.goldAnchor)
       expect(built.surface.role).toBe(FIXTURE_GOLD.role)
       expect(normalizeAccessibleName(built.surface.name)).toBe(FIXTURE_GOLD.nameNormalized)
-      expect(built.surface.siblingNames.length).toBeGreaterThan(0)
-      expect(built.surface.siblingNames).not.toContain(built.surface.name)
+      // The siblings are the other NAMED controls by POSITION — the gold target's own index is
+      // the only exclusion. They may legitimately repeat the gold's text, and on this fixture
+      // they do: the recorded screen carries two `Continue` buttons. Filtering a sibling out
+      // because it shares the gold's label would hide from the author the single most important
+      // fact about this screen, and would make the judge-targeted constraint "do not reuse a
+      // sibling name" unsatisfiable in the exact case where it matters.
+      const named = seed.cassette.input.stateBefore.elements.filter(
+        element => element.name.trim() !== '',
+      )
+      expect(built.surface.siblingNames.length).toBe(named.length - 1)
+      expect(built.surface.siblingNames).toContain('Continue')
 
       // Reproducible from its inputs alone: no clock, no draw, nothing ambient.
       const again = buildProbeRequest({ seed, kind, authoringModel: JUDGE_MODEL })

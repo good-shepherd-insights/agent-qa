@@ -340,9 +340,9 @@ export function deriveAdversarialLabel({
   // is complete for the WRONG path is `malformed` and refused here exactly as a partial one is.
   if (generatorProvenance(generator) !== 'table' && generatorProvenance(generator) !== 'probe') {
     throw new TypeError(
-      'adversarial derivation requires complete generator provenance for its kind ' +
-        '(mutator + tableVersion + tableHash for a table family, ' +
-        'authoringModel + promptVersion for a probe)',
+      'adversarial derivation requires complete generator metadata for its kind ' +
+        '(mutator, tableVersion and tableHash for a table family; ' +
+        'authoringModel and promptVersion for a probe)',
     )
   }
   const {
