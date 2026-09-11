@@ -9,8 +9,7 @@ import {
 import type { MigrationRegistry } from '../versioning/create-version-guard'
 import { isVerdictClass } from '../verdict/verdict'
 import {
-  MemoryOnPathEntrySchema,
-  MisdirectionEvidenceSchema,
+  hasMisdirectionMemberShapes,
   MisdirectionRecordResultSchema,
   misdirectionSourceDigest,
 } from '../verdict/misdirection-evidence'
@@ -297,31 +296,6 @@ function hasCompletePlanSourceShape(value: unknown): boolean {
     const flow = value.flow
     if (!isNonArrayObject(flow)) return false
     if (!isOrdinal(flow.cursor) || !isOrdinal(flow.length)) return false
-  }
-  return true
-}
-
-/**
- * Present-implies-valid for the two additive circularity members a verdict may carry
- * (422 D-17). Shared by the persisted `rootCause` predicate below and, through the same two
- * exported schemas, by the analysis-artifact guard and the strict cassette parser — one
- * spelling of the shape, three boundaries.
- *
- * A present `memoryOnPath` must be an ARRAY of complete entries: the declaration is what the
- * validator recomputes against, so a non-array or a half-spelled entry is a claim no gate can
- * check rather than a claim that happens to be absent.
- */
-function hasMisdirectionMemberShapes(value: Record<string, unknown>): boolean {
-  if ('memoryOnPath' in value) {
-    const declared = value.memoryOnPath
-    if (!Array.isArray(declared)) return false
-    if (!declared.every((entry) => MemoryOnPathEntrySchema.safeParse(entry).success)) return false
-  }
-  if (
-    'misdirectionRuledOut' in value &&
-    !MisdirectionEvidenceSchema.safeParse(value.misdirectionRuledOut).success
-  ) {
-    return false
   }
   return true
 }

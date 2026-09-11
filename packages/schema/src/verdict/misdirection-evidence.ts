@@ -385,6 +385,35 @@ export const MisdirectionEvidenceSchema = z
  * member is REFUSED rather than dropped, because a dropped member is a claim a reader never
  * sees, and this block exists to make a claim visible.
  */
+/**
+ * Present-implies-valid for the two additive circularity members a stored verdict may carry
+ * (422-12, D-17). ONE spelling for every reader that admits verdict bytes — the handoff loader's
+ * `rootCause` predicate, the analysis-artifact guard, and any later reader of the same pair.
+ *
+ * A dropped member is a claim no reader ever sees, and these members exist to make a claim
+ * visible, so a PRESENT-but-malformed member is refused rather than stripped. Absence stays
+ * legal on every verdict written before 422, and a present `memoryOnPath` must be a real ARRAY
+ * of complete entries: the declaration is what the validator recomputes against, so a
+ * half-spelled one is a claim no gate can check.
+ *
+ * Deliberately NOT a total shape check for a verdict — each reader keeps its own rules about
+ * class, producer and evidence depth. This answers only the circularity half.
+ */
+export function hasMisdirectionMemberShapes(value: Record<string, unknown>): boolean {
+  if ('memoryOnPath' in value) {
+    const declared = value.memoryOnPath
+    if (!Array.isArray(declared)) return false
+    if (!declared.every((entry) => MemoryOnPathEntrySchema.safeParse(entry).success)) return false
+  }
+  if (
+    'misdirectionRuledOut' in value &&
+    !MisdirectionEvidenceSchema.safeParse(value.misdirectionRuledOut).success
+  ) {
+    return false
+  }
+  return true
+}
+
 export function guardMisdirectionEvidence(value: unknown): MisdirectionEvidence {
   const parsed = MisdirectionEvidenceSchema.safeParse(value)
   if (!parsed.success) {
