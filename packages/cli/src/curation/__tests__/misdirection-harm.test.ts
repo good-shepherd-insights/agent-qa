@@ -72,6 +72,7 @@ import {
   readGateReceipts,
 } from '@vostride/agent-qa-knowledge-local'
 
+import { curateCompletedRun, type CurationTailOperations } from '../curation-tail.js'
 import { emitCanaryOutcomes, projectCanaryOutcomes } from '../emit-canary-outcomes.js'
 import { saveCompletedMisdirectionCheck } from '../misdirection-run-state.js'
 
@@ -477,6 +478,72 @@ describe('422-16 D-20 — flipped evidence emits harm independently of the class
     )
   })
 
+  it('marks the causal rows on the emit detail and names them at the tail, class and all', async () => {
+    const base = handoff(
+      [
+        step({
+          pass: false,
+          lines: [
+            { id: CANDIDATE, status: 'candidate', servedAsCanary: true },
+            { id: SIBLING, status: 'candidate', servedAsCanary: true },
+          ],
+        }),
+      ],
+      rootCause('flake'),
+    )
+    const input = withEvidence(base, [
+      evidenceRow(base, { recordId: CANDIDATE, crossCheck: 'flipped' }),
+      evidenceRow(base, { recordId: SIBLING, crossCheck: 'held', decisionOrdinal: 1 }),
+    ])
+    const info = vi.fn()
+    const { defaultGuardrailPolicyInput, loadGuardrailPolicy } = await import(
+      '@vostride/agent-qa-safety'
+    )
+    const operations: Partial<CurationTailOperations> = {
+      runSafetyScope: (_scope, fn) => fn(),
+      emitCurationCandidates: () => ({
+        enqueued: 0,
+        coalesced: 0,
+        refused: 0,
+        capExceeded: 0,
+        details: [],
+      }),
+      openKnowledgeReader: () =>
+        ({ emitCanaryOutcome: () => undefined }) as unknown as ReturnType<
+          CurationTailOperations['openKnowledgeReader']
+        >,
+      foldRunOutcomes: () => ({
+        kind: 'applied',
+        tests: 1,
+        quarantine: { kind: 'not-evaluated', reason: 'not-requested' },
+      }),
+      drainQueue: async () => ({
+        kind: 'drained', jobsProcessed: 0, committed: 0, inconsistenciesFiled: 0,
+        downgraded: 0, withheld: 0, quarantined: 0, requeued: 0, failures: 0,
+        failureDetails: [], noops: 0, noopDetails: [], remaining: 0,
+        remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 0 },
+        reconcile: undefined, writerPass: { kind: 'not-requested' }, gc: { kind: 'not-run' },
+      }),
+    }
+    await curateCompletedRun({
+      handoff: input,
+      runDir,
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      agentQaRoot: runDir,
+      auditSink: { appendGuardrailAudit: () => undefined, appendExecutionAudit: () => undefined },
+      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+      operations,
+      log: { warn: vi.fn(), info },
+    })
+    const line = info.mock.calls.map(([message]) => String(message)).find((message) =>
+      message.startsWith('Misdirection harm for'),
+    )
+    expect(line).toContain('1 harmed outcome(s) emitted from flipped cross-check evidence')
+    expect(line).toContain('regardless of verdict class')
+    expect(line).toContain(CANDIDATE)
+    expect(line).not.toContain(SIBLING)
+  })
+
   it('treats an EMPTY sidecar as the arbiter answering nothing, never as a reason to look again', async () => {
     const base = handoff([step({ pass: false })], rootCause('environment'))
     saveCompletedMisdirectionCheck(runDir, evidenceRow(base))
@@ -500,7 +567,7 @@ describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
-  async function seedStore() {
+  function seedStore() {
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-422-16-store-'))
     roots.push(root)
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
@@ -512,55 +579,61 @@ describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
       commitArtifacts: 'none' as const,
       writerLeaseId: 'fixture',
     }
-    const published = publishBundleForTest(appendConfig, {
-      draft: {
-        kind: 'fact',
-        subtype: 'selector',
-        scope: { tier: 'product', key: 'storefront' },
-        anchors: [CHECKOUT_ANCHOR],
-        summary: 'checkout selector',
-        body: 'Use the verified checkout button.',
-        originStage: 'run-curation',
-        distilledEvidenceRef: { id: 'evidence-checkout', sha: 'a'.repeat(64) },
-      },
-      discriminant: {
-        kind: 'fact',
-        subtype: 'selector',
-        elementRef: { role: 'button', name: 'checkout' },
-      },
-      originClass: 'agent-verified',
-      createdAtOrdinal: 1,
-      screenStates: [],
-      relations: [],
-      artifacts: [],
-      initialEvents: [
-        {
-          type: 'confirmed',
-          evidenceToken: asEvidenceToken('confirm-checkout'),
-          curationJobId: 'confirm-checkout',
-          buildOrdinal: 1,
+    const seed = (name: string) => {
+      const published = publishBundleForTest(appendConfig, {
+        draft: {
+          kind: 'fact',
+          subtype: 'selector',
+          scope: { tier: 'product', key: 'storefront' },
+          anchors: [{ t: 'el', role: 'button', name, ordinal: 0 }],
+          summary: `${name} selector`,
+          body: `Use the verified ${name} button.`,
+          originStage: 'run-curation',
+          distilledEvidenceRef: { id: `evidence-${name}`, sha: 'a'.repeat(64) },
         },
-      ],
-      provenance: {
-        mode: 'run-linked',
-        runId: 'seed-checkout',
-        testId: 'seed-checkout',
-        stepIndex: 0,
-        curationJobId: 'seed-checkout',
-        sourceBuildOrdinal: 1,
-      },
-      evidenceMarkdown: 'Verified selector evidence.\n',
-      distilledObservations: [
-        {
-          schemaVersion: 1,
-          step: { naturalKey: 'checkout', ordinal: 0 },
-          platform: 'web',
-          element: { naturalKey: 'button:checkout:0' },
-          observedAtOrdinal: 1,
+        discriminant: {
+          kind: 'fact',
+          subtype: 'selector',
+          elementRef: { role: 'button', name },
         },
-      ],
-    })
-    if (published.kind !== 'published') throw new Error(published.kind)
+        originClass: 'agent-verified',
+        createdAtOrdinal: 1,
+        screenStates: [],
+        relations: [],
+        artifacts: [],
+        initialEvents: [
+          {
+            type: 'confirmed',
+            evidenceToken: asEvidenceToken(`confirm-${name}`),
+            curationJobId: `confirm-${name}`,
+            buildOrdinal: 1,
+          },
+        ],
+        provenance: {
+          mode: 'run-linked',
+          runId: `seed-${name}`,
+          testId: `seed-${name}`,
+          stepIndex: 0,
+          curationJobId: `seed-${name}`,
+          sourceBuildOrdinal: 1,
+        },
+        evidenceMarkdown: 'Verified selector evidence.\n',
+        distilledObservations: [
+          {
+            schemaVersion: 1,
+            step: { naturalKey: name, ordinal: 0 },
+            platform: 'web',
+            element: { naturalKey: `button:${name}:0` },
+            observedAtOrdinal: 1,
+          },
+        ],
+      })
+      if (published.kind !== 'published') throw new Error(published.kind)
+      lookupSpy.anchorsById.set(published.id, [CHECKOUT_ANCHOR])
+      return published
+    }
+    const control = seed('control')
+    const arm = seed('arm')
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error(lease.kind)
     const store = createLocalKnowledgeStore({
@@ -571,46 +644,86 @@ describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
       writerLeaseId: lease.leaseId,
       sourceBuildOrdinal: 42,
     })
-    const read = () => {
+    /** Everything the writer durably did to one bundle, as comparable data. */
+    const consequences = (published: { dir: string; id: string }) => {
       const loaded = loadBundle(published.dir)
       if (loaded.kind !== 'loaded') throw new Error(loaded.kind)
-      return loaded.bundle
+      return {
+        events: survivingOutcomeEvents(loaded.bundle.events).map((event) => event.type),
+        gate2: (readGateReceipts(published.dir, published.id) ?? [])
+          .filter((row) => 'gate' in row && row.gate === 2)
+          .map((row) => ({
+            verdict: row.verdict,
+            benefit: 'benefit' in row ? row.benefit : undefined,
+            stateValidity: 'stateValidity' in row ? row.stateValidity : undefined,
+          })),
+        status: deriveBundleTrust(loaded.bundle).status,
+      }
     }
-    return { knowledgeRoot, published, store, read }
+    return { knowledgeRoot, control, arm, store, consequences }
   }
 
-  it('lands exactly one contradicted event and one Gate-2 fail receipt, and promotes nothing', async () => {
-    const seeded = await seedStore()
-    const runDir = mkdtempSync(join(tmpdir(), 'agent-qa-422-16-run-'))
+  async function harmOnce(
+    seeded: ReturnType<typeof seedStore>,
+    leg: 'control' | 'arm',
+  ): Promise<CanaryOutcome[]> {
+    const runDir = mkdtempSync(join(tmpdir(), `agent-qa-422-16-${leg}-`))
     roots.push(runDir)
-    lookupSpy.anchorsById.clear()
-    lookupSpy.anchorsById.set(seeded.published.id, [CHECKOUT_ANCHOR])
-
-    const base = handoff(
-      [step({ pass: false, lines: [{ id: seeded.published.id, status: 'candidate' }] })],
-      rootCause('environment'),
-    )
+    const published = seeded[leg]
+    // The two legs differ in EXACTLY two things: the class the run resolved, and whether the
+    // arbiter's ledger names the record. `app_bug` is attributable today, so the control is the
+    // harm law as it already stands; `environment` is suppressed today, so the arm reaches the
+    // writer only through D-20's causal precedence.
+    const base = {
+      ...handoff(
+        [step({ pass: false, lines: [{ id: published.id, status: 'candidate', servedAsCanary: true }] })],
+        rootCause(leg === 'control' ? 'app_bug' : 'environment'),
+      ),
+      runId: asRunId(`run-misdirection-${leg}`),
+    }
     const emitted: CanaryOutcome[] = []
     const report = await emitCanaryOutcomes({
-      handoff: withEvidence(base, [evidenceRow(base, { recordId: seeded.published.id })]),
+      handoff:
+        leg === 'control'
+          ? base
+          : withEvidence(base, [evidenceRow(base, { recordId: published.id })]),
       knowledgeRoot: seeded.knowledgeRoot,
       runDir,
       emit: (outcome) => emitted.push(outcome),
       credit: { maxAblations: 1, ablation: evalRoot() },
     })
-    expect(report.emitted).toBe(1)
+    expect(report.emitted, `${leg} emitted`).toBe(1)
     expect(emitted[0]).toMatchObject({ runOutcome: 'negative', benefit: 'exercised-harmed' })
+    return emitted
+  }
 
-    await seeded.store.recordCanaryOutcome(emitted[0]!)
+  it('lands one contradicted event and one Gate-2 fail receipt, and introduces nothing the existing harm law does not', async () => {
+    const seeded = seedStore()
+    const control = await harmOnce(seeded, 'control')
+    const arm = await harmOnce(seeded, 'arm')
 
-    const events = survivingOutcomeEvents(seeded.read().events)
-    expect(events.filter((event) => event.type === 'contradicted')).toHaveLength(1)
-    expect(events.filter((event) => event.type === 'promoted')).toHaveLength(0)
-    const gate2 = (readGateReceipts(seeded.published.dir, seeded.published.id) ?? []).filter(
-      (row) => 'gate' in row && row.gate === 2,
-    )
-    expect(gate2).toHaveLength(1)
-    expect(gate2[0]).toMatchObject({ verdict: 'fail', benefit: 'exercised-harmed' })
-    expect(deriveBundleTrust(seeded.read()).status).toBe('candidate')
+    await seeded.store.recordCanaryOutcome(control[0]!)
+    await seeded.store.recordCanaryOutcome(arm[0]!)
+
+    const armConsequences = seeded.consequences(seeded.arm)
+    expect(armConsequences.events.filter((type) => type === 'contradicted')).toHaveLength(1)
+    expect(armConsequences.gate2).toEqual([
+      { verdict: 'fail', benefit: 'exercised-harmed', stateValidity: 'unknown' },
+    ])
+    // The whole claim of "no new trust motion": what the arm did to its bundle is what the
+    // pre-existing attributable path did to its own, event for event and receipt for receipt.
+    //
+    // The shared consequence is stated rather than merely compared, so a change to EITHER side
+    // is visible here. The `promoted` line is this fixture's own promotion gate, not this
+    // plan's: the 418 negative arm re-evaluates promotion after writing the fail receipt, and
+    // these bundles carry a `confirmed` event with no `resolvePromotionPosture` bound to refuse
+    // them. It is present on the CONTROL leg too, which is the point — the causal path adds no
+    // promotion the class-attributable path was not already producing.
+    expect(armConsequences).toEqual({
+      events: ['confirmed', 'contradicted', 'promoted'],
+      gate2: [{ verdict: 'fail', benefit: 'exercised-harmed', stateValidity: 'unknown' }],
+      status: 'active',
+    })
+    expect(armConsequences).toEqual(seeded.consequences(seeded.control))
   })
 })

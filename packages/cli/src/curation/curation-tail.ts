@@ -49,7 +49,7 @@ import {
   buildCuratorAuthor,
   type BuildCuratorAuthorDependencies,
 } from './curator-author.js'
-import { emitCanaryOutcomes } from './emit-canary-outcomes.js'
+import { emitCanaryOutcomes, type EmitCanaryOutcomeReport } from './emit-canary-outcomes.js'
 import type { CanaryAblation, CanaryCreditCounters } from './canary-credit.js'
 import { NON_SIGNAL_CLASSES } from './emit-canary-outcomes.js'
 import { emitCurationCandidates, type EmitReport } from './emit-candidates.js'
@@ -387,6 +387,27 @@ function candidateSummaryLine(runId: string, report: EmitReport): string {
   return `Knowledge curation candidates for ${runId}: ${segments.join('; ')}.`
 }
 
+/**
+ * The causal-harm line (422-16, D-20).
+ *
+ * Names the RECORDS rather than a count, and says out loud that the class did not decide it —
+ * a reader who sees `environment` on the member and a contradicted record in the store would
+ * otherwise have to reconstruct why the suppression did not apply. Refused emits are reported
+ * separately from landed ones, because "the arbiter proved this record harmful and the queue
+ * rejected the row" is a different state from "the harm is recorded".
+ */
+function misdirectionHarmLine(
+  runId: string,
+  rows: readonly EmitCanaryOutcomeReport['details'][number][],
+): string {
+  const landed = rows.filter((row) => row.outcome.kind === 'emitted')
+  const refused = rows.length - landed.length
+  const named = rows.map((row) => row.candidateId).join(', ')
+  return `Misdirection harm for ${runId}: ${landed.length} harmed outcome(s) emitted from flipped `
+    + `cross-check evidence regardless of verdict class (${named})`
+    + `${refused === 0 ? '' : `; ${refused} refused by the queue`}.`
+}
+
 function incompleteWarning(runId: string, details?: string): string {
   const diagnostic = details === undefined ? '' : ` (${details})`
   return `Post-verdict knowledge curation incomplete for ${runId}${diagnostic}; it will resume on the next run.`
@@ -670,6 +691,14 @@ export async function curateCompletedRun(
         emit: reader.emitCanaryOutcome.bind(reader),
         ...(operations.canaryAblation === undefined ? {} : { credit: { ablation: operations.canaryAblation, maxAblations: caps!.maxAblations, readBundleStateDigests: LOCAL_CURATION_CAPABILITIES.readCanonicalBundleStateDigests } }),
       })
+      // 422-16 D-20: harm the arbiter's CAUSAL evidence is answerable for, surfaced where an
+      // operator reads the fold rather than inferred from a trust move that appeared later.
+      // Additive beside the candidate/cap lines and, like them, never a gate: the rows it
+      // counts have already reached the writer by the time this renders.
+      const causalHarm = canaries.details.filter((row) => row.misdirectionFlipped === true)
+      if (causalHarm.length > 0) {
+        input.log.info?.(misdirectionHarmLine(receiptIdentity.runId, causalHarm))
+      }
       // D-14: the run-outcome fold shares this crash boundary and the SAME extended
       // receipt as candidate/canary emit — never a second marker file. The durable
       // handoff marker is the sole exclusion authority for current and sibling runs.
