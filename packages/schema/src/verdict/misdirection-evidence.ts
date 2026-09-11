@@ -56,6 +56,8 @@ import type { CrossCheck } from '../knowledge/gate-receipt'
  * words read a marker the serving path already wrote.
  */
 export type MemoryOnPathTrust = 'candidate' | 'low-trust-active'
+// prettier-ignore
+export const MEMORY_ON_PATH_TRUSTS = ['candidate', 'low-trust-active'] as const satisfies readonly MemoryOnPathTrust[]
 
 /** One low-trust record the run's own briefs put on a verdict's failing path. */
 export interface MemoryOnPathEntry {
@@ -76,9 +78,13 @@ export interface MemoryOnPathSite extends MemoryOnPathEntry {
  * was measured and the author's declaration is all there is". Never a quality grade.
  */
 export type MisdirectionBacking = 'declared-only'
+// prettier-ignore
+export const MISDIRECTION_BACKINGS = ['declared-only'] as const satisfies readonly MisdirectionBacking[]
 
 /** The evaluation-root posture a cross-check ran under (D-19). */
 export type MisdirectionRootPosture = 'eval-root' | 'no-eval-root' | 'broken-eval-root'
+// prettier-ignore
+export const MISDIRECTION_ROOT_POSTURES = ['eval-root', 'no-eval-root', 'broken-eval-root'] as const satisfies readonly MisdirectionRootPosture[]
 
 /** Disclosed sampling of one cross-check row; `seedHonored` sits on the row beside it. */
 export interface MisdirectionSamples {
@@ -223,64 +229,95 @@ export function misdirectionSourceDigest(handoff: CompletedRunHandoff): string {
   )
 }
 
+/** The evidence key: one EXPOSURE, not one record (see {@link MemoryOnPathSite}). */
+function siteKey(stepIndex: number, recordId: RecordId): string {
+  return `${stepIndex}${recordId}`
+}
+
 /**
  * Fold the claimed rows against the recomputed sites (D-20).
  *
+ * THE KEY IS THE EXPOSURE, NOT THE RECORD. A record served on two steps is cross-checked
+ * twice, and the run that cleared it on the first step says nothing about the second: keying
+ * by record would read the second row as a duplicate of the first and REFUSE the pair, which
+ * is how a real second-step flip disappears behind a first-step hold. Keying by exposure keeps
+ * both rows, so the flip survives to the law below and a record covered on only one of its two
+ * exposures reads `unchecked` rather than held.
+ *
  * Key integrity runs FIRST and is fail-closed: a row minted against another run or member, a
- * row whose source-digest identity is not this handoff's, a row for a record no brief put on
- * the path, and two rows for one key are each `'evidence-refused'`. Only then does the
+ * row whose source-digest identity is not this handoff's, a row naming an exposure no brief
+ * recorded, and two rows for one exposure are each `'evidence-refused'`. Only then does the
  * cross-check law apply — flipped takes precedence, all-held permits the class, and every
  * other shape answers `'unknown'` naming its unresolved records.
+ *
+ * Every answer is stated at RECORD level even though the fold is keyed per exposure, because
+ * trust moves against a record. Harm names only the records a flip actually supports; a held
+ * sibling of a flipped record is never labelled causal, and it stays visible in `memoryOnPath`
+ * regardless — disclosed, not accused.
  */
 export function aggregateMisdirectionEvidence(
   input: MisdirectionAggregationInput,
 ): MisdirectionAggregate {
-  const required: RecordId[] = []
+  const exposedRecords: RecordId[] = []
   for (const site of input.sites) {
-    if (!required.includes(site.recordId)) required.push(site.recordId)
+    if (!exposedRecords.includes(site.recordId)) exposedRecords.push(site.recordId)
   }
+  const requiredKeys = new Set(input.sites.map((site) => siteKey(site.stepIndex, site.recordId)))
 
   const problems: string[] = []
-  const byRecord = new Map<RecordId, MisdirectionRecordResult>()
+  const byKey = new Map<string, MisdirectionRecordResult>()
   for (const row of input.results) {
+    const where = `${row.recordId} at step ${row.stepIndex}`
     if (row.runId !== input.runId) {
-      problems.push(`row for ${row.recordId} was minted against run ${row.runId}`)
+      problems.push(`row for ${where} was minted against run ${row.runId}`)
       continue
     }
     if (row.perTest !== input.perTest) {
-      problems.push(`row for ${row.recordId} was minted against member test ${row.perTest}`)
+      problems.push(`row for ${where} was minted against member test ${row.perTest}`)
       continue
     }
     if (row.handoffBaseDigest !== input.handoffBaseDigest) {
-      problems.push(`row for ${row.recordId} names a source-digest identity from another run`)
+      problems.push(`row for ${where} names a source-digest identity from another run`)
       continue
     }
-    if (!required.includes(row.recordId)) {
-      problems.push(`row for ${row.recordId}, which no served brief put on this failing path`)
+    const key = siteKey(row.stepIndex, row.recordId)
+    if (!requiredKeys.has(key)) {
+      problems.push(`row for ${where}, an exposure no served brief recorded on this path`)
       continue
     }
-    if (byRecord.has(row.recordId)) {
-      problems.push(`a second, conflicting row for ${row.recordId}`)
+    if (byKey.has(key)) {
+      problems.push(`a second, conflicting row for ${where}`)
       continue
     }
-    byRecord.set(row.recordId, row)
+    byKey.set(key, row)
   }
   if (problems.length > 0) return { outcome: 'evidence-refused', problems }
 
-  const withCheck = (check: CrossCheck): RecordId[] =>
-    required.filter((recordId) => byRecord.get(recordId)?.crossCheck === check)
+  /** Records with at least one exposure whose row reads `check`. */
+  const recordsWithCheck = (check: CrossCheck): RecordId[] =>
+    exposedRecords.filter((recordId) =>
+      input.sites.some(
+        (site) =>
+          site.recordId === recordId &&
+          byKey.get(siteKey(site.stepIndex, site.recordId))?.crossCheck === check,
+      ),
+    )
 
-  const suspect = withCheck('flipped')
+  const suspect = recordsWithCheck('flipped')
   if (suspect.length > 0) return { outcome: 'flipped', suspect }
 
-  const inconclusive = withCheck('inconclusive')
-  const notRun = withCheck('not-run')
-  const unchecked = required.filter((recordId) => !byRecord.has(recordId))
+  const inconclusive = recordsWithCheck('inconclusive')
+  const notRun = recordsWithCheck('not-run')
+  const unchecked = exposedRecords.filter((recordId) =>
+    input.sites.some(
+      (site) => site.recordId === recordId && !byKey.has(siteKey(site.stepIndex, site.recordId)),
+    ),
+  )
   if (inconclusive.length > 0 || notRun.length > 0 || unchecked.length > 0) {
     return { outcome: 'unknown', inconclusive, notRun, unchecked }
   }
 
-  return { outcome: 'held', records: required }
+  return { outcome: 'held', records: exposedRecords }
 }
 
 const recordIdSchema = z.custom<RecordId>(

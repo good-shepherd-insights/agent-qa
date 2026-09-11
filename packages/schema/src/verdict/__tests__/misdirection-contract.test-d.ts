@@ -7,23 +7,31 @@
 // lacks. A one-directional pin is satisfied by a set that grew, which is exactly the failure a
 // closed vocabulary exists to prevent (the v54 reverse-membership bar, 416 D-02).
 //
-// The NEVER-BARS are hand-spelled on purpose. `Extract<T, 'x'>` reading `never` is the only
-// assertion that REDs when someone later adds `'x'`, and the words chosen are the plausible
-// near-misses: a trust word this plan considered and refused, a cross-check spelling the wall
-// already forbids, and a backing word that would turn an ABSENCE marker into a quality grade.
+// THE ASSERTIONS SIT INSIDE `test` BLOCKS ON PURPOSE. A `.test-d.ts` whose assertions are all
+// top-level still TYPECHECKS, but vitest reports "no tests" for it — and a type oracle that
+// executes nothing is indistinguishable from one that was never wired up. Every cell below is
+// counted, so a run that reports zero is a real failure rather than a silent pass.
 //
-// THE EIGHT-CLASS FLOOR IS SPELLED BY HAND, not derived from VERDICT_CLASSES. Deriving it
-// would make this cell agree with the constant by construction and prove nothing: a ninth
-// class added to the constant would flow straight through. The whole point is a second,
-// independent spelling that REDs when the union moves — 422 widened the verdict by exactly two
-// additive optional members and moved no class.
+// THE NEVER-BARS ARE HAND-SPELLED. `Extract<T, 'x'>` reading `never` is the only assertion that
+// REDs when someone later adds `'x'`, and the words chosen are the plausible near-misses: a
+// trust word this plan considered and refused, a cross-check spelling another wall already
+// forbids, and a backing word that would turn an ABSENCE marker into a quality grade.
+//
+// THE EIGHT-CLASS FLOOR IS SPELLED BY HAND TOO, not derived from VERDICT_CLASSES. Deriving it
+// would make this cell agree with the constant by construction and prove nothing: a ninth class
+// added to the constant would flow straight through. The point is a second, INDEPENDENT
+// spelling that REDs when the union moves — 422 widened the verdict by exactly two additive
+// optional members and moved no class.
+//
+// The negative controls (`@ts-expect-error`) are the oracle's own proof that it bites: each one
+// states a claim that is FALSE, and TypeScript errors on the suppression comment itself if the
+// claim ever becomes true — so a vacuous pin cannot hide here.
 
-import { expectTypeOf } from 'vitest'
+import { describe, expectTypeOf, test } from 'vitest'
 
-import {
-  MEMORY_ON_PATH_TRUSTS,
-  MISDIRECTION_BACKINGS,
-} from '../misdirection-evidence'
+import { CROSS_CHECKS } from '../../knowledge/gate-receipt'
+import type { CrossCheck } from '../../knowledge/gate-receipt'
+import { MEMORY_ON_PATH_TRUSTS, MISDIRECTION_BACKINGS } from '../misdirection-evidence'
 import type {
   MemoryOnPathEntry,
   MemoryOnPathTrust,
@@ -33,105 +41,140 @@ import type {
   MisdirectionRecordResult,
   MisdirectionRootPosture,
 } from '../misdirection-evidence'
-import { CROSS_CHECKS } from '../../knowledge/gate-receipt'
-import type { CrossCheck } from '../../knowledge/gate-receipt'
 import { VERDICT_CLASSES } from '../verdict'
 import type { Verdict, VerdictClass } from '../verdict'
 
-// ---------------------------------------------------------------------------------------
-// The two memory trust words
-// ---------------------------------------------------------------------------------------
+describe('the two memory trust words', () => {
+  test('are closed in both directions', () => {
+    expectTypeOf<
+      Exclude<MemoryOnPathTrust, (typeof MEMORY_ON_PATH_TRUSTS)[number]>
+    >().toEqualTypeOf<never>()
+    expectTypeOf<
+      Exclude<(typeof MEMORY_ON_PATH_TRUSTS)[number], MemoryOnPathTrust>
+    >().toEqualTypeOf<never>()
+    expectTypeOf<MemoryOnPathTrust>().toEqualTypeOf<'candidate' | 'low-trust-active'>()
+  })
 
-expectTypeOf<
-  Exclude<MemoryOnPathTrust, (typeof MEMORY_ON_PATH_TRUSTS)[number]>
->().toEqualTypeOf<never>()
-expectTypeOf<
-  Exclude<(typeof MEMORY_ON_PATH_TRUSTS)[number], MemoryOnPathTrust>
->().toEqualTypeOf<never>()
-expectTypeOf<MemoryOnPathTrust>().toEqualTypeOf<'candidate' | 'low-trust-active'>()
-// Near-misses this plan considered and refused: trust is a DECLARED store marker, never a
-// minted grade, so neither a numeric band name nor a promotion word joins the set.
-expectTypeOf<Extract<MemoryOnPathTrust, 'low-trust'>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<MemoryOnPathTrust, 'promoted'>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<MemoryOnPathTrust, 'canary'>>().toEqualTypeOf<never>()
+  test('bar the near-misses this plan considered and refused', () => {
+    // Trust here is a DECLARED store marker, never a minted grade: no numeric band name, no
+    // promotion word, and not the serving mechanism's own name either.
+    expectTypeOf<Extract<MemoryOnPathTrust, 'low-trust'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<MemoryOnPathTrust, 'promoted'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<MemoryOnPathTrust, 'canary'>>().toEqualTypeOf<never>()
+  })
 
-// ---------------------------------------------------------------------------------------
-// The four cross-check words, REUSED and not re-minted
-// ---------------------------------------------------------------------------------------
+  test('refuse a trust word outside the two — the oracle bites', () => {
+    // @ts-expect-error 'canary' is not a memory trust word; the entry below must not compile.
+    const bad: MemoryOnPathEntry = { recordId: 'r' as never, trust: 'canary' }
+    expectTypeOf(bad).toEqualTypeOf<MemoryOnPathEntry>()
+  })
+})
 
-expectTypeOf<Exclude<CrossCheck, (typeof CROSS_CHECKS)[number]>>().toEqualTypeOf<never>()
-expectTypeOf<Exclude<(typeof CROSS_CHECKS)[number], CrossCheck>>().toEqualTypeOf<never>()
-expectTypeOf<CrossCheck>().toEqualTypeOf<'flipped' | 'held' | 'inconclusive' | 'not-run'>()
-// The evidence block and every row speak the receipts' vocabulary, never a fifth private copy.
-expectTypeOf<MisdirectionEvidence['crossCheck']>().toEqualTypeOf<CrossCheck>()
-expectTypeOf<MisdirectionRecordResult['crossCheck']>().toEqualTypeOf<CrossCheck>()
-// 412's wall already forbids the underscore spelling; this plan did not widen the set either.
-expectTypeOf<Extract<CrossCheck, 'not_run'>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<CrossCheck, 'unchecked'>>().toEqualTypeOf<never>()
+describe('the four cross-check words', () => {
+  test('are the gate receipts own set, reused and not re-minted', () => {
+    expectTypeOf<Exclude<CrossCheck, (typeof CROSS_CHECKS)[number]>>().toEqualTypeOf<never>()
+    expectTypeOf<Exclude<(typeof CROSS_CHECKS)[number], CrossCheck>>().toEqualTypeOf<never>()
+    expectTypeOf<CrossCheck>().toEqualTypeOf<'flipped' | 'held' | 'inconclusive' | 'not-run'>()
+  })
 
-// ---------------------------------------------------------------------------------------
-// The single optional backing literal — an ABSENCE marker, never a grade
-// ---------------------------------------------------------------------------------------
+  test('are the exact vocabulary the block and every row speak', () => {
+    expectTypeOf<MisdirectionEvidence['crossCheck']>().toEqualTypeOf<CrossCheck>()
+    expectTypeOf<MisdirectionRecordResult['crossCheck']>().toEqualTypeOf<CrossCheck>()
+  })
 
-expectTypeOf<
-  Exclude<MisdirectionBacking, (typeof MISDIRECTION_BACKINGS)[number]>
->().toEqualTypeOf<never>()
-expectTypeOf<
-  Exclude<(typeof MISDIRECTION_BACKINGS)[number], MisdirectionBacking>
->().toEqualTypeOf<never>()
-expectTypeOf<MisdirectionBacking>().toEqualTypeOf<'declared-only'>()
-expectTypeOf<Extract<MisdirectionBacking, 'measured'>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<MisdirectionBacking, 'cross-checked'>>().toEqualTypeOf<never>()
-// The block's member is OPTIONAL: an ordinary gated run carries no backing word at all.
-expectTypeOf<MisdirectionEvidence['backing']>().toEqualTypeOf<MisdirectionBacking | undefined>()
+  test('were not widened by this plan', () => {
+    expectTypeOf<Extract<CrossCheck, 'not_run'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<CrossCheck, 'unchecked'>>().toEqualTypeOf<never>()
+  })
+})
 
-// D-19's three postures, and the one that is not an exemption.
-expectTypeOf<MisdirectionRootPosture>().toEqualTypeOf<
-  'eval-root' | 'no-eval-root' | 'broken-eval-root'
->()
-expectTypeOf<Extract<MisdirectionRootPosture, 'byom'>>().toEqualTypeOf<never>()
+describe('the backing literal', () => {
+  test('is closed in both directions to one absence marker', () => {
+    expectTypeOf<
+      Exclude<MisdirectionBacking, (typeof MISDIRECTION_BACKINGS)[number]>
+    >().toEqualTypeOf<never>()
+    expectTypeOf<
+      Exclude<(typeof MISDIRECTION_BACKINGS)[number], MisdirectionBacking>
+    >().toEqualTypeOf<never>()
+    expectTypeOf<MisdirectionBacking>().toEqualTypeOf<'declared-only'>()
+  })
 
-// ---------------------------------------------------------------------------------------
-// The aggregate's four arms, and the ONE that permits a no-trust-change class
-// ---------------------------------------------------------------------------------------
+  test('is never a quality grade, and is OPTIONAL on the block', () => {
+    expectTypeOf<Extract<MisdirectionBacking, 'measured'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<MisdirectionBacking, 'cross-checked'>>().toEqualTypeOf<never>()
+    expectTypeOf<MisdirectionEvidence['backing']>().toEqualTypeOf<
+      MisdirectionBacking | undefined
+    >()
+  })
 
-expectTypeOf<MisdirectionAggregate['outcome']>().toEqualTypeOf<
-  'held' | 'flipped' | 'unknown' | 'evidence-refused'
->()
-expectTypeOf<Extract<MisdirectionAggregate['outcome'], 'ruled-out'>>().toEqualTypeOf<never>()
-// The unknown arm DISCLOSES its unresolved siblings — all three lists, never a bare flag.
-expectTypeOf<
-  keyof Extract<MisdirectionAggregate, { outcome: 'unknown' }>
->().toEqualTypeOf<'outcome' | 'inconclusive' | 'notRun' | 'unchecked'>()
+  test('names exactly three root postures, and BYOM is not one of them', () => {
+    // D-19 turns on ABSENCE versus BREAKAGE, so the posture set spells both; the funding
+    // arrangement a reader might call this case is not a posture the validator can check.
+    expectTypeOf<MisdirectionRootPosture>().toEqualTypeOf<
+      'eval-root' | 'no-eval-root' | 'broken-eval-root'
+    >()
+    expectTypeOf<Extract<MisdirectionRootPosture, 'byom'>>().toEqualTypeOf<never>()
+  })
+})
 
-// ---------------------------------------------------------------------------------------
-// The verdict floor: eight classes, unchanged, plus exactly two additive optional members
-// ---------------------------------------------------------------------------------------
+describe('the aggregate arms', () => {
+  test('are exactly four, with one holding arm', () => {
+    expectTypeOf<MisdirectionAggregate['outcome']>().toEqualTypeOf<
+      'held' | 'flipped' | 'unknown' | 'evidence-refused'
+    >()
+    expectTypeOf<Extract<MisdirectionAggregate['outcome'], 'ruled-out'>>().toEqualTypeOf<never>()
+  })
 
-// Hand-spelled — a SECOND, independent statement of the closed set (see the header).
-type EightClasses =
-  | 'test_bug'
-  | 'app_bug'
-  | 'environment'
-  | 'flake'
-  | 'config_error'
-  | 'llm_error'
-  | 'unknown'
-  | 'timeout'
+  test('disclose every unresolved sibling by name, never as a bare flag', () => {
+    expectTypeOf<keyof Extract<MisdirectionAggregate, { outcome: 'unknown' }>>().toEqualTypeOf<
+      'outcome' | 'inconclusive' | 'notRun' | 'unchecked'
+    >()
+    expectTypeOf<
+      Extract<MisdirectionAggregate, { outcome: 'flipped' }>['suspect']
+    >().toEqualTypeOf<readonly VerdictSuspect[]>()
+  })
+})
 
-expectTypeOf<VerdictClass>().toEqualTypeOf<EightClasses>()
-expectTypeOf<Verdict['class']>().toEqualTypeOf<EightClasses>()
-expectTypeOf<Exclude<VerdictClass, (typeof VERDICT_CLASSES)[number]>>().toEqualTypeOf<never>()
-expectTypeOf<Exclude<(typeof VERDICT_CLASSES)[number], VerdictClass>>().toEqualTypeOf<never>()
-// The never-bar: a ninth class REDs here, whichever plausible name it arrives under.
-expectTypeOf<Extract<VerdictClass, 'memory_error'>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<VerdictClass, 'misdirection'>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<VerdictClass, 'circular'>>().toEqualTypeOf<never>()
+/** Local alias so the suspect-list element type is named once, at the assertion. */
+type VerdictSuspect = MemoryOnPathEntry['recordId']
 
-// The two new members are OPTIONAL, and the frozen boolean beside them is untouched.
-type AppBugVerdict = Extract<Verdict, { class: 'app_bug' }>
-expectTypeOf<AppBugVerdict['memoryMisdirectionRuledOut']>().toEqualTypeOf<boolean>()
-expectTypeOf<AppBugVerdict['memoryOnPath']>().toEqualTypeOf<MemoryOnPathEntry[] | undefined>()
-expectTypeOf<AppBugVerdict['misdirectionRuledOut']>().toEqualTypeOf<
-  MisdirectionEvidence | undefined
->()
+describe('the verdict floor', () => {
+  // A SECOND, independent statement of the closed set (see the header).
+  type EightClasses =
+    | 'test_bug'
+    | 'app_bug'
+    | 'environment'
+    | 'flake'
+    | 'config_error'
+    | 'llm_error'
+    | 'unknown'
+    | 'timeout'
+
+  test('is still exactly the eight classes, hand-spelled', () => {
+    expectTypeOf<VerdictClass>().toEqualTypeOf<EightClasses>()
+    expectTypeOf<Verdict['class']>().toEqualTypeOf<EightClasses>()
+    expectTypeOf<Exclude<VerdictClass, (typeof VERDICT_CLASSES)[number]>>().toEqualTypeOf<never>()
+    expectTypeOf<Exclude<(typeof VERDICT_CLASSES)[number], VerdictClass>>().toEqualTypeOf<never>()
+  })
+
+  test('grew no ninth class under any name this plan might have reached for', () => {
+    expectTypeOf<Extract<VerdictClass, 'memory_error'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<VerdictClass, 'misdirection'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<VerdictClass, 'circular'>>().toEqualTypeOf<never>()
+  })
+
+  test('gained exactly two additive OPTIONAL members beside the frozen boolean', () => {
+    type AppBugVerdict = Extract<Verdict, { class: 'app_bug' }>
+    expectTypeOf<AppBugVerdict['memoryMisdirectionRuledOut']>().toEqualTypeOf<boolean>()
+    expectTypeOf<AppBugVerdict['memoryOnPath']>().toEqualTypeOf<MemoryOnPathEntry[] | undefined>()
+    expectTypeOf<AppBugVerdict['misdirectionRuledOut']>().toEqualTypeOf<
+      MisdirectionEvidence | undefined
+    >()
+  })
+
+  test('refuses a ninth class on a verdict value — the oracle bites', () => {
+    // @ts-expect-error 'misdirection' is not a verdict class; this assignment must not compile.
+    const bad: Verdict['class'] = 'misdirection'
+    expectTypeOf(bad).toEqualTypeOf<VerdictClass>()
+  })
+})

@@ -32,9 +32,14 @@ import {
   deriveMemoryOnPath,
   deriveMemoryOnPathSites,
   guardMisdirectionEvidence,
+  MEMORY_ON_PATH_TRUSTS,
+  MISDIRECTION_BACKINGS,
+  MISDIRECTION_ROOT_POSTURES,
   misdirectionSourceDigest,
   MisdirectionEvidenceError,
 } from '../misdirection-evidence'
+import { CROSS_CHECKS } from '../../knowledge/gate-receipt'
+import { VERDICT_CLASSES } from '../verdict'
 import type {
   MisdirectionEvidence,
   MisdirectionRecordResult,
@@ -297,6 +302,44 @@ function reasonsOf(result_: ReturnType<typeof validateAnalysisAgainstHandoff>): 
   if (result_.ok) return []
   return result_.rejects.map((reject) => reject.reason)
 }
+
+// ---------------------------------------------------------------------------------------
+// The closed vocabularies, at runtime. The type-level halves live in
+// `misdirection-contract.test-d.ts`; both directions are pinned there, and these cells pin
+// the exact LISTS and their order. A one-sided pin is satisfied by a set that grew.
+// ---------------------------------------------------------------------------------------
+
+describe('the 422 evidence vocabularies are closed', () => {
+  it('pins exactly two memory trust words', () => {
+    expect(MEMORY_ON_PATH_TRUSTS).toEqual(['candidate', 'low-trust-active'])
+  })
+
+  it('pins exactly one backing word, and it is an absence marker', () => {
+    expect(MISDIRECTION_BACKINGS).toEqual(['declared-only'])
+  })
+
+  it('pins the three evaluation-root postures', () => {
+    expect(MISDIRECTION_ROOT_POSTURES).toEqual(['eval-root', 'no-eval-root', 'broken-eval-root'])
+  })
+
+  it('REUSES the four cross-check words rather than minting a fifth copy', () => {
+    expect(CROSS_CHECKS).toEqual(['flipped', 'held', 'inconclusive', 'not-run'])
+  })
+
+  it('leaves the verdict class floor at exactly eight, hand-spelled', () => {
+    expect(VERDICT_CLASSES).toEqual([
+      'test_bug',
+      'app_bug',
+      'environment',
+      'flake',
+      'config_error',
+      'llm_error',
+      'unknown',
+      'timeout',
+    ])
+    expect(VERDICT_CLASSES).toHaveLength(8)
+  })
+})
 
 // ---------------------------------------------------------------------------------------
 // D-17 — membership is RECOMPUTED from the run's own briefs
