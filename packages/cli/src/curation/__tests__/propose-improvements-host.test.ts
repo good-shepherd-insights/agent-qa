@@ -22,7 +22,7 @@
 // substituted at its own seam, which is where a fake belongs: below it sit an LLM, a browser and
 // a committed corpus, and above it sits every line this plan wrote.
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -81,6 +81,8 @@ import {
   proposalStageCapabilities,
   resolveProposeGate1MaxPerJob,
 } from '../../composition/local-agent-host.js'
+import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import { createReplayGatePortForHost } from '../../gates/replay-gate-host.js'
 import { curateCompletedRun, type CurationTailReceipt } from '../curation-tail.js'
 
 const RUN_ID = 'r_422-09-terminal'
@@ -187,10 +189,9 @@ function stubEvalSession(store: CommittedStore, over: {
   readonly replay?: (candidateId: string) => unknown
   readonly adversarial?: unknown
   readonly digest?: unknown
-  readonly gate1MaxPerJob?: number
 } = {}) {
   vi.mocked(resolveEvalSession).mockResolvedValue({
-    evalConfig: over.gate1MaxPerJob === undefined ? {} : { gate1: { maxPerJob: over.gate1MaxPerJob } },
+    evalConfig: {},
     configDir: '/tmp/422-09',
     configPath: '/tmp/422-09/agent-qa.config.yaml',
   } as unknown as Awaited<ReturnType<typeof resolveEvalSession>>)
@@ -233,6 +234,21 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   vi.restoreAllMocks()
 })
+
+/**
+ * This host's one replay-gate bridge, memoised exactly as `composeCliLocalAgent` memoises it.
+ *
+ * Written as a helper rather than inlined per cell so the cells cannot accidentally construct two
+ * bridges for one host — the very drift the 417/421 walls pin against in production code.
+ */
+function sharedGate(root: string, authority?: { leaseId: string; epoch: number }) {
+  let memo: ReturnType<typeof createReplayGatePortForHost> | undefined
+  return () => (memo ??= createReplayGatePortForHost({
+    configPath: join(root, 'agent-qa.config.yaml'),
+    agentQaRoot: join(root, '.agent-qa'),
+    ...(authority === undefined ? {} : { resolveClaimAuthority: () => authority }),
+  }))
+}
 
 function tempRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-422-09-'))
@@ -325,7 +341,9 @@ describe('the composed capabilities answer from the host, not from a fixture (42
       configPath: join(root, 'agent-qa.config.yaml'),
       agentQaRoot: join(root, '.agent-qa'),
       resolveKnowledgeRoot: () => join(root, 'knowledge'),
-      ...(authority === undefined ? {} : { resolveClaimAuthority: () => authority }),
+      // The host's ONE bridge, built here exactly as `composeCliLocalAgent` builds it — including
+      // the borrowed lease, which travels on the bridge's deps rather than on the builder's.
+      replayGate: sharedGate(root, authority),
     })
   }
 
@@ -403,12 +421,45 @@ describe('the composed capabilities answer from the host, not from a fixture (42
     ).rejects.toThrow(/rec-a/)
   })
 
-  it('reads the operator override for the per-job Gate-1 cap, and the default when there is none', async () => {
-    const store = committedStore([])
-    stubEvalSession(store, { gate1MaxPerJob: 2 })
-    expect(await resolveProposeGate1MaxPerJob('/tmp/422-09/agent-qa.config.yaml')).toBe(2)
-    stubEvalSession(store)
-    expect(await resolveProposeGate1MaxPerJob('/tmp/422-09/agent-qa.config.yaml')).toBeUndefined()
+  it('reads the operator override for the per-job Gate-1 cap off a REAL config, and the default when there is none', async () => {
+    // A real file on disk, because the thing under test is whether `eval.gate1.maxPerJob`
+    // survives the whole read path. It did not: the CLI restated the `gate1` block as
+    // `{ maxScreens }` and rebuilt it field by field, so 422-08's bound was configuration no
+    // reader could ever see. A stubbed session would have gone green over that.
+    const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' })
+    roots.push(fixture.project)
+    const base = readFileSync(fixture.configPath, 'utf8')
+    writeFileSync(fixture.configPath, `${base}eval:\n  gate1:\n    maxPerJob: 2\n`, 'utf8')
+    expect(await resolveProposeGate1MaxPerJob(fixture.configPath)).toBe(2)
+    // The SIBLING knob alone is not this one. They are two axes — how much a single screening
+    // looks at, and how many screenings a run's tail may buy — and reading either for the other
+    // would spend replay work the operator did not authorise.
+    writeFileSync(fixture.configPath, `${base}eval:\n  gate1:\n    maxScreens: 8\n`, 'utf8')
+    expect(await resolveProposeGate1MaxPerJob(fixture.configPath)).toBeUndefined()
+    // An unreadable configuration answers the recorded default rather than taking the queue down
+    // for an optional knob nobody set.
+    expect(await resolveProposeGate1MaxPerJob(join(fixture.project, 'absent.yaml'))).toBeUndefined()
+  })
+
+  it('surfaces the per-job bound on the resolved eval session too, not only on the schema', async () => {
+    // THROUGH THE UNMOCKED MODULE, because the subject IS the module this file otherwise
+    // substitutes. `EvalCliConfig` restated the `gate1` block as `{ maxScreens }` and
+    // `mergeEvalConfig` rebuilt it field by field, so `eval.gate1.maxPerJob` — a bound 422-08 put
+    // in the schema — reached no reader at all. Every other eval consumer reads the session, so
+    // the restatement would have gone on silently dropping whatever the schema gained next.
+    const actual = await vi.importActual<typeof import('../../eval-session-composition.js')>(
+      '../../eval-session-composition.js',
+    )
+    const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' })
+    roots.push(fixture.project)
+    const base = readFileSync(fixture.configPath, 'utf8')
+    writeFileSync(
+      fixture.configPath,
+      `${base}eval:\n  gate1:\n    maxPerJob: 3\n    maxScreens: 9\n`,
+      'utf8',
+    )
+    const session = await actual.resolveEvalSession({ configPath: fixture.configPath, keyOnly: true })
+    expect(session.evalConfig.gate1).toEqual({ maxPerJob: 3, maxScreens: 9 })
   })
 })
 
@@ -434,7 +485,7 @@ describe('the third stage runs after the fold and reads back real receipts (422 
       configPath: join(root, 'agent-qa.config.yaml'),
       agentQaRoot,
       resolveKnowledgeRoot: () => join(root, 'knowledge'),
-      resolveClaimAuthority: () => ({ leaseId: 'lease-pump', epoch: 5 }),
+      replayGate: sharedGate(root, { leaseId: 'lease-pump', epoch: 5 }),
     })
     const host = composeLocalAgent({
       mintQuarantineIdentityPath: MINT_IDENTITY,

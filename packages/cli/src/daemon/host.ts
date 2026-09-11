@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util'
 import type { ResolvePromotionPosture, ScopeKey } from '@vostride/agent-qa-schema'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
+import type { ReplayGatePort } from '@vostride/agent-qa-agent'
 import { bindTrustPriorsToConfig, trustPriorsForHost } from '../curation/trust-priors.js'
 
 import type {
@@ -60,7 +61,7 @@ import type { CliAnalyticsHost } from '../composition/analytics-host.js'
 import {
   proposalStageCapabilities,
   resolveProposeGate1MaxPerJob,
-} from '../composition/local-agent-host.js'
+} from '../composition/proposal-stage-capabilities.js'
 import { createShutdownController } from '../commands/shutdown-controller.js'
 import {
   completedRunDir,
@@ -784,6 +785,18 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   const trustPriors = input.configPath === undefined
     ? undefined : trustPriorsForHost({ configPath: input.configPath })
   const resolveTrustPriors = trustPriors?.resolve
+  /**
+   * The operator's per-job Gate-1 bound (422-09, D-14), read HERE and handed down as a value.
+   *
+   * BEFORE the lease, beside the validation above, and deliberately not at composition or at
+   * queue open. Startup between this daemon's first log line and its signal handlers is a window
+   * in which a stop signal has nobody to receive it, and every await added inside it widens that
+   * window — `daemon-run-execution.test.ts` measures exactly that. Config reads belong on the
+   * pre-authority leg, where this daemon already does three of them.
+   */
+  const proposeGate1MaxPerJob = input.configPath === undefined
+    ? undefined
+    : await resolveProposeGate1MaxPerJob(input.configPath)
 
   const operations = { ...defaultOperations(), ...input.operations }
   const logger = input.logger ?? DEFAULT_LOGGER
@@ -998,6 +1011,27 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let drainWorker: Promise<void> | undefined
   let maintenanceWorker: Promise<void> | undefined
   let authorPromise: Promise<CuratorAuthor> | undefined
+  /**
+   * THIS daemon's ONE replay-gate bridge — constructed lazily, then memoised (417/421 walls).
+   *
+   * Lazy and memoised for the reasons the terminal host's memo states at length: the walls pin
+   * one construction site per host file and none at all until an operation asks. 422 D-14 adds
+   * the borrowed lease to the bridge's own deps — `daemonWriterAuthority` is the SAME closure the
+   * drain step reads, and it is a closure so the receipt is written under the lease this process
+   * is holding at the claim rather than under the one it held when the bridge was built.
+   *
+   * This process holds the lease already, so the borrowed path acquires nothing and releases
+   * nothing: a holder that re-acquires is told `held` by itself, and one that released would end
+   * its own authority mid-drain.
+   */
+  let replayGateMemo: ReplayGatePort | undefined
+  const sharedReplayGate = (configPath: string): ReplayGatePort =>
+    (replayGateMemo ??= createReplayGatePortForHost({
+      configPath,
+      agentQaRoot: input.agentQaRoot,
+      resolveTrustPriors,
+      resolveClaimAuthority: () => daemonWriterAuthority,
+    }))
   const resolveHostPromotionPosture = (currentBuildOrdinal?: number, scope?: ScopeKey): Promise<ResolvePromotionPosture | undefined> =>
     input.configPath === undefined
       ? Promise.resolve(undefined)
@@ -1006,7 +1040,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
           lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
           currentBuildOrdinal: product => latestBuildOrdinal({ root: input.agentQaRoot, product }),
-          replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot, resolveTrustPriors }),
+          replayGate: sharedReplayGate(input.configPath),
         })
         .then(posture => promotionPostureResolverForHost(posture, message => logger.error(message),
           currentBuildOrdinal, scope?.tier === 'product' ? scope.key : null))
@@ -2268,9 +2302,12 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
                 // The SAME resolver the composition's own `resolvePromotionPosture` binds below,
                 // passed by reference rather than wrapped: one memoised preparation per host.
                 resolvePromotionPosture: resolveHostPromotionPosture,
-                resolveClaimAuthority: () => daemonWriterAuthority,
+                // The SAME bridge the promotion posture receives, and therefore the same borrowed
+                // lease, the same trust priors and the same runtime root.
+                replayGate: () => sharedReplayGate(input.configPath!),
               }),
-              proposeGate1MaxPerJob: () => resolveProposeGate1MaxPerJob(input.configPath!),
+              // Already resolved above; the factory is a value handed through, not a read.
+              proposeGate1MaxPerJob: () => proposeGate1MaxPerJob,
             }),
       },
       ...(runExecution === undefined ? {} : { runExecution }),

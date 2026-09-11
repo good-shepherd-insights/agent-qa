@@ -68,6 +68,7 @@ import {
 import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { composeCliLocalAgent, proposalStageCapabilities } from '../../composition/local-agent-host.js'
 import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
+import { createReplayGatePortForHost } from '../../gates/replay-gate-host.js'
 
 const PRODUCT = 'storefront'
 const CURRENT_DIGEST = 'c'.repeat(64)
@@ -234,6 +235,16 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   vi.restoreAllMocks()
 })
+
+/** One memoised bridge per host, the way both production hosts build theirs. */
+function sharedGate(root: string, resolveClaimAuthority: () => { leaseId: string; epoch: number } | undefined) {
+  let memo: ReturnType<typeof createReplayGatePortForHost> | undefined
+  return () => (memo ??= createReplayGatePortForHost({
+    configPath: join(root, 'agent-qa.config.yaml'),
+    agentQaRoot: join(root, '.agent-qa'),
+    resolveClaimAuthority,
+  }))
+}
 
 function tempRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-422-09d-'))
@@ -491,7 +502,7 @@ describe('the borrowed lease is read at the claim, and a refused write is never 
       configPath: join(root, 'agent-qa.config.yaml'),
       agentQaRoot: join(root, '.agent-qa'),
       resolveKnowledgeRoot: () => join(root, 'knowledge'),
-      resolveClaimAuthority: resolve,
+      replayGate: sharedGate(root, resolve),
     })
   }
 
@@ -536,7 +547,7 @@ describe('a repeated daemon drain spends nothing it already spent (422 D-14/D-15
       configPath: join(root, '..', 'agent-qa.config.yaml'),
       agentQaRoot: root,
       resolveKnowledgeRoot: () => join(root, 'knowledge'),
-      resolveClaimAuthority: () => DAEMON_LEASE,
+      replayGate: sharedGate(join(root, '..'), () => DAEMON_LEASE),
     })
     const host = composeLocalAgent({
       mintQuarantineIdentityPath: MINT_IDENTITY,

@@ -25,7 +25,27 @@ describe('417/418 production replay gate binding', () => {
     expect(source.match(/createReplayGatePortForHost\(/g)).toHaveLength(1)
   })
 
-  it('keeps the post-run replay job slot unbound while hosts prepare receipt posture', () => {
+  /**
+   * 2026-09-12, 422-09: THIS WALL MOVED, AND IT MOVED BECAUSE ITS SUBJECT DID.
+   *
+   * 417 required the post-run replay job slot to stay UNBOUND, and pinned it the bluntest way
+   * there is — the member spelling `runReplayGate:` appearing in NO shipped file. That was the
+   * right wall while the capability was a declaration: 422-07 and 422-08 both shipped it typed
+   * and bound nowhere, and this cell is what would have caught a host binding it by accident.
+   *
+   * 422 D-14 binds it on purpose. So the wall becomes an EXACT ALLOW-LIST rather than a
+   * prohibition — which is strictly stronger than deleting it and stronger than the old form for
+   * everything except the two named files: a third site, anywhere in either tree, still fails.
+   * The two are the only shapes the architecture permits:
+   *
+   *   proposal-stage-capabilities.ts  BINDS it, over a bridge its host built and handed in
+   *   compose-local-agent.ts          FORWARDS it, neutrally — agent-local constructs no gate
+   *
+   * Neither production HOST is on the list, and that is the point: both compose through the one
+   * shared builder rather than spelling the member themselves, which is what makes the terminal's
+   * and the daemon's capability sets equal by construction (422-09's parity cells).
+   */
+  it('binds the post-run replay job slot at exactly the two sanctioned sites', () => {
     function files(dir: string): string[] {
       return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
         entry.name === '__tests__'
@@ -40,9 +60,15 @@ describe('417/418 production replay gate binding', () => {
     const roots = ['../../', '../../../../agent-local/src/'].map((path) =>
       fileURLToPath(new URL(path, import.meta.url)),
     )
-    expect(
-      roots.flatMap(files).filter((file) => /runReplayGate:/.test(readFileSync(file, 'utf8'))),
-    ).toEqual([])
+    const sites = roots
+      .flatMap(files)
+      .filter((file) => /runReplayGate:/.test(readFileSync(file, 'utf8')))
+      .map((file) => file.slice(file.indexOf(`${join('packages', '')}`)))
+      .sort()
+    expect(sites).toEqual([
+      join('packages', 'agent-local', 'src', 'composition', 'compose-local-agent.ts'),
+      join('packages', 'cli', 'src', 'composition', 'proposal-stage-capabilities.ts'),
+    ])
   })
 
   it('constructs without session IO, then lazily resolves a key-only session and preserves the host runtime root', async () => {

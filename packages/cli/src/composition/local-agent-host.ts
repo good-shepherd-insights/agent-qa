@@ -117,7 +117,17 @@ import {
   yamlParseFailureMessage,
 } from '@vostride/agent-qa-core'
 import type { TestDefinition } from '@vostride/agent-qa-core'
-import type { KnowledgeBundleSummary } from '@vostride/agent-qa-schema'
+// 422-09: the shared proposal-stage builder lives in its own module so the daemon can compose it
+// without dragging this file's whole surface into its module graph. Re-exported here because the
+// terminal host is its other caller and every reader of this file expects to find it beside the
+// composition it feeds.
+export {
+  proposalStageCapabilities,
+  resolveProposeGate1MaxPerJob,
+  type ProposalStageCapabilities,
+  type ProposalStageCapabilitiesInput,
+} from './proposal-stage-capabilities.js'
+import { proposalStageCapabilities, resolveProposeGate1MaxPerJob } from './proposal-stage-capabilities.js'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
 import type {
   ConfigScaffoldContentPortLike,
@@ -3671,212 +3681,38 @@ export function createChatConfirmPort(
   }
 }
 
-// ---- 422 D-13 / D-14: the proposal stage's host-owned capabilities -------------------------
-//
-// ONE builder, TWO hosts. The terminal (`composeCliLocalAgent` below) and the daemon
-// (`daemon/host.ts`) both compose these members from this function and from nowhere else, so
-// "the two hosts agree" is a property of there being one construction site rather than a claim
-// a reviewer has to re-derive by reading two literals side by side. A capability bound on the
-// terminal and forgotten on the daemon is a silent behavioural split between two ways of running
-// the same product, and 422-08 shipped the whole Gate-1 leg unbound on BOTH because each host
-// composed its own `postRun` literal.
-//
-// Everything here is a CLI concern by construction: a replay gate needs an eval session, the
-// committed corpus digest needs the committed root, and the adversarial staging seam lives behind
-// an operator-admission boundary neither `agent` nor `agent-local` may name. What crosses into the
-// composition is data and neutral closures.
-
-export interface ProposalStageCapabilitiesInput {
-  configPath: string
-  agentQaRoot: string
-  /** Which knowledge root this host serves from, resolved per call (the reader's own idiom). */
-  resolveKnowledgeRoot: () => Promise<string> | string
-  resolveTrustPriors?: ResolveTrustPriors
-  resolvePromotionPosture?: ComposeLocalAgentInput['resolvePromotionPosture']
-  /**
-   * The writer lease this host ALREADY HOLDS, resolved at the Gate-1 claim (422 D-14).
-   *
-   * A function and never a value: both hosts compose this bundle BEFORE they acquire their
-   * lease, so a value read here is `undefined` forever and every Gate-1 write would ask the
-   * writer for a lease the very same process already holds — which it answers `held`, by the
-   * caller, against itself. Absent leaves the standalone acquire/finally-release posture, which
-   * is correct for a host that owns no lease and wrong for one that does.
-   */
-  resolveClaimAuthority?: () => ReplayGateClaimAuthority | undefined
-}
-
-/**
- * The five members 422-07 and 422-08 declared and left unbound, as ONE value.
- *
- * `Required<Pick<...>>` rather than a restatement: every member is the capability's own declared
- * type, so a shape change in `agent` fails to compile here instead of drifting into a second
- * spelling of a contract that has one owner.
- */
-export type ProposalStageCapabilities = Required<
-  Pick<
-    PostRunJobCapabilities,
-    | 'runReplayGate'
-    | 'listBundles'
-    | 'gateReceiptsFor'
-    | 'readProposeCorpusPosture'
-    | 'stageAdversarialProposal'
-  >
->
-
-/**
- * The product this run's proposal stage stages FOR, derived from the candidates the fold
- * committed rather than from configuration.
- *
- * The same derivation `orderProposalCandidates` makes inside the handler, and deliberately the
- * same one: a proposal job is about one run, a run is about one product, and two answers to
- * "which product" is how a stage ends up screening one corpus and staging against another.
- * `undefined` means the committed store recognises none of the fold's ids, which is the one
- * case where there is nothing this stage could honestly address.
- */
-function productOfCandidates(
-  bundles: readonly KnowledgeBundleSummary[],
-  candidateIds: readonly string[],
-): string | undefined {
-  for (const candidateId of candidateIds) {
-    const row = bundles.find((entry) => entry.bundleId === candidateId)
-    if (row !== undefined) return row.product
-  }
-  return undefined
-}
-
-export function proposalStageCapabilities(
-  input: ProposalStageCapabilitiesInput,
-): ProposalStageCapabilities {
-  const resolveTrustPriors = input.resolveTrustPriors
-    ?? trustPriorsForHost({ configPath: input.configPath }).resolve
-  // The DATA bridge, composed once and asked for its borrowed lease per call. Everything the
-  // gate needs beyond that — the eval session, the committed root, the recording writer — it
-  // resolves for itself, lazily, so composing this bundle costs no credential resolution on a
-  // host whose chain never reaches the proposal stage.
-  const gate: ReplayGatePort = createReplayGatePortForHost({
-    configPath: input.configPath,
-    agentQaRoot: input.agentQaRoot,
-    resolveTrustPriors,
-    ...(input.resolveClaimAuthority === undefined
-      ? {}
-      : { resolveClaimAuthority: input.resolveClaimAuthority }),
-  })
-  // The physically read-only knowledge entry, over THIS host's root. Both members the selection
-  // needs come from the one reader: a listing and a receipt history answered by two readers over
-  // two roots would be two opinions about what is still ungated.
-  const reader: Pick<KnowledgeReaderPort, 'listBundles' | 'gateReceipts'> = createKnowledgeReader(
-    input.resolveKnowledgeRoot,
-    undefined,
-    input.resolvePromotionPosture,
-    resolveTrustPriors,
-  )
-  const session = async () => {
-    const { resolveEvalSession } = await import('../eval-session-composition.js')
-    return await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
-  }
-  return {
-    runReplayGate: gate.runReplayGate.bind(gate),
-    listBundles: async () => await reader.listBundles(),
-    gateReceiptsFor: async ({ candidateId }) => {
-      const read = reader.gateReceipts
-      if (read === undefined) throw new Error('knowledge reader binds no gateReceipts')
-      return await read.call(reader, { candidateId })
-    },
-    /**
-     * Which corpus this host's Gate-1 evidence is measured against (422 D-14).
-     *
-     * `readCanaryCorpusDigest`'s three arms map onto the posture's three one-for-one, and the
-     * mapping is total on purpose: an unreadable committed root is NOT an absent one. Folding
-     * them together would let a broken root read as "no corpus to screen against", which spends
-     * the job's charge on a question nobody can check the answer to.
-     */
-    readProposeCorpusPosture: async (): Promise<ProposeCorpusPosture> => {
-      try {
-        const { readCanaryCorpusDigest } = await import('../eval-session-composition.js')
-        const digest = readCanaryCorpusDigest(await session())
-        if (digest.kind === 'digest') {
-          return { kind: 'resolved', corpusDigest: digest.corpusDigest }
-        }
-        return digest.kind === 'no-eval-root'
-          ? { kind: 'no-root' }
-          : { kind: 'unavailable', reason: digest.reason }
-      } catch (error) {
-        return {
-          kind: 'unavailable',
-          reason: error instanceof Error ? error.message : String(error),
-        }
-      }
-    },
-    /**
-     * The third stage's work: STAGE for review, and never admit (D-01).
-     *
-     * `admit` is deliberately absent rather than `false` — the verb branches on the flag being
-     * true, and a background job that could pass it at all would be a background job that could
-     * write the committed corpus. Nothing here has an operator behind it, so nothing here has
-     * the authority an admission needs.
-     *
-     * A REFUSAL finishes with no counts rather than throwing: a host with no eval root, or one
-     * whose committed root cannot be read, has an honest answer — it staged nothing — and a
-     * throw here would become a retry that asks the same unanswerable question under the same
-     * conditions until the declared bound runs out.
-     */
-    stageAdversarialProposal: async ({ candidateIds }) => {
-      const { runAdversarialVerb } = await import('../eval-session-composition.js')
-      const product = productOfCandidates(await reader.listBundles(), candidateIds)
-      if (product === undefined) return { proposed: 0, skipped: 0 }
-      const result = await runAdversarialVerb(await session(), {
-        agentQaRoot: input.agentQaRoot,
-        product,
-      })
-      if (result.kind === 'refused') return { proposed: 0, skipped: 0 }
-      // The neutral DTO admits two counts and nothing else (D-11), so this is a PROJECTION and
-      // not a summary: `proposed` is what a reviewer will actually be shown, and `skipped` is
-      // everything this refresh considered and declined to stage. The probe gap, the spend and
-      // the refusal texts stay in the adversarial audit sink, which is the surface that may
-      // carry prose at all.
-      return {
-        proposed: result.staged.length,
-        skipped:
-          result.skips.length
-          + result.stagingSkips.length
-          + result.settledRefusals.length
-          + result.refusals.length,
-      }
-    },
-  }
-}
-
-/**
- * The operator's `eval.gate1.maxPerJob`, resolved by the HOST (422 D-14).
- *
- * DATA rather than a reader on the capability, because the handler must not learn to read
- * configuration; `undefined` means the recorded default and the difference is disclosed on the
- * durable charge as `cap.source`. A configuration this host cannot read answers `undefined` too:
- * the recorded default is the safe bound, and refusing to open the queue because an optional
- * override could not be read would take the whole chain down for a knob nobody set.
- */
-export async function resolveProposeGate1MaxPerJob(
-  configPath: string,
-): Promise<number | undefined> {
-  try {
-    const { resolveEvalSession } = await import('../eval-session-composition.js')
-    const session = await resolveEvalSession({ configPath, keyOnly: true })
-    return session.evalConfig.gate1?.maxPerJob
-  } catch {
-    return undefined
-  }
-}
-
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost & { trustPriorDisclosure: TrustPriorDisclosure } {
   const trustPriors = input.trustPriors ?? trustPriorsForHost({ configPath: input.configPath })
   const resolveTrustPriors = trustPriors.resolve
+  /**
+   * THIS host's ONE replay-gate bridge — constructed lazily, then memoised (417/421 walls).
+   *
+   * Lazy because `judge-panel-host-paths.test.ts` pins that composing a host constructs no bridge
+   * at all until an operation asks for one; memoised because `replay-gate-binding.test.ts` pins
+   * exactly one construction site per host file, and one site that ran twice with different deps
+   * would satisfy the letter of that wall while breaking what it protects. The promotion posture
+   * and the 422 D-14 Gate-1 leg receive the SAME object.
+   *
+   * 422 D-14: the borrowed lease travels on the bridge's own deps rather than on either consumer,
+   * so the posture's presence check and the proposal stage's write share one answer to "which
+   * lease is this host holding" — resolved at the claim, never captured here.
+   */
+  let replayGateMemo: ReplayGatePort | undefined
+  const sharedReplayGate = (): ReplayGatePort => (replayGateMemo ??= createReplayGatePortForHost({
+    configPath: input.configPath,
+    agentQaRoot: input.agentQaRoot,
+    resolveTrustPriors,
+    ...(input.postRun?.resolveClaimAuthority === undefined
+      ? {}
+      : { resolveClaimAuthority: input.postRun.resolveClaimAuthority }),
+  }))
   const resolvePromotionPosture = input.resolvePromotionPosture ?? (async () =>
     buildPromotionPostureResolver({ configPath: input.configPath,
       knowledgeRoot: await knowledgeRoot(), agentQaRoot: input.agentQaRoot,
       canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
       lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
       currentBuildOrdinal: product => latestBuildOrdinal({ root: input.agentQaRoot, product }),
-      replayGate: createReplayGatePortForHost({ configPath: input.configPath, agentQaRoot: input.agentQaRoot, resolveTrustPriors }),
+      replayGate: sharedReplayGate(),
     })
       .then(result => promotionPostureResolverForHost(result, message => console.warn(message))))
   // Narrowed once, here, so the hook closures below close over a value TypeScript knows is present
@@ -4072,9 +3908,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
               resolveKnowledgeRoot: knowledgeRoot,
               resolveTrustPriors,
               resolvePromotionPosture,
-              ...(input.postRun.resolveClaimAuthority === undefined
-                ? {}
-                : { resolveClaimAuthority: input.postRun.resolveClaimAuthority }),
+              replayGate: sharedReplayGate,
             }),
             proposeGate1MaxPerJob: () => resolveProposeGate1MaxPerJob(input.configPath),
           },
