@@ -186,6 +186,17 @@ function buildHandoff(): CompletedRunHandoff {
       outcome: 'failed',
       steps: [failingStep(0, servedBrief([briefLine()], 'brief-digest-clean'))],
     },
+    {
+      testId: 't_twice',
+      testName: 'one record served on two steps',
+      filePath: 'tests/twice.yaml',
+      testIndex: 4,
+      outcome: 'failed',
+      steps: [
+        passingStep(0, servedBrief([candidateLine()], 'brief-digest-4a')),
+        failingStep(1, servedBrief([candidateLine(), canaryLine()], 'brief-digest-4b')),
+      ],
+    },
   ]
   return {
     schemaVersion: 7,
@@ -661,4 +672,183 @@ describe('validateAnalysisAgainstHandoff: the three gated postures', () => {
     const artifact = artifactOf([verdictFor(0)], [partsFor(0)])
     expect(validateAnalysisAgainstHandoff(artifact, HANDOFF)).toEqual({ ok: true })
   })
+
+  it('refuses the SAME bytes once a current gated producer is declared', () => {
+    const artifact = artifactOf([verdictFor(0)], [partsFor(0)])
+    expect(validateAnalysisAgainstHandoff(artifact, HANDOFF).ok).toBe(true)
+    expect(
+      validateAnalysisAgainstHandoff(artifact, HANDOFF, { gatedProducerEvidence: true }).ok,
+    ).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// D-20 — one record, two exposures: the cross-check that clears it on one step says
+// nothing about the other, and harm names only the records a flip actually supports
+// ---------------------------------------------------------------------------------------
+
+describe('aggregateMisdirectionEvidence: one record served on two steps', () => {
+  const sites = deriveMemoryOnPathSites(testAt(4).steps)
+  const base = {
+    runId: 'run-misdirection-guard',
+    perTest: 4,
+    handoffBaseDigest: BASE_DIGEST,
+    sites,
+  }
+  const rowAt = (
+    stepIndex: number,
+    recordId: RecordId,
+    crossCheck: MisdirectionRecordResult['crossCheck'],
+  ) =>
+    result({
+      recordId,
+      perTest: 4,
+      stepIndex,
+      briefDigest: stepIndex === 0 ? 'brief-digest-4a' : 'brief-digest-4b',
+      crossCheck,
+    })
+
+  it('records BOTH exposures of the twice-served record', () => {
+    expect(sites).toEqual([
+      { stepIndex: 0, recordId: CANDIDATE_RECORD, trust: 'candidate' },
+      { stepIndex: 1, recordId: CANDIDATE_RECORD, trust: 'candidate' },
+      { stepIndex: 1, recordId: CANARY_RECORD, trust: 'low-trust-active' },
+    ])
+  })
+
+  it('folds the two exposures to one record-level entry', () => {
+    expect(deriveMemoryOnPath(testAt(4).steps)).toEqual([
+      { recordId: CANDIDATE_RECORD, trust: 'candidate' },
+      { recordId: CANARY_RECORD, trust: 'low-trust-active' },
+    ])
+  })
+
+  it('holds only when EVERY exposure is covered and held', () => {
+    expect(
+      aggregateMisdirectionEvidence({
+        ...base,
+        results: [
+          rowAt(0, CANDIDATE_RECORD, 'held'),
+          rowAt(1, CANDIDATE_RECORD, 'held'),
+          rowAt(1, CANARY_RECORD, 'held'),
+        ],
+      }),
+    ).toEqual({ outcome: 'held', records: [CANDIDATE_RECORD, CANARY_RECORD] })
+  })
+
+  it('retains two results for one record, so a second-step flip is not lost', () => {
+    const aggregate = aggregateMisdirectionEvidence({
+      ...base,
+      results: [
+        rowAt(0, CANDIDATE_RECORD, 'held'),
+        rowAt(1, CANDIDATE_RECORD, 'flipped'),
+        rowAt(1, CANARY_RECORD, 'held'),
+      ],
+    })
+    expect(aggregate).toEqual({ outcome: 'flipped', suspect: [CANDIDATE_RECORD] })
+  })
+
+  it('attributes harm to the flipped record only, never to its held sibling', () => {
+    const aggregate = aggregateMisdirectionEvidence({
+      ...base,
+      results: [
+        rowAt(0, CANDIDATE_RECORD, 'held'),
+        rowAt(1, CANDIDATE_RECORD, 'held'),
+        rowAt(1, CANARY_RECORD, 'flipped'),
+      ],
+    })
+    if (aggregate.outcome !== 'flipped') throw new Error('expected a flipped aggregate')
+    expect(aggregate.suspect).toEqual([CANARY_RECORD])
+    expect(aggregate.suspect).not.toContain(CANDIDATE_RECORD)
+    // The held sibling is not causal, and it is still DISCLOSED as having been on the path.
+    expect(deriveMemoryOnPath(testAt(4).steps).map((entry) => entry.recordId)).toContain(
+      CANDIDATE_RECORD,
+    )
+  })
+
+  it('leaves a record unchecked when only ONE of its two exposures was covered', () => {
+    expect(
+      aggregateMisdirectionEvidence({
+        ...base,
+        results: [rowAt(1, CANDIDATE_RECORD, 'held'), rowAt(1, CANARY_RECORD, 'held')],
+      }),
+    ).toEqual({
+      outcome: 'unknown',
+      inconclusive: [],
+      notRun: [],
+      unchecked: [CANDIDATE_RECORD],
+    })
+  })
+
+  it('refuses a row naming an exposure the briefs never recorded', () => {
+    const aggregate = aggregateMisdirectionEvidence({
+      ...base,
+      results: [
+        rowAt(0, CANDIDATE_RECORD, 'held'),
+        rowAt(1, CANDIDATE_RECORD, 'held'),
+        rowAt(1, CANARY_RECORD, 'held'),
+        rowAt(0, CANARY_RECORD, 'held'),
+      ],
+    })
+    expect(aggregate.outcome).toBe('evidence-refused')
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// D-20 — the four no-trust-change classes are held-gated, and BOTH producers obey it
+// ---------------------------------------------------------------------------------------
+
+describe('the no-trust-change classes are held-gated for every producer', () => {
+  const gated = { gatedProducerEvidence: true } as const
+  const NO_TRUST_CHANGE = ['app_bug', 'flake', 'environment', 'config_error'] as const
+  const PRODUCERS = ['deterministic-classifier', 'analyze-run'] as const
+  const TRUST_MOVING = ['test_bug', 'llm_error', 'unknown', 'timeout'] as const
+
+  const artifactWith = (
+    verdictClass: string,
+    producer: string,
+    crossCheck: MisdirectionRecordResult['crossCheck'],
+  ): RunAnalysisArtifact =>
+    artifactOf(
+      [
+        verdictFor(0, {
+          class: verdictClass,
+          producer,
+          misdirectionRuledOut: evidence(
+            [result({ recordId: CANDIDATE_RECORD, crossCheck })],
+            { crossCheck },
+          ),
+        } as Partial<Verdict>),
+      ],
+      [partsFor(0)],
+    )
+
+  for (const producer of PRODUCERS) {
+    for (const verdictClass of NO_TRUST_CHANGE) {
+      it(`${verdictClass} by ${producer}: held admits, flipped/inconclusive/not-run refuse`, () => {
+        expect(
+          validateAnalysisAgainstHandoff(artifactWith(verdictClass, producer, 'held'), HANDOFF, gated),
+        ).toEqual({ ok: true })
+        for (const crossCheck of ['flipped', 'inconclusive', 'not-run'] as const) {
+          expect(
+            validateAnalysisAgainstHandoff(
+              artifactWith(verdictClass, producer, crossCheck),
+              HANDOFF,
+              gated,
+            ).ok,
+          ).toBe(false)
+        }
+      })
+    }
+  }
+
+  for (const verdictClass of TRUST_MOVING) {
+    it(`${verdictClass} moves trust, so it carries no cross-check obligation`, () => {
+      const artifact = artifactOf(
+        [verdictFor(0, { class: verdictClass, memoryMisdirectionRuledOut: false } as Partial<Verdict>)],
+        [partsFor(0)],
+      )
+      expect(validateAnalysisAgainstHandoff(artifact, HANDOFF, gated)).toEqual({ ok: true })
+    })
+  }
 })
