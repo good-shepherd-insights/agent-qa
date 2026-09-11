@@ -84,6 +84,11 @@ import {
 import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { createReplayGatePortForHost } from '../../gates/replay-gate-host.js'
 import { curateCompletedRun, type CurationTailReceipt } from '../curation-tail.js'
+import {
+  runPostRunTail,
+  type PostRunTailHostInput,
+  type PostRunTailOperations,
+} from '../post-run-tail.js'
 
 const RUN_ID = 'r_422-09-terminal'
 const PRODUCT = 'storefront'
@@ -326,6 +331,80 @@ describe('the terminal host BINDS the proposal stage rather than declaring it (4
       claimAuthority?: { leaseId: string; epoch: number }
     }
     expect(options.claimAuthority).toEqual({ leaseId: 'lease-terminal', epoch: 11 })
+  })
+})
+
+describe('the post-run tail hands its own host the lease it takes (422 D-14)', () => {
+  it('threads the held authority and the fold receipt ids from the drain into the composition', async () => {
+    const root = tempRoot()
+    const handed: PostRunTailHostInput[] = []
+    let atClaim: { leaseId: string; epoch: number } | undefined
+    const folded = {
+      curated: 2,
+      deprecated: 0,
+      complete: true,
+      drainKind: 'drained' as const,
+      candidateIds: ['rec-a', 'rec-b'] as readonly string[],
+    }
+    const operations = {
+      loadCompletedRunHandoff: () => ({ runId: RUN_ID, schemaVersion: 5, executionContext: 'local-headless' }),
+      resolveKnowledgeRoot: () => join(root, 'knowledge'),
+      composeHost: (hostInput: PostRunTailHostInput) => {
+        handed.push(hostInput)
+        return {
+          jobs: async () => ({
+            queue: {
+              // ASSERTED FROM INSIDE THE PUMP. After `drain()` resolves, the tail has released
+              // its lease and the closure correctly answers `undefined` — so a reading taken
+              // afterwards would measure the teardown rather than the claim.
+              runNextJob: async () => {
+                atClaim = hostInput.resolveClaimAuthority?.()
+                return { ran: false, reason: 'no-job' }
+              },
+              recoverAbandonedClaims: async () => ({ released: [] }),
+            },
+            store: { adoptEpoch: async () => ({ epoch: 7 }) },
+            idSource: DIGEST_JOB_ID_SOURCE,
+          }),
+          close: async () => undefined,
+        }
+      },
+      // THE LEASE THIS DRAIN TAKES. What the composition must receive is a closure that answers
+      // with THIS, resolved when Gate 1 claims — never a value read at composition, which the
+      // tail performs before the take and which would therefore be `undefined` forever.
+      acquireWriterLease: () => ({ kind: 'acquired', leaseId: 'lease-tail', epoch: 7 }),
+      releaseLease: () => ({ kind: 'released' }),
+      nudgeDaemon: async () => undefined,
+      curateCompletedRun: async () => folded,
+      runCurationTail: async () => undefined,
+      createChipEmitter: () => ({ observe: () => undefined, finish: () => undefined }),
+      readPostProcessingStatus: async () => ({ kind: 'ready' }),
+      readRunDigest: async () => ({}),
+      now: () => 1_000,
+    } as unknown as PostRunTailOperations
+    const tail = runPostRunTail({
+      runId: RUN_ID,
+      agentQaRoot: join(root, '.agent-qa'),
+      configPath: join(root, 'agent-qa.config.yaml'),
+      knowledgeConfig: { dir: 'knowledge' },
+      configDir: root,
+      auditSink: {},
+      policy: {},
+      log: { warn: () => undefined },
+      operations,
+    } as unknown as Parameters<typeof runPostRunTail>[0])
+    await tail.drain()
+    expect(handed).toHaveLength(1)
+    const hostInput = handed[0]!
+    // Composed BEFORE the take, so the closure is the only shape that can answer correctly.
+    expect(atClaim).toEqual({ leaseId: 'lease-tail', epoch: 7 })
+    // And it goes back to answering nothing once the lease is released: a bridge that kept the
+    // released fence would write receipts under an authority this process no longer holds.
+    expect(hostInput.resolveClaimAuthority?.()).toBeUndefined()
+    // And the fold's committed candidates reach the capability the chain's third stage reads.
+    expect(
+      await hostInput.curateRun({ runId: RUN_ID, executionContext: 'local-headless' }),
+    ).toEqual({ curated: 2, deprecated: 0, complete: true, candidateIds: ['rec-a', 'rec-b'] })
   })
 })
 
