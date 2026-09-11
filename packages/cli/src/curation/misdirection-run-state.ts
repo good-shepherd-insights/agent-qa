@@ -55,6 +55,7 @@ import type { MisdirectionRecordResult } from '@vostride/agent-qa-schema'
 export const MISDIRECTION_POLICY_FILE = 'misdirection-policy.json'
 export const MISDIRECTION_RESERVATIONS_DIR = 'misdirection-reservations'
 export const MISDIRECTION_COMPLETIONS_DIR = 'misdirection-completions'
+export const MISDIRECTION_POSTURE_FILE = 'misdirection-posture.json'
 
 /**
  * The FULL identity one check is keyed by (D-18).
@@ -361,7 +362,17 @@ export function readMisdirectionRunState(runDir: string, runId: string): Misdire
 /**
  * The evaluation-root posture this run's arbiter last operated under (D-19).
  *
- * DECLARED, UNIMPLEMENTED (RED).
+ * WHY IT IS DURABLE AND NOT MERELY RETURNED. An absent evaluation root and a root that exists and
+ * cannot be read record the SAME thing on the handoff — an empty ledger — and mean opposite
+ * things: the first earns D-19's `declared-only` exemption, the second is an unbacked gated
+ * posture that has NOT earned it. A later reader of `handoff.json` sees one empty array, so the
+ * difference has to live somewhere it can actually be found. It also lets a retry re-state the
+ * posture without consulting the root a second time.
+ *
+ * LAST WRITE WINS, unlike the cap beside it, and the asymmetry is deliberate: a cap that moved
+ * would let a crash loop spend forever, while a posture that could not move would tell a fixed
+ * root it is still broken. The write is the analysis artifact's rename idiom for the same reason
+ * — a reader sees the whole old record or the whole new one.
  */
 export interface MisdirectionRunPostureRecord {
   readonly schemaVersion: 1
@@ -372,19 +383,45 @@ export interface MisdirectionRunPostureRecord {
   readonly reason?: string
 }
 
+const postureSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    runId: z.string().min(1),
+    kind: z.enum(['eval-root', 'no-eval-root', 'broken-eval-root']),
+    corpusDigest: z.string().min(1).optional(),
+    profileDigest: z.string().min(1).optional(),
+    reason: z.string().min(1).optional(),
+  })
+  .strict()
+
 export function readMisdirectionRunPosture(
-  _runDir: string,
-  _runId: string,
+  runDir: string,
+  runId: string,
 ): MisdirectionRunPostureRecord | undefined {
-  // DECLARED, UNIMPLEMENTED (RED).
-  return undefined
+  let text: string
+  try {
+    text = readFileSync(join(runDir, MISDIRECTION_POSTURE_FILE), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw new Error('misdirection root posture unavailable')
+  }
+  let parsed: MisdirectionRunPostureRecord
+  try {
+    parsed = postureSchema.parse(JSON.parse(text)) as MisdirectionRunPostureRecord
+  } catch {
+    throw new Error('misdirection root posture invalid')
+  }
+  if (parsed.runId !== runId) throw new Error('misdirection root posture identity mismatch')
+  return parsed
 }
 
 export function writeMisdirectionRunPosture(
-  _runDir: string,
-  _record: MisdirectionRunPostureRecord,
+  runDir: string,
+  record: MisdirectionRunPostureRecord,
 ): void {
-  // DECLARED, UNIMPLEMENTED (RED).
+  const value = postureSchema.parse(record) as MisdirectionRunPostureRecord
+  mkdirSync(runDir, { recursive: true })
+  replaceAtomically(join(runDir, MISDIRECTION_POSTURE_FILE), `${canonicalJson(value)}\n`)
 }
 
 /**
@@ -413,12 +450,17 @@ export function persistMisdirectionSidecar(
     throw new Error('completed run handoff is not an object')
   }
   const next = { ...(raw as Record<string, unknown>), misdirectionEvidence: value }
-  const dir = dirname(handoffPath)
-  const staged = join(dir, `.handoff.json.${randomUUID()}.tmp`)
+  replaceAtomically(handoffPath, `${JSON.stringify(next)}\n`)
+}
+
+/** Stage → fsync → rename → fsync dir: a reader sees the whole old document or the whole new one. */
+function replaceAtomically(path: string, text: string): void {
+  const dir = dirname(path)
+  const staged = join(dir, `.${randomUUID()}.tmp`)
   try {
-    writeFileSync(staged, `${JSON.stringify(next)}\n`, { encoding: 'utf8', mode: 0o600 })
+    writeFileSync(staged, text, { encoding: 'utf8', mode: 0o600 })
     fsyncPath(staged)
-    renameSync(staged, handoffPath)
+    renameSync(staged, path)
     fsyncPath(dir)
   } finally {
     rmSync(staged, { force: true })

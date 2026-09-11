@@ -60,13 +60,16 @@ import type {
 
 import {
   persistMisdirectionSidecar,
+  readMisdirectionRunPosture,
   readMisdirectionRunState,
   reserveMisdirectionCheck,
   saveCompletedMisdirectionCheck,
   writeMisdirectionRunPolicy,
+  writeMisdirectionRunPosture,
   misdirectionCheckKeyDigest,
   type MisdirectionCapSource,
   type MisdirectionCheckKey,
+  type MisdirectionRunPostureRecord,
 } from './misdirection-run-state.js'
 
 /**
@@ -282,12 +285,27 @@ export async function prepareMisdirectionEvidence(
   const handoffBaseDigest = misdirectionSourceDigest(handoff)
   const notices: string[] = []
 
+  // ═══ THE RETRY SHORT-CIRCUIT, BEFORE ANY ARBITER CALL AT ALL ═══
+  //
+  // A run whose published ledger already answers every exposure it owes is a run this pass has
+  // nothing to do for, and "nothing to do" has to mean NOTHING: not a root consultation, not a
+  // cassette extraction, not a provider call. Skipping only the provider call would still make a
+  // crash loop re-read the committed corpus and re-extract every target on every attempt, which
+  // is real work charged to the verdict's own clock.
+  //
+  // It is keyed on the EXPOSURE — `(perTest, stepIndex, recordId)` — and not on the record,
+  // because the ledger is. An exposure whose decision could not be located has no row, so such a
+  // run correctly falls through and tries again: the decision may be locatable now.
+  const recovered = recoverPublishedEvidence(input, runId, exposures)
+  if (recovered !== undefined) return recovered
+
   let posture: MisdirectionRootPostureRead
   try {
     posture = await input.arbiter.rootPosture()
   } catch (error) {
     posture = { kind: 'broken-eval-root', reason: errorText(error) }
   }
+  writeMisdirectionRunPosture(input.runDir, postureRecord(runId, posture))
 
   // D-19. An absent root earns the declared-only exemption; a present-but-broken root does not,
   // and both record an EMPTY ledger rather than an absent one — the arbiter ran, and said so.
@@ -456,6 +474,71 @@ export async function prepareMisdirectionEvidence(
 
   persistMisdirectionSidecar(input.handoffPath, rows)
   return { posture: 'eval-root', rows, persisted: true, cap, notices }
+}
+
+/** One exposure's identity on the LEDGER: the same key 422-11's aggregation folds by. */
+function exposureKey(row: { perTest: number; stepIndex: number; recordId: string }): string {
+  return `${String(row.perTest)}\u001f${String(row.stepIndex)}\u001f${row.recordId}`
+}
+
+function postureRecord(
+  runId: string,
+  posture: MisdirectionRootPostureRead,
+): MisdirectionRunPostureRecord {
+  if (posture.kind === 'eval-root') {
+    return {
+      schemaVersion: 1,
+      runId,
+      kind: 'eval-root',
+      corpusDigest: posture.corpusDigest,
+      profileDigest: posture.profileDigest,
+    }
+  }
+  return posture.kind === 'no-eval-root'
+    ? { schemaVersion: 1, runId, kind: 'no-eval-root' }
+    : { schemaVersion: 1, runId, kind: 'broken-eval-root', reason: posture.reason }
+}
+
+/**
+ * The already-answered pass: a published ledger plus a recorded posture that between them cover
+ * every exposure this run owes. Returns `undefined` when anything is still owed, so the ordinary
+ * path runs and pays only for what is missing.
+ */
+function recoverPublishedEvidence(
+  input: PrepareMisdirectionEvidenceInput,
+  runId: string,
+  exposures: readonly MisdirectionExposure[],
+): PrepareMisdirectionEvidenceResult | undefined {
+  const published = input.handoff.misdirectionEvidence
+  if (published === undefined) return undefined
+  const recordedPosture = readMisdirectionRunPosture(input.runDir, runId)
+  if (recordedPosture === undefined) return undefined
+  if (recordedPosture.kind !== 'eval-root') {
+    // A root-less pass owes an EMPTY ledger and nothing else, so a non-empty one is not this.
+    if (published.length > 0) return undefined
+    return {
+      posture: recordedPosture.kind,
+      rows: [],
+      ...(recordedPosture.kind === 'no-eval-root' ? { backing: 'declared-only' as const } : {}),
+      persisted: true,
+      notices:
+        recordedPosture.kind === 'no-eval-root'
+          ? [MISDIRECTION_NO_EVAL_ROOT]
+          : [`${MISDIRECTION_POSTURE_UNAVAILABLE}: ${recordedPosture.reason ?? 'unknown'}`],
+    }
+  }
+  const answered = new Set(published.map(exposureKey))
+  if (!exposures.every((exposure) => answered.has(exposureKey(exposure)))) return undefined
+  const policy = readMisdirectionRunState(input.runDir, runId).policy
+  return {
+    posture: 'eval-root',
+    rows: published,
+    persisted: true,
+    ...(policy === undefined
+      ? {}
+      : { cap: { maxChecks: policy.maxChecks, source: policy.source } }),
+    notices: [],
+  }
 }
 
 async function resolveDurableCap(
