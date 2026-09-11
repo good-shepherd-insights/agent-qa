@@ -28,8 +28,8 @@ import { createAgentJobsCommand } from '../commands/agent-jobs.js'
 import { listAgentJobs, pumpAgentJobs, requeueAgentJob } from '../composition/agent-jobs-ops.js'
 import type { AgentJobsOpsDeps } from '../composition/agent-jobs-ops.js'
 
-/** The Issue-slot kind retired in Phase 412 — spelled independently; no build still exports it. */
-const RETIRED_KIND = 'triage-issues'
+/** A kind no current vocabulary contains — the Phase 412 needle itself stays deleted (CLSR-01). */
+const RETIRED_KIND = 'retired-kind-fixture'
 
 /**
  * The store's file name, spelled here rather than imported.

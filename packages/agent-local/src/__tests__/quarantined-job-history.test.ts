@@ -33,8 +33,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { composeJobRecovery } from '../composition/compose-job-recovery.js'
 import { AGENT_JOB_STORE_DB_FILE } from '../store/sqlite-job-store.js'
 
-/** The Issue-slot kind retired in Phase 412 — spelled independently; no build still exports it. */
-const RETIRED_KIND = 'triage-issues'
+/** A kind no current vocabulary contains — the Phase 412 needle itself stays deleted (CLSR-01). */
+const RETIRED_KIND = 'retired-kind-fixture'
 
 /** The one kind these cells drain. Single checkpoint, no successors, so a drain is one row. */
 const VALID_KIND: JobKind = 'consolidate'

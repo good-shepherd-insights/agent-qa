@@ -2974,7 +2974,7 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
   it('names the family "eval" with explicit calibration and the existing corpus and gate verbs', () => {
     const cmd = createEvalCommand()
     expect(cmd.name()).toBe('eval')
-    const verbs = ['calibrate', 'extract', 'replay', 'seed', 'report', 'census', 'floor', 'gate', 'replay-gate']
+    const verbs = ['calibrate', 'extract', 'replay', 'seed', 'adversarial', 'report', 'census', 'floor', 'gate', 'replay-gate']
     expect(cmd.commands.map(sub => sub.name())).toEqual(verbs)
   })
 

@@ -279,7 +279,7 @@ describe('jobConclusionKind, the 422 D-16 vocabulary', () => {
   it('admits the unreadable-kind conclusion without admitting an unreadable kind', () => {
     expect(jobSchema.safeParse({ ...JOB, conclusionKind: 'unreadable_kind' }).success).toBe(true)
     expect(
-      jobSchema.safeParse({ ...JOB, kind: 'triage-issues', conclusionKind: 'unreadable_kind' })
+      jobSchema.safeParse({ ...JOB, kind: 'retired-kind-fixture', conclusionKind: 'unreadable_kind' })
         .success,
     ).toBe(false)
   })

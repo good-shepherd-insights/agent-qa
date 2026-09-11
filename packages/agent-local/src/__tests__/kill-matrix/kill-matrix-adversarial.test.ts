@@ -830,7 +830,7 @@ describe('a retired-kind row at the head of the FIFO (D-16, ADV-03)', () => {
   // The Issue-slot kind retired in Phase 412 (see DELETION-INVENTORY.md). Spelled independently
   // here rather than imported: it is precisely a kind no current vocabulary contains, so any
   // constant this build still exported for it would be the bug.
-  const RETIRED_KIND = 'triage-issues'
+  const RETIRED_KIND = 'retired-kind-fixture'
 
   // The FIXED, MASKED reason a quarantine records. Spelled out rather than imported for the same
   // reason the kind is: an assertion that read the production constant would agree with whatever
