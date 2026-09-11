@@ -2,8 +2,10 @@ import { sha256hex } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 import { canonicalJson } from '../canonical-json'
 import type { Cassette } from '../cassette/cassette'
+import type { CassetteModelReceipt } from '../cassette/receipt-leg'
+import type { BaselineProfileKeyInput } from '../baseline/profile-key'
 import { JUDGE_CONFIG } from '../judge/config'
-import { createPanelIdentity } from '../judge/panel'
+import { assessPanelEligibility, createPanelIdentity } from '../judge/panel'
 import { resolveJudgeFamilies, judgeFamiliesIntersect } from '../judge/family'
 import { effectiveGold } from '../labels/effective-gold'
 import type { StandaloneLabelRecord } from '../labels/label-record'
@@ -130,6 +132,39 @@ interface StoredScore {
   score: CassetteScore
   judge?: JudgeIdentityBlock
   scoringContext?: ScoringContext
+}
+
+/** Pure admission of honest identity absence; callers must separately guard all stored digests. */
+export function isUnjudgedPanelRefusal(input: {
+  record: Pick<StoredScore, 'judge' | 'score'>; profile: BaselineProfileKeyInput
+  recordedModel: CassetteModelReceipt; replayedModelId: string
+}): boolean {
+  const { record, profile, recordedModel, replayedModelId } = input
+  if (record.judge !== undefined || !profile.judgeModelId?.startsWith('panel:')
+    || profile.judgeVersion !== JUDGE_CONFIG.judgeVersion || record.score.kind !== 'leaf'
+    || record.score.entry.kind !== 'decision') return false
+  let memberModelIds: string[]
+  try { memberModelIds = profile.judgeModelId.slice('panel:'.length).split('+').map(decodeURIComponent) }
+  catch { return false }
+  if (memberModelIds.length < 2 || memberModelIds.length > JUDGE_CONFIG.maxPanelMembers
+    || new Set(memberModelIds).size !== memberModelIds.length
+    || createPanelIdentity(memberModelIds).judgeModelId !== profile.judgeModelId) return false
+  const recordedModelId = recordedModel.declared?.modelId ?? recordedModel.resolvedModelId
+  const eligibility = assessPanelEligibility({ memberModelIds, replayedModelId,
+    ...(recordedModelId === undefined ? {} : { recordedModelId }) })
+  if (eligibility.eligible || eligibility.reason !== 'no-eligible-judge') return false
+  const decision = record.score.entry.score
+  if ('judgeSettled' in decision) return false
+  if ('judgeOutcome' in decision && decision.judgeOutcome !== undefined) {
+    if (decision.judgeOutcome.kind !== 'not-invoked' || decision.judgeOutcome.reason !== 'no-eligible-judge') return false
+    const declaredIds = decision.judgeOutcome.families?.members?.map(member => member.judgeModelId)
+    if (!declaredIds || canonicalJson([...declaredIds].sort()) !== canonicalJson([...memberModelIds].sort())) return false
+    const declaredEligibility = assessPanelEligibility({ memberModelIds: declaredIds,
+      replayedModelId, ...(recordedModelId === undefined ? {} : { recordedModelId }) })
+    return !declaredEligibility.eligible && declaredEligibility.reason === 'no-eligible-judge'
+      && canonicalJson(decision.judgeOutcome.families) === canonicalJson(declaredEligibility.families)
+  }
+  return true
 }
 const hash = (value: unknown): string => sha256hex(canonicalJson(value))
 function inputsDigest(input: ScoringInputs): string {
