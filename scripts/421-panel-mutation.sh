@@ -109,6 +109,7 @@ function mutate(text, leg) {
 
 // Measured Vitest 4.1.5 / TypeScript 6.0.3 diagnostic text and source pointers.
 // Named independent test assertions are required in addition to these exact collateral hashes.
+// P19–P21 retain identical messages/counts; reviewed adjudication edits moved pointers +5 lines.
 const measured = {
   "P01": {
     "count": 2,
@@ -184,15 +185,15 @@ const measured = {
   },
   "P19": {
     "count": 5,
-    "digest": "90c46f33b7951083fb89feff66954bf712c4a180249111e5911501620da6b76a"
+    "digest": "45e0d28d3b8a6a7eef5bb2a688723912d5846af7d12598c2fa5202b750a05b31"
   },
   "P20": {
     "count": 11,
-    "digest": "2ebae97c60350f6732674fded5c00f1d6868291cf1a1a13235e4322532284ad2"
+    "digest": "b69961ae7a52618f6e4827e456e29334fd7aaa0ca8d589e338e4b0cff1bdb5e5"
   },
   "P21": {
     "count": 7,
-    "digest": "a1859330b32ecc877b59738b19d85ff7cbfefce153293bd6cfe1663c7f070da4"
+    "digest": "3a82a62583e962fbdbfa9b50cce58f1fc504b854939d80e490e16992e1a019df"
   },
   "P22": {
     "count": 12,
