@@ -99,6 +99,7 @@ import {
   listStagedAdversarial,
   loadAdversarialGuardrailPolicy,
   refreshAdversarialSplit,
+  resolveAdversarialSeedCap,
   stageAdversarialProposal,
   FEEDBACK_STAGING_SUBDIR,
   readCommittedCorpusDigest,
@@ -133,6 +134,7 @@ import {
 } from '@vostride/agent-qa-eval-local'
 import type {
   AdversarialRefusal,
+  AdversarialSeedCap,
   AdversarialStagingSkip,
   StageAdversarialProposalResult,
   StagedAdversarialCase,
@@ -219,6 +221,8 @@ export interface EvalCliConfig {
   seeding?: { silverPerTestCap?: number }
   gate1?: { maxScreens?: number }
   gate2?: NonNullable<AgentQaConfig['eval']>['gate2']
+  /** 422 D-04: the per-refresh novel-seed cap for `eval adversarial`. */
+  adversarial?: NonNullable<AgentQaConfig['eval']>['adversarial']
 }
 
 /** The one resolved session every eval verb consumes (D-05). */
@@ -1139,7 +1143,7 @@ export { ADVERSARIAL_EGRESS_CHANNEL, ADVERSARIAL_STAGING_SUBDIR }
 export type { AdversarialRefusal, AdversarialStagingSkip, StagedAdversarialCase }
 
 export interface AdversarialVerbResult {
-  kind: 'staged' | 'unchanged' | 'nothing-derived' | 'dry-run' | 'admitted' | 'refused'
+  kind: 'staged' | 'unchanged' | 'nothing-derived' | 'dry-run' | 'admitted' | 'partial' | 'refused'
   reason?: string
   product: string
   batchDigest?: string
@@ -1148,16 +1152,32 @@ export interface AdversarialVerbResult {
   staged: readonly StagedAdversarialCase[]
   /** Cases whose bytes actually landed in the committed root (admit branch). */
   admitted: readonly StagedAdversarialCase[]
+  /** Reviewed cases already committed byte-identically; these move no digest (D-04). */
+  unchanged: readonly StagedAdversarialCase[]
+  /** Reviewed members that have not landed — nonzero on a partial admission. */
+  remaining: readonly StagedAdversarialCase[]
   refusals: readonly AdversarialRefusal[]
+  /** Refusals a previous refresh settled under this policy; disclosed, never re-asserted. */
+  settledRefusals: StageAdversarialProposalResult['settledRefusals']
   stagingSkips: readonly AdversarialStagingSkip[]
   skips: StageAdversarialProposalResult['skips']
   seedsConsidered: number
   seedsDeferred: number
+  /** NOVEL eligible seeds, counted BEFORE the cap (D-04). */
+  eligibleSeeds: number
+  /** The resolved per-refresh seed cap and where it came from. */
+  cap: AdversarialSeedCap
   tableVersion?: number
   tableHash?: string
   previousCorpusDigest?: string
   nextCorpusDigest?: string
   writesStarted: boolean
+  /**
+   * The standing Gate-1/Gate-2 receipts this admission staled, derived from the digests that
+   * ACTUALLY moved and the receipts ACTUALLY stored — `null` only when the new digest could not
+   * be read at all. A Gate-3 receipt carries no corpus digest and is never invented stale.
+   */
+  staleReceipts: ReturnType<typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts> | null
   /** Admission stales standing receipts; the operator re-measures with this (415 D-12). */
   floorCommand: string
 }
@@ -1171,14 +1191,23 @@ export interface AdversarialVerbOptions {
   batch?: string
   dryRun?: boolean
   mutators?: readonly import('@vostride/agent-qa-eval').AdversarialMutator[]
+  /** `--max-seeds`; overrides `eval.adversarial.maxSeedsPerRefresh`, which overrides the default. */
   maxSeeds?: number
   /** Test seam for the loaded policy; production loads the host's. */
   policy?: import('@vostride/agent-qa-schema').GuardrailPolicy
   auditSink?: import('@vostride/agent-qa-safety-local').JsonlAuditSink
+  knowledgeRoot?: string
+  readStandingGateReceipts?: typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts
 }
 
 export function adversarialHostOptions(session: EvalSession) {
-  return { agentQaRoot: resolve(session.configDir, '.agent-qa') }
+  // The knowledge root and the receipt reader travel with the host so the admission can name
+  // what it staled — the same shape `feedbackSeedHostOptions` resolves for the feedback verb.
+  return {
+    agentQaRoot: resolve(session.configDir, '.agent-qa'),
+    knowledgeRoot: resolveKnowledgeRoot(session.config.knowledge, session.configDir),
+    readStandingGateReceipts: LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts,
+  }
 }
 
 export async function runAdversarialVerb(
@@ -1190,9 +1219,19 @@ export async function runAdversarialVerb(
   const stagingDir = join(opts.agentQaRoot, ADVERSARIAL_STAGING_SUBDIR, slugBranch(product))
   const configArg = `'${resolve(session.configPath).replaceAll("'", "'\"'\"'")}'`
   const floorCommand = `agent-qa --config ${configArg} eval floor`
+  // D-04: the cap resolves from the flag, then the host's config, then the recorded default —
+  // and says which, because a cap whose origin is invisible is a cap nobody can audit.
+  const cap = resolveAdversarialSeedCap(
+    opts.maxSeeds !== undefined
+      ? { value: opts.maxSeeds, source: 'flag' }
+      : session.evalConfig.adversarial?.maxSeedsPerRefresh !== undefined
+        ? { value: session.evalConfig.adversarial.maxSeedsPerRefresh, source: 'config' }
+        : {},
+  )
   const base: AdversarialVerbResult = {
-    kind: 'refused', product, stagingDir, staged: [], admitted: [], refusals: [], stagingSkips: [],
-    skips: [], seedsConsidered: 0, seedsDeferred: 0, writesStarted: false, floorCommand,
+    kind: 'refused', product, stagingDir, staged: [], admitted: [], unchanged: [], remaining: [],
+    refusals: [], settledRefusals: [], stagingSkips: [], skips: [], seedsConsidered: 0,
+    seedsDeferred: 0, eligibleSeeds: 0, cap, writesStarted: false, staleReceipts: [], floorCommand,
   }
   const digest = readCanaryCorpusDigest(session)
   if (digest.kind !== 'digest') {
@@ -1208,6 +1247,11 @@ export async function runAdversarialVerb(
     if (opts.batch === undefined) {
       return { ...base, kind: 'refused', reason: 'admit-requires-batch' }
     }
+    // Standing DATA is read BEFORE the operator's write, so "what did this admission stale"
+    // is answered against the receipts as they stood, not as the write left them.
+    const receipts = opts.knowledgeRoot !== undefined && opts.readStandingGateReceipts !== undefined
+      ? opts.readStandingGateReceipts({ knowledgeRoot: opts.knowledgeRoot })
+      : []
     const refreshed = refreshAdversarialSplit({
       agentQaRoot: opts.agentQaRoot,
       committedRoot,
@@ -1218,15 +1262,32 @@ export async function runAdversarialVerb(
       seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', 'adversarial'),
       ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
     })
+    // Derived, never assumed. A refusal that never started writing moved nothing, so it stales
+    // nothing — `null` is reserved for the one genuinely unknown case: writes began and the
+    // final digest could not be read. An unmoved digest stales nothing either, and a receipt
+    // pinned to some other corpus is not swept in. Gate 3 carries no corpus digest at all, so
+    // the filter can never reach it (D-12).
+    const moves = refreshed.nextCorpusDigest === undefined
+      ? refreshed.writesStarted
+        ? undefined
+        : false
+      : refreshed.nextCorpusDigest !== refreshed.previousCorpusDigest
     return {
       ...base,
       kind: refreshed.kind,
       ...(refreshed.reason === undefined ? {} : { reason: refreshed.reason }),
       batchDigest: refreshed.batchDigest,
       admitted: refreshed.admitted,
+      unchanged: refreshed.unchanged,
+      remaining: refreshed.remaining,
       refusals: refreshed.refusals,
       stagingSkips: refreshed.stagingSkips,
       writesStarted: refreshed.writesStarted,
+      staleReceipts: moves === undefined
+        ? null
+        : moves
+          ? receipts.filter(receipt => receipt.corpusDigest === refreshed.previousCorpusDigest)
+          : [],
       ...(refreshed.previousCorpusDigest === undefined ? {} : { previousCorpusDigest: refreshed.previousCorpusDigest }),
       ...(refreshed.nextCorpusDigest === undefined ? {} : { nextCorpusDigest: refreshed.nextCorpusDigest }),
     }
@@ -1239,7 +1300,9 @@ export async function runAdversarialVerb(
     policy,
     auditSink,
     ...(opts.mutators === undefined ? {} : { mutators: opts.mutators }),
-    ...(opts.maxSeeds === undefined ? {} : { maxSeeds: opts.maxSeeds }),
+    // Only a NON-default cap is pushed down: the composition owns the recorded default, and
+    // handing it back an unattributed value would have it record an operator choice nobody made.
+    ...(cap.source === 'default' ? {} : { maxSeeds: cap.value, maxSeedsSource: cap.source }),
     ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
   })
   return {
@@ -1248,13 +1311,18 @@ export async function runAdversarialVerb(
     ...(result.batchDigest === undefined ? {} : { batchDigest: result.batchDigest }),
     staged: result.staged,
     refusals: result.refusals,
+    settledRefusals: result.settledRefusals,
     stagingSkips: result.stagingSkips,
     skips: result.skips,
     seedsConsidered: result.seedsConsidered,
     seedsDeferred: result.seedsDeferred,
+    eligibleSeeds: result.eligibleSeeds,
+    cap: result.cap,
     tableVersion: result.tableVersion,
     tableHash: result.tableHash,
     previousCorpusDigest: digest.corpusDigest,
+    // Staging commits nothing, so nothing it does can stale a standing receipt.
+    staleReceipts: [],
   }
 }
 
@@ -2983,6 +3051,7 @@ function mergeEvalConfig(
     ...(k !== undefined ? { k } : {}),
     ...(seed !== undefined ? { seed } : {}),
     ...(fromConfig?.gate2 === undefined ? {} : { gate2: fromConfig.gate2 }),
+    ...(fromConfig?.adversarial === undefined ? {} : { adversarial: fromConfig.adversarial }),
     ...(silverPerTestCap !== undefined ? { seeding: { silverPerTestCap } } : {}),
     ...(fromConfig?.gate1 !== undefined
       ? { gate1: { ...(maxScreens === undefined ? {} : { maxScreens }) } } : {}),

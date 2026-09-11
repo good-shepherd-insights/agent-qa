@@ -62,14 +62,22 @@ function renderAdversarialSummary(result: AdversarialVerbResult): void {
   for (const row of result.admitted) {
     console.log(`admitted ${row.cassetteId} ${row.mutator}/${row.kind} from ${row.seedCassetteId}`)
   }
+  // Four counts, four lines: an unchanged member moved no digest and a remaining one has not
+  // landed, and folding either into "admitted" is how a partial admission reads as a whole one.
+  for (const row of result.unchanged) console.log(`unchanged ${row.cassetteId} (already committed byte-identically)`)
+  for (const row of result.remaining) console.log(`remaining ${row.cassetteId} (reviewed, not yet committed)`)
   for (const refusal of result.refusals) {
     console.log(`refused ${refusal.cassetteId}: ${refusal.detector} ${refusal.action} (seed ${refusal.seedCassetteId})`)
+  }
+  for (const row of result.settledRefusals) {
+    console.log(`settled refusal ${row.seedCassetteId} ${row.mutator}: ${row.detector ?? 'policy'} (decided by an earlier refresh)`)
   }
   for (const skip of result.stagingSkips) console.log(`skipped ${skip.cassetteId}: ${skip.reason}`)
   const seedSkips = result.skips.reduce<Record<string, number>>((counts, skip) => {
     counts[skip.reason] = (counts[skip.reason] ?? 0) + 1
     return counts
   }, {})
+  console.log(`seed cap ${result.cap.value} (${result.cap.source}); eligible ${result.eligibleSeeds}`)
   console.log(`seeds considered ${result.seedsConsidered}, deferred ${result.seedsDeferred}, skips ${renderCounters(seedSkips)}`)
   if (result.batchDigest !== undefined) {
     console.log(`batch ${result.batchDigest}`)
@@ -80,7 +88,21 @@ function renderAdversarialSummary(result: AdversarialVerbResult): void {
   if (result.previousCorpusDigest !== undefined) {
     console.log(`corpus digest ${result.previousCorpusDigest} → ${result.nextCorpusDigest ?? 'unchanged'}`)
   }
-  if (result.admitted.length > 0) console.log(`re-measure the floor: ${result.floorCommand}`)
+  if (result.admitted.length > 0) {
+    // Disclosure, never repair: admission names the standing measurements its digest move
+    // invalidated and hands back the command. It rewrites no floor and re-points no baseline —
+    // silently re-measuring against the corpus the operator just changed would destroy the only
+    // evidence the change mattered (415 D-12).
+    console.log(`standing receipts that will read receipt-stale: ${result.staleReceipts === null ? 'unknown (final corpus digest unavailable)' : result.staleReceipts.length}`)
+    for (const receipt of result.staleReceipts ?? []) {
+      console.log(`${receipt.candidateId} gate ${receipt.gate} ${receipt.verdict}`)
+    }
+    console.log('the noise floor and any designated baseline were measured against the previous digest; neither is rewritten here')
+    console.log(`re-measure the floor: ${result.floorCommand}`)
+  }
+  if (result.remaining.length > 0 && result.writesStarted) {
+    console.log(`Writes began and ${result.remaining.length} reviewed case(s) did not land. The reviewed batch is still at ${result.stagingDir}/${result.batchDigest ?? ''}. Resolve the reported issue, then re-run: eval adversarial --admit --batch ${result.batchDigest ?? '<digest>'}`)
+  }
 }
 
 /** Typed integer flag parser (D-08): a non-integer `--k`/`--seed` is a loud invalid-value error. */
@@ -769,11 +791,16 @@ export function createEvalCommand(): Command {
       .option('--admit', 'commit the reviewed batch; requires --batch <digest>')
       .option('--batch <digest>', 'the exact reviewed batch digest to admit')
       .option('--product <slug>', 'product partition to derive from (default: default)')
+      .option(
+        '--max-seeds <count>',
+        'cap on NOVEL seeds this refresh derives from; overrides eval.adversarial.maxSeedsPerRefresh (422 D-04)',
+        parseIntegerFlag('--max-seeds'),
+      )
       .option('--dry-run', 'derive and check without writing anything')
       .option('--json', 'emit the typed result DTO to stdout')
       .action(
         async (
-          opts: { admit?: boolean; batch?: string; product?: string; dryRun?: boolean; json?: boolean },
+          opts: { admit?: boolean; batch?: string; product?: string; maxSeeds?: number; dryRun?: boolean; json?: boolean },
           command: Command,
         ) => {
           try {
@@ -783,6 +810,15 @@ export function createEvalCommand(): Command {
             }
             if (opts.admit === true && opts.batch === undefined) {
               throw new TypeError('--admit requires --batch <digest>; admission never picks a batch for you')
+            }
+            // Admission commits an already-reviewed manifest and never derives, so a seed cap
+            // there would be a cap on nothing — a silently ignored flag, which is worse than a
+            // refused one.
+            if (opts.maxSeeds !== undefined && opts.admit === true) {
+              throw new TypeError('--max-seeds applies to staging only; admission derives nothing')
+            }
+            if (opts.maxSeeds !== undefined && opts.maxSeeds < 1) {
+              throw new TypeError(`--max-seeds must be a positive integer, got "${opts.maxSeeds}".`)
             }
             const configPath = getGlobalConfigPath(command)
             const { resolveEvalSession, runAdversarialVerb, adversarialHostOptions } = await import(
@@ -798,6 +834,7 @@ export function createEvalCommand(): Command {
               ...(opts.product === undefined ? {} : { product: opts.product }),
               ...(opts.admit === undefined ? {} : { admit: opts.admit }),
               ...(opts.batch === undefined ? {} : { batch: opts.batch }),
+              ...(opts.maxSeeds === undefined ? {} : { maxSeeds: opts.maxSeeds }),
               ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
             })
             if (opts.json) console.log(JSON.stringify(result, null, 2))

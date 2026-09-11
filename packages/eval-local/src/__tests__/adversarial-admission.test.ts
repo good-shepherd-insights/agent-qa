@@ -240,28 +240,41 @@ describe('422 adversarial admission — fixed batch, recoverable commit', () => 
   })
 
   it('refuses a committed id whose bytes differ, overwriting no history and moving no digest', () => {
-    const f = fixture(1)
+    const f = fixture(2)
     const staged = stage(f)
-    const derivedId = staged.staged[0]!.cassetteId
     const batch = staged.batchDigest!
 
-    // Someone already committed THIS id with other bytes. Admission must not decide which of
-    // the two is right — it must refuse and leave the committed record alone.
-    const file = join(f.committedRoot, committedCassettePath('default', derivedId))
-    const foreign = committedFileText({ schemaVersion: 1, id: derivedId, note: 'not the reviewed bytes' })
-    mkdirSync(join(file, '..'), { recursive: true })
+    // Land exactly one case, then let its committed bytes drift — a hand edit, or a case
+    // committed under some other generator. The id is the same; the bytes are not.
+    let committed = 0
+    const partial = admit(f, batch, {
+      afterCaseCommitted: () => {
+        committed += 1
+        if (committed === 1) throw new Error('injected IO interruption')
+      },
+    })
+    const drifted = partial.admitted[0]!.cassetteId
+    const file = join(f.committedRoot, committedCassettePath('default', drifted))
+    const document = JSON.parse(readFileSync(file, 'utf8')) as { input: { stateBefore: { url: string } } }
+    document.input.stateBefore.url = 'https://example.test/edited-after-commit'
+    const foreign = committedFileText(document)
     writeFileSync(file, foreign)
     const before = corpusDigest(f.committedRoot)
 
-    const refused = admit(f, batch)
+    const retried = admit(f, batch)
 
-    expect(refused.kind).toBe('refused')
-    expect(refused.admitted).toEqual([])
-    expect(refused.unchanged).toEqual([])
-    expect(refused.stagingSkips).toMatchObject([{ cassetteId: derivedId, reason: 'committed-conflict' }])
+    // Admission does not get to decide which of two versions of one id is right.
+    expect(retried.stagingSkips).toMatchObject([{ cassetteId: drifted, reason: 'committed-conflict' }])
+    expect(retried.unchanged).toEqual([])
+    expect(retried.admitted.map(row => row.cassetteId)).not.toContain(drifted)
     expect(readFileSync(file, 'utf8')).toBe(foreign)
-    expect(corpusDigest(f.committedRoot)).toBe(before)
-    expect(refused.nextCorpusDigest).toBe(before)
+    // The conflicting member never lands, so the batch is neither complete nor retired.
+    expect(retried.kind).toBe('partial')
+    expect(retried.remaining.map(row => row.cassetteId)).toEqual([drifted])
+    expect(listStagedAdversarial({ agentQaRoot: f.agentQaRoot, product: 'default' })).toHaveLength(1)
+    // The OTHER case still landed, so the digest moves for it and only for it.
+    expect(corpusDigest(f.committedRoot)).not.toBe(before)
+    expect(retried.nextCorpusDigest).toBe(corpusDigest(f.committedRoot))
   })
 
   it('leaves the digest stable for an absent batch and for one already fully committed', () => {

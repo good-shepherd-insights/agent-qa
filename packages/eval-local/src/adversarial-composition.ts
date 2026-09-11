@@ -214,6 +214,8 @@ export interface AdversarialStagingSkip {
     | 'path-identity-mismatch'
     | 'seed-label-unavailable'
     | 'seed-provenance-mismatch'
+    /** This id is already committed with DIFFERENT bytes. History wins; nothing is overwritten. */
+    | 'committed-conflict'
 }
 
 export interface StageAdversarialProposalInput {
@@ -300,20 +302,51 @@ export interface RefreshAdversarialSplitInput {
   auditSink?: AuditSink
   seedingOutputBaseDir: string
   dryRun?: boolean
+  /**
+   * Runs after ONE case's bytes have landed and been byte-verified.
+   *
+   * An observation and fault-injection seam. Admission is the only place in this composition
+   * where an interruption can leave the committed root part-way through a reviewed batch, and
+   * "a case that landed stays landed" is not a claim anything could check without a way to
+   * interrupt it between cases. A throw here is treated exactly like a real IO failure.
+   */
+  afterCaseCommitted?: (cassetteId: string) => void
 }
 
-export interface RefreshAdversarialSplitResult {
-  kind: 'admitted' | 'dry-run' | 'refused'
-  reason?: 'batch-not-found' | 'staging-integrity' | 'corpus-unavailable' | 'admission-refused'
+/**
+ * The outcome of ONE operator admission (D-01..D-04).
+ *
+ * Four counts, deliberately not three. `admitted` are cases whose bytes this run committed;
+ * `unchanged` are reviewed cases already present BYTE-IDENTICALLY, which move no digest and
+ * must not be double-counted as admissions; `refusals` are policy blocks; `remaining` are
+ * reviewed members that have not landed — the number that makes a partial admission legible
+ * as one. Collapsing any pair of them is how an interrupted run comes to read as a complete one.
+ */
+export interface AdversarialAdmissionResult {
+  kind: 'admitted' | 'partial' | 'dry-run' | 'refused'
+  reason?:
+    | 'batch-not-found'
+    | 'staging-integrity'
+    | 'corpus-unavailable'
+    | 'admission-refused'
+    | 'admission-interrupted'
   product: string
   batchDigest: string
+  /** Cases whose bytes THIS run committed. */
   admitted: readonly StagedAdversarialCase[]
+  /** Reviewed cases already committed byte-identically; the digest does not move for these. */
+  unchanged: readonly StagedAdversarialCase[]
   refusals: readonly AdversarialRefusal[]
+  /** Reviewed members that have not landed — zero on a complete admission. */
+  remaining: readonly StagedAdversarialCase[]
   stagingSkips: readonly AdversarialStagingSkip[]
   previousCorpusDigest?: string
   nextCorpusDigest?: string
   writesStarted: boolean
 }
+
+/** 422-01's spelling of the same result, retained for its existing callers. */
+export type RefreshAdversarialSplitResult = AdversarialAdmissionResult
 
 // ---------------------------------------------------------------------------
 // Guarded local IO (the gate2 staging posture, verbatim in spirit).
@@ -962,7 +995,9 @@ export function refreshAdversarialSplit(
     product: input.product,
     batchDigest: input.batchDigest,
     admitted: [] as StagedAdversarialCase[],
+    unchanged: [] as StagedAdversarialCase[],
     refusals: [] as AdversarialRefusal[],
+    remaining: [] as StagedAdversarialCase[],
     stagingSkips: [] as AdversarialStagingSkip[],
     writesStarted: false,
   }
@@ -1001,6 +1036,7 @@ export function refreshAdversarialSplit(
 
   const refusals: AdversarialRefusal[] = []
   const stagingSkips: AdversarialStagingSkip[] = []
+  const unchanged: StagedAdversarialCase[] = []
   const admissible: {
     manifestCase: AdversarialBatchManifestCase
     cassette: LeafCassette
@@ -1082,6 +1118,24 @@ export function refreshAdversarialSplit(
       })
       continue
     }
+    // D-04/D-08 against what is ALREADY committed. Three cases, and only the third is work:
+    // byte-identical is `unchanged` (an interrupted run's survivor, or a duplicate admission —
+    // the digest does not move for it); conflicting bytes are refused, because deciding which
+    // of two versions of one id is right is not an admission's call and history wins; absent
+    // is the case this run commits.
+    const present = committedState(input.committedRoot, input.product, staged.manifest.cassetteId, staged.texts)
+    if (present === 'conflict') {
+      stagingSkips.push({
+        cassetteId: staged.manifest.cassetteId,
+        seedCassetteId: staged.manifest.seedCassetteId,
+        reason: 'committed-conflict',
+      })
+      continue
+    }
+    if (present === 'identical') {
+      unchanged.push(stagedCaseOf(staged.manifest))
+      continue
+    }
     admissible.push({
       manifestCase: staged.manifest,
       cassette: staged.cassette,
@@ -1092,25 +1146,51 @@ export function refreshAdversarialSplit(
     })
   }
 
-  const result: RefreshAdversarialSplitResult = {
+  const result: AdversarialAdmissionResult = {
     ...base,
     kind: 'admitted',
+    unchanged,
     refusals,
     stagingSkips,
     previousCorpusDigest: previous.corpusDigest,
   }
+  const reviewed = batch.cases.map(row => stagedCaseOf(row.manifest))
+  const notLanded = (landed: readonly StagedAdversarialCase[]): StagedAdversarialCase[] => {
+    const done = new Set(landed.map(row => row.cassetteId))
+    return reviewed.filter(row => !done.has(row.cassetteId))
+  }
+
   if (input.dryRun === true) {
+    // A preview reports what WOULD be committed and what is already there, and writes nothing.
     return {
       ...result,
       kind: 'dry-run',
       admitted: admissible.map(row => stagedCaseOf(row.manifestCase)),
+      remaining: notLanded([...unchanged, ...admissible.map(row => stagedCaseOf(row.manifestCase))]),
     }
   }
   if (admissible.length === 0) {
-    return { ...result, kind: 'refused', reason: 'admission-refused', nextCorpusDigest: previous.corpusDigest }
+    // Nothing to write. Already-complete is an ADMISSION whose digest simply does not move;
+    // nothing admissible and nothing unchanged is a refusal.
+    const complete = unchanged.length === reviewed.length && reviewed.length > 0
+    if (complete) retireBatch(batch.dir)
+    return {
+      ...result,
+      kind: complete ? 'admitted' : 'refused',
+      ...(complete ? {} : { reason: 'admission-refused' as const }),
+      remaining: notLanded(unchanged),
+      nextCorpusDigest: previous.corpusDigest,
+    }
   }
 
-  const batches = admissible.map(row => {
+  // Commit ONE case at a time. The batch was preflighted in full above, so every case reached
+  // here was already judged admissible — which is what makes stopping between them safe: an
+  // interruption leaves committed bytes that a retry recognises as `unchanged`, never a
+  // half-written case and never a case nobody checked.
+  const admitted: StagedAdversarialCase[] = []
+  let interrupted = false
+  result.writesStarted = true
+  for (const row of admissible) {
     const runId = row.corpusEntry.run_links.runId
     const plan: SeedingPlan = {
       product: input.product,
@@ -1129,49 +1209,31 @@ export function refreshAdversarialSplit(
       proceduresExcludedCount: 0,
     }
     const cassettes: ExtractedCassette[] = [{ cassette: row.cassette, blobs: row.blobs }]
-    return { plan, cassettes }
-  })
-
-  const admitted: StagedAdversarialCase[] = []
-  let seeded: SeedingBatchReport | undefined
-  result.writesStarted = true
-  try {
-    seeded = seedCommittedCorpus({
-      batches,
-      committedRoot: input.committedRoot,
-      seedingOutputBaseDir: input.seedingOutputBaseDir,
-      policy: input.policy,
-      ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }),
-    })
-  } catch {
-    seeded = undefined
-  }
-  for (const [index, row] of admissible.entries()) {
-    const report = seeded?.reports[index]
+    let report: SeedingBatchReport['reports'][number] | undefined
+    try {
+      report = seedCommittedCorpus({
+        batches: [{ plan, cassettes }],
+        committedRoot: input.committedRoot,
+        seedingOutputBaseDir: input.seedingOutputBaseDir,
+        policy: input.policy,
+        ...(input.auditSink === undefined ? {} : { auditSink: input.auditSink }),
+      }).reports[0]
+    } catch {
+      report = undefined
+    }
     if (report === undefined || report.refusals.length > 0) {
       stagingSkips.push({
         cassetteId: row.cassette.id,
         seedCassetteId: row.manifestCase.seedCassetteId,
-        reason: 'text-hash-mismatch',
+        reason: report?.refusals.some(refusal => refusal.kind === 'write-conflict') === true
+          ? 'committed-conflict'
+          : 'text-hash-mismatch',
       })
       continue
     }
     // Neither aggregate counts nor the absence of an exception is evidence: verify the bytes.
-    let verified = false
-    try {
-      verified =
-        readFileSync(join(input.committedRoot, committedCassettePath(input.product, row.cassette.id)), 'utf8') === row.texts.cassette &&
-        readFileSync(join(input.committedRoot, committedLabelPath(input.product, row.cassette.id)), 'utf8') === row.texts.label &&
-        readFileSync(join(input.committedRoot, committedCorpusPath(input.product, row.cassette.id)), 'utf8') === row.texts.entry &&
-        row.blobs.every(blob =>
-          readFileSync(join(input.committedRoot, committedBlobPath(input.product, row.cassette.id, blob.sha))).equals(
-            Buffer.from(blob.bytes),
-          ),
-        )
-    } catch {
-      verified = false
-    }
-    if (!verified) {
+    if (committedState(input.committedRoot, input.product, row.cassette.id, row.texts) !== 'identical'
+      || !blobsCommitted(input.committedRoot, input.product, row.cassette.id, row.blobs)) {
       stagingSkips.push({
         cassetteId: row.cassette.id,
         seedCassetteId: row.manifestCase.seedCassetteId,
@@ -1180,28 +1242,101 @@ export function refreshAdversarialSplit(
       continue
     }
     admitted.push(stagedCaseOf(row.manifestCase))
-  }
-
-  // Retire the staged batch only when every reviewed case actually landed; a partial batch
-  // stays on disk so the operator can see what did not.
-  if (admitted.length === batch.cases.length) {
     try {
-      rmSync(batch.dir, { recursive: true })
+      input.afterCaseCommitted?.(row.cassette.id)
     } catch {
-      // Cleanup failure is not un-admission; the bytes are verified in the committed root.
+      // A real interruption at exactly this point: the case above is committed and stays so.
+      interrupted = true
+      break
     }
   }
 
+  const landed = [...admitted, ...unchanged]
+  const remaining = notLanded(landed)
+  // Retire the reviewed batch only when every member landed AND this run finished its own
+  // bookkeeping. A partial batch — or one whose run was interrupted after the last case —
+  // stays on disk so the operator resumes THAT manifest rather than deriving a different one.
+  const complete = remaining.length === 0 && !interrupted
+  if (complete) retireBatch(batch.dir)
+
   const next = readCommittedCorpusDigest({ committedRoot: input.committedRoot })
+  const kind: AdversarialAdmissionResult['kind'] =
+    complete ? 'admitted' : admitted.length > 0 ? 'partial' : 'refused'
   return {
     ...result,
-    kind: admitted.length === 0 ? 'refused' : 'admitted',
-    ...(admitted.length === 0 ? { reason: 'admission-refused' as const } : {}),
+    kind,
+    // An interruption and a refusal are different facts about an incomplete batch: one stopped,
+    // the other was told no. Reporting either as the other misdirects the operator's next move.
+    ...(complete
+      ? {}
+      : { reason: interrupted ? ('admission-interrupted' as const) : ('admission-refused' as const) }),
     admitted,
+    unchanged,
     refusals,
+    remaining,
     stagingSkips,
     writesStarted: true,
     ...(next.kind === 'digest' ? { nextCorpusDigest: next.corpusDigest } : {}),
+  }
+}
+
+/**
+ * Whether this id is ALREADY committed, and whether its bytes are the reviewed ones.
+ *
+ * `absent` only when all three documents are missing: a root holding one of them is a partial
+ * write, not an empty slot, and calling it absent would let an admission write over the rest.
+ */
+function committedState(
+  committedRoot: string,
+  product: string,
+  cassetteId: string,
+  texts: { cassette: string; label: string; entry: string },
+): 'absent' | 'identical' | 'conflict' {
+  const files: [string, string][] = [
+    [join(committedRoot, committedCassettePath(product, cassetteId)), texts.cassette],
+    [join(committedRoot, committedLabelPath(product, cassetteId)), texts.label],
+    [join(committedRoot, committedCorpusPath(product, cassetteId)), texts.entry],
+  ]
+  let present = 0
+  let equal = 0
+  for (const [file, expected] of files) {
+    let actual: string
+    try {
+      actual = readFileSync(file, 'utf8')
+    } catch {
+      continue
+    }
+    present += 1
+    if (actual === expected) equal += 1
+  }
+  if (present === 0) return 'absent'
+  return equal === files.length ? 'identical' : 'conflict'
+}
+
+/** The derived cassette's own committed blob closure, byte-compared. */
+function blobsCommitted(
+  committedRoot: string,
+  product: string,
+  cassetteId: string,
+  blobs: readonly ExtractedBlob[],
+): boolean {
+  try {
+    return blobs.every(blob =>
+      readFileSync(join(committedRoot, committedBlobPath(product, cassetteId, blob.sha))).equals(
+        Buffer.from(blob.bytes),
+      ),
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Cleanup is not un-admission: the bytes are already verified in the committed root. */
+function retireBatch(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true })
+  } catch {
+    // A staging directory that cannot be removed is an operator annoyance, not a failed admission.
   }
 }
 
