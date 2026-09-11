@@ -54,6 +54,13 @@ import { analyticsRunId } from '@vostride/agent-qa-analytics'
 
 import { analyticsEvent } from '../composition/analytics-host.js'
 import type { CliAnalyticsHost } from '../composition/analytics-host.js'
+// 422-09: the ONE proposal-capability builder, shared with the terminal host. Imported rather
+// than restated — the whole point of the shared builder is that there is nowhere for the two
+// hosts to disagree.
+import {
+  proposalStageCapabilities,
+  resolveProposeGate1MaxPerJob,
+} from '../composition/local-agent-host.js'
 import { createShutdownController } from '../commands/shutdown-controller.js'
 import {
   completedRunDir,
@@ -2222,8 +2229,49 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           // WR-03 / D-01: the same three fields the CLI binding returns — but the two
           // bindings are NOT equivalent, and the reason is declared one field above: only a
           // leg folding with a masker active may claim the kind that runs the same per-run fold.
-          return { curated: folded.curated, deprecated: folded.deprecated, complete: folded.complete }
+          //
+          // 422 D-13: and the committed receipt's candidates, spread on presence exactly as the
+          // terminal spreads them. A fold that wrote no receipt forwards NO field — never an
+          // empty list, which would tell the third stage there were none.
+          return {
+            curated: folded.curated,
+            deprecated: folded.deprecated,
+            complete: folded.complete,
+            ...(folded.candidateIds === undefined ? {} : { candidateIds: folded.candidateIds }),
+          }
         },
+        // 422-09 (D-01/D-13/D-14): THE SAME BUILDER THE TERMINAL COMPOSES FROM, called here so
+        // the two hosts cannot drift. A capability bound on one and forgotten on the other is a
+        // behavioural split between two ways of running the same product over one queue — which
+        // is exactly the shape 422-08's window recorded, with all three production hosts named.
+        //
+        // `resolveClaimAuthority` is the SAME `daemonWriterAuthority` closure the drain step
+        // reads, and it is a closure for the reason the terminal's is: the Gate-1 bridge resolves
+        // it at the claim, so the lease this daemon is actually holding is the one the receipt is
+        // written under. This process holds the lease already, so the borrowed path acquires
+        // nothing and releases nothing — a holder that re-acquires is told `held` by itself, and
+        // one that released would end its own authority mid-drain.
+        //
+        // CONDITIONAL ON `configPath`, on the `draftAuthoring`/`draftApply` idiom below: a legacy
+        // daemon with no configuration has no eval root by construction (see the trust-prior
+        // validation at startup), and inventing a path for it would compose a screening leg that
+        // can only ever answer `posture-unavailable`. A host that bound no gate did not screen —
+        // and saying so by binding nothing is the same absence the handler already reads.
+        ...(input.configPath === undefined
+          ? {}
+          : {
+              ...proposalStageCapabilities({
+                configPath: input.configPath,
+                agentQaRoot: input.agentQaRoot,
+                resolveKnowledgeRoot: () => input.knowledgeRoot,
+                ...(resolveTrustPriors === undefined ? {} : { resolveTrustPriors }),
+                // The SAME resolver the composition's own `resolvePromotionPosture` binds below,
+                // passed by reference rather than wrapped: one memoised preparation per host.
+                resolvePromotionPosture: resolveHostPromotionPosture,
+                resolveClaimAuthority: () => daemonWriterAuthority,
+              }),
+              proposeGate1MaxPerJob: () => resolveProposeGate1MaxPerJob(input.configPath!),
+            }),
       },
       ...(runExecution === undefined ? {} : { runExecution }),
       // 393 D-01 / 385 D-15: the SAME keep-gate binding the CLI composes, because both hosts
