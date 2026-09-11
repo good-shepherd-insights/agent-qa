@@ -186,7 +186,7 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
   expect(fresh.disclosure.digest).toBe(publication.artifact.generationId)
   for (const mode of ['done', 'failed', 'partial', 'handed-off'] as const) {
     const info = vi.fn()
-    const notification = { schemaVersion: 2, runId: f.handoff.runId, outcome: mode === 'failed' ? 'failed' : 'done',
+    const notification = { schemaVersion: 3, runId: f.handoff.runId, outcome: mode === 'failed' ? 'failed' : 'done',
       verdictSummary: { total: 1, byClass: { app_bug: 1 } },
       stages: { analysis: { status: 'done' }, curation: { status: mode === 'failed' ? 'failed' : 'done', curated: 2, deprecated: 1 } } } as RunNotification
     const operations = {

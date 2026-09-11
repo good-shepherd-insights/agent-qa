@@ -661,6 +661,11 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         const ownChainJobIds = [
           String(chainIds.analyzeRun),
           String(chainIds.curateMemory),
+          // 422 D-13. Listed for the own-chain tracker rather than for the chips: the proposal
+          // stage has no chip (`STAGE_CHIPS` maps only the two), so the emitter's drop-guard
+          // admits its outcome and then finds nothing to draw. Omitting the id would instead
+          // have made this tail's own third stage read as another run's work.
+          String(chainIds.proposeImprovements),
         ]
         /**
          * The ONLY construction site (D-13).

@@ -1907,6 +1907,17 @@ export interface ComposeLocalAgentInput {
      * `CandidateProsePosture` for what each member does and does not certify.
      */
     readonly candidateProse: CandidateProsePosture
+    /**
+     * The 422 D-13 proposal stage's staging port, passed straight through.
+     *
+     * OPTIONAL beside a REQUIRED `curateRun`, and the asymmetry is the contract: without
+     * `curateRun` there is no real fold and therefore no real chain, whereas a host that binds
+     * no staging port still runs the third stage — it stages nothing, records no counts, and
+     * the terminal says exactly that. Passed through rather than built here for the same reason
+     * `curateRun` is: the adversarial staging is not a local concern, and this package may not
+     * name the seam it lives behind.
+     */
+    readonly stageAdversarialProposal?: PostRunJobCapabilities['stageAdversarialProposal']
   }
   /**
    * D-01's TokenAccounting substrate for the analyze-run author (389 plan 06). OPTIONAL
@@ -2456,6 +2467,13 @@ export function postRunCapabilities(
         join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(runId), HANDOFF_FILE),
       ),
     curateRun: postRun.curateRun,
+    // 422 D-13: spread on the conditional idiom this file uses throughout, so an unbound port
+    // is an ABSENT member rather than a present `undefined` — the handler decides on presence,
+    // in one place, and a host that declined to bind cannot be mistaken for one that bound a
+    // hole.
+    ...(postRun.stageAdversarialProposal === undefined
+      ? {}
+      : { stageAdversarialProposal: postRun.stageAdversarialProposal }),
     // 389 D-09: the artifact's path is DERIVED from the artifact's own runId through the
     // same `runs/<slug>/` law as the handoff read above — `slugBranch` is the traversal
     // guard (T-389-01), and a job payload never carries a path.
