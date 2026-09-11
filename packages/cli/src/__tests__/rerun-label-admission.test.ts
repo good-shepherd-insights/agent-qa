@@ -36,6 +36,10 @@ function fixture(existingOriginal = true) {
   const committedRoot = join(f.root, 'agent-qa-eval')
   const artifacts = new FsRunArtifactSource({ root: f.agentQaRoot, runId: f.handoff.runId })
   const evidence = structuredClone(member.steps[0]!)
+  // 422-12: extraction now projects the member's recorded root cause onto the cassette label, so
+  // the ORIGINAL cassette must be extracted from a handoff carrying the ORIGINAL attempt's
+  // verdict — the one `rerunOrigin.rootCause` preserves below — never the rerun's final class.
+  member.rootCause = verdict('environment', 0)
   const originalExtraction = extractRunCassettes({ handoff: f.handoff, artifacts }).cassettes
   const original = originalExtraction.find(row => row.cassette.granularity === 'leaf')!.cassette
   if (original.granularity !== 'leaf') throw new Error('fixture leaf missing')
