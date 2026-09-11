@@ -36,8 +36,8 @@ import {
   assessPanelEligibility, resolveJudgeFamilies,
   resolveReplayProfileDeclaration, selectedEvalJudgeNames,
   type AuthoringModel, type EvalSession,
-  type JudgeCalibrationEntryDiagnostic, type JudgeCalibrationGapReason,
-  type ModelProfile, type ResolvedModelAuth,
+  type JudgeCalibrationEntryDiagnostic,
+  type ModelProfile, type NoProbeModelGap, type NoProbeModelReason, type ResolvedModelAuth,
 } from './eval-session-composition.js'
 import {
   resolveNamedConfig, resolveModelAuth, toModelProfileAndAuth,
@@ -71,8 +71,15 @@ interface ProbePreflightCommon {
   entries: readonly JudgeCalibrationEntryDiagnostic[]
 }
 
+/**
+ * The gap arm IS the neutral DTO, widened with this host's masked diagnostics.
+ *
+ * Spelled as an intersection rather than as a lookalike shape so the two cannot drift: what a
+ * job checkpoint, a staging report and a chain line carry is exactly `NoProbeModelGap`, and the
+ * diagnostics beside it are the host's own disclosure, which never crosses into eval-local.
+ */
 export type AdversarialProbeCapability =
-  | (ProbePreflightCommon & { kind: 'no-probe-model'; reason: JudgeCalibrationGapReason })
+  | (ProbePreflightCommon & NoProbeModelGap)
   | (ProbePreflightCommon & { kind: 'probe-author'; author: AdversarialProbeAuthorSelection })
 
 interface PreflightRow {
@@ -171,7 +178,7 @@ export async function resolveAdversarialProbeCapability(
       name: masker.mask(diagnostic.name),
       ...(diagnostic.modelId === undefined ? {} : { modelId: masker.mask(diagnostic.modelId) }),
     }))
-    const gap = (reason: JudgeCalibrationGapReason): AdversarialProbeCapability =>
+    const gap = (reason: NoProbeModelReason): AdversarialProbeCapability =>
       ({ kind: 'no-probe-model', reason, entries })
 
     // Precedence, and it is ordered from the most general cause to the most specific: nothing

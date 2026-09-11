@@ -65,8 +65,18 @@ import { ADVERSARIAL_PROMPT_HASH, ADVERSARIAL_PROMPT_VERSION } from './probe-pro
  */
 export type NoProbeModelReason = JudgeCalibrationGapReason
 
-/** Declaration-order projection of `NoProbeModelReason` (the 414 D-22 bar idiom). */
-export const NO_PROBE_MODEL_REASONS: readonly NoProbeModelReason[] = []
+/**
+ * Declaration-order projection of `NoProbeModelReason` (the 414 D-22 bar idiom).
+ *
+ * The ORDER is the precedence a host must read them in — nothing declared, then nothing
+ * credentialed, then nothing family-disjoint — so the first reason a host can reach is the first
+ * thing it has to fix.
+ */
+export const NO_PROBE_MODEL_REASONS = [
+  'panel-not-configured',
+  'no-credential',
+  'single-family-host',
+] as const satisfies readonly NoProbeModelReason[]
 
 /**
  * The provider-neutral capability gap (D-09).

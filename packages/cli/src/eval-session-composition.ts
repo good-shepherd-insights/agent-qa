@@ -3069,9 +3069,10 @@ export type { RunMaskingContext as FeedbackMaskingContext } from '@vostride/agen
 // pure probe contracts through this same composition boundary the judge preflight uses. The
 // FUNC-02 surface firewall ledgers this file for `@vostride/agent-qa-eval` and only ever
 // shrinks, so a new CLI file may never name that package itself.
-export { renderAdversarialProbePrompt } from '@vostride/agent-qa-eval'
+export { NO_PROBE_MODEL_REASONS, renderAdversarialProbePrompt } from '@vostride/agent-qa-eval'
 export type {
-  AuthoringModel, GenerationRequest, ProbeAuthorPort, ProbeGeneratorKind, ProbeText, ProbeUsage,
+  AuthoringModel, GenerationRequest, NoProbeModelGap, NoProbeModelReason,
+  ProbeAuthorPort, ProbeGeneratorKind, ProbeText, ProbeUsage,
 } from '@vostride/agent-qa-eval'
 export { resolveAdversarialProbeCapability } from './adversarial-probe-preflight.js'
 export type {
