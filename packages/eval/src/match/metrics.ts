@@ -3,7 +3,14 @@ import { ORIGIN_PRIORS, sha256hex } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
 import type { CassetteLabelLeg } from '../cassette/label-leg'
 import type { LabelWeight } from '../labels/label-record'
-import type { CorpusSplit, HeldOutVisibility } from '../labels/corpus-entry'
+import type { CorpusGenerator, CorpusSplit, HeldOutVisibility } from '../labels/corpus-entry'
+// 422 D-05/D-08: ONE generation projection, asked by both populations that have one. The census
+// counts committed membership and this file counts what a batch actually scored; the two sets are
+// different and each assembles its own input, but "which generations are in here" is one question
+// and two spellings of it would eventually answer it two ways. The edge is one-way: derive-census
+// imports only the `EvalBatchReport` TYPE from here, which erases at build.
+import { projectAdversarialGenerationMix } from '../census/derive-census'
+import type { AdversarialGenerationMix } from '../census/derive-census'
 import { BRIEF_SOURCES } from '../replay/brief-tiers'
 import type { BriefSource } from '../replay/brief-tiers'
 import { REPLAY_REFUSAL_REASONS } from '../replay/result'
@@ -108,6 +115,13 @@ export interface ScoredBatchEntry {
   scoringExcluded?: boolean
   split?: CorpusSplit
   heldOutVisibility?: HeldOutVisibility
+  /**
+   * 2026-09-12, 422 D-05/D-11: the committed entry's generator provenance, copied by the batch
+   * assembler from this cassette's own corpus membership. Absent means the assembler could not
+   * resolve the entry — a DIFFERENT fact from an entry that names no family, and reported as
+   * `metadataUnavailable` rather than folded into `absent` provenance.
+   */
+  generator?: CorpusGenerator
   product?: string
   outcome: ReplayCassetteOutcome
   score?: CassetteScore
@@ -138,6 +152,22 @@ export interface EvalBatchReport {
     /** Entries lacking a complete recorded split assignment, including staged entries. */
     unassignedCount: number
   }
+  /**
+   * 2026-09-12, 422 D-05/D-08/D-11: how the SCORED adversarial population was generated.
+   *
+   * Additive-optional, and deliberately the opposite kind of field from `perSplit.adversarial`
+   * beside it. The cell is ALWAYS present — a batch with no adversarial member states four
+   * complete zero cells rather than omitting one (420 D-05) — because an empty scored population
+   * is a measurement. The mix is present ONLY when that population is non-empty, because a
+   * histogram of zeros beside an empty cell would read as "adversarial cases were scored and
+   * none came from anywhere". A report written before 422 carries no mix and never acquires one.
+   *
+   * The population is this batch's own adversarial entries, exactly the set `perSplit.adversarial`
+   * measures. It is NEVER the corpus census — the committed corpus and a scored batch are
+   * different sets, and silently substituting one for the other would attribute generations to a
+   * run that did not replay them.
+   */
+  adversarialGenerationMix?: AdversarialGenerationMix
   honesty: {
     tieCounts: Counts<TieCause>
     unscorableIdentityCounts: Counts<UnscorableIdentityCause>
@@ -417,6 +447,22 @@ function splitMetrics(entries: readonly ScoredBatchEntry[], representatives: rea
   }
   return { natural: cell('natural'), 'held-out': { shared: cell('shared'), private: cell('private') },
     adversarial: cell('adversarial'), unassignedCount: entries.filter(entry => splitKey(entry) === undefined).length }
+}
+
+/**
+ * 422 D-05/D-08: the generation mix of the population `perSplit.adversarial` measures.
+ *
+ * `splitKey` is reused rather than re-testing `entry.split` so the mix's `total` cannot drift
+ * from that cell's denominators. `undefined` is preserved into the projection: an entry whose
+ * corpus membership the assembler could not resolve is `metadataUnavailable`, never a fabricated
+ * `absent` stamp.
+ */
+function adversarialGenerationMix(
+  entries: readonly ScoredBatchEntry[],
+): AdversarialGenerationMix | undefined {
+  const population = entries.filter(entry => splitKey(entry) === 'adversarial')
+  if (population.length === 0) return undefined
+  return projectAdversarialGenerationMix(population.map(entry => entry.generator))
 }
 
 function recoveryMetrics(entries: readonly ScoredBatchEntry[]): EvalBatchReport['recovery'] {
@@ -718,6 +764,12 @@ export function buildEvalReport(
     },
     calibration: copyCalibration(opts.calibration),
     perSplit: splitMetrics(entries, representatives),
+    // Absent for an empty adversarial population; the always-present cell above already states
+    // that emptiness, and a zero histogram beside it would state something else entirely.
+    ...(() => {
+      const mix = adversarialGenerationMix(entries)
+      return mix === undefined ? {} : { adversarialGenerationMix: mix }
+    })(),
     honesty: {
       tieCounts,
       unscorableIdentityCounts,

@@ -138,7 +138,11 @@ export function assembleScoredBatch(input: {
       ...(authoritative?.weight === undefined ? {} : { softWeight: authoritative.weight }),
       ...(scoringExcluded ? { scoringExcluded: true } : {}),
       ...(corpusEntry === undefined ? {} : { split: corpusEntry.split,
-        ...(corpusEntry.split !== 'held-out' ? {} : { heldOutVisibility: corpusEntry.heldOutVisibility }) }),
+        ...(corpusEntry.split !== 'held-out' ? {} : { heldOutVisibility: corpusEntry.heldOutVisibility }),
+        // 2026-09-12, 422 D-05/D-11: the generator stamp travels with the split it belongs to,
+        // read off the SAME committed entry. An entry this assembler could not resolve carries
+        // neither, so the report discloses its generation as unavailable rather than absent.
+        ...(corpusEntry.split !== 'adversarial' ? {} : { generator: corpusEntry.generator }) }),
       outcome,
       ...(score !== undefined ? { score } : {}),
       ...(incurredJudgeScore === undefined ? {} : { incurredJudgeScore }),
