@@ -68,7 +68,6 @@ import type { JobHandlerContext } from '../kind-registry.js'
 import type { JobModelRequest } from '../record-llm-authorship.js'
 import { buildSyntheticHandoff } from './fixtures/synthetic-handoff.js'
 
-const RUN_ID = 'run-422-15-misdirection'
 const EVIDENCE_TEXT = 'Error: element "Submit" not found'
 const ALPHA = asRecordId('rec-alpha')
 const BETA = asRecordId('rec-beta')
@@ -152,6 +151,35 @@ function withEvidence(
 
 function handoffDigestOf(handoff: CompletedRunHandoff): string {
   return sha256hex(canonicalJson(handoff))
+}
+
+/**
+ * A verdict already on the member when the handoff was written — the floor projection copies it
+ * verbatim and never re-classifies it (D-02).
+ *
+ * Built literally rather than through `deterministicVerdict`, whose own vocabulary is the four
+ * classes the classifier can MINT (timeout / environment / flake / unknown). A persisted
+ * `rootCause` is not restricted to those: the runner copies whatever the member carried, so
+ * `app_bug` is a real shape this path must guard even though no classifier produces it.
+ */
+function persistedVerdict(
+  verdictClass: Verdict['class'],
+  citedSteps: number[],
+  perTest = 0,
+): Verdict {
+  return {
+    class: verdictClass,
+    producer: 'deterministic-classifier',
+    confidence: 1,
+    evidence: {
+      citedSteps,
+      citedAnchors: [],
+      citedArtifacts: [],
+      rationale: 'HTTP 500 from the checkout API',
+    },
+    memoryMisdirectionRuledOut: true,
+    perTest,
+  } as Verdict
 }
 
 // ---------------------------------------------------------------------------------------
@@ -419,7 +447,7 @@ describe('422-15 deterministic verdicts are guarded identically', () => {
     // The deterministic classifier never reaches the author, so before this plan its verdict was
     // persisted unvalidated. A code-owned ledger that flipped refuses it exactly as it refuses an
     // authored one — otherwise the guard has a hole the size of the classifier.
-    const appBug = deterministicVerdict('app_bug', 'HTTP 500 from the checkout API', [0], 0)
+    const appBug = persistedVerdict('app_bug', [0])
     const base = withServedRecords(
       buildSyntheticHandoff({ failureCount: 1, rootCauseFor: () => appBug }),
       [{ perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] }],
@@ -438,7 +466,7 @@ describe('422-15 deterministic verdicts are guarded identically', () => {
   })
 
   it('keeps a DETERMINISTIC app_bug whose cross-check HELD, and stamps its backing', async () => {
-    const appBug = deterministicVerdict('app_bug', 'HTTP 500 from the checkout API', [0], 0)
+    const appBug = persistedVerdict('app_bug', [0])
     const base = withServedRecords(
       buildSyntheticHandoff({ failureCount: 1, rootCauseFor: () => appBug }),
       [{ perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] }],
@@ -457,14 +485,14 @@ describe('422-15 deterministic verdicts are guarded identically', () => {
     // The arm must change behaviour ONLY where the gated posture differs from the historical one.
     // A deterministic verdict citing a step that does not exist is refused under BOTH postures, so
     // it is not this arm's business and is persisted exactly as it was before.
-    const bad = deterministicVerdict('test_bug', 'the assertion never ran', [41], 0)
+    const bad = deterministicVerdict('flake', 'retryCount 2 > 0', [41], 0)
     const base = buildSyntheticHandoff({ failureCount: 1, rootCauseFor: () => bad })
     const handoff = withEvidence(base, () => [])
 
     const run = await runAnalyzeRun({ handoff, outputs: [] })
 
     const verdict = verdictOf(run, 0)
-    expect(verdict.class).toBe('test_bug')
+    expect(verdict.class).toBe('flake')
     expect(verdict.evidence.citedSteps).toEqual([41])
   })
 })
@@ -496,7 +524,7 @@ describe('422-15 an authored copy can never become authority', () => {
     ])
     const rows = [rowFor(base, { crossCheck: 'flipped' })]
     const forged = {
-      ...deterministicVerdict('app_bug', 'a signal', [0], 0),
+      ...persistedVerdict('app_bug', [0]),
       memoryOnPath: [{ recordId: BETA, trust: 'candidate' as const }],
       misdirectionRuledOut: { crossCheck: 'held' as const, results: [] },
     }
@@ -518,7 +546,7 @@ describe('422-15 an authored copy can never become authority', () => {
     const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
       { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
     ])
-    const verdict = deterministicVerdict('app_bug', 'a signal', [0], 0)
+    const verdict = persistedVerdict('app_bug', [0])
 
     const stamped = stampVerdictMisdirectionEvidence({
       verdict,

@@ -31,6 +31,8 @@ import type {
   JobKind,
   KnowledgeBundleSummary,
   KnowledgeGatesListResult,
+  MisdirectionRecordResult,
+  MisdirectionRootPosture,
   PerTestOutcome,
   RunAnalysisArtifact,
   RunNotificationVerdictSummary,
@@ -44,13 +46,20 @@ import {
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   errorTextOf,
   failingStepOf,
+  MisdirectionRecordResultSchema,
   sha256hex,
   slugBranch,
+  validateAnalysisAgainstHandoff,
 } from '@vostride/agent-qa-schema'
 import type { JobCheckpointReadOutcome } from '../ports/job-store.js'
 import { deterministicVerdict, UNKNOWN_SIGNAL_RATIONALE } from '@vostride/agent-qa-runner'
 
-import { authorRunAnalysis } from './analyze-run-author.js'
+import {
+  authorRunAnalysis,
+  flippedRecordsOf,
+  misdirectionValidationOptions,
+  stampVerdictMisdirectionEvidence,
+} from './analyze-run-author.js'
 import { UNKNOWN_VERDICTS_MARKER } from './chain-identity.js'
 import { buildEvidencePacks } from './evidence-diet.js'
 import type { EvidenceHistoryLookup } from './evidence-diet.js'
@@ -279,6 +288,21 @@ export interface PostRunJobCapabilities {
    */
   readEvidenceBlob?(runId: string, sha: string): Uint8Array | undefined
   /**
+   * 2026-09-12, 422 D-19: which evaluation-root posture this run's circularity evidence was
+   * produced under.
+   *
+   * The rows themselves cannot answer it. An ABSENT root and a BROKEN one both publish the same
+   * empty ledger — that is precisely why 422-14 records the posture in its own durable file —
+   * and only the first earns `backing: 'declared-only'`. Reading that file is a host API, so the
+   * posture arrives here as a capability rather than as something this package learns to look up.
+   *
+   * OPTIONAL, and unbound is FAIL-CLOSED rather than permissive: a run whose posture nobody can
+   * state is treated as an ordinary `'eval-root'`, which is 422-11's own default and which makes
+   * an empty ledger an unresolved cross-check rather than a BYOM exemption. A throw is read the
+   * same way — a posture this process could not obtain is not a posture it may assume.
+   */
+  readMisdirectionRootPosture?(runId: string): MisdirectionRootPosture | undefined
+  /**
    * 2026-09-07, 417 D-18: typed now, bound nowhere in 417. Phase 422's
    * propose-improvements binds this seam; the five-kind chain is untouched.
    *
@@ -393,6 +417,26 @@ export interface AnalyzeRunPayload {
   readonly gateRun?: true
   /** D-14 §6's outcome-exclusion marker, same carrier idiom, same literal-only rule. */
   readonly excludedFromOutcomes?: true
+  /**
+   * 422 D-17/D-18: the pre-enqueue arbiter's per-record cross-check rows, copied off the same
+   * handoff `handoffDigest` names (422-14's enqueue site).
+   *
+   * ABSENT is not EMPTY here either: absent means the arbiter never ran (every job queued before
+   * 422-14), `[]` means it ran and recorded nothing. The copy is VISIBILITY, exactly as the two
+   * markers above are — the handoff is what the digest covers, so the handler reads its authority
+   * off the loaded document and uses this copy only to notice a queue row that disagrees with the
+   * bytes it points at.
+   */
+  readonly misdirectionEvidence?: readonly MisdirectionRecordResult[]
+  /**
+   * Set when the key was PRESENT and this build could not read it.
+   *
+   * Deliberately not folded into absence, on 422-08's `unreadable`-is-not-`absent` rule. Absence
+   * says the arbiter never ran and turns the gate off; an unreadable claim says a producer wrote
+   * something this build cannot check, and degrading that to "never ran" would silently disarm
+   * the guard for exactly the payload that most deserves it. The handler refuses instead.
+   */
+  readonly misdirectionEvidenceUnreadable?: true
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -433,7 +477,32 @@ export function readAnalyzeRunPayload(value: unknown): AnalyzeRunPayload | undef
     ...(record.excludedFromOutcomes === true
       ? { excludedFromOutcomes: true as const }
       : {}),
+    ...readCarriedMisdirectionEvidence(record.misdirectionEvidence),
   }
+}
+
+/**
+ * The additive-optional circularity copy, read the way this module reads every durable payload
+ * member — tolerantly about GENERATION, strictly about SHAPE.
+ *
+ * An absent key is an older producer and stays absent. A present key whose rows all parse is
+ * carried verbatim. A present key that does not parse is neither dropped nor guessed at: it is
+ * marked unreadable, and the handler turns that into a permanent refusal. Dropping it would be
+ * the one failure this whole block exists to prevent — a gated run quietly re-read as a
+ * historical one, whose no-trust-change verdict is then accepted on its own word.
+ */
+function readCarriedMisdirectionEvidence(
+  value: unknown,
+): Pick<AnalyzeRunPayload, 'misdirectionEvidence' | 'misdirectionEvidenceUnreadable'> {
+  if (value === undefined) return {}
+  if (!Array.isArray(value)) return { misdirectionEvidenceUnreadable: true as const }
+  const rows: MisdirectionRecordResult[] = []
+  for (const candidate of value) {
+    const parsed = MisdirectionRecordResultSchema.safeParse(candidate)
+    if (!parsed.success) return { misdirectionEvidenceUnreadable: true as const }
+    rows.push(parsed.data as MisdirectionRecordResult)
+  }
+  return { misdirectionEvidence: rows }
 }
 
 /**
@@ -646,6 +715,148 @@ export function templateSentenceParts(
   }
 }
 
+// ---- 422 D-17..D-20: the circularity guard, at the one seam that authors verdicts -----------
+//
+// 422-11 shipped the gate with BOTH options defaulting fail-closed and recorded the seam plainly:
+// no producer passes `gatedProducerEvidence` or a `rootPosture`, so the arm is off. 422-14 shipped
+// the producer. This is where the two meet, and the meeting has exactly one switch:
+//
+//   the analysed handoff carries a `misdirectionEvidence` member  ->  the arm is ON
+//   it does not                                                   ->  the arm is OFF, historically
+//
+// The switch is the MEMBER's presence and not its contents, because that is what "the arbiter ran"
+// means: an empty ledger is a producer that ran and recorded nothing (a skipped run, an absent
+// root, a broken one), and an absent member is every run written before the producer existed.
+//
+// TURNING A FAIL-CLOSED DEFAULT ON IS THE RISKIEST EDIT IN THIS PHASE, so the off arm is not
+// merely "the same code with a flag" — it is the same CALL. `misdirectionValidationOptions`
+// answers `{}` for an absent ledger, which is the argument every caller passed before 422 and the
+// one `validateAnalysisAgainstHandoff` defaults to, and nothing below runs at all.
+
+/** The posture, fail-closed: unbound, unanswered and throwing all read as an ordinary root. */
+function readMisdirectionPosture(
+  capabilities: PostRunJobCapabilities,
+  runId: string,
+): MisdirectionRootPosture {
+  try {
+    return capabilities.readMisdirectionRootPosture?.(runId) ?? 'eval-root'
+  } catch {
+    return 'eval-root'
+  }
+}
+
+/**
+ * The honest floor for a verdict the evidence does not support (D-20).
+ *
+ * `unknown` rather than a softer class, because every other class either moves trust (and the
+ * evidence cannot justify moving it) or claims no trust change (which is the claim just refused).
+ * The floor keeps the refused verdict's CITED STEPS so the stamp that follows recomputes the same
+ * path — an exposure dropped here would be an exposure the record stops disclosing — and it stops
+ * claiming `memoryMisdirectionRuledOut`, which is the whole content of what was refused.
+ */
+function honestUnknownFloor(refused: Verdict): Verdict {
+  const floor = deterministicVerdict(
+    'unknown',
+    UNKNOWN_SIGNAL_RATIONALE,
+    [...refused.evidence.citedSteps],
+    refused.perTest,
+  )
+  return { ...floor, memoryMisdirectionRuledOut: false }
+}
+
+/**
+ * Stamp every verdict, then enforce the floor over the whole artifact (D-17/D-18/D-20).
+ *
+ * THE DOUBLE VALIDATION IS THE POINT. The gated posture and the historical one are run over the
+ * same stamped artifact, and only a member the GATED posture refuses and the historical one
+ * accepts is downgraded. Anything both refuse is a pre-existing condition that has nothing to do
+ * with this arm — a verdict citing a step that does not exist was already being persisted that
+ * way — and this plan deliberately leaves it exactly where it was. What is measured is the
+ * DIFFERENCE the arm makes, which is also the only thing the arm is entitled to change.
+ *
+ * DETERMINISTIC VERDICTS GO THROUGH THIS TOO. The author upgrades `unknown` floor members and
+ * nothing else, so before today a persisted `app_bug` or a classifier-minted `environment` reached
+ * the artifact having never met the gate at all. A guard with a hole the size of the classifier is
+ * not a guard, and the cross-check does not care which producer wrote the sentence it refutes.
+ */
+function enforceMisdirectionFloor(input: {
+  readonly verdicts: readonly Verdict[]
+  readonly handoff: CompletedRunHandoff
+  readonly runId: string
+  readonly evidence: readonly MisdirectionRecordResult[] | undefined
+  readonly rootPosture: MisdirectionRootPosture
+  readonly partsOf: (verdicts: readonly Verdict[]) => VerdictSentenceParts[]
+}): { readonly verdicts: Verdict[]; readonly parts: VerdictSentenceParts[] } {
+  const { handoff, runId, evidence, rootPosture, partsOf } = input
+  const testsByIndex = new Map(handoff.tests.map((test) => [test.testIndex, test]))
+  const stampAll = (verdicts: readonly Verdict[], parts: readonly VerdictSentenceParts[]) =>
+    verdicts.map((verdict, index) =>
+      stampVerdictMisdirectionEvidence({
+        verdict,
+        parts: parts[index],
+        test: testsByIndex.get(verdict.perTest),
+        evidence,
+        rootPosture,
+      }),
+    )
+
+  const parts = partsOf(input.verdicts)
+  // The arbiter never ran: nothing is stamped, nothing is validated, nothing moves.
+  if (evidence === undefined) return { verdicts: [...input.verdicts], parts }
+
+  const stamped = stampAll(input.verdicts, parts)
+  const artifact: RunAnalysisArtifact = {
+    schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
+    runId,
+    verdicts: stamped,
+    parts,
+  }
+  const gated = validateAnalysisAgainstHandoff(
+    artifact,
+    handoff,
+    misdirectionValidationOptions(evidence, rootPosture),
+  )
+  let downgraded = stamped
+  if (!gated.ok) {
+    const historical = validateAnalysisAgainstHandoff(artifact, handoff)
+    const preExisting = new Set(historical.ok ? [] : historical.rejects.map((r) => r.perTest))
+    const newlyRefused = new Set(
+      gated.rejects.map((reject) => reject.perTest).filter((perTest) => !preExisting.has(perTest)),
+    )
+    if (newlyRefused.size > 0) {
+      downgraded = input.verdicts.map((verdict) =>
+        newlyRefused.has(verdict.perTest) ? honestUnknownFloor(verdict) : verdict,
+      )
+    }
+  }
+
+  // Parts are recomputed BEFORE the final stamp: a downgraded member's producer moved back to the
+  // classifier, so its sentence is now the template's honest "root cause undetermined" — and the
+  // grounding step that sentence quotes is part of the path the stamp recomputes over. Stamping
+  // against the pre-downgrade parts would declare a membership the validator no longer recomputes.
+  const finalParts = partsOf(downgraded)
+  const finalVerdicts = stampAll(downgraded, finalParts).map(withCausalAttribution)
+  return { verdicts: finalVerdicts, parts: finalParts }
+}
+
+/**
+ * Name the harm, and name it narrowly (D-20).
+ *
+ * Only an `unknown` verdict carries attribution from here — a verdict that kept its class was not
+ * harmed by the memory — and only the records an actual FLIP supports are named. A held sibling of
+ * a flipped record stays in `memoryOnPath` and out of `attribution`: disclosed, never accused.
+ */
+function withCausalAttribution(verdict: Verdict): Verdict {
+  if (verdict.class !== 'unknown') return verdict
+  const flipped = flippedRecordsOf(verdict)
+  if (flipped.length === 0) return verdict
+  return {
+    ...verdict,
+    memoryMisdirectionRuledOut: false,
+    attribution: { records: flipped.map((record) => asRecordId(record)), anchors: [] },
+  } as Verdict
+}
+
 /**
  * The real analyze-run body (D-02 / D-06 / 389 D-09).
  *
@@ -692,6 +903,32 @@ function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler
       )
     }
 
+    // 422 D-17/D-18: the payload's circularity copy must agree with the bytes the digest above
+    // just pinned, BEFORE anything uses either. The handoff is the authority — it is what
+    // `handoffDigest` covers — so the copy can neither weaken nor strengthen it; what a copy CAN
+    // do is disagree, and a queue row that disagrees with the document it points at is not a row
+    // about this run's evidence. Both refusals are permanent for the same reason every other
+    // unreadable-input refusal here is: a second attempt reads the same bytes.
+    if (payload.misdirectionEvidenceUnreadable === true) {
+      return permanently(
+        `the analyze-run payload for ${payload.runId} carries a circularity ledger this build ` +
+          'cannot read, and a claim that cannot be checked is not a claim that may be ignored',
+      )
+    }
+    const publishedEvidence = handoff.misdirectionEvidence
+    if (
+      payload.misdirectionEvidence !== undefined &&
+      (publishedEvidence === undefined ||
+        canonicalJson(payload.misdirectionEvidence) !== canonicalJson(publishedEvidence))
+    ) {
+      return permanently(
+        `the analyze-run payload for ${payload.runId} carries circularity evidence that is not ` +
+          'the evidence in the analysed handoff bytes; the digest covers the handoff, so a copy ' +
+          'that disagrees with it is not about these bytes',
+      )
+    }
+    const rootPosture = readMisdirectionPosture(capabilities, payload.runId)
+
     // The author swap (389 D-09/JOBQ-03). On a fresh pass the callback runs exactly once:
     // floor projected, template parts authored, the artifact made durable through
     // `persistAnalysis`, and only THEN is the returned value recorded on the declared
@@ -729,6 +966,12 @@ function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler
             floor,
             packs: buildEvidencePacks(handoff, unknownTests, history),
             history,
+            // The ledger reaches the author as DATA and the gate as AUTHORITY (D-20). Absent, it
+            // does neither: the request is byte-identical to the pre-422 one and the author's own
+            // validation runs under the historical options.
+            ...(publishedEvidence === undefined
+              ? {}
+              : { misdirectionEvidence: publishedEvidence, rootPosture }),
             ...(capabilities.analysisTokenBudget === undefined
               ? {}
               : { tokenBudget: capabilities.analysisTokenBudget }),
@@ -747,18 +990,29 @@ function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler
         // D-06's ONE producer-keyed parts rule: LLM parts for upgraded members, template
         // parts for deterministic members — which is also what hands a degraded/unfilled
         // `unknown` its honest "root cause undetermined" sentence.
-        const parts = verdicts.map((verdict) =>
-          verdict.producer === 'analyze-run'
-            ? authoredParts.get(verdict.perTest) ?? templateSentenceParts(verdict, handoff)
-            : templateSentenceParts(verdict, handoff),
-        )
+        const partsOf = (candidates: readonly Verdict[]): VerdictSentenceParts[] =>
+          candidates.map((verdict) =>
+            verdict.producer === 'analyze-run'
+              ? authoredParts.get(verdict.perTest) ?? templateSentenceParts(verdict, handoff)
+              : templateSentenceParts(verdict, handoff),
+          )
+        // 422 D-17/D-18: the code-owned stamp and the honest floor, over EVERY member — the
+        // author's upgrades and the members that never reached it alike.
+        const guarded = enforceMisdirectionFloor({
+          verdicts,
+          handoff,
+          runId: payload.runId,
+          evidence: publishedEvidence,
+          rootPosture,
+          partsOf,
+        })
         capabilities.persistAnalysis({
           schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
           runId: payload.runId,
-          verdicts,
-          parts,
+          verdicts: guarded.verdicts,
+          parts: guarded.parts,
         })
-        return { runId: payload.runId, verdicts }
+        return { runId: payload.runId, verdicts: guarded.verdicts }
       },
     )
     const verdicts = authored.verdicts

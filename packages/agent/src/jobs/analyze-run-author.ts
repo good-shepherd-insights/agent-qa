@@ -33,6 +33,7 @@ import type {
   AnalysisValidationOptions,
   ArtifactRef,
   CompletedRunHandoff,
+  MisdirectionEvidence,
   MisdirectionRecordResult,
   MisdirectionRootPosture,
   PerTestOutcome,
@@ -44,6 +45,9 @@ import type {
 import {
   canonicalJson,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
+  deriveMemoryOnPath,
+  deriveMemoryOnPathSites,
+  failingStepOf,
   QUOTE_SEARCHED_STEP_FIELDS,
   validateAnalysisAgainstHandoff,
 } from '@vostride/agent-qa-schema'
@@ -122,11 +126,13 @@ export function misdirectionPathSteps(
   parts: VerdictSentenceParts | undefined,
   test: PerTestOutcome,
 ): StepEvidence[] {
-  // DECLARED, NOT YET IMPLEMENTED (RED).
-  void verdict
-  void parts
-  void test
-  return []
+  const indexes = new Set<number>(verdict.evidence.citedSteps)
+  if (parts !== undefined && 'stepIndex' in parts.groundingQuote) {
+    indexes.add(parts.groundingQuote.stepIndex)
+  }
+  const failing = failingStepOf(test)
+  if (failing !== undefined) indexes.add(failing.stepIndex)
+  return test.steps.filter((step) => indexes.has(step.stepIndex))
 }
 
 /**
@@ -141,15 +147,114 @@ export function misdirectionValidationOptions(
   evidence: readonly MisdirectionRecordResult[] | undefined,
   rootPosture: MisdirectionRootPosture,
 ): AnalysisValidationOptions {
-  // DECLARED, NOT YET IMPLEMENTED (RED).
-  void evidence
-  void rootPosture
-  return {}
+  return evidence === undefined ? {} : { gatedProducerEvidence: true, rootPosture }
 }
 
+/** One exposure's key: the (step, record) pair, never the record alone. */
+function exposureKey(stepIndex: number, recordId: string): string {
+  return `${String(stepIndex)}\u001f${recordId}`
+}
+
+/**
+ * The block's one-word summary, in precedence order: a flip outranks everything, an explicitly
+ * inconclusive row outranks an incomplete ledger, and `held` requires EVERY exposure covered by a
+ * held row. An uncovered exposure reads `not-run` here and stays individually visible in
+ * `results` — and the aggregate the validator computes reads the ROWS, never this word, so a
+ * summary can never be the thing that exonerates a verdict.
+ */
+function summarizeCrossCheck(
+  rows: readonly MisdirectionRecordResult[],
+  sites: readonly { readonly stepIndex: number; readonly recordId: string }[],
+): MisdirectionEvidence['crossCheck'] {
+  if (rows.some((row) => row.crossCheck === 'flipped')) return 'flipped'
+  if (rows.some((row) => row.crossCheck === 'inconclusive')) return 'inconclusive'
+  const covered = new Set(rows.map((row) => exposureKey(row.stepIndex, String(row.recordId))))
+  const complete = sites.every((site) =>
+    covered.has(exposureKey(site.stepIndex, String(site.recordId))),
+  )
+  return complete && rows.every((row) => row.crossCheck === 'held') ? 'held' : 'not-run'
+}
+
+/** Why an empty ledger is empty — D-19's two postures do not mean the same thing. */
+function postureReason(posture: MisdirectionRootPosture): string | undefined {
+  if (posture === 'no-eval-root') {
+    return 'no evaluation root existed, so no record on this path could be cross-checked'
+  }
+  if (posture === 'broken-eval-root') {
+    return 'the evaluation root could not be consulted, so no record on this path was cross-checked'
+  }
+  return undefined
+}
+
+/**
+ * Stamp ONE verdict with the code-owned membership and the code-owned ledger.
+ *
+ * Three postures, and each is a different fact:
+ *
+ *   - the arbiter never ran (`evidence === undefined`): the verdict is returned byte-identical,
+ *     because a run nobody measured is not a run this job may make new claims about;
+ *   - it ran and this verdict's path carries no low-trust record: nothing is stamped, and a
+ *     declaration the verdict arrived with is REMOVED rather than carried — there is no claim
+ *     here to back, so a block would be an answer to a question nobody asked;
+ *   - it ran and the path carries exposures: both members are replaced with values derived from
+ *     the run's own served briefs and the published rows, filtered to THIS member and to THIS
+ *     verdict's own exposures.
+ *
+ * The filter matters twice over. Rows for another member would be refused by the aggregate's key
+ * integrity, and rows for an exposure this verdict's path does not contain would be refused as
+ * "an exposure no served brief recorded on this path" — both correct refusals, and both avoidable
+ * by handing the gate exactly the rows it is entitled to.
+ */
 export function stampVerdictMisdirectionEvidence(input: MisdirectionStampInput): Verdict {
-  // DECLARED, NOT YET IMPLEMENTED (RED).
-  return input.verdict
+  const { verdict, parts, test, evidence, rootPosture } = input
+  if (evidence === undefined || test === undefined) return verdict
+
+  const steps = misdirectionPathSteps(verdict, parts, test)
+  const sites = deriveMemoryOnPathSites(steps)
+  if (sites.length === 0) {
+    if (verdict.memoryOnPath === undefined && verdict.misdirectionRuledOut === undefined) {
+      return verdict
+    }
+    const bare = { ...verdict } as Record<string, unknown>
+    delete bare.memoryOnPath
+    delete bare.misdirectionRuledOut
+    return bare as unknown as Verdict
+  }
+
+  const keys = new Set(sites.map((site) => exposureKey(site.stepIndex, String(site.recordId))))
+  const rows = evidence.filter(
+    (row) =>
+      row.perTest === verdict.perTest && keys.has(exposureKey(row.stepIndex, String(row.recordId))),
+  )
+  const reason = postureReason(rootPosture)
+  const block: MisdirectionEvidence = {
+    crossCheck: summarizeCrossCheck(rows, sites),
+    results: rows,
+    ...(reason === undefined ? {} : { reason }),
+    // D-19: the ONE exemption is ABSENCE, and only absence. A broken root publishes the same
+    // empty ledger and earns nothing. The `rows.length === 0` clause is not belt-and-braces: the
+    // validator answers on the backing BEFORE it reads the rows, so a marker beside a real ledger
+    // would skip the ledger entirely.
+    ...(rootPosture === 'no-eval-root' && rows.length === 0
+      ? { backing: 'declared-only' as const }
+      : {}),
+  }
+  return {
+    ...verdict,
+    memoryOnPath: deriveMemoryOnPath(steps),
+    misdirectionRuledOut: block,
+  } as Verdict
+}
+
+/** The flipped records a stamped block names — the only records harm may be attributed to. */
+export function flippedRecordsOf(verdict: Verdict): string[] {
+  const rows = verdict.misdirectionRuledOut?.results ?? []
+  const records: string[] = []
+  for (const row of rows) {
+    if (row.crossCheck !== 'flipped') continue
+    if (!records.includes(String(row.recordId))) records.push(String(row.recordId))
+  }
+  return records
 }
 
 export interface AuthorTokenBudget {
@@ -177,6 +282,22 @@ export interface AuthorRunAnalysisInput {
   readonly readEvidenceBlob?: (sha: string) => Uint8Array | undefined
   /** The §1.4 `agent_context` parameter; defaults to the analyze-run provenance line. */
   readonly agentContext?: string
+  /**
+   * 422 D-17/D-20: the run-level circularity ledger the pre-enqueue arbiter published, exactly
+   * as it reached the analysed handoff bytes.
+   *
+   * It enters the request as DATA — one context-tier block per analyzed member — and it enters
+   * the gate as AUTHORITY, through {@link stampVerdictMisdirectionEvidence}, which overwrites
+   * whatever the model answered about it. The author is still asked for
+   * `memoryMisdirectionRuledOut`: the boolean is the author's own claim and the ledger is what
+   * decides whether that claim is worth anything.
+   *
+   * ABSENT means the arbiter never ran, and absence is the whole of the transition guarantee —
+   * the validator is then called with the historical options and no verdict is stamped at all.
+   */
+  readonly misdirectionEvidence?: readonly MisdirectionRecordResult[]
+  /** D-19's posture; read only when a ledger is present. Fail-closed default: `'eval-root'`. */
+  readonly rootPosture?: MisdirectionRootPosture
 }
 
 export interface AuthorRunAnalysisResult {
@@ -192,6 +313,21 @@ export interface AuthorRunAnalysisResult {
   }
   /** Analyzed tests that failed validation after the single repair and kept their floor. */
   readonly degradedTests: number[]
+  /**
+   * What this authorship SPENT, recorded once (422 D-20).
+   *
+   * Once, because `recordLlmAuthorship` memoizes: a resumed job reads the recorded value and
+   * never reaches this function, so the calls below can happen exactly one time across every
+   * attempt of one job. Capped, because the loop runs at most `1 + AUTHOR_REPAIR_CAP` times
+   * however persistent the answer is — the evidence-informed repair is the SAME budget the
+   * parse-repair round-trip already had, never a second one bought by the ledger.
+   */
+  readonly usage: {
+    readonly modelCalls: number
+    readonly repairCalls: number
+    /** The compaction ladder's estimate; `0` when no accounting substrate was injected. */
+    readonly estimatedTokens: number
+  }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -382,10 +518,58 @@ function historyLine(pack: EvidencePack, history: EvidenceHistoryLookup): string
   )
 }
 
+/**
+ * One cross-check row, rendered for the prompt (422 D-20).
+ *
+ * The row's identity digests are deliberately NOT rendered: they are integrity material for the
+ * gate, they cost tokens, and an author cannot act on them. What an author can act on is which
+ * record was checked, on which step, and what removing it did.
+ */
+function crossCheckLine(row: MisdirectionRecordResult): string {
+  const samples = row.samples === undefined ? '' : `; k=${String(row.samples.k)}`
+  const reason = row.reason === undefined ? '' : `; ${row.reason}`
+  return (
+    `- test ${String(row.perTest)}, step ${String(row.stepIndex)}, record ` +
+    `${String(row.recordId)}: ${row.crossCheck}${reason}${samples}`
+  )
+}
+
+/**
+ * The arbiter's own answer about this run, as reasoning input (422 D-20).
+ *
+ * DATA, not an instruction. The block tells the author what the deterministic removal cross-check
+ * measured for the records this run served on its failing paths; the author still answers
+ * `memoryMisdirectionRuledOut` for itself, and the code still decides — after the author has
+ * spoken — whether the ledger supports the class the author chose. Omitted entirely when the
+ * arbiter never ran, so a pre-422 run's request is byte-identical to what it always was.
+ */
+function crossCheckTier(
+  packs: readonly EvidencePack[],
+  evidence: readonly MisdirectionRecordResult[] | undefined,
+): PromptTierBlock[] {
+  if (evidence === undefined) return []
+  const analyzed = new Set(packs.map((pack) => pack.testIndex))
+  const rows = evidence.filter((row) => analyzed.has(row.perTest))
+  return [
+    {
+      title: 'Memory misdirection cross-check (reasoning input)',
+      body:
+        'The deterministic removal cross-check already ran for the low-trust records this run ' +
+        'served on the failing paths below. `flipped` means removing the record changed the ' +
+        'outcome — the served memory is implicated. `held` means it did not. `inconclusive` ' +
+        'and `not-run` mean nothing was established:\n' +
+        (rows.length === 0
+          ? '- no record on an analyzed test\u2019s failing path was cross-checked'
+          : rows.map(crossCheckLine).join('\n')),
+    },
+  ]
+}
+
 function contextTier(
   handoff: CompletedRunHandoff,
   packs: readonly EvidencePack[],
   history: EvidenceHistoryLookup,
+  evidence: readonly MisdirectionRecordResult[] | undefined,
 ): PromptTierBlock[] {
   return [
     {
@@ -403,6 +587,7 @@ function contextTier(
         'reasoning, not prose to restate:\n' +
         packs.map((pack) => historyLine(pack, history)).join('\n'),
     },
+    ...crossCheckTier(packs, evidence),
   ]
 }
 
@@ -489,8 +674,9 @@ interface AttemptOutcome {
 function evaluateAttempt(
   text: string,
   pending: ReadonlySet<number>,
-  handoff: CompletedRunHandoff,
+  input: AuthorRunAnalysisInput,
 ): AttemptOutcome {
+  const handoff = input.handoff
   let entries: AuthoredTestEntry[]
   try {
     const wire = AuthorOutputWire.parse(parseJsonWithRepair(text))
@@ -516,13 +702,30 @@ function evaluateAttempt(
 
   const rejects: { perTest: number; reason: string }[] = []
   const candidates = new Map<number, CandidatePair>()
+  const testsByIndex = new Map(handoff.tests.map((test) => [test.testIndex, test]))
+  const rootPosture = input.rootPosture ?? 'eval-root'
   for (const perTest of pending) {
     const entry = byTest.get(perTest)
     if (entry === undefined) {
       rejects.push({ perTest, reason: `the output carries no entry for testIndex ${perTest}` })
       continue
     }
-    candidates.set(perTest, candidateOf(entry))
+    const pair = candidateOf(entry)
+    // THE STAMP GOES ON BEFORE THE GATE SEES THE CANDIDATE (422 D-17/D-18). Stamping after
+    // validation would hand the gate a verdict carrying no evidence — which it would refuse for
+    // the wrong reason, spending the one repair on a message the author cannot act on — and then
+    // decorate the refused verdict afterwards. The evidence is code-owned either way; what the
+    // ordering decides is whether the gate got to USE it.
+    candidates.set(perTest, {
+      ...pair,
+      verdict: stampVerdictMisdirectionEvidence({
+        verdict: pair.verdict,
+        parts: pair.parts,
+        test: testsByIndex.get(perTest),
+        evidence: input.misdirectionEvidence,
+        rootPosture,
+      }),
+    })
   }
 
   if (candidates.size > 0) {
@@ -535,6 +738,7 @@ function evaluateAttempt(
         parts: ordered.map((pair) => pair.parts),
       },
       handoff,
+      misdirectionValidationOptions(input.misdirectionEvidence, rootPosture),
     )
     if (!validation.ok) {
       const rejectedTests = new Set(validation.rejects.map((reject) => reject.perTest))
@@ -593,7 +797,7 @@ export async function authorRunAnalysis(
       input.agentContext ??
       'analyze-run: authoring root-cause verdicts and sentence parts for one completed run',
     stable: stableTier(),
-    context: contextTier(input.handoff, compacted.packs, input.history),
+    context: contextTier(input.handoff, compacted.packs, input.history, input.misdirectionEvidence),
     volatile: volatileTier(compacted.packs),
   })
   const images = collectImages(compacted.packs, input.readEvidenceBlob, model.vision === true)
@@ -603,6 +807,7 @@ export async function authorRunAnalysis(
   const accepted = new Map<number, CandidatePair>()
   let pending = new Set(analyzed)
   let lastRejects: readonly { perTest: number; reason: string }[] = []
+  let modelCalls = 0
 
   for (let attempt = 0; attempt <= AUTHOR_REPAIR_CAP && pending.size > 0; attempt += 1) {
     const attemptRequest: JobModelRequest =
@@ -610,7 +815,8 @@ export async function authorRunAnalysis(
         ? request
         : { ...request, prompt: `${request.prompt}\n\n${repairFeedback(lastRejects)}` }
     const output = await model.generate(attemptRequest)
-    const outcome = evaluateAttempt(output.text, pending, input.handoff)
+    modelCalls += 1
+    const outcome = evaluateAttempt(output.text, pending, input)
     for (const [perTest, pair] of outcome.accepted) accepted.set(perTest, pair)
     pending = new Set([...pending].filter((perTest) => !accepted.has(perTest)))
     lastRejects = outcome.rejects
@@ -635,5 +841,10 @@ export async function authorRunAnalysis(
       estimatedTokens: compacted.estimatedTokens,
     },
     degradedTests: analyzed.filter((testIndex) => !accepted.has(testIndex)),
+    usage: {
+      modelCalls,
+      repairCalls: Math.max(0, modelCalls - 1),
+      estimatedTokens: compacted.estimatedTokens,
+    },
   }
 }
