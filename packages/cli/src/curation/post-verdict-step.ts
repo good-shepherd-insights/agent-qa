@@ -130,6 +130,11 @@ import {
 } from './curation-tail.js'
 import { resolvePostRunJobModel } from './post-run-tail.js'
 import { readRunCanaryPolicy, writeRunCanaryPolicy } from './canary-run-state.js'
+import {
+  misdirectionPreparationCapabilities,
+  type MisdirectionPreparationCapabilities,
+  type PrepareMisdirectionEvidenceResult,
+} from './misdirection-tail.js'
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { dirname } from 'node:path'
 
@@ -145,6 +150,16 @@ import { dirname } from 'node:path'
  */
 export interface PostVerdictStepOperations {
   recordCanaryPolicy: typeof recordCanaryPolicy
+  /**
+   * 422 D-18: the circularity arbiter, run BEFORE the enqueue below and after the D-08 skip.
+   *
+   * A member of this table rather than a call inside `enqueueAnalyzeRun`, because the two are
+   * different responsibilities with different failure postures: this one produces durable
+   * evidence and the other publishes a row that must cover it. Ordering them here — and only
+   * here — is what makes "the analysed bytes include the cross-check" a property of the step
+   * rather than of whoever happens to call the enqueue.
+   */
+  prepareMisdirectionEvidence: typeof prepareMisdirectionEvidenceForRun
   acquireWriterLease: typeof LOCAL_DAEMON_CAPABILITIES.acquireWriterLease
   releaseLease: typeof LOCAL_DAEMON_CAPABILITIES.releaseLease
   readWriterLease: typeof LOCAL_DAEMON_CAPABILITIES.readWriterLease
@@ -233,6 +248,17 @@ export interface PostVerdictStepOptions {
    * So the door that minted the lease says so.
    */
   readonly writerAuthority?: CurationWriterAuthority
+  /**
+   * The HOST's circularity-preparation capability (422 D-18).
+   *
+   * Both production run hosts compose it from `misdirectionPreparationCapabilities()` and hand it
+   * down here. ABSENT is not a disabled arbiter: the step builds the capability from the same one
+   * builder, so a door that forgets to bind it still arbitrates. What binding it explicitly buys
+   * is that the two hosts' objects can be COMPARED against each other — which is how a capability
+   * bound on the terminal and forgotten on the daemon is caught, rather than by reading two
+   * literals side by side.
+   */
+  readonly misdirection?: MisdirectionPreparationCapabilities
   readonly log: { warn(message: string): void }
   /** Focused test seam. Production callers omit it. */
   readonly operations?: Partial<PostVerdictStepOperations>
@@ -286,6 +312,7 @@ function defaultOperations(): PostVerdictStepOperations {
   const curationDefaults = defaultCurationTailOperations()
   return {
     recordCanaryPolicy,
+    prepareMisdirectionEvidence: prepareMisdirectionEvidenceForRun,
     acquireWriterLease: LOCAL_DAEMON_CAPABILITIES.acquireWriterLease,
     releaseLease: LOCAL_DAEMON_CAPABILITIES.releaseLease,
     readWriterLease: LOCAL_DAEMON_CAPABILITIES.readWriterLease,
@@ -391,6 +418,18 @@ export async function enqueueAnalyzeRun(input: {
       ...(handoff.excludedFromOutcomes === undefined
         ? {}
         : { excludedFromOutcomes: handoff.excludedFromOutcomes }),
+      // 422 D-18, on the same conditional-spread rule and for the same "see what a QUEUED job is"
+      // reason as the two markers above. ABSENT means the arbiter never ran and an EMPTY array
+      // means it ran and recorded nothing, so the copy is conditional rather than defaulted —
+      // `[]` written for an absent member would tell the analysis job a cross-check happened.
+      //
+      // The rows are read off the handoff loaded ONE LINE ABOVE, which is the handoff the
+      // preparation step already published its sidecar onto; `handoffDigest` therefore covers
+      // them, and the payload's own `superRefine` refuses a row that named that digest as its
+      // source identity.
+      ...(handoff.misdirectionEvidence === undefined
+        ? {}
+        : { misdirectionEvidence: [...handoff.misdirectionEvidence] }),
     })
     const outcome = await jobs.queue.enqueue('analyze-run', payload, input.runId)
     return outcome.deduped ? 'deduped' : 'enqueued'
@@ -592,6 +631,39 @@ export async function recordCanaryPolicy(options: Pick<PostVerdictStepOptions, '
     maxAblations: caps.maxAblations, source: caps.source as 'flag' | 'config' | 'default' })
 }
 
+/**
+ * Produce and PUBLISH this run's circularity evidence, before anything is queued (422 D-18).
+ *
+ * It loads the handoff through the step's own `loadCompletedRunHandoff` — the strict guard — and
+ * hands that document to the producer, which builds every D-18 authorization from it and accepts
+ * none from anywhere else. That is the provenance binding 422-13 recorded as unowned: its gate
+ * proves an authorization is internally consistent, and what makes one AUTHENTIC is that nobody
+ * outside this call could have supplied it.
+ *
+ * WHAT PROPAGATES AND WHAT DOES NOT. A root that cannot be consulted is a POSTURE and is absorbed
+ * by the port itself — post-processing may never cost the verdict. A failure to PERSIST is
+ * deliberately allowed to propagate: the caller turns it into `post-run-enqueue-failed` and
+ * queues nothing, because publishing an analysis row over evidence that did not reach disk is
+ * exactly the ordering this plan exists to prevent.
+ */
+export async function prepareMisdirectionEvidenceForRun(
+  options: Pick<PostVerdictStepOptions, 'agentQaRoot' | 'runId' | 'configPath' | 'misdirection'>,
+  operations: Pick<PostVerdictStepOperations, 'loadCompletedRunHandoff'>,
+): Promise<PrepareMisdirectionEvidenceResult> {
+  const handoffPath = completedRunHandoffPath(options.agentQaRoot, options.runId)
+  const capabilities = options.misdirection
+    ?? misdirectionPreparationCapabilities({
+      configPath: options.configPath,
+      agentQaRoot: options.agentQaRoot,
+    })
+  return await capabilities.prepareMisdirectionEvidence({
+    agentQaRoot: options.agentQaRoot,
+    runDir: dirname(handoffPath),
+    handoffPath,
+    handoff: operations.loadCompletedRunHandoff(handoffPath),
+  })
+}
+
 export function createPostVerdictStep(options: PostVerdictStepOptions): {
   readonly port: PostVerdictPort
   readonly handoff: PostVerdictHandoff
@@ -634,6 +706,10 @@ export function createPostVerdictStep(options: PostVerdictStepOptions): {
       let enqueueError: string | undefined
       try {
         await ops().recordCanaryPolicy(options)
+        // 422 D-18: DURABLE BEFORE PUBLISHED. The sidecar reaches `handoff.json` here, so the
+        // digest `enqueueAnalyzeRun` mints one line below covers it — and a process that dies
+        // between the two leaves evidence on disk that the retry reads instead of re-spending.
+        await ops().prepareMisdirectionEvidence(options, ops())
         enqueue = await enqueueAnalyzeRun({
           runId: options.runId,
           agentQaRoot: options.agentQaRoot,

@@ -35,6 +35,7 @@ import {
   locateTargetCassettes,
   removalFlipsOutcome,
   resolveActiveRecordRemoval,
+  type FailingPathCandidateAuthorization,
   type ReplayBag,
 } from './replay-gate-composition.js'
 import { runCassetteReplay } from './replay-composition.js'
@@ -290,10 +291,26 @@ export interface AblateCanaryStepInput {
   committedRoot: string
   recordId: string
   target: { runId: string; testId: string; stepIndex: number }
+  /** The gate-2 audit sub-tree this ablation writes under. Slugged before it becomes a path. */
   attributedObservationId: string
   k: number
   baseSeed: number
   replay: ReplayBag
+  /**
+   * 2026-09-12, 422 D-18: WHICH removal rule authorizes this ablation.
+   *
+   * ABSENT keeps 418's opt-in served-canary flag, which is what every canary caller means and
+   * what this function did unconditionally before — so no existing caller changes behaviour. The
+   * pre-analysis circularity arbiter passes a D-18 authorization INSTEAD, because its subject is
+   * an ORDINARY candidate that was never flagged a canary, and `resolveFailingPathCandidate`
+   * recomputes the failing step, the served membership and the brief identity from the run's own
+   * bytes before admitting it. The two are a sibling pair rather than one switch: the canary flag
+   * is an opt-in and the authorization is positive proof.
+   */
+  admission?: {
+    servedCanary?: true
+    failingPathCandidate?: FailingPathCandidateAuthorization
+  }
 }
 export type CommittedCorpusDigestRead =
   | { kind: 'digest'; corpusDigest: string }
@@ -354,6 +371,9 @@ export async function ablateCanaryStep(
 ): Promise<AblateCanaryStepResult> {
   // Validate before extraction or spend, using the canonical odd-k contract.
   deriveSampleSeeds(input.baseSeed, input.k)
+  // One resolution, shared by sample one and by every subsequent sample (418 D-02): a second
+  // spelling here would let the first arm admit a removal the rest of the cross-check refuses.
+  const admission = input.admission ?? { servedCanary: true as const }
   const gate2Dir = join(
     input.agentQaRoot,
     GATE2_AUDIT_SUBDIR,
@@ -403,7 +423,10 @@ export async function ablateCanaryStep(
   const removal = resolveActiveRecordRemoval({
     cassette,
     recordId: input.recordId,
-    servedCanary: true,
+    ...(admission.servedCanary === undefined ? {} : { servedCanary: admission.servedCanary }),
+    ...(admission.failingPathCandidate === undefined
+      ? {}
+      : { failingPathCandidate: admission.failingPathCandidate }),
   })
   if (removal.kind === 'unavailable')
     return { kind: 'unavailable', reason: 'brief-line-not-found', detail: removal.reason }
@@ -445,7 +468,13 @@ export async function ablateCanaryStep(
   const checked = await removalFlipsOutcome({
     recordId: input.recordId,
     cassettes: [target],
-    mode: { kind: 'active-record', servedCanary: true },
+    mode: {
+      kind: 'active-record',
+      ...(admission.servedCanary === undefined ? {} : { servedCanary: admission.servedCanary }),
+    },
+    ...(admission.failingPathCandidate === undefined
+      ? {}
+      : { failingPathCandidate: admission.failingPathCandidate }),
     k: input.k,
     baseSeed: input.baseSeed,
     existing: { withRecord, withoutRecord },

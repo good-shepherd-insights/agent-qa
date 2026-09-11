@@ -1,0 +1,364 @@
+// PRE-ENQUEUE CIRCULARITY ARBITRATION (Phase 422 plan 14, D-18 / D-19).
+//
+// ═══ WHAT THIS FILE IS FOR ═══
+//
+// A no-trust-change verdict says "the served memory was not the problem". 422-11 made that claim
+// checkable and 422-12 made the evidence durable across four boundaries, but neither put a
+// PRODUCER in the tree: nothing anywhere wrote a single cross-check row. This file is that
+// producer, and where it sits is the entire design.
+//
+// IT RUNS BEFORE `enqueueAnalyzeRun`, NOT INSIDE THE CURATION FOLD. The analysis job is the first
+// reader that forms an opinion about why a run failed, and the whole point of the circularity
+// guard is that the opinion must not be formed on memory nobody cross-checked. Curation-time
+// attribution — the other place this could have lived — happens AFTER that first analysis, so
+// evidence produced there could never back it. And because `enqueueAnalyzeRun` mints the payload
+// digest from the FINAL handoff bytes, evidence written after the enqueue would be evidence the
+// analysed bytes do not cover.
+//
+// SO THE ORDER IS: skip → consult the root → enumerate exposures → reserve → spend → persist →
+// enqueue. Every step before `persist` is recoverable from disk; nothing after it re-spends.
+//
+// ═══ THE PROVENANCE BINDING 422-13 HANDED FORWARD ═══
+//
+// 422-13 shipped `resolveFailingPathCandidate` and recorded its own explicit limit: the gate
+// proves the authorization is internally CONSISTENT, not that it is AUTHENTIC — "a caller with
+// total control over the object can synthesize one that satisfies every check", and binding the
+// authorization to a loaded-handoff identity "is 422-15's job".
+//
+// IT IS THIS PLAN'S JOB, AND IT IS DONE HERE. `prepareMisdirectionEvidence` accepts NO
+// authorization from anybody. It takes a `CompletedRunHandoff` that the caller LOADED through
+// `loadCompletedRunHandoff` — the strict guard, over bytes the runner wrote — and builds every
+// authorization itself, from that document's own member outcome, verbatim. There is no parameter
+// on any exported surface here through which a caller could supply a `perTest` of its own
+// choosing. That closes the residual for THIS producer; a future producer that accepts an
+// authorization from its caller re-opens it and owes its own binding.
+//
+// ═══ IMPORT DISCIPLINE (FUNC-02) ═══
+//
+// `@vostride/agent-qa-schema` and node built-ins only. `packages/cli/src/eval-session-composition.ts`
+// is the ONE CLI file the surface-firewall ledger clears for `@vostride/agent-qa-eval-local`, and
+// that ledger only ever shrinks — so the replay, extraction and corpus legs arrive here through a
+// PORT, resolved by deferred import at the call. The deferred import is also what keeps the eval
+// composition graph out of the daemon child's module graph, which is the cost 422-09 measured.
+
+import {
+  computeBriefDigest,
+  deriveMemoryOnPathSites,
+  failingStepOf,
+  misdirectionSourceDigest,
+} from '@vostride/agent-qa-schema'
+import type {
+  CompletedRunHandoff,
+  CrossCheck,
+  MemoryOnPathTrust,
+  MisdirectionRecordResult,
+  MisdirectionRootPosture,
+  MisdirectionSamples,
+  PerTestOutcome,
+  RecordId,
+} from '@vostride/agent-qa-schema'
+
+import {
+  persistMisdirectionSidecar,
+  readMisdirectionRunState,
+  reserveMisdirectionCheck,
+  saveCompletedMisdirectionCheck,
+  writeMisdirectionRunPolicy,
+  misdirectionCheckKeyDigest,
+  type MisdirectionCapSource,
+  type MisdirectionCheckKey,
+} from './misdirection-run-state.js'
+
+/**
+ * The four not-run words this producer can write, spelled once.
+ *
+ * They are DIFFERENT SENTENCES and the vocabulary keeps them apart on purpose: a check nobody was
+ * allowed to run, a check that spent and did not finish, a run with no evaluation root to check
+ * against, and a run whose root exists and could not be read. 422-11's D-19 rule turns on exactly
+ * the last two being distinguishable.
+ */
+export const MISDIRECTION_CAP_EXCEEDED = 'cap-exceeded'
+export const MISDIRECTION_INTERRUPTED = 'interrupted'
+export const MISDIRECTION_NO_EVAL_ROOT = 'no-eval-root'
+export const MISDIRECTION_POSTURE_UNAVAILABLE = 'posture-unavailable'
+
+/**
+ * What the evaluation root answered, and the run-level identities a row must bind.
+ *
+ * THREE ARMS, NEVER TWO. An absent root and a broken root produce identical (empty) evidence and
+ * mean opposite things: the first is the BYOM exemption D-19 grants, the second is an unbacked
+ * gated posture that has NOT earned it. Folding them would let every broken root borrow the
+ * exemption, which is the failure 422-11 designed the posture vocabulary against.
+ *
+ * `corpusDigest` and `profileDigest` are RUN-LEVEL rather than per-decision, so a row for an
+ * exposure the cap refused still binds the corpus and profile the run would have checked under.
+ */
+export type MisdirectionRootPostureRead =
+  | { readonly kind: 'eval-root'; readonly corpusDigest: string; readonly profileDigest: string }
+  | { readonly kind: 'no-eval-root' }
+  | { readonly kind: 'broken-eval-root'; readonly reason: string }
+
+/** The resolved per-run check cap and where it came from. Durable — see `MisdirectionRunPolicy`. */
+export interface MisdirectionCaps {
+  readonly maxChecks: number
+  readonly source: MisdirectionCapSource
+}
+
+/** Which live decision a step's failing path replays. Deterministic: extraction, never spend. */
+export interface MisdirectionLocateInput {
+  readonly agentQaRoot: string
+  readonly runId: string
+  readonly testId: string
+  readonly stepIndex: number
+}
+
+export type MisdirectionLocated =
+  | { readonly kind: 'located'; readonly decisionOrdinal: number }
+  | { readonly kind: 'unavailable'; readonly reason: string }
+
+/**
+ * The D-18 authorization, as this producer builds it — the run's own recorded member outcome and
+ * nothing a caller asserted. It is handed to eval-local's `resolveFailingPathCandidate`, which
+ * RECOMPUTES which step failed and whether the record was on its path.
+ */
+export interface MisdirectionAuthorization {
+  readonly recordId: string
+  readonly runId: string
+  readonly perTest: PerTestOutcome
+}
+
+export interface MisdirectionCheckInput extends MisdirectionLocateInput {
+  readonly decisionOrdinal: number
+  readonly recordId: string
+  readonly authorization: MisdirectionAuthorization
+}
+
+export type MisdirectionChecked =
+  | {
+      readonly kind: 'checked'
+      readonly crossCheck: CrossCheck
+      readonly seedHonored: boolean
+      readonly samples: MisdirectionSamples
+      readonly reason?: string
+    }
+  | { readonly kind: 'unavailable'; readonly reason: string }
+
+/**
+ * Everything this producer needs from the eval side, as data and closures.
+ *
+ * `locate` and `check` are two members rather than one because the RESERVATION goes between them:
+ * locating a decision is deterministic extraction and costs no provider call, while `check` is the
+ * spend. A single member would force the charge to be written either before work that never needed
+ * one, or after a call this process may not survive.
+ */
+export interface MisdirectionArbiterPort {
+  rootPosture(): Promise<MisdirectionRootPostureRead>
+  resolveCaps(): Promise<MisdirectionCaps>
+  locate(input: MisdirectionLocateInput): Promise<MisdirectionLocated>
+  check(input: MisdirectionCheckInput): Promise<MisdirectionChecked>
+}
+
+/** One low-trust record on one failing step of one member — the unit of work and of evidence. */
+export interface MisdirectionExposure {
+  readonly perTest: number
+  readonly testId: string
+  readonly stepIndex: number
+  readonly recordId: RecordId
+  readonly trust: MemoryOnPathTrust
+  /** Recomputed from the failing step's OWN served brief, never read off a stored field. */
+  readonly briefDigest: string
+}
+
+/**
+ * Every exposure this run owes a cross-check, in the one deterministic order (D-18).
+ *
+ * MEMBER, then FAILING STEP, then the brief's own rendered order, with the record id as the final
+ * tie-break so the sequence is a total order rather than a stable-sort accident. The order is
+ * load-bearing: it is what decides which exposures fall inside the cap, and a cap applied to an
+ * unordered set would check a different four on every retry.
+ *
+ * PURE, AND IT RUNS FIRST. A run with no low-trust memory on any failing path reaches no store, no
+ * root and no provider — which is why a handoff with nothing to check keeps a handoff with NO
+ * sidecar member at all rather than an empty one.
+ */
+export function misdirectionExposures(_handoff: CompletedRunHandoff): MisdirectionExposure[] {
+  // DECLARED, UNIMPLEMENTED (RED).
+  return []
+}
+
+export interface PrepareMisdirectionEvidenceInput {
+  readonly agentQaRoot: string
+  /** `<agentQaRoot>/runs/<slug(runId)>` — the run's own audit directory. */
+  readonly runDir: string
+  /** `<runDir>/handoff.json` — the document the sidecar is published onto. */
+  readonly handoffPath: string
+  /**
+   * The run's handoff AS LOADED through the strict guard. The single source of every
+   * authorization this function builds — see the provenance note in this file's header.
+   */
+  readonly handoff: CompletedRunHandoff
+  readonly arbiter: MisdirectionArbiterPort
+}
+
+export interface PrepareMisdirectionEvidenceResult {
+  /** `not-consulted` means the arbiter never ran: a skipped run, or nothing to check. */
+  readonly posture: MisdirectionRootPosture | 'not-consulted'
+  readonly rows: readonly MisdirectionRecordResult[]
+  /** D-19's absence exemption, and ONLY under a genuinely absent evaluation root. */
+  readonly backing?: 'declared-only'
+  /** Did the sidecar reach `handoff.json`? False exactly when the arbiter never ran. */
+  readonly persisted: boolean
+  readonly cap?: MisdirectionCaps
+  /** Every exposure this pass could not reach, in its own words. Never folded into one line. */
+  readonly notices: readonly string[]
+}
+
+const NOT_CONSULTED: PrepareMisdirectionEvidenceResult = {
+  posture: 'not-consulted',
+  rows: [],
+  persisted: false,
+  notices: [],
+}
+
+function keyOf(exposure: MisdirectionExposure, runId: string, decisionOrdinal: number): MisdirectionCheckKey {
+  return {
+    runId,
+    perTest: exposure.perTest,
+    stepIndex: exposure.stepIndex,
+    decisionOrdinal,
+    recordId: exposure.recordId,
+  }
+}
+
+/**
+ * Produce this run's circularity evidence and publish it, BEFORE the analysis enqueue.
+ *
+ * THE SKIPS COME FIRST AND COST NOTHING. A gate run or an outcome-excluded run reaches no store,
+ * no root and no provider — the same D-08 line `post-verdict-step.ts` holds one layer up, restated
+ * here so the PRODUCER is safe on its own terms rather than only because its one caller is.
+ *
+ * WHAT IS DURABLE WHEN THIS RETURNS: the resolved cap, one reservation per charged check, one
+ * completion per finished result, and the sidecar on `handoff.json`. What is NOT durable is the
+ * `notices` list, which is diagnosis rather than evidence.
+ *
+ * A CHECK THAT THREW IS AN INTERRUPTED CHECK, NOT A LOST ONE. The reservation stays on disk with
+ * no completion beside it, so the charge is kept and a retry reports `interrupted` with unknown
+ * usage instead of silently asking the provider the same question again. A remote call this
+ * process did not see finish is not a call this process may assume did not happen.
+ */
+export async function prepareMisdirectionEvidence(
+  _input: PrepareMisdirectionEvidenceInput,
+): Promise<PrepareMisdirectionEvidenceResult> {
+  // DECLARED, UNIMPLEMENTED (RED).
+  return NOT_CONSULTED
+}
+
+async function resolveDurableCap(
+  input: PrepareMisdirectionEvidenceInput,
+  runId: string,
+): Promise<MisdirectionCaps> {
+  const caps = await input.arbiter.resolveCaps()
+  if (!Number.isSafeInteger(caps.maxChecks) || caps.maxChecks < 0) {
+    throw new TypeError('misdirection check cap must be a non-negative integer')
+  }
+  writeMisdirectionRunPolicy(input.runDir, {
+    schemaVersion: 1,
+    runId,
+    maxChecks: caps.maxChecks,
+    source: caps.source,
+  })
+  // Read back rather than trusting the write: a policy that already existed WINS, and a resolution
+  // that lost that race must not be the one this pass spends against.
+  const state = readMisdirectionRunState(input.runDir, runId)
+  return state.policy === undefined
+    ? caps
+    : { maxChecks: state.policy.maxChecks, source: state.policy.source }
+}
+
+/** The member outcome this exposure came from — matched on the id the enumeration carried. */
+function memberOf(
+  handoff: CompletedRunHandoff,
+  testId: string,
+  perTest: number,
+): PerTestOutcome | undefined {
+  return handoff.tests.find((test) => test.testId === testId && test.testIndex === perTest)
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * The host-owned preparation capability — ONE builder, composed by BOTH production run hosts and
+ * by the post-verdict step's own default, and by nothing else.
+ *
+ * PARITY IS A PROPERTY OF THERE BEING ONE CONSTRUCTION SITE (422-09's line, held here). A
+ * capability bound on the terminal and forgotten on the daemon is a behavioural split between two
+ * ways of running the same product, and the two hosts' objects are compared against EACH OTHER
+ * rather than against a restated literal — two restatements both go green the moment somebody
+ * updates both and neither binding.
+ */
+export interface MisdirectionPreparationCapabilities {
+  readonly prepareMisdirectionEvidence: (
+    input: Omit<PrepareMisdirectionEvidenceInput, 'arbiter'>,
+  ) => Promise<PrepareMisdirectionEvidenceResult>
+}
+
+export function misdirectionPreparationCapabilities(input: {
+  readonly configPath: string
+  readonly agentQaRoot: string
+}): MisdirectionPreparationCapabilities {
+  const arbiter = misdirectionArbiterForHost(input)
+  return {
+    prepareMisdirectionEvidence: async (prepared) =>
+      await prepareMisdirectionEvidence({ ...prepared, arbiter }),
+  }
+}
+
+/**
+ * The eval-side port, bound lazily over this host's configuration.
+ *
+ * Every member defers its import of `../eval-session-composition.js` to the CALL, on
+ * `createCanaryAblationForHost`'s exact idiom (418 D-01/D-08): composing a host must resolve no
+ * eval session, must resolve no provider credential, and must not pull the eval composition graph
+ * into a daemon child that will never arbitrate anything.
+ *
+ * A ROOT THAT CANNOT BE CONSULTED IS A POSTURE, NOT A CRASH. Every arm converts its own failure
+ * into the honest answer — `broken-eval-root`, `unavailable` — because post-processing may never
+ * cost the verdict, and a throw here would become a retry asking the same unanswerable question.
+ */
+export function misdirectionArbiterForHost(input: {
+  readonly configPath: string
+  readonly agentQaRoot: string
+}): MisdirectionArbiterPort {
+  const session = async () => {
+    const { resolveEvalSession } = await import('../eval-session-composition.js')
+    return await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
+  }
+  return {
+    async rootPosture() {
+      try {
+        const { readMisdirectionRootPosture } = await import('../eval-session-composition.js')
+        return await readMisdirectionRootPosture(await session())
+      } catch (error) {
+        return { kind: 'broken-eval-root', reason: errorText(error) }
+      }
+    },
+    async resolveCaps() {
+      const { resolveMisdirectionCaps } = await import('../eval-session-composition.js')
+      return resolveMisdirectionCaps(await session())
+    },
+    async locate(target) {
+      try {
+        const { locateMisdirectionDecision } = await import('../eval-session-composition.js')
+        return await locateMisdirectionDecision(await session(), target)
+      } catch (error) {
+        return { kind: 'unavailable', reason: errorText(error) }
+      }
+    },
+    async check(target) {
+      const { runMisdirectionCheck } = await import('../eval-session-composition.js')
+      return await runMisdirectionCheck(await session(), target)
+    },
+  }
+}
