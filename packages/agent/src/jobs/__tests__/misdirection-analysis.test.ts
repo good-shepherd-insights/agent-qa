@@ -636,3 +636,366 @@ describe('422-15 repair calls and token use are recorded once and capped', () =>
     expect(run.outcome.status).toBe('complete')
   })
 })
+
+// ---------------------------------------------------------------------------------------
+// 422-15-T2: D-19's BYOM declaration, and per-member honesty across a mixed ledger.
+// ---------------------------------------------------------------------------------------
+
+describe('422-15 D-19: absence is the exemption, breakage is not', () => {
+  it('keeps the authored class under a genuinely ABSENT evaluation root, backed declared-only', async () => {
+    // The BYOM floor. A host with no evaluation root could not cross-check anything, so the
+    // arbiter published an EMPTY ledger and recorded why. Refusing the class here would punish
+    // exactly the deployment this project promises to keep working.
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+    ])
+    const handoff = withEvidence(base, () => [])
+
+    const run = await runAnalyzeRun({
+      handoff,
+      outputs: [outputOf([authoredEntry(0)])],
+      capabilities: { readMisdirectionRootPosture: () => 'no-eval-root' },
+    })
+
+    const verdict = verdictOf(run, 0)
+    expect(verdict.class).toBe('app_bug')
+    expect(verdict.misdirectionRuledOut?.backing).toBe('declared-only')
+    expect(verdict.misdirectionRuledOut?.results).toEqual([])
+    // The exposure is still disclosed: declared-only says nothing was measured, not that nothing
+    // was served.
+    expect(verdict.memoryOnPath).toEqual([{ recordId: ALPHA, trust: 'candidate' }])
+  })
+
+  it('refuses that exemption to a BROKEN root — the same empty ledger means something else', async () => {
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+    ])
+    const handoff = withEvidence(base, () => [])
+    const output = outputOf([authoredEntry(0)])
+
+    const run = await runAnalyzeRun({
+      handoff,
+      outputs: [output, output],
+      capabilities: { readMisdirectionRootPosture: () => 'broken-eval-root' },
+    })
+
+    const verdict = verdictOf(run, 0)
+    expect(verdict.class).toBe('unknown')
+    expect(verdict.misdirectionRuledOut?.backing).toBeUndefined()
+    expect(verdict.misdirectionRuledOut?.reason).toContain('could not be consulted')
+    // Nothing flipped, so nothing is attributed — an unavailable posture accuses no record.
+    expect(verdict.attribution).toBeUndefined()
+  })
+
+  it('fails closed when NO host bound a posture reader: silence never grants the exemption', async () => {
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+    ])
+    const handoff = withEvidence(base, () => [])
+    const output = outputOf([authoredEntry(0)])
+
+    const run = await runAnalyzeRun({ handoff, outputs: [output, output] })
+
+    const verdict = verdictOf(run, 0)
+    expect(verdict.class).toBe('unknown')
+    expect(verdict.misdirectionRuledOut?.backing).toBeUndefined()
+  })
+
+  it('reads a THROWING posture reader as an ordinary root rather than an exemption', async () => {
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+    ])
+    const handoff = withEvidence(base, () => [])
+    const output = outputOf([authoredEntry(0)])
+
+    const run = await runAnalyzeRun({
+      handoff,
+      outputs: [output, output],
+      capabilities: {
+        readMisdirectionRootPosture: () => {
+          throw new Error('the posture record could not be read')
+        },
+      },
+    })
+
+    expect(verdictOf(run, 0).class).toBe('unknown')
+    expect(verdictOf(run, 0).misdirectionRuledOut?.backing).toBeUndefined()
+  })
+})
+
+describe('422-15 D-20: every member answers for its own evidence', () => {
+  it('leaves a HELD member authored while its FLIPPED sibling falls to the floor', async () => {
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 2 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+      { perTest: 1, stepIndex: 0, records: [{ id: BETA }] },
+    ])
+    const handoff = withEvidence(base, (self) => [
+      rowFor(self, { perTest: 0, recordId: ALPHA, crossCheck: 'held' }),
+      rowFor(self, { perTest: 1, recordId: BETA, crossCheck: 'flipped' }),
+    ])
+    const output = outputOf([authoredEntry(0), authoredEntry(1)])
+
+    const run = await runAnalyzeRun({ handoff, outputs: [output, output] })
+
+    expect(verdictOf(run, 0).class).toBe('app_bug')
+    expect(verdictOf(run, 0).attribution).toBeUndefined()
+    expect(verdictOf(run, 1).class).toBe('unknown')
+    expect(verdictOf(run, 1).attribution?.records).toEqual([BETA])
+    // A held member cannot exonerate a flipped one, and a flipped one cannot convict a held one:
+    // neither member's block carries the other's row.
+    expect(verdictOf(run, 0).misdirectionRuledOut?.results.map((row) => row.recordId)).toEqual([
+      ALPHA,
+    ])
+    expect(verdictOf(run, 1).misdirectionRuledOut?.results.map((row) => row.recordId)).toEqual([
+      BETA,
+    ])
+  })
+
+  it('keeps a CAPPED exposure visible and refuses to read it as held', async () => {
+    // 422-14 retains an exposure the per-run cap did not admit as a `not-run` row with its own
+    // reason. An unrun check is not a passed one, and the record says which it was.
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }, { id: BETA }] },
+    ])
+    const handoff = withEvidence(base, (self) => [
+      rowFor(self, { recordId: ALPHA, crossCheck: 'held' }),
+      rowFor(self, { recordId: BETA, crossCheck: 'not-run', reason: 'cap-exceeded' }),
+    ])
+    const output = outputOf([authoredEntry(0)])
+
+    const run = await runAnalyzeRun({ handoff, outputs: [output, output] })
+
+    const verdict = verdictOf(run, 0)
+    expect(verdict.class).toBe('unknown')
+    expect(verdict.misdirectionRuledOut?.crossCheck).toBe('not-run')
+    expect(
+      verdict.misdirectionRuledOut?.results.find((row) => row.recordId === BETA)?.reason,
+    ).toBe('cap-exceeded')
+    // The capped record is disclosed, never accused: nothing flipped, so nothing is attributed.
+    expect(verdict.attribution).toBeUndefined()
+  })
+
+  it('retains every row VERBATIM — the identities, the disclosure and the sampling', async () => {
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+    ])
+    const row = rowFor(base, {
+      crossCheck: 'held',
+      decisionOrdinal: 3,
+      seedHonored: false,
+      samples: { k: 2, seeds: [7, 11], modelCalls: 4 },
+    })
+    const handoff = withEvidence(base, () => [row])
+
+    const run = await runAnalyzeRun({ handoff, outputs: [outputOf([authoredEntry(0)])] })
+
+    expect(canonicalJson(verdictOf(run, 0).misdirectionRuledOut?.results)).toBe(
+      canonicalJson([row]),
+    )
+  })
+
+  it('keys on the EXPOSURE: a first-step hold does not cover a second-step flip', () => {
+    // The same record served on two steps was cross-checked twice, and the pass that cleared it on
+    // the first step says nothing about the second. Asserted on the stamp itself, where both
+    // exposures are still on the verdict's path — a verdict that has already fallen to the floor
+    // cites nothing, so its path has narrowed to the failing step by then.
+    const base = withServedRecords(
+      buildSyntheticHandoff({ failureCount: 1, passingStepsBefore: 1 }),
+      [
+        { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+        { perTest: 0, stepIndex: 1, records: [{ id: ALPHA }] },
+      ],
+    )
+    const rows = [
+      rowFor(base, { stepIndex: 0, crossCheck: 'held' }),
+      rowFor(base, { stepIndex: 1, crossCheck: 'flipped' }),
+    ]
+
+    const stamped = stampVerdictMisdirectionEvidence({
+      verdict: persistedVerdict('app_bug', [0]),
+      parts: undefined,
+      test: base.tests[0],
+      evidence: rows,
+      rootPosture: 'eval-root',
+    })
+
+    expect(stamped.misdirectionRuledOut?.results).toHaveLength(2)
+    // One record, two answers, and the summary takes the worse of them.
+    expect(stamped.memoryOnPath).toEqual([{ recordId: ALPHA, trust: 'candidate' }])
+    expect(stamped.misdirectionRuledOut?.crossCheck).toBe('flipped')
+  })
+
+  it('refuses the class on that second-step flip, and would KEEP it had both exposures held', async () => {
+    // The pair that makes the cell above non-vacuous: the only difference between these two runs
+    // is the second exposure's answer, and it decides the verdict.
+    const base = withServedRecords(
+      buildSyntheticHandoff({ failureCount: 1, passingStepsBefore: 1 }),
+      [
+        { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+        { perTest: 0, stepIndex: 1, records: [{ id: ALPHA }] },
+      ],
+    )
+    const output = outputOf([
+      authoredEntry(0, {
+        citedSteps: [0],
+        groundingQuote: { stepIndex: 0, quote: 'neighbor step 0' },
+      }),
+    ])
+    const rowsHolding = (self: CompletedRunHandoff) => [
+      rowFor(self, { stepIndex: 0, crossCheck: 'held' as const }),
+      rowFor(self, { stepIndex: 1, crossCheck: 'held' as const }),
+    ]
+
+    const flipped = await runAnalyzeRun({
+      handoff: withEvidence(base, (self) => [
+        rowFor(self, { stepIndex: 0, crossCheck: 'held' }),
+        rowFor(self, { stepIndex: 1, crossCheck: 'flipped' }),
+      ]),
+      outputs: [output, output],
+    })
+    const held = await runAnalyzeRun({
+      handoff: withEvidence(base, rowsHolding),
+      outputs: [output],
+    })
+
+    expect(verdictOf(flipped, 0).class).toBe('unknown')
+    expect(String((flipped.requests[1] as JobModelRequest).prompt)).toContain('FLIPPED')
+    expect(verdictOf(held, 0).class).toBe('app_bug')
+    expect(held.modelCalls).toBe(1)
+  })
+
+  it('retains the exposures a REFUSED claim covered after the member falls to the floor', async () => {
+    // THE DETAIL A FLOOR LOSES IF NOBODY KEEPS IT. The author cited step 0, which served the
+    // record that flipped; the failing step served a different record that held. When the claim is
+    // refused the member falls to the deterministic floor, whose own citation is empty — so the
+    // path narrows to the failing step and the record that actually misled the run vanishes from
+    // the disclosure along with the reason the member fell at all.
+    const base = withServedRecords(
+      buildSyntheticHandoff({ failureCount: 1, passingStepsBefore: 1 }),
+      [
+        { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+        { perTest: 0, stepIndex: 1, records: [{ id: BETA }] },
+      ],
+    )
+    const handoff = withEvidence(base, (self) => [
+      rowFor(self, { stepIndex: 0, recordId: ALPHA, crossCheck: 'flipped' }),
+      rowFor(self, { stepIndex: 1, recordId: BETA, crossCheck: 'held' }),
+    ])
+    const output = outputOf([
+      authoredEntry(0, {
+        citedSteps: [0],
+        groundingQuote: { stepIndex: 0, quote: 'neighbor step 0' },
+      }),
+    ])
+
+    const run = await runAnalyzeRun({ handoff, outputs: [output, output] })
+
+    const verdict = verdictOf(run, 0)
+    expect(verdict.class).toBe('unknown')
+    expect([...(verdict.memoryOnPath ?? [])].map((entry) => entry.recordId).sort()).toEqual([
+      ALPHA,
+      BETA,
+    ])
+    expect(verdict.attribution?.records).toEqual([ALPHA])
+    expect(verdict.misdirectionRuledOut?.results).toHaveLength(2)
+  })
+
+  it('never widens a floor path to a step the member never captured', async () => {
+    // The union above takes steps from a claim that was REFUSED, and one way to earn a refusal is
+    // to cite a step that does not exist. Carrying that citation onto the floor would persist an
+    // artifact the validator rejects for a reason the arm did not create.
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+    ])
+    const handoff = withEvidence(base, (self) => [rowFor(self, { crossCheck: 'flipped' })])
+    const output = outputOf([authoredEntry(0, { citedSteps: [0, 41] })])
+
+    const run = await runAnalyzeRun({ handoff, outputs: [output, output] })
+
+    const verdict = verdictOf(run, 0)
+    expect(verdict.class).toBe('unknown')
+    expect(verdict.evidence.citedSteps).toEqual([0])
+    expect(
+      validateAnalysisAgainstHandoff(run.persisted as RunAnalysisArtifact, handoff, {
+        gatedProducerEvidence: true,
+        rootPosture: 'eval-root',
+      }),
+    ).toEqual({ ok: true })
+  })
+
+  it('treats a canary-served ACTIVE record as low trust, exactly as a candidate', async () => {
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA, status: 'active', servedAsCanary: true }] },
+    ])
+    const handoff = withEvidence(base, (self) => [rowFor(self, { crossCheck: 'held' })])
+
+    const run = await runAnalyzeRun({ handoff, outputs: [outputOf([authoredEntry(0)])] })
+
+    expect(verdictOf(run, 0).memoryOnPath).toEqual([
+      { recordId: ALPHA, trust: 'low-trust-active' },
+    ])
+  })
+})
+
+describe('422-15 a refused payload still lands the chain honestly', () => {
+  it('refuses an unreadable ledger permanently, one line PAST the digest gate', async () => {
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+    ])
+    const handoff = withEvidence(base, (self) => [rowFor(self, { crossCheck: 'held' })])
+
+    const run = await runAnalyzeRun({
+      handoff,
+      outputs: [],
+      payload: { misdirectionEvidence: [{ recordId: 'rec-alpha' }] },
+    })
+
+    expect(run.outcome.status).toBe('permanent')
+    expect(String((run.outcome as { reason: string }).reason)).toContain('cannot read')
+    expect(run.persisted).toBeUndefined()
+  })
+
+  it('refuses a carried copy that disagrees with the analysed bytes', async () => {
+    const base = withServedRecords(buildSyntheticHandoff({ failureCount: 1 }), [
+      { perTest: 0, stepIndex: 0, records: [{ id: ALPHA }] },
+    ])
+    const handoff = withEvidence(base, (self) => [rowFor(self, { crossCheck: 'held' })])
+
+    const run = await runAnalyzeRun({
+      handoff,
+      outputs: [],
+      payload: {
+        misdirectionEvidence: [rowFor(handoff, { crossCheck: 'flipped' })],
+      },
+    })
+
+    expect(run.outcome.status).toBe('permanent')
+    expect(String((run.outcome as { reason: string }).reason)).toContain(
+      'not the evidence in the analysed handoff bytes',
+    )
+  })
+
+  it('hands the third stage the same successors a live analysis would, marked unknown', async () => {
+    // D-04's ratified disposition, restated for the new refusals: curation and the proposal stage
+    // must never wait on a dead head, so a permanently failed analysis chains onward carrying the
+    // unknown-verdicts marker and the reason.
+    const declaration = createRealJobKindRegistry({
+      loadCompletedRunHandoff: () => buildSyntheticHandoff({ failureCount: 1 }),
+      curateRun: async () => ({ curated: 0, deprecated: 0, complete: true }),
+      persistAnalysis: () => {},
+    }).require('analyze-run')
+    const fallback = declaration.onPermanentFailure
+    expect(typeof fallback).toBe('function')
+
+    const successors = (fallback as (input: unknown) => readonly { kind: string; payload: Record<string, unknown> }[])({
+      job: { id: 'job_dead_analysis' } as unknown as Job,
+      payload: { runId: 'run-422-15-dead', executionContext: 'local-headless' },
+      reason: 'the analyze-run payload carries a circularity ledger this build cannot read',
+    })
+
+    expect(successors.map((successor) => successor.kind)).toEqual(['curate-memory'])
+    expect(successors[0]?.payload.verdicts).toBe('unknown')
+    expect(String(successors[0]?.payload.failureReason)).toContain('cannot read')
+    expect(successors[0]?.payload.runId).toBe('run-422-15-dead')
+  })
+})
