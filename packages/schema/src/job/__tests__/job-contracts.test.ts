@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { jobSchema } from '../job'
+import { jobConclusionKindValues, jobSchema } from '../job'
 import { chainedJobRequestSchema, jobEnqueueRequestSchema } from '../job-enqueue'
 import { JOB_CHECKPOINT_SCHEMA_VERSION, jobCheckpointEnvelopeSchema } from '../job-checkpoint'
 import { jobHandlerOutcomeSchema } from '../job-outcome'
@@ -223,5 +223,69 @@ describe('jobSchema alongside the new vocabulary', () => {
 
     expect(jobSchema.safeParse(job).success).toBe(true)
     expect(jobSchema.safeParse({ ...job, idempotencyKey: 'k' }).success).toBe(false)
+  })
+})
+
+// 422 D-16 (ADV-03). The conclusion vocabulary, pinned EXACTLY, from a list written out here
+// rather than derived from the declaration under test — a check that read the production array
+// would agree with whatever that array became, which is precisely the change it exists to catch.
+//
+// Runtime and compile-time bars travel TOGETHER (see job-contracts.test-d.ts). Neither alone is
+// enough: the type union and the value list are two declarations, and a member removed from one
+// and not the other is exactly the drift that lets a store record a conclusion no reader accepts.
+describe('jobConclusionKind, the 422 D-16 vocabulary', () => {
+  const CONCLUSIONS = [
+    'no_issue',
+    'needs_user_input',
+    'insufficient_evidence',
+    'knowledge_skipped_draft',
+    'model_capability_error',
+    'provider_error',
+    'insufficient_model_output',
+    'unreadable_kind',
+  ]
+
+  const JOB: Record<string, unknown> = {
+    id: 'job_1',
+    kind: 'analyze-run',
+    status: 'failed',
+    summary: 'Analyze failed checkout run',
+    attempts: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:01.000Z',
+  }
+
+  it('job conclusion kinds exact', () => {
+    // ORDER included. The list is a declaration, and a reordered declaration is a change a
+    // set-comparison would wave through while a diff of the file would not.
+    expect([...jobConclusionKindValues]).toEqual(CONCLUSIONS)
+  })
+
+  // The list above could be right while the SCHEMA read some other list, so the same vocabulary is
+  // re-asserted through the parser an actual row travels through.
+  it.each(CONCLUSIONS)('parses a job concluding %s', (conclusion) => {
+    expect(jobSchema.safeParse({ ...JOB, conclusionKind: conclusion }).success).toBe(true)
+  })
+
+  it.each(['unreadable-kind', 'unreadableKind', 'illicit-conclusion-kind', 'quarantined', ''])(
+    'refuses %p, which is not a declared conclusion',
+    (conclusion) => {
+      expect(jobSchema.safeParse({ ...JOB, conclusionKind: conclusion }).success).toBe(false)
+    },
+  )
+
+  // D-16's other half, asserted from the conclusion's own file: naming an outcome for a row this
+  // build cannot read must not widen what it CAN read. The five kinds are untouched.
+  it('admits the unreadable-kind conclusion without admitting an unreadable kind', () => {
+    expect(jobSchema.safeParse({ ...JOB, conclusionKind: 'unreadable_kind' }).success).toBe(true)
+    expect(
+      jobSchema.safeParse({ ...JOB, kind: 'triage-issues', conclusionKind: 'unreadable_kind' })
+        .success,
+    ).toBe(false)
+  })
+
+  it('leaves the conclusion optional, because most rows conclude nothing nameable', () => {
+    expect(jobSchema.safeParse(JOB).success).toBe(true)
+    expect(jobSchema.safeParse({ ...JOB, conclusionKind: undefined }).success).toBe(true)
   })
 })
