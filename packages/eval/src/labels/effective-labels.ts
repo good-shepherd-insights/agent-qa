@@ -26,17 +26,28 @@ const weightSchema = z.object({
 // same reader every other persisted label goes through — a fresh committed-reader readback of a
 // derived record is therefore already executable, rather than silently falling back to legacy
 // bytes. Optional, so every pre-422 record still parses byte-for-byte as before.
+//
+// 2026-09-11, 422-02: the generator metadata is REQUIRED here, unlike on the corpus entry.
+// The distinction is where the bytes came from. A committed adversarial ENTRY may predate
+// 422 and legitimately name none of the three additive fields; a `derivedFrom` marker has no
+// history at all — the 422 derivation engine is the only thing that has ever minted one, and
+// it mints all three together. So a partial marker is not "an old record", it is a malformed
+// one, and admitting it would mean inventing the generation a committed variant was derived
+// under. The two seed identities must also agree: a marker that names one seed in its own
+// field and another in its generator states a provenance that cannot be true.
 const derivedFromSchema = z.object({
   seedCassetteId: z.string().min(1),
   generator: z.object({
     kind: z.enum(GENERATOR_KINDS),
     seedCassetteId: z.string().min(1),
     generatorVersion: count,
-    mutator: z.enum(ADVERSARIAL_MUTATORS).optional(),
-    tableVersion: count.optional(),
-    tableHash: digest.optional(),
+    mutator: z.enum(ADVERSARIAL_MUTATORS),
+    tableVersion: count.min(1),
+    tableHash: digest,
   }).strict(),
-}).strict()
+}).strict().refine(marker => marker.seedCassetteId === marker.generator.seedCassetteId, {
+  message: 'derivedFrom.seedCassetteId must equal derivedFrom.generator.seedCassetteId',
+})
 
 const recordSchema = z.object({
   derivedFrom: derivedFromSchema.optional(),

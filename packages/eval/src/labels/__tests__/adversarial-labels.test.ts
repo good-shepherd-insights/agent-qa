@@ -16,7 +16,7 @@
  *      "an old record" — and the reader must say so instead of fabricating the absent field.
  */
 import { describe, expect, it } from 'vitest'
-import { sha256hex } from '@vostride/agent-qa-schema'
+import { asRef, sha256hex } from '@vostride/agent-qa-schema'
 import type { MarkReceipt } from '@vostride/agent-qa-schema'
 import {
   FIXTURE_REFS,
@@ -55,7 +55,7 @@ function userGoldSeedLabel(seed: ReturnType<typeof seedFixture>): StandaloneLabe
     kind: 'false-pass',
     markId: 'mark_0123456789ab',
     correctedExpectation: CORRECTED_EXPECTATION,
-    correctedAction: { type: 'click', ref: FIXTURE_REFS.siblingButton },
+    correctedAction: { type: 'click', ref: asRef(FIXTURE_REFS.siblingButton) },
   } as MarkReceipt
   return projectUserMarkLabelRecord({
     cassette: seed.cassette,
@@ -74,7 +74,7 @@ function correctedSilverSeedLabel(seed: ReturnType<typeof seedFixture>): Standal
       verdict: 'fail',
       overturnedVerdict: { ...seed.cassette.label.verdict! },
       correctedExpectation: CORRECTED_EXPECTATION,
-      correctedAction: { type: 'click', ref: FIXTURE_REFS.siblingButton },
+      correctedAction: { type: 'click', ref: asRef(FIXTURE_REFS.siblingButton) },
       markId: 'mark_ba9876543210',
     },
   }
@@ -308,7 +308,7 @@ describe('422-02 the derived label is scoring-only and still excluded from its o
   })
 })
 
-function omit<T extends Record<string, unknown>>(value: T, key: string): Record<string, unknown> {
+function omit(value: object, key: string): Record<string, unknown> {
   const copy: Record<string, unknown> = { ...value }
   delete copy[key]
   return copy

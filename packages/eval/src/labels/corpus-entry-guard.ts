@@ -111,7 +111,27 @@ const adversarialArmSchema = z
         tableVersion: z.number().int().nonnegative().optional(),
         tableHash: digestSchema.optional(),
       })
-      .strict(),
+      .strict()
+      // 2026-09-11, 422-02: ALL THREE or NONE. Absent is the pre-422 shape and stays
+      // admissible; a PARTIAL stamp is not an older generation, it is a derivation whose
+      // provenance is missing a leg. Admitting `mutator` without `tableVersion` would leave
+      // a committed variant naming a family with no generation to explain it, and the census
+      // reports adversarial entries PER `tableVersion` — so the gap would be invented at
+      // read time rather than refused at admission.
+      .refine(
+        generator => {
+          const present = [
+            generator.mutator !== undefined,
+            generator.tableVersion !== undefined,
+            generator.tableHash !== undefined,
+          ].filter(Boolean).length
+          return present === 0 || present === 3
+        },
+        {
+          message:
+            'generator must name all of mutator, tableVersion and tableHash, or none of them',
+        },
+      ),
   })
   .strict()
 

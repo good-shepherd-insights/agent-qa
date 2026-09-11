@@ -315,6 +315,30 @@ export function deriveAdversarialLabel({
   seedLabel,
   generator,
 }: DeriveAdversarialLabelInput): StandaloneLabelRecord {
+  // 2026-09-11, 422-02: two caller-bug guards, matching what the strict reader admits.
+  //
+  // The first is the one that would corrupt gold silently. Cloning a record that labels a
+  // DIFFERENT cassette would stamp the derived variant with another decision's expectation
+  // and another run's provenance — a wrong gold and a broken ROOT-03 exclusion at once, and
+  // nothing downstream could tell, because the clone is well-formed in every other respect.
+  //
+  // The second keeps the factory and `parseStandaloneLabelRecord` telling one story: a
+  // `derivedFrom` marker has no legacy form, so minting a partial one here would write bytes
+  // this package's own reader refuses.
+  if (seedLabel.cassetteId !== generator.seedCassetteId) {
+    throw new TypeError(
+      'adversarial derivation requires the seed label of the cassette the generator names',
+    )
+  }
+  if (
+    generator.mutator === undefined ||
+    generator.tableVersion === undefined ||
+    generator.tableHash === undefined
+  ) {
+    throw new TypeError(
+      'adversarial derivation requires complete generator metadata (mutator, tableVersion, tableHash)',
+    )
+  }
   const {
     revision: _revision,
     supersedes: _supersedes,
