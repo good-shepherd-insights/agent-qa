@@ -414,9 +414,15 @@ describe('a row another build wrote still reads, through the op (D-01, Pitfall 7
 
       const notification = status.notification
       expect(notification).toBeDefined()
-      expect(notification!.schemaVersion).toBe(2)
+      // 2026-09-11 (422 D-13): the walk is two steps long now, and the row this cell stores was
+      // written by a build three versions back. The end of the walk moved; the claim did not.
+      expect(notification!.schemaVersion).toBe(3)
       // Set-equality on the keys: the placeholder must be GONE from what a surface receives, not
       // merely unrendered by the surfaces that happen to exist today.
+      //
+      // It is also, since D-13, the pin that the walk did not INVENT the third stage on the way
+      // past. A historical row belongs to a chain that had no proposal stage, and `proposals`
+      // absent is the only honest thing this build can say about it.
       expect(Object.keys(notification!.stages).sort()).toEqual(['analysis', 'curation'])
       // The counts survived the walk — a migration that rebuilt the stage record instead of
       // narrowing it would drop them and still pass the key-set claim above.
