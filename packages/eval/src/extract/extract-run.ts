@@ -100,7 +100,14 @@ export function extractRunCassettes({
         const record: DecisionRecord = {
           input,
           sidecar: projectedSidecar.leg,
-          label: projectLabelLeg({ step, subAction: selection.subAction }),
+          label: projectLabelLeg({
+            step,
+            subAction: selection.subAction,
+            // 422-12: the root cause is recorded on the MEMBER, not the step, so the extractor
+            // is the one caller that can supply it. Absent members stay absent — extraction
+            // never mints a verdict the run did not record.
+            rootCause: handoffTest.rootCause,
+          }),
           receipt: assembleReceipt({
             inputLeg: input,
             step,

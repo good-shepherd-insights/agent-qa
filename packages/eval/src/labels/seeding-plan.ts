@@ -161,7 +161,13 @@ function matchesOriginal(input: BuildSeedingPlanInput, member: PerTestOutcome, d
     && canonicalJson(cassette.input) === canonicalJson(inputLeg)
     && canonicalJson(cassette.receipt) === canonicalJson(receipt)
     && canonicalJson(cassette.sidecar) === canonicalJson(projectSidecarLeg({ subAction }).leg)
-    && canonicalJson(cassette.label) === canonicalJson(projectLabelLeg({ step: decision.evidence, subAction }))
+    && canonicalJson(cassette.label) === canonicalJson(projectLabelLeg({
+      // 422-12: the original extraction projected the ORIGINAL attempt's root cause onto the
+      // label, and `rerunOrigin.rootCause` is that same recorded verdict. Reconstructing
+      // without it would read every post-422 cassette of a member that HAD a root cause as a
+      // mismatch, and retire nothing.
+      step: decision.evidence, subAction, rootCause: member.rerunOrigin?.rootCause,
+    }))
     && canonicalJson(record.label) === canonicalJson(cassette.label)
     && canonicalJson(recordProvenance) === canonicalJson(provenance)
     && (entry === undefined ? record.quarantine === 'rerun-overturned'

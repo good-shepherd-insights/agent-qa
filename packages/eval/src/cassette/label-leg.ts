@@ -49,7 +49,17 @@ export interface CassetteLabelLeg {
   tier: LabelTier
   /** Recorded failure projections only; unavailable fields remain absent (D-16). */
   recordedFailure?: RecordedFailureContext
-  /** Reserved schema root-cause slot; the current handoff does not populate it (D-16). */
+  /**
+   * The member test's recorded root cause, copied verbatim from the handoff (D-16; populated
+   * since 422-12).
+   *
+   * A `Verdict` may carry the 422 circularity members (`memoryOnPath`, `misdirectionRuledOut`),
+   * and they ride here unchanged: the cassette is the artifact that leaves the run directory, so
+   * a reader on the other side has to be able to see what was cross-checked and what was not.
+   * Structurally ABSENT when the member recorded no root cause — which is the overwhelming
+   * majority and every cassette committed before today. Absence means "the run recorded none",
+   * never "the analysis found nothing".
+   */
   rootCause?: Verdict
   /** Reserved contrastive-pair slot populated by the later label factory (D-17). */
   pairing?: ContrastivePairing

@@ -34,7 +34,13 @@ function fixture(classification?: Verdict['class']) {
   member.rerunAttempt = 2
   member.rootCause = verdict('flake')
   member.rerunOrigin = { ...origin, evidenceDigest: sha256hex(canonicalJson(origin)) }
-  const originalHandoff = { ...handoff, tests: [{ ...member, steps: [evidence] }] }
+  // 422-12: the ORIGINAL attempt's handoff carried the ORIGINAL attempt's root cause — which the
+  // rerun preserves as `rerunOrigin.rootCause`, never the rerun's own final class. Extraction now
+  // projects that verdict onto the label, so synthesizing the original handoff from the mutated
+  // rerun member would give the stored cassette a root cause the original run never recorded.
+  const { rootCause: _rerunRootCause, ...originalMember } = member
+  const originalHandoff = { ...handoff, tests: [{ ...originalMember, steps: [evidence],
+    ...(classification ? { rootCause: verdict(classification) } : {}) }] }
   const original = extractRunCassettes({ handoff: originalHandoff, artifacts }).cassettes
     .find(entry => entry.cassette.granularity === 'leaf')!.cassette
   if (original.granularity !== 'leaf') throw new Error('fixture leaf missing')
