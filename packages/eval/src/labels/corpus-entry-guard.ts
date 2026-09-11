@@ -31,11 +31,17 @@ import { z } from 'zod'
 import { BENEFITS } from '@vostride/agent-qa-schema'
 import type {
   CorpusEntry,
+  CorpusGenerator,
   HeldOutVisibility,
   NaturalCorpusEntry,
   TargetEnvironment,
 } from './corpus-entry'
-import { ADVERSARIAL_MUTATORS, GENERATOR_KINDS, HELD_OUT_VISIBILITIES } from './corpus-entry'
+import {
+  ADVERSARIAL_MUTATORS,
+  GENERATOR_KINDS,
+  generatorProvenance,
+  HELD_OUT_VISIBILITIES,
+} from './corpus-entry'
 
 const LOWER_HEX_64 = /^[0-9a-f]{64}$/
 const digestSchema = z
@@ -110,26 +116,40 @@ const adversarialArmSchema = z
         mutator: z.enum(ADVERSARIAL_MUTATORS).optional(),
         tableVersion: z.number().int().nonnegative().optional(),
         tableHash: digestSchema.optional(),
+        // 2026-09-11, 422-04 D-11/D-12: the probe half's provenance. Both fields are
+        // ADDITIVE-OPTIONAL for the same reason the table triple is — zero committed entries
+        // carry them before 422, so no CORPUS_ENTRY_SCHEMA_VERSION bump is owed. `min(1)` on
+        // each string is what stops an unidentified author being recorded as an identified
+        // one: D-11 requires every LLM-derived entry to NAME its author, and an empty string
+        // is a name-shaped absence.
+        authoringModel: z
+          .object({ id: z.string().min(1), family: z.string().min(1) })
+          .strict()
+          .optional(),
+        promptVersion: z.number().int().positive().optional(),
       })
       .strict()
-      // 2026-09-11, 422-02: ALL THREE or NONE. Absent is the pre-422 shape and stays
-      // admissible; a PARTIAL stamp is not an older generation, it is a derivation whose
-      // provenance is missing a leg. Admitting `mutator` without `tableVersion` would leave
-      // a committed variant naming a family with no generation to explain it, and the census
-      // reports adversarial entries PER `tableVersion` — so the gap would be invented at
-      // read time rather than refused at admission.
+      // 2026-09-11, 422-04: the admission is COMPLETE-FOR-YOUR-KIND, delegated to the one
+      // completeness rule in `corpus-entry.ts` rather than re-spelled here.
+      //
+      // 422-02 required all three table fields or none. That rule was right while one engine
+      // minted every adversarial entry; two now do, and they stamp different provenance. The
+      // rule therefore generalised rather than relaxed: `absent` is still the pre-422 shape and
+      // still admissible, a partial stamp is still refused, and the widening ADDED a direction
+      // the old refine could not express — a stamp that is complete but belongs to the OTHER
+      // path. A `judge-targeted` entry naming a mutator claims a frozen table drew text no
+      // table contains; a `confusable` entry naming an authoring model credits a model for a
+      // pure substitution. Both parse field-by-field and both are false.
       .refine(
         generator => {
-          const present = [
-            generator.mutator !== undefined,
-            generator.tableVersion !== undefined,
-            generator.tableHash !== undefined,
-          ].filter(Boolean).length
-          return present === 0 || present === 3
+          const provenance = generatorProvenance(generator as CorpusGenerator)
+          return provenance !== 'malformed'
         },
         {
           message:
-            'generator must name all of mutator, tableVersion and tableHash, or none of them',
+            'generator must name provenance complete for its kind: mutator, tableVersion and ' +
+            'tableHash for a table family; authoringModel and promptVersion for a probe kind; ' +
+            'or none of them for a pre-422 entry',
         },
       ),
   })

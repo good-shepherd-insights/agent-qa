@@ -4,7 +4,8 @@ import { canonicalJson } from '../canonical-json'
 import { cassetteSchema } from '../cassette/schema'
 import { actionWireSchema } from '../cassette/action-wire-schema'
 import type { StandaloneLabelRecord } from './label-record'
-import { ADVERSARIAL_MUTATORS, GENERATOR_KINDS } from './corpus-entry'
+import { ADVERSARIAL_MUTATORS, GENERATOR_KINDS, generatorProvenance } from './corpus-entry'
+import type { CorpusGenerator } from './corpus-entry'
 
 const digest = z.string().regex(/^[0-9a-f]{64}$/)
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
@@ -35,16 +36,29 @@ const weightSchema = z.object({
 // one, and admitting it would mean inventing the generation a committed variant was derived
 // under. The two seed identities must also agree: a marker that names one seed in its own
 // field and another in its generator states a provenance that cannot be true.
+//
+// 2026-09-11, 422-04: two derivation engines now mint markers and they stamp different
+// provenance, so the REQUIREMENT became "complete for your kind" rather than "these three".
+// The strictness is unchanged and in one direction it is stronger: a marker still has no
+// legacy form, so `absent` is refused here exactly as a partial stamp is — and a stamp that is
+// complete but belongs to the other path (`judge-targeted` naming a mutator, `fuzz-label`
+// naming an authoring model) is now refused too, which the fixed three-field shape could not
+// express because it could not represent the probe arm at all.
 const derivedFromSchema = z.object({
   seedCassetteId: z.string().min(1),
   generator: z.object({
     kind: z.enum(GENERATOR_KINDS),
     seedCassetteId: z.string().min(1),
     generatorVersion: count,
-    mutator: z.enum(ADVERSARIAL_MUTATORS),
-    tableVersion: count.min(1),
-    tableHash: digest,
-  }).strict(),
+    mutator: z.enum(ADVERSARIAL_MUTATORS).optional(),
+    tableVersion: count.min(1).optional(),
+    tableHash: digest.optional(),
+    authoringModel: z.object({ id: z.string().min(1), family: z.string().min(1) }).strict().optional(),
+    promptVersion: count.min(1).optional(),
+  }).strict().refine(generator => {
+    const provenance = generatorProvenance(generator as CorpusGenerator)
+    return provenance === 'table' || provenance === 'probe'
+  }, { message: 'derivedFrom.generator must name provenance complete for its kind' }),
 }).strict().refine(marker => marker.seedCassetteId === marker.generator.seedCassetteId, {
   message: 'derivedFrom.seedCassetteId must equal derivedFrom.generator.seedCassetteId',
 })
