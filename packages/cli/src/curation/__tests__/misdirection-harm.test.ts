@@ -72,6 +72,7 @@ import {
   readGateReceipts,
 } from '@vostride/agent-qa-knowledge-local'
 
+import type { CanaryAblationInput } from '../canary-credit.js'
 import { curateCompletedRun, type CurationTailOperations } from '../curation-tail.js'
 import { emitCanaryOutcomes, projectCanaryOutcomes } from '../emit-canary-outcomes.js'
 import { saveCompletedMisdirectionCheck } from '../misdirection-run-state.js'
@@ -284,7 +285,8 @@ function evalRoot(corpusDigest: string | 'no-eval-root' = 'c'.repeat(64)) {
   return {
     isNovel: vi.fn(async () => false),
     stage: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
-    ablate: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
+    // Typed input so a cell can read WHICH exposures the Gate-2 allowance was spent on.
+    ablate: vi.fn(async (_input: CanaryAblationInput) => ({ kind: 'no-eval-root' as const })),
     corpusDigest: vi.fn(async () =>
       corpusDigest === 'no-eval-root'
         ? ({ kind: 'no-eval-root' } as const)
@@ -736,7 +738,6 @@ describe('422-16 D-20 — only the flipped rows move, and they move exactly once
     )
     lookupSpy.anchorsById.set(ORDINARY, [CHECKOUT_ANCHOR])
     const ablation = evalRoot()
-    ablation.isNovel = vi.fn(async () => false)
     const emit = vi.fn()
     const report = await emitCanaryOutcomes({
       handoff: withEvidence(base, [evidenceRow(base, { stepIndex: 1 })]),
@@ -751,6 +752,7 @@ describe('422-16 D-20 — only the flipped rows move, and they move exactly once
     })
     // The causal harm is a NEGATIVE row, and negatives are never replayed — the arbiter
     // already did the removal. So the Gate-2 allowance is untouched by it.
+    expect(ablation.ablate).toHaveBeenCalledOnce()
     for (const call of ablation.ablate.mock.calls) {
       expect(call[0]).not.toMatchObject({ candidateId: CANDIDATE, stepIndex: 1 })
     }
@@ -758,6 +760,14 @@ describe('422-16 D-20 — only the flipped rows move, and they move exactly once
       report.details.filter((row) => row.misdirectionFlipped === true).map((row) => row.candidateId),
     ).toEqual([CANDIDATE])
     expect(report.details.filter((row) => row.misdirectionFlipped !== true)).toHaveLength(2)
+    // One allowance, one ablation, one capped sibling — the numbers the cap produces with no
+    // ledger at all. The causal row is simply not in this accounting.
+    expect(report.canary).toMatchObject({
+      credited: 0,
+      ablationCapExceeded: 1,
+      rideAlongUncredited: 1,
+      nonSignal: { environment: 0, timeout: 0, flake: 0 },
+    })
   })
 })
 
