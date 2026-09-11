@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  asRecordId,
   asRef,
   sha256hex,
   type PerTestOutcome,
@@ -21,12 +22,15 @@ import {
 } from '@vostride/agent-qa-schema'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import {
+  applyBriefDelta,
+  canonicalJson,
   canonicalizeInputLeg,
   computeDecisionIdentity,
   deriveSampleSeeds,
   type LeafCassette,
 } from '@vostride/agent-qa-eval'
 import * as evalLocal from '../index.js'
+import { resolveActiveRecordRemoval } from '../replay-gate-composition.js'
 import { writeGate1Fixture } from './fixtures/gate1-fixtures.js'
 import {
   actionGenerateResult,
@@ -280,5 +284,245 @@ describe('D-18 ordinary-candidate ablation through the two-arm replay arbiter', 
     const { result } = await ablate(fixture, { authorization: authorizationFor(fixture.target) })
     expect(result.crossCheck).toBe('flipped')
     expect(digestTree(fixture.f.committedRoot)).toBe(before)
+  })
+})
+
+describe('D-18 refusals stay narrow and always precede replay spend', () => {
+  /** Each case mutates the decision or the proof, then asserts a TYPED refusal and zero calls. */
+  const refusals: {
+    name: string
+    reason: string
+    prepare: (fixture: ReturnType<typeof ordinaryCandidate>) => AblateOptions
+  }[] = [
+    {
+      name: 'no reproducible proof turn covers the decision',
+      reason: 'active record requires a reproducible proof turn',
+      prepare: (fixture) => {
+        const proof = fixture.target.cassette.input.servedBrief.proof!
+        const first = proof.promptTurns[0]!
+        proof.promptTurns = [
+          { ...first, turnOrdinal: 5 },
+          { ...first, turnOrdinal: 6, learnedL2: `${first.learnedL2} (other turn)` },
+        ]
+        return { authorization: authorizationFor(fixture.target) }
+      },
+    },
+    {
+      name: 'the rendered line appears twice in the proof turn',
+      reason: 'active record rendered line is absent or ambiguous',
+      prepare: (fixture) => {
+        const turn = fixture.target.cassette.input.servedBrief.proof!.promptTurns[0]!
+        turn.learnedL2 = `${turn.learnedL2}\n${turn.learnedL2}`
+        return { authorization: authorizationFor(fixture.target) }
+      },
+    },
+    {
+      name: 'the authorization names a record other than the one being removed',
+      reason: 'failing-path authorization names another record',
+      prepare: (fixture) => ({
+        authorization: authorizationFor(fixture.target, { recordId: 'some-other-record' }),
+      }),
+    },
+    {
+      name: 'the authorization names another run',
+      reason: 'failing-path authorization names another run or member',
+      prepare: (fixture) => ({
+        authorization: authorizationFor(fixture.target, { runId: 'r_not-this-run' }),
+      }),
+    },
+    {
+      name: 'the authorization names another member test',
+      reason: 'failing-path authorization names another run or member',
+      prepare: (fixture) => ({
+        authorization: authorizationFor(fixture.target, { testId: 'another-member' }),
+      }),
+    },
+    {
+      name: 'the served line sits on an unsupported tier',
+      reason: 'active record brief line unavailable',
+      prepare: (fixture) => {
+        fixture.line.tier = 'L9'
+        return { authorization: authorizationFor(fixture.target) }
+      },
+    },
+    {
+      name: 'the cited step passed its verifier',
+      reason: 'failing-path authorization cites a verified-passing step',
+      prepare: (fixture) => ({
+        authorization: authorizationFor(fixture.target, { pass: true }),
+      }),
+    },
+    {
+      name: 'the cited step is not the decision being ablated',
+      reason: 'failing-path authorization cites a step other than the removal target',
+      prepare: (fixture) => ({
+        authorization: authorizationFor(fixture.target, { stepIndex: 4 }),
+      }),
+    },
+    {
+      name: 'the failing step never served the record',
+      reason: 'failing-path record was not served on the failing step',
+      prepare: (fixture) => {
+        const brief = structuredClone(fixture.target.cassette.input.servedBrief)
+        brief.channel1 = []
+        return { authorization: authorizationFor(fixture.target, { brief }) }
+      },
+    },
+    {
+      name: 'the record is a probation canary rather than an ordinary candidate',
+      reason: 'failing-path record is not an ordinary candidate',
+      prepare: (fixture) => {
+        const brief = structuredClone(fixture.target.cassette.input.servedBrief)
+        brief.channel1[0]!.status = 'active'
+        brief.channel1[0]!.servedAsCanary = true
+        return { authorization: authorizationFor(fixture.target, { brief }) }
+      },
+    },
+    {
+      name: 'the authorization carries a lookalike brief, not the replayed one',
+      reason: 'failing-path authorization cites a different brief than the replayed decision',
+      prepare: (fixture) => {
+        const brief = structuredClone(fixture.target.cassette.input.servedBrief)
+        // Same record, still a candidate — but one extra served line the decision never had.
+        brief.channel1.push({
+          ...structuredClone(brief.channel1[0]!),
+          id: asRecordId('forged-sibling-line'),
+        })
+        return { authorization: authorizationFor(fixture.target, { brief }) }
+      },
+    },
+  ]
+
+  it.each(refusals)('refuses before any replay call when $name', async ({ reason, prepare }) => {
+    const fixture = ordinaryCandidate()
+    const options = prepare(fixture)
+    fixture.target.cassette.receipt.promptInputHash = sha256hex(
+      canonicalizeInputLeg(fixture.target.cassette.input),
+    )
+    const { result, stub } = await ablate(fixture, options)
+    expect(result.crossCheck).toBe('inconclusive')
+    expect(result.perTarget).toEqual([
+      { cassetteId: fixture.target.cassette.id, crossCheck: 'inconclusive' },
+    ])
+    expect(result.notices.join('\n')).toContain(reason)
+    expect(stub.captured).toHaveLength(0)
+    expect(result.modelCalls).toBe(0)
+    expect(result.screens).toBe(0)
+    // The record the caller tried to ablate is still exactly where the run served it.
+    expect(fixture.target.cassette.input.servedBrief.channel1.map((row) => row.id)).toContain(
+      fixture.line.id,
+    )
+  })
+
+  it('gives every refusal its own words', () => {
+    expect(new Set(refusals.map((row) => row.reason)).size).toBe(refusals.length - 1)
+  })
+
+  it('changes exactly the authorized line and nothing else in the replayed input', () => {
+    const fixture = ordinaryCandidate()
+    const { cassette } = fixture.target
+    const removal = resolveActiveRecordRemoval({
+      cassette,
+      recordId: fixture.line.id,
+      failingPathCandidate: authorizationFor(fixture.target),
+    })
+    expect(removal.kind).toBe('removed')
+    if (removal.kind !== 'removed') return
+    const without = applyBriefDelta(cassette.input, removal.delta)
+    const stripBrief = (leg: typeof cassette.input) => ({ ...leg, servedBrief: undefined })
+    expect(canonicalJson(stripBrief(without))).toBe(canonicalJson(stripBrief(cassette.input)))
+    const stripLines = (brief: ServedBrief) => ({
+      ...brief,
+      channel1: undefined,
+      proof: brief.proof === undefined ? undefined : { ...brief.proof, promptTurns: undefined },
+    })
+    expect(canonicalJson(stripLines(without.servedBrief))).toBe(
+      canonicalJson(stripLines(cassette.input.servedBrief)),
+    )
+    expect(without.servedBrief.channel1).toEqual([])
+    expect(cassette.input.servedBrief.channel1).toHaveLength(1)
+    const before = cassette.input.servedBrief.proof!.promptTurns
+    const after = without.servedBrief.proof!.promptTurns
+    expect(after).toHaveLength(before.length)
+    for (const [index, turn] of before.entries()) {
+      const lines = turn.learnedL2 === '' ? [] : turn.learnedL2.split('\n')
+      const remaining = lines.filter((_, position) => position !== removal.delta.position)
+      expect(lines).toContain(removal.delta.renderedLine)
+      expect(after[index]!.learnedL2).toBe(remaining.join('\n'))
+      expect(canonicalJson({ ...turn, learnedL2: null })).toBe(
+        canonicalJson({ ...after[index]!, learnedL2: null }),
+      )
+    }
+  })
+
+  it('answers each decision identity separately when one candidate rode two of them', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'two-decisions-'))
+    roots.push(root)
+    const f = writeGate1Fixture(root, { proofBrief: true, targetDecisions: 2 })
+    const targets = f.selected.filter((row) => row.cassette.runId === f.injection.target!.runId)
+    expect(targets).toHaveLength(2)
+    expect(new Set(targets.map((row) => row.cassette.decisionOrdinal)).size).toBe(2)
+    const line = targets[0]!.cassette.input.servedBrief.channel1[0]!
+    const needle = line.summary.replaceAll('"', '\\"')
+    for (const row of targets) {
+      const own = row.cassette.input.servedBrief.channel1[0]!
+      own.status = 'candidate'
+      own.servedAsCanary = false
+      row.cassette.receipt.promptInputHash = sha256hex(canonicalizeInputLeg(row.cassette.input))
+    }
+    // The sibling decision keeps reaching gold with or without the record; the first does not.
+    const stub = respondingStub((call) => {
+      const prompt = JSON.stringify(call.prompt)
+      return actionGenerateResult(
+        'web',
+        prompt.includes('gate1-target-sibling-1') || prompt.includes(needle)
+          ? 'e-continue'
+          : 'e-other',
+      )
+    })
+    const sampleFor = (row: (typeof targets)[number], ref: string) => {
+      const action = { type: 'click' as const, ref: asRef(ref) }
+      return {
+        sampleIndex: 0,
+        durationMs: 0,
+        outcome: {
+          kind: 'decision' as const,
+          action,
+          identity: computeDecisionIdentity(action, row.cassette.input.stateBefore.elements),
+        },
+      }
+    }
+    const result = await evalLocal.removalFlipsOutcome({
+      recordId: line.id,
+      mode: { kind: 'active-record' },
+      failingPathCandidate: authorizationFor(targets[0]!),
+      cassettes: targets.map((row) => ({
+        ...row,
+        existing: {
+          withRecord: sampleFor(row, 'e-continue'),
+          withoutRecord: sampleFor(
+            row,
+            row.cassette.decisionOrdinal === targets[0]!.cassette.decisionOrdinal
+              ? 'e-other'
+              : 'e-continue',
+          ),
+        },
+      })),
+      k: 3,
+      baseSeed: 11,
+      replay: {
+        profile: stubProfile(),
+        auth: noneAuth,
+        modelOverrides: { languageModels: stub.languageModels },
+        maskingContextFactory: createMaskingContext,
+      },
+      gate1Dir: join(f.agentQaRoot, 'two-decisions'),
+    })
+    expect(result.perTarget).toHaveLength(2)
+    expect(new Set(result.perTarget.map((row) => row.cassetteId)).size).toBe(2)
+    // Two decisions, two answers — the arbiter never folds one into the other.
+    expect(new Set(result.perTarget.map((row) => row.crossCheck))).toEqual(
+      new Set(['flipped', 'held']),
+    )
   })
 })
