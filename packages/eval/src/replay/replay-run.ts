@@ -9,9 +9,11 @@
 // randomness. Outcome classification is by `instanceof` on the typed error classes, NEVER by
 // matching an error message string (D-09). A cassette-shaped problem resolves to a typed
 // ReplayRefusal — replayCassette never throws for it; only a genuine engine bug may propagate.
+// A planning-turn GuardrailBlockError refuses the whole cassette, including earlier samples.
 
 import type { Action } from '@vostride/agent-qa-schema'
 import { PlanningTurnError } from '@vostride/agent-qa-runner'
+import { GuardrailBlockError } from '@vostride/agent-qa-safety'
 import type { Cassette, LeafCassette, ProcedureCassette } from '../cassette/cassette'
 import type { CassetteInputLeg } from '../cassette/input-leg'
 import type { CassetteReceipt } from '../cassette/receipt-leg'
@@ -310,7 +312,15 @@ async function runSample(context: DecisionReplayContext, sampleIndex: number): P
 
   // (4) Invoke the real planner and classify faithful-or-loud (D-08/D-09).
   const started = clock.now()
-  const outcome = await classifyPlan(context, handle, reconstructed)
+  let outcome: Awaited<ReturnType<typeof classifyPlan>>
+  try {
+    outcome = await classifyPlan(context, handle, reconstructed)
+  } catch (error) {
+    if (error instanceof GuardrailBlockError) {
+      return { kind: 'refusal', refusal: refusal(context.cassetteId, 'guard-failed', error.message) }
+    }
+    throw error
+  }
   const durationMs = clock.now() - started
 
   const sample: ReplaySample = {
@@ -382,7 +392,9 @@ async function classifyPlan(
     if (error instanceof UnservableDivergenceError) {
       return { outcome: { kind: 'unservable-divergence', tool: error.tool, args: error.canonicalArgs } }
     }
-    // Any other throw is infra (provider outage / auth) — reported, never scored, never aborting.
+    // A guard block is a typed cassette refusal, mapped by runSample rather than scored.
+    if (error instanceof GuardrailBlockError) throw error
+    // Other throws are infra (provider outage / auth) — reported, never scored, never aborting.
     const message = error instanceof Error ? error.message : String(error)
     return { outcome: { kind: 'harness-error', message } }
   }
