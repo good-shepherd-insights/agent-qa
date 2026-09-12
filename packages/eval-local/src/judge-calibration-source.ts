@@ -107,6 +107,21 @@ function guardArtifact(value: unknown): JudgeCalibrationArtifact | undefined {
     || !same(a.identity, createPanelIdentity(a.identity.members.map(member => member.judgeModelId)))
     || a.profile.judgeModelId !== a.identity.judgeModelId || a.profile.judgeVersion !== a.identity.judgeVersion
     || (a.minNSource === 'default' && a.minN !== JUDGE_CALIBRATION_MIN_N) || a.admitted > a.selected) return undefined
+  const subset = a.judgeTargeted
+  if (subset?.source === 'resolved') {
+    const sum = (counts: Record<string, number>) => Object.values(counts).reduce((n, value) => n + value, 0)
+    const authors = subset.byAuthoringModel
+    const ids = authors.map(row => row.authoringModel)
+    if (sum(subset.byProvenance) + subset.metadataUnavailable !== subset.total
+      || sum(subset.byKind) + subset.metadataUnavailable !== subset.total
+      || subset.judgeTargeted > Math.min(subset.byProvenance.probe, subset.byKind['judge-targeted'])
+      || subset.selfAuthored > subset.judgeTargeted || subset.observedInCalibration > subset.judgeTargeted
+      || !same(ids, [...ids].sort()) || new Set(ids).size !== ids.length
+      || authors.some(row => row.judgeTargeted > row.probeAuthored)
+      || authors.reduce((n, row) => n + row.probeAuthored, 0) !== subset.byProvenance.probe
+      || authors.reduce((n, row) => n + row.judgeTargeted, 0) !== subset.judgeTargeted
+      || authors.filter(row => row.panelMember).reduce((n, row) => n + row.judgeTargeted, 0) !== subset.selfAuthored) return undefined
+  }
   if (a.status === 'capability-gap') return same(a.cost, { callBound: 0, usage: { calls: 0 } }) ? a : undefined
   const c = a.counts, ids = a.identity.members.map(member => member.judgeModelId)
   if (a.n !== a.pooled.n || (a.status === 'calibrated') !== (a.n >= a.minN)
@@ -163,6 +178,14 @@ function evidenceIdentity(input: JudgeCalibrationReadInput) {
   return { corpusDigest: read.corpusDigest, goldSetDigest: read.goldSetDigest,
     replayEvidenceDigest: read.replayEvidenceDigest, evidenceDigest: read.evidenceDigest,
     selected: read.selected, admitted: read.evidence.length,
+    // 422 D-12: derived from the SAME read the digests come from, with the same observed-gold
+    // population the staged summary uses, so staged and stored cannot disagree.
+    judgeTargeted: projectJudgeTargetedCalibration({
+      ...(read.adversarialMembers === undefined ? { unavailable: 'corpus-unreadable' as const }
+        : { members: read.adversarialMembers }),
+      memberModelIds: input.identity.members?.map(member => member.judgeModelId) ?? [],
+      observedCassetteIds: read.evidence.map(row => row.goldCassetteId),
+    }),
     ...(missingCorrection ? { skippedCounts: { 'missing-executable-correction': missingCorrection } } : {}) }
 }
 
@@ -182,10 +205,14 @@ export function createJudgeCalibrationArtifact(input: JudgeCalibrationReadInput,
 }
 
 function admitted(input: JudgeCalibrationReadInput, artifact: JudgeCalibrationArtifact): boolean {
-  const expected = { ...envelope(input), ...evidenceIdentity(input) }
+  const { skippedCounts, judgeTargeted, ...bound } = { ...envelope(input), ...evidenceIdentity(input) }
   // Absence is evidence too: omitted diagnostics must not admit an invented artifact count.
-  return same(artifact.skippedCounts, expected.skippedCounts)
-    && Object.entries(expected).every(([key, value]) => same(Reflect.get(artifact, key), value))
+  return same(artifact.skippedCounts, skippedCounts)
+    // 422 D-12: an artifact written before the subset existed carries no block, and that silence
+    // stays admissible forever. A block that IS present must be the one this corpus produces —
+    // an internally consistent forgery claiming a clean adversarial arm is still a forgery.
+    && (artifact.judgeTargeted === undefined || same(artifact.judgeTargeted, judgeTargeted))
+    && Object.entries(bound).every(([key, value]) => same(Reflect.get(artifact, key), value))
 }
 function checkedText(root: string, path: string): string | undefined {
   assertCalibrationPath(root, path)

@@ -209,7 +209,7 @@ it('keeps a measured zero, an unread source and a historical absence three separ
 it.each([
   ['self-authorship exceeding its own judge-targeted subset', { selfAuthored: 2 }],
   ['a judge-targeted count the probe arm cannot hold', { judgeTargeted: 2 }],
-  ['observation in a population the subset never entered', { observedInCalibration: 1 }],
+  ['more measured-population membership than the subset itself holds', { observedInCalibration: 2 }],
   ['author rows that do not account for the probe arm', { byAuthoringModel: [] }],
   ['a self-authorship count no panel-member author backs', { selfAuthored: 0 }],
   ['a provenance arm this build does not know', { byProvenance: { invented: 1 } }],

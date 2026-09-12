@@ -985,9 +985,34 @@ export type JudgeCalibrateVerbResult = Awaited<ReturnType<typeof runJudgeCalibra
  * must print the SAME lines — which is only guaranteed by there being one function to call.
  */
 export function renderJudgeTargetedCalibration(
-  _disclosure?: import('@vostride/agent-qa-eval').JudgeTargetedCalibrationDisclosure,
+  disclosure?: import('@vostride/agent-qa-eval').JudgeTargetedCalibrationDisclosure,
 ): string[] {
-  return []
+  // Three states before any number is printed, and none of them may print one: an artifact that
+  // predates the field said nothing, and a run that could not read its corpus measured nothing.
+  if (disclosure === undefined) {
+    return ['judge-targeted adversarial bait: not recorded (this artifact predates the disclosure)']
+  }
+  if (disclosure.source === 'unavailable') {
+    return [`judge-targeted adversarial bait: not determined (${disclosure.reason})`]
+  }
+  const lines = [
+    `judge-targeted adversarial bait: judge-targeted=${disclosure.judgeTargeted}`
+      + ` self-authored-by-this-panel=${disclosure.selfAuthored}`
+      + ` observed-in-measured-population=${disclosure.observedInCalibration}`,
+    `adversarial provenance: model-authored=${disclosure.byProvenance.probe}`
+      + ` table-derived=${disclosure.byProvenance.table}`
+      + ` legacy-unattributed=${disclosure.byProvenance.absent}`
+      + ` malformed=${disclosure.byProvenance.malformed}`
+      + ` unresolved=${disclosure.metadataUnavailable}`
+      + ` of ${disclosure.total} committed members (arms are counted apart, never summed)`,
+  ]
+  for (const row of disclosure.byAuthoringModel) {
+    lines.push(`author ${row.authoringModel} (${row.authoringFamily})`
+      + `${row.panelMember ? ' [panel member — self-authored]' : ''}`
+      + `: judge-targeted=${row.judgeTargeted} authored=${row.probeAuthored}`)
+  }
+  lines.push('Bait counts above are RAW: the agreement, interval, per-member rows and minN are not adjusted for them.')
+  return lines
 }
 export type { JudgeTargetedCalibrationDisclosure } from '@vostride/agent-qa-eval'
 

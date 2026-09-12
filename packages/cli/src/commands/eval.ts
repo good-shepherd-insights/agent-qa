@@ -601,6 +601,10 @@ export function createEvalCommand(): Command {
             console.log(`pooled agreement=${report.pooledAgreement ?? 'unavailable'} interval=${report.wilson95 ? `[${report.wilson95.lower},${report.wilson95.upper}]` : 'unavailable'}; abstention=${report.abstention.numerator}/${report.abstention.denominator}; member-pair disagreement=${report.disagreement.numerator}/${report.disagreement.denominator}`)
           }
           console.log(`probe calls: ${report.cost.usage.calls}; bound=${report.cost.callBound} (eligible executable decisions × one question × members × two swaps)`)
+          // 422 D-12: the circularity disclosure, rendered by the composition root's single
+          // function so the staged preview and the stored artifact print identical lines.
+          const { renderJudgeTargetedCalibration } = await import('../eval-session-composition.js')
+          for (const line of renderJudgeTargetedCalibration(report.judgeTargeted)) console.log(line)
           console.log('Agreement on selected executable gold; not a population accuracy estimate.')
           console.log('path' in result ? `artifact: ${result.kind} ${result.path}` : 'No committed artifact created.')
         }
