@@ -327,6 +327,10 @@ export type AdversarialProbeSkipReason =
    */
   | 'tuple-interrupted'
   | 'probe-cap-exceeded'
+  /** Paid output belongs to a different author or prompt; never implicitly re-author it. */
+  | 'probe-reservation-mismatch'
+  /** Re-derivation must recover the identity already recorded with the paid response. */
+  | 'probe-completion-identity-mismatch'
 
 /** An honest row for every probe tuple that produced no case. */
 export interface AdversarialProbeSkip {
@@ -1098,6 +1102,20 @@ export async function stageAdversarialProposal(
           continue
         }
         if (attempt.kind === 'completed') {
+          const expected = probeReservationOf(reservationKey, {
+            promptHash: request.promptHash,
+            author: request.authoringModel,
+          })
+          if (
+            attempt.reservation.authorDigest !== expected.authorDigest ||
+            attempt.reservation.authorFamily !== expected.authorFamily ||
+            attempt.reservation.promptHash !== expected.promptHash
+          ) {
+            // Only closed reasons leave this boundary: model IDs may contain credentials.
+            // The paid record stays untouched and this tuple never falls through to author().
+            probeSkips.push({ ...row, reason: 'probe-reservation-mismatch' })
+            continue
+          }
           const completion = attempt.completion
           if (completion.outcome !== 'derived' || completion.text === undefined) {
             probeSkips.push({ ...row, reason: 'tuple-already-decided' })
@@ -1186,6 +1204,10 @@ export async function stageAdversarialProposal(
           continue
         }
         const probe = derivation.probe
+        if (attempt.kind === 'completed' && attempt.completion.cassetteId !== probe.cassette.id) {
+          probeSkips.push({ ...row, reason: 'probe-completion-identity-mismatch' })
+          continue
+        }
         const texts = {
           cassette: committedFileText(probe.cassette),
           label: committedFileText(probe.labelRecord),

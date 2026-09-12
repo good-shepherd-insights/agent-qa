@@ -22,7 +22,7 @@
  * for one tuple — by driving the store at the seam where that instant actually is, rather than
  * by asserting that the code looks like it would be safe.
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -320,6 +320,68 @@ function probeStoreFiles(f: Fixture): string[] {
 }
 
 describe('422 adversarial probe reservations — one call per tuple, honest interruption', () => {
+  it.each(['author', 'family', 'prompt', 'cassette'] as const)(
+    'CR-09 refuses changed %s on recovery without spending or rewriting paid records',
+    async mismatch => {
+      const f = fixture()
+      const author = recordingAuthor(f, request => `Continue to ${request.kind} review`)
+      const first = await stage(f, { author: author.port })
+      expect(probeCases(first)).toHaveLength(PROBE_GENERATOR_KINDS.length)
+      discardStagedBatches(f)
+      const dir = join(f.agentQaRoot, ADVERSARIAL_PROBE_SUBDIR, 'default')
+      for (const file of probeStoreFiles(f)) {
+        const path = join(dir, file)
+        const record = JSON.parse(readFileSync(path, 'utf8'))
+        if (mismatch === 'prompt' && file.endsWith('.reservation.json')) {
+          record.promptHash = 'f'.repeat(64)
+          writeFileSync(path, JSON.stringify(record))
+        }
+        if (mismatch === 'cassette' && file.endsWith('.completion.json')) {
+          record.cassetteId = 'f'.repeat(64)
+          writeFileSync(path, JSON.stringify(record))
+        }
+      }
+      const paid = probeStoreFiles(f).map(file => [file, readFileSync(join(dir, file), 'utf8')])
+      const refuser = throwingAuthor()
+      const retry = await stage(f, {
+        author: refuser.port,
+        authoringModel: {
+          id: mismatch === 'author' ? 'sk-fixture-credential-capable-model' : AUTHOR.id,
+          family: mismatch === 'family' ? OTHER_AUTHOR.family : AUTHOR.family,
+        },
+      })
+      expect(refuser.calls).toEqual([])
+      expect(retry.spend.modelCalls).toBe(0)
+      expect(probeCases(retry)).toEqual([])
+      expect(retry.probeSkips.map(row => row.reason)).toEqual(PROBE_GENERATOR_KINDS.map(() =>
+        mismatch === 'cassette' ? 'probe-completion-identity-mismatch' : 'probe-reservation-mismatch',
+      ))
+      // The internal result retains the caller's model DTO for downstream disclosure. The
+      // new diagnostic and every durable paid record must remain free of that raw ID.
+      expect(JSON.stringify(retry.probeSkips)).not.toContain('sk-fixture-credential-capable-model')
+      expect(JSON.stringify(paid)).not.toContain('sk-fixture-credential-capable-model')
+      expect(probeStoreFiles(f).map(file => [file, readFileSync(join(dir, file), 'utf8')])).toEqual(paid)
+    },
+  )
+
+  it('CR-09 recovers the same paid identity when provider usage was absent', async () => {
+    const f = fixture()
+    const author = silentUsageAuthor()
+    const first = await stage(f, { author: author.port })
+    discardStagedBatches(f)
+    const refuser = throwingAuthor()
+    const retry = await stage(f, { author: refuser.port })
+    expect(refuser.calls).toEqual([])
+    expect(retry.spend.modelCalls).toBe(0)
+    expect(probeCases(retry).map(row => row.cassetteId)).toEqual(probeCases(first).map(row => row.cassetteId))
+    expect(probeCases(retry)).toHaveLength(PROBE_GENERATOR_KINDS.length)
+    for (const kind of PROBE_GENERATOR_KINDS) {
+      const attempt = readProbeAttempt({ agentQaRoot: f.agentQaRoot, key: keyOf(f, 0, kind) })
+      expect(attempt.kind).toBe('completed')
+      expect(attempt.usageKnown).toBe(false)
+    }
+  })
+
   it('reserves durably before the port is entered, and the reservation survives the batch', async () => {
     const f = fixture()
     const author = recordingAuthor(f, request => `Continue to ${request.kind} review`)
