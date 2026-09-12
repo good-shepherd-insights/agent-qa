@@ -31,21 +31,36 @@ export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 3
 /** Whether the chain as a whole finished clean. Every stage done ⇒ `done` (D-12). */
 export type RunNotificationOutcome = 'done' | 'failed'
 
-// 2026-09-12, 422-22 (RED skeleton): the closed lists this plan declares, landed with one member
-// each and an incomplete key roster, so the cells in `../__tests__/422-notification-closed-sets
-// .test.ts` fail on their named assertions rather than on a module-load error (INVALID_RED, #3770).
-export const RUN_NOTIFICATION_OUTCOMES = ['done'] as const satisfies readonly RunNotificationOutcome[]
+/**
+ * Declaration-order projection of `RunNotificationOutcome` (2026-09-12, 422-22; the D-22 bar).
+ *
+ * `satisfies` refuses a list member the union lacks and says NOTHING about a union that grew, so
+ * the reverse direction is pinned by the independent oracles in
+ * `../__tests__/422-notification-closed-sets.test.ts` and its `.test-d.ts` sibling — neither of
+ * which builds its expectation from this list.
+ */
+export const RUN_NOTIFICATION_OUTCOMES = [
+  'done',
+  'failed',
+] as const satisfies readonly RunNotificationOutcome[]
 
 /** What became of one stage the chain actually ran. */
 export type RunNotificationStageStatus = 'done' | 'failed'
 
+/**
+ * Declaration-order projection of `RunNotificationStageStatus` (2026-09-12, 422-22).
+ *
+ * TWO WORDS, AND THE THIRD ONE IS AN ABSENCE RATHER THAN A WORD. A stage that was not recorded is
+ * expressed by the member being MISSING (see `RunNotificationStages`), never by a `not-recorded`
+ * status — because a status is a claim about a stage that ran, and every row written before v3
+ * belongs to a chain whose third stage did not exist. Widening this enum to carry the historical
+ * case would let a migration stamp an invented stage onto every row ever written, and no reader
+ * can tell an invented stage from a recorded one.
+ */
 export const RUN_NOTIFICATION_STAGE_STATUSES = [
   'done',
+  'failed',
 ] as const satisfies readonly RunNotificationStageStatus[]
-
-export const RUN_NOTIFICATION_STAGE_KEY_SETS = ['analysis,curation'] as const
-
-export const RUN_NOTIFICATION_FIELD_KEYS = 'outcome,runId,schemaVersion,stages'
 
 /**
  * Per-class counts over the verdicts the analysis stage authored.
@@ -118,6 +133,25 @@ export interface RunNotification {
   stages: RunNotificationStages
 }
 
+/**
+ * The two admissible stage key sets, sorted and joined — declared as DATA (2026-09-12, 422-22).
+ *
+ * TWO SETS, never "the declared ones plus anything" (422 D-13). The optional third member widened
+ * what a stage set may BE by exactly one shape; a presence check for `proposals` beside a subset
+ * check for the rest would readmit the undeclared member this equality exists to refuse, which is
+ * the failure the exact-key idiom was chosen against in the first place.
+ *
+ * Stated here rather than inline in the guard so the admissible shapes are a value an oracle can
+ * read and a reviewer can count. The ORDER is historical: the v2 pair first, then the v3 triple.
+ */
+export const RUN_NOTIFICATION_STAGE_KEY_SETS = [
+  'analysis,curation',
+  'analysis,curation,proposals',
+] as const
+
+/** The exact top-level field set, sorted and joined. The record carries these five and no more. */
+export const RUN_NOTIFICATION_FIELD_KEYS = 'outcome,runId,schemaVersion,stages,verdictSummary'
+
 /** Refusal for bytes that do not describe a notification this build can read. */
 export class RunNotificationSchemaError extends Error {
   override readonly name = 'RunNotificationSchemaError'
@@ -137,6 +171,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isCount(value: unknown): boolean {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+/**
+ * Membership against a declared closed list (2026-09-12, 422-22).
+ *
+ * The guard asks the CONSTANT rather than re-spelling its members in an `||` chain, so a word this
+ * build reads and a word it admits cannot drift apart. An inline pair was fine while the words
+ * were spelled once; they are now spelled beside their type, and two spellings is one too many.
+ */
+function isMember<T extends string>(members: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && (members as readonly string[]).includes(value)
 }
 
 /**
@@ -233,9 +278,7 @@ export function guardRunNotification(value: unknown): RunNotification {
     }
   }
 
-  if (
-    Object.keys(migrated).sort().join(',') !== 'outcome,runId,schemaVersion,stages,verdictSummary'
-  ) {
+  if (Object.keys(migrated).sort().join(',') !== RUN_NOTIFICATION_FIELD_KEYS) {
     throw new RunNotificationSchemaError(
       `its field set is ${JSON.stringify(Object.keys(migrated).sort())}`,
     )
@@ -249,7 +292,7 @@ export function guardRunNotification(value: unknown): RunNotification {
   if (typeof migrated.runId !== 'string' || migrated.runId === '') {
     throw new RunNotificationSchemaError('it names no run')
   }
-  if (migrated.outcome !== 'done' && migrated.outcome !== 'failed') {
+  if (!isMember(RUN_NOTIFICATION_OUTCOMES, migrated.outcome)) {
     throw new RunNotificationSchemaError(`${String(migrated.outcome)} is not a chain outcome`)
   }
 
@@ -272,17 +315,17 @@ export function guardRunNotification(value: unknown): RunNotification {
   // beside a subset check for the rest would readmit the undeclared member this equality exists
   // to refuse, which is the failure the exact-key idiom was chosen against in the first place.
   const stageKeys = Object.keys(stages).sort().join(',')
-  if (stageKeys !== 'analysis,curation' && stageKeys !== 'analysis,curation,proposals') {
+  if (!(RUN_NOTIFICATION_STAGE_KEY_SETS as readonly string[]).includes(stageKeys)) {
     throw new RunNotificationSchemaError(
       `its stage set is ${JSON.stringify(Object.keys(stages).sort())}`,
     )
   }
   const analysis = stages.analysis
-  if (!isRecord(analysis) || (analysis.status !== 'done' && analysis.status !== 'failed')) {
+  if (!isRecord(analysis) || !isMember(RUN_NOTIFICATION_STAGE_STATUSES, analysis.status)) {
     throw new RunNotificationSchemaError('its analysis stage reports no outcome')
   }
   const curation = stages.curation
-  if (!isRecord(curation) || (curation.status !== 'done' && curation.status !== 'failed')) {
+  if (!isRecord(curation) || !isMember(RUN_NOTIFICATION_STAGE_STATUSES, curation.status)) {
     throw new RunNotificationSchemaError('its curation stage reports no outcome')
   }
   if ('curated' in curation && !isCount(curation.curated)) {
@@ -297,10 +340,7 @@ export function guardRunNotification(value: unknown): RunNotification {
   // proposal stage is refused here rather than handed to a surface that would print `undefined`.
   if ('proposals' in stages) {
     const proposals = stages.proposals
-    if (
-      !isRecord(proposals) ||
-      (proposals.status !== 'done' && proposals.status !== 'failed')
-    ) {
+    if (!isRecord(proposals) || !isMember(RUN_NOTIFICATION_STAGE_STATUSES, proposals.status)) {
       throw new RunNotificationSchemaError('its proposal stage reports no outcome')
     }
     if ('proposed' in proposals && !isCount(proposals.proposed)) {
