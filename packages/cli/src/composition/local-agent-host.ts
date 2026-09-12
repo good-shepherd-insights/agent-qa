@@ -128,6 +128,7 @@ export {
   type ProposalStageCapabilitiesInput,
 } from './proposal-stage-capabilities.js'
 import { proposalStageCapabilities, resolveProposeGate1MaxPerJob } from './proposal-stage-capabilities.js'
+import { misdirectionPostureCapability } from './misdirection-posture-capability.js'
 import { misdirectionPreparationCapabilities } from '../curation/misdirection-tail.js'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
 import type {
@@ -3915,6 +3916,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
             // travel on to a package that has no idea what a writer lease is.
             curateRun: input.postRun.curateRun,
             candidateProse: input.postRun.candidateProse,
+            ...misdirectionPostureCapability({ agentQaRoot: input.agentQaRoot }),
             ...proposalStageCapabilities({
               configPath: input.configPath,
               agentQaRoot: input.agentQaRoot,

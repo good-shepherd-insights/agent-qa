@@ -62,6 +62,7 @@ import {
   proposalStageCapabilities,
   resolveProposeGate1MaxPerJob,
 } from '../composition/proposal-stage-capabilities.js'
+import { misdirectionPostureCapability } from '../composition/misdirection-posture-capability.js'
 import { createShutdownController } from '../commands/shutdown-controller.js'
 import {
   completedRunDir,
@@ -2240,6 +2241,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         // binding serves unclaimable for this host, and the fold is deferred to a leg that
         // folds with a masker ACTIVE — a masker, not necessarily the folded run's (T-388-30).
         candidateProse: 'no-masker',
+        ...misdirectionPostureCapability({ agentQaRoot: input.agentQaRoot }),
         curateRun: async ({ runId: curatedRunId, deadlineMs }) => {
           const policy = input.policy
           const factory = input.author

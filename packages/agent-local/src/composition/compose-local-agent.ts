@@ -1938,6 +1938,12 @@ export interface ComposeLocalAgentInput {
     readonly gateReceiptsFor?: PostRunJobCapabilities['gateReceiptsFor']
     readonly readProposeCorpusPosture?: PostRunJobCapabilities['readProposeCorpusPosture']
     /**
+     * 2026-09-13, 422 D-19, gap plan 422-27: the host's durable per-run evaluation-root
+     * posture, forwarded as a neutral closure. Absence leaves the handler's fail-closed
+     * default in force; this composition neither resolves nor interprets the posture.
+     */
+    readonly readMisdirectionRootPosture?: PostRunJobCapabilities['readMisdirectionRootPosture']
+    /**
      * The operator's per-job Gate-1 bound, as a FACTORY resolved once at queue open.
      *
      * A factory on the exact `model` / `analysisTokenBudget` idiom, for the same reason those are:
@@ -2540,6 +2546,9 @@ export function postRunCapabilities(
     ...(postRun.readProposeCorpusPosture === undefined
       ? {}
       : { readProposeCorpusPosture: postRun.readProposeCorpusPosture }),
+    ...(postRun.readMisdirectionRootPosture === undefined
+      ? {}
+      : { readMisdirectionRootPosture: postRun.readMisdirectionRootPosture }),
     ...(proposeGate1MaxPerJob === undefined ? {} : { proposeGate1MaxPerJob }),
     // 389 D-09: the artifact's path is DERIVED from the artifact's own runId through the
     // same `runs/<slug>/` law as the handoff read above — `slugBranch` is the traversal
