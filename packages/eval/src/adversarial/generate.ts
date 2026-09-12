@@ -136,37 +136,130 @@ export const ADVERSARIAL_INAPPLICABILITIES = [
 /** 422-01's spelling of the same union, retained for the staging report's existing readers. */
 export type AdversarialSeedSkipReason = AdversarialInapplicability
 
-// 2026-09-12, 422-22 (RED skeleton): the closed vocabularies this plan declares. Landed with a
-// single member each so the cells in `__tests__/closed-sets.test.ts` fail on the named
-// assertion rather than on a module-load error, which the #3770 gate reads as INVALID_RED.
-
+/**
+ * 2026-09-12, 422-22 (D-05): the two answers this engine gives for one `(seed, mutator)` pair.
+ *
+ * DERIVED from the outcome union's own discriminant rather than declared a second time. A third
+ * arm added to `AdversarialGenerationOutcome` widens this type automatically and then REDs the
+ * hand-spelled cells in `__tests__/closed-sets.test-d.ts` by name; a parallel declaration would
+ * have gone on quietly saying two.
+ *
+ * The word is `derived` and not `generated`: the engine DERIVES a variant from a seed and the
+ * corpus addresses it by a derived id. That spelling is already in the staging report and in the
+ * settled-tuple record on disk, so a synonym here would be a second vocabulary for one fact.
+ */
 export type GenerationOutcome = AdversarialGenerationOutcome['kind']
 
-export const GENERATION_OUTCOMES = ['derived'] as const satisfies readonly GenerationOutcome[]
+/** Declaration-order projection of `GenerationOutcome` (the 414 D-22 bar idiom). */
+export const GENERATION_OUTCOMES = [
+  'derived',
+  'inapplicable',
+] as const satisfies readonly GenerationOutcome[]
 
-export type AdversarialRowStatus = 'staged'
+/**
+ * 2026-09-12, 422-22 (D-05/D-09): the terminal status of ONE row of a staging report.
+ *
+ * A refresh report is read row by row — one per `(seed, family)` and one per `(seed, probe kind)`
+ * tuple — and before this constant the six things a row could BE were spread across five arrays
+ * with no shared vocabulary: a staged case, a settled tuple, a policy refusal, an inapplicability,
+ * an interrupted charge and a publication failure. Naming them once is what lets a reader, a
+ * census and a job checkpoint agree on what they are counting.
+ *
+ * The six are deliberately NOT collapsible. `unchanged` is an idempotent no-op and `inapplicable`
+ * is a case this build cannot derive — one bucket for both would make a corpus that already has
+ * the case indistinguishable from a seed that is broken. `refusal` is a guardrail detector that
+ * fired and `failed` is bytes that could not be published — one is a decision and the other is an
+ * accident. And `interrupted` is a provider call that was announced and never answered, which is
+ * CHARGED: folding it into `failed` would make a real spend read as a free one.
+ */
+export type AdversarialRowStatus =
+  | 'staged'
+  | 'unchanged'
+  | 'refusal'
+  | 'inapplicable'
+  | 'interrupted'
+  | 'failed'
 
+/** Declaration-order projection of `AdversarialRowStatus` (D-22). */
 export const ADVERSARIAL_ROW_STATUSES = [
   'staged',
+  'unchanged',
+  'refusal',
+  'inapplicable',
+  'interrupted',
+  'failed',
 ] as const satisfies readonly AdversarialRowStatus[]
 
-export type AdversarialPublication = 'published'
+/**
+ * What publication did with a row this engine DID derive (D-03/D-04).
+ *
+ * A separate union from the row status on purpose, and not the same words: this one is the
+ * staging layer's ANSWER, and the row status is what a report says after reading it. One union
+ * serving both would have to carry `unchanged` and `inapplicable`, which describe rows
+ * publication never saw at all.
+ */
+export type AdversarialPublication = 'published' | 'refused' | 'interrupted' | 'failed'
 
+/** Declaration-order projection of `AdversarialPublication` (D-22). */
 export const ADVERSARIAL_PUBLICATIONS = [
   'published',
+  'refused',
+  'interrupted',
+  'failed',
 ] as const satisfies readonly AdversarialPublication[]
 
-export function adversarialRowStatus(_input: {
+/**
+ * Read one report row's terminal status from what the engine and the staging layer each said.
+ *
+ * PURE and TOTAL: every outcome arm crossed with every publication answer lands on one of the six
+ * words, which is what makes the vocabulary usable by a renderer that must not meet a value it
+ * cannot draw. The publication argument is optional because a row nothing tried to publish has no
+ * publication answer — and defaulting it to `published` would be wrong for exactly the
+ * inapplicable arm, which is why that arm is answered BEFORE the default is applied.
+ *
+ * The one rule here that is content rather than a rename: `already-derived` reads as `unchanged`.
+ * A tuple this generation already addresses is not a case the refresh could not handle, it is a
+ * case the corpus already has, and reporting it beside a malformed seed would put an idempotent
+ * no-op and a broken document in one bucket.
+ */
+export function adversarialRowStatus(input: {
   outcome: AdversarialGenerationOutcome
   publication?: AdversarialPublication
 }): AdversarialRowStatus {
-  return 'staged'
+  if (input.outcome.kind === 'inapplicable') {
+    return input.outcome.reason === 'already-derived' ? 'unchanged' : 'inapplicable'
+  }
+  switch (input.publication ?? 'published') {
+    case 'published':
+      return 'staged'
+    case 'refused':
+      return 'refusal'
+    case 'interrupted':
+      return 'interrupted'
+    case 'failed':
+      return 'failed'
+  }
 }
 
-export type AdversarialCapSource = 'default'
+/**
+ * 2026-09-12, 422-22 (D-04): where a resolved cap came from, recorded beside every refresh.
+ *
+ * The NEUTRAL declaration. Both durable caps — the per-refresh seed cap and the per-refresh
+ * provider-call cap — record their origin, and before this constant each storage-side record
+ * spelled the three words itself. Two hand-written lists of one vocabulary is how one of them
+ * ends up admitting an origin the other refuses, and the origin is PERSISTED: it is what lets a
+ * refresh explain a bound nobody remembers setting.
+ *
+ * Declaration order reads as "what you get if you say nothing, then what overrides it". The
+ * resolution precedence runs the other way — a flag beats a config value beats the default.
+ */
+export type AdversarialCapSource = 'default' | 'config' | 'flag'
 
+/** Declaration-order projection of `AdversarialCapSource` (D-22). */
 export const ADVERSARIAL_CAP_SOURCES = [
   'default',
+  'config',
+  'flag',
 ] as const satisfies readonly AdversarialCapSource[]
 
 /** An honest row for every seed × mutator pair that produced no variant. */

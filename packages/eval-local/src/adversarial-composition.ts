@@ -54,6 +54,7 @@ import {
   guardCorpusEntry,
   isProbeGeneratorKind,
   parseStandaloneLabelRecord,
+  type AdversarialCapSource,
   type AdversarialCorpusEntry,
   type AdversarialMutator,
   type AdversarialSeed,
@@ -272,10 +273,16 @@ export interface AdversarialStagingSkip {
  */
 export const ADVERSARIAL_DEFAULT_MAX_PROBE_CALLS = 4
 
-/** The resolved probe-call cap and where the operator set it (the seed-cap idiom). */
+/**
+ * The resolved probe-call cap and where the operator set it (the seed-cap idiom).
+ *
+ * 2026-09-12, 422-22: `source` names the NEUTRAL `AdversarialCapSource` for the same reason the
+ * seed cap does — this value is recorded beside every refresh, and a second storage-side spelling
+ * of a persisted vocabulary is a second list to keep in step with the first.
+ */
 export interface AdversarialProbeCallCap {
   value: number
-  source: 'flag' | 'config' | 'default'
+  source: AdversarialCapSource
 }
 
 /**
@@ -354,7 +361,7 @@ export interface StageAdversarialProposalInput {
   /** D-04: the per-refresh NOVEL-seed cap; absent resolves to the recorded default. */
   maxSeeds?: number
   /** Where `maxSeeds` came from, recorded beside the refresh. Absent with a value means 'flag'. */
-  maxSeedsSource?: 'flag' | 'config'
+  maxSeedsSource?: Exclude<AdversarialCapSource, 'default'>
   /**
    * D-10: the bound author, or nothing.
    *
@@ -371,7 +378,7 @@ export interface StageAdversarialProposalInput {
   /** D-04/D-10: the per-refresh provider-CALL cap; absent resolves to the recorded default. */
   maxProbeCalls?: number
   /** Where `maxProbeCalls` came from. Absent with a value means 'flag'. */
-  maxProbeCallsSource?: 'flag' | 'config'
+  maxProbeCallsSource?: Exclude<AdversarialCapSource, 'default'>
   /** Derive and scan, publish nothing — neither staged bytes nor a settle record. */
   dryRun?: boolean
 }
@@ -638,7 +645,7 @@ export function computeAdversarialBatchDigest(
  */
 export function resolveAdversarialProbeCallCap(input: {
   value?: number
-  source?: 'flag' | 'config'
+  source?: Exclude<AdversarialCapSource, 'default'>
 }): AdversarialProbeCallCap {
   if (input.value === undefined) {
     return { value: ADVERSARIAL_DEFAULT_MAX_PROBE_CALLS, source: 'default' }

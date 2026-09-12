@@ -125,6 +125,38 @@ export function isProbeGeneratorKind(kind: GeneratorKind): kind is ProbeGenerato
 export type TargetEnvironment = 'shared' | 'local'
 
 /**
+ * 2026-09-12, 422-22 (D-05/D-09/D-11): THE PERSISTED DECLARATION LEDGER for the adversarial split.
+ *
+ * Every closed vocabulary phase 422 persists or publishes, and where each one lives. The list is
+ * here rather than in a doc because this file is where a later plan comes to widen the corpus
+ * entry, and the obligation it has to meet is the D-22 bar: a `satisfies`-pinned literal list
+ * declared directly beneath its type, an INDEPENDENT exact runtime oracle, and a compile-time
+ * never-bar that spells the union again by hand. One direction is not a pin — `satisfies` refuses
+ * a list member the union lacks and says nothing about a union that grew.
+ *
+ *   `CorpusSplit`               three   — this file            (414 D-03)
+ *   `HeldOutVisibility`         two     — this file            (414 D-18/D-19)
+ *   `GeneratorKind`             six     — this file            (414 D-21; 422 does NOT widen it)
+ *   `ProbeGeneratorKind`        two     — this file, Extracted from the six
+ *   `AdversarialMutator`        eleven  — this file            (422 D-05, frozen by Plan 02)
+ *   `GeneratorProvenance`       four    — this file            (422 D-11, complete-for-your-kind)
+ *   `AdversarialInapplicability` thirteen — `../adversarial/generate`
+ *   `GenerationOutcome`         two     — `../adversarial/generate`, from the outcome discriminant
+ *   `AdversarialRowStatus`      six     — `../adversarial/generate`
+ *   `AdversarialPublication`    four    — `../adversarial/generate`
+ *   `AdversarialCapSource`      three   — `../adversarial/generate` (the storage records import it)
+ *   `ProbeInapplicability`      seven   — `../adversarial/probes`
+ *   `ProbeRefusal`              seven   — `../adversarial/probes`
+ *   `ProbeReservationStatus`    three   — `../adversarial/probes` (the durable store derives it)
+ *   `NoProbeModelReason`        three   — `../adversarial/probes`, from the judge gap vocabulary
+ *
+ * Both oracles are `../adversarial/__tests__/closed-sets.test.ts` and `.test-d.ts`, which share no
+ * fixture with each other by design. A FREE-TEXT reason field does not join this ledger: a
+ * detector name and a refusal message are prose a host wrote, and turning either into an enum
+ * would make a new host's honest message an unreadable document.
+ */
+
+/**
  * 2026-09-11, 422 D-05: the mutation FAMILY a derived entry came from.
  *
  * `GeneratorKind` names the FIELD that was perturbed and stays at six

@@ -195,19 +195,50 @@ export const PROBE_REFUSALS = [
   'probe-identity-unchanged',
 ] as const satisfies readonly ProbeRefusal[]
 
-// 2026-09-12, 422-22 (RED skeleton): see the note in `./generate`.
+/**
+ * 2026-09-12, 422-22 (D-04/D-11): the durable state of ONE probe tuple's charge.
+ *
+ * THE NEUTRAL DECLARATION of a vocabulary the storage layer already speaks. A probe charge is two
+ * files: the row written BEFORE a provider is contacted, and the answer written after. Those two
+ * presences are the whole state space, and the three words below are what each pair means.
+ *
+ * NOTHING HERE IS A WRITTEN STATUS FIELD, and that is the design rather than an economy. The one
+ * thing a dying process cannot do is record that it died, so a status column would have to be
+ * updated by exactly the code that failed — which is how a lost call comes back looking answered
+ * and gets re-asked. The status is DERIVED from the two presences instead.
+ *
+ * There is no word here for a call in progress. A tuple a live attempt is inside looks identical
+ * on disk to one a dead attempt left behind, and the honest reading of both is the same: a charge
+ * with no answer. A remote call nobody saw finish is not a call anybody may assume did not happen,
+ * so the charge survives the attempt and a later refresh declines to spend on it again.
+ */
+export type ProbeReservationStatus = 'unattempted' | 'interrupted' | 'completed'
 
-export type ProbeReservationStatus = 'unattempted'
-
+/**
+ * Declaration-order projection of `ProbeReservationStatus` (the 414 D-22 bar idiom).
+ *
+ * The order is the order the two disk facts are read in: no charge, then a charge with no answer,
+ * then a charge with one.
+ */
 export const PROBE_RESERVATION_STATUSES = [
   'unattempted',
+  'interrupted',
+  'completed',
 ] as const satisfies readonly ProbeReservationStatus[]
 
-export function probeReservationStatus(_input: {
+/**
+ * Read a tuple's durable state from the two presences, and from nothing else.
+ *
+ * Pure and total. An answer with no charge beside it reads as `unattempted` rather than as
+ * `completed`: with no charge there is no tuple to have been answered, and admitting the orphan
+ * would let a refresh conclude that a call was made for free.
+ */
+export function probeReservationStatus(input: {
   reservationRecorded: boolean
   completionRecorded: boolean
 }): ProbeReservationStatus {
-  return 'unattempted'
+  if (!input.reservationRecorded) return 'unattempted'
+  return input.completionRecorded ? 'completed' : 'interrupted'
 }
 
 /** One derived probe: the three documents plus the provenance that explains them. */

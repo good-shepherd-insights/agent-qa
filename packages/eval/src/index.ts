@@ -338,25 +338,34 @@ export type {
   AdversarialTableEntry,
 } from './adversarial/tables'
 export {
+  ADVERSARIAL_CAP_SOURCES,
   ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH,
   ADVERSARIAL_GENERATED_MUTATORS,
   ADVERSARIAL_GENERATOR_VERSION,
   ADVERSARIAL_INAPPLICABILITIES,
+  ADVERSARIAL_PUBLICATIONS,
+  ADVERSARIAL_ROW_STATUSES,
   adversarialDrawKey,
+  adversarialRowStatus,
   applyAdversarialTableEntry,
   deriveAdversarialCassetteId,
   drawAdversarialTableEntry,
   generateAdversarialVariants,
+  GENERATION_OUTCOMES,
 } from './adversarial/generate'
 export type {
+  AdversarialCapSource,
   AdversarialGenerationOutcome,
   AdversarialInapplicability,
+  AdversarialPublication,
+  AdversarialRowStatus,
   AdversarialSeed,
   AdversarialSeedSkip,
   AdversarialSeedSkipReason,
   AdversarialVariant,
   GenerateAdversarialVariantsInput,
   GenerateAdversarialVariantsResult,
+  GenerationOutcome,
 } from './adversarial/generate'
 
 // 2026-09-11, 422 D-09..D-12: the pure PROBE surface. The prompt is a frozen, hash-pinned code
@@ -379,6 +388,8 @@ export {
   PROBE_INAPPLICABILITIES,
   PROBE_MAX_TEXT_LENGTH,
   PROBE_REFUSALS,
+  PROBE_RESERVATION_STATUSES,
+  probeReservationStatus,
 } from './adversarial/probes'
 export type {
   AdversarialProbe,
@@ -391,6 +402,7 @@ export type {
   ProbeDerivation,
   ProbeInapplicability,
   ProbeRefusal,
+  ProbeReservationStatus,
   ProbeSurface,
   ProbeText,
   ProbeUsage,

@@ -37,10 +37,13 @@ import { createHash, randomUUID } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 
 import {
+  ADVERSARIAL_CAP_SOURCES,
   ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH,
   ADVERSARIAL_MUTATORS,
   PROBE_GENERATOR_KINDS,
   canonicalJson,
+  probeReservationStatus,
+  type AdversarialCapSource,
   type AdversarialMutator,
   type ProbeGeneratorKind,
 } from '@vostride/agent-qa-eval'
@@ -86,10 +89,16 @@ export interface AdversarialRefreshTuple {
   detail?: string
 }
 
-/** The resolved cap and where the operator set it — recorded so a refresh can explain itself. */
+/**
+ * The resolved cap and where the operator set it — recorded so a refresh can explain itself.
+ *
+ * 2026-09-12, 422-22: `source` names the NEUTRAL vocabulary rather than re-spelling it. This
+ * record is persisted, and a storage-side copy of a persisted vocabulary is a second list to keep
+ * in step with the first — which is how one of them ends up admitting an origin the other refuses.
+ */
 export interface AdversarialSeedCap {
   value: number
-  source: 'flag' | 'config' | 'default'
+  source: AdversarialCapSource
 }
 
 export interface AdversarialRefreshRecord {
@@ -127,7 +136,7 @@ const recordSchema = z.object({
   sourceDigest: digestField,
   cap: z.object({
     value: z.number().int().positive(),
-    source: z.enum(['flag', 'config', 'default']),
+    source: z.enum(ADVERSARIAL_CAP_SOURCES),
   }).strict(),
   eligibleSeeds: z.number().int().nonnegative(),
   excessSeeds: z.number().int().nonnegative(),
@@ -165,7 +174,7 @@ export function adversarialTupleKey(seedCassetteId: string, mutator: Adversarial
  */
 export function resolveAdversarialSeedCap(input: {
   value?: number
-  source?: 'flag' | 'config'
+  source?: Exclude<AdversarialCapSource, 'default'>
 }): AdversarialSeedCap {
   if (input.value === undefined) {
     return { value: ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH, source: 'default' }
@@ -565,7 +574,16 @@ function attemptStateFrom(dir: string, key: ProbeReservationKey): ProbeAttemptSt
   // THE DERIVATION THAT MATTERS. A reservation with no completion is `interrupted`, and it is
   // read that way rather than written that way because the one thing a dying process cannot do
   // is record that it died. A status field would have to be updated by the code that failed.
-  if (rawCompletion === undefined) return { kind: 'interrupted', reservation, usageKnown: false }
+  //
+  // 2026-09-12, 422-22: the derivation itself is the NEUTRAL `probeReservationStatus`, and the arm
+  // takes its name from the word that function returned — so this reader's arm names and the
+  // staging report's status words are one vocabulary rather than the same three facts spelled
+  // twice. A rename on either side stops compiling here.
+  const status = probeReservationStatus({
+    reservationRecorded: true,
+    completionRecorded: rawCompletion !== undefined,
+  })
+  if (status === 'interrupted') return { kind: status, reservation, usageKnown: false }
   const completion = probeCompletionSchema.parse(rawCompletion) as ProbeCompletion
   return { kind: 'completed', reservation, completion, usageKnown: completionUsageKnown(completion) }
 }
