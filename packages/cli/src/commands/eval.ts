@@ -99,7 +99,11 @@ function renderAdversarialSummary(result: AdversarialVerbResult): void {
   if (result.batchDigest !== undefined) {
     console.log(`batch ${result.batchDigest}`)
     if (result.admitted.length === 0 && result.staged.length > 0) {
-      console.log(`review ${result.stagingDir}/${result.batchDigest}, then admit with: eval adversarial --admit --batch ${result.batchDigest}`)
+      // The admit branch resolves the batch under `<stagingRoot>/<product>/<digest>`, so the
+      // product has to ride the hint. Without it the CLI falls to its own `default` product and
+      // a batch staged under any other one answers `batch-not-found` — a command that reads as
+      // if it should work and cannot. Invisible on a `default` host, which is why it survived.
+      console.log(`review ${result.stagingDir}/${result.batchDigest}, then admit with: eval adversarial --product ${result.product} --admit --batch ${result.batchDigest}`)
     }
   }
   if (result.previousCorpusDigest !== undefined) {

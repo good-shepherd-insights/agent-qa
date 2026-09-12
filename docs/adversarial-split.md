@@ -31,8 +31,13 @@ A plain stage writes one batch and prints the digest to hand back:
 
 ```
 batch 3f9c…                    (64 lower-hex)
-review .agent-qa/eval/adversarial/default/3f9c…, then admit with: eval adversarial --admit --batch 3f9c…
+review .agent-qa/eval/adversarial/default/3f9c…, then admit with: eval adversarial --product default --admit --batch 3f9c…
 ```
+
+**`--product` is load-bearing on the admit branch, not decoration.** Admission resolves the
+batch under `<stagingRoot>/<product>/<digest>` and the CLI's own default product is `default`,
+so admitting a batch staged under any other product without naming it answers
+`refused: batch-not-found`. The hint line above carries the product for that reason.
 
 Review the exact bytes that will be committed, not a rendering of them. A batch is a directory:
 
