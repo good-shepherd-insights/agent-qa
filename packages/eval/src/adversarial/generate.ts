@@ -136,6 +136,39 @@ export const ADVERSARIAL_INAPPLICABILITIES = [
 /** 422-01's spelling of the same union, retained for the staging report's existing readers. */
 export type AdversarialSeedSkipReason = AdversarialInapplicability
 
+// 2026-09-12, 422-22 (RED skeleton): the closed vocabularies this plan declares. Landed with a
+// single member each so the cells in `__tests__/closed-sets.test.ts` fail on the named
+// assertion rather than on a module-load error, which the #3770 gate reads as INVALID_RED.
+
+export type GenerationOutcome = AdversarialGenerationOutcome['kind']
+
+export const GENERATION_OUTCOMES = ['derived'] as const satisfies readonly GenerationOutcome[]
+
+export type AdversarialRowStatus = 'staged'
+
+export const ADVERSARIAL_ROW_STATUSES = [
+  'staged',
+] as const satisfies readonly AdversarialRowStatus[]
+
+export type AdversarialPublication = 'published'
+
+export const ADVERSARIAL_PUBLICATIONS = [
+  'published',
+] as const satisfies readonly AdversarialPublication[]
+
+export function adversarialRowStatus(_input: {
+  outcome: AdversarialGenerationOutcome
+  publication?: AdversarialPublication
+}): AdversarialRowStatus {
+  return 'staged'
+}
+
+export type AdversarialCapSource = 'default'
+
+export const ADVERSARIAL_CAP_SOURCES = [
+  'default',
+] as const satisfies readonly AdversarialCapSource[]
+
 /** An honest row for every seed × mutator pair that produced no variant. */
 export interface AdversarialSeedSkip {
   seedCassetteId: string

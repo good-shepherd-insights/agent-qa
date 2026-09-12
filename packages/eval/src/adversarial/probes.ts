@@ -195,6 +195,21 @@ export const PROBE_REFUSALS = [
   'probe-identity-unchanged',
 ] as const satisfies readonly ProbeRefusal[]
 
+// 2026-09-12, 422-22 (RED skeleton): see the note in `./generate`.
+
+export type ProbeReservationStatus = 'unattempted'
+
+export const PROBE_RESERVATION_STATUSES = [
+  'unattempted',
+] as const satisfies readonly ProbeReservationStatus[]
+
+export function probeReservationStatus(_input: {
+  reservationRecorded: boolean
+  completionRecorded: boolean
+}): ProbeReservationStatus {
+  return 'unattempted'
+}
+
 /** One derived probe: the three documents plus the provenance that explains them. */
 export interface AdversarialProbe {
   cassette: LeafCassette
