@@ -18,7 +18,7 @@
  *   - two runs, and two permutations of the same input, must serialise identically (D-07).
  */
 import { describe, expect, it } from 'vitest'
-import { normalizeAccessibleName, screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
+import { asRef, normalizeAccessibleName, screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../../canonical-json'
 import { canonicalizeInputLeg } from '../../extract/receipt'
 import { ADVERSARIAL_MUTATORS } from '../../labels/corpus-entry'
@@ -32,6 +32,10 @@ import type { AdversarialSeed, AdversarialVariant } from '../generate'
 import { FIXTURE_GOLD, FIXTURE_REFS, makeAdversarialSeedFixture } from './fixtures'
 
 const UNIT_SEPARATOR = String.fromCharCode(31)
+
+const treeElements = (names: string[]) => names.map((name, index) => ({
+  role: 'button', name, ref: asRef(`e-${index}`),
+}))
 
 /** A fixture whose four recorded surfaces let every one of the eleven families apply. */
 function richSeed(): AdversarialSeed {
@@ -393,7 +397,7 @@ describe('CR-06: rewriteElementNameInTree', () => {
     expect(
       rewriteElementNameInTree({
         tree: QUOTED,
-        elementNames: ['Save changes', 'Save'],
+        elements: treeElements(['Save changes', 'Save']),
         index: 1,
         replacement: 'Sqve',
       }),
@@ -404,7 +408,7 @@ describe('CR-06: rewriteElementNameInTree', () => {
     expect(
       rewriteElementNameInTree({
         tree: BARE,
-        elementNames: ['Save changes', 'Save'],
+        elements: treeElements(['Save changes', 'Save']),
         index: 1,
         replacement: 'Sqve',
       }),
@@ -415,7 +419,7 @@ describe('CR-06: rewriteElementNameInTree', () => {
     expect(
       rewriteElementNameInTree({
         tree: QUOTED,
-        elementNames: ['Save changes', 'Save'],
+        elements: treeElements(['Save changes', 'Save']),
         index: 0,
         replacement: 'Sqve changes',
       }),
@@ -427,7 +431,7 @@ describe('CR-06: rewriteElementNameInTree', () => {
     expect(
       rewriteElementNameInTree({
         tree,
-        elementNames: ['Continue', 'Continue'],
+        elements: treeElements(['Continue', 'Continue']),
         index: 1,
         replacement: 'Contimue',
       }),
@@ -435,7 +439,7 @@ describe('CR-06: rewriteElementNameInTree', () => {
     expect(
       rewriteElementNameInTree({
         tree,
-        elementNames: ['Continue', 'Continue'],
+        elements: treeElements(['Continue', 'Continue']),
         index: 0,
         replacement: 'Contimue',
       }),
@@ -446,7 +450,7 @@ describe('CR-06: rewriteElementNameInTree', () => {
     expect(
       rewriteElementNameInTree({
         tree: '- button "Continue"',
-        elementNames: ['Submit'],
+        elements: treeElements(['Submit']),
         index: 0,
         replacement: 'Sudmit',
       }),
@@ -455,7 +459,7 @@ describe('CR-06: rewriteElementNameInTree', () => {
     expect(
       rewriteElementNameInTree({
         tree: '- button "Continue"',
-        elementNames: [''],
+        elements: treeElements(['']),
         index: 0,
         replacement: 'x',
       }),

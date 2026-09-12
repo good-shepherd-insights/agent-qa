@@ -567,73 +567,59 @@ function isProofBacked(cassette: LeafCassette): boolean {
 }
 
 /**
- * Rewrite ONE element's name where it appears in the rendered tree, or refuse.
- *
- * The rendered tree is prose, so the only faithful rewrite of one element's line is a
- * positional one: replacing every appearance would rename the target's identically-labelled
- * siblings too, and a tree that disagrees with `elements` describes a screen that never
- * existed. That much the previous version had right. Two things it had wrong:
- *
- *   - IT COUNTED OCCURRENCES IN TWO DIFFERENT UNIVERSES. The ordinal was counted over
- *     `elements` by exact name equality, then spent as a raw SUBSTRING ordinal in the tree.
- *     Those are not the same number. An element named `Save` sitting after one named
- *     `Save changes` has element-ordinal 0, but the first textual `Save` in the tree is inside
- *     `Save changes` -- so the rewrite renamed a DIFFERENT control in the tree than in
- *     `elements`, and `promptInputHash`/`screenStateHash` were then recomputed over the
- *     inconsistent document so nothing downstream could notice.
- *
- *     Fixed by SHADOWING: any stretch of the tree occupied by a longer element name that
- *     strictly contains the needle cannot be the needle's own rendering, so those positions
- *     are skipped before the ordinal is applied. This needs no assumption about the tree's
- *     syntax, which matters -- captured trees appear both quoted (`- button "Save"`) and bare
- *     (`  button Continue`).
- *
- *   - A MISSING NEEDLE WAS A SILENT NO-OP. `return haystack` meant the case was still derived,
- *     still staged, still admitted and still counted as an adversarial variant, while a planner
- *     reading the rendered tree saw the UNPERTURBED label: an adversarial case that measures
- *     nothing while reporting as staged. `undefined` now says so, and both callers turn it into
- *     a typed refusal.
+ * Resolve a rendered name by role, normalized name and matching-set ordinal. Only name
+ * fields in supported tree rows participate; roles, annotations and prose never do.
+ * Cardinality, verbatim names and any rendered refs must agree with the recorded elements
+ * before an ordinal is safe to use. Unsupported or ambiguous representations are refused.
  */
 export function rewriteElementNameInTree(input: {
   tree: string
-  elementNames: readonly string[]
-  /** Index into `elementNames` of the element being perturbed. */
+  elements: readonly Pick<ElementInfo, 'role' | 'name' | 'ref'>[]
+  /** Index into the recorded elements of the element being perturbed. */
   index: number
   replacement: string
 }): string | undefined {
-  const { tree, elementNames, index, replacement } = input
-  const needle = elementNames[index]
-  if (needle === undefined || needle === '') return undefined
-
-  // Positions the needle cannot legitimately occupy: inside a longer sibling name.
-  const shadows: { start: number; end: number }[] = []
-  for (const other of new Set(elementNames)) {
-    if (other === needle || other.length <= needle.length || !other.includes(needle)) continue
-    let at = tree.indexOf(other)
-    while (at >= 0) {
-      shadows.push({ start: at, end: at + other.length })
-      at = tree.indexOf(other, at + other.length)
-    }
-  }
-  const shadowed = (at: number): boolean =>
-    shadows.some(range => at >= range.start && at < range.end)
-
-  // The ordinal, counted over elements that share this exact name — unchanged, and now spent
-  // against a list of candidate positions drawn from the same universe.
-  const occurrence = elementNames.slice(0, index).filter(name => name === needle).length
-
-  let seen = 0
-  let at = tree.indexOf(needle)
-  while (at >= 0) {
-    if (!shadowed(at)) {
-      if (seen === occurrence) {
-        return tree.slice(0, at) + replacement + tree.slice(at + needle.length)
+  const { tree, elements, index, replacement } = input
+  const target = elements[index]
+  if (target === undefined || target.name === '') return undefined
+  const normalized = normalizeAccessibleName(target.name)
+  const peers = elements.map((element, position) => ({ element, position })).filter(({ element }) =>
+    element.role === target.role && normalizeAccessibleName(element.name) === normalized,
+  )
+  const spans: { start: number; name: string; ref?: string }[] = []
+  let offset = 0
+  for (const line of tree.split('\n')) {
+    const header = /^(\s*(?:-\s+)?)(\'?)([\w-]+) /.exec(line)
+    if (header !== null && header[3] === target.role) {
+      const start = header[0].length
+      const wrapped = header[2] === "'"
+      const body = wrapped && line.endsWith("'") ? line.slice(start, -1) : line.slice(start)
+      if (wrapped && !line.endsWith("'")) return undefined
+      const quoted = /^"([^"]*)"(.*)$/.exec(body)
+      // Bare captures render the complete remainder as the name. Quoted captures have an
+      // explicit closing delimiter followed by annotations or colon-introduced prose.
+      const name = quoted === null ? body : quoted[1]!
+      const suffix = quoted?.[2] ?? ''
+      if (body.startsWith('"') && quoted === null) return undefined
+      if (suffix !== '' && !/^(?:\s+\[[^\]]*\]|\s+@\([^)]*\))*\s*(?::.*)?$/.test(suffix)) {
+        return undefined
       }
-      seen += 1
+      if (normalizeAccessibleName(name) === normalized) {
+        const refs = [...suffix.matchAll(/\[ref=([^\]]+)\]/g)]
+        if (refs.length > 1) return undefined
+        spans.push({ start: offset + start + (quoted === null ? 0 : 1), name,
+          ...(refs[0] === undefined ? {} : { ref: refs[0][1]! }),
+        })
+      }
     }
-    at = tree.indexOf(needle, at + needle.length)
+    offset += line.length + 1
   }
-  return undefined
+  if (spans.length !== peers.length) return undefined
+  if (spans.some((span, ordinal) => span.name !== peers[ordinal]!.element.name ||
+    (span.ref !== undefined && span.ref !== String(peers[ordinal]!.element.ref)))) return undefined
+  const span = spans[peers.findIndex(peer => peer.position === index)]
+  if (span === undefined) return undefined
+  return tree.slice(0, span.start) + replacement + tree.slice(span.start + span.name.length)
 }
 
 function deriveCassette(input: {
@@ -806,7 +792,7 @@ export function generateAdversarialVariants(
       // label. That is a case that measures nothing while reporting as staged.
       const rewrittenTree = rewriteElementNameInTree({
         tree: seed.cassette.input.stateBefore.tree,
-        elementNames: elements.map(element => element.name),
+        elements,
         index: selection.index,
         replacement: selection.mutatedName,
       })

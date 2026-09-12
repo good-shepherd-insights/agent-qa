@@ -493,7 +493,7 @@ export function deriveProbeCassette(input: DeriveProbeCassetteInput): ProbeDeriv
   // containing this one cannot absorb the rewrite and rename the wrong control.
   const tree = rewriteElementNameInTree({
     tree: seedCassette.input.stateBefore.tree,
-    elementNames: elements.map(element => element.name),
+    elements,
     index: goldIndex,
     replacement: response.text,
   })
