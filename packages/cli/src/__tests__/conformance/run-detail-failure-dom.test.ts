@@ -315,6 +315,32 @@ interface PageObservation {
   readonly full: BannerState
   /** Every response this page received. */
   readonly responses: readonly RecordedResponse[]
+  /** What the failure view says about circularity on THIS run (422 D-17/D-19/D-20). */
+  readonly circularity: CircularityObservation
+}
+
+/**
+ * The circularity half of the same visit, harvested from the same page (422 D-17/D-19/D-20).
+ *
+ * IT IS RECORDED ON BOTH SIDES OF THE SEAM ON PURPOSE. `analysisBody` is what the shipped binary
+ * put on the wire and `states` is what the shipped bundle painted from it, and (3h)'s whole claim
+ * is that the two agree on an ABSENCE: this run's arbiter never ran, so `analysis.get` carries no
+ * `misdirection` member and the page paints no circularity element. A DOM-only cell would pass
+ * just as happily against a page that received the member and silently dropped it.
+ */
+interface CircularityObservation {
+  /** How many verdict blocks painted. Zero would make the absence claim below vacuous. */
+  readonly verdictBlocks: number
+  /** Every `data-misdirection` word on the page, in document order. */
+  readonly states: readonly string[]
+  /** Every causal record chip the page named. */
+  readonly causalRecords: readonly string[]
+  /** Every exposed on-path record chip the page named. */
+  readonly onPathRecords: readonly string[]
+  /** `GET /api/runs/:id/analysis`'s body, bounded — the wire half of the claim. */
+  readonly analysisBody?: string
+  /** Why the verdict block never attached, when it never did. Recorded, never thrown. */
+  readonly waitFailure?: string
 }
 
 /** Everything `beforeAll` measured, or the reason it could not. */
@@ -390,6 +416,12 @@ function context(): string {
           + (response.refusalBody === undefined ? '' : ` -> ${response.refusalBody}`))
         .join(' | ') || '(none)'
     }`,
+    `circularity: verdict blocks: ${String(observed?.circularity.verdictBlocks ?? 0)}; `
+    + `states: ${(observed?.circularity.states ?? []).join(', ') || '(none)'}; `
+    + `causal: ${(observed?.circularity.causalRecords ?? []).join(', ') || '(none)'}; `
+    + `on-path: ${(observed?.circularity.onPathRecords ?? []).join(', ') || '(none)'}; `
+    + `wait failure: ${observed?.circularity.waitFailure?.split('\n')[0] ?? '(none)'}`,
+    `analysis body: ${JSON.stringify((observed?.circularity.analysisBody ?? '').slice(0, 900))}`,
     `page text: ${JSON.stringify((observed?.truncated.bodyText ?? '').slice(0, 600))}`,
     recorded.failure === undefined ? '' : `drive failure: ${recorded.failure}`,
     `dashboard stderr: ${(recorded.dashboardStderr ?? '').slice(-1_200)}`,
@@ -472,6 +504,7 @@ async function observeFailureBanner(
   let toggleFailure: string | undefined
   const responses: RecordedResponse[] = []
   const pendingBodies: Promise<void>[] = []
+  let analysisBody: string | undefined
   page.on('response', (response) => {
     const record: {
       url: string
@@ -489,6 +522,16 @@ async function observeFailureBanner(
         response.text().then(
           (body) => { record.refusalBody = body.slice(0, 400) },
           () => { record.refusalBody = '(body unreadable)' },
+        ),
+      )
+    }
+    // THE ANALYSIS BODY, ON A 200 — the wire half of (3h). It is read here rather than re-fetched
+    // because a second request is a second answer, and the claim is about the bytes THIS page got.
+    if (record.status === 200 && /\/api\/runs\/[^/]+\/analysis$/u.test(record.url)) {
+      pendingBodies.push(
+        response.text().then(
+          (body) => { analysisBody = body.slice(0, 20_000) },
+          () => { analysisBody = '(body unreadable)' },
         ),
       )
     }
@@ -574,10 +617,36 @@ async function observeFailureBanner(
     }
     const full = await harvestBanner(page)
 
+    // THE FAILURE VIEW'S OWN BLOCK (422). The wait is on the verdict block rather than on a
+    // circularity element, because the fact being measured is that NO circularity element exists:
+    // waiting for one would time out on the healthy case and record nothing about the block.
+    let circularityWaitFailure: string | undefined
+    await page.locator('[data-verdict-block]')
+      .waitFor({ state: 'attached', timeout: PAGE_BUDGET_MS })
+      .catch((error: unknown) => {
+        circularityWaitFailure = error instanceof Error ? error.message : String(error)
+      })
+    const painted = await page.evaluate(() => {
+      const read = (selector: string, attribute: string) =>
+        Array.from(document.querySelectorAll(selector))
+          .map((element) => element.getAttribute(attribute) ?? '?')
+      return {
+        verdictBlocks: document.querySelectorAll('[data-verdict-block]').length,
+        states: read('[data-misdirection]', 'data-misdirection'),
+        causalRecords: read('[data-misdirection-causal-record]', 'data-misdirection-causal-record'),
+        onPathRecords: read('[data-misdirection-on-path-record]', 'data-misdirection-on-path-record'),
+      }
+    })
+
     // Every refusal body read before the observation is handed back, so the record is complete.
     await Promise.all(pendingBodies)
 
     return {
+      circularity: {
+        ...painted,
+        ...(analysisBody === undefined ? {} : { analysisBody }),
+        ...(circularityWaitFailure === undefined ? {} : { waitFailure: circularityWaitFailure }),
+      },
       finalUrl: page.url(),
       ...(waitFailure === undefined ? {} : { waitFailure }),
       toggled,
@@ -990,5 +1059,126 @@ describe('the shipped dashboard paints a FAILED run\'s summary through the maski
       + 'than the page did is the defect this cell exists for; a copy that carries LESS would mean '
       + `the copy path is truncating a second time.${context()}`,
     ).toBe(normaliseRedactions(observed.truncated.renderedText, labels))
+  })
+
+  // ── 422 D-17/D-19/D-20: THE CIRCULARITY EVIDENCE, ON THE RUN THIS FILE ACTUALLY DRIVES.
+  //
+  // THIS RUN'S ARBITER NEVER RAN. The fixture spends no provider call on a cross-check, publishes
+  // no `misdirection-*` sidecar and writes no verdict ledger, so `analysis.get` must carry NO
+  // `misdirection` member and the failure view must paint no circularity element. That is the
+  // ADDITIVE claim of the whole plan, and it is the one claim only this file can make: everything
+  // else about the evidence is measured against fixtures, and a fixture cannot prove that the
+  // shipped binary and the shipped bundle leave an untouched run untouched.
+  //
+  // BOTH SIDES OF THE SEAM ARE ASSERTED. A DOM-only cell would pass just as happily against a page
+  // that received the member and dropped it on the floor, and a wire-only cell would pass against a
+  // bundle that invented a "not recorded" badge under every historical failure. And the block count
+  // is asserted first, because an absence measured on a page with no blocks is an absence of
+  // nothing.
+  it('(3h) a run whose arbiter never ran carries no circularity member and paints no badge', () => {
+    const observed = visit()
+    expect(
+      observed.circularity.waitFailure,
+      'no `[data-verdict-block]` ever attached, so the absence below is an absence of nothing. '
+      + 'The failure view paints a block for every member `analysis.get` answers a verdict for, '
+      + `and this run failed one.${context()}`,
+    ).toBeUndefined()
+    expect(
+      observed.circularity.verdictBlocks,
+      `the page painted no verdict block for a run with a failed member.${context()}`,
+    ).toBeGreaterThan(0)
+
+    const body = observed.circularity.analysisBody
+    expect(
+      body,
+      `the page never received a 200 from \`/api/runs/:id/analysis\`.${context()}`,
+    ).toBeDefined()
+    const analysis = JSON.parse(body as string) as {
+      verdicts?: { misdirection?: unknown }[]
+    }
+    expect(
+      (analysis.verdicts ?? []).length,
+      `the analysis answered no verdicts at all, so the wire claim below is vacuous.${context()}`,
+    ).toBeGreaterThan(0)
+    expect(
+      (analysis.verdicts ?? []).filter((verdict) => 'misdirection' in verdict).length,
+      'a verdict carries a `misdirection` member on a run whose arbiter never ran. ABSENT and '
+      + 'EMPTY are two facts here: a `{ state: "not-recorded" }` on every historical verdict is a '
+      + `claim the producer never made.${context()}`,
+    ).toBe(0)
+
+    expect(
+      observed.circularity.states,
+      'the shipped bundle painted a circularity badge over evidence that was never produced. '
+      + 'This is the exact misstatement 422-17 refused on the CLI line and #427 makes live: a '
+      + `reader would conclude something was ruled out.${context()}`,
+    ).toEqual([])
+    expect(
+      observed.circularity.causalRecords,
+      `a memory record is attributed as causal on a run that cross-checked nothing.${context()}`,
+    ).toEqual([])
+    expect(
+      observed.circularity.onPathRecords,
+      `an on-path record is named on a run whose verdict declared none.${context()}`,
+    ).toEqual([])
+  })
+})
+
+// ── THE TWO RECORD ROWS ARE TWO DIFFERENT NAMES (422 D-20). Source-level and outside the drive,
+// for `publishedConstant`'s reason: it reads two files and nothing else, so it must not pull a
+// spawned binary, a browser and a real run in behind it.
+//
+// WHY A CELL AT ALL. The causal row names the records whose cross-check FLIPPED and the exposure
+// row names every low-trust record the run put on the member's path; a refactor that hoisted them
+// onto one attribute would still render two lists, still pass every count assertion in the
+// dashboard suites, and would attribute a member's failure to a record whose check HELD. The wall
+// is the NAMES, because the names are what every cell that tells the rows apart addresses.
+describe('the failure view keeps causal and exposed memory records apart (422 D-20)', () => {
+  const VERDICT_BLOCK = readFileSync(
+    join(PACKAGES_ROOT, 'dashboard-ui', 'src', 'components', 'run-detail', 'verdict-block.tsx'),
+    'utf8',
+  )
+
+  it('renders the causal row and the exposure row under two distinct attribute names', () => {
+    // Read out of the SOURCE rather than typed as a pair of literals: a literal comparison is a
+    // tautology the compiler resolves, and what is being walled is the file's own text.
+    const names = [...new Set(
+      [...VERDICT_BLOCK.matchAll(/data-misdirection-[a-z-]+/gu)].map((match) => match[0]),
+    )].sort()
+    expect(
+      names.includes('data-misdirection-causal-record'),
+      'the causal row lost its own attribute name',
+    ).toBe(true)
+    expect(
+      names.includes('data-misdirection-on-path-record'),
+      'the exposure row lost its own attribute name',
+    ).toBe(true)
+    expect(
+      names.filter((name) => name.endsWith('-record')).length,
+      'the two record rows collapsed onto one name — a record whose check HELD would then be '
+      + 'rendered as the cause of the failure',
+    ).toBe(2)
+  })
+
+  it('publishes every circularity sentence as a constant, so no copy is typed at a render site', () => {
+    // The block's own law, applied to the 422 copy: a sentence lives in `lib/analysis-view.ts` and
+    // the component reads it. A literal here would drift from what the cells assert.
+    for (const name of [
+      'MISDIRECTION_NOT_RECORDED_TEXT',
+      'MISDIRECTION_HELD_TEXT',
+      'MISDIRECTION_UNRESOLVED_TEXT',
+      'MISDIRECTION_DECLARED_ONLY_TEXT',
+      'MEMORY_ON_PATH_NOT_RECORDED_TEXT',
+      'MEMORY_ON_PATH_NONE_TEXT',
+    ]) {
+      expect(publishedConstant('lib/analysis-view.ts', name).length).toBeGreaterThan(0)
+    }
+    // AND THE ONE WORD THE CLI ALREADY OWNS IS SPELLED THE SAME WAY (422-17). `post-run-tail.ts`
+    // renders `circularity guard: declared-only` for the backing an operator actually got; two
+    // surfaces describing one run in two vocabularies is worse than either being absent.
+    expect(publishedConstant('lib/analysis-view.ts', 'MISDIRECTION_DECLARED_ONLY_TEXT'))
+      .toContain('declared-only')
+    expect(publishedConstant('lib/analysis-view.ts', 'MISDIRECTION_NOT_RECORDED_TEXT'))
+      .toContain('not recorded')
   })
 })
