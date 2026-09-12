@@ -284,7 +284,7 @@ describe('the terminal host BINDS the proposal stage rather than declaring it (4
       },
     })
     const handed = vi.mocked(composeLocalAgent).mock.calls.at(-1)![0].postRun
-    // The five members 422-08's window names, plus the two that were already there. Asserted as
+    // The proposal ports, their bound, the fold and the 422-27 posture reader. Asserted as
     // a SET rather than member-by-member: a capability silently dropped from this literal is the
     // exact regression, and a per-member assertion would pass for the members somebody
     // remembered while the forgotten one stayed invisible.
@@ -294,6 +294,7 @@ describe('the terminal host BINDS the proposal stage rather than declaring it (4
       'gateReceiptsFor',
       'listBundles',
       'proposeGate1MaxPerJob',
+      'readMisdirectionRootPosture',
       'readProposeCorpusPosture',
       'runReplayGate',
       'stageAdversarialProposal',
