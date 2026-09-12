@@ -479,6 +479,37 @@ function withMutatedName(
   )
 }
 
+/** Rebuild each resolvable descriptor from its original control, including shifted ordinals.
+ * Unresolved alternate-name descriptors retain their historical meaning; they must not start
+ * resolving to a different control as a side effect. Their broader policy is separate (#438).
+ */
+export function retargetDescriptors(
+  before: readonly ElementInfo[],
+  after: readonly ElementInfo[],
+  descriptors: readonly GoldAnchorDescriptor[],
+): GoldAnchorDescriptor[] | undefined {
+  const originalIndices = descriptors.map(descriptor => resolveDescriptorIndex(before, descriptor))
+  const rebuilt: GoldAnchorDescriptor[] = []
+  for (const [position, descriptor] of descriptors.entries()) {
+    const index = originalIndices[position]!
+    if (index < 0) {
+      if (resolveDescriptorIndex(after, descriptor) !== -1) return undefined
+      rebuilt.push(descriptor)
+      continue
+    }
+    const element = after[index]
+    if (element === undefined || element.ref !== before[index]!.ref) return undefined
+    const nameNormalized = normalizeAccessibleName(element.name)
+    const ordinal = after.slice(0, index).filter(candidate =>
+      candidate.role === element.role && normalizeAccessibleName(candidate.name) === nameNormalized,
+    ).length
+    const next = { ...descriptor, role: element.role, nameNormalized, ordinal }
+    if (resolveDescriptorIndex(after, next) !== index) return undefined
+    rebuilt.push(next)
+  }
+  return rebuilt
+}
+
 /**
  * D-06's benign postcondition: every gold and equivalence descriptor must resolve to the
  * SAME element index after the perturbation as before it. `-1 === -1` counts — a descriptor
@@ -632,7 +663,7 @@ function deriveCassette(input: {
   tree: string
   /** Present only for a hostile family: the anchor follows its target's new identity. */
   retargetTo?: string
-}): LeafCassette {
+}): LeafCassette | undefined {
   const { seed, anchor, selection, cassetteId, retargetTo, tree } = input
   const elements = withMutatedName(
     seed.input.stateBefore.elements,
@@ -641,20 +672,17 @@ function deriveCassette(input: {
   )
   const stateBefore: ScreenState = { ...seed.input.stateBefore, elements, tree }
   const inputLeg = { ...seed.input, stateBefore }
-  const retarget = (descriptor: GoldAnchorDescriptor): GoldAnchorDescriptor =>
-    retargetTo !== undefined &&
-    descriptor.role === anchor.role &&
-    descriptor.nameNormalized === anchor.nameNormalized &&
-    descriptor.ordinal === anchor.ordinal
-      ? { ...descriptor, nameNormalized: retargetTo }
-      : descriptor
+  const descriptors = retargetDescriptors(seed.input.stateBefore.elements, elements, [
+    anchor, ...seed.sidecar.equivalenceSet,
+  ])
+  if (descriptors === undefined) return undefined
   const sidecar =
     retargetTo === undefined
       ? seed.sidecar
       : {
           ...seed.sidecar,
-          goldAnchor: retarget(anchor),
-          equivalenceSet: seed.sidecar.equivalenceSet.map(retarget),
+          goldAnchor: descriptors[0]!,
+          equivalenceSet: descriptors.slice(1),
         }
   return {
     ...seed,
@@ -816,6 +844,10 @@ export function generateAdversarialVariants(
           ? { retargetTo: normalizeAccessibleName(selection.mutatedName) }
           : {}),
       })
+      if (derived === undefined) {
+        outcomes.push({ kind: 'inapplicable', seedCassetteId, mutator, reason: 'gold-anchor-unresolved' })
+        continue
+      }
       const generator: CorpusGenerator = {
         kind,
         seedCassetteId,

@@ -43,7 +43,7 @@ import type {
   CorpusGenerator,
   ProbeGeneratorKind,
 } from '../labels/corpus-entry'
-import { ADVERSARIAL_GENERATOR_VERSION, rewriteElementNameInTree } from './generate'
+import { ADVERSARIAL_GENERATOR_VERSION, retargetDescriptors, rewriteElementNameInTree } from './generate'
 import type { AdversarialSeed } from './generate'
 import type { JudgeCalibrationGapReason } from '../judge/calibration'
 import { ADVERSARIAL_PROMPT_HASH, ADVERSARIAL_PROMPT_VERSION } from './probe-prompt'
@@ -315,10 +315,8 @@ export function deriveProbeCassetteId(input: {
 /**
  * Index of the element a descriptor names, or -1.
  *
- * Spelled here rather than imported from `./generate` so the probe half carries no dependency
- * on the frozen-table engine: the two derivations share a RULE (D-03's `role + nameNormalized +
- * ordinal` identity), not an implementation, and coupling them would make a change to the table
- * engine able to move probe identities.
+ * Request eligibility uses D-03's role + normalized name + ordinal identity. Derivation also
+ * checks the rebuilt gold/equivalent descriptors through the shared retargeting postcondition.
  */
 function resolveDescriptorIndex(
   elements: readonly ElementInfo[],
@@ -509,13 +507,10 @@ export function deriveProbeCassette(input: DeriveProbeCassetteInput): ProbeDeriv
   // gold ACTION is unchanged, and the descriptor is how that action's target is located on the
   // perturbed screen. The equivalence set is retargeted through the same rule so its arity and
   // membership stay the seed's.
-  const retargetTo = normalizeAccessibleName(response.text)
-  const retarget = (descriptor: GoldAnchorDescriptor): GoldAnchorDescriptor =>
-    descriptor.role === anchor.role &&
-    descriptor.nameNormalized === anchor.nameNormalized &&
-    descriptor.ordinal === anchor.ordinal
-      ? { ...descriptor, nameNormalized: retargetTo }
-      : descriptor
+  const descriptors = retargetDescriptors(elements, mutatedElements, [
+    anchor, ...seedCassette.sidecar.equivalenceSet,
+  ])
+  if (descriptors === undefined) return { outcome: 'refused', reason: 'seed-request-mismatch' }
 
   const cassetteId = deriveProbeCassetteId({
     seedCassetteId: seedCassette.id,
@@ -531,8 +526,8 @@ export function deriveProbeCassette(input: DeriveProbeCassetteInput): ProbeDeriv
     input: inputLeg,
     sidecar: {
       ...seedCassette.sidecar,
-      goldAnchor: retarget(anchor),
-      equivalenceSet: seedCassette.sidecar.equivalenceSet.map(retarget),
+      goldAnchor: descriptors[0]!,
+      equivalenceSet: descriptors.slice(1),
     },
     // The label LEG is the as-extracted snapshot and is copied verbatim (D-01 store law); the
     // authoritative derived label is the standalone record beside it.

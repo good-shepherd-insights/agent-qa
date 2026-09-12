@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { normalizeAccessibleName } from '@vostride/agent-qa-schema'
 import { generateAdversarialVariants, type AdversarialSeed } from '../generate'
 import { buildProbeRequest, deriveProbeCassette } from '../probes'
 import { FIXTURE_REFS, makeAdversarialSeedFixture } from './fixtures'
@@ -83,5 +84,32 @@ describe.each(paths)('CR-07 rendered identity through %s derivation', path => {
     ).join('\n'))
     state.tree = state.tree.replace(`[ref=${FIXTURE_REFS.goldButton}]`, '[ref=wrong-control]')
     expect(derive(seed, path).cassette).toBeUndefined()
+  })
+})
+
+describe.each(paths)('CR-08 descriptor identity through %s derivation', path => {
+  it.each([0, 1])('rebuilds gold and equivalent ordinals when duplicate %i is renamed', goldOrdinal => {
+    const seed = makeAdversarialSeedFixture({ names: { [FIXTURE_REFS.siblingButton]: 'Continue' } })
+    const buttons = seed.cassette.input.stateBefore.elements.filter(element => element.role === 'button')
+    const descriptors = buttons.map((element, ordinal) => ({
+      role: element.role, nameNormalized: 'continue', ordinal, ref: String(element.ref),
+    }))
+    seed.cassette.sidecar.goldAnchor = descriptors[goldOrdinal]!
+    seed.cassette.sidecar.goldAction = { type: 'click', ref: buttons[goldOrdinal]!.ref }
+    seed.cassette.sidecar.equivalenceSet = descriptors
+    const result = derive(seed, path)
+    expect(result.cassette).toBeDefined()
+    const cassette = result.cassette!
+    expect(cassette.sidecar.goldAction).toEqual(seed.cassette.sidecar.goldAction)
+    const locate = (descriptor: typeof descriptors[number]) => cassette.input.stateBefore.elements.filter(element =>
+      element.role === descriptor.role && normalizeAccessibleName(element.name) === descriptor.nameNormalized,
+    )[descriptor.ordinal]?.ref
+    expect(cassette.sidecar.goldAnchor!.ordinal).toBe(0)
+    expect(locate(cassette.sidecar.goldAnchor as typeof descriptors[number])).toBe(buttons[goldOrdinal]!.ref)
+    expect(cassette.sidecar.equivalenceSet).toHaveLength(2)
+    cassette.sidecar.equivalenceSet.forEach((descriptor, index) => {
+      expect(descriptor.ordinal).toBe(0)
+      expect(locate(descriptor as typeof descriptors[number])).toBe(buttons[index]!.ref)
+    })
   })
 })
