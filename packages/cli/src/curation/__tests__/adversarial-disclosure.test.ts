@@ -13,12 +13,16 @@
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { guardRunNotification, type RunNotification } from '@vostride/agent-qa-schema'
 import type { ProposeGate1Report } from '@vostride/agent-qa-agent'
+import {
+  ADVERSARIAL_MANIFEST_FILE,
+  ADVERSARIAL_STAGING_SUBDIR,
+} from '@vostride/agent-qa-eval-local'
 
 import {
   MISDIRECTION_POSTURE_BOUND_AT_HOST,
@@ -283,7 +287,14 @@ describe('the tail reads its own persisted proposal record (#424)', () => {
 })
 
 describe('the doctor Learning-mode row (D-09/D-19)', () => {
-  function probes(): KnowledgeCheckProbes {
+  /**
+   * A host whose committed eval root RESOLVES, because the adversarial half is appended only
+   * where it can say something: a `no-eval-root` host holds no staged batch and no refresh
+   * record by construction and already says so one clause to the left. The posture is supplied
+   * through the probe seam rather than by seeding a real eval root, so these cells measure the
+   * disclosure and not `buildPromotionPostureResolver`.
+   */
+  function probes(p: ReturnType<typeof project>): KnowledgeCheckProbes {
     return {
       classifyIndexFace: () => ({ source: 'index' }),
       resolveEmbedderCapability: () =>
@@ -291,13 +302,40 @@ describe('the doctor Learning-mode row (D-09/D-19)', () => {
       readWriterLease: () => ({ kind: 'absent' }),
       readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
       readDaemonEventLedger: () => ({ events: [] }),
+      buildPromotionPosture: async () => ({
+        kind: 'ready',
+        committedRoot: join(p.root, 'agent-qa-eval'),
+        host: {
+          lowerTrustShares: [], canaryHorizonBuilds: 5, canaryHorizonBuildsSource: 'default',
+          maxLowerTrustPerScope: 2, maxLowerTrustPerScopeSource: 'default', notices: [],
+          replayGateAvailable: true, judge: { capable: false, reason: 'no-judge-configured' },
+          canary: { kind: 'not-provided', rarePathEligible: false },
+          corpusDigest: 'a'.repeat(64), minimumGateSet: 3, profileKey: 'test-profile',
+        },
+        resolve: () => undefined,
+      }) as never,
     }
   }
 
   async function learningRow(p: ReturnType<typeof project>) {
-    const checks = createKnowledgeChecks({ config: p.config, configPath: p.configPath, probes: probes() })
+    const checks = createKnowledgeChecks({ config: p.config, configPath: p.configPath, probes: probes(p) })
     return await checks[3].check()
   }
+
+  it('says nothing at all on a host whose eval root is absent, which already says it', async () => {
+    const p = project()
+    const checks = createKnowledgeChecks({
+      config: p.config,
+      configPath: p.configPath,
+      probes: {
+        ...probes(p),
+        buildPromotionPosture: async () => ({ kind: 'no-eval-root', committedRoot: join(p.root, 'agent-qa-eval') }),
+      },
+    })
+    const row = await checks[3].check()
+    expect(row.message).toContain('no eval root at')
+    expect(row.message).not.toContain('adversarial:')
+  })
 
   it('names the probe gap by its pinned reason rather than reporting zero probes', async () => {
     const row = await learningRow(project())
@@ -307,8 +345,11 @@ describe('the doctor Learning-mode row (D-09/D-19)', () => {
 
   it('says the staged report is not recorded on a host that never staged one', async () => {
     const row = await learningRow(project())
-    expect(row.message).toContain('staged not recorded')
-    expect(row.message).not.toContain('staged 0')
+    // Scoped to the adversarial clause: the canary half of this row carries its own `staged 0`,
+    // which is a MEASURED zero from the completed-run receipts and is not this clause's subject.
+    const adversarial = row.message.slice(row.message.indexOf('; adversarial:'))
+    expect(adversarial).toContain('staged not recorded')
+    expect(adversarial).not.toContain('staged 0')
   })
 
   it('discloses the circularity backing an operator is ACTUALLY getting', async () => {
@@ -320,19 +361,21 @@ describe('the doctor Learning-mode row (D-09/D-19)', () => {
     )
   })
 
-  it('counts a REAL staged batch and its refresh record, and never invents one', async () => {
+  it('reports an unreadable staged batch rather than reporting health it could not establish', async () => {
     const p = project()
     const digest = 'b'.repeat(64)
-    const caseDir = join(p.agentQaRoot, 'adversarial-staging', 'demo', digest, 'case-0000')
-    mkdirSync(caseDir, { recursive: true })
-    // A manifest whose digest does not recompute is a TAMPERED batch; `listStagedAdversarial`
-    // throws on it by design, and the row must surface that rather than report health.
-    writeFileSync(join(dirname(caseDir), 'manifest.json'), JSON.stringify({
+    const batchDir = join(p.agentQaRoot, ADVERSARIAL_STAGING_SUBDIR, 'demo', digest)
+    mkdirSync(batchDir, { recursive: true })
+    // A manifest whose batch digest does not recompute from its own case list is a TAMPERED
+    // batch; `listStagedAdversarial` throws on it by design, and the row must surface that
+    // rather than fall back to the same `not recorded` an empty root produces.
+    writeFileSync(join(batchDir, ADVERSARIAL_MANIFEST_FILE), JSON.stringify({
       schemaVersion: 1, product: 'demo', batchDigest: digest, tableVersion: 1,
       tableHash: 'c'.repeat(64), stagedAt: '2026-09-12T00:00:00.000Z', cases: [],
     }))
     const row = await learningRow(p)
     expect(row.message).toContain('staged unreadable')
+    expect(row.message).not.toContain('staged not recorded')
     expect(row.status).toBe('fail')
   })
 })

@@ -24,6 +24,15 @@ import { completedRunsRoot, CURATION_TAIL_RECEIPT_FILE, readCurationTailReceipt 
 import { promotionHostProof } from './promotion-host-proof.js'
 import { publishBundleForTest, appendPromotionReceipt } from '@vostride/agent-qa-knowledge-local'
 
+// 422-17 (D-09/D-14/D-19): the Learning mode row gained an adversarial half, appended ONLY on a
+// host whose committed eval root exists — a `skip` row and a `no-eval-root` row can hold no
+// staged batch and no refresh record by construction, and already say so one clause to the left.
+// It is CONSTANT across the fixtures that do get it for a stated reason rather than by luck: none
+// declares an `eval` judge pool (so the probe gap short-circuits to the first reason without
+// resolving a session), none stages an adversarial batch (so the staged report is `not recorded`
+// and never `staged 0`), and the circularity clause is a fact about this BUILD — no composition
+// forwards `readMisdirectionRootPosture`, so D-19's declared-only exemption is unreachable here.
+const ADVERSARIAL_SUFFIX = '; adversarial: no-probe-model: panel-not-configured; staged not recorded; circularity backing: fail-closed eval-root (no host binds the recorded posture)'
 const PRIOR_SUFFIX = '; label calibration: absent; trust priors: provisional; judge panel: capability gap: panel-not-configured'
 
 const STATIC_PROFILE: EmbeddingProfile = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' }
@@ -388,7 +397,7 @@ describe('createKnowledgeChecks', () => {
     }))
     expect(learning).toEqual({ status, message: (replayGateAvailable
       ? `${message.slice(0, -1)}; since-v4 ride-along 0; cap-exceeded 0; lower-trust none; staged 0)`
-      : message) + PRIOR_SUFFIX })
+      : message) + PRIOR_SUFFIX + ADVERSARIAL_SUFFIX })
   })
 
   it('folds only validated v4 receipts into since-v4 counts and renders per-product shares', async () => {
@@ -414,7 +423,7 @@ describe('createKnowledgeChecks', () => {
       buildPromotionPosture: async () => ({ kind: 'ready', committedRoot: '', host, resolve: () => undefined }),
     }))
     expect(checks).toHaveLength(4)
-    expect(learning).toEqual({ status: 'pass', message: 'gated (Gate 1 bound; judge none; canary evidence none; since-v4 ride-along 3; cap-exceeded 1; lower-trust 1/4 active in example-web, 0/0 active in empty-product; staged 3)' + PRIOR_SUFFIX })
+    expect(learning).toEqual({ status: 'pass', message: 'gated (Gate 1 bound; judge none; canary evidence none; since-v4 ride-along 3; cap-exceeded 1; lower-trust 1/4 active in example-web, 0/0 active in empty-product; staged 3)' + PRIOR_SUFFIX + ADVERSARIAL_SUFFIX })
   })
 
   it('discloses actual on-disk shares through the production doctor facts binding without replay or writes', async () => {
@@ -471,7 +480,7 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'unavailable', committedRoot: join(project.projectRoot, 'agent-qa-eval'), refusals, resolve: () => undefined }),
     }))
-    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — noise-floor: no artefact for the active profile' + PRIOR_SUFFIX })
+    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — noise-floor: no artefact for the active profile' + PRIOR_SUFFIX + ADVERSARIAL_SUFFIX })
     expect(refusals).toEqual(['noise-floor: no artefact for profile X', 'second refusal'])
   })
 
@@ -485,7 +494,7 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'unavailable', committedRoot: join(project.projectRoot, 'agent-qa-eval'), refusals, resolve: () => undefined }),
     }))
-    expect(learning).toEqual({ status: 'fail', message: `posture-unavailable — ${cause}` + PRIOR_SUFFIX })
+    expect(learning).toEqual({ status: 'fail', message: `posture-unavailable — ${cause}` + PRIOR_SUFFIX + ADVERSARIAL_SUFFIX })
     expect(refusals).toEqual([refusal])
   })
 
@@ -494,7 +503,7 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => { throw new Error('posture read refused for private-model: Bearer synthetic-receipt-token') },
     }))
-    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — eval posture could not be resolved' + PRIOR_SUFFIX })
+    expect(learning).toEqual({ status: 'fail', message: 'posture-unavailable — eval posture could not be resolved' + PRIOR_SUFFIX + ADVERSARIAL_SUFFIX })
   })
 
   it('probes each axis exactly once across all four rows', async () => {

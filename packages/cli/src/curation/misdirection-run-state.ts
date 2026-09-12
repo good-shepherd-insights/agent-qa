@@ -58,6 +58,27 @@ export const MISDIRECTION_COMPLETIONS_DIR = 'misdirection-completions'
 export const MISDIRECTION_POSTURE_FILE = 'misdirection-posture.json'
 
 /**
+ * Whether ANY production composition forwards `PostRunJobCapabilities.readMisdirectionRootPosture`
+ * (422 D-19; WINDOWS #427).
+ *
+ * A CONSTANT and not a probe, because the binding is a property of the shipped composition rather
+ * than of a running host: `postRunCapabilities` in `agent-local` forwards the four Gate-1 ports,
+ * the staging port and the per-job bound, and it forwards NO posture reader — so the handler's own
+ * `readMisdirectionPosture` falls to its fail-closed `'eval-root'` default on every production run.
+ *
+ * The value is therefore what this build can honestly say about the backing an operator is
+ * ACTUALLY getting, and the disclosure below renders it rather than the posture the arbiter
+ * recorded. A line that read the recorded `no-eval-root` and printed `declared-only` would tell an
+ * operator their circularity claim carries the D-19 BYOM exemption when the analysis that stamped
+ * the verdict never saw it.
+ *
+ * It is pinned by a raw-source cell in `__tests__/adversarial-disclosure.test.ts` (the S6 idiom):
+ * the day a composition binds the member, that cell reds and this constant has to be revisited
+ * rather than quietly disagreeing with the code.
+ */
+export const MISDIRECTION_POSTURE_BOUND_AT_HOST = false
+
+/**
  * The FULL identity one check is keyed by (D-18).
  *
  * Five components and not four: 422-11 keys evidence by EXPOSURE `(step, record)` because a

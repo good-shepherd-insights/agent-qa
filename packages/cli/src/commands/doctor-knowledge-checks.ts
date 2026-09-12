@@ -47,7 +47,18 @@ import { buildTrustPriorsResolver, formatTrustPriorDisclosure, type TrustPriorsR
 import { resolveRawConfigKnowledgeRoot } from '../config.js'
 import { buildPromotionPostureResolver, type PromotionPostureResolution } from '../curation/promotion-posture.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
+// 422 D-09/D-14: the persisted adversarial staging state, read-only. This is the STAGING store,
+// not the committed corpus and not a writer — `listStagedAdversarial` and
+// `readAdversarialRefreshRecords` both refuse tampered bytes and neither creates a path.
+import {
+  listStagedAdversarial,
+  readAdversarialRefreshRecords,
+} from '@vostride/agent-qa-eval-local'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
+// From the module that OWNS the posture record, never from `post-run-tail.ts`: that file names
+// the terminal host composition and the daemon client, and importing it here would pull both into
+// every doctor invocation (the host-to-host import trap 422-09 recorded).
+import { MISDIRECTION_POSTURE_BOUND_AT_HOST } from '../curation/misdirection-run-state.js'
 import { readDaemonEventLedger, type DaemonEvent } from '../daemon/events.js'
 import type { CheckResult, DoctorCheck } from './doctor.js'
 
@@ -137,8 +148,13 @@ interface KnowledgeCheckContext {
   relativeIndexPath: string
   priors: () => TrustPriorsResolution
   panel: () => Promise<string>
-  /** The 422 adversarial half of the Learning mode row, memoised beside the panel half. */
-  adversarial: () => Promise<{ text: string; unreadable: boolean }>
+  /**
+   * The 422 adversarial half of the Learning mode row, memoised beside the panel half.
+   *
+   * It takes the eval-root predicate rather than resolving one, because the row it joins has
+   * already answered that question and a second answer could disagree with the first.
+   */
+  adversarial: (evalRootPresent: boolean) => Promise<{ text: string; unreadable: boolean }>
   probe: () => Promise<KnowledgeProbe>
 }
 
@@ -278,18 +294,29 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
         : check.fixInstructions
     },
     check: async () => {
-    const priors = context.knowledgeRoot === null ? context.priors() : (await context.probe()).trustPriors
+    const probe = context.knowledgeRoot === null ? undefined : await context.probe()
+    const priors = probe === undefined ? context.priors() : probe.trustPriors
     const row = await check.check()
+    // 422: the adversarial half is appended only where it can SAY something. A host with no
+    // knowledge root, or one whose committed eval root is absent, has already been told exactly
+    // that one line to the left — it can hold no staged batch, no refresh record and no probe
+    // corpus by construction — so three further "not recorded" clauses would be noise rather
+    // than disclosure, and they would push a row that already carries four suffixes past the
+    // width `doctor.ts`'s renderer keeps every row on one line at.
+    const evalRootPresent = probe !== undefined && probe.learning.kind !== 'no-eval-root'
     const disclosure = priors.kind === 'refused'
       ? 'label calibration: invalid or unavailable; trust priors: unavailable'
       : `${priors.calibration}; ${formatTrustPriorDisclosure(priors.disclosure)}`
-    const adversarial = await context.adversarial()
-    // A refused prior still fails the row first; an unreadable adversarial state fails a row that
-    // would otherwise have passed, because a diagnostic that reports healthy about a subsystem it
-    // could not read is worse than one that errors (D-19's `fail`-for-an-errored-subsystem rule).
-    const status = priors.kind === 'refused' && row.status !== 'skip'
+    const adversarial = await context.adversarial(evalRootPresent)
+    // Two independent escalations onto the SAME `skip` carve-out the prior escalation already
+    // uses. A tampered adversarial staging store is exactly D-19's ERRORED subsystem — present
+    // and refusing to be read — and a `warn` for a rung reached by design must not be allowed to
+    // mask it: the two say different things and the more serious one wins. `skip` is preserved
+    // because a host with no knowledge root has nothing to report either way, which is the same
+    // reason the refused-prior arm preserves it.
+    const status = row.status !== 'skip' && (priors.kind === 'refused' || adversarial.unreadable)
       ? 'fail'
-      : adversarial.unreadable && row.status === 'pass' ? 'fail' : row.status
+      : row.status
     return { ...row, status,
       message: `${row.message}; ${disclosure}${await context.panel()}${adversarial.text}` }
   } }
@@ -324,11 +351,99 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
 async function doctorAdversarialDisclosure(
   input: CreateKnowledgeChecksInput,
   agentQaRoot: string,
+  evalRootPresent: boolean,
 ): Promise<{ text: string; unreadable: boolean }> {
-  // RED SKELETON (422-17-T1): declared and inert.
-  void input
-  void agentQaRoot
-  return { text: '', unreadable: false }
+  if (!evalRootPresent) return { text: '', unreadable: false }
+  const backing = MISDIRECTION_POSTURE_BOUND_AT_HOST
+    ? 'circularity backing: recorded posture applied'
+    : 'circularity backing: fail-closed eval-root (no host binds the recorded posture)'
+  const staged = readStagedAdversarialSummary(agentQaRoot)
+  return {
+    text: `; adversarial: ${await probeGapDisclosure(input)}; ${staged.text}; ${backing}`,
+    unreadable: staged.unreadable,
+  }
+}
+
+/**
+ * The probe gap, resolved locally and for free (D-09).
+ *
+ * The empty-pool arm short-circuits BEFORE any session resolution, exactly as
+ * `resolveAdversarialProbeCapability` does — a host with no declared judge pool learns its gap
+ * without touching a registry, a credential store or the filesystem, and a doctor row must not be
+ * the one surface that pays for an answer everything else gets free.
+ *
+ * A resolution that THREW is `not determined` rather than a reason word. The three reasons are a
+ * closed vocabulary describing a host that was successfully inspected; borrowing one of them for
+ * an inspection that failed would put a diagnosis where there is none.
+ */
+async function probeGapDisclosure(input: CreateKnowledgeChecksInput): Promise<string> {
+  try {
+    const { selectedEvalJudgeNames, resolveEvalSession } =
+      await import('../eval-session-composition.js')
+    const evalConfig = (input.config?.eval ?? {}) as import('../eval-session-composition.js').EvalCliConfig
+    if (selectedEvalJudgeNames(evalConfig).length === 0) {
+      return 'no-probe-model: panel-not-configured'
+    }
+    const session = await resolveEvalSession({ configPath: input.configPath, keyOnly: true })
+    // Every credential the preflight resolves is registered in this disposable masker before any
+    // diagnostic exists; none of those diagnostics is rendered here in any case.
+    session.maskingContextFactory = () => buildRunMaskingContext({ env: process.env })
+    const { resolveAdversarialProbeCapability } =
+      await import('../adversarial-probe-preflight.js')
+    const capability = await resolveAdversarialProbeCapability(session)
+    return capability.kind === 'probe-author'
+      ? 'probe author available'
+      : `no-probe-model: ${capability.reason}`
+  } catch {
+    return 'probe author not determined'
+  }
+}
+
+/**
+ * The staged report, counted from what is actually on disk (D-14).
+ *
+ * PRODUCTS COME FROM THE STAGING ROOT ITSELF, not from a configured list: a product that never
+ * staged a batch has published no refresh record either, and asking for one by name would turn an
+ * empty answer into a count. A root with no batch at all is `not recorded` — not `staged 0`, which
+ * would claim a refresh ran and derived nothing.
+ *
+ * A THROW IS REPORTED, NEVER SWALLOWED. `listStagedAdversarial` refuses a batch whose manifest
+ * digest does not recompute and `readAdversarialRefreshRecords` refuses a record whose content
+ * address does not match its file name; both are tamper checks, and a diagnostic that answered
+ * `not recorded` over one would report health about a subsystem it could not read.
+ */
+function readStagedAdversarialSummary(
+  agentQaRoot: string,
+): { text: string; unreadable: boolean } {
+  let batches: ReturnType<typeof listStagedAdversarial>
+  try {
+    batches = listStagedAdversarial({ agentQaRoot })
+  } catch {
+    return { text: 'staged unreadable', unreadable: true }
+  }
+  if (batches.length === 0) return { text: 'staged not recorded', unreadable: false }
+  const products = [...new Set(batches.map(batch => batch.manifest.product))].sort()
+  const cases = batches.reduce((sum, batch) => sum + batch.manifest.cases.length, 0)
+  const tuples = { derived: 0, refused: 0, inapplicable: 0 }
+  let refreshes = 0
+  let deferred = 0
+  try {
+    for (const product of products) {
+      for (const record of readAdversarialRefreshRecords({ agentQaRoot, product })) {
+        refreshes += 1
+        deferred += record.excessSeeds
+        for (const tuple of record.tuples) tuples[tuple.outcome] += 1
+      }
+    }
+  } catch {
+    return { text: 'staged unreadable', unreadable: true }
+  }
+  return {
+    text: `staged ${cases} in ${batches.length} batch(es) over ${products.length} product(s); `
+      + `refreshes ${refreshes} (derived ${tuples.derived}, refused ${tuples.refused}, `
+      + `inapplicable ${tuples.inapplicable}, cap-deferred ${deferred})`,
+    unreadable: false,
+  }
 }
 
 /** Independent of floor and knowledge availability; presence is local, never authentication.
@@ -532,7 +647,8 @@ export function createKnowledgeChecks(
     relativeIndexPath: knowledgeRoot === null ? '' : displayPath(indexDbPath(knowledgeRoot)),
     priors,
     panel: () => pendingPanel ??= doctorPanelDisclosure(input),
-    adversarial: () => pendingAdversarial ??= doctorAdversarialDisclosure(input, agentQaRoot),
+    adversarial: evalRootPresent =>
+      pendingAdversarial ??= doctorAdversarialDisclosure(input, agentQaRoot, evalRootPresent),
     probe: () => {
       if (knowledgeRoot === null) throw new TypeError('no knowledge root to probe')
       pending ??= runProbe(knowledgeRoot)
