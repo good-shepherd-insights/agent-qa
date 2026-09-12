@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -1196,5 +1196,48 @@ describe('validate:arch eval-local reader port (414 D-19/D-20) — source-anchor
     expect(declaration).toContain('@vostride/agent-qa-knowledge-local')
     expect(declaration).toContain('@vostride/agent-qa-eval-local')
     expect(source).toContain('READER_SUBPATH_PACKAGES.includes(record.pkg.name)')
+  })
+})
+
+// 422-21 (D-18). The lesson recorded at the top of this file — "what was missing was not a rule;
+// it was this script CALLING it" — was learned by mutation and then had to be learned again: a
+// wall file can be added to `src/__tests__/` and never reach `release.yml`, because
+// `validate:arch` names its cells one by one. The package suite runs everything, so the gap is
+// invisible locally and total in the release pipeline.
+//
+// This census closes it in the one direction that matters: every cell file in this directory is
+// either NAMED by `validate:arch` or listed below with a reason. A new wall lands RED until
+// somebody decides which it is. The two exclusions are deliberate and are not carve-outs for a
+// failing rule — both pass, both run under `pnpm --filter @vostride/agent-qa-arch test`, and
+// neither is a phase wall: `manifest.test.ts` asserts the manifest/on-disk equality that the
+// aggregate above already CALLS through `findSetMismatchOffenders`, and
+// `parity-reverse-completeness.test.ts` builds the agent function registry, which is a
+// conformance leg over another package's source rather than an architecture gate over this one.
+describe('validate:arch roster completeness (422-21 / D-18)', () => {
+  const NOT_IN_ARCH_GATE: Record<string, string> = {
+    'manifest.test.ts':
+      'the manifest/on-disk equality it asserts is already CALLED by the aggregate above',
+    'parity-reverse-completeness.test.ts':
+      'conformance LEG 5 over the agent function registry, not an architecture gate',
+  }
+
+  const rostered = (): string[] =>
+    (JSON.parse(readRepoFile('package.json')).scripts['validate:arch'] as string)
+      .split(/\s+/)
+      .filter(token => token.startsWith('src/__tests__/'))
+      .map(token => token.replace('src/__tests__/', ''))
+
+  it('names every architecture cell file, or records why it is excluded', () => {
+    const onDisk = readdirSync(testDir)
+      .filter(file => file.endsWith('.test.ts'))
+      .sort()
+    const covered = new Set([...rostered(), ...Object.keys(NOT_IN_ARCH_GATE)])
+    expect(onDisk.filter(file => !covered.has(file))).toEqual([])
+  })
+
+  it('carries no exclusion or roster entry for a cell file that no longer exists', () => {
+    const onDisk = new Set(readdirSync(testDir).filter(file => file.endsWith('.test.ts')))
+    expect(Object.keys(NOT_IN_ARCH_GATE).filter(file => !onDisk.has(file))).toEqual([])
+    expect(rostered().filter(file => !onDisk.has(file))).toEqual([])
   })
 })
