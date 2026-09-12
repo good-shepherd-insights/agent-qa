@@ -28,7 +28,10 @@ const ROOTS = [
   'eval/src/labels/silver-sampling.ts',
   'eval-local/src/aa-floor-composition.ts',
   'eval-local/src/release-gate-composition.ts',
-  // Phase 422 owns this future source root; its absence is allowed and disclosed below.
+  // 2026-09-12, 422-21: phase 422 shipped this root (422-01), so it is no longer a future one.
+  // The absence tolerance below stays as the mechanism, and the census cell at the tail now
+  // asserts that NOTHING is being skipped — a root that quietly stops existing would otherwise
+  // turn its rule into a green that scanned no bytes.
   'eval/src/adversarial',
 ] as const
 
@@ -117,6 +120,37 @@ describe('415 gate randomness and release-gate isolation', () => {
       ).toEqual([])
     })
   }
+
+  // 422-21 (D-07). Every cell above is an emptiness assertion, and an emptiness assertion over
+  // zero files passes. These two say what was actually READ, so a deleted, renamed or
+  // never-created root is a RED here instead of a silent all-green everywhere else.
+  it('scans every declared root — nothing is skipped, and no root contributes zero sources', () => {
+    expect(skippedRoots).toEqual([])
+    const counts = Object.fromEntries(
+      ROOTS.map(root => {
+        const prefix = `packages/${root}`
+        return [
+          root,
+          SOURCES.filter(source => source.file === prefix || source.file.startsWith(`${prefix}/`))
+            .length,
+        ]
+      }),
+    )
+    expect(Object.entries(counts).filter(([, count]) => count === 0)).toEqual([])
+  })
+
+  it('scans the phase-422 adversarial generation root itself', () => {
+    expect(
+      SOURCES.map(source => source.file).filter(file =>
+        file.startsWith('packages/eval/src/adversarial/'),
+      ),
+    ).toEqual([
+      'packages/eval/src/adversarial/generate.ts',
+      'packages/eval/src/adversarial/probe-prompt.ts',
+      'packages/eval/src/adversarial/probes.ts',
+      'packages/eval/src/adversarial/tables.ts',
+    ])
+  })
 
   it('no vitest config, turbo pipeline or package test script references the release gate', () => {
     const gateReference = /release-gate|m3-release|eval gate/

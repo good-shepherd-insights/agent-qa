@@ -1,5 +1,5 @@
 import { globSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -48,6 +48,44 @@ describe('module discipline', () => {
     }
 
     expect(offenders).toEqual([])
+  })
+
+  // 422-21 (D-07). The two cells above are emptiness assertions, and an emptiness assertion over
+  // zero files passes. Phase 422 added a PURE generation root to this package — the adversarial
+  // derivation engine — and the whole point of it being pure is that this scan reaches it. Name
+  // the files, so a root that is moved, renamed or excluded from the glob is a RED here rather
+  // than a silent shrinkage of what "no runtime IO" was measured over.
+  it('scans the pure adversarial generation root', () => {
+    const scanned = sourceFiles
+      .map(file => relative(pkgRoot, file).split(sep).join('/'))
+      .filter(file => file.startsWith('src/adversarial/'))
+      .sort()
+
+    expect(scanned).toEqual([
+      'src/adversarial/generate.ts',
+      'src/adversarial/probe-prompt.ts',
+      'src/adversarial/probes.ts',
+      'src/adversarial/tables.ts',
+    ])
+  })
+
+  // 422-01 tripped this scan on the phrase "no `Math.random`" inside a doc comment and read it as
+  // a bug. It is not: the scan is textual over whole-file source, so a comment is a hit by
+  // construction, and that is what makes it impossible to describe a banned API into the file
+  // without also declaring it. Pinned here so the next plan finds the rule instead of the
+  // surprise.
+  it('counts a banned API named in a comment, by design', () => {
+    for (const bannedPattern of bannedPatterns) {
+      expect(bannedPattern.test('// nothing here'), String(bannedPattern)).toBe(false)
+    }
+    expect(
+      bannedPatterns.some(bannedPattern =>
+        bannedPattern.test('// this module uses no Math.random anywhere'),
+      ),
+    ).toBe(true)
+    expect(
+      bannedPatterns.some(bannedPattern => bannedPattern.test('/** never calls Date.now(). */')),
+    ).toBe(true)
   })
 
   it('rejects held-out host and nondeterminism API violations', () => {
