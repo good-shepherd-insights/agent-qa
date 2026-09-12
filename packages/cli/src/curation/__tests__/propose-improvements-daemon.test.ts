@@ -365,6 +365,7 @@ describe('the daemon binds what the terminal binds (422 D-01/D-14)', () => {
         'gateReceiptsFor',
         'listBundles',
         'proposeGate1MaxPerJob',
+        'readMisdirectionRootPosture',
         'readProposeCorpusPosture',
         'runReplayGate',
         'stageAdversarialProposal',

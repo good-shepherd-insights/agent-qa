@@ -30,9 +30,9 @@ import { publishBundleForTest, appendPromotionReceipt } from '@vostride/agent-qa
 // It is CONSTANT across the fixtures that do get it for a stated reason rather than by luck: none
 // declares an `eval` judge pool (so the probe gap short-circuits to the first reason without
 // resolving a session), none stages an adversarial batch (so the staged report is `not recorded`
-// and never `staged 0`), and the circularity clause is a fact about this BUILD — no composition
-// forwards `readMisdirectionRootPosture`, so D-19's declared-only exemption is unreachable here.
-const ADVERSARIAL_SUFFIX = '; adversarial: no-probe-model: panel-not-configured; staged not recorded; circularity backing: fail-closed eval-root (no host binds the recorded posture)'
+// and never `staged 0`), and the circularity clause is a fact about this BUILD: both production
+// hosts bind the recorded posture, and agent-local forwards it to the analysis handler.
+const ADVERSARIAL_SUFFIX = '; adversarial: no-probe-model: panel-not-configured; staged not recorded; circularity backing: recorded posture applied'
 const PRIOR_SUFFIX = '; label calibration: absent; trust priors: provisional; judge panel: capability gap: panel-not-configured'
 
 const STATIC_PROFILE: EmbeddingProfile = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' }

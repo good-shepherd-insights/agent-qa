@@ -329,10 +329,9 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
  *      behind them. A root that holds no batch for any product has NOT staged zero — nothing
  *      recorded a refresh — and the row says `not recorded`, never `staged 0`.
  *   3. The CIRCULARITY BACKING, which is a fact about this BUILD rather than about this host:
- *      see `MISDIRECTION_POSTURE_BOUND_AT_HOST`. While no composition binds the posture reader,
- *      every gated run resolves the fail-closed `eval-root` and D-19's `declared-only` BYOM
- *      exemption is unreachable — so an operator reading this row is told what they are actually
- *      getting rather than what the arbiter wrote down.
+ *      see MISDIRECTION_POSTURE_BOUND_AT_HOST. Both production hosts bind the recorded posture,
+ *      and agent-local forwards it to analysis: D-19's absent-root declaration is applied while
+ *      broken and unrecorded postures stay fail-closed. The row names that shipped binding.
  *
  * A READ THAT FAILED IS A ROW THAT SAYS SO. `listStagedAdversarial` refuses a tampered batch by
  * throwing, and a diagnostic that swallowed that into `not recorded` would report healthy about a

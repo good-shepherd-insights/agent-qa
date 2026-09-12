@@ -964,8 +964,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
        *
        * The RECORDED posture is this run's own `misdirection-posture.json`, written by the
        * arbiter before the analysis enqueue; whether it was APPLIED is a property of the shipped
-       * composition (`MISDIRECTION_POSTURE_BOUND_AT_HOST`). Both travel, because today they
-       * disagree on every production run and only the renderer may decide what to say about that.
+       * composition (`MISDIRECTION_POSTURE_BOUND_AT_HOST`). Production now binds the reader.
+       * Both travel because a harness host may still compose without the binding, and the
+       * renderer must retain its fail-closed arm when appliedAtHost is false.
        *
        * A posture file that is present and will not parse is `unreadable` and NOT `not-recorded`:
        * the first says this build could not read what the arbiter wrote, the second says the
@@ -1226,9 +1227,9 @@ export type ProposalGate1Disclosure =
  * What backs this run's circularity claim (422 D-19).
  *
  * `posture` is what `misdirection-posture.json` RECORDED; `appliedAtHost` is whether the analysis
- * stage could read it at all. The two are separate members on purpose — see
- * `MISDIRECTION_POSTURE_BOUND_AT_HOST` — because today they disagree on every production run, and
- * a disclosure that carried only the first would state a backing nobody got.
+ * stage could read it at all. Production now binds the reader, but the members stay separate
+ * because a harness host may still compose without it. See MISDIRECTION_POSTURE_BOUND_AT_HOST:
+ * the renderer's tested appliedAtHost: false arm must remain fail-closed.
  */
 export type CircularityGuardDisclosure =
   | { readonly kind: 'not-recorded' }
@@ -1372,16 +1373,12 @@ function renderGate1Clause(gate1: ProposalGate1Disclosure): string {
 /**
  * What ACTUALLY backs this run's circularity claim (422 D-19; WINDOWS #427).
  *
- * The recorded posture and the applied posture are two facts, and on every production run today
- * they differ: `prepareMisdirectionEvidence` writes `misdirection-posture.json` before the
- * analysis enqueue, and the analysis handler then reads its posture through
- * `PostRunJobCapabilities.readMisdirectionRootPosture`, which no composition binds — so the
- * handler's fail-closed `'eval-root'` default is what stamped the verdict.
+ * Both production hosts now bind the reader that applies prepareMisdirectionEvidence's
+ * recorded posture to analysis. A harness host can still compose without that binding,
+ * so appliedAtHost remains explicit and its false arm retains the fail-closed disclosure.
  *
- * This function therefore renders the APPLIED backing and names the recorded posture beside it
- * when the two disagree. Printing `declared-only` off the recorded `no-eval-root` alone would tell
- * an operator their circularity claim carries D-19's BYOM exemption when the verdict it is
- * attached to never received it — the exact misstatement this disclosure exists to prevent.
+ * This function renders the applied backing and names the recorded posture when the two
+ * disagree. Declared-only belongs only to an absent-root posture the analysis actually received.
  */
 function renderCircularityGuardSegment(circularity: CircularityGuardDisclosure): string {
   if (circularity.kind === 'not-recorded') return 'circularity guard: not recorded'

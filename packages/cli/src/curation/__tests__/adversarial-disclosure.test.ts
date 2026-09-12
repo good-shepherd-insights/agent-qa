@@ -8,8 +8,8 @@
 // happened". Those are opposite statements to the operator reading the line.
 //
 // The cells are BEHAVIOURAL: they drive the real renderer and the real doctor rows over real
-// persisted bytes. The one structural cell is the #427 wall, and it is structural because its
-// subject IS the shipped composition's import surface.
+// persisted bytes. The #427 structural cell pins agreement between the honesty constant and
+// the shipped composition's source.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -443,15 +443,16 @@ describe('the doctor Learning-mode row (D-09/D-19)', () => {
   })
 })
 
-describe('WINDOWS #427: the recorded posture reaches no production host', () => {
-  it('pins that no composition forwards readMisdirectionRootPosture onto PostRunJobCapabilities', async () => {
+describe('WINDOWS #427 closed by 422-27: the honesty constant and the shipped composition agree', () => {
+  it('pins that MISDIRECTION_POSTURE_BOUND_AT_HOST equals whether postRunCapabilities forwards readMisdirectionRootPosture', async () => {
     const { readFileSync } = await import('node:fs')
     const composition = readFileSync(
       join(__dirname, '../../../../agent-local/src/composition/compose-local-agent.ts'),
       'utf8',
     )
-    // The subject of the wall, not a proxy for it: `postRunCapabilities` is the ONE builder that
-    // populates `PostRunJobCapabilities`, and the member appears nowhere in its module.
+    // postRunCapabilities is the one builder that populates PostRunJobCapabilities.
+    // The member's presence in this module must equal the constant: dropping the forward
+    // reds this cell, as does flipping the constant without moving the forward.
     expect(composition).toContain('postRunCapabilities')
     expect(composition.includes('readMisdirectionRootPosture')).toBe(
       MISDIRECTION_POSTURE_BOUND_AT_HOST,
