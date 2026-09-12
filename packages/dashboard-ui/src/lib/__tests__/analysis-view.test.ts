@@ -23,7 +23,16 @@ import {
   ANALYSIS_PROVISIONAL_TEXT,
   DETERMINISTIC_FALLBACK_LABEL,
   LLM_VERDICT_LABEL,
+  MEMORY_ON_PATH_NONE_TEXT,
+  MEMORY_ON_PATH_NOT_RECORDED_TEXT,
+  MISDIRECTION_DECLARED_ONLY_TEXT,
+  MISDIRECTION_HELD_TEXT,
+  MISDIRECTION_NOT_RECORDED_TEXT,
+  MISDIRECTION_UNRESOLVED_TEXT,
   markerFor,
+  memoryOnPathLine,
+  misdirectionAttributionLine,
+  misdirectionUnbackedLine,
   missingEvidenceLine,
   projectAnalysisView,
   provenanceLabel,
@@ -364,10 +373,10 @@ describe('the projection reads circularity evidence and invents none (422 D-17/D
     })
 
     expect(evidence?.state).toBe('held')
-    expect(evidence?.text).toBe('circularity: cross-check held')
+    expect(evidence?.text).toBe(MISDIRECTION_HELD_TEXT)
     expect(evidence?.causalRecords, 'nothing flipped, so nothing is attributed').toEqual([])
     expect(evidence?.onPath).toEqual([{ recordId: HELD, trust: 'candidate' }])
-    expect(evidence?.onPathText).toBe('memory on path: 1 record')
+    expect(evidence?.onPathText).toBe(memoryOnPathLine(1))
   })
 
   it('names the FLIPPED records as the causal attribution, apart from every exposed record', () => {
@@ -385,7 +394,7 @@ describe('the projection reads circularity evidence and invents none (422 D-17/D
     })
 
     expect(evidence?.state).toBe('flipped')
-    expect(evidence?.text).toBe('circularity: memory attribution — 1 flipped record')
+    expect(evidence?.text).toBe(misdirectionAttributionLine(1))
     // THE TWO SETS ARE DIFFERENT SETS. Causal names what the cross-check FLIPPED; on-path names
     // every low-trust record the run put in front of this member. Folding them would attribute the
     // failure to a record whose check HELD.
@@ -414,11 +423,11 @@ describe('the projection reads circularity evidence and invents none (422 D-17/D
     })
 
     expect(evidence?.state).toBe('declared-only')
-    expect(evidence?.text).toBe('circularity: declared-only — no evaluation root, nothing measured')
+    expect(evidence?.text).toBe(MISDIRECTION_DECLARED_ONLY_TEXT)
     expect(evidence?.text, 'a declaration is not a result').not.toContain('held')
     expect(evidence?.causalRecords).toEqual([])
     // `[]` is the author declaring NO records; the absence cell below is a different claim.
-    expect(evidence?.onPathText).toBe('memory on path: none declared')
+    expect(evidence?.onPathText).toBe(MEMORY_ON_PATH_NONE_TEXT)
   })
 
   it('reports a BROKEN root as unresolved with its disclosed word, never as declared-only', () => {
@@ -432,10 +441,10 @@ describe('the projection reads circularity evidence and invents none (422 D-17/D
     })
 
     expect(evidence?.state).toBe('unresolved')
-    expect(evidence?.text).toBe('circularity: unresolved')
+    expect(evidence?.text).toBe(MISDIRECTION_UNRESOLVED_TEXT)
     expect(evidence?.text).not.toContain('declared-only')
     expect(evidence?.unbackedReason).toBe('posture-unavailable')
-    expect(evidence?.unbackedText).toBe('unbacked: posture-unavailable')
+    expect(evidence?.unbackedText).toBe(misdirectionUnbackedLine('posture-unavailable'))
   })
 
   it('reports a CAP-EXCEEDED row as unbacked too, with its own word', () => {
@@ -447,7 +456,7 @@ describe('the projection reads circularity evidence and invents none (422 D-17/D
 
     expect(evidence?.state).toBe('unresolved')
     expect(evidence?.unbackedReason).toBe('cap-exceeded')
-    expect(evidence?.unbackedText).toBe('unbacked: cap-exceeded')
+    expect(evidence?.unbackedText).toBe(misdirectionUnbackedLine('cap-exceeded'))
   })
 
   it('keeps a DECLARED path with no ledger at not recorded, and absent apart from empty', () => {
@@ -456,18 +465,18 @@ describe('the projection reads circularity evidence and invents none (422 D-17/D
       memoryOnPath: [{ recordId: HELD, trust: 'candidate' }],
     })
     expect(declared?.state).toBe('not-recorded')
-    expect(declared?.text).toBe('circularity: not recorded')
+    expect(declared?.text).toBe(MISDIRECTION_NOT_RECORDED_TEXT)
     expect(declared?.causalRecords).toEqual([])
     expect(declared?.onPath).toEqual([{ recordId: HELD, trust: 'candidate' }])
 
     // ABSENT IS NOT EMPTY, at the last reader as at every one before it (422-12).
     const undeclared = withMisdirection({ state: 'not-recorded' })
     expect(undeclared?.onPath, 'the author declared NOTHING').toBeUndefined()
-    expect(undeclared?.onPathText).toBe('memory on path: not recorded')
+    expect(undeclared?.onPathText).toBe(MEMORY_ON_PATH_NOT_RECORDED_TEXT)
 
     const empty = withMisdirection({ state: 'not-recorded', memoryOnPath: [] })
     expect(empty?.onPath, 'the author declared NO records').toEqual([])
-    expect(empty?.onPathText).toBe('memory on path: none declared')
+    expect(empty?.onPathText).toBe(MEMORY_ON_PATH_NONE_TEXT)
   })
 
   it('projects a verdict with NO circularity member to NO evidence at all', () => {

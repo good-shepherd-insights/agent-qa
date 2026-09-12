@@ -57,6 +57,23 @@
 // ONE MISSING SCREENSHOT IS NOT AN UNTRUSTWORTHY VERDICT, and the whole-verdict badge that would
 // say otherwise was rejected. Bundle-level `evidence-incomplete` semantics belong to bundles.
 //
+// AND THE CIRCULARITY EVIDENCE IS TWO ROWS, NEVER ONE (422 · D-17 / D-19 / D-20). The causal
+// records — the ones whose cross-check FLIPPED — and the records merely ON the served path are
+// different claims, so they are different attribute names, different rows and a different chip
+// look. One row carrying both would attribute a member's failure to a record whose check HELD,
+// which is precisely the misreading the ledger exists to prevent.
+//
+// THE WHOLE SECTION IS ABSENT FOR A VERDICT THAT MADE NO CLAIM. Not an empty element and not a
+// "not recorded" line under every historical failure: `view.misdirectionEvidence` is undefined
+// whenever `analysis.get` carried no member, and this file renders nothing at all for it. A run
+// whose arbiter never ran paints exactly the block it painted before 422.
+//
+// NO PRODUCER STRING JOINS THE SEAM HERE. Every word below is an exported constant, an exported
+// formatter or a closed vocabulary word the DTO validated (`held`, `flipped`, `cap-exceeded`,
+// `posture-unavailable`, a record id). The `reason` text a root read failure produces never
+// reaches this DTO — see `AnalysisMisdirectionRecord` — so there is nothing here to mask, and
+// wrapping these would claim a redaction nobody made.
+//
 // `data-*` DESCRIBES WHAT IS RENDERED, not what was passed (the banner's `showingFull` lesson).
 
 import { useEffect, useRef, useState } from 'react'
@@ -88,6 +105,16 @@ interface VerdictBlockProps {
 const AFFORDANCE_CLASS =
   "rounded-[2px] border border-border/60 bg-background/60 px-1.5 py-0.5 font-mono text-[10px] " +
   "text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+
+/** An EXPOSED record: a quiet chip, the same weight as every other read-only fact in the block. */
+const ON_PATH_CHIP_CLASS =
+  "rounded-[2px] border border-border/60 bg-background/60 px-1.5 py-0.5 font-mono text-[10px] " +
+  "text-muted-foreground"
+
+/** A CAUSAL record: the amber the lifecycle marker already owns, so the page mints no new colour. */
+const CAUSAL_CHIP_CLASS =
+  "rounded-[2px] border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] " +
+  "text-amber-600"
 
 const MARK_ACTION_CLASS = 'inline-flex min-h-8 min-w-8 items-center justify-center rounded-[2px] border px-2 py-1 font-mono text-xs transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60'
 
@@ -267,6 +294,70 @@ export function VerdictBlock({
         >
           {view.missingEvidenceText}
         </div>
+      )}
+
+      {view.misdirectionEvidence === undefined ? null : (
+        <>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
+            <span
+              data-misdirection={view.misdirectionEvidence.state}
+              className={
+                view.misdirectionEvidence.state === 'flipped'
+                  ? "whitespace-nowrap text-amber-500"
+                  : "whitespace-nowrap"
+              }
+            >
+              {view.misdirectionEvidence.text}
+            </span>
+            {view.misdirectionEvidence.unbackedReason === undefined ? null : (
+              <span
+                data-misdirection-unbacked={view.misdirectionEvidence.unbackedReason}
+                className="whitespace-nowrap"
+              >
+                {view.misdirectionEvidence.unbackedText}
+              </span>
+            )}
+            <span data-misdirection-on-path className="whitespace-nowrap">
+              {view.misdirectionEvidence.onPathText}
+            </span>
+          </div>
+
+          {view.misdirectionEvidence.causalRecords.length === 0 ? null : (
+            <div
+              data-misdirection-causal={String(view.misdirectionEvidence.causalRecords.length)}
+              className="mt-1 flex flex-wrap items-center gap-1"
+            >
+              {view.misdirectionEvidence.causalRecords.map((recordId) => (
+                <span
+                  key={recordId}
+                  data-misdirection-causal-record={recordId}
+                  className={CAUSAL_CHIP_CLASS}
+                >
+                  {recordId}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {view.misdirectionEvidence.onPath === undefined
+            || view.misdirectionEvidence.onPath.length === 0 ? null : (
+            <div
+              data-misdirection-exposed={String(view.misdirectionEvidence.onPath.length)}
+              className="mt-1 flex flex-wrap items-center gap-1"
+            >
+              {view.misdirectionEvidence.onPath.map((entry) => (
+                <span
+                  key={entry.recordId}
+                  data-misdirection-on-path-record={entry.recordId}
+                  data-misdirection-trust={entry.trust}
+                  className={ON_PATH_CHIP_CLASS}
+                >
+                  {entry.recordId}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {view.siblings.length === 0 ? null : (

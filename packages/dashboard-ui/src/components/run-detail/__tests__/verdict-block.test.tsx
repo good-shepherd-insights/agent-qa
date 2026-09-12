@@ -30,6 +30,15 @@ import {
   ANALYSIS_PROVISIONAL_TEXT,
   CITED_ARTIFACT_LABEL,
   citedStepLabel,
+  MEMORY_ON_PATH_NONE_TEXT,
+  MEMORY_ON_PATH_NOT_RECORDED_TEXT,
+  MISDIRECTION_DECLARED_ONLY_TEXT,
+  MISDIRECTION_HELD_TEXT,
+  MISDIRECTION_NOT_RECORDED_TEXT,
+  MISDIRECTION_UNRESOLVED_TEXT,
+  memoryOnPathLine,
+  misdirectionAttributionLine,
+  misdirectionUnbackedLine,
   missingEvidenceLine,
   provenanceLabel,
   siblingLine,
@@ -441,21 +450,21 @@ describe('422 circularity evidence in the block (D-17/D-19/D-20)', () => {
 
   const heldEvidence = {
     state: 'held' as const,
-    text: 'circularity: cross-check held',
+    text: MISDIRECTION_HELD_TEXT,
     causalRecords: [] as readonly string[],
     onPath: [{ recordId: HELD, trust: 'candidate' as const }],
-    onPathText: 'memory on path: 1 record',
+    onPathText: memoryOnPathLine(1),
   }
 
   const flippedEvidence = {
     state: 'flipped' as const,
-    text: 'circularity: memory attribution — 1 flipped record',
+    text: misdirectionAttributionLine(1),
     causalRecords: [FLIPPED] as readonly string[],
     onPath: [
       { recordId: HELD, trust: 'candidate' as const },
       { recordId: FLIPPED, trust: 'low-trust-active' as const },
     ],
-    onPathText: 'memory on path: 2 records',
+    onPathText: memoryOnPathLine(2),
   }
 
   const attr = (selector: string, name: string) =>
@@ -466,7 +475,7 @@ describe('422 circularity evidence in the block (D-17/D-19/D-20)', () => {
     expect(container.querySelector('[data-misdirection]')?.getAttribute('data-misdirection'))
       .toBe('held')
     expect(container.querySelector('[data-misdirection]')?.textContent)
-      .toBe('circularity: cross-check held')
+      .toBe(MISDIRECTION_HELD_TEXT)
     expect(container.querySelector('[data-misdirection-causal]'), 'nothing flipped').toBeNull()
     expect(attr('[data-misdirection-on-path-record]', 'data-misdirection-on-path-record'))
       .toEqual([HELD])
@@ -492,8 +501,8 @@ describe('422 circularity evidence in the block (D-17/D-19/D-20)', () => {
   it('paints declared-only, unresolved and not-recorded as three distinct states', () => {
     render({
       misdirectionEvidence: {
-        state: 'declared-only', text: 'circularity: declared-only — no evaluation root, nothing measured',
-        causalRecords: [], onPath: [], onPathText: 'memory on path: none declared',
+        state: 'declared-only', text: MISDIRECTION_DECLARED_ONLY_TEXT,
+        causalRecords: [], onPath: [], onPathText: MEMORY_ON_PATH_NONE_TEXT,
       },
     })
     expect(container.querySelector('[data-misdirection]')?.getAttribute('data-misdirection'))
@@ -503,9 +512,10 @@ describe('422 circularity evidence in the block (D-17/D-19/D-20)', () => {
     act(() => { root.render(<MemoryRouter><VerdictBlock
       view={view({
         misdirectionEvidence: {
-          state: 'unresolved', text: 'circularity: unresolved', causalRecords: [],
-          onPathText: 'memory on path: not recorded',
-          unbackedReason: 'posture-unavailable', unbackedText: 'unbacked: posture-unavailable',
+          state: 'unresolved', text: MISDIRECTION_UNRESOLVED_TEXT, causalRecords: [],
+          onPathText: MEMORY_ON_PATH_NOT_RECORDED_TEXT,
+          unbackedReason: 'posture-unavailable',
+          unbackedText: misdirectionUnbackedLine('posture-unavailable'),
         },
       })}
       onCitedStep={() => {}} onSelectMember={() => {}} onCitedArtifact={() => {}}
@@ -515,15 +525,15 @@ describe('422 circularity evidence in the block (D-17/D-19/D-20)', () => {
     expect(container.querySelector('[data-misdirection-unbacked]')?.getAttribute('data-misdirection-unbacked'))
       .toBe('posture-unavailable')
     expect(container.querySelector('[data-misdirection-unbacked]')?.textContent)
-      .toBe('unbacked: posture-unavailable')
+      .toBe(misdirectionUnbackedLine('posture-unavailable'))
     expect(container.querySelector('[data-misdirection-on-path-record]'), 'nothing declared').toBeNull()
 
     act(() => { root.render(<MemoryRouter><VerdictBlock
       view={view({
         misdirectionEvidence: {
-          state: 'not-recorded', text: 'circularity: not recorded', causalRecords: [],
+          state: 'not-recorded', text: MISDIRECTION_NOT_RECORDED_TEXT, causalRecords: [],
           onPath: [{ recordId: HELD, trust: 'candidate' }],
-          onPathText: 'memory on path: 1 record',
+          onPathText: memoryOnPathLine(1),
         },
       })}
       onCitedStep={() => {}} onSelectMember={() => {}} onCitedArtifact={() => {}}
