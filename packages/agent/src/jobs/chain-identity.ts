@@ -46,6 +46,14 @@ export const POST_RUN_CHAIN_TERMINAL_KINDS: readonly JobKind[] = Object.freeze([
   'propose-improvements',
 ])
 
+// 2026-09-12, 422-22 (RED skeleton): the key set, landed at the 409 width so the cells in
+// `__tests__/422-chain-closed-sets.test.ts` fail on their named assertions rather than on a
+// module-load error, which the #3770 gate classifies as INVALID_RED.
+export const CHAIN_JOB_ID_KEYS = [
+  'analyzeRun',
+  'curateMemory',
+] as const satisfies readonly (keyof ChainJobIds)[]
+
 /** The three job ids one run's chain addresses, whether or not any of them exists. */
 export interface ChainJobIds {
   readonly analyzeRun: JobId
