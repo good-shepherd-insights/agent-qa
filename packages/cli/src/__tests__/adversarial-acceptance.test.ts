@@ -544,20 +544,36 @@ describe('422 acceptance — the documented surface, the whole loop, and the ref
 
   it('(A11) the read-only and staging demo modes cannot admit', async () => {
     const source = readFileSync(ACCEPTANCE_SCRIPT, 'utf8')
-    const { DEMO_MODES, READ_ONLY_MODES, isBatchDigest } = await import(ACCEPTANCE_SCRIPT.href)
+    const { DEMO_MODES, READ_ONLY_MODES, isBatchDigest, demoArgv } =
+      await import(ACCEPTANCE_SCRIPT.href)
     expect(DEMO_MODES).toEqual(['--inspect-demo', '--stage-demo', '--check-staged', '--verify-admitted'])
     expect(READ_ONLY_MODES).toEqual(['--inspect-demo', '--stage-demo', '--check-staged'])
-    // Structural, not aspirational: the instrument never names the committer and never spells
-    // the operator's admission flag, so no mode of it can perform an admission.
+
+    // STRUCTURAL, over the argv the instrument actually builds — not a taboo on a spelling,
+    // which is evaded by respelling it. The only mode that invokes anything is `--stage-demo`,
+    // and what it invokes is the staging branch of the verb; every other mode builds no argv at
+    // all, so there is nothing for an admission flag to ride on.
+    const staging: string[] = demoArgv('--stage-demo', '/tmp/agent-qa.config.yaml', { product: 'default' })
+    expect(staging.slice(-5)).toEqual(['eval', 'adversarial', '--product', 'default', '--json'])
+    expect(staging.slice(1, 3)).toEqual(['--config', '/tmp/agent-qa.config.yaml'])
+    expect(staging.some(token => token.startsWith('--adm'))).toBe(false)
+    expect(staging.some(token => token === '--batch')).toBe(false)
+    for (const mode of READ_ONLY_MODES.filter((row: string) => row !== '--stage-demo')) {
+      expect(demoArgv(mode, '/tmp/agent-qa.config.yaml')).toBeUndefined()
+    }
+    expect(demoArgv('--verify-admitted', '/tmp/agent-qa.config.yaml')).toBeUndefined()
+    expect(() => demoArgv('--not-a-mode', '/tmp/agent-qa.config.yaml')).toThrow()
+
+    // The committer is never named, so no branch can reach it however the argv is built.
     expect(source).not.toContain('refreshAdversarialSplit')
-    expect(source).not.toContain("'--admit'")
-    expect(source).not.toContain('"--admit"')
+
     // A batch is named by digest, never by a path a generated manifest could supply.
     expect(isBatchDigest('a'.repeat(64))).toBe(true)
     expect(isBatchDigest('A'.repeat(64))).toBe(false)
     expect(isBatchDigest('../../etc/passwd')).toBe(false)
     expect(isBatchDigest(join('a'.repeat(64), 'manifest.json'))).toBe(false)
     expect(isBatchDigest('a'.repeat(63))).toBe(false)
+    expect(isBatchDigest(undefined)).toBe(false)
   })
 })
 
