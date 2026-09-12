@@ -131,22 +131,18 @@ It is never a thrown error and never becomes a cassette. An operator whose polic
 `injectionShape: 'block'` refuses the injection family wholesale, and the report says which
 detector did it.
 
-**A guardrail block is never a regression, and it reaches the gate by two different routes.**
-Both exit **2**; neither can reach exit 1, which is reserved for a measured regression against a
-comparable baseline.
+**A guardrail block is never a regression: both guardrail routes produce the same
+`guard-failed` replay refusal.** A changed refusal population exits **2**; exit 1 is reserved
+for a measured regression against a comparable baseline.
 
 | Where the block happens | What is recorded | What `eval gate` says |
 | --- | --- | --- |
 | Loading a committed adversarial cassette (a guard rejection) | the `guard-failed` **replay refusal** | `refusal-population-differs` → exit 2 |
-| During replay, when the request-hook guardrail throws | a **harness error**, counted in `harnessErrorCount` | `harness-errors` → exit 2 |
+| During replay, when the request-hook guardrail throws `GuardrailBlockError` | the same `guard-failed` **replay refusal** for that cassette, classified by `instanceof` in `replay-run.ts`; the cassette's samples are discarded | `refusal-population-differs` → exit 2 |
+| Infrastructure: any other planning-turn throw (provider outage, auth) | a **harness error**, counted in `harnessErrorCount` | `harness-errors` → exit 2 |
 
-The second route is worth stating plainly because it is easy to describe wrongly: a
-`GuardrailBlockError` raised by the provider request hook is not classified as a replay refusal
-at all. It propagates out of the planning turn, is classified as infrastructure, and is tallied
-as a harness error — so a host looking for `guard-failed` after a blocked replay will not find
-one. The safety property (Pitfall 15: a refused or blocked probe is never counted as a
-regression) holds on both routes; the vocabulary does not. If `eval gate` exits 2, read which
-reason it names before reading anything about quality.
+Gap-closure plan 422-26 closed the request-hook route: its block is counted under refusals.
+An operator seeing `harness-errors` is looking at infrastructure, never at a refused probe.
 
 ## Caps, and where each one came from (D-04, D-11, D-14, D-18)
 
@@ -472,9 +468,9 @@ The date is the decision date (`422-CONTEXT.md`); the notes were written during 
 | 11 | The retired-kind quarantine word `unreadable_kind`; no store version bump | D-16 | The retired-kind quarantine |
 | 12 | The local adversarial audit anatomy, and hygiene coverage of admitted entries by construction | — | Local audit anatomy |
 
-A thirteenth divergence was found while writing this guide and is recorded as a finding rather
-than a reconciliation: a request-hook guardrail block during replay is a **harness error**, not
-the `guard-failed` refusal D-03's wording implies. See "The loaded guardrail policy" above.
+The divergence recorded as WINDOWS #432 is closed by gap-closure plan 422-26. Cell (A5) and
+`guard-block-refusal.test.ts` prove that a request-hook guardrail block is the `guard-failed`
+refusal D-03 specifies, counted under refusals and inconclusive at exit 2 with no regression.
 
 ## What this documentation does and does not establish
 
