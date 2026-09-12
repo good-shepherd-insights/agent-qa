@@ -24,6 +24,7 @@
 // own. NOTHING HERE REACHES A PROVIDER OR AN EVALUATION ROOT: the arbiter is a port.
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -599,6 +600,32 @@ describe('CR-04: exception text from a credential-resolving layer never becomes 
 // ---------------------------------------------------------------------------------------
 
 describe('WR-08: persistMisdirectionSidecar leaves handoff.json as it found it', () => {
+  it.each([0o077, 0o777])('WR-09 preserves existing modes and private new files under umask %i', mask => {
+    const fixture = project(oneFailingStep(ids(1)))
+    chmodSync(fixture.handoffPath, 0o644)
+    // The process-wide umask changes only in this child, never in the concurrent test worker.
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { mkdirSync, readFileSync, statSync } from 'node:fs'
+      import { dirname, join } from 'node:path'
+      const { persistMisdirectionSidecar, writeMisdirectionRunPosture, MISDIRECTION_POSTURE_FILE } =
+        await import(process.argv[1])
+      const handoff = process.argv[2]
+      const runDir = join(dirname(handoff), 'private-posture')
+      mkdirSync(runDir)
+      process.umask(Number(process.argv[3]))
+      persistMisdirectionSidecar(handoff, [])
+      writeMisdirectionRunPosture(runDir, { schemaVersion: 1, runId: 'fixture', kind: 'no-eval-root' })
+      process.stdout.write(JSON.stringify({
+        existingMode: statSync(handoff).mode & 0o777,
+        newMode: statSync(join(runDir, MISDIRECTION_POSTURE_FILE)).mode & 0o777,
+        rows: JSON.parse(readFileSync(handoff, 'utf8')).misdirectionEvidence,
+      }))
+    `, new URL('../misdirection-run-state.ts', import.meta.url).href, fixture.handoffPath, String(mask)], {
+      encoding: 'utf8',
+    })
+    expect(JSON.parse(output)).toEqual({ existingMode: 0o644, newMode: 0o600, rows: [] })
+  })
+
   it('does not narrow the file mode the runner chose', async () => {
     const fixture = project(oneFailingStep(ids(1)))
     // A group-readable handoff, as a runner sharing a run directory would leave it.

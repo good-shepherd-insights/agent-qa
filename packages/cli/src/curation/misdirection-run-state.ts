@@ -30,6 +30,7 @@
 // row's shape has exactly one owner and this file re-spells none of it.
 
 import {
+  chmodSync,
   closeSync,
   fsyncSync,
   linkSync,
@@ -489,6 +490,9 @@ function replaceAtomically(path: string, text: string): void {
   }
   try {
     writeFileSync(staged, text, { encoding: 'utf8', mode })
+    // File creation masks mode with the process umask; replacement must restore the exact
+    // intended permission bits before syncing and publishing the staged document.
+    chmodSync(staged, mode)
     fsyncPath(staged)
     renameSync(staged, path)
     fsyncPath(dir)
