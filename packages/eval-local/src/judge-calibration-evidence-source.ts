@@ -6,7 +6,8 @@ import {
   createScoringContext, deriveRunSlug, representativeDecisionSample, resolveJudgeCalibrationTruth,
   resolveProductPartition, selectJudgeCalibrationGold,
   type BaselineProfileKeyInput, type JudgeCalibrationDiagnostics, type JudgeCalibrationEvidence,
-  type JudgeCalibrationGold, type JudgeCalibrationSkipReason, type LeafReplayResult,
+  type JudgeCalibrationGold, type JudgeCalibrationSkipReason, type JudgeTargetedCalibrationMember,
+  type LeafReplayResult,
 } from '@vostride/agent-qa-eval'
 import { HANDOFF_FILE, RUNS_SUBDIR, loadCompletedRunHandoff } from '@vostride/agent-qa-runner-local'
 import { sha256hex, slugBranch, type MarkReceipt } from '@vostride/agent-qa-schema'
@@ -36,6 +37,14 @@ export interface JudgeCalibrationEvidenceRead {
   evidenceDigest: string
   profileKey: string
   selectedInputs: { decisionId: string; goldCassetteId: string; replayFile: string; reportFile: string; replayDigest: string; scoreDigest: string; reportDigest: string }[]
+  /**
+   * 422 D-12: the committed ADVERSARIAL population — the bait disclosure's source, never gold.
+   *
+   * ABSENT means this reader could not open the committed corpus at all, which is a different
+   * fact from a corpus that holds no adversarial member; an empty array standing in for the
+   * former would report a clean zero nobody measured.
+   */
+  adversarialMembers?: readonly JudgeTargetedCalibrationMember[]
 }
 const hash = (value: unknown) => sha256hex(canonicalJson(value))
 

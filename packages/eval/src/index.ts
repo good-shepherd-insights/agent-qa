@@ -3,6 +3,8 @@ export { prepareJudgeCalibrationProbe, summarizeJudgeCalibration } from './judge
 export type { JudgeCalibrationProbe, JudgeCalibrationProbeObservation } from './judge/calibration'
 export { selectJudgeCalibrationGold, resolveJudgeCalibrationTruth, judgeCalibrationFullMatch, JUDGE_CALIBRATION_GAP_REASONS, JUDGE_CALIBRATION_STATUSES, JUDGE_CALIBRATION_MIN_N, resolveJudgeCalibrationMinimum } from './judge/calibration'
 export type { JudgeCalibrationGapReason, JudgeCalibrationStatus, JudgeCalibrationMinimum, JudgeCalibrationEntryDiagnostic, JudgeCalibrationResult } from './judge/calibration'
+export { projectJudgeTargetedCalibration, JUDGE_TARGETED_CALIBRATION_UNAVAILABLE_REASONS } from './judge/calibration'
+export type { JudgeTargetedCalibrationDisclosure, JudgeTargetedCalibrationInput, JudgeTargetedCalibrationMember, JudgeTargetedCalibrationUnavailableReason, JudgeTargetedAuthorRow } from './judge/calibration'
 export { judgeFamiliesIntersect } from './judge/family'
 export type { JudgeCalibrationGold, JudgeCalibrationEvidence, JudgeCalibrationObservation, JudgeCalibrationTruth, JudgeCalibrationSkipReason, JudgeCalibrationDiagnostics } from './judge/calibration'
 export { collectSoftPopulation } from './labels/soft-population'

@@ -4,6 +4,7 @@ import type { LeafCassette } from '../cassette/cassette'
 import type { CassetteReceipt } from '../cassette/receipt-leg'
 import type { CommittedCorpusSnapshot } from '../census/derive-census'
 import { computeCorpusDigest } from '../census/corpus-digest'
+import type { CorpusGenerator, GeneratorKind, GeneratorProvenance } from '../labels/corpus-entry'
 import { deriveRunSlug } from '../extract/ids'
 import { effectiveGold } from '../labels/effective-gold'
 import type { StandaloneLabelRecord } from '../labels/label-record'
@@ -45,13 +46,105 @@ export interface JudgeCalibrationEntryDiagnostic {
   credential: 'present' | 'missing' | 'unauthenticated' | 'resolution-failed'
   failures: readonly ('config-unresolved' | 'no-credential' | 'unknown-family' | 'replay-family-collision' | 'member-family-collision')[]
 }
-export type JudgeCalibrationResult =
+/**
+ * 2026-09-12, 422 D-11/D-12 — the circularity disclosure, and what it deliberately is not.
+ *
+ * A judge calibrated partly on cases the system itself authored TO FOOL JUDGES is measuring its
+ * own reflection. Removing those cases is not the fix — they are legitimate committed corpus
+ * members — so the mitigation is DISCLOSURE: state how much of the committed adversarial
+ * population is model-authored bait aimed at a judge, name its authors, and say whether any of it
+ * reached the measured population. A reader can then discount the number; nothing here discounts
+ * it for them.
+ *
+ * Three separations are structural rather than documented, and all three came out of the same
+ * failure mode — a number discounted for the WRONG population misleads exactly as much as an
+ * undisclosed one:
+ *
+ *   - SELF-AUTHORED IS NOT ADVERSARIAL. A table-derived variant is drawn from a frozen,
+ *     hash-pinned table by a seeded function; no model authored it. Only the `probe` provenance
+ *     arm is self-authored, and only its `judge-targeted` kind is aimed at a judge. The arms are
+ *     counted apart (`byProvenance`, 422-19's vocabulary) and are never summed.
+ *   - UNAVAILABLE IS NOT ZERO. `source: 'unavailable'` carries no count at all. A run that could
+ *     not read its corpus must SAY it could not, because a disclosure that silently reads zero
+ *     when its source is unreadable is worse than no disclosure at all.
+ *   - RAW IS NOT ADJUSTED. `basis: 'raw'` is on the wire: the pooled agreement, its interval, the
+ *     per-member rows, the counts and `minN` beside this block are untouched by it.
+ */
+export type JudgeTargetedCalibrationUnavailableReason = 'not-read' | 'corpus-unreadable'
+/** Declaration-order projection of `JudgeTargetedCalibrationUnavailableReason` (D-22). */
+export const JUDGE_TARGETED_CALIBRATION_UNAVAILABLE_REASONS = [
+  'not-read', 'corpus-unreadable',
+] as const satisfies readonly JudgeTargetedCalibrationUnavailableReason[]
+
+/** One committed adversarial member. `generator` absent means the CALLER could not resolve it. */
+export interface JudgeTargetedCalibrationMember {
+  cassetteId: string
+  generator?: CorpusGenerator
+}
+
+/** One authoring identity, with the fact that makes its bait SELF-authored stated on the row. */
+export interface JudgeTargetedAuthorRow {
+  /** Configured model identity exactly as the committed entry records it. */
+  authoringModel: string
+  /** Resolved provider family, as the judge-family resolver spells it. */
+  authoringFamily: string
+  /** This author is a member of the panel this calibration measured. */
+  panelMember: boolean
+  /** Every probe-authored member this author wrote, judge-targeted or not. */
+  probeAuthored: number
+  /** The judge-targeted subset of those. */
+  judgeTargeted: number
+}
+
+export type JudgeTargetedCalibrationDisclosure =
+  | { basis: 'raw'; source: 'unavailable'; reason: JudgeTargetedCalibrationUnavailableReason }
+  | {
+      basis: 'raw'
+      source: 'resolved'
+      /** Committed adversarial members this disclosure speaks for. */
+      total: number
+      /** Members whose generator the caller could not supply. Never folded into a zero arm. */
+      metadataUnavailable: number
+      /** Derivation path of each stamp (422-04). Closed set; a path nobody used reads `0`. */
+      byProvenance: Record<GeneratorProvenance, number>
+      /** The perturbed FIELD over every member naming a generator. Closed set; zeros retained. */
+      byKind: Record<GeneratorKind, number>
+      /** Probe-authored members whose kind targets a judge. */
+      judgeTargeted: number
+      /** Of those, written by a model on THIS panel. The circularity number. */
+      selfAuthored: number
+      /** Per author, sorted by identity. Open value space: an unused author is absent, not zero. */
+      byAuthoringModel: readonly JudgeTargetedAuthorRow[]
+      /** Judge-targeted members that reached the measured independent-gold population. */
+      observedInCalibration: number
+    }
+
+export interface JudgeTargetedCalibrationInput {
+  /** The committed adversarial population. ABSENT means the caller could not read it. */
+  members?: readonly JudgeTargetedCalibrationMember[]
+  /** Which unavailability to disclose when `members` is absent. */
+  unavailable?: JudgeTargetedCalibrationUnavailableReason
+  /** The panel being calibrated; membership is what makes authored bait SELF-authored. */
+  memberModelIds: readonly string[]
+  /** Cassette ids that entered the independent-gold population this summary measured. */
+  observedCassetteIds?: readonly string[]
+}
+
+/** Fold a committed adversarial population into the judge-targeted self-authorship disclosure. */
+export function projectJudgeTargetedCalibration(
+  input: JudgeTargetedCalibrationInput,
+): JudgeTargetedCalibrationDisclosure {
+  return { basis: 'raw', source: 'unavailable', reason: input.unavailable ?? 'not-read' }
+}
+
+export type JudgeCalibrationResult = { judgeTargeted: JudgeTargetedCalibrationDisclosure } & (
   | { status: 'calibrated'; n: number; pooledAgreement: number;
       wilson95: NonNullable<ReturnType<typeof wilsonInterval>>;
       perMember: readonly { judgeModelId: string; n: number; agreement: number;
         wilson95: NonNullable<ReturnType<typeof wilsonInterval>> }[] }
   | { status: 'uncalibrated'; n: number }
   | { status: 'capability-gap'; reason: JudgeCalibrationGapReason }
+)
 
 export type JudgeCalibrationSkipReason = 'invalid-gold' | 'missing-source' | 'conflicting-gold'
   | 'missing-executable-correction' | 'invalid-executable-correction' | 'invalid-recorded-model'
@@ -133,6 +226,8 @@ export function summarizeJudgeCalibration(input: {
   memberModelIds: readonly string[]
   minN?: JudgeCalibrationMinimum
   selected?: number
+  /** 422 D-12: the committed adversarial population, for the raw self-authorship disclosure. */
+  judgeTargeted?: Omit<JudgeTargetedCalibrationInput, 'memberModelIds'>
 }) {
   const minimum = input.minN ?? resolveJudgeCalibrationMinimum()
   resolveJudgeCalibrationMinimum(minimum.value)
@@ -186,8 +281,10 @@ export function summarizeJudgeCalibration(input: {
     if (row.usage.inputTokens !== undefined) usage.inputTokens = (usage.inputTokens ?? 0) + row.usage.inputTokens
     if (row.usage.outputTokens !== undefined) usage.outputTokens = (usage.outputTokens ?? 0) + row.usage.outputTokens
   }
+  // RAW, always present: every summary states its bait content or states that it could not.
+  const judgeTargeted = projectJudgeTargetedCalibration({ ...input.judgeTargeted, memberModelIds: input.memberModelIds })
   return { status: pooled.n >= minimum.value ? 'calibrated' as const : 'uncalibrated' as const,
-    n: pooled.n, minN: minimum.value, minNSource: minimum.source, counts, perMember, pooled,
+    n: pooled.n, minN: minimum.value, minNSource: minimum.source, counts, perMember, pooled, judgeTargeted,
     ...(pooled.n ? { pooledAgreement: pooled.agreement!, wilson95: pooled.wilson95! } : {}),
     abstention: calibrationRate(pooled.abstained, attempted.length),
     disagreement: { ...calibrationRate(pairs.reduce((sum, pair) => sum + pair.numerator, 0),
