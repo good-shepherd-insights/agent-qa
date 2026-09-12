@@ -1,0 +1,354 @@
+// 422-17: what the chain terminal line and the doctor Learning-mode row say about the third
+// stage, its probe gap, its ungated remainder and what actually backs its circularity claim.
+//
+// THE ONE LAW EVERY CELL HERE ENFORCES IS "ABSENT IS NOT ZERO". Four upstream sources in this
+// phase are deliberately three-valued — 422-06's `usageKnown`, 422-19's `metadataUnavailable`,
+// 422-20's `judgeTargeted`, and this plan's own `stages.proposals` — and a surface that rendered
+// any of them as a flat `0` would make "nothing was recorded" indistinguishable from "nothing
+// happened". Those are opposite statements to the operator reading the line.
+//
+// The cells are BEHAVIOURAL: they drive the real renderer and the real doctor rows over real
+// persisted bytes. The one structural cell is the #427 wall, and it is structural because its
+// subject IS the shipped composition's import surface.
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+
+import { afterAll, describe, expect, it } from 'vitest'
+
+import { guardRunNotification, type RunNotification } from '@vostride/agent-qa-schema'
+import type { ProposeGate1Report } from '@vostride/agent-qa-agent'
+
+import {
+  MISDIRECTION_POSTURE_BOUND_AT_HOST,
+  defaultPostRunTailOperations,
+  renderChainTerminalLine,
+  type CircularityGuardDisclosure,
+  type ProposalGate1Disclosure,
+} from '../post-run-tail.js'
+import { createKnowledgeChecks, type KnowledgeCheckProbes } from '../../commands/doctor-knowledge-checks.js'
+
+const created: string[] = []
+afterAll(() => {
+  for (const dir of created) rmSync(dir, { recursive: true, force: true })
+})
+
+function project(config: Record<string, unknown> = { knowledge: { dir: 'agent-qa-knowledge' } }) {
+  const root = mkdtempSync(join(tmpdir(), 'adversarial-disclosure-'))
+  created.push(root)
+  mkdirSync(join(root, 'agent-qa-knowledge'), { recursive: true })
+  return {
+    root,
+    config,
+    configPath: join(root, 'agent-qa.config.yaml'),
+    agentQaRoot: join(root, '.agent-qa'),
+  }
+}
+
+function notification(
+  stages: Partial<RunNotification['stages']> = {},
+  outcome: RunNotification['outcome'] = 'done',
+): RunNotification {
+  return {
+    schemaVersion: 3,
+    runId: 'fixture-run',
+    outcome,
+    verdictSummary: { total: 1, byClass: { app_bug: 1 } },
+    stages: {
+      analysis: { status: 'done' },
+      curation: { status: 'done', curated: 2, deprecated: 1 },
+      ...stages,
+    },
+  }
+}
+
+const NO_GATE1_WORK = {
+  reservedGate1: [],
+  screenedGate1: [],
+  recoveredGate1Receipts: [],
+  interruptedGate1: [],
+  ungatedRemaining: [],
+  kindExcluded: [],
+  stale: [],
+} as const
+
+function gate1(overrides: Partial<ProposeGate1Report> = {}): ProposeGate1Report {
+  return { ...NO_GATE1_WORK, disposition: 'claimed', ...overrides }
+}
+
+describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
+  it('says the proposal stage is not recorded rather than staged 0 when the row carries none', () => {
+    const line = renderChainTerminalLine(notification())
+    expect(line).toContain('proposals: not recorded')
+    expect(line).not.toContain('staged 0')
+    // The historical population: a v2 row migrated forward names no proposal stage at all, and
+    // the migration deliberately synthesises none. The rendered sentence must match that silence.
+    const migrated = guardRunNotification({
+      schemaVersion: 2,
+      runId: 'fixture-run',
+      outcome: 'done',
+      verdictSummary: { total: 1, byClass: { app_bug: 1 } },
+      stages: { analysis: { status: 'done' }, curation: { status: 'done', curated: 2, deprecated: 1 } },
+    })
+    expect(migrated.stages.proposals).toBeUndefined()
+    expect(renderChainTerminalLine(migrated)).toContain('proposals: not recorded')
+  })
+
+  it('renders a MEASURED zero as zero, and keeps curation counts untouched beside it', () => {
+    const line = renderChainTerminalLine(
+      notification({ proposals: { status: 'done', proposed: 0, skipped: 0 } }),
+    )
+    expect(line).toContain('proposals: done (staged 0, skipped 0')
+    expect(line).toContain('curation: done (2 curated, 1 deprecated)')
+    expect(line).not.toContain('not recorded')
+  })
+
+  it('renders recorded staged and skipped counts exactly as the row carries them', () => {
+    expect(
+      renderChainTerminalLine(notification({ proposals: { status: 'done', proposed: 3, skipped: 4 } })),
+    ).toContain('proposals: done (staged 3, skipped 4')
+  })
+
+  it('says staged not recorded for a stage that ran with no staging port bound', () => {
+    const line = renderChainTerminalLine(notification({ proposals: { status: 'done' } }))
+    expect(line).toContain('proposals: done (staged not recorded')
+    expect(line).not.toContain('staged 0')
+  })
+
+  it('names a FAILED proposal stage on the line, so a failed chain outcome is attributable', () => {
+    const line = renderChainTerminalLine(
+      notification({ proposals: { status: 'failed' } }, 'failed'),
+    )
+    expect(line).toContain('post-processing failed')
+    expect(line).toContain('curation: done')
+    expect(line).toContain('proposals: failed')
+  })
+
+  it('projects the persisted Gate-1 remainder, its interruptions and its screened slots', () => {
+    const line = renderChainTerminalLine(
+      notification({ proposals: { status: 'done', proposed: 1, skipped: 0 } }),
+      {
+        proposalGate1: {
+          kind: 'recorded',
+          report: gate1({
+            reservedGate1: ['a', 'b'],
+            screenedGate1: [{ candidateId: 'a', verdict: 'pass' }],
+            interruptedGate1: ['b'],
+            ungatedRemaining: ['c', 'd', 'e'],
+          }),
+        },
+      },
+    )
+    expect(line).toContain('Gate-1 claimed: ungated remaining 3, screened 1, interrupted 1')
+  })
+
+  it('keeps a broken corpus root distinguishable from a zero remainder', () => {
+    const unavailable = renderChainTerminalLine(
+      notification({ proposals: { status: 'done', proposed: 0, skipped: 0 } }),
+      {
+        proposalGate1: {
+          kind: 'recorded',
+          // The reason text is deliberately hostile: it must not reach the line.
+          report: gate1({ disposition: 'posture-unavailable', reason: '/Users/secret/agent-qa-eval is unreadable' }),
+        },
+      },
+    )
+    expect(unavailable).toContain('Gate-1 posture-unavailable: ungated remaining 0')
+    expect(unavailable).not.toContain('secret')
+    expect(unavailable).not.toContain('/Users/')
+  })
+
+  it('tells not-recorded, unreadable and not-bound Gate-1 legs apart', () => {
+    const row = notification({ proposals: { status: 'done', proposed: 0, skipped: 0 } })
+    const of = (proposalGate1: ProposalGate1Disclosure): string =>
+      renderChainTerminalLine(row, { proposalGate1 })
+    expect(of({ kind: 'not-recorded' })).toContain('Gate-1 not recorded')
+    expect(of({ kind: 'unreadable' })).toContain('Gate-1 unreadable')
+    expect(of({ kind: 'unbound' })).toContain('Gate-1 not bound')
+    // Three different sentences, so no two of them can be read as the same fact.
+    const rendered = new Set([
+      of({ kind: 'not-recorded' }),
+      of({ kind: 'unreadable' }),
+      of({ kind: 'unbound' }),
+    ])
+    expect(rendered.size).toBe(3)
+  })
+
+  it('never carries a candidate id or a digest onto the line', () => {
+    const line = renderChainTerminalLine(notification({ proposals: { status: 'done', proposed: 1 } }), {
+      proposalGate1: {
+        kind: 'recorded',
+        report: gate1({
+          reservedGate1: ['bundle-super-secret-id'],
+          ungatedRemaining: ['bundle-another-secret'],
+          stale: ['bundle-third-secret'],
+        }),
+      },
+    })
+    expect(line).not.toContain('bundle-')
+    expect(line).toContain('ungated remaining 1')
+  })
+})
+
+describe('circularity guard backing on the chain line (D-19; WINDOWS #427)', () => {
+  const row = notification({ proposals: { status: 'done', proposed: 0, skipped: 0 } })
+  const of = (circularity: CircularityGuardDisclosure): string =>
+    renderChainTerminalLine(row, { circularity })
+
+  it('says not recorded when this run recorded no evaluation-root posture at all', () => {
+    expect(of({ kind: 'not-recorded' })).toContain('circularity guard: not recorded')
+  })
+
+  it('says posture-unavailable for a posture file this build could not read', () => {
+    expect(of({ kind: 'unreadable' })).toContain('circularity guard: posture-unavailable')
+  })
+
+  it('grants declared-only ONLY when the recorded absent root was actually applied', () => {
+    expect(of({ kind: 'recorded', posture: 'no-eval-root', appliedAtHost: true }))
+      .toContain('circularity guard: declared-only')
+    expect(of({ kind: 'recorded', posture: 'broken-eval-root', appliedAtHost: true }))
+      .toContain('circularity guard: posture-unavailable')
+    expect(of({ kind: 'recorded', posture: 'eval-root', appliedAtHost: true }))
+      .toContain('circularity guard: eval-root')
+  })
+
+  it('refuses to claim a backing the run did not get when no host binds the posture', () => {
+    const line = of({ kind: 'recorded', posture: 'no-eval-root', appliedAtHost: false })
+    // The recorded posture would have earned the BYOM exemption; the analysis never saw it.
+    expect(line).not.toContain('circularity guard: declared-only')
+    expect(line).toContain('circularity guard: eval-root (fail-closed')
+    expect(line).toContain('no-eval-root')
+    expect(of({ kind: 'recorded', posture: 'broken-eval-root', appliedAtHost: false }))
+      .toContain('circularity guard: eval-root (fail-closed')
+  })
+})
+
+describe('the tail reads its own persisted proposal record (#424)', () => {
+  it('reports the persisted Gate-1 report through the host store and the shared chain derivation', async () => {
+    const report = gate1({ disposition: 'claimed', ungatedRemaining: ['x', 'y'] })
+    const reads: Array<{ jobId: string; checkpointId: string }> = []
+    const host = {
+      jobs: async () => ({
+        idSource: { jobIdFor: (kind: string, key: string) => `${kind}:${key}` },
+        store: {
+          readCheckpoint: async (jobId: unknown, checkpointId: string) => {
+            reads.push({ jobId: String(jobId), checkpointId })
+            return { found: true, payload: { value: { runId: 'r1', candidateIds: [], gate1: report } } }
+          },
+        },
+      }),
+    } as never
+    const read = defaultPostRunTailOperations().readProposalGate1Report
+    expect(read).toBeDefined()
+    await expect(read!(host, 'r1')).resolves.toEqual({ kind: 'recorded', report })
+    // Addressed through `chainJobIdsForRun`'s own transitive derivation, never a run-keyed guess.
+    expect(reads).toEqual([
+      {
+        jobId: 'propose-improvements:curate-memory:analyze-run:r1->curate-memory->propose-improvements',
+        checkpointId: 'proposals-authored',
+      },
+    ])
+  })
+
+  it('answers not-recorded for an absent checkpoint and unbound for one with no gate1 block', async () => {
+    const read = defaultPostRunTailOperations().readProposalGate1Report!
+    const hostWith = (outcome: unknown) => ({
+      jobs: async () => ({
+        idSource: { jobIdFor: (kind: string, key: string) => `${kind}:${key}` },
+        store: { readCheckpoint: async () => outcome },
+      }),
+    }) as never
+    await expect(read(hostWith({ found: false }), 'r1')).resolves.toEqual({ kind: 'not-recorded' })
+    await expect(
+      read(hostWith({ found: true, payload: { value: { runId: 'r1', candidateIds: [] } } }), 'r1'),
+    ).resolves.toEqual({ kind: 'unbound' })
+  })
+
+  it('answers unreadable for a checkpoint whose gate1 block this build cannot read', async () => {
+    const read = defaultPostRunTailOperations().readProposalGate1Report!
+    const host = {
+      jobs: async () => ({
+        idSource: { jobIdFor: (kind: string, key: string) => `${kind}:${key}` },
+        store: {
+          readCheckpoint: async () => ({
+            found: true,
+            payload: { value: { runId: 'r1', candidateIds: [], gate1: { disposition: 'claimed' } } },
+          }),
+        },
+      }),
+    } as never
+    await expect(read(host, 'r1')).resolves.toEqual({ kind: 'unreadable' })
+  })
+})
+
+describe('the doctor Learning-mode row (D-09/D-19)', () => {
+  function probes(): KnowledgeCheckProbes {
+    return {
+      classifyIndexFace: () => ({ source: 'index' }),
+      resolveEmbedderCapability: () =>
+        Promise.resolve({ kind: 'ready', rung: 'native', profile: { model_id: 'm' }, embedder: {} } as never),
+      readWriterLease: () => ({ kind: 'absent' }),
+      readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
+      readDaemonEventLedger: () => ({ events: [] }),
+    }
+  }
+
+  async function learningRow(p: ReturnType<typeof project>) {
+    const checks = createKnowledgeChecks({ config: p.config, configPath: p.configPath, probes: probes() })
+    return await checks[3].check()
+  }
+
+  it('names the probe gap by its pinned reason rather than reporting zero probes', async () => {
+    const row = await learningRow(project())
+    expect(row.message).toContain('adversarial: no-probe-model: panel-not-configured')
+    expect(row.message).not.toContain('probes 0')
+  })
+
+  it('says the staged report is not recorded on a host that never staged one', async () => {
+    const row = await learningRow(project())
+    expect(row.message).toContain('staged not recorded')
+    expect(row.message).not.toContain('staged 0')
+  })
+
+  it('discloses the circularity backing an operator is ACTUALLY getting', async () => {
+    const row = await learningRow(project())
+    expect(row.message).toContain(
+      MISDIRECTION_POSTURE_BOUND_AT_HOST
+        ? 'circularity backing: recorded posture applied'
+        : 'circularity backing: fail-closed eval-root (no host binds the recorded posture)',
+    )
+  })
+
+  it('counts a REAL staged batch and its refresh record, and never invents one', async () => {
+    const p = project()
+    const digest = 'b'.repeat(64)
+    const caseDir = join(p.agentQaRoot, 'adversarial-staging', 'demo', digest, 'case-0000')
+    mkdirSync(caseDir, { recursive: true })
+    // A manifest whose digest does not recompute is a TAMPERED batch; `listStagedAdversarial`
+    // throws on it by design, and the row must surface that rather than report health.
+    writeFileSync(join(dirname(caseDir), 'manifest.json'), JSON.stringify({
+      schemaVersion: 1, product: 'demo', batchDigest: digest, tableVersion: 1,
+      tableHash: 'c'.repeat(64), stagedAt: '2026-09-12T00:00:00.000Z', cases: [],
+    }))
+    const row = await learningRow(p)
+    expect(row.message).toContain('staged unreadable')
+    expect(row.status).toBe('fail')
+  })
+})
+
+describe('WINDOWS #427: the recorded posture reaches no production host', () => {
+  it('pins that no composition forwards readMisdirectionRootPosture onto PostRunJobCapabilities', async () => {
+    const { readFileSync } = await import('node:fs')
+    const composition = readFileSync(
+      join(__dirname, '../../../../agent-local/src/composition/compose-local-agent.ts'),
+      'utf8',
+    )
+    // The subject of the wall, not a proxy for it: `postRunCapabilities` is the ONE builder that
+    // populates `PostRunJobCapabilities`, and the member appears nowhere in its module.
+    expect(composition).toContain('postRunCapabilities')
+    expect(composition.includes('readMisdirectionRootPosture')).toBe(
+      MISDIRECTION_POSTURE_BOUND_AT_HOST,
+    )
+  })
+})

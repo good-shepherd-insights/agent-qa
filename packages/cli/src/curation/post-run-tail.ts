@@ -45,7 +45,11 @@ import {
   RUNS_DIGEST_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
 } from '@vostride/agent-qa-agent'
-import type { JobModelCapability } from '@vostride/agent-qa-agent'
+import type {
+  JobModelCapability,
+  ProposeGate1Report,
+  ProposeImprovementsCheckpoint,
+} from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import type {
@@ -77,6 +81,10 @@ import {
 } from './curation-tail.js'
 import type { CanaryCreditCounters } from './canary-credit.js'
 import { NON_SIGNAL_CLASSES } from './emit-canary-outcomes.js'
+import {
+  readMisdirectionRunPosture,
+  type MisdirectionRunPostureRecord,
+} from './misdirection-run-state.js'
 import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
@@ -186,6 +194,22 @@ export interface PostRunTailOperations {
    * what the `agent-qa digest` verb, M5's run page and 392's chat all serve.
    */
   readRunDigest(host: LocalAgentHost, runId: string): Promise<RunDigest>
+  /**
+   * This run's OWN `proposals-authored` Gate-1 leg, read back off the durable checkpoint
+   * (422 D-14; closes WINDOWS #424 without widening a persisted DTO).
+   *
+   * OPTIONAL, unlike every member above it, and the asymmetry is deliberate on two counts. It is
+   * a DISCLOSURE read: a tail that cannot perform it loses one clause of one line and must never
+   * lose the line, so an absent binding answers `not-recorded` exactly as an absent checkpoint
+   * does. And every existing harness that hands this table a partial override keeps compiling,
+   * which is what stops a disclosure from becoming a reason to touch twelve fixtures.
+   *
+   * The read goes through the host's OWN job store and the ONE shared `chainJobIdsForRun`
+   * derivation — the same store the pump drained and the same ids its chip trail addressed — so
+   * the record disclosed here is this run's third stage and not a neighbour's. It is read-only and
+   * it never opens a queue the tail did not already open.
+   */
+  readProposalGate1Report?(host: LocalAgentHost, runId: string): Promise<ProposalGate1Disclosure>
   /** The one wall clock, read only at tail boundaries. */
   now(): number
 }
@@ -298,6 +322,9 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
       { runId },
       CLI_FUNCTION_CALLER,
     ) as RunDigest,
+    // RED SKELETON (422-17-T1): declared and inert, so the cells below fail on the named
+    // behaviour rather than on a module that will not load.
+    readProposalGate1Report: async () => ({ kind: 'not-recorded' }),
     now: Date.now,
   }
 }
@@ -1066,6 +1093,60 @@ export function renderPostProcessingSummaryLine(
 }
 
 /**
+ * Whether ANY production composition forwards `PostRunJobCapabilities.readMisdirectionRootPosture`
+ * (422 D-19; WINDOWS #427).
+ *
+ * A CONSTANT and not a probe, because the binding is a property of the shipped composition rather
+ * than of a running host: `postRunCapabilities` in `agent-local` forwards the four Gate-1 ports,
+ * the staging port and the per-job bound, and it forwards NO posture reader — so the handler's own
+ * `readMisdirectionPosture` falls to its fail-closed `'eval-root'` default on every production run.
+ *
+ * The value is therefore what this build can honestly say about the backing an operator is
+ * ACTUALLY getting, and the disclosure below renders it rather than the posture the arbiter
+ * recorded. A line that read the recorded `no-eval-root` and printed `declared-only` would tell an
+ * operator their circularity claim carries the D-19 BYOM exemption when the analysis that stamped
+ * the verdict never saw it.
+ *
+ * It is pinned by a raw-source cell in `__tests__/adversarial-disclosure.test.ts` (the S6 idiom):
+ * the day a composition binds the member, that cell reds and this constant has to be revisited
+ * rather than quietly disagreeing with the code.
+ */
+export const MISDIRECTION_POSTURE_BOUND_AT_HOST = false
+
+/**
+ * What this run's persisted `proposals-authored` checkpoint says about its Gate-1 leg (422 D-14).
+ *
+ * FOUR ARMS, and none of them is a zero. `not-recorded` is a chain that never published the
+ * checkpoint — every run written before 422 D-13, and every chain that halted at the fold.
+ * `unreadable` is a checkpoint this build found and could not read, which is a different fact and
+ * must never degrade into the first. `unbound` is the handler's own `disposition: 'unbound'`,
+ * omitted from the checkpoint by `realProposeImprovementsHandler`: a host that bound no gate
+ * capability did not screen zero candidates, it did not screen.
+ */
+export type ProposalGate1Disclosure =
+  | { readonly kind: 'not-recorded' }
+  | { readonly kind: 'unreadable' }
+  | { readonly kind: 'unbound' }
+  | { readonly kind: 'recorded'; readonly report: ProposeGate1Report }
+
+/**
+ * What backs this run's circularity claim (422 D-19).
+ *
+ * `posture` is what `misdirection-posture.json` RECORDED; `appliedAtHost` is whether the analysis
+ * stage could read it at all. The two are separate members on purpose — see
+ * `MISDIRECTION_POSTURE_BOUND_AT_HOST` — because today they disagree on every production run, and
+ * a disclosure that carried only the first would state a backing nobody got.
+ */
+export type CircularityGuardDisclosure =
+  | { readonly kind: 'not-recorded' }
+  | { readonly kind: 'unreadable' }
+  | {
+      readonly kind: 'recorded'
+      readonly posture: MisdirectionRunPostureRecord['kind']
+      readonly appliedAtHost: boolean
+    }
+
+/**
  * The D-09 human line, rendered from the chain-terminal row and nothing else.
  *
  * Fires on ANY terminal — done or failed (D-12) — because a failure is exactly when the user
@@ -1076,10 +1157,29 @@ export function renderPostProcessingSummaryLine(
  * Absent curation counts print as no counts at all (D-11): a stage that never committed a
  * bundle reports its status, and a `0 curated` would say it curated nothing, which is a
  * different claim from never having got that far.
+ *
+ * 422 D-13/D-14/D-19: the third stage joins it, and the SAME rule governs every number it adds —
+ * absent is not zero. `stages.proposals` absent renders `not recorded` (a v2 row, or a chain that
+ * halted at the fold), a recorded stage with no counts renders `staged not recorded` (no staging
+ * port was bound), and only a recorded `proposed: 0` renders a zero. `proposalGate1` and
+ * `circularity` follow the same law, one arm per fact.
+ *
+ * WHAT NEVER REACHES THIS LINE (D-11, T-422-17-01): no `reason` text from any of those records.
+ * `ProposeGate1Report.reason` carries a corpus-posture refusal or a store error verbatim, and
+ * `MisdirectionRunPostureRecord.reason` carries a root read failure — both are arbitrary strings
+ * from layers with no masking boundary of their own. Only the closed disposition and posture
+ * WORDS and the array LENGTHS are rendered; no candidate id, no digest, no authored text.
  */
 export function renderChainTerminalLine(
   notification: RunNotification,
-  report?: { canary?: CanaryCreditCounters; trustPriorDisclosure?: TrustPriorDisclosure },
+  report?: {
+    canary?: CanaryCreditCounters
+    trustPriorDisclosure?: TrustPriorDisclosure
+    /** This run's persisted Gate-1 leg; omitted entirely by a caller that read none. */
+    proposalGate1?: ProposalGate1Disclosure
+    /** What actually backs this run's circularity claim; omitted by a caller that read none. */
+    circularity?: CircularityGuardDisclosure
+  },
 ): string {
   const { verdictSummary, stages } = notification
   const classes = Object.entries(verdictSummary.byClass)

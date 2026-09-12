@@ -137,6 +137,8 @@ interface KnowledgeCheckContext {
   relativeIndexPath: string
   priors: () => TrustPriorsResolution
   panel: () => Promise<string>
+  /** The 422 adversarial half of the Learning mode row, memoised beside the panel half. */
+  adversarial: () => Promise<{ text: string; unreadable: boolean }>
   probe: () => Promise<KnowledgeProbe>
 }
 
@@ -281,9 +283,52 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
     const disclosure = priors.kind === 'refused'
       ? 'label calibration: invalid or unavailable; trust priors: unavailable'
       : `${priors.calibration}; ${formatTrustPriorDisclosure(priors.disclosure)}`
-    return { ...row, status: priors.kind === 'refused' && row.status !== 'skip' ? 'fail' : row.status,
-      message: `${row.message}; ${disclosure}${await context.panel()}` }
+    const adversarial = await context.adversarial()
+    // A refused prior still fails the row first; an unreadable adversarial state fails a row that
+    // would otherwise have passed, because a diagnostic that reports healthy about a subsystem it
+    // could not read is worse than one that errors (D-19's `fail`-for-an-errored-subsystem rule).
+    const status = priors.kind === 'refused' && row.status !== 'skip'
+      ? 'fail'
+      : adversarial.unreadable && row.status === 'pass' ? 'fail' : row.status
+    return { ...row, status,
+      message: `${row.message}; ${disclosure}${await context.panel()}${adversarial.text}` }
   } }
+}
+
+/**
+ * The adversarial half of the Learning mode row (422 D-09 / D-14 / D-19).
+ *
+ * THREE FACTS, EACH FROM ITS OWN SOURCE, AND NONE OF THEM INFERRED FROM AN ABSENCE:
+ *
+ *   1. The PROBE GAP. Resolved exactly as `refreshAdversarialSplit` resolves it — local config,
+ *      local credential presence, local family arithmetic, ZERO provider calls — so the row
+ *      names the same closed `NoProbeModelReason` the staging report would. A host with no
+ *      declared pool short-circuits to `panel-not-configured` without resolving a session at
+ *      all, which is the first arm `resolveAdversarialProbeCapability` takes for the same reason.
+ *   2. The STAGED REPORT. The staging root's own manifests plus the durable refresh records
+ *      behind them. A root that holds no batch for any product has NOT staged zero — nothing
+ *      recorded a refresh — and the row says `not recorded`, never `staged 0`.
+ *   3. The CIRCULARITY BACKING, which is a fact about this BUILD rather than about this host:
+ *      see `MISDIRECTION_POSTURE_BOUND_AT_HOST`. While no composition binds the posture reader,
+ *      every gated run resolves the fail-closed `eval-root` and D-19's `declared-only` BYOM
+ *      exemption is unreachable — so an operator reading this row is told what they are actually
+ *      getting rather than what the arbiter wrote down.
+ *
+ * A READ THAT FAILED IS A ROW THAT SAYS SO. `listStagedAdversarial` refuses a tampered batch by
+ * throwing, and a diagnostic that swallowed that into `not recorded` would report healthy about a
+ * subsystem it could not read — which is the one thing `doctor` may never do.
+ *
+ * Credentials never reach it: the capability's `entries` diagnostics are masked and are not
+ * rendered here at all, and no seed id, cassette id, digest or authored text is printed.
+ */
+async function doctorAdversarialDisclosure(
+  input: CreateKnowledgeChecksInput,
+  agentQaRoot: string,
+): Promise<{ text: string; unreadable: boolean }> {
+  // RED SKELETON (422-17-T1): declared and inert.
+  void input
+  void agentQaRoot
+  return { text: '', unreadable: false }
 }
 
 /** Independent of floor and knowledge availability; presence is local, never authentication.
@@ -422,6 +467,7 @@ export function createKnowledgeChecks(
   let pending: Promise<KnowledgeProbe> | undefined
   let cachedPriors: TrustPriorsResolution | undefined
   let pendingPanel: Promise<string> | undefined
+  let pendingAdversarial: Promise<{ text: string; unreadable: boolean }> | undefined
   const priors = () => cachedPriors ??= buildTrustPriorsResolver({ configPath: input.configPath, inspectCalibration: true })
 
   async function runProbe(root: string): Promise<KnowledgeProbe> {
@@ -486,6 +532,7 @@ export function createKnowledgeChecks(
     relativeIndexPath: knowledgeRoot === null ? '' : displayPath(indexDbPath(knowledgeRoot)),
     priors,
     panel: () => pendingPanel ??= doctorPanelDisclosure(input),
+    adversarial: () => pendingAdversarial ??= doctorAdversarialDisclosure(input, agentQaRoot),
     probe: () => {
       if (knowledgeRoot === null) throw new TypeError('no knowledge root to probe')
       pending ??= runProbe(knowledgeRoot)
