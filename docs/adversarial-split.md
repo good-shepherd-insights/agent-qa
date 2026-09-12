@@ -121,13 +121,22 @@ It is never a thrown error and never becomes a cassette. An operator whose polic
 `injectionShape: 'block'` refuses the injection family wholesale, and the report says which
 detector did it.
 
-**A refusal is not a regression, at generation time or at gate time.** An already-committed
-adversarial cassette whose replay trips the request-hook guardrail records the existing
-`guard-failed` replay refusal. `eval gate` folds a changed refusal population into
-`refusal-population-differs`, which is an **inconclusive** verdict and exits **2** — never the
-regression exit 1. Exit 1 is reserved for a measured regression against a comparable baseline.
-If `eval gate` exits 2 with that reason, the population of refused decisions moved; compare the
-refusal counts before reading anything about quality.
+**A guardrail block is never a regression, and it reaches the gate by two different routes.**
+Both exit **2**; neither can reach exit 1, which is reserved for a measured regression against a
+comparable baseline.
+
+| Where the block happens | What is recorded | What `eval gate` says |
+| --- | --- | --- |
+| Loading a committed adversarial cassette (a guard rejection) | the `guard-failed` **replay refusal** | `refusal-population-differs` → exit 2 |
+| During replay, when the request-hook guardrail throws | a **harness error**, counted in `harnessErrorCount` | `harness-errors` → exit 2 |
+
+The second route is worth stating plainly because it is easy to describe wrongly: a
+`GuardrailBlockError` raised by the provider request hook is not classified as a replay refusal
+at all. It propagates out of the planning turn, is classified as infrastructure, and is tallied
+as a harness error — so a host looking for `guard-failed` after a blocked replay will not find
+one. The safety property (Pitfall 15: a refused or blocked probe is never counted as a
+regression) holds on both routes; the vocabulary does not. If `eval gate` exits 2, read which
+reason it names before reading anything about quality.
 
 ## Caps, and where each one came from (D-04, D-11, D-14, D-18)
 
