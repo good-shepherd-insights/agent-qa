@@ -395,10 +395,17 @@ apply_mutation () {
         "$REPO_ROOT/packages/schema/src/index.ts"
       v03_coherence_gate ;;
     J-02)
-      # 409 Row 2's diff, verbatim. `consolidate` is chosen deliberately: it is a REGISTERED kind,
-      # so the registry's own `declares only successors that are themselves registered` validation
-      # stays out of the blast and the reds that remain are the successor-list cells.
-      perl -0pi -e "s/\Qconst ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory']\E/const ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory', 'consolidate']/" \
+      # 409 Row 2's diff. `consolidate` is chosen deliberately: it is a REGISTERED kind, so the
+      # registry's own `declares only successors that are themselves registered` validation stays
+      # out of the blast and the reds that remain are the successor-list cells.
+      #
+      # 2026-09-12 (422-23): THE ANCHOR MOVED, THE MEASUREMENT DID NOT. 422-22 restated this
+      # constant as `as const satisfies readonly JobKind[]` so the literal edge survives into the
+      # type, which left the 409 spelling matching nothing — and an edit that matches nothing is a
+      # leg that measures the ABSENCE of the mutation. The anchor is re-transcribed from the
+      # shipped line; the six cells the row recorded were RE-MEASURED under the new anchor and are
+      # the same six, so REQUIRED and ALLOWED below are untouched.
+      perl -0pi -e "s/\Qconst ANALYZE_RUN_SUCCESSORS = ['curate-memory'] as const satisfies readonly JobKind[]\E/const ANALYZE_RUN_SUCCESSORS = ['curate-memory', 'consolidate'] as const satisfies readonly JobKind[]/" \
         "$REPO_ROOT/packages/agent/src/jobs/kinds.ts" ;;
     J-01)
       # 409 Row 1's diff, verbatim — TWO lines, because both declarations spell the one set and
@@ -406,11 +413,29 @@ apply_mutation () {
       perl -0pi -e "s/\Q  | 'curate-memory'\E\n/  | 'curate-memory'\n  | 'triage-issues'\n/; s/\Q  'curate-memory',\E\n/  'curate-memory',\n  'triage-issues',\n/" \
         "$REPO_ROOT/packages/schema/src/job/job.ts" ;;
     J-03a|J-03b|J-03c)
-      # 409 Row 3's diff, verbatim — one mutation measured at three distances, the Row 7/8
+      # 409 Row 3's diff, RETARGETED — one mutation measured at three distances, the Row 7/8
       # precedent. The interface widening and the derivation must move together or the object
       # literal no longer satisfies `ChainJobIds`.
-      perl -0pi -e 's/\n  readonly curateMemory: JobId\n/\n  readonly curateMemory: JobId\n  readonly consolidate: JobId\n/;
-                    s/^(    curateMemory: idSource\.jobIdFor\(.*\n)/$1    consolidate: idSource.jobIdFor(\x27consolidate\x27, `\${String(analyzeRun)}->consolidate`),\n/m' \
+      #
+      # 2026-09-12 (422-23, D-13): THE ROW MOVED, SO THE MUTATION MOVED WITH IT. Phase 409 took the
+      # chain from three derived ids to two, and this leg proved a THIRD id was refused. Phase 422
+      # D-13 authorised a third — `proposeImprovements`, keyed transitively from the curate-memory
+      # id — so re-adding a third here would now be re-adding a LEGAL one, and the leg would be
+      # measuring the tree's disagreement with itself rather than a wall. The leg therefore injects
+      # a FORBIDDEN FOURTH id. Two properties of the injection are load-bearing:
+      #
+      #   * the kind is `consolidate`, a REGISTERED kind, so the agent's `dts` build still compiles
+      #     under the mutation and the leg reaches a red CELL rather than a build failure (the 409
+      #     note (d) lesson, applied in the opposite direction);
+      #   * the new member is appended AFTER `proposeImprovements`, so the three legal ids are still
+      #     asked for in their shipped order and the extra ask is the only difference the cells see.
+      #
+      # The second anchor deliberately carries no `$`: the shipped derivation spells its successor
+      # key as a template literal, and a pattern quoting `${String(curateMemory)}` would have to
+      # escape perl's own interpolation in the SEARCH half as well as the replacement half — a
+      # second place for a silently non-matching edit to hide (410 Row 5's recorded trap).
+      perl -0pi -e 's/\n  readonly proposeImprovements: JobId\n\}/\n  readonly proposeImprovements: JobId\n  readonly admitProposals: JobId\n}/;
+                    s/->propose-improvements`,\n    \),\n  \}/->propose-improvements`,\n    ),\n    admitProposals: idSource.jobIdFor(\x27consolidate\x27, `\${String(curateMemory)}->consolidate`),\n  }/' \
         "$REPO_ROOT/packages/agent/src/jobs/chain-identity.ts" ;;
     W-06)
       # 411 Row 8's diff, verbatim. OPTIONAL on purpose: a required key would red the producers
