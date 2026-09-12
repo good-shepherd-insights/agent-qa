@@ -128,6 +128,20 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'the adversarial batch staging store under .agent-qa/eval/adversarial/, the durable per-product refresh-state store under .agent-qa/eval/adversarial-state/, the probe-reservation store under .agent-qa/eval/adversarial-probes/, and the operator-only admission recheck on the eval-adversarial channel, delegating committed writes to the single sanctioned seeding helper',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
+  // Phase 422 D-07/D-10 (422-21), recorded here rather than in a plan summary because this is the
+  // file a later plan would have to edit to make it false:
+  //
+  //   NO MODEL IS CONSTRUCTED ON THE ADVERSARIAL PATH.
+  //
+  // Staging derives, scans and stores; the probe call goes out through a
+  // `ProbeAuthorPort` this package receives and never builds. The author's model comes into
+  // existence in `packages/cli/src/adversarial-probe-author.ts`, inside `runSafetyScope`, and what
+  // crosses back here is one method taking a pure DTO and returning text plus usage. So the four
+  // adversarial storage responsibilities above are STORAGE in full, and the clause below is
+  // unamended rather than merely un-edited: this package's sanctioned model-construction sites are
+  // still exactly the replay-composition helper's and the judge binding's, both of which predate
+  // this phase. `packages/arch/src/__tests__/422-no-eval-writer.test.ts` counts them.
+  //
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single
   // sanctioned replay-composition helper's one createModel call site; any other provider invocation
   // ownership remains forbidden.
