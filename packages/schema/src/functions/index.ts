@@ -106,6 +106,12 @@ export {
   AnalysisResolvedVerdictSchema,
   AnalysisSentenceSchema,
   AnalysisClusterViewSchema,
+  // 422 D-17/D-19/D-20: the circularity evidence a resolved verdict carries onto a surface.
+  ANALYSIS_MISDIRECTION_REASONS,
+  AnalysisMisdirectionRecordSchema,
+  AnalysisMemoryOnPathEntrySchema,
+  AnalysisVerdictMisdirectionSchema,
+  projectVerdictMisdirection,
 } from './analysis-get'
 export type {
   AnalysisGetInput,
@@ -116,6 +122,10 @@ export type {
   AnalysisSentence,
   AnalysisClusterMemberRef,
   AnalysisClusterView,
+  AnalysisMisdirectionReason,
+  AnalysisMisdirectionRecord,
+  AnalysisMemoryOnPathEntry,
+  AnalysisVerdictMisdirection,
 } from './analysis-get'
 export {
   KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION,
