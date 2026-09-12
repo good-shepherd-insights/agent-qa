@@ -500,6 +500,77 @@ describe('deriveMemoryOnPath: code owns on-path membership', () => {
 })
 
 // ---------------------------------------------------------------------------------------
+// CR-05 — the exposure key is separated, so two exposures can never share one slot
+// ---------------------------------------------------------------------------------------
+
+// `stepIndex` is decimal and `RecordId` is an unconstrained branded string, so joining them
+// with nothing between makes `(1, '2abc')` and `(12, 'abc')` ONE key. These two cells pin the
+// two ways that collision corrupts the gate that removes memory.
+describe('aggregateMisdirectionEvidence: colliding exposure components stay distinct', () => {
+  const COLLIDING_A = asRecordId('2abc')
+  const COLLIDING_B = asRecordId('abc')
+  const collidingSites = [
+    { stepIndex: 1, recordId: COLLIDING_A, trust: 'candidate' as const },
+    { stepIndex: 12, recordId: COLLIDING_B, trust: 'candidate' as const },
+  ]
+  const collidingBase = {
+    runId: 'run-misdirection-guard',
+    perTest: 1,
+    handoffBaseDigest: BASE_DIGEST,
+    sites: collidingSites,
+  }
+
+  it('does not let one row exonerate a second, unchecked exposure it merely collides with', () => {
+    // Under bare concatenation both sites key to '12abc', so the single row below covers BOTH
+    // and the fold reaches `held` — the only arm that exonerates — for an exposure nobody
+    // checked. Separated, the uncovered exposure surfaces as `unchecked`.
+    const aggregate = aggregateMisdirectionEvidence({
+      ...collidingBase,
+      results: [
+        result({
+          recordId: COLLIDING_B,
+          perTest: 1,
+          stepIndex: 12,
+          briefDigest: 'brief-digest-2',
+          crossCheck: 'held',
+        }),
+      ],
+    })
+    expect(aggregate).toEqual({
+      outcome: 'unknown',
+      inconclusive: [],
+      notRun: [],
+      unchecked: [COLLIDING_A],
+    })
+  })
+
+  it('does not read two distinct exposures as one conflicting row', () => {
+    // Under bare concatenation the second row lands on an occupied key and the whole pair is
+    // refused as 'a second, conflicting row', which buries the flip.
+    const aggregate = aggregateMisdirectionEvidence({
+      ...collidingBase,
+      results: [
+        result({
+          recordId: COLLIDING_A,
+          perTest: 1,
+          stepIndex: 1,
+          briefDigest: 'brief-digest-2',
+          crossCheck: 'flipped',
+        }),
+        result({
+          recordId: COLLIDING_B,
+          perTest: 1,
+          stepIndex: 12,
+          briefDigest: 'brief-digest-2',
+          crossCheck: 'held',
+        }),
+      ],
+    })
+    expect(aggregate).toEqual({ outcome: 'flipped', suspect: [COLLIDING_A] })
+  })
+})
+
+// ---------------------------------------------------------------------------------------
 // D-20 — a mixed cross-check never resolves to held
 // ---------------------------------------------------------------------------------------
 

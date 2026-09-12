@@ -345,7 +345,7 @@ export async function prepareMisdirectionEvidence(
   /** One `locate` per STEP, memoised: the live decision is a fact about the step, not the record. */
   const located = new Map<string, MisdirectionLocated>()
   const locate = async (exposure: MisdirectionExposure): Promise<MisdirectionLocated> => {
-    const stepKey = `${exposure.testId}${String(exposure.stepIndex)}`
+    const stepKey = `${exposure.testId}\u001f${String(exposure.stepIndex)}`
     const seen = located.get(stepKey)
     if (seen !== undefined) return seen
     let answer: MisdirectionLocated

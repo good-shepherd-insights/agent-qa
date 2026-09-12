@@ -188,7 +188,7 @@ export function deriveMemoryOnPathSites(steps: readonly StepEvidence[]): MemoryO
     for (const line of step.servedBrief.channel1) {
       const trust = memoryOnPathTrustOf(line)
       if (trust === undefined) continue
-      const key = `${step.stepIndex}${line.id}`
+      const key = siteKey(step.stepIndex, line.id)
       if (seen.has(key)) continue
       seen.add(key)
       sites.push({ stepIndex: step.stepIndex, recordId: line.id, trust })
@@ -229,9 +229,21 @@ export function misdirectionSourceDigest(handoff: CompletedRunHandoff): string {
   )
 }
 
-/** The evidence key: one EXPOSURE, not one record (see {@link MemoryOnPathSite}). */
+/** The one separator every composite key in this file joins on. */
+const EVIDENCE_KEY_SEPARATOR = '\u001f'
+
+/**
+ * The evidence key: one EXPOSURE, not one record (see {@link MemoryOnPathSite}).
+ *
+ * U+001F BETWEEN THE COMPONENTS, and spelled as an escape so the separator survives a reformat.
+ * `RecordId` is an unconstrained branded string and `stepIndex` is decimal, so bare
+ * concatenation mints ONE key for `(1, '2abc')` and `(12, 'abc')`. This key gates memory
+ * removal: a collision either hides a real exposure from `sites` — letting the fold reach
+ * `held`, the only arm that exonerates — or reads two distinct rows as one conflicting pair.
+ * `exposureKey` and `adversarialTupleKey` pin the same separator for the same reason.
+ */
 function siteKey(stepIndex: number, recordId: RecordId): string {
-  return `${stepIndex}${recordId}`
+  return `${String(stepIndex)}${EVIDENCE_KEY_SEPARATOR}${recordId}`
 }
 
 /**
