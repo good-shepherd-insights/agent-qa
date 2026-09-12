@@ -316,8 +316,9 @@ function gateFixture(core) {
 /**
  * SC4, as an exit code rather than as a sentence.
  *
- * A moved refusal population and a moved harness-error population are the two ways a guardrail
- * block reaches the release gate, and BOTH must be inconclusive. The control — identical
+ * A guardrail block reaches the release gate as a moved guard-failed refusal population.
+ * A moved harness-error population is the infrastructure control; both are inconclusive.
+ * The control — identical
  * populations on both sides — is asserted in the same leg, because a cell that only ever checks
  * the differing case cannot tell a real signal from a reason the gate raises unconditionally.
  */
