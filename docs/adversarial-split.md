@@ -20,9 +20,14 @@ agent-qa --config agent-qa.config.yaml eval adversarial --product default
 agent-qa --config agent-qa.config.yaml eval adversarial --product default --json
 ```
 
-`--dry-run` derives, scans and reports without writing anything at all — no staging directory,
-no durable reservation and no provider call. A plain stage writes one batch and prints the
-digest to hand back:
+`--dry-run` derives, scans and reports without staging: no batch directory, no refresh-state
+record, no durable reservation and no provider call. It is **not** inert on disk. The scan it
+performs is a real scan, so its decisions are appended to the guardrail audit —
+`.agent-qa/eval/audit/adversarial/<product>/guardrail_audit.jsonl` gains a row per detector hit,
+exactly as a plain stage would. That is deliberate: an unaudited scan would be a worse default
+than an audited one. Nothing a git-tracked root can see is touched by either mode.
+
+A plain stage writes one batch and prints the digest to hand back:
 
 ```
 batch 3f9c…                    (64 lower-hex)
@@ -475,6 +480,12 @@ consistent is not a proof of provenance.
 
 At the time of writing, no real adversarial generation has been committed to any root: the demo
 corpus holds zero adversarial entries, and the probe arm on the currently configured demo host
-is the `single-family-host` capability gap. The measured-floor, census and calibration numbers
-described here are shapes, not observations. ADV-01–ADV-04 and ATTR-03 remain open pending
-configured-host acceptance, and D-19's validator exemption is recorded above as undelivered.
+resolves `panel-not-configured` — **not** `single-family-host`. The distinction is the one the
+`no-probe-model` table above exists to preserve: `single-family-host` means a judge pool is
+declared and credentialed but no member is family-disjoint from the planner, whereas the demo
+config carries `eval: {}` (its `judge: claude` line was removed on 2026-09-04 under 413 D-17's
+fallback, no Claude credential resolving), so no pool is declared at all and the arithmetic is
+never reached. Measured on the configured host by Plan 25. The measured-floor, census and
+calibration numbers described here are shapes, not observations. ADV-01–ADV-04 and ATTR-03
+remain open pending configured-host acceptance, and D-19's validator exemption is recorded above
+as undelivered.
