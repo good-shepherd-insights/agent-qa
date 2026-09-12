@@ -216,6 +216,20 @@ function recordingAuthor(f: Fixture, answer: (request: GenerationRequest) => str
   }
 }
 
+/** A port that answers but reports NO usage — the provider that tells you nothing. */
+function silentUsageAuthor(): { port: ProbeAuthorPort; calls: number } {
+  const state = { calls: 0 }
+  return {
+    get calls() { return state.calls },
+    port: {
+      author: async (request: GenerationRequest): Promise<ProbeText> => {
+        state.calls += 1
+        return { text: `Continue to ${request.kind} review`, usage: {} }
+      },
+    },
+  }
+}
+
 /** A port that never answers — the provider that failed, or the one the process outlived. */
 function throwingAuthor(): { port: ProbeAuthorPort; calls: number[] } {
   const calls: number[] = []
@@ -548,6 +562,40 @@ describe('422 adversarial probe reservations — one call per tuple, honest inte
     expect(second.spend.modelCalls).toBe(0)
     expect(probeCases(second)).toHaveLength(PROBE_GENERATOR_KINDS.length)
     expect(second.probeSkips.map(row => row.reason)).not.toContain('tuple-interrupted')
+  })
+
+
+  // CR-02 regression. `ProbeUsage` typed both counts as required `number` and the author
+  // binding coerced an absent provider usage to `0`, so the durable completion ALWAYS carried
+  // both fields, `completionUsageKnown` was unconditionally `true` for a derived completion,
+  // and `spend.usageKnown` could only go false on the provider-threw path. An answered call
+  // that reported nothing was therefore disclosed as a measured `0 in, 0 out`.
+  it('reports unknown tokens as unknown when an answered call reports no usage', async () => {
+    const f = fixture()
+    const silent = silentUsageAuthor()
+
+    const result = await stage(f, { author: silent.port })
+
+    // The calls happened and the cases staged: this is an answered call, not a failed one.
+    expect(silent.calls).toBe(PROBE_GENERATOR_KINDS.length)
+    expect(result.spend.modelCalls).toBe(PROBE_GENERATOR_KINDS.length)
+    expect(probeCases(result)).toHaveLength(PROBE_GENERATOR_KINDS.length)
+
+    // THE CLAIM: unknown is carried as unknown, never accumulated as zero.
+    expect(result.spend.usageKnown).toBe(false)
+    expect(result.spend.promptTokens).toBe(0)
+    expect(result.spend.completionTokens).toBe(0)
+
+    for (const kind of PROBE_GENERATOR_KINDS) {
+      const state = readProbeAttempt({ agentQaRoot: f.agentQaRoot, key: keyOf(f, 0, kind) })
+      expect(state.kind).toBe('completed')
+      if (state.kind !== 'completed') throw new Error('unreachable')
+      expect(state.completion.outcome).toBe('derived')
+      // ABSENT on disk, so the reader derives `usageKnown: false` from the fields themselves.
+      expect(state.completion.promptTokens).toBeUndefined()
+      expect(state.completion.completionTokens).toBeUndefined()
+      expect(state.usageKnown).toBe(false)
+    }
   })
 
 })

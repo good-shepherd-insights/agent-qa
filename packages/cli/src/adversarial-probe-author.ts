@@ -134,12 +134,18 @@ export function createAdversarialProbeAuthor(
           }
           return {
             text: parsed.data.name,
-            // Reported spend, carried as reported. A provider that reports nothing yields zero
-            // here, which UNDER-states tokens — the probe budget is a call count for exactly
-            // that reason, so an unreported token never buys an extra call.
+            // Reported spend, carried as reported -- and ABSENT when the provider reported
+            // nothing, never zero. A zero here would be a measured claim about a call whose
+            // cost we do not know, and the disclosure that reads this cannot tell the two
+            // apart once they are the same number. The probe budget is denominated in CALLS
+            // for exactly this reason, so an unreported token still never buys an extra call.
             usage: {
-              promptTokens: honestCount(result.usage?.inputTokens),
-              completionTokens: honestCount(result.usage?.outputTokens),
+              ...(reportedCount(result.usage?.inputTokens) === undefined
+                ? {}
+                : { promptTokens: reportedCount(result.usage?.inputTokens) }),
+              ...(reportedCount(result.usage?.outputTokens) === undefined
+                ? {}
+                : { completionTokens: reportedCount(result.usage?.outputTokens) }),
             },
           }
         })
@@ -157,8 +163,9 @@ function parseJson(text: string): unknown {
   }
 }
 
-function honestCount(value: number | undefined): number {
+/** A count the provider actually reported, or `undefined` when it reported nothing usable. */
+function reportedCount(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.trunc(value)
-    : 0
+    : undefined
 }

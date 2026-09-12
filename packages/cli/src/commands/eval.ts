@@ -85,7 +85,16 @@ function renderAdversarialSummary(result: AdversarialVerbResult): void {
   if (result.authoringModel !== undefined) {
     console.log(`probe author family ${result.authoringModel.family}`)
   }
-  console.log(`probe calls ${result.spend.modelCalls}/${result.probeCap.value} (${result.probeCap.source}); reported tokens ${result.spend.promptTokens} in, ${result.spend.completionTokens} out`)
+  // `usageKnown` is a STATEMENT, and this is the line that has to make it. Printing the raw
+  // totals unqualified when at least one answered call reported no usage renders an unknown
+  // charge as a measured one, which is the single thing the field exists to prevent.
+  console.log(
+    `probe calls ${result.spend.modelCalls}/${result.probeCap.value} (${result.probeCap.source}); `
+      + (result.spend.usageKnown
+        ? `reported tokens ${result.spend.promptTokens} in, ${result.spend.completionTokens} out`
+        : `reported tokens unavailable (at least one call reported no usage);`
+          + ` partial totals ${result.spend.promptTokens} in, ${result.spend.completionTokens} out`),
+  )
   for (const row of result.probeRefusals) {
     console.log(`probe refused ${row.seedCassetteId} ${row.kind} v${row.promptVersion}: ${row.reason}`)
   }

@@ -1099,20 +1099,23 @@ export async function stageAdversarialProposal(
         }
         if (attempt.kind === 'completed') {
           const completion = attempt.completion
-          if (
-            completion.outcome !== 'derived' ||
-            completion.text === undefined ||
-            completion.promptTokens === undefined ||
-            completion.completionTokens === undefined
-          ) {
+          if (completion.outcome !== 'derived' || completion.text === undefined) {
             probeSkips.push({ ...row, reason: 'tuple-already-decided' })
             continue
           }
+          // The TEXT is what makes a completed attempt re-derivable; the token counts are a
+          // disclosure about a call this refresh is not making. A recorded answer whose
+          // provider reported no usage is still a perfectly good answer, so absence here
+          // rebuilds as absence rather than disqualifying the tuple.
           response = {
             text: completion.text,
             usage: {
-              promptTokens: completion.promptTokens,
-              completionTokens: completion.completionTokens,
+              ...(completion.promptTokens === undefined
+                ? {}
+                : { promptTokens: completion.promptTokens }),
+              ...(completion.completionTokens === undefined
+                ? {}
+                : { completionTokens: completion.completionTokens }),
             },
           }
         } else {
@@ -1156,8 +1159,18 @@ export async function stageAdversarialProposal(
             probeSkips.push({ ...row, reason: 'tuple-already-decided' })
             continue
           }
-          spend.promptTokens += response.usage.promptTokens
-          spend.completionTokens += response.usage.completionTokens
+          // ABSENT is not zero. A call that answered without reporting usage makes the
+          // running totals incomplete, and the honest move is to say the totals are unknown
+          // rather than to add a fabricated zero to them.
+          if (
+            response.usage.promptTokens === undefined ||
+            response.usage.completionTokens === undefined
+          ) {
+            spend.usageKnown = false
+          } else {
+            spend.promptTokens += response.usage.promptTokens
+            spend.completionTokens += response.usage.completionTokens
+          }
         }
         const derivation = deriveProbeCassette({
           seed,
@@ -1212,8 +1225,14 @@ export async function stageAdversarialProposal(
           outcome: 'derived',
           text: probe.text,
           cassetteId: probe.cassette.id,
-          promptTokens: probe.usage.promptTokens,
-          completionTokens: probe.usage.completionTokens,
+          // Written only when the provider reported them, so `completionUsageKnown` reads a
+          // real fact off the record instead of returning `true` unconditionally.
+          ...(probe.usage.promptTokens === undefined
+            ? {}
+            : { promptTokens: probe.usage.promptTokens }),
+          ...(probe.usage.completionTokens === undefined
+            ? {}
+            : { completionTokens: probe.usage.completionTokens }),
         })
         const probeBlobs = resolveSeedBlobs(
           input.committedRoot,

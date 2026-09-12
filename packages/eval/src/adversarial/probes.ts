@@ -102,10 +102,18 @@ export interface NoProbeModelGap {
  */
 export const PROBE_MAX_TEXT_LENGTH = 200
 
-/** Recorded token usage for one authored probe. */
+/**
+ * Recorded token usage for one authored probe.
+ *
+ * BOTH COUNTS ARE OPTIONAL, AND ABSENT IS NOT ZERO. A provider that reports no usage has told
+ * us nothing, and the alternative to saying so is writing `0` -- which makes a real charge
+ * indistinguishable from a free one. `ProbeCompletion` already documents its mirror of these
+ * two fields that way; typing them as required here is what forced the author binding to
+ * launder an absent count into a measured zero before the durable store ever saw it.
+ */
 export interface ProbeUsage {
-  promptTokens: number
-  completionTokens: number
+  promptTokens?: number
+  completionTokens?: number
 }
 
 /** The captured application strings a probe rewrites — untrusted data, never instructions. */
@@ -436,8 +444,8 @@ function carriesControlCharacter(text: string): boolean {
   return false
 }
 
-function isHonestCount(value: number): boolean {
-  return Number.isInteger(value) && value >= 0
+function isReportedCount(value: number | undefined): boolean {
+  return value === undefined || (Number.isInteger(value) && value >= 0)
 }
 
 /** Validate one authored response against its request. Order is fixed so refusals are stable. */
@@ -457,8 +465,10 @@ function responseRefusal(
   if (response.text.trim() === '') return 'probe-text-empty'
   if ([...response.text].length > PROBE_MAX_TEXT_LENGTH) return 'probe-text-too-long'
   if (carriesControlCharacter(response.text)) return 'probe-text-not-a-name'
-  if (!isHonestCount(response.usage.promptTokens)) return 'probe-usage-invalid'
-  if (!isHonestCount(response.usage.completionTokens)) return 'probe-usage-invalid'
+  // ABSENT is a legal answer -- the provider reported nothing. A count that is PRESENT and
+  // not a non-negative integer is still a refusal.
+  if (!isReportedCount(response.usage.promptTokens)) return 'probe-usage-invalid'
+  if (!isReportedCount(response.usage.completionTokens)) return 'probe-usage-invalid'
   // A response that folds back onto the recorded identity under the real normalizer perturbed
   // nothing a name-based planner or judge can see. Staging it would spend a probe call on a
   // rename and then report it as an adversarial case.
