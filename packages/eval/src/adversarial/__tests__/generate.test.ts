@@ -27,7 +27,7 @@ import { createSeededRng } from '../../stats/prng'
 import { ADVERSARIAL_TABLES, ADVERSARIAL_TABLE_VERSION } from '../tables'
 import type { AdversarialTableEntry } from '../tables'
 import * as engine from '../generate'
-import { deriveAdversarialCassetteId, generateAdversarialVariants } from '../generate'
+import { deriveAdversarialCassetteId, generateAdversarialVariants, rewriteElementNameInTree } from '../generate'
 import type { AdversarialSeed, AdversarialVariant } from '../generate'
 import { FIXTURE_GOLD, FIXTURE_REFS, makeAdversarialSeedFixture } from './fixtures'
 
@@ -370,5 +370,120 @@ describe('422-02 adversarial generation — explicit outcomes for everything els
         outcome => outcome.kind === 'inapplicable' && outcome.reason === 'cap-exceeded',
       ),
     ).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// CR-06 — the rendered tree and `elements` must describe ONE screen
+// ---------------------------------------------------------------------------------------
+
+// The occurrence index used to rewrite the tree was counted over ELEMENTS by exact name
+// equality, then spent as a raw SUBSTRING ordinal in the tree prose. Those are not the same
+// number, and the mismatch renamed a different control in the tree than in `elements` -- after
+// which `promptInputHash`/`screenStateHash` were recomputed over the inconsistent document, so
+// nothing downstream could notice. The second half was worse for the measurement: a needle the
+// tree did not carry rewrote nothing and said nothing, staging an adversarial case whose
+// rendered tree still showed the UNPERTURBED label.
+describe('CR-06: rewriteElementNameInTree', () => {
+  // Captured trees appear both quoted and bare, so the rule may not lean on either syntax.
+  const QUOTED = '- button "Save changes"\n- button "Save"'
+  const BARE = 'button Save changes\n  button Save'
+
+  it('does not let a longer sibling name absorb the rewrite (quoted tree)', () => {
+    expect(
+      rewriteElementNameInTree({
+        tree: QUOTED,
+        elementNames: ['Save changes', 'Save'],
+        index: 1,
+        replacement: 'Sqve',
+      }),
+    ).toBe('- button "Save changes"\n- button "Sqve"')
+  })
+
+  it('does not let a longer sibling name absorb the rewrite (bare tree)', () => {
+    expect(
+      rewriteElementNameInTree({
+        tree: BARE,
+        elementNames: ['Save changes', 'Save'],
+        index: 1,
+        replacement: 'Sqve',
+      }),
+    ).toBe('button Save changes\n  button Sqve')
+  })
+
+  it('still renames the longer sibling itself when IT is the target', () => {
+    expect(
+      rewriteElementNameInTree({
+        tree: QUOTED,
+        elementNames: ['Save changes', 'Save'],
+        index: 0,
+        replacement: 'Sqve changes',
+      }),
+    ).toBe('- button "Sqve changes"\n- button "Save"')
+  })
+
+  it('keeps the positional rule for genuinely identical siblings', () => {
+    const tree = '- button "Continue"\n- button "Continue"'
+    expect(
+      rewriteElementNameInTree({
+        tree,
+        elementNames: ['Continue', 'Continue'],
+        index: 1,
+        replacement: 'Contimue',
+      }),
+    ).toBe('- button "Continue"\n- button "Contimue"')
+    expect(
+      rewriteElementNameInTree({
+        tree,
+        elementNames: ['Continue', 'Continue'],
+        index: 0,
+        replacement: 'Contimue',
+      }),
+    ).toBe('- button "Contimue"\n- button "Continue"')
+  })
+
+  it('refuses instead of silently returning the unperturbed tree', () => {
+    expect(
+      rewriteElementNameInTree({
+        tree: '- button "Continue"',
+        elementNames: ['Submit'],
+        index: 0,
+        replacement: 'Sudmit',
+      }),
+    ).toBeUndefined()
+    // An empty needle can match anywhere and so identifies nothing.
+    expect(
+      rewriteElementNameInTree({
+        tree: '- button "Continue"',
+        elementNames: [''],
+        index: 0,
+        replacement: 'x',
+      }),
+    ).toBeUndefined()
+  })
+})
+
+describe('CR-06: a tree that cannot carry the perturbation reports rather than stages', () => {
+  it('emits tree-target-unresolved instead of an unperturbed adversarial case', () => {
+    const seed = richSeed()
+    // A capture whose rendered tree does not mention the control `elements` names. The old
+    // code staged this: the tree came back byte-identical and nothing said so.
+    seed.cassette.input.stateBefore.tree = 'button Something Else Entirely'
+
+    const result = generateAdversarialVariants({
+      product: 'fixture',
+      seeds: [seed],
+      mutators: ['confusable'],
+    })
+
+    expect(result.variants).toEqual([])
+    expect(result.outcomes).toEqual([
+      {
+        kind: 'inapplicable',
+        seedCassetteId: seed.cassette.id,
+        mutator: 'confusable',
+        reason: 'tree-target-unresolved',
+      },
+    ])
   })
 })

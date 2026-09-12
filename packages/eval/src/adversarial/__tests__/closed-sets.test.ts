@@ -120,6 +120,9 @@ const EXPECTED_INAPPLICABILITIES: readonly string[] = [
   'no-table-entry-applies',
   'benign-surface-absent',
   'hostile-identity-unchanged',
+  // CR-06: the rendered tree does not carry the control `elements` says is being renamed, so
+  // the pair reports instead of staging a case whose tree describes the unperturbed screen.
+  'tree-target-unresolved',
   'already-derived',
 ]
 
@@ -329,6 +332,8 @@ describe('422-22 the vocabularies 422 did NOT move', () => {
       'probe-text-not-a-name',
       'probe-usage-invalid',
       'probe-identity-unchanged',
+      // CR-06, the probe half of the same refusal.
+      'probe-tree-target-unresolved',
     ])
   })
 

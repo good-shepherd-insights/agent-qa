@@ -114,6 +114,7 @@ export type AdversarialInapplicability =
   | 'no-table-entry-applies'
   | 'benign-surface-absent'
   | 'hostile-identity-unchanged'
+  | 'tree-target-unresolved'
   | 'already-derived'
 
 /** Declaration-order projection of `AdversarialInapplicability` (the 414 D-22 bar idiom). */
@@ -130,6 +131,7 @@ export const ADVERSARIAL_INAPPLICABILITIES = [
   'no-table-entry-applies',
   'benign-surface-absent',
   'hostile-identity-unchanged',
+  'tree-target-unresolved',
   'already-derived',
 ] as const satisfies readonly AdversarialInapplicability[]
 
@@ -556,28 +558,73 @@ function isProofBacked(cassette: LeafCassette): boolean {
 }
 
 /**
- * Replace the `occurrence`-th appearance of `needle`, counted from zero. The rendered tree is
- * prose, so the ONLY faithful rewrite of one element's line is a positional one: replacing
- * every appearance would rename the target's identically-labelled siblings too, and a tree
- * that disagrees with `elements` describes a screen that never existed.
+ * Rewrite ONE element's name where it appears in the rendered tree, or refuse.
+ *
+ * The rendered tree is prose, so the only faithful rewrite of one element's line is a
+ * positional one: replacing every appearance would rename the target's identically-labelled
+ * siblings too, and a tree that disagrees with `elements` describes a screen that never
+ * existed. That much the previous version had right. Two things it had wrong:
+ *
+ *   - IT COUNTED OCCURRENCES IN TWO DIFFERENT UNIVERSES. The ordinal was counted over
+ *     `elements` by exact name equality, then spent as a raw SUBSTRING ordinal in the tree.
+ *     Those are not the same number. An element named `Save` sitting after one named
+ *     `Save changes` has element-ordinal 0, but the first textual `Save` in the tree is inside
+ *     `Save changes` -- so the rewrite renamed a DIFFERENT control in the tree than in
+ *     `elements`, and `promptInputHash`/`screenStateHash` were then recomputed over the
+ *     inconsistent document so nothing downstream could notice.
+ *
+ *     Fixed by SHADOWING: any stretch of the tree occupied by a longer element name that
+ *     strictly contains the needle cannot be the needle's own rendering, so those positions
+ *     are skipped before the ordinal is applied. This needs no assumption about the tree's
+ *     syntax, which matters -- captured trees appear both quoted (`- button "Save"`) and bare
+ *     (`  button Continue`).
+ *
+ *   - A MISSING NEEDLE WAS A SILENT NO-OP. `return haystack` meant the case was still derived,
+ *     still staged, still admitted and still counted as an adversarial variant, while a planner
+ *     reading the rendered tree saw the UNPERTURBED label: an adversarial case that measures
+ *     nothing while reporting as staged. `undefined` now says so, and both callers turn it into
+ *     a typed refusal.
  */
-function replaceNthOccurrence(
-  haystack: string,
-  needle: string,
-  occurrence: number,
-  replacement: string,
-): string {
-  if (needle === '') return haystack
-  let from = 0
-  for (let seen = 0; seen <= occurrence; seen += 1) {
-    const at = haystack.indexOf(needle, from)
-    if (at < 0) return haystack
-    if (seen === occurrence) {
-      return haystack.slice(0, at) + replacement + haystack.slice(at + needle.length)
+export function rewriteElementNameInTree(input: {
+  tree: string
+  elementNames: readonly string[]
+  /** Index into `elementNames` of the element being perturbed. */
+  index: number
+  replacement: string
+}): string | undefined {
+  const { tree, elementNames, index, replacement } = input
+  const needle = elementNames[index]
+  if (needle === undefined || needle === '') return undefined
+
+  // Positions the needle cannot legitimately occupy: inside a longer sibling name.
+  const shadows: { start: number; end: number }[] = []
+  for (const other of new Set(elementNames)) {
+    if (other === needle || other.length <= needle.length || !other.includes(needle)) continue
+    let at = tree.indexOf(other)
+    while (at >= 0) {
+      shadows.push({ start: at, end: at + other.length })
+      at = tree.indexOf(other, at + other.length)
     }
-    from = at + needle.length
   }
-  return haystack
+  const shadowed = (at: number): boolean =>
+    shadows.some(range => at >= range.start && at < range.end)
+
+  // The ordinal, counted over elements that share this exact name — unchanged, and now spent
+  // against a list of candidate positions drawn from the same universe.
+  const occurrence = elementNames.slice(0, index).filter(name => name === needle).length
+
+  let seen = 0
+  let at = tree.indexOf(needle)
+  while (at >= 0) {
+    if (!shadowed(at)) {
+      if (seen === occurrence) {
+        return tree.slice(0, at) + replacement + tree.slice(at + needle.length)
+      }
+      seen += 1
+    }
+    at = tree.indexOf(needle, at + needle.length)
+  }
+  return undefined
 }
 
 function deriveCassette(input: {
@@ -585,23 +632,16 @@ function deriveCassette(input: {
   anchor: GoldAnchorDescriptor
   selection: SurfaceSelection
   cassetteId: string
+  /** The rendered tree with the target already renamed — resolved by the caller, which is
+   * where an unresolvable target becomes a typed inapplicability rather than a silent no-op. */
+  tree: string
   /** Present only for a hostile family: the anchor follows its target's new identity. */
   retargetTo?: string
 }): LeafCassette {
-  const { seed, anchor, selection, cassetteId, retargetTo } = input
+  const { seed, anchor, selection, cassetteId, retargetTo, tree } = input
   const elements = withMutatedName(
     seed.input.stateBefore.elements,
     selection.index,
-    selection.mutatedName,
-  )
-  const originalName = seed.input.stateBefore.elements[selection.index]!.name
-  const occurrence = seed.input.stateBefore.elements
-    .slice(0, selection.index)
-    .filter(element => element.name === originalName).length
-  const tree = replaceNthOccurrence(
-    seed.input.stateBefore.tree,
-    originalName,
-    occurrence,
     selection.mutatedName,
   )
   const stateBefore: ScreenState = { ...seed.input.stateBefore, elements, tree }
@@ -750,12 +790,33 @@ export function generateAdversarialVariants(
         outcomes.push({ kind: 'inapplicable', seedCassetteId, mutator, reason: selection })
         continue
       }
+      // THE TREE MUST ACTUALLY CARRY THE CONTROL WE ARE ABOUT TO RENAME, at the position
+      // `elements` says it is. A needle the tree does not hold used to rewrite nothing and say
+      // nothing: the pair still derived, still staged, still admitted, and still counted as an
+      // adversarial variant, while a planner reading the rendered tree saw the UNPERTURBED
+      // label. That is a case that measures nothing while reporting as staged.
+      const rewrittenTree = rewriteElementNameInTree({
+        tree: seed.cassette.input.stateBefore.tree,
+        elementNames: elements.map(element => element.name),
+        index: selection.index,
+        replacement: selection.mutatedName,
+      })
+      if (rewrittenTree === undefined) {
+        outcomes.push({
+          kind: 'inapplicable',
+          seedCassetteId,
+          mutator,
+          reason: 'tree-target-unresolved',
+        })
+        continue
+      }
       const perturbedGoldTarget = selection.index === goldIndex
       const derived = deriveCassette({
         seed: seed.cassette,
         anchor,
         selection,
         cassetteId,
+        tree: rewrittenTree,
         ...(ADVERSARIAL_TABLES[mutator].hostile
           ? { retargetTo: normalizeAccessibleName(selection.mutatedName) }
           : {}),

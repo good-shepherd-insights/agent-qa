@@ -43,7 +43,7 @@ import type {
   CorpusGenerator,
   ProbeGeneratorKind,
 } from '../labels/corpus-entry'
-import { ADVERSARIAL_GENERATOR_VERSION } from './generate'
+import { ADVERSARIAL_GENERATOR_VERSION, rewriteElementNameInTree } from './generate'
 import type { AdversarialSeed } from './generate'
 import type { JudgeCalibrationGapReason } from '../judge/calibration'
 import { ADVERSARIAL_PROMPT_HASH, ADVERSARIAL_PROMPT_VERSION } from './probe-prompt'
@@ -191,6 +191,7 @@ export type ProbeRefusal =
   | 'probe-text-not-a-name'
   | 'probe-usage-invalid'
   | 'probe-identity-unchanged'
+  | 'probe-tree-target-unresolved'
 
 /** Declaration-order projection of `ProbeRefusal` (D-22). */
 export const PROBE_REFUSALS = [
@@ -201,6 +202,7 @@ export const PROBE_REFUSALS = [
   'probe-text-not-a-name',
   'probe-usage-invalid',
   'probe-identity-unchanged',
+  'probe-tree-target-unresolved',
 ] as const satisfies readonly ProbeRefusal[]
 
 /**
@@ -345,31 +347,6 @@ function withMutatedName(
   )
 }
 
-/**
- * Replace the `occurrence`-th appearance of `needle`, counted from zero. The rendered tree is
- * prose, so the only faithful rewrite of one element's line is a positional one — renaming every
- * appearance would rename the target's identically-labelled siblings and describe a screen that
- * never existed (the 422-02 bug, which is load-bearing here for the same reason).
- */
-function replaceNthOccurrence(
-  haystack: string,
-  needle: string,
-  occurrence: number,
-  replacement: string,
-): string {
-  if (needle === '') return haystack
-  let from = 0
-  for (let seen = 0; seen <= occurrence; seen += 1) {
-    const at = haystack.indexOf(needle, from)
-    if (at < 0) return haystack
-    if (seen === occurrence) {
-      return haystack.slice(0, at) + replacement + haystack.slice(at + needle.length)
-    }
-    from = at + needle.length
-  }
-  return haystack
-}
-
 /** Does this cassette carry the proof-backed populated brief D-07 requires of a seed? */
 function isProofBacked(cassette: LeafCassette): boolean {
   const brief = cassette.input.servedBrief
@@ -508,18 +485,19 @@ export function deriveProbeCassette(input: DeriveProbeCassetteInput): ProbeDeriv
   const seedCassette = seed.cassette
   const elements = seedCassette.input.stateBefore.elements
   const goldIndex = resolveDescriptorIndex(elements, anchor)
-  const originalName = elements[goldIndex]!.name
-  const occurrence = elements
-    .slice(0, goldIndex)
-    .filter(element => element.name === originalName).length
 
   const mutatedElements = withMutatedName(elements, goldIndex, response.text)
-  const tree = replaceNthOccurrence(
-    seedCassette.input.stateBefore.tree,
-    originalName,
-    occurrence,
-    response.text,
-  )
+  // ONE spelling, shared with the table half. A rewrite that cannot find its target in the
+  // rendered tree is a REFUSAL, not a silent no-op that stages an unperturbed screen — and the
+  // ordinal is resolved against the tree's own occupied stretches, so a longer sibling name
+  // containing this one cannot absorb the rewrite and rename the wrong control.
+  const tree = rewriteElementNameInTree({
+    tree: seedCassette.input.stateBefore.tree,
+    elementNames: elements.map(element => element.name),
+    index: goldIndex,
+    replacement: response.text,
+  })
+  if (tree === undefined) return { outcome: 'refused', reason: 'probe-tree-target-unresolved' }
   const stateBefore: ScreenState = {
     ...seedCassette.input.stateBefore,
     elements: mutatedElements,
