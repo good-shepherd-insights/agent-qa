@@ -160,6 +160,16 @@ const MARKER_CENSUS: Readonly<Record<string, 'consumer' | 'carrier' | 'producer'
   // code any more. REMOVED rather than relaxed, for the same reason `local-agent-host.ts` was in
   // 401-10: a census entry for a file that no longer names a marker is a claim nothing checks.
   'packages/cli/src/curation/post-verdict-step.ts': 'consumer',
+  // 2026-09-12 (422-14, D-19): A SECOND CONSUMER ON THE SAME SEAM, declared for the same reason
+  // the step above is one. `prepareMisdirectionEvidence` opens with
+  // `if (handoff.gateRun === true || handoff.excludedFromOutcomes === true) return NOT_CONSULTED`
+  // — a run carrying either marker has no arbiter consulted at all, so no circularity evidence is
+  // prepared and no provider call is charged against it. That is a decision the markers drive, not
+  // a representation of them, so `carrier` would be a lie about what this file does with the
+  // values it reads. The step above decides whether an `analyze-run` is enqueued; this one decides
+  // whether that run's exposures are arbitrated first. Both readings are the same law applied at
+  // two points on one chain.
+  'packages/cli/src/curation/misdirection-tail.ts': 'consumer',
   'packages/cli/src/commands/run.ts': 'carrier',
   // 2026-08-23 (401-10): `packages/cli/src/composition/local-agent-host.ts` LEFT THIS CENSUS WITH
   // ITS SUBJECT. It was a carrier because `MARKER_FLAGS` translated the two markers into the child
@@ -278,12 +288,31 @@ describe('the INVK-06 consumer census is frozen and self-checking (D-15)', () =>
     //                            durably ENQUEUED at all (404 D-08). It touches no outcome table,
     //                            writes no fingerprint and reads no projection.
     //
-    // A THIRD entry, or either of these growing a read of the other's substrate, is what this cell
-    // exists to refuse — so both are named, in full, rather than counted.
+    //   `misdirection-tail.ts`  — 2026-09-12 (422-14, D-19). Reads EITHER marker to decide whether
+    //                            the run's exposures are ARBITRATED at all: a gate run or an
+    //                            excluded run returns `NOT_CONSULTED`, so no circularity evidence
+    //                            is prepared and no provider call is charged against it. Its
+    //                            substrate is the misdirection sidecar on `handoff.json`.
+    //
+    // AN UNDECLARED entry, or any of these growing a read of another's substrate, is what this cell
+    // exists to refuse — so all three are named, in full, rather than counted. The count is still
+    // not the rule: no two readers may disagree about the SAME question, and these three answer
+    // three questions over three disjoint substrates (flake counting / the queue / the sidecar).
     expect(consumers).toEqual([
+      'packages/cli/src/curation/misdirection-tail.ts',
       'packages/cli/src/curation/post-verdict-step.ts',
       'packages/knowledge-local/src/projection/run-outcomes.ts',
     ])
+    // The third gate's disjointness, measured on the same terms as the two below it: the arbiter
+    // gate names no outcome substrate and does not enqueue — it decides what the first analysis may
+    // read, never whether that analysis is queued, which is the step's question and only the step's.
+    const arbiter = readFileSync(
+      join(ROOT, 'packages/cli/src/curation/misdirection-tail.ts'),
+      'utf8',
+    )
+    expect(arbiter, 'the arbiter gate must not reach into run outcomes').not.toContain('projectRunOutcomes')
+    expect(arbiter).not.toContain('run_test_outcomes')
+    expect(arbiter, 'the arbiter gate must not enqueue — that is the step\'s decision').not.toContain('queue.enqueue')
     // The disjointness, measured rather than asserted in prose: the enqueue gate names no outcome
     // substrate, and the outcome gate names no queue.
     const step = readFileSync(join(ROOT, 'packages/cli/src/curation/post-verdict-step.ts'), 'utf8')
