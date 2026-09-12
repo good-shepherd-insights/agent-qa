@@ -1175,7 +1175,9 @@ export async function readMisdirectionRootPosture(
 ): Promise<MisdirectionRootPostureRead> {
   const digest = readCanaryCorpusDigest(session)
   if (digest.kind === 'no-eval-root') return { kind: 'no-eval-root' }
-  if (digest.kind !== 'digest') return { kind: 'broken-eval-root', reason: digest.reason }
+  // A closed word, not `digest.reason`: that string is an `lstat`/read error message and it
+  // lands in the durable `misdirection-posture.json`. See MISDIRECTION_ROOT_UNREADABLE.
+  if (digest.kind !== 'digest') return { kind: 'broken-eval-root', reason: 'eval-root-unreadable' }
   const identity = await resolveGateProfileIdentity(session)
   // The profile KEY hashed, never carried: the key names declared model ids, and a row that
   // travels onto the enqueue payload and into `analysis.json` should bind the profile without

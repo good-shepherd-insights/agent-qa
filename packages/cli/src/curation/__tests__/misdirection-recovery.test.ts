@@ -50,9 +50,12 @@ import type {
 import { ATTR_DEFAULT_MAX_MISDIRECTION_CHECKS } from '../../eval-session-composition.js'
 import {
   MISDIRECTION_CAP_EXCEEDED,
+  MISDIRECTION_CHECK_FAILED,
+  MISDIRECTION_DECISION_UNLOCATABLE,
   MISDIRECTION_INTERRUPTED,
   MISDIRECTION_NO_EVAL_ROOT,
   MISDIRECTION_POSTURE_UNAVAILABLE,
+  MISDIRECTION_ROOT_UNREADABLE,
   misdirectionExposures,
   prepareMisdirectionEvidence,
   type MisdirectionArbiterPort,
@@ -523,5 +526,69 @@ describe('every refusal keeps its own words (D-18)', () => {
     expect(result.notices[0]).toContain('no live decision at target')
     expect(calls.check).toEqual([])
     expect(fixture.onDisk().misdirectionEvidence).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// CR-04 — a resolver or provider exception is never forwarded as text
+// ---------------------------------------------------------------------------------------
+
+// The calls behind this port are `resolveEvalSession` (registry + credential resolution),
+// `readMisdirectionRootPosture`, `locateMisdirectionDecision` and `runMisdirectionCheck` -- a
+// provider call. Their exception text used to be carried verbatim into TWO places that must
+// never hold untrusted free text: the durable `misdirection-posture.json` `reason` field, and
+// the `notices` array, which is returned to the caller through no masker. The sibling
+// preflight in this same phase already refuses to forward resolver messages.
+describe('CR-04: exception text from a credential-resolving layer never becomes disclosure', () => {
+  const SECRET = 'registry entry acme-llm: provider key sk-live-DEADBEEF rejected'
+
+  it('reduces a throwing rootPosture to a closed word, on disk and in the notices', async () => {
+    const fixture = project(oneFailingStep(ids(1)))
+    const port: MisdirectionArbiterPort = {
+      ...stubArbiter().port,
+      rootPosture: async () => { throw new Error(SECRET) },
+    }
+    const result = await fixture.prepare(port)
+
+    expect(result.posture).toBe('broken-eval-root')
+    expect(JSON.stringify(result.notices)).not.toContain('sk-live-DEADBEEF')
+    expect(JSON.stringify(result.notices)).not.toContain('acme-llm')
+    expect(result.notices).toEqual([
+      `${MISDIRECTION_POSTURE_UNAVAILABLE}: ${MISDIRECTION_ROOT_UNREADABLE}`,
+    ])
+    // The DURABLE record is the half no downstream allow-list protects.
+    expect(readMisdirectionRunPosture(fixture.runDir, fixture.runId)).toEqual({
+      schemaVersion: 1,
+      runId: fixture.runId,
+      kind: 'broken-eval-root',
+      reason: MISDIRECTION_ROOT_UNREADABLE,
+    })
+  })
+
+  it('reduces a throwing locate to a closed word', async () => {
+    const fixture = project(oneFailingStep(ids(1)))
+    const port: MisdirectionArbiterPort = {
+      ...stubArbiter().port,
+      locate: async () => { throw new Error(SECRET) },
+    }
+    const result = await fixture.prepare(port)
+
+    expect(result.rows).toEqual([])
+    expect(JSON.stringify(result.notices)).not.toContain('sk-live-DEADBEEF')
+    expect(result.notices).toEqual([`rec-0 at step 0: ${MISDIRECTION_DECISION_UNLOCATABLE}`])
+  })
+
+  it('reduces a throwing check -- a provider call -- to a closed word', async () => {
+    const fixture = project(oneFailingStep(ids(1)))
+    const port: MisdirectionArbiterPort = {
+      ...stubArbiter().port,
+      check: async () => { throw new Error(SECRET) },
+    }
+    const result = await fixture.prepare(port)
+
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0]?.crossCheck).toBe('not-run')
+    expect(JSON.stringify(result.notices)).not.toContain('sk-live-DEADBEEF')
+    expect(result.notices).toEqual([`rec-0 at step 0: ${MISDIRECTION_CHECK_FAILED}`])
   })
 })

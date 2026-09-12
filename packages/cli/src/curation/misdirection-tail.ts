@@ -86,6 +86,22 @@ export const MISDIRECTION_NO_EVAL_ROOT = 'no-eval-root'
 export const MISDIRECTION_POSTURE_UNAVAILABLE = 'posture-unavailable'
 
 /**
+ * The closed words this producer may say about a FAILURE, and the only things it says.
+ *
+ * Every call these stand in for resolves a registry entry, a credential or a provider:
+ * `resolveEvalSession`, `readMisdirectionRootPosture`, `locateMisdirectionDecision` and
+ * `runMisdirectionCheck`. Their exception text can name a registry entry, a provider or a
+ * model id, and it lands in two places that must never carry untrusted free text -- the
+ * durable `misdirection-posture.json` `reason` field, and the `notices` array returned to the
+ * caller, which passes through no masker. The sibling code in this phase already refuses to
+ * forward resolver messages for exactly this reason. A closed word keeps the refusal
+ * actionable without forwarding the text.
+ */
+export const MISDIRECTION_ROOT_UNREADABLE = 'eval-root-unreadable'
+export const MISDIRECTION_DECISION_UNLOCATABLE = 'decision-unlocatable'
+export const MISDIRECTION_CHECK_FAILED = 'check-failed'
+
+/**
  * What the evaluation root answered, and the run-level identities a row must bind.
  *
  * THREE ARMS, NEVER TWO. An absent root and a broken root produce identical (empty) evidence and
@@ -302,8 +318,8 @@ export async function prepareMisdirectionEvidence(
   let posture: MisdirectionRootPostureRead
   try {
     posture = await input.arbiter.rootPosture()
-  } catch (error) {
-    posture = { kind: 'broken-eval-root', reason: errorText(error) }
+  } catch {
+    posture = { kind: 'broken-eval-root', reason: MISDIRECTION_ROOT_UNREADABLE }
   }
   writeMisdirectionRunPosture(input.runDir, postureRecord(runId, posture))
 
@@ -356,8 +372,8 @@ export async function prepareMisdirectionEvidence(
         testId: exposure.testId,
         stepIndex: exposure.stepIndex,
       })
-    } catch (error) {
-      answer = { kind: 'unavailable', reason: errorText(error) }
+    } catch {
+      answer = { kind: 'unavailable', reason: MISDIRECTION_DECISION_UNLOCATABLE }
     }
     located.set(stepKey, answer)
     return answer
@@ -443,8 +459,9 @@ export async function prepareMisdirectionEvidence(
           perTest: memberOf(handoff, exposure.testId, exposure.perTest)!,
         },
       })
-    } catch (error) {
-      notices.push(`${exposure.recordId} at step ${String(exposure.stepIndex)}: ${errorText(error)}`)
+    } catch {
+      // A PROVIDER call. Its exception text is the least safe string in this file.
+      notices.push(`${exposure.recordId} at step ${String(exposure.stepIndex)}: ${MISDIRECTION_CHECK_FAILED}`)
       rows.push({
         ...identities,
         crossCheck: 'not-run',
@@ -572,10 +589,6 @@ function memberOf(
   return handoff.tests.find((test) => test.testId === testId && test.testIndex === perTest)
 }
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 /**
  * The host-owned preparation capability — ONE builder, composed by BOTH production run hosts and
  * by the post-verdict step's own default, and by nothing else.
@@ -628,8 +641,10 @@ export function misdirectionArbiterForHost(input: {
       try {
         const { readMisdirectionRootPosture } = await import('../eval-session-composition.js')
         return await readMisdirectionRootPosture(await session())
-      } catch (error) {
-        return { kind: 'broken-eval-root', reason: errorText(error) }
+      } catch {
+        // Closed word only -- a resolver message can name a registry entry, a provider or a
+        // model id, and this value is written to disk.
+        return { kind: 'broken-eval-root', reason: MISDIRECTION_ROOT_UNREADABLE }
       }
     },
     async resolveCaps() {
@@ -640,8 +655,8 @@ export function misdirectionArbiterForHost(input: {
       try {
         const { locateMisdirectionDecision } = await import('../eval-session-composition.js')
         return await locateMisdirectionDecision(await session(), target)
-      } catch (error) {
-        return { kind: 'unavailable', reason: errorText(error) }
+      } catch {
+        return { kind: 'unavailable', reason: MISDIRECTION_DECISION_UNLOCATABLE }
       }
     },
     async check(target) {
