@@ -104,9 +104,12 @@
 #   V-03  409 Rows 10-13 / VOCB-01 + VOCB-02, the whole-vocabulary readmission  arch census  none
 #   J-02  409 Row 2 / JOBK-02, a second declared successor  agent real-kinds + engine-semantics + kind-registry  none
 #   J-01  409 Row 1 / JOBK-01, a sixth kind on the enqueue contract  agent kind-registry.test.ts  schema ONLY (agent MUST NOT be rebuilt)
-#   J-03a  409 Row 3 / JOBK-03 instrument (a)  agent chain-identity + runs-post-processing  agent then agent-local
-#   J-03b  409 Row 3 / JOBK-03 instrument (b)  agent-local chain-terminal-notify.test.ts  agent then agent-local
-#   J-03c  409 Row 3 / JOBK-03 instrument (c)  cli post-run-enqueue-idempotency.test.ts  agent then agent-local
+#   J-03a  409 Row 3 / JOBK-03, RETARGETED by 422 D-13 — instrument (a)  agent chain-identity +
+#            runs-post-processing  agent then agent-local
+#   J-03b  409 Row 3 / JOBK-03, RETARGETED by 422 D-13 — instrument (b)  agent-local
+#            chain-terminal-notify.test.ts  agent then agent-local
+#   J-03c  409 Row 3 / JOBK-03, RETARGETED by 422 D-13 — instrument (c)  cli
+#            post-run-enqueue-idempotency.test.ts  agent then agent-local
 #   E-01  410 Row 1 / ENTY-03, the sixth kind in the ARRAY  schema 410-five-entity-kinds.test.ts  none
 #   E-02  410 Row 2 / the cast smuggle on the two kinds.ts tables  same suite + a live schema typecheck (exit 0)  none
 #   E-03  410 Row 3 / the cast smuggle on the two entity-card.ts tables  same suite + a live schema typecheck (exit 0)  none
@@ -1138,9 +1141,19 @@ run_leg J-01 "a sixth kind re-added to the enqueue contract" runtime \
   "$J01_REQUIRED" "$J01_ALLOWED" "$AGENT_FILTER" "src/jobs/__tests__/kind-registry.test.ts" \
   "$SCHEMA_FILTER" "packages/schema/src/job/job.ts" ""
 
-# 409 Row 3 / JOBK-03 — one mutation, three instruments, three independent cycles (the Row 7/8
-# precedent). `tsc` is SILENT on a third key — both rebuild filters exited 0 under the mutation,
-# so the widening reaches every cell as a runtime change and these are the only wall there is.
+# 409 Row 3 / JOBK-03, RETARGETED BY 422 D-13 — one mutation, three instruments, three independent
+# cycles (the Row 7/8 precedent). `tsc` is SILENT on an extra key — both rebuild filters exit 0
+# under the mutation, so the widening reaches every cell as a runtime change and these are the only
+# wall there is.
+#
+# WHAT MOVED, AND WHY THE OLD EXPECTATIONS WOULD HAVE BEEN A LIE. 409 narrowed the chain to TWO
+# derived ids and this leg proved a third was refused. 422 D-13 AUTHORISED a third — the
+# `propose-improvements` stage — so the cells this leg names were re-titled to the three-id shape by
+# 422-07, and its two-id REQUIRED strings named cells that no longer exist. Asserting them would
+# have been a `did not red its named cell` FATAL at best and, had the titles happened to survive, a
+# leg measuring a legal widening at worst. The mutation now injects a FORBIDDEN FOURTH id and the
+# REQUIRED sets below are TRANSCRIBED FROM A MEASURED RUN of that mutation, not predicted: four
+# cells in the agent, two across the agent-local dist, one through both dists in the cli.
 #
 # The rebuild order is load-bearing twice over: agent-local resolves the agent through `dist` and
 # the cli resolves BOTH through `dist`, so leg (c) reads a stale derivation if either build is
@@ -1150,28 +1163,30 @@ run_leg J-01 "a sixth kind re-added to the enqueue contract" runtime \
 J03_SUBJECT="packages/agent/src/jobs/chain-identity.ts"
 J03_REBUILD="$AGENT_FILTER $LOCAL_FILTER"
 
-J03A_REQUIRED="derives exactly two chain ids, keyed analyzeRun and curateMemory
-lets every derived chain kind land the terminal — the terminal list equals the derived kind set"
-# The port cell is recorded ALLOWED but the ledger calls it a valid optional REQUIRED, promotable
-# without re-measuring (409 note (e)); it is left where the row put it.
-J03A_ALLOWED="$J03A_REQUIRED
-derives two distinct ids whose successor key is built from the head id
-asks the port for exactly the two ids chainJobIdsForRun derives"
-run_leg J-03a "a third derived chain id, read in the agent package" runtime \
+J03A_REQUIRED="derives exactly three chain ids, keyed analyzeRun, curateMemory and proposeImprovements
+derives three distinct ids, each successor key built from its own predecessor id
+lets every derived chain kind land the terminal — the terminal list equals the derived kind set
+asks the port for exactly the three ids chainJobIdsForRun derives"
+# The port cell was ALLOWED-not-REQUIRED because 409 note (e) called it promotable without
+# re-measuring. It is PROMOTED here on a measurement rather than on that permission: under the
+# forbidden-fourth mutation it REDs every run, because the op hands the port the whole derived id
+# set and the cell counts what the port was asked for.
+J03A_ALLOWED="$J03A_REQUIRED"
+run_leg J-03a "a forbidden FOURTH derived chain id, read in the agent package" runtime \
   "$J03A_REQUIRED" "$J03A_ALLOWED" "$AGENT_FILTER" \
   "src/jobs/__tests__/chain-identity.test.ts src/functions/ops/__tests__/runs-post-processing.test.ts" \
   "$J03_REBUILD" "$J03_SUBJECT" ""
 
-J03B_REQUIRED="drives enqueue -> analyze-run -> curate-memory -> exactly one notification row
+J03B_REQUIRED="drives enqueue -> analyze-run -> curate-memory -> propose-improvements -> exactly one notification row
 notifies honestly when the analysis died and curation carried on"
 J03B_ALLOWED="$J03B_REQUIRED"
-run_leg J-03b "the same third id, read across the agent -> agent-local dist boundary" runtime \
+run_leg J-03b "the same fourth id, read across the agent -> agent-local dist boundary" runtime \
   "$J03B_REQUIRED" "$J03B_ALLOWED" "$LOCAL_FILTER" "src/__tests__/chain-terminal-notify.test.ts" \
   "$J03_REBUILD" "$J03_SUBJECT" ""
 
 J03C_REQUIRED='produces exactly one analyze-run job, and the second run dedupes rather than errors'
 J03C_ALLOWED="$J03C_REQUIRED"
-run_leg J-03c "the same third id, read by the cli through both dists" runtime \
+run_leg J-03c "the same fourth id, read by the cli through both dists" runtime \
   "$J03C_REQUIRED" "$J03C_ALLOWED" "$CLI_FILTER" \
   "src/__tests__/post-run-enqueue-idempotency.test.ts" \
   "$J03_REBUILD" "$J03_SUBJECT" ""
@@ -1356,9 +1371,10 @@ echo "       the WHOLE deleted delta vocabulary and id brand, readmitted from th
 echo "       into a tree that still compiles, REDs exactly the four census cells that name them;"
 echo "       a second declared successor for analyze-run REDs the successor cells and nothing in"
 echo "       the registry; a sixth kind re-added to the enqueue contract REDs the sorted-list cell"
-echo "       with the schema alone rebuilt; and a third derived chain id REDs by name at all three"
-echo "       distances — in the agent, across the agent-local dist, and through both dists in the"
-echo "       cli — with every subject restored byte-identically after each cycle."
+echo "       with the schema alone rebuilt; and a FORBIDDEN FOURTH derived chain id — the third"
+echo "       having been authorised by 422 D-13 — REDs by name at all three distances: in the"
+echo "       agent, across the agent-local dist, and through both dists in the cli, with every"
+echo "       subject restored byte-identically after each cycle."
 echo "       And of the 410 ledger: a sixth entity kind REDs the array cell by name, and the same"
 echo "       kind cast-smuggled onto all five satisfies-total tables REDs their key-set cells while"
 echo "       the compiler stays at exit 0 under every cast — the asymmetry 410 measured, proven on"
