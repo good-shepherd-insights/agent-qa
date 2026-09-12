@@ -365,7 +365,7 @@ There is no ninth class. `flipped` moves trust regardless of the model's answer;
 re-invoked once with the arbiter result in its diet, and a persistent no-trust-change answer
 degrades to the floor.
 
-### BYOM, and what this milestone did not deliver (D-19)
+### BYOM: the declared claim stands, disclosed (D-19)
 
 D-19's design is: with no eval root the tail records `misdirectionRuledOut: { crossCheck:
 'not-run', reason: 'no-eval-root' }`, the validator accepts the model's declared boolean exactly
@@ -373,22 +373,25 @@ as before, and the verdict discloses `backing: declared-only` so learning stays 
 the system says it is blunter. A present-but-broken root is `not-run: posture-unavailable` and
 earns no exemption.
 
-**The recording half shipped; the validator exemption did not reach production.** The tail writes
-the posture durably to `misdirection-posture.json` before the analysis enqueue, but no shipped
-composition binds `PostRunJobCapabilities.readMisdirectionRootPosture`, so the analysis handler
-falls to its fail-closed `'eval-root'` default on every run. A BYOM host is therefore held to the
-*stricter* gated rule rather than the intended exemption. Nothing is mis-stated to an operator:
-both disclosures render the **applied** backing and name the recorded posture beside it when the
-two disagree —
+The tail writes the posture durably to `misdirection-posture.json` before the analysis enqueue.
+Both production hosts now bind `PostRunJobCapabilities.readMisdirectionRootPosture` through one
+builder, `misdirectionPostureCapability`, forwarded by agent-local's composition. The analysis
+handler therefore applies the recorded posture. With an absent root, a model's declared
+`memoryMisdirectionRuledOut: true` keeps its declared class with `backing: declared-only`.
+A present-but-broken root is `posture-unavailable`, earns no exemption and degrades a gated
+claim to the `unknown` floor. An unrecorded run retains the fail-closed gated rule.
+
+The chain line for an applied absent root and doctor's binding disclosure read:
 
 ```
-circularity guard: eval-root (fail-closed; recorded no-eval-root unread — no host binds the posture)
-circularity backing: fail-closed eval-root (no host binds the recorded posture)
+circularity guard: declared-only
+circularity backing: recorded posture applied
 ```
 
-— rather than printing `declared-only` off a posture the verdict never received. Binding the
-reader flips a fail-closed default to open and is owned by the phase that can verify it against a
-real BYOM run; see the Phase 422 reconciliation notes in `.planning/REQUIREMENTS.md`.
+Gap-closure plan 422-27 delivered the binding and its fail-closed controls. The live BYOM run's
+disposition is recorded separately in 422-28's summary and the final-gates record; fixture
+coverage alone does not establish that live accepted-class change. See also the Phase 422
+gap-closure addenda in `.planning/REQUIREMENTS.md`.
 
 ## The retired-kind quarantine (D-16)
 
@@ -463,7 +466,7 @@ The date is the decision date (`422-CONTEXT.md`); the notes were written during 
 | 6 | The third chain id, notification schema v3's additive `proposals` stage, absent-is-not-zero, and the chip-less choice | D-13 | The chain, inline Gate 1 |
 | 7 | Four recorded defaults — 8 / 4 / 4 / 4 — each with a rationale and a disclosed source | D-04, D-11, D-14, D-18 | Caps, and where each came from |
 | 8 | `memoryOnPath` / `misdirectionRuledOut` are additive-optional evidence; `memoryMisdirectionRuledOut` keeps its name and meaning; eight verdict classes | D-17, D-20 | The circularity guard |
-| 9 | BYOM `declared-only`: the recording and disclosure half shipped, **the validator exemption did not** | D-19 | BYOM, and what this milestone did not deliver |
+| 9 | BYOM `declared-only`: the validator exemption is delivered by 422-27 on both production hosts; broken or unrecorded roots stay fail-closed | D-19 | BYOM: the declared claim stands, disclosed |
 | 10 | `flipped` ⇒ `exercised-harmed` on a failing step, whatever class the model wrote | D-20 | The circularity guard |
 | 11 | The retired-kind quarantine word `unreadable_kind`; no store version bump | D-16 | The retired-kind quarantine |
 | 12 | The local adversarial audit anatomy, and hygiene coverage of admitted entries by construction | — | Local audit anatomy |
