@@ -228,9 +228,21 @@ describe('agent-qa agent-jobs requeue over a quarantined row (422 D-16)', () => 
     expect(outcome.kind).toBe('refused')
     if (outcome.kind !== 'refused') return
     expect(outcome.reason).toBe('unreadable-kind')
-    // The message has to be ACTIONABLE — it names the row's own kind, so the operator reading it
-    // knows why this row is different from every other terminal row they can requeue.
-    expect(String(outcome.message)).toContain(RETIRED_KIND)
+    // WR-07. THIS PIN IS INVERTED FROM WHAT IT USED TO SAY, deliberately. It required the
+    // message to name the row's own kind, "so the operator reading it knows why this row is
+    // different". But `QUARANTINED_UNREADABLE_KIND_REASON` -- the store's own reason column,
+    // twenty lines from the error that was interpolating this value -- states the opposite
+    // rule with a full rationale: the unreadable kind is a string an EARLIER build, or
+    // anything with write access to that database, put in a column, and a rendered-on-a-
+    // terminal field is the last place to paste the one value this build refuses to trust.
+    // Two rules for one value, and the considered one wins.
+    //
+    // Actionability does not depend on this: the cell above pins that `listAgentJobs` still
+    // discloses `kind: RETIRED_KIND` on the typed DTO, which is where a reader has to ASK for
+    // the value and knows what it is when they do.
+    expect(String(outcome.message)).not.toContain(RETIRED_KIND)
+    expect(String(outcome.message)).toContain('a kind this build does not read')
+    expect(String(outcome.message)).toContain('job_retired_head')
 
     // Nothing moved: same rows, same attempts, same statuses, same conclusion — asserted over the
     // whole row set rather than field by field, so a column this cell never thought to name cannot

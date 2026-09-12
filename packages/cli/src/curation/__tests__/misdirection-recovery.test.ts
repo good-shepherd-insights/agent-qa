@@ -24,7 +24,7 @@
 // own. NOTHING HERE REACHES A PROVIDER OR AN EVALUATION ROOT: the arbiter is a port.
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -32,6 +32,7 @@ import {
   asRecordId,
   asRef,
   asRunId,
+  canonicalJson,
   computeBriefDigest,
   guardCompletedRunHandoff,
   sha256hex,
@@ -590,5 +591,34 @@ describe('CR-04: exception text from a credential-resolving layer never becomes 
     expect(result.rows[0]?.crossCheck).toBe('not-run')
     expect(JSON.stringify(result.notices)).not.toContain('sk-live-DEADBEEF')
     expect(result.notices).toEqual([`rec-0 at step 0: ${MISDIRECTION_CHECK_FAILED}`])
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// WR-08 — the sidecar write does not repermission or re-serialise the runner's document
+// ---------------------------------------------------------------------------------------
+
+describe('WR-08: persistMisdirectionSidecar leaves handoff.json as it found it', () => {
+  it('does not narrow the file mode the runner chose', async () => {
+    const fixture = project(oneFailingStep(ids(1)))
+    // A group-readable handoff, as a runner sharing a run directory would leave it.
+    chmodSync(fixture.handoffPath, 0o640)
+
+    await fixture.prepare(stubArbiter().port)
+
+    // The sidecar staged at a hardcoded 0o600 and renamed over the original, silently
+    // tightening the document to owner-only on the FIRST write with any exposure.
+    expect(statSync(fixture.handoffPath).mode & 0o777).toBe(0o640)
+    // And it really did write: the claim is "unchanged mode", not "no write happened".
+    expect(fixture.onDisk().misdirectionEvidence).toHaveLength(1)
+  })
+
+  it('serialises canonically, so the document has ONE spelling', async () => {
+    const fixture = project(oneFailingStep(ids(1)))
+    await fixture.prepare(stubArbiter().port)
+
+    const text = readFileSync(fixture.handoffPath, 'utf8')
+    const parsed: unknown = JSON.parse(text)
+    expect(text).toBe(`${canonicalJson(parsed)}\n`)
   })
 })

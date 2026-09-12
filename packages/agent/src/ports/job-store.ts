@@ -105,9 +105,16 @@ export interface JobInsert extends JobEnqueueRequest {
  * recorded WHY it was quarantined would be gone.
  *
  * Raised INSIDE the requeue's transaction and before any of those three media is touched, so a
- * refused requeue leaves the store byte-identical. The message names the row's own kind because
- * that is the fact an operator needs and cannot get from the refusal alone — it is read from the
- * row this operator explicitly addressed, not from untrusted input arriving at a surface.
+ * refused requeue leaves the store byte-identical.
+ *
+ * THE MESSAGE DOES NOT NAME THE KIND, and that is the same rule
+ * `QUARANTINED_UNREADABLE_KIND_REASON` states for `last_failure_reason`: the unreadable kind is
+ * a string an EARLIER build -- or anything with write access to that database -- put in a
+ * column, and this message is rendered on operator terminals and copied into logs.
+ * Interpolating it here took the one field of the row this build refuses to trust and pasted it
+ * into the one place an operator is most likely to read without thinking. The value stays on
+ * `unreadableKind`, where a caller has to ask for it and knows what it is when they do --
+ * exactly where the `kind` column keeps it.
  */
 export class QuarantinedJobRequeueError extends Error {
   override readonly name = 'QuarantinedJobRequeueError'
@@ -117,11 +124,12 @@ export class QuarantinedJobRequeueError extends Error {
     readonly unreadableKind: string,
   ) {
     super(
-      `Agent job ${jobId} cannot be requeued: it was recorded under kind ` +
-        `${JSON.stringify(unreadableKind)}, which this build does not read, so it was ` +
-        'quarantined at claim rather than handled. No registered kind can run it, and a requeue ' +
-        'would reset its spent attempt and delete the record of why it was quarantined without ' +
-        'making it runnable. Clear the row deliberately if it is no longer wanted.',
+      `Agent job ${jobId} cannot be requeued: it was recorded under a kind this build does ` +
+        'not read, so it was quarantined at claim rather than handled. No registered kind can ' +
+        'run it, and a requeue would reset its spent attempt and delete the record of why it ' +
+        'was quarantined without making it runnable. The original kind, id and payload are ' +
+        'preserved in the row for inspection. Clear the row deliberately if it is no longer ' +
+        'wanted.',
     )
   }
 }

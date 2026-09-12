@@ -487,3 +487,22 @@ describe('CR-06: a tree that cannot carry the perturbation reports rather than s
     ])
   })
 })
+
+describe('WR-06: drawAdversarialTableEntry over an empty family', () => {
+  it('throws rather than returning undefined typed as an entry', () => {
+    // NOT a regression cell -- a pin on behaviour that is already correct, added because it
+    // was untested and a review read it as broken. The claim was that `entries: []` makes the
+    // non-null assertion yield `undefined` TYPED as an AdversarialTableEntry. It does not:
+    // `nextInt(0, -1)` computes `range = 0`, fails its own `range < 1` guard and throws a
+    // TypeError before any indexing happens, so the assertion is never reached. Pinned here
+    // so a future change to `nextInt`'s range guard cannot quietly make the claim true.
+    expect(() =>
+      engine.drawAdversarialTableEntry({
+        seedCassetteId: 'seed',
+        mutator: 'confusable',
+        tableVersion: ADVERSARIAL_TABLE_VERSION,
+        entries: [],
+      }),
+    ).toThrow(TypeError)
+  })
+})

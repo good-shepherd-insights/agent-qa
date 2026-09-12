@@ -39,6 +39,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -471,15 +472,31 @@ export function persistMisdirectionSidecar(
     throw new Error('completed run handoff is not an object')
   }
   const next = { ...(raw as Record<string, unknown>), misdirectionEvidence: value }
-  replaceAtomically(handoffPath, `${JSON.stringify(next)}\n`)
+  // `canonicalJson`, matching the posture writer above and every other document this phase
+  // writes -- and matching the basis `enqueueAnalyzeRun` already digests this handoff under.
+  // A plain `JSON.stringify` here was a third serialization of one document.
+  replaceAtomically(handoffPath, `${canonicalJson(next)}\n`)
 }
 
-/** Stage → fsync → rename → fsync dir: a reader sees the whole old document or the whole new one. */
+/**
+ * Stage → fsync → rename → fsync dir: a reader sees the whole old document or the whole new one.
+ *
+ * THE EXISTING FILE'S MODE IS PRESERVED. This renames over documents another writer created --
+ * `handoff.json` is the runner's -- and staging at a hardcoded `0o600` silently tightened that
+ * file to owner-only on the first sidecar write, regardless of what the runner chose. `0o600`
+ * remains the default for a document this function is CREATING.
+ */
 function replaceAtomically(path: string, text: string): void {
   const dir = dirname(path)
   const staged = join(dir, `.${randomUUID()}.tmp`)
+  let mode = 0o600
   try {
-    writeFileSync(staged, text, { encoding: 'utf8', mode: 0o600 })
+    mode = statSync(path).mode & 0o777
+  } catch {
+    // No existing document: this call is creating one, and owner-only is the right default.
+  }
+  try {
+    writeFileSync(staged, text, { encoding: 'utf8', mode })
     fsyncPath(staged)
     renameSync(staged, path)
     fsyncPath(dir)

@@ -85,6 +85,15 @@ export const ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH = 8
  * The families this engine derives. 422-01 derived two of eleven and reported the rest as a
  * typed skip; 422-02 closed that gap, so the generated set IS the declared set and the
  * per-family honesty now lives in the inapplicability rows rather than in a subset list.
+ *
+ * WHICH MAKES `isGenerated` VACUOUS TODAY, AND SAYING SO IS THE POINT. Because this list is
+ * `ADVERSARIAL_MUTATORS` verbatim and the request filter below is drawn from the same list,
+ * the `mutator-not-generated` branch cannot be reached and that word reads `0` in every count
+ * rendered from the closed vocabulary. It is retained on purpose rather than deleted: the word
+ * is persisted in staging reports written before 422-02, so a reader of those records still
+ * needs it, and the guard is what makes narrowing this list again a one-line change instead of
+ * a re-derivation of the skip path. Do not read the zero as "every family was generated" --
+ * read it as "nothing can currently produce this row".
  */
 export const ADVERSARIAL_GENERATED_MUTATORS: readonly AdversarialMutator[] = ADVERSARIAL_MUTATORS
 
