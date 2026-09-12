@@ -38,6 +38,7 @@ import {
   projectSilverLabelRecord,
   type ComputeGateVerdictInput,
   type DecisionCorrectnessVector,
+  type EvalBatchReport,
   type GenerationRequest,
   type LeafCassette,
   type ProbeText,
@@ -230,7 +231,17 @@ function vector(i: number): DecisionCorrectnessVector {
   }
 }
 
-function gateFixture(): ComputeGateVerdictInput {
+/**
+ * `ComputeGateVerdictInput.baseline` is optional on the contract — a gate run with no designated
+ * baseline is legal and is exactly what `missing-baseline` reports. This fixture always supplies
+ * one, so its return type says so: without the narrowing every cell below would have to
+ * non-null-assert a field the fixture guarantees, and a `!` is how a real absence gets silenced.
+ */
+type GateFixture = ComputeGateVerdictInput & {
+  baseline: NonNullable<ComputeGateVerdictInput['baseline']> & { report: EvalBatchReport }
+}
+
+function gateFixture(): GateFixture {
   const baselineReport = buildEvalReport([], undefined, undefined, { declaredSeed: 11 })
   const currentReport = buildEvalReport([], undefined, undefined, { declaredSeed: 29 })
   baselineReport.batchKey = 'acceptance-baseline'
