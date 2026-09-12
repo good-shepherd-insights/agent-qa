@@ -46,12 +46,24 @@ export const POST_RUN_CHAIN_TERMINAL_KINDS: readonly JobKind[] = Object.freeze([
   'propose-improvements',
 ])
 
-// 2026-09-12, 422-22 (RED skeleton): the key set, landed at the 409 width so the cells in
-// `__tests__/422-chain-closed-sets.test.ts` fail on their named assertions rather than on a
-// module-load error, which the #3770 gate classifies as INVALID_RED.
+/**
+ * 2026-09-12, 422-22 (D-13): the key set the derivation addresses, as a pinned literal list.
+ *
+ * The D-22 bar idiom, applied to a KEY SET rather than to a union of values: `satisfies` refuses a
+ * name this interface does not declare, and the independent oracles in
+ * `__tests__/422-chain-closed-sets.test.ts` / `.test-d.ts` pin the other direction, which is the
+ * one that matters here. A fourth id added to `ChainJobIds` alone would leave this list naming
+ * three and `satisfies` perfectly happy — nothing in a green suite fails when a set GROWS, which
+ * is exactly why the reverse-membership cells exist.
+ *
+ * The width has moved twice and both moves were authorised: 409's Issue-slot cleanup took it from
+ * three to two, and 422 D-13 restored a third for `propose-improvements`. Stating it as data is
+ * what makes the next move announce itself.
+ */
 export const CHAIN_JOB_ID_KEYS = [
   'analyzeRun',
   'curateMemory',
+  'proposeImprovements',
 ] as const satisfies readonly (keyof ChainJobIds)[]
 
 /** The three job ids one run's chain addresses, whether or not any of them exists. */

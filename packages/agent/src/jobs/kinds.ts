@@ -181,7 +181,7 @@ function analyzeRunFallback(input: FallbackContinuationInput): readonly ChainedJ
   )
 }
 
-const ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory']
+const ANALYZE_RUN_SUCCESSORS = ['curate-memory'] as const satisfies readonly JobKind[]
 
 /**
  * The 422 D-13 edge, declared once and read by the declaration, the real handler and the
@@ -189,7 +189,12 @@ const ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory']
  * above rests on. `propose-improvements` is a kind this build has declared since 385; what this
  * constant adds is the successor relation that finally reaches it.
  */
-const CURATE_MEMORY_SUCCESSORS: readonly JobKind[] = ['propose-improvements']
+//
+// 2026-09-12, 422-22: stated as `as const satisfies readonly JobKind[]` rather than annotated,
+// so the literal members survive into the type. An annotation widens the entries to `JobKind`
+// and the edge stops being visible to anything reading the constant — which is the same D-22
+// bar every other closed set in this milestone is held to.
+const CURATE_MEMORY_SUCCESSORS = ['propose-improvements'] as const satisfies readonly JobKind[]
 
 /**
  * The host powers the two real post-run handlers need, injected by the composition (D-01).
