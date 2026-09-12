@@ -17,7 +17,7 @@ import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 // The CLI is a surface / composition root with full host access (spec §4), so this module uses
 // node builtins directly.
 
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
@@ -1410,6 +1410,25 @@ export async function runSeedFromFeedbackVerb(session: EvalSession, opts: {
 export { ADVERSARIAL_EGRESS_CHANNEL, ADVERSARIAL_STAGING_SUBDIR }
 export type { AdversarialRefusal, AdversarialStagingSkip, StagedAdversarialCase }
 
+/**
+ * The authoring identity as a DISCLOSURE: provider family, plus a digest standing in for the
+ * configured model id. Mirrors `ProbeReservation`'s `authorDigest`/`authorFamily` pair, and for
+ * the same stated reason -- a configured model id can itself embed a credential.
+ */
+export interface AuthoringModelDisclosure {
+  /** sha256 of the configured model id -- never the id. */
+  idDigest: string
+  /** The resolved provider family, which cannot carry a credential. */
+  family: string
+}
+
+function authoringModelDisclosureOf(model: AuthoringModel): AuthoringModelDisclosure {
+  return {
+    idDigest: createHash('sha256').update(model.id, 'utf8').digest('hex'),
+    family: model.family,
+  }
+}
+
 export interface AdversarialVerbResult {
   kind: 'staged' | 'unchanged' | 'nothing-derived' | 'dry-run' | 'admitted' | 'partial' | 'refused'
   reason?: string
@@ -1453,8 +1472,17 @@ export interface AdversarialVerbResult {
    * consulted — the admit branch derives nothing, so it asks nothing.
    */
   noProbeModel?: NoProbeModelGap
-  /** The identity that authored this refresh's probes (D-11). */
-  authoringModel?: AuthoringModel
+  /**
+   * The identity that authored this refresh's probes (D-11), REDUCED FOR DISCLOSURE.
+   *
+   * Family plus a digest, never the configured id. This DTO is what `eval adversarial --json`
+   * prints verbatim to stdout, which on any CI host is a log -- and unlike the committed corpus
+   * entry, it crosses no `assertCommittedEgressSafe` and is emitted even on the
+   * `nothing-derived` branch where no case was ever scanned. A configured model id can embed a
+   * credential; that is why the preflight masks it for its own diagnostics and why
+   * `ProbeReservation` records `authorDigest` rather than the id.
+   */
+  authoringModel?: AuthoringModelDisclosure
   /** The resolved provider-call cap and where it came from (D-04/D-10). */
   probeCap: AdversarialProbeCallCap
   /** What this invocation actually spent at a provider. Zero on every admit branch. */
@@ -1654,7 +1682,11 @@ export async function runAdversarialVerb(
     // Staging commits nothing, so nothing it does can stale a standing receipt.
     staleReceipts: [],
     ...(result.noProbeModel === undefined ? {} : { noProbeModel: result.noProbeModel }),
-    ...(result.authoringModel === undefined ? {} : { authoringModel: result.authoringModel }),
+    // The raw id stays on the binding, where derivation and the committed stamp need it. What
+    // leaves on the result is the family and a digest -- see AdversarialVerbResult.
+    ...(result.authoringModel === undefined
+      ? {}
+      : { authoringModel: authoringModelDisclosureOf(result.authoringModel) }),
     probeCap: result.probeCap,
     spend: result.spend,
     probeSkips: result.probeSkips,

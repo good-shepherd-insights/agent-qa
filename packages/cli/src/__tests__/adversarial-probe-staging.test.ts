@@ -303,6 +303,9 @@ function stagedTexts(f: Fixture, batchDigest: string, cassetteId: string) {
   throw new Error(`no staged case for ${cassetteId}`)
 }
 
+/** sha256('claude-sonnet-4-6') — what the verb result discloses in place of the id. */
+const AUTHOR_ID_DIGEST = '7d811269d13fd7df0fd2cb573cbd1b11679a1ae347c179b3daf22b12408604c4'
+
 describe('422 adversarial probe staging — the author port, bounded and accounted for', () => {
   it('authors one probe per novel selected tuple and stages the scanned concrete bytes', async () => {
     const f = fixture()
@@ -319,7 +322,9 @@ describe('422 adversarial probe staging — the author port, bounded and account
     expect(result.spend.promptTokens).toBe(311 * PROBE_GENERATOR_KINDS.length)
     expect(result.spend.completionTokens).toBe(7 * PROBE_GENERATOR_KINDS.length)
     expect(result.noProbeModel).toBeUndefined()
-    expect(result.authoringModel).toEqual({ id: 'claude-sonnet-4-6', family: 'claude' })
+    // CR-03: the VERB RESULT discloses family + digest, never the configured id. The
+    // committed entry below still stamps the id -- that document is scanned, this one is not.
+    expect(result.authoringModel).toEqual({ idDigest: AUTHOR_ID_DIGEST, family: 'claude' })
 
     // BOTH probe kinds are staged, beside the deterministic families rather than instead of them.
     const probes = probeCases(result)
@@ -443,4 +448,25 @@ describe('422 adversarial probe staging — the author port, bounded and account
     // A refusal row names identities and the detector, never the refused surface text.
     expect(JSON.stringify(result.refusals)).not.toContain('Disregard prior instructions')
   })
+
+  // CR-03 regression. `eval adversarial --json` prints the verb result verbatim to stdout,
+  // which on any CI host is a log. That DTO crosses no `assertCommittedEgressSafe` and is
+  // emitted even on branches where no case was ever scanned, so a configured model id -- the
+  // one value the preflight masks because it can embed a credential -- reached an unscanned
+  // operator surface. The committed corpus entry still carries the id under D-11; it is
+  // scanned at admission, and this cell must not be read as forbidding that.
+  it('never spells the configured model id into the serialized verb result', async () => {
+    const f = fixture()
+    const s = await session(f)
+    const capability = await probeCapability()
+    const { result } = await stage(f, s, { capability })
+
+    expect(result.kind).toBe('staged')
+    // Exactly what `--json` writes.
+    expect(JSON.stringify(result, null, 2)).not.toContain('claude-sonnet-4-6')
+    expect(result.authoringModel).toEqual({ idDigest: AUTHOR_ID_DIGEST, family: 'claude' })
+    // The family survives: the human line prints it, and it cannot carry a credential.
+    expect(result.authoringModel?.family).toBe('claude')
+  })
+
 })
