@@ -52,7 +52,12 @@ import {
   PROBE_RESERVATION_STATUSES,
   probeReservationStatus,
 } from '../probes'
-import { ADVERSARIAL_TABLE_VERSION } from '../tables'
+import {
+  ADVERSARIAL_TABLE_HASH,
+  ADVERSARIAL_TABLE_HASHES,
+  ADVERSARIAL_TABLE_VERSION,
+  computeAdversarialTableHash,
+} from '../tables'
 
 // ---------------------------------------------------------------------------------------
 // The independent spellings. Every literal below was typed out by hand from the D-05/D-09/
@@ -325,6 +330,36 @@ describe('422-22 the vocabularies 422 did NOT move', () => {
       'probe-usage-invalid',
       'probe-identity-unchanged',
     ])
+  })
+
+  /**
+   * 2026-09-12, 422-23: the bump guard `tables.ts` DOCUMENTS, finally asked.
+   *
+   * The file's own header states that `ADVERSARIAL_TABLE_HASHES` pins the hash of every shipped
+   * generation and that "a table edit without an `ADVERSARIAL_TABLE_VERSION` bump makes the two
+   * disagree and REDs the pinned-hash cell by name". No cell was asking. The prompt half of the
+   * same idiom has had one since 422-04 (`probe-contract.test.ts`), and the asymmetry was invisible
+   * because both halves of an unasked guard agree with themselves: `ADVERSARIAL_TABLE_HASH` is
+   * `computeAdversarialTableHash()` by construction, so comparing THOSE two proves nothing.
+   *
+   * The literal is what makes this bite. Generation 2's digest is spelled out here, so a silent
+   * edit to any family — including a change to an entry `id`, which is DISCLOSURE only and alters
+   * no derivation — reds this cell rather than re-addressing committed variants in silence.
+   */
+  it('pins every shipped table generation by hash, so a table edit without a bump reds here', () => {
+    expect(ADVERSARIAL_TABLE_HASHES[1]).toBe(
+      '1e7d73bd713c068050c9a94b06dd30e3569970043a97604368a16a1fe1e0d178',
+    )
+    expect(ADVERSARIAL_TABLE_HASHES[2]).toBe(
+      'e98c576592b28ed06ab528f6fe40bac8a311cf49473e0fbb3fd2ac76395020a8',
+    )
+    // History is ADDED to and never replaced: every shipped generation keeps a pin, and the
+    // CURRENT one must still be the hash this build actually computes.
+    for (let version = 1; version <= ADVERSARIAL_TABLE_VERSION; version += 1) {
+      expect(ADVERSARIAL_TABLE_HASHES[version], `generation ${version}`).toMatch(/^[0-9a-f]{64}$/)
+    }
+    expect(computeAdversarialTableHash()).toBe(ADVERSARIAL_TABLE_HASHES[ADVERSARIAL_TABLE_VERSION])
+    expect(ADVERSARIAL_TABLE_HASH).toBe(computeAdversarialTableHash())
   })
 
   it('bumps no persisted document version', () => {
