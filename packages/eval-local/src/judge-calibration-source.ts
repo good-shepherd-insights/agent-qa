@@ -3,8 +3,10 @@ import { closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFil
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { canonicalJson, committedFileText, composeBaselineProfileKey, createPanelIdentity,
-  projectJudgeConfigContract, projectMatcherConfigContract, wilsonInterval,
-  JUDGE_CALIBRATION_MIN_N, type JudgeCalibrationMinimum, type JudgeCalibrationDiagnostics, type JudgeIdentityBlock,
+  projectJudgeConfigContract, projectJudgeTargetedCalibration, projectMatcherConfigContract, wilsonInterval,
+  GENERATOR_KINDS, GENERATOR_PROVENANCES, JUDGE_CALIBRATION_MIN_N,
+  JUDGE_TARGETED_CALIBRATION_UNAVAILABLE_REASONS,
+  type JudgeCalibrationMinimum, type JudgeCalibrationDiagnostics, type JudgeIdentityBlock,
 } from '@vostride/agent-qa-eval'
 import { sha256hex, slugBranch, type GuardrailPolicy } from '@vostride/agent-qa-schema'
 import { assertCommittedEgressSafe, CommittedEgressBlockedError, defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
@@ -39,7 +41,27 @@ const profileSchema = z.object({ plannerModelId: id, fingerprint: digest, matche
 const identitySchema = z.object({ judgeModelId: id, judgeFamily: z.string(), judgeVersion: count,
   confidenceThreshold: z.literal('high'),
   panelSize: count.min(2).max(3), members: z.array(z.object({ judgeModelId: id, judgeFamily: z.string() }).strict()).min(2).max(3) }).strict()
+/**
+ * 422 D-12: the judge-targeted self-authorship subset, ADDITIVE-OPTIONAL and strictly validated.
+ *
+ * Absent is the pre-422-20 shape and stays admissible forever — an artifact written before the
+ * field existed said nothing about bait, and a reader must not turn that silence into a zero.
+ * Present is checked by the same closed-vocabulary rule the census mix uses: a provenance arm or
+ * generator word from another build is a REFUSAL, not a value to pass into a disclosure.
+ */
+const closedCounts = <T extends string>(values: readonly [T, ...T[]]) => z.record(z.enum(values), count)
+const authorRow = z.object({ authoringModel: id, authoringFamily: z.string(),
+  panelMember: z.boolean(), probeAuthored: count.min(1), judgeTargeted: count }).strict()
+const judgeTargetedBlock = z.union([
+  z.object({ basis: z.literal('raw'), source: z.literal('unavailable'),
+    reason: z.enum(JUDGE_TARGETED_CALIBRATION_UNAVAILABLE_REASONS) }).strict(),
+  z.object({ basis: z.literal('raw'), source: z.literal('resolved'), total: count,
+    metadataUnavailable: count, byProvenance: closedCounts(GENERATOR_PROVENANCES),
+    byKind: closedCounts(GENERATOR_KINDS), judgeTargeted: count, selfAuthored: count,
+    byAuthoringModel: z.array(authorRow), observedInCalibration: count }).strict(),
+])
 const common = { schemaVersion: z.literal(JUDGE_CALIBRATION_SCHEMA_VERSION), generationId: digest,
+  judgeTargeted: judgeTargetedBlock.optional(),
   profileKey: id, profile: profileSchema, identity: identitySchema, constitutionDigest: digest,
   corpusDigest: digest, goldSetDigest: digest, replayEvidenceDigest: digest, evidenceDigest: digest,
   minN: count.min(2), minNSource: z.enum(['default', 'flag']), selected: count, admitted: count, cost,

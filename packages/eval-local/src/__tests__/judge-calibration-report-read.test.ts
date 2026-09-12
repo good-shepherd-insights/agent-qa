@@ -2,9 +2,13 @@ import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { buildEvalReport, createPanelIdentity } from '@vostride/agent-qa-eval'
+import {
+  ADVERSARIAL_GENERATOR_VERSION, ADVERSARIAL_PROMPT_VERSION, ADVERSARIAL_TABLE_HASH,
+  ADVERSARIAL_TABLE_VERSION, buildEvalReport, committedFileText, createPanelIdentity,
+  projectCorpusEntry, type CorpusGenerator,
+} from '@vostride/agent-qa-eval'
 import { FsReportStore, loadStagedReport } from '../report-store.js'
-import { FsCommittedRootStore, committedReportPath } from '../committed-root-store.js'
+import { FsCommittedRootStore, committedCorpusPath, committedReportPath } from '../committed-root-store.js'
 import { listCommittedReports } from '../committed-corpus-source.js'
 import * as local from '../index.js'
 import * as calibrationSource from '../judge-calibration-source.js'
@@ -120,3 +124,109 @@ for (const reader of ['staged', 'committed'] as const) {
     expect(readFileSync(f.file, 'utf8')).toBe(f.bytes)
   })
 }
+
+// ---------------------------------------------------------------------------
+// 422-20-T2 — the judge-targeted bait subset at the STORED boundary.
+//
+// Four states must stay visibly different where a reader meets them, and exactly one of them is
+// "we measured no bait". An artifact that predates the disclosure carries no block at all and
+// must keep reading forever; an artifact that measured an empty adversarial arm carries an
+// explicit zero; a run that could not open its corpus carries `unavailable`; and an artifact that
+// measured self-authored judge bait names its authors. Collapsing any pair of those into one
+// rendering is the failure this block exists to prevent.
+const BAIT_PANEL = createPanelIdentity(['claude-judge-stub', 'gemini-judge-stub'])
+const baitProfile = { plannerModelId: 'gpt-replay-stub', fingerprint: 'a'.repeat(64),
+  matcherVersion: 1, judgeModelId: BAIT_PANEL.judgeModelId, judgeVersion: BAIT_PANEL.judgeVersion }
+
+function baitFixture(options: { bait?: boolean } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'calibration-bait-')); roots.push(root)
+  const corpus = writeCommittedFloorFixture(root)
+  const seed = corpus.selected[0]!.cassette
+  if (seed.granularity !== 'leaf') throw new Error('expected a fixture leaf')
+  const store = new FsCommittedRootStore({ committedRoot: corpus.committedRoot })
+  const add = (generator: CorpusGenerator, suffix: string) => {
+    const entry = { ...projectCorpusEntry({ cassette: seed, product: 'alpha', runId: seed.runId,
+      assignment: { split: 'adversarial', generator } }), cassetteId: `${seed.id}--${suffix}` }
+    store.writeText(committedCorpusPath('alpha', entry.cassetteId), committedFileText(entry))
+  }
+  if (options.bait !== false) {
+    add({ kind: 'fuzz-label', seedCassetteId: seed.id, generatorVersion: ADVERSARIAL_GENERATOR_VERSION,
+      mutator: 'confusable', tableVersion: ADVERSARIAL_TABLE_VERSION, tableHash: ADVERSARIAL_TABLE_HASH }, 'table')
+    add({ kind: 'judge-targeted', seedCassetteId: seed.id, generatorVersion: ADVERSARIAL_GENERATOR_VERSION,
+      authoringModel: { id: 'claude-judge-stub', family: 'claude' }, promptVersion: ADVERSARIAL_PROMPT_VERSION }, 'bait')
+  }
+  const input = { committedRoot: corpus.committedRoot, agentQaRoot: join(root, '.agent-qa'),
+    identity: BAIT_PANEL, minN: { value: 20, source: 'flag' as const }, profile: baitProfile }
+  const artifact = local.createJudgeCalibrationArtifact(input, { status: 'capability-gap', reason: 'no-credential' })
+  const write = (value: unknown) => {
+    const path = join(input.committedRoot, local.judgeCalibrationPath(artifact.profileKey))
+    mkdirSync(join(input.committedRoot, 'reports/judge-calibration'), { recursive: true })
+    writeFileSync(path, committedFileText(value))
+  }
+  return { root, input, artifact, write }
+}
+
+/** Re-mint the generation id so a mutation is tested on its MERITS, not on a stale digest. */
+const remint = (artifact: Record<string, unknown>) => {
+  const { generationId: _drop, ...body } = artifact
+  return { ...body, generationId: local.judgeCalibrationGenerationId(body) }
+}
+
+it('stores the judge-targeted subset on a fresh artifact and round-trips it off disk', () => {
+  const f = baitFixture()
+  expect(f.artifact.judgeTargeted).toMatchObject({ basis: 'raw', source: 'resolved', total: 2,
+    metadataUnavailable: 0, judgeTargeted: 1, selfAuthored: 1, observedInCalibration: 0 })
+  expect((f.artifact.judgeTargeted as { byProvenance: Record<string, number> }).byProvenance)
+    .toMatchObject({ table: 1, probe: 1, absent: 0, malformed: 0 })
+  expect((f.artifact.judgeTargeted as { byAuthoringModel: unknown[] }).byAuthoringModel).toEqual([
+    { authoringModel: 'claude-judge-stub', authoringFamily: 'claude', panelMember: true,
+      probeAuthored: 1, judgeTargeted: 1 },
+  ])
+  f.write(f.artifact)
+  expect(local.readJudgeCalibration(f.input)).toEqual({ kind: 'loaded', artifact: f.artifact })
+})
+
+it('keeps a measured zero, an unread source and a historical absence three separate facts', () => {
+  const zero = baitFixture({ bait: false })
+  expect(zero.artifact.judgeTargeted).toMatchObject({ source: 'resolved', total: 0,
+    judgeTargeted: 0, selfAuthored: 0, byAuthoringModel: [] })
+
+  // `unavailable` is admissible bytes and carries no count at all — never a zero arm.
+  const unread = remint({ ...zero.artifact,
+    judgeTargeted: { basis: 'raw', source: 'unavailable', reason: 'corpus-unreadable' } })
+  const guarded = local.guardJudgeCalibration(unread)
+  expect(guarded?.judgeTargeted).toEqual({ basis: 'raw', source: 'unavailable', reason: 'corpus-unreadable' })
+
+  // A historical artifact predates the field entirely; the read must not invent a zero for it.
+  const { judgeTargeted: _absent, ...historicalBody } = zero.artifact
+  const historical = remint(historicalBody)
+  expect(local.guardJudgeCalibration(historical)).toBeDefined()
+  expect(local.guardJudgeCalibration(historical)?.judgeTargeted).toBeUndefined()
+  zero.write(historical)
+  expect(local.readJudgeCalibration(zero.input)).toMatchObject({ kind: 'loaded' })
+})
+
+it.each([
+  ['self-authorship exceeding its own judge-targeted subset', { selfAuthored: 2 }],
+  ['a judge-targeted count the probe arm cannot hold', { judgeTargeted: 2 }],
+  ['observation in a population the subset never entered', { observedInCalibration: 1 }],
+  ['author rows that do not account for the probe arm', { byAuthoringModel: [] }],
+  ['a self-authorship count no panel-member author backs', { selfAuthored: 0 }],
+  ['a provenance arm this build does not know', { byProvenance: { invented: 1 } }],
+])('refuses a stored subset carrying %s', (_label, patch) => {
+  const f = baitFixture()
+  const subset = f.artifact.judgeTargeted as Record<string, unknown>
+  const mutated = remint({ ...f.artifact, judgeTargeted: { ...subset, ...patch,
+    ...(('byProvenance' in patch) ? { byProvenance: { ...(subset.byProvenance as object), ...patch.byProvenance } } : {}) } })
+  expect(local.guardJudgeCalibration(mutated)).toBeUndefined()
+})
+
+it('refuses a stored subset that disagrees with the corpus it claims to describe', () => {
+  const f = baitFixture()
+  const subset = f.artifact.judgeTargeted as Record<string, unknown>
+  // Internally consistent, but not what this committed root holds: a forged clean bill of health.
+  f.write(remint({ ...f.artifact, judgeTargeted: { ...subset, judgeTargeted: 0, selfAuthored: 0,
+    byKind: { ...(subset.byKind as object), 'judge-targeted': 0, 'fuzz-label': 2 },
+    byProvenance: { absent: 0, table: 2, probe: 0, malformed: 0 }, byAuthoringModel: [] } }))
+  expect(local.readJudgeCalibration(f.input).kind).toBe('refused')
+})

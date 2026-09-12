@@ -977,6 +977,20 @@ export async function runJudgeCalibrateVerb(session: EvalSession, opts: {
 
 export type JudgeCalibrateVerbResult = Awaited<ReturnType<typeof runJudgeCalibrateVerb>>
 
+/**
+ * 422 D-12 — the ONE rendering of the judge-targeted self-authorship subset.
+ *
+ * It lives here rather than in `commands/eval.ts` for two reasons: the command layer may not name
+ * `@vostride/agent-qa-eval` (FUNC-02 surface firewall), and a staged preview and a stored artifact
+ * must print the SAME lines — which is only guaranteed by there being one function to call.
+ */
+export function renderJudgeTargetedCalibration(
+  _disclosure?: import('@vostride/agent-qa-eval').JudgeTargetedCalibrationDisclosure,
+): string[] {
+  return []
+}
+export type { JudgeTargetedCalibrationDisclosure } from '@vostride/agent-qa-eval'
+
 // Doctor's independent read-only calibration projection uses this same composition boundary.
 export { readJudgeCalibration, computeReplayProfileFingerprintFor }
 export { projectMatcherConfigContract } from '@vostride/agent-qa-eval'
