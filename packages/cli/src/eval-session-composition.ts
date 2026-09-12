@@ -1753,6 +1753,13 @@ export function feedbackSeedHostOptions(session: EvalSession) {
 
 // Preserve the existing eval composition boundary; the DATA bridge imports this lazily.
 export { runReplayGate, serializeReplayGateReceipt, readLabelCalibration, readCalibrationGoldIdentity } from '@vostride/agent-qa-eval-local'
+// 2026-09-12 (422-17, D-14): the two READ-ONLY adversarial state readers, re-exported from the one
+// CLI file the surface-firewall ledger clears for `@vostride/agent-qa-eval-local`. `doctor` needs
+// them for its Learning-mode disclosure and reaches them by DEFERRED import through here, exactly
+// as `misdirection-tail.ts` reaches its replay legs — that ledger only ever shrinks, and a second
+// cleared file would be it growing. Both refuse tampered bytes by throwing; neither writes, and
+// neither creates a path.
+export { listStagedAdversarial, readAdversarialRefreshRecords } from '@vostride/agent-qa-eval-local'
 export type { RunReplayGateInput, RunReplayGateResult } from '@vostride/agent-qa-eval-local'
 export type ReplayGateVerbResult = import('./gates/replay-gate-host.js').ReplayGateVerbResult & {
   maxScreens: number

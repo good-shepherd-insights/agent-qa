@@ -47,13 +47,6 @@ import { buildTrustPriorsResolver, formatTrustPriorDisclosure, type TrustPriorsR
 import { resolveRawConfigKnowledgeRoot } from '../config.js'
 import { buildPromotionPostureResolver, type PromotionPostureResolution } from '../curation/promotion-posture.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
-// 422 D-09/D-14: the persisted adversarial staging state, read-only. This is the STAGING store,
-// not the committed corpus and not a writer — `listStagedAdversarial` and
-// `readAdversarialRefreshRecords` both refuse tampered bytes and neither creates a path.
-import {
-  listStagedAdversarial,
-  readAdversarialRefreshRecords,
-} from '@vostride/agent-qa-eval-local'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 // From the module that OWNS the posture record, never from `post-run-tail.ts`: that file names
 // the terminal host composition and the daemon client, and importing it here would pull both into
@@ -357,7 +350,7 @@ async function doctorAdversarialDisclosure(
   const backing = MISDIRECTION_POSTURE_BOUND_AT_HOST
     ? 'circularity backing: recorded posture applied'
     : 'circularity backing: fail-closed eval-root (no host binds the recorded posture)'
-  const staged = readStagedAdversarialSummary(agentQaRoot)
+  const staged = await readStagedAdversarialSummary(agentQaRoot)
   return {
     text: `; adversarial: ${await probeGapDisclosure(input)}; ${staged.text}; ${backing}`,
     unreadable: staged.unreadable,
@@ -411,12 +404,22 @@ async function probeGapDisclosure(input: CreateKnowledgeChecksInput): Promise<st
  * digest does not recompute and `readAdversarialRefreshRecords` refuses a record whose content
  * address does not match its file name; both are tamper checks, and a diagnostic that answered
  * `not recorded` over one would report health about a subsystem it could not read.
+ *
+ * BOTH READERS ARRIVE BY DEFERRED IMPORT THROUGH `eval-session-composition.ts` — the ONE CLI file
+ * the surface-firewall ledger clears for `@vostride/agent-qa-eval-local`, and a ledger that only
+ * ever shrinks. It is also what keeps the eval composition graph out of every `agent-qa doctor`
+ * invocation, which is the same cost `doctorPanelDisclosure` defers for.
  */
-function readStagedAdversarialSummary(
+async function readStagedAdversarialSummary(
   agentQaRoot: string,
-): { text: string; unreadable: boolean } {
+): Promise<{ text: string; unreadable: boolean }> {
+  let listStagedAdversarial: typeof import('../eval-session-composition.js')['listStagedAdversarial']
+  let readAdversarialRefreshRecords:
+    typeof import('../eval-session-composition.js')['readAdversarialRefreshRecords']
   let batches: ReturnType<typeof listStagedAdversarial>
   try {
+    ({ listStagedAdversarial, readAdversarialRefreshRecords } =
+      await import('../eval-session-composition.js'))
     batches = listStagedAdversarial({ agentQaRoot })
   } catch {
     return { text: 'staged unreadable', unreadable: true }

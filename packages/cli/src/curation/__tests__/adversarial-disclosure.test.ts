@@ -195,6 +195,69 @@ describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
   })
 })
 
+describe('the read projection over a real stored notification (422-17-T2)', () => {
+  /** The bytes as a store holds them, walked through the ONE guard every reader calls. */
+  const stored = (doc: Record<string, unknown>): RunNotification => guardRunNotification(doc)
+
+  it('reports a HISTORICAL v2 row as not recorded, never as a proposal stage that did nothing', () => {
+    const row = stored({
+      schemaVersion: 2,
+      runId: 'historical-run',
+      outcome: 'done',
+      verdictSummary: { total: 2, byClass: { app_bug: 2 } },
+      stages: { analysis: { status: 'done' }, curation: { status: 'done', curated: 1, deprecated: 0 } },
+    })
+    const line = renderChainTerminalLine(row, { proposalGate1: { kind: 'not-recorded' } })
+    expect(line).toContain('proposals: not recorded')
+    // A stage that was never recorded has no Gate-1 leg to report on either, so the clause is
+    // ABSENT rather than a second "not recorded" about a leg of a stage that did not happen.
+    expect(line).not.toContain('Gate-1')
+    for (const zero of ['staged 0', 'skipped 0', 'ungated remaining 0']) {
+      expect(line).not.toContain(zero)
+    }
+  })
+
+  it('reports a CURRENT zero-work stage as a measured zero, from the stored counts', () => {
+    const row = stored({
+      schemaVersion: 3,
+      runId: 'zero-work-run',
+      outcome: 'done',
+      verdictSummary: { total: 0, byClass: {} },
+      stages: {
+        analysis: { status: 'done' },
+        curation: { status: 'done', curated: 0, deprecated: 0 },
+        proposals: { status: 'done', proposed: 0, skipped: 0 },
+      },
+    })
+    const line = renderChainTerminalLine(row, {
+      proposalGate1: { kind: 'recorded', report: gate1({ disposition: 'no-candidates' }) },
+    })
+    expect(line).toContain('proposals: done (staged 0, skipped 0')
+    expect(line).toContain('Gate-1 no-candidates: ungated remaining 0')
+    expect(line).not.toContain('not recorded')
+  })
+
+  it('reports a CURRENT failed stage as failed, and invents no counts for it', () => {
+    const row = stored({
+      schemaVersion: 3,
+      runId: 'failed-stage-run',
+      outcome: 'failed',
+      verdictSummary: { total: 1, byClass: { app_bug: 1 } },
+      stages: {
+        analysis: { status: 'done' },
+        curation: { status: 'done', curated: 1, deprecated: 0 },
+        proposals: { status: 'failed' },
+      },
+    })
+    const line = renderChainTerminalLine(row)
+    expect(line).toContain('post-processing failed')
+    // The stage that actually failed is named, so `failed` beside a `done` curation is
+    // attributable rather than a chain outcome with no owner.
+    expect(line).toContain('curation: done (1 curated, 0 deprecated)')
+    expect(line).toContain('proposals: failed (staged not recorded)')
+  })
+})
+
 describe('circularity guard backing on the chain line (D-19; WINDOWS #427)', () => {
   const row = notification({ proposals: { status: 'done', proposed: 0, skipped: 0 } })
   const of = (circularity: CircularityGuardDisclosure): string =>

@@ -58,21 +58,28 @@ interface StageChipKinds {
 /**
  * Which job kind speaks through which chip.
  *
- * The table names what a job kind EMITS, so a kind that emits nothing has no row. As of
- * 2026-08-26 (Phase 404 D-01/D-02) the chip set is `{analysis, curation}` and the three
- * `issues*` event names no longer exist, so a row describing what a reserved kind "would" emit
- * could only name events the enum does not carry. 2026-09-01 (Phase 409): the reserved sixth
- * kind left with the Issue-slot cleanup — see DELETION-INVENTORY.md. The emitter's run-scoped
- * drop-guard consults the two chain ids, so a row observed by this pump that is not this run's
- * is dropped by id rather than mis-attributed.
+ * The table names what a job kind EMITS. As of 2026-08-26 (Phase 404 D-01/D-02) the chip set is
+ * `{analysis, curation}` and the three `issues*` event names no longer exist, so a row describing
+ * what a reserved kind "would" emit could only name events the enum does not carry. 2026-09-01
+ * (Phase 409): the reserved sixth kind left with the Issue-slot cleanup — see
+ * DELETION-INVENTORY.md. The emitter's run-scoped drop-guard consults this run's chain ids, so a
+ * row observed by this pump that is not this run's is dropped by id rather than mis-attributed.
  *
- * `Partial<Record<JobKind, StageChipKinds>>` is what makes an absent kind legal: a kind with no
- * row emits nothing, while a kind WITH a row that grows a chip member is still a compile error.
+ * 2026-09-12 (Phase 422 D-13, 422-17): a FULL `Record`, not a `Partial` one, and the change is
+ * the point rather than a tidy-up. The chain grew a third stage that is deliberately chip-less,
+ * and under a `Partial` its silence was produced by the same missing key that answers for `chat`
+ * — a kind that is not a post-processing stage at all. A chain stage that gives no chip is a
+ * DECISION and must be written down; an absent key is an omission, and the two are
+ * indistinguishable to every reader. Every kind now names its answer, so a sixth fails to compile
+ * here until somebody chooses one. `postRunChipDecision` below is the single reader of this table.
  *
  * `notify` is absent for a different reason: it is not a job kind at all — the chain terminal is
  * a function-layer emission over a durable row (D-09), not a queue member, and it is not a chip.
  */
-const STAGE_CHIPS: Partial<Record<JobKind, StageChipKinds>> = {
+const NO_CHIP = 'no-chip' as const
+
+const STAGE_CHIPS: Record<JobKind, StageChipKinds | typeof NO_CHIP> = {
+  chat: NO_CHIP,
   'analyze-run': {
     started: 'analysisStarted',
     completed: 'analysisCompleted',
@@ -83,19 +90,48 @@ const STAGE_CHIPS: Partial<Record<JobKind, StageChipKinds>> = {
     completed: 'curationCompleted',
     failed: 'curationFailed',
   },
+  consolidate: NO_CHIP,
+  // 422 D-13. The third CHAIN stage, and the one row here whose `no-chip` is a granted discretion
+  // rather than a statement that the kind is not a post-processing stage at all. Its progress is
+  // durable and is disclosed elsewhere — the `proposals-authored` checkpoint and the ONE
+  // chain-terminal line — so a chip would be a third spelling of a fact two surfaces already
+  // carry, and D-14's chip vocabulary stays closed at the two words every consumer renders.
+  'propose-improvements': NO_CHIP,
 }
 
 /**
- * RED SKELETON (422-17-T2): declared and inert, so the cells fail on the named behaviour.
+ * What this build has DECIDED about a job kind's chips.
+ *
+ * Three arms, because there are three facts and the previous `undefined` lookup collapsed two of
+ * them. `declared-chip-less` is a kind this build knows and deliberately gives no chip;
+ * `unknown-kind` is a kind this build cannot classify at all — a row written by a later build,
+ * or a quarantined kind. Both emit nothing (a chip is a claim, and neither has a vocabulary to
+ * make one in), and that is exactly why they had to become distinguishable somewhere: silence
+ * that means two things cannot be reviewed, and `propose-improvements` joined the chain by
+ * riding the same silence as `chat`.
  */
 export type PostRunChipDecision =
   | { readonly kind: 'chips'; readonly chips: StageChipKinds }
   | { readonly kind: 'declared-chip-less' }
   | { readonly kind: 'unknown-kind' }
 
+/**
+ * The one lookup, total over `JobKind` by construction.
+ *
+ * `STAGE_CHIPS` is a full `Record` rather than a `Partial`, so a sixth kind added to the shipped
+ * vocabulary fails to compile HERE until somebody chooses its chips or writes `NO_CHIP` beside a
+ * reason — instead of silently inheriting the chip-less arm from a missing key.
+ *
+ * The parameter is `string` and not `JobKind` deliberately: the runtime value arrives off a queue
+ * row, and a build that narrowed it at the type level would still have to answer for bytes an
+ * older or newer build wrote. That is what `unknown-kind` is.
+ */
 export function postRunChipDecision(kind: string): PostRunChipDecision {
-  void kind
-  return { kind: 'unknown-kind' }
+  const declared = Object.hasOwn(STAGE_CHIPS, kind)
+    ? STAGE_CHIPS[kind as JobKind]
+    : undefined
+  if (declared === undefined) return { kind: 'unknown-kind' }
+  return declared === NO_CHIP ? { kind: 'declared-chip-less' } : { kind: 'chips', chips: declared }
 }
 
 /**
@@ -269,10 +305,14 @@ export function createPostRunChipEmitter(
       if (!options.chainJobIds.includes(String(job.id))) return
       const kind = job.kind
       if (kind === undefined) return
-      const chips = STAGE_CHIPS[kind]
-      // A kind outside the chain — `chat`, `consolidate`, `propose-improvements` — is not a
-      // post-processing stage and has no chip to move. The pump can legitimately run one.
-      if (chips === undefined) return
+      const decision = postRunChipDecision(kind)
+      // Two silences, and this build now knows which one it is making. `chat` and `consolidate`
+      // are not post-processing stages; `propose-improvements` IS one and is chip-less by the
+      // D-13 discretion, its progress carried by its durable checkpoint and the chain-terminal
+      // line. A kind this build cannot classify is the third case and also emits nothing — a
+      // claim needs a vocabulary, and there is none for a row a later build wrote.
+      if (decision.kind !== 'chips') return
+      const chips = decision.chips
 
       // `handlerInvoked: false` means the attempt bound was already spent at claim time and the
       // driver failed the job WITHOUT handing it to its handler (385 D-18). Emitting `started`
