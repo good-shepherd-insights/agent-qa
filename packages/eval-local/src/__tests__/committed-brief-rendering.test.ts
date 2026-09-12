@@ -17,7 +17,7 @@ describe('415 D-07 — committed populated-brief reconstruction', () => {
     return
   }
 
-  it('reconstructs all 63 populated briefs as proof/exact with matching policyDigest', () => {
+  it('reconstructs all 79 populated briefs as proof/exact with matching policyDigest', () => {
     const cassettesRoot = join(demoRoot, 'init', 'agent-qa-eval', 'cassettes')
     expect(existsSync(cassettesRoot)).toBe(true)
     const totals = { populated: 0, L0: 0, L1: 0, L2: 0 }
@@ -49,6 +49,10 @@ describe('415 D-07 — committed populated-brief reconstruction', () => {
       if ('knowledgeBriefL1' in stepContext) totals.L1++
       if ('knowledgeBriefL2' in stepContext) totals.L2++
     }
-    expect(totals).toEqual({ populated: 63, L0: 63, L1: 28, L2: 49 })
+    // 2026-09-12 (422-25): the operator admitted a 16-case adversarial batch into the committed
+    // demo root. `populated`, `L0` and `L2` each move by exactly 16 (63->79, 63->79, 49->65);
+    // `L1` does not move, because a derived case clones exactly the briefs its seed carried and
+    // neither of the two admitted seeds carried an L1.
+    expect(totals).toEqual({ populated: 79, L0: 79, L1: 28, L2: 65 })
   })
 })

@@ -359,8 +359,8 @@ describe('buildPromotionPostureResolver', () => {
     const posture = resolvePosture({ ...candidate, product, scope: { tier: 'product', key: product } })
     expect(typeof posture).toBe('object')
     expect(posture).not.toBeInstanceOf(Promise)
-    // The committed aggregate floor is 63; example-web has only 40 entries.
-    expect(posture).toMatchObject({ kind: 'resolved', gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, scope: { resolution: 'product-key' }, counts: { excludedCount: 0, natural: 34, heldOutShared: 2, heldOutPrivate: 4, adversarial: 0, remaining: { before: { natural: 34 } } } })
+    // The committed aggregate floor is 79; example-web has only 56 entries (422-25 admitted 16).
+    expect(posture).toMatchObject({ kind: 'resolved', gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, scope: { resolution: 'product-key' }, counts: { excludedCount: 0, natural: 34, heldOutShared: 2, heldOutPrivate: 4, adversarial: 16, remaining: { before: { natural: 34 } } } })
     expect(resolvePosture({ ...candidate, provenance: { runIds: [], receiptDigests: [], capturedAtOrdinals: [] } })).toMatchObject({ gateSetVerdict: 'unprovenanced-candidate', gateSetNonEmpty: false })
     expect(resolvePosture({ ...candidate, scope: { tier: 'test', key: 'test-scope' } })).toMatchObject({ scope: { resolution: 'default-fallback' } })
     expect(resolvePosture({ ...candidate, product, provenance: { ...candidate.provenance, runIds: entries.map(entry => entry.run_links.runId) } })).toMatchObject({ gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, counts: { remaining: { after: { natural: 0, heldOutPrivate: 0, heldOutShared: 0, adversarial: 0 } } } })
@@ -388,7 +388,7 @@ describe('buildPromotionPostureResolver', () => {
     const excluding = { ...candidate, provenance: { ...candidate.provenance,
       runIds: readCommittedCorpus(f.committedRoot).snapshot.entries.map(entry => entry.run_links.runId) } }
     const excludedBefore = result.resolve(excluding)
-    expect(excludedBefore).toMatchObject({ gateSetVerdict: 'empty-gate-set', counts: { excludedCount: 40 } })
+    expect(excludedBefore).toMatchObject({ gateSetVerdict: 'empty-gate-set', counts: { excludedCount: 56 } })
     rmSync(join(f.committedRoot, 'corpus'), { recursive: true })
     const after = result.resolve(candidate)
     expect(after).toMatchObject({ kind: 'resolved', gateSetVerdict: 'empty-gate-set', gateSetNonEmpty: false, counts: { natural: 0, excludedCount: 0, remaining: { after: { natural: 0, heldOutShared: 0, heldOutPrivate: 0, adversarial: 0 } } } })
