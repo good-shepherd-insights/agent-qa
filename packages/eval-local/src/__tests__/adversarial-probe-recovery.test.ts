@@ -22,7 +22,7 @@
  * for one tuple — by driving the store at the seam where that instant actually is, rather than
  * by asserting that the code looks like it would be safe.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -50,6 +50,7 @@ import {
   stageAdversarialProposal,
   type StageAdversarialProposalResult,
 } from '../adversarial-composition.js'
+import { COMMITTED_CASSETTES_DIR } from '../committed-root-store.js'
 import {
   ADVERSARIAL_PROBE_SUBDIR,
   completeProbeCall,
@@ -258,6 +259,41 @@ function probeCases(result: StageAdversarialProposalResult) {
 /** Erase the reviewed batches, as a run that died before publishing would leave them. */
 function discardStagedBatches(f: Fixture): void {
   rmSync(join(f.agentQaRoot, ADVERSARIAL_STAGING_SUBDIR), { recursive: true, force: true })
+}
+
+/**
+ * Take the seed blob tree out from under the committed root, and put it back.
+ *
+ * This is the transient disk failure `resolveSeedBlobs` reports as `blob-unresolvable` — an
+ * operational fault a repaired root fixes, NOT a statement about the bytes.
+ */
+function blobOutage(f: Fixture): { restore: () => void } {
+  const live = join(f.committedRoot, COMMITTED_CASSETTES_DIR)
+  const parked = join(f.root, 'parked-blobs')
+  // ONLY the blob trees: the cassette and label documents must stay readable, or the seed
+  // never becomes a candidate and no call is ever made.
+  const blobDirs: string[] = []
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const child = join(dir, entry.name)
+      if (entry.name === 'blobs') blobDirs.push(child)
+      else walk(child)
+    }
+  }
+  walk(live)
+  expect(blobDirs.length).toBeGreaterThan(0)
+  const saved = blobDirs.map((dir, index) => {
+    const copy = join(parked, String(index))
+    cpSync(dir, copy, { recursive: true })
+    rmSync(dir, { recursive: true, force: true })
+    return { dir, copy }
+  })
+  return {
+    restore: () => {
+      for (const { dir, copy } of saved) cpSync(copy, dir, { recursive: true })
+    },
+  }
 }
 
 function probeStoreFiles(f: Fixture): string[] {
@@ -471,4 +507,47 @@ describe('422 adversarial probe reservations — one call per tuple, honest inte
     })).toThrow(TypeError)
     expect(probeStoreFiles(f)).toEqual([])
   })
+
+  // CR-05/CR-01 regression. The probe half used to `continue` on an unresolvable blob WITHOUT
+  // recording the derived answer, leaving a reservation with no completion beside it. The next
+  // refresh read that pair as `interrupted` — "charged and never re-authored" — so the paid
+  // text was gone and the tuple was closed forever for that prompt generation. The
+  // deterministic half refuses to settle this exact condition and says why; the probe half was
+  // doing something strictly worse than settling it.
+  it('keeps the paid answer when the blob closure cannot be resolved, and re-derives it for free', async () => {
+    const f = fixture()
+    const author = recordingAuthor(f, request => `Continue to ${request.kind} review`)
+
+    const outage = blobOutage(f)
+    const first = await stage(f, { author: author.port })
+
+    // The call happened and was charged, and the case could not be staged.
+    expect(author.requests).toHaveLength(PROBE_GENERATOR_KINDS.length)
+    expect(first.spend.modelCalls).toBe(PROBE_GENERATOR_KINDS.length)
+    expect(probeCases(first)).toEqual([])
+    expect(first.stagingSkips.map(row => row.reason)).toContain('blob-unresolvable')
+
+    // THE CLAIM: the answer is durable anyway. An operational skip may not spend the one part
+    // of a probe that cannot be recomputed.
+    for (const kind of PROBE_GENERATOR_KINDS) {
+      const state = readProbeAttempt({ agentQaRoot: f.agentQaRoot, key: keyOf(f, 0, kind) })
+      expect(state.kind).toBe('completed')
+      if (state.kind !== 'completed') throw new Error('unreachable')
+      expect(state.completion.outcome).toBe('derived')
+      expect(state.completion.text).toBe(`Continue to ${kind} review`)
+    }
+
+    // A repaired root re-derives from disk. The author THROWS, so a single new call would fail
+    // the cell outright — which is the point: there must not be one.
+    outage.restore()
+    discardStagedBatches(f)
+    const refuser = throwingAuthor()
+    const second = await stage(f, { author: refuser.port })
+
+    expect(refuser.calls).toEqual([])
+    expect(second.spend.modelCalls).toBe(0)
+    expect(probeCases(second)).toHaveLength(PROBE_GENERATOR_KINDS.length)
+    expect(second.probeSkips.map(row => row.reason)).not.toContain('tuple-interrupted')
+  })
+
 })

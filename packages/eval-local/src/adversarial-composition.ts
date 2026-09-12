@@ -1198,23 +1198,15 @@ export async function stageAdversarialProposal(
           refusals.push(...probeCaseRefusals)
           continue
         }
-        const probeBlobs = resolveSeedBlobs(
-          input.committedRoot,
-          input.product,
-          probe.seedCassetteId,
-          probe.blobShas,
-        )
-        if ('skipReason' in probeBlobs) {
-          stagingSkips.push({
-            cassetteId: probe.cassette.id,
-            seedCassetteId: probe.seedCassetteId,
-            reason: probeBlobs.skipReason,
-          })
-          continue
-        }
-        // The durable output, written ONCE. A later refresh that finds it re-derives this exact
-        // case with no call at all, which is what makes the crash between the answer and the
-        // reviewed batch a recoverable one rather than a second bill.
+        // The durable output, written ONCE, and written BEFORE any operational skip below it.
+        // A later refresh that finds it re-derives this exact case with no call at all, which
+        // is what makes the crash between the answer and the reviewed batch a recoverable one
+        // rather than a second bill. The text is the only non-recomputable part of a probe, so
+        // it is recorded the instant it is known to be good: leaving it unrecorded while an
+        // unresolvable blob sends the loop to `continue` would strand the reservation with no
+        // completion, which the next refresh reads as `interrupted` — turning a transient disk
+        // problem into a permanent exclusion AND discarding an answer already paid for. The
+        // deterministic half refuses to settle that same condition for the weaker reason.
         recordProbeOutcome(input.agentQaRoot, attempt, reservationKey, {
           schemaVersion: 1,
           outcome: 'derived',
@@ -1223,6 +1215,22 @@ export async function stageAdversarialProposal(
           promptTokens: probe.usage.promptTokens,
           completionTokens: probe.usage.completionTokens,
         })
+        const probeBlobs = resolveSeedBlobs(
+          input.committedRoot,
+          input.product,
+          probe.seedCassetteId,
+          probe.blobShas,
+        )
+        if ('skipReason' in probeBlobs) {
+          // Deliberately NOT settled, on the deterministic half's rule: a repaired root
+          // re-derives this case for free from the answer recorded above.
+          stagingSkips.push({
+            cassetteId: probe.cassette.id,
+            seedCassetteId: probe.seedCassetteId,
+            reason: probeBlobs.skipReason,
+          })
+          continue
+        }
         publishable.push({
           manifestCase: {
             cassetteId: probe.cassette.id,
