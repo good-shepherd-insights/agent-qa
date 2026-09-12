@@ -326,3 +326,153 @@ describe('cited evidence rides the verdict, and absence is counted (D-01/D-19)',
     expect(missingEvidenceLine({ missing: 3, total: 3 })).toBe('3 of 3 cited artifacts unavailable')
   })
 })
+
+// ── 422 D-17/D-19/D-20: THE CIRCULARITY EVIDENCE, AS THE FAILURE VIEW READS IT.
+//
+// THREE UPSTREAM SOURCES ARE DELIBERATELY THREE-VALUED AND A UI IS WHERE THEY GET FLATTENED.
+// 422-15's guard can be stamped, absent or refused; 422-12's readers keep absent distinct from
+// empty at every boundary; 422-17 established that a guard backed by the fail-closed `eval-root`
+// posture must NOT be presented as `declared-only`. A badge reading "ruled out" over evidence that
+// was never produced is the failure these cells exist to prevent, and #427 makes it the live case
+// rather than a hypothetical: no composition binds the posture reader, so every gated run today
+// resolves fail-closed.
+//
+// AND THE WHOLE ADDITION IS ADDITIVE. The last cell in this block hands the projection the same
+// bytes a pre-422 run serves and requires NO evidence member at all — a historical failure view
+// paints exactly what it painted before.
+
+describe('the projection reads circularity evidence and invents none (422 D-17/D-19/D-20)', () => {
+  const HELD = 'rec_held_0001'
+  const FLIPPED = 'rec_flipped_01'
+
+  function withMisdirection(misdirection: AnalysisResolvedVerdict['misdirection']) {
+    return projectAnalysisView(
+      analysis({
+        verdicts: [verdict(0, misdirection === undefined ? {} : { misdirection })],
+        sentences: [{ perTest: 0, testId: 't_0', sentence: 'observed (step 0): "boom"' }],
+      }),
+      'done',
+    ).get(0)?.misdirectionEvidence
+  }
+
+  it('reads an all-HELD ledger as cross-check held, and names no causal record', () => {
+    const evidence = withMisdirection({
+      state: 'measured',
+      crossCheck: 'held',
+      results: [{ recordId: HELD, crossCheck: 'held' }],
+      memoryOnPath: [{ recordId: HELD, trust: 'candidate' }],
+    })
+
+    expect(evidence?.state).toBe('held')
+    expect(evidence?.text).toBe('circularity: cross-check held')
+    expect(evidence?.causalRecords, 'nothing flipped, so nothing is attributed').toEqual([])
+    expect(evidence?.onPath).toEqual([{ recordId: HELD, trust: 'candidate' }])
+    expect(evidence?.onPathText).toBe('memory on path: 1 record')
+  })
+
+  it('names the FLIPPED records as the causal attribution, apart from every exposed record', () => {
+    const evidence = withMisdirection({
+      state: 'measured',
+      crossCheck: 'flipped',
+      results: [
+        { recordId: HELD, crossCheck: 'held' },
+        { recordId: FLIPPED, crossCheck: 'flipped' },
+      ],
+      memoryOnPath: [
+        { recordId: HELD, trust: 'candidate' },
+        { recordId: FLIPPED, trust: 'low-trust-active' },
+      ],
+    })
+
+    expect(evidence?.state).toBe('flipped')
+    expect(evidence?.text).toBe('circularity: memory attribution — 1 flipped record')
+    // THE TWO SETS ARE DIFFERENT SETS. Causal names what the cross-check FLIPPED; on-path names
+    // every low-trust record the run put in front of this member. Folding them would attribute the
+    // failure to a record whose check HELD.
+    expect(evidence?.causalRecords).toEqual([FLIPPED])
+    expect(evidence?.onPath?.map((entry) => entry.recordId)).toEqual([HELD, FLIPPED])
+  })
+
+  it('refuses to soften a flipped ROW under a block word that says held', () => {
+    const evidence = withMisdirection({
+      state: 'measured',
+      crossCheck: 'held',
+      results: [{ recordId: FLIPPED, crossCheck: 'flipped' }],
+    })
+
+    expect(evidence?.state, 'the row wins, in the safe direction only').toBe('flipped')
+    expect(evidence?.causalRecords).toEqual([FLIPPED])
+  })
+
+  it('renders the D-19 declared-only backing as its own state, never as a measurement', () => {
+    const evidence = withMisdirection({
+      state: 'declared-only',
+      crossCheck: 'not-run',
+      results: [],
+      backing: 'declared-only',
+      memoryOnPath: [],
+    })
+
+    expect(evidence?.state).toBe('declared-only')
+    expect(evidence?.text).toBe('circularity: declared-only — no evaluation root, nothing measured')
+    expect(evidence?.text, 'a declaration is not a result').not.toContain('held')
+    expect(evidence?.causalRecords).toEqual([])
+    // `[]` is the author declaring NO records; the absence cell below is a different claim.
+    expect(evidence?.onPathText).toBe('memory on path: none declared')
+  })
+
+  it('reports a BROKEN root as unresolved with its disclosed word, never as declared-only', () => {
+    // D-19's one exemption is ABSENCE, not breakage. A root that exists and cannot be read leaves
+    // the same empty ledger as one that is absent and has NOT earned the BYOM exemption.
+    const evidence = withMisdirection({
+      state: 'measured',
+      crossCheck: 'not-run',
+      results: [{ recordId: HELD, crossCheck: 'not-run', reason: 'posture-unavailable' }],
+      memoryOnPath: [{ recordId: HELD, trust: 'candidate' }],
+    })
+
+    expect(evidence?.state).toBe('unresolved')
+    expect(evidence?.text).toBe('circularity: unresolved')
+    expect(evidence?.text).not.toContain('declared-only')
+    expect(evidence?.unbackedReason).toBe('posture-unavailable')
+    expect(evidence?.unbackedText).toBe('unbacked: posture-unavailable')
+  })
+
+  it('reports a CAP-EXCEEDED row as unbacked too, with its own word', () => {
+    const evidence = withMisdirection({
+      state: 'measured',
+      crossCheck: 'not-run',
+      results: [{ recordId: HELD, crossCheck: 'not-run', reason: 'cap-exceeded' }],
+    })
+
+    expect(evidence?.state).toBe('unresolved')
+    expect(evidence?.unbackedReason).toBe('cap-exceeded')
+    expect(evidence?.unbackedText).toBe('unbacked: cap-exceeded')
+  })
+
+  it('keeps a DECLARED path with no ledger at not recorded, and absent apart from empty', () => {
+    const declared = withMisdirection({
+      state: 'not-recorded',
+      memoryOnPath: [{ recordId: HELD, trust: 'candidate' }],
+    })
+    expect(declared?.state).toBe('not-recorded')
+    expect(declared?.text).toBe('circularity: not recorded')
+    expect(declared?.causalRecords).toEqual([])
+    expect(declared?.onPath).toEqual([{ recordId: HELD, trust: 'candidate' }])
+
+    // ABSENT IS NOT EMPTY, at the last reader as at every one before it (422-12).
+    const undeclared = withMisdirection({ state: 'not-recorded' })
+    expect(undeclared?.onPath, 'the author declared NOTHING').toBeUndefined()
+    expect(undeclared?.onPathText).toBe('memory on path: not recorded')
+
+    const empty = withMisdirection({ state: 'not-recorded', memoryOnPath: [] })
+    expect(empty?.onPath, 'the author declared NO records').toEqual([])
+    expect(empty?.onPathText).toBe('memory on path: none declared')
+  })
+
+  it('projects a verdict with NO circularity member to NO evidence at all', () => {
+    // THE ADDITIVE CLAIM, and it is measured rather than assumed: the bytes below are exactly what
+    // `analysis.get` serves for every run written before 422 and for the deterministic floor.
+    expect(withMisdirection(undefined), 'a historical run renders as it always did').toBeUndefined()
+  })
+})
