@@ -2,8 +2,9 @@ import { sha256hex, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { canonicalJson } from '../canonical-json'
 import type { LeafCassette } from '../cassette/cassette'
 import type { CassetteReceipt } from '../cassette/receipt-leg'
-import type { CommittedCorpusSnapshot } from '../census/derive-census'
+import { projectAdversarialGenerationMix, type CommittedCorpusSnapshot } from '../census/derive-census'
 import { computeCorpusDigest } from '../census/corpus-digest'
+import { generatorProvenance } from '../labels/corpus-entry'
 import type { CorpusGenerator, GeneratorKind, GeneratorProvenance } from '../labels/corpus-entry'
 import { deriveRunSlug } from '../extract/ids'
 import { effectiveGold } from '../labels/effective-gold'
@@ -130,11 +131,51 @@ export interface JudgeTargetedCalibrationInput {
   observedCassetteIds?: readonly string[]
 }
 
-/** Fold a committed adversarial population into the judge-targeted self-authorship disclosure. */
+/**
+ * Fold a committed adversarial population into the judge-targeted self-authorship disclosure.
+ *
+ * The provenance and kind arms are 422-19's projection, called rather than re-spelled: one
+ * generation projection, asked here by a third population. Everything this function adds on top
+ * is the CALIBRATION fact that projection cannot know — which authors are on the panel being
+ * measured, and whether any judge bait reached the measured population.
+ */
 export function projectJudgeTargetedCalibration(
   input: JudgeTargetedCalibrationInput,
 ): JudgeTargetedCalibrationDisclosure {
-  return { basis: 'raw', source: 'unavailable', reason: input.unavailable ?? 'not-read' }
+  const { members } = input
+  if (members === undefined) return { basis: 'raw', source: 'unavailable', reason: input.unavailable ?? 'not-read' }
+  const mix = projectAdversarialGenerationMix(members.map(member => member.generator))
+  const panel = new Set(input.memberModelIds)
+  const observed = new Set(input.observedCassetteIds ?? [])
+  const authors = new Map<string, { authoringFamily: string; probeAuthored: number; judgeTargeted: number }>()
+  let judgeTargeted = 0, selfAuthored = 0, observedInCalibration = 0
+  for (const member of members) {
+    const generator = member.generator
+    // Only the `probe` arm was AUTHORED. A table draw is a pure function of its inputs and a
+    // legacy or malformed stamp names no author at all — neither may acquire one here.
+    if (generator === undefined || generatorProvenance(generator) !== 'probe') continue
+    const authoringModel = generator.authoringModel!
+    const row = authors.get(authoringModel.id)
+      ?? { authoringFamily: authoringModel.family, probeAuthored: 0, judgeTargeted: 0 }
+    row.probeAuthored += 1
+    if (generator.kind === 'judge-targeted') {
+      row.judgeTargeted += 1
+      judgeTargeted += 1
+      if (panel.has(authoringModel.id)) selfAuthored += 1
+      if (observed.has(member.cassetteId)) observedInCalibration += 1
+    }
+    authors.set(authoringModel.id, row)
+  }
+  return {
+    basis: 'raw', source: 'resolved', total: mix.total, metadataUnavailable: mix.metadataUnavailable,
+    byProvenance: mix.byProvenance, byKind: mix.byKind, judgeTargeted, selfAuthored,
+    byAuthoringModel: [...authors.keys()].sort().map(authoringModel => {
+      const row = authors.get(authoringModel)!
+      return { authoringModel, authoringFamily: row.authoringFamily, panelMember: panel.has(authoringModel),
+        probeAuthored: row.probeAuthored, judgeTargeted: row.judgeTargeted }
+    }),
+    observedInCalibration,
+  }
 }
 
 export type JudgeCalibrationResult = { judgeTargeted: JudgeTargetedCalibrationDisclosure } & (

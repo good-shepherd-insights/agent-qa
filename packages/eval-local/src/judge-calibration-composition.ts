@@ -5,7 +5,7 @@ import {
   prepareJudgeCalibrationProbe, resolveJudgeCalibrationMinimum,
   summarizeJudgeCalibration,
   type BaselineProfileKeyInput, type JudgeCalibrationProbeObservation,
-  type JudgeCalibrationMinimum, type UsageAggregator,
+  type JudgeCalibrationMinimum, type JudgeTargetedCalibrationDisclosure, type UsageAggregator,
 } from '@vostride/agent-qa-eval'
 import type { ModelProfile } from '@vostride/agent-qa-model'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
@@ -20,7 +20,8 @@ export type RunJudgeCalibrationResult = Awaited<ReturnType<typeof runJudgePanelC
   | JudgeCalibrationPublication
   | { kind: 'capability-gap'; status: 'capability-gap'; reason: 'panel-not-configured' | 'no-credential' | 'single-family-host';
       minN: number; minNSource: JudgeCalibrationMinimum['source']; n: 0; identity?: JudgeCalibrationReadInput['identity'];
-      cost: { callBound: number; usage: { calls: number } }; artifactDisposition: 'not-created' }
+      cost: { callBound: number; usage: { calls: number } }; artifactDisposition: 'not-created';
+      judgeTargeted: JudgeTargetedCalibrationDisclosure }
 
 /** Publication routing is separate from the forced probe, so a missing composite does no IO. */
 export async function runJudgeCalibration(input: {
@@ -35,6 +36,9 @@ export async function runJudgeCalibration(input: {
     kind: 'capability-gap' as const, status: 'capability-gap' as const, reason: input.reason,
     minN: input.minN.value, minNSource: input.minN.source, n: 0,
     cost: { callBound: 0, usage: { calls: 0 } }, artifactDisposition: 'not-created' as const,
+    // This branch opens no committed root, so it has no bait content to report. Saying so is
+    // the whole point: a zero here would be a clean bill of health nobody measured.
+    judgeTargeted: { basis: 'raw' as const, source: 'unavailable' as const, reason: 'not-read' as const },
     ...(input.publication ? { identity: input.publication.identity } : {}),
   }
   if (input.kind === 'probe' && !input.commit) return runJudgePanelCalibration(input.probe)
@@ -131,7 +135,13 @@ async function executeJudgePanelCalibration(input: RunJudgePanelCalibrationInput
       throw new Error('Judge calibration probe failed; inspect the local audit and retry.')
     } finally { masker.dispose() }
   }
-  const summary = summarizeJudgeCalibration({ observations, memberModelIds, minN, selected: read.selected })
+  // 422 D-12: RAW disclosure beside the measurement. The bait population is the committed
+  // adversarial arm — never this run's gold, which the reader has already kept disjoint from it.
+  const summary = summarizeJudgeCalibration({ observations, memberModelIds, minN, selected: read.selected,
+    judgeTargeted: { ...(read.adversarialMembers === undefined
+      ? { unavailable: 'corpus-unreadable' as const }
+      : { members: read.adversarialMembers }),
+      observedCassetteIds: read.evidence.map(row => row.goldCassetteId) } })
   return { kind: 'dry-run' as const, ...summary,
     identity, profileKey: read.profileKey,
     corpusDigest: read.corpusDigest, goldSetDigest: read.goldSetDigest,

@@ -76,6 +76,11 @@ export function loadJudgeCalibrationEvidence(input: LoadJudgeCalibrationEvidence
   try { inspectTree(input.committedRoot, input.committedRoot) }
   catch { skip('path-refused'); return finish() }
   const raw = readCommittedCorpus(input.committedRoot)
+  // Set the moment the corpus IS readable, and never before: every path above returns with the
+  // field still absent, which is what keeps "could not open" distinct from "holds no bait".
+  result.adversarialMembers = raw.snapshot.entries
+    .filter(entry => entry.split === 'adversarial')
+    .map(entry => ({ cassetteId: entry.cassetteId, generator: entry.generator }))
   for (const _refusal of raw.refusals) skip('corpus-refused')
   const exclusions = readRunExclusions(input.committedRoot)
   if (exclusions.refusals.length) {
