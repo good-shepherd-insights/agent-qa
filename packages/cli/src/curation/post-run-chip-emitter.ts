@@ -86,6 +86,19 @@ const STAGE_CHIPS: Partial<Record<JobKind, StageChipKinds>> = {
 }
 
 /**
+ * RED SKELETON (422-17-T2): declared and inert, so the cells fail on the named behaviour.
+ */
+export type PostRunChipDecision =
+  | { readonly kind: 'chips'; readonly chips: StageChipKinds }
+  | { readonly kind: 'declared-chip-less' }
+  | { readonly kind: 'unknown-kind' }
+
+export function postRunChipDecision(kind: string): PostRunChipDecision {
+  void kind
+  return { kind: 'unknown-kind' }
+}
+
+/**
  * The shape of a pump outcome this emitter reads.
  *
  * Structural rather than the engine's `RunNextJobOutcome` itself, and the narrowing is the
