@@ -176,6 +176,45 @@ async function corpusReader() {
  * `readerVisibility` beside the number, because a total that silently omitted the private split
  * would read as corpus shrinkage the next time someone compared two of these records.
  */
+/**
+ * The AUTHORITATIVE corpus digest — the one the production CLI prints, the baseline pointer
+ * pins, and the stale-receipt filter compares against.
+ *
+ * It is computed over EVERY committed entry, including the private held-out split. The
+ * proposer's `/reader` cannot see that split (ROOT-10), so a digest folded from
+ * `committedCensus`'s entries is a digest of a DIFFERENT population and is not comparable with
+ * anything the system reports. On the demo root the two differ outright — reader-visible gives
+ * `40c1031b…` over 129 entries, the whole corpus gives `cbf1e383…` over 155 — so reporting the
+ * reader's value under the name `corpusDigest` invited exactly the false comparison an operator
+ * makes when checking whether an admission moved the digest. Both are reported, named apart.
+ *
+ * This reads the entry files directly rather than through `/reader` BECAUSE the reader is the
+ * thing that cannot see the whole corpus. It is a read-only audit path in an acceptance
+ * instrument, never a production one.
+ */
+async function fullCorpusDigest(committedRoot) {
+  const corpusDir = join(committedRoot, 'corpus')
+  if (!existsSync(corpusDir)) return { digest: 'unavailable', entries: 0 }
+  const files = []
+  const walk = dir => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.name.endsWith('.json')) files.push(path)
+    }
+  }
+  try {
+    walk(corpusDir)
+    const entries = files.sort().map(path => JSON.parse(readFileSync(path, 'utf8')))
+    const core = await evalCore()
+    return { digest: core.computeCorpusDigest(entries), entries: entries.length }
+  } catch (error) {
+    // An unreadable corpus is reported as unreadable. Falling back to the reader's digest here
+    // would reintroduce the exact substitution this function exists to remove.
+    return { digest: 'unreadable', entries: 0, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 async function committedCensus(committedRoot) {
   if (!existsSync(committedRoot)) return { present: false, products: {}, total: 0, bySplit: {} }
   const { openCorpusReader } = await corpusReader()
@@ -445,8 +484,8 @@ async function inspectDemo(configPath) {
   const census = await committedCensus(roots.committedRoot)
   const { openCorpusReader } = await corpusReader()
   const core = await evalCore()
-  let corpusDigest = 'unavailable'
-  let proofBackedSeeds = 0
+  let readerVisibleDigest = 'unavailable'
+  let seedsWithProofBrief = 0
   if (census.present) {
     const reader = openCorpusReader(roots.committedRoot)
     const entries = []
@@ -456,11 +495,12 @@ async function inspectDemo(configPath) {
         if (entry.split !== 'natural') continue
         const loaded = reader.loadCassette(entry.cassetteId)
         if (loaded.kind === 'loaded' && loaded.cassette.granularity === 'leaf'
-          && loaded.cassette.input?.servedBrief?.proof !== undefined) proofBackedSeeds += 1
+          && loaded.cassette.input?.servedBrief?.proof !== undefined) seedsWithProofBrief += 1
       }
     }
-    corpusDigest = core.computeCorpusDigest(entries)
+    readerVisibleDigest = core.computeCorpusDigest(entries)
   }
+  const full = census.present ? await fullCorpusDigest(roots.committedRoot) : { digest: 'unavailable', entries: 0 }
   const reportsDir = join(roots.committedRoot, 'reports')
   const record = {
     mode: '--inspect-demo',
@@ -468,12 +508,23 @@ async function inspectDemo(configPath) {
     configPath: roots.configPath,
     committedRoot: roots.committedRoot,
     committedRootPresent: census.present,
-    corpusDigest,
+    // The digest every production surface means when it says "corpus digest".
+    corpusDigest: full.digest,
+    corpusEntries: full.entries,
+    // The same fold over the proposer-visible subset only. A DIFFERENT population, so a
+    // DIFFERENT value — never compare it against a digest the CLI printed.
+    readerVisibleCorpusDigest: readerVisibleDigest,
+    digestNote: 'corpusDigest folds every committed entry and is the value the CLI, the baseline pointer and the stale-receipt filter use. readerVisibleCorpusDigest folds only the proposer-visible subset (ROOT-10) and is comparable with nothing the system reports.',
     entries: census.total,
     readerVisibility: 'proposer /reader: the private held-out split is structurally unreadable here (ROOT-10), so these counts exclude it',
     bySplit: census.bySplit,
     byProduct: census.products,
-    proofBackedNaturalSeeds: proofBackedSeeds,
+    // UPPER BOUND, not the eligible-seed count. Production additionally requires a non-empty
+    // memory channel (`isProofBacked`, packages/eval/src/adversarial/generate.ts), which this
+    // instrument deliberately does not re-spell. The authoritative figures are the refresh
+    // verb's own `eligibleSeeds` and its `brief-not-proof-backed` skips.
+    naturalSeedsWithProofBrief: seedsWithProofBrief,
+    seedEligibilityNote: 'naturalSeedsWithProofBrief is an UPPER BOUND on eligible seeds: it tests only that the served brief carries a proof. Production also requires at least one non-empty memory channel. Read eligibleSeeds / brief-not-proof-backed off `eval adversarial` for the real figure.',
     adversarialEntries: census.bySplit.adversarial ?? 0,
     reports: existsSync(reportsDir)
       ? readdirSync(reportsDir, { withFileTypes: true }).map(e => `${e.name}${e.isDirectory() ? '/' : ''}`).sort()
@@ -579,13 +630,16 @@ async function checkStaged(configPath, opts) {
   }
   const census = await committedCensus(roots.committedRoot)
   const core = await evalCore()
-  let corpusDigest = 'unavailable'
+  let readerVisibleDigest = 'unavailable'
   if (census.present) {
     const { openCorpusReader } = await corpusReader()
     const reader = openCorpusReader(roots.committedRoot)
     const entries = Object.keys(census.products).flatMap(product => reader.listEntries(product))
-    corpusDigest = core.computeCorpusDigest(entries)
+    readerVisibleDigest = core.computeCorpusDigest(entries)
   }
+  // The pre-digest an operator compares against after admitting has to be the digest the ADMIT
+  // verb prints. That verb folds the whole corpus, so this one must too.
+  const full = census.present ? await fullCorpusDigest(roots.committedRoot) : { digest: 'unavailable', entries: 0 }
   const started = Date.now()
   const record = {
     mode: '--check-staged',
@@ -594,7 +648,11 @@ async function checkStaged(configPath, opts) {
     stagingRoot: roots.stagingRoot,
     batches,
     skippedPaths: skipped,
-    committedRootPreDigest: corpusDigest,
+    // Comparable with the digest the admit verb prints. See fullCorpusDigest.
+    committedRootPreDigest: full.digest,
+    committedRootEntries: full.entries,
+    readerVisiblePreDigest: readerVisibleDigest,
+    digestNote: 'committedRootPreDigest folds every committed entry and is what the admit verb reports moving. readerVisiblePreDigest folds the proposer-visible subset only (ROOT-10) and is comparable with nothing the system reports.',
     committedEntries: census.total,
     readerVisibility: 'proposer /reader: the private held-out split is structurally unreadable here (ROOT-10), so these counts exclude it',
     committedBySplit: census.bySplit,
@@ -655,11 +713,16 @@ async function verifyAdmitted(configPath, opts) {
       }
     }
   }
+  const full = await fullCorpusDigest(roots.committedRoot)
   const record = {
     mode: '--verify-admitted',
     sourceSha: git(['rev-parse', 'HEAD']),
     configPath: roots.configPath,
     committedRoot: roots.committedRoot,
+    // The post-admission digest, folded the same way the admit verb folds it, so the two can
+    // actually be compared.
+    corpusDigest: full.digest,
+    corpusEntries: full.entries,
     committedEntries: census.total,
     readerVisibility: 'proposer /reader: the private held-out split is structurally unreadable here (ROOT-10), so these counts exclude it',
     committedBySplit: census.bySplit,
@@ -687,8 +750,11 @@ const HELP = `422-acceptance — Phase 422 acceptance instrument
       Required legs: ${REQUIRED_FIXTURE_LEGS.join(', ')}.
 
   node scripts/422-acceptance.mjs --inspect-demo --config <path>
-      Read-only observation of the configured host: corpus digest, entries by split, proof-backed
-      natural seeds, published reports and whether a staging root exists. Writes nothing.
+      Read-only observation of the configured host: corpus digest, entries by split, an upper
+      bound on eligible seeds, published reports and whether a staging root exists. Writes
+      nothing. corpusDigest folds the WHOLE corpus and is the value the CLI reports;
+      readerVisibleCorpusDigest folds the proposer-visible subset only and compares with
+      nothing the system prints.
 
   node scripts/422-acceptance.mjs --stage-demo --config <path> [--product <slug>] [--max-seeds <n>]
       Production staging through the built CLI (packages/cli/dist/cli.js). Stages a reviewable
