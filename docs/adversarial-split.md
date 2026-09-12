@@ -439,6 +439,33 @@ than by a directory list. `packages/arch/src/__tests__/422-no-eval-writer.test.t
 `pnpm run validate:arch` proves no eval-root or adversarial-staging writer is reachable from
 `agent-local` or `knowledge-local`.
 
+## Source reconciliations — 2026-09-11
+
+Twelve contracts were reconciled against what actually shipped. The canonical notes live in
+`.planning/REQUIREMENTS.md` under "Phase 422 dated reconciliations — 2026-09-11"; this index
+names them so a reader of this guide can see which twelve, and which section above states each.
+The date is the decision date (`422-CONTEXT.md`); the notes were written during execution on
+2026-09-12.
+
+| # | Reconciliation | D | Stated above in |
+|---|---|---|---|
+| 1 | The job stages; `eval adversarial --admit --batch` is the only committer. `PROPOSAL_KINDS` stays three | D-01, D-02 | Staging, review and admission |
+| 2 | The channel runs the host's LOADED policy; refusals are typed data and never regressions | D-03 | The loaded guardrail policy |
+| 3 | Additive `mutator` / `tableVersion` / `tableHash` / `authoringModel` / `promptVersion` and the `derivedFrom` label marker — no corpus or label schema bump | D-05, D-06, D-11 | Immutable generations; LLM probes |
+| 4 | `GENERATOR_KINDS` (6) and `LabelSourceChannel` (4) NOT widened; `AdversarialMutator` is the new closed set, and `PROBE_RESERVATION_STATUSES` shipped as `unattempted \| interrupted \| completed` | D-05, D-06 | Immutable generations; LLM probes |
+| 5 | "Capable" is 421 D-14's preflight verbatim; the `no-probe-model` gap set is closed and costs zero calls | D-09 | LLM probes |
+| 6 | The third chain id, notification schema v3's additive `proposals` stage, absent-is-not-zero, and the chip-less choice | D-13 | The chain, inline Gate 1 |
+| 7 | Four recorded defaults — 8 / 4 / 4 / 4 — each with a rationale and a disclosed source | D-04, D-11, D-14, D-18 | Caps, and where each came from |
+| 8 | `memoryOnPath` / `misdirectionRuledOut` are additive-optional evidence; `memoryMisdirectionRuledOut` keeps its name and meaning; eight verdict classes | D-17, D-20 | The circularity guard |
+| 9 | BYOM `declared-only`: the recording and disclosure half shipped, **the validator exemption did not** | D-19 | BYOM, and what this milestone did not deliver |
+| 10 | `flipped` ⇒ `exercised-harmed` on a failing step, whatever class the model wrote | D-20 | The circularity guard |
+| 11 | The retired-kind quarantine word `unreadable_kind`; no store version bump | D-16 | The retired-kind quarantine |
+| 12 | The local adversarial audit anatomy, and hygiene coverage of admitted entries by construction | — | Local audit anatomy |
+
+A thirteenth divergence was found while writing this guide and is recorded as a finding rather
+than a reconciliation: a request-hook guardrail block during replay is a **harness error**, not
+the `guard-failed` refusal D-03's wording implies. See "The loaded guardrail policy" above.
+
 ## What this documentation does and does not establish
 
 **Everything above describes shipped contracts proven by fixtures and fake models.** No live
