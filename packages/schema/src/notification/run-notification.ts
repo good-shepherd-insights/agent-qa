@@ -31,8 +31,21 @@ export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 3
 /** Whether the chain as a whole finished clean. Every stage done ⇒ `done` (D-12). */
 export type RunNotificationOutcome = 'done' | 'failed'
 
+// 2026-09-12, 422-22 (RED skeleton): the closed lists this plan declares, landed with one member
+// each and an incomplete key roster, so the cells in `../__tests__/422-notification-closed-sets
+// .test.ts` fail on their named assertions rather than on a module-load error (INVALID_RED, #3770).
+export const RUN_NOTIFICATION_OUTCOMES = ['done'] as const satisfies readonly RunNotificationOutcome[]
+
 /** What became of one stage the chain actually ran. */
 export type RunNotificationStageStatus = 'done' | 'failed'
+
+export const RUN_NOTIFICATION_STAGE_STATUSES = [
+  'done',
+] as const satisfies readonly RunNotificationStageStatus[]
+
+export const RUN_NOTIFICATION_STAGE_KEY_SETS = ['analysis,curation'] as const
+
+export const RUN_NOTIFICATION_FIELD_KEYS = 'outcome,runId,schemaVersion,stages'
 
 /**
  * Per-class counts over the verdicts the analysis stage authored.

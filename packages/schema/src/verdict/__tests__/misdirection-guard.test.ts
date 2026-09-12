@@ -26,6 +26,11 @@ import type { RecordId } from '../../ids/record-id'
 import { asRef } from '../../primitives/ref'
 import { asRunId } from '../../run/run-id'
 import { CURRENT_ANALYSIS_SCHEMA_VERSION } from '../analysis-artifact'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '../../handoff/completed-run-handoff'
+import {
+  ANALYSIS_MISDIRECTION_REASONS,
+  projectVerdictMisdirection,
+} from '../../functions/analysis-get'
 import type { RunAnalysisArtifact } from '../analysis-artifact'
 import {
   aggregateMisdirectionEvidence,
@@ -338,6 +343,129 @@ describe('the 422 evidence vocabularies are closed', () => {
       'timeout',
     ])
     expect(VERDICT_CLASSES).toHaveLength(8)
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// 422-22-T3 — the surface-side thinning of the same evidence, pinned independently.
+//
+// 422-18 widened `analysis.get` with an additive-optional `misdirection` member, which is the
+// FIRST time this evidence crosses a DTO into a browser. Two things about it are closed and
+// neither is pinned by the cells above: the four-word reason allow-list, and the exact key set
+// the DTO forwards. `MisdirectionRecordResult.reason` is an OPEN string on the durable row — a
+// root read failure can put arbitrary producer text there — so a passthrough would put a
+// producer's sentence into a text node, and a widened key set would carry a digest or a sample
+// to a page. Both are spelled out by hand here.
+// ---------------------------------------------------------------------------------------
+
+/** A complete `not-run` row bound to this fixture run, differing only in its reason text. */
+function disclosureRow(recordId: RecordId, reason: string): MisdirectionRecordResult {
+  return {
+    runId: 'run-422-22',
+    perTest: 0,
+    stepIndex: 1,
+    decisionOrdinal: 0,
+    recordId,
+    handoffBaseDigest: 'a'.repeat(64),
+    briefDigest: 'b'.repeat(64),
+    corpusDigest: 'c'.repeat(64),
+    profileDigest: 'e'.repeat(64),
+    crossCheck: 'not-run',
+    seedHonored: true,
+    reason,
+  }
+}
+
+describe('422-22 the analysis DTO thins the ledger to a closed vocabulary', () => {
+  it('carries exactly the four disclosable not-run words, in order', () => {
+    expect([...ANALYSIS_MISDIRECTION_REASONS]).toEqual([
+      'cap-exceeded',
+      'interrupted',
+      'no-eval-root',
+      'posture-unavailable',
+    ])
+    expect([...ANALYSIS_MISDIRECTION_REASONS].sort()).toEqual([
+      'cap-exceeded',
+      'interrupted',
+      'no-eval-root',
+      'posture-unavailable',
+    ])
+  })
+
+  it('forwards a word inside the allow-list and DROPS one outside it', () => {
+    // The behaviour, not the list. A producer sentence is exactly what this bar exists for.
+    const rows: MisdirectionRecordResult[] = [
+      disclosureRow(CANDIDATE_RECORD, 'cap-exceeded'),
+      disclosureRow(
+        CANARY_RECORD,
+        'ENOENT: no such file or directory, open /home/someone/.agent-qa/eval/root.json',
+      ),
+    ]
+    const projected = projectVerdictMisdirection({
+      perTest: 0,
+      testId: 'test-0',
+      class: 'unknown',
+      producer: 'analyze-run',
+      confidence: 0.5,
+      memoryMisdirectionRuledOut: false,
+      misdirectionRuledOut: { crossCheck: 'not-run', results: rows },
+    } as unknown as Verdict)
+    expect(projected?.results?.[0]?.reason).toBe('cap-exceeded')
+    expect(projected?.results?.[1]?.reason).toBeUndefined()
+    // Omission is safe because the word REFINES a row that already says `not-run`: the reader
+    // still knows the check did not run, it simply is not told why.
+    expect(projected?.results?.[1]?.crossCheck).toBe('not-run')
+  })
+
+  it('carries no digest, sample or identity binding onto the DTO', () => {
+    const projected = projectVerdictMisdirection({
+      perTest: 0,
+      testId: 'test-0',
+      class: 'unknown',
+      producer: 'analyze-run',
+      confidence: 0.5,
+      memoryMisdirectionRuledOut: false,
+      memoryOnPath: [{ recordId: CANDIDATE_RECORD, trust: 'candidate' }],
+      misdirectionRuledOut: {
+        crossCheck: 'held',
+        results: [{ ...disclosureRow(CANDIDATE_RECORD, 'unused'), crossCheck: 'held' }],
+      },
+    } as unknown as Verdict)
+    // The exact key set the DTO may carry, hand-spelled. A digest joining it would be a value a
+    // page prints; a sample joining it would be run content with no masking boundary of its own.
+    expect(Object.keys(projected ?? {}).sort()).toEqual([
+      'crossCheck',
+      'memoryOnPath',
+      'results',
+      'state',
+    ])
+    expect(Object.keys(projected?.results?.[0] ?? {}).sort()).toEqual(['crossCheck', 'recordId'])
+    expect(Object.keys(projected?.memoryOnPath?.[0] ?? {}).sort()).toEqual(['recordId', 'trust'])
+  })
+
+  it('OMITS the member entirely for a verdict that made no claim', () => {
+    // Absence renders as NOTHING. A `{ state: 'not-recorded' }` on every historical verdict
+    // would be this surface asserting a fact the producer never recorded, under every old
+    // failure in the product.
+    expect(
+      projectVerdictMisdirection({
+        perTest: 0,
+        testId: 'test-0',
+        class: 'app_bug',
+        producer: 'analyze-run',
+        confidence: 0.5,
+        memoryMisdirectionRuledOut: true,
+      } as unknown as Verdict),
+    ).toBeUndefined()
+  })
+})
+
+describe('422-22 the persisted versions this evidence did NOT move', () => {
+  it('leaves the handoff at 7 and the analysis artifact at 1', () => {
+    // Circularity evidence crosses four persisted boundaries as optional-additive members inside
+    // a block no historical document carries, so no version is owed a migration.
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
+    expect(CURRENT_ANALYSIS_SCHEMA_VERSION).toBe(1)
   })
 })
 

@@ -43,6 +43,14 @@ import type {
 } from '../misdirection-evidence'
 import { VERDICT_CLASSES } from '../verdict'
 import type { Verdict, VerdictClass } from '../verdict'
+import { ANALYSIS_MISDIRECTION_REASONS } from '../../functions/analysis-get'
+import type {
+  AnalysisMemoryOnPathEntry,
+  AnalysisMisdirectionReason,
+  AnalysisMisdirectionRecord,
+  AnalysisResolvedVerdict,
+  AnalysisVerdictMisdirection,
+} from '../../functions/analysis-get'
 
 describe('the two memory trust words', () => {
   test('are closed in both directions', () => {
@@ -176,5 +184,86 @@ describe('the verdict floor', () => {
     // @ts-expect-error 'misdirection' is not a verdict class; this assignment must not compile.
     const bad: Verdict['class'] = 'misdirection'
     expectTypeOf(bad).toEqualTypeOf<VerdictClass>()
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// 422-22-T3 — the surface DTO 422-18 added, pinned as its own closed vocabulary.
+//
+// The cells above pin the EVIDENCE's vocabularies where they are produced. This block pins the
+// thinned shape that crosses `analysis.get` into a browser, which is a different contract with a
+// different bar: the durable row's `reason` is an OPEN string and the DTO's is a closed four-word
+// allow-list, and the DTO's key set is deliberately narrower than the row's.
+// ---------------------------------------------------------------------------------------
+
+describe('the analysis DTO circularity member', () => {
+  test('is ADDITIVE-OPTIONAL on the resolved verdict, so a pre-422 reader still types', () => {
+    expectTypeOf<AnalysisResolvedVerdict['misdirection']>().toEqualTypeOf<
+      AnalysisVerdictMisdirection | undefined
+    >()
+    // A verdict naming only the members 406 shipped is still an `AnalysisResolvedVerdict`.
+    expectTypeOf<{
+      perTest: number
+      testId: string
+      class: VerdictClass
+      producer: 'deterministic-classifier' | 'analyze-run'
+      confidence: number
+    }>().toExtend<AnalysisResolvedVerdict>()
+  })
+
+  test('carries exactly five members and nothing that identifies a run', () => {
+    expectTypeOf<keyof AnalysisVerdictMisdirection>().toEqualTypeOf<
+      'state' | 'crossCheck' | 'results' | 'backing' | 'memoryOnPath'
+    >()
+    expectTypeOf<keyof AnalysisMisdirectionRecord>().toEqualTypeOf<
+      'recordId' | 'crossCheck' | 'reason'
+    >()
+    expectTypeOf<keyof AnalysisMemoryOnPathEntry>().toEqualTypeOf<'recordId' | 'trust'>()
+  })
+
+  test('bars every identity binding the durable row carries', () => {
+    // The row binds run, member, step, decision, brief, corpus and profile identities so it
+    // cannot be replayed as another verdict's exoneration. None is a fact a reader acts on, and
+    // every one is a value a page would put in a text node.
+    expectTypeOf<
+      Extract<keyof AnalysisVerdictMisdirection, 'misdirectionSourceDigest'>
+    >().toEqualTypeOf<never>()
+    expectTypeOf<Extract<keyof AnalysisVerdictMisdirection, 'sample'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<keyof AnalysisVerdictMisdirection, 'seedHonored'>>().toEqualTypeOf<never>()
+    expectTypeOf<Extract<keyof AnalysisMisdirectionRecord, 'sample'>>().toEqualTypeOf<never>()
+  })
+
+  test('narrows the row open reason to four closed words, both directions', () => {
+    expectTypeOf<AnalysisMisdirectionReason>().toEqualTypeOf<
+      'cap-exceeded' | 'interrupted' | 'no-eval-root' | 'posture-unavailable'
+    >()
+    expectTypeOf<
+      Exclude<AnalysisMisdirectionReason, (typeof ANALYSIS_MISDIRECTION_REASONS)[number]>
+    >().toEqualTypeOf<never>()
+    expectTypeOf<
+      Exclude<(typeof ANALYSIS_MISDIRECTION_REASONS)[number], AnalysisMisdirectionReason>
+    >().toEqualTypeOf<never>()
+    // The durable row's own reason stays OPEN. The two are deliberately different types: a
+    // producer may say anything, and this DTO may forward only these four.
+    expectTypeOf<MisdirectionRecordResult['reason']>().toEqualTypeOf<string | undefined>()
+    expectTypeOf<AnalysisMisdirectionRecord['reason']>().toEqualTypeOf<
+      AnalysisMisdirectionReason | undefined
+    >()
+  })
+
+  test('keeps the three-arm reading, and reuses the trust and cross-check words', () => {
+    expectTypeOf<AnalysisVerdictMisdirection['state']>().toEqualTypeOf<
+      'not-recorded' | 'declared-only' | 'measured'
+    >()
+    expectTypeOf<Extract<AnalysisVerdictMisdirection['state'], 'held'>>().toEqualTypeOf<never>()
+    expectTypeOf<AnalysisMisdirectionRecord['crossCheck']>().toEqualTypeOf<CrossCheck>()
+    expectTypeOf<AnalysisMemoryOnPathEntry['trust']>().toEqualTypeOf<MemoryOnPathTrust>()
+    expectTypeOf<AnalysisVerdictMisdirection['backing']>().toEqualTypeOf<'declared-only' | undefined>()
+  })
+
+  test('negative control: the DTO is not the durable block', () => {
+    // @ts-expect-error — the thinned DTO and the durable evidence are different shapes; the
+    // second carries identities the first must never learn.
+    expectTypeOf<AnalysisVerdictMisdirection>().toEqualTypeOf<MisdirectionEvidence>()
   })
 })
