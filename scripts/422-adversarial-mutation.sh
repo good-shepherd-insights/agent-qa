@@ -42,6 +42,8 @@
 #   fatal     mutate every subject, create every planted path, then throw
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
 #   (unset)   the real run
+# AGENT_QA_ADVERSARIAL_MUTATION_LEG selects one declared leg ONLY in neutered selftest mode.
+# Without it, the legacy neutered control reaches A01. Empty/unknown IDs or other modes refuse.
 #
 # Installed Node 24 and workspace tools are required. No downloads, builds, provider calls or
 # persistent source changes.
@@ -77,8 +79,10 @@ const NOTIFICATION = 'packages/schema/src/notification/run-notification.ts'
 const RECEIPT = 'packages/cli/src/gates/replay-gate-host.ts'
 const EVIDENCE = 'packages/schema/src/verdict/misdirection-evidence.ts'
 const HARM = 'packages/cli/src/curation/emit-canary-outcomes.ts'
+const PREFLIGHT = 'packages/cli/src/adversarial-probe-preflight.ts'
+const COMPOSITION = 'packages/eval-local/src/adversarial-composition.ts'
 const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION, RECEIPT,
-  EVIDENCE, HARM]
+  EVIDENCE, HARM, PREFLIGHT, COMPOSITION]
 
 /** The one leg that adds a file rather than editing one: the arch census names what it accuses. */
 const PLANT = 'packages/agent-local/src/422-adversarial-plant.ts'
@@ -147,6 +151,9 @@ const ARCH_WRITER = 'src/__tests__/422-no-eval-writer.test.ts'
 const CLI_RECEIPT = 'src/gates/__tests__/replay-gate-host.test.ts'
 const SCHEMA_GUARD = 'src/verdict/__tests__/misdirection-guard.test.ts'
 const CLI_HARM = 'src/curation/__tests__/misdirection-harm.test.ts'
+const CLI_SINGLETON = 'src/__tests__/adversarial-probe-author.test.ts'
+const LOCAL_RECOVERY = 'src/__tests__/adversarial-recovery.test.ts'
+const LOCAL_SAFETY = 'src/__tests__/adversarial-safety.test.ts'
 const receiptTitles = [
   '422 refuses to hand a caller a receipt the writer never acknowledged',
   '422 refuses a dry-run receipt at the port while the verb still renders it',
@@ -170,6 +177,11 @@ const aggregationControls = [
 ]
 const aggregationDescribe = 'aggregateMisdirectionEvidence: mixed rows never resolve to held'
 const harmTitle = 'emits ONE identical harmed consequence for every one of the eight classes and both producers'
+const singletonTitle = 'routes an eligible singleton through the capturing stub with its own profile and auth'
+const policyTitles = [
+  'settles refusals durably so a later refresh advances past them, and reopens them under a new policy',
+  'refuses staged injection bytes when the host policy moved from route to block, admitting nothing',
+]
 
 const instruments = {
   'eval-sets': { pkg: 'packages/eval', files: [EVAL_SETS_RUNTIME, EVAL_SETS_TYPES], typecheck: true },
@@ -186,6 +198,10 @@ const instruments = {
     nameFilter: exactTitles([...aggregationTitles, ...aggregationControls]) },
   'cli-harm': { pkg: 'packages/cli', files: [CLI_HARM], typecheck: false,
     nameFilter: exactTitles([harmTitle]) },
+  'cli-singleton': { pkg: 'packages/cli', files: [CLI_SINGLETON], typecheck: false,
+    nameFilter: exactTitles([singletonTitle]) },
+  'local-policy': { pkg: 'packages/eval-local', files: [LOCAL_RECOVERY, LOCAL_SAFETY], typecheck: false,
+    nameFilter: exactTitles(policyTitles) },
 }
 
 // ---- the cells each leg must redden, named BEFORE anything runs ---------------------------------
@@ -406,12 +422,36 @@ const legs = [
     to: 'const rowOutcome = runOutcome',
     reds: [cell(CLI_HARM, '422-16 D-20 — flipped evidence emits harm independently of the class', harmTitle)],
   },
+  {
+    subject: PREFLIGHT, instrument: 'cli-singleton', vocabulary: 'eligible singleton capability',
+    operation: 'reject', member: 'one-entry author pool',
+    from: 'if (names.length === 0) {',
+    to: 'if (names.length < 2) {',
+    reds: [cell(CLI_SINGLETON, '422-05 the eligible probe author, bound in the CLI', singletonTitle)],
+    // This independently authored helper uses a throw for its kind assertion. Permit ONLY
+    // the measured message under this named FAIL and this test-source pointer; not tool errors.
+    assertion: { message: 'Error: expected a probe author, got no-probe-model',
+      pointer: ' ❯ selectAuthor src/__tests__/adversarial-probe-author.test.ts:133:11' },
+  },
+  {
+    subject: COMPOSITION, instrument: 'local-policy', vocabulary: 'loaded-policy scan',
+    operation: 'bypass', member: 'generation and admission checkpoints',
+    from: '    assertCommittedEgressSafe(\n      [\n        { label: `cassette:${input.cassetteId}`, text: input.scanView },',
+    to: '    false && assertCommittedEgressSafe(\n      [\n        { label: `cassette:${input.cassetteId}`, text: input.scanView },',
+    reds: [cell(LOCAL_RECOVERY, '422 adversarial refresh bounding and recovery', policyTitles[0]),
+      cell(LOCAL_SAFETY, '422 adversarial same-byte safety boundary', policyTitles[1])],
+  },
 ]
 legs.forEach((leg, index) => { leg.id = `A${String(index + 1).padStart(2, '0')}` })
 // Derived from the declared ledger, never a guessed number: the selftest states the same total
 // independently, so a leg silently dropped here reddens there instead of shrinking both in step.
 const EXPECTED_LEGS = legs.length
-if (EXPECTED_LEGS !== 16) throw new Error(`Expected exactly 16 mutation legs, declared ${EXPECTED_LEGS}`)
+if (EXPECTED_LEGS !== 18) throw new Error(`Expected exactly 18 mutation legs, declared ${EXPECTED_LEGS}`)
+const target = process.env.AGENT_QA_ADVERSARIAL_MUTATION_LEG
+if (target !== undefined && (mode !== 'neutered' || !legs.some(leg => leg.id === target))) {
+  fatal('Invalid AGENT_QA_ADVERSARIAL_MUTATION_LEG: requires neutered mode and a declared ID')
+}
+const activeLegs = target === undefined ? legs : legs.filter(leg => leg.id === target)
 
 // ---- the arrival proof --------------------------------------------------------------------------
 // Computed from SOURCE before any byte is touched. A subject outside its instrument's relative
@@ -485,8 +525,14 @@ function mutate(text, leg) {
 }
 
 // ---- reading a run -------------------------------------------------------------------------------
-function parse(log) {
+function parse(log, leg) {
   const clean = log.replace(/\x1b\[[0-9;]*m/g, '')
+  let toolDiagnostics = clean
+  if (leg?.assertion !== undefined) {
+    const block = ` FAIL  ${leg.reds[0]}\n${leg.assertion.message}\n${leg.assertion.pointer}\n`
+    if (clean.split(block).length !== 2) throw new Error('Missing intended behavior assertion')
+    toolDiagnostics = clean.replace(block, ` FAIL  ${leg.reds[0]}\n${leg.assertion.pointer}\n`)
+  }
   const failures = [...clean.matchAll(/^ FAIL  (src\/[^ ]+) > (.+)$/gm)]
     .map(match => `${match[1]} > ${match[2]}`)
   const diagnostics = [...clean.matchAll(/^(TypeCheckError:[\s\S]*?)^ ❯ (src\/[^\n]+:\d+:\d+)$/gm)]
@@ -500,7 +546,7 @@ function parse(log) {
   if ((clean.match(/^TypeCheckError:/gm) ?? []).length !== diagnostics.length) {
     throw new Error('Unparsed type diagnostic')
   }
-  if (/^(?:Error|SyntaxError|ReferenceError|RangeError|TypeError):/m.test(clean)) {
+  if (/^(?:Error|SyntaxError|ReferenceError|RangeError|TypeError):/m.test(toolDiagnostics)) {
     throw new Error('Unrelated tool error')
   }
   return {
@@ -530,9 +576,9 @@ function checkGreen(result, instrument) {
   return parsed
 }
 function checkRed(result, leg) {
-  if (result.exit === 0) throw new Error('suite stayed green')
+  if (result.exit === 0) throw new Error(`${leg.id}: suite stayed green`)
   if (result.exit !== 1) throw new Error(`Unexpected tool exit ${result.exit}`)
-  const parsed = parse(result.log)
+  const parsed = parse(result.log, leg)
   const expected = [...leg.reds].sort()
   const missing = [...expected, ...(leg.greens ?? [])].filter(name => !parsed.selectedNames.includes(name))
   if (missing.length > 0) throw new Error(`Named cell not selected: ${JSON.stringify(missing)}`)
@@ -625,11 +671,11 @@ async function main() {
 
   // Every instrument must be green BEFORE any mutation, or a leg's RED could be pre-existing —
   // and every cell a leg names must be among the cells the green run SELECTED.
-  const used = [...new Set(legs.map(leg => leg.instrument))]
+  const used = [...new Set(activeLegs.map(leg => leg.instrument))]
   for (const name of used) checkGreen(await instrument(name, `preflight-${name}`), name)
 
   const ledger = []
-  for (const leg of legs) {
+  for (const leg of activeLegs) {
     console.log(`LEG ${leg.id} ${leg.vocabulary} ${leg.operation} ${leg.member}`)
     const snapshot = leg.plant === undefined ? owned.get(leg.subject) : undefined
     if (mode !== 'neutered') {
@@ -670,9 +716,18 @@ async function main() {
     mustReject('unrelated error', () => checkRed({ ...result, log: `${result.log}\nError: unrelated\n` }, leg))
     mustReject('wrong named cell', () => checkRed({ ...result,
       log: result.log.replace(/^( FAIL  src\/[^ ]+ > .+)$/m, '$1 trailing') }, leg))
+    mustReject('missing named cell', () => checkRed({ ...result,
+      log: result.log.split('\n').filter(line => !(line.includes(leg.reds[0])
+        && /^\s*[✓×]/.test(line))).join('\n') }, leg))
     mustReject('zero selected cells', () => checkRed({ ...result,
       log: result.log.replace(/^\s*[✓×] (?: TS  )?src\/[^ ]+ > .+$/gm, '') }, leg))
     mustReject('a green suite', () => checkRed({ ...result, exit: 0 }, leg))
+    if (leg.assertion !== undefined) {
+      mustReject('wrong behavior assertion', () => checkRed({ ...result,
+        log: result.log.replace(leg.assertion.message, 'Error: an unrelated helper failure') }, leg))
+      mustReject('wrong behavior assertion pointer', () => checkRed({ ...result,
+        log: result.log.replace(leg.assertion.pointer, ' ❯ unrelated src/other.test.ts:1:1') }, leg))
+    }
     if (leg.greens?.length) {
       mustReject('missing positive control', () => checkRed({ ...result,
         log: result.log.split('\n').filter(line => !line.includes(leg.greens[0])).join('\n') }, leg))
@@ -689,6 +744,7 @@ async function main() {
       originalDigest: snapshot?.hash ?? null,
       mutatedDigest: sha(fs.readFileSync(leg.subject ?? leg.plant)),
       selectedNames: parsed.selectedNames,
+      assertion: leg.assertion ?? null,
     })
     fs.writeFileSync(path.join(work, 'ledger.json'), JSON.stringify(ledger, null, 2) + '\n')
     console.log(`NAMED RED ${leg.id}: ${parsed.failures.join(' | ')}; diagnostics=${parsed.digest}`)
@@ -699,7 +755,10 @@ async function main() {
       if (fs.existsSync(path.join(root, leg.plant))) throw new Error(`planted path survived: ${leg.plant}`)
       console.log(`REMOVED ${leg.plant}`)
     }
-    const green = checkGreen(await instrument(leg.instrument, `${leg.id}-restored-green`), leg.instrument)
+    const restored = await instrument(leg.instrument, `${leg.id}-restored-green`)
+    const green = checkGreen(restored, leg.instrument)
+    mustReject('missing named green cell', () => checkGreen({ ...restored,
+      log: restored.log.split('\n').filter(line => !line.includes(leg.reds[0])).join('\n') }, leg.instrument))
     ledger[ledger.length - 1].restoredSelectedNames = green.selectedNames
     ledger[ledger.length - 1].restoredDigest = leg.plant ? null : sha(fs.readFileSync(leg.subject))
     fs.writeFileSync(path.join(work, 'ledger.json'), JSON.stringify(ledger, null, 2) + '\n')

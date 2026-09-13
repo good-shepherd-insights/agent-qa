@@ -153,8 +153,11 @@ function runMode(mode, options = {}) {
   const log = path.join(work, `${name}.log`)
   const fd = fs.openSync(log, 'wx')
   const started = Date.now()
+  const env = { ...process.env, AGENT_QA_ADVERSARIAL_MUTATION_SELFTEST: mode }
+  delete env.AGENT_QA_ADVERSARIAL_MUTATION_LEG
+  if (options.target !== undefined) env.AGENT_QA_ADVERSARIAL_MUTATION_LEG = options.target
   const result = spawnSync('bash', ['scripts/422-adversarial-mutation.sh'], {
-    cwd: copy, env: { ...process.env, AGENT_QA_ADVERSARIAL_MUTATION_SELFTEST: mode },
+    cwd: copy, env,
     stdio: ['ignore', fd, fd], timeout: 2_700_000,
   })
   fs.closeSync(fd)
@@ -165,7 +168,8 @@ function runMode(mode, options = {}) {
   }, null, 2) + '\n')
   assert.deepEqual(hostAfter, hostBefore, `${name}: host source/dist integrity`)
   fs.writeFileSync(path.join(work, `${name}.json`), JSON.stringify({
-    mode, status: result.status, signal: result.signal, error: result.error?.message,
+    mode, target: options.target, command: ['bash', 'scripts/422-adversarial-mutation.sh'], cwd: copy,
+    status: result.status, signal: result.signal, error: result.error?.message,
     elapsedMs: Date.now() - started, before, after,
   }, null, 2) + '\n')
   const output = fs.readFileSync(log, 'utf8')
@@ -183,7 +187,7 @@ function runMode(mode, options = {}) {
 
 /** The reason each refusing mode must print, and nothing else. */
 function reasonFor(mode) {
-  if (mode === 'neutered') return 'suite stayed green'
+  if (mode === 'neutered') return 'A01: suite stayed green'
   if (mode === 'fatal') return 'intentional fatal after A01 mutation'
   if (mode === 'invalid') return 'Unknown AGENT_QA_ADVERSARIAL_MUTATION_SELFTEST'
   return `interrupted by ${mode}`
@@ -251,6 +255,18 @@ test('adversarial mutation legs redden by name and restore byte-identically', ()
       assert.equal(record.instrument, contract.instrument, `${leg.id}: ${suffix} instrument`)
     }
   }
+  const aggregate = ledger.find(leg => leg.id === 'A15')
+  for (const title of ['resolves to held only when every relevant row held',
+    'held + flipped is flipped, never held']) {
+    const name = `src/verdict/__tests__/misdirection-guard.test.ts > aggregateMisdirectionEvidence: mixed rows never resolve to held > ${title}`
+    assert.ok(aggregate.selectedNames.includes(name), `A15 selected positive control: ${title}`)
+    assert.ok(aggregate.restoredSelectedNames.includes(name), `A15 restored positive control: ${title}`)
+    assert.ok(!aggregate.failures.includes(name), `A15 retained positive control: ${title}`)
+  }
+  assert.deepEqual(ledger.find(leg => leg.id === 'A17').assertion, {
+    message: 'Error: expected a probe author, got no-probe-model',
+    pointer: ' ❯ selectAuthor src/__tests__/adversarial-probe-author.test.ts:133:11',
+  }, 'A17 may only admit the independent helper assertion measured at its source pointer')
   console.log(`SELFTEST normal exit=${status} legs=${ledger.length} restored=${subjects.length}`)
 
   // ---- the refusing modes ------------------------------------------------------------------
@@ -291,6 +307,67 @@ test('adversarial mutation legs redden by name and restore byte-identically', ()
     console.log(`SELFTEST ${mode} exit=${run.status} reason=${reason}`)
   }
 
+  for (const target of ['A13', 'A14', 'A15', 'A16', 'A17', 'A18']) {
+    const run = runMode('neutered', { label: `neutered-${target}`, target })
+    assert.equal(run.status, 1, run.output)
+    assert.deepEqual(run.output.match(/^FATAL: .+$/gm), [`FATAL: ${target}: suite stayed green`])
+    assert.match(run.output, new RegExp(`^${target}-red: exit=0 `, 'm'))
+    assert.deepEqual(run.output.match(/^LEG A\d+ /gm), [`LEG ${target} `])
+    assert.ok(!run.output.includes('ADVERSARIAL_MUTATION_OK'), run.output)
+    const evidence = /^Evidence: (.+)$/m.exec(run.output)[1]
+    const child = JSON.parse(fs.readFileSync(path.join(evidence, `${target}-red.json`), 'utf8'))
+    assert.equal(child.exit, 0, `${target}: actual selected green child`)
+    for (const [index, file] of subjects.entries()) {
+      assert.ok(run.output.includes(`RESTORED ${file} sha256=${run.before[index]}`))
+    }
+    console.log(`SELFTEST neutered-${target} exit=1 selected-green-child=0 restored=${subjects.length}`)
+  }
+
+  const invalidTargets = [
+    { mode: 'neutered', target: 'A99', label: 'unknown-target' },
+    { mode: 'neutered', target: '', label: 'empty-target' },
+    { mode: '', target: 'A13', label: 'target-without-neutered' },
+    { mode: 'fatal', target: 'A13', label: 'target-with-fatal' },
+  ]
+  for (const options of invalidTargets) {
+    const run = runMode(options.mode, options)
+    assert.equal(run.status, 1, run.output)
+    assert.deepEqual(run.output.match(/^FATAL: .+$/gm), [
+      'FATAL: Invalid AGENT_QA_ADVERSARIAL_MUTATION_LEG: requires neutered mode and a declared ID',
+    ])
+    assert.ok(!/ARRIVAL |RESTORED |ADVERSARIAL_MUTATION_OK/.test(run.output), run.output)
+    const evidence = /^Evidence: (.+)$/m.exec(run.output)[1]
+    assert.equal(fs.existsSync(path.join(evidence, 'subjects.json')), false)
+    console.log(`SELFTEST ${options.label} exit=1 before-ownership=1`)
+  }
+
+  function editInstrument(copy, from, to) {
+    const file = path.join(copy, 'scripts/422-adversarial-mutation.sh')
+    const text = fs.readFileSync(file, 'utf8')
+    assert.equal(text.split(from).length, 2, 'isolated control anchor must be unique')
+    fs.writeFileSync(file, text.replace(from, to))
+  }
+  const noop = runMode('', { label: 'unchanged-transform', prepare: copy => {
+    editInstrument(copy,
+      `to: "export const ADVERSARIAL_ROW_STATUSES = [\\n  'staged',\\n",`,
+      `to: "export const ADVERSARIAL_ROW_STATUSES = [\\n  'staged',\\n  'unchanged',\\n",`)
+  } })
+  assert.equal(noop.status, 1, noop.output)
+  assert.deepEqual(noop.output.match(/^FATAL: .+$/gm), ['FATAL: Mutation anchor did not land: A01'])
+  assert.ok(!/A01-red:|ADVERSARIAL_MUTATION_OK/.test(noop.output), noop.output)
+  console.log('SELFTEST unchanged-transform exit=1 unchanged-bytes-rejected=1')
+
+  const wrongArrival = runMode('', { label: 'wrong-arrival', prepare: copy => {
+    editInstrument(copy, "'cli-receipt': { pkg: 'packages/cli', files: [CLI_RECEIPT]",
+      "'cli-receipt': { pkg: 'packages/cli', files: []")
+  } })
+  assert.equal(wrongArrival.status, 1, wrongArrival.output)
+  assert.ok(wrongArrival.output.includes(`FATAL: A13: ${RECEIPT} is not in the relative-import closure`))
+  assert.ok(!/RESTORED |LEG A|ADVERSARIAL_MUTATION_OK/.test(wrongArrival.output), wrongArrival.output)
+  const wrongEvidence = /^Evidence: (.+)$/m.exec(wrongArrival.output)[1]
+  assert.equal(fs.existsSync(path.join(wrongEvidence, 'subjects.json')), false)
+  console.log('SELFTEST wrong-arrival exit=1 before-ownership=1')
+
   // ---- the preflight's clean-source protection ------------------------------------------------
   // A dirty subject is REFUSED and LEFT ALONE. Restoring it from a snapshot taken after the dirt
   // landed would launder someone else's uncommitted work into a byte-identical-looking success.
@@ -309,6 +386,31 @@ test('adversarial mutation legs redden by name and restore byte-identically', ()
     assert.equal(dirty.after[index], dirty.before[index], `${file}: untouched by a refused run`)
   }
   console.log('SELFTEST dirty-subject exit=1 refused-without-modifying=1')
+
+  for (const [index, file] of [RECEIPT, EVIDENCE, HARM, PREFLIGHT, COMPOSITION].entries()) {
+    for (const state of ['dirty', 'untracked', 'ignored']) {
+      const run = runMode('', { label: `${state}-new-subject-${index + 1}`, prepare: copy => {
+        if (state === 'dirty') fs.appendFileSync(path.join(copy, file), dirtyMark)
+        else {
+          git(copy, ['update-index', '--force-remove', '--', file])
+          git(copy, ['-c', 'commit.gpgsign=false', '-c', 'user.name=Fixture',
+            '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'untrack fixture subject'])
+          if (state === 'ignored') {
+            fs.appendFileSync(path.join(copy, '.git/info/exclude'), `\n/${file}\n`)
+            const status = spawnSync('git', ['status', '--porcelain', '--', file], { cwd: copy, encoding: 'utf8' })
+            assert.equal(status.status, 0)
+            assert.equal(status.stdout, '', 'ignored file must look clean to status alone')
+          }
+        }
+      } })
+      assert.equal(run.status, 1, run.output)
+      assert.deepEqual(run.output.match(/^FATAL: .+$/gm), [`FATAL: ${file} is dirty or untracked — refusing mutation`])
+      assert.ok(!/ARRIVAL |RESTORED |ADVERSARIAL_MUTATION_OK/.test(run.output), run.output)
+      const evidence = /^Evidence: (.+)$/m.exec(run.output)[1]
+      assert.equal(fs.existsSync(path.join(evidence, 'subjects.json')), false)
+      console.log(`SELFTEST ${state}-new-subject-${index + 1} exit=1 incoming-bytes-preserved=1`)
+    }
+  }
 
   // ---- the planted path may never overwrite a real file ----------------------------------------
   const occupied = runMode('', {
