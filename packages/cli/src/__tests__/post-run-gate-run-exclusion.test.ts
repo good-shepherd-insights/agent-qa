@@ -38,7 +38,7 @@
 // mechanism that does not exist.
 
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -274,7 +274,8 @@ interface Side {
  * differential would be measuring idempotency instead of exclusion.
  */
 function side(label: string, markers: { gateRun?: true; excludedFromOutcomes?: true }): Side {
-  const agentQaRoot = mkdtempSync(join(tmpdir(), `agent-qa-393-05-${label}-`))
+  // Turbo can omit TMPDIR, yielding macOS's /tmp symlink. Canonicalize only our owned fixture.
+  const agentQaRoot = realpathSync(mkdtempSync(join(tmpdir(), `agent-qa-393-05-${label}-`)))
   roots.push(agentQaRoot)
   writeFileSync(join(agentQaRoot, 'agent-qa.config.yaml'), 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nuse:\n  mobile:\n    appState: preserve\n')
   const knowledgeRoot = join(agentQaRoot, 'knowledge')
