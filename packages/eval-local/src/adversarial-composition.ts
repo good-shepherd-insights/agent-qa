@@ -1748,11 +1748,13 @@ export function refreshAdversarialSplit(
     if (input.dryRun === true) {
       if (pathPresent(lock)) throw new AdversarialLifecycleBusyError(lock)
     } else release = acquireLifecycleLock(lock, input)
-    return refreshAdversarialSplitOwned(input)
   } catch (error) {
     if (error instanceof AdversarialLifecycleBusyError) return { ...base, reason: 'admission-refused', lifecycleBusy: { lockPath: error.lockPath } }
     if (error instanceof TypeError || error instanceof z.ZodError || error instanceof SyntaxError) return { ...base, reason: 'staging-integrity' }
     throw error
+  }
+  try {
+    return refreshAdversarialSplitOwned(input)
   } finally { release?.() }
 }
 
