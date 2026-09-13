@@ -137,6 +137,8 @@ import {
 } from './misdirection-tail.js'
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { dirname } from 'node:path'
+import { canonicalJson } from '@vostride/agent-qa-schema'
+import { ownPostVerdictContinuation, postVerdictPendingPath, PostVerdictContinuationRefused } from './post-verdict-continuation.js'
 
 /**
  * The capability table, stubbable per cell.
@@ -149,6 +151,7 @@ import { dirname } from 'node:path'
  * moments: the first pair at the verdict, the second only if a pump asks.
  */
 export interface PostVerdictStepOperations {
+  ownContinuation: typeof ownPostVerdictContinuation
   recordCanaryPolicy: typeof recordCanaryPolicy
   /**
    * 422 D-18: the circularity arbiter, run BEFORE the enqueue below and after the D-08 skip.
@@ -272,6 +275,10 @@ export interface PostVerdictStepOptions {
  */
 export interface PostVerdictHandoff {
   readonly outcome: PostVerdictOutcome | undefined
+  readonly completion?: Promise<PostVerdictOutcome>
+  readonly enqueueState?: PostVerdictEnqueueState
+  readonly failureDetail?: string
+  readonly pendingPath?: string
   /**
    * ACQUIRE (once) and hand over. This is the call a pump makes, and it is the only thing in this
    * file that mutates the lease file: a step whose run never reaches a pump acquires nothing at
@@ -311,6 +318,7 @@ const POST_RUN_ENQUEUE_FAILED = 'post-run-enqueue-failed'
 function defaultOperations(): PostVerdictStepOperations {
   const curationDefaults = defaultCurationTailOperations()
   return {
+    ownContinuation: ownPostVerdictContinuation,
     recordCanaryPolicy,
     prepareMisdirectionEvidence: prepareMisdirectionEvidenceForRun,
     acquireWriterLease: LOCAL_DAEMON_CAPABILITIES.acquireWriterLease,
@@ -441,6 +449,29 @@ export async function enqueueAnalyzeRun(input: {
       // never cost the verdict (JOBQ-06). The next composition opens its own.
     }
   }
+}
+
+/** Read the actual deterministic row before recovery can spend, and validate its final bytes. */
+async function matchingAnalysisAlreadyQueued(options: PostVerdictStepOptions, operations: PostVerdictStepOperations): Promise<boolean> {
+  const host = operations.composeHost(options)
+  try {
+    const jobs = await host.jobs()
+    const id = jobs.idSource.jobIdFor('analyze-run', options.runId)
+    const row = (await jobs.store.dumpState()).jobs.find((job) => job.id === id
+      || (job.kind === 'analyze-run' && job.idempotencyKey === options.runId))
+    if (row === undefined) return false
+    const handoff = operations.loadCompletedRunHandoff(completedRunHandoffPath(options.agentQaRoot, options.runId))
+    const parsed = AnalyzeRunPayloadSchema.safeParse(row.payload)
+    if (row.id !== id || row.kind !== 'analyze-run' || row.idempotencyKey !== options.runId
+      || !parsed.success || parsed.data.runId !== options.runId
+      || parsed.data.handoffDigest !== curationTailHandoffDigest(handoff)
+      || canonicalJson(parsed.data.misdirectionEvidence ?? null) !== canonicalJson(handoff.misdirectionEvidence ?? null)
+      || parsed.data.handoffSchemaVersion !== handoff.schemaVersion
+      || parsed.data.executionContext !== handoff.executionContext) {
+      throw new PostVerdictContinuationRefused('queue-conflict')
+    }
+    return true
+  } finally { await host.close() }
 }
 
 /**
@@ -673,6 +704,9 @@ export function createPostVerdictStep(options: PostVerdictStepOptions): {
   let supplied: CurationWriterAuthority | undefined
   let claimed = false
   let decided: PostVerdictOutcome | undefined
+  let completion: Promise<PostVerdictOutcome> | undefined
+  let enqueue: PostVerdictEnqueueState | undefined
+  let enqueueError: string | undefined
   /**
    * What `takeAcquiredLease()` should do when a pump finally asks.
    *
@@ -685,8 +719,7 @@ export function createPostVerdictStep(options: PostVerdictStepOptions): {
    */
   let plan: 'acquire' | 'supplied' | 'none' = 'none'
 
-  const port: PostVerdictPort = {
-    async run(input: PostVerdictStepInput): Promise<PostVerdictOutcome> {
+  const execute = async (input: PostVerdictStepInput): Promise<PostVerdictOutcome> => {
       const root = options.knowledgeRoot
       const settle = (outcome: PostVerdictOutcome): PostVerdictOutcome => {
         decided = outcome
@@ -698,30 +731,31 @@ export function createPostVerdictStep(options: PostVerdictStepOptions): {
       // handoff: the handoff is loaded by the enqueue, and this arm exists precisely so the
       // enqueue never runs.
       if (input.gateRun === true || input.excludedFromOutcomes === true) {
+        enqueue = 'skipped'
         return settle(dispositionOf({ enqueue: 'skipped', leaseSkipped: true }))
       }
 
       // (b) THE ENQUEUE — the durable record, before any posture about draining it.
-      let enqueue: PostVerdictEnqueueState
-      let enqueueError: string | undefined
       try {
-        await ops().recordCanaryPolicy(options)
         // 422 D-18: DURABLE BEFORE PUBLISHED. The sidecar reaches `handoff.json` here, so the
         // digest `enqueueAnalyzeRun` mints one line below covers it — and a process that dies
         // between the two leaves evidence on disk that the retry reads instead of re-spending.
-        await ops().prepareMisdirectionEvidence(options, ops())
-        enqueue = await enqueueAnalyzeRun({
-          runId: options.runId,
-          agentQaRoot: options.agentQaRoot,
-          configPath: options.configPath,
-          operations: ops(),
+        enqueue = await ops().ownContinuation({ ...options,
+          queued: () => matchingAnalysisAlreadyQueued(options, ops()),
+          prepare: async () => {
+            await ops().recordCanaryPolicy(options)
+            await ops().prepareMisdirectionEvidence(options, ops())
+          },
+          enqueue: async () => {
+            return await enqueueAnalyzeRun({ ...options, operations: ops() })
+          },
         })
       } catch (error) {
         enqueue = error instanceof PostProcessingUnboundError ? 'unbound' : 'failed'
         enqueueError = enqueueFailureWarning(
           options.runId,
           completedRunHandoffPath(options.agentQaRoot, options.runId),
-          error instanceof Error ? error.message : String(error),
+          error instanceof PostVerdictContinuationRefused ? error.category : 'preparation-or-enqueue-error',
         )
       }
 
@@ -763,12 +797,21 @@ export function createPostVerdictStep(options: PostVerdictStepOptions): {
         plan = 'acquire'
       }
       return settle(dispositionOf({ enqueue, probe, leaseSkipped: false }))
+  }
+  const port: PostVerdictPort = {
+    run(input) {
+      completion ??= execute(input)
+      return completion
     },
   }
 
   return {
     port,
     handoff: {
+      get completion() { return completion },
+      get enqueueState() { return enqueue },
+      get failureDetail() { return enqueueError },
+      get pendingPath() { return postVerdictPendingPath(options) },
       get outcome(): PostVerdictOutcome | undefined {
         return decided
       },

@@ -58,6 +58,7 @@ import type {
 // install the run's safety scope and map its verdict, and both of those live in packages this file
 // may not name directly.
 import {
+  DRAIN_BUDGET_MS,
   REFUSED_RUN_REQUEST_FIELDS,
   RunRequestFieldRefusedError,
   buildRunAuditSink,
@@ -68,6 +69,7 @@ import {
   runSafetyScope,
   writeMaskingDigests,
 } from '@vostride/agent-qa-agent-local'
+import { waitForPostVerdictContinuation } from '../curation/post-verdict-continuation.js'
 import type {
   RunExecutionContext,
   RunInvocationCoreOptions,
@@ -136,6 +138,7 @@ export interface RunSubscriberAttachInput {
 
 /** What a door's post-verdict tail is handed, INSIDE the run's own safety scope. */
 export interface CliRunVerdictContext {
+  readonly postVerdictDeadlineMs?: number
   readonly runId: string
   readonly verdict: string
   /** The verdict's own exit code, before any door-level fold (`--all`, a pending cancel). */
@@ -187,6 +190,7 @@ export interface CliRunOutcome {
  * What a door hands over to get a run. Everything here is something only a DOOR can answer.
  */
 export interface InProcessCliRunExecutionOptions {
+  readonly postVerdictSignal?: AbortSignal
   readonly resolveTrustPriors?: ResolveTrustPriors
   /** The config runs resolve against unless `request.configPath` names another. */
   readonly configPath: string
@@ -688,6 +692,7 @@ export async function runInProcessCliRun(
    * promise's own — the two must never both run, and which one does is decided exactly once.
    */
   let detachedTail: Promise<void> | undefined
+  let closedOut = false
 
   /**
    * Release whatever lease nobody took, then dispose the masker. Exactly once, whoever runs it.
@@ -717,6 +722,8 @@ export async function runInProcessCliRun(
    * `detachedTail`'s presence at the moment the drive leaves.
    */
   const closeOutRun = (): void => {
+    if (closedOut) return
+    closedOut = true
     releaseUntakenPostVerdictLease({
       handoff: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,
       knowledgeRoot: produced.knowledgeRoot,
@@ -752,6 +759,9 @@ export async function runInProcessCliRun(
         // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics
         // drain) AFTER `done` and BEFORE mapping the verdict or re-throwing a framework error.
         await startedSubscribers?.flush()
+        const postVerdictDeadlineMs = Date.now() + DRAIN_BUDGET_MS
+        await waitForPostVerdictContinuation(postVerdictHandoff?.completion,
+          postVerdictDeadlineMs, options.postVerdictSignal)
 
         // A throw out of a member closure is a framework/setup error rather than a test failure:
         // the shell absorbs executor throws into failed members (D-13), so the producer captured
@@ -769,30 +779,42 @@ export async function runInProcessCliRun(
           configDir: produced.configDir,
           configFilePath: produced.configFilePath,
           postVerdict: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,
+          postVerdictDeadlineMs,
         }
         const finalExitCode = options.afterVerdict === undefined
           ? exitCode
           : await options.afterVerdict(verdictContext)
         if (options.postRunTail === undefined) {
-          return { runId, verdict, exitCode: finalExitCode }
+          if (postVerdictHandoff?.completion !== undefined) {
+            detachedTail = postVerdictHandoff.completion.then(() => undefined, () => undefined).finally(closeOutRun)
+          }
+          return { runId, verdict, exitCode: finalExitCode,
+            ...(detachedTail === undefined ? {} : { settled: detachedTail }) }
         }
         // 404 D-06 / RESEARCH Pitfall 2: START it and RETURN. The dispose duty travels with it —
         // see `closeOutRun` and the `postRunTail` option's own doc for why the masker may not be
         // torn down before the fold that needs it.
-        detachedTail = options.postRunTail(verdictContext)
+        detachedTail = Promise.allSettled([
+          postVerdictHandoff?.completion,
+          options.postRunTail(verdictContext)
           .catch((error: unknown) => {
             warnByName(
               `Run ${runId}: the post-run tail did not complete (`
               + `${error instanceof Error ? error.message : String(error)}`
               + '); queued work will resume on the next run or when the daemon drains it.',
             )
-          })
+          }),
+        ]).then(() => undefined)
           .finally(closeOutRun)
         return { runId, verdict, exitCode: finalExitCode, settled: detachedTail }
       } finally {
         // The close-out runs HERE unless the detached tail took ownership of it — see
         // `closeOutRun`'s own doc for why that hand-over is the whole of D-06's masker rule.
-        if (detachedTail === undefined) closeOutRun()
+        if (detachedTail === undefined) {
+          if (postVerdictHandoff?.completion !== undefined) {
+            detachedTail = postVerdictHandoff.completion.then(() => undefined, () => undefined).finally(closeOutRun)
+          } else closeOutRun()
+        }
       }
     },
   )
