@@ -27,7 +27,10 @@ const CORPUS = 'packages/eval/src/labels/corpus-entry.ts'
 const CHAIN = 'packages/agent/src/jobs/chain-identity.ts'
 const NOTIFICATION = 'packages/schema/src/notification/run-notification.ts'
 const RECEIPT = 'packages/cli/src/gates/replay-gate-host.ts'
-const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION, RECEIPT]
+const EVIDENCE = 'packages/schema/src/verdict/misdirection-evidence.ts'
+const HARM = 'packages/cli/src/curation/emit-canary-outcomes.ts'
+const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION, RECEIPT,
+  EVIDENCE, HARM]
 const PLANT = 'packages/agent-local/src/422-adversarial-plant.ts'
 
 /** Packages an instrument RUNS in; the rest are copied for their raw source alone. */
@@ -60,6 +63,12 @@ const expected = [
     operation: 'plant', member: 'an adversarial storage path in a protected package' },
   { subject: RECEIPT, instrument: 'cli-receipt', vocabulary: 'acknowledged Gate-1 return',
     operation: 'bypass', member: 'writer acknowledgement refusal' },
+  { subject: EVIDENCE, instrument: 'schema-membership', vocabulary: 'code-owned memory membership',
+    operation: 'erase', member: 'candidate and served-canary trust' },
+  { subject: EVIDENCE, instrument: 'schema-aggregation', vocabulary: 'all-held evidence law',
+    operation: 'bypass', member: 'unresolved siblings' },
+  { subject: HARM, instrument: 'cli-harm', vocabulary: 'class-independent flipped harm',
+    operation: 'erase', member: 'causal outcome precedence' },
 ]
 expected.forEach((leg, index) => { leg.id = `A${String(index + 1).padStart(2, '0')}` })
 
@@ -189,7 +198,7 @@ test('adversarial mutation legs redden by name and restore byte-identically', ()
     '422-10 keeps its own registration — the phase gate borrows the instrument, it does not absorb it')
   assert.ok(fs.existsSync('scripts/422-adversarial-mutation.sh'), 'the instrument must exist')
   assert.ok(fs.existsSync('scripts/422-quarantine-mutation.sh'), 'the quarantine instrument must exist')
-  assert.equal(expected.length, 13)
+  assert.equal(expected.length, 16)
   const declared = fs.readFileSync('scripts/422-adversarial-mutation.sh', 'utf8')
     .split('const legs = [')[1].split('legs.forEach')[0]
   assert.equal((declared.match(/^  \{$/gm) ?? []).length, expected.length,
@@ -197,18 +206,18 @@ test('adversarial mutation legs redden by name and restore byte-identically', ()
 
   const { output, status, before } = runMode('')
   assert.equal(status, 0, output)
-  assert.match(output, /^ADVERSARIAL_MUTATION_OK legs=13 named-red=13 byte-identical-restoration=8$/m)
+  assert.match(output, /^ADVERSARIAL_MUTATION_OK legs=16 named-red=16 byte-identical-restoration=10$/m)
   assert.ok(!output.includes('FATAL:'), output)
 
   // The arrival proof ran for EVERY leg before any byte moved. Without it a leg whose subject the
   // instrument never reads would report a green that measures the absence of the mutation.
-  assert.equal((output.match(/^ARRIVAL A\d+: /gm) ?? []).length, 13, output)
-  assert.equal((output.match(/^NAMED RED A\d+:/gm) ?? []).length, 13, output)
+  assert.equal((output.match(/^ARRIVAL A\d+: /gm) ?? []).length, 16, output)
+  assert.equal((output.match(/^NAMED RED A\d+:/gm) ?? []).length, 16, output)
 
   const evidence = /^Evidence: (.+)$/m.exec(output)?.[1]
   assert.ok(evidence, 'the run must retain its evidence directory')
   const ledger = JSON.parse(fs.readFileSync(path.join(evidence, 'ledger.json'), 'utf8'))
-  assert.equal(ledger.length, 13)
+  assert.equal(ledger.length, 16)
   const snapshots = JSON.parse(fs.readFileSync(path.join(evidence, 'subjects.json'), 'utf8'))
   assert.deepEqual(Object.keys(snapshots), subjects)
   for (const [index, file] of subjects.entries()) assert.equal(snapshots[file].hash, before[index])
