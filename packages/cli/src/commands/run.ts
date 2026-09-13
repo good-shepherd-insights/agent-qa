@@ -1724,6 +1724,7 @@ async function executeSuites(
 
   const activeSuiteDbs = new Set<any>()
   let shutdownRequested = false
+  let frozenExitCode: number | undefined
   // SESSION-04 (D-01/D-03): the CLI owns the ONE run-level SIGINT. When a RunSession is live the
   // handler routes the abort into `session.cancel()` (skip the rest, aggregate `cancelled`); core's
   // per-test SIGINT registration is suppressed because the executor threads ctx.abortSignal (D-03).
@@ -1763,8 +1764,9 @@ async function executeSuites(
       try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
     },
     exit: (code) => process.exit(code),
-    setExitCode: (code) => { shutdownRequested = true; process.exitCode = code },
+    setExitCode: (code) => { shutdownRequested = true; process.exitCode = frozenExitCode ?? code },
     armGrace: () => {
+      if (frozenExitCode !== undefined) return
       const grace = setTimeout(() => process.exit(130), cancelGraceMs())
       grace.unref?.()
       graceTimer = grace
@@ -1887,15 +1889,15 @@ async function executeSuites(
         },
         warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
         postVerdictSignal: curationAbortController.signal,
-        afterVerdict: async ({ verdict, maskingContext, auditSink, postVerdict, postVerdictDeadlineMs }) => {
+        freezeVerdict: (verdict) => {
           clearGraceTimer()
           activeRunSession = undefined
-          // D-14: freeze the verdict-mapped code before the curation tail. A tail failure or a
-          // signal arriving while the drain owns its lease can stop learning, but can never
-          // replace this code.
-          const verdictExitCode = mapVerdictToExitCode(
+          frozenExitCode = mapVerdictToExitCode(
             shutdownRequested ? 'cancelled' : (verdict as never),
           )
+          return frozenExitCode
+        },
+        afterVerdict: async ({ exitCode: verdictExitCode, maskingContext, auditSink, postVerdict, postVerdictDeadlineMs }) => {
           // 388-02 D-01: ONE shared post-run tail serves both of this command's tail sites
           // (Pitfall 1). 404 D-05: the ENQUEUE is no longer one of its legs — the shell's
           // post-verdict step performed it before `runFinished`, on this door and on every other,
@@ -4775,6 +4777,7 @@ export function createRunCommand(): Command {
         // single-test analog of Plan 10's suite-parent parallel drop under the one-RunSession law).
         // The run-level SIGINT routes into session.cancel(); the D-14 verdict map owns the exit code.
         let shutdownRequested = false
+        let frozenExitCode: number | undefined
         let activeRunSession: { cancel(): void } | undefined
         const curationAbortController = new AbortController()
         // A throw out of a member closure is a framework/setup error (not a test failure): the shell
@@ -4797,8 +4800,9 @@ export function createRunCommand(): Command {
             try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
           },
           exit: (code) => process.exit(code),
-          setExitCode: (code) => { shutdownRequested = true; process.exitCode = code },
+          setExitCode: (code) => { shutdownRequested = true; process.exitCode = frozenExitCode ?? code },
           armGrace: () => {
+            if (frozenExitCode !== undefined) return
             const grace = setTimeout(() => process.exit(130), cancelGraceMs())
             grace.unref?.()
             graceTimer = grace
@@ -4931,17 +4935,19 @@ export function createRunCommand(): Command {
               // masks like every other. The `--all` fold happens on the freeze line below and is
               // untouched by this rework.
               postVerdictSignal: curationAbortController.signal,
-              afterVerdict: async ({ verdict, maskingContext, auditSink, postVerdict, postVerdictDeadlineMs }) => {
+              freezeVerdict: (verdict) => {
                 clearGraceTimer()
                 activeRunSession = undefined
-                // Freeze the complete --all-aware exit code before the tail begins. Signals remain
-                // wired until the tail releases its lease, but neither abort nor failure may
-                // replace this code.
+                // Include cancellation observed during execution and the earlier --all suite fold.
+                // A later first signal only aborts preparation/tail waiting; a second still exits.
                 const verdictExitCode = mapVerdictToExitCode(
                   shutdownRequested ? 'cancelled' : (verdict as never),
                 )
-                const exitCode =
+                frozenExitCode =
                   verdictExitCode !== 0 ? verdictExitCode : (suitesFailed ? 1 : 0)
+                return frozenExitCode
+              },
+              afterVerdict: async ({ exitCode, maskingContext, auditSink, postVerdict, postVerdictDeadlineMs }) => {
                 // 388-02: the same shared tail as the multi-suite site above, and the same 404
                 // D-05 posture — the enqueue happened in the shell, so this handle has two legs.
                 const postRunTail = composeCliPostRunTail({

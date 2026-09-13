@@ -74,7 +74,7 @@ it.each([
         expect(vi.mocked(openRunKnowledgeComposition).mock.calls.at(-1)![0].resolveTrustPriors?.()).toEqual(old.priors)
         if (malformed) writeFileSync(join(f.project, 'agent-qa-eval/labels/calibration.json'), '{"private":"invalid replacement"}')
         else artifact(f.project, 0.25)
-        await input.afterVerdict!({ verdict: 'passed', runId: request.runId, configDir: f.project,
+        await input.afterVerdict!({ verdict: 'passed', exitCode: input.freezeVerdict!('passed'), runId: request.runId, configDir: f.project,
           configFilePath: f.configPath, auditSink: {}, postVerdict: { takeAcquiredLease: () => undefined } } as never)
         return { runId: request.runId, exitCode: 0 } as never
       } finally { await produced.finalize?.() }

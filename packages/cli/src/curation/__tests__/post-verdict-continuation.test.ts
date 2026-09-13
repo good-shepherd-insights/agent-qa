@@ -643,6 +643,16 @@ it('terminal drain discovers recorded pending work before an unrelated empty FIF
 })
 
 it.each(['direct', 'suite'] as const)('CR-11 actual %s command keeps failed exit one when first SIGINT interrupts the real shared preparation wait', async (mode) => {
+  await commandSignalFixture(mode, 'post-verdict')
+}, 30_000)
+
+it.each((['direct', 'suite'] as const).flatMap(mode =>
+  (['active-run', 'second-signal'] as const).map(timing => ({ mode, timing })),
+))('CR-11 actual $mode command retains $timing exit 130', async ({ mode, timing }) => {
+  await commandSignalFixture(mode, timing)
+}, 30_000)
+
+async function commandSignalFixture(mode: 'direct' | 'suite', timing: 'post-verdict' | 'active-run' | 'second-signal') {
   const f = continuationFixture()
   vi.stubEnv('DO_NOT_TRACK', '1')
   vi.spyOn(console, 'log').mockImplementation(() => undefined)
@@ -654,6 +664,8 @@ it.each(['direct', 'suite'] as const)('CR-11 actual %s command keeps failed exit
   const reserved = deferred<void>()
   const beforeListeners = new Set(process.listeners('SIGINT'))
   const beforeExitCode = process.exitCode
+  const executing = deferred<void>()
+  const releaseExecution = deferred<void>()
   const actualDrive = drive.runInProcessCliRun
   let session!: RunSession
   let runnerSettled = false
@@ -670,9 +682,14 @@ it.each(['direct', 'suite'] as const)('CR-11 actual %s command keeps failed exit
         void value.done.then(() => { runnerSettled = true })
       },
       produceMembers: async () => ({ ...produced,
+        memberProbeUrls: [],
         members: [{ testId: f.input.directTestId, name: 'checkout', filePath: 'tests/direct.yaml' }],
-        executor: async () => ({ name: 'checkout', filePath: 'tests/direct.yaml', status: 'failed', duration: 1,
-          steps: [{ name: 'Open checkout', status: 'failed', duration: 1, evidence }] }),
+        executor: async () => {
+          executing.resolve()
+          if (timing === 'active-run') await releaseExecution.promise
+          return { name: 'checkout', filePath: 'tests/direct.yaml', status: 'failed', duration: 1,
+            steps: [{ name: 'Open checkout', status: 'failed', duration: 1, evidence }] }
+        },
         bindRunContext: (context) => {
           produced.bindRunContext(context)
           dispose = vi.spyOn(context.maskingContext, 'dispose')
@@ -692,22 +709,29 @@ it.each(['direct', 'suite'] as const)('CR-11 actual %s command keeps failed exit
     mode === 'suite' ? f.input.suitePattern : f.input.testPattern, '--trust-session', '--detach'], { from: 'user' })
   void parsing.catch(() => undefined)
   try {
-    await reserved.promise
-    await vi.advanceTimersByTimeAsync(5001)
-    expect(runnerSettled).toBe(true)
+    await (timing === 'active-run' ? executing.promise : reserved.promise)
+    if (timing !== 'active-run') await vi.advanceTimersByTimeAsync(5001)
+    expect(runnerSettled).toBe(timing !== 'active-run')
     expect(exit).not.toHaveBeenCalled()
     const pendingPath = postVerdictPendingPath({ ...f.input, runId: String(session.id) })
-    expect(existsSync(pendingPath)).toBe(true)
+    expect(existsSync(pendingPath)).toBe(timing !== 'active-run')
     const handlers = process.listeners('SIGINT').filter(handler => !beforeListeners.has(handler))
     expect(handlers).toHaveLength(1)
     handlers[0]!('SIGINT')
+    if (timing === 'active-run') { releaseExecution.resolve(); release.resolve() }
+    if (timing === 'second-signal') expect(() => handlers[0]!('SIGINT')).toThrow('fixture command exit')
     await expect(parsing).rejects.toThrow('fixture command exit')
-    expect(exit.mock.calls[0]![0], 'a completed failed verdict must survive a first post-verdict signal').toBe(1)
-    expect(output.mock.calls.flat().join('\n')).toContain(`preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}`)
-    expect(existsSync(pendingPath)).toBe(true)
-    expect(dispose).not.toHaveBeenCalled()
-    expect(outcome?.settled).toBeDefined()
+    expect(exit.mock.calls[0]![0], 'completed failure is frozen; active cancellation and hard second signal retain 130')
+      .toBe(timing === 'post-verdict' ? 1 : 130)
+    if (timing === 'active-run') expect(outcome?.verdict).toBe('cancelled')
+    else {
+      expect(output.mock.calls.flat().join('\n')).toContain(`preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}`)
+      expect(existsSync(pendingPath)).toBe(true)
+      expect(dispose).not.toHaveBeenCalled()
+      expect(outcome?.settled).toBeDefined()
+    }
   } finally {
+    releaseExecution.resolve()
     release.resolve()
     await parsing.catch(() => undefined)
     await outcome?.settled
@@ -715,7 +739,33 @@ it.each(['direct', 'suite'] as const)('CR-11 actual %s command keeps failed exit
   }
   expect(dispose).toHaveBeenCalledTimes(1)
   expect(fetch).not.toHaveBeenCalled()
-}, 30_000)
+}
+
+it('CR-11 actual --all command freezes an earlier suite failure into a passing direct result', async () => {
+  const f = continuationFixture()
+  vi.stubEnv('DO_NOT_TRACK', '1')
+  vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('fixture command exit') })
+  const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider forbidden'))
+  const codes: number[] = []
+  vi.spyOn(drive, 'runInProcessCliRun').mockImplementation(async (input, request) => {
+    const produced = await input.produceMembers!({} as never)
+    try {
+      const verdict = codes.length === 0 ? 'failed' : 'passed'
+      const exitCode = input.freezeVerdict!(verdict)
+      codes.push(exitCode)
+      return { runId: String(request.runId), verdict, exitCode }
+    } finally { await produced.finalize?.() }
+  })
+  const program = new Command().option('--config <path>').addCommand(createRunCommand())
+  await expect(program.parseAsync(['--config', f.input.configPath, 'run', '--all', '--trust-session', '--detach'],
+    { from: 'user' })).rejects.toThrow('fixture command exit')
+  expect(codes).toEqual([1, 1])
+  expect(exit.mock.calls[0]![0]).toBe(1)
+  expect(fetch).not.toHaveBeenCalled()
+})
 
 it.each((['direct', 'suite'] as const).flatMap(mode =>
   (['pending', 'late-failure', 'failed', 'settled-before-finish', 'skipped'] as const).map(state => ({ mode, state })),
@@ -767,7 +817,7 @@ it.each((['direct', 'suite'] as const).flatMap(mode =>
       else await reserved.promise
       if (state === 'failed') await finishPreparation()
       pendingPath = postVerdictPendingPath({ ...f.input, runId })
-      const exitCode = await input.afterVerdict!({ verdict: 'failed', runId, configDir: f.input.project,
+      const exitCode = await input.afterVerdict!({ verdict: 'failed', exitCode: input.freezeVerdict!('failed'), runId, configDir: f.input.project,
         configFilePath: f.input.configPath, auditSink: {}, postVerdict: step.handoff,
         postVerdictDeadlineMs: Date.now() - 1 } as never)
       expect(existsSync(pendingPath)).toBe(state !== 'skipped' && state !== 'settled-before-finish')

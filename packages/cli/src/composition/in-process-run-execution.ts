@@ -216,6 +216,8 @@ export interface InProcessCliRunExecutionOptions {
   readonly reader?: RunInvocationCoreOptions['reader']
   /** Fired with the started session — the D-09 bridge hook 401-07 consumes. */
   readonly onSession?: (session: RunSession) => void
+  /** Freeze the door's completed result before any asynchronous post-verdict work. */
+  readonly freezeVerdict?: (verdict: CliRunVerdictContext['verdict']) => number
   /**
    * The already-resolved input preflight, when the door read it for itself.
    *
@@ -759,9 +761,12 @@ export async function runInProcessCliRun(
         }
 
         const { verdict } = await session.done
+        const exitCode = options.freezeVerdict === undefined
+          ? mapVerdictToExitCode(verdict as never)
+          : options.freezeVerdict(verdict)
         await produced.finalize?.()
         // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics
-        // drain) AFTER `done` and BEFORE mapping the verdict or re-throwing a framework error.
+        // drain) AFTER `done` and BEFORE publishing the result or re-throwing a framework error.
         await startedSubscribers?.flush()
         const postVerdictDeadlineMs = Date.now() + DRAIN_BUDGET_MS
         preparationSettled = await waitForPostVerdictContinuation(postVerdictHandoff?.completion,
@@ -773,7 +778,6 @@ export async function runInProcessCliRun(
         const frameworkError = produced.takeFrameworkError()
         if (frameworkError !== undefined) throw frameworkError
 
-        const exitCode = mapVerdictToExitCode(verdict as never)
         const verdictContext: CliRunVerdictContext = {
           runId,
           verdict,
