@@ -24,6 +24,7 @@ import { Command } from 'commander'
 import { createRunCommand } from '../../commands/run.js'
 import * as drive from '../../composition/in-process-run-execution.js'
 import * as tailComposition from '../post-run-tail-composition.js'
+import * as evalSession from '../../eval-session-composition.js'
 
 const roots: string[] = []
 afterEach(() => {
@@ -443,6 +444,40 @@ it.each(['malformed', 'foreign', 'symlink', 'write-failure'] as const)('refuses 
   expect(f.prepare).not.toHaveBeenCalled()
   expect(f.enqueue).not.toHaveBeenCalled()
   expect(existsSync(f.pendingPath)).toBe(true)
+})
+
+it.each(['gateRun', 'excludedFromOutcomes'] as const)('refuses %s creation and forged pending recovery before policy, lease or provider work', async (marker) => {
+  const f = continuationFixture()
+  writeFileSync(f.handoffPath, JSON.stringify({ ...JSON.parse(readFileSync(f.handoffPath, 'utf8')), [marker]: true }))
+  const forbidden = vi.fn(() => { throw new Error('excluded run must not acquire authority') })
+  const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(forbidden)
+  const resolveSession = vi.spyOn(evalSession, 'resolveEvalSession').mockImplementation(forbidden)
+  const prepare = vi.fn(async () => { throw new Error('excluded run must not prepare') })
+  const step = createPostVerdictStep({ ...f.input, detach: true, log: { warn: () => undefined },
+    misdirection: { prepareMisdirectionEvidence: prepare }, operations: {
+      recordCanaryPolicy: forbidden, readWriterLease: forbidden, acquireWriterLease: forbidden,
+      composeHost: forbidden,
+    } })
+  await step.port.run({ [marker]: true } as never)
+  expect(step.handoff.enqueueState).toBe('skipped')
+  expect(existsSync(f.pendingPath)).toBe(false)
+  // A valid-schema forged record cannot bypass the loaded handoff's exclusion decision.
+  const bytes = JSON.stringify({ schemaVersion: 1, runId: f.input.runId,
+    sourceDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64), handoffDigest: 'c'.repeat(64) })
+  writeFileSync(f.pendingPath, bytes)
+  await expect(Promise.resolve().then(() => f.own())).rejects.toThrow('identity-conflict')
+  const result = await recoverPendingPostVerdictContinuations({ ...f.input,
+    deadlineMs: Date.now() + DRAIN_BUDGET_MS, log: { warn: () => undefined },
+    misdirection: { prepareMisdirectionEvidence: prepare } })
+  expect(result).toEqual([{ runId: f.input.runId, pending: true, enqueued: false, detail: 'identity-conflict' }])
+  expect(readFileSync(f.pendingPath, 'utf8')).toBe(bytes)
+  expect(existsSync(`${f.pendingPath}.owner`)).toBe(false)
+  expect(f.prepare).not.toHaveBeenCalled()
+  expect(f.enqueue).not.toHaveBeenCalled()
+  expect(prepare).not.toHaveBeenCalled()
+  expect(resolveSession).not.toHaveBeenCalled()
+  expect(provider).not.toHaveBeenCalled()
+  expect(forbidden).not.toHaveBeenCalled()
 })
 
 it.each(['config', 'source'] as const)('failed publication retains the intent and queues nothing; changed %s refuses retry', async (changed) => {

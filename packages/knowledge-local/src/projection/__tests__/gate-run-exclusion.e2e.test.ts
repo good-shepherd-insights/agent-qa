@@ -170,6 +170,10 @@ const MARKER_CENSUS: Readonly<Record<string, 'consumer' | 'carrier' | 'producer'
   // whether that run's exposures are arbitrated first. Both readings are the same law applied at
   // two points on one chain.
   'packages/cli/src/curation/misdirection-tail.ts': 'consumer',
+  // 2026-09-13 (422-31): durable continuation validates the loaded handoff before publishing
+  // or recovering an intent. Either marker refuses lifecycle ownership; the existing step and
+  // arbiter retain their enqueue/evidence decisions. This is a consumer, not a carrier.
+  'packages/cli/src/curation/post-verdict-continuation.ts': 'consumer',
   'packages/cli/src/commands/run.ts': 'carrier',
   // 2026-08-23 (401-10): `packages/cli/src/composition/local-agent-host.ts` LEFT THIS CENSUS WITH
   // ITS SUBJECT. It was a carrier because `MARKER_FLAGS` translated the two markers into the child
@@ -295,11 +299,12 @@ describe('the INVK-06 consumer census is frozen and self-checking (D-15)', () =>
     //                            substrate is the misdirection sidecar on `handoff.json`.
     //
     // AN UNDECLARED entry, or any of these growing a read of another's substrate, is what this cell
-    // exists to refuse — so all three are named, in full, rather than counted. The count is still
-    // not the rule: no two readers may disagree about the SAME question, and these three answer
-    // three questions over three disjoint substrates (flake counting / the queue / the sidecar).
+    // exists to refuse — so every consumer is named in full rather than counted. Since 422-31,
+    // continuation also refuses either marker before durable intent ownership/recovery; it
+    // delegates enqueue/evidence to the existing gates and never writes outcome projections.
     expect(consumers).toEqual([
       'packages/cli/src/curation/misdirection-tail.ts',
+      'packages/cli/src/curation/post-verdict-continuation.ts',
       'packages/cli/src/curation/post-verdict-step.ts',
       'packages/knowledge-local/src/projection/run-outcomes.ts',
     ])
@@ -313,6 +318,12 @@ describe('the INVK-06 consumer census is frozen and self-checking (D-15)', () =>
     expect(arbiter, 'the arbiter gate must not reach into run outcomes').not.toContain('projectRunOutcomes')
     expect(arbiter).not.toContain('run_test_outcomes')
     expect(arbiter, 'the arbiter gate must not enqueue — that is the step\'s decision').not.toContain('queue.enqueue')
+    const continuation = readFileSync(
+      join(ROOT, 'packages/cli/src/curation/post-verdict-continuation.ts'), 'utf8',
+    )
+    expect(continuation).not.toContain('projectRunOutcomes')
+    expect(continuation).not.toContain('run_test_outcomes')
+    expect(continuation, 'continuation delegates publication to the existing step').not.toContain('queue.enqueue')
     // The disjointness, measured rather than asserted in prose: the enqueue gate names no outcome
     // substrate, and the outcome gate names no queue.
     const step = readFileSync(join(ROOT, 'packages/cli/src/curation/post-verdict-step.ts'), 'utf8')
