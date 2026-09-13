@@ -20,11 +20,16 @@ import { createPostVerdictStep } from '../post-verdict-step.js'
 import { recoverPendingPostVerdictContinuations } from '../post-verdict-continuation.js'
 import { CURATION_QUEUE_POLL_MS, runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
 import type { MisdirectionPreparationCapabilities, MisdirectionArbiterPort } from '../misdirection-tail.js'
+import { Command } from 'commander'
+import { createRunCommand } from '../../commands/run.js'
+import * as drive from '../../composition/in-process-run-execution.js'
+import * as tailComposition from '../post-run-tail-composition.js'
 
 const roots: string[] = []
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -502,3 +507,62 @@ it('terminal drain discovers recorded pending work before an unrelated empty FIF
     expect(existsSync(f.pendingPath)).toBe(false)
   } finally { await host.close() }
 })
+
+it.each(['direct', 'suite'] as const)('actual %s command reports pending preparation without a skipped or drained chain', async (mode) => {
+  const f = continuationFixture()
+  vi.stubEnv('DO_NOT_TRACK', '1')
+  const output = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('fixture command exit') })
+  const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider forbidden'))
+  const actualTail = tailComposition.composeCliPostRunTail
+  let report: ReturnType<ReturnType<typeof actualTail>['report']> | undefined
+  let pendingPath = ''
+  const composed = vi.spyOn(tailComposition, 'composeCliPostRunTail').mockImplementation((input) => {
+    const handle = actualTail(input)
+    return { ...handle, finish: async (options) => { await handle.finish(options); report = handle.report() } }
+  })
+  const execution = vi.spyOn(drive, 'runInProcessCliRun').mockImplementation(async (input, request) => {
+    const produced = await input.produceMembers!({} as never)
+    const runId = String(request.runId)
+    const runDir = join(f.input.agentQaRoot, 'runs', runId)
+    mkdirSync(runDir, { recursive: true })
+    writeFileSync(join(runDir, 'handoff.json'), JSON.stringify({
+      ...JSON.parse(readFileSync(f.handoffPath, 'utf8')), runId,
+    }))
+    const release = deferred<void>()
+    const reserved = deferred<void>()
+    const step = createPostVerdictStep({ ...f.input, runId, detach: true,
+      misdirection: recoveryCapabilities(async () => {
+        reserved.resolve(); await release.promise
+        return { kind: 'checked', crossCheck: 'held', seedHonored: true,
+          samples: { k: 1, seeds: [11], modelCalls: 0 } }
+      }),
+    })
+    const preparation = step.port.run({} as never)
+    try {
+      await reserved.promise
+      pendingPath = postVerdictPendingPath({ ...f.input, runId })
+      const exitCode = await input.afterVerdict!({ verdict: 'failed', runId, configDir: f.input.project,
+        configFilePath: f.input.configPath, auditSink: {}, postVerdict: step.handoff,
+        postVerdictDeadlineMs: Date.now() - 1 } as never)
+      expect(existsSync(pendingPath)).toBe(true)
+      expect(existsSync(join(runDir, 'curation-tail-receipt.json'))).toBe(false)
+      return { runId, exitCode } as never
+    } finally { release.resolve(); await preparation; await produced.finalize?.() }
+  })
+  const program = new Command().option('--config <path>').addCommand(createRunCommand())
+  await expect(program.parseAsync(['--config', f.input.configPath, 'run',
+    mode === 'suite' ? f.input.suitePattern : f.input.testPattern, '--trust-session', '--detach'], { from: 'user' }))
+    .rejects.toThrow('fixture command exit')
+  expect(execution).toHaveBeenCalledTimes(1)
+  expect(composed).toHaveBeenCalledTimes(1)
+  expect(exit.mock.calls[0]![0]).toBe(1)
+  expect(report, 'a pending producer has no enqueue disposition and no completed drain')
+    .toEqual({ preparationPending: true, drain: 'not-attempted', jobsRun: 0 })
+  expect(output.mock.calls.flat().join('\n')).toContain(
+    `preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`,
+  )
+  expect(fetch).not.toHaveBeenCalled()
+}, 30_000)
