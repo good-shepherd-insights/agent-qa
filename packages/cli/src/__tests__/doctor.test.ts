@@ -1288,7 +1288,10 @@ targets:
   })
 
   it('leaves every row on one line at a wide width, byte-identical to the pre-change output', async () => {
-    forceTerminalWidth(WIDE_TEST_WIDTH)
+    // 422-27 adds the build's circularity backing to the absent-root Learning mode row.
+    // The longest logical row measures 240 columns; this unwrapped control uses 300 while
+    // the 80-column wrapping guards stay fixed.
+    forceTerminalWidth(300)
 
     await runHealthyHost()
 
@@ -1301,6 +1304,7 @@ targets:
       preChangeRow('Embedder', `native (${DEFAULT_EMBEDDING_PROFILE.model_id})`, 'PASS'),
     )
     expect(lines).toContain(preChangeRow('Retrieval rung', 'memidex', 'PASS'))
+    expect(rowFor('Learning mode')).toContain('circularity backing: recorded posture applied')
   })
 })
 
