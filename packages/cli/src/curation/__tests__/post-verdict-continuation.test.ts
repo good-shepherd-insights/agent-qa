@@ -16,7 +16,7 @@ import { runPostRunTail } from '../post-run-tail.js'
 import { defaultPostRunGuardrailPolicy } from '../curation-tail.js'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { createPostVerdictStep } from '../post-verdict-step.js'
+import { createPostVerdictStep, recordCanaryPolicy } from '../post-verdict-step.js'
 import { recoverPendingPostVerdictContinuations } from '../post-verdict-continuation.js'
 import { CURATION_QUEUE_POLL_MS, runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
 import type { MisdirectionPreparationCapabilities, MisdirectionArbiterPort } from '../misdirection-tail.js'
@@ -183,7 +183,7 @@ it('same-process callers observe one producer and one publication', async () => 
   const first = f.own({ prepare })
   const second = f.own({ prepare })
   expect(first).toBe(second)
-  await Promise.resolve()
+  await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1))
   expect(prepare).toHaveBeenCalledTimes(1)
   release.resolve()
   await first
@@ -393,6 +393,8 @@ it.each(['terminal', 'daemon'] as const)('CR-10 %s recovery preserves flag one a
   await expect(f.own({ maxAblations: 1, queued: async () => { throw new Error('stop after intent before preparation') } }))
     .rejects.toThrow('stop after intent before preparation')
   expect(existsSync(f.pendingPath)).toBe(true)
+  const originalPolicy = readFileSync(join(f.runDir, 'canary-policy.json'))
+  expect(readRunCanaryPolicy(f.runDir, f.input.runId)).toMatchObject({ maxAblations: 1, source: 'flag' })
   expect(f.prepare).not.toHaveBeenCalled()
   const check = vi.fn(async () => ({ kind: 'checked' as const, crossCheck: 'held' as const,
     seedHonored: true, samples: { k: 1, seeds: [11], modelCalls: 0 } }))
@@ -405,7 +407,62 @@ it.each(['terminal', 'daemon'] as const)('CR-10 %s recovery preserves flag one a
   expect(readRunCanaryPolicy(f.runDir, f.input.runId), 'the original flag one must never become recovery default four')
     .toEqual({ schemaVersion: 1, runId: f.input.runId, maxAblations: 1, source: 'flag' })
   expect(existsSync(f.pendingPath)).toBe(false)
+  expect(readFileSync(join(f.runDir, 'canary-policy.json'))).toEqual(originalPolicy)
   expect(fetch).not.toHaveBeenCalled()
+})
+
+it.each((['terminal', 'daemon'] as const).flatMap(door =>
+  (['missing', 'conflicting', 'malformed', 'legacy'] as const).map(state => ({ door, state })),
+))('CR-10 $door refuses $state policy authority without inventing a recovery allowance', async ({ door, state }) => {
+  const f = continuationFixture()
+  const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider forbidden'))
+  await expect(f.own({ maxAblations: 1, queued: async () => { throw new Error('retain') } })).rejects.toThrow('retain')
+  const policyPath = join(f.runDir, 'canary-policy.json')
+  if (state === 'missing') rmSync(policyPath)
+  if (state === 'conflicting') writeFileSync(policyPath, JSON.stringify({ schemaVersion: 1, runId: f.input.runId, maxAblations: 4, source: 'default' }))
+  if (state === 'malformed') writeFileSync(policyPath, '{bad')
+  if (state === 'legacy') {
+    const { policyDigest: _digest, ...legacy } = JSON.parse(readFileSync(f.pendingPath, 'utf8'))
+    writeFileSync(f.pendingPath, JSON.stringify({ ...legacy, schemaVersion: 1 }))
+    rmSync(policyPath)
+  }
+  const intentBytes = readFileSync(f.pendingPath)
+  const policyBytes = existsSync(policyPath) ? readFileSync(policyPath) : undefined
+  const prepare = vi.fn(async () => { throw new Error('refused policy cannot prepare') })
+  if (door === 'terminal') await terminalRecover(f, { prepareMisdirectionEvidence: prepare })
+  else { const daemon = await startRecoveryDaemon(f, { prepareMisdirectionEvidence: prepare }); await daemon.stop() }
+  expect(readFileSync(f.pendingPath)).toEqual(intentBytes)
+  expect(existsSync(policyPath)).toBe(policyBytes !== undefined)
+  if (policyBytes !== undefined) expect(readFileSync(policyPath)).toEqual(policyBytes)
+  expect(prepare).not.toHaveBeenCalled()
+  expect(fetch).not.toHaveBeenCalled()
+  const host = composeCliLocalAgent({ agentQaRoot: f.input.agentQaRoot, configPath: f.input.configPath })
+  try { expect((await (await host.jobs()).store.dumpState()).jobs).toHaveLength(0) } finally { await host.close() }
+})
+
+it.each(['before-policy', 'after-policy', 'intent-publication'] as const)('CR-10 %s failure never makes incomplete policy eligible for recovery', async (window) => {
+  const f = continuationFixture()
+  await expect(f.own({ maxAblations: 1, initializePolicy: async () => {
+    if (window !== 'before-policy') await recordCanaryPolicy({ ...f.input, maxAblations: 1 })
+    if (window === 'intent-publication') mkdirSync(f.pendingPath)
+    else throw new Error('policy boundary interruption')
+  } })).rejects.toThrow()
+  expect(existsSync(f.pendingPath)).toBe(window === 'intent-publication')
+  expect(existsSync(join(f.runDir, 'canary-policy.json'))).toBe(window !== 'before-policy')
+  expect(existsSync(`${f.pendingPath}.owner`)).toBe(false)
+  expect(f.prepare).not.toHaveBeenCalled()
+  expect(f.enqueue).not.toHaveBeenCalled()
+})
+
+it('CR-10 an explicit changed flag cannot replace the original bound policy', async () => {
+  const f = continuationFixture()
+  await expect(f.own({ maxAblations: 1, queued: async () => { throw new Error('retain') } })).rejects.toThrow('retain')
+  const intent = readFileSync(f.pendingPath)
+  const policy = readFileSync(join(f.runDir, 'canary-policy.json'))
+  await expect(Promise.resolve().then(() => f.own({ maxAblations: 2 }))).rejects.toThrow('identity-conflict')
+  expect(readFileSync(f.pendingPath)).toEqual(intent)
+  expect(readFileSync(join(f.runDir, 'canary-policy.json'))).toEqual(policy)
+  expect(f.prepare).not.toHaveBeenCalled()
 })
 
 it('separate live process contenders cannot publish interrupted evidence or spend twice', async () => {
@@ -426,8 +483,9 @@ it.each(['live', 'EPERM', 'unknown', 'partial'] as const)('refuses %s owner with
   await expect(f.own({ prepare: async () => { throw new Error('retain intent') } })).rejects.toThrow()
   const lock = `${f.pendingPath}.owner`
   mkdirSync(lock)
+  const { policyDigest: _policy, ...ownerIdentity } = JSON.parse(readFileSync(f.pendingPath, 'utf8'))
   if (mode !== 'partial') writeFileSync(join(lock, 'owner.json'), JSON.stringify({
-    ...JSON.parse(readFileSync(f.pendingPath, 'utf8')), pid: process.pid, token: randomUUID(),
+    ...ownerIdentity, pid: process.pid, token: randomUUID(),
   }))
   if (mode === 'EPERM' || mode === 'unknown') vi.spyOn(process, 'kill').mockImplementation(() => {
     throw Object.assign(new Error('uncertain'), { code: mode === 'EPERM' ? 'EPERM' : 'EIO' })
@@ -458,8 +516,8 @@ it('a stale release cannot remove a newer owner generation', async () => {
 it.each(['malformed', 'foreign', 'symlink', 'write-failure'] as const)('refuses %s intent before preparation', async (mode) => {
   const f = continuationFixture()
   if (mode === 'malformed') writeFileSync(f.pendingPath, '{bad')
-  if (mode === 'foreign') writeFileSync(f.pendingPath, JSON.stringify({ schemaVersion: 1,
-    runId: generateRunId(), sourceDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64), handoffDigest: 'c'.repeat(64) }))
+  if (mode === 'foreign') writeFileSync(f.pendingPath, JSON.stringify({ schemaVersion: 2,
+    runId: generateRunId(), sourceDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64), handoffDigest: 'c'.repeat(64), policyDigest: 'd'.repeat(64) }))
   if (mode === 'symlink') symlinkSync(f.handoffPath, f.pendingPath)
   if (mode === 'write-failure') mkdirSync(f.pendingPath)
   await expect(Promise.resolve().then(() => f.own())).rejects.toThrow()
@@ -484,8 +542,8 @@ it.each(['gateRun', 'excludedFromOutcomes'] as const)('refuses %s creation and f
   expect(step.handoff.enqueueState).toBe('skipped')
   expect(existsSync(f.pendingPath)).toBe(false)
   // A valid-schema forged record cannot bypass the loaded handoff's exclusion decision.
-  const bytes = JSON.stringify({ schemaVersion: 1, runId: f.input.runId,
-    sourceDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64), handoffDigest: 'c'.repeat(64) })
+  const bytes = JSON.stringify({ schemaVersion: 2, runId: f.input.runId,
+    sourceDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64), handoffDigest: 'c'.repeat(64), policyDigest: 'd'.repeat(64) })
   writeFileSync(f.pendingPath, bytes)
   await expect(Promise.resolve().then(() => f.own())).rejects.toThrow('identity-conflict')
   const result = await recoverPendingPostVerdictContinuations({ ...f.input,
@@ -513,7 +571,7 @@ it.each(['config', 'source'] as const)('failed publication retains the intent an
     source.tests[0].testName = 'changed source'
     writeFileSync(f.handoffPath, JSON.stringify(source))
   }
-  await expect(f.own()).rejects.toThrow('identity-conflict')
+  await expect(Promise.resolve().then(() => f.own())).rejects.toThrow('identity-conflict')
   expect(readFileSync(f.pendingPath)).toEqual(before)
   expect(f.prepare).not.toHaveBeenCalled()
   const check = vi.fn(async () => { throw new Error('changed identity cannot prepare') })

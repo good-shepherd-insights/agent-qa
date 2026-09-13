@@ -703,7 +703,7 @@ function stepOperations(
 ): Partial<PostVerdictStepOperations> {
   return {
     // This legacy queue/lease harness substitutes IO; real ownership is exercised in post-verdict-continuation.test.ts.
-    ownContinuation: async ({ prepare, enqueue }: Parameters<PostVerdictStepOperations['ownContinuation']>[0]) => { await prepare(); return await enqueue() },
+    ownContinuation: async ({ initializePolicy, prepare, enqueue }: Parameters<PostVerdictStepOperations['ownContinuation']>[0]) => { await initializePolicy?.(); await prepare(); return await enqueue() },
     recordCanaryPolicy: vi.fn(async () => undefined),
     acquireWriterLease: fence.acquireWriterLease,
     releaseLease: fence.releaseLease,

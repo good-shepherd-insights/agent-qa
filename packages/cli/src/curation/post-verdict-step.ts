@@ -750,9 +750,9 @@ export function createPostVerdictStep(options: PostVerdictStepOptions): {
         // digest `enqueueAnalyzeRun` mints one line below covers it — and a process that dies
         // between the two leaves evidence on disk that the retry reads instead of re-spending.
         enqueue = await ops().ownContinuation({ ...options,
+          initializePolicy: () => ops().recordCanaryPolicy(options),
           queued: () => matchingAnalysisAlreadyQueued(options, ops()),
           prepare: async () => {
-            await ops().recordCanaryPolicy(options)
             await ops().prepareMisdirectionEvidence(options, ops())
           },
           enqueue: async () => {

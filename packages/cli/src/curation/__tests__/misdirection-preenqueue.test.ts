@@ -351,7 +351,7 @@ async function runStep(
     log: { warn: () => undefined },
     operations: {
       // This legacy queue/lease harness substitutes IO; real ownership is exercised in post-verdict-continuation.test.ts.
-      ownContinuation: async ({ prepare, enqueue }) => { await prepare(); return await enqueue() },
+      ownContinuation: async ({ initializePolicy, prepare, enqueue }) => { await initializePolicy?.(); await prepare(); return await enqueue() },
       recordCanaryPolicy: async () => undefined,
       readWriterLease: (() => ({ kind: 'absent' })) as unknown as PostVerdictStepOperations['readWriterLease'],
       acquireWriterLease: (() => ({
