@@ -396,6 +396,14 @@ async function runStepOver(
     verdict: 'failed' as never,
     ...markers,
   })
+  const expected = markers.gateRun || markers.excludedFromOutcomes ? 'detached' : 'drained'
+  if (outcome.disposition !== expected) {
+    // Only the production-safe outcome/category is disclosed; the original assertions stay below.
+    console.error('Unexpected exclusion differential disposition', JSON.stringify({
+      outcome, enqueue: step.handoff.enqueueState, failureDetail: step.handoff.failureDetail,
+    }))
+  }
+  expect(step.handoff.failureDetail, 'the exclusion differential must not hide a preparation refusal').toBeUndefined()
   return outcome.disposition
 }
 
