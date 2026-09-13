@@ -739,6 +739,9 @@ export async function runInProcessCliRun(
     maskingContext.dispose()
   }
   let preparationDisclosureOwnedByDoor = false
+  let preparationSettled = false
+  const retainUntilSettled = (completion: Promise<unknown>): Promise<void> =>
+    completion.then(() => undefined, () => undefined).finally(closeOutRun)
 
   return await runSafetyScope(
     { maskingContext, auditSink, executionContext: options.executionContext },
@@ -761,7 +764,7 @@ export async function runInProcessCliRun(
         // drain) AFTER `done` and BEFORE mapping the verdict or re-throwing a framework error.
         await startedSubscribers?.flush()
         const postVerdictDeadlineMs = Date.now() + DRAIN_BUDGET_MS
-        await waitForPostVerdictContinuation(postVerdictHandoff?.completion,
+        preparationSettled = await waitForPostVerdictContinuation(postVerdictHandoff?.completion,
           postVerdictDeadlineMs, options.postVerdictSignal)
 
         // A throw out of a member closure is a framework/setup error rather than a test failure:
@@ -787,8 +790,8 @@ export async function runInProcessCliRun(
           : await options.afterVerdict(verdictContext)
         preparationDisclosureOwnedByDoor = options.afterVerdict !== undefined || options.postRunTail !== undefined
         if (options.postRunTail === undefined) {
-          if (postVerdictHandoff?.completion !== undefined) {
-            detachedTail = postVerdictHandoff.completion.then(() => undefined, () => undefined).finally(closeOutRun)
+          if (!preparationSettled && postVerdictHandoff?.completion !== undefined) {
+            detachedTail = retainUntilSettled(postVerdictHandoff.completion)
           }
           return { runId, verdict, exitCode: finalExitCode,
             ...(detachedTail === undefined ? {} : { settled: detachedTail }) }
@@ -796,7 +799,7 @@ export async function runInProcessCliRun(
         // 404 D-06 / RESEARCH Pitfall 2: START it and RETURN. The dispose duty travels with it —
         // see `closeOutRun` and the `postRunTail` option's own doc for why the masker may not be
         // torn down before the fold that needs it.
-        detachedTail = Promise.allSettled([
+        detachedTail = retainUntilSettled(Promise.allSettled([
           postVerdictHandoff?.completion,
           options.postRunTail(verdictContext)
           .catch((error: unknown) => {
@@ -806,8 +809,7 @@ export async function runInProcessCliRun(
               + '); queued work will resume on the next run or when the daemon drains it.',
             )
           }),
-        ]).then(() => undefined)
-          .finally(closeOutRun)
+        ]))
         return { runId, verdict, exitCode: finalExitCode, settled: detachedTail }
       } finally {
         if (!preparationDisclosureOwnedByDoor && postVerdictHandoff?.completion !== undefined) {
@@ -819,11 +821,10 @@ export async function runInProcessCliRun(
         }
         // The close-out runs HERE unless the detached tail took ownership of it — see
         // `closeOutRun`'s own doc for why that hand-over is the whole of D-06's masker rule.
-        if (detachedTail === undefined) {
-          if (postVerdictHandoff?.completion !== undefined) {
-            detachedTail = postVerdictHandoff.completion.then(() => undefined, () => undefined).finally(closeOutRun)
-          } else closeOutRun()
+        if (detachedTail === undefined && !preparationSettled && postVerdictHandoff?.completion !== undefined) {
+          detachedTail = retainUntilSettled(postVerdictHandoff.completion)
         }
+        if (detachedTail === undefined) closeOutRun()
       }
     },
   )

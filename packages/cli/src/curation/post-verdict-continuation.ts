@@ -19,9 +19,11 @@ const ownerSchema = intentSchema.extend({ pid: z.number().int().positive(), toke
 type Owner = z.infer<typeof ownerSchema>
 
 export class PostVerdictContinuationRefused extends Error {
-  constructor(readonly category: 'unsafe-path' | 'identity-conflict' | 'intent-invalid' | 'owner-busy' | 'queue-conflict') {
+  readonly category: 'unsafe-path' | 'identity-conflict' | 'intent-invalid' | 'owner-busy' | 'queue-conflict'
+  constructor(category: PostVerdictContinuationRefused['category']) {
     super(category)
     this.name = 'PostVerdictContinuationRefused'
+    this.category = category
   }
 }
 
