@@ -25,6 +25,7 @@ import { createRunCommand } from '../../commands/run.js'
 import * as drive from '../../composition/in-process-run-execution.js'
 import * as tailComposition from '../post-run-tail-composition.js'
 import * as evalSession from '../../eval-session-composition.js'
+import { readRunCanaryPolicy } from '../canary-run-state.js'
 
 const roots: string[] = []
 afterEach(() => {
@@ -385,6 +386,27 @@ it.each(['before-intent', 'completion', 'sidecar', 'enqueue'] as const)('recover
     } finally { await host.close() }
   } finally { await child.stop(); chmodSync(f.runDir, 0o700) }
 }, 30_000)
+
+it.each(['terminal', 'daemon'] as const)('CR-10 %s recovery preserves flag one across the earliest durable intent window', async (door) => {
+  const f = continuationFixture()
+  const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider forbidden'))
+  await expect(f.own({ maxAblations: 1, queued: async () => { throw new Error('stop after intent before preparation') } }))
+    .rejects.toThrow('stop after intent before preparation')
+  expect(existsSync(f.pendingPath)).toBe(true)
+  expect(f.prepare).not.toHaveBeenCalled()
+  const check = vi.fn(async () => ({ kind: 'checked' as const, crossCheck: 'held' as const,
+    seedHonored: true, samples: { k: 1, seeds: [11], modelCalls: 0 } }))
+  if (door === 'terminal') await terminalRecover(f, recoveryCapabilities(check))
+  else {
+    const daemon = await startRecoveryDaemon(f, recoveryCapabilities(check))
+    try { await vi.waitFor(() => expect(existsSync(f.pendingPath)).toBe(false)) }
+    finally { await daemon.stop() }
+  }
+  expect(readRunCanaryPolicy(f.runDir, f.input.runId), 'the original flag one must never become recovery default four')
+    .toEqual({ schemaVersion: 1, runId: f.input.runId, maxAblations: 1, source: 'flag' })
+  expect(existsSync(f.pendingPath)).toBe(false)
+  expect(fetch).not.toHaveBeenCalled()
+})
 
 it('separate live process contenders cannot publish interrupted evidence or spend twice', async () => {
   const f = continuationFixture()
