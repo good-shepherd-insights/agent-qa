@@ -30,7 +30,7 @@ const RECEIPT = 'packages/cli/src/gates/replay-gate-host.ts'
 const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION, RECEIPT]
 const PLANT = 'packages/agent-local/src/422-adversarial-plant.ts'
 
-/** The four packages an instrument RUNS in; the rest are copied for their raw source alone. */
+/** Packages an instrument RUNS in; the rest are copied for their raw source alone. */
 const RUNNER_PACKAGES = ['eval', 'agent', 'schema', 'arch', 'cli']
 
 const expected = [
@@ -71,6 +71,25 @@ function git(cwd, args) {
   assert.equal(result.status, 0, result.stderr)
 }
 
+// Include source and existing dist paths, so additions/removals cannot hide behind equal hashes.
+function hostBytes() {
+  const inventory = {}
+  function visit(dir) {
+    if (!fs.existsSync(dir)) return
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name)
+      if (entry.isDirectory()) visit(file)
+      else if (entry.isFile()) inventory[path.relative(root, file)] = sha(file)
+      else if (entry.isSymbolicLink()) inventory[path.relative(root, file)] = `symlink:${fs.readlinkSync(file)}`
+    }
+  }
+  for (const entry of fs.readdirSync(path.join(root, 'packages'), { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    for (const tree of ['src', 'dist']) visit(path.join(root, 'packages', entry.name, tree))
+  }
+  return inventory
+}
+
 /**
  * A fresh slice per mode.
  *
@@ -87,13 +106,17 @@ function makeCopy(name) {
     if (!fs.existsSync(source)) continue
     fs.mkdirSync(path.join(copy, 'packages', entry.name), { recursive: true })
     fs.cpSync(source, path.join(copy, 'packages', entry.name, 'src'), { recursive: true })
+    // CLI witnesses also import source fixtures from sibling packages. Their external imports
+    // need installed dependencies too; source itself remains copied, and nothing is rebuilt.
+    const dependencies = path.join(root, 'packages', entry.name, 'node_modules')
+    if (fs.existsSync(dependencies)) {
+      fs.symlinkSync(dependencies, path.join(copy, 'packages', entry.name, 'node_modules'), 'dir')
+    }
   }
   for (const pkg of RUNNER_PACKAGES) {
     for (const file of ['package.json', 'tsconfig.json', 'vitest.config.ts']) {
       fs.copyFileSync(path.join(root, 'packages', pkg, file), path.join(copy, 'packages', pkg, file))
     }
-    fs.symlinkSync(path.join(root, 'packages', pkg, 'node_modules'),
-      path.join(copy, 'packages', pkg, 'node_modules'), 'dir')
   }
   for (const file of ['package.json', 'tsconfig.base.json', 'scripts/422-adversarial-mutation.sh']) {
     fs.copyFileSync(path.join(root, file), path.join(copy, file))
@@ -108,6 +131,7 @@ function makeCopy(name) {
 
 function runMode(mode, options = {}) {
   const name = options.label ?? (mode === '' ? 'normal' : mode)
+  const hostBefore = hostBytes()
   const copy = makeCopy(name)
   if (options.prepare !== undefined) options.prepare(copy)
   const before = subjects.map(file => sha(path.join(copy, file)))
@@ -120,6 +144,11 @@ function runMode(mode, options = {}) {
   })
   fs.closeSync(fd)
   const after = subjects.map(file => sha(path.join(copy, file)))
+  const hostAfter = hostBytes()
+  fs.writeFileSync(path.join(work, `${name}-host-integrity.json`), JSON.stringify({
+    before: hostBefore, after: hostAfter,
+  }, null, 2) + '\n')
+  assert.deepEqual(hostAfter, hostBefore, `${name}: host source/dist integrity`)
   fs.writeFileSync(path.join(work, `${name}.json`), JSON.stringify({
     mode, status: result.status, signal: result.signal, error: result.error?.message,
     elapsedMs: Date.now() - started, before, after,
@@ -195,6 +224,9 @@ test('adversarial mutation legs redden by name and restore byte-identically', ()
       assert.equal(leg.restoreDigest, null, `${leg.id}: a planted leg owns no snapshot`)
     } else {
       assert.equal(leg.restoreDigest, before[subjects.indexOf(leg.subject)])
+      assert.equal(leg.originalDigest, leg.restoreDigest)
+      assert.equal(leg.restoredDigest, leg.originalDigest)
+      assert.notEqual(leg.mutatedDigest, leg.originalDigest)
     }
     const digest = crypto.createHash('sha256').update(JSON.stringify(leg.diagnostics)).digest('hex')
     assert.equal(leg.digest, digest, `${leg.id}: diagnostics digest`)

@@ -74,7 +74,8 @@ const PROMPT = 'packages/eval/src/adversarial/probe-prompt.ts'
 const CORPUS = 'packages/eval/src/labels/corpus-entry.ts'
 const CHAIN = 'packages/agent/src/jobs/chain-identity.ts'
 const NOTIFICATION = 'packages/schema/src/notification/run-notification.ts'
-const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION]
+const RECEIPT = 'packages/cli/src/gates/replay-gate-host.ts'
+const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION, RECEIPT]
 
 /** The one leg that adds a file rather than editing one: the arch census names what it accuses. */
 const PLANT = 'packages/agent-local/src/422-adversarial-plant.ts'
@@ -140,6 +141,13 @@ const AGENT_CHAIN_TYPES = 'src/jobs/__tests__/422-chain-closed-sets.test-d.ts'
 const SCHEMA_NOTIFY_RUNTIME = 'src/__tests__/422-notification-closed-sets.test.ts'
 const SCHEMA_NOTIFY_TYPES = 'src/__tests__/422-notification-closed-sets.test-d.ts'
 const ARCH_WRITER = 'src/__tests__/422-no-eval-writer.test.ts'
+const CLI_RECEIPT = 'src/gates/__tests__/replay-gate-host.test.ts'
+const receiptTitles = [
+  '422 refuses to hand a caller a receipt the writer never acknowledged',
+  '422 refuses a dry-run receipt at the port while the verb still renders it',
+  '422 lends the host port its claim authority per call and refuses an unrecorded receipt',
+]
+const exactTitles = titles => `(?:${titles.map(title => title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`
 
 const instruments = {
   'eval-sets': { pkg: 'packages/eval', files: [EVAL_SETS_RUNTIME, EVAL_SETS_TYPES], typecheck: true },
@@ -148,6 +156,8 @@ const instruments = {
   'agent-chain': { pkg: 'packages/agent', files: [AGENT_CHAIN_RUNTIME, AGENT_CHAIN_TYPES], typecheck: true },
   'schema-notify': { pkg: 'packages/schema', files: [SCHEMA_NOTIFY_RUNTIME, SCHEMA_NOTIFY_TYPES], typecheck: true },
   'arch-writer': { pkg: 'packages/arch', files: [ARCH_WRITER], typecheck: false, nameFilter: 'D-01 raw source' },
+  'cli-receipt': { pkg: 'packages/cli', files: [CLI_RECEIPT], typecheck: false,
+    nameFilter: exactTitles(receiptTitles) },
 }
 
 // ---- the cells each leg must redden, named BEFORE anything runs ---------------------------------
@@ -337,12 +347,19 @@ const legs = [
     member: 'an adversarial storage path in a protected package',
     reds: [WRITER_RUNTIME],
   },
+  {
+    subject: RECEIPT, instrument: 'cli-receipt', vocabulary: 'acknowledged Gate-1 return',
+    operation: 'bypass', member: 'writer acknowledgement refusal',
+    from: 'if (!ACKNOWLEDGED_RECORDINGS.includes(result.recorded)) {',
+    to: 'if (false && !ACKNOWLEDGED_RECORDINGS.includes(result.recorded)) {',
+    reds: receiptTitles.map(title => cell(CLI_RECEIPT, '417 DATA replay gate bridge', title)),
+  },
 ]
 legs.forEach((leg, index) => { leg.id = `A${String(index + 1).padStart(2, '0')}` })
 // Derived from the declared ledger, never a guessed number: the selftest states the same total
 // independently, so a leg silently dropped here reddens there instead of shrinking both in step.
 const EXPECTED_LEGS = legs.length
-if (EXPECTED_LEGS !== 12) throw new Error(`Expected exactly 12 mutation legs, declared ${EXPECTED_LEGS}`)
+if (EXPECTED_LEGS !== 13) throw new Error(`Expected exactly 13 mutation legs, declared ${EXPECTED_LEGS}`)
 
 // ---- the arrival proof --------------------------------------------------------------------------
 // Computed from SOURCE before any byte is touched. A subject outside its instrument's relative
@@ -387,6 +404,11 @@ function proveArrival() {
     }
     const spec = instruments[leg.instrument]
     if (spec === undefined) throw new Error(`${leg.id}: unknown instrument ${leg.instrument}`)
+    const realSubject = fs.realpathSync(path.join(root, leg.subject))
+    const realPackage = path.join(fs.realpathSync(root), spec.pkg)
+    if (!realSubject.startsWith(`${realPackage}${path.sep}`)) {
+      throw new Error(`${leg.id}: subject realpath escapes its copied package`)
+    }
     if (!leg.subject.startsWith(`${spec.pkg}/`)) {
       throw new Error(`${leg.id}: ${leg.subject} is outside ${spec.pkg} — this instrument carries no dist-crossing leg`)
     }
@@ -529,8 +551,9 @@ function unplant(leg) {
 async function main() {
   // Check every subject before owning any bytes; never discard unrelated edits.
   for (const file of subjects) {
+    const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '--', file], { cwd: root, encoding: 'utf8' })
     const status = spawnSync('git', ['status', '--porcelain', '--', file], { cwd: root, encoding: 'utf8' })
-    if (status.status !== 0 || status.stdout.trim()) {
+    if (tracked.status !== 0 || status.status !== 0 || status.stdout.trim()) {
       throw new Error(`${file} is dirty or untracked — refusing mutation`)
     }
     if (!fs.lstatSync(file).isFile()) throw new Error(`Non-regular subject: ${file}`)
@@ -606,6 +629,9 @@ async function main() {
       vocabulary: leg.vocabulary, operation: leg.operation, member: leg.member,
       exit: result.exit, failures: parsed.failures, diagnostics: parsed.diagnostics,
       digest: parsed.digest, restoreDigest: snapshot?.hash ?? null,
+      originalDigest: snapshot?.hash ?? null,
+      mutatedDigest: sha(fs.readFileSync(leg.subject ?? leg.plant)),
+      selectedNames: parsed.selectedNames,
     })
     fs.writeFileSync(path.join(work, 'ledger.json'), JSON.stringify(ledger, null, 2) + '\n')
     console.log(`NAMED RED ${leg.id}: ${parsed.failures.join(' | ')}; diagnostics=${parsed.digest}`)
@@ -616,7 +642,10 @@ async function main() {
       if (fs.existsSync(path.join(root, leg.plant))) throw new Error(`planted path survived: ${leg.plant}`)
       console.log(`REMOVED ${leg.plant}`)
     }
-    checkGreen(await instrument(leg.instrument, `${leg.id}-restored-green`), leg.instrument)
+    const green = checkGreen(await instrument(leg.instrument, `${leg.id}-restored-green`), leg.instrument)
+    ledger[ledger.length - 1].restoredSelectedNames = green.selectedNames
+    ledger[ledger.length - 1].restoredDigest = leg.plant ? null : sha(fs.readFileSync(leg.subject))
+    fs.writeFileSync(path.join(work, 'ledger.json'), JSON.stringify(ledger, null, 2) + '\n')
   }
   restore()
   owned.clear()
