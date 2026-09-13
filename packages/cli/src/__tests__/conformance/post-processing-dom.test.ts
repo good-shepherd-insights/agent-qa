@@ -207,9 +207,11 @@ interface PageObservation {
   readonly firstReadHadDisposition: boolean
   /** Whether the chain was already terminal on the first read. */
   readonly firstReadTerminal: boolean
-  /** When the local run-stream door served this run's `verdict` frame — the D-13 moment. */
+  /** When the separate Node subscriber received this run's `verdict`, for server-side diagnostics. */
   readonly verdictAt?: number
-  /** When this page was navigated. */
+  /** When this browser received its own `verdict`, on the browser's monotonic clock. */
+  readonly browserVerdictAt?: number
+  /** When this page changed its route, on the same browser clock as `browserVerdictAt`. */
   readonly navigatedAt?: number
   /** When the durable rows first read terminal. */
   readonly terminalAt?: number
@@ -546,6 +548,45 @@ async function armChipObserver(page: Page): Promise<void> {
 }
 
 /**
+ * Measure D-13 from the viewer's own envelope to its route change on one browser clock.
+ * A separate Node SSE client can receive a verdict before this page has even loaded; charging
+ * that interval to the page's reaction measures loading and runner scheduling instead of D-13.
+ * Both native APIs still receive the original arguments, and the verdict listener is installed
+ * before the bundle can register its handler. No frame, application callback, or clock is mocked.
+ */
+async function armVerdictNavigationObserver(page: Page, runId: string): Promise<void> {
+  await page.addInitScript((id) => {
+    const timing: { verdictAt?: number; navigatedAt?: number } = {}
+    const bag = window as unknown as { __verdictNavigation: typeof timing }
+    bag.__verdictNavigation = timing
+    const streamPath = `/api/run-stream/${encodeURIComponent(id)}`
+    const detailPath = `/runs/${encodeURIComponent(id)}`
+    window.EventSource = new Proxy(window.EventSource, {
+      construct(Target, args, newTarget) {
+        const source = Reflect.construct(Target, args, newTarget) as EventSource
+        if (new URL(String(args[0]), location.href).pathname === streamPath) {
+          source.addEventListener('verdict', () => { timing.verdictAt ??= performance.now() })
+        }
+        return source
+      },
+    })
+    const recordNavigation = (): void => {
+      if (location.pathname === detailPath) timing.navigatedAt ??= performance.now()
+    }
+    const replaceState = history.replaceState.bind(history)
+    history.replaceState = (...args) => {
+      replaceState(...args)
+      recordNavigation()
+    }
+    const pushState = history.pushState.bind(history)
+    history.pushState = (...args) => {
+      pushState(...args)
+      recordNavigation()
+    }
+  }, runId)
+}
+
+/**
  * Count every `/post-processing` request and response this page makes FOR ONE RUN.
  *
  * SCOPED BY RUN ID, not by path alone: `driveInProcessArm` warms the run-detail chunk inside the
@@ -591,6 +632,7 @@ async function harvest(
     hadDisposition: boolean
     terminal: boolean
     verdictAt?: number
+    browserVerdictAt?: number
     navigatedAt?: number
     terminalAt?: number
     firstReadAt?: number
@@ -636,6 +678,7 @@ async function harvest(
     firstReadHadDisposition: firstRead.hadDisposition,
     firstReadTerminal: firstRead.terminal,
     ...(firstRead.verdictAt === undefined ? {} : { verdictAt: firstRead.verdictAt }),
+    ...(firstRead.browserVerdictAt === undefined ? {} : { browserVerdictAt: firstRead.browserVerdictAt }),
     ...(firstRead.navigatedAt === undefined ? {} : { navigatedAt: firstRead.navigatedAt }),
     ...(firstRead.terminalAt === undefined ? {} : { terminalAt: firstRead.terminalAt }),
     ...(firstRead.firstReadAt === undefined ? {} : { firstReadAt: firstRead.firstReadAt }),
@@ -749,6 +792,7 @@ async function driveInProcessArm(
     await seedForeignBacklog(fx, BACKLOG_CHAINS)
 
     const runId = await triggerDrainableRun(fx.dashboard.origin)
+    await armVerdictNavigationObserver(page, runId)
     let verdictFrameAt = 0
     const verdictWatch = readUntilFrame(fx.dashboard.origin, runId, 'verdict', RUN_BUDGET_MS)
       .then(() => { verdictFrameAt = Date.now() })
@@ -767,7 +811,9 @@ async function driveInProcessArm(
     // milliseconds of the `verdict` ENVELOPE — the exact moment D-19 names.
     await page.goto(`${fx.dashboard.origin}/runs/${encodeURIComponent(runId)}/live`)
     await page.waitForURL(/\/runs\/[^/]+$/u, { timeout: RUN_BUDGET_MS })
-    const navigatedAt = Date.now()
+    const browserTiming = await page.evaluate(() =>
+      (window as unknown as { __verdictNavigation: { verdictAt?: number; navigatedAt?: number } }).__verdictNavigation,
+    )
     await verdictWatch
     const verdictAt = verdictFrameAt
 
@@ -809,7 +855,8 @@ async function driveInProcessArm(
       hadDisposition: atFirstRead.disposition !== undefined,
       terminal: chainTerminal(atFirstRead),
       verdictAt,
-      navigatedAt,
+      ...(browserTiming.verdictAt === undefined ? {} : { browserVerdictAt: browserTiming.verdictAt }),
+      ...(browserTiming.navigatedAt === undefined ? {} : { navigatedAt: browserTiming.navigatedAt }),
       terminalAt,
       ...(firstReadAt === undefined ? {} : { firstReadAt }),
       durableChips: (await readChain(fx.dashboard.origin, runId)).status.chips,
@@ -1119,11 +1166,11 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
       `[404-08] (1) k=${String(K)} arms — streams opened per arm: `
       + `${JSON.stringify(recorded.inProcess.map((arm) => arm.requests.filter(isStream).length))}; `
       + `reads per arm: ${JSON.stringify(recorded.inProcess.map((arm) => arm.requests.filter(isRead).length))}; `
-      + 'verdict frame → D-13 navigation (ms): '
-      + `${JSON.stringify(recorded.inProcess.map((arm) => (arm.navigatedAt ?? 0) - (arm.verdictAt ?? 0)))}; `
-      + 'verdict frame → the page first read (ms): '
+      + 'browser verdict receipt → D-13 navigation (ms): '
+      + `${JSON.stringify(recorded.inProcess.map((arm) => (arm.navigatedAt ?? 0) - (arm.browserVerdictAt ?? 0)))}; `
+      + 'Node verdict receipt → the page first read (ms): '
       + `${JSON.stringify(recorded.inProcess.map((arm) => (arm.firstReadAt ?? 0) - (arm.verdictAt ?? 0)))}; `
-      + 'verdict frame → durable terminal (ms): '
+      + 'Node verdict receipt → durable terminal (ms): '
       + `${JSON.stringify(recorded.inProcess.map((arm) => (arm.terminalAt ?? 0) - (arm.verdictAt ?? 0)))}; `
       + `arrived with the chain still in flight: ${JSON.stringify(recorded.inProcess.map((arm) => !arm.firstReadTerminal))}; `
       + `terminal words: ${JSON.stringify(recorded.inProcess.map((arm) => arm.painted))}`,
@@ -1131,9 +1178,10 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
     for (const [index, arm] of recorded.inProcess.entries()) {
       const streams = arm.requests.filter(isStream).length
       expect(
-        arm.navigatedAt !== undefined && arm.verdictAt !== undefined && arm.navigatedAt - arm.verdictAt < 2_000,
+        arm.navigatedAt !== undefined && arm.browserVerdictAt !== undefined
+        && arm.navigatedAt >= arm.browserVerdictAt && arm.navigatedAt - arm.browserVerdictAt < 2_000,
         `arm ${String(index)} (${arm.runId}) reached run detail `
-        + `${String((arm.navigatedAt ?? 0) - (arm.verdictAt ?? 0))}ms after the run-stream \`verdict\` frame. D-13 `
+        + `${String((arm.navigatedAt ?? 0) - (arm.browserVerdictAt ?? 0))}ms after its browser received the run-stream \`verdict\` frame. D-13 `
         + 'moves the viewer ON that envelope; an arrival seconds later is a different posture',
       ).toBe(true)
       expect(
