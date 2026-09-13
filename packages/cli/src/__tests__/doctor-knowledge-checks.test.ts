@@ -24,15 +24,16 @@ import { completedRunsRoot, CURATION_TAIL_RECEIPT_FILE, readCurationTailReceipt 
 import { promotionHostProof } from './promotion-host-proof.js'
 import { publishBundleForTest, appendPromotionReceipt } from '@vostride/agent-qa-knowledge-local'
 
-// 422-17 (D-09/D-14/D-19): the Learning mode row gained an adversarial half, appended ONLY on a
-// host whose committed eval root exists — a `skip` row and a `no-eval-root` row can hold no
-// staged batch and no refresh record by construction, and already say so one clause to the left.
+// 422-17/422-27 (D-09/D-14/D-19): probe and staging details require an eval root. The build's
+// circularity binding is also disclosed on an absent-root host; no-knowledge-root rows stay
+// skipped with their existing message.
 // It is CONSTANT across the fixtures that do get it for a stated reason rather than by luck: none
 // declares an `eval` judge pool (so the probe gap short-circuits to the first reason without
 // resolving a session), none stages an adversarial batch (so the staged report is `not recorded`
 // and never `staged 0`), and the circularity clause is a fact about this BUILD: both production
 // hosts bind the recorded posture, and agent-local forwards it to the analysis handler.
 const ADVERSARIAL_SUFFIX = '; adversarial: no-probe-model: panel-not-configured; staged not recorded; circularity backing: recorded posture applied'
+const CIRCULARITY_SUFFIX = '; circularity backing: recorded posture applied'
 const PRIOR_SUFFIX = '; label calibration: absent; trust priors: provisional; judge panel: capability gap: panel-not-configured'
 
 const STATIC_PROFILE: EmbeddingProfile = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' }
@@ -367,7 +368,32 @@ describe('createKnowledgeChecks', () => {
     const { learning } = await runChecks(project, baseProbes({
       buildPromotionPosture: async () => ({ kind: 'no-eval-root', committedRoot }),
     }))
-    expect(learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), committedRoot)}` + PRIOR_SUFFIX })
+    expect(learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), committedRoot)}` + PRIOR_SUFFIX + CIRCULARITY_SUFFIX })
+  })
+
+  it('discloses bound circularity backing without probing an absent eval root', async () => {
+    const project = makeProject()
+    const evalComposition = await import('../eval-session-composition.js')
+    const listStaged = vi.spyOn(evalComposition, 'listStagedAdversarial')
+    const readRefreshes = vi.spyOn(evalComposition, 'readAdversarialRefreshRecords')
+    const resolveSession = vi.spyOn(evalComposition, 'resolveEvalSession')
+    try {
+      const { learning } = await runChecks(project, {
+        resolveEmbedderCapability: async () => LEXICAL_ONLY,
+      })
+      expect(learning?.status).toBe('warn')
+      expect(learning?.message).toContain('no eval root at ')
+      expect(learning?.message).toContain('circularity backing: recorded posture applied')
+      expect(learning?.message).not.toContain('; adversarial:')
+      expect(learning?.message).not.toContain('staged ')
+      expect(listStaged).not.toHaveBeenCalled()
+      expect(readRefreshes).not.toHaveBeenCalled()
+      expect(resolveSession).not.toHaveBeenCalled()
+    } finally {
+      listStaged.mockRestore()
+      readRefreshes.mockRestore()
+      resolveSession.mockRestore()
+    }
   })
 
   it('passes the production replay port to the posture probe', async () => {
@@ -597,7 +623,7 @@ describe('createKnowledgeChecks', () => {
     expect(second.embedder).toEqual(first.embedder)
     expect(second.rung).toEqual(first.rung)
     expect(second.learning).toEqual(first.learning)
-    expect(first.learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), join(project.projectRoot, 'agent-qa-eval'))}` + PRIOR_SUFFIX })
+    expect(first.learning).toEqual({ status: 'warn', message: `deterministic-verdict-floor — no eval root at ${relative(process.cwd(), join(project.projectRoot, 'agent-qa-eval'))}` + PRIOR_SUFFIX + CIRCULARITY_SUFFIX })
 
     expect(afterFirst).toEqual(before)
     expect(afterSecond).toEqual(before)
