@@ -1560,12 +1560,19 @@ export async function stageAdversarialProposal(
   const batchDigest = computeAdversarialBatchDigest(input.product, cases)
   const productDir = adversarialProductDir(input.agentQaRoot, input.product)
   const dir = join(productDir, batchDigest)
+  function existingBatchOutcome(): StageAdversarialProposalResult {
+    const existing = listStagedAdversarial({ agentQaRoot: input.agentQaRoot,
+      product: input.product, batchDigest, includeRetired: true })[0]
+    if (existing?.retirement !== undefined) return { ...base, kind: 'nothing-derived', staged: [], ...settle() }
+    return { ...base, kind: 'unchanged', batchDigest, dir, ...settle() }
+  }
+  if (pathPresent(dir)) return existingBatchOutcome()
   if (input.dryRun === true) return { ...base, kind: 'dry-run', batchDigest, dir }
 
   requireDirectories(productDir)
   // An already-published batch still settles: the previous run may have been interrupted
   // between the staging rename and its record, and the decisions are the same either way.
-  if (pathPresent(dir)) return { ...base, kind: 'unchanged', batchDigest, dir, ...settle() }
+  if (pathPresent(dir)) return existingBatchOutcome()
 
   const manifest: AdversarialBatchManifest = {
     schemaVersion: 1,
@@ -1591,7 +1598,7 @@ export async function stageAdversarialProposal(
     }
     // Publish once, fully validated. An existing published batch is nonempty and cannot be
     // replaced by rename; a competitor is reported as 'unchanged', never as a fresh stage.
-    if (pathPresent(dir)) return { ...base, kind: 'unchanged', batchDigest, dir, ...settle() }
+    if (pathPresent(dir)) return existingBatchOutcome()
     renameSync(temporary, dir)
     temporary = undefined
     // Settle AFTER the bytes are published: an interruption before this point leaves nothing
@@ -1633,6 +1640,11 @@ export function listStagedAdversarial(input: {
       if (input.batchDigest !== undefined && input.batchDigest !== batchDigest) continue
       const dir = join(productDir, batchDigest)
       requireDirectories(dir)
+      // Inspect the whole retained audit tree without following links, including entries
+      // outside the manifest's document paths. Unreviewed links cannot ride a valid marker.
+      for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile() && !entry.isDirectory()) throw new TypeError('unsafe or unexpected adversarial batch entry')
+      }
       const manifest = manifestSchema.parse(
         JSON.parse(readStagedFile(dir, ADVERSARIAL_MANIFEST_FILE)),
       ) as AdversarialBatchManifest
@@ -1726,6 +1738,7 @@ export function refreshAdversarialSplit(
 ): RefreshAdversarialSplitResult {
   const base = { product: input.product, batchDigest: input.batchDigest, admitted: [], unchanged: [],
     refusals: [], remaining: [], stagingSkips: [], writesStarted: false, kind: 'refused' as const }
+  if (!LOWER_HEX_64.test(input.batchDigest)) return { ...base, reason: 'batch-not-found' }
   let release: (() => void) | undefined
   try {
     validateBatchIdentity(input.product, input.batchDigest)
