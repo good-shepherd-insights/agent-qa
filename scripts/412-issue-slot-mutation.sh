@@ -548,26 +548,33 @@ apply_mutation () {
 #   created   newline-separated paths this leg brings into existence (must not exist beforehand)
 run_leg () {
   local id="$1" label="$2" mode="$3" required="$4" allowed="$5" filter="$6" suite="$7" rebuild="$8"
-  CURRENT_SUBJECTS="$9"
-  CURRENT_CREATED="${10}"
-  CURRENT_REBUILD="$8"
+  local subjects="$9" created="${10}"
 
   echo "=== LEG $id — $label"
 
+  # A refusal must not grant cleanup ownership. Check EVERY path before taking any
+  # snapshot or publishing the restore lists; the EXIT trap also runs on refusal.
   local p
   while IFS= read -r p; do
     [ -z "$p" ] && continue
     clean_gate "$p"
-    cp "$REPO_ROOT/$p" "$(snapshot_path "$p")"
-    echo "  subject $p sha256 $(shasum -a 256 "$REPO_ROOT/$p" | cut -d' ' -f1)"
-  done <<< "$CURRENT_SUBJECTS"
+  done <<< "$subjects"
   while IFS= read -r p; do
     [ -z "$p" ] && continue
-    if [ -e "$REPO_ROOT/$p" ]; then
+    if [ -e "$REPO_ROOT/$p" ] || [ -L "$REPO_ROOT/$p" ]; then
       echo "FATAL: $p already exists — leg $id would overwrite a real file" >&2
       exit 1
     fi
-  done <<< "$CURRENT_CREATED"
+  done <<< "$created"
+
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    cp "$REPO_ROOT/$p" "$(snapshot_path "$p")"
+    echo "  subject $p sha256 $(shasum -a 256 "$REPO_ROOT/$p" | cut -d' ' -f1)"
+  done <<< "$subjects"
+  CURRENT_SUBJECTS="$subjects"
+  CURRENT_CREATED="$created"
+  CURRENT_REBUILD="$rebuild"
 
   apply_mutation "$id"
 
@@ -942,6 +949,7 @@ instrument_self_check () {
   echo
 }
 
+node "$REPO_ROOT/scripts/412-issue-slot-refusal-selftest.mjs"
 instrument_self_check
 
 # ── PREFLIGHT ─────────────────────────────────────────────────────────────────────────────────
