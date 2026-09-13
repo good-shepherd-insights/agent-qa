@@ -7,7 +7,7 @@
 # HERE instead of shrinking both in step.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-exec node --input-type=commonjs - <<'NODE'
+exec node --test-reporter=tap --input-type=commonjs - <<'NODE'
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
@@ -26,11 +26,12 @@ const PROMPT = 'packages/eval/src/adversarial/probe-prompt.ts'
 const CORPUS = 'packages/eval/src/labels/corpus-entry.ts'
 const CHAIN = 'packages/agent/src/jobs/chain-identity.ts'
 const NOTIFICATION = 'packages/schema/src/notification/run-notification.ts'
-const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION]
+const RECEIPT = 'packages/cli/src/gates/replay-gate-host.ts'
+const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION, RECEIPT]
 const PLANT = 'packages/agent-local/src/422-adversarial-plant.ts'
 
 /** The four packages an instrument RUNS in; the rest are copied for their raw source alone. */
-const RUNNER_PACKAGES = ['eval', 'agent', 'schema', 'arch']
+const RUNNER_PACKAGES = ['eval', 'agent', 'schema', 'arch', 'cli']
 
 const expected = [
   { subject: GENERATE, instrument: 'eval-sets', vocabulary: 'AdversarialRowStatus',
@@ -57,6 +58,8 @@ const expected = [
     vocabulary: 'the v2 -> v3 migration step', operation: 'synthesize', member: 'stages.proposals' },
   { subject: PLANT, instrument: 'arch-writer', vocabulary: 'the protected-root writer census',
     operation: 'plant', member: 'an adversarial storage path in a protected package' },
+  { subject: RECEIPT, instrument: 'cli-receipt', vocabulary: 'acknowledged Gate-1 return',
+    operation: 'bypass', member: 'writer acknowledgement refusal' },
 ]
 expected.forEach((leg, index) => { leg.id = `A${String(index + 1).padStart(2, '0')}` })
 
@@ -157,22 +160,26 @@ test('adversarial mutation legs redden by name and restore byte-identically', ()
     '422-10 keeps its own registration — the phase gate borrows the instrument, it does not absorb it')
   assert.ok(fs.existsSync('scripts/422-adversarial-mutation.sh'), 'the instrument must exist')
   assert.ok(fs.existsSync('scripts/422-quarantine-mutation.sh'), 'the quarantine instrument must exist')
-  assert.equal(expected.length, 12)
+  assert.equal(expected.length, 13)
+  const declared = fs.readFileSync('scripts/422-adversarial-mutation.sh', 'utf8')
+    .split('const legs = [')[1].split('legs.forEach')[0]
+  assert.equal((declared.match(/^  \{$/gm) ?? []).length, expected.length,
+    'independent behavioral mutation inventory must be implemented')
 
   const { output, status, before } = runMode('')
   assert.equal(status, 0, output)
-  assert.match(output, /^ADVERSARIAL_MUTATION_OK legs=12 named-red=12 byte-identical-restoration=7$/m)
+  assert.match(output, /^ADVERSARIAL_MUTATION_OK legs=13 named-red=13 byte-identical-restoration=8$/m)
   assert.ok(!output.includes('FATAL:'), output)
 
   // The arrival proof ran for EVERY leg before any byte moved. Without it a leg whose subject the
   // instrument never reads would report a green that measures the absence of the mutation.
-  assert.equal((output.match(/^ARRIVAL A\d+: /gm) ?? []).length, 12, output)
-  assert.equal((output.match(/^NAMED RED A\d+:/gm) ?? []).length, 12, output)
+  assert.equal((output.match(/^ARRIVAL A\d+: /gm) ?? []).length, 13, output)
+  assert.equal((output.match(/^NAMED RED A\d+:/gm) ?? []).length, 13, output)
 
   const evidence = /^Evidence: (.+)$/m.exec(output)?.[1]
   assert.ok(evidence, 'the run must retain its evidence directory')
   const ledger = JSON.parse(fs.readFileSync(path.join(evidence, 'ledger.json'), 'utf8'))
-  assert.equal(ledger.length, 12)
+  assert.equal(ledger.length, 13)
   const snapshots = JSON.parse(fs.readFileSync(path.join(evidence, 'subjects.json'), 'utf8'))
   assert.deepEqual(Object.keys(snapshots), subjects)
   for (const [index, file] of subjects.entries()) assert.equal(snapshots[file].hash, before[index])
