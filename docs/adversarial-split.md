@@ -103,8 +103,10 @@ refusal an earlier refresh already decided under this policy: disclosed, never r
 `committed-conflict`. `committed-conflict` means the id exists with *different* bytes: history
 wins and nothing is overwritten.
 
-`seeds considered`, `deferred` and `eligible` disclose the cap's effect. Deferred seeds are
-counted and wait for the next refresh; they are never dropped.
+During staging, `seeds considered`, `deferred` and `eligible` disclose the cap's effect.
+Deferred seeds are counted and wait for the next refresh; they are never dropped. Admission
+does not repeat seed selection: its current zero-valued seed counters are placeholders, not
+a new measurement of eligibility (WINDOWS #434).
 
 When writes began and some reviewed cases did not land, the verb says so and leaves the batch in
 place with the re-run command. The correct response is to resolve the reported filesystem issue
@@ -298,7 +300,8 @@ candidates are `kind-excluded`. Order is this fold's candidates first, then olde
 candidates in the product by creation ordinal. Candidates past the cap stay
 `gate1-receipt-required`, are counted, and are picked up by the next run or by `eval replay-gate`.
 
-The chain-terminal line reports the stage. Every clause distinguishes absent from zero:
+The chain-terminal line reports the stage and distinguishes absent staging evidence from
+measured counts:
 
 ```
 proposals: not recorded                         the row carries no proposal stage at all
@@ -313,6 +316,10 @@ remaining` prints even when it is zero, because the zero is the difference betwe
 work behind" and "the cap admitted everything eligible" — which is exactly what decides whether
 to run `eval replay-gate` by hand. No candidate id, digest, authored text or verbatim `reason`
 string reaches this line; only closed words and array lengths.
+
+Known disclosure limit (W-1): a refused staging verb can still reach the chain-terminal line
+as `staged 0, skipped 0`. Those zeros do not establish a successful empty refresh; inspect the
+recorded refusal before interpreting them.
 
 `propose-improvements` emits no progress chip. Its progress is durable on the
 `proposals-authored` checkpoint and disclosed on the one chain-terminal line, so a chip would be
@@ -477,19 +484,22 @@ refusal D-03 specifies, counted under refusals and inconclusive at exit 2 with n
 
 ## What this documentation does and does not establish
 
-**Everything above describes shipped contracts proven by fixtures and fake models.** No live
-provider call, no live replay and no live corpus admission backs any statement here. Phase 422's
-screenings are substitutions at the eval-session seam; a removal gate that is internally
-consistent is not a proof of provenance.
+The shipped contracts have automated fixture and fake-model coverage. Plan 25 also recorded
+an approved admission of 16 adversarial cases into the demo corpus, bringing its total to 171
+entries. Plan 28 recorded two failing scratch runs through a real provider and the complete
+post-run chain. Neither run served qualifying candidate or low-trust memory, so those runs did
+not verify the live BYOM accepted-class behavior. Qualifying live Gate-1 screening, capable
+probe authoring and removal-cross-check acceptance also remain outstanding; an internally
+consistent fixture gate does not establish those live results.
 
-At the time of writing, no real adversarial generation has been committed to any root: the demo
-corpus holds zero adversarial entries, and the probe arm on the currently configured demo host
-resolves `panel-not-configured` — **not** `single-family-host`. The distinction is the one the
-`no-probe-model` table above exists to preserve: `single-family-host` means a judge pool is
-declared and credentialed but no member is family-disjoint from the planner, whereas the demo
-config carries `eval: {}` (its `judge: claude` line was removed on 2026-09-04 under 413 D-17's
-fallback, no Claude credential resolving), so no pool is declared at all and the arithmetic is
-never reached. Measured on the configured host by Plan 25. The measured-floor, census and
-calibration numbers described here are shapes, not observations. ADV-01–ADV-04 and ATTR-03
-remain open pending configured-host acceptance, and D-19's validator exemption is recorded above
-as undelivered.
+The configured demo host's probe check reported `panel-not-configured`. A `single-family-host`
+gap instead requires a declared, credentialed judge pool with no family-disjoint member. The
+demo's `eval: {}` declares no pool, so that family comparison is not reached. These are the
+observations recorded by Plan 25, rather than a promise that a later host configuration is
+unchanged.
+
+D-19's validator exemption is delivered by the shared reader binding on both production hosts.
+The qualifying live proof remains pending under WINDOWS #440. The phase's SUMMARY, acceptance
+and final-gate records identify the source versions, run IDs and observed fields; examples in
+this guide do not establish additional measured-floor or calibration results. ADV-01–ADV-04
+and ATTR-03 remain pending final acceptance.
