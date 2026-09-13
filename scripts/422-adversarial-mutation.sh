@@ -75,7 +75,10 @@ const CORPUS = 'packages/eval/src/labels/corpus-entry.ts'
 const CHAIN = 'packages/agent/src/jobs/chain-identity.ts'
 const NOTIFICATION = 'packages/schema/src/notification/run-notification.ts'
 const RECEIPT = 'packages/cli/src/gates/replay-gate-host.ts'
-const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION, RECEIPT]
+const EVIDENCE = 'packages/schema/src/verdict/misdirection-evidence.ts'
+const HARM = 'packages/cli/src/curation/emit-canary-outcomes.ts'
+const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION, RECEIPT,
+  EVIDENCE, HARM]
 
 /** The one leg that adds a file rather than editing one: the arch census names what it accuses. */
 const PLANT = 'packages/agent-local/src/422-adversarial-plant.ts'
@@ -142,12 +145,31 @@ const SCHEMA_NOTIFY_RUNTIME = 'src/__tests__/422-notification-closed-sets.test.t
 const SCHEMA_NOTIFY_TYPES = 'src/__tests__/422-notification-closed-sets.test-d.ts'
 const ARCH_WRITER = 'src/__tests__/422-no-eval-writer.test.ts'
 const CLI_RECEIPT = 'src/gates/__tests__/replay-gate-host.test.ts'
+const SCHEMA_GUARD = 'src/verdict/__tests__/misdirection-guard.test.ts'
+const CLI_HARM = 'src/curation/__tests__/misdirection-harm.test.ts'
 const receiptTitles = [
   '422 refuses to hand a caller a receipt the writer never acknowledged',
   '422 refuses a dry-run receipt at the port while the verb still renders it',
   '422 lends the host port its claim authority per call and refuses an unrecorded receipt',
 ]
 const exactTitles = titles => `(?:${titles.map(title => title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`
+const membershipTitles = [
+  'names the candidate record served on the failing step, and only it',
+  'separates a pre-promotion candidate from a low-trust active canary',
+  'rejects a verdict that declares an empty memoryOnPath over a served candidate',
+  'gates a verdict that cites only the clean step while the actual failing step carried memory',
+]
+const aggregationTitles = [
+  'held + not-run is unknown with the unchecked sibling disclosed, never held',
+  'held + inconclusive is unknown with the inconclusive sibling disclosed',
+  'an omitted row leaves its record unchecked, and unchecked is never held',
+]
+const aggregationControls = [
+  'resolves to held only when every relevant row held',
+  'held + flipped is flipped, never held',
+]
+const aggregationDescribe = 'aggregateMisdirectionEvidence: mixed rows never resolve to held'
+const harmTitle = 'emits ONE identical harmed consequence for every one of the eight classes and both producers'
 
 const instruments = {
   'eval-sets': { pkg: 'packages/eval', files: [EVAL_SETS_RUNTIME, EVAL_SETS_TYPES], typecheck: true },
@@ -158,6 +180,12 @@ const instruments = {
   'arch-writer': { pkg: 'packages/arch', files: [ARCH_WRITER], typecheck: false, nameFilter: 'D-01 raw source' },
   'cli-receipt': { pkg: 'packages/cli', files: [CLI_RECEIPT], typecheck: false,
     nameFilter: exactTitles(receiptTitles) },
+  'schema-membership': { pkg: 'packages/schema', files: [SCHEMA_GUARD], typecheck: false,
+    nameFilter: exactTitles(membershipTitles) },
+  'schema-aggregation': { pkg: 'packages/schema', files: [SCHEMA_GUARD], typecheck: false,
+    nameFilter: exactTitles([...aggregationTitles, ...aggregationControls]) },
+  'cli-harm': { pkg: 'packages/cli', files: [CLI_HARM], typecheck: false,
+    nameFilter: exactTitles([harmTitle]) },
 }
 
 // ---- the cells each leg must redden, named BEFORE anything runs ---------------------------------
@@ -354,12 +382,36 @@ const legs = [
     to: 'if (false && !ACKNOWLEDGED_RECORDINGS.includes(result.recorded)) {',
     reds: receiptTitles.map(title => cell(CLI_RECEIPT, '417 DATA replay gate bridge', title)),
   },
+  {
+    subject: EVIDENCE, instrument: 'schema-membership', vocabulary: 'code-owned memory membership',
+    operation: 'erase', member: 'candidate and served-canary trust',
+    from: "  if (line.status === 'candidate') return 'candidate'\n  if (line.servedAsCanary) return 'low-trust-active'\n",
+    to: '',
+    reds: membershipTitles.map((title, index) => cell(SCHEMA_GUARD, index < 2
+      ? 'deriveMemoryOnPath: code owns on-path membership'
+      : 'validateAnalysisAgainstHandoff: memoryOnPath cannot be forged or omitted', title)),
+  },
+  {
+    subject: EVIDENCE, instrument: 'schema-aggregation', vocabulary: 'all-held evidence law',
+    operation: 'bypass', member: 'unresolved siblings',
+    from: 'if (inconclusive.length > 0 || notRun.length > 0 || unchecked.length > 0) {',
+    to: 'if (false && (inconclusive.length > 0 || notRun.length > 0 || unchecked.length > 0)) {',
+    reds: aggregationTitles.map(title => cell(SCHEMA_GUARD, aggregationDescribe, title)),
+    greens: aggregationControls.map(title => cell(SCHEMA_GUARD, aggregationDescribe, title)),
+  },
+  {
+    subject: HARM, instrument: 'cli-harm', vocabulary: 'class-independent flipped harm',
+    operation: 'erase', member: 'causal outcome precedence',
+    from: "const rowOutcome = causalRow ? 'negative' : runOutcome",
+    to: 'const rowOutcome = runOutcome',
+    reds: [cell(CLI_HARM, '422-16 D-20 — flipped evidence emits harm independently of the class', harmTitle)],
+  },
 ]
 legs.forEach((leg, index) => { leg.id = `A${String(index + 1).padStart(2, '0')}` })
 // Derived from the declared ledger, never a guessed number: the selftest states the same total
 // independently, so a leg silently dropped here reddens there instead of shrinking both in step.
 const EXPECTED_LEGS = legs.length
-if (EXPECTED_LEGS !== 13) throw new Error(`Expected exactly 13 mutation legs, declared ${EXPECTED_LEGS}`)
+if (EXPECTED_LEGS !== 16) throw new Error(`Expected exactly 16 mutation legs, declared ${EXPECTED_LEGS}`)
 
 // ---- the arrival proof --------------------------------------------------------------------------
 // Computed from SOURCE before any byte is touched. A subject outside its instrument's relative
@@ -462,7 +514,8 @@ function parse(log) {
 /** Every cell any leg on this instrument names must be SELECTED by the green run, or the leg
  *  names a cell that does not exist and its RED could never be the one it claims. */
 function namedCellsFor(instrument) {
-  return [...new Set(legs.filter(leg => leg.instrument === instrument).flatMap(leg => leg.reds))].sort()
+  return [...new Set(legs.filter(leg => leg.instrument === instrument)
+    .flatMap(leg => [...leg.reds, ...(leg.greens ?? [])]))].sort()
 }
 function checkGreen(result, instrument) {
   const parsed = parse(result.log)
@@ -481,7 +534,7 @@ function checkRed(result, leg) {
   if (result.exit !== 1) throw new Error(`Unexpected tool exit ${result.exit}`)
   const parsed = parse(result.log)
   const expected = [...leg.reds].sort()
-  const missing = expected.filter(name => !parsed.selectedNames.includes(name))
+  const missing = [...expected, ...(leg.greens ?? [])].filter(name => !parsed.selectedNames.includes(name))
   if (missing.length > 0) throw new Error(`Named cell not selected: ${JSON.stringify(missing)}`)
   if (JSON.stringify(parsed.failures) !== JSON.stringify(expected)) {
     throw new Error(`Unexpected named failures: ${JSON.stringify(parsed.failures)}`)
@@ -620,6 +673,10 @@ async function main() {
     mustReject('zero selected cells', () => checkRed({ ...result,
       log: result.log.replace(/^\s*[✓×] (?: TS  )?src\/[^ ]+ > .+$/gm, '') }, leg))
     mustReject('a green suite', () => checkRed({ ...result, exit: 0 }, leg))
+    if (leg.greens?.length) {
+      mustReject('missing positive control', () => checkRed({ ...result,
+        log: result.log.split('\n').filter(line => !line.includes(leg.greens[0])).join('\n') }, leg))
+    }
     if (leg.reds.some(name => name.includes('.test-d.ts >'))) {
       mustReject('missing type assertion', () => checkRed({ ...result,
         log: result.log.replace(/^TypeCheckError:[\s\S]*?^ ❯ src\/[^\n]+:\d+:\d+$/gm, '') }, leg))
