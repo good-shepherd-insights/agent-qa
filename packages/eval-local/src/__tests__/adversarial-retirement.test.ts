@@ -192,6 +192,18 @@ async function stagedFixture(count = 3) {
 }
 
 describe('422 adversarial retirement integrity and recovery', () => {
+  it('preserves an operational before-write TypeError instead of calling it staging corruption', async () => {
+    const f = await stagedFixture(1)
+    const before = tree(f.committedRoot)
+    const failure = new TypeError('standing knowledge receipt schema is unavailable')
+    expect(() => refreshAdversarialSplit({ ...f, policy: POLICY,
+      seedingOutputBaseDir: join(f.agentQaRoot, 'eval/audit/error-boundary'),
+      beforeWrites: () => { throw failure },
+    })).toThrow(failure)
+    expect(tree(f.committedRoot)).toEqual(before)
+    expect(existsSync(f.lock)).toBe(false)
+  })
+
   it('refuses an unexpected symlink inside the reviewed batch before publishing a decision', async () => {
     const f = await stagedFixture()
     symlinkSync(f.committedRoot, join(f.dir, 'unreviewed-link'))
