@@ -11,6 +11,8 @@ import { readMisdirectionRunState } from '../misdirection-run-state.js'
 import { DRAIN_BUDGET_MS } from '@vostride/agent-qa-agent-local'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { ownPostVerdictContinuation, postVerdictPendingPath } from '../post-verdict-continuation.js'
+import { runPostRunTail } from '../post-run-tail.js'
+import { defaultPostRunGuardrailPolicy } from '../curation-tail.js'
 
 const roots: string[] = []
 afterEach(() => {
@@ -175,4 +177,24 @@ it('failed publication retains the intent and queues nothing; changed config ref
   await expect(f.own()).rejects.toThrow('identity-conflict')
   expect(readFileSync(f.pendingPath)).toEqual(before)
   expect(f.prepare).not.toHaveBeenCalled()
+})
+
+it('terminal drain discovers recorded pending work before an unrelated empty FIFO', async () => {
+  const f = continuationFixture()
+  await expect(f.own({ prepare: async () => { throw new Error('interrupted before prepare') } })).rejects.toThrow()
+  const tail = runPostRunTail({ runId: generateRunId(), agentQaRoot: f.input.agentQaRoot,
+    configPath: f.input.configPath, configDir: f.input.project, knowledgeConfig: { dir: 'knowledge' },
+    auditSink: { emit: () => undefined } as never, policy: defaultPostRunGuardrailPolicy(),
+    log: { warn: () => undefined }, operations: {
+      acquireWriterLease: (() => ({ kind: 'held', holder: { pid: process.pid } })) as never,
+      nudgeDaemon: async () => undefined,
+    },
+  })
+  await tail.drain()
+  const host = composeCliLocalAgent({ agentQaRoot: f.input.agentQaRoot, configPath: f.input.configPath })
+  try {
+    const rows = (await (await host.jobs()).store.dumpState()).jobs
+    expect(rows.filter((row) => row.kind === 'analyze-run' && row.idempotencyKey === f.input.runId)).toHaveLength(1)
+    expect(existsSync(f.pendingPath)).toBe(false)
+  } finally { await host.close() }
 })
