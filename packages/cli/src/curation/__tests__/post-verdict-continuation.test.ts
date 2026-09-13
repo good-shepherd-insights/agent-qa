@@ -642,6 +642,81 @@ it('terminal drain discovers recorded pending work before an unrelated empty FIF
   } finally { await host.close() }
 })
 
+it.each(['direct', 'suite'] as const)('CR-11 actual %s command keeps failed exit one when first SIGINT interrupts the real shared preparation wait', async (mode) => {
+  const f = continuationFixture()
+  vi.stubEnv('DO_NOT_TRACK', '1')
+  vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  const output = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('fixture command exit') })
+  const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider forbidden'))
+  const release = deferred<void>()
+  const reserved = deferred<void>()
+  const beforeListeners = new Set(process.listeners('SIGINT'))
+  const beforeExitCode = process.exitCode
+  const actualDrive = drive.runInProcessCliRun
+  let session!: RunSession
+  let runnerSettled = false
+  let outcome: Awaited<ReturnType<typeof actualDrive>> | undefined
+  let dispose!: ReturnType<typeof vi.spyOn>
+  const evidence = JSON.parse(readFileSync(f.handoffPath, 'utf8')).tests[0].steps[0]
+  vi.spyOn(drive, 'runInProcessCliRun').mockImplementation(async (input, request) => {
+    const produced = await input.produceMembers!({} as never)
+    // Keep the actual command callbacks and actual shared drive; only the member/provider ports
+    // are controlled. The runner publishes its real handoff and times out at its fixed 5000 ms.
+    outcome = await actualDrive({ ...input,
+      onSession: (value) => {
+        session = value; input.onSession?.(value)
+        void value.done.then(() => { runnerSettled = true })
+      },
+      produceMembers: async () => ({ ...produced,
+        members: [{ testId: f.input.directTestId, name: 'checkout', filePath: 'tests/direct.yaml' }],
+        executor: async () => ({ name: 'checkout', filePath: 'tests/direct.yaml', status: 'failed', duration: 1,
+          steps: [{ name: 'Open checkout', status: 'failed', duration: 1, evidence }] }),
+        bindRunContext: (context) => {
+          produced.bindRunContext(context)
+          dispose = vi.spyOn(context.maskingContext, 'dispose')
+        },
+      }),
+      postProcessing: { ...input.postProcessing, misdirection: recoveryCapabilities(async () => {
+        reserved.resolve(); await release.promise
+        return { kind: 'checked', crossCheck: 'held', seedHonored: true,
+          samples: { k: 1, seeds: [11], modelCalls: 0 } }
+      }) },
+    }, request)
+    return outcome
+  })
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+  const program = new Command().option('--config <path>').addCommand(createRunCommand())
+  const parsing = program.parseAsync(['--config', f.input.configPath, 'run',
+    mode === 'suite' ? f.input.suitePattern : f.input.testPattern, '--trust-session', '--detach'], { from: 'user' })
+  void parsing.catch(() => undefined)
+  try {
+    await reserved.promise
+    await vi.advanceTimersByTimeAsync(5001)
+    expect(runnerSettled).toBe(true)
+    expect(exit).not.toHaveBeenCalled()
+    const pendingPath = postVerdictPendingPath({ ...f.input, runId: String(session.id) })
+    expect(existsSync(pendingPath)).toBe(true)
+    const handlers = process.listeners('SIGINT').filter(handler => !beforeListeners.has(handler))
+    expect(handlers).toHaveLength(1)
+    handlers[0]!('SIGINT')
+    await expect(parsing).rejects.toThrow('fixture command exit')
+    expect(exit.mock.calls[0]![0], 'a completed failed verdict must survive a first post-verdict signal').toBe(1)
+    expect(output.mock.calls.flat().join('\n')).toContain(`preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}`)
+    expect(existsSync(pendingPath)).toBe(true)
+    expect(dispose).not.toHaveBeenCalled()
+    expect(outcome?.settled).toBeDefined()
+  } finally {
+    release.resolve()
+    await parsing.catch(() => undefined)
+    await outcome?.settled
+    process.exitCode = beforeExitCode
+  }
+  expect(dispose).toHaveBeenCalledTimes(1)
+  expect(fetch).not.toHaveBeenCalled()
+}, 30_000)
+
 it.each((['direct', 'suite'] as const).flatMap(mode =>
   (['pending', 'late-failure', 'failed', 'settled-before-finish', 'skipped'] as const).map(state => ({ mode, state })),
 ))('actual $mode command reports $state preparation without a false chain', async ({ mode, state }) => {
