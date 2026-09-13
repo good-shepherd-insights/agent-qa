@@ -136,7 +136,7 @@ import {
   type PrepareMisdirectionEvidenceResult,
 } from './misdirection-tail.js'
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { canonicalJson } from '@vostride/agent-qa-schema'
 import { ownPostVerdictContinuation, postVerdictPendingPath, PostVerdictContinuationRefused } from './post-verdict-continuation.js'
 
@@ -487,9 +487,9 @@ async function matchingAnalysisAlreadyQueued(options: PostVerdictStepOptions, op
  * sweep in this build (D-07), by decision.
  */
 function enqueueFailureWarning(runId: string, handoffPath: string, detail: string): string {
-  return `Post-run analysis was not queued for ${runId} (${detail}); the verdict and exit code `
-    + `are unaffected. The run handoff is still on disk at ${handoffPath}, so the analysis can `
-    + 'be queued again from there.'
+  return `Run ${runId}: preparation/enqueue failed or was refused (${detail}); post-run analysis was not queued. The verdict and exit code are unaffected. `
+    + `Handoff: ${handoffPath}. Durable intent, if publication succeeded: ${join(dirname(handoffPath), 'post-verdict-pending.json')}. `
+    + 'The next local run or daemon drain resumes eligible pending preparation; conflicting or unsafe state remains refused.'
 }
 
 /**

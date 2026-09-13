@@ -1886,7 +1886,8 @@ async function executeSuites(
           })
         },
         warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
-        afterVerdict: async ({ verdict, maskingContext, auditSink, postVerdict }) => {
+        postVerdictSignal: curationAbortController.signal,
+        afterVerdict: async ({ verdict, maskingContext, auditSink, postVerdict, postVerdictDeadlineMs }) => {
           clearGraceTimer()
           activeRunSession = undefined
           // D-14: freeze the verdict-mapped code before the curation tail. A tail failure or a
@@ -1901,6 +1902,8 @@ async function executeSuites(
           // and it ran under `--detach` too (Pitfall 8). What is detach-gated is the in-process
           // chain drain, and neither leg can replace the code frozen on the line above.
           const postRunTail = composeCliPostRunTail({
+            postVerdict,
+            ...(postVerdictDeadlineMs === undefined ? {} : { deadlineMs: postVerdictDeadlineMs }),
             trustPriors,
             ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
             runId,
@@ -4927,7 +4930,8 @@ export function createRunCommand(): Command {
               // The post-verdict tail, run INSIDE the run's own safety scope so its curation egress
               // masks like every other. The `--all` fold happens on the freeze line below and is
               // untouched by this rework.
-              afterVerdict: async ({ verdict, maskingContext, auditSink, postVerdict }) => {
+              postVerdictSignal: curationAbortController.signal,
+              afterVerdict: async ({ verdict, maskingContext, auditSink, postVerdict, postVerdictDeadlineMs }) => {
                 clearGraceTimer()
                 activeRunSession = undefined
                 // Freeze the complete --all-aware exit code before the tail begins. Signals remain
@@ -4941,6 +4945,8 @@ export function createRunCommand(): Command {
                 // 388-02: the same shared tail as the multi-suite site above, and the same 404
                 // D-05 posture — the enqueue happened in the shell, so this handle has two legs.
                 const postRunTail = composeCliPostRunTail({
+                  postVerdict,
+                  ...(postVerdictDeadlineMs === undefined ? {} : { deadlineMs: postVerdictDeadlineMs }),
                   trustPriors,
                   ...(opts.maxAblations === undefined ? {} : { maxAblations: opts.maxAblations }),
                   runId: singleRunId,

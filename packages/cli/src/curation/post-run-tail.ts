@@ -151,7 +151,8 @@ export type PostRunDrainOutcome =
  * moment the two disagreed.
  */
 export interface PostRunTailReport {
-  readonly enqueue: PostRunEnqueueOutcome
+  readonly enqueue?: PostRunEnqueueOutcome
+  readonly preparationPending?: true
   readonly drain: PostRunDrainOutcome
   /** Chain jobs this process actually ran to a disposition. */
   readonly jobsRun: number
@@ -416,6 +417,10 @@ export interface RunPostRunTailOptions extends Pick<
    * this run.
    */
   enqueueOutcome?: PostRunEnqueueOutcome
+  /** Live ownership survives the runner's bounded wait; undefined state means still preparing. */
+  postVerdict?: import('./post-verdict-step.js').PostVerdictHandoff
+  /** The host wait and this drain spend one deadline. */
+  deadlineMs?: number
   /**
    * The dashboard's second chip sink (404 D-16), accepted here and threaded to the emitter.
    *
@@ -567,7 +572,14 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
    * directly. It is not a claim that nothing is queued; it is the honest "this process did not do
    * the queuing and was not told what happened".
    */
-  const enqueueOutcome: PostRunEnqueueOutcome = opts.enqueueOutcome ?? 'skipped'
+  const enqueueOutcome = (): PostRunEnqueueOutcome | undefined => {
+    if (opts.postVerdict === undefined) return opts.enqueueOutcome ?? 'skipped'
+    const state = opts.postVerdict.enqueueState
+    return state === 'unbound' ? 'failed' : state
+  }
+  let observingLateFailure = false
+  const discloseFailure = () => opts.log.warn(opts.postVerdict?.failureDetail
+    ?? `Run ${opts.runId}: preparation/enqueue failed or was refused. Analysis is not queued.`)
   let drainOutcome: PostRunDrainOutcome = 'not-attempted'
   let jobsRun = 0
   let preparationRecoveryPending = false
@@ -678,6 +690,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       readonly takeLease?: () => CurationWriterAuthority | undefined
       readonly withoutLease?: 'consult' | 'skip'
     } = {}): Promise<void> {
+      if (opts.postVerdict !== undefined && enqueueOutcome() !== 'enqueued' && enqueueOutcome() !== 'deduped') return
       let root: string
       try {
         // 404 D-05: resolved HERE. The enqueue leg used to do it as a side effect, and the step
@@ -695,7 +708,11 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // resolved costs a warning and no fence.
         knowledgeRoot ??= ops().resolveKnowledgeRoot(opts.knowledgeConfig, opts.configDir)
         root = knowledgeRoot
-        drainDeadlineMs = ops().now() + DRAIN_BUDGET_MS
+        drainDeadlineMs = opts.deadlineMs ?? ops().now() + DRAIN_BUDGET_MS
+        if ((opts.deadlineMs !== undefined && ops().now() >= drainDeadlineMs) || opts.signal?.aborted) {
+          drainOutcome = 'budget-exhausted'
+          return
+        }
         const recovery = await ops().recoverPendingPostVerdictContinuations({
           agentQaRoot: opts.agentQaRoot, configPath: opts.configPath, knowledgeRoot: root,
           deadlineMs: drainDeadlineMs, log: opts.log,
@@ -930,6 +947,22 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     },
 
     async finish(input: { readonly detached?: boolean } = {}): Promise<void> {
+      const actualEnqueue = enqueueOutcome()
+      if (opts.postVerdict !== undefined && actualEnqueue === undefined) {
+        opts.log.info?.(`Run ${opts.runId}: preparation pending; analysis is not yet queued. Durable intent: ${opts.postVerdict.pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
+        if (!observingLateFailure && opts.postVerdict.completion !== undefined) {
+          observingLateFailure = true
+          void opts.postVerdict.completion.then(() => {
+            if (enqueueOutcome() === 'failed') discloseFailure()
+          }, discloseFailure)
+        }
+        return
+      }
+      if (opts.postVerdict !== undefined && actualEnqueue === 'failed') { discloseFailure(); return }
+      if (opts.postVerdict !== undefined && actualEnqueue === 'skipped') {
+        opts.log.info?.(`Run ${opts.runId}: post-run analysis intentionally skipped.`)
+        return
+      }
       if (input.detached === true && drainOutcome === 'not-attempted') {
         // The one place `detached` is ever produced. `drain()` was never called, so nothing
         // else in this file could have said so — and a report that called the detach posture
@@ -1031,7 +1064,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       // 404 D-05: the step's answer, not this file's. Nothing is queued and the step's own
       // `post-run-enqueue-failed` warning has already said everything true about this run, so a
       // close-out line built from an empty chain would be the second, quieter version of it.
-      if (enqueueOutcome === 'failed') return
+      if (actualEnqueue === 'failed') return
       let openedHost: LocalAgentHost
       try {
         // Composed HERE rather than inherited: the detach leg never calls `drain()`, and it is
@@ -1086,7 +1119,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     },
 
     report(): PostRunTailReport {
-      return { enqueue: enqueueOutcome, drain: drainOutcome, jobsRun }
+      const enqueue = enqueueOutcome()
+      return { ...(enqueue === undefined ? { preparationPending: true as const } : { enqueue }), drain: drainOutcome, jobsRun }
     },
   }
 }

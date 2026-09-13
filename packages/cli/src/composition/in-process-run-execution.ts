@@ -738,6 +738,7 @@ export async function runInProcessCliRun(
     // still replaces.
     maskingContext.dispose()
   }
+  let preparationDisclosureOwnedByDoor = false
 
   return await runSafetyScope(
     { maskingContext, auditSink, executionContext: options.executionContext },
@@ -784,6 +785,7 @@ export async function runInProcessCliRun(
         const finalExitCode = options.afterVerdict === undefined
           ? exitCode
           : await options.afterVerdict(verdictContext)
+        preparationDisclosureOwnedByDoor = options.afterVerdict !== undefined || options.postRunTail !== undefined
         if (options.postRunTail === undefined) {
           if (postVerdictHandoff?.completion !== undefined) {
             detachedTail = postVerdictHandoff.completion.then(() => undefined, () => undefined).finally(closeOutRun)
@@ -808,6 +810,13 @@ export async function runInProcessCliRun(
           .finally(closeOutRun)
         return { runId, verdict, exitCode: finalExitCode, settled: detachedTail }
       } finally {
+        if (!preparationDisclosureOwnedByDoor && postVerdictHandoff?.completion !== undefined) {
+          const handoff = postVerdictHandoff
+          if (handoff.enqueueState === undefined) warnByName(`Run ${runId}: preparation pending; analysis is not yet queued. Durable intent: ${handoff.pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
+          void handoff.completion!.then(() => {
+            if (handoff.failureDetail !== undefined) warnByName(handoff.failureDetail)
+          }, () => warnByName(`Run ${runId}: preparation/enqueue failed (preparation-or-enqueue-error). Durable intent: ${handoff.pendingPath}.`))
+        }
         // The close-out runs HERE unless the detached tail took ownership of it — see
         // `closeOutRun`'s own doc for why that hand-over is the whole of D-06's masker rule.
         if (detachedTail === undefined) {

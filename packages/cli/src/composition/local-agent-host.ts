@@ -457,6 +457,8 @@ function createComposedRunExecution(input: {
                 '../curation/post-run-tail-composition.js'
               )
               const tail = composeCliPostRunTail({
+                postVerdict: context.postVerdict,
+                ...(context.postVerdictDeadlineMs === undefined ? {} : { deadlineMs: context.postVerdictDeadlineMs }),
                 trustPriors,
                 canaryAblation: createCanaryAblationForHost({ configPath: context.configFilePath, agentQaRoot: input.agentQaRoot }),
                 runId: context.runId,

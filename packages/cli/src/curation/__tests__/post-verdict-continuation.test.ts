@@ -39,7 +39,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-it.each(['settles', 'host deadline expires'] as const)('retains host ownership after the real runner timeout until evidence-bound analysis exists: %s', async (mode) => {
+it.each(['settles', 'host deadline expires', 'abort', 'detached tail', 'framework error'] as const)('retains host ownership after the real runner timeout until evidence-bound analysis exists: %s', async (mode) => {
   const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' })
   roots.push(fixture.project)
   const fetchTrap = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider forbidden'))
@@ -64,9 +64,13 @@ it.each(['settles', 'host deadline expires'] as const)('retains host ownership a
   let hostSettled = false
   let runnerSettled = false
   let dispose!: ReturnType<typeof vi.spyOn>
+  const abort = new AbortController()
+  const detached = vi.fn(async () => undefined)
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
   const running = runInProcessCliRun({
     configPath: fixture.configPath, agentQaRoot: fixture.agentQaRoot,
+    postVerdictSignal: abort.signal,
+    ...(mode === 'detached tail' ? { postRunTail: detached } : {}),
     executionContext: 'local-headless', trust: { trustMode: true },
     onSession: (value) => { session = value; void value.done.then(() => { runnerSettled = true }) },
     produceMembers: async () => ({
@@ -78,7 +82,7 @@ it.each(['settles', 'host deadline expires'] as const)('retains host ownership a
       knowledgeRoot: join(fixture.project, 'knowledge'), targetClass: 'local',
       targetNames: [fixture.targetName], memberProbeUrls: [],
       bindRunContext: ({ maskingContext }) => { dispose = vi.spyOn(maskingContext, 'dispose') }, applyAssembly: () => undefined,
-      bindSession: () => undefined, takeFrameworkError: () => undefined,
+      bindSession: () => undefined, takeFrameworkError: () => mode === 'framework error' ? new Error('fixture framework failure') : undefined,
       getCurationModelDeps: () => undefined,
     }),
     postProcessing: { misdirection: { prepareMisdirectionEvidence: (input) =>
@@ -89,6 +93,7 @@ it.each(['settles', 'host deadline expires'] as const)('retains host ownership a
       } }) } },
     afterVerdict: () => { hostSettled = true; return 1 },
   }, { patterns: [fixture.testPattern] })
+  void running.catch(() => undefined)
   try {
     await reserved.promise
     const runDir = join(fixture.agentQaRoot, 'runs', String(session.id))
@@ -98,18 +103,27 @@ it.each(['settles', 'host deadline expires'] as const)('retains host ownership a
     expect(hostSettled, 'the host must retain the still-pending preparation after runner.done').toBe(false)
     expect(existsSync(join(runDir, 'post-verdict-pending.json'))).toBe(true)
     expect(guardCompletedRunHandoff(JSON.parse(readFileSync(join(runDir, 'handoff.json'), 'utf8'))).misdirectionEvidence).toBeUndefined()
-    if (mode === 'host deadline expires') {
-      await vi.advanceTimersByTimeAsync(DRAIN_BUDGET_MS + 1)
-      const pending = await running
-      expect(hostSettled).toBe(true)
-      expect(pending.settled).toBeDefined()
+    if (mode !== 'settles') {
+      if (mode === 'abort') { abort.abort(); abort.abort() }
+      else await vi.advanceTimersByTimeAsync(DRAIN_BUDGET_MS + 1)
+      if (mode === 'framework error') {
+        await expect(running).rejects.toThrow('fixture framework failure')
+        expect(hostSettled).toBe(false)
+      } else {
+        const pending = await running
+        expect(hostSettled).toBe(true)
+        expect(pending.settled).toBeDefined()
+      }
       expect(dispose).not.toHaveBeenCalled()
       expect(existsSync(join(runDir, 'post-verdict-pending.json.owner', 'owner.json'))).toBe(true)
     }
     release.resolve()
-    const outcome = await running
-    await outcome.settled
-    expect(outcome.exitCode).toBe(1)
+    if (mode === 'framework error') await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
+    else {
+      const outcome = await running
+      await outcome.settled
+      expect(outcome.exitCode).toBe(1)
+    }
     expect(checked).toHaveBeenCalledTimes(1)
     expect(fetchTrap).not.toHaveBeenCalled()
     const final = guardCompletedRunHandoff(JSON.parse(readFileSync(join(runDir, 'handoff.json'), 'utf8')))
@@ -124,9 +138,10 @@ it.each(['settles', 'host deadline expires'] as const)('retains host ownership a
     } finally { await host.close() }
     expect(existsSync(join(runDir, 'post-verdict-pending.json'))).toBe(false)
     expect(dispose).toHaveBeenCalledTimes(1)
+    if (mode === 'detached tail') expect(detached).toHaveBeenCalledTimes(1)
   } finally {
     release.resolve()
-    await running
+    await running.catch(() => undefined)
   }
 }, 30_000)
 
@@ -421,7 +436,7 @@ it.each(['malformed', 'foreign', 'symlink', 'write-failure'] as const)('refuses 
   const f = continuationFixture()
   if (mode === 'malformed') writeFileSync(f.pendingPath, '{bad')
   if (mode === 'foreign') writeFileSync(f.pendingPath, JSON.stringify({ schemaVersion: 1,
-    runId: generateRunId(), sourceDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64) }))
+    runId: generateRunId(), sourceDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64), handoffDigest: 'c'.repeat(64) }))
   if (mode === 'symlink') symlinkSync(f.handoffPath, f.pendingPath)
   if (mode === 'write-failure') mkdirSync(f.pendingPath)
   await expect(Promise.resolve().then(() => f.own())).rejects.toThrow()
@@ -444,6 +459,10 @@ it.each(['config', 'source'] as const)('failed publication retains the intent an
   await expect(f.own()).rejects.toThrow('identity-conflict')
   expect(readFileSync(f.pendingPath)).toEqual(before)
   expect(f.prepare).not.toHaveBeenCalled()
+  const check = vi.fn(async () => { throw new Error('changed identity cannot prepare') })
+  await terminalRecover(f, recoveryCapabilities(check))
+  expect(check).not.toHaveBeenCalled()
+  expect(readFileSync(f.pendingPath)).toEqual(before)
 })
 
 it('an uncertain owner does not starve an unrelated eligible intent', async () => {
@@ -508,20 +527,26 @@ it('terminal drain discovers recorded pending work before an unrelated empty FIF
   } finally { await host.close() }
 })
 
-it.each(['direct', 'suite'] as const)('actual %s command reports pending preparation without a skipped or drained chain', async (mode) => {
+it.each((['direct', 'suite'] as const).flatMap(mode =>
+  (['pending', 'late-failure', 'failed', 'settled-before-finish', 'skipped'] as const).map(state => ({ mode, state })),
+))('actual $mode command reports $state preparation without a false chain', async ({ mode, state }) => {
   const f = continuationFixture()
   vi.stubEnv('DO_NOT_TRACK', '1')
-  const output = vi.spyOn(console, 'log').mockImplementation(() => undefined)
-  vi.spyOn(console, 'error').mockImplementation(() => undefined)
-  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  const output = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
   const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('fixture command exit') })
   const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider forbidden'))
   const actualTail = tailComposition.composeCliPostRunTail
   let report: ReturnType<ReturnType<typeof actualTail>['report']> | undefined
   let pendingPath = ''
+  let finishPreparation: (() => Promise<unknown>) | undefined
   const composed = vi.spyOn(tailComposition, 'composeCliPostRunTail').mockImplementation((input) => {
     const handle = actualTail(input)
-    return { ...handle, finish: async (options) => { await handle.finish(options); report = handle.report() } }
+    return { ...handle, finish: async (options) => {
+      if (state === 'settled-before-finish') await finishPreparation!()
+      await handle.finish(options); report = handle.report()
+    } }
   })
   const execution = vi.spyOn(drive, 'runInProcessCliRun').mockImplementation(async (input, request) => {
     const produced = await input.produceMembers!({} as never)
@@ -533,21 +558,29 @@ it.each(['direct', 'suite'] as const)('actual %s command reports pending prepara
     }))
     const release = deferred<void>()
     const reserved = deferred<void>()
-    const step = createPostVerdictStep({ ...f.input, runId, detach: true,
-      misdirection: recoveryCapabilities(async () => {
+    const capabilities = recoveryCapabilities(async () => {
         reserved.resolve(); await release.promise
         return { kind: 'checked', crossCheck: 'held', seedHonored: true,
           samples: { k: 1, seeds: [11], modelCalls: 0 } }
-      }),
+      })
+    const step = createPostVerdictStep({ ...f.input, runId, detach: true, log: { warn: () => undefined },
+      misdirection: { prepareMisdirectionEvidence: async (options) => {
+        const result = await capabilities.prepareMisdirectionEvidence!(options)
+        if (state === 'failed' || state === 'late-failure') throw new Error('private provider exception must stay hidden')
+        return result
+      } },
     })
-    const preparation = step.port.run({} as never)
+    const preparation = step.port.run({ ...(state === 'skipped' ? { gateRun: true } : {}) } as never)
+    finishPreparation = async () => { release.resolve(); await preparation }
     try {
-      await reserved.promise
+      if (state === 'skipped') await preparation
+      else await reserved.promise
+      if (state === 'failed') await finishPreparation()
       pendingPath = postVerdictPendingPath({ ...f.input, runId })
       const exitCode = await input.afterVerdict!({ verdict: 'failed', runId, configDir: f.input.project,
         configFilePath: f.input.configPath, auditSink: {}, postVerdict: step.handoff,
         postVerdictDeadlineMs: Date.now() - 1 } as never)
-      expect(existsSync(pendingPath)).toBe(true)
+      expect(existsSync(pendingPath)).toBe(state !== 'skipped' && state !== 'settled-before-finish')
       expect(existsSync(join(runDir, 'curation-tail-receipt.json'))).toBe(false)
       return { runId, exitCode } as never
     } finally { release.resolve(); await preparation; await produced.finalize?.() }
@@ -559,10 +592,26 @@ it.each(['direct', 'suite'] as const)('actual %s command reports pending prepara
   expect(execution).toHaveBeenCalledTimes(1)
   expect(composed).toHaveBeenCalledTimes(1)
   expect(exit.mock.calls[0]![0]).toBe(1)
-  expect(report, 'a pending producer has no enqueue disposition and no completed drain')
-    .toEqual({ preparationPending: true, drain: 'not-attempted', jobsRun: 0 })
-  expect(output.mock.calls.flat().join('\n')).toContain(
-    `preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`,
-  )
+  const lines = output.mock.calls.flat().join('\n')
+  const warning = warnings.mock.calls.flat().join('\n')
+  if (state === 'pending' || state === 'late-failure') {
+    expect(report, 'a pending producer has no enqueue disposition and no completed drain')
+      .toEqual({ preparationPending: true, drain: 'not-attempted', jobsRun: 0 })
+    expect(lines).toContain(`preparation pending; analysis is not yet queued. Durable intent: ${pendingPath}. The next local run or daemon drain resumes eligible pending preparation.`)
+  } else if (state === 'failed') expect(report).toEqual({ enqueue: 'failed', drain: 'not-attempted', jobsRun: 0 })
+  else if (state === 'skipped') {
+    expect(report).toEqual({ enqueue: 'skipped', drain: 'not-attempted', jobsRun: 0 })
+    expect(lines).toContain('post-run analysis intentionally skipped.')
+    expect(lines).not.toContain('Durable intent:')
+  } else {
+    expect(report).toEqual({ enqueue: 'enqueued', drain: 'detached', jobsRun: 0 })
+    expect(lines).not.toContain('preparation pending')
+    expect(lines).toContain('agent-qa digest')
+  }
+  if (state === 'failed' || state === 'late-failure') {
+    expect(warning).toContain('preparation/enqueue failed or was refused (preparation-or-enqueue-error)')
+    expect(warning).toContain(pendingPath)
+    expect(warning).not.toContain('private provider exception')
+  }
   expect(fetch).not.toHaveBeenCalled()
 }, 30_000)

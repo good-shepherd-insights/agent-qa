@@ -77,6 +77,8 @@ export interface ComposeCliPostRunTailInput {
   readonly log: RunCurationTailOptions['log']
   /** What the shell's post-verdict step reported about the durable hand-off (404 D-05). */
   readonly enqueueOutcome?: PostRunEnqueueOutcome
+  readonly postVerdict?: import('./post-verdict-step.js').PostVerdictHandoff
+  readonly deadlineMs?: number
   /**
    * The dashboard's SECOND chip sink (404 D-16), threaded through to the emitter in 404-05.
    *
@@ -111,6 +113,8 @@ export function composeCliPostRunTail(input: ComposeCliPostRunTailInput): PostRu
     ...(input.modelDeps === undefined ? {} : { modelDeps: input.modelDeps }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
     ...(input.enqueueOutcome === undefined ? {} : { enqueueOutcome: input.enqueueOutcome }),
+    ...(input.postVerdict === undefined ? {} : { postVerdict: input.postVerdict }),
+    ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
     ...(input.relay === undefined ? {} : { relay: input.relay }),
     ...(input.operations === undefined ? {} : { operations: input.operations }),
   })

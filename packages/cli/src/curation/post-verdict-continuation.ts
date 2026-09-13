@@ -200,6 +200,7 @@ export function ownPostVerdictContinuation(input: PostVerdictContinuationIdentit
         if (!await input.queued()) throw new PostVerdictContinuationRefused('queue-conflict')
       }
       owner.assertOwned()
+      if (!same(identity(input), intent)) throw new PostVerdictContinuationRefused('identity-conflict')
       const current = readIntent(path)
       if (current === undefined || !same(current, intent)) throw new PostVerdictContinuationRefused('identity-conflict')
       rmSync(path)

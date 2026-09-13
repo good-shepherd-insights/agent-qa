@@ -295,6 +295,33 @@ function options(h: Harness): RunPostRunTailOptions {
   }
 }
 
+it('pending preparation cannot be represented by an unrelated empty drain or receipt', async () => {
+  const h = harness()
+  const tail = runPostRunTail({ ...options(h), postVerdict: {
+    outcome: undefined,
+    completion: new Promise(() => undefined), pendingPath: '/owned/run/post-verdict-pending.json',
+    takeAcquiredLease: () => undefined, takeUnclaimedLease: () => undefined,
+  } })
+  await tail.drain()
+  await tail.finish()
+  expect(tail.report()).toEqual({ preparationPending: true, drain: 'not-attempted', jobsRun: 0 })
+  expect(h.runNextJob).not.toHaveBeenCalled()
+  expect(h.operations.runCurationTail).not.toHaveBeenCalled()
+  expect(h.info.mock.calls.flat().join('\n')).toContain('analysis is not yet queued')
+  expect(h.readRunDigest).not.toHaveBeenCalled()
+})
+
+it('the host wait and terminal recovery/pump spend the same deadline', async () => {
+  const h = harness()
+  const recovery = vi.fn(async (input) => { h.clock.value = input.deadlineMs; return [] })
+  const tail = runPostRunTail({ ...options(h), enqueueOutcome: 'enqueued', deadlineMs: 1001,
+    operations: { ...h.operations, recoverPendingPostVerdictContinuations: recovery } })
+  await tail.drain()
+  expect(recovery.mock.calls[0]![0].deadlineMs).toBe(1001)
+  expect(h.runNextJob).not.toHaveBeenCalled()
+  expect(tail.report().drain).toBe('backlog-exhausted')
+})
+
 /** A pump script: the given outcomes in order, then an emptied queue. */
 function pump(outcomes: readonly unknown[]): ReturnType<typeof vi.fn> {
   let call = 0
