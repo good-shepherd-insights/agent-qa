@@ -29,12 +29,14 @@ const NOTIFICATION = 'packages/schema/src/notification/run-notification.ts'
 const RECEIPT = 'packages/cli/src/gates/replay-gate-host.ts'
 const EVIDENCE = 'packages/schema/src/verdict/misdirection-evidence.ts'
 const HARM = 'packages/cli/src/curation/emit-canary-outcomes.ts'
+const PREFLIGHT = 'packages/cli/src/adversarial-probe-preflight.ts'
+const COMPOSITION = 'packages/eval-local/src/adversarial-composition.ts'
 const subjects = [GENERATE, PROBES, TABLES, PROMPT, CORPUS, CHAIN, NOTIFICATION, RECEIPT,
-  EVIDENCE, HARM]
+  EVIDENCE, HARM, PREFLIGHT, COMPOSITION]
 const PLANT = 'packages/agent-local/src/422-adversarial-plant.ts'
 
 /** Packages an instrument RUNS in; the rest are copied for their raw source alone. */
-const RUNNER_PACKAGES = ['eval', 'agent', 'schema', 'arch', 'cli']
+const RUNNER_PACKAGES = ['eval', 'agent', 'schema', 'arch', 'cli', 'eval-local']
 
 const expected = [
   { subject: GENERATE, instrument: 'eval-sets', vocabulary: 'AdversarialRowStatus',
@@ -69,6 +71,10 @@ const expected = [
     operation: 'bypass', member: 'unresolved siblings' },
   { subject: HARM, instrument: 'cli-harm', vocabulary: 'class-independent flipped harm',
     operation: 'erase', member: 'causal outcome precedence' },
+  { subject: PREFLIGHT, instrument: 'cli-singleton', vocabulary: 'eligible singleton capability',
+    operation: 'reject', member: 'one-entry author pool' },
+  { subject: COMPOSITION, instrument: 'local-policy', vocabulary: 'loaded-policy scan',
+    operation: 'bypass', member: 'generation and admission checkpoints' },
 ]
 expected.forEach((leg, index) => { leg.id = `A${String(index + 1).padStart(2, '0')}` })
 
@@ -198,7 +204,7 @@ test('adversarial mutation legs redden by name and restore byte-identically', ()
     '422-10 keeps its own registration — the phase gate borrows the instrument, it does not absorb it')
   assert.ok(fs.existsSync('scripts/422-adversarial-mutation.sh'), 'the instrument must exist')
   assert.ok(fs.existsSync('scripts/422-quarantine-mutation.sh'), 'the quarantine instrument must exist')
-  assert.equal(expected.length, 16)
+  assert.equal(expected.length, 18)
   const declared = fs.readFileSync('scripts/422-adversarial-mutation.sh', 'utf8')
     .split('const legs = [')[1].split('legs.forEach')[0]
   assert.equal((declared.match(/^  \{$/gm) ?? []).length, expected.length,
@@ -206,18 +212,18 @@ test('adversarial mutation legs redden by name and restore byte-identically', ()
 
   const { output, status, before } = runMode('')
   assert.equal(status, 0, output)
-  assert.match(output, /^ADVERSARIAL_MUTATION_OK legs=16 named-red=16 byte-identical-restoration=10$/m)
+  assert.match(output, /^ADVERSARIAL_MUTATION_OK legs=18 named-red=18 byte-identical-restoration=12$/m)
   assert.ok(!output.includes('FATAL:'), output)
 
   // The arrival proof ran for EVERY leg before any byte moved. Without it a leg whose subject the
   // instrument never reads would report a green that measures the absence of the mutation.
-  assert.equal((output.match(/^ARRIVAL A\d+: /gm) ?? []).length, 16, output)
-  assert.equal((output.match(/^NAMED RED A\d+:/gm) ?? []).length, 16, output)
+  assert.equal((output.match(/^ARRIVAL A\d+: /gm) ?? []).length, 18, output)
+  assert.equal((output.match(/^NAMED RED A\d+:/gm) ?? []).length, 18, output)
 
   const evidence = /^Evidence: (.+)$/m.exec(output)?.[1]
   assert.ok(evidence, 'the run must retain its evidence directory')
   const ledger = JSON.parse(fs.readFileSync(path.join(evidence, 'ledger.json'), 'utf8'))
-  assert.equal(ledger.length, 16)
+  assert.equal(ledger.length, 18)
   const snapshots = JSON.parse(fs.readFileSync(path.join(evidence, 'subjects.json'), 'utf8'))
   assert.deepEqual(Object.keys(snapshots), subjects)
   for (const [index, file] of subjects.entries()) assert.equal(snapshots[file].hash, before[index])
