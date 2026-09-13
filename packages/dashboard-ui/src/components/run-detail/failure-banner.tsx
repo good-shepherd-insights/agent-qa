@@ -45,8 +45,8 @@ import { useState } from "react"
 import { AlertCircle, Check, ChevronRight, Copy } from "lucide-react"
 
 import { MaskedText } from "@/components/run-detail/masked-text"
-import { maskedLabel } from "@/components/run-detail/masked-chip"
-import { splitMaskedText, truncateMaskedText } from "@/lib/masked-text"
+import { copyTextOf } from "@/lib/display-text"
+import { truncateMaskedText } from "@/lib/masked-text"
 import { cn } from "@/lib/utils"
 
 /**
@@ -71,26 +71,6 @@ import { cn } from "@/lib/utils"
  * number to make a cell go green.
  */
 export const FAILURE_BANNER_PREVIEW_WORDS = 20
-
-/**
- * One RENDERED run of summary text as a clipboard string: every marker replaced by the sentence its
- * chip shows.
- *
- * WHAT WAS RENDERED, NEVER MORE THAN IT. This takes the string the caller handed `MaskedText`
- * rather than reading the summary itself, because the collapsed banner shows a PREVIEW: a clipboard
- * built from the whole summary hands a reader restored cleartext the page never showed them, which
- * is the half of the medium the marker->label substitution alone does not close.
- *
- * JOINED WITH NO SEPARATOR, because the segments already carry the producer's own spacing — a join
- * on anything else would insert whitespace the sentence never had around every redaction.
- */
-function copyTextOf(rendered: string): string {
-  return splitMaskedText(rendered)
-    .map((segment) => (
-      segment.kind === "text" ? segment.text : `[${maskedLabel(segment.category)}]`
-    ))
-    .join("")
-}
 
 /** What the last copy attempt did — `idle` until one is made, and back to `idle` after a moment. */
 type CopyStatus = "idle" | "copied" | "failed"

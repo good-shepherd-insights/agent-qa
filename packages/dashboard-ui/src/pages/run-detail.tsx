@@ -40,6 +40,7 @@ import { projectAnalysisView, type OnMark, type MarkDenial } from "@/lib/analysi
 import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
+import { copyTextOf } from "@/lib/display-text"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
 import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
@@ -122,7 +123,7 @@ export default function RunDetailPage() {
 
   const [run, setRun] = useState<RunRow | null>(null)
   const runTitle = run ? `Run - ${run.name}` : "Run"
-  usePageTitle(runTitle)
+  usePageTitle(copyTextOf(runTitle))
   useRunStatusFavicon(getRunFaviconState(run?.status))
   // THE PAGE'S ONE DURABLE READ (D-03/D-16). `undefined` = not asked yet; `null` = the read
   // FAILED. Those are different facts and the tree renders them differently: an unasked page is

@@ -14,10 +14,12 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScreenshotViewer } from "@/components/screenshot-viewer"
 import type { RunArtifactResponse, RunRow } from "@/lib/api"
+import { copyTextOf } from "@/lib/display-text"
 import { routes } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 import { ArtifactConfigTab } from "./artifact-config-tab"
 import { EvidenceIncomplete } from "./evidence-incomplete"
+import { MaskedText } from "./masked-text"
 
 // THE FOURTH TAB IS THE FAILURE VIEW'S OPEN TARGET (406-08 · D-02, second half).
 //
@@ -78,7 +80,7 @@ function ErrorState({ error, onRetry }: { error: string; onRetry: () => void }) 
           <p className="mt-1 text-sm text-muted-foreground">
             Retry the request. If it continues, verify the dashboard server can read run artifacts.
           </p>
-          <p className="mt-2 break-words font-mono text-xs text-red-500">{error}</p>
+          <p className="mt-2 break-words font-mono text-xs text-red-500"><MaskedText text={error} /></p>
           <Button className="mt-3" size="sm" variant="outline" onClick={onRetry}>
             Retry
           </Button>
@@ -135,7 +137,7 @@ function sortedAttributeEntries(attributes: Record<string, string>) {
 }
 
 function copyText(value: string) {
-  void navigator.clipboard?.writeText(value)
+  void navigator.clipboard?.writeText(copyTextOf(value))
 }
 
 function AttributesTab({ response }: { response: RunArtifactResponse }) {
@@ -170,16 +172,16 @@ function AttributesTab({ response }: { response: RunArtifactResponse }) {
             {entries.map(([key, value]) => (
               <tr key={key} className="border-b border-border/70 last:border-b-0">
                 <th className="w-[240px] align-top px-3 py-2 text-left font-mono text-xs font-medium text-muted-foreground">
-                  {key}
+                  {copyTextOf(key)}
                 </th>
                 <td className="align-top px-3 py-2">
                   <div className="flex min-w-0 items-start gap-2">
-                    <span className="min-w-0 flex-1 break-all font-mono text-xs text-foreground">{value}</span>
+                    <span className="min-w-0 flex-1 break-all font-mono text-xs text-foreground"><MaskedText text={value} /></span>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-sm"
-                      aria-label={`Copy ${key} value`}
+                      aria-label={`Copy ${copyTextOf(key)} value`}
                       title="Copy value"
                       onClick={() => copyText(value)}
                     >
@@ -280,7 +282,7 @@ export function ArtifactDrawer({
       <SheetContent side="right" className="w-[min(820px,92vw)] sm:max-w-none gap-0 overflow-hidden p-0">
         <SheetHeader className="border-b px-4 py-3 pr-12">
           <SheetTitle className="text-base leading-snug">Run details</SheetTitle>
-          <SheetDescription className="truncate text-xs">{description}</SheetDescription>
+          <SheetDescription className="truncate text-xs"><MaskedText text={description} /></SheetDescription>
           <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
             <span className="break-all font-mono">{run.id}</span>
             {artifact ? (

@@ -144,6 +144,25 @@ describe('423 guarded human read', () => {
     expect(stored).toContain(fixture.authPlaceholder)
     expect(stored).not.toContain(AUTH_TOKEN)
   })
+
+  it('C423-HUMAN-DETAIL-SANITIZED: empty evidence and missing sidecars retain honest absence', async () => {
+    const runId = fixture.db.insertRun({
+      name: 'Historical run', status: 'passed', duration: 0,
+      startedAt: new Date(0).toISOString(), endedAt: new Date(0).toISOString(),
+    })
+    const url = `${fixture.origin}/api/runs/${runId}/detail`
+    const empty = await fetch(url)
+    expect(empty.status).toBe(200)
+    expect(await empty.json()).toMatchObject({ members: [], steps: [], subActions: [] })
+    fixture.db.insertRunStep({
+      runId, testIndex: 0, stepIndex: 0, stepText: '<SECRET_0> <EMAIL_0> [secret]',
+      cacheStatus: 'miss', verifierVerdict: null, selfHealOccurred: false, briefDigest: '',
+    })
+    const historical = await fetch(url)
+    const body = await historical.json() as RunDetailProjection
+    expect(body.steps[0]?.stepText).toBe(`${maskedMarker('secret')} ${maskedMarker('email')} [secret]`)
+    expect(JSON.stringify(body)).not.toContain(AUTH_TOKEN)
+  })
 })
 
 // Labels are read from their published UI source, independently of the conversion under test.
