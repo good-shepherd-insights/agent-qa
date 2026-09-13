@@ -8,6 +8,7 @@
 // readable. Anything less and "propose, never commit" is a comment rather than a property.
 import { Command } from 'commander'
 import { createEvalCommand } from '../commands/eval.js'
+import * as composition from '../eval-session-composition.js'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -218,6 +219,61 @@ async function command(f: ReturnType<typeof fixture>, flags: string[]) {
 }
 
 describe('422 public adversarial retirement', () => {
+  it.each([
+    ['--retire'], ['--retire', '--batch', 'a'.repeat(64)], ['--retire', '--product', 'default'],
+    ...['--admit', '--dry-run', '--max-seeds', '--max-probe-calls'].map(flag =>
+      ['--retire', '--product', 'default', '--batch', 'a'.repeat(64), flag, ...(flag.startsWith('--max-') ? ['1'] : [])]),
+    ['--retire', '--product', '../default', '--batch', 'a'.repeat(64)],
+    ['--retire', '--product', 'default', '--batch', '../batch'],
+    ['--batch', 'a'.repeat(64)], ['--admit'],
+    ['--admit', '--batch', 'a'.repeat(64), '--max-seeds', '1'],
+    ['--admit', '--batch', 'a'.repeat(64), '--max-probe-calls', '1'],
+  ])('rejects invalid options before session resolution: %j', async (...flags) => {
+    const session = vi.spyOn(composition, 'resolveEvalSession')
+    const output = await command({ configPath: '/missing/retirement-config.yaml' } as ReturnType<typeof fixture>, flags)
+    expect(output.exit).toBe(1)
+    expect(output.error).toMatch(/requires|cannot|applies/)
+    expect(session).not.toHaveBeenCalled()
+    session.mockRestore()
+  })
+
+  it('refuses a retired admission preview without reading irrelevant broken knowledge receipts', async () => {
+    const f = fixture()
+    const s = await session(f)
+    const staged = await runAdversarialVerb(s, { ...adversarialHostOptions(s), product: 'default' })
+    const flags = ['--product', 'default', '--retire', '--batch', staged.batchDigest!]
+    const retired = await command(f, flags)
+    expect(retired.exit, retired.error).toBe(0)
+    expect(retired.output).toContain('settled seeds and probe spend stay consumed')
+    expect(retired.output).toContain('No new receipt or floor staleness')
+    expect(retired.output).toContain('existing stale evidence is not refreshed')
+    const again = await command(f, flags)
+    expect(again.output).toContain('already retired')
+    const receipts = vi.fn(() => { throw new Error('knowledge index schema fault') })
+    const refused = await runAdversarialVerb(s, { ...adversarialHostOptions(s), product: 'default',
+      admit: true, batch: staged.batchDigest!, dryRun: true, readStandingGateReceipts: receipts })
+    expect(refused).toMatchObject({ kind: 'refused', reason: 'admission-refused', writesStarted: false,
+      admitted: [], staleReceipts: [], retirement: { retired: true } })
+    expect(receipts).not.toHaveBeenCalled()
+    const preview = await command(f, ['--product', 'default', '--admit', '--batch', staged.batchDigest!, '--dry-run', '--json'])
+    expect(preview.exit, preview.error).toBe(2)
+    expect(JSON.parse(preview.output)).toMatchObject({ kind: 'refused', writesStarted: false, admitted: [], retirement: { retired: true } })
+  })
+
+  it('captures standing receipts before actual admission writes and never during an admission preview', async () => {
+    const f = fixture()
+    const s = await session(f)
+    const staged = await runAdversarialVerb(s, { ...adversarialHostOptions(s), product: 'default' })
+    const before = tree(f.committedRoot)
+    const receipts = vi.fn(() => { expect(tree(f.committedRoot)).toEqual(before); return [] })
+    const opts = { ...adversarialHostOptions(s), product: 'default', admit: true,
+      batch: staged.batchDigest!, readStandingGateReceipts: receipts }
+    expect((await runAdversarialVerb(s, { ...opts, dryRun: true })).kind).toBe('dry-run')
+    expect(receipts).not.toHaveBeenCalled()
+    expect((await runAdversarialVerb(s, opts)).kind).toBe('admitted')
+    expect(receipts).toHaveBeenCalledTimes(1)
+  })
+
   it('retires the exact reviewed batch through the public command and refuses later admission', async () => {
     const f = fixture()
     const s = await session(f)
