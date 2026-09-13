@@ -51,6 +51,7 @@ import type {
   ProposeImprovementsCheckpoint,
 } from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { recoverPendingPostVerdictContinuations } from './post-verdict-continuation.js'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import type {
   PostProcessingChips,
@@ -164,6 +165,7 @@ export interface PostRunTailReport {
  * one site's module graph.
  */
 export interface PostRunTailOperations {
+  recoverPendingPostVerdictContinuations: typeof recoverPendingPostVerdictContinuations
   loadCompletedRunHandoff: CurationTailOperations['loadCompletedRunHandoff']
   resolveKnowledgeRoot: CurationTailOperations['resolveKnowledgeRoot']
   composeHost(input: PostRunTailHostInput): LocalAgentHost
@@ -306,6 +308,7 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
       },
     }),
     acquireWriterLease: LOCAL_DAEMON_CAPABILITIES.acquireWriterLease,
+    recoverPendingPostVerdictContinuations,
     releaseLease: LOCAL_DAEMON_CAPABILITIES.releaseLease,
     nudgeDaemon,
     curateCompletedRun,
@@ -567,6 +570,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   const enqueueOutcome: PostRunEnqueueOutcome = opts.enqueueOutcome ?? 'skipped'
   let drainOutcome: PostRunDrainOutcome = 'not-attempted'
   let jobsRun = 0
+  let preparationRecoveryPending = false
   /**
    * Did THIS process's pump run this run's `analyze-run` to `completed`? (389 D-12.)
    *
@@ -691,6 +695,13 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // resolved costs a warning and no fence.
         knowledgeRoot ??= ops().resolveKnowledgeRoot(opts.knowledgeConfig, opts.configDir)
         root = knowledgeRoot
+        drainDeadlineMs = ops().now() + DRAIN_BUDGET_MS
+        const recovery = await ops().recoverPendingPostVerdictContinuations({
+          agentQaRoot: opts.agentQaRoot, configPath: opts.configPath, knowledgeRoot: root,
+          deadlineMs: drainDeadlineMs, log: opts.log,
+          ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+        })
+        preparationRecoveryPending = recovery.some((result) => result.pending)
         resolvePromotionPosture = await preparePromotionPosture()
       } catch (error) {
         // Constructing the operations table reads the shipped modules, and a build where one of
@@ -703,7 +714,6 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       let acquiredLeaseId: string | undefined
       let openedHost: LocalAgentHost | undefined
       try {
-        drainDeadlineMs = ops().now() + DRAIN_BUDGET_MS
         // THE TAKE, AND THE `finally` THAT ENDS IT, IN ONE TRY (CR-01). Calling the thunk is what
         // acquires; the very next statement records what to release. Nothing can run between them.
         const handed = input.takeLease?.()
@@ -864,7 +874,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // The prior-run janitor, under the REMAINder of the same budget and the same lease
         // (Pitfall 11). This run's own directory is already receipted by the fold the chain
         // just ran, so the sweep skips it rather than folding it twice.
-        await ops().runCurationTail({
+        if (!preparationRecoveryPending) await ops().runCurationTail({
           resolveTrustPriors,
           resolvePromotionPostureForRun: preparePromotionPosture,
           ...(opts.canaryAblation === undefined ? {} : { operations: { canaryAblation: opts.canaryAblation } }),

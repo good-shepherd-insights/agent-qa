@@ -75,6 +75,8 @@ import {
   type CurationWriterAuthority,
 } from '../curation/curation-tail.js'
 import { misdirectionPreparationCapabilities } from '../curation/misdirection-tail.js'
+import { recoverPendingPostVerdictContinuations } from '../curation/post-verdict-continuation.js'
+import { DRAIN_BUDGET_MS } from '@vostride/agent-qa-agent-local'
 import { exercisedAnchors } from '../curation/handoff-anchors.js'
 import {
   appendDrainSessionReceipt,
@@ -206,6 +208,7 @@ export type DaemonShutdownStage =
   | 'releaseLease'
 
 export interface DaemonHostOperations {
+  recoverPendingPostVerdictContinuations: typeof recoverPendingPostVerdictContinuations
   /** Test-only scheduler seam; production uses libuv's monotonic timer scheduling. */
   setInterval(callback: () => void, intervalMs: number): ReturnType<typeof setInterval>
   clearInterval(timer: ReturnType<typeof setInterval>): void
@@ -394,6 +397,7 @@ async function waitForEmbedderWorkerProcessExit(
 
 function defaultOperations(): DaemonHostOperations {
   return {
+    recoverPendingPostVerdictContinuations,
     setInterval: (callback, intervalMs) => setInterval(callback, intervalMs),
     clearInterval: (timer) => clearInterval(timer),
     setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
@@ -1619,6 +1623,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   const drainSession = async (
     sessionId: string,
     receiptRequired: boolean,
+    deadlineMs: number,
   ): Promise<void> => {
     const initialWork = operations.inspectDrainableCurationWork({
       knowledgeRoot: input.knowledgeRoot,
@@ -1677,7 +1682,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }) }
     }
     if (initialCandidates.length > 0) curation = await resolveCuration()
-    while (remainingAfter > 0) {
+    while (remainingAfter > 0 && operations.now() < deadlineMs) {
       const observed = operations.inspectDrainableCurationWork({
         knowledgeRoot: input.knowledgeRoot,
         currentLeaseId: acquired.leaseId,
@@ -1715,7 +1720,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           knowledgeRoot: input.knowledgeRoot,
           auditBaseDir: input.agentQaRoot,
           agentQaRoot: input.agentQaRoot,
-          budgetMs: 'unbounded',
+          budgetMs: Math.max(0, deadlineMs - operations.now()),
           lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
           author: sessionCuration.author,
           ...(sessionCuration.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: sessionCuration.resolvePromotionPosture }),
@@ -1804,7 +1809,16 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       drainReceiptRequired = false
       activeDrainSessionId = sessionId
       try {
-        await drainSession(sessionId, receiptRequired)
+        const deadlineMs = operations.now() + DRAIN_BUDGET_MS
+        if (input.configPath !== undefined) {
+          await operations.recoverPendingPostVerdictContinuations({
+            agentQaRoot: input.agentQaRoot, configPath: input.configPath,
+            knowledgeRoot: input.knowledgeRoot, deadlineMs,
+            log: { warn: (message) => logger.error(message) },
+            onEnqueued: () => jobDispatcher?.wake(),
+          })
+        }
+        await drainSession(sessionId, receiptRequired, deadlineMs)
       } finally {
         activeDrainSessionId = undefined
       }
@@ -2421,6 +2435,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     operations.trace?.('registration-written')
 
     curationPollTimer = operations.setInterval(requestDrain, CURATION_QUEUE_POLL_MS)
+    requestDrain()
     maintenanceTimer = operations.setInterval(() => {
       if (shutdownPromise !== undefined || maintenanceWorker !== undefined) return
       maintenanceWorker = (async () => {

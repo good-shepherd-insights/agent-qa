@@ -467,7 +467,9 @@ async function matchingAnalysisAlreadyQueued(options: PostVerdictStepOptions, op
       || parsed.data.handoffDigest !== curationTailHandoffDigest(handoff)
       || canonicalJson(parsed.data.misdirectionEvidence ?? null) !== canonicalJson(handoff.misdirectionEvidence ?? null)
       || parsed.data.handoffSchemaVersion !== handoff.schemaVersion
-      || parsed.data.executionContext !== handoff.executionContext) {
+      || parsed.data.executionContext !== handoff.executionContext
+      || parsed.data.gateRun !== handoff.gateRun
+      || parsed.data.excludedFromOutcomes !== handoff.excludedFromOutcomes) {
       throw new PostVerdictContinuationRefused('queue-conflict')
     }
     return true
@@ -548,6 +550,13 @@ export function probeWriterLease(input: {
  * different facts: one is worth a warning and the other is a decision somebody took.
  */
 export type PostVerdictEnqueueState = PostVerdictEnqueueOutcome | 'failed' | 'unbound' | 'skipped'
+
+function safePreparationFailure(error: unknown): string {
+  if (error instanceof PostVerdictContinuationRefused) return error.category
+  if (error instanceof Error && error.message === 'canary policy invalid') return 'canary policy invalid'
+  if (error instanceof Error && /\bSQLITE_BUSY\b/.test(error.message)) return 'SQLITE_BUSY'
+  return 'preparation-or-enqueue-error'
+}
 
 /**
  * The D-09 decision: what the enqueue and the lease said at the verdict → the posture the wire
@@ -755,7 +764,7 @@ export function createPostVerdictStep(options: PostVerdictStepOptions): {
         enqueueError = enqueueFailureWarning(
           options.runId,
           completedRunHandoffPath(options.agentQaRoot, options.runId),
-          error instanceof PostVerdictContinuationRefused ? error.category : 'preparation-or-enqueue-error',
+          safePreparationFailure(error),
         )
       }
 

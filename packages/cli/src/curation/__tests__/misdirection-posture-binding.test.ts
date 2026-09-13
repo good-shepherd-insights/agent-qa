@@ -345,6 +345,8 @@ async function driveStep(
     misdirection,
     log: { warn: () => undefined },
     operations: {
+      // This legacy queue/lease harness substitutes IO; real ownership is exercised in post-verdict-continuation.test.ts.
+      ownContinuation: async ({ prepare, enqueue }) => { await prepare(); return await enqueue() },
       recordCanaryPolicy: async () => undefined,
       readWriterLease: (() => ({
         kind: 'absent',

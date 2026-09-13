@@ -7,11 +7,13 @@ import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { canonicalJson, misdirectionSourceDigest, sha256hex } from '@vostride/agent-qa-schema'
 import { completedRunHandoffPath, defaultCurationTailOperations } from './curation-tail.js'
+import { buildRunAuditSink, runSafetyScope } from '@vostride/agent-qa-agent-local'
+import type { PostVerdictHandoff, PostVerdictStepOptions } from './post-verdict-step.js'
 
 export const POST_VERDICT_PENDING_FILE = 'post-verdict-pending.json'
 const digest = z.string().regex(/^[a-f0-9]{64}$/)
 const intentSchema = z.object({ schemaVersion: z.literal(1), runId: z.string().min(1),
-  sourceDigest: digest, configDigest: digest }).strict()
+  sourceDigest: digest, handoffDigest: digest, configDigest: digest }).strict()
 type Intent = z.infer<typeof intentSchema>
 const ownerSchema = intentSchema.extend({ pid: z.number().int().positive(), token: z.uuid() }).strict()
 type Owner = z.infer<typeof ownerSchema>
@@ -72,10 +74,12 @@ function identity(input: PostVerdictContinuationIdentity): Intent {
   if (String(handoff.runId) !== input.runId || handoff.gateRun || handoff.excludedFromOutcomes) {
     throw new PostVerdictContinuationRefused('identity-conflict')
   }
+  const { misdirectionEvidence: _evidence, ...source } = handoff
   return { schemaVersion: 1, runId: input.runId, sourceDigest: misdirectionSourceDigest(handoff),
+    handoffDigest: sha256hex(canonicalJson(source)),
     configDigest: sha256hex(canonicalJson({ configPath: resolve(input.configPath),
       config: sha256hex(readFileSync(input.configPath, 'utf8')),
-      knowledgeRoot: resolve(input.knowledgeRoot), maxAblations: input.maxAblations ?? null })) }
+      knowledgeRoot: resolve(input.knowledgeRoot) })) }
 }
 
 function readIntent(path: string): Intent | undefined {
@@ -128,7 +132,7 @@ function positivelyDead(pid: number): boolean {
 }
 
 /** Nonblocking candidate/owner protocol. Retained nonempty dead generations fence ABA. */
-function claim(lock: string, intent: Intent): () => void {
+function claim(lock: string, intent: Intent): { assertOwned(): void; release(): void } {
   const owner: Owner = { ...intent, pid: process.pid, token: randomUUID() }
   const candidate = `${lock}.candidate-${owner.token}`
   mkdirSync(candidate)
@@ -154,14 +158,17 @@ function claim(lock: string, intent: Intent): () => void {
     }
     if (!acquired) throw new PostVerdictContinuationRefused('owner-busy')
   } finally { rmSync(candidate, { recursive: true, force: true }) }
-  return () => {
+  const assertOwned = () => {
     if (readOwner(lock, intent)?.token !== owner.token) throw new PostVerdictContinuationRefused('owner-busy')
+  }
+  return { assertOwned, release: () => {
+    assertOwned()
     const released = `${lock}.released-${owner.token}`
     renameSync(lock, released)
     sync(dirname(lock))
     rmSync(released, { recursive: true })
     sync(dirname(lock))
-  }
+  } }
 }
 
 const running = new Map<string, { intent: Intent; completion: Promise<'enqueued' | 'deduped'> }>()
@@ -178,24 +185,27 @@ export function ownPostVerdictContinuation(input: PostVerdictContinuationIdentit
     if (!same(active.intent, intent)) throw new PostVerdictContinuationRefused('identity-conflict')
     return active.completion
   }
-  const release = claim(`${path}.owner`, intent)
+  const owner = claim(`${path}.owner`, intent)
   const completion = (async () => {
     try {
       publishIntent(path, intent)
+      owner.assertOwned()
       let result: 'enqueued' | 'deduped' = 'deduped'
       if (!await input.queued()) {
         await input.prepare()
+        owner.assertOwned()
         // Revalidate paths and source/config after preparation, before publishing a job.
         if (!same(identity(input), intent)) throw new PostVerdictContinuationRefused('identity-conflict')
         result = await input.enqueue()
         if (!await input.queued()) throw new PostVerdictContinuationRefused('queue-conflict')
       }
+      owner.assertOwned()
       const current = readIntent(path)
       if (current === undefined || !same(current, intent)) throw new PostVerdictContinuationRefused('identity-conflict')
       rmSync(path)
       sync(dirname(path))
       return result
-    } finally { release() }
+    } finally { owner.release() }
   })().finally(() => { running.delete(path) })
   running.set(path, { intent, completion })
   return completion
@@ -223,4 +233,98 @@ export async function waitForPostVerdictContinuation(
     if (timer !== undefined) clearTimeout(timer)
     if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort)
   }
+}
+
+export interface RecoverPendingPostVerdictOptions {
+  readonly agentQaRoot: string
+  readonly configPath: string
+  readonly knowledgeRoot: string
+  readonly deadlineMs: number
+  readonly signal?: AbortSignal
+  readonly log: { warn(message: string): void }
+  readonly onEnqueued?: () => void
+  /** Trusted host capability, the same seam as a normal run; never read from the intent. */
+  readonly misdirection?: PostVerdictStepOptions['misdirection']
+}
+
+export interface PendingPostVerdictRecovery {
+  readonly runId: string
+  readonly pending: boolean
+  readonly enqueued: boolean
+  readonly detail?: string
+}
+
+/** Existing terminal/daemon drain cycles discover only recorded intents, in run order. */
+export async function recoverPendingPostVerdictContinuations(input: RecoverPendingPostVerdictOptions): Promise<readonly PendingPostVerdictRecovery[]> {
+  const results: PendingPostVerdictRecovery[] = []
+  const runs = join(input.agentQaRoot, 'runs')
+  let names: string[]
+  try { safePath(input.agentQaRoot, true); safePath(runs, true); names = readdirSync(runs).sort() }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') input.log.warn('Post-verdict recovery refused: unsafe or unreadable run root.')
+    return results
+  }
+  for (const name of names) {
+    if (Date.now() >= input.deadlineMs || input.signal?.aborted) break
+    const path = join(runs, name, POST_VERDICT_PENDING_FILE)
+    let runId = name
+    try {
+      // A foreign/symlink directory is never followed, even for the initial intent read.
+      safePath(join(runs, name), true)
+      const intent = readIntent(path)
+      if (intent === undefined) continue
+      runId = intent.runId
+      const bound = { ...input, runId }
+      if (postVerdictPendingPath(bound) !== path || !same(identity(bound), intent)) {
+        throw new PostVerdictContinuationRefused('identity-conflict')
+      }
+      // Live owners (including our own) have their own safety scope. Do not borrow or replay it.
+      const active = running.get(path)
+      const lock = `${path}.owner`
+      let ownerPresent = false
+      try { lstatSync(lock); ownerPresent = true } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      const owner = ownerPresent ? readOwner(lock, intent) : undefined
+      if (active !== undefined || (ownerPresent && (owner === undefined || !positivelyDead(owner.pid)))) {
+        results.push({ runId, pending: true, enqueued: false, detail: 'owner-busy' })
+        input.log.warn(`Run ${runId}: preparation pending; owner busy or uncertain. Analysis is not yet queued. Intent: ${path}.`)
+        continue
+      }
+      let handoff: PostVerdictHandoff | undefined
+      // Disposal travels with the actual operation, even if the caller's deadline expires.
+      const completion = (async () => {
+        const { resolveEvalSession } = await import('../eval-session-composition.js')
+        const session = await resolveEvalSession({ configPath: input.configPath })
+        // Expired discovery must not start a new producer after its caller returned.
+        if (Date.now() >= input.deadlineMs || input.signal?.aborted) return
+        const maskingContext = session.maskingContextFactory()
+        try {
+          const auditSink = buildRunAuditSink({ configDir: dirname(input.configPath), runId, executionContext: 'local-headless' })
+          const { createPostVerdictStep } = await import('./post-verdict-step.js')
+          const step = createPostVerdictStep({ ...bound, detach: true })
+          handoff = step.handoff
+          await runSafetyScope({ maskingContext, auditSink, executionContext: 'local-headless' },
+            async () => await step.port.run({} as Parameters<typeof step.port.run>[0]))
+        } finally { maskingContext.dispose() }
+      })()
+      const settled = await waitForPostVerdictContinuation(completion, input.deadlineMs, input.signal)
+      const disclose = () => {
+        if (handoff?.enqueueState === 'enqueued' || handoff?.enqueueState === 'deduped') input.onEnqueued?.()
+        if (handoff?.enqueueState === 'failed' || handoff?.enqueueState === 'unbound') {
+          input.log.warn(`Run ${runId}: preparation/enqueue failed or was refused (${handoff.failureDetail ?? 'recovery-error'}). Intent: ${path}; the next local run or daemon drain retries eligible pending work.`)
+        }
+      }
+      if (settled) { await completion; disclose() }
+      else void completion.then(disclose, () => input.log.warn(`Run ${runId}: preparation/enqueue failed (recovery-error). Intent retained at ${path}.`))
+      const enqueued = handoff?.enqueueState === 'enqueued' || handoff?.enqueueState === 'deduped'
+      results.push({ runId, pending: !enqueued, enqueued,
+        ...(handoff?.failureDetail === undefined ? {} : { detail: handoff.failureDetail }) })
+    } catch (error) {
+      const detail = error instanceof PostVerdictContinuationRefused ? error.category : 'recovery-error'
+      results.push({ runId, pending: true, enqueued: false, detail })
+      input.log.warn(`Post-verdict preparation recovery refused (${detail}); intent retained at ${path}.`)
+    }
+  }
+  return results
 }
