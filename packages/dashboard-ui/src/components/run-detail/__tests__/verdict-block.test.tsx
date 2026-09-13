@@ -496,6 +496,38 @@ describe('422 circularity evidence in the block (D-17/D-19/D-20)', () => {
     const causal = container.querySelector<HTMLElement>('[data-misdirection-causal-record]')!
     const exposed = container.querySelector<HTMLElement>(`[data-misdirection-on-path-record="${HELD}"]`)!
     expect(causal.className, 'the two chips do not look alike').not.toBe(exposed.className)
+    expect(container.querySelector('[data-misdirection-causal] dt')?.textContent)
+      .toBe('Causal records (flipped)')
+    expect(container.querySelector('[data-misdirection-exposed] dt')?.textContent)
+      .toBe('All records on path')
+  })
+
+  it('offers every recorded result and reason in a native disclosure without changing attribution', () => {
+    render({
+      misdirectionEvidence: {
+        ...flippedEvidence,
+        results: [
+          { recordId: HELD, crossCheck: 'held' },
+          { recordId: FLIPPED, crossCheck: 'flipped' },
+          { recordId: 'rec_capped', crossCheck: 'not-run', reason: 'cap-exceeded' },
+          { recordId: 'rec_interrupted', crossCheck: 'inconclusive', reason: 'interrupted' },
+        ],
+      },
+    })
+
+    const disclosure = container.querySelector<HTMLDetailsElement>('details')
+    expect(disclosure?.open, 'details are available without expanding every failed member by default')
+      .toBe(false)
+    expect(disclosure?.querySelector('summary')?.textContent).toBe('Per-record cross-checks')
+    expect(attr('[data-misdirection-result]', 'data-misdirection-result'))
+      .toEqual([HELD, FLIPPED, 'rec_capped', 'rec_interrupted'])
+    expect(disclosure?.querySelector('[data-misdirection-result="rec_capped"]')?.textContent)
+      .toContain(misdirectionUnbackedLine('cap-exceeded'))
+    expect(disclosure?.querySelector('[data-misdirection-result="rec_interrupted"]')?.textContent)
+      .toContain(misdirectionUnbackedLine('interrupted'))
+    expect(attr('[data-misdirection-causal-record]', 'data-misdirection-causal-record'))
+      .toEqual([FLIPPED])
+    expect(disclosure?.querySelectorAll('button, a, input').length, 'results are read-only').toBe(0)
   })
 
   it('paints declared-only, unresolved and not-recorded as three distinct states', () => {

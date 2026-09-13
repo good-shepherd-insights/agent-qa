@@ -413,6 +413,25 @@ describe('the projection reads circularity evidence and invents none (422 D-17/D
     expect(evidence?.causalRecords).toEqual([FLIPPED])
   })
 
+  it('retains every result and unresolved reason when another record flipped', () => {
+    const results = [
+      { recordId: HELD, crossCheck: 'held' as const },
+      { recordId: FLIPPED, crossCheck: 'flipped' as const },
+      { recordId: 'rec_capped', crossCheck: 'not-run' as const, reason: 'cap-exceeded' as const },
+      { recordId: 'rec_interrupted', crossCheck: 'inconclusive' as const, reason: 'interrupted' as const },
+    ]
+    const evidence = withMisdirection({ state: 'measured', crossCheck: 'flipped', results })
+
+    expect(evidence?.results, 'an aggregate attribution must not discard other recorded outcomes')
+      .toEqual(results)
+    expect(evidence?.state).toBe('flipped')
+    expect(evidence?.causalRecords).toEqual([FLIPPED])
+    expect(evidence?.onPath, 'the ledger does not invent an exposure declaration').toBeUndefined()
+    expect(withMisdirection({ state: 'not-recorded' })?.results).toBeUndefined()
+    expect(withMisdirection({ state: 'declared-only', crossCheck: 'not-run', results: [] })?.results)
+      .toEqual([])
+  })
+
   it('renders the D-19 declared-only backing as its own state, never as a measurement', () => {
     const evidence = withMisdirection({
       state: 'declared-only',

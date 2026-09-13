@@ -42,6 +42,7 @@
 import type {
   AnalysisGetOutput,
   AnalysisMemoryOnPathEntry,
+  AnalysisMisdirectionRecord,
   AnalysisMisdirectionReason,
   AnalysisResolvedVerdict,
   AnalysisVerdictMisdirection,
@@ -281,6 +282,8 @@ export interface MemberMisdirectionView {
   readonly onPath?: readonly MemberMisdirectionOnPath[]
   /** The on-path line, which is the ONE place absent, empty and populated are told apart. */
   readonly onPathText: string
+  /** Every stored result, including unresolved rows beside a flipped result. Absence stays absent. */
+  readonly results?: readonly AnalysisMisdirectionRecord[]
   /** The closed word an unresolved ledger disclosed, when it disclosed one. */
   readonly unbackedReason?: AnalysisMisdirectionReason
   /** The unbacked line — present exactly when `unbackedReason` is. */
@@ -306,6 +309,25 @@ export const MEMORY_ON_PATH_NOT_RECORDED_TEXT = 'memory on path: not recorded'
 /** The author declared NO records — a claim, and not the absence above. */
 export const MEMORY_ON_PATH_NONE_TEXT = 'memory on path: none declared'
 
+export const MISDIRECTION_CAUSAL_RECORDS_LABEL = 'Causal records (flipped)'
+export const MISDIRECTION_ON_PATH_RECORDS_LABEL = 'All records on path'
+export const MISDIRECTION_RESULTS_LABEL = 'Per-record cross-checks'
+
+export const MISDIRECTION_RESULT_TEXT = {
+  held: 'Held — outcome unchanged',
+  flipped: 'Flipped — removing this record changed the outcome',
+  inconclusive: 'Inconclusive — no reliable result',
+  'not-run': 'Not run',
+} satisfies Record<CrossCheck, string>
+
+/** Explain only the DTO's closed reasons; never render the producer's open diagnostic text. */
+const MISDIRECTION_REASON_TEXT = {
+  'cap-exceeded': 'Cross-check limit reached; this memory remains unchecked',
+  interrupted: 'Cross-check interrupted; no completed result is available',
+  'no-eval-root': 'No evaluation root; this claim was not measured',
+  'posture-unavailable': 'Evaluation root unavailable; this memory was not cleared',
+} satisfies Record<AnalysisMisdirectionReason, string>
+
 /** The attribution line. Counts the FLIPPED records, which is what "attribution" names. */
 export function misdirectionAttributionLine(count: number): string {
   return `circularity: memory attribution — ${String(count)} flipped `
@@ -318,14 +340,14 @@ export function memoryOnPathLine(count: number): string {
 }
 
 /**
- * Why an unresolved ledger is unbacked, in the producer's own closed word.
+ * Why an unresolved ledger is unbacked, explained from the producer's closed word.
  *
  * `cap-exceeded` and `posture-unavailable` are the two an operator acts differently on: the first
  * is a budget this run hit, the second is an evaluation root this build could not read. The DTO
  * admits four closed words and forwards nothing else, so no producer text reaches this line.
  */
 export function misdirectionUnbackedLine(reason: AnalysisMisdirectionReason): string {
-  return `unbacked: ${reason}`
+  return MISDIRECTION_REASON_TEXT[reason]
 }
 
 /**
@@ -352,6 +374,7 @@ function readMisdirection(
     state,
     text: misdirectionTextFor(state, causalRecords.length),
     causalRecords,
+    ...(evidence.results === undefined ? {} : { results: evidence.results }),
     ...(evidence.memoryOnPath === undefined ? {} : { onPath: evidence.memoryOnPath }),
     onPathText: evidence.memoryOnPath === undefined
       ? MEMORY_ON_PATH_NOT_RECORDED_TEXT
