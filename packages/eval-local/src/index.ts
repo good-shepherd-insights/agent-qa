@@ -1,4 +1,6 @@
 // Neutral port type re-exports anchor the eval workspace dependency declared by this package.
+export { retireStagedAdversarialBatch, AdversarialLifecycleBusyError } from './adversarial-composition.js'
+export type { RetireStagedAdversarialBatchInput, AdversarialRetirementResult } from './adversarial-composition.js'
 export { runJudgePanelCalibration, runJudgeCalibration } from './judge-calibration-composition.js'
 export { JUDGE_CALIBRATION_SCHEMA_VERSION, JUDGE_CALIBRATION_SUBDIR, judgeCalibrationPath,
   readJudgeCalibration, publishJudgeCalibration, createJudgeCalibrationArtifact, guardJudgeCalibration,

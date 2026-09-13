@@ -113,6 +113,7 @@ import {
   listStagedAdversarial,
   loadAdversarialGuardrailPolicy,
   refreshAdversarialSplit,
+  retireStagedAdversarialBatch,
   resolveAdversarialProbeCallCap,
   resolveAdversarialSeedCap,
   stageAdversarialProposal,
@@ -1434,6 +1435,8 @@ function authoringModelDisclosureOf(model: AuthoringModel): AuthoringModelDisclo
 export interface AdversarialVerbResult {
   kind: 'staged' | 'unchanged' | 'nothing-derived' | 'dry-run' | 'admitted' | 'partial' | 'refused'
   reason?: string
+  retirement?: import('@vostride/agent-qa-eval-local').AdversarialRetirementResult
+  lifecycleBusy?: { lockPath: string }
   product: string
   batchDigest?: string
   stagingDir: string
@@ -1544,6 +1547,14 @@ export function adversarialHostOptions(session: EvalSession) {
   }
 }
 
+/** Operator retirement resolves configuration only; no receipt scan, author or floor work. */
+export function runRetireAdversarialVerb(session: EvalSession, opts: { product: string; batch: string }) {
+  const result = retireStagedAdversarialBatch({ agentQaRoot: resolve(session.configDir, '.agent-qa'),
+    committedRoot: resolve(session.configDir, 'agent-qa-eval'), product: opts.product, batchDigest: opts.batch })
+  return { ...result, modelCalls: 0, admitsNothing: true, settledWorkPreserved: true,
+    newMeasurementStaleness: false }
+}
+
 export async function runAdversarialVerb(
   session: EvalSession,
   opts: AdversarialVerbOptions,
@@ -1595,9 +1606,7 @@ export async function runAdversarialVerb(
     }
     // Standing DATA is read BEFORE the operator's write, so "what did this admission stale"
     // is answered against the receipts as they stood, not as the write left them.
-    const receipts = opts.knowledgeRoot !== undefined && opts.readStandingGateReceipts !== undefined
-      ? opts.readStandingGateReceipts({ knowledgeRoot: opts.knowledgeRoot })
-      : []
+    let receipts: ReturnType<typeof LOCAL_CURATION_CAPABILITIES.readStandingGateReceipts> = []
     const refreshed = refreshAdversarialSplit({
       agentQaRoot: opts.agentQaRoot,
       committedRoot,
@@ -1606,6 +1615,10 @@ export async function runAdversarialVerb(
       policy,
       auditSink,
       seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', 'adversarial'),
+      beforeWrites: () => {
+        receipts = opts.knowledgeRoot !== undefined && opts.readStandingGateReceipts !== undefined
+          ? opts.readStandingGateReceipts({ knowledgeRoot: opts.knowledgeRoot }) : []
+      },
       ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
     })
     // Derived, never assumed. A refusal that never started writing moved nothing, so it stales
@@ -1629,6 +1642,8 @@ export async function runAdversarialVerb(
       refusals: refreshed.refusals,
       stagingSkips: refreshed.stagingSkips,
       writesStarted: refreshed.writesStarted,
+      ...(refreshed.retirement === undefined ? {} : { retirement: refreshed.retirement }),
+      ...(refreshed.lifecycleBusy === undefined ? {} : { lifecycleBusy: refreshed.lifecycleBusy }),
       staleReceipts: moves === undefined
         ? null
         : moves

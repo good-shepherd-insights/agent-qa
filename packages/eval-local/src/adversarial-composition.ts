@@ -29,8 +29,8 @@
 // only at admission, by the one sanctioned seeding writer, under the derived cassette's own
 // path — which is what makes a fresh reader's blob closure resolvable.
 
-import { createHash } from 'node:crypto'
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import { closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 import {
@@ -461,6 +461,7 @@ export interface StageAdversarialProposalResult {
 export interface StagedAdversarialBatch {
   dir: string
   manifest: AdversarialBatchManifest
+  retirement?: AdversarialRetirementRecord
   cases: readonly {
     manifest: AdversarialBatchManifestCase
     caseDir: string
@@ -483,6 +484,8 @@ export interface RefreshAdversarialSplitInput {
   auditSink?: AuditSink
   seedingOutputBaseDir: string
   dryRun?: boolean
+  /** Snapshot host receipts only after validation, under lifecycle ownership, before writes. */
+  beforeWrites?: () => void
   /**
    * Runs after ONE case's bytes have landed and been byte-verified.
    *
@@ -524,6 +527,199 @@ export interface AdversarialAdmissionResult {
   previousCorpusDigest?: string
   nextCorpusDigest?: string
   writesStarted: boolean
+  retirement?: AdversarialRetirementResult
+  lifecycleBusy?: { lockPath: string }
+}
+
+const retirementSchema = z.object({
+  schemaVersion: z.literal(1), product: z.string().min(1), batchDigest: digestField,
+  manifestSha256: digestField, reviewedCaseIds: z.array(z.string().min(1)).min(1),
+  alreadyCommittedCaseIds: z.array(z.string().min(1)),
+}).strict()
+type AdversarialRetirementRecord = z.infer<typeof retirementSchema>
+
+export interface RetireStagedAdversarialBatchInput {
+  agentQaRoot: string
+  committedRoot: string
+  product: string
+  batchDigest: string
+}
+
+/** A decision over retained reviewed bytes, never an admission outcome. */
+export interface AdversarialRetirementResult {
+  retired: true
+  alreadyRetired: boolean
+  product: string
+  batchDigest: string
+  manifestSha256: string
+  retainedBatchDir: string
+  retirementRecordPath: string
+  reviewedCaseIds: readonly string[]
+  alreadyCommittedCaseIds: readonly string[]
+  remainingCaseIds: readonly string[]
+}
+
+export class AdversarialLifecycleBusyError extends Error {
+  constructor(readonly lockPath: string) {
+    super(`Adversarial batch lifecycle is busy or ownership is uncertain at ${lockPath}; retry after its owner finishes. Do not remove the lock.`)
+    this.name = 'AdversarialLifecycleBusyError'
+  }
+}
+
+function validateBatchIdentity(product: string, digest: string): void {
+  if (!product || slugBranch(product) !== product) throw new TypeError('adversarial product must be an exact safe product slug')
+  if (!LOWER_HEX_64.test(digest)) throw new TypeError('adversarial batch must be an exact lowercase SHA256 digest')
+}
+
+const lifecycleOwnerSchema = z.object({ schemaVersion: z.literal(1),
+  product: z.string().min(1), batchDigest: digestField,
+  pid: z.number().int().positive(), token: z.uuid(),
+}).strict()
+type LifecycleOwner = z.infer<typeof lifecycleOwnerSchema>
+
+function syncLifecycleDirectory(dir: string): void {
+  const fd = openSync(dir, 'r')
+  try { fsyncSync(fd) } finally { closeSync(fd) }
+}
+
+function lifecycleLockPath(input: { agentQaRoot: string; product: string; batchDigest: string }): string {
+  validateBatchIdentity(input.product, input.batchDigest)
+  if (!lstatSync(input.agentQaRoot).isDirectory()) throw new TypeError('unsafe adversarial root')
+  const productDir = adversarialProductDir(input.agentQaRoot, input.product)
+  requireDirectories(productDir)
+  return join(productDir, `.pending-lifecycle-${input.batchDigest}`)
+}
+
+function readLifecycleOwner(lock: string, identity: Pick<LifecycleOwner, 'product' | 'batchDigest'>): LifecycleOwner | undefined {
+  try {
+    if (!lstatSync(lock).isDirectory() || readdirSync(lock).join() !== 'owner.json') return undefined
+    const parsed = lifecycleOwnerSchema.safeParse(JSON.parse(readStagedFile(lock, 'owner.json')))
+    return parsed.success && parsed.data.product === identity.product && parsed.data.batchDigest === identity.batchDigest
+      ? parsed.data : undefined
+  } catch { return undefined }
+}
+
+function lifecycleOwnerDead(pid: number): boolean {
+  try { process.kill(pid, 0); return false }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' }
+}
+
+/** Nonblocking mark-lock protocol: keep nonempty dead-generation tombstones to fence ABA. */
+function acquireLifecycleLock(lock: string, identity: Pick<LifecycleOwner, 'product' | 'batchDigest'>): () => void {
+  const owner: LifecycleOwner = { schemaVersion: 1, product: identity.product,
+    batchDigest: identity.batchDigest, pid: process.pid, token: randomUUID() }
+  const candidate = `${lock}.candidate-${owner.token}`
+  mkdirSync(candidate)
+  let acquired = false
+  try {
+    const fd = openSync(join(candidate, 'owner.json'), 'wx', 0o600)
+    try { writeFileSync(fd, committedFileText(owner)); fsyncSync(fd) } finally { closeSync(fd) }
+    syncLifecycleDirectory(candidate)
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try { mkdirSync(lock) }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        const current = readLifecycleOwner(lock, identity)
+        if (current === undefined || !lifecycleOwnerDead(current.pid)) throw new AdversarialLifecycleBusyError(lock)
+        try {
+          // Never remove this tombstone: a delayed reclaimer cannot replace a nonempty G
+          // with a newer H after a competing reclaimer already moved G here.
+          renameSync(lock, `${lock}.dead-${current.token}`)
+          syncLifecycleDirectory(dirname(lock))
+          continue
+        } catch { throw new AdversarialLifecycleBusyError(lock) }
+      }
+      renameSync(join(candidate, 'owner.json'), join(lock, 'owner.json'))
+      syncLifecycleDirectory(lock)
+      syncLifecycleDirectory(dirname(lock))
+      acquired = true
+      break
+    }
+    if (!acquired) throw new AdversarialLifecycleBusyError(lock)
+  } finally {
+    rmSync(candidate, { recursive: true, force: true })
+  }
+  return () => {
+    if (readLifecycleOwner(lock, identity)?.token !== owner.token) throw new AdversarialLifecycleBusyError(lock)
+    const released = `${lock}.released-${owner.token}`
+    renameSync(lock, released)
+    syncLifecycleDirectory(dirname(lock))
+    rmSync(released, { recursive: true })
+    syncLifecycleDirectory(dirname(lock))
+  }
+}
+
+function retirementResult(batch: StagedAdversarialBatch, record: AdversarialRetirementRecord, alreadyRetired: boolean): AdversarialRetirementResult {
+  const committed = new Set(record.alreadyCommittedCaseIds)
+  return { retired: true, alreadyRetired, product: record.product, batchDigest: record.batchDigest,
+    manifestSha256: record.manifestSha256, retainedBatchDir: batch.dir,
+    retirementRecordPath: join(batch.dir, 'retirement.json'), reviewedCaseIds: record.reviewedCaseIds,
+    alreadyCommittedCaseIds: record.alreadyCommittedCaseIds,
+    remainingCaseIds: record.reviewedCaseIds.filter(id => !committed.has(id)) }
+}
+
+function readRetirement(batch: StagedAdversarialBatch): AdversarialRetirementRecord | undefined {
+  if (!pathPresent(join(batch.dir, 'retirement.json'))) return undefined
+  const text = readStagedFile(batch.dir, 'retirement.json')
+  const record = retirementSchema.parse(JSON.parse(text))
+  const ids = batch.manifest.cases.map(row => row.cassetteId)
+  const committed = new Set(record.alreadyCommittedCaseIds)
+  if (record.product !== batch.manifest.product || record.batchDigest !== batch.manifest.batchDigest
+    || record.manifestSha256 !== textHash(readStagedFile(batch.dir, ADVERSARIAL_MANIFEST_FILE))
+    || JSON.stringify(record.reviewedCaseIds) !== JSON.stringify(ids)
+    || JSON.stringify(record.alreadyCommittedCaseIds) !== JSON.stringify(ids.filter(id => committed.has(id)))
+    || text !== committedFileText(record)) throw new TypeError('adversarial retirement record conflicts with reviewed bytes')
+  return record
+}
+
+/** Retain the reviewed batch and publish its operator decision once, under admission's lock. */
+export function retireStagedAdversarialBatch(input: RetireStagedAdversarialBatchInput): AdversarialRetirementResult {
+  const lock = lifecycleLockPath(input)
+  const release = acquireLifecycleLock(lock, input)
+  try {
+    const batch = listStagedAdversarial({ ...input, includeRetired: true })[0]
+    if (batch === undefined) throw new TypeError('adversarial reviewed batch not found; name its exact product and digest')
+    const digest = readCommittedCorpusDigest({ committedRoot: input.committedRoot })
+    if (digest.kind !== 'digest') throw new TypeError('adversarial committed corpus unavailable; cannot establish already committed cases')
+    if (!lstatSync(input.committedRoot).isDirectory()) throw new TypeError('unsafe adversarial committed root')
+    const committedRoot = realpathSync(input.committedRoot)
+    const alreadyCommittedCaseIds: string[] = []
+    for (const row of batch.cases) {
+      let present = 0
+      for (const [path, text] of [
+        [committedCassettePath(input.product, row.cassette.id), row.texts.cassette],
+        [committedLabelPath(input.product, row.cassette.id), row.texts.label],
+        [committedCorpusPath(input.product, row.cassette.id), row.texts.entry],
+      ] as const) {
+        const file = join(committedRoot, path)
+        requireDirectories(dirname(file))
+        if (!pathPresent(file)) continue
+        if (!lstatSync(file).isFile() || readFileSync(file, 'utf8') !== text) throw new TypeError('adversarial committed case conflicts with reviewed bytes')
+        present += 1
+      }
+      if (present !== 0 && present !== 3) throw new TypeError('adversarial committed case is incomplete')
+      if (present === 3) alreadyCommittedCaseIds.push(row.cassette.id)
+    }
+    const record: AdversarialRetirementRecord = { schemaVersion: 1, product: input.product,
+      batchDigest: input.batchDigest, manifestSha256: textHash(readStagedFile(batch.dir, ADVERSARIAL_MANIFEST_FILE)),
+      reviewedCaseIds: batch.manifest.cases.map(row => row.cassetteId), alreadyCommittedCaseIds }
+    if (batch.retirement !== undefined) {
+      if (committedFileText(record) !== committedFileText(batch.retirement)) throw new TypeError('adversarial retirement committed-case identity changed')
+      return retirementResult(batch, batch.retirement, true)
+    }
+    const temporary = join(batch.dir, `.pending-retirement-${randomUUID()}`)
+    let ownedTemporary = false
+    try {
+      const fd = openSync(temporary, 'wx', 0o600)
+      ownedTemporary = true
+      try { writeFileSync(fd, committedFileText(record)); fsyncSync(fd) } finally { closeSync(fd) }
+      linkSync(temporary, join(batch.dir, 'retirement.json'))
+      syncLifecycleDirectory(batch.dir)
+    } finally {
+      if (ownedTemporary) rmSync(temporary, { force: true })
+    }
+    return retirementResult(batch, record, false)
+  } finally { release() }
 }
 
 /** 422-01's spelling of the same result, retained for its existing callers. */
@@ -566,6 +762,7 @@ function directoryNames(path: string): string[] {
 
 /** A staged document is only readable as a REGULAR file inside its own case directory. */
 function readStagedFile(caseDir: string, name: string): string {
+  requireDirectories(caseDir)
   const file = join(caseDir, name)
   if (!pathPresent(file) || !lstatSync(file).isFile()) {
     throw new TypeError('unsafe adversarial staging file')
@@ -854,7 +1051,7 @@ export async function stageAdversarialProposal(
     })
   }
   // Anything already staged is also already derived: D-04's idempotence key spans both.
-  for (const batch of listStagedAdversarial({ agentQaRoot: input.agentQaRoot, product: input.product })) {
+  for (const batch of listStagedAdversarial({ agentQaRoot: input.agentQaRoot, product: input.product, includeRetired: true })) {
     for (const staged of batch.manifest.cases) {
       existingCassetteIds.add(staged.cassetteId)
       if (staged.promptVersion !== undefined && isProbeGeneratorKind(staged.kind)) {
@@ -1419,8 +1616,12 @@ export function listStagedAdversarial(input: {
   agentQaRoot: string
   product?: string
   batchDigest?: string
+  includeRetired?: boolean
 }): StagedAdversarialBatch[] {
+  if (input.product !== undefined && (!input.product || slugBranch(input.product) !== input.product)) throw new TypeError('adversarial product must be an exact safe product slug')
+  if (input.batchDigest !== undefined && !LOWER_HEX_64.test(input.batchDigest)) throw new TypeError('adversarial batch must be an exact lowercase SHA256 digest')
   if (!pathPresent(input.agentQaRoot)) return []
+  if (!lstatSync(input.agentQaRoot).isDirectory()) throw new TypeError('unsafe adversarial root')
   const root = join(realpathSync(input.agentQaRoot), ADVERSARIAL_STAGING_SUBDIR)
   const products = input.product === undefined ? directoryNames(root) : [slugBranch(input.product)]
   const batches: StagedAdversarialBatch[] = []
@@ -1431,6 +1632,7 @@ export function listStagedAdversarial(input: {
       if (batchDigest.startsWith('.pending-')) continue
       if (input.batchDigest !== undefined && input.batchDigest !== batchDigest) continue
       const dir = join(productDir, batchDigest)
+      requireDirectories(dir)
       const manifest = manifestSchema.parse(
         JSON.parse(readStagedFile(dir, ADVERSARIAL_MANIFEST_FILE)),
       ) as AdversarialBatchManifest
@@ -1443,6 +1645,7 @@ export function listStagedAdversarial(input: {
       if (computeAdversarialBatchDigest(manifest.product, manifest.cases) !== manifest.batchDigest) {
         throw new TypeError('adversarial manifest digest mismatch')
       }
+      if (new Set(manifest.cases.map(row => row.cassetteId)).size !== manifest.cases.length) throw new TypeError('duplicate adversarial reviewed case identity')
       const cases: StagedAdversarialBatch['cases'] = manifest.cases.map((manifestCase, index) => {
         const caseDir = join(dir, caseDirName(index))
         const texts = {
@@ -1497,7 +1700,10 @@ export function listStagedAdversarial(input: {
         }
         return { manifest: manifestCase, caseDir, cassette, labelRecord: parsedLabel.record, corpusEntry, texts }
       })
-      batches.push({ dir, manifest, cases })
+      const batch: StagedAdversarialBatch = { dir, manifest, cases }
+      const retirement = readRetirement(batch)
+      if (retirement !== undefined) batch.retirement = retirement
+      if (retirement === undefined || input.includeRetired === true) batches.push(batch)
     }
   }
   return batches
@@ -1518,6 +1724,26 @@ export function listStagedAdversarial(input: {
 export function refreshAdversarialSplit(
   input: RefreshAdversarialSplitInput,
 ): RefreshAdversarialSplitResult {
+  const base = { product: input.product, batchDigest: input.batchDigest, admitted: [], unchanged: [],
+    refusals: [], remaining: [], stagingSkips: [], writesStarted: false, kind: 'refused' as const }
+  let release: (() => void) | undefined
+  try {
+    validateBatchIdentity(input.product, input.batchDigest)
+    if (!pathPresent(input.agentQaRoot)) return { ...base, reason: 'batch-not-found' }
+    const lock = lifecycleLockPath(input)
+    if (!pathPresent(dirname(lock))) return { ...base, reason: 'batch-not-found' }
+    if (input.dryRun === true) {
+      if (pathPresent(lock)) throw new AdversarialLifecycleBusyError(lock)
+    } else release = acquireLifecycleLock(lock, input)
+    return refreshAdversarialSplitOwned(input)
+  } catch (error) {
+    if (error instanceof AdversarialLifecycleBusyError) return { ...base, reason: 'admission-refused', lifecycleBusy: { lockPath: error.lockPath } }
+    if (error instanceof TypeError || error instanceof z.ZodError || error instanceof SyntaxError) return { ...base, reason: 'staging-integrity' }
+    throw error
+  } finally { release?.() }
+}
+
+function refreshAdversarialSplitOwned(input: RefreshAdversarialSplitInput): RefreshAdversarialSplitResult {
   const base = {
     product: input.product,
     batchDigest: input.batchDigest,
@@ -1531,15 +1757,13 @@ export function refreshAdversarialSplit(
   if (!LOWER_HEX_64.test(input.batchDigest)) {
     return { ...base, kind: 'refused', reason: 'batch-not-found' }
   }
-  const previous = readCommittedCorpusDigest({ committedRoot: input.committedRoot })
-  if (previous.kind !== 'digest') return { ...base, kind: 'refused', reason: 'corpus-unavailable' }
-
   let batch: StagedAdversarialBatch | undefined
   try {
     batch = listStagedAdversarial({
       agentQaRoot: input.agentQaRoot,
       product: input.product,
       batchDigest: input.batchDigest,
+      includeRetired: true,
     })[0]
   } catch (error) {
     // A tampered batch is an integrity refusal, not an operational failure — and it happens
@@ -1554,12 +1778,20 @@ export function refreshAdversarialSplit(
       ...base,
       kind: 'refused',
       reason: 'staging-integrity',
-      previousCorpusDigest: previous.corpusDigest,
     }
   }
   if (batch === undefined) {
-    return { ...base, kind: 'refused', reason: 'batch-not-found', previousCorpusDigest: previous.corpusDigest }
+    return { ...base, kind: 'refused', reason: 'batch-not-found' }
   }
+  if (batch.retirement !== undefined) {
+    const retirement = retirementResult(batch, batch.retirement, true)
+    const committed = new Set(retirement.alreadyCommittedCaseIds)
+    return { ...base, kind: 'refused', reason: 'admission-refused', retirement,
+      unchanged: batch.cases.filter(row => committed.has(row.cassette.id)).map(row => stagedCaseOf(row.manifest)),
+      remaining: batch.cases.filter(row => !committed.has(row.cassette.id)).map(row => stagedCaseOf(row.manifest)) }
+  }
+  const previous = readCommittedCorpusDigest({ committedRoot: input.committedRoot })
+  if (previous.kind !== 'digest') return { ...base, kind: 'refused', reason: 'corpus-unavailable' }
 
   const refusals: AdversarialRefusal[] = []
   const stagingSkips: AdversarialStagingSkip[] = []
@@ -1700,7 +1932,7 @@ export function refreshAdversarialSplit(
     // Nothing to write. Already-complete is an ADMISSION whose digest simply does not move;
     // nothing admissible and nothing unchanged is a refusal.
     const complete = unchanged.length === reviewed.length && reviewed.length > 0
-    if (complete) retireBatch(batch.dir)
+    if (complete) cleanupCompletedAdmissionBatch(batch.dir)
     return {
       ...result,
       kind: complete ? 'admitted' : 'refused',
@@ -1716,6 +1948,7 @@ export function refreshAdversarialSplit(
   // half-written case and never a case nobody checked.
   const admitted: StagedAdversarialCase[] = []
   let interrupted = false
+  input.beforeWrites?.()
   result.writesStarted = true
   for (const row of admissible) {
     const runId = row.corpusEntry.run_links.runId
@@ -1784,7 +2017,7 @@ export function refreshAdversarialSplit(
   // bookkeeping. A partial batch — or one whose run was interrupted after the last case —
   // stays on disk so the operator resumes THAT manifest rather than deriving a different one.
   const complete = remaining.length === 0 && !interrupted
-  if (complete) retireBatch(batch.dir)
+  if (complete) cleanupCompletedAdmissionBatch(batch.dir)
 
   const next = readCommittedCorpusDigest({ committedRoot: input.committedRoot })
   const kind: AdversarialAdmissionResult['kind'] =
@@ -1875,7 +2108,7 @@ function recordProbeOutcome(
 }
 
 /** Cleanup is not un-admission: the bytes are already verified in the committed root. */
-function retireBatch(dir: string): void {
+function cleanupCompletedAdmissionBatch(dir: string): void {
   try {
     rmSync(dir, { recursive: true })
   } catch {

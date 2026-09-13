@@ -8,7 +8,7 @@
 // readable. Anything less and "propose, never commit" is a comment rather than a property.
 import { Command } from 'commander'
 import { createEvalCommand } from '../commands/eval.js'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as model from '@vostride/agent-qa-model'
@@ -224,7 +224,7 @@ describe('422 public adversarial retirement', () => {
     const staged = await runAdversarialVerb(s, { ...adversarialHostOptions(s), product: 'default' })
     expect(staged.kind).toBe('staged')
     const batch = staged.batchDigest!
-    const dir = join(f.agentQaRoot, 'eval/adversarial/default', batch)
+    const dir = realpathSync(join(f.agentQaRoot, 'eval/adversarial/default', batch))
     const reviewed = tree(dir)
     const committed = tree(f.committedRoot)
     const knowledge = tree(f.knowledgeRoot)

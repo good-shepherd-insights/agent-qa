@@ -51,6 +51,13 @@ function renderFeedbackSeedSummary(result: SeedFromFeedbackVerbResult): void {
  * floor re-measure command an admission owes (415 D-12 / 418 D-21 idiom).
  */
 function renderAdversarialSummary(result: AdversarialVerbResult): void {
+  if (result.retirement !== undefined) {
+    console.log(`adversarial admission refused: retired ${result.product}/${result.batchDigest}`)
+    console.log(`retirement record: ${result.retirement.retirementRecordPath}; writesStarted: false`)
+    console.log('Retirement admits nothing; settled seeds and probe spend stay consumed. No new receipt or floor staleness was caused; existing stale evidence is not refreshed.')
+    return
+  }
+  if (result.lifecycleBusy !== undefined) console.log(`batch lifecycle busy at ${result.lifecycleBusy.lockPath}; retry after its owner finishes`)
   if (result.reason !== undefined) console.log(`adversarial ${result.kind}: ${result.reason}`)
   if (result.kind === 'nothing-derived') console.log(`no new adversarial variants for ${result.product}`)
   if (result.tableVersion !== undefined) {
@@ -848,8 +855,9 @@ export function createEvalCommand(): Command {
 
   cmd.addCommand(
     new Command('adversarial')
-      .description('Stage a reviewable adversarial batch, or admit one reviewed batch (422 D-01)')
+      .description('Stage, admit, or retire one reviewed adversarial batch (422 D-01)')
       .option('--admit', 'commit the reviewed batch; requires --batch <digest>')
+      .option('--retire', 'durably refuse the exact reviewed batch, retaining its audit bytes; requires --product and --batch')
       .option('--batch <digest>', 'the exact reviewed batch digest to admit')
       .option('--product <slug>', 'product partition to derive from (default: default)')
       .option(
@@ -866,10 +874,32 @@ export function createEvalCommand(): Command {
       .option('--json', 'emit the typed result DTO to stdout')
       .action(
         async (
-          opts: { admit?: boolean; batch?: string; product?: string; maxSeeds?: number; maxProbeCalls?: number; dryRun?: boolean; json?: boolean },
+          opts: { retire?: boolean; admit?: boolean; batch?: string; product?: string; maxSeeds?: number; maxProbeCalls?: number; dryRun?: boolean; json?: boolean },
           command: Command,
         ) => {
           try {
+            if (opts.retire === true) {
+              if (opts.admit === true || opts.maxSeeds !== undefined || opts.maxProbeCalls !== undefined || opts.dryRun === true) {
+                throw new TypeError('--retire cannot be combined with --admit, --max-seeds, --max-probe-calls or --dry-run')
+              }
+              if (opts.product === undefined || opts.batch === undefined) throw new TypeError('--retire requires explicit --product <slug> and --batch <digest>')
+              if (!/^[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?$/.test(opts.product) || opts.product.includes('..')) throw new TypeError('--retire requires an exact safe product slug')
+              if (!/^[0-9a-f]{64}$/.test(opts.batch)) throw new TypeError('--retire requires an exact lowercase SHA256 batch digest')
+              const { resolveEvalSession, runRetireAdversarialVerb } = await import('../eval-session-composition.js')
+              const configPath = getGlobalConfigPath(command)
+              const session = await resolveEvalSession({ ...(configPath === undefined ? {} : { configPath }), keyOnly: true })
+              const result = runRetireAdversarialVerb(session, { product: opts.product, batch: opts.batch })
+              if (opts.json) console.log(JSON.stringify(result, null, 2))
+              else {
+                console.log(`${result.alreadyRetired ? 'already retired' : 'retired'} ${result.product}/${result.batchDigest}`)
+                console.log(`retained audit: ${result.retainedBatchDir}`)
+                console.log(`retirement record: ${result.retirementRecordPath} (manifest SHA256 ${result.manifestSha256})`)
+                console.log(`already committed cases preserved: ${result.alreadyCommittedCaseIds.length}`)
+                for (const id of result.alreadyCommittedCaseIds) console.log(`preserved ${id}`)
+                console.log('Retirement admits nothing; settled seeds and probe spend stay consumed. No new receipt or floor staleness was caused; existing stale evidence is not refreshed. Model calls: 0.')
+              }
+              return
+            }
             // Staging is the default; admission is an explicit operator act naming ONE batch.
             if (opts.batch !== undefined && opts.admit !== true) {
               throw new TypeError('--batch applies to --admit only; staging derives its own batch digest')
