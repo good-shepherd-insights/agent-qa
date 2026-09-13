@@ -290,17 +290,16 @@ function createLearningModeCheck(context: KnowledgeCheckContext): DoctorCheck {
     const probe = context.knowledgeRoot === null ? undefined : await context.probe()
     const priors = probe === undefined ? context.priors() : probe.trustPriors
     const row = await check.check()
-    // 422: the adversarial half is appended only where it can SAY something. A host with no
-    // knowledge root, or one whose committed eval root is absent, has already been told exactly
-    // that one line to the left — it can hold no staged batch, no refresh record and no probe
-    // corpus by construction — so three further "not recorded" clauses would be noise rather
-    // than disclosure, and they would push a row that already carries four suffixes past the
-    // width `doctor.ts`'s renderer keeps every row on one line at.
+    // 422-27: absent eval roots still disclose the build's circularity binding, without
+    // consulting the probe or staging stores. A host with no knowledge root keeps its
+    // existing skipped message; it has no learning subsystem to describe.
     const evalRootPresent = probe !== undefined && probe.learning.kind !== 'no-eval-root'
     const disclosure = priors.kind === 'refused'
       ? 'label calibration: invalid or unavailable; trust priors: unavailable'
       : `${priors.calibration}; ${formatTrustPriorDisclosure(priors.disclosure)}`
-    const adversarial = await context.adversarial(evalRootPresent)
+    const adversarial = context.knowledgeRoot === null
+      ? { text: '', unreadable: false }
+      : await context.adversarial(evalRootPresent)
     // Two independent escalations onto the SAME `skip` carve-out the prior escalation already
     // uses. A tampered adversarial staging store is exactly D-19's ERRORED subsystem — present
     // and refusing to be read — and a `warn` for a rung reached by design must not be allowed to
@@ -345,10 +344,10 @@ async function doctorAdversarialDisclosure(
   agentQaRoot: string,
   evalRootPresent: boolean,
 ): Promise<{ text: string; unreadable: boolean }> {
-  if (!evalRootPresent) return { text: '', unreadable: false }
   const backing = MISDIRECTION_POSTURE_BOUND_AT_HOST
     ? 'circularity backing: recorded posture applied'
     : 'circularity backing: fail-closed eval-root (no host binds the recorded posture)'
+  if (!evalRootPresent) return { text: `; ${backing}`, unreadable: false }
   const staged = await readStagedAdversarialSummary(agentQaRoot)
   return {
     text: `; adversarial: ${await probeGapDisclosure(input)}; ${staged.text}; ${backing}`,
