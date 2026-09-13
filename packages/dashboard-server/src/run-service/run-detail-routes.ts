@@ -16,6 +16,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
+import { redactAuthStateValue as sanitizeAuthStateForResponse } from '@vostride/agent-qa-core'
 import {
   RunsArtifactInputSchema,
   RunsDetailInputSchema,
@@ -217,7 +218,11 @@ export function serveRunDetailRead(
         res,
         200,
         deps.boundary === 'human'
-          ? unmaskTreeForDisplay(deps.host, outcome.body, { runId: deps.runId })
+          // The display seam can restore an entire auth-state JSON string. Sanitize last,
+          // just like the other human run reads, so restoration cannot bypass redaction.
+          ? sanitizeAuthStateForResponse(
+            unmaskTreeForDisplay(deps.host, outcome.body, { runId: deps.runId }),
+          )
           : outcome.body,
       )
     },

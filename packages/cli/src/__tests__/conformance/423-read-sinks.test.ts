@@ -73,7 +73,7 @@ async function startFixture() {
   })
   const agentHost = composeDashboardAgentHost(
     { registry } as LocalAgentHost,
-    { subscribe: () => () => undefined } as Parameters<typeof composeDashboardAgentHost>[1],
+    { subscribe: () => () => undefined, emit() {} },
     undefined, undefined, unmask,
   )
   const started = await startServer({ db, port: 0, agentHost })
