@@ -62,7 +62,7 @@ agent-qa --config agent-qa.config.yaml eval adversarial --admit --batch 3f9c… 
 agent-qa --config agent-qa.config.yaml eval adversarial --admit --batch 3f9c…
 ```
 
-`--admit` without `--batch` refuses (`admit-requires-batch`); `--batch` without `--admit` is a
+`--admit` without `--batch` refuses (`admit-requires-batch`); `--batch` without `--admit` or `--retire` is a
 usage error; `--max-seeds` and `--max-probe-calls` with `--admit` are usage errors rather than
 ignored flags, because admission derives and authors nothing and a silently ignored budget is
 worse than a refused one. An unknown digest is `refused: batch-not-found`. A missing or
@@ -83,6 +83,52 @@ declared family is accounted for exactly once per seed: derived, or explained by
 `mutator-not-generated`, `no-table-entry-applies`, `benign-surface-absent`,
 `hostile-identity-unchanged` or `already-derived`. A benign family that has no distractor
 surface to land on reports `benign-surface-absent` rather than perturbing the gold target.
+
+## Retiring a declined batch
+
+Retirement durably prevents future admission of one exact reviewed batch. Name both its product
+and its full 64-character lowercase digest. For example, after setting `REVIEWED_BATCH_SHA256`
+to the digest printed by staging:
+
+```sh
+agent-qa --config agent-qa.config.yaml eval adversarial --product example-web --retire --batch "$REVIEWED_BATCH_SHA256" --json
+```
+
+The command retains the original manifest and every reviewed case in place. It adds a
+write-once `retirement.json` inside that batch, binding the exact original manifest SHA256 and
+the ordered reviewed case IDs. Its separate result reports `retired: true`, `alreadyRetired`,
+`retainedBatchDir`, `retirementRecordPath`, `reviewedCaseIds`, `alreadyCommittedCaseIds` and
+`remainingCaseIds`. Repeating the exact command returns `alreadyRetired: true` without changing
+the decision bytes. Malformed records, altered reviewed bytes and unsafe paths fail closed.
+
+Retirement and real admission share per-batch ownership. A live, incomplete or uncertain lock
+reports busy: wait for its owner to finish and retry the same command; do not remove the lock.
+A positively dead owner can be recovered, with a retained generation tombstone protecting a
+new owner's lock from delayed cleanup. If admission stopped after committing some cases,
+retirement preserves and reports those committed cases while blocking the remainder. It never
+un-admits a case. A fully completed admission may already have cleaned up its staging directory;
+an absent batch is not evidence of retirement.
+
+Retirement requires explicit `--product` and `--batch`; combining it with `--admit`,
+`--max-seeds`, `--max-probe-calls` or `--dry-run` is a usage error before configuration is read.
+To verify a retired batch's admission refusal safely, preview admission separately:
+
+```sh
+agent-qa --config agent-qa.config.yaml eval adversarial --product example-web --admit --batch "$REVIEWED_BATCH_SHA256" --dry-run --json
+```
+
+This exits **2** with the existing `kind: refused`, `reason: admission-refused`, an explicit
+`retirement` detail naming the record, `writesStarted: false` and an empty `admitted` list.
+It checks retirement before scanning standing knowledge receipts or invoking a provider.
+The normal staging reader omits retired batches; storage audit callers can explicitly use
+`listStagedAdversarial({ ..., includeRetired: true })` to read and validate them.
+
+Retirement admits nothing and makes zero model/provider calls. Settled seeds and probe spend
+stay consumed; the refresh records, probe reservations and completions are unchanged and the
+retired derivations remain deduplicated. Committed corpus and knowledge history are unchanged.
+No new receipt, baseline or floor staleness is caused, and existing stale evidence is not
+refreshed. Table generations, corpus rotation and probe prompt generations retain their
+existing rules.
 
 ## Reading the numbers a refresh prints
 
