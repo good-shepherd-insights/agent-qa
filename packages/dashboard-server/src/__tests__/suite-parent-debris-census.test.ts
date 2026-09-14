@@ -1322,7 +1322,7 @@ describe('the historical-row argument is retired, by name (405-07, D-02 · T-402
 
     // The refusal names BOTH versions, so an operator knows which file to remove.
     expect(() => new DashboardDatabase({ dbPath: file }))
-      .toThrow(/user_version 1 predates schema version 2/)
+      .toThrow(/user_version 1 predates schema version 3/)
   })
 
   it('the retired artifact kinds are no longer writable — the union member is unreachable breadth', () => {
