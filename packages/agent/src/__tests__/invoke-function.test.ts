@@ -37,6 +37,47 @@ import type { FunctionDeps, FunctionSpec } from '../functions/spec.js'
 
 const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
 
+describe('read invocation scope', () => {
+  it('READ-SCOPE surrounds awaited read dispatch after the gate and preserves output validation', async () => {
+    const events: string[] = []
+    const sink = capturingSink()
+    const spec: FunctionSpec = {
+      ...runsListSpec,
+      invoke: async () => {
+        events.push('invoke')
+        await Promise.resolve()
+        events.push('settled')
+        return []
+      },
+    }
+    const registry = createRegistryFromSpecs([spec], {
+      ...registryOptions({ auditSink: sink.sink }),
+      withReadScope: async (functionId: string, invoke: () => Promise<unknown>) => {
+        expect(functionId).toBe('runs.list')
+        expect(sink.executionRows()).toHaveLength(1)
+        events.push('enter')
+        try { return await invoke() } finally { events.push('dispose') }
+      },
+    })
+    expect(await invokeFunction(registry, 'runs.list', {}, caller(['read']))).toEqual([])
+    expect(events).toEqual(['enter', 'invoke', 'settled', 'dispose'])
+  })
+
+  it('READ-SCOPE never runs for denied calls or write dispatch', async () => {
+    let scopes = 0
+    const registry = createRegistryFromSpecs([runsListSpec, configSetSpec], {
+      ...registryOptions(),
+      withReadScope: async (_functionId: string, invoke: () => Promise<unknown>) => {
+        scopes++
+        return invoke()
+      },
+    })
+    await expect(invokeFunction(registry, 'runs.list', {}, caller([]))).rejects.toBeInstanceOf(FunctionScopeError)
+    await invokeFunction(registry, 'config.set', {}, caller(['config-write']))
+    expect(scopes).toBe(0)
+  })
+})
+
 function handoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
   return {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
