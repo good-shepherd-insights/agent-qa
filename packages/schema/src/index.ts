@@ -148,6 +148,9 @@ export {
 export type { EvidenceRefPrefix, EvidenceArtifactRef } from './ids/artifact-ref'
 export {
   EVIDENCE_KINDS,
+  NETWORK_CREDENTIAL_HEADERS,
+  NETWORK_BODY_CONTENT_TYPES,
+  NETWORK_BODY_MAX_BYTES,
   EVIDENCE_ABSENCE_REASONS,
   EvidenceKindSchema,
   EvidenceAbsenceReasonSchema,
@@ -165,6 +168,8 @@ export {
 } from './run/evidence'
 export type {
   EvidenceKind,
+  NetworkCredentialHeader,
+  NetworkBodyContentType,
   EvidenceAbsenceReason,
   EvidenceDocument,
   EvidenceEntry,

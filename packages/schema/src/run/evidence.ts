@@ -1,6 +1,22 @@
 import { z } from 'zod'
 import { EvidenceArtifactRefSchema } from '../ids/artifact-ref'
 
+export type NetworkCredentialHeader =
+  | 'authorization' | 'proxy-authorization' | 'cookie' | 'set-cookie' | 'x-api-key'
+  | 'x-auth-token' | 'x-access-token' | 'x-csrf-token' | 'x-xsrf-token'
+export const NETWORK_CREDENTIAL_HEADERS = [
+  'authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key',
+  'x-auth-token', 'x-access-token', 'x-csrf-token', 'x-xsrf-token',
+] as const satisfies readonly NetworkCredentialHeader[]
+export type NetworkBodyContentType =
+  | 'application/json' | 'text/html' | 'text/plain' | 'application/xml'
+  | 'text/xml' | 'application/x-www-form-urlencoded'
+export const NETWORK_BODY_CONTENT_TYPES = [
+  'application/json', 'text/html', 'text/plain', 'application/xml', 'text/xml',
+  'application/x-www-form-urlencoded',
+] as const satisfies readonly NetworkBodyContentType[]
+export const NETWORK_BODY_MAX_BYTES = 32768
+
 export type EvidenceKind = 'console' | 'network' | 'a11y' | 'aria' | 'variables'
 export const EVIDENCE_KINDS = [
   'console', 'network', 'a11y', 'aria', 'variables',

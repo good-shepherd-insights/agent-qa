@@ -1,5 +1,24 @@
 import { expectTypeOf, test } from 'vitest'
 import type { z } from 'zod'
+import { NETWORK_CREDENTIAL_HEADERS, NETWORK_BODY_CONTENT_TYPES, NETWORK_BODY_MAX_BYTES } from '../index'
+import type { NetworkCredentialHeader, NetworkBodyContentType } from '../index'
+
+test('C423-HEADERS-EXACT', () => {
+  type Expected = 'authorization' | 'proxy-authorization' | 'cookie' | 'set-cookie' | 'x-api-key'
+    | 'x-auth-token' | 'x-access-token' | 'x-csrf-token' | 'x-xsrf-token'
+  expectTypeOf<NetworkCredentialHeader>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof NETWORK_CREDENTIAL_HEADERS)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<NetworkCredentialHeader, (typeof NETWORK_CREDENTIAL_HEADERS)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof NETWORK_CREDENTIAL_HEADERS)[number], NetworkCredentialHeader>>().toEqualTypeOf<never>()
+})
+test('C423-CONTENT-TYPES-EXACT', () => {
+  type Expected = 'application/json' | 'text/html' | 'text/plain' | 'application/xml' | 'text/xml' | 'application/x-www-form-urlencoded'
+  expectTypeOf<NetworkBodyContentType>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof NETWORK_BODY_CONTENT_TYPES)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<Exclude<NetworkBodyContentType, (typeof NETWORK_BODY_CONTENT_TYPES)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof NETWORK_BODY_CONTENT_TYPES)[number], NetworkBodyContentType>>().toEqualTypeOf<never>()
+  expectTypeOf<typeof NETWORK_BODY_MAX_BYTES>().toEqualTypeOf<32768>()
+})
 import {
   EVIDENCE_KINDS, EVIDENCE_ABSENCE_REASONS, EVIDENCE_REF_PREFIXES,
   EvidenceDocumentSchema, EvidenceEntrySchema,
