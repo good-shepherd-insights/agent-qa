@@ -20,15 +20,8 @@
 // happened to it. Hiding a superseded record from someone who named it would answer "there is
 // no such record" about a record that plainly exists.
 
-import { KnowledgeRecordShowResultSchema } from '@vostride/agent-qa-schema'
 import type { KnowledgeRecordShowResult } from '@vostride/agent-qa-schema'
-
-import { deriveBundleTrust } from './bundle-read.js'
-import { toInspectRecordView } from './inspect.js'
-import {
-  enumerateMaintenanceBundleDirs,
-  loadMaintenanceBundle,
-} from './maintenance-scan.js'
+import { showRecords } from './show-records.js'
 
 export interface ShowRecordOptions {
   knowledgeRoot: string
@@ -43,27 +36,5 @@ export interface ShowRecordOptions {
  * FUNC-04 empty edge: an empty store answers, it does not throw.
  */
 export function showRecord(options: ShowRecordOptions): KnowledgeRecordShowResult {
-  for (const entry of enumerateMaintenanceBundleDirs(options.knowledgeRoot)) {
-    const bundle = loadMaintenanceBundle(entry)
-    if (bundle.manifest.id !== options.recordId) continue
-
-    return KnowledgeRecordShowResultSchema.parse({
-      kind: 'found',
-      schemaVersion: 1,
-      // The shared projection accepts only lifecycle and counters; no numerical prior is used.
-      record: toInspectRecordView(entry, bundle, deriveBundleTrust(bundle)),
-      // The bundle's own committed provenance, verbatim. A record shown without it is an
-      // assertion; shown with it, it is evidence — and paraphrasing it here would have made
-      // this module a second author of a claim the bundle already makes about itself.
-      provenance: bundle.provenance,
-      summary: bundle.summary,
-      body: bundle.body,
-    })
-  }
-
-  return KnowledgeRecordShowResultSchema.parse({
-    kind: 'not-found',
-    schemaVersion: 1,
-    recordId: options.recordId,
-  })
+  return showRecords({ knowledgeRoot: options.knowledgeRoot, recordIds: [options.recordId] })[0]!
 }

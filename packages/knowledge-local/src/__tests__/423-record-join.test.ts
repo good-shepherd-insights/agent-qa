@@ -64,8 +64,8 @@ function fixture() {
 type Batch = (options: { knowledgeRoot: string; recordIds: readonly string[] }) => readonly KnowledgeRecordShowResult[]
 function batch(): Batch {
   const method = (reader as unknown as { showRecords?: Batch }).showRecords
-  // RED-only adapter measures the existing repeated single-read behavior before the batch exists.
-  return method ?? (({ knowledgeRoot, recordIds }) => recordIds.map(recordId => showRecord({ knowledgeRoot, recordId })))
+  expect(method, 'the reader entry must bind the batch maintenance read').toBeTypeOf('function')
+  return method!
 }
 
 describe('423 one maintenance record join', () => {

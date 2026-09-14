@@ -25,6 +25,8 @@ export { listBundles } from './list-bundles.js'
 // files and projects them, which is the whole of what the read half of the review family is.
 export { showRecord } from './show-record.js'
 export type { ShowRecordOptions } from './show-record.js'
+export { showRecords } from './show-records.js'
+export type { ShowRecordsOptions } from './show-records.js'
 // 390 D-01/D-11: the committed quarantine ledger's READ half. On the reader entry beside its
 // siblings because it opens nothing, writes nothing and holds no lease — it reads one committed
 // text file and folds it purely. The append half stays on the main entry: it performs a committed
