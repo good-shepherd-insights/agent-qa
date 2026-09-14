@@ -89,6 +89,25 @@ function snapshot(f: ReturnType<typeof commitFixture>, run = 'synthetic-run-43')
 }
 
 describe('423 curation snapshot', () => {
+  it('REPLACEMENT-INDEPENDENT-CONFIRM keeps actual confirmation after suppressing only replacement Add', () => {
+    const f = commitFixture()
+    const active = { ...f.deps, profile: { mode: 'drain-to-active' as const } }
+    const result = commitCurationDelta(active, f.claimed, f.checkpoint(f.supersede))
+    if (result.kind !== 'applied') throw new Error('expected Supersede')
+    const initial = readCurationEffects({ knowledgeRoot: f.root, sourceRunId: 'synthetic-run-43' })
+    expect(foldCurationSnapshot([...initial, ...initial]).rows).toHaveLength(1)
+    const confirmJob = f.job('Purchase', 44)
+    confirmJob.payload.sourceRunId = 'synthetic-run-43'
+    const confirm: Delta = { kind: 'Confirm', origin: 'agent', scope: f.add.scope,
+      citedIds: [result.bundleId], targetId: result.bundleId, evidenceToken: asEvidenceToken(confirmJob.payload.evidenceToken) }
+    expect(commitCurationDelta(active, confirmJob, f.checkpoint(confirm)).kind).toBe('applied')
+    const folded = snapshot(f)
+    expect(folded.breakdown).toEqual({ added: 0, confirmed: 1, superseded: 1, deprecated: 0, proposed: 0 })
+    expect(folded.rows.flatMap(row => row.changes)).toHaveLength(3)
+    expect(folded.rows.find(row => row.recordId === result.bundleId)?.changes).toEqual([
+      expect.objectContaining({ bucket: 'confirmed', change: expect.objectContaining({ atOrdinal: 44 }) }),
+    ])
+  })
   it('CURATION-FIVE-BUCKETS counts five actual affected units and suppresses replacement Add', () => {
     const f = commitFixture()
     const active = { ...f.deps, profile: { mode: 'drain-to-active' as const } }
@@ -165,7 +184,7 @@ describe('423 curation snapshot', () => {
           { ...checkpoint, neighborIds: [f.victim.bundleId] }),
       } })
     expect(report.effects).toHaveLength(mode === 'single' ? 1 : 2)
-    expect(report.effects?.every(effect => effect.bucket === 'added')).toBe(true)
+    expect(report.effects?.map(effect => effect.bucket).sort()).toEqual(mode === 'single' ? ['added'] : ['added', 'proposed'])
     expect(report).not.toHaveProperty('snapshot')
     expect(report.remaining, JSON.stringify(report)).toBeGreaterThan(0)
     expect(report.failures).toBeGreaterThan(0)
@@ -179,7 +198,7 @@ describe('423 curation snapshot', () => {
     expect(author).not.toHaveBeenCalled()
     expect(resumed.failures, JSON.stringify(resumed)).toBe(0)
     expect(resumed.remaining, JSON.stringify(resumed)).toBe(0)
-    expect(resumed.snapshot?.breakdown).toEqual({ added: mode === 'single' ? 0 : 1, confirmed: 0, superseded: 1, deprecated: 0, proposed: 0 })
+    expect(resumed.snapshot?.breakdown).toEqual({ added: 0, confirmed: 0, superseded: 1, deprecated: 0, proposed: mode === 'single' ? 0 : 1 })
     expect(resumed.snapshot?.rows).toHaveLength(mode === 'single' ? 1 : 2)
   })
 
