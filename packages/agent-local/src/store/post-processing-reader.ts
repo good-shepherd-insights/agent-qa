@@ -20,7 +20,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { guardRunNotification, isJobKind } from '@vostride/agent-qa-schema'
+import { canonicalJson, CurationSnapshotSchema, guardRunNotification, isJobKind, sha256hex } from '@vostride/agent-qa-schema'
 import type { JobConclusionKind, JobStatus, RunNotification } from '@vostride/agent-qa-schema'
 import type {
   ChainJobIds,
@@ -37,6 +37,70 @@ import {
   QUARANTINED_UNREADABLE_KIND_REASON,
 } from './sqlite-job-store.js'
 import { JobStoreSchemaVersionError } from './store-errors.js'
+import { readJobCheckpointEnvelope } from './job-checkpoint-store.js'
+
+/** Invalid authoritative checkpoint facts cannot be presented as an empty curation. */
+export class CurationSnapshotReadError extends Error {
+  override readonly name = 'CurationSnapshotReadError'
+
+  constructor() {
+    // No persisted prose or payload values in a read failure: they have not crossed MaskFn.
+    super('The recorded curation checkpoint is invalid; its snapshot cannot be read.')
+  }
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new CurationSnapshotReadError()
+  }
+  return value as Record<string, unknown>
+}
+
+function readCurationSnapshot(
+  db: DatabaseSync,
+  root: string,
+  ids: ChainJobIds,
+  runId: string,
+): PostProcessingChainState['curationSnapshot'] {
+  const checkpointId = 'bundle-committed'
+  // Match the store's latest fenced row. Files alone cannot resurrect a requeued checkpoint.
+  const row = db.prepare(`SELECT payload_json, payload_digest, attempt FROM job_checkpoints
+    WHERE job_id = ? AND checkpoint_id = ? ORDER BY attempt DESC LIMIT 1`)
+    .get(String(ids.curateMemory), checkpointId)
+  if (row === undefined) return undefined
+  try {
+    const authoritative: unknown = JSON.parse(String(row.payload_json))
+    if (sha256hex(canonicalJson(authoritative)) !== row.payload_digest) {
+      throw new CurationSnapshotReadError()
+    }
+    let payload = authoritative
+    try {
+      const cached = readJobCheckpointEnvelope({ root }, String(ids.curateMemory), checkpointId)
+      if (cached.found && sha256hex(canonicalJson(cached.envelope.payload)) === row.payload_digest) {
+        payload = cached.envelope.payload
+      }
+    } catch {
+      // Like sqlite-job-store.readCheckpoint: a damaged cache cannot overrule the fenced row.
+    }
+    const checkpoint = recordOf(payload)
+    if (checkpoint.jobId !== ids.curateMemory || checkpoint.checkpointId !== checkpointId
+      || checkpoint.attempt !== Number(row.attempt) || !Number.isInteger(checkpoint.attempt)
+      || Number(checkpoint.attempt) < 1 || typeof checkpoint.recordedAt !== 'string'
+      || checkpoint.recordedAt.length === 0) throw new CurationSnapshotReadError()
+    const value = recordOf(checkpoint.value)
+    if (value.curationSnapshot === undefined) return undefined
+    const job = db.prepare('SELECT kind, idempotency_key, payload, attempts FROM jobs WHERE id = ?')
+      .get(String(ids.curateMemory))
+    if (job === undefined || job.kind !== 'curate-memory'
+      || job.idempotency_key !== `${ids.analyzeRun}->curate-memory`
+      || Number(job.attempts) < Number(checkpoint.attempt)
+      || recordOf(JSON.parse(String(job.payload))).runId !== runId
+      || value.runId !== runId) throw new CurationSnapshotReadError()
+    return CurationSnapshotSchema.parse(value.curationSnapshot)
+  } catch {
+    throw new CurationSnapshotReadError()
+  }
+}
 
 export interface CreatePostProcessingReaderOptions {
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. Absolute. */
@@ -146,6 +210,7 @@ export function createPostProcessingReader(
           notificationRow === undefined
             ? undefined
             : guardRunNotification(JSON.parse(String(notificationRow.payload)) as unknown)
+        const curationSnapshot = readCurationSnapshot(db, options.agentQaRoot, ids, runId)
 
         // Absent members are OMITTED rather than set undefined, so the state a projection reads
         // says the same thing whether it was built here or by a test's literal.
@@ -154,6 +219,7 @@ export function createPostProcessingReader(
           ...(curateMemory === undefined ? {} : { curateMemory }),
           ...(proposeImprovements === undefined ? {} : { proposeImprovements }),
           ...(notification === undefined ? {} : { notification }),
+          ...(curationSnapshot === undefined ? {} : { curationSnapshot }),
         }
       } finally {
         db.close()

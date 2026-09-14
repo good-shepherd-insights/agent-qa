@@ -41,7 +41,7 @@ import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-loca
 import { AGENT_JOB_STORE_DB_FILE, QUARANTINED_UNREADABLE_KIND_REASON } from '../store/sqlite-job-store.js'
 import { canonicalLogicalDump, createLogicalDump } from '../store/logical-dump.js'
 import { createPostProcessingReader } from '../store/post-processing-reader.js'
-import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
+import { createJobCheckpointStore, readJobCheckpointEnvelope } from '../store/job-checkpoint-store.js'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -235,6 +235,12 @@ function readColdChain(root: string, runId = RUN_ID) {
     .readChain(chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE), runId)
 }
 
+function barrier() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => { resolve = done })
+  return { promise, resolve }
+}
+
 async function completedCuration() {
   const writer = createHarness(undefined, {
     curateRun: async () => ({ curated: 7, deprecated: 3, complete: true, snapshot: CURATION_SNAPSHOT }),
@@ -249,9 +255,31 @@ async function completedCuration() {
 }
 
 describe('423 completed checkpoint snapshot', () => {
+  it('CHECKPOINT-ENVELOPE keeps safe addresses and named version refusal without creating directories', () => {
+    const harness = createHarness()
+    const root = join(harness.agentQaRoot, 'missing-root')
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+    expect(readJobCheckpointEnvelope({ root }, ids.curateMemory, 'bundle-committed')).toEqual({ found: false })
+    expect(existsSync(root)).toBe(false)
+    expect(() => readJobCheckpointEnvelope({ root }, '../escape', 'bundle-committed'))
+      .toThrowError(expect.objectContaining({ name: 'InvalidJobCheckpointIdError' }))
+    expect(() => readJobCheckpointEnvelope({ root: 'relative' }, ids.curateMemory, 'bundle-committed'))
+      .toThrow('must be absolute')
+    const store = createJobCheckpointStore({ root })
+    store.publish(ids.curateMemory, 'bundle-committed', {})
+    const path = store.checkpointPath(ids.curateMemory, 'bundle-committed')
+    const envelope = JSON.parse(readFileSync(path, 'utf8'))
+    writeFileSync(path, JSON.stringify({ ...envelope, schemaVersion: 999 }))
+    expect(() => readJobCheckpointEnvelope({ root }, ids.curateMemory, 'bundle-committed'))
+      .toThrowError(expect.objectContaining({ name: 'JobCheckpointSchemaVersionError' }))
+    writeFileSync(path, JSON.stringify({ ...envelope, jobId: ids.analyzeRun }))
+    expect(() => readJobCheckpointEnvelope({ root }, ids.curateMemory, 'bundle-committed'))
+      .toThrow('does not match its address')
+  })
+
   it('CHECKPOINT-BEFORE-NOTIFICATION reads actual curation while the real proposals stage is blocked', async () => {
-    const entered = Promise.withResolvers<void>()
-    const release = Promise.withResolvers<void>()
+    const entered = barrier()
+    const release = barrier()
     const writer = createHarness(undefined, {
       curateRun: async () => ({ curated: 7, deprecated: 3, complete: true, snapshot: CURATION_SNAPSHOT }),
       stageAdversarialProposal: async () => {
@@ -305,7 +333,7 @@ describe('423 completed checkpoint snapshot', () => {
     expect(await readColdChain(writer.agentQaRoot, 'unrelated-run')).not.toHaveProperty('curationSnapshot')
   })
 
-  it.each(['snapshot', 'run', 'job', 'checkpoint', 'attempt', 'digest'] as const)(
+  it.each(['snapshot', 'run', 'job', 'checkpoint', 'attempt', 'digest', 'chain', 'job-run'] as const)(
     'CHECKPOINT-INVALID %s refuses authoritative corruption without changing bytes', async field => {
       const { writer, ids } = await completedCuration()
       const db = new DatabaseSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))
@@ -318,6 +346,10 @@ describe('423 completed checkpoint snapshot', () => {
         if (field === 'job') payload.jobId = ids.analyzeRun
         if (field === 'checkpoint') payload.checkpointId = 'candidates-authored'
         if (field === 'attempt') payload.attempt += 1
+        if (field === 'chain') db.prepare('UPDATE jobs SET idempotency_key = ? WHERE id = ?')
+          .run('unrelated-chain', ids.curateMemory)
+        if (field === 'job-run') db.prepare('UPDATE jobs SET payload = ? WHERE id = ?')
+          .run(JSON.stringify({ runId: 'unrelated-run' }), ids.curateMemory)
         const json = canonicalJson(payload)
         db.prepare('UPDATE job_checkpoints SET payload_json = ?, payload_digest = ? WHERE checkpoint_id = ?')
           .run(json, field === 'digest' ? 'invalid-digest' : sha256hex(json), 'bundle-committed')
@@ -346,6 +378,31 @@ describe('423 completed checkpoint snapshot', () => {
       expect(readQueue(writer.agentQaRoot)).toEqual(before)
     },
   )
+
+  it('CHECKPOINT-LATEST reads the newest fenced attempt, never a stale valid file', async () => {
+    const { writer, ids } = await completedCuration()
+    const empty = CurationSnapshotSchema.parse({ schemaVersion: 1, rows: [],
+      breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+    })
+    const db = new DatabaseSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))
+    try {
+      const row = db.prepare('SELECT * FROM job_checkpoints WHERE checkpoint_id = ?')
+        .get('bundle-committed')!
+      const payload = JSON.parse(String(row.payload_json))
+      payload.attempt = 2
+      payload.value.curationSnapshot = empty
+      const json = canonicalJson(payload)
+      db.prepare('UPDATE jobs SET attempts = 2 WHERE id = ?').run(ids.curateMemory)
+      db.prepare(`INSERT INTO job_checkpoints
+        (job_id, checkpoint_id, attempt, payload_json, payload_digest, epoch) VALUES (?, ?, 2, ?, ?, ?)`)
+        .run(ids.curateMemory, 'bundle-committed', json, sha256hex(json), row.epoch!)
+    } finally { db.close() }
+    expect(await readColdChain(writer.agentQaRoot)).toHaveProperty('curationSnapshot', empty)
+    const remove = new DatabaseSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))
+    try { remove.prepare('DELETE FROM job_checkpoints WHERE job_id = ?').run(ids.curateMemory) }
+    finally { remove.close() }
+    expect(await readColdChain(writer.agentQaRoot)).not.toHaveProperty('curationSnapshot')
+  })
 })
 
 describe('423 cold stage facts', () => {

@@ -17,6 +17,7 @@ import type {
   ClauseReceiptStatus,
   CompletedRunHandoff,
   CommitReceipt,
+  CurationSnapshot,
   EntityDescriptor,
   EntityResolution,
   ForgetReceiptV1,
@@ -881,6 +882,8 @@ export interface PostProcessingChainState {
   readonly analyzeRun?: PostProcessingJobRow
   readonly curateMemory?: PostProcessingJobRow
   readonly proposeImprovements?: PostProcessingJobRow
+  /** Completed curation facts, available before the proposals stage reaches terminal. */
+  readonly curationSnapshot?: CurationSnapshot
   /** The chain-terminal record, once the terminal transaction wrote it (D-09). */
   readonly notification?: RunNotification
 }

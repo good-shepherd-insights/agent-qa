@@ -45,6 +45,7 @@ import {
   asRecordId,
   canonicalJson,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
+  CurationSnapshotSchema,
   errorTextOf,
   failingStepOf,
   MisdirectionRecordResultSchema,
@@ -1145,6 +1146,9 @@ function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandl
       runId: record.runId,
       curated: counts.curated,
       deprecated: counts.deprecated,
+      ...(counts.snapshot === undefined
+        ? {}
+        : { curationSnapshot: CurationSnapshotSchema.parse(counts.snapshot) }),
     })
     // 422 D-13. The successor is produced for EVERY completed fold, including one that curated
     // nothing: zero work is still work that finished, and a successor gated on the counts would

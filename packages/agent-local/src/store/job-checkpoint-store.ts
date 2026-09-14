@@ -144,6 +144,47 @@ function requireSegment(field: 'jobId' | 'checkpointId', value: string): string 
   return value
 }
 
+function checkpointPath(root: string, jobId: string, checkpointId: string): string {
+  if (!isAbsolute(root)) throw new TypeError('agent job checkpoint root must be absolute')
+  return join(root, ...JOB_CHECKPOINT_SUBDIR, requireSegment('jobId', jobId),
+    `${requireSegment('checkpointId', checkpointId)}.json`)
+}
+
+function readEnvelopeOn(
+  fs: Pick<JobCheckpointFs, 'readFileSync'>,
+  root: string,
+  jobId: string,
+  checkpointId: string,
+): { found: false } | { found: true; envelope: JobCheckpointEnvelope } {
+  const file = checkpointPath(root, jobId, checkpointId)
+  let text: string
+  try {
+    text = fs.readFileSync(file, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { found: false }
+    throw error
+  }
+  const raw = JSON.parse(text) as { schemaVersion?: unknown } | null
+  // Preserve the named version refusal before structural validation.
+  if (raw?.schemaVersion !== JOB_CHECKPOINT_SCHEMA_VERSION) {
+    throw new JobCheckpointSchemaVersionError(file, raw?.schemaVersion)
+  }
+  const envelope = jobCheckpointEnvelopeSchema.parse(raw)
+  if (envelope.jobId !== jobId || envelope.checkpointId !== checkpointId) {
+    throw new TypeError('Agent job checkpoint envelope does not match its address')
+  }
+  return { found: true, envelope }
+}
+
+/** Cold read only: no store construction, directory creation or checkpoint publication. */
+export function readJobCheckpointEnvelope(
+  options: CreateJobCheckpointStoreOptions,
+  jobId: string,
+  checkpointId: string,
+): { found: false } | { found: true; envelope: JobCheckpointEnvelope } {
+  return readEnvelopeOn(REAL_JOB_CHECKPOINT_FS, options.root, jobId, checkpointId)
+}
+
 function isSwallowableDirectoryFsyncError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code
   return DIRECTORY_FSYNC_SWALLOWED_CODES.some((allowed) => allowed === code)
@@ -174,11 +215,7 @@ export function createJobCheckpointStoreOn(
   const checkpointsRoot = join(options.root, ...JOB_CHECKPOINT_SUBDIR)
 
   function pathFor(jobId: string, checkpointId: string): string {
-    return join(
-      checkpointsRoot,
-      requireSegment('jobId', jobId),
-      `${requireSegment('checkpointId', checkpointId)}.json`,
-    )
+    return checkpointPath(options.root, jobId, checkpointId)
   }
 
   function bestEffortFsyncDirectory(dir: string): void {
@@ -239,23 +276,8 @@ export function createJobCheckpointStoreOn(
     },
 
     read(jobId, checkpointId) {
-      const file = pathFor(jobId, checkpointId)
-      let text: string
-      try {
-        text = fs.readFileSync(file, 'utf8')
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { found: false }
-        throw error
-      }
-      const raw = JSON.parse(text) as { schemaVersion?: unknown }
-      // The version is checked BEFORE the schema parse, and the order is deliberate. D-04
-      // asks for a named refusal that tells the operator what to do, and a generic parse
-      // failure on a literal mismatch is not that — it reports a field, not a remedy. Once
-      // the version is right, the parse covers everything else the contract requires.
-      if (raw.schemaVersion !== JOB_CHECKPOINT_SCHEMA_VERSION) {
-        throw new JobCheckpointSchemaVersionError(file, raw.schemaVersion)
-      }
-      return { found: true, payload: jobCheckpointEnvelopeSchema.parse(raw).payload }
+      const read = readEnvelopeOn(fs, options.root, jobId, checkpointId)
+      return read.found ? { found: true, payload: read.envelope.payload } : read
     },
   }
 }
