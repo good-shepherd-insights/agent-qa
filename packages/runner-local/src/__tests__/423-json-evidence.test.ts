@@ -65,13 +65,14 @@ test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA b
   }
   const secret = 'synthetic-network-secret-423'
   const body = secret + 'a'.repeat(32768 - secret.length)
-  adapter.drainNetworkLogs = () => [200, 404, 0].map((status, index) => ({
+  adapter.drainNetworkLogs = () => [200, 404, 0, 200].map((status, index) => ({
     url: `https://example.test/${secret}/${index}`, method: 'POST', status,
     requestHeaders: { Authorization: 'synthetic-session-token', 'content-type': 'text/plain' },
     responseHeaders: { 'Set-Cookie': 'synthetic-session-cookie', 'content-type': 'text/plain' },
-    body, requestBody: body, startTime: 30 - index, endTime: 40 - index,
+    body: index === 3 ? '§'.repeat(5000) : body,
+    requestBody: index === 3 ? '§'.repeat(5000) : body, startTime: 30 - index, endTime: 40 - index,
   }))
-  const masking = { mask: (text: string) => text.replaceAll(secret, '[secret]'), unmask: (text: string) => text }
+  const masking = { mask: (text: string) => text.replaceAll(secret, '[secret]').replaceAll('§', '[secret]'), unmask: (text: string) => text }
   const bus = createRunEventBus({ runId: 'run-423' })
   let terminal: StepFinalizedPayload | undefined
   let visibleAtTerminal: Uint8Array | undefined
@@ -88,7 +89,7 @@ test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA b
     sink: createMemberEventSink({ bus, masking, testIndex: 0 }), testIndex: 0,
     abortSignal: new AbortController().signal, masking, evidenceArtifacts: store,
   })
-  expect(terminal?.evidence?.network).toMatchObject({ state: 'present', counts: { total: 3, failed: 1, errored: 1 } })
+  expect(terminal?.evidence?.network).toMatchObject({ state: 'present', counts: { total: 4, failed: 1, errored: 1 } })
   const entry = terminal!.evidence!.network
   if (entry.state !== 'present') throw new Error('Expected persisted network entry')
   const reopened = new FsEvidenceArtifactStore({ root, runId: 'run-423' })
@@ -100,12 +101,14 @@ test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA b
   const decoded = NetworkEvidenceDocumentSchema.parse(JSON.parse(stored.toString('utf8')))
   expect(stored.toString('utf8')).not.toContain(secret)
   expect(stored.toString('utf8')).not.toContain('synthetic-session')
-  expect(decoded.records.map(record => record.startTime)).toEqual([30, 29, 28])
-  for (const record of decoded.records) {
+  expect(decoded.records.map(record => record.startTime)).toEqual([30, 29, 28, 27])
+  expect(decoded.records[3]).not.toHaveProperty('body')
+  expect(decoded.records[3]).not.toHaveProperty('requestBody')
+  for (const record of decoded.records.slice(0, 3)) {
     expect(record.requestBody).toBe(record.body)
     expect(Buffer.byteLength(record.body!)).toBe(32768 - secret.length + '[secret]'.length)
   }
-  console.info('NETWORK-READBACK-MEASUREMENTS', JSON.stringify({ records: 3, blobBytes: stored.length,
+  console.info('NETWORK-READBACK-MEASUREMENTS', JSON.stringify({ records: 4, blobBytes: stored.length,
     networkEntryBytes: Buffer.byteLength(JSON.stringify(entry)) }))
 })
 

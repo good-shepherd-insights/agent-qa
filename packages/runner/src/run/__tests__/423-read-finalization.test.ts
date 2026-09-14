@@ -140,7 +140,13 @@ test('NETWORK-BYTE-STRESS: 600 request plus response 32-KiB bodies retain masked
   const synchronousMs = performance.now() - baselineStart
   await timer
   console.info('NETWORK-BASELINE', JSON.stringify({ records: records.length, synchronousMs, timerDelayMs: timerAt - baselineStart }))
-  f.adapter.drainNetworkLogs = () => records
+  let firstYieldMs: number | undefined
+  let drainStarted = 0
+  f.adapter.drainNetworkLogs = () => {
+    drainStarted = performance.now()
+    setTimeout(() => { firstYieldMs = performance.now() - drainStarted }, 0)
+    return records
+  }
   const persist = f.config.evidenceArtifacts!.persistEvidenceDocument!
   let serializationMs = 0
   let blobBytes = 0
@@ -152,6 +158,7 @@ test('NETWORK-BYTE-STRESS: 600 request plus response 32-KiB bodies retain masked
     return value
   } }
   f.config.evidenceArtifacts!.persistEvidenceDocument = value => {
+    expect(firstYieldMs).toBeDefined()
     const started = performance.now()
     const serialized = JSON.stringify(value)
     serializationMs = performance.now() - started
@@ -172,8 +179,22 @@ test('NETWORK-BYTE-STRESS: 600 request plus response 32-KiB bodies retain masked
   }
   const rowEvidenceBytes = Buffer.byteLength(JSON.stringify(f.terminals()[0].evidence))
   expect(rowEvidenceBytes).toBeLessThan(1000)
-  console.info('NETWORK-MEASUREMENTS', JSON.stringify({ records: 600, elapsedMs, maskMs, serializationMs, blobBytes, rowEvidenceBytes,
+  console.info('NETWORK-MEASUREMENTS', JSON.stringify({ records: 600, elapsedMs, maskMs, serializationMs, firstYieldMs, blobBytes, rowEvidenceBytes,
     terminalPayloadBytes: Buffer.byteLength(JSON.stringify(f.terminals()[0])) }))
+})
+
+test('NETWORK-CANCEL-DURING-BATCH: cancellation retains all drained content and one cancelled terminal', async () => {
+  const f = fixture()
+  const records = Array.from({ length: 65 }, (_, index) => networkRecord(index))
+  f.adapter.drainNetworkLogs = () => {
+    setTimeout(() => f.abort.abort(new Error('synthetic batch cancellation')), 0)
+    return records
+  }
+  const result = await runMemberTest(f.member, f.config)
+  expect(f.terminals()).toHaveLength(1)
+  expect(result.status).toBe('cancelled')
+  expect(f.terminals()[0].status).toBe('cancelled')
+  expect(f.terminals()[0].evidence?.network).toMatchObject({ state: 'present', counts: { total: 65, failed: 0, errored: 0 } })
 })
 
 test.each(['empty', 'disabled', 'android', 'ios', 'capture-error', 'persist-error', 'missing-mask', 'missing-store', 'missing-drain'] as const)(
