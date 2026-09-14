@@ -14,8 +14,10 @@
 // with `packages/agent external deps: unexpected vitest` (387-04 hit this exact trap). The
 // vitest `typecheck.include` glob matches either location.
 
-import type { BriefWhyInput, QuarantineOperationsPort } from '@vostride/agent-qa-schema'
-import { expectTypeOf } from 'vitest'
+import type {
+  BriefWhyInput, FeedbackPort, FeedbackReadsPort, QuarantineOperationsPort, RunsMarkInput,
+} from '@vostride/agent-qa-schema'
+import { describe, expectTypeOf, test } from 'vitest'
 
 import type { mapStepEvidenceToWhy } from '../ops/knowledge-brief-why.js'
 import type {
@@ -28,6 +30,7 @@ import type {
   RunsReaderPort,
   StepEvidenceLookup,
 } from '../spec.js'
+import type { OPTIONAL_FUNCTION_DEP_KEYS } from '../spec.js'
 
 // ---- 1. The reader port carries NO write-shaped member ----------------------------------------
 //
@@ -262,3 +265,38 @@ expectTypeOf<KnowledgeReaderPort>().not.toHaveProperty('readStepEvidence')
 expectTypeOf<Parameters<typeof mapStepEvidenceToWhy>>().toEqualTypeOf<
   [StepEvidenceLookup, BriefWhyInput]
 >()
+
+// ---- 5. C423-FEEDBACK-BINDINGS-EXACT: the feedback bindings, in counted blocks --------------
+//
+// 2026-09-15, 423-37: an independent oracle for plan 423-23's mutation. The union below is spelled
+// by hand again rather than shared with section 2, and every assertion sits inside a `test` block
+// so vitest counts it; the top-level pins above typecheck but report no tests.
+type HandSpelledOptionalDepKey =
+  | 'liveView' | 'runInvocation' | 'knowledgeReview' | 'postProcessing' | 'runDetail'
+  | 'evidenceBlobs' | 'analysis' | 'recurrence' | 'quarantine' | 'proposalsInbox'
+  | 'standingGrants' | 'chatTurn' | 'draftEvaluation' | 'authoringRead' | 'authoringScope'
+  | 'draftShelf' | 'authoringFunnel' | 'draftApply' | 'authoringProposals' | 'configFiles'
+  | 'configValidate' | 'configApply' | 'configProposals' | 'configScan' | 'configUndoSource'
+  | 'scaffoldContent' | 'capabilityCatalog' | 'feedback' | 'feedbackReads'
+
+describe('C423-FEEDBACK-BINDINGS-EXACT', () => {
+  test('pins the optional dep key union and its runtime roster in both directions', () => {
+    expectTypeOf<OptionalFunctionDepKey>().toEqualTypeOf<HandSpelledOptionalDepKey>()
+    expectTypeOf<(typeof OPTIONAL_FUNCTION_DEP_KEYS)[number]>().toEqualTypeOf<HandSpelledOptionalDepKey>()
+    expectTypeOf<Exclude<OptionalFunctionDepKey, (typeof OPTIONAL_FUNCTION_DEP_KEYS)[number]>>().toEqualTypeOf<never>()
+    expectTypeOf<Exclude<(typeof OPTIONAL_FUNCTION_DEP_KEYS)[number], OptionalFunctionDepKey>>().toEqualTypeOf<never>()
+  })
+
+  test('binds the feedback writer and the read-only feedback observations as two optional deps', () => {
+    expectTypeOf<Extract<OptionalFunctionDepKey, `feedback${string}`>>().toEqualTypeOf<'feedback' | 'feedbackReads'>()
+    expectTypeOf<FunctionDeps['feedback']>().toEqualTypeOf<FeedbackPort | undefined>()
+    expectTypeOf<FunctionDeps['feedbackReads']>().toEqualTypeOf<FeedbackReadsPort | undefined>()
+  })
+
+  test('pins the read binding to history and preview, with no writer verb', () => {
+    expectTypeOf<keyof FeedbackReadsPort>().toEqualTypeOf<'history' | 'preview'>()
+    expectTypeOf<keyof FeedbackPort>().toEqualTypeOf<'mark' | 'marksFor'>()
+    expectTypeOf<Extract<keyof FeedbackReadsPort, keyof FeedbackPort>>().toEqualTypeOf<never>()
+    expectTypeOf<Parameters<NonNullable<FeedbackReadsPort['preview']>>>().toEqualTypeOf<[RunsMarkInput]>()
+  })
+})
