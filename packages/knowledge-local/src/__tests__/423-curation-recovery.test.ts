@@ -14,14 +14,19 @@ import { enqueueArtifactFreeCandidateProjection } from './fixtures/curation-cand
 
 import { commitIntentSchema, listCommitIntents, writeCommitIntent } from '../journal/intent-journal.js'
 import { clearCommitIntent } from '../journal/intent-journal.js'
-import { acquireWriterLease } from '../lease/writer-lease.js'
-import { writeJobState } from '../queue/job-state.js'
+import { acquireWriterLease, releaseLease } from '../lease/writer-lease.js'
+import { readJobState, writeJobState } from '../queue/job-state.js'
+import { reconcileOnDrainStart } from '../journal/reconcile.js'
+import { applyIndexDeltaForBundleWithinCurrentAuthority } from '../curator/commit.js'
+import { enumerateBundleDirs } from '../bundle-scan.js'
 import {
   COMPLETED_EFFECTS_SUBDIR,
   curationEffectReceiptSchema,
   effectIdentity,
   listCurationEffectReceipts,
   writeCurationEffectReceipt,
+  receiptForEffect,
+  type CurationObservation,
 } from '../journal/curation-effect-receipt.js'
 
 const roots: string[] = []
@@ -74,6 +79,78 @@ function commitFixture() {
 }
 
 describe('423 curation effect recovery', () => {
+  function reopen(f: ReturnType<typeof commitFixture>) {
+    expect(releaseLease({ knowledgeRoot: f.root, leaseId: f.authority.leaseId }).kind).toBe('released')
+    const lease = acquireWriterLease(f.root)
+    if (lease.kind !== 'acquired') throw new Error('expected successor lease')
+    expect(lease.epoch).toBeGreaterThan(f.authority.epoch)
+    return { leaseId: lease.leaseId, epoch: lease.epoch }
+  }
+  function reconcile(f: ReturnType<typeof commitFixture>, authority = f.authority) {
+    return reconcileOnDrainStart({ knowledgeRoot: f.root, writerAuthority: authority,
+      hasIndexRow: () => true,
+      applyIndexDelta: (intent) => applyIndexDeltaForBundleWithinCurrentAuthority({ knowledgeRoot: f.root, bundleId: intent.bundleId }),
+      deriveIndexRowFromBundle: (bundleId) => applyIndexDeltaForBundleWithinCurrentAuthority({ knowledgeRoot: f.root, bundleId }),
+    })
+  }
+  function bundleBytes(root: string) {
+    return enumerateBundleDirs(root).map(({ dir }) => [dir, readFileSync(join(dir, 'manifest.json'), 'utf8'), readFileSync(join(dir, 'evidence/outcomes.jsonl'), 'utf8')])
+  }
+  it.each([
+    ['CRASH-AFTER-COMMIT', 'afterBundlePublished'],
+    ['CRASH-AFTER-RECEIPT', 'afterEffectReceiptsWritten'],
+    ['CRASH-BEFORE-OUTER-CHECKPOINT', 'afterIntentCleared'],
+  ] as const)('%s recovers identical classification under a newer epoch', (_name, hook) => {
+    const f = commitFixture()
+    let observation: CurationObservation | undefined
+    const crash = () => { throw new Error('synthetic-interruption') }
+    expect(() => commitCurationDelta({ ...f.deps, hooks: {
+      afterIntentWritten: () => {
+        const entry = listCommitIntents(f.root)[0]
+        if (entry !== undefined && 'parsed' in entry) observation = entry.parsed.observation
+      }, [hook]: crash,
+    } }, f.claimed, f.checkpoint(f.supersede))).toThrow('synthetic-interruption')
+    expect(observation).toBeDefined()
+    const expected = observation!.effects.map((effect) => receiptForEffect(f.claimed.candidateId, observation!, effect))
+    const before = bundleBytes(f.root)
+    const successor = reopen(f)
+    reconcile(f, successor)
+    expect(f.rows()).toEqual(expected)
+    expect(bundleBytes(f.root)).toEqual(before)
+    const receipts = readdirSync(join(f.root, COMPLETED_EFFECTS_SUBDIR)).map((name) => readFileSync(join(f.root, COMPLETED_EFFECTS_SUBDIR, name), 'utf8'))
+    reconcile(f, successor)
+    expect(f.rows()).toEqual(expected)
+    expect(readdirSync(join(f.root, COMPLETED_EFFECTS_SUBDIR)).map((name) => readFileSync(join(f.root, COMPLETED_EFFECTS_SUBDIR, name), 'utf8'))).toEqual(receipts)
+  })
+  it('CRASH-BEFORE-PUBLICATION contributes no successfully committed row', () => {
+    const f = commitFixture()
+    expect(() => commitCurationDelta({ ...f.deps, hooks: { beforePublishRename: () => { throw new Error('synthetic-before-publish') } } }, f.claimed, f.checkpoint(f.supersede))).toThrow('synthetic-before-publish')
+    reconcile(f, reopen(f))
+    expect(f.rows()).toEqual([])
+  })
+  it('RESTART-REFOLD reads completed effects after candidate state was deleted', () => {
+    const f = commitFixture()
+    const outcome = commitCurationDelta(f.deps, f.claimed, f.checkpoint(f.supersede))
+    expect(outcome.kind).toBe('downgraded')
+    expect(readJobState(f.root, f.claimed.candidateId).kind).toBe('absent')
+    expect(existsSync(f.claimed.candidateDir)).toBe(false)
+    const before = f.rows()
+    expect(before).toHaveLength(1)
+    reconcile(f, reopen(f))
+    expect(f.rows()).toEqual(before)
+  })
+  it('STALE-EPOCH-EFFECT refuses old writers creating or overwriting receipts', () => {
+    const f = commitFixture()
+    commitCurationDelta(f.deps, f.claimed, f.checkpoint(f.supersede))
+    const row = f.rows()[0]!
+    reopen(f)
+    const options = { knowledgeRoot: f.root, authority: f.authority, auditBaseDir: f.deps.auditBaseDir, receipt: row }
+    expect(() => writeCurationEffectReceipt(options)).toThrow()
+    expect(() => writeCurationEffectReceipt({ ...options, receipt: { ...row, sourceRunId: 'foreign' } })).toThrow()
+    const newEffect = { recordId: 'fact-new', product: 'storefront', change: 'added' as const, atOrdinal: 44, evidenceToken: 'synthetic-new' }
+    expect(() => writeCurationEffectReceipt({ ...options, receipt: { ...row, ...newEffect, effectId: effectIdentity(row.candidateId, newEffect) } })).toThrow()
+    expect(f.rows()).toEqual([row])
+  })
   it('DOWNGRADE-PROPOSE-ONLY retains original Supersede while ordinary Add stays added', () => {
     const f = commitFixture()
     const before = readFileSync(join(f.victim.bundleDir, 'manifest.json'))
