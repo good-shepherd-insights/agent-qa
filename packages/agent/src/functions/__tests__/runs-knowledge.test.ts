@@ -1015,3 +1015,121 @@ describe('the DTO never carries a null and always validates', () => {
     })
   })
 })
+
+// ── 423 D-22: versioned rung causes through the existing runs.knowledge read ──────────────────
+// Hand-spelled bytes, because this storage-neutral package cannot call the knowledge-local fold.
+describe('423 recorded rung causes on runs.knowledge (D-22)', () => {
+  const CURRENT_FOLDS = [
+    { face: 'absent', rung: { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-not-built' } },
+    { face: 'locked', rung: { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-locked' } },
+    { face: 'corrupt', rung: { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-corrupt' } },
+    { face: 'schema-version', rung: { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-corrupt' } },
+  ] as const
+  const HISTORICAL = { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable' } as const
+
+  function withRungs(rungs: readonly unknown[]): CompletedRunHandoff {
+    return handoff([
+      test(0, rungs.map((retrievalRung, stepIndex) => (retrievalRung === undefined
+        ? step(stepIndex)
+        : ({ ...step(stepIndex), retrievalRung } as StepEvidence)))),
+    ])
+  }
+
+  function scanError(): Error {
+    return Object.assign(new Error('knowledge maintenance scan incomplete at synthetic'), {
+      name: 'KnowledgeMaintenanceScanError',
+    })
+  }
+
+  describe('RUNG-READ-PROPAGATION', () => {
+    it.each(CURRENT_FOLDS)('projects the current $face fold byte for byte at run and step level', async ({ rung }) => {
+      const result = await ready({ document: withRungs([rung, undefined]) })
+
+      expect(JSON.stringify(result.retrievalRung)).toBe(JSON.stringify(rung))
+      expect(JSON.stringify(result.steps[0]?.retrievalRung)).toBe(JSON.stringify(rung))
+      expect(result.steps[1] && 'retrievalRung' in result.steps[1]).toBe(false)
+      expect(RunKnowledgeProjectionSchema.parse(result)).toEqual(result)
+    })
+
+    it('keeps the three causes distinct per step rather than collapsing them', async () => {
+      const result = await ready({ document: withRungs(CURRENT_FOLDS.map(({ rung }) => rung)) })
+
+      expect(result.steps.map((row) => row.retrievalRung?.reason)).toEqual([
+        'index-not-built',
+        'index-locked',
+        'index-corrupt',
+        'index-corrupt',
+      ])
+      expect(result.retrievalRung).toEqual(CURRENT_FOLDS[0].rung)
+    })
+
+    it('retains scanIncomplete independently of rung health', async () => {
+      const degraded = await ready({
+        document: withRungs([CURRENT_FOLDS[2].rung]),
+        knowledge: { diffSince: () => Promise.reject(scanError()) },
+      })
+      expect(degraded.retrievalRung).toEqual(CURRENT_FOLDS[2].rung)
+      expect(degraded.learned.scanIncomplete).toBe(true)
+
+      const clean = await ready({ document: withRungs([CURRENT_FOLDS[2].rung]) })
+      expect(clean.retrievalRung).toEqual(CURRENT_FOLDS[2].rung)
+      expect('scanIncomplete' in clean.learned).toBe(false)
+
+      const healthy = await ready({
+        document: withRungs([{ schemaVersion: 2, rung: 'memidex' }]),
+        knowledge: { diffSince: () => Promise.reject(scanError()) },
+      })
+      expect(healthy.retrievalRung).toEqual({ schemaVersion: 2, rung: 'memidex' })
+      expect(healthy.learned.scanIncomplete).toBe(true)
+    })
+  })
+
+  describe('RUNG-HISTORICAL-READ', () => {
+    it('projects a historical v1 handoff row unchanged, never as a current cause', async () => {
+      const result = await ready({ document: withRungs([HISTORICAL]) })
+
+      expect(JSON.stringify(result.retrievalRung)).toBe(JSON.stringify(HISTORICAL))
+      expect(JSON.stringify(result.steps[0]?.retrievalRung)).toBe(JSON.stringify(HISTORICAL))
+      const parsed = RunKnowledgeProjectionSchema.parse(result)
+      expect(parsed.kind === 'ready' ? parsed.retrievalRung : undefined).toEqual(HISTORICAL)
+    })
+
+    it('keeps each step on the version it was written under in a mixed run', async () => {
+      const result = await ready({ document: withRungs([HISTORICAL, CURRENT_FOLDS[0].rung, RUNG]) })
+
+      expect(result.steps.map((row) => row.retrievalRung)).toEqual([
+        HISTORICAL,
+        CURRENT_FOLDS[0].rung,
+        RUNG,
+      ])
+      expect(result.retrievalRung).toEqual(HISTORICAL)
+    })
+  })
+
+  describe('RUNG-INVALID-VERSION', () => {
+    const INVALID = [
+      { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-not-built' },
+      { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-locked' },
+      { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-corrupt' },
+      { schemaVersion: 3, rung: 'bundle-scan', reason: 'index-corrupt' },
+      { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-missing' },
+      { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-corrupt', detail: 'synthetic' },
+      { rung: 'bundle-scan', reason: 'index-corrupt' },
+    ]
+
+    it.each(INVALID)('drops a mislabelled or future rung from its step: %j', async (invalid) => {
+      const result = await ready({ document: withRungs([invalid, CURRENT_FOLDS[1].rung]) })
+
+      expect(result.steps[0] && 'retrievalRung' in result.steps[0]).toBe(false)
+      expect(result.steps[1]?.retrievalRung).toEqual(CURRENT_FOLDS[1].rung)
+      expect(result.retrievalRung).toEqual(CURRENT_FOLDS[1].rung)
+    })
+
+    it.each(INVALID)('the wire contract refuses the same value at run level: %j', async (invalid) => {
+      const result = await ready({ document: withRungs([CURRENT_FOLDS[1].rung]) })
+
+      expect(RunKnowledgeProjectionSchema.safeParse({ ...result, retrievalRung: invalid }).success)
+        .toBe(false)
+    })
+  })
+})

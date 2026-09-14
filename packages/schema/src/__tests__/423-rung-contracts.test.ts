@@ -7,6 +7,7 @@ import {
   RETRIEVAL_RUNG_REASONS,
   RETRIEVAL_RUNGS,
   RecordedRetrievalRungSchema,
+  RunKnowledgeProjectionSchema,
   asRunId,
 } from '../index'
 import type { StepEvidence } from '../index'
@@ -177,5 +178,47 @@ describe('LEGACY-HISTORICAL', () => {
       rung: 'bundle-scan',
       reason: 'index-unavailable',
     })).toEqual({ schemaVersion: 2, rung: 'bundle-scan', reason: 'index-unavailable' })
+  })
+})
+
+describe('RUNG-INVALID-VERSION', () => {
+  const INVALID: readonly unknown[] = [
+    ...NEW_INDEX_REASONS.map((reason) => ({ schemaVersion: 1, rung: 'bundle-scan', reason })),
+    { schemaVersion: 3, rung: 'bundle-scan', reason: 'index-corrupt' },
+    { schemaVersion: 0, rung: 'bundle-scan', reason: 'index-unavailable' },
+    { schemaVersion: '2', rung: 'bundle-scan', reason: 'index-corrupt' },
+    { rung: 'bundle-scan', reason: 'index-corrupt' },
+    { schemaVersion: 2, rung: 'dense-only' },
+    { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-corrupt', detail: 'synthetic' },
+    { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable', upgradedTo: 2 },
+  ]
+
+  test.each(INVALID)('the schema refuses a mislabelled, future or widened value: %j', (invalid) => {
+    expect(RecordedRetrievalRungSchema.safeParse(invalid).success).toBe(false)
+  })
+
+  test.each(INVALID)('the persisted handoff guard refuses the same step: %j', (invalid) => {
+    expect(() => guardCompletedRunHandoff(handoffWith(invalid))).toThrow(
+      /failed structural validation/,
+    )
+  })
+
+  test.each(INVALID)('the runs.knowledge wire contract refuses it at run level: %j', (invalid) => {
+    const projection = {
+      kind: 'ready',
+      runId: 'run-rung-contract',
+      buildOrdinal: 1,
+      knowledgeStore: 'bound',
+      steps: [],
+      curation: { status: 'pending' },
+      learned: { changes: [], canaryAttributions: [] },
+    }
+    expect(RunKnowledgeProjectionSchema.safeParse(projection).success).toBe(true)
+    expect(RunKnowledgeProjectionSchema.safeParse({ ...projection, retrievalRung: invalid }).success)
+      .toBe(false)
+    expect(RunKnowledgeProjectionSchema.safeParse({
+      ...projection,
+      retrievalRung: { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-corrupt' },
+    }).success).toBe(true)
   })
 })

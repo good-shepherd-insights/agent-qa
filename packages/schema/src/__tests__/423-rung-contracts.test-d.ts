@@ -63,3 +63,18 @@ describe('C423-RUNG-REASONS-EXACT', () => {
     expectTypeOf<Brief.RecordedRetrievalRung>().toEqualTypeOf<RecordedRetrievalRung>()
   })
 })
+
+describe('RUNG-INVALID-VERSION', () => {
+  test('refuses a third version and a v1 value carrying a 423 cause at the type boundary', () => {
+    expectTypeOf<Extract<RecordedRetrievalRung, { schemaVersion: 3 }>>().toEqualTypeOf<never>()
+    expectTypeOf<{ schemaVersion: 1; rung: 'bundle-scan'; reason: 'index-locked' }>()
+      .not.toExtend<RecordedRetrievalRung>()
+    expectTypeOf<{ schemaVersion: 3; rung: 'bundle-scan'; reason: 'index-corrupt' }>()
+      .not.toExtend<RecordedRetrievalRung>()
+    expectTypeOf<{ schemaVersion: 2; rung: 'bundle-scan'; reason: 'index-locked' }>()
+      .toExtend<RecordedRetrievalRung>()
+    expectTypeOf<{ schemaVersion: 1; rung: 'bundle-scan'; reason: 'index-unavailable' }>()
+      .toExtend<RecordedRetrievalRung>()
+    expectTypeOf<Extract<keyof RecordedRetrievalRung, 'detail'>>().toEqualTypeOf<never>()
+  })
+})
