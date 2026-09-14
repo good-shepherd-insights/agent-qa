@@ -1,5 +1,5 @@
-// THE EIGHT CAUSE LABELS, HELD EQUAL ACROSS TWO DOORS (Phase 407 plan 11 · TRST-01 / TRST-02,
-// D-15 / D-18).
+// THE ELEVEN CAUSE LABELS, HELD EQUAL ACROSS TWO DOORS (Phase 407 plan 11 · TRST-01 / TRST-02,
+// D-15 / D-18; widened by 423 D-22).
 //
 // WHY THIS CELL EXISTS AT ALL. The retrieval rung is printed by two surfaces that share no module:
 // `agent-qa doctor`'s three retrieval rows (407-08, `cli/src/commands/doctor-knowledge-checks.ts`)
@@ -42,6 +42,7 @@ import {
   type ReadEmbedderWorkerRegistrationOutcome,
   type ReadWriterLeaseOutcome,
 } from '@vostride/agent-qa-agent-local'
+import { createFunctionRegistry, type FunctionDeps } from '@vostride/agent-qa-agent'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { RUNG_CAUSE_LABELS, createKnowledgeChecks } from '../commands/doctor-knowledge-checks.js'
@@ -318,4 +319,126 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
       'the `Retrieval rung` row disagrees with the fold it is a view of.',
     ).toEqual([])
   }, 30_000)
+})
+
+// ── 423 D-22 / D-23: distinct index causes, one historical word, and doctor as current health ──
+// Plan 423-23 owns the mutation script; RUNG-LABEL-PARITY is its required named RED cell.
+
+/** Hand-spelled, never derived from `RETRIEVAL_RUNG_REASONS`. */
+const EXPECTED_REASONS = [
+  'embedder-load-failed',
+  'floor-disabled',
+  'index-corrupt',
+  'index-locked',
+  'index-not-built',
+  'index-unavailable',
+  'low-ram-deferral',
+  'model-not-downloaded',
+  'native-runtime-unavailable',
+  'profile-static-configured',
+  'profile-unresolved',
+]
+
+/** The exact bytes both doors print for the four index words. */
+const INDEX_LABELS = {
+  'index-not-built': 'knowledge index not built yet, scanning bundles',
+  'index-locked': 'knowledge index locked by another process, scanning bundles',
+  'index-corrupt': 'knowledge index corrupt, rebuild requested, scanning bundles',
+  'index-unavailable': 'knowledge index unavailable (cause not recorded), scanning bundles',
+} as const
+
+const LEGACY_LABEL = INDEX_LABELS['index-unavailable']
+
+const CURRENT_INDEX_CAUSES = [
+  { face: 'absent', reason: 'index-not-built' },
+  { face: 'locked', reason: 'index-locked' },
+  { face: 'corrupt', reason: 'index-corrupt' },
+  { face: 'schema-version', reason: 'index-corrupt' },
+] as const
+
+const NATIVE = EMBEDDERS[0]!.outcome
+
+describe('RUNG-LABEL-PARITY', () => {
+  it('both doors key exactly the eleven hand-spelled reasons', () => {
+    expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual(EXPECTED_REASONS)
+    expect(Object.keys(DASHBOARD_CAUSE_LABELS).sort()).toEqual(EXPECTED_REASONS)
+    expect(RECORDED_REASONS).toEqual(EXPECTED_REASONS)
+  })
+
+  it('pins each index cause to the same exact bytes on both doors', () => {
+    for (const [reason, label] of Object.entries(INDEX_LABELS)) {
+      expect(RUNG_CAUSE_LABELS[reason as keyof typeof INDEX_LABELS], `cli ${reason}`).toBe(label)
+      expect(DASHBOARD_CAUSE_LABELS[reason], `dashboard ${reason}`).toBe(label)
+    }
+  })
+
+  it('never presents not-built as corrupt, and keeps every cause label distinct', () => {
+    const label = (reason: string) => String((RUNG_CAUSE_LABELS as Record<string, string>)[reason])
+    expect(label('index-not-built')).toMatch(/not built/u)
+    expect(label('index-not-built')).not.toMatch(/corrupt|rebuild/u)
+    expect(label('index-locked')).not.toMatch(/corrupt|rebuild/u)
+    expect(label('index-corrupt')).toMatch(/rebuild requested/u)
+    expect(new Set(Object.values(RUNG_CAUSE_LABELS)).size).toBe(EXPECTED_REASONS.length)
+  })
+})
+
+describe('LEGACY-LABEL', () => {
+  it('reads the historical word as cause not recorded on both doors', () => {
+    expect(RUNG_CAUSE_LABELS['index-unavailable']).toBe(LEGACY_LABEL)
+    expect(DASHBOARD_CAUSE_LABELS['index-unavailable']).toBe(LEGACY_LABEL)
+    expect(LEGACY_LABEL).toContain('cause not recorded')
+  })
+
+  it('never lends a current cause its wording', () => {
+    for (const { reason } of CURRENT_INDEX_CAUSES) {
+      const label = String((RUNG_CAUSE_LABELS as Record<string, string>)[reason])
+      expect(label).toBe(INDEX_LABELS[reason])
+      expect(label).not.toContain('cause not recorded')
+    }
+  })
+})
+
+describe('DOCTOR-CURRENT-SEPARATE', () => {
+  afterAll(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  it.each(CURRENT_INDEX_CAUSES)('doctor names the live $face face as $reason, never the historical word', async ({ face, reason }) => {
+    const indexFace = FACES.find((entry) => entry.label === `scan/${face}`)!.face
+    const rows = await doctorRows(indexFace, NATIVE, DEFAULT_EMBEDDING_PROFILE)
+    const store = rows.find((row) => row.name === 'Knowledge store')!
+    const rung = rows.find((row) => row.name === 'Retrieval rung')!
+
+    expect(rung).toEqual({
+      name: 'Retrieval rung',
+      status: 'warn',
+      message: `bundle-scan — ${INDEX_LABELS[reason]}`,
+    })
+    for (const row of rows) expect(row.message).not.toContain(LEGACY_LABEL)
+    if (face === 'absent') {
+      expect(store.status).toBe('warn')
+      expect(store.message).toContain(INDEX_LABELS['index-not-built'])
+      expect(store.message).not.toMatch(/corrupt|could not be opened/u)
+    } else {
+      expect(store.status).toBe('fail')
+      expect(store.message).toContain(`could not be opened: ${face}`)
+    }
+  })
+
+  it('adds no current-health read op; current health stays on agent-qa doctor (D-23)', () => {
+    const registry = createFunctionRegistry({
+      deps: {} as unknown as FunctionDeps,
+      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      resolveExecutionContext: () => 'local-interactive',
+    })
+    const ids = registry.list({
+      surface: 'test',
+      grantedScopes: [],
+      safeMode: false,
+      origin: 'human',
+    }).map((entry) => entry.id)
+    expect(ids.length).toBeGreaterThan(30)
+    expect(ids).toContain('runs.knowledge')
+    expect(ids.filter((id) => /health|doctor|rung/u.test(id))).toEqual([])
+  })
 })
