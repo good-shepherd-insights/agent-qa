@@ -3,7 +3,10 @@ import { fsyncSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { EvidenceDocument } from '@vostride/agent-qa-schema'
+import type { EvidenceDocument, StepFinalizedPayload } from '@vostride/agent-qa-schema'
+import { NetworkEvidenceDocumentSchema } from '@vostride/agent-qa-schema'
+import { createMemberEventSink, createRunEventBus, runMemberTest } from '@vostride/agent-qa-runner'
+import type { MemberRunConfig, PlatformAdapter } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '../evidence-artifact-store.js'
 
 const io = vi.hoisted(() => ({ beforeWrite: undefined as undefined | ((path: unknown) => void) }))
@@ -51,6 +54,59 @@ test('MASK-BEFORE-HASH: exact masked serialized bytes retain capture order and t
   expect(JSON.parse(Buffer.from(store.getBlob(ref.sha)!).toString()).records.map(
     (record: { timestamp: number }) => record.timestamp,
   )).toEqual([20, 10])
+})
+
+test('NETWORK-READBACK: real member terminal refers to one reopened masked SHA blob with retained byte bounds', async () => {
+  const { root, store, dir } = fixture()
+  const adapter: PlatformAdapter = {
+    platform: 'web', setup: async () => {}, cleanup: async () => {},
+    observe: async () => { throw new Error('No additional capture expected') },
+    execute: async () => { throw new Error('Inline fixture uses appiumScript') },
+  }
+  const secret = 'synthetic-network-secret-423'
+  const body = secret + 'a'.repeat(32768 - secret.length)
+  adapter.drainNetworkLogs = () => [200, 404, 0].map((status, index) => ({
+    url: `https://example.test/${secret}/${index}`, method: 'POST', status,
+    requestHeaders: { Authorization: 'synthetic-session-token', 'content-type': 'text/plain' },
+    responseHeaders: { 'Set-Cookie': 'synthetic-session-cookie', 'content-type': 'text/plain' },
+    body, requestBody: body, startTime: 30 - index, endTime: 40 - index,
+  }))
+  const masking = { mask: (text: string) => text.replaceAll(secret, '[secret]'), unmask: (text: string) => text }
+  const bus = createRunEventBus({ runId: 'run-423' })
+  let terminal: StepFinalizedPayload | undefined
+  let visibleAtTerminal: Uint8Array | undefined
+  bus.subscribe(1, event => {
+    if (event.type !== 'stepFinalized') return
+    terminal = event.payload as StepFinalizedPayload
+    const entry = terminal.evidence?.network
+    if (entry?.state === 'present') visibleAtTerminal = store.getBlob(entry.ref.sha)
+  })
+  const unusedModel = {} as MemberRunConfig['plannerModel']
+  await runMemberTest({ testId: 'synthetic-network', name: 'Network readback', filePath: 'synthetic.yaml', steps: ['{{appium: mobile: hideKeyboard}}'] }, {
+    adapter, planner: { plan: async () => { throw new Error('No provider call expected') } },
+    plannerModel: unusedModel, verifierModel: unusedModel, appiumScript: async () => ({ success: true }),
+    sink: createMemberEventSink({ bus, masking, testIndex: 0 }), testIndex: 0,
+    abortSignal: new AbortController().signal, masking, evidenceArtifacts: store,
+  })
+  expect(terminal?.evidence?.network).toMatchObject({ state: 'present', counts: { total: 3, failed: 1, errored: 1 } })
+  const entry = terminal!.evidence!.network
+  if (entry.state !== 'present') throw new Error('Expected persisted network entry')
+  const reopened = new FsEvidenceArtifactStore({ root, runId: 'run-423' })
+  const stored = Buffer.from(reopened.getBlob(entry.ref.sha)!)
+  expect(Buffer.from(visibleAtTerminal!)).toEqual(stored)
+  expect(createHash('sha256').update(stored).digest('hex')).toBe(entry.ref.sha)
+  expect(entry.ref.id).toBe(`network-evidence:${entry.ref.sha}`)
+  expect(readdirSync(dir)).toEqual([entry.ref.sha])
+  const decoded = NetworkEvidenceDocumentSchema.parse(JSON.parse(stored.toString('utf8')))
+  expect(stored.toString('utf8')).not.toContain(secret)
+  expect(stored.toString('utf8')).not.toContain('synthetic-session')
+  expect(decoded.records.map(record => record.startTime)).toEqual([30, 29, 28])
+  for (const record of decoded.records) {
+    expect(record.requestBody).toBe(record.body)
+    expect(Buffer.byteLength(record.body!)).toBe(32768 - secret.length + '[secret]'.length)
+  }
+  console.info('NETWORK-READBACK-MEASUREMENTS', JSON.stringify({ records: 3, blobBytes: stored.length,
+    networkEntryBytes: Buffer.byteLength(JSON.stringify(entry)) }))
 })
 
 test('DEDUP: identical complete bytes do not rewrite an existing blob', () => {

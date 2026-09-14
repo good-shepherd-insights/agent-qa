@@ -4,12 +4,20 @@ import { createRunEventBus } from '../bus.js'
 import { createMemberEventSink } from '../event-sink.js'
 import { runMemberTest, type MemberRunConfig, type MemberTest } from '../member-runner.js'
 import { fakeModel, makeActionPlan, makeAdapter, makePlanner } from '../../loop/__tests__/loop-harness.js'
-import type { ConsoleLogEntry } from '../../result.js'
+import type { ConsoleLogEntry, NetworkLogEntry } from '../../result.js'
+import { createMaskingContext } from '@vostride/agent-qa-safety'
+import { projectNetworkEvidence } from '../network-evidence-policy.js'
 import { executeStep } from '../../loop/index.js'
 import type { LoopPorts } from '../../loop/ports.js'
 
 const secret = 'synthetic-live-secret-423'
 const hookId = 'h_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
+const networkRecord = (index: number, status = 200): NetworkLogEntry => ({
+  url: `https://example.test/${index}/${secret}`, method: 'POST', status,
+  requestHeaders: { 'content-type': 'text/plain', Authorization: 'synthetic-fresh-session' },
+  responseHeaders: { 'content-type': 'text/plain', 'set-cookie': 'synthetic-fresh-session' },
+  requestBody: secret, body: secret, startTime: 1000 - index, endTime: 2000 - index,
+})
 function fixture() {
   const events: RunEventEnvelope[] = []
   const documents: EvidenceDocument[] = []
@@ -32,7 +40,7 @@ function fixture() {
       getBlob: () => undefined,
       persistEvidenceDocument: value => {
         documents.push(structuredClone(value))
-        return { id: `console-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) }
+        return { id: `${value.kind}-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) }
       },
     },
   }
@@ -77,6 +85,124 @@ test('EVID-WEB-PRESENT: live masked records/counts publish after a11y and variab
   ] }])
   expect(JSON.stringify(f.documents)).not.toContain(secret)
 })
+
+test('NETWORK-COUNTS: one document and exact persisted total/failed/errored counts precede terminal', async () => {
+  const f = fixture()
+  const records = [networkRecord(0, 200), networkRecord(1, 400), networkRecord(2, 503), networkRecord(3, 0), networkRecord(4, 399)]
+  f.adapter.drainNetworkLogs = vi.fn(() => records)
+  f.member.steps = [{ step: 'Click Log in', capture: { variable: 'captured', method: 'ai' } }]
+  f.config.extractorFactory = () => ({ extract: async () => {
+    f.secrets.add(secret)
+    return { success: true, variableName: 'captured', value: secret, reasoning: 'synthetic' }
+  } })
+  const persist = f.config.evidenceArtifacts!.persistEvidenceDocument!
+  f.config.evidenceArtifacts!.persistEvidenceDocument = value => {
+    expect(f.terminals()).toHaveLength(0)
+    return persist(value)
+  }
+  await runMemberTest(f.member, f.config)
+  expect(f.terminals()[0].evidence?.network).toMatchObject({ kind: 'network', state: 'present', counts: { total: 5, failed: 2, errored: 1 } })
+  expect(f.documents).toHaveLength(1)
+  expect(f.documents[0]).toEqual(projectNetworkEvidence(records, f.config.masking!.mask))
+  expect(JSON.stringify(f.documents)).not.toContain(secret)
+  expect(JSON.stringify(f.documents)).not.toContain('synthetic-fresh-session')
+  expect(f.adapter.drainNetworkLogs).toHaveBeenCalledTimes(1)
+})
+
+test('NETWORK-MULTIPAGE: all drained page records survive in capture order without a global 500 cap', async () => {
+  const f = fixture()
+  const pages = [Array.from({ length: 400 }, (_, i) => networkRecord(i, 404)),
+    Array.from({ length: 350 }, (_, i) => networkRecord(i + 400, 0))]
+  f.adapter.drainNetworkLogs = () => pages.flat()
+  await runMemberTest(f.member, f.config)
+  expect(f.terminals()[0].evidence?.network).toMatchObject({ state: 'present', counts: { total: 750, failed: 400, errored: 350 } })
+  expect(f.documents).toHaveLength(1)
+  const document = f.documents[0]
+  expect(document.kind).toBe('network')
+  if (document.kind !== 'network') throw new Error('Expected network')
+  expect(document.records.map(record => record.startTime)).toEqual(pages.flat().map(record => record.startTime))
+})
+
+test('NETWORK-BYTE-STRESS: 600 request plus response 32-KiB bodies retain masked bounds and small row facts', async () => {
+  const f = fixture()
+  const masking = createMaskingContext()
+  for (let index = 0; index < 20; index++) masking.register(`synthetic-unused-secret-${index}`)
+  masking.register(secret)
+  f.config.masking = masking
+  const body = secret + 'é'.repeat(Math.floor((32768 - secret.length) / 2)) + 'a'.repeat((32768 - secret.length) % 2)
+  expect(Buffer.byteLength(body)).toBe(32768)
+  const records = Array.from({ length: 600 }, (_, i) => ({ ...networkRecord(i), body, requestBody: body }))
+  // Measure the unbatched policy on the same synthetic shape before assessing scheduling.
+  const baselineStart = performance.now()
+  let timerAt = 0
+  const timer = new Promise<void>(resolve => setTimeout(() => { timerAt = performance.now(); resolve() }, 0))
+  projectNetworkEvidence(records, text => masking.mask(text))
+  const synchronousMs = performance.now() - baselineStart
+  await timer
+  console.info('NETWORK-BASELINE', JSON.stringify({ records: records.length, synchronousMs, timerDelayMs: timerAt - baselineStart }))
+  f.adapter.drainNetworkLogs = () => records
+  const persist = f.config.evidenceArtifacts!.persistEvidenceDocument!
+  let serializationMs = 0
+  let blobBytes = 0
+  let maskMs = 0
+  f.config.masking = { ...masking, mask: text => {
+    const started = performance.now()
+    const value = masking.mask(text)
+    maskMs += performance.now() - started
+    return value
+  } }
+  f.config.evidenceArtifacts!.persistEvidenceDocument = value => {
+    const started = performance.now()
+    const serialized = JSON.stringify(value)
+    serializationMs = performance.now() - started
+    blobBytes = Buffer.byteLength(serialized)
+    expect(serialized).not.toContain(secret)
+    return persist(value)
+  }
+  const started = performance.now()
+  await runMemberTest(f.member, f.config)
+  const elapsedMs = performance.now() - started
+  expect(f.terminals()[0].evidence?.network).toMatchObject({ state: 'present', counts: { total: 600, failed: 0, errored: 0 } })
+  const document = f.documents[0]
+  if (document.kind !== 'network') throw new Error('Expected network')
+  for (const record of document.records) {
+    expect(record.body).toContain('<SECRET_20>')
+    expect(record.requestBody).toBe(record.body)
+    expect(Buffer.byteLength(record.body!)).toBeLessThanOrEqual(32768)
+  }
+  const rowEvidenceBytes = Buffer.byteLength(JSON.stringify(f.terminals()[0].evidence))
+  expect(rowEvidenceBytes).toBeLessThan(1000)
+  console.info('NETWORK-MEASUREMENTS', JSON.stringify({ records: 600, elapsedMs, maskMs, serializationMs, blobBytes, rowEvidenceBytes,
+    terminalPayloadBytes: Buffer.byteLength(JSON.stringify(f.terminals()[0])) }))
+})
+
+test.each(['empty', 'disabled', 'android', 'ios', 'capture-error', 'persist-error', 'missing-mask', 'missing-store', 'missing-drain'] as const)(
+  'NETWORK-STATES: %s retains honest absence and the original verdict', async kind => {
+    const f = fixture()
+    f.adapter.drainNetworkLogs = vi.fn(() => {
+      if (kind === 'capture-error') throw new Error('synthetic capture error')
+      return kind === 'empty' ? [] : [networkRecord(0)]
+    })
+    if (kind === 'disabled') f.config.logCapture = { network: false }
+    if (kind === 'android' || kind === 'ios') {
+      f.config.adapter = { ...f.adapter, platform: kind }
+      f.member.steps = ['{{appium: mobile: hideKeyboard}}']
+      f.config.appiumScript = async () => ({ success: true })
+    }
+    if (kind === 'persist-error') f.config.evidenceArtifacts!.persistEvidenceDocument = () => { throw new Error('synthetic persist error') }
+    if (kind === 'missing-mask') f.config.masking = undefined
+    if (kind === 'missing-store') f.config.evidenceArtifacts = undefined
+    if (kind === 'missing-drain') f.adapter.drainNetworkLogs = undefined
+    const result = await runMemberTest(f.member, f.config)
+    expect(result.status).toBe('passed')
+    const reason = kind === 'empty' ? 'empty' : kind === 'disabled' ? 'not-captured'
+      : ['android', 'ios', 'missing-drain'].includes(kind) ? 'unsupported' : 'failed'
+    expect(f.terminals()[0].evidence?.network).toEqual({ kind: 'network', state: 'absent', reason })
+    expect(f.documents).toEqual([])
+    if (kind === 'disabled') expect(f.adapter.drainNetworkLogs).not.toHaveBeenCalled()
+    if (kind === 'android' || kind === 'ios') expect(result.steps[0].networkLogs).toEqual([networkRecord(0)])
+  },
+)
 
 test('EVID-ZERO: captured zero records is empty without counts or a blob', async () => {
   const f = fixture()
