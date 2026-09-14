@@ -2230,6 +2230,10 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     const draftAuthoring = await resolveDraftAuthoring(input.configPath)
     const draftApply = await resolveDraftApply(input.configPath)
     localAgent = operations.composeLocalAgent({
+      ...(input.configPath === undefined ? {} : {
+        readMaskingSources: (await import('../composition/local-agent-host.js'))
+          .createColdReadMaskingSources(input.configPath),
+      }),
       resolveTrustPriors,
       resolvePromotionPosture: resolveHostPromotionPosture,
       agentQaRoot: input.agentQaRoot,

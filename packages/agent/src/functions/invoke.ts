@@ -285,7 +285,11 @@ export async function invokeFunction(
     throw new FunctionNotBoundError(functionId)
   }
 
-  const result = await spec.invoke(parsed.data, internals.deps)
+  const dispatch = () => spec.invoke(parsed.data, internals.deps)
+  const result = spec.resultKind === 'unary' && spec.risk.readOnly === true
+    && internals.withReadScope !== undefined
+    ? await internals.withReadScope(functionId, dispatch)
+    : await dispatch()
 
   // A stream result IS the declared async iterable and passes through untouched: the
   // spec's `output` describes one ELEMENT, so parsing the iterable against it would be a

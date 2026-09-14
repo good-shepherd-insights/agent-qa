@@ -380,6 +380,8 @@ export type CallerScopedDenyOverlay = (
 ) => boolean
 
 export interface CreateFunctionRegistryOptions {
+  /** Host-owned lifetime around an authorized unary read; absent preserves ambient scope. */
+  withReadScope?: (functionId: string, invoke: () => Promise<unknown>) => Promise<unknown>
   /** Host-backed implementations the ops read through; built at the composition root. */
   deps: FunctionDeps
   /**
@@ -453,6 +455,7 @@ export interface FunctionRegistry {
 }
 
 interface RegistryInternals {
+  withReadScope?: CreateFunctionRegistryOptions['withReadScope']
   specs: ReadonlyMap<string, FunctionSpec>
   deps: FunctionDeps
   auditSink: AuditSink
@@ -631,6 +634,7 @@ export function createRegistryFromSpecs(
   }
 
   REGISTRY_INTERNALS.set(registry, {
+    ...(options.withReadScope === undefined ? {} : { withReadScope: options.withReadScope }),
     specs: byId,
     deps: options.deps,
     auditSink,

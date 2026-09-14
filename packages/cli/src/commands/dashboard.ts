@@ -81,7 +81,7 @@ import {
   MCP_HTTP_BIND_HOST,
   MCP_HTTP_DEFAULT_PORT,
 } from './mcp.js'
-import { resolveMcpTokens } from '../composition/mcp-token-resolution.js'
+import { mcpTokenSecretStore, resolveMcpTokens } from '../composition/mcp-token-resolution.js'
 import type { ResolvedMcpToken } from '../composition/mcp-token-resolution.js'
 import {
   CLI_FUNCTION_CALLER,
@@ -2220,6 +2220,7 @@ async function startDashboardBackedServices(
     let mcpMasking: ReturnType<typeof composeMcpMasking> | undefined
     let mcpServer: NodeHttpServer | undefined
     if (mcpCredentials.shouldMount) {
+      runDoor.bindMaskingSecrets(mcpTokenSecretStore(mcpTokens))
       // The MCP masker, composed exactly as `agent-qa mcp` composes it: `buildRunMaskingContext`
       // seeded with THIS process's declared MCP credentials, because `sensitiveEnvSlice` selects by
       // name suffix and nothing obliges an operator to point `tokenEnvVar` at a name ending in

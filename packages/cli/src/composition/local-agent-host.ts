@@ -263,6 +263,30 @@ export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
   }
 }
 
+/** Resolve only cold-read masking inputs: no plugins, run preparation, or directory writes. */
+export function createColdReadMaskingSources(
+  configPath: string,
+  retainedStores: () => Iterable<{
+    forEachSecret(cb: (name: string, value: string) => void): void
+  }> = () => [],
+): NonNullable<ComposeLocalAgentInput['readMaskingSources']> {
+  return async () => {
+    try {
+      const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+      const workspace = resolveWorkspacePaths({ config, configPath })
+      return {
+        secretsContent: readFileSync(workspace.secretsFile.absolutePath, 'utf8'),
+        secretStores: [...retainedStores()],
+        env: process.env,
+      }
+    } catch {
+      // Required file/config failures leave no new masking authority. An optional retained
+      // store may be absent, but a missing required source is never an empty secret file.
+      return undefined
+    }
+  }
+}
+
 /**
  * The chat / `fn` / MCP door's run execution: the ONE in-process, policy-gated drive (401-05).
  *
@@ -517,6 +541,10 @@ function createComposedRunExecution(input: {
 }
 
 export interface ComposeCliLocalAgentInput {
+  /** Additional credentials this host retains, enumerated again for every cold read. */
+  readonly maskingSecretStores?: () => Iterable<{
+    forEachSecret(cb: (name: string, value: string) => void): void
+  }>
   /** An enclosing host supplies its ready snapshot, including the matching disclosure. */
   trustPriors?: ReturnType<typeof trustPriorsForHost>
   /** An enclosing drain may supply its already-memoised preparation. */
@@ -3754,6 +3782,13 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
   const doorConfirm = 'confirm' in input ? input.confirm : createTtyConfirmPort()
 
   const host = composeLocalAgent({
+    readMaskingSources: createColdReadMaskingSources(input.configPath, () => {
+      const bridgeSecrets = input.runBridge?.maskingSecrets?.()
+      return [
+        ...(bridgeSecrets === undefined ? [] : [bridgeSecrets]),
+        ...(input.maskingSecretStores?.() ?? []),
+      ]
+    }),
     feedback: createFeedbackPortForHost({
       resolveTrustPriors,
       configPath: input.configPath, agentQaRoot: input.agentQaRoot, randomUuid: randomUUID,

@@ -15,10 +15,13 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, maskedMarker, sha256hex,
 } from '@vostride/agent-qa-schema'
 import type { CurationSnapshot, PostProcessingStatus } from '@vostride/agent-qa-schema'
-import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
+import { getActiveAuditSink, getActiveExecutionContext, getActiveMaskingContext } from '@vostride/agent-qa-safety'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
+import type { MaskingContext } from '@vostride/agent-qa-schema'
 
-import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
+import { CLI_FUNCTION_CALLER, composeCliLocalAgent, createColdReadMaskingSources } from '../local-agent-host.js'
 import { createDisplayUnmasker } from '../display-unmask.js'
+import { resolveConfig } from '../../config.js'
 
 const roots: string[] = []
 const hosts: LocalAgentHost[] = []
@@ -26,6 +29,7 @@ afterEach(async () => {
   for (const host of hosts.splice(0)) await host.close()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
 })
 
 function storeOf(values: Record<string, string>) {
@@ -44,7 +48,8 @@ function project() {
     workspace: { testMatch: ['tests/**/*.yaml'], suiteMatch: ['suites/**/*.yaml'],
       hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local' },
     knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
-    registry: { llms: [{ name: 'unused', provider: 'openai-compatible', model: 'unused' }],
+    registry: { llms: [{ name: 'unused', provider: 'openai-compatible', model: 'unused',
+      baseURL: 'http://127.0.0.1:1/v1' }],
       targets: { local: { platform: 'web', url: 'http://127.0.0.1:1' } } },
     use: { llm: 'unused', mobile: { appState: 'preserve' } },
   }
@@ -68,6 +73,7 @@ function snapshot(runId: string, evidenceTokens = [sha256hex('first-event'), sha
 }
 
 async function publish(p: ReturnType<typeof project>, completed?: CurationSnapshot) {
+  await resolveConfig({ configPath: p.configPath, loadAuthPlugins: false })
   const writer = composeLocalAgent({
     agentQaRoot: p.agentQaRoot,
     mintQuarantineIdentityPath: path => path,
@@ -162,5 +168,106 @@ describe('Wave 18 cold read masking recovery', () => {
     expect(existsSync(join(p.agentQaRoot, 'job-checkpoints'))).toBe(false)
     await publish(p)
     expect(await read.read()).not.toHaveProperty('curationSnapshot')
+  })
+
+  it('COLD-SOURCES rereads configured, retained and sensitive environment seeds without mutating stores', async () => {
+    const p = project()
+    const configured = 'configured-first-value'
+    const rotated = 'configured-second-value'
+    const retained = { TOKEN: 'retained-runtime-value' }
+    const envValue = 'environment-sensitive-value'
+    vi.stubEnv('COLD_READ_TEST_TOKEN', envValue)
+    writeFileSync(p.secretFile, `CURRENT=${configured}\n`)
+    const store = storeOf(retained)
+    const sources = createColdReadMaskingSources(p.configPath, () => [store])
+    expect((await sources())?.secretStores).toEqual([store])
+    expect(existsSync(p.agentQaRoot)).toBe(false)
+    const text = [configured, rotated, retained.TOKEN, envValue, 'ordinary-event'].join(' / ')
+    await publish(p, snapshot(p.runId, [text]))
+    const read = cold(p, () => [store])
+    const token = async () => (await read.read()).curationSnapshot!.rows[0]!.changes[0]!.change.evidenceToken
+    const marker = maskedMarker('secret')
+    expect(await token()).toBe([marker, rotated, marker, marker, 'ordinary-event'].join(' / '))
+    writeFileSync(p.secretFile, `CURRENT=${rotated}\n`)
+    retained.TOKEN = configured
+    expect(await token()).toBe([marker, marker, 'retained-runtime-value', marker, 'ordinary-event'].join(' / '))
+    const values: string[] = []
+    store.forEachSecret((_name, value) => { values.push(value) })
+    expect(values).toEqual([configured])
+    expect((await sources())?.secretsContent).toBe(`CURRENT=${rotated}\n`)
+  })
+
+  it.each(['missing', 'invalid', 'unreadable'] as const)('COLD-SOURCE-REFUSAL %s sources retain the existing fail-closed context', async kind => {
+    const p = project()
+    await publish(p, snapshot(p.runId))
+    if (kind === 'missing') rmSync(p.secretFile)
+    if (kind === 'invalid') writeFileSync(p.secretFile, 'INVALID-NAME=synthetic-value\n')
+    if (kind === 'unreadable') { rmSync(p.secretFile); mkdirSync(p.secretFile) }
+    const read = cold(p)
+    await expect(read.read()).rejects.toMatchObject({
+      name: 'ZodError', issues: [{ code: 'custom', path: ['curationSnapshot'],
+        message: 'The recorded curation snapshot cannot be projected safely.' }],
+    })
+    expect(getActiveMaskingContext()).toBeUndefined()
+  })
+
+  it('COLD-COLLISION refuses genuinely masked duplicate events without deleting history', async () => {
+    const p = project()
+    const first = 'first-sensitive-event'
+    const second = 'second-sensitive-event'
+    const recorded = snapshot(p.runId, [first, second])
+    // Only the evidence distinguishes these historical identities.
+    recorded.rows[0]!.changes[1]!.change.observationId = recorded.rows[0]!.changes[0]!.change.observationId
+    writeFileSync(p.secretFile, `FIRST=${first}\nSECOND=${second}\n`)
+    await publish(p, recorded)
+    await expect(cold(p).read()).rejects.toMatchObject({
+      name: 'ZodError', issues: [{ code: 'custom', path: ['curationSnapshot'],
+        message: 'The recorded curation snapshot cannot be projected safely.' }],
+    })
+    expect(recorded.rows[0]!.changes).toHaveLength(2)
+    expect(getActiveMaskingContext()).toBeUndefined()
+  })
+
+  it('COLD-LIFETIME preserves execution/audit authority and disposes only its own context after await', async () => {
+    const p = project()
+    const secret = 'lifetime-sensitive-value'
+    writeFileSync(p.secretFile, `VALUE=${secret}\n`)
+    await publish(p, snapshot(p.runId, [secret]))
+    const read = cold(p)
+    const sink = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+    let active: MaskingContext | undefined
+    const original = CurationSnapshotSchema.safeParse.bind(CurationSnapshotSchema)
+    vi.spyOn(CurationSnapshotSchema, 'safeParse').mockImplementation((...args) => {
+      active = getActiveMaskingContext()
+      expect(getActiveExecutionContext()).toBe('ci')
+      expect(getActiveAuditSink()).toBe(sink)
+      return original(...args)
+    })
+    await runSafetyScope({ executionContext: 'ci', auditSink: sink }, async () => {
+      await read.read()
+      expect(getActiveMaskingContext()).toBeUndefined()
+      expect(getActiveExecutionContext()).toBe('ci')
+      expect(getActiveAuditSink()).toBe(sink)
+    })
+    expect(active).toBeDefined()
+    // The wrapper's underlying registrations have been disposed; retained host stores were not.
+    expect(active!.mask(secret)).toBe(secret)
+  })
+
+  it('COLD-ACTIVE keeps an existing run masker and skips unavailable cold sources', async () => {
+    const p = project()
+    const secret = 'active-context-value'
+    await publish(p, snapshot(p.runId, [secret]))
+    rmSync(p.secretFile)
+    const context = buildRunMaskingContext({ secretStore: storeOf({ VALUE: secret }), env: {} })
+    const read = cold(p)
+    try {
+      await runSafetyScope({ maskingContext: context }, async () => {
+        const result = await read.read()
+        expect(result.curationSnapshot!.rows[0]!.changes[0]!.change.evidenceToken).toBe('<SECRET_0>')
+        expect(getActiveMaskingContext()).toBe(context)
+      })
+      expect(context.mask(secret)).toBe('<SECRET_0>')
+    } finally { context.dispose() }
   })
 })

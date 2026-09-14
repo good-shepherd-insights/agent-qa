@@ -189,10 +189,12 @@ import type { FeedbackPort } from '@vostride/agent-qa-schema'
 import type { ArtifactRef, TestDraftProposalV1 } from '@vostride/agent-qa-schema'
 import type { ServedRecordFacts } from '@vostride/agent-qa-knowledge-local'
 export type { ServedRecordFacts, MarkTriage, ApplyFeedbackInput } from '@vostride/agent-qa-knowledge-local'
-import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
+import { ReplayIncompleteError, SecretStore } from '@vostride/agent-qa-runner'
 import {
   NO_STANDING_APPROVALS,
   defaultGuardrailPolicyInput,
+  getActiveAuditSink,
+  getActiveExecutionContext,
   getActiveMaskingContext,
   loadGuardrailPolicy,
   scanConstructedArtifact,
@@ -212,9 +214,11 @@ import {
   loadCompletedRunHandoff,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
-import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
   admitAnalysisArtifactForRun,
+  maskedMarker,
+  PLACEHOLDER_PATTERN,
   ANALYSIS_FILE,
   asJobId,
   CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
@@ -258,7 +262,7 @@ import type { SightMemoryEntities } from './knowledge-review-reader.js'
 import { createEvidenceBlobReader, readEvidenceBlobBytes } from './evidence-blob-reader.js'
 import { createDispatchGrants } from './dispatch-grants.js'
 import type { DispatchGrants } from './dispatch-grants.js'
-import { buildRunPorts } from './run-composition.js'
+import { buildRunMaskingContext, buildRunPorts } from './run-composition.js'
 import type { RetrievalRungResolver } from './run-composition.js'
 import { writeAnalysisArtifact } from '../analysis/persist-analysis.js'
 import { createJsonlSessionLog } from '../session/jsonl-session-log.js'
@@ -1680,6 +1684,12 @@ export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonl
   })
 
 export interface ComposeLocalAgentInput {
+  /** Current host sources for cold snapshot reads. Undefined means no masking authority. */
+  readonly readMaskingSources?: () => Promise<{
+    readonly secretsContent: string
+    readonly secretStores: readonly { forEachSecret(cb: (name: string, value: string) => void): void }[]
+    readonly env: Record<string, string | undefined>
+  } | undefined>
   /** Immutable neutral data resolved by the host, reused until recomposition. */
   readonly resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors']
   readonly feedback?: FeedbackPort
@@ -3214,6 +3224,58 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   }
 
   const registry = createFunctionRegistry({
+    ...(input.readMaskingSources === undefined ? {} : {
+      withReadScope: async (functionId: string, invoke: () => Promise<unknown>) => {
+        // These two reads share the snapshot projector. Do not change unrelated reads or
+        // replace the context of a run/turn that already holds masking authority.
+        if ((functionId !== 'runs.postprocessing' && functionId !== 'runs.knowledge')
+          || getActiveMaskingContext() !== undefined) return invoke()
+        let masking: ReturnType<typeof buildRunMaskingContext> | undefined
+        try {
+          const sources = await input.readMaskingSources!()
+          if (sources !== undefined) {
+            const declared = SecretStore.fromEnvContent(sources.secretsContent)
+            const entries: [string, string][] = []
+            for (const store of [declared, ...sources.secretStores]) {
+              store.forEachSecret((name, value) => { entries.push([name, value]) })
+            }
+            masking = buildRunMaskingContext({ env: sources.env, secretStore: {
+              forEachSecret(cb) { for (const [name, value] of entries) cb(name, value) },
+            } })
+          }
+        } catch {
+          // Unavailable or invalid sources never authorize an empty context. The op's
+          // existing no-context mask remains authoritative, including collision refusal.
+        }
+        if (masking === undefined) return invoke()
+        const coldMasking = masking
+        const maskFresh = (text: string) => coldMasking.mask(text).replaceAll(
+          PLACEHOLDER_PATTERN,
+          (_token, category: string) => maskedMarker(category === 'EMAIL' ? 'email' : 'secret'),
+        )
+        const mask = (text: string): string => {
+          // Keep recorded placeholders verbatim. Only newly masked spans receive display
+          // markers: a fresh SECRET_0 has no relationship to the run's historical SECRET_0.
+          let cursor = 0
+          let result = ''
+          for (const token of text.matchAll(PLACEHOLDER_PATTERN)) {
+            result += maskFresh(text.slice(cursor, token.index)) + token[0]
+            cursor = token.index + token[0].length
+          }
+          return result + maskFresh(text.slice(cursor))
+        }
+        const auditSink = getActiveAuditSink()
+        try {
+          return await runSafetyScope({
+            maskingContext: { mask, unmask: text => text },
+            executionContext: getActiveExecutionContext(),
+            ...(auditSink === undefined ? {} : { auditSink }),
+          }, invoke)
+        } finally {
+          masking.dispose()
+        }
+      },
+    }),
     deps: {
       runs: {
         ...runsReader,

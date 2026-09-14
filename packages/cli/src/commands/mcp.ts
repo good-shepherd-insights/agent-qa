@@ -372,6 +372,7 @@ export function createMcpCommand(): Command {
         })
 
         const host = composeCliLocalAgent({
+          maskingSecretStores: () => [mcpTokenSecretStore(tokens)],
           // 398-10 (D-11/D-18): the explain counter hooks bind against this port inside the
           // composition root, so `agent.explain` is countable over MCP exactly as it is in chat.
           analytics,
