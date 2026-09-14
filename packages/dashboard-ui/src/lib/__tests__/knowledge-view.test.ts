@@ -1632,7 +1632,7 @@ describe('the banner sentence is composed from closed tables, never from an erro
 
   it('renders the other two degraded rungs through the same template', () => {
     expect(rungBannerText({ rung: 'bundle-scan', reason: 'index-unavailable' })).toBe(
-      'Retrieval degraded: bundle scan — knowledge index unavailable, scanning bundles. Run `agent-qa doctor`.',
+      'Retrieval degraded: bundle scan — knowledge index unavailable (cause not recorded), scanning bundles. Run `agent-qa doctor`.',
     )
     expect(rungBannerText({ rung: 'lexical-only', reason: 'floor-disabled' })).toBe(
       'Retrieval degraded: lexical-only retrieval — static floor disabled. Run `agent-qa doctor`.',

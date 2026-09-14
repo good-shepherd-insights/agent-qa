@@ -120,7 +120,7 @@ describe("a degraded rung says rung, cause and the doctor hint on one line (D-15
     expect(el?.getAttribute("data-rung")).toBe("bundle-scan")
     expect(el?.getAttribute("data-rung-reason")).toBe("index-unavailable")
     expect(el?.textContent).toContain("bundle scan")
-    expect(el?.textContent).toContain("knowledge index unavailable, scanning bundles")
+    expect(el?.textContent).toContain("knowledge index unavailable (cause not recorded), scanning bundles")
   })
 
   it("leaves `data-rung-reason` ABSENT rather than empty when the rung carries no cause", () => {

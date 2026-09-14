@@ -1210,11 +1210,23 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
  * `schemaVersion` is dropped rather than carried: it states which contract the value was WRITTEN
  * under, which is a fact about the handoff and not about the run, and a view member nothing
  * paints is a member a component can accidentally paint.
+ *
+ * Both arms are folded explicitly (423 D-22) and neither translates its reason: a v1
+ * `index-unavailable` stays that word and renders as a historical cause-not-recorded, never as
+ * one of the v2 causes a pre-423 run could not have named.
  */
 function rungView(recorded: RecordedRetrievalRung): RungView {
-  return {
-    rung: recorded.rung,
-    ...(recorded.reason === undefined ? {} : { reason: recorded.reason }),
+  switch (recorded.schemaVersion) {
+    case 1:
+    case 2:
+      return {
+        rung: recorded.rung,
+        ...(recorded.reason === undefined ? {} : { reason: recorded.reason }),
+      }
+    default: {
+      const unreachable: never = recorded
+      return unreachable
+    }
   }
 }
 
@@ -1241,14 +1253,18 @@ export const RUNG_LABELS: Record<Exclude<RetrievalRung, 'memidex'>, string> = {
  *
  * BYTE-IDENTICAL TO `cli/src/commands/doctor-knowledge-checks.ts`, ON PURPOSE AND BY NECESSITY.
  * The dashboard and the CLI share no UI module — `packages/cli` cannot import a React package's
- * lib — so the eight labels are spelled twice and 407-11 asserts the two tables equal. Three of
+ * lib — so the labels are spelled twice and 407-11 asserts the two tables equal. Three of
  * them (`model-not-downloaded`, `embedder-load-failed`, `profile-static-configured`) are NOT in
  * UI-SPEC's five: the recorded enum has eight arms because `cold-artifact`, `load-failure` and a
  * `static` PREFERRED profile are three distinct operator situations, and 407-08 chose the wording
  * for them first. This table follows that one rather than the spec where the two differ.
  *
- * A ninth `RetrievalRungReason` becomes a compile error here instead of a blank cause printed
+ * A new `RetrievalRungReason` becomes a compile error here instead of a blank cause printed
  * after an em dash.
+ *
+ * 423 D-22: a banner states what a run RECORDED. The three index causes are what post-423 runs
+ * record; `index-unavailable` is only ever read off a pre-423 run and says so ("cause not
+ * recorded") rather than guessing which of the three it was. Current health is `agent-qa doctor`.
  */
 export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
   'native-runtime-unavailable': 'native ONNX runtime unavailable',
@@ -1256,9 +1272,12 @@ export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
   'low-ram-deferral': 'embedding deferred on low memory',
   'model-not-downloaded': 'embedding model not downloaded',
   'embedder-load-failed': 'embedder failed to load',
-  'index-unavailable': 'knowledge index unavailable, scanning bundles',
+  'index-unavailable': 'knowledge index unavailable (cause not recorded), scanning bundles',
   'floor-disabled': 'static floor disabled',
   'profile-static-configured': 'static profile configured',
+  'index-not-built': 'knowledge index not built yet, scanning bundles',
+  'index-locked': 'knowledge index locked by another process, scanning bundles',
+  'index-corrupt': 'knowledge index corrupt, rebuild requested, scanning bundles',
 }
 
 /**

@@ -59,9 +59,13 @@ const { foldRetrievalRung, indexDbPath } = LOCAL_KNOWLEDGE_PROBES
 
 /**
  * The closed reason vocabulary rendered for a person, as a TOTAL map rather than a switch with a
- * default: a ninth `RetrievalRungReason` becomes a compile error here instead of a blank cause
+ * default: a new `RetrievalRungReason` becomes a compile error here instead of a blank cause
  * printed after an em dash. 407-11 pins this table equal to the dashboard's copy of it — the two
  * surfaces share no UI module, so the labels are defined twice by necessity and asserted equal.
+ *
+ * 423 D-22: doctor is CURRENT health, so its rows only ever print the three live index causes
+ * (not built, locked, corrupt). `index-unavailable` keeps a label solely because the table is
+ * shared with recorded runs, where it means a pre-423 scan whose cause was never recorded.
  */
 export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
   'native-runtime-unavailable': 'native ONNX runtime unavailable',
@@ -69,9 +73,12 @@ export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
   'low-ram-deferral': 'embedding deferred on low memory',
   'model-not-downloaded': 'embedding model not downloaded',
   'embedder-load-failed': 'embedder failed to load',
-  'index-unavailable': 'knowledge index unavailable, scanning bundles',
+  'index-unavailable': 'knowledge index unavailable (cause not recorded), scanning bundles',
   'floor-disabled': 'static floor disabled',
   'profile-static-configured': 'static profile configured',
+  'index-not-built': 'knowledge index not built yet, scanning bundles',
+  'index-locked': 'knowledge index locked by another process, scanning bundles',
+  'index-corrupt': 'knowledge index corrupt, rebuild requested, scanning bundles',
 }
 
 /** D-16: no knowledge reader bound is not a rung. Every row still prints; none is omitted. */
@@ -224,7 +231,7 @@ function createKnowledgeStoreCheck(context: KnowledgeCheckContext): DoctorCheck 
       }
       return {
         status: 'warn',
-        message: `no index at ${context.relativeRoot} — scanning bundles (${RUNG_CAUSE_LABELS['index-unavailable']})`,
+        message: `no index at ${context.relativeRoot} — scanning bundles (${RUNG_CAUSE_LABELS['index-not-built']})`,
       }
     },
   }

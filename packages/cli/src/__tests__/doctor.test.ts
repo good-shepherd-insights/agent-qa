@@ -1150,7 +1150,7 @@ targets:
     }
     expect(rowFor('Knowledge store')).toContain('scanning bundles')
     expect(rowFor('Embedder')).toContain('static floor — native ONNX runtime unavailable')
-    expect(rowFor('Retrieval rung')).toContain('bundle-scan — knowledge index unavailable')
+    expect(rowFor('Retrieval rung')).toContain('bundle-scan — knowledge index not built yet')
     expect(process.exitCode).not.toBe(1)
   })
 

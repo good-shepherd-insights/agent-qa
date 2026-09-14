@@ -179,11 +179,11 @@ describe('createKnowledgeChecks', () => {
     const relativeRoot = relative(process.cwd(), project.knowledgeRoot) || '.'
     expect(store).toEqual({
       status: 'warn',
-      message: `no index at ${relativeRoot} — scanning bundles (${RUNG_CAUSE_LABELS['index-unavailable']})`,
+      message: `no index at ${relativeRoot} — scanning bundles (${RUNG_CAUSE_LABELS['index-not-built']})`,
     })
     expect(rung).toEqual({
       status: 'warn',
-      message: `bundle-scan — ${RUNG_CAUSE_LABELS['index-unavailable']}`,
+      message: `bundle-scan — ${RUNG_CAUSE_LABELS['index-not-built']}`,
     })
     expect(embedder.status).toBe('pass')
     expect(resolveEmbedderCapability).toHaveBeenCalledTimes(1)
@@ -633,7 +633,7 @@ describe('createKnowledgeChecks', () => {
 
     expect(first.rung).toEqual({
       status: 'warn',
-      message: `bundle-scan — ${RUNG_CAUSE_LABELS['index-unavailable']}`,
+      message: `bundle-scan — ${RUNG_CAUSE_LABELS['index-not-built']}`,
     })
   })
 })

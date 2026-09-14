@@ -19,7 +19,7 @@
 // either word would be measuring the machine. The ONE deterministic rung here is fixture (A)'s,
 // and it is deterministic for a structural reason rather than a hopeful one — the populated
 // fixture ships an EMPTY `agent-qa-knowledge` directory with no index, the fold reads the index
-// axis FIRST, and `scan` folds to `bundle-scan` / `index-unavailable` whatever the embedder did.
+// axis FIRST, and an absent index folds to `bundle-scan` / `index-not-built` whatever the embedder did.
 // If a future fixture change adds an index, (a1)/(a2) must switch to the parity form (b3) uses.
 //
 // A BROWSER THAT CANNOT LAUNCH IS A RED, NEVER A SKIP — `run-detail-dom.test.ts`'s law. The one
@@ -1927,8 +1927,8 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     ).toBe('bundle-scan')
     expect(
       projection.retrievalRung?.reason,
-      `the recorded cause for a scanned index is \`index-unavailable\`.${context('scan', scan)}`,
-    ).toBe('index-unavailable')
+      `the recorded cause for an index that was never built is \`index-not-built\`.${context('scan', scan)}`,
+    ).toBe('index-not-built')
   })
 
   it('(a2) the run header paints the rung banner with the sentence of record', () => {
@@ -1947,7 +1947,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
       observed.bannerText,
       'the banner text is not the sentence the two published label tables compose for this '
       + `recorded rung and cause.${context('scan', scan)}`,
-    ).toBe(bannerSentence('bundle-scan', 'index-unavailable'))
+    ).toBe(bannerSentence('bundle-scan', 'index-not-built'))
   })
 
   it('(a3) pressing `7` opens a ready Knowledge tab with one row per recorded step', () => {
