@@ -214,6 +214,45 @@ it('EVID-UPSERT-OMISSION: insert and replace mirror defined facts, then omit abs
     expect(rows.subActions[0]).not.toHaveProperty('artifactRefs')
   } finally { db.close() }
 })
+
+it('ARIA-COLD-READBACK: subscriber preserves ordered child ownership and empty evidence across reopen', async () => {
+  const dbPath = join(dir, 'aria-order.db')
+  const db = new DashboardDatabase({ dbPath })
+  const { step, child } = recorded()
+  const children = [0, 1, 2].map(index => {
+    const sha = String(index + 1).repeat(64)
+    const imageSha = String(index + 4).repeat(64)
+    const ref = EvidenceArtifactRefSchema.parse({ id: `aria-state:${sha}`, sha })
+    const screenshot = { id: `decision-screenshot:${imageSha}`, sha: imageSha }
+    return { ...child, subActionIndex: index,
+      screenStateHash: `before-${index}`, screenStateHashAfter: `after-${index}`,
+      artifactRefs: index === 2 ? [screenshot] : [screenshot, ref],
+      ariaEvidence: index === 2
+        ? { kind: 'aria', state: 'absent', reason: 'empty' } as const
+        : { kind: 'aria', state: 'present', ref } as const,
+    }
+  })
+  try {
+    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId: 'aria-order' } })
+    let seq = 0
+    const emit = (type: RunEventEnvelope['type'], payload: unknown) => ingest.handler({
+      runId: 'aria-order', type, payload, seq: ++seq, ts: Date.now(),
+    } as RunEventEnvelope)
+    emit('runStarted', {})
+    emit('testStarted', { testIndex: 0, name: 'member' })
+    emit('stepFinalized', step)
+    emit('stepFinalized', { ...step, stepIndex: 2 })
+    for (const item of [children[2], children[0], children[1]]) emit('subActionRecorded', item)
+    await ingest.finalize({})
+  } finally { db.close() }
+  const cold = new DashboardDatabase({ dbPath })
+  try {
+    const output = await detail(cold, 'aria-order')
+    expect(output.subActions).toEqual(children)
+    expect(output.subActions.filter(item => item.stepIndex === 2)).toEqual([])
+    expect(output.steps.find(item => item.stepIndex === 2)).not.toHaveProperty('ariaEvidence')
+  } finally { cold.close() }
+})
 it('MIGRATION-V2-HISTORY: retains every prior value and NULL with exactly four added columns', () => {
   const db = open('history.db')
   seedV2(db)

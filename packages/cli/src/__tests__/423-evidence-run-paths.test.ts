@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId, generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
-import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { SecretRedactor, SecretStore, createRunEventBus, createMemberEventSink, executeStep, makeScreenState } from '@vostride/agent-qa-runner'
 import type { EvidenceArtifactStorePort } from '@vostride/agent-qa-runner'
 import { buildRunMaskingContext, createRunInvocationCore } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import { DashboardDatabase, createDashboardRunDetailReader, createDashboardRunIngest } from '@vostride/agent-qa-dashboard'
-import { asRunId, ConsoleEvidenceDocumentSchema } from '@vostride/agent-qa-schema'
+import { asRunId, AriaEvidenceDocumentSchema, ConsoleEvidenceDocumentSchema, screenStateHash } from '@vostride/agent-qa-schema'
 import { RunDetailProjectionSchema } from '@vostride/agent-qa-schema'
 import { createFunctionRegistry, invokeFunction, RUNS_DETAIL_FUNCTION_ID, type FunctionDeps } from '@vostride/agent-qa-agent'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
@@ -17,6 +17,8 @@ import type { RunEventEnvelope, StepFinalizedPayload } from '@vostride/agent-qa-
 import { produceDirectRunMembers, produceSuiteRunMembers } from '../commands/run.js'
 import type { RunInvocationInputs, SuiteRunMemberProductionInput } from '../commands/run.js'
 import { assembleCliRun } from '../composition/run-assembly.js'
+import type { LoopPorts, StepResult } from '@vostride/agent-qa-runner'
+import type { ScreenState, SubActionRecordedPayload } from '@vostride/agent-qa-schema'
 
 const boundary = vi.hoisted(() => ({
   provider: vi.fn(() => { throw new Error('provider must not be called') }),
@@ -220,3 +222,165 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
     }
   })
 }
+
+// This slice uses the real runner, sink, subscriber, disk stores and function registry.
+// Platform/model are deterministic ports. runs.evidence selection belongs to 423-29/09;
+// here runs.detail selects the recorded child and the existing store reads its SHA bytes.
+async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'childless' | 'historical') {
+  const runId = generateRunId()
+  const masking = buildRunMaskingContext({ env: {} })
+  const secret = 'synthetic-aria-late-secret'
+  const before = [0, 1].map(index => makeScreenState({
+    platform: mode === 'mobile' ? 'android' : 'web',
+    tree: mode === 'empty' ? '' : `before child ${index} ${secret}`,
+  }))
+  const after = [0, 1].map(index => makeScreenState({ tree: `after child ${index} ${secret}` }))
+  const screens = [before[0]!, before[0]!, after[0]!, before[1]!, before[1]!, after[1]!]
+  let observeIndex = 0
+  let current: ScreenState = before[0]!
+  let verification = 0
+  const storeRoot = join(root, '.agent-qa')
+  const store = new FsEvidenceArtifactStore({ root: storeRoot, runId })
+  const dbPath = join(root, 'aria.db')
+  const db = new DashboardDatabase({ dbPath })
+  const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+  const bus = createRunEventBus({ runId })
+  const events: RunEventEnvelope[] = []
+  const publicationBytes = new Map<string, Uint8Array>()
+  bus.subscribe(1, event => {
+    events.push(event)
+    if (event.type === 'subActionRecorded') {
+      const child = event.payload as SubActionRecordedPayload
+      for (const ref of child.artifactRefs ?? []) {
+        const bytes = store.getBlob(ref.sha)
+        if (bytes) publicationBytes.set(ref.sha, bytes)
+      }
+    }
+    ingest.handler(event)
+  })
+  bus.publish('runStarted', {})
+  bus.publish('testStarted', { testIndex: 0, testId: generateTestId(), name: 'ARIA member' })
+  const sink = createMemberEventSink({ bus, masking, testIndex: 0 }).loopEmitFor(0)
+  const ports: LoopPorts = {
+    adapter: {
+      platform: mode === 'mobile' ? 'android' : 'web',
+      async setup() {}, async cleanup() {},
+      async observe() { current = screens[Math.min(observeIndex++, screens.length - 1)]!; return current },
+      async execute() { masking.register(secret); return { success: true } },
+      async screenshot() { return Buffer.from(`decision image ${current.tree}`) },
+    },
+    planner: { async plan() { return { plan: {
+      reasoning: 'record child', action: { type: 'wait' }, confidence: 1,
+      stepComplete: true, stepFailed: false,
+    } } } },
+    verifier: { async verify() { return { verification: {
+      success: verification++ > 0, reasoning: 'fixture verdict', isAppError: false,
+    } } } },
+    masking, evidenceArtifacts: store, events: sink,
+  }
+  let result: StepResult | undefined
+  try {
+    if (mode === 'childless' || mode === 'historical') {
+      bus.publish('stepFinalized', { testIndex: 0, stepIndex: 0, cacheStatus: 'bypass',
+        verifierVerdict: { pass: true, reasoning: 'recorded' }, selfHealOccurred: false,
+        briefDigest: 'recorded', status: 'passed' })
+      if (mode === 'historical') {
+        bus.publish('subActionRecorded', { testIndex: 0, stepIndex: 0, subActionIndex: 0,
+          plan: 'historical', plannedAction: { type: 'wait' }, result: { success: true },
+          screenStateHash: screenStateHash(before[0]!),
+        })
+      }
+    } else {
+      result = await executeStep('Wait for the second state', ports, {
+        stepInstruction: 'Wait', testName: 'ARIA member', previousSteps: [],
+        plannerModel: {} as never, verifierModel: {} as never,
+      })
+      expect(result.status).toBe('passed')
+    }
+    await ingest.finalize({})
+  } finally { db.close() }
+  const handoffPath = join(root, 'handoff.json')
+  writeFileSync(handoffPath, JSON.stringify(result?.evidence ?? { stateBefore: before[0], stateAfter: after[0] }))
+  const handoffBytes = readFileSync(handoffPath)
+  expect(handoffBytes.toString()).toContain(secret)
+  const recordedChildren = events.filter(event => event.type === 'subActionRecorded')
+    .map(event => event.payload as SubActionRecordedPayload)
+  const lost = mode === 'missing' ? recordedChildren[0]?.ariaEvidence : undefined
+  if (lost?.state === 'present') rmSync(join(storeRoot, 'runs', slugBranch(runId), 'blobs', lost.ref.sha))
+  const reopened = new FsEvidenceArtifactStore({ root: storeRoot, runId })
+  const cold = new DashboardDatabase({ dbPath })
+  const forbidden = vi.fn(() => { throw new Error('Historical handoff must not be loaded') })
+  const blobRead = vi.fn(() => { throw new Error('runs.detail probes presence only') })
+  try {
+    const registry = createFunctionRegistry({
+      deps: {
+        runDetail: createDashboardRunDetailReader(cold), runs: { get: forbidden },
+        evidenceBlobs: { read: blobRead, has: async (_runId: unknown, sha: string) => reopened.hasBlob(sha) ? 'found' : 'blob_absent' },
+      } as unknown as FunctionDeps,
+      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      resolveExecutionContext: () => 'local-interactive',
+    })
+    const detail = RunDetailProjectionSchema.parse(await invokeFunction(
+      registry, RUNS_DETAIL_FUNCTION_ID, { runId: asRunId(runId) },
+      { surface: 'cli', grantedScopes: ['read'], safeMode: false, origin: 'human' } as FunctionCaller,
+    ))
+    expect(forbidden).not.toHaveBeenCalled()
+    expect(blobRead).not.toHaveBeenCalled()
+    expect(readFileSync(handoffPath).equals(handoffBytes)).toBe(true)
+    expect(detail.steps).toHaveLength(1)
+    expect(detail.subActions.map(child => child.subActionIndex)).toEqual(
+      mode === 'childless' ? [] : mode === 'historical' ? [0] : [0, 1],
+    )
+    if (mode === 'childless') {
+      expect(detail.steps[0]).not.toHaveProperty('ariaEvidence')
+      expect(detail.subActions).toEqual([])
+    } else if (mode === 'historical') {
+      expect(detail.subActions[0]?.ariaEvidence).toEqual({ kind: 'aria', state: 'absent', reason: 'unavailable' })
+      expect(detail.subActions[0]?.artifactRefs).toBeUndefined()
+      expect(cold.readRunDetailRows(runId)?.subActions[0]).not.toHaveProperty('ariaEvidence')
+    } else {
+      for (const [index, child] of detail.subActions.entries()) {
+        expect(child.ariaEvidence).toEqual(recordedChildren[index]?.ariaEvidence)
+        expect(result?.evidence?.subActions[index]?.stateBefore.tree).toBe(before[index]?.tree)
+        // Existing failed-verification semantics replace the first after state with the
+        // next settled before state. ARIA must still retain that child's original before.
+        expect(result?.evidence?.subActions[index]?.stateAfter?.tree)
+          .toBe(index === 0 ? before[1]?.tree : after[1]?.tree)
+        const screenshot = child.artifactRefs?.find(ref => ref.id.startsWith('decision-screenshot:'))
+        expect(screenshot).toBeDefined()
+        const image = Buffer.from(`decision image ${before[index]!.tree}`)
+        expect(screenshot?.sha).toBe(createHash('sha256').update(image).digest('hex'))
+        expect(Buffer.from(reopened.getBlob(screenshot!.sha)!).equals(image)).toBe(true)
+        if (mode === 'empty') {
+          expect(child.ariaEvidence).toEqual({ kind: 'aria', state: 'absent', reason: 'empty' })
+          expect(child.artifactRefs).toHaveLength(1)
+          continue
+        }
+        expect(child.ariaEvidence?.state).toBe('present')
+        if (child.ariaEvidence?.state !== 'present') throw new Error('Missing ARIA producer ref')
+        const ref = child.ariaEvidence.ref
+        expect(child.artifactRefs?.map(item => item.id)).toEqual([screenshot!.id, ref.id])
+        expect(publicationBytes.has(ref.sha)).toBe(true)
+        if (mode === 'missing' && index === 0) {
+          expect(child.artifactRefs?.[1]).toMatchObject({ ...ref, present: false })
+          expect(reopened.getBlob(ref.sha)).toBeUndefined()
+          continue
+        }
+        const bytes = reopened.getBlob(ref.sha)!
+        expect(Buffer.from(bytes).equals(Buffer.from(publicationBytes.get(ref.sha)!))).toBe(true)
+        expect(createHash('sha256').update(bytes).digest('hex')).toBe(ref.sha)
+        const text = Buffer.from(bytes).toString()
+        expect(AriaEvidenceDocumentSchema.parse(JSON.parse(text))).toEqual({ schemaVersion: 1, kind: 'aria', tree: masking.mask(before[index]!.tree) })
+        expect(text).not.toContain(secret)
+        expect(text).not.toContain('after child')
+      }
+    }
+  } finally { cold.close(); masking.dispose() }
+}
+
+it('ARIA-COLD-READBACK / ARIA-SIDE-BEFORE: two children retain distinct before trees and decision screenshots across DB reopen', () => ariaReadback('two'))
+it('ARIA-COLD-READBACK: empty before trees retain their own screenshots and empty state', () => ariaReadback('empty'))
+it('ARIA-COLD-READBACK: missing blob marks only its cited ref absent without selecting its sibling', () => ariaReadback('missing'))
+it('ARIA-COLD-READBACK / EVID-MOBILE-TREE: existing Android before trees survive cold readback', () => ariaReadback('mobile'))
+it('EVID-NO-SUBACTION: the current detail read preserves childless selection without fabricating a child', () => ariaReadback('childless'))
+it('ARIA-HISTORICAL-NO-BACKFILL: NULL ARIA stays unavailable despite a cleartext handoff', () => ariaReadback('historical'))

@@ -101,6 +101,27 @@ describe('DETAIL-HISTORICAL-UNAVAILABLE', () => {
 })
 
 describe('DETAIL-ENTRY-OWNERSHIP', () => {
+  it('ARIA-SIDE-BEFORE: missing ARIA bytes annotate only the owned ref and never select another child', async () => {
+    const firstRef = ref('aria-state', 'a')
+    const secondRef = ref('aria-state', 'b')
+    const image = ref('decision-screenshot', 'c')
+    const children: EvidenceSubAction[] = [firstRef, secondRef].map((ariaRef, index) => ({
+      ...child(0, 0, index), screenStateHash: `before-${index}`, screenStateHashAfter: `after-${index}`,
+      artifactRefs: [image, ariaRef], ariaEvidence: { kind: 'aria', state: 'present', ref: ariaRef },
+    }))
+    const contentRead = vi.fn(() => { throw new Error('No blob or historical tree content read') })
+    const output = await runsDetailSpec.invoke({ runId }, {
+      runDetail: { read: async () => ({ runId, members: [], steps: [step()], subActions: children }) },
+      evidenceBlobs: { read: contentRead, has: async (_id: unknown, sha: string) => sha === firstRef.sha ? 'blob_absent' : 'found' },
+      runs: { get: contentRead },
+    } as unknown as FunctionDeps)
+    expect(output.subActions.map(item => item.ariaEvidence)).toEqual(children.map(item => item.ariaEvidence))
+    expect(output.subActions[0]?.artifactRefs).toEqual([{ ...image, present: true }, { ...firstRef, present: false }])
+    expect(output.subActions[1]?.artifactRefs).toEqual([{ ...image, present: true }, { ...secondRef, present: true }])
+    expect(output.subActions.map(item => item.screenStateHash)).toEqual(['before-0', 'before-1'])
+    expect(contentRead).not.toHaveBeenCalled()
+    expect(RunDetailProjectionSchema.safeParse(output).success).toBe(true)
+  })
   it('preserves a valid captured __proto__ own name through strict parsing', async () => {
     const variableSnapshot = JSON.parse('{"__proto__":{"value":"[secret]","source":"capture"}}') as VariableSnapshot
     const recorded: EvidenceStep = {
