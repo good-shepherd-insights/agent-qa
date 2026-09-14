@@ -10,6 +10,16 @@ import { createDashboardRunDetailReader } from '../run-service/run-detail-reader
 import { createFunctionRegistry, invokeFunction, RUNS_DETAIL_FUNCTION_ID, type FunctionDeps } from '@vostride/agent-qa-agent'
 import { asRunId, EvidenceArtifactRefSchema, RunDetailProjectionSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, RunEventEnvelope, StepFinalizedPayload, SubActionRecordedPayload } from '@vostride/agent-qa-schema'
+import type { ModelProfile } from '@vostride/agent-qa-schema'
+import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
+import { createModel, createTokenAccounting } from '@vostride/agent-qa-model'
+import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
+import {
+  createMemberEventSink, createRunEventBus, createStepModelScope,
+  LLMPlanner, LLMVerifier, makeScreenState, runMemberTest,
+} from '@vostride/agent-qa-runner'
+import type { StepModelScope } from '@vostride/agent-qa-runner'
+import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 
 // Frozen pre-423 v2 DDL, copied before the v3 change. Never derived from current MIGRATIONS.
 const V2_SQL: string[] = [
@@ -42,8 +52,264 @@ const opened: DashboardSqliteDatabase[] = []
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'agent-qa-423-migration-')) })
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   for (const db of opened.splice(0)) db.close()
   rmSync(dir, { recursive: true, force: true })
+})
+
+// Only the provider transport and platform are doubles. The model owner, SDK, scoped
+// consumers, member loop, late extractor, event sink, subscriber and SQLite are real.
+async function usageRun(options: { retry?: boolean; omitCache?: boolean; unscoped?: boolean } = {}) {
+  const runId = asRunId(generateRunId())
+  const testId = generateTestId()
+  const dbPath = join(dir, `${runId}.db`)
+  const db = new DashboardDatabase({ dbPath })
+  const masking = buildRunMaskingContext({ env: {} })
+  const store = new FsEvidenceArtifactStore({ root: dir, runId })
+  const bus = createRunEventBus({ runId })
+  const events: RunEventEnvelope[] = []
+  const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+  bus.subscribe(1, event => { events.push(event); ingest.handler(event) })
+  let planningCalls = 0
+  let retry = options.retry
+  let extractionStarted = false
+  let terminalCountAtExtraction = -1
+  const requests: string[] = []
+  const transport = vi.fn(async (_url: unknown, init: RequestInit) => {
+    const request = JSON.parse(String(init.body))
+    if (retry) {
+      retry = false
+      requests.push('failed-attempt')
+      return new Response(JSON.stringify({ error: { message: 'Synthetic transient failure' } }),
+        { status: 503, headers: { 'content-type': 'application/json', 'retry-after-ms': '0' } })
+    }
+    const planning = Array.isArray(request.tools) && request.tools.some(
+      (tool: { function: { name: string } }) => tool.function.name === 'web_click',
+    )
+    const extracting = request.response_format?.json_schema?.name === 'extraction_result'
+    const judging = request.response_format?.json_schema?.name === 'ai_judgment'
+    requests.push(planning ? 'planner' : extracting ? 'extraction' : judging ? 'assertion' : 'verifier')
+    if (planning) planningCalls++
+    if (extracting) {
+      extractionStarted = true
+      terminalCountAtExtraction = events.filter(event => event.type === 'stepFinalized').length
+      // This secret was unknown during planning and must still disappear at final egress.
+      masking.register('synthetic-routed-model')
+    }
+    return new Response(JSON.stringify({
+      id: 'chat-synthetic-423-31', created: 1, model: 'synthetic-routed-model',
+      choices: [{ index: 0, finish_reason: planning ? 'tool_calls' : 'stop', message: planning
+        ? { role: 'assistant', content: null, tool_calls: [{ id: `call-${planningCalls}`, type: 'function', function: {
+            name: planningCalls === 1 ? 'web_click' : 'common_assertAI',
+            arguments: JSON.stringify({ ...(planningCalls === 1 ? { ref: 'e2' } : { claim: 'The Log in button is visible' }),
+              reasoning: 'Check the button', confidence: 1, stepComplete: true,
+              doesActionAdvanceUsTowardsGoal: true }),
+          } }] }
+        : { role: 'assistant', content: JSON.stringify(extracting
+            ? { value: 'captured', reasoning: 'Read from screen' }
+            : judging ? { verdict: true, rationale: 'Visible' }
+            : { success: false, reasoning: 'Confirm with an assertion', isAppError: false }) } }],
+      usage: { prompt_tokens: 100, completion_tokens: 7,
+        ...(options.omitCache ? {} : { prompt_tokens_details: { cached_tokens: 30 } }) },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  })
+  vi.stubGlobal('fetch', transport)
+  const profile: ModelProfile = {
+    provider: 'openai-compatible', model: 'gpt-4o', baseURL: 'https://usage-fixture.invalid/v1',
+    auth: { mode: 'none' },
+  }
+  const model = createModel(profile, { kind: 'none' })
+  const accounting = createTokenAccounting({ getCapabilities: () => profile.capabilities! })
+  const consumers = (models: { plannerModel: typeof model; verifierModel: typeof model }) => ({
+    planner: new LLMPlanner(models.plannerModel, 'web', undefined, undefined, accounting),
+    verifier: new LLMVerifier(models.verifierModel, accounting),
+  })
+  let scope: StepModelScope | undefined
+  bus.publish('runStarted', {})
+  bus.publish('testStarted', { testIndex: 0, testId, name: 'Usage roundtrip' })
+  try {
+    const result = await runMemberTest({ testId, name: 'Usage roundtrip', filePath: 'usage.yaml',
+      steps: [{ step: 'Click and verify Log in', capture: { variable: '__proto__', method: 'ai' } }],
+    }, {
+      adapter: { platform: 'web', async setup() {}, async cleanup() {},
+        async observe() { return makeScreenState() }, async execute() { return { success: true } } },
+      ...consumers({ plannerModel: model, verifierModel: model }), plannerModel: model, verifierModel: model,
+      testIndex: 0, abortSignal: new AbortController().signal, masking, evidenceArtifacts: store,
+      sink: createMemberEventSink({ bus, masking, testIndex: 0 }),
+      ...(options.unscoped ? {} : { stepModelScope: { runId, create: key => {
+        scope = createStepModelScope({ key,
+          models: {
+            planner: { model, bind: observer => createModel(profile, { kind: 'none' }, {}, observer) },
+            verifier: { model, bind: observer => createModel(profile, { kind: 'none' }, {}, observer) },
+          },
+          profiles: { planner: { provider: profile.provider, modelId: profile.model },
+            verifier: { provider: profile.provider, modelId: profile.model } },
+          mask: text => masking.mask(text),
+          createConsumers: models => consumers(models as { plannerModel: typeof model; verifierModel: typeof model }),
+        })
+        return scope
+      } } }),
+    })
+    expect(result.status).toBe('passed')
+    expect(result.steps[0]?.capturedVariables).toEqual({ ['__proto__']: 'captured' })
+    expect(requests.filter(value => value !== 'failed-attempt')).toEqual([
+      'planner', 'verifier', 'planner', 'assertion', 'extraction',
+    ])
+    bus.publish('testFinished', { testIndex: 0, outcome: 'passed' })
+    bus.publish('runFinished', { aggregateVerdict: 'passed' })
+    await ingest.finalize({})
+    const finals = events.filter(event => event.type === 'stepFinalized')
+    expect(finals).toHaveLength(1)
+    expect(events.filter(event => event.type === 'runWarning')).toEqual([])
+    db.close()
+    const cold = new DashboardDatabase({ dbPath })
+    try {
+      return { event: finals[0]!.payload as StepFinalizedPayload, events, result,
+        rows: cold.readRunDetailRows(runId)!, projection: await detail(cold, runId),
+        snapshot: scope?.snapshot(), requests, extractionStarted, terminalCountAtExtraction, store,
+      }
+    } finally { cold.close() }
+  } finally { bus.close(); db.close(); masking.dispose() }
+}
+
+it('USAGE-COLD-ROUNDTRIP: real model attempts survive final event, subscriber and cold read', async () => {
+  const run = await usageRun()
+  expect(run.event.modelUsage).toMatchObject({ calls: { started: 5, succeeded: 5, failed: 0 },
+    inputTokens: 500, outputTokens: 35, cachedInputTokens: 150 })
+  expect(run.rows.steps[0]?.modelUsage).toEqual(run.event.modelUsage)
+  expect(run.rows.steps[0]?.tokenUsage).toEqual(run.event.tokenUsage)
+  expect(run.projection.steps[0]?.modelUsage).toEqual(run.event.modelUsage)
+  expect(run.projection.steps[0]?.tokenUsage).toEqual(run.event.tokenUsage)
+  expect(JSON.stringify(run.event)).not.toContain('synthetic-routed-model')
+  expect(run.event.modelUsage?.roles.planner?.respondingModelIds).toHaveLength(1)
+  expect(run.event.modelUsage?.roles.verifier?.respondingModelIds).toHaveLength(1)
+})
+
+it('USAGE-EXTRACTION-FINAL: final publication includes late extraction and own variable names', async () => {
+  const run = await usageRun()
+  expect(run.extractionStarted).toBe(true)
+  expect(run.terminalCountAtExtraction).toBe(0)
+  expect(run.event.tokenUsage).toEqual({ promptTokens: 500, completionTokens: 35, totalTokens: 535, cachedInputTokens: 150 })
+  expect(run.event.variableSnapshot).toEqual({ ['__proto__']: { value: 'captured', source: 'capture' } })
+  expect(run.rows.steps[0]?.variableSnapshot).toEqual(run.event.variableSnapshot)
+})
+
+it('USAGE-NO-DOUBLE-COUNT: failed retry remains in the complete population after later success', async () => {
+  const run = await usageRun({ retry: true })
+  expect(run.requests).toHaveLength(6)
+  expect(run.event.modelUsage).toMatchObject({ calls: { started: 6, succeeded: 5, failed: 1 } })
+  for (const row of [run.event, run.rows.steps[0]!, run.projection.steps[0]!]) {
+    expect(row).not.toHaveProperty('tokenUsage')
+    expect(row.modelUsage).not.toHaveProperty('cachedInputTokens')
+    expect(row.modelUsage).not.toHaveProperty('inputTokens')
+    expect(row.modelUsage).not.toHaveProperty('outputTokens')
+  }
+  expect(run.rows.steps[0]?.modelUsage).toEqual(run.event.modelUsage)
+})
+
+it('USAGE-RAW-ABSENT: SDK normalized cache zero never reaches the cold read', async () => {
+  const run = await usageRun({ omitCache: true })
+  expect(run.event.tokenUsage).toEqual({ promptTokens: 500, completionTokens: 35, totalTokens: 535 })
+  expect(run.rows.steps[0]?.tokenUsage).toEqual(run.event.tokenUsage)
+  expect(run.rows.steps[0]?.modelUsage).not.toHaveProperty('cachedInputTokens')
+})
+
+it('USAGE-LEGACY-UNSCOPED: old callers keep their original loop token population', async () => {
+  const run = await usageRun({ unscoped: true })
+  expect(run.event).not.toHaveProperty('modelUsage')
+  expect(run.rows.steps[0]).not.toHaveProperty('modelUsage')
+  expect(run.event.tokenUsage).toEqual(run.result.steps[0]?.trace?.tokenUsage)
+  expect(run.rows.steps[0]?.tokenUsage).toEqual(run.event.tokenUsage)
+  expect(run.event.tokenUsage).not.toHaveProperty('cachedInputTokens')
+})
+
+it('ARIA-MEMBER-PROXY: real member preserves child extras through buffering and cold read', async () => {
+  const run = await usageRun()
+  const children = run.events.filter(event => event.type === 'subActionRecorded')
+    .map(event => event.payload as SubActionRecordedPayload)
+  expect(children).toHaveLength(2)
+  expect(run.rows.subActions).toEqual(children)
+  for (const child of children) {
+    expect(child.ariaEvidence?.state).toBe('present')
+    if (child.ariaEvidence?.state === 'present') {
+      expect(child.artifactRefs).toContainEqual(child.ariaEvidence.ref)
+      expect(JSON.parse(Buffer.from(run.store.getBlob(child.ariaEvidence.ref.sha)!).toString())).toMatchObject({ kind: 'aria' })
+    }
+  }
+})
+
+it('HISTORICAL-USAGE-ABSENT: upgraded populated v2 rows retain only their recorded token facts', async () => {
+  const raw = open('usage-history.db')
+  seedV2(raw)
+  raw.close()
+  const db = new DashboardDatabase({ dbPath: join(dir, 'usage-history.db') })
+  try {
+    for (const id of ['old', 'old-null']) {
+      const row = db.readRunDetailRows(id)!.steps[0]!
+      expect(row).not.toHaveProperty('modelUsage')
+      expect(row.tokenUsage?.cachedInputTokens).toBeUndefined()
+    }
+    expect(db.readRunDetailRows('old')!.steps[0]?.tokenUsage).toEqual({ promptTokens: 3, completionTokens: 4, totalTokens: 7 })
+    expect(db.readRunDetailRows('old-null')!.steps[0]).not.toHaveProperty('tokenUsage')
+  } finally { db.close() }
+})
+
+it('USAGE-OPTIONAL-ENVELOPE: independent token/model fields and clearing survive insert, upsert and reopen', async () => {
+  const dbPath = join(dir, 'usage-envelope.db')
+  const db = new DashboardDatabase({ dbPath })
+  const { step } = recorded()
+  const tokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedInputTokens: 0 }
+  const modelUsage = { roles: {}, calls: { started: 1, succeeded: 0, failed: 1 } }
+  try {
+    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId: 'envelope' } })
+    let seq = 0
+    const emit = (payload: StepFinalizedPayload) => ingest.handler({ runId: 'envelope', type: 'stepFinalized', payload, seq: ++seq, ts: Date.now() })
+    ingest.handler({ runId: 'envelope', type: 'runStarted', payload: {}, seq: ++seq, ts: Date.now() } as RunEventEnvelope)
+    emit({ ...step, stepIndex: 0, tokenUsage })
+    emit({ ...step, stepIndex: 1, tokenUsage })
+    emit({ ...step, stepIndex: 1, modelUsage })
+    emit({ ...step, stepIndex: 2, tokenUsage, modelUsage })
+    emit({ ...step, stepIndex: 2 })
+    await ingest.finalize({})
+  } finally { db.close() }
+  const cold = new DashboardDatabase({ dbPath })
+  try {
+    const [tokenOnly, modelOnly, omitted] = cold.readRunDetailRows('envelope')!.steps
+    expect(tokenOnly?.tokenUsage).toEqual(tokenUsage)
+    expect(tokenOnly).not.toHaveProperty('modelUsage')
+    expect(modelOnly?.modelUsage).toEqual(modelUsage)
+    expect(modelOnly).not.toHaveProperty('tokenUsage')
+    expect(omitted).not.toHaveProperty('modelUsage')
+    expect(omitted).not.toHaveProperty('tokenUsage')
+  } finally { cold.close() }
+})
+
+it('USAGE-ENVELOPE-AUTHORITY: absent or malformed persisted usage never resurrects scalar totals', () => {
+  const dbPath = join(dir, 'usage-authority.db')
+  const db = new DashboardDatabase({ dbPath })
+  const { step } = recorded()
+  db.insertRun({ id: 'authority', name: 'authority', status: 'passed', duration: 0, startedAt: '', endedAt: '' })
+  for (let stepIndex = 0; stepIndex < 4; stepIndex++) {
+    db.insertRunStep({ ...step, runId: 'authority', stepIndex,
+      tokenUsage: { promptTokens: 100, completionTokens: 7, totalTokens: 107 } })
+  }
+  db.close()
+  const raw = open('usage-authority.db')
+  const modelUsage = { roles: {}, calls: { started: 1, succeeded: 0, failed: 1 } }
+  for (const [stepIndex, envelope] of [
+    [0, JSON.stringify({ modelUsage })], [1, '{malformed'], [2, 'null'],
+    [3, JSON.stringify({ modelUsage, tokenUsage: { totalTokens: 99 } })],
+  ] as const) raw.prepare('UPDATE run_steps SET model_usage_json = ? WHERE step_index = ?').run(envelope, stepIndex)
+  raw.close()
+  const cold = new DashboardDatabase({ dbPath })
+  try {
+    const rows = cold.readRunDetailRows('authority')!.steps
+    for (const row of rows) expect(row).not.toHaveProperty('tokenUsage')
+    expect(rows[0]?.modelUsage).toEqual(modelUsage)
+    expect(rows[3]?.modelUsage).toEqual(modelUsage)
+    expect(rows[1]).not.toHaveProperty('modelUsage')
+    expect(rows[2]).not.toHaveProperty('modelUsage')
+  } finally { cold.close() }
 })
 function open(name: string): DashboardSqliteDatabase {
   const db = createDashboardSqliteDatabase(join(dir, name))
