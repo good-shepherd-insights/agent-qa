@@ -120,25 +120,25 @@ describe('foldRetrievalRung — the index axis is folded FIRST (D-17)', () => {
     ['the static floor', READY_FLOOR],
     ['a deferred embedder', { kind: 'deferred', reason: 'ram-budget' }],
     ['no embedder at all', { kind: 'lexical-only' }],
-  ])('folds a scan face to bundle-scan/index-unavailable with %s', (_name, embedder) => {
+  ])('folds an absent scan face to bundle-scan/index-not-built with %s', (_name, embedder) => {
     // No dense leg can run against an index that will not open, whatever the embedder did —
     // which is precisely why the index axis is consulted before the embedder axis.
     expect(foldRetrievalRung(SCAN_FACE, embedder)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'bundle-scan',
-      reason: 'index-unavailable',
+      reason: 'index-not-built',
     })
   })
 
   it('folds index + native to memidex with NO reason key (the top rung names no cause)', () => {
     const recorded = foldRetrievalRung(INDEX_FACE, READY_NATIVE)
-    expect(recorded).toEqual({ schemaVersion: 1, rung: 'memidex' })
+    expect(recorded).toEqual({ schemaVersion: 2, rung: 'memidex' })
     expect('reason' in recorded).toBe(false)
   })
 
   it('folds index + floor to static-floor/native-runtime-unavailable for a node profile', () => {
     expect(foldRetrievalRung(INDEX_FACE, READY_FLOOR, DEFAULT_EMBEDDING_PROFILE)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'static-floor',
       reason: 'native-runtime-unavailable',
     })
@@ -149,7 +149,7 @@ describe('foldRetrievalRung — the index axis is folded FIRST (D-17)', () => {
     // runtime broke. An operator reading `native-runtime-unavailable` here would go hunting for
     // a fault that does not exist.
     expect(foldRetrievalRung(INDEX_FACE, READY_FLOOR, STATIC_FLOOR_EMBEDDING_PROFILE)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'static-floor',
       reason: 'profile-static-configured',
     })
@@ -162,7 +162,7 @@ describe('foldRetrievalRung — the index axis is folded FIRST (D-17)', () => {
     ['worker-unavailable', 'profile-unresolved'],
   ] as const)('folds index + deferred/%s to lexical-only/%s', (deferReason, rungReason) => {
     expect(foldRetrievalRung(INDEX_FACE, { kind: 'deferred', reason: deferReason })).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'lexical-only',
       reason: rungReason,
     })
@@ -170,7 +170,7 @@ describe('foldRetrievalRung — the index axis is folded FIRST (D-17)', () => {
 
   it('folds index + lexical-only to lexical-only/floor-disabled', () => {
     expect(foldRetrievalRung(INDEX_FACE, { kind: 'lexical-only' })).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'lexical-only',
       reason: 'floor-disabled',
     })
@@ -252,7 +252,7 @@ describe('resolveRetrievalRung — never throws, never downloads, never writes',
     })
 
     expect(recorded).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'static-floor',
       reason: 'native-runtime-unavailable',
     })
@@ -273,7 +273,7 @@ describe('resolveRetrievalRung — never throws, never downloads, never writes',
     })
 
     expect(recorded).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'lexical-only',
       reason: 'floor-disabled',
     })
@@ -290,7 +290,7 @@ describe('resolveRetrievalRung — never throws, never downloads, never writes',
     })
 
     expect(recorded).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'lexical-only',
       reason: 'low-ram-deferral',
     })
@@ -305,7 +305,7 @@ describe('resolveRetrievalRung — never throws, never downloads, never writes',
       probes: probes(),
     })
 
-    expect(recorded).toEqual({ schemaVersion: 1, rung: 'memidex' })
+    expect(recorded).toEqual({ schemaVersion: 2, rung: 'memidex' })
   })
 
   it('short-circuits on a scan face without touching the embedder or writing a marker', async () => {
@@ -319,9 +319,9 @@ describe('resolveRetrievalRung — never throws, never downloads, never writes',
     })
 
     expect(recorded).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'bundle-scan',
-      reason: 'index-unavailable',
+      reason: 'index-not-built',
     })
     // The probe costs a model load; a face that already decides the fold must not pay it.
     expect(injected.discoverWorker).not.toHaveBeenCalled()

@@ -31,12 +31,30 @@ import {
   type EmbedderProbes,
 } from './embedder-acquire.js'
 import { classifyIndexFace, type IndexFace } from './index-reader.js'
+import type { RebuildReason } from './rebuild-marker.js'
 
 /** The index half of the fold — `index-reader`'s degrade ladder, read without side effects. */
 export type IndexAxis = IndexFace
 
 /** The embedder half of the fold — `embedder-acquire`'s capability outcome, unchanged. */
 export type EmbedderAxis = AcquireEmbedderOutcome
+
+/** What every current fold writes: the `schemaVersion: 2` arm (423 D-22). */
+export type CurrentRecordedRetrievalRung = Extract<RecordedRetrievalRung, { schemaVersion: 2 }>
+
+/**
+ * `RebuildReason` → the recorded cause (423 D-22), as a total map for the same reason as below.
+ *
+ * `schema-version` and `corrupt` share one cause: both mean "rebuild requested" and the operator
+ * does the same thing for either. `index-unavailable` is deliberately NOT a value here — it is the
+ * historical word for a scan whose cause was never recorded, and no current fold may mint it.
+ */
+const INDEX_REASONS: Record<RebuildReason, RetrievalRungReason> = {
+  absent: 'index-not-built',
+  locked: 'index-locked',
+  corrupt: 'index-corrupt',
+  'schema-version': 'index-corrupt',
+}
 
 /**
  * `DeferReason` → the recorded reason word, as a total map rather than a switch with a default.
@@ -65,21 +83,21 @@ export function foldRetrievalRung(
   index: IndexAxis,
   embedder: EmbedderAxis,
   preferredProfile: EmbeddingProfile = DEFAULT_EMBEDDING_PROFILE,
-): RecordedRetrievalRung {
+): CurrentRecordedRetrievalRung {
   if (index.source === 'scan') {
-    return { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable' }
+    return { schemaVersion: 2, rung: 'bundle-scan', reason: INDEX_REASONS[index.reason] }
   }
 
   if (embedder.kind === 'ready') {
     if (embedder.rung === 'native') {
-      return { schemaVersion: 1, rung: 'memidex' }
+      return { schemaVersion: 2, rung: 'memidex' }
     }
     // Same rung, two different truths. A static PREFERRED profile means the floor is serving
     // because it was asked for; anything else means the native runtime could not load. An
     // operator reading `native-runtime-unavailable` on a deliberately-static host would go
     // hunting for a fault that does not exist.
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'static-floor',
       reason:
         preferredProfile.backend === 'static'
@@ -89,10 +107,10 @@ export function foldRetrievalRung(
   }
 
   if (embedder.kind === 'deferred') {
-    return { schemaVersion: 1, rung: 'lexical-only', reason: DEFERRED_REASONS[embedder.reason] }
+    return { schemaVersion: 2, rung: 'lexical-only', reason: DEFERRED_REASONS[embedder.reason] }
   }
 
-  return { schemaVersion: 1, rung: 'lexical-only', reason: 'floor-disabled' }
+  return { schemaVersion: 2, rung: 'lexical-only', reason: 'floor-disabled' }
 }
 
 export interface ResolveRetrievalRungOptions {
@@ -121,7 +139,7 @@ export interface ResolveRetrievalRungOptions {
  */
 export async function resolveRetrievalRung(
   options: ResolveRetrievalRungOptions,
-): Promise<RecordedRetrievalRung> {
+): Promise<CurrentRecordedRetrievalRung> {
   const preferredProfile = options.preferredProfile ?? DEFAULT_EMBEDDING_PROFILE
   const index = classifyIndexFace(options.knowledgeRoot)
   if (index.source === 'scan') {

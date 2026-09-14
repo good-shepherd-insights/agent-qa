@@ -37,17 +37,20 @@ export const RETRIEVAL_RUNGS = ['memidex', 'bundle-scan', 'static-floor', 'lexic
 export type RetrievalRung = (typeof RETRIEVAL_RUNGS)[number]
 
 /**
- * WHY the ladder degraded, as a closed enum recorded beside the rung (D-15).
+ * WHY the ladder degraded, as a closed enum recorded beside the rung (D-15, widened by 423 D-22).
  *
  * Closed rather than free prose lifted from an error, because this string is rendered to a
  * person in a one-line banner and graded by `doctor` — an error message would be neither
- * stable nor safe to print. Eight names rather than D-15's five: `cold-artifact` and
- * `load-failure` are real `DeferReason` arms in `embedder-acquire.ts` today and a `static`
- * PREFERRED profile is a real configuration, so the enum has a home for each rather than
- * folding three distinct operator situations into one wrong word.
+ * stable nor safe to print. `cold-artifact` and `load-failure` are real `DeferReason` arms in
+ * `embedder-acquire.ts` and a `static` PREFERRED profile is a real configuration, so the enum
+ * has a home for each rather than folding distinct operator situations into one wrong word.
  *
  * The mapping of record (fold owner: `knowledge-local/src/retrieval-rung.ts`):
- * `index-unavailable` — the index face degraded to `scan`.
+ * `index-not-built` — the index file is absent (fresh store or clone); bundle scan is authoritative.
+ * `index-locked` — another connection held the index; transient contention.
+ * `index-corrupt` — the index would not open or carries the wrong schema version; rebuild requested.
+ * `index-unavailable` — HISTORICAL ONLY: a pre-423 scan whose cause was not recorded. No current
+ *   fold mints it, and no reader may reinterpret it as one of the three causes above.
  * `native-runtime-unavailable` — the native ONNX runtime could not load; the floor took over.
  * `profile-static-configured` — the floor is serving because the PREFERRED profile is static.
  * `low-ram-deferral` — `DeferReason: 'ram-budget'`.
@@ -65,9 +68,24 @@ export const RETRIEVAL_RUNG_REASONS = [
   'index-unavailable',
   'floor-disabled',
   'profile-static-configured',
+  'index-not-built',
+  'index-locked',
+  'index-corrupt',
 ] as const
 
 export type RetrievalRungReason = (typeof RETRIEVAL_RUNG_REASONS)[number]
+
+/** The eight reasons a `schemaVersion: 1` rung could be written with, frozen as of 407. */
+const HISTORICAL_RETRIEVAL_RUNG_REASONS = [
+  'native-runtime-unavailable',
+  'profile-unresolved',
+  'low-ram-deferral',
+  'model-not-downloaded',
+  'embedder-load-failed',
+  'index-unavailable',
+  'floor-disabled',
+  'profile-static-configured',
+] as const satisfies readonly RetrievalRungReason[]
 
 /**
  * The rung as persisted, stamped with its own literal `schemaVersion` in the same
@@ -75,16 +93,32 @@ export type RetrievalRungReason = (typeof RETRIEVAL_RUNG_REASONS)[number]
  * travels with the value, so a rung read out of an old handoff states which contract it was
  * written under rather than being interpreted under today's.
  *
+ * TWO STRICT ARMS (423 D-22). `schemaVersion: 1` is the historical arm with its original eight
+ * reasons, so a v1 value carrying a 423 cause is refused as mislabelled. `schemaVersion: 2` is
+ * what every current fold writes, over the widened vocabulary. Old bytes are read under their
+ * own arm and never upgraded.
+ *
  * `reason` is ABSENT IFF `rung === 'memidex'` — the top rung is not a degradation and has no
  * cause to name. Every lower rung carries one, which is what lets the banner say rung AND cause
  * in one line without a second read. The invariant is asserted by the fold that mints these
  * values rather than by this schema, because a `superRefine` here would refuse a historical
  * value the product already wrote and a handoff must stay loadable.
  */
-export const RecordedRetrievalRungSchema = z.object({
+const RecordedRetrievalRungV1Schema = z.object({
   schemaVersion: z.literal(1),
+  rung: z.enum(RETRIEVAL_RUNGS),
+  reason: z.enum(HISTORICAL_RETRIEVAL_RUNG_REASONS).optional(),
+}).strict()
+
+const RecordedRetrievalRungV2Schema = z.object({
+  schemaVersion: z.literal(2),
   rung: z.enum(RETRIEVAL_RUNGS),
   reason: z.enum(RETRIEVAL_RUNG_REASONS).optional(),
 }).strict()
+
+export const RecordedRetrievalRungSchema = z.discriminatedUnion('schemaVersion', [
+  RecordedRetrievalRungV1Schema,
+  RecordedRetrievalRungV2Schema,
+])
 
 export type RecordedRetrievalRung = z.infer<typeof RecordedRetrievalRungSchema>
