@@ -1,5 +1,8 @@
 import type { LanguageModel } from 'ai'
 import { describe, expect, it } from 'vitest'
+import { createStepModelScope } from '../../run/step-model-observations.js'
+import type { StepModelObservation, StepModelScopeKey } from '../../run/ports.js'
+import { makePlanner } from './loop-harness.js'
 
 import { buildTools, defaultRegistry } from '../../tools/index.js'
 import {
@@ -39,13 +42,18 @@ function generateResult(content: GenerateResult['content']): GenerateResult {
 
 function createCapturingModel(output: 'action' | 'no-tool' = 'action') {
   const calls: GenerateCall[] = []
-  const model: StubLanguageModel = {
+  const bind = (observation?: StepModelObservation): StubLanguageModel => ({
     specificationVersion: 'v3',
     provider: 'runner-test',
     modelId: MODEL_ID,
     supportedUrls: {},
     async doGenerate(params) {
       calls.push(params)
+      observation?.onCall({ kind: 'start' })
+      // Independently specified raw-provider facts at dispatch, before SDK fallback.
+      observation?.onCall({ kind: 'success', report: {
+        inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, respondingModelId: MODEL_ID,
+      } })
       return generateResult(
         output === 'action'
           ? [{
@@ -60,9 +68,15 @@ function createCapturingModel(output: 'action' | 'no-tool' = 'action') {
     async doStream() {
       throw new Error('streaming is not used by executePlanningTurn')
     },
-  }
+  })
+  const base = bind()
+  const scope = createStepModelScope({
+    key: { runId: 'sampling-run' as StepModelScopeKey['runId'], testIndex: 0, stepIndex: 0 },
+    models: { planner: { model: base, bind }, verifier: { model: base, bind } },
+    mask: text => text, createConsumers: () => ({ planner: makePlanner() }),
+  })
 
-  return { model, calls }
+  return { model: scope.plannerModel, calls }
 }
 
 function turnOptions(

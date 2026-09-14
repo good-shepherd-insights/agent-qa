@@ -4,6 +4,7 @@
 // (the loop's abort path depends on it, T-353-07 mitigation). §12.2 structured-assert
 // semantics are Phase 360; no semantic changes here.
 import { generateText, Output } from 'ai'
+import { withStepModelCall } from '../run/step-model-observations.js'
 import type { LanguageModel, ModelMessage, SystemModelMessage } from 'ai'
 import { z } from 'zod'
 import type { DeclaredModelProfile, ScreenState } from '@vostride/agent-qa-schema'
@@ -202,8 +203,8 @@ export class LLMVerifier implements Verifier {
       messages,
       pin: (message) => pinned.has(message),
       call: (maxOutputTokens, fitted) =>
-        generateText({
-          model: this.model,
+        withStepModelCall(this.model, model => generateText({
+          model,
           maxRetries: 0,
           output: outputConfig,
           abortSignal,
@@ -218,7 +219,7 @@ export class LLMVerifier implements Verifier {
             ? { stopSequences: this.profile.sampling.stop }
             : {}),
           ...(this.profile?.sampling?.seed !== undefined ? { seed: this.profile.sampling.seed } : {}),
-        }),
+        })).then(observed => observed.result),
       // recordUsage anchors on the observed input tokens (the port reads inputTokens
       // only); the `ai` result already carries the usage triad. The nested token-detail
       // objects the port never consumes are intentionally not fabricated.
@@ -341,8 +342,8 @@ export class LLMVerifier implements Verifier {
       messages,
       pin: (message) => pinned.has(message),
       call: (maxOutputTokens, fitted) =>
-        generateText({
-          model: this.model,
+        withStepModelCall(this.model, model => generateText({
+          model,
           maxRetries: 0,
           output: outputConfig,
           abortSignal,
@@ -357,7 +358,7 @@ export class LLMVerifier implements Verifier {
             ? { stopSequences: this.profile.sampling.stop }
             : {}),
           ...(this.profile?.sampling?.seed !== undefined ? { seed: this.profile.sampling.seed } : {}),
-        }),
+        })).then(observed => observed.result),
       recordFrom: (r) => (r.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }) as LanguageModelUsage,
     })
   }

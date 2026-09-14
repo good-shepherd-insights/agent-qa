@@ -4,6 +4,7 @@
 // sanctioned AI-call idiom. No provider construction, no second provider path: egress
 // masking rides the 362 provider-request hook inside runSafetyScope for free.
 import { generateText, Output } from 'ai'
+import { withStepModelCall } from '../run/step-model-observations.js'
 import type { LanguageModel } from 'ai'
 import { z } from 'zod'
 import type { ScreenState } from '@vostride/agent-qa-schema'
@@ -26,8 +27,8 @@ export class LLMVariableExtractor implements VariableExtractor {
     try {
       const prompt = buildExtractionPrompt(input, screenState)
 
-      const result = await generateText({
-        model: this.model,
+      const { result } = await withStepModelCall(this.model, model => generateText({
+        model,
         maxRetries: 0,
         output: Output.object({
           schema: ExtractionResultSchema,
@@ -35,7 +36,7 @@ export class LLMVariableExtractor implements VariableExtractor {
           description: 'Extracted variable value from screen state',
         }),
         prompt,
-      })
+      }))
 
       if (!result.output) {
         throw new Error('LLM returned empty response — no extraction result')

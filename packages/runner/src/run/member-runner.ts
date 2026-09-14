@@ -432,7 +432,18 @@ async function runMemberAttempt(
       result.variableSnapshot = Object.fromEntries(Object.entries(variableStore.snapshot()).map(
         ([name, entry]) => [name, { ...entry, value: redactSecretValue(entry.value, config.secretRedactor) }],
       ))
-      modelScope?.finish()
+      const modelFacts = modelScope?.finish()
+      // This replaces the old loop population, never adds it a second time. The neutral
+      // snapshot is also available to the later typed final-event binding (423-31).
+      if (modelFacts && result.trace) {
+        delete result.trace.tokenUsage
+        if (modelFacts.inputTokens !== undefined && modelFacts.outputTokens !== undefined) {
+          result.trace.tokenUsage = {
+            promptTokens: modelFacts.inputTokens, completionTokens: modelFacts.outputTokens,
+            totalTokens: modelFacts.inputTokens + modelFacts.outputTokens,
+          }
+        }
+      }
       try {
         finalizer.finish(result)
       } finally {

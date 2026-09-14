@@ -1,6 +1,7 @@
 // Runner-owned assertion evaluators (moved 1:1 from core/src/agent/asserter.ts,
 // D-02) — behavior unchanged, imports re-pointed to runner-local modules only.
 import { generateText, Output } from 'ai'
+import { withStepModelCall } from '../run/step-model-observations.js'
 import type { LanguageModel } from 'ai'
 import { z } from 'zod'
 import type { ScreenState } from '@vostride/agent-qa-schema'
@@ -125,8 +126,8 @@ export class LLMAssertionEvaluator implements Asserter {
     try {
       const prompt = buildAssertionPrompt(assertion, screenState)
 
-      const result = await generateText({
-        model: this.model,
+      const { result } = await withStepModelCall(this.model, model => generateText({
+        model,
         maxRetries: 0,
         output: Output.object({
           schema: AssertionResultSchema,
@@ -134,7 +135,7 @@ export class LLMAssertionEvaluator implements Asserter {
           description: 'Evaluation of whether the test assertion holds true',
         }),
         prompt,
-      })
+      }))
 
       if (!result.output) {
         throw new Error('LLM returned empty response — no assertion result')

@@ -24,6 +24,7 @@
 // throws that surface are the abort propagation from generateText and the untouched
 // zod schemaInvalid grounding error from toolCallToActionPlan (D-09 / T-353-05).
 import { generateText } from 'ai'
+import { withStepModelCall } from '../run/step-model-observations.js'
 import type { LanguageModel, ModelMessage, SystemModelMessage, Tool, ToolCallPart, ToolResultPart, ToolSet } from 'ai'
 import type {
   GroundingAttempt,
@@ -285,8 +286,8 @@ export async function executePlanningTurn(
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     // generateText errors (including abort) propagate to the caller untouched.
-    const result = await generateText({
-      model: options.model,
+    const observed = await withStepModelCall(options.model, model => generateText({
+      model,
       maxRetries: 0,
       maxOutputTokens: options.maxOutputTokens,
       ...(options.sampling?.temperature !== undefined
@@ -302,9 +303,10 @@ export async function executePlanningTurn(
       system: options.system,
       abortSignal: options.abortSignal,
       messages,
-    })
+    }))
+    const result = observed.result
 
-    lastResponseModelId = result.response?.modelId
+    lastResponseModelId = observed.respondingModelId
     for (const w of result.warnings ?? []) {
       if (w.type === 'unsupported') unsupported.add(w.feature)
     }

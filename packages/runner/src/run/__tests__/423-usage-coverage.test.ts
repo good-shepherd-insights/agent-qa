@@ -10,6 +10,7 @@ import { executePlanningTurn } from '../../loop/planning-turn.js'
 import { LLMVerifier } from '../../loop/verifier.js'
 import { LLMAssertionEvaluator } from '../../loop/asserter.js'
 import { LLMVariableExtractor } from '../../loop/llm-variable-extractor.js'
+import { LLMPlanner } from '../../loop/planner.js'
 import { buildTools, defaultRegistry } from '../../tools/index.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 
@@ -284,4 +285,81 @@ test('CACHE-HIT-NO-REPORT: execution cache and unobserved SDK usage cannot manuf
   delete config.stepModelScope
   const unbound = await runMemberTest(member, config)
   expect(unbound.steps[0].trace?.tokenUsage).toEqual(legacy)
+})
+
+test.each([NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, 101])(
+  'MIXED-COVERAGE-INVALID: invalid cached count %s never becomes authoritative', async cachedInputTokens => {
+    const f = fixture()
+    await f.dispatch(f.scope.plannerModel, { ...report, cachedInputTokens })
+    expect(f.scope.finish()).not.toHaveProperty('cachedInputTokens')
+  },
+)
+
+test('MIXED-COVERAGE-INCOMPLETE: pending starts, missing input and failed attempts remove coverage', async () => {
+  for (const missing of ['pending', 'input', 'failure'] as const) {
+    const f = fixture()
+    await f.dispatch(f.scope.plannerModel, report)
+    await withStepModelCall(f.scope.verifierModel, async model => {
+      f.emit(model, { kind: 'start' })
+      if (missing === 'failure') f.emit(model, { kind: 'failure' })
+      if (missing === 'input') f.emit(model, { kind: 'success', report: { cachedInputTokens: 0 } })
+    })
+    expect(f.scope.finish().started).toBe(2)
+    expect(f.scope.snapshot()).not.toHaveProperty('cachedInputTokens')
+    expect(f.scope.snapshot()).not.toHaveProperty('inputTokens')
+  }
+})
+
+test('USAGE-ISOLATION: duplicate and late terminals cannot mutate masked detached final facts', async () => {
+  const f = fixture()
+  let observer!: StepModelObservation
+  await withStepModelCall(f.scope.plannerModel, async model => {
+    observer = f.observers.get(model)!
+    observer.onCall({ kind: 'start' })
+    observer.onCall({ kind: 'success', report: { ...report, respondingModelId: 'sensitive-model' } })
+    observer.onCall({ kind: 'failure' })
+    observer.onCall({ kind: 'success', report: { inputTokens: 9999 } })
+  })
+  const final = f.scope.finish()
+  expect(JSON.stringify(final)).not.toContain('sensitive-model')
+  expect(final).toMatchObject({ started: 1, succeeded: 1, failed: 0, inputTokens: 100 })
+  final.attempts[0].report!.inputTokens = 9999
+  final.roles.planner.respondingModelIds.push('untrusted')
+  f.scope.dispose()
+  observer.onCall({ kind: 'start' })
+  observer.onCall({ kind: 'success', report })
+  expect(f.scope.snapshot()).toMatchObject({ started: 1, inputTokens: 100,
+    roles: { planner: { respondingModelIds: ['[secret]'] } } })
+  await expect(f.dispatch(f.scope.plannerModel, report)).rejects.toThrow('scope is closed')
+})
+
+test('USAGE-HEALING: actual planner and verifier retain failed-action replanning decisions', async () => {
+  const f = sdkFixture([{ report, tool: true },
+    { report, text: '{"success":false,"reasoning":"retry","isAppError":false}' },
+    { report, tool: true }, { report }])
+  const planner = new LLMPlanner(f.scope.plannerModel, 'web', undefined, undefined, makeFakeTokenAccounting())
+  const config: MemberRunConfig = {
+    adapter: makeAdapter({ executeResults: [{ success: false, error: 'synthetic action failure' }, { success: true }] }),
+    planner, verifier: f.scope.verifier, plannerModel: f.scope.plannerModel, verifierModel: f.scope.verifierModel,
+    testIndex: 3, abortSignal: new AbortController().signal,
+    stepModelScope: { runId: f.scope.key.runId, create: () => ({ ...f.scope, planner }) },
+    sink: { stepStarted: vi.fn(), loopEmitFor: () => ({ stepFinalized: vi.fn(), subActionRecorded: vi.fn() }),
+      hookStarted: vi.fn(), hookFinished: vi.fn(), testRetryScheduled: vi.fn() },
+  }
+  const result = await runMemberTest({ testId: 'synthetic-test-423', name: 'Healing',
+    filePath: 'synthetic.yaml', steps: ['Click Log in'] }, config)
+  expect(result.status).toBe('passed')
+  expect(result.steps[0].evidence?.subActions).toHaveLength(2)
+  expect(f.script).toHaveLength(0)
+  expect(f.scope.snapshot()).toMatchObject({ started: 4, inputTokens: 400, outputTokens: 40, cachedInputTokens: 160 })
+})
+
+test('USAGE-EXTRACTION-FAILURE: discarded extraction usage remains observed after provider failure', async () => {
+  const f = sdkFixture([{ failure: 'synthetic extraction failure' }])
+  const result = await new LLMVariableExtractor(f.scope.verifierModel).extract(
+    { method: 'ai', variableName: 'name' }, makeScreenState(),
+  )
+  expect(result.success).toBe(false)
+  expect(f.scope.finish()).toMatchObject({ started: 1, failed: 1, succeeded: 0 })
+  expect(f.scope.snapshot()).not.toHaveProperty('cachedInputTokens')
 })
