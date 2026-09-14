@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { asEvidenceToken, asRecordId, type BundleDraft, type Delta } from '@vostride/agent-qa-schema'
+import { asEvidenceToken, asRecordId, type BundleDraft, type Delta, type RecordChange } from '@vostride/agent-qa-schema'
+import { diffSince } from '../diff-since.js'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
 import * as bundleAppend from '../bundle-append.js'
 import { loadBundle } from '../bundle-read.js'
@@ -244,6 +245,29 @@ describe('423 curation snapshot', () => {
     expect(read().rows[0]?.changes).toHaveLength(2)
     expect(read().rows[0]?.changes.every(e => e.change.observationId === 'attributed')).toBe(true)
     expect(read().rows[0]?.changes.every(e => e.change.sourceRunId === 'synthetic-run-43')).toBe(true)
+  })
+
+  it('LATER-PROMOTION-STORE keeps the fixed snapshot while a later attributed promotion has its own identity', () => {
+    const f = commitFixture()
+    const run = 'synthetic-run-42'
+    const fixed = snapshot(f, run)
+    expect(fixed.breakdown).toEqual({ added: 1, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 })
+    const fixedBytes = JSON.stringify(fixed)
+    const config = { knowledgeRoot: f.root, productKey: 'storefront', auditBaseDir: f.deps.auditBaseDir,
+      commitArtifacts: 'none' as const, writerLeaseId: f.authority.leaseId, writerEpoch: f.authority.epoch }
+    expect(bundleAppend.appendOutcomeEvent(config, f.victim.bundleId, { type: 'promoted', buildOrdinal: 60,
+      evidenceToken: asEvidenceToken('later-promotion'), curationJobId: `promote:${f.victimJob.candidateId}` }).kind).toBe('appended')
+    const attributed = diffSince({ knowledgeRoot: f.root, sinceOrdinal: 41 }).filter(row => row.sourceRunId === run)
+    const recorded = fixed.rows.flatMap(row => row.changes.map(entry => entry.change))
+    // The stable identity both readers retain: diffSince reports an Add without the receipt token.
+    const same = (left: RecordChange, right: RecordChange) => left.recordId === right.recordId
+      && left.change === right.change && left.atOrdinal === right.atOrdinal && left.byRecordId === right.byRecordId
+      && (left.evidenceToken === undefined || right.evidenceToken === undefined || left.evidenceToken === right.evidenceToken)
+    expect(recorded.every(entry => attributed.some(row => same(row, entry)))).toBe(true)
+    const later = attributed.filter(row => !recorded.some(entry => same(row, entry)))
+    expect(later).toEqual([expect.objectContaining({ recordId: f.victim.bundleId, change: 'promoted', atOrdinal: 60, sourceRunId: run })])
+    expect(JSON.stringify(fixed)).toBe(fixedBytes)
+    expect(snapshot(f, run).rows[0]?.changes.length).toBeGreaterThan(fixed.rows[0]!.changes.length)
   })
 
   it('HISTORICAL-MISSING never creates a snapshot from missing receipts or bundle shape', async () => {

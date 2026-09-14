@@ -33,7 +33,11 @@ import type {
   StepEvidence,
   StepPlanSource,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
+import { CurationSnapshotSchema, KnowledgeRecordShowResultSchema, maskedMarker } from '@vostride/agent-qa-schema'
+import { createFunctionRegistry } from '../registry.js'
+import { invokeFunction } from '../invoke.js'
 
 import { knowledgeRecordsDiffSpec } from '../ops/knowledge-records-diff.js'
 import { runsDigestSpec } from '../ops/runs-digest.js'
@@ -264,6 +268,184 @@ function change(overrides: Partial<RecordChange> = {}): RecordChange {
   }
 }
 
+function currentRecord(recordId: string) {
+  return KnowledgeRecordShowResultSchema.parse({
+    kind: 'found', schemaVersion: 1, summary: `購入 é e\u0301 ${recordId}`,
+    body: `Current body 🧪 ${recordId}`,
+    provenance: { mode: 'standalone', sourceDescription: 'synthetic inspection' },
+    record: { schemaVersion: 1, recordId, product: 'shop', scope: 'checkout', kind: 'fact',
+      status: 'superseded', confirmations: 7, contradictions: 2, evidenceTokens: ['evidence-current'],
+      openedAtOrdinal: 8, closedAtOrdinal: 90, lastEventOrdinal: 90,
+      anchors: ['page:/checkout', 'el:購入'], trustNarrative: 'Current supporting evidence' },
+  })
+}
+
+function fixedSnapshot() {
+  const classified = (recordId: string, kind: RecordChange['change'], atOrdinal: number) =>
+    change({ recordId, change: kind, atOrdinal, sourceRunId: RUN_ID,
+      evidenceToken: `receipt-${recordId}`, observationId: `observation-${recordId}` })
+  return CurationSnapshotSchema.parse({ schemaVersion: 1,
+    rows: [
+      { recordId: 'added', bucket: 'added', changes: [{ bucket: 'added', change: classified('added', 'added', 20) }] },
+      { recordId: 'confirmed', bucket: 'confirmed', changes: [
+        { bucket: 'confirmed', change: classified('confirmed', 'confirmed', 21) },
+        { bucket: 'confirmed', change: { ...classified('confirmed', 'confirmed', 21), evidenceToken: 'second-confirm', observationId: 'second-observation' } },
+      ] },
+      { recordId: 'victim', bucket: 'superseded', byRecordId: 'replacement', changes: [
+        { bucket: 'superseded', change: { ...classified('victim', 'superseded', 22), byRecordId: 'replacement' } },
+        { bucket: 'added', change: classified('replacement', 'added', 22) },
+      ] },
+      { recordId: 'deprecated', bucket: 'deprecated', changes: [{ bucket: 'deprecated', change: classified('deprecated', 'deprecated', 23) }] },
+      { recordId: 'proposed', bucket: 'proposed', changes: [{ bucket: 'proposed', change: classified('proposed', 'added', 24) }] },
+    ], breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 } })
+}
+
+describe('423 current content and fixed historical sections', () => {
+  beforeEach(() => setActiveMaskingContextResolver(() => masking))
+  afterEach(() => setActiveMaskingContextResolver(() => undefined))
+  const masking = createMaskingContext()
+
+  it('USED-ALL-CHANNELS: one union batch enriches learned and every used channel', async () => {
+    const showRecords = vi.fn(async ({ recordIds }: { recordIds: readonly string[] }) => recordIds.map(currentRecord))
+    const unary = vi.fn(async () => { throw new Error('per-ID fallback forbidden') })
+    const result = await ready({ knowledge: { showRecords, showRecord: unary,
+      diffSince: async () => [change({ recordId: 'rec-a', sourceRunId: RUN_ID }), change({ recordId: 'learned-only', sourceRunId: RUN_ID })] } })
+    expect(showRecords).toHaveBeenCalledTimes(1)
+    expect(new Set(showRecords.mock.calls[0]?.[0].recordIds)).toEqual(new Set(['rec-a', 'rec-b', 'rec-c', 'rec-canary', 'learned-only']))
+    expect(showRecords.mock.calls[0]?.[0].recordIds).toHaveLength(5)
+    expect(unary).not.toHaveBeenCalled()
+    for (const row of [...result.steps.flatMap(s => [...s.served.channel1, ...s.served.channel2, ...s.served.channel3]), ...result.learned.changes]) {
+      expect(row).toHaveProperty('recordContent', expect.objectContaining({ kind: 'fact', currentStatus: 'superseded',
+        applicability: { product: 'shop', scope: 'checkout', anchors: ['page:/checkout', 'el:購入'],
+          openedAtOrdinal: 8, closedAtOrdinal: 90 },
+        currentTrust: { confirmations: 7, contradictions: 2, evidenceTokens: ['evidence-current'],
+          lastEventOrdinal: 90, trustNarrative: 'Current supporting evidence' } }))
+    }
+    expect(RunKnowledgeProjectionSchema.parse(result)).toEqual(result)
+  })
+
+  it('CURRENT-VS-HISTORICAL: joined present-day facts cannot rewrite served trust or change identity', async () => {
+    const historical = change({ recordId: 'rec-a', sourceRunId: RUN_ID, observationId: 'old-observation', evidenceToken: 'old-token' })
+    const result = await ready({ knowledge: { diffSince: async () => [historical],
+      showRecords: async ({ recordIds }) => recordIds.map(currentRecord) } })
+    expect(result.learned.changes[0]).toMatchObject(historical)
+    expect(result.learned.changes[0]).toHaveProperty('recordContent.currentStatus', 'superseded')
+    expect(result.steps[0]?.served.channel1[0]).toMatchObject({ trust: 0.8, status: 'active',
+      recordContent: { content: 'Current body 🧪 rec-a', summary: '購入 é e\u0301 rec-a', currentTrust: { confirmations: 7 } } })
+  })
+
+  it('NOT-FOUND-RETAINED: missing exact Unicode identities remain learned and used rows', async () => {
+    const ids = ['é', 'e\u0301', '__proto__']
+    const showRecords = vi.fn(async ({ recordIds }: { recordIds: readonly string[] }) => recordIds.map(recordId => ({ kind: 'not-found' as const, schemaVersion: 1 as const, recordId })))
+    const result = await ready({ knowledge: { showRecords,
+      diffSince: async () => ids.map(recordId => change({ recordId, sourceRunId: RUN_ID })) } })
+    expect(result.learned.changes.map(row => row.recordId)).toEqual(['__proto__', 'e\u0301', 'é'])
+    for (const row of [...result.learned.changes, ...result.steps[0]!.served.channel2]) {
+      expect(row).toHaveProperty('contentAbsence', { reason: 'not-found' })
+      expect(row).not.toHaveProperty('recordContent')
+    }
+    expect(result.learned).not.toHaveProperty('scanIncomplete')
+  })
+
+  it('SCAN-INCOMPLETE: failed batch retains both halves and differs from an ordinary missing record', async () => {
+    const result = await ready({ knowledge: { diffSince: async () => [change({ sourceRunId: RUN_ID })],
+      showRecords: async () => { throw Object.assign(new Error('synthetic private path'), { name: 'KnowledgeMaintenanceScanError' }) } } })
+    expect(result.learned.changes).toHaveLength(1)
+    expect(result.steps).toHaveLength(4)
+    expect(result.learned).toHaveProperty('scanIncomplete', true)
+    expect(result.learned.changes[0]).toHaveProperty('contentAbsence', { reason: 'scan-incomplete' })
+    expect(result.steps[0]?.served.channel2[0]).toHaveProperty('contentAbsence', { reason: 'scan-incomplete' })
+    expect(JSON.stringify(result)).not.toContain('synthetic private path')
+  })
+
+  it('SNAPSHOT-STABLE: five fixed buckets preserve richer attribution and unchanged reads', async () => {
+    const snapshot = fixedSnapshot()
+    const before = JSON.stringify(snapshot)
+    const recorded = snapshot.rows.flatMap(row => row.changes.map(entry => entry.change))
+    const diff = recorded.map(row => row.change === 'added'
+      ? change({ recordId: row.recordId, change: 'added', atOrdinal: row.atOrdinal, sourceRunId: RUN_ID }) : row)
+    const options: DepsOptions = { bindPostProcessing: true, chain: { curationSnapshot: snapshot,
+      curateMemory: { status: 'done', claimed: false } }, knowledge: { diffSince: async () => diff,
+      showRecords: async ({ recordIds }) => recordIds.map(currentRecord) } }
+    const first = await ready(options)
+    expect(first.learned).toHaveProperty('curationSnapshot', snapshot)
+    expect(first.learned).toHaveProperty('sinceThen', { changes: [], count: 0 })
+    expect(first.learned.changes).toHaveLength(7)
+    const served = first.learned.curationSnapshot!
+    expect(served.rows.map(row => row.bucket).sort()).toEqual(['added', 'confirmed', 'deprecated', 'proposed', 'superseded'])
+    expect(Object.values(served.breakdown).reduce((sum, count) => sum + count, 0)).toBe(served.rows.length)
+    for (const bucket of ['added', 'confirmed', 'superseded', 'deprecated', 'proposed'] as const) {
+      expect(served.breakdown[bucket]).toBe(served.rows.filter(row => row.bucket === bucket).length)
+    }
+    expect(await ready(options)).toEqual(first)
+    expect(JSON.stringify(snapshot)).toBe(before)
+    expect(RunKnowledgeProjectionSchema.parse(first)).toEqual(first)
+  })
+
+  it('LATER-PROMOTION: the same record and a distinct same-ordinal confirmation remain since then', async () => {
+    const snapshot = fixedSnapshot()
+    const later = [change({ recordId: 'added', change: 'promoted', atOrdinal: 91, sourceRunId: RUN_ID }),
+      change({ recordId: 'confirmed', atOrdinal: 21, sourceRunId: RUN_ID, evidenceToken: 'third-confirm', observationId: 'third-observation' })]
+    const result = await ready({ bindPostProcessing: true, chain: { curationSnapshot: snapshot },
+      knowledge: { diffSince: async () => [...snapshot.rows.flatMap(row => row.changes.map(entry => entry.change)), ...later],
+        showRecords: async ({ recordIds }) => recordIds.map(currentRecord) } })
+    expect(result.learned).toHaveProperty('curationSnapshot', snapshot)
+    expect(result.learned).toHaveProperty('sinceThen', { changes: later.map(row => expect.objectContaining(row)), count: 2 })
+  })
+
+  it('FAILED-CHAIN-ROWS-RETAINED: incomplete curation keeps actual changes without invented snapshot/counts', async () => {
+    const result = await ready({ bindPostProcessing: true, chain: { curateMemory: { status: 'failed', claimed: false } },
+      knowledge: { diffSince: async () => [change({ sourceRunId: RUN_ID })],
+        showRecords: async ({ recordIds }) => recordIds.map(currentRecord) } })
+    expect(result.curation.status).toBe('failed')
+    expect(result.learned.changes).toHaveLength(1)
+    expect(result.learned.changes[0]).toMatchObject({ recordId: 'rec-1', change: 'confirmed', atOrdinal: 12 })
+    expect(result.learned.changes[0]).toHaveProperty('recordContent')
+    expect(result.learned).not.toHaveProperty('curationSnapshot')
+    expect(result.learned).not.toHaveProperty('sinceThen')
+    expect(result.curation).not.toHaveProperty('counts')
+  })
+
+  it('JOINED-STRINGS-MASKED: joined prose crosses the live mask while exact identities stay unmasked', async () => {
+    const secret = 'synthetic-secret-9f2c'
+    const local = createMaskingContext()
+    local.register(secret)
+    const secretRecord = (recordId: string) => KnowledgeRecordShowResultSchema.parse({
+      kind: 'found', schemaVersion: 1, summary: `summary ${secret}`, body: `body ${secret}`,
+      provenance: { mode: 'standalone', sourceDescription: 'synthetic inspection' },
+      record: { schemaVersion: 1, recordId, product: `shop ${secret}`, scope: 'checkout', kind: 'fact',
+        status: 'active', confirmations: 1, contradictions: 0, evidenceTokens: [`token ${secret}`],
+        openedAtOrdinal: 3, lastEventOrdinal: 3, anchors: [`el:${secret}`], trustNarrative: `narrative ${secret}` },
+    })
+    const options: DepsOptions = { knowledge: { diffSince: async () => [change({ recordId: 'rec-a', sourceRunId: RUN_ID })],
+      showRecords: async ({ recordIds }) => recordIds.map(secretRecord) } }
+    setActiveMaskingContextResolver(() => local)
+    const masked = await ready(options)
+    expect(JSON.stringify(masked)).not.toContain(secret)
+    expect(masked.steps[0]?.served.channel1[0]).toMatchObject({ id: 'rec-a', recordContent: {
+      content: local.mask(`body ${secret}`), summary: local.mask(`summary ${secret}`),
+      applicability: { product: local.mask(`shop ${secret}`), anchors: [local.mask(`el:${secret}`)] },
+      currentTrust: { evidenceTokens: [local.mask(`token ${secret}`)], trustNarrative: local.mask(`narrative ${secret}`) } } })
+    expect(masked.learned.changes[0]).toMatchObject({ recordId: 'rec-a', sourceRunId: RUN_ID })
+    setActiveMaskingContextResolver(() => undefined)
+    const closed = await ready(options)
+    expect(JSON.stringify(closed)).not.toContain(secret)
+    expect(closed.steps[0]?.served.channel1[0]).toHaveProperty('recordContent.content', maskedMarker('secret'))
+    expect(closed.steps[0]?.served.channel1[0]?.id).toBe('rec-a')
+  })
+
+  it('JOIN-NOT-BOUND: actual registry retains the read with typed enrichment absence and no unary fallback', async () => {
+    const unary = vi.fn(async () => { throw new Error('unary fallback forbidden') })
+    const registry = createFunctionRegistry({ deps: deps({ knowledge: { showRecord: unary } }),
+      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      resolveExecutionContext: () => 'local-headless' })
+    const result = await invokeFunction(registry, 'runs.knowledge', { runId: RUN_ID },
+      { surface: 'cli', origin: 'human', grantedScopes: ['read'], safeMode: false })
+    expect(result).toHaveProperty('steps.0.served.channel2.0.contentAbsence', { reason: 'not-bound' })
+    expect(unary).not.toHaveBeenCalled()
+  })
+})
+
 /**
  * The layer's no-null idiom, asserted STRUCTURALLY (407-19, IN-03).
  *
@@ -362,13 +544,15 @@ describe('the Used half projects every step of every member test (LERN-01, D-03)
       status: 'active',
       servedAsCanary: false,
       tier: 'context',
+      contentAbsence: { reason: 'not-bound' },
     }])
     expect(result.steps[0]?.served.channel2).toEqual([
-      { id: 'rec-b', detailLevel: 'summary', bodyDigest: 'body-1' },
+      { id: 'rec-b', detailLevel: 'summary', bodyDigest: 'body-1', contentAbsence: { reason: 'not-bound' } },
     ])
     // Anchors are deliberately NOT projected: the panel renders a caution's sentence only.
+    // 423-34: a host binding no batch record read names that absence instead of omitting it.
     expect(result.steps[0]?.served.channel3).toEqual([
-      { id: 'rec-c', summary: 'the checkout button moves on mobile' },
+      { id: 'rec-c', summary: 'the checkout button moves on mobile', contentAbsence: { reason: 'not-bound' } },
     ])
     expect(result.steps[2]?.served.channel1[0]?.servedAsCanary).toBe(true)
   })
