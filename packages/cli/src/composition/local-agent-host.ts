@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { AUTHORING_DRAFT_EDIT_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
 import { AuthoringDraftEditOutputSchema } from '@vostride/agent-qa-schema'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
+import { createFeedbackReadsPortForHost } from '../gates/feedback-read-host.js'
 import { bindTrustPriorsToConfig, trustPriorsForHost, type ResolveTrustPriors, type TrustPriorDisclosure } from '../curation/trust-priors.js'
 // The CLI's half of the local host (Phase 384 plan 01, superseded in place by 385 plan 09, D-15).
 //
@@ -3847,6 +3848,8 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
         await invokeFunction(host.registry, AUTHORING_DRAFT_EDIT_FUNCTION_ID, draftInput, CLI_FUNCTION_CALLER),
       ),
     }),
+    // 423 D-19: a dedicated read host, so history never reaches the writer's lock, lease or draft path.
+    feedbackReads: createFeedbackReadsPortForHost({ agentQaRoot: input.agentQaRoot }),
     resolvePromotionPosture,
     resolveTrustPriors,
     agentQaRoot: input.agentQaRoot,

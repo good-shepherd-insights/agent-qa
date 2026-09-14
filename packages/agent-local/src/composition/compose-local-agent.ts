@@ -186,7 +186,7 @@ import type {
   CreateLocalKnowledgeStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeReviewPort } from '@vostride/agent-qa-agent'
-import type { FeedbackPort } from '@vostride/agent-qa-schema'
+import type { FeedbackPort, FeedbackReadsPort } from '@vostride/agent-qa-schema'
 import type { ArtifactRef, TestDraftProposalV1 } from '@vostride/agent-qa-schema'
 import type { ServedRecordFacts } from '@vostride/agent-qa-knowledge-local'
 export type { ServedRecordFacts, MarkTriage, ApplyFeedbackInput } from '@vostride/agent-qa-knowledge-local'
@@ -1698,6 +1698,8 @@ export interface ComposeLocalAgentInput {
   /** Immutable neutral data resolved by the host, reused until recomposition. */
   readonly resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors']
   readonly feedback?: FeedbackPort
+  /** 423 D-19: read-only mark history; absent leaves runs.marks.history unbound by name. */
+  readonly feedbackReads?: FeedbackReadsPort
   /** DATA across the wall: host preparation may await; candidate evaluation is synchronous. */
   readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. Absolute. */
@@ -3464,6 +3466,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         now: () => Date.parse(clock.now()),
       }),
       ...(input.feedback === undefined ? {} : { feedback: input.feedback }),
+      ...(input.feedbackReads === undefined ? {} : { feedbackReads: input.feedbackReads }),
       quarantine: createQuarantineOperations({
         resolveKnowledgeRoot: input.knowledgeRoot,
         auditBaseDir: input.agentQaRoot,

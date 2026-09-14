@@ -331,6 +331,8 @@ const ALL_FUNCTION_IDS = [
   'runs.liveurl',
   // 419 GATE3-01: shared mutation; safe-mode listing excludes it by declared scope.
   'runs.mark',
+  // 423 D-19: read-tier, so it survives safe-mode filtering beside its runs. siblings.
+  'runs.marks.history',
   // 388 D-14: read-tier like its `runs.` siblings, so it too survives safe-mode filtering and
   // the filter assertion below sharpens rather than merely lengthens — `runs.start` plus the
   // four knowledge-write verbs are still exactly the ids that drop out.

@@ -100,6 +100,8 @@ export type { EvidenceBlobReaderPort } from './functions/spec.js'
 export { RunNotFoundError } from './functions/ops/runs-get.js'
 // 419 GATE3-01: publish identity DATA only; the spec's invoke must stay behind the gate.
 export { RUNS_MARK_FUNCTION_ID } from './functions/ops/runs-mark.js'
+// 423 D-19: identity only; the history spec stays behind invokeFunction.
+export { RUNS_MARKS_HISTORY_FUNCTION_ID } from './functions/ops/runs-marks-history.js'
 // 416 D-17: the gate-history op identity and its named unbound refusal.
 export { KNOWLEDGE_GATES_LIST_FUNCTION_ID, KnowledgeGatesUnboundError } from './functions/ops/knowledge-gates-list.js'
 export { RunNotRecordedError } from './functions/ops/runs-start.js'

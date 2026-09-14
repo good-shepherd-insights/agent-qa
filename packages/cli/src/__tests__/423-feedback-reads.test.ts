@@ -424,7 +424,9 @@ describe('423-18 marks history registration and host binding (D-19)', () => {
     const [first, second, third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
     expect(entries.map(entry => [entry.markId, entry.ordinal, entry.active, entry.supersededBy ?? null, entry.proposal?.state ?? null]))
       .toEqual([[first.markId, 1, false, second.markId, 'rejected'], [second.markId, 2, true, null, null], [third.markId, 3, true, null, 'pending']])
-    expect(typeof entries[2]!.note).toBe('string')
+    // A cold host holds no masking authority for this read, so every free-text field is fully redacted.
+    expect(entries.map(entry => entry.note ?? null)).toEqual([maskedMarker('secret'), null, maskedMarker('secret')])
+    expect(entries[0]!.proposal).toMatchObject({ state: 'rejected', decision: { reason: maskedMarker('secret') } })
     expect(JSON.stringify(result)).not.toContain(SECRET)
     return result
   }

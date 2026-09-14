@@ -64,6 +64,7 @@ import { runsGetSpec } from './ops/runs-get.js'
 import { runsKnowledgeSpec } from './ops/runs-knowledge.js'
 import { runsListSpec } from './ops/runs-list.js'
 import { runsMarkSpec } from './ops/runs-mark.js'
+import { runsMarksHistorySpec } from './ops/runs-marks-history.js'
 import { runsPostProcessingSpec } from './ops/runs-post-processing.js'
 import { runsStartSpec } from './ops/runs-start.js'
 import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from './spec.js'
@@ -131,6 +132,8 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   runsEvidenceSpec as FunctionSpec,
   // 419 GATE3-01: the sovereign mark write binds only where the host supplies feedback.
   runsMarkSpec as FunctionSpec,
+  // 423 D-19: the mark history read binds through feedbackReads, never through the writer above.
+  runsMarksHistorySpec as FunctionSpec,
   // 2026-08-27 (405-05 D-12/D-13): THE ref-resolving read — one run's content-addressed evidence
   // blob, by sha, with the content type sniffed from the bytes themselves. Registered beside
   // `runs.detail` because the two are the halves of one claim: the projection carries an
