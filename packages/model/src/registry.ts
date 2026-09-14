@@ -7,7 +7,7 @@ import {
 } from 'ai'
 
 import type { LanguageModelMiddleware } from 'ai'
-import type { LanguageModelV3, ProviderV3 } from '@ai-sdk/provider'
+import type { LanguageModelV3, LanguageModelV3StreamPart, ProviderV3 } from '@ai-sdk/provider'
 import type { ModelProfile } from '@vostride/agent-qa-schema'
 import { registerFirstPartySafetyHooks } from '@vostride/agent-qa-safety'
 
@@ -103,13 +103,17 @@ export function createModel(
   )
   const observe = (event: ModelCallEvent) => {
     try {
-      onCall?.(event)
+      Promise.resolve(onCall?.(event)).catch(() => {})
     } catch {
       // Observation cannot prevent a call or replace its original result/error.
     }
   }
   const start = () => {
-    try { onProviderCall?.() } catch { /* Legacy observation is isolated independently. */ }
+    try {
+      Promise.resolve(onProviderCall?.()).catch(() => {})
+    } catch {
+      // Legacy observation is isolated independently.
+    }
     observe({ kind: 'start' })
   }
   const observedProvider = onProviderCall === undefined && onCall === undefined ? provider : wrapProvider({
@@ -121,17 +125,71 @@ export function createModel(
         try {
           const result = await doGenerate()
           // Reporting, including the live masker, cannot replace a provider outcome.
-          try { observe({ kind: 'success', report: providerCallReport(result, origin) }) }
-          catch { observe({ kind: 'success', report: {} }) }
+          try {
+            observe({ kind: 'success', report: providerCallReport(result, origin) })
+          } catch {
+            observe({ kind: 'success', report: {} })
+          }
           return result
         } catch (error) {
           observe({ kind: 'failure' })
           throw error
         }
       },
-      wrapStream: ({ doStream }) => {
+      wrapStream: async ({ doStream }) => {
         start()
-        return doStream()
+        try {
+          const result = await doStream()
+          if (onCall === undefined) return result
+          const reader = result.stream.getReader()
+          let terminal = false
+          let modelId: string | undefined
+          const failure = () => {
+            if (!terminal) {
+              terminal = true
+              observe({ kind: 'failure' })
+            }
+          }
+          return {
+            ...result,
+            stream: new ReadableStream<LanguageModelV3StreamPart>({
+              async pull(controller) {
+                try {
+                  const next = await reader.read()
+                  if (next.done) {
+                    failure()
+                    controller.close()
+                    return
+                  }
+                  const part = next.value
+                  if (part.type === 'response-metadata') modelId = part.modelId
+                  if (part.type === 'error') failure()
+                  if (part.type === 'finish' && !terminal) {
+                    terminal = true
+                    try {
+                      observe({ kind: 'success', report: providerCallReport({
+                        usage: part.usage, response: { modelId },
+                      }, origin) })
+                    } catch {
+                      observe({ kind: 'success', report: {} })
+                    }
+                  }
+                  controller.enqueue(part)
+                } catch (error) {
+                  failure()
+                  controller.error(error)
+                }
+              },
+              async cancel(reason) {
+                failure()
+                await reader.cancel(reason)
+              },
+            }, { highWaterMark: 0 }),
+          }
+        } catch (error) {
+          observe({ kind: 'failure' })
+          throw error
+        }
       },
     },
   })

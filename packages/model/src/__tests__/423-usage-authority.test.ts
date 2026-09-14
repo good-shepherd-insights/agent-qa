@@ -87,6 +87,22 @@ describe.each(transports)('423 usage authority: %s', (provider) => {
     await generateText({ model: raw, prompt: 'hello', maxRetries: 0 })
     expect(events[1]?.report?.respondingModelId).toBe(identity)
   })
+
+  it('MODEL-SDK-FALLBACK never fills absent provider-result identity', async () => {
+    const { raw } = transportModel(provider, 0)
+    const result = await raw.doGenerate({ prompt: [] })
+    // Reproduce a transport that preserves usage but omits response identity at
+    // the model boundary. Some wire schemas require model even though V3 does not.
+    result.response = undefined
+    const origin = provider === 'openai-compatible' ? 'openai-chat'
+      : provider === 'openai-subscription' ? 'openai-responses'
+      : provider === 'gemini' ? 'gemini' : 'anthropic-messages'
+    const observed = custom(result, origin)
+    const generated = await generateText({ model: observed.model, prompt: 'hello', maxRetries: 0 })
+    expect(generated.response.modelId).toBe(declared)
+    expect(observed.events[1]).toMatchObject({ kind: 'success', report: { cachedInputTokens: 0 } })
+    expect(observed.events[1]).not.toHaveProperty('report.respondingModelId')
+  })
 })
 
 it('MODEL-SDK-FALLBACK and CUSTOM-UNKNOWN reject normalized custom facts', async () => {
@@ -116,7 +132,7 @@ it('PRE-DISPATCH-REFUSAL does not start or complete an observed call', async () 
 function custom(result = stubGenerateResult(), origin?: ModelCallReportOrigin,
   onCall?: (event: ModelCallEvent) => void) {
   const events: ModelCallEvent[] = []
-  const base = stubModel({ modelId: declared, generate: async () => result })
+  const base = stubModel({ provider: 'openai.chat', modelId: declared, generate: async () => result })
   const model = createModel(profile('openai-compatible'), { kind: 'none' }, {
     languageModels: { [declared]: base }, providerReportOrigin: origin,
   }, { onCall: event => { events.push(event); onCall?.(event) } })
@@ -185,7 +201,6 @@ it('CUSTOM-UNKNOWN ignores spoofed provider names and model/usage metadata witho
   result.response = { modelId: declared }
   result.usage.raw = { prompt_tokens_details: { cached_tokens: 30 } }
   const unknown = custom(result)
-  unknown.base.provider = 'openai.chat'
   await unknown.model.doGenerate({ prompt: [] })
   expect(unknown.events[1]).toEqual({ kind: 'success', report: { inputTokens: 0, outputTokens: 0 } })
   const trusted = custom(result, 'openai-chat')
