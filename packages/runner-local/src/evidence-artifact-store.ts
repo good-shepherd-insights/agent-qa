@@ -24,7 +24,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { ArtifactRef } from '@vostride/agent-qa-schema'
+import type { ArtifactRef, EvidenceDocument } from '@vostride/agent-qa-schema'
 import type { EvidenceArtifactStorePort } from '@vostride/agent-qa-runner'
 
 import { slugBranch } from './branch-resolver.js'
@@ -54,6 +54,10 @@ export class FsEvidenceArtifactStore implements EvidenceArtifactStorePort {
     mkdirSync(this.dir, { recursive: true })
     writeFileSync(join(this.dir, sha), bytes)
     return { id: `decision-screenshot:${sha}`, sha }
+  }
+
+  persistEvidenceDocument(document: Exclude<EvidenceDocument, { kind: 'variables' }>): ArtifactRef {
+    return this.persistDecisionScreenshot(Buffer.from(JSON.stringify(document)))
   }
 
   hasBlob(sha: string): boolean {
