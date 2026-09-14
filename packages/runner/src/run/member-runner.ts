@@ -692,6 +692,7 @@ async function runMemberAttempt(
     }
 
     let result: StepResult
+    let completedExecution: StepResult | undefined
     try {
       // 5. EXECUTE — appium rides the injected handler (Q-2); otherwise the loop.
       if (appiumAction && config.appiumScript) {
@@ -752,6 +753,7 @@ async function runMemberAttempt(
           : await execution
       }
 
+      completedExecution = result
       result.originalStepName = hasTemplateVars ? originalStepName : undefined
       const abortResultForCurrentStep = () =>
         createAbortedStepResult(
@@ -764,12 +766,12 @@ async function runMemberAttempt(
         )
 
       const abortedAfterExecution = abortResultForCurrentStep()
-      if (abortedAfterExecution) result = abortedAfterExecution
+      if (abortedAfterExecution) result = { ...result, ...abortedAfterExecution }
 
       // Failure/after screenshot via the injected writer.
       if (config.captureScreenshots === true && stepAbortController.signal.aborted) {
         const aborted = abortResultForCurrentStep()
-        if (aborted) result = aborted
+        if (aborted) result = { ...result, ...aborted }
       } else if (config.captureScreenshots === true && config.persistFailureScreenshot) {
         try {
           const screenshot = await withAbort(
@@ -779,7 +781,7 @@ async function runMemberAttempt(
           if (screenshot) result.screenshot = screenshot
         } catch (err) {
           const aborted = abortResultForCurrentStep()
-          if (aborted) result = aborted
+          if (aborted) result = { ...result, ...aborted }
           else throw err
         }
       }
@@ -789,12 +791,13 @@ async function runMemberAttempt(
         !stepAbortController.signal.aborted
         && config.accessibility?.enabled
         && config.adapter.platform === 'web'
-        && config.accessibilityCheck
       ) {
         const runAfter = config.accessibility.runAfter ?? 'every-step'
         const shouldRun =
           runAfter === 'every-step' || (runAfter === 'test-end' && stepIndex === member.steps.length - 1)
-        if (shouldRun) {
+        if (shouldRun && !config.accessibilityCheck) {
+          finalizer.accessibilityUnsupported()
+        } else if (shouldRun && config.accessibilityCheck) {
           try {
             const violations = await withAbort(
               config.accessibilityCheck(
@@ -808,6 +811,7 @@ async function runMemberAttempt(
               stepAbortController.signal,
             )
             result.accessibilityViolations = violations
+            finalizer.recordAccessibility(violations)
             if (config.accessibility.failOnViolation && violations.length > 0) {
               const critical = violations.filter(v => v.impact === 'critical').length
               const serious = violations.filter(v => v.impact === 'serious').length
@@ -817,15 +821,16 @@ async function runMemberAttempt(
               }
             }
           } catch {
+            finalizer.accessibilityFailed()
             const aborted = abortResultForCurrentStep()
-            if (aborted) result = aborted
+            if (aborted) result = { ...result, ...aborted }
             // else: never fail the step on an accessibility-check error.
           }
         }
       }
 
       // Capture — via the injected verifier model (createExtractor threads it, Q-2 idiom).
-      if (result.status !== 'failed' && typeof stepDef !== 'string' && stepDef.capture) {
+      if (!stepAbortController.signal.aborted && result.status !== 'failed' && typeof stepDef !== 'string' && stepDef.capture) {
         const method = stepDef.capture.method ?? 'ai'
         const extractor = makeExtractor(config.verifierModel, method)
         try {
@@ -849,7 +854,7 @@ async function runMemberAttempt(
           }
         } catch (err) {
           const aborted = abortResultForCurrentStep()
-          if (aborted) result = aborted
+          if (aborted) result = { ...result, ...aborted }
           else throw err
         }
       }
@@ -869,7 +874,7 @@ async function runMemberAttempt(
           await withAbort(adapterWithPoll.pollDeviceLogs(), stepAbortController.signal)
         } catch (err) {
           const aborted = abortResultForCurrentStep()
-          if (aborted) result = aborted
+          if (aborted) result = { ...result, ...aborted }
           finalizer.consoleFailed()
         }
       }
@@ -880,9 +885,9 @@ async function runMemberAttempt(
 
       result.id = stepId
     } catch (error) {
-      result = createAbortedStepResult(instruction, 0, stepAbortController.signal) ?? {
+      result = { ...completedExecution, ...(createAbortedStepResult(instruction, 0, stepAbortController.signal) ?? {
         name: instruction, status: 'failed', duration: 0, error: getErrorMessage(error),
-      }
+      }) }
     } finally {
       clearStepScope()
     }

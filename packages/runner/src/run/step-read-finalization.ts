@@ -1,9 +1,9 @@
 // Member-only terminal boundary. The standalone loop keeps its synchronous callback contract;
 // only this injected proxy holds its terminal until the member finishes capture/enrichment.
-import { ConsoleEvidenceDocumentSchema, EvidenceArtifactRefSchema, NetworkEvidenceDocumentSchema, VariableSnapshotSchema } from '@vostride/agent-qa-schema'
+import { A11yEvidenceDocumentSchema, ConsoleEvidenceDocumentSchema, EvidenceArtifactRefSchema, NetworkEvidenceDocumentSchema, VariableSnapshotSchema } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, StepEvidence, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import type { LoopEventEmitPort } from '../loop/ports.js'
-import type { StepResult } from '../result.js'
+import type { AccessibilityViolation, StepResult } from '../result.js'
 import type { MemberRunConfig } from './member-runner.js'
 import { synthesizeStepEvidence } from './handoff-assembly.js'
 import { projectNetworkEvidence } from './network-evidence-policy.js'
@@ -27,6 +27,11 @@ export function createStepReadFinalizer(
     kind: 'network', state: 'absent',
     reason: config.adapter.platform === 'web' ? 'not-captured' : 'unsupported',
   }
+  let a11yEvidence: StepEvidenceEntries['a11y'] = {
+    kind: 'a11y', state: 'absent',
+    reason: config.adapter.platform === 'web' ? 'not-captured' : 'unsupported',
+  }
+  let a11yRecords: AccessibilityViolation[] | undefined
   const events: LoopEventEmitPort = {
     stepFinalized(evidence, extra) {
       if (!finalized && pending === undefined) pending = { evidence, extra }
@@ -131,6 +136,48 @@ export function createStepReadFinalizer(
     }
   }
 
+  function recordAccessibility(records: AccessibilityViolation[]): void {
+    a11yRecords = records
+  }
+
+  function accessibilityFailed(): void {
+    a11yRecords = undefined
+    a11yEvidence = { kind: 'a11y', state: 'absent', reason: 'failed' }
+  }
+
+  function accessibilityUnsupported(): void {
+    a11yEvidence = { kind: 'a11y', state: 'absent', reason: 'unsupported' }
+  }
+
+  function persistAccessibility(): void {
+    if (a11yRecords === undefined) return
+    if (a11yRecords.length === 0) {
+      a11yEvidence = { kind: 'a11y', state: 'absent', reason: 'empty' }
+      return
+    }
+    try {
+      const masking = config.masking
+      const store = config.evidenceArtifacts
+      if (!masking || !store?.persistEvidenceDocument) throw new Error('Accessibility evidence not bound')
+      const mask = (text: string) => masking.mask(redactSecretValue(text, config.secretRedactor))
+      const document = A11yEvidenceDocumentSchema.parse({
+        schemaVersion: 1, kind: 'a11y',
+        records: a11yRecords.map(record => ({
+          ruleId: mask(record.ruleId), impact: record.impact, description: mask(record.description),
+          help: mask(record.help), helpUrl: mask(record.helpUrl),
+          nodes: record.nodes.map(node => ({ html: mask(node.html), target: node.target.map(mask) })),
+        })),
+      })
+      const ref = EvidenceArtifactRefSchema.parse(store.persistEvidenceDocument(document))
+      if (!ref.id.startsWith('a11y-evidence:')) throw new Error('Invalid accessibility evidence ref')
+      const counts = { minor: 0, moderate: 0, serious: 0, critical: 0 }
+      for (const record of document.records) counts[record.impact]++
+      a11yEvidence = { kind: 'a11y', state: 'present', ref, counts }
+    } catch {
+      accessibilityFailed()
+    }
+  }
+
   function finish(result: StepResult): void {
     if (finalized) return
     finalized = true
@@ -146,6 +193,9 @@ export function createStepReadFinalizer(
     // Preserve the recorded loop evidence for handoff assembly even when enrichment replaced
     // the StepResult with an abort result. Bypasses use the very same synthesis as handoffs.
     result.evidence ??= evidence
+    // Extraction may register new secrets after axe completes. Persist with the current
+    // context here, and retain successful capture even if a later capture failed or aborted.
+    persistAccessibility()
     let variableSnapshot: ReturnType<typeof VariableSnapshotSchema.parse> | undefined
     let variables: StepEvidenceEntries['variables'] = {
       kind: 'variables', state: 'absent', reason: 'not-captured',
@@ -175,7 +225,7 @@ export function createStepReadFinalizer(
     const entries: StepEvidenceEntries = {
       console: consoleEvidence,
       network: networkEvidence,
-      a11y: { kind: 'a11y', state: 'absent', reason: 'not-captured' },
+      a11y: a11yEvidence,
       variables,
     }
     const { status: _status, durationMs: _duration, error: _error, ...extra } = pending?.extra ?? {}
@@ -186,5 +236,6 @@ export function createStepReadFinalizer(
     })
   }
 
-  return { events, captureConsole, captureNetwork, consoleFailed, finish }
+  return { events, captureConsole, captureNetwork, consoleFailed,
+    recordAccessibility, accessibilityFailed, accessibilityUnsupported, finish }
 }

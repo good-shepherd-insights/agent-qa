@@ -985,11 +985,12 @@ function buildAppiumScriptHandler(adapter: PlatformAdapter, secretStore?: Secret
 
 /** Build the injected accessibility-check handler (Q-4). Web-only; resolves the page and runs the
  * dynamically-loaded `@vostride/agent-qa-web` `runAccessibilityCheck` (the composition root is the
- * dynamic-load host — resolves Open Q-4 as move-now). Returns [] when no page is available. */
+ * dynamic-load host — resolves Open Q-4 as move-now). A lost page is a capture failure,
+ * never a successful zero-violation check. */
 function buildAccessibilityCheckHandler(adapter: PlatformAdapter): AccessibilityCheckHandler {
   return async (opts) => {
     const page = 'getPage' in adapter ? (adapter as { getPage: () => unknown }).getPage() : undefined
-    if (!page) return []
+    if (!page) throw new Error('Accessibility capture requires an active browser page')
     const web = await import('@vostride/agent-qa-web')
     return web.runAccessibilityCheck(page as any, opts)
   }
@@ -1124,7 +1125,9 @@ export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRu
 
     runJs: buildRunJsHandler(input.adapter),
     appiumScript: buildAppiumScriptHandler(input.adapter, input.secretStore),
-    accessibilityCheck: buildAccessibilityCheckHandler(input.adapter),
+    accessibilityCheck: 'getPage' in input.adapter && typeof input.adapter.getPage === 'function'
+      ? buildAccessibilityCheckHandler(input.adapter)
+      : undefined,
     persistFailureScreenshot: buildFailureScreenshotWriter(input.adapter),
 
     resolveSecrets: (text: string) => resolveSecretTemplatesInValue(text, input.secretStore),
