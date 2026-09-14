@@ -3,11 +3,17 @@ import { createHash } from 'node:crypto'
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import * as agent from '@vostride/agent-qa-agent'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { createConfirmRegistry } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { asRunId, maskedMarker, RunsMarkOutcomeSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarksHistoryResult } from '@vostride/agent-qa-schema'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { asRunId, maskedMarker, RunsMarkOutcomeSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarksHistoryResult, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
+import { Command } from 'commander'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { composeDashboardDoor, DASHBOARD_FUNCTION_CALLER } from '../commands/dashboard.js'
+import { createFnCommand } from '../commands/fn.js'
+import * as host from '../composition/local-agent-host.js'
 import { FsMarkLedger } from '../eval-session-composition.js'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
 import { createFeedbackReadsPortForHost, type FeedbackReadsHostDeps } from '../gates/feedback-read-host.js'
@@ -206,27 +212,32 @@ function proposalIdOf(receipt: MarkReceipt): string {
   return receipt.disposition.proposalId
 }
 
+type MarkedTemplate = { root: string; runSlug: string; runId: RunId; receipts: MarkReceipt[] }
+
+/** Three real marks: a drafted run-level mark, its confirmed-bug successor (which withdraws the draft), and a drafted step mark. */
+async function markedTemplate(roots: string[]): Promise<MarkedTemplate> {
+  const f = markFixture(); roots.push(f.root)
+  const runId = f.handoff.runId
+  const port = createFeedbackPortForHost(f.deps)
+  const receipts: MarkReceipt[] = []
+  for (const input of [
+    { runId, kind: 'false-fail', note: 'first run-level note' },
+    { runId, kind: 'confirmed-bug' },
+    { runId, stepIndex: 0, kind: 'false-fail', note: `step note ${SECRET}` },
+  ] satisfies RunsMarkInput[]) {
+    const outcome = await port.mark(input)
+    if (outcome.kind !== 'marked') throw new Error(`fixture mark refused: ${outcome.kind}`)
+    receipts.push(outcome.receipt)
+  }
+  expect(receipts.map(receipt => receipt.disposition.kind)).toEqual(['drafted', 'confirmed-bug', 'drafted'])
+  return { root: f.root, runSlug: f.runDir.split('/').at(-1)!, runId, receipts }
+}
+
 describe('423-18 read-only marks history host (D-19)', () => {
   const roots: string[] = []
-  let template: { root: string; runSlug: string; runId: RunId; receipts: MarkReceipt[] }
+  let template: MarkedTemplate
 
-  beforeAll(async () => {
-    const f = markFixture(); roots.push(f.root)
-    const runId = f.handoff.runId
-    const port = createFeedbackPortForHost(f.deps)
-    const receipts: MarkReceipt[] = []
-    for (const input of [
-      { runId, kind: 'false-fail', note: 'first run-level note' },
-      { runId, kind: 'confirmed-bug' },
-      { runId, stepIndex: 0, kind: 'false-fail', note: `step note ${SECRET}` },
-    ] satisfies RunsMarkInput[]) {
-      const outcome = await port.mark(input)
-      if (outcome.kind !== 'marked') throw new Error(`fixture mark refused: ${outcome.kind}`)
-      receipts.push(outcome.receipt)
-    }
-    expect(receipts.map(receipt => receipt.disposition.kind)).toEqual(['drafted', 'confirmed-bug', 'drafted'])
-    template = { root: f.root, runSlug: f.runDir.split('/').at(-1)!, runId, receipts }
-  }, 180_000)
+  beforeAll(async () => { template = await markedTemplate(roots) }, 180_000)
   afterEach(() => setActiveMaskingContextResolver(() => undefined))
   afterAll(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
@@ -377,5 +388,102 @@ describe('423-18 read-only marks history host (D-19)', () => {
     expect(await historyOf(readsFor({ agentQaRoot: unreadable.agentQaRoot }), template.runId))
       .toEqual({ kind: 'ledger-unavailable', runId: template.runId })
     expect(tree(unreadable.root)).toEqual(unreadableBefore)
+  })
+})
+
+// 2026-09-15, 423 D-19: runs.marks.history registered and bound on every existing local host composition.
+const HISTORY = 'runs.marks.history'
+const auditless = { appendExecutionAudit() {}, appendGuardrailAudit() {} }
+
+describe('423-18 marks history registration and host binding (D-19)', () => {
+  const roots: string[] = []
+  const closers: Array<() => void | Promise<void>> = []
+  let template: MarkedTemplate
+
+  beforeAll(async () => { template = await markedTemplate(roots) }, 180_000)
+  afterEach(async () => {
+    process.exitCode = 0
+    for (const close of closers.splice(0).reverse()) await close()
+  })
+  afterAll(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+
+  function coldScene() {
+    const root = mkdtempSync(join(tmpdir(), '423-18-binding-')); roots.push(root)
+    cpSync(template.root, root, { recursive: true })
+    // The note's synthetic token is a declared secret, so a cold host's live mask must hide it.
+    writeFileSync(join(root, '.env.secrets.local'), `HISTORY_SYNTHETIC_TOKEN=${SECRET}\n`)
+    const agentQaRoot = join(root, '.agent-qa')
+    return { root, configPath: join(root, 'agent-qa.config.yaml'), agentQaRoot,
+      stores: [join(agentQaRoot, 'runs'), join(agentQaRoot, 'proposals'), join(root, 'agent-qa-knowledge'), join(root, 'agent-qa-eval')] }
+  }
+  const storeMaps = (stores: readonly string[]) => stores.map(tree)
+
+  function expectMaskedOrdinalHistory(value: unknown) {
+    const result = RunsMarksHistoryResultSchema.parse(value)
+    const entries = historyEntries(result)
+    const [first, second, third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
+    expect(entries.map(entry => [entry.markId, entry.ordinal, entry.active, entry.supersededBy ?? null, entry.proposal?.state ?? null]))
+      .toEqual([[first.markId, 1, false, second.markId, 'rejected'], [second.markId, 2, true, null, null], [third.markId, 3, true, null, 'pending']])
+    expect(typeof entries[2]!.note).toBe('string')
+    expect(JSON.stringify(result)).not.toContain(SECRET)
+    return result
+  }
+
+  it('HISTORY-REGISTRY-BINDING: the cold CLI host binds the read host, and a registry without feedbackReads stays unbound', async () => {
+    expect(Reflect.get(agent, 'RUNS_MARKS_HISTORY_FUNCTION_ID')).toBe(HISTORY)
+    expect(Reflect.get(agent, 'runsMarksHistorySpec')).toBeUndefined()
+
+    const s = coldScene()
+    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, confirm: undefined,
+      resolveExecutionContext: () => 'local-headless' })
+    closers.push(() => composed.close())
+    expect(composed.registry.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === HISTORY)).toMatchObject({
+      bindingStatus: 'bound', requiredScopes: ['read'], resultKind: 'unary', risk: { readOnly: true } })
+    const before = storeMaps(s.stores)
+    expectMaskedOrdinalHistory(await agent.invokeFunction(composed.registry, HISTORY, { runId: template.runId }, host.CLI_FUNCTION_CALLER))
+    expect(storeMaps(s.stores)).toEqual(before)
+    expect(existsSync(join(s.agentQaRoot, 'runs', template.runSlug, 'mark-intent.json'))).toBe(false)
+
+    // The mark writer is not a history binding; an absent read port is refused by name.
+    const writerOnly = agent.createFunctionRegistry({ auditSink: auditless, resolveExecutionContext: () => 'local-headless',
+      deps: { feedback: { mark: refuse('feedback.mark'), marksFor: refuse('feedback.marksFor') } } as never })
+    expect(writerOnly.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === HISTORY)?.bindingStatus).toBe('unbound')
+    await expect(agent.invokeFunction(writerOnly, HISTORY, { runId: template.runId }, host.CLI_FUNCTION_CALLER))
+      .rejects.toBeInstanceOf(agent.FunctionNotBoundError)
+  })
+
+  it('HISTORY-FN-PARITY: agent-qa fn, the CLI registry and the dashboard door return one masked history with unchanged stores', async () => {
+    const s = coldScene()
+    const before = storeMaps(s.stores)
+
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => { stdout.push(values.map(String).join(' ')) })
+    const errors = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => { stderr.push(values.map(String).join(' ')) })
+    process.exitCode = undefined
+    try {
+      await new Command().exitOverride().option('--config <path>').addCommand(createFnCommand())
+        .parseAsync(['--config', s.configPath, 'fn', HISTORY, '--input', JSON.stringify({ runId: template.runId }), '--json'], { from: 'user' })
+    } finally { log.mockRestore(); errors.mockRestore() }
+    expect(stderr).toEqual([])
+    expect(process.exitCode).toBeUndefined()
+    const viaFn = expectMaskedOrdinalHistory(JSON.parse(stdout.join('\n')))
+
+    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, confirm: undefined,
+      resolveExecutionContext: () => 'local-headless' })
+    closers.push(() => composed.close())
+    const viaRegistry = expectMaskedOrdinalHistory(
+      await agent.invokeFunction(composed.registry, HISTORY, { runId: template.runId }, host.CLI_FUNCTION_CALLER))
+
+    const door = composeDashboardDoor({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, boundOrigin: () => undefined,
+      confirms: createConfirmRegistry({ timeoutMs: 1_000 }) })
+    closers.push(() => door.host.close())
+    expect(door.host.registry.list(DASHBOARD_FUNCTION_CALLER).find(entry => entry.id === HISTORY)?.bindingStatus).toBe('bound')
+    const viaDashboard = expectMaskedOrdinalHistory(
+      await agent.invokeFunction(door.host.registry, HISTORY, { runId: template.runId }, DASHBOARD_FUNCTION_CALLER))
+
+    expect(viaFn).toEqual(viaRegistry)
+    expect(viaDashboard).toEqual(viaRegistry)
+    expect(storeMaps(s.stores)).toEqual(before)
   })
 })
