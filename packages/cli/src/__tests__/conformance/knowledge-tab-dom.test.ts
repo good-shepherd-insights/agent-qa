@@ -812,6 +812,11 @@ interface ServedLineObservation {
 interface PageObservation {
   readonly finalUrl: string
   readonly waitFailure?: string
+  /** The response this browser visit actually rendered, independent of the preflight read. */
+  readonly projection?: RunKnowledgeProjection
+  readonly projectionStatus?: number
+  readonly projectionBody?: string
+  readonly projectionFailure?: string
   /** How many `[data-step-id]` rows the durable tree drew. */
   readonly treeStepCount: number
   /** `data-rung` on the header banner, or nothing when the header painted no banner. */
@@ -921,6 +926,10 @@ function context(label: string, recorded: Recorded): string {
     `projection: ${(recorded.projectionBody ?? '').slice(0, 1_400)}`,
     `visit url: ${recorded.visit?.finalUrl ?? '(never opened)'}`,
     `visit wait failure: ${recorded.visit?.waitFailure?.split('\n')[0] ?? '(none)'}`,
+    `browser projection status: ${String(recorded.visit?.projectionStatus ?? 0)}; `
+    + `kind: ${recorded.visit?.projection?.kind ?? '(none)'}`,
+    `browser projection: ${(recorded.visit?.projectionBody ?? '').slice(0, 1_400)}`,
+    `browser projection failure: ${recorded.visit?.projectionFailure ?? '(none)'}`,
     `banner: rung=${recorded.visit?.bannerRung ?? '(absent)'} `
     + `reason=${recorded.visit?.bannerReason ?? '(absent)'} `
     + `text=${JSON.stringify(recorded.visit?.bannerText ?? null)}`,
@@ -1005,15 +1014,20 @@ function visitOf(label: string, recorded: Recorded): PageObservation {
   return observed as PageObservation
 }
 
-/** The recorded projection, narrowed to the `ready` arm every cell here asks about. */
+/** The browser's own response, narrowed to the `ready` arm the parity cells ask about. */
 function readyProjection(
   label: string,
   recorded: Recorded,
 ): Extract<RunKnowledgeProjection, { kind: 'ready' }> {
-  const projection = recorded.projection
+  const visit = recorded.visit
+  expect(
+    visit?.projectionStatus,
+    `the ${label} browser received no successful knowledge response.${context(label, recorded)}`,
+  ).toBe(200)
+  const projection = visit?.projection
   expect(
     projection?.kind,
-    `the ${label} \`/api/runs/:id/knowledge\` read did not answer \`ready\`.${context(label, recorded)}`,
+    `the ${label} browser's knowledge read did not answer \`ready\`.${context(label, recorded)}`,
   ).toBe('ready')
   return projection as Extract<RunKnowledgeProjection, { kind: 'ready' }>
 }
@@ -1130,6 +1144,26 @@ async function observeKnowledge(
 ): Promise<PageObservation> {
   const page: Page = await browserContext.newPage()
   let waitFailure: string | undefined
+  const knowledgeUrl = `${origin}/api/runs/${encodeURIComponent(runId)}/knowledge`
+  const knowledgeResponse: Promise<Pick<PageObservation,
+    'projection' | 'projectionStatus' | 'projectionBody' | 'projectionFailure'>> = page
+    .waitForResponse(
+      (response) => response.url() === knowledgeUrl && response.request().method() === 'GET',
+      { timeout: PAGE_BUDGET_MS },
+    )
+    .then(async (response) => {
+      const body = await response.text()
+      const parsed = RunKnowledgeProjectionSchema.safeParse(JSON.parse(body))
+      return {
+        projectionStatus: response.status(),
+        projectionBody: body,
+        ...(parsed.success ? { projection: parsed.data }
+          : { projectionFailure: parsed.error.message }),
+      }
+    })
+    .catch((error: unknown) => ({
+      projectionFailure: error instanceof Error ? error.message : String(error),
+    }))
   try {
     await page.goto(`${origin}/runs/${encodeURIComponent(runId)}`)
     await page.locator('[data-step-id]').first()
@@ -1164,6 +1198,7 @@ async function observeKnowledge(
       )
       .catch(() => undefined)
 
+    const receivedKnowledge = await knowledgeResponse
     // The durable header banner: a run-detail header fact, not a Knowledge-tab one — a reader sees
     // it without pressing anything, and it stays painted on every tab.
     const bannerRung = await attributeOf(page, '[data-rung-banner]', 'data-rung')
@@ -1295,6 +1330,7 @@ async function observeKnowledge(
 
     return {
       finalUrl: page.url(),
+      ...receivedKnowledge,
       ...(waitFailure === undefined ? {} : { waitFailure }),
       treeStepCount,
       ...(bannerRung === undefined ? {} : { bannerRung }),
@@ -1327,18 +1363,16 @@ async function observeKnowledge(
 const CHAIN_BUDGET_MS = 90_000
 
 /**
- * Read the projection the page itself reads, through the SAME spawned door, ONCE THE CHAIN HAS
- * SETTLED.
+ * Wait for the curation stage through the same spawned door before visiting the page.
  *
  * WHY IT WAITS RATHER THAN SNAPSHOTTING. `runFinished` arrives before the post-run chain drains,
  * so a projection read at that instant says `curation: pending` while the page — rendered seconds
- * later, after the client's own poll — paints `done`. Comparing the two would be measuring the gap
- * between two clocks, not an agreement between a page and its op. Both readings are therefore
- * taken after the chain is TERMINAL, which is the only state in which "the half and the chip give
- * one account" is a claim about the product.
+ * later — paints `done`. This read is only a preflight: even `curation: done` can precede the
+ * terminal notification and its counts. Page parity therefore uses the response captured from
+ * that browser visit, while this earlier response remains available for fixture diagnostics.
  *
- * A BUDGET THAT RUNS OUT IS NOT A THROW. The last reading is kept whatever it says, and the cells
- * red on the fact with the whole projection quoted.
+ * A budget that runs out keeps the last preflight reading for diagnostics. The page assertions
+ * independently check the response that visit received and the DOM it rendered.
  */
 async function readSettledProjection(
   origin: string,
