@@ -9,7 +9,8 @@ import {
   resolveMaskingHostKey, writeMaskingDigests,
 } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { generateRunId } from '@vostride/agent-qa-ids'
+import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
+import { resolveAuthStatePaths, writeAuthStateFiles } from '@vostride/agent-qa-core'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, maskedMarker, sha256hex,
@@ -118,6 +119,47 @@ function cold(p: ReturnType<typeof project>, retained: () => Iterable<ReturnType
 }
 
 describe('Wave 18 cold read masking recovery', () => {
+  it('COLD-AUTH masks configured single and suite auth-only values while preserving two checkpoint events', async () => {
+    const p = project()
+    const testId = generateTestId()
+    mkdirSync(join(p.root, 'tests'))
+    mkdirSync(join(p.root, 'suites'))
+    writeFileSync(join(p.root, 'tests', 'auth.yaml'), JSON.stringify({
+      'test-id': testId, name: 'Auth read', target: 'local', steps: ['Inspect page'],
+      use: { authState: 'single-session' },
+    }))
+    const suiteTestId = generateTestId()
+    writeFileSync(join(p.root, 'tests', 'suite-member.yaml'), JSON.stringify({
+      'test-id': suiteTestId, name: 'Suite member', target: 'local', steps: ['Inspect page'],
+    }))
+    writeFileSync(join(p.root, 'suites', 'auth.yaml'), JSON.stringify({
+      name: 'Auth suite', target: 'local', tests: [{ test: '../tests/suite-member.yaml', id: suiteTestId }],
+      use: { authState: 'suite-session' },
+    }))
+    const single = 'synthetic-single-cookie-value'
+    const suite = 'synthetic-suite-storage-value'
+    for (const [stateName, payload] of [
+      ['single-session', { cookies: [{ name: 'session', value: single }], origins: [] }],
+      ['suite-session', { cookies: [], origins: [{ origin: 'http://127.0.0.1:1',
+        localStorage: [{ name: 'token', value: suite }] }] }],
+    ] as const) {
+      await writeAuthStateFiles(resolveAuthStatePaths({ configDir: p.root,
+        targetName: 'local', stateName, target: { platform: 'web' } }), {
+        payload, metadata: { version: 1, kind: 'web', target: 'local', name: stateName,
+          capturedAt: '2026-09-14T00:00:00.000Z' },
+      })
+    }
+    await publish(p, snapshot(p.runId, [`first ${single}`, `second ${suite}`]))
+    const read = cold(p)
+    const result = await read.read()
+    expect(result.curationSnapshot!.rows[0]!.changes.map(row => row.change.evidenceToken))
+      .toEqual([`first ${maskedMarker('secret')}`, `second ${maskedMarker('secret')}`])
+    expect(result.curationSnapshot!.rows[0]!.changes).toHaveLength(2)
+    await expect(invokeFunction(read.host.registry, 'runs.knowledge', { runId: p.runId }, CLI_FUNCTION_CALLER))
+      .resolves.toMatchObject({ kind: 'ready', curation: { status: 'done' } })
+    expect(read.host.jobs).not.toHaveBeenCalled()
+  })
+
   it('COLD-TWO-EVENTS reads one confirmed record with both actual checkpoint events intact', async () => {
     const p = project()
     const recorded = snapshot(p.runId)
