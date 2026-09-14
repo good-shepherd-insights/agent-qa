@@ -243,6 +243,7 @@ describe('423 curation snapshot', () => {
       retractsEvidenceToken: asEvidenceToken('synthetic-evidence-43'), retractsCurationJobId: f.claimed.candidateId, rollbackReceiptId: 'synthetic-rollback' })
     expect(read().rows[0]?.changes).toHaveLength(2)
     expect(read().rows[0]?.changes.every(e => e.change.observationId === 'attributed')).toBe(true)
+    expect(read().rows[0]?.changes.every(e => e.change.sourceRunId === 'synthetic-run-43')).toBe(true)
   })
 
   it('HISTORICAL-MISSING never creates a snapshot from missing receipts or bundle shape', async () => {
