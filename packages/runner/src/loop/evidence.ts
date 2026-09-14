@@ -10,6 +10,7 @@
 // unchanged until 361/363.
 import {
   computeBriefDigest,
+  EvidenceArtifactRefSchema,
   NO_KNOWLEDGE_READER_TRUNCATION,
   toRecordedActionResult,
   TRACE_TRUNCATION_TOP_K,
@@ -17,6 +18,7 @@ import {
 import type {
   Action,
   ActionAnnotation,
+  AriaEvidenceEntry,
   ActionResult as SchemaActionResult,
   AiJudgmentEvidence,
   AssertValueEvidence,
@@ -30,6 +32,7 @@ import type {
   LocalEffectEvidence,
   LosslessServedBriefProofV1,
   ModelIdentity,
+  MaskingContext,
   ModelCallRecord,
   PlanningFailureEvidence,
   Point,
@@ -57,6 +60,33 @@ import type {
 } from '@vostride/agent-qa-schema'
 import type { Action as PlatformAction, ActionResult as PlatformActionResult } from '../platform.js'
 import type { StepAnnotation, SubActionTrace } from '../result.js'
+import type { EvidenceArtifactStorePort } from './ports.js'
+
+/** D-02: persist the captured before tree with the live run mask; handoff states stay raw. */
+export function persistAriaEvidence(
+  evidence: SubActionEvidence,
+  masking: MaskingContext | undefined,
+  store: EvidenceArtifactStorePort | undefined,
+): AriaEvidenceEntry {
+  if (evidence.stateBefore.tree.length === 0) {
+    return { kind: 'aria', state: 'absent', reason: 'empty' }
+  }
+  try {
+    if (!masking || !store?.persistEvidenceDocument) {
+      return { kind: 'aria', state: 'absent', reason: 'failed' }
+    }
+    const ref = EvidenceArtifactRefSchema.parse(store.persistEvidenceDocument({
+      schemaVersion: 1, kind: 'aria', tree: masking.mask(evidence.stateBefore.tree),
+    }))
+    if (!ref.id.startsWith('aria-state:')) {
+      return { kind: 'aria', state: 'absent', reason: 'failed' }
+    }
+    return { kind: 'aria', state: 'present', ref }
+  } catch {
+    // An evidence failure cannot suppress the recorded action or its decision screenshot.
+    return { kind: 'aria', state: 'absent', reason: 'failed' }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // makeEmptyServedBrief — the canonical empty brief (Pitfall 4 / D-05 graceful

@@ -23,6 +23,7 @@ const networkRecord = (index: number, status = 200): NetworkLogEntry => ({
 function fixture() {
   const events: RunEventEnvelope[] = []
   const documents: EvidenceDocument[] = []
+  const ariaDocuments: EvidenceDocument[] = []
   const secrets = new Set<string>()
   const masking = {
     mask: (text: string) => [...secrets].reduce((value, item) => value.replaceAll(item, '[secret]'), text),
@@ -41,8 +42,9 @@ function fixture() {
       persistDecisionScreenshot: () => ({ id: `decision-screenshot:${'a'.repeat(64)}`, sha: 'a'.repeat(64) }),
       getBlob: () => undefined,
       persistEvidenceDocument: value => {
-        documents.push(structuredClone(value))
-        return { id: `${value.kind}-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) }
+        const lane = value.kind === 'aria' ? ariaDocuments : documents
+        lane.push(structuredClone(value))
+        return { id: `${value.kind === 'aria' ? 'aria-state' : `${value.kind}-evidence`}:${'b'.repeat(64)}`, sha: 'b'.repeat(64) }
       },
     },
   }
@@ -51,7 +53,7 @@ function fixture() {
   const terminals = () => events.filter(event => event.type === 'stepFinalized').map(
     event => event.payload as StepFinalizedPayload,
   )
-  return { events, documents, secrets, abort, adapter, config, member, terminals }
+  return { events, documents, ariaDocuments, secrets, abort, adapter, config, member, terminals }
 }
 
 test('VARIABLE-FINAL: capture replaces the seed only before the single final snapshot', async () => {

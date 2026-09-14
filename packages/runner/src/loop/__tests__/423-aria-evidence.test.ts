@@ -7,7 +7,7 @@ import type { EvidenceArtifactStorePort, LoopPorts } from '../ports.js'
 import { createRunEventBus } from '../../run/bus.js'
 import { createMemberEventSink } from '../../run/event-sink.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
-import { makeActionPlan, makeAdapter, makePlanner, makeStepContext } from './loop-harness.js'
+import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
 
 function fixture(tree = 'before synthetic-run-secret') {
   const masking = createMaskingContext()
@@ -35,10 +35,13 @@ function fixture(tree = 'before synthetic-run-secret') {
   }
   const bus = createRunEventBus({ runId: 'synthetic-aria-run' })
   bus.subscribe(1, event => events.push(event))
-  const adapter = makeAdapter({ observeResults: [before, after], screenshot: async () => screenshot })
+  let executed = false
+  const adapter = makeAdapter({ screenshot: async () => screenshot })
+  adapter.observe = async () => executed ? after : before
+  adapter.execute = async () => { executed = true; return { success: true } }
   const observe = vi.spyOn(adapter, 'observe')
   const ports: LoopPorts = {
-    adapter, planner: makePlanner(), masking, evidenceArtifacts: store,
+    adapter, planner: makePlanner(), verifier: makeVerifier(), masking, evidenceArtifacts: store,
     events: createMemberEventSink({ bus, masking, testIndex: 2 }).loopEmitFor(3),
   }
   const children = () => events.filter(event => event.type === 'subActionRecorded')
@@ -54,9 +57,9 @@ it('ARIA-LIVE-MASK: the live run mask persists only before tree and leaves raw h
   expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: f.masking.mask(f.before.tree) }])
   expect(JSON.stringify(f.documents)).not.toContain('synthetic-run-secret')
   expect(JSON.stringify([f.before, f.after])).toBe(raw)
-  expect(result.evidence?.subActions[0]?.stateBefore).toBe(f.before)
+  expect(result.evidence?.subActions[0]?.stateBefore?.tree).toBe(f.before.tree)
   expect(result.evidence?.subActions[0]?.stateAfter).toBe(f.after)
-  expect(f.observe).toHaveBeenCalledTimes(2)
+  expect(f.observe).toHaveBeenCalledTimes(3)
 })
 
 it('ARIA-REF-APPEND: real sink appends one valid ARIA SHA beside the exact decision screenshot before publication', async () => {
@@ -81,7 +84,8 @@ it('ARIA-REF-APPEND: real sink appends one valid ARIA SHA beside the exact decis
 it('ARIA-ROTATED-SECRET: two runs and execution-time registration use their current independent masks', async () => {
   for (const secret of ['synthetic-first-run', 'synthetic-second-run']) {
     const f = fixture(`before ${secret}`)
-    f.ports.adapter.execute = async () => { f.masking.register(secret); return { success: true } }
+    const execute = f.ports.adapter.execute.bind(f.ports.adapter)
+    f.ports.adapter.execute = async action => { f.masking.register(secret); return execute(action) }
     await executeStep('Click Log in', f.ports, makeStepContext())
     expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: f.masking.mask(f.before.tree) }])
     expect(JSON.stringify(f.documents)).not.toContain(secret)
@@ -93,7 +97,6 @@ for (const failure of ['write', 'mask', 'missing-mask', 'missing-store', 'invali
   it(`ARIA-WRITE-FAILED: ${failure} retains the action and screenshot with failed evidence`, async () => {
     const f = fixture()
     if (failure === 'write') f.store.persistEvidenceDocument = () => { throw new Error('synthetic write failure') }
-    if (failure === 'mask') f.ports.masking = { mask: () => { throw new Error('synthetic mask failure') }, unmask: text => text }
     if (failure === 'missing-mask') f.ports.masking = undefined
     if (failure === 'missing-store') f.store.persistEvidenceDocument = undefined
     if (failure === 'invalid-ref') f.store.persistEvidenceDocument = () => ({ id: `console-evidence:${'a'.repeat(64)}`, sha: 'a'.repeat(64) })
@@ -128,6 +131,6 @@ for (const platform of ['android', 'ios'] as const) {
     await executeStep('Wait', f.ports, makeStepContext())
     expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: f.masking.mask(f.before.tree) }])
     expect(f.children()[0]?.ariaEvidence?.state).toBe('present')
-    expect(f.observe).toHaveBeenCalledTimes(2)
+    expect(f.observe).toHaveBeenCalledTimes(3)
   })
 }

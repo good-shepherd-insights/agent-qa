@@ -22,6 +22,7 @@ import type {
   StepEvidence,
   StepFinalizedPayload,
   SubActionEvidence,
+  SubActionRecordedPayload,
 } from '@vostride/agent-qa-schema'
 import type { ConfigDigests } from '../run/ports.js'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
@@ -172,7 +173,12 @@ export interface LoopEventEmitPort {
       variableSnapshot?: StepFinalizedPayload['variableSnapshot']
     },
   ): void
-  subActionRecorded(evidence: SubActionEvidence, subActionIndex: number): void
+  subActionRecorded(
+    evidence: SubActionEvidence,
+    subActionIndex: number,
+    /** Capture-time ARIA state; the projector appends its ref beside the decision screenshot. */
+    extra?: { ariaEvidence?: SubActionRecordedPayload['ariaEvidence'] },
+  ): void
 }
 
 /**

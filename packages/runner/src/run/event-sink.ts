@@ -98,11 +98,15 @@ export function createMemberEventSink(deps: {
             )
           })
         },
-        subActionRecorded(evidence: SubActionEvidence, subActionIndex: number): void {
+        subActionRecorded(
+          evidence: SubActionEvidence,
+          subActionIndex: number,
+          extra?: Parameters<LoopEventEmitPort['subActionRecorded']>[2],
+        ): void {
           guardEmit(bus, () => {
             bus.publish(
               'subActionRecorded',
-              projectSubActionRecorded(evidence, { testIndex, stepIndex, subActionIndex }, mask),
+              projectSubActionRecorded(evidence, { testIndex, stepIndex, subActionIndex }, mask, extra),
             )
           })
         },

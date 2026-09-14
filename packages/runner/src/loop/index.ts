@@ -92,7 +92,7 @@ import {
   resolveSecretTemplatesInValue,
 } from './secrets.js'
 import { captureServedPromptTurn, estimateTokens } from './prompts.js'
-import { EvidenceRecorder, collapseAnnotation, projectLegacyTrace } from './evidence.js'
+import { EvidenceRecorder, collapseAnnotation, persistAriaEvidence, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
 import { maskToolExchanges } from './mask-exchanges.js'
 import { settle } from './settle.js'
@@ -200,8 +200,8 @@ export async function executeStep(
 
   // §A8 evidence accumulator (D-14) — the recording array IS SubActionEvidence[].
   // D-02 (Plan 361-08): bind the one sub-action emission chokepoint to ports.events when
-  // present, so every recordSubAction append emits `subActionRecorded` live — the five call
-  // sites stay untouched. Unbound ⇒ no callback (byte-identical to today, D-05).
+  // present, so every recordSubAction append emits `subActionRecorded` live. D-02 (423):
+  // the same boundary persists the already captured before tree; no capture or handoff rewrite.
   // 407 D-13/D-16: the rung was resolved ONCE at the composition root; the loop awaits that one
   // promise and stamps what it gets. Two guards, each a way the banner could otherwise lie:
   //   - no bound reader ⇒ no rung, because "no knowledge reader bound is not a rung" (D-16) and a
@@ -214,9 +214,10 @@ export async function executeStep(
   const recorder = new EvidenceRecorder({
     scope: { tier: 'test', key: context.testName },
     asOfBuild: ports.knowledgeAsOfBuild ?? 0,
-    onSubActionRecorded: ports.events
-      ? (evidence, index) => ports.events?.subActionRecorded(evidence, index)
-      : undefined,
+    onSubActionRecorded: (evidence, index) => {
+      const ariaEvidence = persistAriaEvidence(evidence, ports.masking, ports.evidenceArtifacts)
+      ports.events?.subActionRecorded(evidence, index, { ariaEvidence })
+    },
     modelProfile: ports.modelProfiles?.planner,
     verifierIdentity: ports.modelProfiles?.verifier
       ? {
