@@ -1234,7 +1234,22 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       + `means the annotation is cached or was never re-derived.${context()}`,
     ).toBe(false)
 
-    const refs = recorded.detailRefsAfter ?? []
+    const beforeRefs = recorded.detailRefsBefore ?? []
+    const afterRefs = recorded.detailRefsAfter ?? []
+    expect(
+      afterRefs.map(({ id, sha, present }) => ({ id, sha, present })),
+      'the detail wire must retain every artifact in order; deleting the cited screenshot changes '
+      + `only that blob's availability, leaving the ARIA evidence intact.${context()}`,
+    ).toEqual(beforeRefs.map(({ id, sha, present }) => ({
+      id,
+      sha,
+      present: sha === recorded.deletedSha ? false : present,
+    })))
+
+    // The verdict cites one screenshot; the member also records independent ARIA evidence.
+    // Select the cited identity so neither a new artifact nor its position changes this claim.
+    const citedScreenshotId = `decision-screenshot:${recorded.deletedSha}`
+    const refs = afterRefs.filter((ref) => ref.id === citedScreenshotId)
     expect(
       refs.map((ref) => ref.sha),
       `the sub-action's artifact ref was dropped from the detail wire.${context()}`,
@@ -1248,7 +1263,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     // AND THE BEFORE/AFTER PAIR IS WHAT MAKES THIS A MEASUREMENT. A route that answered `false`
     // unconditionally would satisfy every assertion above.
     expect(
-      (recorded.detailRefsBefore ?? [])[0]?.present,
+      beforeRefs.find((ref) => ref.id === citedScreenshotId)?.present,
       `the detail op said the ref was ABSENT before anything was deleted.${context()}`,
     ).toBe(true)
   })
