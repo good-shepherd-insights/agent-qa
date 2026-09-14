@@ -445,7 +445,7 @@ async function runMemberAttempt(
         }
       }
       try {
-        finalizer.finish(result)
+        finalizer.finish(result, modelFacts)
       } finally {
         modelScope?.dispose()
       }

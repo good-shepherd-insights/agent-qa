@@ -11,6 +11,7 @@ import type {
   EvidenceDocument,
   DeclaredModelProfile,
   MaskingContext,
+  ModelUsageObservations,
   ProcedureBodyPayload,
   ProcedureMatch,
   RecordedRetrievalRung,
@@ -169,6 +170,8 @@ export interface LoopEventEmitPort {
        * `undefined` in that case, so absence is produced, never fabricated here.
        */
       tokenUsage?: StepFinalizedPayload['tokenUsage']
+      /** Finished member scope, including late extraction; overrides the legacy loop tally. */
+      modelObservations?: ModelUsageObservations
       evidence?: StepFinalizedPayload['evidence']
       variableSnapshot?: StepFinalizedPayload['variableSnapshot']
     },

@@ -14,7 +14,6 @@ import type {
   HookStartedPayload,
   MaskingContext,
   StepEvidence,
-  StepFinalizedPayload,
   SubActionEvidence,
   TestRetryScheduledPayload,
 } from '@vostride/agent-qa-schema'
@@ -78,16 +77,7 @@ export function createMemberEventSink(deps: {
       return {
         stepFinalized(
           evidence: StepEvidence,
-          extra?: {
-            status?: StepFinalizedPayload['status']
-            durationMs?: number
-            error?: string
-            // 405 D-05: kept spelling-identical to `projectStepFinalized`'s `extra` and to
-            // `LoopEventEmitPort.stepFinalized`'s — three copies of one contract.
-            tokenUsage?: StepFinalizedPayload['tokenUsage']
-            evidence?: StepFinalizedPayload['evidence']
-            variableSnapshot?: StepFinalizedPayload['variableSnapshot']
-          },
+          extra?: Parameters<LoopEventEmitPort['stepFinalized']>[1],
         ): void {
           guardEmit(bus, () => {
             // 363 D-01: the widened projection folds the StepResult-derived status/durationMs/error

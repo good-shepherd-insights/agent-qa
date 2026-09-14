@@ -13,6 +13,8 @@ import {
 } from './sqlite.js'
 import {
   RUN_ARTIFACT_SCHEMA_VERSION,
+  ModelUsageSchema,
+  RunStepTokenUsageSchema,
   type RunDetailMember,
   type RunDetailRows,
   type RunDetailStep,
@@ -246,10 +248,19 @@ function mapRunMemberRow(row: Record<string, unknown>): RunDetailMember {
 function mapRunStepRow(row: Record<string, unknown>): RunDetailStep {
   const evidence = parseJsonColumn(row.evidence_json)
   const variableSnapshot = parseJsonColumn(row.variable_snapshot_json)
+  // First binding of the reserved v3 column: mirror both optional bus fields, independently.
+  // A present envelope owns absence too; malformed JSON must never revive legacy scalar spend.
+  const usageEnvelope = parseJsonColumn(row.model_usage_json)
+  const modelUsage = isPlainObject(usageEnvelope)
+    ? ModelUsageSchema.safeParse(usageEnvelope.modelUsage) : undefined
+  const extendedTokens = isPlainObject(usageEnvelope)
+    ? RunStepTokenUsageSchema.safeParse(usageEnvelope.tokenUsage) : undefined
   // ALL THREE OR NONE. A row with a total but no prompt count is a write nobody makes; reading it
   // as a partial usage object would let a page render a sum whose parts are missing.
   const totalTokens = optionalInt(row.total_tokens)
-  const tokenUsage = totalTokens === undefined
+  const tokenUsage = row.model_usage_json !== null && row.model_usage_json !== undefined
+    ? extendedTokens?.success ? extendedTokens.data : undefined
+    : totalTokens === undefined
     ? undefined
     : {
       promptTokens: optionalInt(row.prompt_tokens) ?? 0,
@@ -268,6 +279,7 @@ function mapRunStepRow(row: Record<string, unknown>): RunDetailStep {
     ...(optionalInt(row.duration_ms) === undefined ? {} : { durationMs: row.duration_ms as number }),
     ...(optionalText(row.error) === undefined ? {} : { error: row.error as string }),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),
+    ...(modelUsage?.success ? { modelUsage: modelUsage.data } : {}),
     ...(evidence === undefined ? {} : { evidence: evidence as RunDetailStep['evidence'] }),
     ...(variableSnapshot === undefined
       ? {}
@@ -642,7 +654,8 @@ export class DashboardDatabase {
     status?: string
     durationMs?: number
     error?: string
-    tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+    tokenUsage?: RunDetailStep['tokenUsage']
+    modelUsage?: RunDetailStep['modelUsage']
     evidence?: RunDetailStep['evidence']
     variableSnapshot?: RunDetailStep['variableSnapshot']
   }): void {
@@ -650,9 +663,9 @@ export class DashboardDatabase {
       INSERT OR REPLACE INTO run_steps (
         run_id, test_index, step_index, step_text, cache_status, verifier_verdict,
         self_heal_occurred, brief_digest, status, duration_ms, error,
-        prompt_tokens, completion_tokens, total_tokens, evidence_json, variable_snapshot_json
+        prompt_tokens, completion_tokens, total_tokens, evidence_json, variable_snapshot_json, model_usage_json
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       step.runId,
       step.testIndex,
@@ -670,6 +683,10 @@ export class DashboardDatabase {
       step.tokenUsage?.totalTokens ?? null,
       step.evidence === undefined ? null : JSON.stringify(step.evidence),
       step.variableSnapshot === undefined ? null : JSON.stringify(step.variableSnapshot),
+      step.modelUsage === undefined && step.tokenUsage === undefined ? null : JSON.stringify({
+        ...(step.modelUsage === undefined ? {} : { modelUsage: step.modelUsage }),
+        ...(step.tokenUsage === undefined ? {} : { tokenUsage: step.tokenUsage }),
+      } satisfies Pick<RunDetailStep, 'modelUsage' | 'tokenUsage'>),
     )
   }
 

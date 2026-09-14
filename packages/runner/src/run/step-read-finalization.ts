@@ -1,7 +1,7 @@
 // Member-only terminal boundary. The standalone loop keeps its synchronous callback contract;
 // only this injected proxy holds its terminal until the member finishes capture/enrichment.
 import { A11yEvidenceDocumentSchema, ConsoleEvidenceDocumentSchema, EvidenceArtifactRefSchema, NetworkEvidenceDocumentSchema, VariableSnapshotSchema } from '@vostride/agent-qa-schema'
-import type { EvidenceDocument, StepEvidence, StepEvidenceEntries } from '@vostride/agent-qa-schema'
+import type { EvidenceDocument, ModelUsageObservations, StepEvidence, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import type { LoopEventEmitPort } from '../loop/ports.js'
 import type { AccessibilityViolation, StepResult } from '../result.js'
 import type { MemberRunConfig } from './member-runner.js'
@@ -36,8 +36,8 @@ export function createStepReadFinalizer(
     stepFinalized(evidence, extra) {
       if (!finalized && pending === undefined) pending = { evidence, extra }
     },
-    subActionRecorded(evidence, index) {
-      if (!finalized) downstream.subActionRecorded(evidence, index)
+    subActionRecorded(evidence, index, extra) {
+      if (!finalized) downstream.subActionRecorded(evidence, index, extra)
     },
   }
 
@@ -178,7 +178,7 @@ export function createStepReadFinalizer(
     }
   }
 
-  function finish(result: StepResult): void {
+  function finish(result: StepResult, modelObservations?: ModelUsageObservations): void {
     if (finalized) return
     finalized = true
     const evidence = result.evidence ?? pending?.evidence ?? synthesizeStepEvidence(result, stepIndex, {
@@ -233,6 +233,7 @@ export function createStepReadFinalizer(
       ...extra, status: result.status, durationMs: result.duration,
       ...(result.error === undefined ? {} : { error: result.error }), evidence: entries,
       ...(variableSnapshot === undefined ? {} : { variableSnapshot }),
+      ...(modelObservations === undefined ? {} : { modelObservations }),
     })
   }
 

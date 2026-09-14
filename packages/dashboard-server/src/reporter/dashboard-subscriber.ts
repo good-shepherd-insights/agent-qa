@@ -407,6 +407,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
         // a NULL row is what makes `runs.detail` able to say "M of K steps unmeasured" instead of
         // reporting a zero nobody measured.
         ...(payload.tokenUsage === undefined ? {} : { tokenUsage: payload.tokenUsage }),
+        ...(payload.modelUsage === undefined ? {} : { modelUsage: payload.modelUsage }),
         ...(payload.evidence === undefined ? {} : { evidence: payload.evidence }),
         ...(payload.variableSnapshot === undefined ? {} : { variableSnapshot: payload.variableSnapshot }),
       })
