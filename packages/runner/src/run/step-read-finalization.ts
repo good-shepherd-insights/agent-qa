@@ -1,12 +1,13 @@
 // Member-only terminal boundary. The standalone loop keeps its synchronous callback contract;
 // only this injected proxy holds its terminal until the member finishes capture/enrichment.
-import { ConsoleEvidenceDocumentSchema, EvidenceArtifactRefSchema, NetworkEvidenceDocumentSchema } from '@vostride/agent-qa-schema'
+import { ConsoleEvidenceDocumentSchema, EvidenceArtifactRefSchema, NetworkEvidenceDocumentSchema, VariableSnapshotSchema } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, StepEvidence, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import type { LoopEventEmitPort } from '../loop/ports.js'
 import type { StepResult } from '../result.js'
 import type { MemberRunConfig } from './member-runner.js'
 import { synthesizeStepEvidence } from './handoff-assembly.js'
 import { projectNetworkEvidence } from './network-evidence-policy.js'
+import { redactSecretValue } from '../loop/secrets.js'
 
 export function createStepReadFinalizer(
   config: MemberRunConfig,
@@ -145,18 +146,43 @@ export function createStepReadFinalizer(
     // Preserve the recorded loop evidence for handoff assembly even when enrichment replaced
     // the StepResult with an abort result. Bypasses use the very same synthesis as handoffs.
     result.evidence ??= evidence
-    // Later kind producers extend this same boundary. No variable/a11y persistence
-    // has been attempted here; their absent states make that explicit until they are bound.
+    let variableSnapshot: ReturnType<typeof VariableSnapshotSchema.parse> | undefined
+    let variables: StepEvidenceEntries['variables'] = {
+      kind: 'variables', state: 'absent', reason: 'not-captured',
+    }
+    if (result.variableSnapshot !== undefined) {
+      try {
+        if (Object.keys(result.variableSnapshot).length === 0) {
+          variables = { kind: 'variables', state: 'absent', reason: 'empty' }
+        } else {
+          const masking = config.masking
+          if (!masking) throw new Error('Variable masking not bound')
+          const mask = (text: string) => masking.mask(redactSecretValue(text, config.secretRedactor))
+          const maskedSnapshot = Object.fromEntries(
+            Object.entries(result.variableSnapshot).map(([name, entry]) => [
+              mask(name), { value: mask(entry.value), source: entry.source },
+            ]),
+          )
+          const validated = VariableSnapshotSchema.parse(maskedSnapshot)
+          variableSnapshot = Object.fromEntries(Object.keys(maskedSnapshot).map(name => [name, validated[name]]))
+          variables = { kind: 'variables', state: 'present', counts: { count: Object.keys(variableSnapshot).length } }
+        }
+      } catch {
+        variableSnapshot = undefined
+        variables = { kind: 'variables', state: 'absent', reason: 'failed' }
+      }
+    }
     const entries: StepEvidenceEntries = {
       console: consoleEvidence,
       network: networkEvidence,
       a11y: { kind: 'a11y', state: 'absent', reason: 'not-captured' },
-      variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
+      variables,
     }
     const { status: _status, durationMs: _duration, error: _error, ...extra } = pending?.extra ?? {}
     downstream.stepFinalized(evidence, {
       ...extra, status: result.status, durationMs: result.duration,
       ...(result.error === undefined ? {} : { error: result.error }), evidence: entries,
+      ...(variableSnapshot === undefined ? {} : { variableSnapshot }),
     })
   }
 

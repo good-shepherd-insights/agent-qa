@@ -421,7 +421,11 @@ async function runMemberAttempt(
     config.sink.stepStarted({ stepIndex, stepText: rawInstruction })
     const recordResult = (result: StepResult) => {
       result.id = stepId
-      result.variableSnapshot ??= variableStore.snapshot()
+      // Sample only once all attempted extraction/inline work has settled. Redact each
+      // value separately so the general result walker cannot discard prototype-named keys.
+      result.variableSnapshot = Object.fromEntries(Object.entries(variableStore.snapshot()).map(
+        ([name, entry]) => [name, { ...entry, value: redactSecretValue(entry.value, config.secretRedactor) }],
+      ))
       finalizer.finish(result)
       steps.push(result)
     }
@@ -850,7 +854,6 @@ async function runMemberAttempt(
         }
       }
 
-      result.variableSnapshot = variableStore.snapshot()
       result = redactSecretValue(result, config.secretRedactor)
 
       if (result.status === 'failed') {

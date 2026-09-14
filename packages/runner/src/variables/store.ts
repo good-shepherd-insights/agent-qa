@@ -60,10 +60,9 @@ export class VariableStore {
   }
 
   snapshot(): Record<string, { value: string; source: VariableSource }> {
-    const result: Record<string, { value: string; source: VariableSource }> = {}
-    for (const [key, tracked] of this.storage) {
-      result[key] = { value: tracked.value, source: tracked.source }
-    }
-    return result
+    // Captured names are data, including __proto__; never invoke an inherited setter.
+    return Object.fromEntries(Array.from(this.storage, ([key, tracked]) => [
+      key, { value: tracked.value, source: tracked.source },
+    ]))
   }
 }
