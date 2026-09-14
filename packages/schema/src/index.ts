@@ -259,6 +259,23 @@ export type {
   RunsDigestInput,
 } from './notification/index'
 export type { RunStatus, ExecutionContext, RunId } from './run/index'
+export {
+  CURATION_BUCKETS,
+  CURATION_BUCKET_PRECEDENCE,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
+  CurationBucketSchema,
+  CurationSnapshotChangeSchema,
+  CurationSnapshotRowSchema,
+  CurationBreakdownSchema,
+  CurationSnapshotSchema,
+} from './notification/curation-snapshot'
+export type {
+  CurationBucket,
+  CurationSnapshotChange,
+  CurationSnapshotRow,
+  CurationBreakdown,
+  CurationSnapshot,
+} from './notification/curation-snapshot'
 export type {
   ArtifactRef,
   BundleDiscriminant,
