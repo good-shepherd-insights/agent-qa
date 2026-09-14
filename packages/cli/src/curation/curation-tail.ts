@@ -999,7 +999,8 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
 
     const receiptIdentity = receiptIdentityForHandoff(handoff)
     try {
-      if (receiptMatches(operations.readCurationTailReceipt(runDir), receiptIdentity)) continue
+      const priorReceipt = operations.readCurationTailReceipt(runDir)
+      if (receiptMatches(priorReceipt, receiptIdentity)) continue
       const resolvePromotionPosture = opts.resolvePromotionPostureForRun === undefined
         ? opts.resolvePromotionPosture : await opts.resolvePromotionPostureForRun(handoff.buildOrdinal, handoff.scope)
       const folded = await curateCompletedRun({
@@ -1018,7 +1019,12 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         ...(opts.deadlineMs === undefined ? {} : { deadlineMs: opts.deadlineMs }),
         ...(opts.signal === undefined ? {} : { signal: opts.signal }),
         log: opts.log,
-        operations,
+        operations: {
+          ...operations,
+          // The sweep already read this exact path; standalone folds still read for themselves.
+          readCurationTailReceipt: (requestedRunDir) => requestedRunDir === runDir
+            ? priorReceipt : operations.readCurationTailReceipt(requestedRunDir),
+        },
       })
       if (!folded.complete) {
         if (opts.signal?.aborted === true) return

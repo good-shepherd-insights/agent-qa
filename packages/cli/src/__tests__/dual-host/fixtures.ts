@@ -13,7 +13,7 @@ import {
   type CurationJobView,
   type CuratorAuthor,
 } from '@vostride/agent-qa-knowledge-local'
-import { canonicalJson } from '@vostride/agent-qa-schema'
+import { canonicalJson, CurationSnapshotSchema } from '@vostride/agent-qa-schema'
 import type { ExecutionContext } from '@vostride/agent-qa-schema'
 
 export const FIXTURE_RUN_ID = 'run-dual-host-byte-proof'
@@ -40,7 +40,7 @@ export interface DualHostFixture {
 }
 
 /**
- * Compare every receipt field while closing the only two host-provenance differences.
+ * Compare every receipt field, validating completion-only snapshot asymmetry separately.
  * New, missing, or mutated fields are named in the failure instead of being hidden by a projection.
  */
 export function compareRunReceipts(
@@ -53,6 +53,16 @@ export function compareRunReceipts(
     if (permitted.has(field)) return false
     const oneShotHasField = Object.hasOwn(oneShot, field)
     const daemonHasField = Object.hasOwn(daemon, field)
+    if (field === 'snapshot') {
+      if ((oneShotHasField && !CurationSnapshotSchema.safeParse(oneShot.snapshot).success)
+        || (daemonHasField && !CurationSnapshotSchema.safeParse(daemon.snapshot).success)) return true
+      if (oneShotHasField !== daemonHasField) {
+        return !(oneShotHasField && !daemonHasField && oneShot.drainKind === 'drained'
+          && oneShot.handoffHolderPid === null && daemon.drainKind === 'handed-off'
+          && typeof daemon.handoffHolderPid === 'number'
+          && Number.isInteger(daemon.handoffHolderPid) && daemon.handoffHolderPid > 0)
+      }
+    }
     if (oneShotHasField !== daemonHasField) return true
     return canonicalJson(oneShot[field]) !== canonicalJson(daemon[field])
   })

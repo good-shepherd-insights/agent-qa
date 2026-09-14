@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 
 import { afterAll, describe, expect, it } from 'vitest'
+import { CurationSnapshotSchema } from '@vostride/agent-qa-schema'
 
 import {
   PERMITTED_RUN_RECEIPT_DIFF_FIELDS,
@@ -16,7 +17,37 @@ import {
   cleanupDualHostRoots,
   makeRoot,
   runLeg,
+  type LegReport,
 } from './spawn-helpers.js'
+
+function assertCompletedSnapshot(oneShot: LegReport, daemon: LegReport, expectedCount: number) {
+  const snapshot = CurationSnapshotSchema.parse(oneShot.runReceipt.snapshot)
+  expect(snapshot.breakdown).toEqual({ added: expectedCount, confirmed: 0, superseded: 0,
+    deprecated: 0, proposed: 0 })
+  const tables = JSON.parse(oneShot.logicalDump) as Array<{
+    table: string; rows: Array<{ bundle_id: string }>
+  }>
+  expect(snapshot.rows.map(row => row.recordId).sort()).toEqual(
+    tables.find(table => table.table === 'records')!.rows.map(row => row.bundle_id).sort(),
+  )
+  expect(daemon.runReceipt).not.toHaveProperty('snapshot')
+  // Equal completed snapshots remain comparable, and a snapshot is never an ignored field.
+  expect(() => compareRunReceipts(oneShot.runReceipt, { ...oneShot.runReceipt })).not.toThrow()
+  const empty = { schemaVersion: 1, rows: [], breakdown: {
+    added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0,
+  } }
+  expect(() => compareRunReceipts(oneShot.runReceipt, { ...oneShot.runReceipt, snapshot: empty }))
+    .toThrow(/snapshot/u)
+  expect(() => compareRunReceipts({ ...oneShot.runReceipt, snapshot: {
+    ...snapshot, breakdown: { ...snapshot.breakdown, added: expectedCount + 1 },
+  } }, daemon.runReceipt)).toThrow(/snapshot/u)
+  const { snapshot: omitted, ...withoutSnapshot } = oneShot.runReceipt
+  expect(omitted).toBeDefined()
+  expect(() => compareRunReceipts(withoutSnapshot, { ...daemon.runReceipt, snapshot }))
+    .toThrow(/snapshot/u)
+  expect(() => compareRunReceipts({ ...oneShot.runReceipt, drainKind: 'handed-off' }, daemon.runReceipt))
+    .toThrow(/snapshot/u)
+}
 
 const childMode = process.env[DUAL_HOST_ENV.child] === '1'
 
@@ -92,6 +123,7 @@ if (childMode) {
       'drainKind',
       'handoffHolderPid',
     ])
+    assertCompletedSnapshot(oneShot, daemon, 2)
     expect(() => compareRunReceipts(oneShot.runReceipt, daemon.runReceipt)).not.toThrow()
     expect(oneShot.runReceipt).toMatchObject({
       drainKind: 'drained',
@@ -144,6 +176,7 @@ if (childMode) {
       expect(daemon.epoch).toBe(1)
       expect(oneShot.commitOrder).toEqual([...oneShot.candidateIds].sort())
       expect(daemon.commitOrder).toEqual(oneShot.commitOrder)
+      assertCompletedSnapshot(oneShot, daemon, fixture.candidates.length)
       expect(() => compareRunReceipts(oneShot.runReceipt, daemon.runReceipt)).not.toThrow()
       expect(daemon.sessionReceipts).toHaveLength(1)
       expect(daemon.sessionReceipts[0]).toMatchObject({
