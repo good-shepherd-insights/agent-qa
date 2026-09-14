@@ -9,6 +9,8 @@ import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { projectNetworkEvidence } from '../network-evidence-policy.js'
 import { executeStep } from '../../loop/index.js'
 import type { LoopPorts } from '../../loop/ports.js'
+import { VariableStore } from '../../variables/store.js'
+import { createStepReadFinalizer } from '../step-read-finalization.js'
 
 const secret = 'synthetic-live-secret-423'
 const hookId = 'h_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
@@ -51,6 +53,110 @@ function fixture() {
   )
   return { events, documents, secrets, abort, adapter, config, member, terminals }
 }
+
+test('VARIABLE-FINAL: capture replaces the seed only before the single final snapshot', async () => {
+  const f = fixture()
+  f.config.inlineVars = { captured: 'before extraction' }
+  f.member.steps = [{ step: 'Click Log in', capture: { variable: 'captured', method: 'ai' } }]
+  f.config.extractorFactory = () => ({ extract: async () => {
+    expect(f.terminals()).toHaveLength(0)
+    f.secrets.add(secret)
+    return { success: true, variableName: 'captured', value: secret, reasoning: 'synthetic' }
+  } })
+  await runMemberTest(f.member, f.config)
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].variableSnapshot).toEqual({ captured: { value: '[secret]', source: 'capture' } })
+  expect(f.terminals()[0].evidence?.variables).toEqual({ kind: 'variables', state: 'present', counts: { count: 1 } })
+})
+
+test('VARIABLE-SOURCES: all seven actual store origins survive final publication', async () => {
+  const f = fixture()
+  f.config.envFileVars = { environment: 'env value' }
+  f.config.inlineVars = { inline: 'inline value' }
+  f.config.suiteVars = { suite: 'suite value' }
+  f.config.cliVars = { cli: 'cli value' }
+  f.config.hookSetupVars = { hook: 'hook value' }
+  f.config.executeStep = async (instruction, ports, context) => {
+    ports.onSetVariable?.('step', 'step value')
+    return executeStep(instruction, ports, context)
+  }
+  f.member.steps = [{ step: 'Click Log in', capture: { variable: 'captured', method: 'ai' } }]
+  f.config.extractorFactory = () => ({ extract: async () => ({ success: true,
+    variableName: 'captured', value: 'capture value', reasoning: 'synthetic' }) })
+  await runMemberTest(f.member, f.config)
+  expect(f.terminals()[0].variableSnapshot).toEqual({
+    environment: { value: 'env value', source: 'env' }, inline: { value: 'inline value', source: 'inline' },
+    suite: { value: 'suite value', source: 'suite' }, cli: { value: 'cli value', source: 'cli' },
+    hook: { value: 'hook value', source: 'hook' }, step: { value: 'step value', source: 'step' },
+    captured: { value: 'capture value', source: 'capture' },
+  })
+  expect(f.terminals()[0].evidence?.variables).toMatchObject({ state: 'present', counts: { count: 7 } })
+})
+
+test('VARIABLE-MASK-NAMES: live mask and declared-secret redaction cover both names and values', async () => {
+  const f = fixture()
+  const declared = 'synthetic-declared-value'
+  f.config.envFileVars = { SYNTHETIC_API_KEY: secret }
+  f.config.inlineVars = { [`name-${secret}`]: `value-${secret}`, [declared]: declared }
+  f.config.secretRedactor = { redactString: text => text.replaceAll(declared, '[secret]') }
+  f.config.executeStep = async (instruction, ports, context) => {
+    f.secrets.add(secret)
+    return executeStep(instruction, ports, context)
+  }
+  await runMemberTest(f.member, f.config)
+  expect(f.terminals()[0].variableSnapshot).toEqual({
+    SYNTHETIC_API_KEY: { value: '[secret]', source: 'env' },
+    'name-[secret]': { value: 'value-[secret]', source: 'inline' },
+    '[secret]': { value: '[secret]', source: 'inline' },
+  })
+  expect(JSON.stringify(f.terminals())).not.toContain(secret)
+  expect(JSON.stringify(f.terminals())).not.toContain(declared)
+})
+
+test('VARIABLE-LARGE: 1000 variables retain full values without a production cap', async () => {
+  const f = fixture()
+  const values = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [
+    `variable-${index}`, index === 999 ? 'é'.repeat(40000) : 'v'.repeat(64),
+  ]))
+  f.config.inlineVars = values
+  await runMemberTest(f.member, f.config)
+  const snapshot = f.terminals()[0].variableSnapshot
+  expect(snapshot).toEqual(Object.fromEntries(Object.entries(values).map(([name, value]) => [name, { value, source: 'inline' }])))
+  expect(f.terminals()[0].evidence?.variables).toMatchObject({ state: 'present', counts: { count: 1000 } })
+  console.info('VARIABLE-MEASUREMENTS', JSON.stringify({ variables: 1000,
+    snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)),
+    terminalBytes: Buffer.byteLength(JSON.stringify(f.terminals()[0])),
+  }))
+})
+
+test('VARIABLE-PROTOTYPE: the actual snapshot producer preserves own prototype-named data', async () => {
+  const store = new VariableStore()
+  store.set('__proto__', 'synthetic prototype value', 'step')
+  expect(Object.keys(store.snapshot())).toEqual(['__proto__'])
+  const f = fixture()
+  f.config.inlineVars = Object.fromEntries([['__proto__', secret], ['constructor', 'ordinary value']])
+  f.config.secretRedactor = { redactString: text => text.replaceAll(secret, '[secret]') }
+  await runMemberTest(f.member, f.config)
+  const snapshot = f.terminals()[0].variableSnapshot!
+  expect(Object.keys(snapshot)).toEqual(['__proto__', 'constructor'])
+  expect(Object.getOwnPropertyDescriptor(snapshot, '__proto__')?.value).toEqual({ value: '[secret]', source: 'inline' })
+  expect(Object.getPrototypeOf(snapshot)).toBe(Object.prototype)
+  expect(f.terminals()[0].evidence?.variables).toMatchObject({ counts: { count: 2 } })
+})
+
+test('VARIABLE-EMPTY: an actual empty snapshot has no invented count', async () => {
+  const f = fixture()
+  await runMemberTest(f.member, f.config)
+  expect(f.terminals()[0].evidence?.variables).toEqual({ kind: 'variables', state: 'absent', reason: 'empty' })
+  expect(f.terminals()[0]).not.toHaveProperty('variableSnapshot')
+})
+
+test('VARIABLE-UNAVAILABLE: a bypass without a supplied snapshot stays not-captured', () => {
+  const f = fixture()
+  createStepReadFinalizer(f.config, 0, f.member.name, 'synthetic').finish({ name: 'bypass', status: 'failed', duration: 0 })
+  expect(f.terminals()[0].evidence?.variables).toEqual({ kind: 'variables', state: 'absent', reason: 'not-captured' })
+  expect(f.terminals()[0]).not.toHaveProperty('variableSnapshot')
+})
 
 test('EVID-WEB-PRESENT: live masked records/counts publish after a11y and variable capture', async () => {
   const f = fixture()
