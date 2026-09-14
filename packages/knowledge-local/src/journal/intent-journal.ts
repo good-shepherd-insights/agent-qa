@@ -21,6 +21,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 
 import { canonicalJson } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
+import { curationObservationSchema } from './curation-effect-receipt.js'
 
 export const JOURNAL_SUBDIR = 'memory/queue/journal'
 export const COMMIT_INTENT_SCHEMA_VERSION = 1
@@ -43,6 +44,8 @@ export const commitIntentSchema = z
     deltaKind: z.enum(['Add', 'Confirm', 'Supersede', 'Deprecate', 'MintUnknown', 'Noop']),
     targetRecordId: z.string().min(1).optional(),
     epoch: z.number().int().positive(),
+    /** Optional versioned observation; historical v1 intents retain their exact shape. */
+    observation: curationObservationSchema.optional(),
   })
   .strict()
 
