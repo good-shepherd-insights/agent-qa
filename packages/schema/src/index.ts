@@ -936,6 +936,8 @@ export {
   // 405-05 D-12/D-13: the artifact read op's two contracts.
   RunsArtifactInputSchema,
   RunsArtifactResultSchema,
+  RunsEvidenceInputSchema,
+  RunsEvidenceResultSchema,
   // 407 LERN-01/LERN-02 D-05: the `runs.knowledge` panel read's contracts.
   RunsKnowledgeInputSchema,
   RunKnowledgeBriefLineSchema,
@@ -1033,6 +1035,8 @@ export type {
   // 405-05 D-12/D-13/D-15: the artifact read's shapes and the port's three-arm lookup answer.
   RunsArtifactInput,
   RunsArtifactResult,
+  RunsEvidenceInput,
+  RunsEvidenceResult,
   // 407 D-05: the panel projection's inferred shapes.
   RunsKnowledgeInput,
   RunKnowledgeProjection,

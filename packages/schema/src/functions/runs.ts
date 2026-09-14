@@ -23,7 +23,11 @@ import { LiveStreamDeclarationSchema } from '../run/live-stream'
 import { RUN_EVENT_TYPES } from '../run/bus-events'
 import type { RunEventEnvelope, RunEventPayload } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
-import { EvidenceEntrySchema, VariableSnapshotSchema } from '../run/evidence'
+import {
+  EvidenceEntrySchema, EvidenceKindSchema, EvidenceAbsenceReasonSchema,
+  ConsoleEvidenceDocumentSchema, NetworkEvidenceDocumentSchema, A11yEvidenceDocumentSchema,
+  AriaEvidenceDocumentSchema, VariablesEvidenceDocumentSchema, VariableSnapshotSchema,
+} from '../run/evidence'
 import type { AriaEvidenceEntry, StepEvidenceEntries, VariableSnapshot } from '../run/evidence'
 import type { RecordedActionResult } from '../result/index'
 import { runIdSchema } from '../run/run-id'
@@ -773,6 +777,54 @@ export const RunsArtifactResultSchema = z.object({
 }).strict()
 
 export type RunsArtifactResult = z.infer<typeof RunsArtifactResultSchema>
+
+/** A recorded row address, never a caller-selected blob SHA or path. */
+export const RunsEvidenceInputSchema = z.strictObject({
+  runId: runIdSchema,
+  testIndex: z.number().int().nonnegative(),
+  stepIndex: z.number().int().nonnegative(),
+  subActionIndex: z.number().int().nonnegative().optional(),
+  kind: EvidenceKindSchema,
+}).refine(value => value.kind === 'aria' || value.subActionIndex === undefined, {
+  message: 'Only ARIA evidence addresses a sub-action',
+})
+export type RunsEvidenceInput = z.infer<typeof RunsEvidenceInputSchema>
+
+const evidenceReady = <S extends z.ZodType>(document: S) => z.strictObject({
+  address: RunsEvidenceInputSchema,
+  outcome: z.literal('ready'),
+  evidence: EvidenceEntrySchema,
+  document,
+})
+
+/** Read failures are separate from the producer's capture-time presence/absence. */
+export const RunsEvidenceResultSchema = z.union([
+  evidenceReady(ConsoleEvidenceDocumentSchema),
+  evidenceReady(NetworkEvidenceDocumentSchema),
+  evidenceReady(A11yEvidenceDocumentSchema),
+  evidenceReady(AriaEvidenceDocumentSchema),
+  evidenceReady(VariablesEvidenceDocumentSchema),
+  z.strictObject({
+    address: RunsEvidenceInputSchema,
+    outcome: z.literal('absent'),
+    evidence: z.strictObject({
+      kind: EvidenceKindSchema, state: z.literal('absent'), reason: EvidenceAbsenceReasonSchema,
+      evidenceIncomplete: z.boolean().optional(),
+    }),
+  }),
+  z.strictObject({
+    address: RunsEvidenceInputSchema,
+    outcome: z.literal('read-error'),
+    code: z.enum(['address-not-found', 'ambiguous-address', 'invalid-entry', 'ref-not-owned',
+      'sha-mismatch', 'invalid-document', 'storage-read-failed', 'snapshot-missing']),
+    capture: EvidenceEntrySchema.optional(),
+  }),
+]).refine(value => {
+  if (value.outcome === 'read-error') return value.capture === undefined || value.capture.kind === value.address.kind
+  if (value.evidence.kind !== value.address.kind) return false
+  return value.outcome !== 'ready' || (value.evidence.state === 'present' && value.document.kind === value.address.kind)
+}, { message: 'Evidence, document and address must describe the same captured kind' })
+export type RunsEvidenceResult = z.infer<typeof RunsEvidenceResultSchema>
 
 // ---- `runs.knowledge` — what one run USED and LEARNED (Phase 407, LERN-01/LERN-02 · D-05) -----
 //

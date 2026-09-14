@@ -36,6 +36,8 @@ export {
   // that ref becomes bytes.
   RunsArtifactInputSchema,
   RunsArtifactResultSchema,
+  RunsEvidenceInputSchema,
+  RunsEvidenceResultSchema,
   // 407 D-05: the `runs.knowledge` panel read's contracts — one input and one two-armed
   // projection carrying what a run USED (served channels, trace arms, plan source, rung) and
   // what it LEARNED (curation counts, attributable record changes, canary outcomes). They live
@@ -84,6 +86,8 @@ export type {
   // and its two absences are kept APART on purpose — see the type's own doc.
   RunsArtifactInput,
   RunsArtifactResult,
+  RunsEvidenceInput,
+  RunsEvidenceResult,
   // 407 D-05: the panel projection's inferred shapes. `RunKnowledgeStep` is the row a surface
   // renders; `RunKnowledgeProjection` is the whole answer including the `evidence-incomplete`
   // arm, which is a RESULT and not a refusal (D-06).
