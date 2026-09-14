@@ -884,6 +884,7 @@ function finishCommitWithinCurrentAuthority(
   job: CommitCurationJob,
   observation: CurationObservation,
   projectSuccessfulPrefix = true,
+  completeClaim = true,
 ): void {
   for (const effect of observation.effects) {
     if (!isCurationEffectCommitted(deps.knowledgeRoot, job.candidateId, effect)) continue
@@ -900,7 +901,8 @@ function finishCommitWithinCurrentAuthority(
   deps.hooks?.afterEffectReceiptsWritten?.()
   clearCommitIntent(deps.knowledgeRoot, job.candidateId)
   deps.hooks?.afterIntentCleared?.()
-  markDoneWithinCurrentAuthority(deps, job)
+  // Retriable failures preserve the claim for drain to requeue its authored checkpoint.
+  if (completeClaim) markDoneWithinCurrentAuthority(deps, job)
 }
 
 function appendFailure(
@@ -1375,7 +1377,7 @@ export function commitCurationDelta(
                   )
               const failure = appendFailure(appended)
               if (failure !== undefined) {
-                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, failure.kind !== 'failed')
                 return failure
               }
               if (
@@ -1419,7 +1421,7 @@ export function commitCurationDelta(
                 ? { kind: 'not-found' as const }
                 : loadBundle(promotionBundleDir)
               if (loaded.kind !== 'loaded' || promotionBundleDir === undefined) {
-                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, false)
                 return { kind: 'failed', reason: 'append-failed' }
               }
               // 416-DOOR: door-3 gate
@@ -1442,7 +1444,7 @@ export function commitCurationDelta(
                 })
                 const promotedFailure = appendFailure(promoted)
                 if (promotedFailure !== undefined) {
-                  finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+                  finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, promotedFailure.kind !== 'failed')
                   return promotedFailure
                 }
                 tailMutationAppended ||= promoted.kind === 'appended'
@@ -1457,7 +1459,7 @@ export function commitCurationDelta(
                 })
                 const receiptFailure = appendFailure(receipt)
                 if (receiptFailure !== undefined) {
-                  finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+                  finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, receiptFailure.kind !== 'failed')
                   return receiptFailure
                 }
                 tailMutationAppended ||= receipt.kind === 'appended'
@@ -1481,7 +1483,7 @@ export function commitCurationDelta(
               })
               const baselineFailure = appendFailure(baseline)
               if (baselineFailure !== undefined) {
-                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, baselineFailure.kind !== 'failed')
                 return baselineFailure
               }
               tailMutationAppended ||= baseline.kind === 'appended'
@@ -1502,7 +1504,7 @@ export function commitCurationDelta(
                 })
               const promotedFailure = appendFailure(promoted)
               if (promotedFailure !== undefined) {
-                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, promotedFailure.kind !== 'failed')
                 return promotedFailure
               }
               tailMutationAppended ||= promoted.kind === 'appended'
@@ -1535,7 +1537,7 @@ export function commitCurationDelta(
             )
             const failure = appendFailure(appended)
             if (failure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, failure.kind !== 'failed')
               return failure
             }
             if (appended.kind === 'duplicate') {
@@ -1564,7 +1566,7 @@ export function commitCurationDelta(
             })
             const failure = appendFailure(appended)
             if (failure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, failure.kind !== 'failed')
               return failure
             }
           }
@@ -1587,7 +1589,7 @@ export function commitCurationDelta(
             )
             const failure = appendFailure(appended)
             if (failure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, failure.kind !== 'failed')
               return failure
             }
             measurementAppendDuplicate = appended.kind === 'duplicate'
@@ -1603,7 +1605,7 @@ export function commitCurationDelta(
             const appended = appendRelation(canonicalConfig, bundleId, relation)
             const failure = appendFailure(appended)
             if (failure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, failure.kind !== 'failed')
               return failure
             }
             tailMutationAppended ||= appended.kind === 'appended'
@@ -1628,7 +1630,7 @@ export function commitCurationDelta(
             })
             const supersededFailure = appendFailure(superseded)
             if (supersededFailure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, supersededFailure.kind !== 'failed')
               return supersededFailure
             }
             tailMutationAppended ||= superseded.kind === 'appended'
@@ -1644,7 +1646,7 @@ export function commitCurationDelta(
             })
             const closeFailure = appendFailure(closed)
             if (closeFailure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation, true, closeFailure.kind !== 'failed')
               return closeFailure
             }
             tailMutationAppended ||= closed.kind === 'appended'

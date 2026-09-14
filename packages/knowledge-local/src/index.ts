@@ -1,6 +1,9 @@
 import type { KnowledgePort } from '@vostride/agent-qa-agent'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 
+export { foldCurationSnapshot, readCurationEffects } from './curator/curation-snapshot.js'
+export type { ReadCurationEffectsOptions } from './curator/curation-snapshot.js'
+
 export {
   canaryOutcomePayloadV2Schema,
   queuedCanaryPayloadSchema,

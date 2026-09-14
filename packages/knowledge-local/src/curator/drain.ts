@@ -13,7 +13,10 @@ import {
   type PromotionPath,
   type ResolvePromotionPosture,
   type TrustPriorTable,
+  type CurationSnapshot,
+  type CurationSnapshotChange,
 } from '@vostride/agent-qa-schema'
+import { foldCurationSnapshot, readCurationEffects } from './curation-snapshot.js'
 
 import { openKnowledgeReader, type KnowledgeReader } from '../index-reader.js'
 import {
@@ -152,6 +155,10 @@ export interface DrainPromotionOutcome {
 }
 
 interface DrainReportBase {
+  /** Actual surviving effects for the requested run, also present on incomplete drains. */
+  effects?: readonly CurationSnapshotChange[]
+  /** Certified only after a complete drain; absent for historical missing receipts. */
+  snapshot?: CurationSnapshot
   jobsProcessed: number
   committed: number
   /**
@@ -230,6 +237,9 @@ export interface DrainOperations extends MaintenanceOperations {
 }
 
 export interface DrainOptions {
+  /** A per-run reader request, independent of which queued jobs this drain claims. */
+  sourceRunId?: string
+  observationIds?: readonly string[]
   /** 2026-09-07, 418 D-19: proposals store root; production hosts bind this in Plan 05. */
   agentQaRoot?: string
   knowledgeRoot: string
@@ -1257,6 +1267,14 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     }
     return result
   } finally {
+    if (options.sourceRunId !== undefined) {
+      try {
+        result.effects = readCurationEffects({ knowledgeRoot: options.knowledgeRoot,
+          sourceRunId: options.sourceRunId, observationIds: options.observationIds })
+      } catch {
+        recordFailure(result, 'commit', 'curation effect read incomplete')
+      }
+    }
     if (drainOwnsLease) {
       try {
         const released = operations.releaseLease({
@@ -1269,5 +1287,9 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       }
     }
     updateRemaining(result, options.knowledgeRoot, lease.leaseId)
+    if (result.kind === 'drained' && result.failures === 0 && result.requeued === 0
+      && result.remaining === 0 && result.effects !== undefined && result.effects.length > 0) {
+      result.snapshot = foldCurationSnapshot(result.effects)
+    }
   }
 }
