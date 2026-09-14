@@ -193,6 +193,8 @@ test('NETWORK-CANCEL-DURING-BATCH: cancellation retains all drained content and 
   const result = await runMemberTest(f.member, f.config)
   expect(f.terminals()).toHaveLength(1)
   expect(result.status).toBe('cancelled')
+  expect(result.steps[0].networkLogs).toEqual(records)
+  expect(result.steps[0].evidence!.subActions.length).toBeGreaterThan(0)
   expect(f.terminals()[0].status).toBe('cancelled')
   expect(f.terminals()[0].evidence?.network).toMatchObject({ state: 'present', counts: { total: 65, failed: 0, errored: 0 } })
 })

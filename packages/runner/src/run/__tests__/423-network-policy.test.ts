@@ -19,9 +19,9 @@ test('HEADER-CASE: every credential value is redacted before the live mask, with
     'x-auth-token', 'x-access-token', 'x-csrf-token', 'x-xsrf-token']
   const headers = Object.fromEntries(names.map((name, index) => [index % 2 ? name.toUpperCase() : name, 'fresh-session-value']))
   const seen: string[] = []
-  const source = record({ requestHeaders: { ...headers, 'safe-SYNTHETIC': 'value-SYNTHETIC' },
+  const source = { ...record({ requestHeaders: { ...headers, 'safe-SYNTHETIC': 'value-SYNTHETIC' },
     responseHeaders: headers, url: 'url-SYNTHETIC', method: 'method-SYNTHETIC',
-    timing: { 'time-SYNTHETIC': 2 } })
+    timing: { 'time-SYNTHETIC': 2 } }), requestSize: 123, responseSize: 456 }
   const result = projectNetworkEvidence([source, record({ status: 404 })], text => {
     seen.push(text)
     return text.replaceAll('SYNTHETIC', '[secret]')
@@ -29,7 +29,7 @@ test('HEADER-CASE: every credential value is redacted before the live mask, with
   expect(Object.values(result.records[0].responseHeaders)).toEqual(names.map(() => maskedMarker('secret')))
   expect(result.records[0]).toMatchObject({ url: 'url-[secret]', method: 'method-[secret]',
     requestHeaders: { 'safe-[secret]': 'value-[secret]' }, timing: { 'time-[secret]': 2 },
-    startTime: 20, endTime: 30, status: 200 })
+    startTime: 20, endTime: 30, status: 200, requestSize: 123, responseSize: 456 })
   expect(result.records.map(value => value.status)).toEqual([200, 404])
   expect(seen).not.toContain('fresh-session-value')
   expect(seen).toContain(maskedMarker('secret'))

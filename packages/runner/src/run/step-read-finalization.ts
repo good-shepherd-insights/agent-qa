@@ -1,11 +1,12 @@
 // Member-only terminal boundary. The standalone loop keeps its synchronous callback contract;
 // only this injected proxy holds its terminal until the member finishes capture/enrichment.
-import { ConsoleEvidenceDocumentSchema, EvidenceArtifactRefSchema } from '@vostride/agent-qa-schema'
-import type { StepEvidence, StepEvidenceEntries } from '@vostride/agent-qa-schema'
+import { ConsoleEvidenceDocumentSchema, EvidenceArtifactRefSchema, NetworkEvidenceDocumentSchema } from '@vostride/agent-qa-schema'
+import type { EvidenceDocument, StepEvidence, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import type { LoopEventEmitPort } from '../loop/ports.js'
 import type { StepResult } from '../result.js'
 import type { MemberRunConfig } from './member-runner.js'
 import { synthesizeStepEvidence } from './handoff-assembly.js'
+import { projectNetworkEvidence } from './network-evidence-policy.js'
 
 export function createStepReadFinalizer(
   config: MemberRunConfig,
@@ -19,6 +20,10 @@ export function createStepReadFinalizer(
   let consoleCaptureFailed = false
   let consoleEvidence: StepEvidenceEntries['console'] = {
     kind: 'console', state: 'absent',
+    reason: config.adapter.platform === 'web' ? 'not-captured' : 'unsupported',
+  }
+  let networkEvidence: StepEvidenceEntries['network'] = {
+    kind: 'network', state: 'absent',
     reason: config.adapter.platform === 'web' ? 'not-captured' : 'unsupported',
   }
   const events: LoopEventEmitPort = {
@@ -81,6 +86,50 @@ export function createStepReadFinalizer(
     }
   }
 
+  async function captureNetwork(result: StepResult, signal: AbortSignal): Promise<void> {
+    if (signal.aborted || config.logCapture?.network === false) return
+    if (config.adapter.drainNetworkLogs === undefined) {
+      networkEvidence = { kind: 'network', state: 'absent', reason: 'unsupported' }
+      return
+    }
+    try {
+      const records = config.adapter.drainNetworkLogs()
+      result.networkLogs = records
+      // Device logging remains intact; this persisted document describes browser evidence only.
+      if (config.adapter.platform !== 'web') return
+      if (records.length === 0) {
+        networkEvidence = { kind: 'network', state: 'absent', reason: 'empty' }
+        return
+      }
+      const masking = config.masking
+      const store = config.evidenceArtifacts
+      if (!masking || !store?.persistEvidenceDocument) throw new Error('Network evidence not bound')
+      const document: Extract<EvidenceDocument, { kind: 'network' }> = {
+        schemaVersion: 1, kind: 'network', records: [],
+      }
+      // A measured 600-record, two-body fixture blocked timers for >400ms. Yield between
+      // batches, retaining all drained records and the live mask until one final publication.
+      for (let offset = 0; offset < records.length; offset += 32) {
+        document.records.push(...projectNetworkEvidence(
+          records.slice(offset, offset + 32), text => masking.mask(text),
+        ).records)
+        if (offset + 32 < records.length) await new Promise<void>(resolve => setTimeout(resolve, 0))
+      }
+      NetworkEvidenceDocumentSchema.parse(document)
+      const ref = EvidenceArtifactRefSchema.parse(store.persistEvidenceDocument(document))
+      if (!ref.id.startsWith('network-evidence:')) throw new Error('Invalid network evidence ref')
+      networkEvidence = { kind: 'network', state: 'present', ref, counts: {
+        total: document.records.length,
+        failed: document.records.filter(record => record.status >= 400).length,
+        errored: document.records.filter(record => record.status === 0).length,
+      } }
+    } catch {
+      if (config.adapter.platform === 'web') {
+        networkEvidence = { kind: 'network', state: 'absent', reason: 'failed' }
+      }
+    }
+  }
+
   function finish(result: StepResult): void {
     if (finalized) return
     finalized = true
@@ -96,11 +145,11 @@ export function createStepReadFinalizer(
     // Preserve the recorded loop evidence for handoff assembly even when enrichment replaced
     // the StepResult with an abort result. Bypasses use the very same synthesis as handoffs.
     result.evidence ??= evidence
-    // Later kind producers extend this same boundary. No variable/a11y/network persistence
+    // Later kind producers extend this same boundary. No variable/a11y persistence
     // has been attempted here; their absent states make that explicit until they are bound.
     const entries: StepEvidenceEntries = {
       console: consoleEvidence,
-      network: { kind: 'network', state: 'absent', reason: 'not-captured' },
+      network: networkEvidence,
       a11y: { kind: 'a11y', state: 'absent', reason: 'not-captured' },
       variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
     }
@@ -111,5 +160,5 @@ export function createStepReadFinalizer(
     })
   }
 
-  return { events, captureConsole, consoleFailed, finish }
+  return { events, captureConsole, captureNetwork, consoleFailed, finish }
 }

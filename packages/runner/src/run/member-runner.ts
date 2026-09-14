@@ -871,9 +871,9 @@ async function runMemberAttempt(
         }
       }
       finalizer.captureConsole(result, stepAbortController.signal)
-      if (!stepAbortController.signal.aborted && config.logCapture?.network !== false) {
-        result.networkLogs = config.adapter.drainNetworkLogs?.()
-      }
+      await finalizer.captureNetwork(result, stepAbortController.signal)
+      const abortedAfterCapture = abortResultForCurrentStep()
+      if (abortedAfterCapture) result = { ...result, ...abortedAfterCapture }
 
       result.id = stepId
     } catch (error) {
