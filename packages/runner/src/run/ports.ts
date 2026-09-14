@@ -367,6 +367,8 @@ export interface MemberEvidenceContext {
 
 /** The per-member execution context threaded into the injected {@link MemberTestExecutor}. */
 export interface MemberTestRunContext {
+  /** Canonical shell identity. Legacy executors without a shell cannot certify scoped usage. */
+  runId?: RunId
   abortSignal: AbortSignal
   testIndex: number
   events: MemberEventSink

@@ -24,8 +24,10 @@ import type {
 import type { SecretStore, SecretRedactor, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
-import { WorkingMemoryStore, runMemberTest } from '@vostride/agent-qa-runner'
-import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor } from '@vostride/agent-qa-runner'
+import { WorkingMemoryStore, runMemberTest, createStepModelScope } from '@vostride/agent-qa-runner'
+import { createCliStepModelScopeFactory } from '../composition/step-model-scope.js'
+import type { CliStepModelScopeOptions } from '../composition/step-model-scope.js'
+import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor, StepModelScopeFactory } from '@vostride/agent-qa-runner'
 // 390 D-16: the run-start ledger fold lives at the local composition root (the CLI's shipped source
 // does not name the knowledge package — 387 D-20); this host calls the ONE resolved helper.
 import { resolveRunQuarantineSnapshot } from '@vostride/agent-qa-agent-local'
@@ -95,6 +97,17 @@ import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type 
 const RUNTIME_ARTIFACTS_DIR = DEFAULT_AGENT_QA_ARTIFACTS_DIR || '.agent-qa/artifacts'
 const RUNTIME_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
 const RUNTIME_VIDEOS_DIR = DEFAULT_AGENT_QA_VIDEOS_DIR || '.agent-qa/artifacts/videos'
+
+/** Model/runner capabilities stay on the existing authorized CLI import boundary. */
+export interface RunStepModelPorts {
+  createModel: typeof createModel
+  createScope: typeof createStepModelScope
+}
+
+function bindMemberStepModelScope(ctx: MemberTestRunContext, create: StepModelScopeFactory) {
+  if (ctx.runId === undefined) throw new Error('Observed model usage requires the run shell to supply its canonical runId.')
+  return { runId: ctx.runId, create }
+}
 
 export interface InvocationProductMember {
   label: string
@@ -2357,6 +2370,7 @@ export async function produceSuiteRunMembers(
     suite: SuiteDefinition
     suiteKey: string
     suiteConfig: RunSuiteConfig
+    stepModelScope: StepModelScopeFactory
     modelProfiles: { planner: DeclaredModelProfile; verifier: DeclaredModelProfile }
     curationModelDeps: CurationTailModelDeps
     /**
@@ -2788,16 +2802,22 @@ export async function produceSuiteRunMembers(
     const deferredNonActionTools: NonActionToolMap | undefined = memoryToolGate(plannerCapabilities)
       ? {}
       : undefined
-    const planner = new LLMPlanner(
-      plannerModel,
-      suitePlatform,
-      logger.createScopedLogger('planner'),
-      suiteCapabilityNotes.trim() || undefined,
-      plannerAccounting,
-      plannerDeclared,
-      deferredNonActionTools,
-    )
-    const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
+    // Fresh consumers share the host's accounting, notes and deferred tool map;
+    // conversation history remains in the member loop's previousSteps context.
+    const createConsumers: CliStepModelScopeOptions['createConsumers'] = models => ({
+      planner: new LLMPlanner(models.plannerModel, suitePlatform,
+        logger.createScopedLogger('planner'), suiteCapabilityNotes.trim() || undefined,
+        plannerAccounting, plannerDeclared, deferredNonActionTools),
+      verifier: new LLMVerifier(models.verifierModel, verifierAccounting, verifierDeclared),
+    })
+    const { planner, verifier } = createConsumers({ plannerModel, verifierModel })
+    const stepModelScope = createCliStepModelScopeFactory({
+      ports: { createModel, createScope: createStepModelScope },
+      planner: { profile: plannerProfile, auth: plannerAuth, model: plannerModel },
+      verifier: { profile: verifierProfile, auth: verifierAuth, model: verifierModel },
+      mask: text => runMaskingContext?.mask(text) ?? '[secret]',
+      createConsumers,
+    })
 
     // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
     // subscribers (console unmasks; junit + wire stay masked; dashboard ingest; analytics) are
@@ -2933,6 +2953,7 @@ export async function produceSuiteRunMembers(
       suite,
       suiteKey: suiteFile,
       suiteConfig,
+      stepModelScope,
       modelProfiles: { planner: plannerDeclared, verifier: verifierDeclared },
       curationModelDeps: { profile: plannerProfile, auth: plannerAuth },
       testEntries,
@@ -3254,6 +3275,7 @@ export async function produceSuiteRunMembers(
             configDigests: perMemberDigests[globalIndex],
             plannerModel: suiteConfig.plannerModel,
             verifierModel: suiteConfig.verifierModel,
+            stepModelScope: bindMemberStepModelScope(ctx, prepared.stepModelScope),
             envFileVars: suiteConfig.envFileVars,
             inlineVars: suiteConfig.inlineVars,
             suiteVars: prepared.suiteHookVars,
@@ -3999,16 +4021,20 @@ export async function produceDirectRunMembers(
           steps: testDef.steps,
         }),
       })
-      const planner = new LLMPlanner(
-        plannerModel,
-        testPlatform,
-        logger.createScopedLogger('planner'),
-        testCapabilityNotes.trim() || undefined,
-        plannerAccounting,
-        plannerDeclared,
-        knowledge.nonActionTools,
-      )
-      const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
+      const createConsumers: CliStepModelScopeOptions['createConsumers'] = models => ({
+        planner: new LLMPlanner(models.plannerModel, testPlatform,
+          logger.createScopedLogger('planner'), testCapabilityNotes.trim() || undefined,
+          plannerAccounting, plannerDeclared, knowledge.nonActionTools),
+        verifier: new LLMVerifier(models.verifierModel, verifierAccounting, verifierDeclared),
+      })
+      const { planner, verifier } = createConsumers({ plannerModel, verifierModel })
+      const stepModelScope = createCliStepModelScopeFactory({
+        ports: { createModel, createScope: createStepModelScope },
+        planner: { profile: plannerProfile, auth: plannerAuth, model: plannerModel },
+        verifier: { profile: verifierProfile, auth: verifierAuth, model: verifierModel },
+        mask: text => singleMaskingContext?.mask(text) ?? '[secret]',
+        createConsumers,
+      })
 
       // Per-test timeouts from merged config
       const testTimeouts = {
@@ -4158,6 +4184,7 @@ export async function produceDirectRunMembers(
         configDigests: perMemberDigest,
         plannerModel,
         verifierModel,
+        stepModelScope: bindMemberStepModelScope(ctx, stepModelScope),
         envFileVars,
         inlineVars,
         cliVars,

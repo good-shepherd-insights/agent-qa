@@ -351,6 +351,7 @@ export function startRun(config: RunConfig): RunSession {
       // surface as an unhandled rejection — the swallow is structural, no extra `.catch` needed.
       const executorRaced: Promise<RaceOutcome> = config
         .executor(member, {
+          runId: config.runId,
           abortSignal: memberController.signal,
           testIndex,
           events,

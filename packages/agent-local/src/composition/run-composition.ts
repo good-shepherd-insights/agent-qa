@@ -1044,6 +1044,7 @@ export interface BuildMemberRunConfigInput {
   // models
   plannerModel: RunLanguageModel
   verifierModel: RunLanguageModel
+  stepModelScope?: MemberRunConfig['stepModelScope']
   // variable seeds
   envFileVars?: Record<string, string>
   inlineVars?: Record<string, string>
@@ -1108,6 +1109,7 @@ export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRu
 
     plannerModel: input.plannerModel,
     verifierModel: input.verifierModel,
+    stepModelScope: input.stepModelScope,
 
     envFileVars: input.envFileVars,
     inlineVars: input.inlineVars,
