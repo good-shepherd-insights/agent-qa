@@ -7,6 +7,7 @@ import type { MemberTestOutcome } from './member-outcome'
 import type { ExecutionContext, RunStatus } from './run-status'
 import type { RecordedRetrievalRung } from '../brief/retrieval-rung'
 import type { VerifierVerdict } from '../handoff/step-evidence'
+import type { AriaEvidenceEntry, StepEvidenceEntries, VariableSnapshot } from './evidence'
 
 /**
  * The bus schema version, declared once per run in `runStarted.payload.busSchemaVersion`
@@ -237,6 +238,9 @@ export interface StepFinalizedPayload {
    * analytics fields) reads absence as "unmeasured" rather than "free".
    */
   tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  /** 423 D-01/D-05/D-07: capture facts only; record bodies stay in evidence blobs. */
+  evidence?: StepEvidenceEntries
+  variableSnapshot?: VariableSnapshot
   /**
    * 2026-08-29 (Phase 407 plan 03, D-14): the host's retrieval rung at the moment this step's
    * brief was served, on the same 363 D-01 additive-optional footing as the fields above — the
@@ -276,6 +280,8 @@ export interface SubActionRecordedPayload {
   screenStateHash: string
   screenStateHashAfter?: string
   artifactRefs?: readonly ArtifactRef[]
+  /** 423 D-02: before-tree capture state; its present ref also rides artifactRefs. */
+  ariaEvidence?: AriaEvidenceEntry
   readonly stateBefore?: never
   readonly screenshot?: never
 }

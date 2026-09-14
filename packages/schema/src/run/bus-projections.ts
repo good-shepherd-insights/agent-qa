@@ -39,11 +39,8 @@ function walk(value: unknown, mask: MaskFn): unknown {
     return value.map(entry => walk(entry, mask))
   }
   if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {}
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = walk(entry, mask)
-    }
-    return out
+    // Define own properties even for a captured name such as __proto__.
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, walk(entry, mask)]))
   }
   return value
 }
@@ -62,6 +59,8 @@ export function projectStepFinalized(
     durationMs?: number
     error?: string
     tokenUsage?: StepFinalizedPayload['tokenUsage']
+    evidence?: StepFinalizedPayload['evidence']
+    variableSnapshot?: StepFinalizedPayload['variableSnapshot']
   },
 ): StepFinalizedPayload {
   const payload: StepFinalizedPayload = {
@@ -81,6 +80,13 @@ export function projectStepFinalized(
     // reason — an unmeasured step carries NO key rather than a zero triple. The three
     // members are numbers, so `maskPayloadStrings` walks past them untouched.
     ...(extra?.tokenUsage !== undefined ? { tokenUsage: extra.tokenUsage } : {}),
+    ...(extra?.evidence !== undefined ? { evidence: extra.evidence } : {}),
+    // Snapshot names are data-bearing keys. The terminal walk below masks their values.
+    ...(extra?.variableSnapshot !== undefined
+      ? { variableSnapshot: Object.fromEntries(
+          Object.entries(extra.variableSnapshot).map(([name, value]) => [mask(name), value]),
+        ) }
+      : {}),
     // 2026-08-29 (Phase 407 plan 03, D-14): same spread-when-defined rule, read from the
     // EVIDENCE rather than from `extra` — unlike the 363 appends above, the rung IS a
     // `StepEvidence` field (D-13). A step whose evidence recorded no rung carries no key, so
@@ -120,6 +126,7 @@ export function projectSubActionRecorded(
   evidence: SubActionEvidence,
   ids: { testIndex: number; stepIndex: number; subActionIndex: number },
   mask: MaskFn,
+  extra?: { ariaEvidence?: SubActionRecordedPayload['ariaEvidence'] },
 ): SubActionRecordedPayload {
   const { stateBefore, stateAfter, decisionScreenshotRef, localEffect, ...rest } = evidence
   void stateBefore
@@ -129,6 +136,7 @@ export function projectSubActionRecorded(
   const artifactRefs: readonly ArtifactRef[] = [
     ...(rest.artifactRefs ?? []),
     ...(decisionScreenshotRef === undefined ? [] : [decisionScreenshotRef]),
+    ...(extra?.ariaEvidence?.state === 'present' ? [extra.ariaEvidence.ref] : []),
   ]
 
   const payload: SubActionRecordedPayload = {
@@ -144,6 +152,7 @@ export function projectSubActionRecorded(
       ? { screenStateHashAfter: screenStateHash(evidence.stateAfter) }
       : {}),
     ...(artifactRefs.length > 0 ? { artifactRefs } : {}),
+    ...(extra?.ariaEvidence !== undefined ? { ariaEvidence: extra.ariaEvidence } : {}),
   }
   return maskPayloadStrings(payload, mask)
 }
