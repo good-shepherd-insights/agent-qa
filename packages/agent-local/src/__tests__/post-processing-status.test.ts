@@ -10,10 +10,11 @@
 // calling the reader, because the claim is about the SEAM D-14 defines: a surface asks the
 // function layer, and the function layer is the only thing that opens a database.
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 
 import { chainJobIdsForRun, invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { ClockPort, ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -35,7 +36,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
-import { AGENT_JOB_STORE_DB_FILE } from '../store/sqlite-job-store.js'
+import { AGENT_JOB_STORE_DB_FILE, QUARANTINED_UNREADABLE_KIND_REASON } from '../store/sqlite-job-store.js'
+import { canonicalLogicalDump, createLogicalDump } from '../store/logical-dump.js'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -137,6 +139,7 @@ const roots: string[] = []
 const hosts: LocalAgentHost[] = []
 
 afterEach(async () => {
+  setActiveMaskingContextResolver(() => undefined)
   for (const host of hosts.splice(0)) await host.close()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
@@ -153,9 +156,9 @@ interface Harness {
  * That is the point of the fixture rather than an omission: the no-creation case needs a host
  * that has done nothing durable, and the cases that do need rows open the store themselves.
  */
-function createHarness(): Harness {
-  const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
-  roots.push(agentQaRoot)
+function createHarness(existingRoot?: string): Harness {
+  const agentQaRoot = existingRoot ?? mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
+  if (existingRoot === undefined) roots.push(agentQaRoot)
   const host = composeLocalAgent({
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
@@ -189,6 +192,148 @@ async function pump(jobs: LocalAgentJobs, fence: { epoch: number }): Promise<voi
   }
   throw new Error('the post-run chain did not drain within the pump bound')
 }
+
+async function closeWriter(harness: Harness): Promise<void> {
+  await harness.host.close()
+  hosts.splice(hosts.indexOf(harness.host), 1)
+}
+
+function readQueue(root: string) {
+  const db = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE), { readOnly: true })
+  try {
+    return {
+      rows: db.prepare('SELECT * FROM jobs ORDER BY created_at, id').all(),
+      logical: canonicalLogicalDump(createLogicalDump({
+        db,
+        schemaVersion: Number(db.prepare('PRAGMA user_version').get()?.user_version),
+        checkpointsRoot: join(root, 'agent-jobs'),
+      })),
+    }
+  } finally {
+    db.close()
+  }
+}
+
+describe('423 cold stage facts', () => {
+  it.each(['queued', 'retried', 'complete', 'failed', 'cancelled'] as const)(
+    'THREE-STAGE-COLD %s preserves exact rows and queue contents',
+    async lifecycle => {
+      const writer = createHarness()
+      const jobs = await writer.host.jobs()
+      const fence = await jobs.store.adoptEpoch(1)
+      const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+      const stages = [
+        ['analysis', 'analyze-run', RUN_ID, ids.analyzeRun],
+        ['curation', 'curate-memory', `${ids.analyzeRun}->curate-memory`, ids.curateMemory],
+        ['proposals', 'propose-improvements', `${ids.curateMemory}->propose-improvements`, ids.proposeImprovements],
+      ] as const
+      for (const [stage, kind, key, id] of stages) {
+        const enqueued = await jobs.queue.enqueue(kind, { runId: RUN_ID }, key)
+        expect(enqueued.job.id).toBe(id)
+        if (lifecycle === 'cancelled') {
+          expect(await jobs.store.requestCancel(id, fence)).toEqual({ outcome: 'cancelled' })
+        } else if (lifecycle !== 'queued') {
+          const excludeKinds = stages.map(item => item[1]).filter(other => other !== kind)
+          const claimed = await jobs.store.claimNext(fence, { excludeKinds })
+          expect(claimed).toMatchObject({ claimed: true, job: { id } })
+          if (lifecycle === 'complete') await jobs.store.completeAndChain(id, [], fence)
+          if (lifecycle === 'failed') {
+            await jobs.store.recordFailure(id, { kind: 'permanent', reason: `${stage} failed` }, fence)
+          }
+          if (lifecycle === 'retried') {
+            await jobs.store.recordFailure(id, { kind: 'retry', reason: `${stage} retry` }, fence)
+            expect(await jobs.store.claimNext(fence, { excludeKinds }))
+              .toMatchObject({ claimed: true, job: { id, attempts: 2 } })
+          }
+        }
+      }
+      await closeWriter(writer)
+      const before = readQueue(writer.agentQaRoot)
+      expect(before.rows).toHaveLength(3)
+      const bytes = readFileSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))
+      const masking = createMaskingContext()
+      setActiveMaskingContextResolver(() => masking)
+      const cold = createHarness(writer.agentQaRoot)
+      const result = await cold.status()
+      const expected = Object.fromEntries(stages.map(([stage, , , id]) => {
+        const row = before.rows.find(row => row.id === id)!
+        expect(row.status).toBe(lifecycle === 'retried' ? 'queued' : lifecycle === 'complete' ? 'done' : lifecycle)
+        expect(Number(row.attempts)).toBe(lifecycle === 'retried' ? 2 : lifecycle === 'complete' || lifecycle === 'failed' ? 1 : 0)
+        return [stage, {
+          attempts: Number(row.attempts),
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          ...(row.claimed_at === null ? {} : { claimedAt: row.claimed_at }),
+          ...(row.last_failure_kind === null ? {} : { lastFailureKind: row.last_failure_kind }),
+          ...(row.last_failure_reason === null ? {} : { lastFailureReason: row.last_failure_reason }),
+        }]
+      }))
+      expect(result.stageDetails).toEqual(expected)
+      const chip = lifecycle === 'retried' ? 'running' : lifecycle === 'complete' ? 'done'
+        : lifecycle === 'queued' ? 'pending' : 'failed'
+      expect(result.chips).toEqual({ analysis: chip, curation: chip })
+      expect(readQueue(writer.agentQaRoot)).toEqual(before)
+      expect(readFileSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))).toEqual(bytes)
+    },
+  )
+
+  it('MASK-FAILURE-REASON masks persisted prose with the active read context', async () => {
+    const writer = createHarness()
+    const jobs = await writer.host.jobs()
+    const fence = await jobs.store.adoptEpoch(1)
+    const { job } = await jobs.queue.enqueue('analyze-run', { runId: RUN_ID }, RUN_ID)
+    await jobs.store.claimNext(fence)
+    const reason = 'synthetic-cold-secret for operator@example.test'
+    await jobs.store.recordFailure(job.id, { kind: 'permanent', reason }, fence)
+    await closeWriter(writer)
+    const before = readQueue(writer.agentQaRoot)
+    expect(before.rows[0]?.last_failure_reason).toBe(reason)
+    const masking = createMaskingContext()
+    masking.register('synthetic-cold-secret')
+    setActiveMaskingContextResolver(() => masking)
+    const result = await createHarness(writer.agentQaRoot).status()
+    expect(result.stageDetails?.analysis?.lastFailureReason).toBe(masking.mask(reason))
+    expect(JSON.stringify(result)).not.toContain('synthetic-cold-secret')
+    expect(JSON.stringify(result)).not.toContain('operator@example.test')
+    expect(readQueue(writer.agentQaRoot)).toEqual(before)
+  })
+
+  it('JOB-MISSING-OMITTED projects only the existing row after cold reopen', async () => {
+    const writer = createHarness()
+    const jobs = await writer.host.jobs()
+    await jobs.queue.enqueue('analyze-run', { runId: RUN_ID }, RUN_ID)
+    await closeWriter(writer)
+    const before = readQueue(writer.agentQaRoot)
+    const row = before.rows[0]!
+    const result = await createHarness(writer.agentQaRoot).status()
+    expect(result.stageDetails).toEqual({ analysis: {
+      attempts: 0, createdAt: row.created_at, updatedAt: row.updated_at,
+    } })
+    expect(readQueue(writer.agentQaRoot)).toEqual(before)
+  })
+
+  it('CONCLUSION-RECORDED reports the writer quarantine conclusion after cold reopen', async () => {
+    const writer = createHarness()
+    const jobs = await writer.host.jobs()
+    await jobs.queue.enqueue('analyze-run', { runId: RUN_ID }, RUN_ID)
+    await closeWriter(writer)
+    const db = new DatabaseSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))
+    try {
+      expect(Number(db.prepare('UPDATE jobs SET kind = ?').run('unknown-fixture-kind').changes)).toBe(1)
+    } finally { db.close() }
+    const quarantine = createHarness(writer.agentQaRoot)
+    const reopened = await quarantine.host.jobs()
+    const fence = await reopened.store.adoptEpoch(1)
+    expect(await reopened.store.claimNext(fence)).toEqual({ claimed: false })
+    expect((await reopened.store.dumpState()).jobs[0]?.conclusionKind).toBe('unreadable_kind')
+    await closeWriter(quarantine)
+    const before = readQueue(writer.agentQaRoot)
+    expect(before.rows[0]?.last_failure_reason).toBe(QUARANTINED_UNREADABLE_KIND_REASON)
+    const result = await createHarness(writer.agentQaRoot).status()
+    expect(result.stageDetails?.analysis?.conclusionKind).toBe('unreadable_kind')
+    expect(readQueue(writer.agentQaRoot)).toEqual(before)
+  })
+})
 
 describe('a status read creates no queue state (T-388-10 / Pitfall 4)', () => {
   it('answers the all-pending projection and leaves NO agent-jobs.db behind', async () => {
