@@ -1,9 +1,11 @@
 import {
   asRunId,
   EvidenceArtifactRefSchema,
+  projectStepFinalized,
   RunDetailProjectionSchema,
   RunDetailStepSchema,
   RunDetailSubActionSchema,
+  VariableSnapshotSchema,
 } from '@vostride/agent-qa-schema'
 import type {
   AriaEvidenceEntry,
@@ -86,6 +88,50 @@ describe('DETAIL-HISTORICAL-UNAVAILABLE', () => {
 })
 
 describe('DETAIL-ENTRY-OWNERSHIP', () => {
+  it('preserves a valid captured __proto__ own name through strict parsing', async () => {
+    const variableSnapshot = JSON.parse('{"__proto__":{"value":"[secret]","source":"capture"}}') as VariableSnapshot
+    const recorded: EvidenceStep = {
+      ...step(), variableSnapshot,
+      evidence: { ...unavailable(), variables: { kind: 'variables', state: 'present', counts: { count: 1 } } },
+    }
+    const output = await read({ runId, members: [], steps: [recorded], subActions: [] }).result
+    const parsed = RunDetailProjectionSchema.parse(output)
+    expect(parsed.steps[0]?.variableSnapshot).toEqual(variableSnapshot)
+    expect(Object.hasOwn(parsed.steps[0]?.variableSnapshot ?? {}, '__proto__')).toBe(true)
+    expect(Object.getPrototypeOf(parsed.steps[0]?.variableSnapshot)).toBe(Object.prototype)
+  })
+
+  it('rejects malformed captured __proto__ values instead of silently skipping validation', () => {
+    for (const value of [
+      { value: 3, source: 'capture' },
+      { value: 'masked', source: 'invented' },
+      { value: 'masked', source: 'capture', unknown: true },
+    ]) {
+      expect(VariableSnapshotSchema.safeParse(Object.fromEntries([['__proto__', value]])).success).toBe(false)
+    }
+  })
+
+  it('carries the capture-time masked names and values without restoring or remasking identities', async () => {
+    const payload = projectStepFinalized({
+      stepIndex: 0, stepText: 'capture', cacheStatus: 'miss', subActions: [],
+      servedBrief: {
+        scope: { tier: 'test', key: 'fixture' }, asOfBuild: 1, budget: 100,
+        truncation: 'none', channel1: [], channel2: [], channel3: [], briefDigest: 'digest',
+      },
+      verifierVerdict: { pass: true, reasoning: 'done' },
+    }, { testIndex: 0, stepIndex: 0 }, value => value.replaceAll('SYNTHETIC', '[secret]'), {
+      evidence: { ...unavailable(), variables: { kind: 'variables', state: 'present', counts: { count: 1 } } },
+      variableSnapshot: { SYNTHETIC_name: { value: 'SYNTHETIC value', source: 'capture' } },
+    })
+    const output = await read({ runId, members: [], steps: [payload], subActions: [] }).result
+    const parsed = RunDetailProjectionSchema.parse(output)
+    expect(parsed.steps[0]?.variableSnapshot).toEqual({
+      '[secret]_name': { value: '[secret] value', source: 'capture' },
+    })
+    expect(JSON.stringify(parsed)).not.toContain('SYNTHETIC')
+    expect(payload.variableSnapshot).toEqual(parsed.steps[0]?.variableSnapshot)
+  })
+
   it('retains recorded kinds, counts, refs, row order and masked snapshots through the strict output', async () => {
     const first: EvidenceStep = {
       ...step(1, 0), evidence: {
