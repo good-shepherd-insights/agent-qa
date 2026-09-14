@@ -34,6 +34,76 @@ import type { TestResult } from '../result.js'
 import type { EvidenceArtifactStorePort, LoopEventEmitPort, SecretRedactorPort } from '../loop/ports.js'
 import type { HookDefinition, HookResult } from '../hooks/types.js'
 import type { LiveStreamCapability, RuntimeAuthStateConfig } from '../platform.js'
+import type { LanguageModel } from 'ai'
+import type { Planner, Verifier } from '../loop/types.js'
+
+/** Structurally compatible with model-owner reports; no provider implementation dependency. */
+export interface StepModelCallReport {
+  inputTokens?: number
+  outputTokens?: number
+  cachedInputTokens?: number
+  respondingModelId?: string
+}
+export type StepModelCallEvent =
+  | { kind: 'start' }
+  | { kind: 'success'; report: StepModelCallReport }
+  | { kind: 'failure' }
+export interface StepModelObservation { onCall(event: StepModelCallEvent): void }
+export interface StepModelScopeKey { runId: RunId; testIndex: number; stepIndex: number }
+export interface StepModelRoleFacts {
+  declared?: ModelIdentity
+  respondingModelIds: string[]
+}
+export interface StepModelAttempt {
+  invocation: number
+  role: 'planner' | 'verifier'
+  kind: StepModelCallEvent['kind']
+  report?: StepModelCallReport
+}
+export interface StepModelSnapshot extends StepModelScopeKey {
+  attempts: StepModelAttempt[]
+  started: number
+  succeeded: number
+  failed: number
+  inputTokens?: number
+  outputTokens?: number
+  cachedInputTokens?: number
+  roles: { planner: StepModelRoleFacts; verifier: StepModelRoleFacts }
+}
+export interface StepModelConsumers {
+  planner: Planner
+  verifier?: Verifier
+  plannerModel: LanguageModel
+  verifierModel: LanguageModel
+}
+export interface StepModelScope extends StepModelConsumers {
+  readonly key: StepModelScopeKey
+  snapshot(): StepModelSnapshot
+  /** Freeze after extraction, before terminal publication. Pending attempts remain uncovered. */
+  finish(): StepModelSnapshot
+  /** Called only after the final event; retained callbacks cannot affect another step. */
+  dispose(): void
+}
+export type StepModelScopeFactory = (key: StepModelScopeKey) => StepModelScope
+
+export interface StepModelBinding {
+  /** Resolved handle supplies metadata; it is never mutated or double-wrapped. */
+  model: Exclude<LanguageModel, string>
+  /**
+   * Bind a fresh observer for ONE SDK invocation. Reuse host conversation/accounting state,
+   * but never a model bound to another observer. Model-owner middleware emits every actual
+   * retry start/terminal; the runner must not synthesize dispatches around generateText.
+   */
+  bind(observation: StepModelObservation): LanguageModel
+}
+export interface StepModelScopeOptions {
+  key: StepModelScopeKey
+  models: { planner: StepModelBinding; verifier: StepModelBinding }
+  profiles?: { planner: ModelIdentity; verifier?: ModelIdentity }
+  mask(text: string): string
+  createConsumers(models: Pick<StepModelConsumers, 'plannerModel' | 'verifierModel'>):
+    Pick<StepModelConsumers, 'planner' | 'verifier'>
+}
 
 /**
  * The two 356 A5 config digests the run actually keyed on, computed once at the CLI
