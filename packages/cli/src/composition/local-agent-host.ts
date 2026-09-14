@@ -44,6 +44,7 @@ import {
 } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { z } from 'zod'
 
 import {
   Document as YamlDocument,
@@ -106,6 +107,9 @@ import {
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   DEFAULT_AGENT_QA_CACHE_DIR,
   parseTestFile,
+  parseSuiteFile,
+  normalizeAuthStateUse,
+  resolveAuthStateForRun,
   parseTestFileWithTokens,
   renderPatchedTestDoc,
   resolveKnowledgeRoot,
@@ -168,6 +172,7 @@ import {
   loadConfigFile,
   loadEnvOverrides,
   mergeConfigs,
+  mergeUseBlocks,
   normalizeConfigForValidation,
   resolveConfig,
 } from '../config.js'
@@ -263,6 +268,21 @@ export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
   }
 }
 
+// The run masker understands cookies and localStorage. Refuse other storage payloads rather
+// than silently establishing authority with an incomplete seed set (e.g. IndexedDB).
+const ColdReadAuthPayloadSchema = z.object({
+  cookies: z.array(z.object({
+    name: z.string(), value: z.string(), domain: z.string().optional(),
+    path: z.string().optional(), expires: z.number().optional(),
+    httpOnly: z.boolean().optional(), secure: z.boolean().optional(),
+    sameSite: z.enum(['Strict', 'Lax', 'None']).optional(), partitionKey: z.string().optional(),
+  }).strict()),
+  origins: z.array(z.object({
+    origin: z.string(),
+    localStorage: z.array(z.object({ name: z.string(), value: z.string() }).strict()),
+  }).strict()),
+}).strict()
+
 /** Resolve only cold-read masking inputs: no plugins, run preparation, or directory writes. */
 export function createColdReadMaskingSources(
   configPath: string,
@@ -274,10 +294,41 @@ export function createColdReadMaskingSources(
     try {
       const config = await resolveConfig({ configPath, loadAuthPlugins: false })
       const workspace = resolveWorkspacePaths({ config, configPath })
+      const declarations = new Map<string, { targetName: string, stateName: string }>()
+      const collect = (targetName: string, use: Record<string, unknown>) => {
+        const auth = normalizeAuthStateUse(use)
+        if (auth === undefined || (!auth.load && !auth.capture)) return
+        declarations.set(JSON.stringify([targetName, auth.name]), { targetName, stateName: auth.name })
+      }
+      const tests = await discoverWorkspaceFiles({ workspace, kind: 'test' })
+      const suites = await discoverWorkspaceFiles({ workspace, kind: 'suite' })
+      for (const file of tests) {
+        const parsed = parseTestFile(readFileSync(file.absolutePath, 'utf8'), file.workspaceRelativePath)
+        if (parsed.errors.length > 0) throw new Error('Cold read auth declarations unavailable')
+        for (const test of parsed.tests) {
+          collect(test.target, mergeUseBlocks(config.use, undefined, test.use, {}))
+        }
+      }
+      for (const file of suites) {
+        const suite = await parseSuiteFile(file.absolutePath)
+        collect(suite.target, mergeUseBlocks(config.use, suite.use, undefined, {}))
+      }
+      const authStatePayloads: unknown[] = []
+      for (const declaration of declarations.values()) {
+        const target = resolveTarget(config, declaration.targetName)
+        const state = await resolveAuthStateForRun({
+          configDir: dirname(resolve(configPath)), authStateDir: config.services?.authState?.dir,
+          ...declaration, target: { platform: target.platform },
+        })
+        authStatePayloads.push(ColdReadAuthPayloadSchema.parse(
+          JSON.parse(readFileSync(state.storageStatePath, 'utf8')),
+        ))
+      }
       return {
         secretsContent: readFileSync(workspace.secretsFile.absolutePath, 'utf8'),
         secretStores: [...retainedStores()],
         env: process.env,
+        authStatePayloads,
       }
     } catch {
       // Required file/config failures leave no new masking authority. An optional retained

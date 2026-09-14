@@ -1689,6 +1689,7 @@ export interface ComposeLocalAgentInput {
     readonly secretsContent: string
     readonly secretStores: readonly { forEachSecret(cb: (name: string, value: string) => void): void }[]
     readonly env: Record<string, string | undefined>
+    readonly authStatePayloads?: readonly unknown[]
   } | undefined>
   /** Immutable neutral data resolved by the host, reused until recomposition. */
   readonly resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors']
@@ -3239,7 +3240,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             for (const store of [declared, ...sources.secretStores]) {
               store.forEachSecret((name, value) => { entries.push([name, value]) })
             }
-            masking = buildRunMaskingContext({ env: sources.env, secretStore: {
+            masking = buildRunMaskingContext({ env: sources.env,
+              authStatePayloads: sources.authStatePayloads, secretStore: {
               forEachSecret(cb) { for (const [name, value] of entries) cb(name, value) },
             } })
           }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -118,7 +118,112 @@ function cold(p: ReturnType<typeof project>, retained: () => Iterable<ReturnType
   }
 }
 
+function fixtureBytes(root: string): unknown {
+  return readdirSync(root, { withFileTypes: true }).map(entry => [entry.name,
+    entry.isDirectory() ? fixtureBytes(join(root, entry.name)) : readFileSync(join(root, entry.name), 'hex')])
+}
+
+function expectUnchangedTree(root: string, before: unknown, fixture: string) {
+  const after = fixtureBytes(root)
+  expect(after).toEqual(before)
+  console.info(JSON.stringify({ kind: 'auth-read-tree-proof', fixture,
+    before: sha256hex(JSON.stringify(before)), after: sha256hex(JSON.stringify(after)) }))
+}
+
+async function authFixture(p: ReturnType<typeof project>, value: string) {
+  const paths = resolveAuthStatePaths({ configDir: p.root, targetName: 'local',
+    stateName: 'current-session', target: { platform: 'web' } })
+  await writeAuthStateFiles(paths, { payload: { cookies: [{ name: 'session', value,
+    domain: '127.0.0.1', path: '/', expires: -1, httpOnly: true, secure: false, sameSite: 'Lax' }], origins: [] },
+  metadata: { version: 1, kind: 'web', target: 'local', name: 'current-session',
+    capturedAt: '2026-09-14T00:00:00.000Z' } })
+  return paths
+}
+
 describe('Wave 18 cold read masking recovery', () => {
+  it.each(['test', 'suite', 'capture'] as const)('COLD-AUTH-INHERITANCE %s resolves fresh seeds without file writes', async kind => {
+    const p = project()
+    const value = 'synthetic-current-auth-token'
+    const rotated = 'synthetic-rotated-auth-token'
+    const authState = kind === 'capture'
+      ? { name: 'current-session', load: false, capture: true } : 'current-session'
+    const testId = generateTestId()
+    mkdirSync(join(p.root, 'tests'))
+    writeFileSync(join(p.root, 'tests', 'current.yaml'), JSON.stringify({
+      'test-id': testId, name: 'Current state', target: 'local', steps: ['Inspect page'],
+      ...(kind !== 'suite' ? { use: { authState } } : {}),
+    }))
+    if (kind === 'suite') {
+      mkdirSync(join(p.root, 'suites'))
+      writeFileSync(join(p.root, 'suites', 'current.yaml'), JSON.stringify({
+        name: 'Inherited state', target: 'local', use: { authState },
+        tests: [{ test: '../tests/current.yaml', id: testId }],
+      }))
+    }
+    await authFixture(p, value)
+    const before = fixtureBytes(p.root)
+    const sources = createColdReadMaskingSources(p.configPath)
+    expect((await sources())?.authStatePayloads).toHaveLength(1)
+    expectUnchangedTree(p.root, before, `inheritance-${kind}`)
+    expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
+    expect(existsSync(join(p.agentQaRoot, 'job-checkpoints'))).toBe(false)
+    await publish(p, snapshot(p.runId, [`first ${value}`, `second ${rotated}`]))
+    const read = cold(p)
+    const tokens = async () => (await read.read()).curationSnapshot!.rows[0]!.changes.map(row => row.change.evidenceToken)
+    expect(await tokens()).toEqual([`first ${maskedMarker('secret')}`, `second ${rotated}`])
+    await authFixture(p, rotated)
+    expect(await tokens()).toEqual([`first ${value}`, `second ${maskedMarker('secret')}`])
+    expect(read.host.jobs).not.toHaveBeenCalled()
+  })
+
+  it.each(['missing', 'capture-missing', 'missing-metadata', 'unreadable', 'invalid-json', 'null', 'indexeddb', 'malformed-cookie', 'wrong-metadata', 'invalid-declaration'] as const)(
+    'COLD-AUTH-REFUSAL %s never creates partial masking authority', async kind => {
+      const p = project()
+      mkdirSync(join(p.root, 'tests'))
+      writeFileSync(join(p.root, 'tests', 'current.yaml'), JSON.stringify({ 'test-id': generateTestId(),
+        name: 'Current declaration', target: 'local', steps: ['Inspect page'], use: { authState: kind === 'capture-missing'
+          ? { name: 'current-session', load: false, capture: true } : 'current-session' } }))
+      const paths = await authFixture(p, 'synthetic-auth-only-secret')
+      if (kind === 'missing' || kind === 'capture-missing') rmSync(paths.payloadPath)
+      if (kind === 'missing-metadata') rmSync(paths.metadataPath)
+      if (kind === 'unreadable') { rmSync(paths.payloadPath); mkdirSync(paths.payloadPath) }
+      if (kind === 'invalid-json') writeFileSync(paths.payloadPath, '{')
+      if (kind === 'null') writeFileSync(paths.payloadPath, 'null')
+      if (kind === 'indexeddb') writeFileSync(paths.payloadPath, JSON.stringify({ cookies: [], origins: [
+        { origin: 'http://127.0.0.1:1', localStorage: [], indexedDB: [{ value: 'unsupported-secret' }] },
+      ] }))
+      if (kind === 'malformed-cookie') writeFileSync(paths.payloadPath, JSON.stringify({ cookies: [{ value: 42 }], origins: [] }))
+      if (kind === 'wrong-metadata') writeFileSync(paths.metadataPath, JSON.stringify({ version: 1, kind: 'web',
+        target: 'foreign', name: 'current-session', capturedAt: '2026-09-14T00:00:00.000Z' }))
+      if (kind === 'invalid-declaration') {
+        writeFileSync(join(p.root, 'tests', 'invalid.yaml'), JSON.stringify({ 'test-id': generateTestId(),
+          name: 'Invalid declaration', target: 'local', steps: ['Inspect page'], use: { authState: { name: 'INVALID' } } }))
+      }
+      const before = fixtureBytes(p.root)
+      expect(await createColdReadMaskingSources(p.configPath)()).toBeUndefined()
+      expectUnchangedTree(p.root, before, `refusal-${kind}`)
+      expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
+      expect(existsSync(join(p.agentQaRoot, 'job-checkpoints'))).toBe(false)
+      const read = cold(p)
+      expect(await read.read()).not.toHaveProperty('curationSnapshot')
+      expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
+      await publish(p, snapshot(p.runId))
+      await expect(read.read()).rejects.toMatchObject({ name: 'ZodError', issues: [{ code: 'custom',
+        message: 'The recorded curation snapshot cannot be projected safely.' }] })
+    },
+  )
+
+  it('COLD-AUTH-GLOBAL preserves the existing rejection of global auth declarations', async () => {
+    const p = project()
+    Object.assign(p.config.use, { authState: 'current-session' })
+    writeFileSync(p.configPath, JSON.stringify(p.config))
+    await expect(resolveConfig({ configPath: p.configPath, loadAuthPlugins: false })).rejects.toThrow()
+    const before = fixtureBytes(p.root)
+    expect(await createColdReadMaskingSources(p.configPath)()).toBeUndefined()
+    expectUnchangedTree(p.root, before, 'global-refusal')
+    expect(existsSync(p.agentQaRoot)).toBe(false)
+  })
+
   it('COLD-AUTH masks configured single and suite auth-only values while preserving two checkpoint events', async () => {
     const p = project()
     const testId = generateTestId()
