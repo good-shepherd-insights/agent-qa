@@ -315,6 +315,7 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
     expect(status).toEqual({
       runId: RUN_ID,
       chips: { analysis: 'done', curation: 'done' },
+      stageDetails: { analysis: {}, curation: {} },
       notification: NOTIFICATION,
     })
     // The third stage reaches a reader through the durable RECORD, not through a chip — so the

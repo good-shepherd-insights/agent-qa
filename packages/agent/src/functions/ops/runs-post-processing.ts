@@ -19,7 +19,10 @@
 // a total mapping with no capability, no port and nothing to await, so the exhaustive table
 // that pins it costs a test file and not a store.
 
+import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
+  maskedMarker,
+  POST_PROCESSING_DETAIL_STAGES,
   PostProcessingStatusSchema,
   RunsPostProcessingInputSchema,
 } from '@vostride/agent-qa-schema'
@@ -27,6 +30,9 @@ import type {
   PostProcessingChipStatus,
   PostProcessingChips,
   PostProcessingStatus,
+  PostProcessingDetailStage,
+  PostProcessingStageDetail,
+  MaskFn,
   RunsPostProcessingInput,
 } from '@vostride/agent-qa-schema'
 
@@ -94,6 +100,33 @@ export function projectPostProcessingChips(
   }
 }
 
+/** Copy only recorded DTO facts; queue state and cancellation requests are not detail fields. */
+function projectStageDetails(
+  state: PostProcessingChainState | undefined,
+  mask: MaskFn,
+): PostProcessingStatus['stageDetails'] {
+  const rows = {
+    analysis: state?.analyzeRun,
+    curation: state?.curateMemory,
+    proposals: state?.proposeImprovements,
+  } satisfies Record<PostProcessingDetailStage, PostProcessingJobRow | undefined>
+  const details: NonNullable<PostProcessingStatus['stageDetails']> = {}
+  for (const stage of POST_PROCESSING_DETAIL_STAGES) {
+    const row = rows[stage]
+    if (row === undefined) continue
+    details[stage] = {
+      ...(row.attempts === undefined ? {} : { attempts: row.attempts }),
+      ...(row.createdAt === undefined ? {} : { createdAt: row.createdAt }),
+      ...(row.claimedAt === undefined ? {} : { claimedAt: row.claimedAt }),
+      ...(row.updatedAt === undefined ? {} : { updatedAt: row.updatedAt }),
+      ...(row.conclusionKind === undefined ? {} : { conclusionKind: row.conclusionKind }),
+      ...(row.lastFailureKind === undefined ? {} : { lastFailureKind: mask(row.lastFailureKind) }),
+      ...(row.lastFailureReason === undefined ? {} : { lastFailureReason: mask(row.lastFailureReason) }),
+    } satisfies PostProcessingStageDetail
+  }
+  return Object.keys(details).length === 0 ? undefined : details
+}
+
 export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostProcessingStatus> = {
   id: RUNS_POST_PROCESSING_FUNCTION_ID,
   summary: "Read one run's post-processing chip statuses from durable job state.",
@@ -107,7 +140,7 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
   output: PostProcessingStatusSchema,
   risk: { name: `fn:${RUNS_POST_PROCESSING_FUNCTION_ID}`, recognized: true, readOnly: true },
   /**
-   * THE TWO CHIPS, WHICH ARE THE WHOLE ANSWER (399.1 D-01; the set narrowed by 404 D-01).
+   * The two chips drive classification; recorded stage details do not change read success.
    *
    * A chip reading `failed` is this op reporting a CHAIN's state truthfully; the read succeeded.
    * Folding a red chip into the clause's own status would make "the post-run chain broke" and "I
@@ -135,10 +168,18 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
     // id source — two copies of the hash input would be two chains that review identically.
     const ids = chainJobIdsForRun(runId, postProcessing.idSource)
     const state = await postProcessing.readChain(ids, runId)
+    // Resolve at invocation time: the host can bind a different masking scope for each read.
+    // Without that scope, free-text failure fields fail closed with the shared display marker.
+    const masking = getActiveMaskingContext()
+    const stageDetails = projectStageDetails(
+      state,
+      masking === undefined ? () => maskedMarker('secret') : text => masking.mask(text),
+    )
 
     return {
       runId,
       chips: projectPostProcessingChips(state),
+      ...(stageDetails === undefined ? {} : { stageDetails }),
       // Absence is spread away rather than padded (the `runs-get.ts` idiom): a chain in flight
       // has no record yet, and a rendered `null` would be a second spelling of what a missing
       // key already says.

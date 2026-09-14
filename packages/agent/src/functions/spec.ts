@@ -43,6 +43,7 @@ import type {
   EvidenceBlobLookup,
   EvidenceBlobPresence,
   MaskedResolvedConfig,
+  PostProcessingStageDetail,
   ProposalsInboxPort,
   QuarantineOperationsPort,
   RecordChange,
@@ -851,14 +852,11 @@ export interface EntityDirectoryPort {
 /**
  * One post-run chain job as the chip projection needs to see it (Phase 388, D-14).
  *
- * Two fields, because two is what the mapping asks: the published status, and whether somebody
- * currently holds the job. The claim is a separate axis rather than a status member on purpose
- * — the store keeps it in a column for exactly that reason (385) — and it is what makes
- * `running` distinguishable from `pending` without inventing a state the job contract does not
- * name. Everything else on a row (attempts, timestamps, the payload) is state a CHIP has no
- * business rendering, so the port does not carry it across.
+ * Status and claim drive the chips; optional recorded facts drive the stage detail (423 D-12).
+ * The claim remains separate from status, so running does not widen the job vocabulary.
+ * Missing facts stay absent, including on older reader implementations.
  */
-export interface PostProcessingJobRow {
+export interface PostProcessingJobRow extends Readonly<PostProcessingStageDetail> {
   readonly status: JobStatus
   /** Whether a drainer holds this job right now. `false` covers queued and terminal alike. */
   readonly claimed: boolean
@@ -873,13 +871,8 @@ export interface PostProcessingJobRow {
  * chained yet. Padding either of them with a synthetic row would erase exactly the distinction
  * the projection reads.
  *
- * This state carries exactly one member per CHIP STAGE, which since 422 D-13 is a strict subset
- * of the stages the chain runs: the chain derives a third id for the proposal stage and this
- * state deliberately does not report its row. The chips are what a surface renders, and widening
- * them is a change to a published vocabulary that D-13 did not authorise — so the third id is
- * handed to `readChain` (the reader is entitled to know the whole chain it is looking at) and
- * the projection stays two-wide. `notification.stages.proposals` is where the third stage's
- * outcome reaches a reader, and it reaches it as the durable record rather than as a chip.
+ * 423 D-12 reports all three durable stage rows. Proposals contributes detail only;
+ * the chip set remains analysis and curation.
  *
  * 2026-09-01 (Phase 409): the chain's third derived id left with the Issue-slot cleanup.
  * 2026-09-11 (Phase 422, D-13): a third derived id returns, without a third chip.
@@ -887,6 +880,7 @@ export interface PostProcessingJobRow {
 export interface PostProcessingChainState {
   readonly analyzeRun?: PostProcessingJobRow
   readonly curateMemory?: PostProcessingJobRow
+  readonly proposeImprovements?: PostProcessingJobRow
   /** The chain-terminal record, once the terminal transaction wrote it (D-09). */
   readonly notification?: RunNotification
 }
@@ -914,9 +908,8 @@ export interface PostProcessingReaderPort {
   /**
    * Durable state for the ids given, or `undefined` when this project holds no queue database
    * at all. Chain identity is still the job-kind layer's to derive, and this port only reads
-   * what it is handed — which since 422 D-13 is three ids, of which the state above reports the
-   * two that have chips. An implementation is free to read fewer rows than it is handed ids;
-   * what it may not do is derive an id of its own.
+   * what it is handed: all three ids, with the proposals row used only for detail (423 D-12).
+   * It may not derive an id of its own.
    *
    * 2026-09-01 (Phase 409): the width dropped from three to two.
    * 2026-09-11 (Phase 422, D-13): three again, and no longer equal to the state's member count.
