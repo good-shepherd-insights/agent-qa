@@ -8,6 +8,7 @@
 import type { LanguageModelUsage, ModelMessage } from 'ai'
 import type {
   ArtifactRef,
+  EvidenceDocument,
   DeclaredModelProfile,
   MaskingContext,
   ProcedureBodyPayload,
@@ -182,6 +183,9 @@ export interface LoopEventEmitPort {
  */
 export interface EvidenceArtifactStorePort {
   persistDecisionScreenshot(bytes: Uint8Array): ArtifactRef
+  /** Already live-masked JSON only. Optional for existing screenshot-only hosts. */
+  persistEvidenceDocument?(document: Exclude<EvidenceDocument, { kind: 'variables' }>): ArtifactRef
+  hasBlob?(sha: string): boolean
   getBlob(sha: string): Uint8Array | undefined
 }
 

@@ -68,7 +68,8 @@ test('CONCURRENT-BLOB: another store sees no partial target during publication',
   let visibleDuringWrite: Uint8Array | undefined
   io.beforeWrite = path => {
     io.beforeWrite = undefined
-    fs.writeFileSync(path as number, bytes.subarray(0, 12))
+    if (typeof path === 'number') fs.writeSync(path, bytes, 0, 12, 0)
+    else fs.writeFileSync(path as string, bytes.subarray(0, 12))
     visibleDuringWrite = other.getBlob(sha)
     other.persistEvidenceDocument(document)
   }
@@ -83,7 +84,8 @@ test('INTERRUPTED-BLOB: partial write failure never publishes a successful ref o
   const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
   io.beforeWrite = path => {
     io.beforeWrite = undefined
-    fs.writeFileSync(path as number, bytes.subarray(0, 12))
+    if (typeof path === 'number') fs.writeSync(path, bytes, 0, 12, 0)
+    else fs.writeFileSync(path as string, bytes.subarray(0, 12))
     throw new Error('synthetic interrupted write')
   }
   expect(() => store.persistEvidenceDocument(document)).toThrow('synthetic interrupted write')
@@ -91,4 +93,26 @@ test('INTERRUPTED-BLOB: partial write failure never publishes a successful ref o
   expect(store.getBlob(sha)).toBeUndefined()
   expect(readdirSync(dir)).toEqual([])
   expect(store.persistEvidenceDocument(document).sha).toBe(sha)
+})
+
+test('JSON-KINDS: schema-owned prefixes and validation reject unsupported documents before writing', () => {
+  const { store, dir } = fixture()
+  for (const [value, prefix] of [
+    [{ schemaVersion: 1, kind: 'network', records: [] }, 'network-evidence:'],
+    [{ schemaVersion: 1, kind: 'a11y', records: [] }, 'a11y-evidence:'],
+    [{ schemaVersion: 1, kind: 'aria', tree: masked }, 'aria-state:'],
+  ] as const) {
+    const ref = store.persistEvidenceDocument(value as Exclude<EvidenceDocument, { kind: 'variables' }>)
+    expect(ref.id).toBe(`${prefix}${ref.sha}`)
+    expect(createHash('sha256').update(store.getBlob(ref.sha)!).digest('hex')).toBe(ref.sha)
+  }
+  const before = readdirSync(dir)
+  for (const invalid of [
+    { ...document, schemaVersion: 2 }, { ...document, extra: true },
+    { ...document, records: [{ level: 'warn', text: masked }] },
+    { schemaVersion: 1, kind: 'variables', records: {} },
+  ]) {
+    expect(() => store.persistEvidenceDocument(invalid as typeof document)).toThrow()
+  }
+  expect(readdirSync(dir)).toEqual(before)
 })
