@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { createFunctionRegistry, type FunctionDeps } from '@vostride/agent-qa-agent'
 import {
   buildRunMaskingContext,
+  createEvidenceBlobReader,
   resolveMaskingHostKey,
   writeMaskingDigests,
   type LocalAgentHost,
@@ -20,6 +21,8 @@ import {
 } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { AUTH_STATE_REDACTION_MARKER } from '@vostride/agent-qa-core'
+import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
+import { setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import { maskedMarker, type RunDetailProjection } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chromium, type Browser, type Page } from 'playwright-core'
@@ -50,7 +53,12 @@ async function startFixture(display?: { name: string; attributes: Record<string,
   const authPlaceholder = placeholders.get(AUTH_STATE)!
   const allowedPlaceholder = placeholders.get(ALLOWED)!
   writeMaskingDigests({ root, runId, key: resolveMaskingHostKey(root), entries: mask.snapshotRegistered() })
-  mask.dispose()
+  setActiveMaskingContextResolver(() => mask)
+  const evidenceDocument = { schemaVersion: 1 as const, kind: 'console' as const, records: [
+    { level: 'log', text: allowedPlaceholder, timestamp: 1 },
+    { level: 'log', text: authPlaceholder, timestamp: 2 },
+  ] }
+  const evidenceRef = new FsEvidenceArtifactStore({ root, runId }).persistEvidenceDocument(evidenceDocument)
   db.insertRun({
     id: runId, name: display?.name ?? 'Read sink fixture', status: 'failed', duration: 1,
     ...(display === undefined ? {} : { attributes: display.attributes }),
@@ -61,6 +69,12 @@ async function startFixture(display?: { name: string; attributes: Record<string,
     runId, testIndex: 0, stepIndex: 0, stepText: allowedPlaceholder,
     cacheStatus: 'miss', verifierVerdict: null, selfHealOccurred: false,
     briefDigest: '', status: 'failed', error: authPlaceholder,
+    evidence: {
+      console: { kind: 'console', state: 'present', ref: evidenceRef as never, counts: { total: 2, errors: 0, warnings: 0 } },
+      network: { kind: 'network', state: 'absent', reason: 'empty' },
+      a11y: { kind: 'a11y', state: 'absent', reason: 'unsupported' },
+      variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
+    },
   })
   db.insertRunStep({
     runId, testIndex: 0, stepIndex: 1,
@@ -68,7 +82,7 @@ async function startFixture(display?: { name: string; attributes: Record<string,
     cacheStatus: 'miss', verifierVerdict: null, selfHealOccurred: false, briefDigest: '',
   })
   const registry = createFunctionRegistry({
-    deps: { runDetail: createDashboardRunDetailReader(db) } as FunctionDeps,
+    deps: { runDetail: createDashboardRunDetailReader(db), evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: root }) } as FunctionDeps,
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
@@ -93,12 +107,14 @@ async function startFixture(display?: { name: string; attributes: Record<string,
   const machineAddress = machine.address()
   if (machineAddress === null || typeof machineAddress === 'string') throw new Error('Machine fixture did not bind')
   return {
-    root, db, runId, origin, authPlaceholder, allowedPlaceholder, unmask,
+    root, db, runId, origin, authPlaceholder, allowedPlaceholder, unmask, evidenceRef, evidenceDocument,
     machineUrl: `http://127.0.0.1:${machineAddress.port}`,
     async close() {
       await started.close()
       await new Promise<void>((resolve, reject) => machine.close((error) => error ? reject(error) : resolve()))
       db.close()
+      setActiveMaskingContextResolver(() => undefined)
+      mask.dispose()
       rmSync(root, { recursive: true, force: true })
     },
   }
@@ -108,6 +124,22 @@ describe('423 guarded human read', () => {
   let fixture: Awaited<ReturnType<typeof startFixture>>
   beforeAll(async () => { fixture = await startFixture() })
   afterAll(async () => { await fixture?.close() })
+
+  it('HTTP-EVIDENCE-HUMAN restores allowed evidence then sanitizes auth state while raw SHA bytes stay masked', async () => {
+    const url = `${fixture.origin}/api/runs/${fixture.runId}`
+    const response = await fetch(`${url}/evidence?kind=console&testIndex=0&stepIndex=0`)
+    expect(response.status).toBe(200)
+    const raw = await response.text()
+    const body = JSON.parse(raw)
+    expect(body).toMatchObject({ outcome: 'ready', document: { records: [
+      { text: ALLOWED }, { text: AUTH_STATE_REDACTION_MARKER },
+    ] } })
+    expect(raw).not.toContain(AUTH_TOKEN)
+    expect(raw).not.toContain(fixture.authPlaceholder)
+    const artifact = await fetch(`${url}/artifacts/${fixture.evidenceRef.sha}`)
+    expect(await artifact.text()).toBe(JSON.stringify(fixture.evidenceDocument))
+    expect(artifact.headers.get('etag')).toBe(`"${fixture.evidenceRef.sha}"`)
+  })
 
   it('C423-HUMAN-DETAIL-SANITIZED: T-405-38 restores then sanitizes durable HTTP output', async () => {
     // Prove the synthetic sidecar restores the auth shape, independently of the response.

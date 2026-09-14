@@ -29,7 +29,8 @@
 
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import type { Server, ServerResponse } from 'node:http'
+import { createServer, type Server, type ServerResponse } from 'node:http'
+import { createHash } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -38,6 +39,7 @@ import {
   ANALYSIS_GET_FUNCTION_ID,
   RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
+  RUNS_EVIDENCE_FUNCTION_ID,
   RUNS_KNOWLEDGE_FUNCTION_ID,
   createFunctionRegistry,
   invokeFunction,
@@ -69,6 +71,7 @@ import { DashboardDatabase } from '../../db/database.js'
 import { createDashboardRunIngest } from '../../reporter/dashboard-subscriber.js'
 import { startServer } from '../../server/server.js'
 import { serveRunDetailRead } from '../run-detail-routes.js'
+import { createRunServiceRoutes, type RunServicePorts } from '../run-service-routes.js'
 import { createDashboardRunDetailReader } from '../run-detail-reader.js'
 
 /** A 64-hex sha, the shape `FsEvidenceArtifactStore` content-addresses a blob under. */
@@ -194,6 +197,7 @@ function hostOver(registry: FunctionRegistry): AgentHost {
     runsPostProcessingFunctionId: 'test:planted-post-processing-op',
     runsEventsFunctionId: 'test:planted-events-op',
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
+    runsEvidenceFunctionId: RUNS_EVIDENCE_FUNCTION_ID,
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
     analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
     // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
@@ -398,6 +402,113 @@ const PNG_BYTES = new Uint8Array([
   0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
 ])
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
+
+async function serveEvidence() {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-http-evidence-'))
+  roots.push(root)
+  const document = { schemaVersion: 1 as const, kind: 'console' as const,
+    records: [{ level: 'error', text: '<SECRET_0>', timestamp: 1 }] }
+  const ref = new FsEvidenceArtifactStore({ root, runId: RUN_ID }).persistEvidenceDocument(document)
+  const db = new DashboardDatabase({ dbPath: ':memory:' })
+  databases.push(db)
+  db.insertRun({ id: RUN_ID, name: 'Evidence', status: 'passed', duration: 1,
+    startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
+  db.insertRunStep({ runId: RUN_ID, testIndex: 0, stepIndex: 0, cacheStatus: 'miss',
+    verifierVerdict: null, selfHealOccurred: false, briefDigest: '', evidence: {
+      console: { kind: 'console', state: 'present', ref: ref as never, counts: { total: 1, errors: 1, warnings: 0 } },
+      network: { kind: 'network', state: 'absent', reason: 'empty' },
+      a11y: { kind: 'a11y', state: 'absent', reason: 'unsupported' },
+      variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
+    } })
+  const registry = composeRegistry(createDashboardRunDetailReader(db), createEvidenceBlobReader({ agentQaRoot: root }))
+  const seen: string[] = []
+  const baseHost = hostOver(registry)
+  const host: AgentHost = { ...baseHost,
+    invokeFunction: (...args) => { seen.push(args[1]); return baseHost.invokeFunction(...args) },
+    unmaskForDisplay: (text) => { seen.push('display'); return text },
+  }
+  const started = await startServer({ db, port: 0, agentHost: host })
+  closers.push(started.close)
+  const remote = createServer(createRunServiceRoutes({ agentHost: host,
+    verifyBearer: header => header === 'Bearer synthetic-evidence-client'
+      ? { kind: 'token', clientId: 'test', trustScope: { project: 'test' } }
+      : { kind: 'refused', reason: 'invalid_token' },
+  } as RunServicePorts))
+  servers.push(remote)
+  await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
+  return { seen, registry, ref, document,
+    local: `http://127.0.0.1:${(started.server.address() as AddressInfo).port}/api/runs/${RUN_ID}`,
+    remote: `http://127.0.0.1:${(remote.address() as AddressInfo).port}/run/${RUN_ID}`,
+    headers: { Authorization: 'Bearer synthetic-evidence-client' },
+  }
+}
+
+describe('423 typed evidence HTTP doors', () => {
+  const query = '?kind=console&testIndex=0&stepIndex=0'
+  it('HTTP-EVIDENCE-HUMAN reaches the recorded evidence through the public operation', async () => {
+    const f = await serveEvidence()
+    const response = await fetch(`${f.local}/evidence${query}`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ outcome: 'ready', evidence: { ref: f.ref }, document: { kind: 'console' } })
+    expect(f.seen).toContain(RUNS_EVIDENCE_FUNCTION_ID)
+    expect(f.seen).toContain('display')
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
+  })
+  it('HTTP-EVIDENCE-MACHINE authenticates before dispatch and never restores', async () => {
+    const f = await serveEvidence()
+    expect((await fetch(`${f.remote}/evidence${query}`)).status).toBe(401)
+    expect(f.seen).toEqual([])
+    const response = await fetch(`${f.remote}/evidence${query}`, { headers: f.headers })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ outcome: 'ready', document: { kind: 'console' } })
+    expect(f.seen).toEqual([RUNS_EVIDENCE_FUNCTION_ID])
+  })
+  it('CROSS-SITE-REFUSED refuses before invocation or restoration', async () => {
+    const f = await serveEvidence()
+    const response = await fetch(`${f.local}/evidence${query}`, { headers: {
+      Origin: 'https://foreign.test', 'Sec-Fetch-Site': 'cross-site',
+    } })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'cross_site_refused' })
+    expect(f.seen).toEqual([])
+  })
+  it.each(['testIndex=0&stepIndex=0', 'kind=console&testIndex=&stepIndex=0',
+    'kind=console&testIndex=1e0&stepIndex=0', 'kind=console&testIndex=-1&stepIndex=0',
+    'kind=console&testIndex=0&stepIndex=0&stepIndex=1',
+    'kind=console&testIndex=0&stepIndex=0&extra=synthetic-private',
+    'kind=console&testIndex=0&stepIndex=0&subActionIndex=0',
+    'kind=aria&testIndex=0&stepIndex=0&subActionIndex=1.5',
+  ])('HTTP-EVIDENCE-QUERY refuses ambiguous or invalid address %s', async query => {
+    const f = await serveEvidence()
+    for (const [origin, headers] of [[f.local, {}], [f.remote, f.headers]] as const) {
+      const response = await fetch(`${origin}/evidence?${query}`, { headers })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ error: 'invalid_evidence_input' })
+    }
+    expect(f.seen).toEqual([])
+  })
+  it('RAW-SHA-BYTE-IDENTITY/ETAG/304 preserves the stored JSON on both raw doors and runs.artifact', async () => {
+    const f = await serveEvidence()
+    const bytes = Buffer.from(JSON.stringify(f.document))
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(f.ref.sha)
+    for (const [origin, headers] of [[f.local, {}], [f.remote, f.headers]] as const) {
+      const url = `${origin}/artifacts/${f.ref.sha}`
+      const response = await fetch(url, { headers })
+      expect(response.status).toBe(200)
+      expect(Buffer.from(await response.arrayBuffer()).equals(bytes)).toBe(true)
+      expect(response.headers.get('etag')).toBe(`"${f.ref.sha}"`)
+      expect(response.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+      const cached = await fetch(url, { headers: { ...headers, 'If-None-Match': `"${f.ref.sha}"` } })
+      expect(cached.status).toBe(304)
+      expect(await cached.text()).toBe('')
+      expect(cached.headers.get('etag')).toBe(`"${f.ref.sha}"`)
+    }
+    const result = await invokeFunction(f.registry, RUNS_ARTIFACT_FUNCTION_ID,
+      { runId: RUN_ID, sha: f.ref.sha }, REGISTRY_CALLER) as { bytesBase64: string }
+    expect(Buffer.from(result.bytesBase64, 'base64').equals(bytes)).toBe(true)
+    expect(f.seen).not.toContain('display')
+  })
+})
 /** Bytes that WANT to be a document. The sniffer has no arm that can grant it (T-405-15). */
 const SVG_BYTES = new TextEncoder().encode(
   '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
