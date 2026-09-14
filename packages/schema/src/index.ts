@@ -260,7 +260,7 @@ export type {
 } from './notification/index'
 export type { RunStatus, ExecutionContext, RunId } from './run/index'
 export {
-  CURATION_BUCKETS,
+  CURATION_BREAKDOWN_BUCKETS,
   CURATION_BUCKET_PRECEDENCE,
   CURATION_SNAPSHOT_SCHEMA_VERSION,
   CurationBucketSchema,

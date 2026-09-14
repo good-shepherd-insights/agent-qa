@@ -1,18 +1,18 @@
 import { expectTypeOf, test } from 'vitest'
 import type { z } from 'zod'
-import { CURATION_BUCKETS, CURATION_BUCKET_PRECEDENCE, CurationSnapshotSchema } from '../index'
+import { CURATION_BREAKDOWN_BUCKETS, CURATION_BUCKET_PRECEDENCE, CurationSnapshotSchema } from '../index'
 import type { CurationBucket, CurationSnapshot, CurationBreakdown,
   CurationSnapshotRow, CurationSnapshotChange } from '../index'
 
 test('C423-BUCKETS-EXACT: independent literal union and both never bars', () => {
   type Expected = 'added' | 'confirmed' | 'superseded' | 'deprecated' | 'proposed'
   expectTypeOf<CurationBucket>().toEqualTypeOf<Expected>()
-  expectTypeOf<(typeof CURATION_BUCKETS)[number]>().toEqualTypeOf<Expected>()
+  expectTypeOf<(typeof CURATION_BREAKDOWN_BUCKETS)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof CURATION_BUCKET_PRECEDENCE)[number]>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<Expected, CurationBucket>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<CurationBucket, Expected>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<CurationBucket, (typeof CURATION_BUCKETS)[number]>>().toEqualTypeOf<never>()
-  expectTypeOf<Exclude<(typeof CURATION_BUCKETS)[number], CurationBucket>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<CurationBucket, (typeof CURATION_BREAKDOWN_BUCKETS)[number]>>().toEqualTypeOf<never>()
+  expectTypeOf<Exclude<(typeof CURATION_BREAKDOWN_BUCKETS)[number], CurationBucket>>().toEqualTypeOf<never>()
 })
 
 test('STRONGEST-ONCE: rows retain historical changes with exact bucket discriminants', () => {

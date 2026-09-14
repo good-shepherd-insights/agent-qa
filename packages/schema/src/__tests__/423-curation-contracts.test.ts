@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import {
-  CURATION_BUCKETS, CURATION_BUCKET_PRECEDENCE, CURATION_SNAPSHOT_SCHEMA_VERSION,
+  CURATION_BREAKDOWN_BUCKETS, CURATION_BUCKET_PRECEDENCE, CURATION_SNAPSHOT_SCHEMA_VERSION,
   CurationBucketSchema, CurationSnapshotSchema, CurationSnapshotRowSchema,
   CurationSnapshotChangeSchema, CurationBreakdownSchema,
 } from '../index'
@@ -49,7 +49,7 @@ const five: CurationSnapshot = {
 }
 
 test('C423-BUCKETS-EXACT: exactly five literals and version one with strict keys', () => {
-  expect(CURATION_BUCKETS).toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'proposed'])
+  expect(CURATION_BREAKDOWN_BUCKETS).toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'proposed'])
   expect(CurationBucketSchema.options).toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'proposed'])
   expect(CURATION_BUCKET_PRECEDENCE).toEqual(['superseded', 'deprecated', 'proposed', 'added', 'confirmed'])
   expect(CURATION_SNAPSHOT_SCHEMA_VERSION).toBe(1)
@@ -153,4 +153,31 @@ test('SNAPSHOT-DISCRIMINANTS: downgrade classifications and unlinked purge stay 
     { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'purged', change: 'purged', atOrdinal: 9 } },
     { bucket: 'confirmed', change: { ...confirmed.changes[0]!.change, promotionPath: 'user-sovereign' } },
   ]) expect(CurationSnapshotChangeSchema.safeParse(invalid).success).toBe(false)
+})
+
+test('SNAPSHOT-STABLE: parse preserves historical order and detaches all nested facts', () => {
+  const input = structuredClone(five)
+  const parsed = CurationSnapshotSchema.parse(input)
+  expect(parsed).toEqual(five)
+  input.rows[1]!.changes[0]!.change.atOrdinal = 999
+  input.rows[2]!.byRecordId = 'later-replacement'
+  input.breakdown.confirmed = 50
+  expect(parsed).toEqual(five)
+  expect(JSON.parse(JSON.stringify(parsed))).toEqual(five)
+})
+
+test('REPLACEMENT-NOT-ADDED: historical replacements remain suppressed after a later supersession', () => {
+  const row: CurationSnapshotRow = {
+    ...superseded, byRecordId: 'later-replacement', changes: [
+      ...superseded.changes,
+      { bucket: 'superseded', change: { schemaVersion: 1, recordId: 'record-victim',
+        change: 'superseded', atOrdinal: 10, byRecordId: 'later-replacement' } },
+    ],
+  }
+  expect(CurationSnapshotRowSchema.parse(row)).toEqual(row)
+  expect(CurationSnapshotRowSchema.safeParse({ ...row, byRecordId: 'record-replacement' }).success).toBe(false)
+  expect(CurationSnapshotSchema.safeParse({ schemaVersion: 1,
+    rows: [row, { recordId: 'record-replacement', bucket: 'added', changes: [superseded.changes[1]] }],
+    breakdown: { ...zero, superseded: 1, added: 1 },
+  }).success).toBe(false)
 })
