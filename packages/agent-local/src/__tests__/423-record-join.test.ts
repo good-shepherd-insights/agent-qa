@@ -1,10 +1,9 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { FunctionNotBoundError, type KnowledgeReaderPort } from '@vostride/agent-qa-agent'
+import { FunctionNotBoundError, RUNS_KNOWLEDGE_FUNCTION_ID, type KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import { KnowledgeMaintenanceScanError, showRecord } from '@vostride/agent-qa-knowledge-local/reader'
-import type { KnowledgeRecordShowResult } from '@vostride/agent-qa-schema'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createKnowledgeReader } from '../composition/compose-local-agent.js'
 import { createKnowledgeReaderPort } from '../composition/knowledge-review-reader.js'
@@ -39,9 +38,9 @@ function fixture() {
   return { root, knowledgeRoot, ...saved }
 }
 
-type Batch = (input: { recordIds: readonly string[] }) => Promise<readonly KnowledgeRecordShowResult[]>
+type Batch = NonNullable<KnowledgeReaderPort['showRecords']>
 function boundBatch(port: KnowledgeReaderPort): Batch {
-  const method = (port as KnowledgeReaderPort & { showRecords?: Batch }).showRecords
+  const method = port.showRecords
   expect(method, 'the actual composed reader must bind showRecords').toBeTypeOf('function')
   return method!.bind(port)
 }
@@ -102,15 +101,15 @@ it('JOIN-NOT-BOUND: optional neutral batch refuses by name without a per-ID fall
   const single = vi.spyOn(port, 'showRecord')
   // Contract-only consumer: run-level dispatch belongs to 423-34. This existing error
   // is how an optional reader is refused, rather than substituting N single reads.
-  const { showRecords: _omitted, ...legacy } = port as KnowledgeReaderPort & { showRecords?: Batch }
+  const { showRecords: _omitted, ...legacy } = port
   const oldPort: KnowledgeReaderPort = legacy
   async function consume(reader: KnowledgeReaderPort) {
-    const read = (reader as KnowledgeReaderPort & { showRecords?: Batch }).showRecords
-    if (read === undefined) throw new FunctionNotBoundError('runs.knowledge')
+    const read = reader.showRecords
+    if (read === undefined) throw new FunctionNotBoundError(RUNS_KNOWLEDGE_FUNCTION_ID)
     return read({ recordIds: [f.id, 'gone'] })
   }
   const before = tree(f.root)
-  await expect(consume(oldPort)).rejects.toMatchObject({ name: 'FunctionNotBoundError', functionId: 'runs.knowledge' })
+  await expect(consume(oldPort)).rejects.toMatchObject({ name: 'FunctionNotBoundError', functionId: RUNS_KNOWLEDGE_FUNCTION_ID })
   expect(single).not.toHaveBeenCalled()
   expect(tree(f.root)).toEqual(before)
 })

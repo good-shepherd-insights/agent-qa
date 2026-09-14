@@ -667,6 +667,14 @@ export interface KnowledgeReaderPort {
    */
   showRecord(input: KnowledgeRecordShowInput): Promise<KnowledgeRecordShowResult>
   /**
+   * Current maintenance content for caller-supplied identities, in first-request order
+   * with duplicates removed. Missing records remain per-ID results; an incomplete scan
+   * retains the maintenance reader's typed failure for the caller to report honestly.
+   * Optional for existing hosts: consumers refuse an unbound capability by name.
+   * This read does not sight identities or change storage.
+   */
+  showRecords?(input: { recordIds: readonly string[] }): Promise<readonly KnowledgeRecordShowResult[]>
+  /**
    * What became of the canary lines THIS run served (2026-08-29, Phase 407 · D-08).
    *
    * ONE ROW PER TUPLE ASKED ABOUT, in the order asked. The caller supplies the served-canary

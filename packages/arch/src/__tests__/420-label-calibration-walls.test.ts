@@ -28,7 +28,7 @@ for (const manifest of globSync('packages/*/package.json', { cwd: repoRoot })) {
 const knowledgePrefix = 'packages/knowledge-local/src/'
 // Plans 10/11: these ten calls expose status/counters/validity only. Canary now
 // receives priors (20), though its use still projects status. diffSince never folds.
-const statusOnly: Record<string, number> = { 'gc.ts': 1, 'inspect.ts': 1, 'show-record.ts': 1,
+const statusOnly: Record<string, number> = { 'gc.ts': 1, 'inspect.ts': 1, 'show-records.ts': 1,
   'lineage-fold.ts': 1, 'gates/gate-receipt-read.ts': 1, 'rollback.ts': 3,
   'review/propose-review.ts': 1, 'review/apply-review.ts': 1 }
 const numerical: Record<string, number> = { 'bundle-read.ts': 1, 'bundle-scan.ts': 2,

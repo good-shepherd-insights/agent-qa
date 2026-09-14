@@ -10,7 +10,7 @@
 // the workspace where a write import is legal. The rule would still have passed and the
 // separation would have been discipline rather than structure.
 //
-// D-01 LIST-VERB SIGHTING. Every entity id one of these verbs surfaces is handed to the
+// D-01 LIST-VERB SIGHTING. Entity ids discovered by listing and single-record verbs go to the
 // injected `sightMemoryEntities` callback. The callback is INJECTED rather than constructed
 // here for the reason above: minting reaches the durable addressing ledger, whose module lives
 // on the writer-gated entry, so a version of this file that could mint could not be a reader
@@ -26,6 +26,7 @@ import {
   inspectRecords,
   listBundles,
   showRecord,
+  showRecords,
 } from '@vostride/agent-qa-knowledge-local/reader'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { ResolvePromotionPosture, TrustPriorTable } from '@vostride/agent-qa-schema'
@@ -137,6 +138,11 @@ export function createKnowledgeReaderPort(
       })
       await sight(result.kind === 'found' ? [result.record.recordId] : [])
       return result
+    },
+    // Caller-supplied union IDs are already known, like canary tuples below. Forward
+    // the maintenance batch without address-ledger sightings or per-record scans.
+    async showRecords({ recordIds }) {
+      return showRecords({ knowledgeRoot: await input.resolveKnowledgeRoot(), recordIds })
     },
     /**
      * 407 D-08: what became of the canary lines one run served.
