@@ -107,12 +107,16 @@ it('EVID-MISSING-BLOB returns unavailable plus evidenceIncomplete without mutati
 
 it.each(['kind', 'schemaVersion', 'records', 'unknown-field', 'json', 'utf8'])(
   'EVID-BAD-BLOB %s is a typed read error preserving runtime capture', async fault => {
-    const bad = { ...documents.console, ...(fault === 'kind' ? { kind: 'network' } : {}),
+    const bad = { ...(fault === 'kind' ? documents.network : documents.console),
       ...(fault === 'schemaVersion' ? { schemaVersion: 2 } : {}),
       ...(fault === 'records' ? { records: 'bad' } : {}), ...(fault === 'unknown-field' ? { secret: 'synthetic' } : {}) }
     const f = fixture('console', bad)
     if (fault === 'json' || fault === 'utf8') {
-      const bytes = fault === 'json' ? new TextEncoder().encode('{') : new Uint8Array([0xff])
+      const bytes = fault === 'json' ? new TextEncoder().encode('{') : new Uint8Array([
+        ...new TextEncoder().encode('{"schemaVersion":1,"kind":"console","records":[{"level":"error","text":"'),
+        0xff,
+        ...new TextEncoder().encode('","timestamp":1}]}'),
+      ])
       f.step.evidence = { ...f.step.evidence!, console: entryFor('console', bytes) as NonNullable<RunDetailStep['evidence']>['console'] }
       f.deps.evidenceBlobs!.read = async () => ({ status: 'found', bytes })
     }

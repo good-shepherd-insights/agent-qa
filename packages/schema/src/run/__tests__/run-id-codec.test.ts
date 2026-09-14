@@ -106,10 +106,11 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
   Record<string, { hardened: number; plainString: number; verdict: string }>
 > = {
   'functions/runs.ts': {
-    hardened: 11,
+    hardened: 12,
     plainString: 7,
     verdict:
-      'hardened here — `RunsStartInput.runId` is the caller-supplied id the run executes under and '
+      '2026-09-14 (423-29 D-04) adds the TWELFTH: `RunsEvidenceInput.runId` scopes the recorded-row and blob reads through the same exact-path codec. '
+      + 'hardened here — `RunsStartInput.runId` is the caller-supplied id the run executes under and '
       + 'becomes `runs/<slugBranch(runId)>/`. 2026-08-25 (403-01 D-03) adds the EIGHTH: '
       + '`RunsLiveUrlInput.runId` is caller-supplied over HTTP, is looked up in the live-session '
       + 'registry, and is INTERPOLATED INTO THE MINTED URL and into the signed claims — so an id '

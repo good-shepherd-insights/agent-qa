@@ -565,7 +565,9 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // and declared verdict/path/reason. Gate evidence payloads remain inside the scanned
     // boundary: this classifier may not inspect their content to derive its outcome.
     // 2026-09-08 (419 GATE3-01): 41. runs.mark folds only governed kinds and address indexes.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(41)
+    // 2026-09-14 (423-29 D-04): 42 source/spec bodies. runs.evidence folds only its outcome;
+    // registration is owned by 423-09, and evidence document content stays outside receipts.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(42)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {
