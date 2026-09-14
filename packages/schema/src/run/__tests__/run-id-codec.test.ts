@@ -243,7 +243,7 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
       + 'This DTO grants no authority to use either string as an unchecked path segment.',
   },
   'functions/feedback.ts': {
-    hardened: 13,
+    hardened: 15,
     plainString: 0,
     verdict:
       '2026-09-09 (419): the eight mark address/input/outcome/trace fields, including '
@@ -252,7 +252,9 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
       + 'transform. Mark DTOs preserve the same bytes and rejection predicate while '
       + 'supporting output JSON-schema projection; no second path rule is declared. '
       + '2026-09-15 (423-36): the marks-history input and its four result arms add five '
-      + 'fields on the same hardened validator.',
+      + 'fields on the same hardened validator. '
+      + '2026-09-15 (423-37): the mark preview adds two, the shared prospective arm shape and '
+      + 'the already-marked arm; its five refusal arms are runs.mark\'s own objects, not new fields.',
   },
   'knowledge/proposal.ts': {
     hardened: 0,

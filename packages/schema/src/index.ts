@@ -1661,6 +1661,11 @@ export {
   // 2026-09-15, 423 D-19: marks history
   markAddressKey, MARK_PROPOSAL_STATES, MARKS_HISTORY_OUTCOMES, MarkProposalCurrentSchema,
   RunsMarksHistoryInputSchema, MarkHistoryEntrySchema, RunsMarksHistoryResultSchema,
+  // 2026-09-15, 423 D-16/D-17: mark consequence preview
+  MARK_PREVIEW_REFUSALS, MARK_PREVIEW_OUTCOMES, MARK_TARGET_REASONS, MARK_GOLD_CHANNELS,
+  MARK_PREVIEW_LATEST_KINDS, MARK_PREVIEW_DRAFT_KINDS, MarkPreviewBasisSchema, MarkPreviewLatestSchema,
+  MarkPreviewGroundTruthSchema, MarkPreviewLabelSchema, MarkPreviewKnowledgeSchema, MarkPreviewDraftSchema,
+  MarkPreviewWithdrawalSchema, RunsMarkPreviewResultSchema,
 } from './functions/feedback'
 export type {
   MarkQuarantineClass, MarkFixKind, MarkDisposition, NoDraftableFixChecked, MarkAddress,
@@ -1668,6 +1673,8 @@ export type {
   CommitReceipt, RunDetailMemberMark, FeedbackPort,
   MarkProposalState, MarkProposalCurrent, RunsMarksHistoryInput, MarkHistoryEntry,
   RunsMarksHistoryResult, MarkHistoryReadEntry, MarkHistoryRead, FeedbackReadsPort,
+  MarkPreviewBasis, MarkPreviewLatest, MarkPreviewGroundTruth, MarkPreviewLabel, MarkPreviewKnowledge,
+  MarkPreviewDraft, MarkPreviewWithdrawal, RunsMarkPreviewResult,
 } from './functions/feedback'
 export { MarkProposalStampSchema } from './knowledge/proposal'
 export type { MarkProposalStamp } from './knowledge/proposal'

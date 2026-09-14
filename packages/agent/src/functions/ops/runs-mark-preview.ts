@@ -1,0 +1,64 @@
+// 2026-09-15, 423 D-16/D-17: what runs.mark would do for this exact input, through the read-only
+// feedbackReads port. The result is prospective: no intent, lease, model call, id mint or write.
+import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
+import { RunsMarkInputSchema, RunsMarkPreviewResultSchema, maskedMarker } from '@vostride/agent-qa-schema'
+import type { MaskFn, RunsMarkInput, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
+
+import { FunctionNotBoundError } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
+import { runsMarkSpec } from './runs-mark.js'
+
+export const RUNS_MARK_PREVIEW_FUNCTION_ID = 'runs.mark.preview'
+
+// Only free text crosses the mask. Ids, kinds, counts, addresses and cassette ids stay structural.
+function maskResult(result: RunsMarkPreviewResult, mask: MaskFn): RunsMarkPreviewResult {
+  if (result.kind !== 'consequences') return result
+  return {
+    ...result,
+    groundTruth: result.groundTruth.map(item => ({
+      ...item,
+      recordedVerdict: { ...item.recordedVerdict, reasoning: mask(item.recordedVerdict.reasoning) },
+      ...(item.correctedExpectation === undefined ? {} : { correctedExpectation: mask(item.correctedExpectation) }),
+    })),
+  }
+}
+
+export const runsMarkPreviewSpec: FunctionSpec<RunsMarkInput, RunsMarkPreviewResult> = {
+  id: RUNS_MARK_PREVIEW_FUNCTION_ID,
+  summary: 'Preview what runs.mark would do for this exact input: its refusals, resolved step, labels, knowledge reach and draft kind, without writing.',
+  requiredScopes: ['read'],
+  resultKind: 'unary',
+  boundThrough: 'feedbackReads',
+  input: RunsMarkInputSchema,
+  output: RunsMarkPreviewResultSchema,
+  risk: { name: `fn:${RUNS_MARK_PREVIEW_FUNCTION_ID}`, recognized: true, readOnly: true },
+  classify(output): ClauseVerdict {
+    switch (output.kind) {
+      case 'consequences':
+        return { status: 'executed', outcome: `preview: ${output.markKind} would draft ${output.draft.kind} over ${output.markedDecisionCount} ${output.markedDecisionCount === 1 ? 'decision' : 'decisions'} (nothing written)` }
+      case 'quarantined':
+        return { status: 'executed', outcome: `preview: ${output.markKind} would be quarantined as ${output.class} (nothing written)` }
+      case 'already-marked':
+        return { status: 'executed', outcome: 'preview: identical repeat of an existing mark (nothing written)' }
+      case 'run-not-found':
+      case 'member-not-found':
+      case 'step-not-found':
+      case 'ambiguous-address':
+      case 'ambiguous-correction':
+        // The writer's own refusal wording; classify interpolates only structural fields.
+        return runsMarkSpec.classify(output)
+      default:
+        return output satisfies never
+    }
+  },
+  async invoke(input, deps) {
+    const parsed = RunsMarkInputSchema.parse(input)
+    const preview = deps.feedbackReads?.preview
+    if (preview === undefined) throw new FunctionNotBoundError(RUNS_MARK_PREVIEW_FUNCTION_ID)
+    const answer = await preview.call(deps.feedbackReads, parsed)
+    if (answer.runId !== parsed.runId) throw new Error('feedbackReads.preview answered for another run')
+    const context = getActiveMaskingContext()
+    const mask: MaskFn = context === undefined ? () => maskedMarker('secret') : text => context.mask(text)
+    return RunsMarkPreviewResultSchema.parse(maskResult(answer, mask))
+  },
+}

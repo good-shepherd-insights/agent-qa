@@ -255,6 +255,165 @@ export type RunsMarksHistoryResult = z.infer<typeof RunsMarksHistoryResultSchema
 const _historyOutcomesCover: ExactlyEqual<(typeof MARKS_HISTORY_OUTCOMES)[number], RunsMarksHistoryResult['kind']> = true
 void _historyOutcomesCover
 
+// 2026-09-15, 423 D-16/D-17: the consequence preview. Input is RunsMarkInputSchema itself; runs.mark
+// gains no field. Refusals are runs.mark's own arm objects, taken by position and type-pinned below.
+const [, , markRunNotFoundArm, markMemberNotFoundArm, markStepNotFoundArm, markAmbiguousAddressArm,
+  markAmbiguousCorrectionArm] = RunsMarkOutcomeSchema.options
+
+export const MARK_PREVIEW_REFUSALS = ['run-not-found', 'member-not-found', 'step-not-found', 'ambiguous-address', 'ambiguous-correction'] as const
+export const MARK_PREVIEW_OUTCOMES = ['consequences', 'quarantined', 'already-marked', ...MARK_PREVIEW_REFUSALS] as const
+export const MARK_TARGET_REASONS = ['step-mark', 'failing-step', 'passing-verdict'] as const
+export const MARK_GOLD_CHANNELS = ['user-mark', 'overturned-verdict'] as const
+export const MARK_PREVIEW_LATEST_KINDS = ['first', 'supersedes'] as const
+export const MARK_PREVIEW_DRAFT_KINDS = ['confirmed-bug', 'knowledge', 'test-edit', 'no-draftable-fix'] as const
+
+const _refusalArmsInOrder: ExactlyEqual<
+  [z.infer<typeof markRunNotFoundArm>['kind'], z.infer<typeof markMemberNotFoundArm>['kind'],
+    z.infer<typeof markStepNotFoundArm>['kind'], z.infer<typeof markAmbiguousAddressArm>['kind'],
+    z.infer<typeof markAmbiguousCorrectionArm>['kind']],
+  [...typeof MARK_PREVIEW_REFUSALS]> = true
+void _refusalArmsInOrder
+const _goldChannelsCover: ExactlyEqual<(typeof MARK_GOLD_CHANNELS)[number], MarkReceipt['gold'][number]['channel']> = true
+void _goldChannelsCover
+
+export const MarkPreviewBasisSchema = z.object({
+  ledgerOrdinal: indexSchema,
+  /** The addressed prior mark's ordinal as observed. Not a lock: runs.mark re-plans under its transaction. */
+  priorMarkOrdinal: z.number().int().positive().optional(),
+}).strict().refine(basis => basis.priorMarkOrdinal === undefined || basis.priorMarkOrdinal <= basis.ledgerOrdinal,
+  { message: 'the prior mark lies inside the observed ledger', path: ['priorMarkOrdinal'] })
+export type MarkPreviewBasis = z.infer<typeof MarkPreviewBasisSchema>
+
+export const MarkPreviewLatestSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('first') }).strict(),
+  z.object({ kind: z.literal('supersedes'), markId: markIdSchema, ordinal: z.number().int().positive() }).strict(),
+])
+export type MarkPreviewLatest = z.infer<typeof MarkPreviewLatestSchema>
+
+const previewMemberSchema = z.object({ testIndex: indexSchema, testId: z.string().min(1).optional() }).strict()
+const resolvedStepSchema = z.object({ stepIndex: indexSchema, reason: z.enum(MARK_TARGET_REASONS) }).strict()
+
+export const MarkPreviewGroundTruthSchema = z.object({
+  testIndex: indexSchema,
+  stepIndex: indexSchema,
+  /** The verdict the mark asserts for this step. */
+  verdict: z.enum(['pass', 'fail']),
+  recordedVerdict: z.object({ pass: z.boolean(), reasoning: z.string() }).strict(),
+  correctedExpectation: z.string().optional(),
+  /** The corrected action is reported by presence; its content is the caller's own input. */
+  correctedAction: z.boolean(),
+}).strict()
+export type MarkPreviewGroundTruth = z.infer<typeof MarkPreviewGroundTruthSchema>
+
+/** A label a freeze would write. Gold cassette ids and ordinals are writer-minted and never appear. */
+export const MarkPreviewLabelSchema = z.object({
+  testIndex: indexSchema,
+  stepIndex: indexSchema,
+  decisionOrdinal: indexSchema,
+  sourceCassetteId: z.string().min(1),
+  channel: z.enum(MARK_GOLD_CHANNELS),
+  correction: z.object({ verdict: z.enum(['pass', 'fail']) }).strict().optional(),
+}).strict()
+export type MarkPreviewLabel = z.infer<typeof MarkPreviewLabelSchema>
+
+/**
+ * The knowledge the mark would reach, as the writer's own evidence inputs. Concrete per-record
+ * confirm/overturn effects and joined content (D-17) are additive fields planned by 423-19.
+ */
+export const MarkPreviewKnowledgeSchema = z.object({
+  servedRecordIds: z.array(z.string().min(1)),
+  appendsEvidence: z.boolean(),
+}).strict()
+export type MarkPreviewKnowledge = z.infer<typeof MarkPreviewKnowledgeSchema>
+
+/** applyFeedback's plan kind and target. The drafted wording is a model call and is never previewed. */
+export const MarkPreviewDraftSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('confirmed-bug') }).strict(),
+  z.object({ kind: z.literal('knowledge'), fix: z.enum(['fact', 'caution', 'procedure-hint']), target: KnowledgeTargetRefSchema }).strict(),
+  z.object({ kind: z.literal('test-edit'), testRef: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('no-draftable-fix'), checked: NoDraftableFixCheckedSchema }).strict(),
+])
+export type MarkPreviewDraft = z.infer<typeof MarkPreviewDraftSchema>
+
+export const MarkPreviewWithdrawalSchema = z.object({
+  proposalId: z.string().min(1),
+  proposalKind: z.enum(['knowledge', 'test-draft']),
+}).strict()
+export type MarkPreviewWithdrawal = z.infer<typeof MarkPreviewWithdrawalSchema>
+
+type LatestWithBasis = { latest: MarkPreviewLatest; basis: MarkPreviewBasis }
+function refineLatestBasis(value: LatestWithBasis, ctx: z.RefinementCtx) {
+  const prior = value.latest.kind === 'supersedes' ? value.latest.ordinal : undefined
+  if (prior !== value.basis.priorMarkOrdinal) {
+    ctx.addIssue({ code: 'custom', path: ['basis', 'priorMarkOrdinal'], message: 'the basis names exactly the mark this one would supersede' })
+  }
+}
+
+const prospectiveShape = {
+  runId: runIdSchema,
+  /** Every effect below is what runs.mark would do now; nothing has been written. */
+  prospective: z.literal(true),
+  markKind: z.enum(MARKS),
+  member: previewMemberSchema,
+  resolvedStep: resolvedStepSchema,
+  latest: MarkPreviewLatestSchema,
+  basis: MarkPreviewBasisSchema,
+}
+
+export const RunsMarkPreviewResultSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('consequences'),
+    ...prospectiveShape,
+    markedDecisionCount: indexSchema,
+    groundTruth: z.array(MarkPreviewGroundTruthSchema),
+    labels: z.array(MarkPreviewLabelSchema),
+    knowledge: MarkPreviewKnowledgeSchema,
+    draft: MarkPreviewDraftSchema,
+    withdraws: MarkPreviewWithdrawalSchema.optional(),
+  }).strict().superRefine((value, ctx) => {
+    refineLatestBasis(value, ctx)
+    if (value.withdraws !== undefined && value.latest.kind !== 'supersedes') {
+      ctx.addIssue({ code: 'custom', path: ['withdraws'], message: 'only a superseding mark withdraws a prior proposal' })
+    }
+    if ((value.draft.kind === 'confirmed-bug') !== (value.markKind === 'confirmed-bug')) {
+      ctx.addIssue({ code: 'custom', path: ['draft'], message: 'a confirmed bug drafts no fix and every other mark plans one' })
+    }
+    if (value.markKind !== 'false-pass' && value.labels.some(label => label.channel === 'overturned-verdict')) {
+      ctx.addIssue({ code: 'custom', path: ['labels'], message: 'only a false-pass freezes an overturned verdict' })
+    }
+    const foreign = [...value.groundTruth, ...value.labels].some(item => item.testIndex !== value.member.testIndex)
+    if (foreign) ctx.addIssue({ code: 'custom', path: ['member'], message: 'ground truth and labels belong to the resolved member' })
+  }),
+  z.object({
+    kind: z.literal('quarantined'),
+    ...prospectiveShape,
+    class: z.enum(MARK_QUARANTINE_CLASSES),
+  }).strict().superRefine(refineLatestBasis),
+  z.object({
+    kind: z.literal('already-marked'),
+    runId: runIdSchema,
+    /** The existing mark an identical repeat returns; a present fact, not a prospective one. */
+    prior: RunDetailMemberMarkSchema.extend({ testIndex: indexSchema, testId: z.string().min(1).optional() }).strict(),
+    basis: MarkPreviewBasisSchema,
+  }).strict().superRefine((value, ctx) => {
+    if (value.basis.priorMarkOrdinal !== value.prior.ordinal) {
+      ctx.addIssue({ code: 'custom', path: ['basis', 'priorMarkOrdinal'], message: 'an identical repeat is computed against its prior mark' })
+    }
+  }),
+  markRunNotFoundArm,
+  markMemberNotFoundArm,
+  markStepNotFoundArm,
+  markAmbiguousAddressArm,
+  markAmbiguousCorrectionArm,
+])
+export type RunsMarkPreviewResult = z.infer<typeof RunsMarkPreviewResultSchema>
+const _previewOutcomesCover: ExactlyEqual<(typeof MARK_PREVIEW_OUTCOMES)[number], RunsMarkPreviewResult['kind']> = true
+void _previewOutcomesCover
+const _previewRefusalsAreMarkOutcomes: ExactlyEqual<
+  Extract<RunsMarkPreviewResult, { kind: (typeof MARK_PREVIEW_REFUSALS)[number] }>,
+  Extract<RunsMarkOutcome, { kind: (typeof MARK_PREVIEW_REFUSALS)[number] }>> = true
+void _previewRefusalsAreMarkOutcomes
+
 /** One ledger receipt with its drafted proposal's current state, as the host read it. */
 export interface MarkHistoryReadEntry {
   receipt: MarkReceipt
@@ -273,4 +432,10 @@ export type MarkHistoryRead =
  */
 export interface FeedbackReadsPort {
   history(runId: RunId): Promise<MarkHistoryRead>
+  /**
+   * 423 D-16: runs.mark's deterministic plan for this exact input, stopping before any intent,
+   * lease, model call, id mint or write. Optional until a host implements it (423-19); a
+   * feedbackReads binding without it leaves runs.mark.preview unbound by name.
+   */
+  preview?(input: RunsMarkInput): Promise<RunsMarkPreviewResult>
 }

@@ -1,31 +1,18 @@
 // 2026-09-15, 423 D-16/D-17: the exact-input consequence preview contract over feedbackReads.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import * as schema from '@vostride/agent-qa-schema'
-import { RunsMarkInputSchema, RunsMarkOutcomeSchema, asRunId, maskedMarker } from '@vostride/agent-qa-schema'
+import { RunsMarkInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, asRunId, maskedMarker } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, RunsMarkInput } from '@vostride/agent-qa-schema'
-import type { z } from 'zod'
 import { invokeFunction } from '../invoke.js'
 import { runsMarkSpec } from '../ops/runs-mark.js'
+import { RUNS_MARK_PREVIEW_FUNCTION_ID, runsMarkPreviewSpec } from '../ops/runs-mark-preview.js'
 import { createRegistryFromSpecs } from '../registry.js'
 import * as spec from '../spec.js'
 import type { FunctionDeps, FunctionSpec } from '../spec.js'
 
-type PreviewModule = { runsMarkPreviewSpec?: FunctionSpec; RUNS_MARK_PREVIEW_FUNCTION_ID?: string }
-let previewModule: PreviewModule = {}
-beforeEach(async () => {
-  previewModule = await import('../ops/runs-mark-preview.js').catch(() => ({})) as PreviewModule
-})
-
-function previewSpec(): FunctionSpec {
-  expect(typeof previewModule.runsMarkPreviewSpec, 'ops/runs-mark-preview must export runsMarkPreviewSpec').toBe('object')
-  return previewModule.runsMarkPreviewSpec!
-}
-function resultSchema(): z.ZodType {
-  const found = (schema as Record<string, unknown>).RunsMarkPreviewResultSchema
-  expect(typeof found, 'the schema root must export RunsMarkPreviewResultSchema').toBe('object')
-  return found as z.ZodType
-}
+const previewSpec = () => runsMarkPreviewSpec as unknown as FunctionSpec
+const resultSchema = () => RunsMarkPreviewResultSchema
+const previewModule = { RUNS_MARK_PREVIEW_FUNCTION_ID }
 
 const runId = asRunId('run-423-mark-preview')
 const member = { testIndex: 1, testId: 'checkout' }

@@ -159,7 +159,7 @@ export type OptionalFunctionDepKey =
   | 'scaffoldContent'
   | 'capabilityCatalog'
   | 'feedback' // 2026-09-08, 419 GATE3-01: the Gate-3 mark port
-  | 'feedbackReads' // 2026-09-15, 423 D-19: read-only mark history, no writer authority
+  | 'feedbackReads' // 2026-09-15, 423 D-19/D-16: read-only mark history and preview, no writer authority
 
 /**
  * 419 GATE3-01: the union previously had only a type-level pin, invisible to vitest.
@@ -1192,6 +1192,8 @@ export interface FunctionDeps {
   /**
    * 423 D-19: read-only feedback observations. Separate from `feedback` so a host can serve
    * history without mark authority; absent means `runs.marks.history` is unbound by name.
+   * 423 D-16: the same binding carries `preview`, runs.mark's plan for an exact input with no
+   * write; a binding without that verb leaves `runs.mark.preview` unbound by name.
    */
   feedbackReads?: FeedbackReadsPort
   /**

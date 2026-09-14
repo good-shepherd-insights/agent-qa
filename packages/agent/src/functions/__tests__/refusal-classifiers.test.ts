@@ -569,7 +569,10 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // registration is owned by 423-09, and evidence document content stays outside receipts.
     // 2026-09-15 (423-36 D-19): 43. runs.marks.history folds its outcome kind, the entry count
     // and the corrupt line number; notes, producers and proposal reasons never reach a receipt.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(43)
+    // 2026-09-15 (423-37 D-16): 44. runs.mark.preview folds the mark kind, draft kind, decision
+    // count and quarantine class, and delegates refusals to runs.mark's fold; no reasoning or
+    // corrected expectation reaches a receipt.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(44)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {
