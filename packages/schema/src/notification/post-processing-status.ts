@@ -20,6 +20,7 @@ import { z } from 'zod'
 import { jobConclusionKindValues } from '../job/job'
 import type { JobConclusionKind } from '../job/job'
 import type { RunNotification } from './run-notification'
+import type { CurationSnapshot } from './curation-snapshot'
 
 /**
  * Declared in the order a stage passes through them.
@@ -87,6 +88,8 @@ export interface PostProcessingStatus {
   chips: PostProcessingChips
   /** A missing job row leaves its stage absent, including on historical payloads. */
   stageDetails?: Partial<Record<PostProcessingDetailStage, PostProcessingStageDetail>>
+  /** Validated completed curation, available before the proposals stage reaches terminal. */
+  curationSnapshot?: CurationSnapshot
   /**
    * Present only once the chain reached its terminal and wrote its one row (D-09). Absent is
    * the ordinary state of a chain still in flight — never rendered as a failure.

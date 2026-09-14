@@ -136,7 +136,17 @@ describe('423 checkpoint-backed snapshot projection', () => {
       })),
       breakdown: { added: 2, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })
-    await expect(read({ curationSnapshot: recorded })).rejects.toMatchObject({ name: 'ZodError' })
+    await expect(read({ curationSnapshot: recorded })).rejects.toMatchObject({
+      name: 'ZodError',
+      issues: [{ code: 'custom', path: ['curationSnapshot'],
+        message: 'The recorded curation snapshot cannot be projected safely.' }],
+    })
+    const invalid = { ...recorded, 'synthetic-raw-secret-key': 'synthetic-raw-secret-value' }
+    await expect(read({ curationSnapshot: invalid })).rejects.toMatchObject({
+      name: 'ZodError',
+      issues: [{ code: 'custom', path: ['curationSnapshot'],
+        message: 'The recorded curation snapshot cannot be projected safely.' }],
+    })
   })
 })
 

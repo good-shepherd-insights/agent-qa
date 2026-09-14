@@ -20,8 +20,10 @@
 // that pins it costs a test file and not a store.
 
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
+import { z } from 'zod'
 import {
   maskedMarker,
+  CurationSnapshotSchema,
   POST_PROCESSING_DETAIL_STAGES,
   PostProcessingStatusSchema,
   RunsPostProcessingInputSchema,
@@ -34,6 +36,7 @@ import type {
   PostProcessingStageDetail,
   MaskFn,
   RunsPostProcessingInput,
+  CurationSnapshot,
 } from '@vostride/agent-qa-schema'
 
 import { chainJobIdsForRun } from '../../jobs/chain-identity.js'
@@ -127,6 +130,39 @@ function projectStageDetails(
   return Object.keys(details).length === 0 ? undefined : details
 }
 
+function projectCurationSnapshot(snapshot: CurationSnapshot, mask: MaskFn): CurationSnapshot {
+  const refuse = () => new z.ZodError([{
+    code: 'custom', path: ['curationSnapshot'],
+    message: 'The recorded curation snapshot cannot be projected safely.',
+  }])
+  const source = CurationSnapshotSchema.safeParse(snapshot)
+  if (!source.success) throw refuse()
+  const projected = {
+    ...source.data,
+    rows: source.data.rows.map(row => ({
+      ...row,
+      recordId: mask(row.recordId),
+      ...(row.byRecordId === undefined ? {} : { byRecordId: mask(row.byRecordId) }),
+      changes: row.changes.map(entry => ({
+        ...entry,
+        change: {
+          ...entry.change,
+          recordId: mask(entry.change.recordId),
+          ...(entry.change.byRecordId === undefined ? {} : { byRecordId: mask(entry.change.byRecordId) }),
+          ...(entry.change.evidenceToken === undefined ? {} : { evidenceToken: mask(entry.change.evidenceToken) }),
+          ...(entry.change.sourceRunId === undefined ? {} : { sourceRunId: mask(entry.change.sourceRunId) }),
+          ...(entry.change.observationId === undefined ? {} : { observationId: mask(entry.change.observationId) }),
+        },
+      })),
+    })),
+  }
+  // Discriminants and constrained hex digests remain structural facts. If redaction
+  // collapses identities, refuse rather than merge rows or fabricate a new breakdown.
+  const result = CurationSnapshotSchema.safeParse(projected)
+  if (!result.success) throw refuse()
+  return result.data
+}
+
 export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostProcessingStatus> = {
   id: RUNS_POST_PROCESSING_FUNCTION_ID,
   summary: "Read one run's post-processing chip statuses from durable job state.",
@@ -171,15 +207,22 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
     // Resolve at invocation time: the host can bind a different masking scope for each read.
     // Without that scope, free-text failure fields fail closed with the shared display marker.
     const masking = getActiveMaskingContext()
+    const mask: MaskFn = masking === undefined
+      ? () => maskedMarker('secret')
+      : text => masking.mask(text)
     const stageDetails = projectStageDetails(
       state,
-      masking === undefined ? () => maskedMarker('secret') : text => masking.mask(text),
+      mask,
     )
+    const curationSnapshot = state?.curationSnapshot === undefined
+      ? undefined
+      : projectCurationSnapshot(state.curationSnapshot, mask)
 
     return {
       runId,
       chips: projectPostProcessingChips(state),
       ...(stageDetails === undefined ? {} : { stageDetails }),
+      ...(curationSnapshot === undefined ? {} : { curationSnapshot }),
       // Absence is spread away rather than padded (the `runs-get.ts` idiom): a chain in flight
       // has no record yet, and a rendered `null` would be a second spelling of what a missing
       // key already says.

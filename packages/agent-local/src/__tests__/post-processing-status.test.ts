@@ -308,6 +308,13 @@ describe('423 completed checkpoint snapshot', () => {
       })
       expect(cold).not.toHaveProperty('notification')
       expect(await jobs.store.listNotifications()).toEqual([])
+      const masking = createMaskingContext()
+      setActiveMaskingContextResolver(() => masking)
+      const projected = await createHarness(writer.agentQaRoot).status()
+      expect(projected.curationSnapshot).toEqual(CURATION_SNAPSHOT)
+      expect(projected.chips).toEqual({ analysis: 'done', curation: 'done' })
+      expect(Object.keys(projected.stageDetails!).sort()).toEqual(['analysis', 'curation', 'proposals'])
+      expect(projected).not.toHaveProperty('notification')
       expect(readQueue(writer.agentQaRoot)).toEqual(before)
     } finally {
       release.resolve()

@@ -13,6 +13,7 @@ import type { ArtifactRef } from '../ids/artifact-ref'
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
 import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '../notification/run-notification'
 import type { RunNotification } from '../notification/run-notification'
+import { CurationSnapshotSchema } from '../notification/curation-snapshot'
 import {
   POST_PROCESSING_CHIP_STATUSES,
   POST_PROCESSING_DETAIL_STAGES,
@@ -315,6 +316,7 @@ export const PostProcessingStatusSchema = z.object({
   runId: z.string(),
   chips: PostProcessingChipsSchema,
   stageDetails: z.partialRecord(z.enum(POST_PROCESSING_DETAIL_STAGES), PostProcessingStageDetailSchema).optional(),
+  curationSnapshot: CurationSnapshotSchema.optional(),
   notification: RunNotificationSchema.optional(),
 }).strict() satisfies z.ZodType<PostProcessingStatus>
 
