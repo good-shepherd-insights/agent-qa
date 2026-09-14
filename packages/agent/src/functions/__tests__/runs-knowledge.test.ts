@@ -272,7 +272,7 @@ function currentRecord(recordId: string) {
   return KnowledgeRecordShowResultSchema.parse({
     kind: 'found', schemaVersion: 1, summary: `購入 é e\u0301 ${recordId}`,
     body: `Current body 🧪 ${recordId}`,
-    provenance: { mode: 'standalone', sourceDescription: 'synthetic inspection' },
+    provenance: { schemaVersion: 1, mode: 'standalone', originClass: 'agent-observed', sourceDescription: 'synthetic inspection' },
     record: { schemaVersion: 1, recordId, product: 'shop', scope: 'checkout', kind: 'fact',
       status: 'superseded', confirmations: 7, contradictions: 2, evidenceTokens: ['evidence-current'],
       openedAtOrdinal: 8, closedAtOrdinal: 90, lastEventOrdinal: 90,
@@ -412,7 +412,7 @@ describe('423 current content and fixed historical sections', () => {
     local.register(secret)
     const secretRecord = (recordId: string) => KnowledgeRecordShowResultSchema.parse({
       kind: 'found', schemaVersion: 1, summary: `summary ${secret}`, body: `body ${secret}`,
-      provenance: { mode: 'standalone', sourceDescription: 'synthetic inspection' },
+      provenance: { schemaVersion: 1, mode: 'standalone', originClass: 'agent-observed', sourceDescription: 'synthetic inspection' },
       record: { schemaVersion: 1, recordId, product: `shop ${secret}`, scope: 'checkout', kind: 'fact',
         status: 'active', confirmations: 1, contradictions: 0, evidenceTokens: [`token ${secret}`],
         openedAtOrdinal: 3, lastEventOrdinal: 3, anchors: [`el:${secret}`], trustNarrative: `narrative ${secret}` },

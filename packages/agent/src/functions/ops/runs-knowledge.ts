@@ -29,7 +29,9 @@
 // specs are module-internal, so this is composition inside the layer and not a dispatch path
 // around `invokeFunction`'s gate: every external caller still arrives through the pipeline.
 
+import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
+  maskedMarker,
   NO_KNOWLEDGE_READER_TRUNCATION,
   RecordedRetrievalRungSchema,
   RunKnowledgeProjectionSchema,
@@ -39,6 +41,9 @@ import type {
   BriefLine,
   CautionLine,
   CompletedRunHandoff,
+  CurationSnapshot,
+  KnowledgeRecordShowResult,
+  MaskFn,
   PostProcessingStatus,
   ReadTrace,
   RecordChange,
@@ -53,7 +58,7 @@ import type {
   StepPlanSource,
 } from '@vostride/agent-qa-schema'
 
-import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec, KnowledgeReaderPort } from '../spec.js'
 import { knowledgeRecordsDiffSpec } from './knowledge-records-diff.js'
 import { runsDigestSpec } from './runs-digest.js'
 import { projectPostProcessingChips, runsPostProcessingSpec } from './runs-post-processing.js'
@@ -234,6 +239,121 @@ function isScanIncomplete(error: unknown): boolean {
   return error instanceof Error && error.name === 'KnowledgeMaintenanceScanError'
 }
 
+type ReadyProjection = Extract<RunKnowledgeProjection, { kind: 'ready' }>
+type LearnedChange = ReadyProjection['learned']['changes'][number]
+type RecordContent = NonNullable<LearnedChange['recordContent']>
+type RecordJoin =
+  | { recordContent: RecordContent }
+  | { contentAbsence: NonNullable<LearnedChange['contentAbsence']> }
+
+/**
+ * Current record content, picked field by field and masked string by string (423 D-20/D-21).
+ *
+ * Trust and status are copied from the maintenance view (`deriveBundleTrust`'s answer), never
+ * recomputed, and are named `current*` so no reader mistakes them for what the row recorded.
+ * Record identities are not joined strings: the row's own id stays exactly what it was.
+ */
+function recordContentOf(
+  result: Extract<KnowledgeRecordShowResult, { kind: 'found' }>,
+  mask: MaskFn,
+): RecordContent {
+  const { record } = result
+  return {
+    content: mask(result.body),
+    summary: mask(result.summary),
+    kind: record.kind,
+    applicability: {
+      product: mask(record.product),
+      scope: mask(record.scope),
+      anchors: record.anchors.map(mask),
+      openedAtOrdinal: record.openedAtOrdinal,
+      ...(record.closedAtOrdinal === undefined ? {} : { closedAtOrdinal: record.closedAtOrdinal }),
+    },
+    currentStatus: record.status,
+    currentTrust: {
+      confirmations: record.confirmations,
+      contradictions: record.contradictions,
+      evidenceTokens: record.evidenceTokens.map(mask),
+      lastEventOrdinal: record.lastEventOrdinal,
+      ...(record.trustNarrative === undefined || record.trustNarrative === null
+        ? {}
+        : { trustNarrative: mask(record.trustNarrative) }),
+    },
+  }
+}
+
+/**
+ * ONE batch read over the union of every learned and used identity (423 D-20).
+ *
+ * There is deliberately no per-id fallback to `showRecord`: that read scans every bundle per id.
+ * A host without the batch capability gets a named `not-bound` absence on every row instead, and
+ * a store that could not finish the scan gets `scan-incomplete` — never a row silently dropped
+ * and never an incomplete scan dressed as ordinary misses.
+ */
+async function joinRecords(
+  knowledge: KnowledgeReaderPort,
+  recordIds: readonly string[],
+  mask: MaskFn,
+): Promise<{ joinFor: (recordId: string) => RecordJoin; scanIncomplete: boolean }> {
+  const showRecords = knowledge.showRecords
+  if (showRecords === undefined) {
+    return { joinFor: () => ({ contentAbsence: { reason: 'not-bound' } }), scanIncomplete: false }
+  }
+  const unique = [...new Set(recordIds)]
+  if (unique.length === 0) {
+    return { joinFor: () => ({ contentAbsence: { reason: 'not-found' } }), scanIncomplete: false }
+  }
+  let results: readonly KnowledgeRecordShowResult[]
+  try {
+    results = await showRecords.call(knowledge, { recordIds: unique })
+  } catch (error) {
+    if (!isScanIncomplete(error)) throw error
+    return {
+      joinFor: () => ({ contentAbsence: { reason: 'scan-incomplete' } }),
+      scanIncomplete: true,
+    }
+  }
+  const found = new Map<string, RecordContent>()
+  for (const result of results) {
+    if (result.kind === 'found') found.set(result.record.recordId, recordContentOf(result, mask))
+  }
+  return {
+    joinFor: (recordId) => {
+      const content = found.get(recordId)
+      return content === undefined
+        ? { contentAbsence: { reason: 'not-found' } }
+        : { recordContent: content }
+    },
+    scanIncomplete: false,
+  }
+}
+
+/**
+ * Is this attributed change one the fixed snapshot recorded? (423 D-15)
+ *
+ * Compared on the identity both readers retain — record, change, ordinal and replacement — and
+ * on the evidence token only where both carry one: `diffSince` reports a record's appearance without
+ * the receipt token curation recorded. The snapshot arrives masked, so the change is compared in
+ * the same masked form. Record id alone is never enough: a later promotion of a record the
+ * snapshot already names is a since-then change.
+ */
+function recordedBySnapshot(
+  change: RecordChange,
+  snapshot: CurationSnapshot,
+  mask: MaskFn,
+): boolean {
+  const recordId = mask(change.recordId)
+  const byRecordId = change.byRecordId === undefined ? undefined : mask(change.byRecordId)
+  const evidenceToken = change.evidenceToken === undefined ? undefined : mask(change.evidenceToken)
+  return snapshot.rows.some((row) => row.changes.some(({ change: recorded }) =>
+    recorded.recordId === recordId
+    && recorded.change === change.change
+    && recorded.atOrdinal === change.atOrdinal
+    && recorded.byRecordId === byRecordId
+    && (recorded.evidenceToken === undefined || evidenceToken === undefined
+      || recorded.evidenceToken === evidenceToken)))
+}
+
 export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgeProjection> = {
   id: RUNS_KNOWLEDGE_FUNCTION_ID,
   summary: "Project one run's used brief channels, serve-time traces, procedure use, recorded "
@@ -405,6 +525,39 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
       changes = []
     }
 
+    const masking = getActiveMaskingContext()
+    const mask: MaskFn = masking === undefined
+      ? () => maskedMarker('secret')
+      : (text) => masking.mask(text)
+    const join = await joinRecords(deps.knowledge, [
+      ...steps.flatMap((row) => [
+        ...row.served.channel1.map((line) => line.id),
+        ...row.served.channel2.map((line) => line.id),
+        ...row.served.channel3.map((line) => line.id),
+      ]),
+      ...changes.map((row) => row.recordId),
+    ], mask)
+    if (join.scanIncomplete) scanIncomplete = true
+    const joinedSteps = steps.map((row) => ({
+      ...row,
+      served: {
+        channel1: row.served.channel1.map((line) => ({ ...line, ...join.joinFor(line.id) })),
+        channel2: row.served.channel2.map((line) => ({ ...line, ...join.joinFor(line.id) })),
+        channel3: row.served.channel3.map((line) => ({ ...line, ...join.joinFor(line.id) })),
+      },
+    }))
+    const joinedChanges: LearnedChange[] = changes.map((row) => ({
+      ...row,
+      ...join.joinFor(row.recordId),
+    }))
+
+    // The fixed checkpoint first; the notification carries a copy of the same snapshot.
+    const curationSnapshot = status?.curationSnapshot
+      ?? status?.notification?.stages.curation.curationSnapshot
+    const sinceThen = curationSnapshot === undefined
+      ? undefined
+      : joinedChanges.filter((row) => !recordedBySnapshot(row, curationSnapshot, mask))
+
     const digest = deps.proposalsInbox === undefined
       ? undefined
       : await runsDigestSpec.invoke({ runId: input.runId }, deps)
@@ -415,7 +568,7 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
       buildOrdinal: document.buildOrdinal,
       knowledgeStore: knowledgeStoreOf(evidence),
       ...(runRung === undefined ? {} : { retrievalRung: runRung }),
-      steps,
+      steps: joinedSteps,
       curation: {
         // `undefined` answers exactly as an empty chain does — nothing was enqueued for this run
         // — which is what a host with no queue database can honestly say (388's own note).
@@ -430,8 +583,12 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
           : {}),
       },
       learned: {
-        changes,
+        changes: joinedChanges,
         canaryAttributions,
+        ...(curationSnapshot === undefined ? {} : { curationSnapshot }),
+        ...(sinceThen === undefined
+          ? {}
+          : { sinceThen: { changes: sinceThen, count: sinceThen.length } }),
         // Spread-when-true, never zero-filled: an absent key is the clean read, and `false` is a
         // byte this DTO does not have (the layer's own no-null idiom).
         ...(scanIncomplete ? { scanIncomplete: true as const } : {}),

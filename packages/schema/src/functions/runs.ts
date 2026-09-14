@@ -7,7 +7,7 @@ import type { Action } from '../action/index'
 import { RecordedRetrievalRungSchema } from '../brief/retrieval-rung'
 import { ServedRetrievalTraceV1Schema } from '../brief/retrieval-trace'
 import { BRIEF_WHY_NO_TRACE_REASONS } from '../knowledge/review-verbs'
-import { RecordChangeSchema } from '../knowledge/maintenance-views'
+import { InspectRecordViewSchema, RecordChangeSchema } from '../knowledge/maintenance-views'
 import type { VerifierVerdict } from '../handoff/step-evidence'
 import type { ArtifactRef } from '../ids/artifact-ref'
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
@@ -868,6 +868,70 @@ export const RunsKnowledgeInputSchema = z.object({
 export type RunsKnowledgeInput = z.infer<typeof RunsKnowledgeInputSchema>
 
 /**
+ * Why a row carries no joined record content (423 D-20/D-21).
+ *
+ * `not-found` is the store's own answer for this identity (for example a purged record), while
+ * `scan-incomplete` means the batch read could not finish and `not-bound` means this host binds no
+ * batch record read. The row itself is always retained.
+ */
+export const RUN_KNOWLEDGE_CONTENT_ABSENCE_REASONS = [
+  'not-found',
+  'scan-incomplete',
+  'not-bound',
+] as const
+
+export const RunKnowledgeContentAbsenceSchema = z.object({
+  reason: z.enum(RUN_KNOWLEDGE_CONTENT_ABSENCE_REASONS),
+}).strict()
+
+/**
+ * The record as the maintenance read shows it NOW (423 D-21). Every `current*` member is read-time
+ * state; the row it rides on keeps its own historical `change`/`atOrdinal` or served trust/status.
+ */
+export const RunKnowledgeRecordContentSchema = z.object({
+  content: z.string(),
+  summary: z.string(),
+  kind: InspectRecordViewSchema.shape.kind,
+  applicability: z.object({
+    product: z.string(),
+    scope: z.string(),
+    anchors: z.array(z.string()),
+    openedAtOrdinal: z.number().int().nonnegative(),
+    closedAtOrdinal: z.number().int().nonnegative().optional(),
+  }).strict(),
+  currentStatus: InspectRecordViewSchema.shape.status,
+  currentTrust: z.object({
+    confirmations: z.number().int().nonnegative(),
+    contradictions: z.number().int().nonnegative(),
+    evidenceTokens: z.array(z.string()),
+    lastEventOrdinal: z.number().int().nonnegative(),
+    trustNarrative: z.string().optional(),
+  }).strict(),
+}).strict()
+
+export type RunKnowledgeRecordContent = z.infer<typeof RunKnowledgeRecordContentSchema>
+export type RunKnowledgeContentAbsence = z.infer<typeof RunKnowledgeContentAbsenceSchema>
+
+const recordJoinShape = {
+  recordContent: RunKnowledgeRecordContentSchema.optional(),
+  contentAbsence: RunKnowledgeContentAbsenceSchema.optional(),
+}
+
+function oneJoinArm(
+  row: { recordContent?: unknown; contentAbsence?: unknown },
+  ctx: z.RefinementCtx,
+) {
+  if (row.recordContent !== undefined && row.contentAbsence !== undefined) {
+    ctx.addIssue({ code: 'custom', path: ['contentAbsence'],
+      message: 'a joined row carries record content or its absence, never both' })
+  }
+}
+
+/** A learned change with the read-time record join beside its unchanged historical fields. */
+export const RunKnowledgeLearnedChangeSchema = RecordChangeSchema.safeExtend(recordJoinShape)
+  .superRefine(oneJoinArm)
+
+/**
  * One channel-1 brief line as the panel renders it.
  *
  * PROJECTED FIELD BY FIELD rather than spread from `BriefLine`, so a field added to the serving
@@ -883,14 +947,16 @@ export const RunKnowledgeBriefLineSchema = z.object({
   status: z.string(),
   servedAsCanary: z.boolean(),
   tier: z.string(),
-}).strict()
+  ...recordJoinShape,
+}).strict().superRefine(oneJoinArm)
 
 /** One channel-2 read trace as the panel renders it. */
 export const RunKnowledgeReadTraceSchema = z.object({
   id: z.string(),
   detailLevel: z.string(),
   bodyDigest: z.string(),
-}).strict()
+  ...recordJoinShape,
+}).strict().superRefine(oneJoinArm)
 
 /**
  * One channel-3 caution as the panel renders it.
@@ -902,7 +968,8 @@ export const RunKnowledgeReadTraceSchema = z.object({
 export const RunKnowledgeCautionLineSchema = z.object({
   id: z.string(),
   summary: z.string(),
-}).strict()
+  ...recordJoinShape,
+}).strict().superRefine(oneJoinArm)
 
 /**
  * Why this step's brief said what it said — the trace, or a NAMED absence (D-04).
@@ -1070,8 +1137,24 @@ export const RunKnowledgeProjectionSchema = z.discriminatedUnion('kind', [
       }).strict().optional(),
     }).strict(),
     learned: z.object({
-      changes: z.array(RecordChangeSchema),
+      changes: z.array(RunKnowledgeLearnedChangeSchema),
       canaryAttributions: z.array(RunKnowledgeCanaryAttributionSchema),
+      /**
+       * This run's curation as curation recorded it (423 D-15): the fixed checkpoint snapshot,
+       * served verbatim so its rows reconcile exactly with its breakdown. Absent when curation
+       * completed no snapshot (a failed or pre-423 chain) — never five zeros.
+       */
+      curationSnapshot: CurationSnapshotSchema.optional(),
+      /**
+       * Attributed changes whose recorded identity is not in {@link curationSnapshot}, such as a
+       * later promotion of a record the snapshot already names. Present only beside a snapshot.
+       */
+      sinceThen: z.object({
+        changes: z.array(RunKnowledgeLearnedChangeSchema),
+        count: z.number().int().nonnegative(),
+      }).strict().refine(section => section.count === section.changes.length, {
+        message: 'sinceThen.count must equal its change rows', path: ['count'],
+      }).optional(),
       /**
        * THE LEARNED HALF DEGRADED, AND SAYS SO (407-14, CR-03).
        *
