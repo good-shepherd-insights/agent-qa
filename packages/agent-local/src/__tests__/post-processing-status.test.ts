@@ -18,12 +18,14 @@ import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride
 
 import { chainJobIdsForRun, invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { ClockPort, ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import type { PostRunJobCapabilities } from '@vostride/agent-qa-agent'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   asRunId,
   canonicalJson,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   FunctionScopeSchema,
+  CurationSnapshotSchema,
   sha256hex,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -38,6 +40,8 @@ import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../composition/compose-
 import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
 import { AGENT_JOB_STORE_DB_FILE, QUARANTINED_UNREADABLE_KIND_REASON } from '../store/sqlite-job-store.js'
 import { canonicalLogicalDump, createLogicalDump } from '../store/logical-dump.js'
+import { createPostProcessingReader } from '../store/post-processing-reader.js'
+import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -156,7 +160,10 @@ interface Harness {
  * That is the point of the fixture rather than an omission: the no-creation case needs a host
  * that has done nothing durable, and the cases that do need rows open the store themselves.
  */
-function createHarness(existingRoot?: string): Harness {
+function createHarness(existingRoot?: string, postRun?: {
+  curateRun?: PostRunJobCapabilities['curateRun']
+  stageAdversarialProposal?: PostRunJobCapabilities['stageAdversarialProposal']
+}): Harness {
   const agentQaRoot = existingRoot ?? mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
   if (existingRoot === undefined) roots.push(agentQaRoot)
   const host = composeLocalAgent({
@@ -170,6 +177,7 @@ function createHarness(existingRoot?: string): Harness {
       curateRun: async () => ({ curated: 2, deprecated: 1, complete: true }),
       // True of this substitute: it returns counts without ever reaching candidate emission.
       candidateProse: 'masker-active',
+      ...postRun,
     },
   })
   hosts.push(host)
@@ -213,6 +221,132 @@ function readQueue(root: string) {
     db.close()
   }
 }
+
+const CURATION_SNAPSHOT = CurationSnapshotSchema.parse({
+  schemaVersion: 1,
+  rows: [{ recordId: 'affected-record', bucket: 'added', changes: [{ bucket: 'added',
+    change: { schemaVersion: 1, recordId: 'affected-record', change: 'added', atOrdinal: 9 },
+  }] }],
+  breakdown: { added: 1, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+})
+
+function readColdChain(root: string, runId = RUN_ID) {
+  return createPostProcessingReader({ agentQaRoot: root, idSource: DIGEST_JOB_ID_SOURCE })
+    .readChain(chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE), runId)
+}
+
+async function completedCuration() {
+  const writer = createHarness(undefined, {
+    curateRun: async () => ({ curated: 7, deprecated: 3, complete: true, snapshot: CURATION_SNAPSHOT }),
+  })
+  const jobs = await writer.host.jobs()
+  const fence = await jobs.store.adoptEpoch(1)
+  const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+  await jobs.queue.enqueue('curate-memory', { runId: RUN_ID }, `${ids.analyzeRun}->curate-memory`)
+  expect(await jobs.queue.runNextJob({ fence })).toMatchObject({ ran: true, disposition: 'completed' })
+  await closeWriter(writer)
+  return { writer, ids }
+}
+
+describe('423 completed checkpoint snapshot', () => {
+  it('CHECKPOINT-BEFORE-NOTIFICATION reads actual curation while the real proposals stage is blocked', async () => {
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const writer = createHarness(undefined, {
+      curateRun: async () => ({ curated: 7, deprecated: 3, complete: true, snapshot: CURATION_SNAPSHOT }),
+      stageAdversarialProposal: async () => {
+        entered.resolve()
+        await release.promise
+        return { proposed: 0, skipped: 0 }
+      },
+    })
+    const jobs = await writer.host.jobs()
+    const handoff = fixtureHandoff(RUN_ID)
+    writeHandoff(writer.agentQaRoot, handoff)
+    const fence = await jobs.store.adoptEpoch(1)
+    await jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
+    await jobs.queue.runNextJob({ fence })
+    await jobs.queue.runNextJob({ fence })
+    const running = jobs.queue.runNextJob({ fence })
+    try {
+      await entered.promise
+      const before = readQueue(writer.agentQaRoot)
+      const cold = await readColdChain(writer.agentQaRoot)
+      expect(cold).toMatchObject({
+        analyzeRun: { status: 'done', claimed: false },
+        curateMemory: { status: 'done', claimed: false },
+        proposeImprovements: { status: 'queued', claimed: true },
+        curationSnapshot: CURATION_SNAPSHOT,
+      })
+      expect(cold).not.toHaveProperty('notification')
+      expect(await jobs.store.listNotifications()).toEqual([])
+      expect(readQueue(writer.agentQaRoot)).toEqual(before)
+    } finally {
+      release.resolve()
+      await running
+    }
+  })
+
+  it.each(['historical', 'incomplete'] as const)('CHECKPOINT-MISSING %s never invents a snapshot', async kind => {
+    const writer = createHarness(undefined, {
+      curateRun: async () => ({ curated: 7, deprecated: 3, complete: kind === 'historical',
+        ...(kind === 'incomplete' ? { snapshot: CURATION_SNAPSHOT } : {}),
+      }),
+    })
+    const jobs = await writer.host.jobs()
+    const fence = await jobs.store.adoptEpoch(1)
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+    await jobs.queue.enqueue('curate-memory', { runId: RUN_ID }, `${ids.analyzeRun}->curate-memory`)
+    await jobs.queue.runNextJob({ fence })
+    const checkpoint = await jobs.store.readCheckpoint(ids.curateMemory, 'bundle-committed')
+    expect(checkpoint.found).toBe(kind === 'historical')
+    await closeWriter(writer)
+    expect(await readColdChain(writer.agentQaRoot)).not.toHaveProperty('curationSnapshot')
+    expect(await readColdChain(writer.agentQaRoot, 'unrelated-run')).not.toHaveProperty('curationSnapshot')
+  })
+
+  it.each(['snapshot', 'run', 'job', 'checkpoint', 'attempt', 'digest'] as const)(
+    'CHECKPOINT-INVALID %s refuses authoritative corruption without changing bytes', async field => {
+      const { writer, ids } = await completedCuration()
+      const db = new DatabaseSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))
+      try {
+        const row = db.prepare('SELECT payload_json FROM job_checkpoints WHERE checkpoint_id = ?')
+          .get('bundle-committed')!
+        const payload = JSON.parse(String(row.payload_json))
+        if (field === 'snapshot') payload.value.curationSnapshot = { ...CURATION_SNAPSHOT, breakdown: {} }
+        if (field === 'run') payload.value.runId = 'unrelated-run'
+        if (field === 'job') payload.jobId = ids.analyzeRun
+        if (field === 'checkpoint') payload.checkpointId = 'candidates-authored'
+        if (field === 'attempt') payload.attempt += 1
+        const json = canonicalJson(payload)
+        db.prepare('UPDATE job_checkpoints SET payload_json = ?, payload_digest = ? WHERE checkpoint_id = ?')
+          .run(json, field === 'digest' ? 'invalid-digest' : sha256hex(json), 'bundle-committed')
+      } finally { db.close() }
+      const before = readQueue(writer.agentQaRoot)
+      await expect(readColdChain(writer.agentQaRoot)).rejects.toMatchObject({ name: 'CurationSnapshotReadError' })
+      expect(readQueue(writer.agentQaRoot)).toEqual(before)
+    },
+  )
+
+  it.each(['missing', 'malformed', 'stale', 'misaddressed'] as const)(
+    'CHECKPOINT-CACHE %s recovers the validated fenced snapshot', async kind => {
+      const { writer, ids } = await completedCuration()
+      const checkpoints = createJobCheckpointStore({ root: writer.agentQaRoot })
+      const path = checkpoints.checkpointPath(ids.curateMemory, 'bundle-committed')
+      const envelope = JSON.parse(readFileSync(path, 'utf8'))
+      if (kind === 'missing') rmSync(path)
+      else if (kind === 'malformed') writeFileSync(path, '{')
+      else {
+        if (kind === 'stale') envelope.payload.value.curationSnapshot = { ...CURATION_SNAPSHOT, rows: [] }
+        else envelope.jobId = ids.analyzeRun
+        writeFileSync(path, JSON.stringify(envelope))
+      }
+      const before = readQueue(writer.agentQaRoot)
+      expect(await readColdChain(writer.agentQaRoot)).toHaveProperty('curationSnapshot', CURATION_SNAPSHOT)
+      expect(readQueue(writer.agentQaRoot)).toEqual(before)
+    },
+  )
+})
 
 describe('423 cold stage facts', () => {
   it.each(['queued', 'retried', 'complete', 'failed', 'cancelled'] as const)(
