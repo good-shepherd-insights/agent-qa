@@ -141,6 +141,8 @@ export type {
 
 // 314 async-seam
 export { asRunId } from './run/index'
+export { MODEL_USAGE_ROLES, ModelUsageRoleSchema, ModelUsageIdentitySchema, ModelUsageSchema } from './run/model-usage'
+export type { ModelUsageRole, ModelUsage, ModelTokenUsage, ModelUsageObservations } from './run/model-usage'
 export {
   EVIDENCE_REF_PREFIXES,
   EvidenceArtifactRefSchema,

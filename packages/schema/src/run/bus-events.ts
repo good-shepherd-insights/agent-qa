@@ -8,6 +8,7 @@ import type { ExecutionContext, RunStatus } from './run-status'
 import type { RecordedRetrievalRung } from '../brief/retrieval-rung'
 import type { VerifierVerdict } from '../handoff/step-evidence'
 import type { AriaEvidenceEntry, StepEvidenceEntries, VariableSnapshot } from './evidence'
+import type { ModelTokenUsage, ModelUsage } from './model-usage'
 
 /**
  * The bus schema version, declared once per run in `runStarted.payload.busSchemaVersion`
@@ -237,7 +238,9 @@ export interface StepFinalizedPayload {
    * consumer downstream (the NULL step columns, the omitted `runs.detail` sum, the omitted
    * analytics fields) reads absence as "unmeasured" rather than "free".
    */
-  tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  tokenUsage?: ModelTokenUsage
+  /** 423 D-09/D-10: selected profiles and authoritative provider observations, never backfilled. */
+  modelUsage?: ModelUsage
   /** 423 D-01/D-05/D-07: capture facts only; record bodies stay in evidence blobs. */
   evidence?: StepEvidenceEntries
   variableSnapshot?: VariableSnapshot

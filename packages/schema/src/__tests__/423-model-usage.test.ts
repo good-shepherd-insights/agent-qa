@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import { projectStepFinalized } from '../run/bus-projections'
 import type { StepEvidence } from '../handoff/step-evidence'
+import { MODEL_USAGE_ROLES, ModelUsageRoleSchema, ModelUsageSchema } from '../run/model-usage'
 
 const evidence: StepEvidence = {
   stepIndex: 0, stepText: 'inspect', cacheStatus: 'hit', subActions: [],
@@ -72,7 +73,41 @@ test.each(['failure', 'start'] as const)(
 )
 
 test('C423-MODEL-ROLES-EXACT: runtime roles are literally planner and verifier', () => {
+  expect(MODEL_USAGE_ROLES).toEqual(['planner', 'verifier'])
+  expect(ModelUsageRoleSchema.options).toEqual(['planner', 'verifier'])
+  expect(ModelUsageRoleSchema.safeParse('healer').success).toBe(false)
   expect(project([])).toHaveProperty('modelUsage.roles')
   const payload = project([]) as unknown as { modelUsage: { roles: object } }
   expect(Object.keys(payload.modelUsage.roles).sort()).toEqual(['planner', 'verifier'])
+  expect(ModelUsageSchema.safeParse({ ...payload.modelUsage,
+    roles: { ...payload.modelUsage.roles, healer: {} } }).success).toBe(false)
+})
+
+test.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, 101])(
+  'MODEL-USAGE-OPTIONAL: invalid cache %s cannot certify provider coverage', cached => {
+    const payload = project([success(100, cached)])
+    expect(payload.tokenUsage).toMatchObject({ promptTokens: 100, totalTokens: 110 })
+    expect(payload.tokenUsage).not.toHaveProperty('cachedInputTokens')
+  },
+)
+
+test('INPUT-SAMPLE-POPULATION: missing output or overflowing total omits both token counts', () => {
+  const incomplete = success()
+  delete incomplete.report!.outputTokens
+  for (const attempts of [[success(), incomplete], [success(Number.MAX_SAFE_INTEGER, 0)]]) {
+    const payload = project(attempts)
+    expect(payload).not.toHaveProperty('tokenUsage')
+    expect(payload.modelUsage).not.toHaveProperty('inputTokens')
+    expect(payload.modelUsage).not.toHaveProperty('outputTokens')
+  }
+})
+
+test('MODEL-USAGE-MASK: masked aliases remain distinct and declared never supplies responding', () => {
+  const extra = { modelObservations: { attempts: [success(), { ...success(),
+    report: { ...success().report, respondingModelId: 'another' } }], roles: {
+    planner: {}, verifier: {},
+  } } }
+  const payload = projectStepFinalized(evidence, { testIndex: 0, stepIndex: 0 }, () => '[masked]', extra)
+  expect(payload.modelUsage?.roles.planner?.respondingModelIds).toEqual(['[masked]'])
+  expect(project([]).modelUsage?.roles.planner).not.toHaveProperty('respondingModelIds')
 })

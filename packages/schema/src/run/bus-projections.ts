@@ -3,6 +3,8 @@ import type { ArtifactRef } from '../ids/artifact-ref'
 import type { PerTestOutcome } from '../handoff/per-test-outcome'
 import type { StepEvidence } from '../handoff/step-evidence'
 import type { SubActionEvidence } from '../handoff/sub-action-evidence'
+import { projectObservedModelUsage } from './model-usage'
+import type { ModelUsageObservations } from './model-usage'
 import type {
   HookFinishedPayload,
   HookStartedPayload,
@@ -59,10 +61,16 @@ export function projectStepFinalized(
     durationMs?: number
     error?: string
     tokenUsage?: StepFinalizedPayload['tokenUsage']
+    modelUsage?: StepFinalizedPayload['modelUsage']
+    modelObservations?: ModelUsageObservations
     evidence?: StepFinalizedPayload['evidence']
     variableSnapshot?: StepFinalizedPayload['variableSnapshot']
   },
 ): StepFinalizedPayload {
+  const usage = extra?.modelObservations === undefined ? {
+    ...(extra?.tokenUsage === undefined ? {} : { tokenUsage: extra.tokenUsage }),
+    ...(extra?.modelUsage === undefined ? {} : { modelUsage: extra.modelUsage }),
+  } : projectObservedModelUsage(extra.modelObservations)
   const payload: StepFinalizedPayload = {
     testIndex: ids.testIndex,
     stepIndex: ids.stepIndex,
@@ -79,7 +87,7 @@ export function projectStepFinalized(
     // 2026-08-27 (Phase 405 plan 04, D-05): same spread-when-defined rule, for the same
     // reason — an unmeasured step carries NO key rather than a zero triple. The three
     // members are numbers, so `maskPayloadStrings` walks past them untouched.
-    ...(extra?.tokenUsage !== undefined ? { tokenUsage: extra.tokenUsage } : {}),
+    ...usage,
     ...(extra?.evidence !== undefined ? { evidence: extra.evidence } : {}),
     // Snapshot names are data-bearing keys. The terminal walk below masks their values.
     ...(extra?.variableSnapshot !== undefined
@@ -93,7 +101,14 @@ export function projectStepFinalized(
     // absence on the wire keeps meaning "no ladder was named" and never "the top rung".
     ...(evidence.retrievalRung !== undefined ? { retrievalRung: evidence.retrievalRung } : {}),
   }
-  return maskPayloadStrings(payload, mask)
+  const masked = maskPayloadStrings(payload, mask)
+  // Distinctness is defined on published identities; a live masker may collapse raw aliases.
+  for (const facts of Object.values(masked.modelUsage?.roles ?? {})) {
+    if (facts.respondingModelIds !== undefined) {
+      facts.respondingModelIds = [...new Set(facts.respondingModelIds)]
+    }
+  }
+  return masked
 }
 
 /**
