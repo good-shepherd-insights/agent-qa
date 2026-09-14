@@ -37,6 +37,8 @@ export { clearProviderRegistry, getProvider, listProviders, registerProvider } f
 export type { ProviderAuthMode, ProviderDescriptor } from './providers/registry'
 export { createModel } from './registry'
 export type { ModelCallObservation, ModelProviderOverrides } from './registry'
+export { MODEL_CALL_EVENT_KINDS, MODEL_CALL_REPORT_ORIGINS } from './provider-call-report'
+export type { ModelCallEvent, ModelCallReport, ModelCallReportOrigin } from './provider-call-report'
 export { validateProfile } from './validate'
 export { resolveVisionConfig } from './vision/resolve-config'
 export type { VisionSizingConfig } from './vision/resolve-config'

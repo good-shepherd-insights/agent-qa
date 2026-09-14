@@ -4,10 +4,11 @@ import type { ModelProfile } from '@vostride/agent-qa-schema'
 import { GuardrailBlockError, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import { createModel } from '../registry.js'
 import { stubGenerateResult, stubModel } from './stub-model.js'
+import type { ModelCallEvent, ModelCallReport } from '../index.js'
 
 // A structural consumer lets RED exercise the existing invocation boundary without
 // a missing-export/type/load failure standing in for the planned behavior.
-type Event = { kind: string; report?: Record<string, unknown> }
+type Event = { kind: ModelCallEvent['kind']; report?: ModelCallReport }
 const transports = [
   'openai-compatible', 'openai-subscription', 'anthropic-compatible',
   'anthropic-subscription', 'gemini',

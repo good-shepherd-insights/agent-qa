@@ -25,6 +25,12 @@ import { stripUnsupportedParamsMiddleware } from './middleware/strip-unsupported
 import { toolSchemaMiddleware } from './middleware.js'
 import { getProvider, listProviders } from './providers/registry.js'
 import { validateProfile } from './validate.js'
+import { openaiCompatible, openaiSubscription } from './adapters/openai.js'
+import { anthropicCompatible, anthropicSubscription } from './adapters/anthropic.js'
+import { gemini } from './adapters/gemini.js'
+import { providerCallReport } from './provider-call-report.js'
+import type { ModelCallEvent, ModelCallObservation, ModelCallReportOrigin } from './provider-call-report.js'
+export type { ModelCallObservation } from './provider-call-report.js'
 
 // D-06 order: retry is outermost on response/errors; repair sees text after SDK
 // extraction; request transforms normalize schema, derive examples, serialize, then
@@ -55,11 +61,8 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
 
 export interface ModelProviderOverrides {
   languageModels?: Record<string, LanguageModelV3>
-}
-
-/** Invocation-only observation: no prompt, credentials, parameters or response are exposed. */
-export interface ModelCallObservation {
-  onProviderCall?: () => void
+  /** Trusted custom/override adapter assertion; omitted means no cache/model authority. */
+  providerReportOrigin?: ModelCallReportOrigin
 }
 
 export function createModel(
@@ -89,23 +92,45 @@ export function createModel(
   // A retry reaches this boundary again; a safety refusal never does. The SDK calls the raw
   // model's methods with their receiver intact and leaves streaming results untouched.
   const onProviderCall = observation.onProviderCall
-  const observe = () => {
+  const onCall = observation.onCall
+  const origin = overrides.providerReportOrigin ?? (
+    overrides.languageModels?.[profile.model] ? undefined
+      : descriptor.adapter === openaiCompatible ? 'openai-chat'
+      : descriptor.adapter === openaiSubscription ? 'openai-responses'
+      : descriptor.adapter === anthropicCompatible || descriptor.adapter === anthropicSubscription
+        ? 'anthropic-messages'
+      : descriptor.adapter === gemini ? 'gemini' : undefined
+  )
+  const observe = (event: ModelCallEvent) => {
     try {
-      onProviderCall?.()
+      onCall?.(event)
     } catch {
       // Observation cannot prevent a call or replace its original result/error.
     }
   }
-  const observedProvider = onProviderCall === undefined ? provider : wrapProvider({
+  const start = () => {
+    try { onProviderCall?.() } catch { /* Legacy observation is isolated independently. */ }
+    observe({ kind: 'start' })
+  }
+  const observedProvider = onProviderCall === undefined && onCall === undefined ? provider : wrapProvider({
     provider,
     languageModelMiddleware: {
       specificationVersion: 'v3',
-      wrapGenerate: ({ doGenerate }) => {
-        observe()
-        return doGenerate()
+      wrapGenerate: async ({ doGenerate }) => {
+        start()
+        try {
+          const result = await doGenerate()
+          // Reporting, including the live masker, cannot replace a provider outcome.
+          try { observe({ kind: 'success', report: providerCallReport(result, origin) }) }
+          catch { observe({ kind: 'success', report: {} }) }
+          return result
+        } catch (error) {
+          observe({ kind: 'failure' })
+          throw error
+        }
       },
       wrapStream: ({ doStream }) => {
-        observe()
+        start()
         return doStream()
       },
     },
