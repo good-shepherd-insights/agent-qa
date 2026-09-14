@@ -58,6 +58,7 @@ import type {
   StageBundleOutcome,
 } from '../bundle-publish.js'
 import {
+  BundleTargetResolutionError,
   resolveProductQualifiedBundleDir,
   type ProductQualifiedBundleDir,
 } from '../bundle-scan.js'
@@ -66,6 +67,10 @@ import {
   projectBundleIndexRowWithinCurrentAuthority,
 } from '../index-rebuild.js'
 import { clearCommitIntent, writeCommitIntent } from '../journal/intent-journal.js'
+import {
+  isCurationEffectCommitted, receiptForEffect, writeCurationEffectReceiptWithinCurrentAuthority,
+  type CurationEffect, type CurationObservation,
+} from '../journal/curation-effect-receipt.js'
 import {
   assertEpochCurrent,
   readCurrentEpoch,
@@ -80,7 +85,7 @@ import {
 } from '../queue/job-state.js'
 import { widenAuthoredDeltaCheckpoint } from './author-contract.js'
 import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
-import { disposeDelta } from './disposition.js'
+import { disposeDelta, originalDispositionDelta } from './disposition.js'
 import type {
   DispositionDrainState,
   FirstSeenRegistration,
@@ -138,6 +143,9 @@ export interface CommitCurationDependencies {
     afterBundlePublished?: (bundleId: RecordId) => void
     /** Test/chaos seam after the index transaction and before intent removal. */
     afterIndexApplied?: (bundleId: RecordId) => void
+    /** Test/chaos seams around the durable observation/cleanup boundary. */
+    afterEffectReceiptsWritten?: () => void
+    afterIntentCleared?: () => void
   }
   operations?: {
     /** Test/chaos seam; production always uses the canonical publisher. */
@@ -172,7 +180,7 @@ export type EmptyDeltaCause =
 
 export type CommitCurationOutcome =
   | ({ kind: 'applied' } & CommittedBundleResult)
-  | ({ kind: 'downgraded'; reason: string } & CommittedBundleResult)
+  | ({ kind: 'downgraded'; reason: string; original: Delta } & CommittedBundleResult)
   | ({ kind: 'converted-confirm' } & CommittedBundleResult)
   | {
       kind: 'withheld'
@@ -874,8 +882,24 @@ function markDoneWithinCurrentAuthority(
 function finishCommitWithinCurrentAuthority(
   deps: CommitCurationDependencies,
   job: CommitCurationJob,
+  observation: CurationObservation,
+  projectSuccessfulPrefix = true,
 ): void {
+  for (const effect of observation.effects) {
+    if (!isCurationEffectCommitted(deps.knowledgeRoot, job.candidateId, effect)) continue
+    // Failure can leave a successful prefix whose normal index tail was never reached.
+    if (projectSuccessfulPrefix) applyIndexDeltaForBundleWithinCurrentAuthority({ knowledgeRoot: deps.knowledgeRoot,
+      bundleId: effect.recordId, product: effect.product,
+      ...(deps.priors === undefined ? {} : { priors: deps.priors }),
+    })
+    writeCurationEffectReceiptWithinCurrentAuthority({ knowledgeRoot: deps.knowledgeRoot,
+      authority: { leaseId: job.leaseId, epoch: deps.epoch }, auditBaseDir: deps.auditBaseDir,
+      policy: deps.policy, receipt: receiptForEffect(job.candidateId, observation, effect),
+    })
+  }
+  deps.hooks?.afterEffectReceiptsWritten?.()
   clearCommitIntent(deps.knowledgeRoot, job.candidateId)
+  deps.hooks?.afterIntentCleared?.()
   markDoneWithinCurrentAuthority(deps, job)
 }
 
@@ -1206,6 +1230,46 @@ export function commitCurationDelta(
             lifecycle: 'committing',
             authored: widenAuthoredDeltaCheckpoint(dispositionCheckpoint),
           })
+          const effect = (recordId: string, product: string, change: CurationEffect['change'], evidenceToken = job.payload.evidenceToken): CurationEffect => ({
+            recordId, product, change, evidenceToken, atOrdinal: job.payload.buildOrdinal,
+          })
+          const publicationChange = (id: string, product: string): 'added' | 'confirmed' => {
+            // A resumed publication by this same candidate is still its original Add.
+            let existing: LoadedBundle | undefined
+            try {
+              const target = resolveProductQualifiedBundleDir({ knowledgeRoot: deps.knowledgeRoot, product, recordId: id })
+              const loaded = loadBundle(target.dir)
+              if (loaded.kind === 'loaded') existing = loaded.bundle
+            } catch (error) {
+              if (!(error instanceof BundleTargetResolutionError) || error.reason !== 'not-found') throw error
+            }
+            return existing === undefined || (existing.provenance.mode === 'run-linked' && existing.provenance.curationJobId === job.candidateId)
+              ? 'added' : 'confirmed'
+          }
+          const effects: CurationEffect[] = [effect(bundleId, bundleProduct,
+            draft !== undefined ? publicationChange(bundleId, bundleProduct) : delta.kind === 'Deprecate' ? 'deprecated' : 'confirmed',
+            delta.kind === 'Confirm' ? delta.evidenceToken : job.payload.evidenceToken,
+          )]
+          if (delta.kind === 'Supersede') {
+            effects.push({ ...effect(delta.victimId, existingTargets.get(delta.victimId)!.product, 'superseded', delta.evidenceToken), byRecordId: bundleId })
+          }
+          for (const prepared of preparedUnknownMintIntents) {
+            const publication = prepared.publication
+            const id = publication.kind === 'canonical' && 'id' in publication.outcome ? publication.outcome.id : undefined
+            if (id !== undefined) effects.push(effect(id, prepared.intent.scope.key, publicationChange(id, prepared.intent.scope.key)))
+          }
+          for (const resolution of disposed.unknownResolutionIntents ?? []) {
+            effects.push(effect(resolution.targetId, existingTargets.get(resolution.targetId)!.product, 'deprecated',
+              asEvidenceToken(sha256hex(canonicalJson({ token: job.payload.evidenceToken, event: resolution.reason, targetId: resolution.targetId }))),
+            ))
+          }
+          const curationObservation: CurationObservation = {
+            schemaVersion: 1, sourceRunId: job.payload.sourceRunId,
+            observationId: job.payload.attributingObservationId,
+            originalDeltaKind: originalDispositionDelta(disposed).kind,
+            appliedDeltaKind: delta.kind, disposition: disposed.kind,
+            ...(disposed.kind === 'downgraded' ? { downgradeReason: disposed.reason } : {}), effects,
+          }
           writeCommitIntent(deps.knowledgeRoot, {
             schemaVersion: 1,
             candidateId: job.candidateId,
@@ -1215,6 +1279,7 @@ export function commitCurationDelta(
               ? {}
               : { targetRecordId: mutationTarget(delta) }),
             epoch: deps.epoch,
+            observation: curationObservation,
           })
           deps.hooks?.afterIntentWritten?.()
           let convertedConfirm = false
@@ -1232,7 +1297,7 @@ export function commitCurationDelta(
               preparedPublication,
             )
             if (published.kind === 'egress-blocked') {
-              finishCommitWithinCurrentAuthority(deps, job)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
               return {
                 kind: 'withheld',
                 reason: 'egress-blocked',
@@ -1240,7 +1305,7 @@ export function commitCurationDelta(
               }
             }
             if (published.kind === 'identity-collision') {
-              finishCommitWithinCurrentAuthority(deps, job)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
               return {
                 kind: 'failed',
                 reason: 'identity-collision',
@@ -1284,7 +1349,7 @@ export function commitCurationDelta(
                   )
               const failure = appendFailure(appended)
               if (failure !== undefined) {
-                finishCommitWithinCurrentAuthority(deps, job)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
                 return failure
               }
               if (
@@ -1301,7 +1366,7 @@ export function commitCurationDelta(
                   || (disposed.unknownMintIntents?.length ?? 0) > 0
                   || (disposed.unknownResolutionIntents?.length ?? 0) > 0
                 if (!hasDeterministicTail) {
-                  finishCommitWithinCurrentAuthority(deps, job)
+                  finishCommitWithinCurrentAuthority(deps, job, curationObservation)
                   return { kind: 'noop', reason: 'evidence-token-consumed' }
                 }
                 confirmedEventDuplicate = true
@@ -1328,7 +1393,7 @@ export function commitCurationDelta(
                 ? { kind: 'not-found' as const }
                 : loadBundle(promotionBundleDir)
               if (loaded.kind !== 'loaded' || promotionBundleDir === undefined) {
-                finishCommitWithinCurrentAuthority(deps, job)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
                 return { kind: 'failed', reason: 'append-failed' }
               }
               // 416-DOOR: door-3 gate
@@ -1351,7 +1416,7 @@ export function commitCurationDelta(
                 })
                 const promotedFailure = appendFailure(promoted)
                 if (promotedFailure !== undefined) {
-                  finishCommitWithinCurrentAuthority(deps, job)
+                  finishCommitWithinCurrentAuthority(deps, job, curationObservation)
                   return promotedFailure
                 }
                 tailMutationAppended ||= promoted.kind === 'appended'
@@ -1366,7 +1431,7 @@ export function commitCurationDelta(
                 })
                 const receiptFailure = appendFailure(receipt)
                 if (receiptFailure !== undefined) {
-                  finishCommitWithinCurrentAuthority(deps, job)
+                  finishCommitWithinCurrentAuthority(deps, job, curationObservation)
                   return receiptFailure
                 }
                 tailMutationAppended ||= receipt.kind === 'appended'
@@ -1390,7 +1455,7 @@ export function commitCurationDelta(
               })
               const baselineFailure = appendFailure(baseline)
               if (baselineFailure !== undefined) {
-                finishCommitWithinCurrentAuthority(deps, job)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
                 return baselineFailure
               }
               tailMutationAppended ||= baseline.kind === 'appended'
@@ -1411,7 +1476,7 @@ export function commitCurationDelta(
                 })
               const promotedFailure = appendFailure(promoted)
               if (promotedFailure !== undefined) {
-                finishCommitWithinCurrentAuthority(deps, job)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
                 return promotedFailure
               }
               tailMutationAppended ||= promoted.kind === 'appended'
@@ -1444,12 +1509,12 @@ export function commitCurationDelta(
             )
             const failure = appendFailure(appended)
             if (failure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
               return failure
             }
             if (appended.kind === 'duplicate') {
               if (disposed.measurementAppend === undefined) {
-                finishCommitWithinCurrentAuthority(deps, job)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
                 return { kind: 'noop', reason: 'evidence-token-consumed' }
               }
               confirmedEventDuplicate = true
@@ -1473,7 +1538,7 @@ export function commitCurationDelta(
             })
             const failure = appendFailure(appended)
             if (failure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
               return failure
             }
           }
@@ -1496,7 +1561,7 @@ export function commitCurationDelta(
             )
             const failure = appendFailure(appended)
             if (failure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
               return failure
             }
             measurementAppendDuplicate = appended.kind === 'duplicate'
@@ -1512,7 +1577,7 @@ export function commitCurationDelta(
             const appended = appendRelation(canonicalConfig, bundleId, relation)
             const failure = appendFailure(appended)
             if (failure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
               return failure
             }
             tailMutationAppended ||= appended.kind === 'appended'
@@ -1537,7 +1602,7 @@ export function commitCurationDelta(
             })
             const supersededFailure = appendFailure(superseded)
             if (supersededFailure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
               return supersededFailure
             }
             tailMutationAppended ||= superseded.kind === 'appended'
@@ -1553,7 +1618,7 @@ export function commitCurationDelta(
             })
             const closeFailure = appendFailure(closed)
             if (closeFailure !== undefined) {
-              finishCommitWithinCurrentAuthority(deps, job)
+              finishCommitWithinCurrentAuthority(deps, job, curationObservation)
               return closeFailure
             }
             tailMutationAppended ||= closed.kind === 'appended'
@@ -1575,7 +1640,7 @@ export function commitCurationDelta(
             && (disposed.unknownMintIntents?.length ?? 0) === 0
             && (disposed.unknownResolutionIntents?.length ?? 0) === 0
           if (evidenceTokenConsumed) {
-            finishCommitWithinCurrentAuthority(deps, job)
+            finishCommitWithinCurrentAuthority(deps, job, curationObservation)
             return { kind: 'noop', reason: 'evidence-token-consumed' }
           }
 
@@ -1605,7 +1670,7 @@ export function commitCurationDelta(
             if (failure !== undefined) return failure
           }
           deps.hooks?.afterIndexApplied?.(bundleId)
-          finishCommitWithinCurrentAuthority(deps, job)
+          finishCommitWithinCurrentAuthority(deps, job, curationObservation, false)
 
           const result: CommittedBundleResult = {
             bundleId,
@@ -1626,7 +1691,7 @@ export function commitCurationDelta(
           }
           if (convertedConfirm) return { kind: 'converted-confirm', ...result }
           return disposed.kind === 'downgraded'
-            ? { kind: 'downgraded', reason: disposed.reason, ...result }
+            ? { kind: 'downgraded', reason: disposed.reason, original: disposed.original, ...result }
             : { kind: 'applied', ...result }
         },
         authorityHooks,

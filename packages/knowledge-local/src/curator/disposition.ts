@@ -171,6 +171,11 @@ export type DispositionOutcome =
   | { kind: 'requeue-resynthesis'; reason: string }
   | { kind: 'noop'; reason: string }
 
+/** Classification observation only: disposal remains the sole policy decision. */
+export function originalDispositionDelta(disposed: Extract<DispositionOutcome, { delta: Delta }>): Delta {
+  return disposed.kind === 'downgraded' ? disposed.original : disposed.delta
+}
+
 interface BundleTruth {
   dir: string
   bundle: LoadedBundle

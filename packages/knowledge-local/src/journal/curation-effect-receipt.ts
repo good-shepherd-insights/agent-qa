@@ -9,6 +9,8 @@ import { z } from 'zod'
 import { checkpointCommittedParts, type BundleEgressOptions } from '../bundle-egress.js'
 import { fsyncDirectory } from '../durable-fs.js'
 import { withCurrentWriterAuthority, type CurrentWriterAuthority } from '../lease/writer-lease.js'
+import { loadBundle, verifyBundleIntegrity } from '../bundle-read.js'
+import { BundleTargetResolutionError, resolveProductQualifiedBundleDir } from '../bundle-scan.js'
 
 export const COMPLETED_EFFECTS_SUBDIR = 'memory/queue/journal/completed-effects'
 const digest = z.string().regex(/^[0-9a-f]{64}$/)
@@ -130,4 +132,36 @@ export function writeCurationEffectReceiptWithinCurrentAuthority(opts: WriteCura
 
 export function writeCurationEffectReceipt(opts: WriteCurationEffectReceiptOptions): void {
   withCurrentWriterAuthority(opts.knowledgeRoot, opts.authority, () => writeCurationEffectReceiptWithinCurrentAuthority(opts))
+}
+
+/** Check actual canonical bytes, never index presence or an intended effect alone. */
+export function isCurationEffectCommitted(knowledgeRoot: string, candidateId: string, effect: CurationEffect): boolean {
+  let dir: string
+  try {
+    dir = resolveProductQualifiedBundleDir({ knowledgeRoot, product: effect.product, recordId: effect.recordId }).dir
+  } catch (error) {
+    if (error instanceof BundleTargetResolutionError && error.reason === 'not-found') return false
+    throw error
+  }
+  const loaded = loadBundle(dir)
+  if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(dir).ok) return false
+  const { bundle } = loaded
+  if (effect.change === 'added' && (
+    bundle.provenance.mode !== 'run-linked'
+    || bundle.provenance.curationJobId !== candidateId
+    || bundle.manifest.createdAtOrdinal !== effect.atOrdinal
+  )) return false
+  return bundle.events.some((event) =>
+    event.curationJobId === candidateId
+    && event.evidenceToken === effect.evidenceToken
+    && event.buildOrdinal === effect.atOrdinal
+    && event.type === (effect.change === 'added' ? 'confirmed' : effect.change)
+    && (effect.byRecordId === undefined || (event.type === 'superseded' && event.byRecordId === effect.byRecordId)),
+  )
+}
+
+/** Shared live/recovery row construction, independent of the recovering writer's epoch. */
+export function receiptForEffect(candidateId: string, observation: CurationObservation, effect: CurationEffect): CurationEffectReceipt {
+  const { effects: _effects, ...classification } = observation
+  return curationEffectReceiptSchema.parse({ ...classification, candidateId, ...effect, effectId: effectIdentity(candidateId, effect) })
 }

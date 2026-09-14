@@ -54,7 +54,7 @@ function commitFixture() {
     } })
     if (enqueued.kind !== 'enqueued') throw new Error('expected enqueued candidate')
     const claimed = claimNextJob({ knowledgeRoot: root, authority, leaseId: authority.leaseId })
-    if (claimed.kind !== 'claimed') throw new Error('expected claimed candidate')
+    if (claimed?.kind !== 'claimed') throw new Error('expected claimed candidate')
     return claimed
   }
   function checkpoint(delta: Delta): AuthoredDeltaCheckpoint {
