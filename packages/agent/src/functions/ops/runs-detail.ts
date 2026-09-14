@@ -159,16 +159,31 @@ export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> 
     // serves the whole projection and simply omits the key, which is presence UNKNOWN rather than
     // a claimed absence.
     const subActions = await Promise.all(rows.subActions.map(async (subAction) => {
+      const ariaEvidence = subAction.ariaEvidence === undefined ? {
+        kind: 'aria' as const, state: 'absent' as const, reason: 'unavailable' as const,
+      } : subAction.ariaEvidence
       const refs = subAction.artifactRefs
-      if (refs === undefined) return { ...subAction }
+      if (refs === undefined) return { ...subAction, ariaEvidence }
       const artifactRefs = await annotatePresence(deps.evidenceBlobs, input.runId, refs)
-      return { ...subAction, artifactRefs }
+      return { ...subAction, artifactRefs, ariaEvidence }
+    }))
+
+    // Only absent persisted fields gain a read-time state. Configuration and handoffs cannot
+    // establish what was captured. ARIA stays on real children; a childless step gains none.
+    const steps: RunDetailStep[] = rows.steps.map(step => ({
+      ...step,
+      evidence: step.evidence === undefined ? {
+        console: { kind: 'console', state: 'absent', reason: 'unavailable' },
+        network: { kind: 'network', state: 'absent', reason: 'unavailable' },
+        a11y: { kind: 'a11y', state: 'absent', reason: 'unavailable' },
+        variables: { kind: 'variables', state: 'absent', reason: 'unavailable' },
+      } : step.evidence,
     }))
 
     return {
       runId: rows.runId,
       members,
-      steps: [...rows.steps],
+      steps,
       subActions,
       tokens: projectRunTokenTotals(rows.steps),
     }

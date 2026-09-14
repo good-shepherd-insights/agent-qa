@@ -32,9 +32,32 @@ export const A11yEvidenceRecordSchema = z.strictObject({
   description: z.string(), help: z.string(), helpUrl: z.string(),
   nodes: z.array(z.strictObject({ html: z.string(), target: z.array(z.string()) })),
 })
-export const VariableSnapshotSchema = z.record(z.string(), z.strictObject({
+const VariableSnapshotEntrySchema = z.strictObject({
   value: z.string(), source: z.enum(['env', 'inline', 'suite', 'cli', 'capture', 'hook', 'step']),
-}))
+})
+// Zod's record parser deliberately skips __proto__. Captured names are data, so validate
+// every own entry before preserving the skipped name. The record supplies the JSON-schema
+// input contract. Custom issues keep strict entry failures intact across Zod intersections,
+// which otherwise reconcile away unrecognized_keys reported by only one arm.
+export const VariableSnapshotSchema = z.record(z.string(), VariableSnapshotEntrySchema).and(
+  z.unknown().transform((input, ctx): Record<string, z.infer<typeof VariableSnapshotEntrySchema>> => {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) return {}
+    const preserved: [string, z.infer<typeof VariableSnapshotEntrySchema>][] = []
+    for (const name of Object.keys(input)) {
+      const entry = VariableSnapshotEntrySchema.safeParse(
+        Object.getOwnPropertyDescriptor(input, name)?.value,
+      )
+      if (!entry.success) {
+        for (const issue of entry.error.issues) {
+          ctx.addIssue({ code: 'custom', message: issue.message, path: [name, ...issue.path] })
+        }
+      } else if (name === '__proto__') {
+        preserved.push([name, entry.data])
+      }
+    }
+    return Object.fromEntries(preserved)
+  }),
+)
 export type VariableSnapshot = z.infer<typeof VariableSnapshotSchema>
 
 export const ConsoleEvidenceDocumentSchema = z.strictObject({

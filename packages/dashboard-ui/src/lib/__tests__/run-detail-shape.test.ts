@@ -59,6 +59,7 @@ const SUB_ACTION_KEYS = [
   'screenStateHash',
   'screenStateHashAfter',
   'artifactRefs',
+  'ariaEvidence',
 ] as const
 
 describe('RunDetailSubAction is exactly the sub-action payload (405-11, D-14)', () => {
@@ -84,6 +85,7 @@ describe('RunDetailSubAction is exactly the sub-action payload (405-11, D-14)', 
       screenStateHash: true,
       screenStateHashAfter: true,
       artifactRefs: true,
+      ariaEvidence: true,
     } satisfies Record<keyof RunDetailSubAction, true>
 
     expect(Object.keys(exhaustive).sort()).toEqual([...SUB_ACTION_KEYS].sort())

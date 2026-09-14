@@ -251,7 +251,13 @@ describe('runs.detail — presence per artifact ref (D-17)', () => {
     expect(ref).toEqual({ id: `decision-screenshot:${SHA_A}`, sha: SHA_A })
     // Everything the projection already served is byte-identical — presence is additive.
     expect(result.subActions[0]!.plan).toBe('click submit')
-    expect(result.steps).toEqual(ROWS.steps)
+    expect(result.steps.map(({ evidence }) => evidence)).toEqual([{
+      console: { kind: 'console', state: 'absent', reason: 'unavailable' },
+      network: { kind: 'network', state: 'absent', reason: 'unavailable' },
+      a11y: { kind: 'a11y', state: 'absent', reason: 'unavailable' },
+      variables: { kind: 'variables', state: 'absent', reason: 'unavailable' },
+    }])
+    expect(result.steps.map(({ evidence: _evidence, ...prior }) => prior)).toEqual(ROWS.steps)
     expect(result.tokens).toEqual({ measuredSteps: 0, unmeasuredSteps: 1 })
   })
 
@@ -271,7 +277,13 @@ describe('runs.detail — presence per artifact ref (D-17)', () => {
     expect(ref).toEqual({ id: `decision-screenshot:${SHA_A}`, sha: SHA_A })
     // The rest of the projection is untouched — the annotation failing costs the annotation only.
     expect(result.subActions[0]!.plan).toBe('click submit')
-    expect(result.steps).toEqual(ROWS.steps)
+    expect(result.steps.map(({ evidence }) => evidence)).toEqual([{
+      console: { kind: 'console', state: 'absent', reason: 'unavailable' },
+      network: { kind: 'network', state: 'absent', reason: 'unavailable' },
+      a11y: { kind: 'a11y', state: 'absent', reason: 'unavailable' },
+      variables: { kind: 'variables', state: 'absent', reason: 'unavailable' },
+    }])
+    expect(result.steps.map(({ evidence: _evidence, ...prior }) => prior)).toEqual(ROWS.steps)
   })
 
   it('one rejected sha does not erase the presence of the shas that DID answer', async () => {

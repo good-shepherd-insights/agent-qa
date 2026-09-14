@@ -16,6 +16,7 @@ import type {
   VariableSnapshot,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 
 import { runsDetailSpec } from '../ops/runs-detail.js'
 import type { FunctionDeps } from '../spec.js'
@@ -68,6 +69,18 @@ function read(rows: RunDetailRows) {
 }
 
 describe('DETAIL-HISTORICAL-UNAVAILABLE', () => {
+  it('rejects malformed null additions instead of treating them as historical absence', async () => {
+    const rows = {
+      runId, members: [], steps: [{ ...step(), evidence: null, variableSnapshot: null }],
+      subActions: [{ ...child(), ariaEvidence: null }],
+    } as unknown as RunDetailRows
+    const output = await read(rows).result
+    expect(output.steps[0]).toHaveProperty('evidence', null)
+    expect(output.subActions[0]).toHaveProperty('ariaEvidence', null)
+    expect(RunDetailProjectionSchema.safeParse(output).success).toBe(false)
+    expect(RunDetailStepSchema.safeParse({ ...step(), variableSnapshot: null }).success).toBe(false)
+  })
+
   it('maps truly absent v2 fields to unavailable for all five kinds without values or counts', async () => {
     const rows: RunDetailRows = {
       runId, members: [{ testIndex: 0, attempts: 1 }], steps: [step()], subActions: [child()],
@@ -107,8 +120,24 @@ describe('DETAIL-ENTRY-OWNERSHIP', () => {
       { value: 'masked', source: 'invented' },
       { value: 'masked', source: 'capture', unknown: true },
     ]) {
-      expect(VariableSnapshotSchema.safeParse(Object.fromEntries([['__proto__', value]])).success).toBe(false)
+      for (const name of ['__proto__', 'ordinary']) {
+        expect(VariableSnapshotSchema.safeParse(Object.fromEntries([[name, value]])).success).toBe(false)
+      }
     }
+  })
+
+  it('retains the public name-keyed strict value/source JSON-schema input contract', () => {
+    const projected = z.toJSONSchema(VariableSnapshotSchema, { io: 'input' })
+    expect(projected.allOf).toEqual([{
+      type: 'object', propertyNames: { type: 'string' },
+      additionalProperties: {
+        type: 'object', properties: {
+          value: { type: 'string' },
+          source: { type: 'string', enum: ['env', 'inline', 'suite', 'cli', 'capture', 'hook', 'step'] },
+        },
+        required: ['value', 'source'], additionalProperties: false,
+      },
+    }, {}])
   })
 
   it('carries the capture-time masked names and values without restoring or remasking identities', async () => {

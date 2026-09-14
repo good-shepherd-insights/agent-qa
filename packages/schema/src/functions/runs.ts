@@ -23,6 +23,8 @@ import { LiveStreamDeclarationSchema } from '../run/live-stream'
 import { RUN_EVENT_TYPES } from '../run/bus-events'
 import type { RunEventEnvelope, RunEventPayload } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
+import { EvidenceEntrySchema, VariableSnapshotSchema } from '../run/evidence'
+import type { AriaEvidenceEntry, StepEvidenceEntries, VariableSnapshot } from '../run/evidence'
 import type { RecordedActionResult } from '../result/index'
 import { runIdSchema } from '../run/run-id'
 import type { GroundingEvidence } from '../screen/target-descriptor'
@@ -520,6 +522,10 @@ export interface RunDetailStep {
   durationMs?: number
   error?: string
   tokenUsage?: RunStepTokenUsage
+  /** Capture-time entries; absence on historical rows is normalized by the read op. */
+  evidence?: StepEvidenceEntries
+  /** Finalized snapshot, with names and values masked by the bus producer. */
+  variableSnapshot?: VariableSnapshot
 }
 
 /** One recorded sub-action, carrying the whole `SubActionRecordedPayload` as persisted (D-01). */
@@ -534,6 +540,8 @@ export interface RunDetailSubAction {
   screenStateHash: string
   screenStateHashAfter?: string
   artifactRefs?: readonly RunDetailArtifactRef[]
+  /** Before-tree evidence belongs to this sub-action, never its parent step. */
+  ariaEvidence?: AriaEvidenceEntry
 }
 
 /**
@@ -677,6 +685,13 @@ export const RunDetailStepSchema = z.object({
   durationMs: durationMsSchema.optional(),
   error: z.string().optional(),
   tokenUsage: RunStepTokenUsageSchema.optional(),
+  evidence: z.strictObject({
+    console: EvidenceEntrySchema.and(z.object({ kind: z.literal('console') })),
+    network: EvidenceEntrySchema.and(z.object({ kind: z.literal('network') })),
+    a11y: EvidenceEntrySchema.and(z.object({ kind: z.literal('a11y') })),
+    variables: EvidenceEntrySchema.and(z.object({ kind: z.literal('variables') })),
+  }).optional(),
+  variableSnapshot: VariableSnapshotSchema.optional(),
 }).strict() satisfies z.ZodType<RunDetailStep>
 
 export const RunDetailSubActionSchema = z.object({
@@ -690,6 +705,7 @@ export const RunDetailSubActionSchema = z.object({
   screenStateHash: z.string(),
   screenStateHashAfter: z.string().optional(),
   artifactRefs: z.array(ArtifactRefSchema).optional(),
+  ariaEvidence: EvidenceEntrySchema.and(z.object({ kind: z.literal('aria') })).optional(),
 }).strict() satisfies z.ZodType<RunDetailSubAction>
 
 export const RunTokenTotalsSchema = z.object({
