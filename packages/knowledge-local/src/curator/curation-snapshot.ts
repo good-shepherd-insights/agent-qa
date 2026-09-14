@@ -49,7 +49,11 @@ export function readCurationEffects(options: ReadCurationEffectsOptions): Curati
     const canary = change.observationId !== undefined && observations.has(change.observationId)
     if ((change.change === 'confirmed' && canary)
       || (change.change === 'promoted' && (canary || change.sourceRunId === options.sourceRunId))) {
-      effects.push(CurationSnapshotChangeSchema.parse({ bucket: 'confirmed', change }))
+      // The caller's emitted observation identities attribute this event to the run,
+      // even when the affected bundle originated in an older run.
+      effects.push(CurationSnapshotChangeSchema.parse({ bucket: 'confirmed', change: {
+        ...change, ...(canary ? { sourceRunId: options.sourceRunId } : {}),
+      } }))
     }
   }
   return effects
