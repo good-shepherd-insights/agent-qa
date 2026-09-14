@@ -20,8 +20,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { guardRunNotification } from '@vostride/agent-qa-schema'
-import type { JobStatus, RunNotification } from '@vostride/agent-qa-schema'
+import { guardRunNotification, isJobKind } from '@vostride/agent-qa-schema'
+import type { JobConclusionKind, JobStatus, RunNotification } from '@vostride/agent-qa-schema'
 import type {
   ChainJobIds,
   JobIdSource,
@@ -34,6 +34,7 @@ import {
   AGENT_JOB_STORE_BUSY_TIMEOUT_MS,
   AGENT_JOB_STORE_DB_FILE,
   AGENT_JOB_STORE_USER_VERSION,
+  QUARANTINED_UNREADABLE_KIND_REASON,
 } from './sqlite-job-store.js'
 import { JobStoreSchemaVersionError } from './store-errors.js'
 
@@ -58,7 +59,26 @@ function toNumber(value: unknown): number {
 
 function toRow(row: Record<string, unknown> | undefined): PostProcessingJobRow | undefined {
   if (row === undefined) return undefined
-  return { status: String(row.status) as JobStatus, claimed: row.claimed_at !== null }
+  // SQLite v3 has no conclusion column. Match sqlite-job-store's quarantineConclusionOf:
+  // only the complete recorded quarantine landing supports this conclusion (422 D-16).
+  const conclusionKind: JobConclusionKind | undefined =
+    !isJobKind(String(row.kind))
+    && row.status === 'failed'
+    && row.last_failure_kind === 'permanent'
+    && row.last_failure_reason === QUARANTINED_UNREADABLE_KIND_REASON
+      ? 'unreadable_kind'
+      : undefined
+  return {
+    status: String(row.status) as JobStatus,
+    claimed: row.claimed_at !== null,
+    attempts: toNumber(row.attempts),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    ...(row.claimed_at === null ? {} : { claimedAt: String(row.claimed_at) }),
+    ...(conclusionKind === undefined ? {} : { conclusionKind }),
+    ...(row.last_failure_kind === null ? {} : { lastFailureKind: String(row.last_failure_kind) }),
+    ...(row.last_failure_reason === null ? {} : { lastFailureReason: String(row.last_failure_reason) }),
+  }
 }
 
 /**
@@ -101,7 +121,11 @@ export function createPostProcessingReader(
           throw new JobStoreSchemaVersionError(path, AGENT_JOB_STORE_USER_VERSION, stamped)
         }
 
-        const selectJob = db.prepare('SELECT status, claimed_at FROM jobs WHERE id = ?')
+        const selectJob = db.prepare(`
+          SELECT kind, status, attempts, created_at, claimed_at, updated_at,
+                 last_failure_kind, last_failure_reason
+          FROM jobs WHERE id = ?
+        `)
         const notificationRow = db
           .prepare('SELECT payload FROM notifications WHERE run_id = ?')
           .get(runId) as Record<string, unknown> | undefined
@@ -111,6 +135,9 @@ export function createPostProcessingReader(
         )
         const curateMemory = toRow(
           selectJob.get(String(ids.curateMemory)) as Record<string, unknown> | undefined,
+        )
+        const proposeImprovements = toRow(
+          selectJob.get(String(ids.proposeImprovements)) as Record<string, unknown> | undefined,
         )
         // Parsed through the schema guard on the way out, like `listNotifications`: the column
         // is bytes another process wrote, and a record that lost a stage must not travel as a
@@ -125,6 +152,7 @@ export function createPostProcessingReader(
         return {
           ...(analyzeRun === undefined ? {} : { analyzeRun }),
           ...(curateMemory === undefined ? {} : { curateMemory }),
+          ...(proposeImprovements === undefined ? {} : { proposeImprovements }),
           ...(notification === undefined ? {} : { notification }),
         }
       } finally {
