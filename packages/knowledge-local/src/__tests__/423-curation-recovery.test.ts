@@ -75,7 +75,7 @@ function commitFixture() {
     precondition: [{ recordId: victim.bundleId, observedStatus: 'candidate', observedOrdinal: 42 }],
     victimId: victim.bundleId, newBundle: draft('Purchase'), evidenceToken: asEvidenceToken(claimed.payload.evidenceToken) }
   const rows = () => listCurationEffectReceipts(root).filter((row) => row.candidateId === claimed.candidateId)
-  return { root, authority, deps, claimed, supersede, victim, victimJob, add, draft, checkpoint, rows }
+  return { root, authority, deps, claimed, supersede, victim, victimJob, add, draft, job, checkpoint, rows }
 }
 
 describe('423 curation effect recovery', () => {
@@ -117,6 +117,14 @@ describe('423 curation effect recovery', () => {
     reconcile(f, successor)
     expect(f.rows()).toEqual(expected)
     expect(bundleBytes(f.root)).toEqual(before)
+    const retry = claimNextJob({ knowledgeRoot: f.root, leaseId: successor.leaseId, authority: successor })
+    if (retry?.kind === 'claimed') {
+      const outcome = commitCurationDelta({ ...f.deps, epoch: successor.epoch }, retry, f.checkpoint(f.supersede))
+      expect(outcome.kind).toBe('noop')
+      expect(readJobState(f.root, retry.candidateId).kind).toBe('absent')
+      expect(bundleBytes(f.root)).toEqual(before)
+      expect(f.rows()).toEqual(expected)
+    }
     const receipts = readdirSync(join(f.root, COMPLETED_EFFECTS_SUBDIR)).map((name) => readFileSync(join(f.root, COMPLETED_EFFECTS_SUBDIR, name), 'utf8'))
     reconcile(f, successor)
     expect(f.rows()).toEqual(expected)
@@ -168,6 +176,16 @@ describe('423 curation effect recovery', () => {
     expect(outcome).toMatchObject({ kind: 'downgraded', original: invalid })
     expect(f.rows()).toMatchObject([{ originalDeltaKind: 'Supersede', disposition: 'downgraded', downgradeReason: 'cited-id-integrity' }])
   })
+  it('DOWNGRADE-EXISTING preserves original disposition when publication becomes confirmation', () => {
+    const f = commitFixture()
+    commitCurationDelta(f.deps, f.claimed, f.checkpoint(f.supersede))
+    const again = f.job('Purchase', 44)
+    const outcome = commitCurationDelta(f.deps, again, f.checkpoint(f.supersede))
+    expect(outcome).toMatchObject({ kind: 'downgraded', original: f.supersede, reason: 'propose-only' })
+    expect(listCurationEffectReceipts(f.root).filter((row) => row.candidateId === again.candidateId)).toMatchObject([
+      { originalDeltaKind: 'Supersede', disposition: 'downgraded', change: 'confirmed' },
+    ])
+  })
   it('DEPRECATE-PROPOSED distinguishes clarification from ordinary MintUnknown', () => {
     const f = commitFixture()
     const delta: Delta = { kind: 'Deprecate', origin: 'agent', scope: f.supersede.scope, citedIds: [f.victim.bundleId], targetId: f.victim.bundleId, reason: 'synthetic-reason' }
@@ -176,6 +194,12 @@ describe('423 curation effect recovery', () => {
     expect(f.rows()).toMatchObject([{ originalDeltaKind: 'Deprecate', appliedDeltaKind: 'MintUnknown', disposition: 'downgraded' }])
     const loaded = loadBundle(f.victim.bundleDir)
     expect(loaded.kind === 'loaded' && loaded.bundle.events.some((e) => e.type === 'deprecated')).toBe(false)
+    const ordinaryJob = f.job('Question', 44)
+    const ordinary: Delta = { kind: 'MintUnknown', origin: 'agent', scope: delta.scope, citedIds: [], conflict: { recordIds: [], kind: 'clarification' } }
+    expect(commitCurationDelta(f.deps, ordinaryJob, f.checkpoint(ordinary)).kind).toBe('applied')
+    expect(listCurationEffectReceipts(f.root).filter((row) => row.candidateId === ordinaryJob.candidateId)).toMatchObject([
+      { originalDeltaKind: 'MintUnknown', appliedDeltaKind: 'MintUnknown', disposition: 'apply', change: 'added' },
+    ])
   })
   it('COMMIT-PARTIAL-EFFECTS records replacement publication but no refused victim effect', () => {
     const f = commitFixture()
