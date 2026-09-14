@@ -125,6 +125,12 @@ function rootWithBlob(sha: string): string {
   const agentQaRoot = join(root, '.agent-qa')
   mkdirSync(join(agentQaRoot, 'runs', 'r-406-07', 'blobs'), { recursive: true })
   writeFileSync(join(agentQaRoot, 'runs', 'r-406-07', 'blobs', sha), 'png-bytes', 'utf8')
+  const handoff = handoffCarryingTheFixtureStepText()
+  const subAction = handoff.tests[0]?.steps[0]?.subActions[0]
+  if (subAction !== undefined) {
+    subAction.decisionScreenshotRef = { id: `decision-screenshot:${sha}`, sha }
+  }
+  writeFileSync(join(agentQaRoot, 'runs', 'r-406-07', 'handoff.json'), JSON.stringify(handoff))
   return agentQaRoot
 }
 
@@ -276,7 +282,7 @@ describe("the 'authored' arm answers the author with a valid OUTPUT_CONTRACT obj
 })
 
 describe('citeEvidenceFrom lifts the run its own decision-screenshot sha', () => {
-  it('cites every 64-hex blob the run wrote', async () => {
+  it('cites the recorded decision screenshot whose blob the run wrote', async () => {
     const sha = 'b'.repeat(64)
     const server = await stub({ analysisOutcome: 'authored' })
     server.citeEvidenceFrom(rootWithBlob(sha))
@@ -284,6 +290,40 @@ describe('citeEvidenceFrom lifts the run its own decision-screenshot sha', () =>
     const entry = authoredEntry(await ask(server))
 
     expect(entry.citedArtifacts).toEqual([{ id: `decision-screenshot:${sha}`, sha }])
+  })
+
+  it('C423-FIXTURE-SCREENSHOT-OWNERSHIP: excludes network JSON and unreferenced blobs', async () => {
+    const sha = 'b'.repeat(64)
+    const root = rootWithBlob(sha)
+    const blobs = join(root, 'runs', 'r-406-07', 'blobs')
+    writeFileSync(join(blobs, 'a'.repeat(64)), JSON.stringify({
+      schemaVersion: 1,
+      kind: 'network',
+      records: [],
+    }))
+    writeFileSync(join(blobs, 'c'.repeat(64)), 'unreferenced-png-bytes')
+    const server = await stub({ analysisOutcome: 'authored' })
+    server.citeEvidenceFrom(root)
+
+    expect(authoredEntry(await ask(server)).citedArtifacts).toEqual([
+      { id: `decision-screenshot:${sha}`, sha },
+    ])
+  })
+
+  it('C423-FIXTURE-SCREENSHOT-OWNERSHIP: does not substitute another blob for a missing screenshot', async () => {
+    const sha = 'b'.repeat(64)
+    const root = rootWithBlob(sha)
+    const blobs = join(root, 'runs', 'r-406-07', 'blobs')
+    rmSync(join(blobs, sha))
+    writeFileSync(join(blobs, 'a'.repeat(64)), JSON.stringify({
+      schemaVersion: 1,
+      kind: 'network',
+      records: [],
+    }))
+    const server = await stub({ analysisOutcome: 'authored' })
+    server.citeEvidenceFrom(root)
+
+    expect(authoredEntry(await ask(server)).citedArtifacts).toEqual([])
   })
 
   it('cites nothing when no root was registered, and nothing when the root has no blobs', async () => {
