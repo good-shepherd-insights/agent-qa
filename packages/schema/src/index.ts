@@ -1658,11 +1658,16 @@ export {
   NoDraftableFixCheckedSchema, MarkDispositionSchema, MarkAddressSchema, MarkReceiptSchema,
   RunsMarkInputSchema, RunsMarkOutcomeSchema, ImprovementPlanKnowledgeSchema,
   ImprovementPlanSchema, CommitReceiptSchema, RunDetailMemberMarkSchema, deriveMarkStepId,
+  // 2026-09-15, 423 D-19: marks history
+  markAddressKey, MARK_PROPOSAL_STATES, MARKS_HISTORY_OUTCOMES, MarkProposalCurrentSchema,
+  RunsMarksHistoryInputSchema, MarkHistoryEntrySchema, RunsMarksHistoryResultSchema,
 } from './functions/feedback'
 export type {
   MarkQuarantineClass, MarkFixKind, MarkDisposition, NoDraftableFixChecked, MarkAddress,
   MarkReceipt, RunsMarkInput, RunsMarkOutcome, ImprovementPlanKnowledge, ImprovementPlan,
   CommitReceipt, RunDetailMemberMark, FeedbackPort,
+  MarkProposalState, MarkProposalCurrent, RunsMarksHistoryInput, MarkHistoryEntry,
+  RunsMarksHistoryResult, MarkHistoryReadEntry, MarkHistoryRead, FeedbackReadsPort,
 } from './functions/feedback'
 export { MarkProposalStampSchema } from './knowledge/proposal'
 export type { MarkProposalStamp } from './knowledge/proposal'

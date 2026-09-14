@@ -179,6 +179,7 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // method most of them have no storage for — and a host that could list runs but hold no blobs
 // would have to answer that verb with something. Optional, it is instead an honest `unbound`.
 // 2026-09-08, 419 GATE3-01: feedback is the twenty-eighth member, pinned BY NAME.
+// 2026-09-15, 423 D-19: feedbackReads is the twenty-ninth, a read-only port beside the writer.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'liveView'
@@ -209,6 +210,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'scaffoldContent'
     | 'capabilityCatalog'
     | 'feedback'
+    | 'feedbackReads'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

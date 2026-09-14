@@ -22,6 +22,7 @@ import type {
   EntityResolution,
   ForgetReceiptV1,
   FeedbackPort,
+  FeedbackReadsPort,
   FunctionScope,
   InspectRecordView,
   JobStatus,
@@ -158,6 +159,7 @@ export type OptionalFunctionDepKey =
   | 'scaffoldContent'
   | 'capabilityCatalog'
   | 'feedback' // 2026-09-08, 419 GATE3-01: the Gate-3 mark port
+  | 'feedbackReads' // 2026-09-15, 423 D-19: read-only mark history, no writer authority
 
 /**
  * 419 GATE3-01: the union previously had only a type-level pin, invisible to vitest.
@@ -192,6 +194,7 @@ export const OPTIONAL_FUNCTION_DEP_KEYS = [
   'scaffoldContent',
   'capabilityCatalog',
   'feedback',
+  'feedbackReads',
 ] as const satisfies readonly OptionalFunctionDepKey[]
 
 type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -1186,6 +1189,11 @@ export interface FunctionDeps {
    * port; absent on hosts that cannot freeze gold.
    */
   feedback?: FeedbackPort
+  /**
+   * 423 D-19: read-only feedback observations. Separate from `feedback` so a host can serve
+   * history without mark authority; absent means `runs.marks.history` is unbound by name.
+   */
+  feedbackReads?: FeedbackReadsPort
   /**
    * 391 PROP-03 / D-15: the proposals inbox's three verbs — list, show, reject.
    *

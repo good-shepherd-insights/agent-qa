@@ -33,10 +33,11 @@ describe('optional function dep keys (419 GATE3-01)', () => {
       'scaffoldContent',
       'capabilityCatalog',
       'feedback',
+      'feedbackReads',
     ])
   })
 
-  it('has exactly 28 optional bindings', () => {
-    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(28)
+  it('has exactly 29 optional bindings', () => {
+    expect(OPTIONAL_FUNCTION_DEP_KEYS).toHaveLength(29)
   })
 })

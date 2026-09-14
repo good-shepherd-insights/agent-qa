@@ -6,6 +6,7 @@ import { actionWireSchema } from '../action/wire-schema'
 import { MARKS } from '../knowledge/gate-receipt'
 import { PROMOTION_PATHS } from '../knowledge/promotion-path'
 import { DeltaSchema, KnowledgeTargetRefSchema, ProposalIdSchema } from '../knowledge/proposal'
+import { PROPOSAL_ENVELOPE_STATUSES, ProposalDecisionRecordSchema } from '../proposal/envelope'
 import { runIdSchema as runIdCodec, type RunId } from '../run/run-id'
 import { VERDICT_CLASSES, type VerdictClass } from '../verdict/verdict'
 
@@ -182,4 +183,94 @@ export function deriveMarkStepId(testIndex: number, stepIndex: number): string {
 export interface FeedbackPort {
   mark(input: RunsMarkInput): Promise<RunsMarkOutcome>
   marksFor(runId: RunId): Promise<readonly MarkReceipt[]>
+}
+
+/** The ledger's latest-wins address: member plus step, testId deliberately excluded (419 D-11). */
+export function markAddressKey(address: Pick<MarkAddress, 'testIndex' | 'stepIndex'>): string {
+  return `${address.testIndex}:${address.stepIndex ?? 'run'}`
+}
+
+// 2026-09-15, 423 D-19: marks history. The receipt disposition is historical; `proposal` is the
+// drafted proposal's state read now, in the envelope's own lifecycle vocabulary. A proposal the
+// store cannot find or parse is a typed absence and never defaults to pending.
+export const MARK_PROPOSAL_STATES = [...PROPOSAL_ENVELOPE_STATUSES, 'missing', 'corrupt'] as const
+export type MarkProposalState = (typeof MARK_PROPOSAL_STATES)[number]
+
+export const MarkProposalCurrentSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('pending'), applyInFlight: z.boolean() }).strict(),
+  z.object({ state: z.literal('expired'), applyInFlight: z.boolean() }).strict(),
+  z.object({ state: z.literal('applied'), decision: ProposalDecisionRecordSchema.optional() }).strict(),
+  z.object({ state: z.literal('rejected'), decision: ProposalDecisionRecordSchema.optional() }).strict(),
+  z.object({ state: z.literal('missing') }).strict(),
+  z.object({ state: z.literal('corrupt') }).strict(),
+])
+export type MarkProposalCurrent = z.infer<typeof MarkProposalCurrentSchema>
+
+type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+const _proposalStatesCover: ExactlyEqual<MarkProposalState, MarkProposalCurrent['state']> = true
+void _proposalStatesCover
+
+export const RunsMarksHistoryInputSchema = z.object({ runId: runIdSchema }).strict()
+export type RunsMarksHistoryInput = z.infer<typeof RunsMarksHistoryInputSchema>
+
+const receiptFactShape = MarkReceiptSchema.omit({
+  schemaVersion: true, runSlug: true, correctedExpectation: true, correctedAction: true, note: true,
+}).shape
+
+export const MarkHistoryEntrySchema = z.object({
+  ...receiptFactShape,
+  // Masked free text can differ in length from the recorded note, so the writer's cap is not reapplied.
+  note: z.string().optional(),
+  /** Corrected fields are reported by presence; their content stays in the ledger. */
+  corrected: z.object({ expectation: z.boolean(), action: z.boolean() }).strict(),
+  active: z.boolean(),
+  supersededBy: markIdSchema.optional(),
+  proposal: MarkProposalCurrentSchema.optional(),
+}).strict().superRefine((entry, ctx) => {
+  if (entry.active === (entry.supersededBy !== undefined)) {
+    ctx.addIssue({ code: 'custom', path: ['active'], message: 'exactly the unsuperseded receipt on an address is active' })
+  }
+  if ((entry.disposition.kind === 'drafted') !== (entry.proposal !== undefined)) {
+    ctx.addIssue({ code: 'custom', path: ['proposal'], message: 'current proposal state is joined for drafted receipts only' })
+  }
+})
+export type MarkHistoryEntry = z.infer<typeof MarkHistoryEntrySchema>
+
+export const MARKS_HISTORY_OUTCOMES = ['history', 'run-not-found', 'ledger-corrupt', 'ledger-unavailable'] as const
+
+export const RunsMarksHistoryResultSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('history'), runId: runIdSchema, entries: z.array(MarkHistoryEntrySchema) }).strict()
+    .superRefine((value, ctx) => {
+      value.entries.forEach((entry, index) => {
+        if (entry.ordinal !== index + 1 || entry.runId !== value.runId) {
+          ctx.addIssue({ code: 'custom', path: ['entries', index, 'ordinal'], message: 'history is this run ledger in ordinal order' })
+        }
+      })
+    }),
+  z.object({ kind: z.literal('run-not-found'), runId: runIdSchema }).strict(),
+  z.object({ kind: z.literal('ledger-corrupt'), runId: runIdSchema, line: z.number().int().positive() }).strict(),
+  z.object({ kind: z.literal('ledger-unavailable'), runId: runIdSchema }).strict(),
+])
+export type RunsMarksHistoryResult = z.infer<typeof RunsMarksHistoryResultSchema>
+const _historyOutcomesCover: ExactlyEqual<(typeof MARKS_HISTORY_OUTCOMES)[number], RunsMarksHistoryResult['kind']> = true
+void _historyOutcomesCover
+
+/** One ledger receipt with its drafted proposal's current state, as the host read it. */
+export interface MarkHistoryReadEntry {
+  receipt: MarkReceipt
+  proposal?: MarkProposalCurrent
+}
+
+export type MarkHistoryRead =
+  | { kind: 'history'; entries: readonly MarkHistoryReadEntry[] }
+  | { kind: 'run-not-found' }
+  | { kind: 'ledger-corrupt'; line: number }
+  | { kind: 'ledger-unavailable' }
+
+/**
+ * Read-only feedback observations. Separate from {@link FeedbackPort} so a host can grant history
+ * without the mark writer; implementations never take the ledger lock, reap or write.
+ */
+export interface FeedbackReadsPort {
+  history(runId: RunId): Promise<MarkHistoryRead>
 }

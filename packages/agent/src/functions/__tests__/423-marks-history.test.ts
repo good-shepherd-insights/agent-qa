@@ -1,31 +1,20 @@
 // 2026-09-15, 423 D-19: ordinal mark history over a read-only feedback port.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import * as schema from '@vostride/agent-qa-schema'
-import { MarkReceiptSchema, asRunId, maskedMarker } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, MarkReceipt, RunId } from '@vostride/agent-qa-schema'
+import { MarkReceiptSchema, RunsMarksHistoryResultSchema, asRunId, maskedMarker } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, MarkProposalCurrent, MarkReceipt, RunId } from '@vostride/agent-qa-schema'
 import { invokeFunction } from '../invoke.js'
+import { runsMarksHistorySpec } from '../ops/runs-marks-history.js'
 import { createRegistryFromSpecs } from '../registry.js'
 import * as spec from '../spec.js'
 import type { FunctionDeps, FunctionSpec } from '../spec.js'
 
-const opModule: Record<string, unknown> = await import(new URL('../ops/runs-marks-history.js', import.meta.url).href).catch(() => ({}))
-
-type HistorySpec = FunctionSpec<{ runId: RunId }, Record<string, unknown>>
-function historySpec(): HistorySpec {
-  const value = opModule.runsMarksHistorySpec
-  expect(typeof value, 'ops/runs-marks-history must export runsMarksHistorySpec').toBe('object')
-  return value as HistorySpec
-}
-function resultSchema(): { parse(value: unknown): unknown } {
-  const value = (schema as Record<string, unknown>).RunsMarksHistoryResultSchema
-  expect(typeof value, 'schema root must export RunsMarksHistoryResultSchema').toBe('object')
-  return value as { parse(value: unknown): unknown }
-}
+const historySpec = () => runsMarksHistorySpec
+const resultSchema = () => RunsMarksHistoryResultSchema
 
 const runId = asRunId('run-423-marks-history')
 type Address = { testIndex: number; stepIndex?: number; testId?: string }
-type ProposalState = Record<string, unknown>
+type ProposalState = MarkProposalCurrent
 type ReadEntry = { receipt: MarkReceipt; proposal?: ProposalState }
 
 const markIdOf = (ordinal: number) => `mark_${ordinal.toString(16).padStart(12, '0')}`
@@ -113,7 +102,7 @@ async function read(entries: readonly ReadEntry[]) {
   const result = await historySpec().invoke({ runId }, bound)
   expect(forbidden).not.toHaveBeenCalled()
   expect(reads.history).toHaveBeenCalledWith(runId)
-  return result as { kind: string; runId: RunId; entries: Record<string, unknown>[] }
+  return result as unknown as { kind: string; runId: RunId; entries: Record<string, unknown>[] }
 }
 
 function expectedFacts(value: MarkReceipt): Record<string, unknown> {
@@ -189,7 +178,7 @@ describe('423-36 runs.marks.history contract (D-19)', () => {
     const result = await read([])
     expect(result).toEqual({ kind: 'history', runId, entries: [] })
     expect(resultSchema().parse(result)).toEqual(result)
-    expect(historySpec().classify(result)).toEqual({ status: 'executed', outcome: 'history: 0 marks' })
+    expect(historySpec().classify(RunsMarksHistoryResultSchema.parse(result))).toEqual({ status: 'executed', outcome: 'history: 0 marks' })
   })
 
   it('HISTORY-ERRORS: no-run, corrupt and unavailable ledgers are typed arms; an absent port is unbound', async () => {
