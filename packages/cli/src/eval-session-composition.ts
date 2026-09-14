@@ -3526,7 +3526,8 @@ function mergeEvalConfig(
   }
 }
 // Gate hosts reach eval/runtime storage only through this established composition boundary.
-export { canonicalJson, markedDecisionCount, resolveMarkedDecisions, resolveProductPartition } from '@vostride/agent-qa-eval'
+export { canonicalJson, markedDecisionCount, previewMarkLabels, resolveMarkLabelTargets, resolveMarkedDecisions, resolveProductPartition } from '@vostride/agent-qa-eval'
+export type { GoldenTrajectoryTarget, MarkGroundTruthPreview, MarkLabelPreviewItem } from '@vostride/agent-qa-eval'
 export { FsHandoffSource, FsMarkLedger, freezeGoldenTrajectory } from '@vostride/agent-qa-eval-local'
 export { slugBranch } from '@vostride/agent-qa-runner-local'
 export { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'

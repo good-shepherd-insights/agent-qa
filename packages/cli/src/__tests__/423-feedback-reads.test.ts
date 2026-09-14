@@ -5,21 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import { asRunId, type RunsMarkInput } from '@vostride/agent-qa-schema'
+import { asRunId, RunsMarkOutcomeSchema, type RunsMarkInput } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FsMarkLedger } from '../eval-session-composition.js'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
+import { previewMarkConsequences as preview } from '../gates/feedback-plan.js'
 import { files, markFixture } from '../gates/__tests__/feedback-fixture.js'
 
 const { showProposalEnvelope } = await import(new URL('../../../knowledge-local/src/review/proposals-store.js', import.meta.url).href)
-const planModule: Record<string, unknown> = await import(new URL('../gates/feedback-plan.js', import.meta.url).href).catch(() => ({}))
-
-type Preview = (deps: object, input: RunsMarkInput) => Promise<Record<string, unknown>>
-function previewMark(): Preview {
-  const fn = planModule.previewMarkConsequences
-  expect(typeof fn, 'feedback-plan must export previewMarkConsequences').toBe('function')
-  return fn as Preview
-}
 
 const refuse = (name: string) => () => { throw new Error(`preview must not call ${name}`) }
 /** Every writer, lease and draft capability throws; only the deterministic reads remain. */
@@ -44,7 +37,6 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
   }
 
   it('PREVIEW-REFUSAL-PARITY: missing run/member/step and ambiguous address/correction match runs.mark with no bytes', async () => {
-    const preview = previewMark()
     const f = fixture()
     const runId = f.handoff.runId
     const member = f.handoff.tests[0]!
@@ -67,6 +59,8 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
       expect(hashes(f.root)).toEqual(before)
       const written = await port.mark(input)
       expect(previewed).toEqual(written)
+      // The strict outcome schema pins the unchanged writer wire shape, which a shared plan could otherwise drift together.
+      expect(RunsMarkOutcomeSchema.parse(written)).toEqual(written)
       expect(hashes(f.root)).toEqual(before)
       kinds.push(written.kind)
     }
@@ -78,7 +72,6 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
   })
 
   it('NOTE-ONLY-REPEAT: a note-only change previews already-marked; a changed correction previews supersession', async () => {
-    const preview = previewMark()
     const f = fixture()
     const runId = f.handoff.runId
     const port = createFeedbackPortForHost(f.deps)
@@ -101,7 +94,6 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
   })
 
   it('QUARANTINE-ORDER: step refusal precedes quarantine, and quarantine precedes the ambiguous-correction refusal', async () => {
-    const preview = previewMark()
     const f = fixture()
     const runId = f.handoff.runId
     const member = f.handoff.tests[0]!
@@ -130,7 +122,6 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
   })
 
   it('PRIOR-WITHDRAWAL: only a new completing effect withdraws the prior draft; repeats, refusals and quarantine do not', async () => {
-    const preview = previewMark()
     const f = fixture()
     const runId = f.handoff.runId
     const port = createFeedbackPortForHost(f.deps)
@@ -165,7 +156,6 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
   })
 
   it('MARK-PLAN-PARITY: the previewed step, labels, served evidence and draft target are the ones the writer lands', async () => {
-    const preview = previewMark()
     const f = fixture()
     const runId = f.handoff.runId
     const before = hashes(f.root)
@@ -177,9 +167,8 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
       draft: { kind: 'knowledge', fix: 'fact', target: { grain: 'record', recordId: f.published.id } },
       latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 } })
     const written = await createFeedbackPortForHost(f.deps).mark({ runId, kind: 'false-fail' })
-    if (written.kind !== 'marked') throw new Error('expected mark')
-    const labels = previewed.labels as { channel: string; sourceCassetteId: string }[]
-    expect(labels.map(label => [label.channel, label.sourceCassetteId]))
+    if (written.kind !== 'marked' || previewed.kind !== 'consequences') throw new Error('expected mark')
+    expect(previewed.labels.map(label => [label.channel, label.sourceCassetteId]))
       .toEqual(written.receipt.gold.map(item => [item.channel, item.sourceCassetteId]))
     expect(written.receipt.evidence.confirmed).toBe(1)
     expect(written.receipt.disposition).toMatchObject({ kind: 'drafted', fix: 'fact', proposalKind: 'knowledge' })
