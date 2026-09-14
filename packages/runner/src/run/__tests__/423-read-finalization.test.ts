@@ -4,7 +4,7 @@ import { createRunEventBus } from '../bus.js'
 import { createMemberEventSink } from '../event-sink.js'
 import { runMemberTest, type MemberRunConfig, type MemberTest } from '../member-runner.js'
 import { fakeModel, makeActionPlan, makeAdapter, makePlanner } from '../../loop/__tests__/loop-harness.js'
-import type { ConsoleLogEntry, NetworkLogEntry } from '../../result.js'
+import type { AccessibilityViolation, ConsoleLogEntry, NetworkLogEntry } from '../../result.js'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { projectNetworkEvidence } from '../network-evidence-policy.js'
 import { executeStep } from '../../loop/index.js'
@@ -157,6 +157,181 @@ test('VARIABLE-UNAVAILABLE: a bypass without a supplied snapshot stays not-captu
   expect(f.terminals()[0].evidence?.variables).toEqual({ kind: 'variables', state: 'absent', reason: 'not-captured' })
   expect(f.terminals()[0]).not.toHaveProperty('variableSnapshot')
 })
+
+function violations(): AccessibilityViolation[] {
+  return (['minor', 'moderate', 'serious', 'critical', 'critical'] as const).map(impact => ({
+    ruleId: `rule-${secret}`, impact, description: `description-${secret}`,
+    help: `help-${secret}`, helpUrl: `https://example.test/${secret}`,
+    nodes: [{ html: `<span>${secret}</span>`, target: [`#${secret}`] }],
+  }))
+}
+
+test('EVID-A11Y-PRESENT: one live-masked document retains all violations and exact impact counts', async () => {
+  const f = fixture()
+  f.config.accessibility = { enabled: true }
+  f.config.accessibilityCheck = vi.fn(async () => violations())
+  f.member.steps = [{ step: 'Click Log in', capture: { variable: 'late', method: 'ai' } }]
+  f.config.extractorFactory = () => ({ extract: async () => {
+    f.secrets.add(secret)
+    return { success: true, variableName: 'late', value: secret, reasoning: 'synthetic' }
+  } })
+  const persist = f.config.evidenceArtifacts!.persistEvidenceDocument!
+  f.config.evidenceArtifacts!.persistEvidenceDocument = document => {
+    expect(f.terminals()).toHaveLength(0)
+    expect(JSON.stringify(document)).not.toContain(secret)
+    return persist(document)
+  }
+  await runMemberTest(f.member, f.config)
+  expect(f.config.accessibilityCheck).toHaveBeenCalledTimes(1)
+  expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'a11y',
+    records: JSON.parse(JSON.stringify(violations()).replaceAll(secret, '[secret]')) }])
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].evidence?.a11y).toEqual({ kind: 'a11y', state: 'present',
+    ref: { id: `a11y-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) },
+    counts: { minor: 1, moderate: 1, serious: 1, critical: 2 } })
+})
+
+test.each(['disabled', 'test-end', 'every-step', 'missing-handler'] as const)(
+  'EVID-A11Y-SCHEDULE: %s distinguishes actual zero capture from unstarted or unsupported', async kind => {
+    const f = fixture()
+    f.member.steps = ['Click Log in', 'Click Log in']
+    f.config.accessibility = { enabled: kind !== 'disabled', runAfter: kind === 'test-end' ? 'test-end' : 'every-step' }
+    const check = vi.fn(async () => [])
+    f.config.accessibilityCheck = kind === 'missing-handler' ? undefined : check
+    await runMemberTest(f.member, f.config)
+    expect(f.terminals()).toHaveLength(2)
+    const reasons = kind === 'disabled' ? ['not-captured', 'not-captured']
+      : kind === 'test-end' ? ['not-captured', 'empty']
+      : kind === 'missing-handler' ? ['unsupported', 'unsupported'] : ['empty', 'empty']
+    expect(f.terminals().map(terminal => terminal.evidence?.a11y)).toEqual(reasons.map(reason => ({ kind: 'a11y', state: 'absent', reason })))
+    expect(check).toHaveBeenCalledTimes(kind === 'test-end' ? 1 : kind === 'every-step' ? 2 : 0)
+    expect(f.documents).toEqual([])
+  },
+)
+
+test.each(['axe', 'persist', 'missing-mask', 'missing-store', 'bad-ref', 'mask'] as const)(
+  'EVID-CAPTURE-THREW: %s failure never reports a clean accessibility result', async kind => {
+    const f = fixture()
+    f.config.accessibility = { enabled: true }
+    f.config.accessibilityCheck = async () => {
+      if (kind === 'axe') throw new Error(`synthetic axe error ${secret}`)
+      return violations()
+    }
+    if (kind === 'persist') f.config.evidenceArtifacts!.persistEvidenceDocument = () => { throw new Error(`synthetic persist ${secret}`) }
+    if (kind === 'missing-store') f.config.evidenceArtifacts = undefined
+    if (kind === 'missing-mask') f.config.masking = undefined
+    if (kind === 'bad-ref') f.config.evidenceArtifacts!.persistEvidenceDocument = () => ({ id: `console-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) })
+    if (kind === 'mask') f.config.masking = { ...f.config.masking!, mask: text => {
+      if (text.includes(secret)) throw new Error('synthetic mask failure')
+      return text
+    } }
+    const result = await runMemberTest(f.member, f.config)
+    expect(result.status).toBe('passed')
+    expect(f.terminals()).toHaveLength(1)
+    expect(f.terminals()[0].evidence?.a11y).toEqual({ kind: 'a11y', state: 'absent', reason: 'failed' })
+    expect(f.terminals()[0]).not.toHaveProperty('error')
+    expect(f.documents).toEqual([])
+  },
+)
+
+test.each(['android', 'ios'] as const)('EVID-MOBILE-SCOPE: %s accessibility remains unsupported', async platform => {
+  const f = fixture()
+  f.config.adapter = { ...f.adapter, platform }
+  f.member.steps = ['{{appium: mobile: hideKeyboard}}']
+  f.config.appiumScript = async () => ({ success: true })
+  f.config.accessibility = { enabled: true }
+  f.config.accessibilityCheck = vi.fn(async () => violations())
+  await runMemberTest(f.member, f.config)
+  expect(f.config.accessibilityCheck).not.toHaveBeenCalled()
+  expect(f.terminals()[0].evidence?.a11y).toEqual({ kind: 'a11y', state: 'absent', reason: 'unsupported' })
+})
+
+test.each(['persist-ok', 'persist-fails'] as const)('A11Y-FINAL-VERDICT: %s publishes the post-check verdict once', async kind => {
+  const f = fixture()
+  f.config.accessibility = { enabled: true, failOnViolation: true }
+  f.config.accessibilityCheck = async () => violations()
+  if (kind === 'persist-fails') f.config.evidenceArtifacts!.persistEvidenceDocument = () => { throw new Error('synthetic write failure') }
+  const result = await runMemberTest(f.member, f.config)
+  expect(result.status).toBe('failed')
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].status).toBe('failed')
+  expect(f.terminals()[0].error).toBe('Accessibility violations found: 2 critical, 1 serious')
+  expect(f.terminals()[0].evidence?.a11y).toMatchObject(kind === 'persist-ok'
+    ? { state: 'present', counts: { minor: 1, moderate: 1, serious: 1, critical: 2 } }
+    : { state: 'absent', reason: 'failed' })
+})
+
+test('EVID-ABORT-DURING: active a11y interruption is failed and retains recorded actions', async () => {
+  const f = fixture()
+  f.member.steps = ['Click Log in', 'Never starts']
+  f.config.accessibility = { enabled: true }
+  f.config.accessibilityCheck = async () => {
+    f.abort.abort(new Error('synthetic axe abort'))
+    return new Promise(() => {})
+  }
+  const result = await runMemberTest(f.member, f.config)
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].status).toBe('cancelled')
+  expect(f.terminals()[0].evidence?.a11y).toEqual({ kind: 'a11y', state: 'absent', reason: 'failed' })
+  expect(result.steps[0].evidence!.subActions.length).toBeGreaterThan(0)
+  expect(f.terminals()[0].evidence?.console).toMatchObject({ reason: 'not-captured' })
+})
+
+test.each(['abort', 'throw'] as const)('EVID-ABORT-BEFORE: extraction %s retains completed a11y and prior variables', async kind => {
+  const f = fixture()
+  f.config.inlineVars = { prior: 'retained' }
+  f.member.steps = [{ step: 'Click Log in', capture: { variable: 'late', method: 'ai' } }, 'Never starts']
+  f.config.accessibility = { enabled: true }
+  f.config.accessibilityCheck = async () => violations()
+  f.config.extractorFactory = () => ({ extract: async () => {
+    if (kind === 'throw') throw new Error('synthetic extraction failed')
+    f.abort.abort(new Error('synthetic extraction abort'))
+    return new Promise(() => {})
+  } })
+  const result = await runMemberTest(f.member, f.config)
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].status).toBe(kind === 'abort' ? 'cancelled' : 'failed')
+  expect(f.terminals()[0].evidence?.a11y).toMatchObject({ state: 'present', counts: { critical: 2 } })
+  expect(result.steps[0].accessibilityViolations).toEqual(violations())
+  expect(f.terminals()[0].variableSnapshot).toEqual({ prior: { value: 'retained', source: 'inline' } })
+  expect(f.terminals()[0].evidence?.console).toMatchObject({ reason: 'not-captured' })
+})
+
+test.each(['no-subaction', 'hook-only', 'hook-error', 'hook-throw', 'template', 'execute-throw', 'appium-error'] as const)(
+  'EVID-BYPASS-TERMINAL: %s keeps one row and only actually captured evidence', async kind => {
+    const f = fixture()
+    f.config.inlineVars = { prior: 'retained' }
+    f.config.accessibility = { enabled: true }
+    f.config.accessibilityCheck = vi.fn(async () => [])
+    f.config.executeStep = async () => {
+      if (kind === 'execute-throw') throw new Error('synthetic execute failure')
+      return { name: 'synthetic bypass', status: 'passed', duration: 0 }
+    }
+    if (kind.startsWith('hook')) {
+      f.member.steps = [`{{runHook:"${hookId}"}}`]
+      f.config.inlineHookDefs = new Map([[hookId, { id: hookId, name: 'synthetic', runtime: 'node', file: 'synthetic.js', deps: [], timeout: 1000, network: false }]])
+      f.config.hookExecutor = { execute: async () => {
+        if (kind === 'hook-throw') throw new Error('synthetic hook failure')
+        return { success: kind === 'hook-only', duration: 1, stdout: '', stderr: '', output: '', variables: { hooked: 'hook value' } }
+      } }
+    }
+    if (kind === 'template') f.member.steps = ['Click {{env:MISSING}}']
+    if (kind === 'appium-error') {
+      f.member.steps = ['{{appium: mobile: hideKeyboard}}']
+      f.config.appiumScript = async () => { throw new Error('synthetic appium failure') }
+    }
+    const result = await runMemberTest(f.member, f.config)
+    const captured = ['no-subaction', 'hook-only', 'appium-error'].includes(kind)
+    expect(f.events.filter(event => event.type === 'stepStarted')).toHaveLength(1)
+    expect(f.events.filter(event => event.type === 'subActionRecorded')).toHaveLength(0)
+    expect(f.terminals()).toHaveLength(1)
+    expect(f.terminals()[0].status).toBe(result.steps[0].status)
+    expect(f.terminals()[0].evidence?.a11y).toEqual({ kind: 'a11y', state: 'absent', reason: captured ? 'empty' : 'not-captured' })
+    expect(f.config.accessibilityCheck).toHaveBeenCalledTimes(captured ? 1 : 0)
+    expect(f.terminals()[0].variableSnapshot?.prior).toEqual({ value: 'retained', source: 'inline' })
+    if (kind === 'hook-only') expect(f.terminals()[0].variableSnapshot?.hooked).toEqual({ value: 'hook value', source: 'hook' })
+  },
+)
 
 test('EVID-WEB-PRESENT: live masked records/counts publish after a11y and variable capture', async () => {
   const f = fixture()
