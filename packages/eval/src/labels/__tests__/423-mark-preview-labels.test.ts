@@ -6,30 +6,10 @@ import { deriveRunSlug } from '../../extract/ids'
 import * as goldenPlan from '../golden-plan'
 
 type Kind = MarkReceipt['kind']
-type LabelIntent = Pick<MarkReceipt, 'kind' | 'correctedExpectation' | 'correctedAction'>
-interface PreviewLabel {
-  testIndex: number
-  stepIndex: number
-  decisionOrdinal: number
-  sourceCassetteId: string
-  channel: 'user-mark' | 'overturned-verdict'
-  correction?: Record<string, unknown>
-}
-type Preview =
-  | { kind: 'step-not-found'; stepCount: number }
-  | { kind: 'ambiguous-correction'; targets: goldenPlan.GoldenTrajectoryTarget[]; decisionCount: number }
-  | { kind: 'labels'; targets: goldenPlan.GoldenTrajectoryTarget[]; decisionCount: number;
-    groundTruth: Record<string, unknown>[]; labels: PreviewLabel[] }
-interface PreviewApi {
-  previewMarkLabels(input: { handoff: ReturnType<typeof makeArtifactRefV2Handoff>;
-    address: { runId: MarkReceipt['runId']; testIndex: number; testId?: string; stepIndex?: number };
-    mark: LabelIntent }): Preview
-}
-
-function api(): PreviewApi {
-  const entry = goldenPlan as unknown as Partial<PreviewApi>
-  expect(typeof entry.previewMarkLabels, 'golden-plan must export previewMarkLabels').toBe('function')
-  return entry as PreviewApi
+type LabelIntent = goldenPlan.MarkLabelIntent
+function api() {
+  expect(typeof goldenPlan.previewMarkLabels, 'golden-plan must export previewMarkLabels').toBe('function')
+  return goldenPlan
 }
 
 function setup(kind: Kind, stepIndex?: number) {
@@ -125,7 +105,7 @@ describe('423-17 prospective gold labels without persistent identities (D-16)', 
             ...(labelRecord.correction === undefined ? {} : { correction }) }
         }))
         expect(preview.labels.map(label => [label.testIndex, label.stepIndex])).toEqual(plan.goldCassettes.map(
-          ({ cassette }) => [cassette.testIndex, cassette.stepIndex]))
+          ({ cassette }) => [cassette.testIndex, cassette.granularity === 'leaf' ? cassette.stepIndex : undefined]))
       }
       expect(preview.decisionCount).toBe(goldenPlan.markedDecisionCount(handoff, preview.targets))
     }

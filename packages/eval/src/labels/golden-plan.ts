@@ -1,4 +1,4 @@
-import type { CompletedRunHandoff, Mark, MarkAddress, MarkReceipt } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, Mark, MarkAddress, MarkReceipt, VerifierVerdict } from '@vostride/agent-qa-schema'
 import type { ExtractedCassette } from '../extract/extract-run'
 import { deriveGoldCassetteId, deriveLeafCassetteId, deriveRunSlug } from '../extract/ids'
 import { collectStepSelections } from '../extract/select'
@@ -56,6 +56,120 @@ export function markedDecisionCount(handoff: CompletedRunHandoff, targets: reado
   }, 0)
 }
 
+export type MarkGoldChannel = 'user-mark' | 'overturned-verdict'
+export type MarkLabelIntent = Pick<MarkReceipt, 'kind' | 'correctedExpectation' | 'correctedAction'>
+
+/** 2026-09-15, 423 D-16: every marked decision freezes a user-mark label; a false-pass also freezes its overturned verdict. */
+export function markGoldChannels(kind: Mark): MarkGoldChannel[] {
+  return kind === 'false-pass' ? ['user-mark', 'overturned-verdict'] : ['user-mark']
+}
+
+export type MarkLabelTargetResolution =
+  | { kind: 'step-not-found'; stepCount: number }
+  | { kind: 'ambiguous-correction'; targets: GoldenTrajectoryTarget[]; decisionCount: number }
+  | { kind: 'resolved'; targets: GoldenTrajectoryTarget[]; decisionCount: number }
+
+/** The freeze's refusal order: an unresolvable step first, then an executable correction that is not one decision. */
+export function resolveMarkLabelTargets(
+  handoff: CompletedRunHandoff, address: MarkAddress, mark: MarkLabelIntent,
+): MarkLabelTargetResolution {
+  const targets = resolveMarkedDecisions(handoff, address, mark.kind)
+  if ('refusal' in targets) return { kind: 'step-not-found', stepCount: targets.stepCount }
+  const decisionCount = markedDecisionCount(handoff, targets)
+  if (mark.correctedAction !== undefined && decisionCount !== 1) {
+    return { kind: 'ambiguous-correction', targets, decisionCount }
+  }
+  return { kind: 'resolved', targets, decisionCount }
+}
+
+export interface MarkLabelCorrectionPreview {
+  verdict: 'pass' | 'fail'
+  overturnedVerdict: VerifierVerdict
+  correctedExpectation?: string
+  correctedAction?: MarkReceipt['correctedAction']
+}
+
+export interface MarkGroundTruthPreview {
+  testIndex: number
+  stepIndex: number
+  verdict: 'pass' | 'fail'
+  recordedVerdict: VerifierVerdict
+  correctedExpectation?: string
+  correctedAction?: MarkReceipt['correctedAction']
+}
+
+export interface MarkLabelPreviewItem {
+  testIndex: number
+  stepIndex: number
+  decisionOrdinal: number
+  sourceCassetteId: string
+  channel: MarkGoldChannel
+  correction?: MarkLabelCorrectionPreview
+}
+
+export type MarkLabelsPreview =
+  | { kind: 'step-not-found'; stepCount: number }
+  | { kind: 'ambiguous-correction'; targets: GoldenTrajectoryTarget[]; decisionCount: number }
+  | { kind: 'labels'; targets: GoldenTrajectoryTarget[]; decisionCount: number
+    groundTruth: MarkGroundTruthPreview[]; labels: MarkLabelPreviewItem[] }
+
+export interface PreviewMarkLabelsInput {
+  handoff: CompletedRunHandoff
+  address: MarkAddress
+  mark: MarkLabelIntent
+}
+
+function correctionFields(mark: MarkLabelIntent) {
+  return {
+    ...(mark.correctedExpectation === undefined ? {} : { correctedExpectation: mark.correctedExpectation }),
+    ...(mark.correctedAction === undefined ? {} : { correctedAction: mark.correctedAction }),
+  }
+}
+
+function recordedVerdictOf(verdict: VerifierVerdict | undefined): VerifierVerdict {
+  if (verdict === undefined) throw new Error('gold correction requires a recorded verifier verdict')
+  return { ...verdict }
+}
+
+/**
+ * The labels a freeze would write, read from the handoff alone. Leaf source ids are derived
+ * from recorded coordinates; gold ids, mark ids and ordinals are writer-minted and never appear.
+ * A decision whose extracted cassette is missing is skipped by the writer, which this cannot see.
+ */
+export function previewMarkLabels({ handoff, address, mark }: PreviewMarkLabelsInput): MarkLabelsPreview {
+  const resolution = resolveMarkLabelTargets(handoff, address, mark)
+  if (resolution.kind !== 'resolved') return resolution
+  const runSlug = deriveRunSlug(handoff.runId)
+  const groundTruth: MarkGroundTruthPreview[] = []
+  const labels: (MarkLabelPreviewItem & { order: string })[] = []
+  for (const target of resolution.targets) {
+    const handoffTest = handoff.tests.find(member => member.testIndex === target.testIndex)!
+    const step = handoffTest.steps[target.stepIndex]!
+    groundTruth.push({ testIndex: target.testIndex, stepIndex: step.stepIndex,
+      verdict: mark.kind === 'false-fail' ? 'pass' : 'fail', recordedVerdict: recordedVerdictOf(step.verifierVerdict),
+      ...correctionFields(mark) })
+    for (const selection of collectStepSelections({ handoffTest, step }).selections) {
+      const leafId = deriveLeafCassetteId({ runSlug, ...selection })
+      for (const channel of markGoldChannels(mark.kind)) {
+        const overturned = channel === 'overturned-verdict'
+        // Mirrors projectUserMarkLabelRecord / projectOverturnedVerdictLabelRecord correction presence.
+        const corrected = overturned || mark.kind !== 'confirmed-bug'
+          || mark.correctedAction !== undefined || mark.correctedExpectation !== undefined
+        labels.push({ testIndex: target.testIndex, stepIndex: step.stepIndex,
+          decisionOrdinal: selection.decisionOrdinal, sourceCassetteId: leafId, channel,
+          ...(corrected ? { correction: {
+            verdict: !overturned && mark.kind === 'false-fail' ? 'pass' as const : 'fail' as const,
+            overturnedVerdict: recordedVerdictOf(step.verifierVerdict), ...correctionFields(mark) } } : {}),
+          // The writer sorts by gold id; its shared ordinal suffix never changes the relative order.
+          order: overturned ? `${leafId}-overturned-gold` : `${leafId}-gold` })
+      }
+    }
+  }
+  labels.sort((a, b) => a.order < b.order ? -1 : a.order > b.order ? 1 : 0)
+  return { kind: 'labels', targets: resolution.targets, decisionCount: resolution.decisionCount, groundTruth,
+    labels: labels.map(({ order: _, ...label }) => label) }
+}
+
 export interface BuildGoldenTrajectoryPlanInput {
   handoff: CompletedRunHandoff
   cassettes: readonly ExtractedCassette[]
@@ -69,11 +183,12 @@ export interface BuildGoldenTrajectoryPlanInput {
 export function buildGoldenTrajectoryPlan({
   handoff, cassettes, mark, product, supersedes, priorGold,
 }: BuildGoldenTrajectoryPlanInput): GoldenTrajectoryPlan {
-  const targets = resolveMarkedDecisions(handoff, mark, mark.kind)
-  if ('refusal' in targets) throw new Error(`step-not-found: stepCount=${targets.stepCount}`)
-  if (mark.correctedAction !== undefined && markedDecisionCount(handoff, targets) !== 1) {
+  const resolution = resolveMarkLabelTargets(handoff, mark, mark)
+  if (resolution.kind === 'step-not-found') throw new Error(`step-not-found: stepCount=${resolution.stepCount}`)
+  if (resolution.kind === 'ambiguous-correction') {
     throw new Error('ambiguous-correction: executable correction requires exactly one decision')
   }
+  const { targets } = resolution
   const runSlug = deriveRunSlug(handoff.runId)
   const plan: GoldenTrajectoryPlan = {
     product, runId: handoff.runId, runSlug, markId: mark.markId,
@@ -96,10 +211,10 @@ export function buildGoldenTrajectoryPlan({
       if (cassette.runId !== handoff.runId || cassette.testIndex !== target.testIndex || cassette.stepIndex !== step.stepIndex) {
         throw new Error('gold source does not match marked decision')
       }
-      for (const overturned of mark.kind === 'false-pass' ? [false, true] : [false]) {
+      for (const channel of markGoldChannels(mark.kind)) {
+        const overturned = channel === 'overturned-verdict'
         const goldId = deriveGoldCassetteId({ leafCassetteId: overturned ? `${leafId}-overturned` : leafId, markOrdinal: mark.ordinal })
         const gold = { ...cassette, id: goldId }
-        const channel = overturned ? 'overturned-verdict' : 'user-mark'
         const previous = priorGold?.filter(item => item.sourceCassetteId === cassette.id && item.channel === channel)
         if (previous !== undefined && previous.length > 1) throw new Error('ambiguous prior gold generation')
         const input = { cassette, runId: handoff.runId, goldCassetteId: goldId, mark,
