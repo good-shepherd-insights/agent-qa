@@ -23,6 +23,7 @@
 //   testFinished pair).
 
 import type { LanguageModel } from 'ai'
+import type { StepModelScopeFactory, StepModelScopeKey } from './ports.js'
 import { computeToolSchemaDigest } from '@vostride/agent-qa-schema'
 import type { DeclaredModelProfile, MaskingContext } from '@vostride/agent-qa-schema'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
@@ -159,6 +160,8 @@ export interface MemberRunConfig {
   // --- models ---
   plannerModel: LanguageModel
   verifierModel: LanguageModel
+  /** The host closes over resolved model/accounting configuration, never a current-step pointer. */
+  stepModelScope?: { runId: StepModelScopeKey['runId']; create: StepModelScopeFactory }
 
   // --- variable seeds (seeding order preserved: env → inline → suite → cli → hook) ---
   envFileVars?: Record<string, string>
@@ -415,6 +418,9 @@ async function runMemberAttempt(
     }
 
     const stepId = makeId('step')
+    const modelScope = config.stepModelScope?.create({
+      runId: config.stepModelScope.runId, testIndex: config.testIndex, stepIndex,
+    })
     const finalizer = createStepReadFinalizer(config, stepIndex, member.name, toolSchemaDigest)
     // Inline hooks and runJS are already work for this step. Announce it before either can
     // finish, fail, or abort; no step scope exists for a pre-start cancellation/deadline.
@@ -426,7 +432,12 @@ async function runMemberAttempt(
       result.variableSnapshot = Object.fromEntries(Object.entries(variableStore.snapshot()).map(
         ([name, entry]) => [name, { ...entry, value: redactSecretValue(entry.value, config.secretRedactor) }],
       ))
-      finalizer.finish(result)
+      modelScope?.finish()
+      try {
+        finalizer.finish(result)
+      } finally {
+        modelScope?.dispose()
+      }
       steps.push(result)
     }
 
@@ -635,8 +646,8 @@ async function runMemberAttempt(
       testContext: member.context,
       suiteContext: config.suiteContext,
       previousSteps: previousSteps.slice(-(config.plannerConfig?.previousStepCount ?? 5)),
-      plannerModel: config.plannerModel,
-      verifierModel: config.verifierModel,
+      plannerModel: modelScope?.plannerModel ?? config.plannerModel,
+      verifierModel: modelScope?.verifierModel ?? config.verifierModel,
       modelId:
         typeof config.plannerModel === 'object' && config.plannerModel && 'modelId' in config.plannerModel
           ? (config.plannerModel as { modelId: string }).modelId
@@ -655,8 +666,8 @@ async function runMemberAttempt(
     // Assemble the LoopPorts bundle (onPhase retired — the loop never called it).
     const ports: LoopPorts = {
       adapter: config.adapter,
-      planner: config.planner,
-      verifier: config.verifier,
+      planner: modelScope?.planner ?? config.planner,
+      verifier: modelScope ? modelScope.verifier : config.verifier,
       cache: config.cache,
       masking: config.masking,
       modelProfiles: config.modelProfiles,
@@ -832,7 +843,7 @@ async function runMemberAttempt(
       // Capture — via the injected verifier model (createExtractor threads it, Q-2 idiom).
       if (!stepAbortController.signal.aborted && result.status !== 'failed' && typeof stepDef !== 'string' && stepDef.capture) {
         const method = stepDef.capture.method ?? 'ai'
-        const extractor = makeExtractor(config.verifierModel, method)
+        const extractor = makeExtractor(modelScope?.verifierModel ?? config.verifierModel, method)
         try {
           const screenState = await withAbort(config.adapter.observe(), stepAbortController.signal)
           const captureResult = await withAbort(

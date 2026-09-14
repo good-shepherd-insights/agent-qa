@@ -102,12 +102,12 @@ test('USAGE-SCOPE-LIFETIME: member binds canonical indices before calls and disp
     expect(finish).toHaveBeenCalledOnce()
     expect(dispose).not.toHaveBeenCalled()
   })
-  const config: MemberRunConfig & { stepModelScope: { runId: string; create: StepModelScopeFactory } } = {
+  const config: MemberRunConfig = {
     adapter: makeAdapter(), planner: makePlanner(), plannerModel: fakeModel, verifierModel: fakeModel,
     testIndex: 4, abortSignal: new AbortController().signal,
     sink: { stepStarted: vi.fn(), loopEmitFor: () => ({ stepFinalized: terminal, subActionRecorded: vi.fn() }),
       hookStarted: vi.fn(), hookFinished: vi.fn(), testRetryScheduled: vi.fn() },
-    stepModelScope: { runId: 'synthetic-run-423', create },
+    stepModelScope: { runId: 'synthetic-run-423' as StepModelScopeKey['runId'], create },
     executeStep: async (_instruction, ports, context) => {
       expect(ports.planner).toBe(f.scope.planner)
       expect(context.plannerModel).toBe(f.scope.plannerModel)

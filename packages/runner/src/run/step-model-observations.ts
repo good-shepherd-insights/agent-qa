@@ -33,9 +33,21 @@ export function createStepModelScope(options: StepModelScopeOptions): StepModelS
   const attempts: StepModelAttempt[] = []
   let nextInvocation = 0
   let closed = false
+  let finalSnapshot: StepModelSnapshot | undefined
   const safeMask = (text: string) => {
     try { return options.mask(text) } catch { return '[secret]' }
   }
+  const count = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+  const cleanReport = (report: StepModelCallReport): StepModelCallReport => ({
+    ...(count(report.inputTokens) ? { inputTokens: report.inputTokens } : {}),
+    ...(count(report.outputTokens) ? { outputTokens: report.outputTokens } : {}),
+    ...(count(report.inputTokens) && count(report.cachedInputTokens)
+      && report.cachedInputTokens <= report.inputTokens
+      ? { cachedInputTokens: report.cachedInputTokens } : {}),
+    ...(typeof report.respondingModelId === 'string' && report.respondingModelId.length > 0
+      ? { respondingModelId: safeMask(report.respondingModelId) } : {}),
+  })
   function modelFor(role: StepModelAttempt['role'], binding: StepModelBinding): LanguageModel {
     const open = (): Invocation => {
       if (closed) throw new Error('Step model scope is closed')
@@ -51,7 +63,7 @@ export function createStepModelScope(options: StepModelScopeOptions): StepModelS
           attempts.push(active)
         } else if (active) {
           active.kind = event.kind
-          if (event.kind === 'success') active.report = { ...event.report }
+          if (event.kind === 'success') active.report = cleanReport(event.report)
           active = undefined
         }
       } }
@@ -68,6 +80,16 @@ export function createStepModelScope(options: StepModelScopeOptions): StepModelS
     } })
   }
   function snapshot(): StepModelSnapshot {
+    if (finalSnapshot) return structuredClone(finalSnapshot)
+    const total = (field: 'inputTokens' | 'outputTokens' | 'cachedInputTokens') => {
+      if (attempts.length === 0 || attempts.some(item => item.kind !== 'success'
+        || item.report?.[field] === undefined)) return undefined
+      const sum = attempts.reduce((value, item) => value + item.report![field]!, 0)
+      return count(sum) ? sum : undefined
+    }
+    const inputTokens = total('inputTokens')
+    const outputTokens = total('outputTokens')
+    const cachedInputTokens = inputTokens === undefined ? undefined : total('cachedInputTokens')
     const roleFacts = (role: StepModelAttempt['role']) => {
       const declared = options.profiles?.[role]
       return {
@@ -79,13 +101,20 @@ export function createStepModelScope(options: StepModelScopeOptions): StepModelS
       }
     }
     return { ...key, attempts: attempts.map(item => ({ ...item,
-      ...(item.report === undefined ? {} : { report: { ...item.report } }),
+      ...(item.report === undefined ? {} : { report: cleanReport(item.report) }),
     })), started: attempts.length, succeeded: attempts.filter(item => item.kind === 'success').length,
     failed: attempts.filter(item => item.kind === 'failure').length,
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
     roles: { planner: roleFacts('planner'), verifier: roleFacts('verifier') } }
   }
   const models = { plannerModel: modelFor('planner', options.models.planner),
     verifierModel: modelFor('verifier', options.models.verifier) }
   return { key, ...models, ...options.createConsumers(models), snapshot,
-    finish: () => { closed = true; return snapshot() }, dispose: () => { closed = true } }
+    finish: () => {
+      closed = true
+      finalSnapshot ??= snapshot()
+      return snapshot()
+    }, dispose: () => { closed = true } }
 }

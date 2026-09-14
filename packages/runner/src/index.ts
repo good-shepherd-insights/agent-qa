@@ -218,6 +218,12 @@ export type {
   PostVerdictOutcome,
 } from './run/ports.js'
 export { POST_VERDICT_STEP_BUDGET_MS } from './run/ports.js'
+export { createStepModelScope, withStepModelCall } from './run/step-model-observations.js'
+export type {
+  StepModelCallReport, StepModelCallEvent, StepModelObservation, StepModelScopeKey,
+  StepModelRoleFacts, StepModelAttempt, StepModelSnapshot, StepModelConsumers,
+  StepModelScope, StepModelScopeFactory, StepModelBinding, StepModelScopeOptions,
+} from './run/ports.js'
 // Phase 363 D-06 — runner-owned hook contracts + orchestration. The Docker impl
 // (DockerHookExecutor) lives in runner-local behind the HookExecutorPort above.
 export * from './hooks/index.js'
