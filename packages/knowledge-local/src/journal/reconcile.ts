@@ -42,6 +42,12 @@ import {
   type ListedCommitIntent,
 } from './intent-journal.js'
 import { recoverExpiredBundleMutations } from './bundle-mutation.js'
+import {
+  isCurationEffectCommitted,
+  receiptForEffect,
+  writeCurationEffectReceiptWithinCurrentAuthority,
+} from './curation-effect-receipt.js'
+import type { BundleEgressOptions } from '../bundle-egress.js'
 
 export interface ReconcileOnDrainStartHooks {
   /**
@@ -59,6 +65,8 @@ export interface ReconcileOnDrainStartDependencies {
   applyIndexDelta(intent: CommitIntent): void
   deriveIndexRowFromBundle(bundleId: string): void
   hooks?: ReconcileOnDrainStartHooks
+  /** Optional host egress context; old callers use the established default policy. */
+  egress?: BundleEgressOptions
 }
 
 export interface ReconcileReport {
@@ -272,6 +280,33 @@ function reconcileOnDrainStartWithinCurrentAuthority(
     }
 
     const { parsed: intent } = entry
+    if (intent.observation !== undefined) {
+      let committed = 0
+      for (const effect of intent.observation.effects) {
+        if (!isCurationEffectCommitted(deps.knowledgeRoot, intent.candidateId, effect)) continue
+        // The main bundle may have published while its victim/maintenance suffix did not.
+        // Replay only projections of independently verified canonical effects.
+        deps.applyIndexDelta({ ...intent, bundleId: effect.recordId })
+        writeCurationEffectReceiptWithinCurrentAuthority({
+          knowledgeRoot: deps.knowledgeRoot,
+          authority: deps.writerAuthority,
+          ...(deps.egress ?? { auditBaseDir: join(deps.knowledgeRoot, 'memory/queue/audit') }),
+          receipt: receiptForEffect(intent.candidateId, intent.observation, effect),
+        })
+        committed += 1
+      }
+      if (committed < intent.observation.effects.length) {
+        requeueCandidate(deps.knowledgeRoot, intent.candidateId, requeued, deps.writerAuthority)
+      }
+      clearCommitIntent(deps.knowledgeRoot, intent.candidateId)
+      if (committed > 0) {
+        report.intentsReplayed += 1
+        report.intentsCleared += 1
+      } else {
+        report.intentsDiscarded += 1
+      }
+      continue
+    }
     if (!bundles.has(intent.bundleId)) {
       requeueCandidate(
         deps.knowledgeRoot,

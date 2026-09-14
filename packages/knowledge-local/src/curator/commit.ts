@@ -1230,37 +1230,63 @@ export function commitCurationDelta(
             lifecycle: 'committing',
             authored: widenAuthoredDeltaCheckpoint(dispositionCheckpoint),
           })
-          const effect = (recordId: string, product: string, change: CurationEffect['change'], evidenceToken = job.payload.evidenceToken): CurationEffect => ({
+          const effect = (
+            recordId: string,
+            product: string,
+            change: CurationEffect['change'],
+            evidenceToken = job.payload.evidenceToken,
+          ): CurationEffect => ({
             recordId, product, change, evidenceToken, atOrdinal: job.payload.buildOrdinal,
           })
           const publicationChange = (id: string, product: string): 'added' | 'confirmed' => {
             // A resumed publication by this same candidate is still its original Add.
             let existing: LoadedBundle | undefined
             try {
-              const target = resolveProductQualifiedBundleDir({ knowledgeRoot: deps.knowledgeRoot, product, recordId: id })
+              const target = resolveProductQualifiedBundleDir({
+                knowledgeRoot: deps.knowledgeRoot, product, recordId: id,
+              })
               const loaded = loadBundle(target.dir)
               if (loaded.kind === 'loaded') existing = loaded.bundle
             } catch (error) {
-              if (!(error instanceof BundleTargetResolutionError) || error.reason !== 'not-found') throw error
+              if (!(error instanceof BundleTargetResolutionError) || error.reason !== 'not-found') {
+                throw error
+              }
             }
-            return existing === undefined || (existing.provenance.mode === 'run-linked' && existing.provenance.curationJobId === job.candidateId)
+            return existing === undefined || (
+              existing.provenance.mode === 'run-linked'
+              && existing.provenance.curationJobId === job.candidateId
+            )
               ? 'added' : 'confirmed'
           }
           const effects: CurationEffect[] = [effect(bundleId, bundleProduct,
-            draft !== undefined ? publicationChange(bundleId, bundleProduct) : delta.kind === 'Deprecate' ? 'deprecated' : 'confirmed',
+            draft !== undefined
+              ? publicationChange(bundleId, bundleProduct)
+              : delta.kind === 'Deprecate' ? 'deprecated' : 'confirmed',
             delta.kind === 'Confirm' ? delta.evidenceToken : job.payload.evidenceToken,
           )]
           if (delta.kind === 'Supersede') {
-            effects.push({ ...effect(delta.victimId, existingTargets.get(delta.victimId)!.product, 'superseded', delta.evidenceToken), byRecordId: bundleId })
+            effects.push({
+              ...effect(delta.victimId, existingTargets.get(delta.victimId)!.product,
+                'superseded', delta.evidenceToken),
+              byRecordId: bundleId,
+            })
           }
           for (const prepared of preparedUnknownMintIntents) {
             const publication = prepared.publication
-            const id = publication.kind === 'canonical' && 'id' in publication.outcome ? publication.outcome.id : undefined
-            if (id !== undefined) effects.push(effect(id, prepared.intent.scope.key, publicationChange(id, prepared.intent.scope.key)))
+            const id = publication.kind === 'canonical' && 'id' in publication.outcome
+              ? publication.outcome.id : undefined
+            if (id !== undefined) {
+              effects.push(effect(id, prepared.intent.scope.key,
+                publicationChange(id, prepared.intent.scope.key)))
+            }
           }
           for (const resolution of disposed.unknownResolutionIntents ?? []) {
-            effects.push(effect(resolution.targetId, existingTargets.get(resolution.targetId)!.product, 'deprecated',
-              asEvidenceToken(sha256hex(canonicalJson({ token: job.payload.evidenceToken, event: resolution.reason, targetId: resolution.targetId }))),
+            effects.push(effect(resolution.targetId, existingTargets.get(resolution.targetId)!.product,
+              'deprecated', asEvidenceToken(sha256hex(canonicalJson({
+                token: job.payload.evidenceToken,
+                event: resolution.reason,
+                targetId: resolution.targetId,
+              }))),
             ))
           }
           const curationObservation: CurationObservation = {
@@ -1366,7 +1392,7 @@ export function commitCurationDelta(
                   || (disposed.unknownMintIntents?.length ?? 0) > 0
                   || (disposed.unknownResolutionIntents?.length ?? 0) > 0
                 if (!hasDeterministicTail) {
-                  finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+                  finishCommitWithinCurrentAuthority(deps, job, curationObservation, false)
                   return { kind: 'noop', reason: 'evidence-token-consumed' }
                 }
                 confirmedEventDuplicate = true
@@ -1514,7 +1540,7 @@ export function commitCurationDelta(
             }
             if (appended.kind === 'duplicate') {
               if (disposed.measurementAppend === undefined) {
-                finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+                finishCommitWithinCurrentAuthority(deps, job, curationObservation, false)
                 return { kind: 'noop', reason: 'evidence-token-consumed' }
               }
               confirmedEventDuplicate = true
@@ -1640,7 +1666,8 @@ export function commitCurationDelta(
             && (disposed.unknownMintIntents?.length ?? 0) === 0
             && (disposed.unknownResolutionIntents?.length ?? 0) === 0
           if (evidenceTokenConsumed) {
-            finishCommitWithinCurrentAuthority(deps, job, curationObservation)
+            // A completed replay must not rewrite an unchanged FTS projection.
+            finishCommitWithinCurrentAuthority(deps, job, curationObservation, false)
             return { kind: 'noop', reason: 'evidence-token-consumed' }
           }
 
@@ -1689,7 +1716,9 @@ export function commitCurationDelta(
               ...(promotionPath === undefined ? {} : { promotionPath }),
             }
           }
-          if (convertedConfirm) return { kind: 'converted-confirm', ...result }
+          if (convertedConfirm && disposed.kind !== 'downgraded') {
+            return { kind: 'converted-confirm', ...result }
+          }
           return disposed.kind === 'downgraded'
             ? { kind: 'downgraded', reason: disposed.reason, original: disposed.original, ...result }
             : { kind: 'applied', ...result }

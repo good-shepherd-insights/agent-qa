@@ -35,7 +35,10 @@ function temporaryRoot(): string {
   roots.push(root)
   return root
 }
-afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterEach(() => {
+  vi.restoreAllMocks()
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
 
 function commitFixture() {
   const root = temporaryRoot()

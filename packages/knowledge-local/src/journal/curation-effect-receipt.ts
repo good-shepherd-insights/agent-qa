@@ -1,6 +1,9 @@
 /** Durable observations of successful curation effects; never lifecycle or write authority. */
 import { randomUUID } from 'node:crypto'
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync,
+  readdirSync, renameSync, rmSync, writeFileSync,
+} from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 
 import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
@@ -44,7 +47,10 @@ export const curationObservationSchema = z.object({
 export type CurationObservation = z.infer<typeof curationObservationSchema>
 
 export function effectIdentity(candidateId: string, effect: CurationEffect): string {
-  return sha256hex(canonicalJson({ candidateId: digest.parse(candidateId), ...curationEffectSchema.parse(effect) }))
+  return sha256hex(canonicalJson({
+    candidateId: digest.parse(candidateId),
+    ...curationEffectSchema.parse(effect),
+  }))
 }
 
 export const curationEffectReceiptSchema = z.object({
@@ -80,11 +86,16 @@ function parseReceipt(text: string, name: string): CurationEffectReceipt {
 export function listCurationEffectReceipts(knowledgeRoot: string): CurationEffectReceipt[] {
   const dir = receiptRoot(knowledgeRoot)
   let entries
-  try { entries = readdirSync(dir, { withFileTypes: true }) } catch (error) {
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw error
   }
-  return entries.filter((entry) => !entry.name.includes('.tmp-')).sort((a, b) => a.name.localeCompare(b.name)).map((entry) => {
+  return entries
+    .filter((entry) => !entry.name.includes('.tmp-'))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((entry) => {
     if (!entry.isFile() || !/^[0-9a-f]{64}-[0-9a-f]{64}\.json$/.test(entry.name)) {
       throw new TypeError('invalid curation effect receipt')
     }
@@ -99,7 +110,9 @@ export interface WriteCurationEffectReceiptOptions extends BundleEgressOptions {
 }
 
 /** @internal Caller already holds the existing root writer authority section. */
-export function writeCurationEffectReceiptWithinCurrentAuthority(opts: WriteCurationEffectReceiptOptions): void {
+export function writeCurationEffectReceiptWithinCurrentAuthority(
+  opts: WriteCurationEffectReceiptOptions,
+): void {
   const parsed = curationEffectReceiptSchema.safeParse(opts.receipt)
   if (!parsed.success) throw new TypeError('invalid curation effect receipt')
   const row = parsed.data
@@ -107,7 +120,9 @@ export function writeCurationEffectReceiptWithinCurrentAuthority(opts: WriteCura
   const text = `${canonicalJson(row)}\n`
   if (existsSync(file)) {
     const existing = parseReceipt(readFileSync(file, 'utf8'), receiptName(row))
-    if (canonicalJson(existing) !== canonicalJson(row)) throw new TypeError('conflicting curation effect receipt')
+    if (canonicalJson(existing) !== canonicalJson(row)) {
+      throw new TypeError('conflicting curation effect receipt')
+    }
     return
   }
   const checked = checkpointCommittedParts([{ label: 'curation-effect-receipt', text }], opts)
@@ -131,14 +146,22 @@ export function writeCurationEffectReceiptWithinCurrentAuthority(opts: WriteCura
 }
 
 export function writeCurationEffectReceipt(opts: WriteCurationEffectReceiptOptions): void {
-  withCurrentWriterAuthority(opts.knowledgeRoot, opts.authority, () => writeCurationEffectReceiptWithinCurrentAuthority(opts))
+  withCurrentWriterAuthority(opts.knowledgeRoot, opts.authority, () =>
+    writeCurationEffectReceiptWithinCurrentAuthority(opts),
+  )
 }
 
 /** Check actual canonical bytes, never index presence or an intended effect alone. */
-export function isCurationEffectCommitted(knowledgeRoot: string, candidateId: string, effect: CurationEffect): boolean {
+export function isCurationEffectCommitted(
+  knowledgeRoot: string,
+  candidateId: string,
+  effect: CurationEffect,
+): boolean {
   let dir: string
   try {
-    dir = resolveProductQualifiedBundleDir({ knowledgeRoot, product: effect.product, recordId: effect.recordId }).dir
+    dir = resolveProductQualifiedBundleDir({
+      knowledgeRoot, product: effect.product, recordId: effect.recordId,
+    }).dir
   } catch (error) {
     if (error instanceof BundleTargetResolutionError && error.reason === 'not-found') return false
     throw error
@@ -161,7 +184,13 @@ export function isCurationEffectCommitted(knowledgeRoot: string, candidateId: st
 }
 
 /** Shared live/recovery row construction, independent of the recovering writer's epoch. */
-export function receiptForEffect(candidateId: string, observation: CurationObservation, effect: CurationEffect): CurationEffectReceipt {
+export function receiptForEffect(
+  candidateId: string,
+  observation: CurationObservation,
+  effect: CurationEffect,
+): CurationEffectReceipt {
   const { effects: _effects, ...classification } = observation
-  return curationEffectReceiptSchema.parse({ ...classification, candidateId, ...effect, effectId: effectIdentity(candidateId, effect) })
+  return curationEffectReceiptSchema.parse({
+    ...classification, candidateId, ...effect, effectId: effectIdentity(candidateId, effect),
+  })
 }
