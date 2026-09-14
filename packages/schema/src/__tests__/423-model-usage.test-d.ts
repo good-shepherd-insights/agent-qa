@@ -1,6 +1,7 @@
 import { expectTypeOf, test } from 'vitest'
 import { MODEL_USAGE_ROLES, ModelUsageRoleSchema } from '../index'
 import type { ModelUsage, ModelUsageRole, ModelUsageObservations } from '../index'
+import type { ModelTokenUsage, RunDetailStep, StepFinalizedPayload, RunStepTokenUsage } from '../index'
 import type { z } from 'zod'
 
 test('C423-MODEL-ROLES-EXACT: type roles are literally planner and verifier', () => {
@@ -12,4 +13,12 @@ test('C423-MODEL-ROLES-EXACT: type roles are literally planner and verifier', ()
   expectTypeOf<ModelUsageObservations['attempts'][number]['role']>().toEqualTypeOf<Expected>()
   expectTypeOf<Exclude<ModelUsageRole, (typeof MODEL_USAGE_ROLES)[number]>>().toEqualTypeOf<never>()
   expectTypeOf<Exclude<(typeof MODEL_USAGE_ROLES)[number], ModelUsageRole>>().toEqualTypeOf<never>()
+})
+
+test('MODEL-USAGE-OPTIONAL: bus and persisted step share the schema-owned optional contracts', () => {
+  expectTypeOf<StepFinalizedPayload['modelUsage']>().toEqualTypeOf<ModelUsage | undefined>()
+  expectTypeOf<RunDetailStep['modelUsage']>().toEqualTypeOf<ModelUsage | undefined>()
+  expectTypeOf<StepFinalizedPayload['tokenUsage']>().toEqualTypeOf<ModelTokenUsage | undefined>()
+  expectTypeOf<RunStepTokenUsage>().toEqualTypeOf<ModelTokenUsage>()
+  expectTypeOf<RunDetailStep['tokenUsage']>().toEqualTypeOf<ModelTokenUsage | undefined>()
 })

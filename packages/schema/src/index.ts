@@ -143,6 +143,8 @@ export type {
 export { asRunId } from './run/index'
 export { MODEL_USAGE_ROLES, ModelUsageRoleSchema, ModelUsageIdentitySchema, ModelUsageSchema } from './run/model-usage'
 export type { ModelUsageRole, ModelUsage, ModelTokenUsage, ModelUsageObservations } from './run/model-usage'
+export { RunModelSummarySchema } from './functions/runs'
+export type { RunModelSummary } from './functions/runs'
 export {
   EVIDENCE_REF_PREFIXES,
   EvidenceArtifactRefSchema,

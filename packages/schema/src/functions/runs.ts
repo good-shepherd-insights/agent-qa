@@ -21,6 +21,8 @@ import {
 import type { PostProcessingChips, PostProcessingStatus } from '../notification/post-processing-status'
 import { LiveStreamDeclarationSchema } from '../run/live-stream'
 import { RUN_EVENT_TYPES } from '../run/bus-events'
+import { ModelUsageSchema, ModelUsageIdentitySchema } from '../run/model-usage'
+import type { ModelUsage, ModelTokenUsage } from '../run/model-usage'
 import type { RunEventEnvelope, RunEventPayload } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
 import {
@@ -506,11 +508,7 @@ export interface RunDetailMember {
  * `stepFinalized`. A cache hit, a bypass or a provider that reports no usage carries NO
  * `tokenUsage` at all — never a zero, which would be a measurement nobody made.
  */
-export interface RunStepTokenUsage {
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-}
+export interface RunStepTokenUsage extends ModelTokenUsage {}
 
 /** One finalized step, carrying the whole `StepFinalizedPayload` as persisted (D-01). */
 export interface RunDetailStep {
@@ -526,6 +524,7 @@ export interface RunDetailStep {
   durationMs?: number
   error?: string
   tokenUsage?: RunStepTokenUsage
+  modelUsage?: ModelUsage
   /** Capture-time entries; absence on historical rows is normalized by the read op. */
   evidence?: StepEvidenceEntries
   /** Finalized snapshot, with names and values masked by the bus producer. */
@@ -579,7 +578,19 @@ export interface RunTokenTotals {
   promptTokens?: number
   completionTokens?: number
   totalTokens?: number
+  cachedInputTokens?: number
+  cachedMeasuredSteps?: number
+  /** Inclusive input over precisely the steps contributing cachedInputTokens. */
+  cachedInputMeasuredTokens?: number
 }
+
+export const RunModelSummarySchema = z.object({
+  declared: z.array(ModelUsageIdentitySchema.extend({ stepCount: z.number().int().positive() }))
+    .nonempty().optional(),
+  responding: z.array(z.object({ provider: z.string().optional(), modelId: z.string(),
+    stepCount: z.number().int().positive() }).strict()).nonempty().optional(),
+}).strict()
+export type RunModelSummary = z.infer<typeof RunModelSummarySchema>
 
 /**
  * What the run-detail READ PORT answers with — the rows and nothing derived (D-03).
@@ -598,6 +609,7 @@ export interface RunDetailRows {
 /** The `runs.detail` result: the rows plus the D-06 sum, in ONE unpaged answer. */
 export interface RunDetailProjection extends RunDetailRows {
   tokens: RunTokenTotals
+  models?: RunModelSummary
 }
 
 /**
@@ -675,6 +687,7 @@ export const RunStepTokenUsageSchema = z.object({
   promptTokens: z.number().int().nonnegative(),
   completionTokens: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative().optional(),
 }).strict() satisfies z.ZodType<RunStepTokenUsage>
 
 export const RunDetailStepSchema = z.object({
@@ -689,6 +702,7 @@ export const RunDetailStepSchema = z.object({
   durationMs: durationMsSchema.optional(),
   error: z.string().optional(),
   tokenUsage: RunStepTokenUsageSchema.optional(),
+  modelUsage: ModelUsageSchema.optional(),
   evidence: z.strictObject({
     console: EvidenceEntrySchema.and(z.object({ kind: z.literal('console') })),
     network: EvidenceEntrySchema.and(z.object({ kind: z.literal('network') })),
@@ -718,6 +732,9 @@ export const RunTokenTotalsSchema = z.object({
   promptTokens: z.number().int().nonnegative().optional(),
   completionTokens: z.number().int().nonnegative().optional(),
   totalTokens: z.number().int().nonnegative().optional(),
+  cachedInputTokens: z.number().int().nonnegative().optional(),
+  cachedMeasuredSteps: z.number().int().positive().optional(),
+  cachedInputMeasuredTokens: z.number().int().nonnegative().optional(),
 }).strict() satisfies z.ZodType<RunTokenTotals>
 
 export const RunDetailProjectionSchema = z.object({
@@ -726,6 +743,7 @@ export const RunDetailProjectionSchema = z.object({
   steps: z.array(RunDetailStepSchema),
   subActions: z.array(RunDetailSubActionSchema),
   tokens: RunTokenTotalsSchema,
+  models: RunModelSummarySchema.optional(),
 }).strict() satisfies z.ZodType<RunDetailProjection>
 
 /**

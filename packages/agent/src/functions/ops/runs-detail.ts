@@ -27,6 +27,7 @@ import type {
   RunDetailProjection,
   RunDetailStep,
   RunTokenTotals,
+  RunModelSummary,
   RunsDetailInput,
 } from '@vostride/agent-qa-schema'
 
@@ -62,6 +63,9 @@ export function projectRunTokenTotals(steps: readonly RunDetailStep[]): RunToken
   let promptTokens = 0
   let completionTokens = 0
   let totalTokens = 0
+  let cachedInputTokens = 0
+  let cachedMeasuredSteps = 0
+  let cachedInputMeasuredTokens = 0
 
   for (const step of steps) {
     const usage = step.tokenUsage
@@ -70,12 +74,51 @@ export function projectRunTokenTotals(steps: readonly RunDetailStep[]): RunToken
     promptTokens += usage.promptTokens
     completionTokens += usage.completionTokens
     totalTokens += usage.totalTokens
+    if (usage.cachedInputTokens !== undefined) {
+      cachedInputTokens += usage.cachedInputTokens
+      cachedMeasuredSteps += 1
+      cachedInputMeasuredTokens += usage.promptTokens
+    }
   }
 
   return {
     measuredSteps,
     unmeasuredSteps: steps.length - measuredSteps,
     ...(measuredSteps === 0 ? {} : { promptTokens, completionTokens, totalTokens }),
+    ...(cachedMeasuredSteps === 0 ? {} : {
+      cachedInputTokens, cachedMeasuredSteps, cachedInputMeasuredTokens,
+    }),
+  }
+}
+
+/** Fold already-masked persisted identities; calls and configured roles never multiply steps. */
+export function projectRunModelSummary(steps: readonly RunDetailStep[]): RunModelSummary | undefined {
+  type Identity = { provider?: string; modelId: string }
+  const declared = new Map<string, { identity: Identity & { provider: string }; steps: Set<string> }>()
+  const responding = new Map<string, { identity: Identity; steps: Set<string> }>()
+  function add<T extends Identity>(map: Map<string, { identity: T; steps: Set<string> }>,
+    identity: T, step: string) {
+    const key = JSON.stringify([identity.provider, identity.modelId])
+    const entry = map.get(key) ?? { identity, steps: new Set<string>() }
+    entry.steps.add(step)
+    map.set(key, entry)
+  }
+  for (const step of steps) {
+    const stepKey = `${step.testIndex}:${step.stepIndex}`
+    for (const facts of Object.values(step.modelUsage?.roles ?? {})) {
+      if (facts.declared !== undefined) add(declared, facts.declared, stepKey)
+      for (const modelId of facts.respondingModelIds ?? []) {
+        add(responding, { modelId,
+          ...(facts.declared === undefined ? {} : { provider: facts.declared.provider }) }, stepKey)
+      }
+    }
+  }
+  if (declared.size === 0 && responding.size === 0) return undefined
+  return {
+    ...(declared.size === 0 ? {} : { declared: [...declared.values()]
+      .map(entry => ({ ...entry.identity, stepCount: entry.steps.size })) }),
+    ...(responding.size === 0 ? {} : { responding: [...responding.values()]
+      .map(entry => ({ ...entry.identity, stepCount: entry.steps.size })) }),
   }
 }
 
@@ -180,12 +223,14 @@ export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> 
       } : step.evidence,
     }))
 
+    const models = projectRunModelSummary(rows.steps)
     return {
       runId: rows.runId,
       members,
       steps,
       subActions,
       tokens: projectRunTokenTotals(rows.steps),
+      ...(models === undefined ? {} : { models }),
     }
   },
 }
