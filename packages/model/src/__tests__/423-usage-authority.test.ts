@@ -1,10 +1,12 @@
 import { generateText } from 'ai'
+import { APICallError } from '@ai-sdk/provider'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ModelProfile } from '@vostride/agent-qa-schema'
-import { GuardrailBlockError, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
+import { createMaskingContext, GuardrailBlockError, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import { createModel } from '../registry.js'
 import { stubGenerateResult, stubModel } from './stub-model.js'
-import type { ModelCallEvent, ModelCallReport } from '../index.js'
+import { MODEL_CALL_EVENT_KINDS, MODEL_CALL_REPORT_ORIGINS } from '../index.js'
+import type { ModelCallEvent, ModelCallReport, ModelCallReportOrigin } from '../index.js'
 
 // A structural consumer lets RED exercise the existing invocation boundary without
 // a missing-export/type/load failure standing in for the planned behavior.
@@ -109,4 +111,150 @@ it('PRE-DISPATCH-REFUSAL does not start or complete an observed call', async () 
   expect(events).toEqual([])
   expect(fetch).not.toHaveBeenCalled()
   expect(observation.onProviderCall).not.toHaveBeenCalled()
+})
+
+function custom(result = stubGenerateResult(), origin?: ModelCallReportOrigin,
+  onCall?: (event: ModelCallEvent) => void) {
+  const events: ModelCallEvent[] = []
+  const base = stubModel({ modelId: declared, generate: async () => result })
+  const model = createModel(profile('openai-compatible'), { kind: 'none' }, {
+    languageModels: { [declared]: base }, providerReportOrigin: origin,
+  }, { onCall: event => { events.push(event); onCall?.(event) } })
+  return { base, model, events }
+}
+
+it('C423-OBSERVATION-EXACT independently pins event and trusted-origin lists', () => {
+  expect(MODEL_CALL_EVENT_KINDS).toEqual(['start', 'success', 'failure'])
+  expect(MODEL_CALL_REPORT_ORIGINS).toEqual([
+    'openai-chat', 'openai-responses', 'anthropic-messages', 'gemini',
+  ])
+})
+
+it('USAGE-RETRY-FAILURE records each failed attempt then success with one report', async () => {
+  const { base, model, events } = custom()
+  let attempts = 0
+  base.doGenerate = async () => {
+    if (++attempts === 1) throw new APICallError({ message: 'temporary',
+      url: 'https://fixture.invalid', requestBodyValues: {}, statusCode: 503,
+      responseHeaders: { 'retry-after-ms': '0' }, isRetryable: true })
+    return stubGenerateResult()
+  }
+  await model.doGenerate({ prompt: [] })
+  expect(attempts).toBe(2)
+  expect(events.map(event => event.kind)).toEqual(['start', 'failure', 'start', 'success'])
+  expect(events.filter(event => 'report' in event)).toHaveLength(1)
+})
+
+it('USAGE-RETRY-FAILURE clamp retry dispatches once for each attempted budget', async () => {
+  const { base, model, events } = custom()
+  const caps: (number | undefined)[] = []
+  base.doGenerate = async params => {
+    caps.push(params.maxOutputTokens)
+    if (caps.length === 1) throw new APICallError({
+      message: "This model's maximum context length is 32768 tokens. However, you requested 40000 tokens",
+      url: 'https://fixture.invalid', requestBodyValues: {}, statusCode: 400, isRetryable: false,
+    })
+    return stubGenerateResult()
+  }
+  await expect(model.doGenerate({ prompt: [], maxOutputTokens: 40000 })).rejects.toBeInstanceOf(APICallError)
+  await model.doGenerate({ prompt: [], maxOutputTokens: 1000 })
+  expect(caps).toEqual([40000, 1000])
+  expect(events.map(event => event.kind)).toEqual(['start', 'failure', 'start', 'success'])
+})
+
+it.each(transports)('INPUT-DENOMINATOR %s remains inclusive on the same call', async provider => {
+  const { raw, events } = transportModel(provider, 30)
+  const result = await raw.doGenerate({ prompt: [] })
+  expect(result.usage.inputTokens.total).toBe(100)
+  expect(events[1]?.report).toMatchObject({ inputTokens: 100, outputTokens: 7, cachedInputTokens: 30 })
+  expect(events[1]?.report).not.toHaveProperty('cacheWriteTokens')
+})
+
+it.each([undefined, null, -1, 1.5, NaN, Infinity, '3'])('USAGE-MALFORMED raw cache %s stays absent', async cache => {
+  const result = stubGenerateResult()
+  // JSON-null and deliberately malformed custom provider values are untrusted input.
+  result.usage.raw = { prompt_tokens_details: { cached_tokens: cache } }
+  result.usage.inputTokens.cacheRead = 0
+  const { model, events } = custom(result, 'openai-chat')
+  await model.doGenerate({ prompt: [] })
+  expect(events[1]).toEqual({ kind: 'success', report: { inputTokens: 0, outputTokens: 0 } })
+})
+
+it('CUSTOM-UNKNOWN ignores spoofed provider names and model/usage metadata without trusted origin', async () => {
+  const result = stubGenerateResult()
+  result.response = { modelId: declared }
+  result.usage.raw = { prompt_tokens_details: { cached_tokens: 30 } }
+  const unknown = custom(result)
+  unknown.base.provider = 'openai.chat'
+  await unknown.model.doGenerate({ prompt: [] })
+  expect(unknown.events[1]).toEqual({ kind: 'success', report: { inputTokens: 0, outputTokens: 0 } })
+  const trusted = custom(result, 'openai-chat')
+  await trusted.model.doGenerate({ prompt: [] })
+  expect(trusted.events[1]).toEqual({ kind: 'success', report: {
+    inputTokens: 0, outputTokens: 0, cachedInputTokens: 30, respondingModelId: declared,
+  } })
+})
+
+it.each(['openai-responses', 'anthropic-messages'] as const)(
+  'MODEL-SDK-FALLBACK subscription %s missing usage/model stays absent', async origin => {
+    const result = stubGenerateResult([{ type: 'text', text: 'ok' }])
+    result.usage = { inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+      outputTokens: { total: undefined, text: undefined, reasoning: undefined } }
+    const { model, events } = custom(result, origin)
+    const generated = await generateText({ model, prompt: 'hello', maxRetries: 0 })
+    expect(generated.response.modelId).toBe(declared)
+    expect(events[1]).toEqual({ kind: 'success', report: {} })
+  },
+)
+
+it('OBSERVER-NONINTERFERENCE preserves successful result and original failure for throwing callbacks', async () => {
+  const result = stubGenerateResult([{ type: 'text', text: 'ok' }])
+  const { base, model, events } = custom(result, undefined, () => { throw new Error('observer') })
+  expect(await model.doGenerate({ prompt: [] })).toEqual(result)
+  const failure = new Error('original provider failure')
+  base.doGenerate = () => { throw failure }
+  await expect(model.doGenerate({ prompt: [] })).rejects.toBe(failure)
+  expect(events.map(event => event.kind)).toEqual(['start', 'success', 'start', 'failure'])
+  expect(JSON.stringify(events)).not.toContain('original provider failure')
+})
+
+it('OBSERVER-NONINTERFERENCE stream dispatch failure emits failure and preserves error', async () => {
+  const { base, model, events } = custom()
+  const failure = new Error('original stream failure')
+  base.doStream = () => { throw failure }
+  await expect(model.doStream({ prompt: [] })).rejects.toBe(failure)
+  expect(events).toEqual([{ kind: 'start' }, { kind: 'failure' }])
+})
+
+it('OBSERVER-NONINTERFERENCE stream success preserves chunks and reports completed usage', async () => {
+  const { base, model, events } = custom(undefined, 'openai-chat', () => { throw new Error('observer') })
+  const usage = stubGenerateResult().usage
+  usage.raw = { prompt_tokens_details: { cached_tokens: 0 } }
+  const chunks = [
+    { type: 'response-metadata' as const, modelId: declared },
+    { type: 'text-start' as const, id: 'text' },
+    { type: 'text-delta' as const, id: 'text', delta: 'ok' },
+    { type: 'text-end' as const, id: 'text' },
+    { type: 'finish' as const, finishReason: { unified: 'stop' as const, raw: 'stop' }, usage },
+  ]
+  base.doStream = async () => ({ stream: new ReadableStream({ start(controller) {
+    chunks.forEach(chunk => controller.enqueue(chunk)); controller.close()
+  } }) })
+  const result = await model.doStream({ prompt: [] })
+  const received = []
+  for await (const chunk of result.stream) received.push(chunk)
+  expect(received).toEqual(chunks)
+  expect(events).toEqual([{ kind: 'start' }, { kind: 'success', report: {
+    inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, respondingModelId: declared,
+  } }])
+})
+
+it('MODEL-REPORTED crosses the live masking context before observation', async () => {
+  const masking = createMaskingContext()
+  masking.register('private-model-name')
+  const { raw, events } = transportModel('openai-compatible', 0, 'private-model-name')
+  setActiveMaskingContextResolver(() => masking)
+  await raw.doGenerate({ prompt: [] })
+  expect(events[1]?.report?.respondingModelId).toBe('<SECRET_0>')
+  expect(JSON.stringify(events)).not.toContain('private-model-name')
 })
