@@ -826,9 +826,9 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       // path is composed from THIS fixture project's own runtime root, this run's slug and the sha
       // the verdict cited, and it is asserted to be inside the project before anything is removed
       // (T-406-28). One blob, in a directory the teardown deletes wholesale a moment later.
-      const sha = recorded.blobsOnDisk[0]
+      const sha = recorded.analysisBefore?.verdicts?.[0]?.evidence?.citedArtifacts?.[0]?.sha
       if (sha === undefined) {
-        recorded.deletionFailure = 'the run wrote no evidence blob to delete'
+        recorded.deletionFailure = 'the authored verdict cited no evidence blob to delete'
       } else {
         const blobPath = join(blobsDir, sha)
         if (!blobPath.startsWith(project.root)) {
@@ -1085,7 +1085,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
 
   it('(1c) the links: the cited screenshot is a real button, nothing is incomplete, and the pane fetched its bytes', () => {
     const page = harvestOf('before')
-    const sha = recorded.blobsOnDisk[0]
+    const sha = recorded.analysisBefore?.verdicts?.[0]?.evidence?.citedArtifacts?.[0]?.sha
     expect(
       page.citedArtifacts,
       'the cited artifact is not a clickable affordance on the page. The bytes are present, so the '

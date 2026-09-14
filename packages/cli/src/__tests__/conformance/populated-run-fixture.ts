@@ -88,13 +88,13 @@
 
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
 import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import { chromium } from 'playwright-core'
-import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 import { RUN_SERVICE_ANCHORED_BUILDS, trackTempRoot } from './spawned-chat.js'
 import type { SpawnedDashboard } from './spawned-chat.js'
@@ -438,8 +438,8 @@ export interface StubModelServer extends FixtureServer {
    * A SETTER RATHER THAN AN OPTION because the ordering forces it: the stub must be listening
    * before the project is minted (the project's config names the stub's port), so the root does
    * not exist at `startStubModelServer` time. Unset — or set to a root with no
-   * `runs/<slug>/blobs/` — the answer cites nothing, which is the honest empty `citedArtifacts`
-   * the validator also accepts.
+   * recorded decision screenshot with bytes in `runs/<slug>/blobs/` — the answer cites nothing,
+   * which is the honest empty `citedArtifacts` the validator also accepts.
    */
   citeEvidenceFrom(agentQaRoot: string): void
 }
@@ -616,12 +616,13 @@ export const POPULATED_ANALYSIS_NEXT_ACTION =
 const BLOB_SHA_RE = /^[0-9a-f]{64}$/u
 
 /**
- * Every decision-screenshot sha this project's ONE run wrote, read off disk at answer time.
+ * Every recorded decision-screenshot ref this project's ONE run wrote, read at answer time.
  *
  * READ LATE, NEVER CACHED. The blobs are written by the run the cell is currently driving, so a
  * value captured when the root was registered would always be empty. Absent directories answer
  * `[]` rather than throwing: a stub that threw here would hang the run instead of failing it, and
- * an empty `citedArtifacts` is a shape the validator accepts.
+ * an empty `citedArtifacts` is a shape the validator accepts. The blob directory also contains
+ * JSON evidence, so the handoff's typed screenshot refs own selection, never directory order.
  */
 function decisionScreenshotRefs(agentQaRoot: string | undefined): { id: string; sha: string }[] {
   if (agentQaRoot === undefined) return []
@@ -631,9 +632,23 @@ function decisionScreenshotRefs(agentQaRoot: string | undefined): { id: string; 
       entry.isDirectory(),
     )
     if (runDir === undefined) return []
-    return readdirSync(join(runsRoot, runDir.name, 'blobs'))
-      .filter((name) => BLOB_SHA_RE.test(name))
-      .map((sha) => ({ id: `decision-screenshot:${sha}`, sha }))
+    const dir = join(runsRoot, runDir.name)
+    const blobShas = new Set(readdirSync(join(dir, 'blobs'))
+      .filter((name) => BLOB_SHA_RE.test(name)))
+    const handoff = JSON.parse(readFileSync(join(dir, 'handoff.json'), 'utf8')) as CompletedRunHandoff
+    const refs = new Map<string, { id: string; sha: string }>()
+    for (const test of handoff.tests) {
+      for (const step of test.steps) {
+        for (const subAction of step.subActions) {
+          const ref = subAction.decisionScreenshotRef
+          if (ref !== undefined && BLOB_SHA_RE.test(ref.sha)
+            && ref.id === `decision-screenshot:${ref.sha}` && blobShas.has(ref.sha)) {
+            refs.set(ref.sha, { id: ref.id, sha: ref.sha })
+          }
+        }
+      }
+    }
+    return [...refs.values()]
   } catch {
     return []
   }
