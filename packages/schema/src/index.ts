@@ -142,6 +142,37 @@ export type {
 // 314 async-seam
 export { asRunId } from './run/index'
 export {
+  EVIDENCE_REF_PREFIXES,
+  EvidenceArtifactRefSchema,
+} from './ids/artifact-ref'
+export type { EvidenceRefPrefix, EvidenceArtifactRef } from './ids/artifact-ref'
+export {
+  EVIDENCE_KINDS,
+  EVIDENCE_ABSENCE_REASONS,
+  EvidenceKindSchema,
+  EvidenceAbsenceReasonSchema,
+  EvidenceDocumentSchema,
+  EvidenceEntrySchema,
+  ConsoleEvidenceRecordSchema,
+  NetworkEvidenceRecordSchema,
+  A11yEvidenceRecordSchema,
+  ConsoleEvidenceDocumentSchema,
+  NetworkEvidenceDocumentSchema,
+  A11yEvidenceDocumentSchema,
+  AriaEvidenceDocumentSchema,
+  VariablesEvidenceDocumentSchema,
+  VariableSnapshotSchema,
+} from './run/evidence'
+export type {
+  EvidenceKind,
+  EvidenceAbsenceReason,
+  EvidenceDocument,
+  EvidenceEntry,
+  AriaEvidenceEntry,
+  StepEvidenceEntries,
+  VariableSnapshot,
+} from './run/evidence'
+export {
   BUNDLE_ID_HASH_SUFFIX_LENGTH,
   BUNDLE_SLUG_MAX_LENGTH,
   asRecordId,
