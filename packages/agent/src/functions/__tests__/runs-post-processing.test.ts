@@ -74,7 +74,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
       verdictSummary: { total: 0, byClass: {} },
       stages: { analysis: { status: 'done' as const }, curation: { status: 'done' as const,
         curationSnapshot: recorded } },
-    }
+    } satisfies RunNotification
     const before = JSON.stringify(notification)
     const result = await read({ notification })
     expect(JSON.stringify(result)).not.toContain('synthetic-snapshot-secret')
@@ -97,7 +97,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
     const notification = { schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
       runId: RUN_ID, outcome: 'done' as const, verdictSummary: { total: 0, byClass: {} },
       stages: { analysis: { status: 'done' as const },
-        curation: { status: 'done' as const, curationSnapshot: recorded } } }
+        curation: { status: 'done' as const, curationSnapshot: recorded } } } satisfies RunNotification
     const before = JSON.stringify(notification)
     await expect(read({ notification })).rejects.toMatchObject({ name: 'ZodError' })
     expect(JSON.stringify(notification)).toBe(before)

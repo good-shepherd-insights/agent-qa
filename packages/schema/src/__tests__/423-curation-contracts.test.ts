@@ -57,7 +57,6 @@ function notification(version: number, curationSnapshot?: unknown) {
       analysis: { status: 'done' },
       curation: { status: 'done', curated: 17, deprecated: 9,
         ...(curationSnapshot === undefined ? {} : { curationSnapshot }) },
-      ...(version === 1 ? { issues: { status: 'reserved' } } : {}),
       ...(version >= 3 ? { proposals: { status: 'done', proposed: 23, skipped: 4 } } : {}),
     },
   }

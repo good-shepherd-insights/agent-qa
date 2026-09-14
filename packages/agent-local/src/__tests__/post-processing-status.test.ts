@@ -759,7 +759,7 @@ describe('a row another build wrote still reads, through the op (D-01, Pitfall 7
       expect(notification).toBeDefined()
       // 2026-09-11 (422 D-13): the walk is two steps long now, and the row this cell stores was
       // written by a build three versions back. The end of the walk moved; the claim did not.
-      expect(notification!.schemaVersion).toBe(3)
+      expect(notification!.schemaVersion).toBe(4)
       // Set-equality on the keys: the placeholder must be GONE from what a surface receives, not
       // merely unrendered by the surfaces that happen to exist today.
       //

@@ -69,7 +69,7 @@ function row(status: JobStatus, claimed = false): PostProcessingJobRow {
 }
 
 const NOTIFICATION: RunNotification = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   runId: RUN_ID,
   outcome: 'done',
   verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },

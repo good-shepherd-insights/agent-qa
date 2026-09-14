@@ -49,6 +49,7 @@ import {
   errorTextOf,
   failingStepOf,
   MisdirectionRecordResultSchema,
+  RunNotificationSchemaError,
   sha256hex,
   slugBranch,
   validateAnalysisAgainstHandoff,
@@ -530,6 +531,7 @@ export interface ProposeImprovementsUpstream {
     readonly curated?: number
     readonly deprecated?: number
     readonly complete?: true
+    readonly curationSnapshot?: CurationSnapshot
   }
 }
 
@@ -570,10 +572,17 @@ export function readProposeImprovementsPayload(
   const upstreamSource = asRecord(record.upstream)
   const curationSource = asRecord(upstreamSource.curation)
   const summary = asRecord(upstreamSource.verdictSummary)
+  const snapshot = curationSource.curationSnapshot === undefined
+    ? undefined
+    : CurationSnapshotSchema.safeParse(curationSource.curationSnapshot)
+  if (snapshot !== undefined && !snapshot.success) {
+    throw new RunNotificationSchemaError('its curation snapshot is invalid')
+  }
   const curation = {
     ...(isCount(curationSource.curated) ? { curated: curationSource.curated } : {}),
     ...(isCount(curationSource.deprecated) ? { deprecated: curationSource.deprecated } : {}),
     ...(curationSource.complete === true ? { complete: true as const } : {}),
+    ...(snapshot?.success ? { curationSnapshot: snapshot.data } : {}),
   }
 
   return {
@@ -1142,13 +1151,16 @@ function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandl
           + 'under its declared bound',
       }
     }
+    const curationSnapshot = counts.snapshot === undefined
+      ? undefined
+      : CurationSnapshotSchema.parse(counts.snapshot)
     await context.publishCheckpoint('bundle-committed', {
       runId: record.runId,
       curated: counts.curated,
       deprecated: counts.deprecated,
-      ...(counts.snapshot === undefined
+      ...(curationSnapshot === undefined
         ? {}
-        : { curationSnapshot: CurationSnapshotSchema.parse(counts.snapshot) }),
+        : { curationSnapshot }),
     })
     // 422 D-13. The successor is produced for EVERY completed fold, including one that curated
     // nothing: zero work is still work that finished, and a successor gated on the counts would
@@ -1188,6 +1200,7 @@ function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandl
                 curated: counts.curated,
                 deprecated: counts.deprecated,
                 complete: true,
+                ...(curationSnapshot === undefined ? {} : { curationSnapshot }),
               },
             },
           },

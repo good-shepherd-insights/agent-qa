@@ -54,7 +54,7 @@ const EXPECTED_FIELD_KEYS = 'outcome,runId,schemaVersion,stages,verdictSummary'
 /** A complete, current-shape record. Assembled field by field rather than projected. */
 function currentRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     runId: 'run-422-22',
     outcome: 'done',
     verdictSummary: { total: 2, byClass: { unknown: 1, timeout: 1 } },
@@ -68,21 +68,21 @@ function currentRecord(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('422-22 the notification version', () => {
-  it('is exactly 3, and is what the guard hands back for every readable row', () => {
-    expect(CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION).toBe(3)
-    expect(guardRunNotification(currentRecord()).schemaVersion).toBe(3)
+  it('is exactly 4, and is what the guard hands back for every readable row', () => {
+    expect(CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION).toBe(4)
+    expect(guardRunNotification(currentRecord()).schemaVersion).toBe(4)
   })
 
   it('declares one migration step per version below the current one', () => {
     // A step per SOURCE version, keyed by that version: a missing step would break the walk
     // silently (the loop stops) and a row stamped older than the ladder reaches would then be
     // refused for the wrong reason.
-    expect(Object.keys(RUN_NOTIFICATION_MIGRATIONS).sort()).toEqual(['1', '2'])
+    expect(Object.keys(RUN_NOTIFICATION_MIGRATIONS).sort()).toEqual(['1', '2', '3'])
   })
 
   it('REFUSES a row stamped newer than this build reads', () => {
     // Guessing at a later contract is how a reader renders a field it does not understand.
-    expect(() => guardRunNotification(currentRecord({ schemaVersion: 4 }))).toThrow(
+    expect(() => guardRunNotification(currentRecord({ schemaVersion: 5 }))).toThrow(
       RunNotificationSchemaError,
     )
   })
@@ -153,7 +153,7 @@ describe('422-22 the notification vocabularies', () => {
 })
 
 describe('422-22 historical absence is a representation, not an invented stage', () => {
-  it('walks a v1 row to v3 with NO proposal stage and no third-stage claim', () => {
+  it('walks a v1 row to v4 with NO proposal stage and no third-stage claim', () => {
     const v1 = {
       schemaVersion: 1,
       runId: 'run-legacy-1',
@@ -168,13 +168,13 @@ describe('422-22 historical absence is a representation, not an invented stage',
     // MIGRATED, never accepted as it stands: a v1 document that came out still stamped 1 would
     // mean the walk never ran, and the shape check downstream would then be checking v1 bytes
     // against a v3 contract.
-    expect(migrated.schemaVersion).toBe(3)
+    expect(migrated.schemaVersion).toBe(4)
     expect(Object.keys(migrated.stages).sort()).toEqual(['analysis', 'curation'])
     expect('proposals' in migrated.stages).toBe(false)
     expect(migrated.stages.proposals).toBeUndefined()
   })
 
-  it('walks a v2 row to v3 and does NOT accept it as a v2 document', () => {
+  it('walks a v2 row to v4 and does NOT accept it as a v2 document', () => {
     const v2 = {
       schemaVersion: 2,
       runId: 'run-legacy-2',

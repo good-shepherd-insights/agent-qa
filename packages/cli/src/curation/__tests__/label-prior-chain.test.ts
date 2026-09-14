@@ -20,7 +20,7 @@ afterEach(() => { vi.clearAllMocks(); for (const root of roots.splice(0)) rmSync
 const disclosure: TrustPriorDisclosure = { status: 'calibrated', digest: 'a'.repeat(64), nByOrigin: { 'agent-verified': 20, 'agent-observed': 25 } }
 const priorText = (digest: string, observed = 25) => `trust priors: calibrated@${digest} (agent-verified n=20, agent-observed n=${observed})`
 function notification(outcome: 'done' | 'failed' = 'done'): RunNotification {
-  return { schemaVersion: 3, runId: 'fixture-run', outcome, verdictSummary: { total: 3, byClass: { app_bug: 3 } },
+  return { schemaVersion: 4, runId: 'fixture-run', outcome, verdictSummary: { total: 3, byClass: { app_bug: 3 } },
     stages: { analysis: { status: 'done' }, curation: { status: outcome, curated: 2, deprecated: 1 } } } as RunNotification
 }
 it.each(['done', 'failed'] as const)('renders exact cached priors on %s terminal without changing counts', outcome => {

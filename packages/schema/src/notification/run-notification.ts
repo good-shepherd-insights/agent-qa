@@ -6,11 +6,11 @@
 // consumer would be re-derived by the second, and the two spellings would drift on the first
 // field either of them wanted.
 //
-// What it deliberately does NOT carry (D-11; 385 D-01): no masked content, no rationale
+// What it deliberately does NOT carry (D-11; 385 D-01): no record content, no rationale
 // prose, no artifact bytes, no `agentqa://` refs. Counts, verdict classes and identifiers
-// only. The reason is not size — it is that this row is read by surfaces that render it
-// directly, and a payload that could carry a secret would need a masking boundary of its own
-// at every one of them. Later surfaces resolve `runId` into an entity card at render time.
+// only. Version 4 adds fixed curation event identities, which may contain unconstrained
+// strings. Public reads mask that snapshot through the same strict projection as the
+// early checkpoint snapshot; durable bytes remain the exact committed facts.
 //
 // `outcome` is a fact about the CHAIN, not about the run: a failed run whose analysis and
 // curation both succeeded notifies `done`. The run's own verdict is the exit code, frozen
@@ -18,6 +18,8 @@
 // a second, later, quieter answer to a question already answered.
 
 import type { Verdict } from '../verdict/verdict'
+import { CurationSnapshotSchema } from './curation-snapshot'
+import type { CurationSnapshot } from './curation-snapshot'
 
 /**
  * Stamped into every record and checked on every read.
@@ -26,7 +28,7 @@ import type { Verdict } from '../verdict/verdict'
  * last version's shape then fails to typecheck at its construction site, which is where the
  * mistake is, instead of at the reader that could only report it as corrupt bytes.
  */
-export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 3
+export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 4
 
 /** Whether the chain as a whole finished clean. Every stage done ⇒ `done` (D-12). */
 export type RunNotificationOutcome = 'done' | 'failed'
@@ -111,6 +113,8 @@ export interface RunNotificationStages {
     status: RunNotificationStageStatus
     curated?: number
     deprecated?: number
+    /** Exact bundle-committed facts. Missing on historical or uncommitted curation. */
+    curationSnapshot?: CurationSnapshot
   }
   /**
    * The adversarial proposal stage (422 D-13). ABSENT means NOT RECORDED — see the interface
@@ -237,6 +241,8 @@ export const RUN_NOTIFICATION_MIGRATIONS: Record<number, (doc: unknown) => unkno
       },
     }
   },
+  /** v3 → v4 (423 D-15): preserve the old record without inventing a snapshot. */
+  3: (doc) => ({ ...(isRecord(doc) ? doc : {}), schemaVersion: 4 }),
 }
 
 /**
@@ -333,6 +339,11 @@ export function guardRunNotification(value: unknown): RunNotification {
   }
   if ('deprecated' in curation && !isCount(curation.deprecated)) {
     throw new RunNotificationSchemaError('its deprecated count is not a count')
+  }
+  if ('curationSnapshot' in curation &&
+    !CurationSnapshotSchema.safeParse(curation.curationSnapshot).success) {
+    // Never include untrusted snapshot keys or identity values in diagnostics.
+    throw new RunNotificationSchemaError('its curation snapshot is invalid')
   }
 
   // Checked only when PRESENT, and then checked in full (422 D-13). An absent stage is the

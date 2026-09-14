@@ -349,7 +349,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     expect(notifications).toHaveLength(1)
     expect(notifications[0]?.runId).toBe(RUN_ID)
     expect(notifications[0]?.payload).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       runId: RUN_ID,
       outcome: 'done',
       verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },

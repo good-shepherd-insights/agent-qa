@@ -17,7 +17,9 @@
 // review.
 
 import type { JobId, JobKind, RunNotification, Verdict } from '@vostride/agent-qa-schema'
-import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, CurationSnapshotSchema, RunNotificationSchemaError,
+} from '@vostride/agent-qa-schema'
 
 import type { JobIdSource } from './engine.js'
 
@@ -209,6 +211,12 @@ export function buildChainTerminalNotification(
     : asRecord(input.publishedValues.get('bundle-committed'))
   const curationSucceeded =
     proposalTerminal || (input.finishingKind === 'curate-memory' && input.finished === 'done')
+  const snapshot = curationSucceeded && committed.curationSnapshot !== undefined
+    ? CurationSnapshotSchema.safeParse(committed.curationSnapshot)
+    : undefined
+  if (snapshot !== undefined && !snapshot.success) {
+    throw new RunNotificationSchemaError('its curation snapshot is invalid')
+  }
   const curation: RunNotification['stages']['curation'] = curationSucceeded
     ? {
         status: 'done',
@@ -216,6 +224,7 @@ export function buildChainTerminalNotification(
         // there would claim it curated nothing, which is a different sentence.
         ...(isCount(committed.curated) ? { curated: committed.curated } : {}),
         ...(isCount(committed.deprecated) ? { deprecated: committed.deprecated } : {}),
+        ...(snapshot?.success ? { curationSnapshot: snapshot.data } : {}),
       }
     : { status: 'failed' }
 

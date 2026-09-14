@@ -387,7 +387,7 @@ describe('isPostProcessingTerminal', () => {
     const withRow: PostProcessingStatus = {
       ...chips('pending', 'pending'),
       notification: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         runId: RUN_ID,
         outcome: 'done',
         verdictSummary: { total: 0, byClass: {} },

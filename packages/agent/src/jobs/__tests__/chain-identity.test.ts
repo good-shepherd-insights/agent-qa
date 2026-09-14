@@ -316,6 +316,12 @@ describe('423 fixed notification snapshot', () => {
 
   it('NOTIFICATION-COPY: a present invalid snapshot fails generically rather than disappearing', () => {
     const bad = { ...committedSnapshot(), syntheticSecretKey: true }
+    expect(() => readProposeImprovementsPayload({ runId: RUN_ID,
+      upstream: { curation: { curationSnapshot: bad } } })).toThrow(/curation snapshot/)
+    try { readProposeImprovementsPayload({ runId: RUN_ID,
+      upstream: { curation: { curationSnapshot: bad } } }) } catch (error) {
+      expect(String(error)).not.toContain('syntheticSecretKey')
+    }
     expect(() => buildChainTerminalNotification({ runId: RUN_ID,
       finishingKind: 'curate-memory', finished: 'done', payload: {},
       publishedValues: new Map([['bundle-committed', { curationSnapshot: bad }]]) }))

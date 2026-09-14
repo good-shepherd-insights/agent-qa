@@ -55,7 +55,7 @@ function notification(
   outcome: RunNotification['outcome'] = 'done',
 ): RunNotification {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     runId: 'fixture-run',
     outcome,
     verdictSummary: { total: 1, byClass: { app_bug: 1 } },

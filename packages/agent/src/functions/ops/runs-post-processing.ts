@@ -217,6 +217,20 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
     const curationSnapshot = state?.curationSnapshot === undefined
       ? undefined
       : projectCurationSnapshot(state.curationSnapshot, mask)
+    const recordedNotification = state?.notification
+    const nestedSnapshot = recordedNotification?.stages.curation.curationSnapshot
+    const notification = recordedNotification === undefined || nestedSnapshot === undefined
+      ? recordedNotification
+      : {
+          ...recordedNotification,
+          stages: {
+            ...recordedNotification.stages,
+            curation: {
+              ...recordedNotification.stages.curation,
+              curationSnapshot: projectCurationSnapshot(nestedSnapshot, mask),
+            },
+          },
+        }
 
     return {
       runId,
@@ -226,7 +240,7 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
       // Absence is spread away rather than padded (the `runs-get.ts` idiom): a chain in flight
       // has no record yet, and a rendered `null` would be a second spelling of what a missing
       // key already says.
-      ...(state?.notification === undefined ? {} : { notification: state.notification }),
+      ...(notification === undefined ? {} : { notification }),
     }
   },
 }
