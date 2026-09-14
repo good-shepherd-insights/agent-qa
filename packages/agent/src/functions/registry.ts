@@ -59,6 +59,7 @@ import { runsLiveUrlSpec } from './ops/runs-live-url.js'
 import { runsDigestSpec } from './ops/runs-digest.js'
 import { runsArtifactSpec } from './ops/runs-artifact.js'
 import { runsDetailSpec } from './ops/runs-detail.js'
+import { RUNS_EVIDENCE_FUNCTION_ID, runsEvidenceSpec } from './ops/runs-evidence.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsKnowledgeSpec } from './ops/runs-knowledge.js'
 import { runsListSpec } from './ops/runs-list.js'
@@ -126,6 +127,8 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // OPTIONAL `runDetail` dep, so a host that owns no dashboard projection database lists it
   // `unbound` BY NAME instead of answering an empty run about a projection it cannot see.
   runsDetailSpec as FunctionSpec,
+  // 423 D-04: parsed evidence uses the existing detail and blob readers together.
+  runsEvidenceSpec as FunctionSpec,
   // 419 GATE3-01: the sovereign mark write binds only where the host supplies feedback.
   runsMarkSpec as FunctionSpec,
   // 2026-08-27 (405-05 D-12/D-13): THE ref-resolving read — one run's content-addressed evidence
@@ -511,6 +514,11 @@ export function resolveBindingStatus(
   spec: FunctionSpec,
   deps: FunctionDeps,
 ): FunctionBindingStatus {
+  // Both readers are required even for addresses whose recorded evidence is absent.
+  // Keep listing and invocation on this same answer without hiding runs.detail itself.
+  if (spec.id === RUNS_EVIDENCE_FUNCTION_ID) {
+    return deps.runDetail === undefined || deps.evidenceBlobs === undefined ? 'unbound' : 'bound'
+  }
   if (spec.boundThrough === undefined) return 'bound'
   return deps[spec.boundThrough] === undefined ? 'unbound' : 'bound'
 }

@@ -156,6 +156,8 @@ export { RUNS_EVENTS_FUNCTION_ID } from './functions/ops/runs-events.js'
 // through `invokeFunction`, and neither the pure `projectRunTokenTotals` nor `runsDetailSpec`
 // joins this barrel (a spec carries its own `invoke`, which is the private power SC1 abolishes).
 export { RUNS_DETAIL_FUNCTION_ID } from './functions/ops/runs-detail.js'
+// 423 D-04: publish identity only; the executable spec remains behind invokeFunction.
+export { RUNS_EVIDENCE_FUNCTION_ID } from './functions/ops/runs-evidence.js'
 // 405-05 D-12/D-13: the sixth op id a surface must be able to NAME, on the line above's exact
 // footing. The dashboard's artifact arm — on BOTH doors — dispatches the ref-resolving read
 // through the injected host, and `packages/dashboard-server` may not import this package at all.

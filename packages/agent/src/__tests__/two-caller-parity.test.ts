@@ -316,6 +316,7 @@ const ALL_FUNCTION_IDS = [
   'runs.detail',
   'runs.digest',
   'runs.events',
+  'runs.evidence',
   'runs.get',
   // 407-01 D-05: in SORT position between `runs.get` and `runs.list`, not appended — this list is
   // compared against the registry's lexicographic listing, so an appended id would fail on ORDER

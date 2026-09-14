@@ -3267,6 +3267,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // `postProcessing` above it is NOT present on every local host: chip truth is readable from
       // `agentQaRoot` alone, but a run's projected step tree lives in a dashboard database that
       // only the dashboard process holds.
+      // 423 D-04: runs.evidence shares this reader with runs.detail and the blob reader
+      // below. The registry requires both for evidence without narrowing detail availability.
       ...(input.runDetail === undefined ? {} : { runDetail: input.runDetail }),
       // 405-05 D-12/D-13: the run-scoped evidence-blob read, on EVERY local host and NOT
       // conditionally spread — unlike `runDetail` one line up, which needs a dashboard database

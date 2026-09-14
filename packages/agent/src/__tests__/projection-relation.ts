@@ -64,6 +64,7 @@ import { runsLiveUrlSpec } from '../functions/ops/runs-live-url.js'
 import { runsDigestSpec } from '../functions/ops/runs-digest.js'
 import { runsArtifactSpec } from '../functions/ops/runs-artifact.js'
 import { runsDetailSpec } from '../functions/ops/runs-detail.js'
+import { runsEvidenceSpec } from '../functions/ops/runs-evidence.js'
 import { runsMarkSpec } from '../functions/ops/runs-mark.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsKnowledgeSpec } from '../functions/ops/runs-knowledge.js'
@@ -197,6 +198,7 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // which `../../etc/passwd` is a well-formed request.
   'runs.artifact': runsArtifactSpec,
   'runs.detail': runsDetailSpec,
+  'runs.evidence': runsEvidenceSpec,
   // 419 GATE3-01: project the real mark validators through the same inert-declaration law.
   'runs.mark': runsMarkSpec,
   'runs.events': runsEventsSpec,

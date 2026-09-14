@@ -94,6 +94,8 @@ it.each(['both', 'runDetail', 'evidenceBlobs'] as const)(
       resolveExecutionContext: () => 'local-headless' })
     try {
       expect(registry.list(caller).find(item => item.id === op)?.bindingStatus).toBe('unbound')
+      expect(registry.list(caller).find(item => item.id === 'runs.detail')?.bindingStatus)
+        .toBe(missing === 'evidenceBlobs' ? 'bound' : 'unbound')
       await expect(agent.invokeFunction(registry, op, f.address, caller)).rejects.toBeInstanceOf(agent.FunctionNotBoundError)
       expect(f.read).not.toHaveBeenCalled()
       expect(f.forbidden).not.toHaveBeenCalled()
