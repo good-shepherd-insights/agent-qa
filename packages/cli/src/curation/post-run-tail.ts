@@ -1,3 +1,4 @@
+import type { CurationSnapshot } from '@vostride/agent-qa-schema'
 // The one post-run tail (Phase 388 plan 02, D-01 / D-03 / D-05 / D-07).
 //
 // Every door's tail ends here. What the run process owes the post-run chain is two separable
@@ -246,6 +247,7 @@ export interface PostRunTailHostInput {
     readonly deprecated: number
     /** The fold's own completeness, carried rather than dropped (WR-03). */
     readonly complete: boolean
+    readonly snapshot?: CurationSnapshot
     /** The committed receipt's candidates, forwarded to the third stage (422 D-13). */
     readonly candidateIds?: readonly string[]
   }>
@@ -662,6 +664,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       curated: folded.curated,
       deprecated: folded.deprecated,
       complete: folded.complete,
+      ...(folded.snapshot === undefined ? {} : { snapshot: folded.snapshot }),
       ...(folded.candidateIds === undefined ? {} : { candidateIds: folded.candidateIds }),
     }
   }

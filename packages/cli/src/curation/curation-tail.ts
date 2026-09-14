@@ -38,11 +38,12 @@ import {
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   GuardrailPolicy,
+  CurationSnapshot,
   MaskingContext,
   ResolvePromotionPosture,
   ScopeKey,
 } from '@vostride/agent-qa-schema'
-import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import { canonicalJson, sha256hex, CurationSnapshotSchema, CURATION_BREAKDOWN_BUCKETS } from '@vostride/agent-qa-schema'
 
 import { nudgeDaemon } from '../daemon/client.js'
 import {
@@ -67,6 +68,11 @@ export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
 export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 4
 
 export interface CurationTailReceipt {
+  /** Fixed successful membership; absent on historical and handed-off receipts. */
+  snapshot?: CurationSnapshot
+  /** Historical diagnostics, readable without manufacturing a snapshot. */
+  curated?: number
+  deprecated?: number
   canary: CanaryCreditCounters
   schemaVersion: typeof CURATION_TAIL_RECEIPT_SCHEMA_VERSION
   runId: string
@@ -269,8 +275,13 @@ function isCanaryCreditCounters(value: unknown): value is CanaryCreditCounters {
 function isCurationTailReceipt(value: unknown): value is CurationTailReceipt {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
-  return Object.keys(record).sort().join(',')
+  const optional = new Set(['snapshot', 'curated', 'deprecated'])
+  return Object.keys(record).filter(key => !optional.has(key)).sort().join(',')
     === 'canary,candidateIds,drainKind,handoffDigest,handoffHolderPid,projectionVersion,runId,schemaVersion'
+    && ['curated', 'deprecated'].every(key => record[key] === undefined
+      || (typeof record[key] === 'number' && Number.isInteger(record[key]) && record[key] >= 0))
+    && (record.snapshot === undefined || (record.drainKind === 'drained'
+      && CurationSnapshotSchema.safeParse(record.snapshot).success))
     && isCanaryCreditCounters(record.canary)
     && record.schemaVersion === CURATION_TAIL_RECEIPT_SCHEMA_VERSION
     && typeof record.runId === 'string'
@@ -314,6 +325,7 @@ function fsyncFile(file: string): void {
 }
 
 function writeCurationTailReceipt(runDir: string, receipt: CurationTailReceipt): void {
+  if (!isCurationTailReceipt(receipt)) throw new TypeError('invalid curation tail receipt')
   const file = join(runDir, CURATION_TAIL_RECEIPT_FILE)
   const staged = join(runDir, `.${CURATION_TAIL_RECEIPT_FILE}.${randomUUID()}.tmp`)
   try {
@@ -441,6 +453,8 @@ export interface CurateCompletedRunInput {
 }
 
 export interface CurateCompletedRunReport {
+  /** Only complete folds carry the fixed five-bucket authority. */
+  snapshot?: CurationSnapshot
   /** Bundles this fold committed — the `curated` half of the D-11 notification counts. */
   curated: number
   /** Committed `Deprecate` deltas — the `deprecated` half. */
@@ -641,6 +655,12 @@ export async function curateCompletedRun(
     ...input.operations,
   }
   const receiptIdentity = receiptIdentityForHandoff(input.handoff)
+  const previous = operations.readCurationTailReceipt(input.runDir)
+  if (previous?.snapshot !== undefined && receiptMatches(previous, receiptIdentity)) {
+    return { curated: previous.curated ?? 0, deprecated: previous.deprecated ?? 0,
+      complete: true, drainKind: previous.drainKind, candidateIds: previous.candidateIds,
+      snapshot: previous.snapshot }
+  }
   let curated = 0
   let deprecated = 0
   let drainKind: CurateCompletedRunReport['drainKind'] = 'aborted'
@@ -738,6 +758,12 @@ export async function curateCompletedRun(
             })
           : operations.buildCuratorAuthor(input.modelDeps))
       const drain = await operations.drainQueue({
+        sourceRunId: String(input.handoff.runId),
+        observationIds: (canaries.details ?? []).flatMap(row => row.candidateId === undefined
+          || row.outcome.kind !== 'emitted' ? [] : [LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId({
+            candidateId: row.candidateId, runId: input.handoff.runId,
+            testId: row.testId, testIndex: row.testIndex, stepIndex: row.stepIndex,
+          })]),
         priors: input.resolveTrustPriors?.(),
         ...(input.resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture: input.resolvePromotionPosture }),
         knowledgeRoot: input.knowledgeRoot,
@@ -788,6 +814,7 @@ export async function curateCompletedRun(
         && (drain.kind === 'drained' || drain.kind === 'handed-off')
         && drain.failures === 0
         && drain.requeued === 0
+        && (drain.kind === 'handed-off' || drain.remaining === undefined || drain.remaining === 0)
       if (complete && (drain.kind === 'drained' || drain.kind === 'handed-off')) {
         completedReceipt = {
           ...receiptIdentity,
@@ -795,6 +822,8 @@ export async function curateCompletedRun(
           drainKind: drain.kind,
           handoffHolderPid: drain.kind === 'handed-off' ? drain.holder.pid : null,
           candidateIds: sortedCandidateIds(candidates),
+          ...(drain.kind !== 'drained' || drain.snapshot === undefined ? {}
+            : { snapshot: CurationSnapshotSchema.parse(drain.snapshot) }),
         }
       }
       if (!complete) {
@@ -824,6 +853,11 @@ export async function curateCompletedRun(
     }
   }
   operations.writeCurationTailReceipt(input.runDir, completedReceipt)
+  if (completedReceipt.snapshot !== undefined) {
+    const breakdown = completedReceipt.snapshot.breakdown
+    input.log.info?.(`curation: ${CURATION_BREAKDOWN_BUCKETS.map(bucket =>
+      `${bucket} ${breakdown[bucket]}`).join(', ')}`)
+  }
   if (completedReceipt.drainKind === 'handed-off') {
     void operations.nudgeDaemon(
       input.agentQaRoot,
@@ -840,6 +874,7 @@ export async function curateCompletedRun(
     complete: true,
     drainKind,
     candidateIds: completedReceipt.candidateIds,
+    ...(completedReceipt.snapshot === undefined ? {} : { snapshot: completedReceipt.snapshot }),
   }
 }
 

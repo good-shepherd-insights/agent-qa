@@ -1,3 +1,4 @@
+import type { CurationSnapshot } from '@vostride/agent-qa-schema'
 import { createCanaryAblationForHost } from '../gates/canary-ablation-host.js'
 import { randomUUID } from 'node:crypto'
 import { AUTHORING_DRAFT_EDIT_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
@@ -758,6 +759,7 @@ export interface ComposeCliLocalAgentInput {
       readonly deprecated: number
       /** The fold's own completeness, carried rather than dropped (WR-03). */
       readonly complete: boolean
+      readonly snapshot?: CurationSnapshot
       /**
        * The candidates the fold's own COMMITTED receipt names (422 D-13).
        *

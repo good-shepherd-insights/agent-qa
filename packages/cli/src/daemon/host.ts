@@ -2302,6 +2302,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
             curated: folded.curated,
             deprecated: folded.deprecated,
             complete: folded.complete,
+            ...(folded.snapshot === undefined ? {} : { snapshot: folded.snapshot }),
             ...(folded.candidateIds === undefined ? {} : { candidateIds: folded.candidateIds }),
           }
         },

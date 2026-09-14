@@ -1,3 +1,4 @@
+import type { CurationSnapshot } from '@vostride/agent-qa-schema'
 // The five real agent job kinds (Phase 385, D-09 / D-17 / D-18 / D-20).
 //
 // The kind set is closed and shipped, and this module declares every member of it. The
@@ -239,6 +240,7 @@ export interface PostRunJobCapabilities {
     readonly curated: number
     readonly deprecated: number
     readonly complete: boolean
+    readonly snapshot?: CurationSnapshot
     /**
      * The candidates the fold's own receipt names, forwarded to the proposal stage (422 D-13).
      *
