@@ -47,7 +47,7 @@ describe('the notification record shape', () => {
     expectTypeOf<RunNotification['schemaVersion']>().toEqualTypeOf<
       typeof CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION
     >()
-    expectTypeOf<RunNotification['schemaVersion']>().toEqualTypeOf<3>()
+    expectTypeOf<RunNotification['schemaVersion']>().toEqualTypeOf<4>()
     expectTypeOf<RunNotification['schemaVersion']>().not.toEqualTypeOf<number>()
     expectTypeOf<RunNotification['schemaVersion']>().not.toEqualTypeOf<2>()
   })

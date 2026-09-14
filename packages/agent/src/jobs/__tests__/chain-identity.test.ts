@@ -17,7 +17,7 @@
 // report a completed curation as a failure and lose its counts — the exact trap 422-PATTERNS names.
 
 import { asJobId } from '@vostride/agent-qa-schema'
-import type { JobKind } from '@vostride/agent-qa-schema'
+import type { CurationSnapshot, Job, JobKind } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -27,6 +27,8 @@ import {
   UNKNOWN_VERDICTS_MARKER,
 } from '../chain-identity.js'
 import type { JobIdSource } from '../engine.js'
+import { createRealJobKindRegistry, readProposeImprovementsPayload } from '../kinds.js'
+import type { JobHandlerContext } from '../kind-registry.js'
 
 const RUN_ID = 'run-1'
 
@@ -129,7 +131,7 @@ describe('the chain terminal notification carries upstream truth forward (422 D-
       publishedValues: new Map([['proposals-authored', { runId: RUN_ID, proposed: 3, skipped: 1 }]]),
     })
 
-    expect(record.schemaVersion).toBe(3)
+    expect(record.schemaVersion).toBe(4)
     expect(record.outcome).toBe('done')
     expect(record.verdictSummary).toEqual({ total: 2, byClass: { timeout: 1, unknown: 1 } })
     // Whole-record equality on the stages rather than field spot-checks: a builder that kept the
@@ -225,5 +227,98 @@ describe('the chain terminal notification carries upstream truth forward (422 D-
       curation: { status: 'done', curated: 1, deprecated: 0 },
     })
     expect(record.outcome).toBe('done')
+  })
+})
+
+// Historical identities and deliberately unrelated legacy/proposal counts are authored
+// independently of the fold. Two events for one row must remain two events and one unit.
+function committedSnapshot(): CurationSnapshot {
+  return { schemaVersion: 1, rows: [{ recordId: 'record-fixed', bucket: 'confirmed', changes: [
+    { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'record-fixed', change: 'confirmed',
+      atOrdinal: 7, evidenceToken: 'synthetic-first' } },
+    { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'record-fixed', change: 'confirmed',
+      atOrdinal: 8, evidenceToken: 'synthetic-second' } },
+  ] }], breakdown: { added: 0, confirmed: 1, superseded: 0, deprecated: 0, proposed: 0 } }
+}
+
+async function completedFold(snapshot: CurationSnapshot | undefined) {
+  const published = new Map<string, unknown>()
+  const counts = { curated: 17, deprecated: 9, complete: true,
+    ...(snapshot === undefined ? {} : { snapshot }) }
+  const context: JobHandlerContext = {
+    job: { id: asJobId('synthetic-curation-job') } as Job,
+    payload: { runId: RUN_ID, verdictSummary: { total: 0, byClass: {} } },
+    publishCheckpoint: async (id, value) => { published.set(id, structuredClone(value)) },
+    recordLlmAuthorship: async () => { throw new Error('curation must not invoke a model') },
+  }
+  const result = await createRealJobKindRegistry({
+    loadCompletedRunHandoff: () => { throw new Error('must not re-read run') },
+    curateRun: async () => counts,
+    persistAnalysis: () => { throw new Error('must not re-analyze') },
+  }).require('curate-memory').handler(context)
+  expect(result.status).toBe('complete')
+  if (result.status !== 'complete') throw new Error('fixture fold did not complete')
+  expect(result.next.map(next => next.kind)).toEqual(['propose-improvements'])
+  expect([...published.keys()]).toEqual(['candidates-authored', 'bundle-committed'])
+  return { payload: structuredClone(result.next[0]!.payload), published }
+}
+
+describe('423 fixed notification snapshot', () => {
+  it.each(['done', 'failed'] as const)('NOTIFICATION-COPY: actual handler successor preserves exact checkpoint for proposals %s', async finished => {
+    const source = committedSnapshot()
+    const before = JSON.stringify(source)
+    const { payload, published } = await completedFold(source)
+    const checkpoint = published.get('bundle-committed')
+    expect(checkpoint).toHaveProperty('curationSnapshot', source)
+    expect(payload).toHaveProperty('upstream.curation.curationSnapshot', source)
+    const parsed = readProposeImprovementsPayload(payload)
+    expect(parsed).toHaveProperty('upstream.curation.curationSnapshot', source)
+    // Simulate later knowledge changes. Neither the queued bytes nor the notification
+    // may reconstruct membership or counts from this current object.
+    source.rows[0]!.changes[0]!.change.atOrdinal = 999
+    source.breakdown.confirmed = 99
+    for (const carrier of [payload, parsed]) {
+      const record = buildChainTerminalNotification({ runId: RUN_ID,
+        finishingKind: 'propose-improvements', finished, payload: carrier,
+        publishedValues: new Map([['proposals-authored', { proposed: 23, skipped: 4 }]]) })
+      expect(record.stages.curation).toHaveProperty('curationSnapshot', JSON.parse(before))
+      expect(JSON.stringify(Reflect.get(record.stages.curation, 'curationSnapshot'))).toBe(before)
+      expect(record.stages.curation.curated).toBe(17)
+      expect(record.stages.curation.deprecated).toBe(9)
+      expect(record.stages.proposals).toEqual(finished === 'done'
+        ? { status: 'done', proposed: 23, skipped: 4 } : { status: 'failed' })
+      expect(record.outcome).toBe(finished)
+    }
+  })
+
+  it('NOTIFICATION-COPY: direct completed curation detaches the authoritative snapshot', () => {
+    const snapshot = committedSnapshot()
+    const before = JSON.stringify(snapshot)
+    const record = buildChainTerminalNotification({ runId: RUN_ID,
+      finishingKind: 'curate-memory', finished: 'done', payload: {},
+      publishedValues: new Map([['bundle-committed', { runId: RUN_ID, curationSnapshot: snapshot }]]) })
+    expect(record.stages.curation).toHaveProperty('curationSnapshot', snapshot)
+    snapshot.rows[0]!.changes[0]!.change.atOrdinal = 999
+    expect(JSON.stringify(Reflect.get(record.stages.curation, 'curationSnapshot'))).toBe(before)
+    expect(record.stages).not.toHaveProperty('proposals')
+  })
+
+  it('NOTIFICATION-COPY: historical complete and failed partial curation never invent a snapshot', async () => {
+    const { payload, published } = await completedFold(undefined)
+    expect(published.get('bundle-committed')).not.toHaveProperty('curationSnapshot')
+    const record = buildChainTerminalNotification({ runId: RUN_ID,
+      finishingKind: 'propose-improvements', finished: 'done', payload, publishedValues: new Map() })
+    expect(record.stages.curation).toEqual({ status: 'done', curated: 17, deprecated: 9 })
+    const failed = buildChainTerminalNotification({ runId: RUN_ID,
+      finishingKind: 'curate-memory', finished: 'failed', payload: {}, publishedValues: new Map() })
+    expect(failed.stages.curation).toEqual({ status: 'failed' })
+  })
+
+  it('NOTIFICATION-COPY: a present invalid snapshot fails generically rather than disappearing', () => {
+    const bad = { ...committedSnapshot(), syntheticSecretKey: true }
+    expect(() => buildChainTerminalNotification({ runId: RUN_ID,
+      finishingKind: 'curate-memory', finished: 'done', payload: {},
+      publishedValues: new Map([['bundle-committed', { curationSnapshot: bad }]]) }))
+      .toThrow(/curation snapshot/)
   })
 })

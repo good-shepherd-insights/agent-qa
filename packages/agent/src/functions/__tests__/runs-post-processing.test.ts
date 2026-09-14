@@ -64,6 +64,48 @@ function snapshot(): CurationSnapshot {
 }
 
 describe('423 checkpoint-backed snapshot projection', () => {
+  it('NOTIFICATION-MASK: terminal-only snapshot crosses the same strict live mask without mutation', async () => {
+    const masking = createMaskingContext()
+    masking.register('synthetic-snapshot-secret')
+    setActiveMaskingContextResolver(() => masking)
+    const recorded = snapshot()
+    const notification = {
+      schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, runId: RUN_ID, outcome: 'done' as const,
+      verdictSummary: { total: 0, byClass: {} },
+      stages: { analysis: { status: 'done' as const }, curation: { status: 'done' as const,
+        curationSnapshot: recorded } },
+    }
+    const before = JSON.stringify(notification)
+    const result = await read({ notification })
+    expect(JSON.stringify(result)).not.toContain('synthetic-snapshot-secret')
+    expect(result.notification).toEqual(JSON.parse(before.replaceAll('synthetic-snapshot-secret',
+      masking.mask('synthetic-snapshot-secret'))))
+    expect(PostProcessingStatusSchema.parse(result)).toEqual(result)
+    expect(JSON.stringify(notification)).toBe(before)
+    expect(result).not.toHaveProperty('curationSnapshot')
+  })
+
+  it('NOTIFICATION-MASK-COLLISION: nested identity collisions fail generically without deleting history', async () => {
+    setActiveMaskingContextResolver(() => undefined)
+    const recorded: CurationSnapshot = { schemaVersion: 1,
+      rows: [{ recordId: 'synthetic-record', bucket: 'confirmed', changes: [
+        { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'synthetic-record',
+          change: 'confirmed', atOrdinal: 1, evidenceToken: 'synthetic-secret-one' } },
+        { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'synthetic-record',
+          change: 'confirmed', atOrdinal: 1, evidenceToken: 'synthetic-secret-two' } },
+      ] }], breakdown: { added: 0, confirmed: 1, superseded: 0, deprecated: 0, proposed: 0 } }
+    const notification = { schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+      runId: RUN_ID, outcome: 'done' as const, verdictSummary: { total: 0, byClass: {} },
+      stages: { analysis: { status: 'done' as const },
+        curation: { status: 'done' as const, curationSnapshot: recorded } } }
+    const before = JSON.stringify(notification)
+    await expect(read({ notification })).rejects.toMatchObject({ name: 'ZodError' })
+    expect(JSON.stringify(notification)).toBe(before)
+    try { await read({ notification }) } catch (error) {
+      expect(String(error)).not.toContain('synthetic-secret')
+    }
+  })
+
   it('POSTPROCESSING-SNAPSHOT-EARLY copies exact masked facts beside three details and two chips', async () => {
     const masking = createMaskingContext()
     masking.register('synthetic-snapshot-secret')

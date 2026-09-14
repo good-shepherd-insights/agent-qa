@@ -3,6 +3,7 @@ import {
   CURATION_BREAKDOWN_BUCKETS, CURATION_BUCKET_PRECEDENCE, CURATION_SNAPSHOT_SCHEMA_VERSION,
   CurationBucketSchema, CurationSnapshotSchema, CurationSnapshotRowSchema,
   CurationSnapshotChangeSchema, CurationBreakdownSchema,
+  guardRunNotification, RunNotificationSchema, RunNotificationSchemaError,
 } from '../index'
 import type { CurationSnapshot, CurationSnapshotChange, CurationSnapshotRow } from '../index'
 
@@ -47,6 +48,70 @@ const five: CurationSnapshot = {
   schemaVersion: 1, rows: [added, confirmed, superseded, deprecated, proposed],
   breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 },
 }
+
+function notification(version: number, curationSnapshot?: unknown) {
+  return {
+    schemaVersion: version, runId: 'synthetic-notification-run', outcome: 'done',
+    verdictSummary: { total: 2, byClass: { timeout: 2 } },
+    stages: {
+      analysis: { status: 'done' },
+      curation: { status: 'done', curated: 17, deprecated: 9,
+        ...(curationSnapshot === undefined ? {} : { curationSnapshot }) },
+      ...(version === 1 ? { issues: { status: 'reserved' } } : {}),
+      ...(version >= 3 ? { proposals: { status: 'done', proposed: 23, skipped: 4 } } : {}),
+    },
+  }
+}
+
+test.each([1, 2, 3])('NOTIFICATION-V1/V2/V3-MIGRATE: v%s retains historical counts and absence in memory', version => {
+  const stored = notification(version)
+  const before = JSON.stringify(stored)
+  const result = guardRunNotification(stored)
+  expect(result.schemaVersion).toBe(4)
+  expect(result.stages.curation).toEqual({ status: 'done', curated: 17, deprecated: 9 })
+  expect(result.stages).not.toHaveProperty('issues')
+  expect(result.stages.proposals).toEqual(version === 3
+    ? { status: 'done', proposed: 23, skipped: 4 } : undefined)
+  expect(Object.hasOwn(result.stages.curation, 'curationSnapshot')).toBe(false)
+  expect(RunNotificationSchema.parse(result)).toEqual(result)
+  expect(JSON.stringify(stored)).toBe(before)
+})
+
+test('NOTIFICATION-V4-ROUNDTRIP: both strict readers preserve full snapshot bytes and separate proposals', () => {
+  const stored = notification(4, five)
+  expect(() => guardRunNotification(stored)).not.toThrow()
+  expect(guardRunNotification(JSON.parse(JSON.stringify(stored)))).toEqual(stored)
+  expect(RunNotificationSchema.safeParse(stored).success).toBe(true)
+  const wire = RunNotificationSchema.parse(stored)
+  expect(wire).toEqual(stored)
+  expect(JSON.stringify(wire.stages.curation)).toBe(JSON.stringify(stored.stages.curation))
+  expect(wire.stages.proposals?.proposed).toBe(23)
+  expect(RunNotificationSchema.safeParse(notification(4)).success).toBe(true)
+})
+
+test('NOTIFICATION-NEWER-REFUSE: invalid and future versions refuse without a guessed walk', () => {
+  for (const version of [0, -1, 1.5, 4.5, 5, 100, NaN, Infinity]) {
+    expect(() => guardRunNotification(notification(version))).toThrow(RunNotificationSchemaError)
+    expect(RunNotificationSchema.safeParse(notification(version)).success).toBe(false)
+  }
+  expect(() => guardRunNotification(notification(5))).toThrow(/this build reads 4/)
+})
+
+test('INVALID-BREAKDOWN: notification guards reject malformed snapshot membership with generic errors', () => {
+  // Prove the valid arm first so a blanket v4 refusal cannot satisfy the negative cells.
+  expect(() => guardRunNotification(notification(4, five))).not.toThrow()
+  const invalids = [null, { ...five, schemaVersion: 2 }, { ...five, syntheticSecretKey: true },
+    { ...five, breakdown: { ...five.breakdown, added: 0 } },
+    { ...five, rows: [...five.rows, added], breakdown: { ...five.breakdown, added: 2 } },
+    { ...five, rows: [{ ...added, recordId: 'syntheticSecretIdentity' }] }]
+  for (const invalid of invalids) {
+    expect(RunNotificationSchema.safeParse(notification(4, invalid)).success).toBe(false)
+    expect(() => guardRunNotification(notification(4, invalid))).toThrow(RunNotificationSchemaError)
+    try { guardRunNotification(notification(4, invalid)) } catch (error) {
+      expect(String(error)).not.toMatch(/syntheticSecret(Key|Identity)/)
+    }
+  }
+})
 
 test('C423-BUCKETS-EXACT: exactly five literals and version one with strict keys', () => {
   expect(CURATION_BREAKDOWN_BUCKETS).toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'proposed'])

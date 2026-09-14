@@ -78,21 +78,21 @@ function storedV3WithProposals(): Record<string, unknown> {
 }
 
 describe('guardRunNotification migrates older rows and refuses newer ones (D-01, 385 D-04)', () => {
-  it('reads a stored schemaVersion-1 row as a two-stage schemaVersion-3 record', () => {
+  it('reads a stored schemaVersion-1 row as a two-stage schemaVersion-4 record', () => {
     const migrated = guardRunNotification(storedV1())
 
-    expect(migrated.schemaVersion).toBe(3)
+    expect(migrated.schemaVersion).toBe(4)
     // Set-equality on the KEYS, not membership: a migration that merely added nothing would pass a
     // membership check while leaving the member it was written to drop sitting in the record.
     expect(Object.keys(migrated.stages).sort()).toEqual(['analysis', 'curation'])
   })
 
-  it('carries every other field of a v1 row through byte-equal, two version steps later', () => {
+  it('carries every other field of a v1 row through byte-equal, three version steps later', () => {
     const migrated = guardRunNotification(storedV1())
 
     // Compared whole rather than field by field: a walk that dropped the counts, or re-derived the
     // outcome from the stages it kept, would satisfy any per-field spot check written afterwards.
-    expect(JSON.parse(JSON.stringify(migrated))).toEqual(storedV3())
+    expect(JSON.parse(JSON.stringify(migrated))).toEqual({ ...storedV3(), schemaVersion: 4 })
   })
 
   it('never synthesizes a proposal stage onto a historical row', () => {
@@ -107,10 +107,10 @@ describe('guardRunNotification migrates older rows and refuses newer ones (D-01,
     }
   })
 
-  it('reads a stored schemaVersion-2 row as a schemaVersion-3 record with its counts intact', () => {
+  it('reads a stored schemaVersion-2 row as a schemaVersion-4 record with its counts intact', () => {
     const migrated = guardRunNotification(storedV2())
 
-    expect(JSON.parse(JSON.stringify(migrated))).toEqual(storedV3())
+    expect(JSON.parse(JSON.stringify(migrated))).toEqual({ ...storedV3(), schemaVersion: 4 })
   })
 
   it('does NOT mutate the record it was handed — the walk is in-memory, the row is untouched', () => {
@@ -131,9 +131,11 @@ describe('guardRunNotification migrates older rows and refuses newer ones (D-01,
   })
 
   it('accepts a current record with and without its proposal stage, unchanged', () => {
-    expect(JSON.parse(JSON.stringify(guardRunNotification(storedV3())))).toEqual(storedV3())
-    expect(JSON.parse(JSON.stringify(guardRunNotification(storedV3WithProposals()))))
-      .toEqual(storedV3WithProposals())
+    for (const historic of [storedV3(), storedV3WithProposals()]) {
+      const current = { ...historic, schemaVersion: 4 }
+      expect(JSON.parse(JSON.stringify(guardRunNotification(current)))).toEqual(current)
+      expect(JSON.parse(JSON.stringify(guardRunNotification(historic)))).toEqual(current)
+    }
   })
 
   it('refuses a current record carrying a stage outside the declared three, naming the set', () => {
@@ -171,13 +173,13 @@ describe('guardRunNotification migrates older rows and refuses newer ones (D-01,
     expect(() => guardRunNotification(fractional)).toThrow(/its skipped count is not a count/u)
   })
 
-  it('refuses a schemaVersion-4 record BY NAME, naming both 4 and 3', () => {
-    const fromTheFuture = { ...storedV3(), schemaVersion: 4 }
+  it('refuses a schemaVersion-5 record BY NAME, naming both 5 and 4', () => {
+    const fromTheFuture = { ...storedV3(), schemaVersion: 5 }
 
     // Both numbers in the message on purpose: "this row is newer than me" is only actionable if
     // the reader is told which build wrote it and which build is reading.
-    expect(() => guardRunNotification(fromTheFuture)).toThrow(/declares schemaVersion 4/u)
-    expect(() => guardRunNotification(fromTheFuture)).toThrow(/this build reads 3/u)
+    expect(() => guardRunNotification(fromTheFuture)).toThrow(/declares schemaVersion 5/u)
+    expect(() => guardRunNotification(fromTheFuture)).toThrow(/this build reads 4/u)
   })
 
   it('refuses a schemaVersion-0 row — an older version with no registered step is not a guess', () => {
@@ -191,7 +193,7 @@ describe('guardRunNotification migrates older rows and refuses newer ones (D-01,
   it('registers exactly the steps needed to walk every older version up to the current one', () => {
     // Read off the constant rather than restated: this is what makes the NEXT bump a one-line
     // addition with a home, instead of a condition somewhere inside the guard.
-    expect(Object.keys(RUN_NOTIFICATION_MIGRATIONS).map(Number).sort()).toEqual([1, 2])
-    expect(CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION).toBe(3)
+    expect(Object.keys(RUN_NOTIFICATION_MIGRATIONS).map(Number).sort()).toEqual([1, 2, 3])
+    expect(CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION).toBe(4)
   })
 })

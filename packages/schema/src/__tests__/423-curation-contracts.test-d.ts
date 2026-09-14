@@ -2,7 +2,7 @@ import { expectTypeOf, test } from 'vitest'
 import type { z } from 'zod'
 import { CURATION_BREAKDOWN_BUCKETS, CURATION_BUCKET_PRECEDENCE, CurationSnapshotSchema } from '../index'
 import type { CurationBucket, CurationSnapshot, CurationBreakdown,
-  CurationSnapshotRow, CurationSnapshotChange } from '../index'
+  CurationSnapshotRow, CurationSnapshotChange, RunNotification } from '../index'
 
 test('C423-BUCKETS-EXACT: independent literal union and both never bars', () => {
   type Expected = 'added' | 'confirmed' | 'superseded' | 'deprecated' | 'proposed'
@@ -42,4 +42,14 @@ test('SNAPSHOT-COUNTS-EXACT: version and exact five numeric count keys', () => {
     added: number, confirmed: number, superseded: number, deprecated: number, proposed: number,
   }>()
   expectTypeOf<z.infer<typeof CurationSnapshotSchema>>().toEqualTypeOf<CurationSnapshot>()
+})
+
+test('NOTIFICATION-V4-ROUNDTRIP: exact current version and optional snapshot carrier', () => {
+  expectTypeOf<RunNotification['schemaVersion']>().toEqualTypeOf<4>()
+  type Curation = RunNotification['stages']['curation']
+  expectTypeOf<keyof Curation>().toEqualTypeOf<'status' | 'curated' | 'deprecated' | 'curationSnapshot'>()
+  // Conditional access keeps the preimplementation RED inside this counted assertion.
+  type Snapshot = Curation extends { curationSnapshot?: infer S } ? S : never
+  expectTypeOf<Snapshot>().toEqualTypeOf<CurationSnapshot>()
+  expectTypeOf<{}>().toMatchTypeOf<Pick<Curation, Exclude<keyof Curation, 'status'>>>()
 })
