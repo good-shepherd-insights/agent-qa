@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { fsyncSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -11,6 +11,7 @@ vi.mock('node:fs', async importOriginal => {
   const fs = await importOriginal<typeof import('node:fs')>()
   return {
     ...fs,
+    fsyncSync: vi.fn(fs.fsyncSync),
     writeFileSync: vi.fn((...args: Parameters<typeof fs.writeFileSync>) => {
       io.beforeWrite?.(args[0])
       return fs.writeFileSync(...args)
@@ -115,4 +116,32 @@ test('JSON-KINDS: schema-owned prefixes and validation reject unsupported docume
     expect(() => store.persistEvidenceDocument(invalid as typeof document)).toThrow()
   }
   expect(readdirSync(dir)).toEqual(before)
+})
+
+test.each([1, 2, 5])('INTERRUPTED-BLOB: sync failure at stage %s never returns a successful reference', stage => {
+  const { store, dir } = fixture()
+  const original = vi.mocked(fsyncSync).getMockImplementation()!
+  let calls = 0
+  vi.mocked(fsyncSync).mockImplementation(fd => {
+    if (++calls === stage) throw new Error('synthetic sync failure')
+    original(fd)
+  })
+  try {
+    expect(() => store.persistEvidenceDocument(document)).toThrow('synthetic sync failure')
+    const persisted = store.getBlob(sha)
+    if (stage === 1) expect(persisted).toBeUndefined()
+    else expect(Buffer.from(persisted!)).toEqual(bytes)
+    expect(readdirSync(dir).filter(name => name.endsWith('.tmp'))).toEqual([])
+  } finally {
+    vi.mocked(fsyncSync).mockImplementation(original)
+  }
+  expect(store.persistEvidenceDocument(document).sha).toBe(sha)
+})
+
+test('DURABLE-PARENTS: a returned reference synchronizes the complete newly-created run family', () => {
+  const { root } = fixture()
+  const store = new FsEvidenceArtifactStore({ root: join(root, 'new-root'), runId: 'run-423' })
+  store.persistEvidenceDocument(document)
+  // File, blobs directory, run directory, runs directory, root, and root parent.
+  expect(fsyncSync).toHaveBeenCalledTimes(6)
 })

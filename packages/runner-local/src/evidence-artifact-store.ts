@@ -25,7 +25,7 @@ import {
   closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync,
   unlinkSync, writeFileSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import type { ArtifactRef, EvidenceDocument } from '@vostride/agent-qa-schema'
 import { EvidenceArtifactRefSchema, EvidenceDocumentSchema } from '@vostride/agent-qa-schema'
@@ -48,9 +48,11 @@ export interface FsEvidenceArtifactStoreConfig {
 
 export class FsEvidenceArtifactStore implements EvidenceArtifactStorePort {
   private readonly dir: string
+  private readonly durabilityRoot: string
 
   constructor(config: FsEvidenceArtifactStoreConfig) {
     this.dir = join(config.root, RUNS_SUBDIR, slugBranch(config.runId), RUN_EVIDENCE_BLOBS_SUBDIR)
+    this.durabilityRoot = dirname(join(config.root, '.'))
   }
 
   persistDecisionScreenshot(bytes: Uint8Array): ArtifactRef {
@@ -76,7 +78,7 @@ export class FsEvidenceArtifactStore implements EvidenceArtifactStorePort {
       // A competing writer may have renamed but not synced its directory yet. Confirm both
       // the complete file and directory ourselves before returning the deduplicated ref.
       this.syncPath(target)
-      this.syncPath(this.dir)
+      this.syncDirectories()
       return ref
     }
     const temporary = join(this.dir, `.${sha}.${randomUUID()}.tmp`)
@@ -90,7 +92,7 @@ export class FsEvidenceArtifactStore implements EvidenceArtifactStorePort {
       // Concurrent identical documents have identical complete bytes. Replacing either
       // complete inode is safe; a reader can never observe the temporary partial content.
       renameSync(temporary, target)
-      this.syncPath(this.dir)
+      this.syncDirectories()
       return ref
     } finally {
       if (opened) closeSync(fd)
@@ -99,6 +101,15 @@ export class FsEvidenceArtifactStore implements EvidenceArtifactStorePort {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
+    }
+  }
+
+  private syncDirectories(): void {
+    // mkdir(recursive) may have created any part of the run family. Sync each parent
+    // entry as well, including when a competing writer created it before this call.
+    for (let path = this.dir; ; path = dirname(path)) {
+      this.syncPath(path)
+      if (path === this.durabilityRoot || dirname(path) === path) return
     }
   }
 
