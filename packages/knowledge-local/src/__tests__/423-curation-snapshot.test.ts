@@ -40,7 +40,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-function commitFixture() {
+function commitFixture(executionContext: 'ci' | 'local-interactive' = 'ci') {
   const root = temporaryRoot()
   const lease = acquireWriterLease(root)
   if (lease.kind !== 'acquired') throw new Error('expected fresh lease')
@@ -55,7 +55,7 @@ function commitFixture() {
   function job(name: string, ordinal: number): CommitCurationJob {
     const bundle = draft(name)
     const enqueued = enqueueArtifactFreeCandidateProjection({ knowledgeRoot: root, projectionInput: {
-      sourceRunId: `synthetic-run-${ordinal}`, scope: bundle.scope, buildOrdinal: ordinal, executionContext: 'ci', secretFlagged: false, injectionFlagged: false,
+      sourceRunId: `synthetic-run-${ordinal}`, scope: bundle.scope, buildOrdinal: ordinal, executionContext, secretFlagged: false, injectionFlagged: false,
       kind: 'fact', subtype: 'selector', anchors: bundle.anchors, summarySeed: bundle.summary, bodySeed: bundle.body,
       distilledObservations: [{ schemaVersion: 1, step: { naturalKey: 'checkout', ordinal: 0 }, platform: 'web', element: { naturalKey: `button:${name}` }, observedAtOrdinal: ordinal }],
       evidenceToken: `synthetic-evidence-${ordinal}`, attributingObservationId: `synthetic-observation-${ordinal}`, emittedAt: '2026-09-14T00:00:00.000Z',
@@ -149,16 +149,93 @@ describe('423 curation snapshot', () => {
     expect(readFileSync(join(f.root, 'memory/index/knowledge.db')).equals(index)).toBe(true)
   })
 
-  it('PARTIAL-NO-FAKE-ZERO exposes actual published replacement without completed snapshot', async () => {
-    const f = commitFixture()
+  it.each(['single', 'siblings'] as const)('PARTIAL-NO-FAKE-ZERO %s preserves actual effects and resumes the failed claim', async (mode) => {
+    const f = commitFixture('local-interactive')
     const original = bundleAppend.appendOutcomeEvent
     vi.spyOn(bundleAppend, 'appendOutcomeEvent').mockImplementation((config, id, event) => event.type === 'superseded' ? { kind: 'not-found' } : original(config, id, event))
-    expect(commitCurationDelta({ ...f.deps, profile: { mode: 'drain-to-active' } }, f.claimed, f.checkpoint(f.supersede)).kind).toBe('failed')
+    let claimed = false
+    const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+      author: async () => ({ kind: 'authored', deltas: [
+        ...(mode === 'single' ? [] : [{ ...f.add, bundle: f.draft('Sibling') }]), f.supersede],
+        authorship: f.checkpoint(f.supersede).authorship }),
+      executionContext: 'local-interactive', policy: f.deps.policy, maintenance: 'skip', sourceRunId: 'synthetic-run-43',
+      operations: {
+        claimNextJob: () => { if (claimed) return undefined; claimed = true; return f.claimed },
+        commitCurationDelta: (deps, job, checkpoint) => commitCurationDelta(deps, job,
+          { ...checkpoint, neighborIds: [f.victim.bundleId] }),
+      } })
+    expect(report.effects).toHaveLength(mode === 'single' ? 1 : 2)
+    expect(report.effects?.every(effect => effect.bucket === 'added')).toBe(true)
+    expect(report).not.toHaveProperty('snapshot')
+    expect(report.remaining, JSON.stringify(report)).toBeGreaterThan(0)
+    expect(report.failures).toBeGreaterThan(0)
+    expect(report.requeued).toBeGreaterThan(0)
+    vi.restoreAllMocks()
+    const author = vi.fn(async () => { throw new Error('retry must reuse authored checkpoint') })
+    const resumed = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+      author, executionContext: 'local-interactive', policy: f.deps.policy, maintenance: 'skip', sourceRunId: 'synthetic-run-43',
+      operations: { commitCurationDelta: (deps, job, checkpoint) => commitCurationDelta(deps, job,
+        { ...checkpoint, neighborIds: [f.victim.bundleId] }) } })
+    expect(author).not.toHaveBeenCalled()
+    expect(resumed.failures, JSON.stringify(resumed)).toBe(0)
+    expect(resumed.remaining, JSON.stringify(resumed)).toBe(0)
+    expect(resumed.snapshot?.breakdown).toEqual({ added: mode === 'single' ? 0 : 1, confirmed: 0, superseded: 1, deprecated: 0, proposed: 0 })
+    expect(resumed.snapshot?.rows).toHaveLength(mode === 'single' ? 1 : 2)
+  })
+
+  it('STRONGEST-ONCE retains older supersessions and collapses repeated identities', () => {
+    const change = (recordId: string, kind: 'added' | 'confirmed' | 'superseded' | 'deprecated', atOrdinal: number, byRecordId?: string) => ({
+      schemaVersion: 1 as const, recordId, change: kind, atOrdinal, sourceRunId: 'synthetic-run',
+      ...(byRecordId === undefined ? {} : { byRecordId }),
+    })
+    const effects = [
+      { bucket: 'confirmed', change: change('victim', 'confirmed', 1) },
+      { bucket: 'added', change: change('victim', 'added', 2) },
+      { bucket: 'proposed', change: change('victim', 'confirmed', 3) },
+      { bucket: 'deprecated', change: change('victim', 'deprecated', 4) },
+      { bucket: 'superseded', change: change('victim', 'superseded', 5, 'old-replacement') },
+      { bucket: 'added', change: change('old-replacement', 'added', 5) },
+      { bucket: 'superseded', change: change('victim', 'superseded', 6, 'new-replacement') },
+      { bucket: 'added', change: change('new-replacement', 'added', 6) },
+    ] as Parameters<typeof foldCurationSnapshot>[0]
+    const result = foldCurationSnapshot([...effects, ...effects])
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0]).toMatchObject({ bucket: 'superseded', byRecordId: 'new-replacement' })
+    expect(result.rows[0]?.changes).toHaveLength(8)
+    expect(foldCurationSnapshot([...effects].reverse())).toEqual(result)
+  })
+
+  it('CANARY-SURVIVAL collapses attributed confirmations and promotion while excluding foreign and overturned events', () => {
+    const f = commitFixture()
+    const confirm: Delta = { kind: 'Confirm', origin: 'agent', scope: f.add.scope, citedIds: [f.victim.bundleId], targetId: f.victim.bundleId,
+      evidenceToken: asEvidenceToken(f.claimed.payload.evidenceToken) }
+    expect(commitCurationDelta(f.deps, f.claimed, f.checkpoint(confirm)).kind).toBe('applied')
+    const config = { knowledgeRoot: f.root, productKey: 'storefront', auditBaseDir: f.deps.auditBaseDir,
+      commitArtifacts: 'none' as const, writerLeaseId: f.authority.leaseId, writerEpoch: f.authority.epoch }
+    const append = (event: Parameters<typeof bundleAppend.appendOutcomeEvent>[2]) =>
+      expect(bundleAppend.appendOutcomeEvent(config, f.victim.bundleId, event).kind).toBe('appended')
+    append({ type: 'confirmed', buildOrdinal: 44, evidenceToken: asEvidenceToken('canary'), curationJobId: 'canary-job', observationId: 'attributed' })
+    append({ type: 'promoted', buildOrdinal: 45, evidenceToken: asEvidenceToken('promotion'), curationJobId: 'promotion-job', observationId: 'attributed' })
+    append({ type: 'confirmed', buildOrdinal: 46, evidenceToken: asEvidenceToken('foreign'), curationJobId: 'foreign-job', observationId: 'foreign' })
+    const read = () => foldCurationSnapshot(readCurationEffects({ knowledgeRoot: f.root, sourceRunId: 'synthetic-run-43', observationIds: ['attributed'] }))
+    expect(read().breakdown.confirmed).toBe(1)
+    expect(read().rows[0]?.changes).toHaveLength(3)
+    append({ type: 'retracted', buildOrdinal: 47, evidenceToken: asEvidenceToken('rollback'), curationJobId: 'rollback-job',
+      retractsEvidenceToken: asEvidenceToken('synthetic-evidence-43'), retractsCurationJobId: f.claimed.candidateId, rollbackReceiptId: 'synthetic-rollback' })
+    expect(read().rows[0]?.changes).toHaveLength(2)
+    expect(read().rows[0]?.changes.every(e => e.change.observationId === 'attributed')).toBe(true)
+  })
+
+  it('HISTORICAL-MISSING never creates a snapshot from missing receipts or bundle shape', async () => {
+    const f = commitFixture()
+    commitCurationDelta(f.deps, f.claimed, f.checkpoint(f.supersede))
+    const receiptsDir = join(f.root, COMPLETED_EFFECTS_SUBDIR)
+    for (const name of readdirSync(receiptsDir)) rmSync(join(receiptsDir, name))
     const report = await drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
       author: async () => ({ kind: 'fallback-required', reason: 'no-model' }), executionContext: 'ci', policy: f.deps.policy,
-      budgetMs: 0, maintenance: 'skip', ...{ sourceRunId: 'synthetic-run-43' } })
-    expect(report).toHaveProperty('effects', [expect.objectContaining({ bucket: 'added' })])
+      maintenance: 'skip', sourceRunId: 'synthetic-run-43' })
+    expect(report.failures).toBe(0)
+    expect(report.effects).toEqual([])
     expect(report).not.toHaveProperty('snapshot')
-    expect(report.remaining).toBeGreaterThan(0)
   })
 })
