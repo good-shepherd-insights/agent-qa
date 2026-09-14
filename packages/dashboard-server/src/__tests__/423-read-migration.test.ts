@@ -85,6 +85,12 @@ it('MIGRATION-FRESH: creates complete nullable v3 directly on a SQLite file', ()
   runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
   expect(db.pragma('user_version', { simple: true })).toBe(3)
   nullableColumns(db)
+  expect(MIGRATIONS[0]?.fromV2Sql).toEqual([
+    'ALTER TABLE run_steps ADD COLUMN evidence_json TEXT',
+    'ALTER TABLE run_steps ADD COLUMN variable_snapshot_json TEXT',
+    'ALTER TABLE run_steps ADD COLUMN model_usage_json TEXT',
+    'ALTER TABLE run_sub_actions ADD COLUMN evidence_state_json TEXT',
+  ])
   expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
 })
 it('MIGRATION-V2-HISTORY: retains every prior value and NULL with exactly four added columns', () => {
@@ -114,6 +120,10 @@ it('MIGRATION-V2-HISTORY: retains every prior value and NULL with exactly four a
 it('MIGRATION-REOPEN: a published v3 file reopens without executing DDL', () => {
   const db = open('reopen.db')
   seedV2(db)
+  db.exec('ALTER TABLE run_steps ADD COLUMN evidence_json TEXT')
+  db.exec('ALTER TABLE run_steps ADD COLUMN variable_snapshot_json TEXT')
+  db.exec('ALTER TABLE run_steps ADD COLUMN model_usage_json TEXT')
+  db.exec('ALTER TABLE run_sub_actions ADD COLUMN evidence_state_json TEXT')
   db.exec('PRAGMA user_version = 3')
   const before = data(db)
   db.close()
@@ -122,6 +132,7 @@ it('MIGRATION-REOPEN: a published v3 file reopens without executing DDL', () => 
   expect(() => runSqliteMigrations(reopened, MIGRATIONS, SCHEMA_VERSION)).not.toThrow()
   expect(exec).not.toHaveBeenCalled()
   expect(data(reopened)).toEqual(before)
+  nullableColumns(reopened)
 })
 for (const [name, version] of [['V1', 1], ['FUTURE', 4], ['FUTURE', 17]] as const) {
   it(`MIGRATION-${name}-REFUSE: names unsupported version ${version} and leaves schema/data untouched`, () => {
@@ -157,4 +168,24 @@ it('MIGRATION-ROLLBACK: failure after a real ALTER restores schema, version, dat
   const reopened = open('rollback.db')
   expect({ data: data(reopened), schema: schema(reopened) }).toEqual(before)
   expect(reopened.pragma('user_version', { simple: true })).toBe(2)
+})
+
+it('MIGRATION-ROLLBACK: version stamp shares the same transaction as all four ALTERs', () => {
+  const db = open('rollback-stamp.db')
+  seedV2(db)
+  const before = { data: data(db), schema: schema(db) }
+  const pragma = db.pragma.bind(db)
+  vi.spyOn(db, 'pragma').mockImplementation((sql, options) => {
+    const value = pragma(sql, options)
+    if (sql === 'user_version = 3') {
+      nullableColumns(db)
+      expect(pragma('user_version', { simple: true })).toBe(3)
+      throw new Error('injected failure after version stamp')
+    }
+    return value
+  })
+  expect(() => runSqliteMigrations(db, MIGRATIONS, 3)).toThrow('injected failure after version stamp')
+  expect({ data: data(db), schema: schema(db) }).toEqual(before)
+  expect(db.pragma('user_version', { simple: true })).toBe(2)
+  expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
 })

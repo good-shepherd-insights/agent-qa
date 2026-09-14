@@ -65,13 +65,13 @@ function writeV1Database(dbPath: string): void {
   }
 }
 
-describe('a fresh dashboard database opens at v2 (D-01/D-02)', () => {
-  it('stamps user_version 2 and creates the three bus-shaped projection tables', () => {
+describe('a fresh dashboard database opens at v3 (423 D-08)', () => {
+  it('stamps user_version 3 and creates the three bus-shaped projection tables', () => {
     const db = new DashboardDatabase({ dbPath: join(workDir, 'fresh.db') })
     try {
       const raw = db as unknown as { db: { pragma(q: string, o?: { simple?: boolean }): unknown; prepare(sql: string): { all(): unknown[] } } }
-      expect(raw.db.pragma('user_version', { simple: true })).toBe(2)
-      expect(SCHEMA_VERSION).toBe(2)
+      expect(raw.db.pragma('user_version', { simple: true })).toBe(3)
+      expect(SCHEMA_VERSION).toBe(3)
 
       const tables = (raw.db
         .prepare("SELECT name FROM sqlite_master WHERE type='table'")
@@ -117,7 +117,7 @@ describe('an older or newer database is refused BY NAME, never migrated (D-02)',
     expect(() => new DashboardDatabase({ dbPath })).toThrow(/Remove the dashboard database/)
     // And it names BOTH versions, so an operator knows which file and which build.
     expect(() => new DashboardDatabase({ dbPath })).toThrow(/user_version 1/)
-    expect(() => new DashboardDatabase({ dbPath })).toThrow(/schema version 2/)
+    expect(() => new DashboardDatabase({ dbPath })).toThrow(/schema version 3/)
   })
 
   it('leaves the refused v1 file exactly as it found it', () => {
@@ -141,16 +141,16 @@ describe('an older or newer database is refused BY NAME, never migrated (D-02)',
   })
 
   it('still refuses a database from a FUTURE build with the not-compatible message', () => {
-    const dbPath = join(workDir, 'future-v3.db')
+    const dbPath = join(workDir, 'future-v4.db')
     const seed = createDashboardSqliteDatabase(dbPath)
     try {
-      seed.exec('PRAGMA user_version = 3')
+      seed.exec('PRAGMA user_version = 4')
     } finally {
       seed.close()
     }
 
     expect(() => new DashboardDatabase({ dbPath }))
-      .toThrow(/user_version 3 is not compatible with schema version 2/)
+      .toThrow(/user_version 4 is not compatible with schema version 3/)
   })
 })
 

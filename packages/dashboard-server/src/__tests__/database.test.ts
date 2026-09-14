@@ -42,8 +42,8 @@ describe('DashboardDatabase', () => {
     // a chain — it is the ONE terminal entry stamped at `SCHEMA_VERSION`, because no database is
     // ever migrated from an older shape (an older one is refused by name), so a chain of
     // intermediate versions would be sql nothing can ever walk.
-    it('SCHEMA_VERSION is 2', () => {
-      expect(SCHEMA_VERSION).toBe(2)
+    it('SCHEMA_VERSION is 3', () => {
+      expect(SCHEMA_VERSION).toBe(3)
     })
 
     it('MIGRATIONS is exactly one entry, stamped at the current schema version', () => {

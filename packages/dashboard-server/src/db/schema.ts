@@ -28,16 +28,25 @@
 // subscriber's `hookFinished` arm → the hook panel), `token_events` (the live-editor ws handler →
 // the insights page — D-20's verdict, measured, not assumed), and the construction-data columns on
 // `runs` that the queue and the settle path write.
-export const SCHEMA_VERSION = 2
+// 423 D-08: v3 permits exactly one additive upgrade from v2. The v1 refusal remains.
+export const SCHEMA_VERSION = 3
 
 export interface DashboardMigration {
   version: number
   sql: string[]
+  /** Sole approved historical upgrade; fresh databases use sql directly. */
+  fromV2Sql?: string[]
 }
 
 export const MIGRATIONS: DashboardMigration[] = [
   {
-    version: 2,
+    version: 3,
+    fromV2Sql: [
+      'ALTER TABLE run_steps ADD COLUMN evidence_json TEXT',
+      'ALTER TABLE run_steps ADD COLUMN variable_snapshot_json TEXT',
+      'ALTER TABLE run_steps ADD COLUMN model_usage_json TEXT',
+      'ALTER TABLE run_sub_actions ADD COLUMN evidence_state_json TEXT',
+    ],
     sql: [
       `CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
@@ -153,6 +162,9 @@ export const MIGRATIONS: DashboardMigration[] = [
         prompt_tokens INTEGER,
         completion_tokens INTEGER,
         total_tokens INTEGER,
+        evidence_json TEXT,
+        variable_snapshot_json TEXT,
+        model_usage_json TEXT,
         PRIMARY KEY (run_id, test_index, step_index)
       )`,
       // NO FOREIGN KEY TO `run_steps`, deliberately: `subActionRecorded` envelopes PRECEDE the
@@ -170,6 +182,7 @@ export const MIGRATIONS: DashboardMigration[] = [
         screen_state_hash TEXT NOT NULL,
         screen_state_hash_after TEXT,
         artifact_refs TEXT,
+        evidence_state_json TEXT,
         PRIMARY KEY (run_id, test_index, step_index, sub_action_index)
       )`,
       'CREATE INDEX IF NOT EXISTS idx_run_members_run ON run_members(run_id)',

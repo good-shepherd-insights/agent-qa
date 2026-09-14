@@ -1,5 +1,5 @@
 /**
- * THE PHASE-405 DELETION INVENTORY (D-21, DETL-06) — grep-clean, plus the v2 DDL's closed shape.
+ * THE PHASE-405 DELETION INVENTORY (D-21, DETL-06) — grep-clean, plus the v3 DDL's closed shape.
  *
  * WHAT THIS PROVES, AND WHY A GREEN SUITE DOES NOT PROVE IT. Phase 405 deleted three v1 projection
  * tables, five `runs` columns, two path-addressed artifact routes, the legacy live feed, the v1 UI
@@ -208,7 +208,7 @@ describe('the D-21 deletion inventory is grep-clean across production sources (D
 })
 
 // ---------------------------------------------------------------------------------------------
-// The v2 DDL's closed shape
+// The v3 DDL's closed shape
 // ---------------------------------------------------------------------------------------------
 
 const DDL = MIGRATIONS.map((migration) => migration.sql.join('\n')).join('\n')
@@ -237,22 +237,22 @@ const SURVIVING_TABLES = [
   'execution_logs',
 ]
 
-describe('the version-2 DDL is a closed shape (D-02, DETL-06)', () => {
+describe('the version-3 DDL is a closed shape (D-02, DETL-06)', () => {
   it('is one migration, at the declared version', () => {
     expect(MIGRATIONS).toHaveLength(1)
     expect(MIGRATIONS[0]?.version).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(2)
+    expect(SCHEMA_VERSION).toBe(3)
   })
 
   for (const { label, needle } of RETIRED_DDL_TOKENS) {
-    it(`the version-2 DDL declares no ${label}`, () => {
+    it(`the version-3 DDL declares no ${label}`, () => {
       const offending = DDL.split('\n')
         .map((line, index) => ({ line: line.trim(), index: index + 1 }))
         .filter((entry) => entry.line.includes(needle))
         .map((entry) => `MIGRATIONS[0].sql:${entry.index}: ${entry.line}`)
       expect(
         offending,
-        `a retired v1 column family returned to the v2 DDL:\n${offending.join('\n')}`,
+        `a retired v1 column family returned to the v3 DDL:\n${offending.join('\n')}`,
       ).toEqual([])
     })
   }
@@ -261,7 +261,7 @@ describe('the version-2 DDL is a closed shape (D-02, DETL-06)', () => {
   // present, so the cell above cannot pass by the migration having lost its DDL wholesale.
   it('declares every table the census KEPT', () => {
     for (const table of SURVIVING_TABLES) {
-      expect(DDL, `the v2 DDL no longer declares ${table}`).toContain(
+      expect(DDL, `the v3 DDL no longer declares ${table}`).toContain(
         `CREATE TABLE IF NOT EXISTS ${table}`,
       )
     }

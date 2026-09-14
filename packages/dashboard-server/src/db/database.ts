@@ -304,28 +304,18 @@ export function runSqliteMigrations(
   }
   if (currentVersion === schemaVersion) return
 
-  // 2026-08-27 (Phase 405 plan 01, D-02 · RESEARCH Pitfall 4): AN OLDER DATABASE IS REFUSED BY
-  // NAME, NEVER MIGRATED.
-  //
-  // This arm did not exist before, and its absence was a silent corruption rather than a missing
-  // nicety. With `SCHEMA_VERSION` at 2 and a v1 file on disk, the old code saw `1 < 2` and ran the
-  // v2 sql ON TOP of the v1 shape — where every statement is `CREATE TABLE IF NOT EXISTS`, so the
-  // wide v1 `steps` table survived untouched and the app came up talking to a half-old schema with
-  // no error anywhere. The v43 hard-cut rule says a schema change is a hard cut; this is that rule
-  // made mechanical, and it names BOTH versions so an operator knows which file to remove.
-  if (currentVersion !== 0 && currentVersion !== schemaVersion) {
+  // 423 D-08 narrows the old hard cut only for v2 -> v3. No intermediate
+  // migration chain or shape inference is allowed.
+  const upgradingV2 = currentVersion === 2 && schemaVersion === 3
+  if (currentVersion !== 0 && !upgradingV2) {
     throw new Error(
       `SQLite database user_version ${currentVersion} predates schema version ${schemaVersion}, `
-      + 'and this build performs no migration. '
+      + 'and this build performs no migration for that version. '
       + 'Remove the dashboard database or use a compatible agent-qa version.',
     )
   }
 
-  // ONE TERMINAL ENTRY, and the single-entry contract is the other half of the refusal above.
-  // Because no database is ever migrated FROM an older shape, a chain of intermediate versions
-  // would be a chain nothing can ever walk — dead sql that still has to be reviewed and kept
-  // consistent. `MIGRATIONS` is therefore exactly one entry stamped at `SCHEMA_VERSION`, applied
-  // only to a database at version 0.
+  // One current fresh-schema entry, with its explicitly approved v2 additions.
   const runnableMigrations = migrations.filter(migration => migration.version <= schemaVersion)
   const terminal = runnableMigrations.length === 1 ? runnableMigrations[0] : undefined
   if (terminal === undefined || terminal.version !== schemaVersion) {
@@ -336,10 +326,15 @@ export function runSqliteMigrations(
     )
   }
 
+  const statements = upgradingV2 ? terminal.fromV2Sql : terminal.sql
+  if (statements === undefined) {
+    throw new Error('Missing approved SQLite user_version 2 to schema version 3 migration')
+  }
+
   db.pragma('foreign_keys = OFF')
   try {
     const runAll = db.transaction(() => {
-      for (const sql of terminal.sql) {
+      for (const sql of statements) {
         db.exec(sql)
       }
       db.pragma(`user_version = ${terminal.version}`)
