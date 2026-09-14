@@ -762,6 +762,8 @@ export {
   isProcessAlive,
   listProposalEnvelopes,
   mintProposalId,
+  // 423 D-19: the non-reaping single-proposal observation marks history joins through.
+  observeProposalEnvelope,
   pendingProposalExists,
   proposalsDir,
   readAppliedProposal,

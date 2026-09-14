@@ -95,6 +95,7 @@ import {
   createProposalsInbox,
   createQuarantineOperations,
   mintProposalId,
+  observeProposalEnvelope,
   writePendingProposalRecord,
   createStandingApprovalReader,
   QUARANTINE_FLAG_FLOOR,
@@ -328,6 +329,8 @@ export interface LocalKnowledgeProbeCapabilities {
   readonly classifyIndexFace: typeof classifyIndexFace
   readonly foldRetrievalRung: typeof foldRetrievalRung
   readonly indexDbPath: typeof indexDbPath
+  /** 2026-09-15, 423 D-19: one proposal's current state without the listing's reap. */
+  readonly observeProposalEnvelope: typeof observeProposalEnvelope
   readonly readEmbedderWorkerRegistration: typeof readEmbedderWorkerRegistration
   readonly readWriterLease: typeof readWriterLease
   readonly resolveEmbedderCapability: typeof resolveEmbedderCapability
@@ -337,6 +340,7 @@ export const LOCAL_KNOWLEDGE_PROBES: LocalKnowledgeProbeCapabilities = Object.fr
   classifyIndexFace,
   foldRetrievalRung,
   indexDbPath,
+  observeProposalEnvelope,
   readEmbedderWorkerRegistration,
   readWriterLease,
   resolveEmbedderCapability,

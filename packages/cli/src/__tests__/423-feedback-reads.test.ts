@@ -10,13 +10,12 @@ import { asRunId, maskedMarker, RunsMarkOutcomeSchema, type FeedbackReadsPort, t
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { FsMarkLedger } from '../eval-session-composition.js'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
+import { createFeedbackReadsPortForHost, type FeedbackReadsHostDeps } from '../gates/feedback-read-host.js'
 import { previewMarkConsequences as preview } from '../gates/feedback-plan.js'
 import { files, markFixture } from '../gates/__tests__/feedback-fixture.js'
 
 const { claimPendingProposal, showProposalEnvelope } = await import(new URL('../../../knowledge-local/src/review/proposals-store.js', import.meta.url).href)
 const { runsMarksHistorySpec } = await import(new URL('../../../agent/src/functions/ops/runs-marks-history.js', import.meta.url).href)
-const readHost: { createFeedbackReadsPortForHost?: (deps: { agentQaRoot: string; now?: () => number; isProcessAlive?: (pid: number) => boolean }) => FeedbackReadsPort } =
-  await import('../gates/feedback-read-host.js').catch(() => ({}))
 
 const refuse = (name: string) => () => { throw new Error(`preview must not call ${name}`) }
 /** Every writer, lease and draft capability throws; only the deterministic reads remain. */
@@ -181,7 +180,7 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
 
 // 2026-09-15, 423 D-19: marks history over the real ledger and proposals store, observed with no write.
 const SECRET = 'synthetic-423-18-history-token'
-type HistoryReadsDeps = { agentQaRoot: string; now?: () => number; isProcessAlive?: (pid: number) => boolean }
+type HistoryReadsDeps = FeedbackReadsHostDeps
 
 /** Every path under a root, directories included, so a created directory is a visible change. */
 function tree(root: string): [string, string][] {
@@ -192,11 +191,7 @@ function tree(root: string): [string, string][] {
   return walk(root)
 }
 
-function readsFor(deps: HistoryReadsDeps): FeedbackReadsPort {
-  const create = readHost.createFeedbackReadsPortForHost
-  expect(typeof create, 'gates/feedback-read-host must export createFeedbackReadsPortForHost').toBe('function')
-  return create!(deps)
-}
+const readsFor = (deps: HistoryReadsDeps): FeedbackReadsPort => createFeedbackReadsPortForHost(deps)
 
 const historyOf = async (reads: FeedbackReadsPort, runId: RunId): Promise<RunsMarksHistoryResult> =>
   await runsMarksHistorySpec.invoke({ runId }, { feedbackReads: reads } as never)
@@ -347,6 +342,17 @@ describe('423-18 read-only marks history host (D-19)', () => {
     const entries = historyEntries(await historyOf(readsFor({ agentQaRoot: proposalScene.agentQaRoot }), template.runId))
     expect(entries.map(entry => entry.proposal?.state ?? null)).toEqual(['rejected', null, 'corrupt'])
     expect(tree(proposalScene.root)).toEqual(proposalBefore)
+
+    // A receipt whose drafted id names a proposal of another kind is not joined as that proposal.
+    const kindScene = scene()
+    const ledgerLines = readFileSync(kindScene.ledger, 'utf8').split('\n')
+    const drafted = JSON.parse(ledgerLines[2]!) as MarkReceipt
+    ledgerLines[2] = JSON.stringify({ ...drafted, disposition: { ...drafted.disposition, proposalKind: 'test-draft', fix: 'test-edit' } })
+    writeFileSync(kindScene.ledger, ledgerLines.join('\n'))
+    const kindBefore = tree(kindScene.root)
+    expect(historyEntries(await historyOf(readsFor({ agentQaRoot: kindScene.agentQaRoot }), template.runId))
+      .map(entry => entry.proposal?.state ?? null)).toEqual(['rejected', null, 'corrupt'])
+    expect(tree(kindScene.root)).toEqual(kindBefore)
 
     const torn = scene()
     writeFileSync(torn.ledger, readFileSync(torn.ledger, 'utf8').slice(0, -1))

@@ -798,38 +798,20 @@ export interface ProposalInboxReadOptions {
   readonly isProcessAlive?: (pid: number) => boolean
 }
 
-/**
- * EVERY proposal this store holds, as read-time envelopes (PROP-03 — 391 is the owner).
- *
- * 387's substrate note said enumeration, reaping and the standing grants that make an inbox
- * meaningful belong to 391. This is the enumeration half, and the reaping rides inside it rather
- * than in a background process on purpose: nothing happens at the moment a proposal expires
- * (D-12), and an orphaned claim is only interesting to somebody looking at the inbox. A reaper
- * would be a second thing that has to be running for the store to be correct.
- *
- * NOTHING IS EVER DELETED. Expiry is computed from the payload's own `proposedAt` against the
- * supplied `now`; the expired file is not touched, and an inbox filtered to `pending` simply
- * stops showing it. The one write this function can perform is the WR-03 restore, which moves a
- * claim marker back to the pending name it came from — a recovery, not a collection.
- */
-export function listProposalEnvelopes(
-  agentQaRoot: string,
-  options: ProposalInboxReadOptions,
-): readonly ProposalInboxEntry[] {
-  const directory = proposalsDir(agentQaRoot)
-  let names: readonly string[]
-  try {
-    names = readdirSync(directory)
-  } catch (error) {
-    // AN EMPTY LISTING IS A RESULT (edge PROP-03/empty). A project that has never proposed
-    // anything has an empty inbox, and it must read identically to one whose directory simply
-    // has not been created yet — the two are the same fact about the same project.
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-    throw error
-  }
+interface LocatedProposal { readonly state: ProposalDurableState; readonly path: string }
+interface ClaimMarker { readonly id: string; readonly pid: number; readonly path: string }
 
-  const durable = new Map<string, { readonly state: ProposalDurableState; readonly path: string }>()
-  const markers: { readonly id: string; readonly pid: number; readonly path: string }[] = []
+/**
+ * THE ONE NAME CLASSIFIER: which durable state each name in the directory holds, and which names
+ * are claim markers. The listing reaps from this answer and the single-proposal observation below
+ * reads it without reaping, so the two cannot disagree about what a name shape means.
+ */
+function classifyProposalNames(
+  directory: string,
+  names: readonly string[],
+): { durable: Map<string, LocatedProposal>; markers: ClaimMarker[] } {
+  const durable = new Map<string, LocatedProposal>()
+  const markers: ClaimMarker[] = []
 
   for (const name of names) {
     // Retired markers and in-flight temps are NOISE, not proposals: each sits beside a durable
@@ -866,6 +848,40 @@ export function listProposalEnvelopes(
       })
     }
   }
+  return { durable, markers }
+}
+
+/**
+ * EVERY proposal this store holds, as read-time envelopes (PROP-03 — 391 is the owner).
+ *
+ * 387's substrate note said enumeration, reaping and the standing grants that make an inbox
+ * meaningful belong to 391. This is the enumeration half, and the reaping rides inside it rather
+ * than in a background process on purpose: nothing happens at the moment a proposal expires
+ * (D-12), and an orphaned claim is only interesting to somebody looking at the inbox. A reaper
+ * would be a second thing that has to be running for the store to be correct.
+ *
+ * NOTHING IS EVER DELETED. Expiry is computed from the payload's own `proposedAt` against the
+ * supplied `now`; the expired file is not touched, and an inbox filtered to `pending` simply
+ * stops showing it. The one write this function can perform is the WR-03 restore, which moves a
+ * claim marker back to the pending name it came from — a recovery, not a collection.
+ */
+export function listProposalEnvelopes(
+  agentQaRoot: string,
+  options: ProposalInboxReadOptions,
+): readonly ProposalInboxEntry[] {
+  const directory = proposalsDir(agentQaRoot)
+  let names: readonly string[]
+  try {
+    names = readdirSync(directory)
+  } catch (error) {
+    // AN EMPTY LISTING IS A RESULT (edge PROP-03/empty). A project that has never proposed
+    // anything has an empty inbox, and it must read identically to one whose directory simply
+    // has not been created yet — the two are the same fact about the same project.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+
+  const { durable, markers } = classifyProposalNames(directory, names)
 
   const alive = options.isProcessAlive ?? isProcessAlive
   const inFlight = new Set<string>()
@@ -942,6 +958,44 @@ export function showProposalEnvelope(
   ProposalIdSchema.parse(proposalId)
   return listProposalEnvelopes(agentQaRoot, options)
     .find((entry) => entry.envelope.id === proposalId)
+}
+
+/**
+ * 2026-09-15, 423 D-19: ONE proposal's current entry as pure observation, for reads that must not
+ * write (marks history). Same classifier and envelope projection as {@link showProposalEnvelope},
+ * without the WR-03 reap: a live claim reads as an apply in flight, and a dead holder's claim reads
+ * as the pending proposal the next listing restores, with the marker left where it is.
+ *
+ * `undefined` means no durable name or claim exists for the id. A file that cannot be parsed
+ * throws, exactly as it does for the listing.
+ */
+export function observeProposalEnvelope(
+  agentQaRoot: string,
+  proposalId: string,
+  options: ProposalInboxReadOptions,
+): ProposalInboxEntry | undefined {
+  ProposalIdSchema.parse(proposalId)
+  const directory = proposalsDir(agentQaRoot)
+  let names: readonly string[]
+  try {
+    names = readdirSync(directory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+  const { durable, markers } = classifyProposalNames(directory, names)
+  let located = durable.get(proposalId)
+  let applyInFlight = false
+  if (located === undefined) {
+    const claims = markers.filter((marker) => marker.id === proposalId)
+    if (claims.length === 0) return undefined
+    const alive = options.isProcessAlive ?? isProcessAlive
+    const live = claims.find((marker) => alive(marker.pid))
+    applyInFlight = live !== undefined
+    located = { state: 'pending', path: (live ?? claims[0]!).path }
+  }
+  const envelope = envelopeAt(located.path, located.state, options.now)
+  return envelope === undefined ? undefined : { envelope, applyInFlight }
 }
 
 /** Read one durable file and project it into the read-time envelope its state implies. */

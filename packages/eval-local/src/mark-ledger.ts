@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { canonicalJson } from '@vostride/agent-qa-eval'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { AuthoringDraftEditOutputSchema, ImprovementPlanSchema, MarkReceiptSchema, type MarkAddress, type MarkReceipt } from '@vostride/agent-qa-schema'
+import { AuthoringDraftEditOutputSchema, ImprovementPlanSchema, MarkReceiptSchema, markAddressKey, type MarkAddress, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 import { acquireMarkLock } from './mark-lock.js'
 
@@ -45,10 +45,6 @@ export class MarkLedgerNoRunError extends Error {
     super('run-not-found: mark ledger requires a completed run handoff')
     this.name = 'MarkLedgerNoRunError'
   }
-}
-
-function addressKey(address: MarkAddress): string {
-  return `${address.testIndex}:${address.stepIndex ?? 'run'}`
 }
 
 /** Gate-side runtime ledger. The proposer reader entry never exports this store. */
@@ -97,7 +93,7 @@ export class FsMarkLedger {
   latestPerAddress(): MarkReceipt[] {
     const latest = new Map<string, MarkReceipt>()
     for (const receipt of this.read()) {
-      const key = addressKey(receipt)
+      const key = markAddressKey(receipt)
       if ((latest.get(key)?.ordinal ?? 0) < receipt.ordinal) latest.set(key, receipt)
     }
     return [...latest.values()].sort((a, b) =>
@@ -107,7 +103,7 @@ export class FsMarkLedger {
 
   latestFor(address: MarkAddress): MarkReceipt | undefined {
     if (address.runId !== this.runId) return undefined
-    return this.latestPerAddress().find(receipt => addressKey(receipt) === addressKey(address)
+    return this.latestPerAddress().find(receipt => markAddressKey(receipt) === markAddressKey(address)
       && (address.testId === undefined || receipt.testId === address.testId))
   }
 
