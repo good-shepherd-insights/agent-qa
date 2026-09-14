@@ -85,6 +85,8 @@ export function createMemberEventSink(deps: {
             // 405 D-05: kept spelling-identical to `projectStepFinalized`'s `extra` and to
             // `LoopEventEmitPort.stepFinalized`'s — three copies of one contract.
             tokenUsage?: StepFinalizedPayload['tokenUsage']
+            evidence?: StepFinalizedPayload['evidence']
+            variableSnapshot?: StepFinalizedPayload['variableSnapshot']
           },
         ): void {
           guardEmit(bus, () => {

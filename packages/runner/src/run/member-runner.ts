@@ -62,6 +62,7 @@ import { parseHookInline, stripHookInline, parseRunJSInline, parseAppiumInline }
 import { generateFailureSummary } from './failure-summary.js'
 import { describeBoundSurface } from '../tools/builder.js'
 import { defaultRegistry } from '../tools/index.js'
+import { createStepReadFinalizer } from './step-read-finalization.js'
 
 /** A single member-test step — a bare instruction or an object carrying per-step knobs. */
 export interface MemberStepSpec {
@@ -230,24 +231,6 @@ function getErrorMessage(error: unknown): string {
   return String(error)
 }
 
-function createTimeoutStepResult(name: string, scopeLabel: 'Test' | 'Step', timeoutMs: number): StepResult {
-  const error = `${scopeLabel} timed out after ${timeoutMs}ms`
-  return {
-    name,
-    status: 'failed',
-    duration: 0,
-    error,
-    trace: {
-      observation: '',
-      reasoning: error,
-      plannedAction: { type: 'waitFor', on: 'text', text: '', timeoutMs: 0 } as unknown as Action,
-      result: 'failure',
-      error,
-      screenStateBefore: '',
-    },
-  }
-}
-
 function createAbortedStepResult(
   name: string,
   duration: number,
@@ -356,7 +339,7 @@ async function runMemberAttempt(
 
   // Navigate to the test URL (secret resolution via the injected fn — store-neutral).
   let shouldRunSteps = true
-  if (member.url) {
+  if (member.url && !testAbortController.signal.aborted) {
     const interpolatedUrl = interpolateVariables(member.url, variableStore)
     const navigateAction = {
       type: 'navigate',
@@ -375,7 +358,6 @@ async function runMemberAttempt(
         'Navigate to test URL',
       )
       if (!aborted) throw err
-      steps.push(aborted)
       testFailed = aborted.status !== 'cancelled'
       shouldRunSteps = false
     }
@@ -392,12 +374,6 @@ async function runMemberAttempt(
   for (let stepIndex = 0; shouldRunSteps && stepIndex < member.steps.length; stepIndex++) {
     if (cancelled) break
     if (testDeadline && performance.now() >= testDeadline) {
-      const stepDef = member.steps[stepIndex]
-      steps.push(createTimeoutStepResult(
-        typeof stepDef === 'string' ? stepDef : stepDef.step,
-        'Test',
-        testTimeout!,
-      ))
       testFailed = true
       break
     }
@@ -436,6 +412,18 @@ async function runMemberAttempt(
     }
     if (stepTimeout) {
       deadlineTimers.push(setTimeout(() => abortForTimeout('step', stepTimeout), stepTimeout))
+    }
+
+    const stepId = makeId('step')
+    const finalizer = createStepReadFinalizer(config, stepIndex, member.name, toolSchemaDigest)
+    // Inline hooks and runJS are already work for this step. Announce it before either can
+    // finish, fail, or abort; no step scope exists for a pre-start cancellation/deadline.
+    config.sink.stepStarted({ stepIndex, stepText: rawInstruction })
+    const recordResult = (result: StepResult) => {
+      result.id = stepId
+      result.variableSnapshot ??= variableStore.snapshot()
+      finalizer.finish(result)
+      steps.push(result)
     }
 
     // 1. INLINE HOOKS — execute BEFORE interpolation (D-04/D-07), merge vars, then strip.
@@ -517,7 +505,7 @@ async function runMemberAttempt(
     }
 
     if (inlineHookFailed) {
-      steps.push(inlineHookAbortResult ?? {
+      recordResult(inlineHookAbortResult ?? {
         name: rawInstruction,
         status: 'failed',
         duration: 0,
@@ -550,8 +538,6 @@ async function runMemberAttempt(
     const interpolatedVariables = interpolated.substitutions
     let hasTemplateVars = originalStepName !== instruction
 
-    const stepId = makeId('step')
-
     // 3. runJS — resolve on the interpolated text via the injected handler (Q-2).
     const runJSMatches = parseRunJSInline(instruction)
     let runJSAbortResult: StepResult | undefined
@@ -565,7 +551,10 @@ async function runMemberAttempt(
         let jsValue: string
         let jsError: string | undefined
         try {
-          const out = await config.runJs(match.code, { abortSignal: stepAbortController.signal })
+          const out = await withAbort(
+            config.runJs(match.code, { abortSignal: stepAbortController.signal }),
+            stepAbortController.signal,
+          )
           jsValue = out.value
           jsError = out.error
         } catch (err) {
@@ -596,7 +585,7 @@ async function runMemberAttempt(
     }
 
     if (runJSAbortResult) {
-      steps.push(runJSAbortResult)
+      recordResult(runJSAbortResult)
       testFailed = runJSAbortResult.status !== 'cancelled'
       clearStepScope()
       break
@@ -615,7 +604,7 @@ async function runMemberAttempt(
     if (unresolvedTemplates.length > 0) {
       const errorLines = unresolvedTemplates.map(t => `  - ${t.pattern}: ${t.message}`)
       const errorMsg = `Unresolved template variable(s):\n${errorLines.join('\n')}`
-      steps.push({
+      recordResult({
         name: instruction,
         status: 'failed',
         duration: 0,
@@ -635,9 +624,6 @@ async function runMemberAttempt(
     }
 
     runnerLog?.info('Step started', { stepIndex, totalSteps: member.steps.length, testName: member.name })
-
-    // Announce the step to the run bus (masked downstream at the sink, not here).
-    config.sink.stepStarted({ stepIndex, stepText: instruction })
 
     const context: RunnerStepContext = {
       stepInstruction: instruction,
@@ -696,7 +682,7 @@ async function runMemberAttempt(
       abortSignal: stepAbortController.signal,
       secretStore: config.secretStore,
       secretRedactor: config.secretRedactor,
-      events: config.sink.loopEmitFor(stepIndex),
+      events: finalizer.events,
       configDigests: config.configDigests,
       evidenceArtifacts: config.evidenceArtifacts,
     }
@@ -754,7 +740,12 @@ async function runMemberAttempt(
           }
         }
       } else {
-        result = await executeStep(instruction, ports, context)
+        // The real loop owns its abort funnel and must finish recording before publication.
+        // An injected executor may not cooperate, so only that seam needs an outer race.
+        const execution = executeStep(instruction, ports, context)
+        result = config.executeStep
+          ? await withAbort(execution, stepAbortController.signal)
+          : await execution
       }
 
       result.originalStepName = hasTemplateVars ? originalStepName : undefined
@@ -767,6 +758,9 @@ async function runMemberAttempt(
           result.trace?.observation,
           result.trace?.reasoning,
         )
+
+      const abortedAfterExecution = abortResultForCurrentStep()
+      if (abortedAfterExecution) result = abortedAfterExecution
 
       // Failure/after screenshot via the injected writer.
       if (config.captureScreenshots === true && stepAbortController.signal.aborted) {
@@ -873,22 +867,24 @@ async function runMemberAttempt(
         } catch (err) {
           const aborted = abortResultForCurrentStep()
           if (aborted) result = aborted
-          else throw err
+          finalizer.consoleFailed()
         }
       }
-      if (!stepAbortController.signal.aborted && config.logCapture?.console !== false) {
-        result.consoleLogs = config.adapter.drainConsoleLogs?.()
-      }
+      finalizer.captureConsole(result, stepAbortController.signal)
       if (!stepAbortController.signal.aborted && config.logCapture?.network !== false) {
         result.networkLogs = config.adapter.drainNetworkLogs?.()
       }
 
       result.id = stepId
+    } catch (error) {
+      result = createAbortedStepResult(instruction, 0, stepAbortController.signal) ?? {
+        name: instruction, status: 'failed', duration: 0, error: getErrorMessage(error),
+      }
     } finally {
       clearStepScope()
     }
 
-    steps.push(result)
+    recordResult(result)
 
     if (result.status === 'failed') {
       testFailed = true

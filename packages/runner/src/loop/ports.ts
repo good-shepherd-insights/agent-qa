@@ -168,6 +168,8 @@ export interface LoopEventEmitPort {
        * `undefined` in that case, so absence is produced, never fabricated here.
        */
       tokenUsage?: StepFinalizedPayload['tokenUsage']
+      evidence?: StepFinalizedPayload['evidence']
+      variableSnapshot?: StepFinalizedPayload['variableSnapshot']
     },
   ): void
   subActionRecorded(evidence: SubActionEvidence, subActionIndex: number): void

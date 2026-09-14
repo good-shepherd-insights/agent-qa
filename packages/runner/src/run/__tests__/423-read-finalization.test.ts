@@ -3,8 +3,10 @@ import type { EvidenceDocument, RunEventEnvelope, StepFinalizedPayload } from '@
 import { createRunEventBus } from '../bus.js'
 import { createMemberEventSink } from '../event-sink.js'
 import { runMemberTest, type MemberRunConfig, type MemberTest } from '../member-runner.js'
-import { fakeModel, makeAdapter, makePlanner } from '../../loop/__tests__/loop-harness.js'
+import { fakeModel, makeActionPlan, makeAdapter, makePlanner } from '../../loop/__tests__/loop-harness.js'
 import type { ConsoleLogEntry } from '../../result.js'
+import { executeStep } from '../../loop/index.js'
+import type { LoopPorts } from '../../loop/ports.js'
 
 const secret = 'synthetic-live-secret-423'
 const hookId = 'h_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
@@ -170,3 +172,104 @@ test('EVID-MOBILE-SCOPE: device logs remain captured while browser evidence is u
   expect(result.steps[0].consoleLogs).toEqual([])
   expect(f.terminals()[0]?.evidence?.console).toEqual({ kind: 'console', state: 'absent', reason: 'unsupported' })
 })
+
+test('EVID-ABORT-DURING: an interrupted active console poll is failed, not an empty capture', async () => {
+  const f = fixture()
+  Object.assign(f.adapter, { pollDeviceLogs: async () => {
+    f.abort.abort(new Error('synthetic poll cancellation'))
+    return new Promise<void>(() => {})
+  } })
+  const result = await runMemberTest(f.member, f.config)
+  expect(result.steps).toHaveLength(1)
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].status).toBe('cancelled')
+  expect(f.terminals()[0].evidence?.console).toEqual({ kind: 'console', state: 'absent', reason: 'failed' })
+  expect(f.adapter.drainConsoleLogs).not.toHaveBeenCalled()
+})
+
+test('EVID-ABORT-BEFORE: cancellation after loop execution skips unstarted capture', async () => {
+  const f = fixture()
+  f.config.executeStep = async (instruction, ports, context) => {
+    const result = await executeStep(instruction, ports, context)
+    f.abort.abort(new Error('synthetic cancellation before drain'))
+    return result
+  }
+  const result = await runMemberTest(f.member, f.config)
+  expect(result.steps).toHaveLength(1)
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].status).toBe('cancelled')
+  expect(f.terminals()[0].evidence?.console).toEqual({ kind: 'console', state: 'absent', reason: 'not-captured' })
+  expect(f.adapter.drainConsoleLogs).not.toHaveBeenCalled()
+})
+
+test('EVID-ONCE: duplicate and late loop terminals cannot overwrite final member facts', async () => {
+  const f = fixture()
+  let late: (() => void) | undefined
+  f.config.executeStep = async (instruction, ports, context) => {
+    const result = await executeStep(instruction, ports, context)
+    const emit = () => ports.events?.stepFinalized(result.evidence!, { status: 'failed', error: 'stale callback' })
+    emit()
+    late = emit
+    return result
+  }
+  await runMemberTest(f.member, f.config)
+  late?.()
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].status).toBe('passed')
+  expect(f.terminals()[0]).not.toHaveProperty('error')
+})
+
+test('EVID-ABORT-DURING: the real loop retains completed sub-action evidence before its cancellation funnel', async () => {
+  const f = fixture()
+  let actions = 0
+  f.config.planner = makePlanner([
+    makeActionPlan({ stepComplete: false }),
+    makeActionPlan({ action: { type: 'click', ref: 'e1' } }),
+  ])
+  f.adapter.execute = async () => {
+    if (++actions === 2) f.abort.abort(new Error('synthetic action cancellation'))
+    return { success: true }
+  }
+  const result = await runMemberTest(f.member, f.config)
+  expect(result.steps).toHaveLength(1)
+  expect(result.steps[0].evidence).toBeDefined()
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].status).toBe('cancelled')
+  const children = f.events.filter(event => event.type === 'subActionRecorded')
+  expect(children.length).toBeGreaterThan(0)
+  expect(children.length).toBe(result.steps[0].evidence!.subActions.length)
+  expect(f.events.at(-1)?.type).toBe('stepFinalized')
+})
+
+test('EVID-TIMEOUT: non-cooperative started execution gets one timeout row and no later row', async () => {
+  const f = fixture()
+  f.config.timeouts = { step: 5 }
+  f.member.steps = ['Never resolves', 'Never starts']
+  let startedPorts: LoopPorts | undefined
+  f.config.executeStep = async (_instruction, ports) => {
+    startedPorts = ports
+    return new Promise(() => {})
+  }
+  const result = await runMemberTest(f.member, f.config)
+  expect(startedPorts).toBeDefined()
+  expect(result.steps).toHaveLength(1)
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].status).toBe('failed')
+  expect(f.terminals()[0].error).toContain('Step timed out')
+})
+
+test.each(['missing-mask', 'missing-store', 'bad-ref', 'missing-drain'] as const)(
+  'EVID-UNBOUND: %s does not claim successful durable content', async kind => {
+    const f = fixture()
+    f.adapter.drainConsoleLogs = () => [{ level: 'error', text: secret, timestamp: 1 }]
+    if (kind === 'missing-mask') f.config.masking = undefined
+    if (kind === 'missing-store') f.config.evidenceArtifacts = undefined
+    if (kind === 'bad-ref') f.config.evidenceArtifacts!.persistEvidenceDocument = () => ({ id: 'console-evidence:bad', sha: 'b'.repeat(64) })
+    if (kind === 'missing-drain') f.adapter.drainConsoleLogs = undefined
+    const result = await runMemberTest(f.member, f.config)
+    expect(result.status).toBe('passed')
+    expect(f.terminals()[0].evidence?.console).toEqual({ kind: 'console', state: 'absent',
+      reason: kind === 'missing-drain' ? 'unsupported' : 'failed' })
+    expect(f.documents).toEqual([])
+  },
+)

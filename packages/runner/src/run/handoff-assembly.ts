@@ -61,7 +61,7 @@ interface SynthDeps {
  * verifier verdict mirrors the step status with its error text passed through `mask` (masked-
  * before-record, identical to real evidence). `servedBrief` is the canonical empty brief.
  */
-function synthesizeStepEvidence(step: StepResult, stepIndex: number, deps: SynthDeps): StepEvidence {
+export function synthesizeStepEvidence(step: StepResult, stepIndex: number, deps: SynthDeps): StepEvidence {
   const passed = step.status === 'passed' || step.status === 'healed'
   const reasoning = step.error ?? `synthesized: step "${step.name}" ${step.status} (no §A8 evidence recorded)`
   return {
