@@ -53,6 +53,11 @@ describe('423 evidence contracts', () => {
       { kind: 'variables', state: 'present', counts: { count: 1 } },
     ]
     for (const entry of entries) expect(api.EvidenceEntrySchema.safeParse(entry).success).toBe(true)
+    for (const entry of entries.slice(0, 4)) {
+      expect(api.EvidenceEntrySchema.safeParse({
+        ...entry, ref: ref('decision-screenshot:'),
+      }).success).toBe(false)
+    }
     expect(api.EvidenceEntrySchema.safeParse({ ...entries[0], ref: ref('network-evidence:') }).success).toBe(false)
     expect(api.EvidenceEntrySchema.safeParse({ ...entries[0], counts: { total: -1, errors: 0, warnings: 0 } }).success).toBe(false)
     expect(api.EvidenceEntrySchema.safeParse({ ...entries[0], reason: 'empty' }).success).toBe(false)
