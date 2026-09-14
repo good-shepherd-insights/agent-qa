@@ -188,6 +188,8 @@ export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } fro
 export {
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
   POST_PROCESSING_CHIP_STATUSES,
+  POST_PROCESSING_DETAIL_STAGES,
+  PostProcessingStageDetailSchema,
   RunDigestCandidateReportSchema,
   RunDigestChainOutcomesSchema,
   RunDigestProposalRowSchema,
@@ -201,6 +203,8 @@ export {
 export type {
   PostProcessingChipStatus,
   PostProcessingChips,
+  PostProcessingDetailStage,
+  PostProcessingStageDetail,
   PostProcessingStatus,
   RunDigest,
   RunDigestCandidateReport,

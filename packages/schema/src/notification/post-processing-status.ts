@@ -15,6 +15,10 @@
 // third derived id, the retired entity kind and the retired proposal arm left with the
 // Issue-slot cleanup — see `DELETION-INVENTORY.md`.
 
+import { z } from 'zod'
+
+import { jobConclusionKindValues } from '../job/job'
+import type { JobConclusionKind } from '../job/job'
 import type { RunNotification } from './run-notification'
 
 /**
@@ -45,9 +49,44 @@ export interface PostProcessingChips {
   curation: PostProcessingChipStatus
 }
 
+/** Detail stages include the chip-less proposals stage; this does not widen the chip set. */
+export type PostProcessingDetailStage = 'analysis' | 'curation' | 'proposals'
+
+export const POST_PROCESSING_DETAIL_STAGES = [
+  'analysis',
+  'curation',
+  'proposals',
+] as const satisfies readonly PostProcessingDetailStage[]
+
+/**
+ * Recorded job facts only. Producers omit missing facts and mask failure text before
+ * publishing; absence never asserts a zero attempt count or an unrecorded timestamp.
+ */
+export interface PostProcessingStageDetail {
+  attempts?: number
+  createdAt?: string
+  claimedAt?: string
+  updatedAt?: string
+  conclusionKind?: JobConclusionKind
+  lastFailureKind?: string
+  lastFailureReason?: string
+}
+
+export const PostProcessingStageDetailSchema = z.object({
+  attempts: z.number().int().nonnegative().optional(),
+  createdAt: z.string().min(1).optional(),
+  claimedAt: z.string().min(1).optional(),
+  updatedAt: z.string().min(1).optional(),
+  conclusionKind: z.enum(jobConclusionKindValues).optional(),
+  lastFailureKind: z.string().optional(),
+  lastFailureReason: z.string().optional(),
+}).strict() satisfies z.ZodType<PostProcessingStageDetail>
+
 export interface PostProcessingStatus {
   runId: string
   chips: PostProcessingChips
+  /** A missing job row leaves its stage absent, including on historical payloads. */
+  stageDetails?: Partial<Record<PostProcessingDetailStage, PostProcessingStageDetail>>
   /**
    * Present only once the chain reached its terminal and wrote its one row (D-09). Absent is
    * the ordinary state of a chain still in flight — never rendered as a failure.

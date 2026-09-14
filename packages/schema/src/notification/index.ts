@@ -10,7 +10,12 @@ export type {
   RunNotificationStages,
   RunNotificationVerdictSummary,
 } from './run-notification'
-export { POST_PROCESSING_CHIP_STATUSES, isPostProcessingChipStatus } from './post-processing-status'
+export {
+  POST_PROCESSING_CHIP_STATUSES,
+  POST_PROCESSING_DETAIL_STAGES,
+  PostProcessingStageDetailSchema,
+  isPostProcessingChipStatus,
+} from './post-processing-status'
 // 391 D-16/D-18: the per-run digest's read-time contract. A projection, never a record — see
 // the module head for why it sits beside the frozen notification row instead of inside it.
 export {
@@ -32,5 +37,7 @@ export type {
 export type {
   PostProcessingChipStatus,
   PostProcessingChips,
+  PostProcessingDetailStage,
+  PostProcessingStageDetail,
   PostProcessingStatus,
 } from './post-processing-status'

@@ -13,7 +13,11 @@ import type { ArtifactRef } from '../ids/artifact-ref'
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
 import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '../notification/run-notification'
 import type { RunNotification } from '../notification/run-notification'
-import { POST_PROCESSING_CHIP_STATUSES } from '../notification/post-processing-status'
+import {
+  POST_PROCESSING_CHIP_STATUSES,
+  POST_PROCESSING_DETAIL_STAGES,
+  PostProcessingStageDetailSchema,
+} from '../notification/post-processing-status'
 import type { PostProcessingChips, PostProcessingStatus } from '../notification/post-processing-status'
 import { LiveStreamDeclarationSchema } from '../run/live-stream'
 import { RUN_EVENT_TYPES } from '../run/bus-events'
@@ -302,6 +306,7 @@ const PostProcessingChipsSchema = z.object({
 export const PostProcessingStatusSchema = z.object({
   runId: z.string(),
   chips: PostProcessingChipsSchema,
+  stageDetails: z.partialRecord(z.enum(POST_PROCESSING_DETAIL_STAGES), PostProcessingStageDetailSchema).optional(),
   notification: RunNotificationSchema.optional(),
 }).strict() satisfies z.ZodType<PostProcessingStatus>
 
