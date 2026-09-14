@@ -10,6 +10,9 @@ import { buildRunMaskingContext, createRunInvocationCore } from '@vostride/agent
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import { DashboardDatabase, createDashboardRunDetailReader, createDashboardRunIngest } from '@vostride/agent-qa-dashboard'
 import { asRunId, ConsoleEvidenceDocumentSchema } from '@vostride/agent-qa-schema'
+import { RunDetailProjectionSchema } from '@vostride/agent-qa-schema'
+import { createFunctionRegistry, invokeFunction, RUNS_DETAIL_FUNCTION_ID, type FunctionDeps } from '@vostride/agent-qa-agent'
+import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope, StepFinalizedPayload } from '@vostride/agent-qa-schema'
 import { produceDirectRunMembers, produceSuiteRunMembers } from '../commands/run.js'
 import type { RunInvocationInputs, SuiteRunMemberProductionInput } from '../commands/run.js'
@@ -63,7 +66,7 @@ afterEach(() => {
 })
 
 for (const path of ['COMPOSED', 'DIRECT'] as const) {
-  it(`CONSOLE-${path}-PATH: real CLI member stores masked bytes and publishes the immutable ref`, async () => {
+  it(`CONSOLE-${path}-PATH / CONSOLE-REOPEN-READ: real CLI member stores masked bytes and publishes the immutable ref`, async () => {
     const runId = generateRunId()
     const testId = generateTestId()
     const filePath = join(root, 'one.yaml')
@@ -189,8 +192,26 @@ for (const path of ['COMPOSED', 'DIRECT'] as const) {
         const rows = await createDashboardRunDetailReader(coldDb).read(asRunId(runId))
         expect(rows?.steps).toHaveLength(1)
         expect(rows?.steps[0]?.status).toBe('passed')
-        // v3 evidence columns/readback are 423-05's next step. This test proves
-        // today's subscriber/detail chain without inventing a persisted evidence column.
+        expect(rows?.steps[0]?.evidence).toEqual(terminal.evidence)
+        const registry = createFunctionRegistry({
+          deps: { runDetail: createDashboardRunDetailReader(coldDb) } as FunctionDeps,
+          auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+          resolveExecutionContext: () => 'local-interactive',
+        })
+        const detail = RunDetailProjectionSchema.parse(await invokeFunction(
+          registry, RUNS_DETAIL_FUNCTION_ID, { runId: asRunId(runId) },
+          { surface: 'cli', grantedScopes: ['read'], safeMode: false, origin: 'human' } as FunctionCaller,
+        ))
+        const coldEntry = detail.steps[0]?.evidence?.console
+        expect(coldEntry).toEqual(entry)
+        if (coldEntry?.state !== 'present') throw new Error('Expected reopened console ref')
+        const coldBytes = reopened.getBlob(coldEntry.ref.sha)!
+        expect(coldBytes).toEqual(bytes)
+        expect(createHash('sha256').update(coldBytes).digest('hex')).toBe(coldEntry.ref.sha)
+        expect(ConsoleEvidenceDocumentSchema.parse(JSON.parse(Buffer.from(coldBytes).toString('utf8'))).records)
+          .toEqual(ConsoleEvidenceDocumentSchema.parse(JSON.parse(text)).records)
+        expect(Buffer.from(coldBytes).toString('utf8')).not.toContain(lateSecret)
+        expect(detail.steps[0]).not.toHaveProperty('variableSnapshot')
       } finally { coldDb.close() }
       expect(reopened.getBlob(entry.ref.sha)).toEqual(bytes)
     } finally {

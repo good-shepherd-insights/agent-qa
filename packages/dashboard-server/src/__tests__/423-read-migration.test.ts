@@ -5,6 +5,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { DashboardDatabase, runSqliteMigrations } from '../db/database.js'
 import { createDashboardSqliteDatabase, type DashboardSqliteDatabase } from '../db/sqlite.js'
 import { MIGRATIONS, SCHEMA_VERSION } from '../db/schema.js'
+import { createDashboardRunIngest } from '../reporter/dashboard-subscriber.js'
+import { createDashboardRunDetailReader } from '../run-service/run-detail-reader.js'
+import { createFunctionRegistry, invokeFunction, RUNS_DETAIL_FUNCTION_ID, type FunctionDeps } from '@vostride/agent-qa-agent'
+import { asRunId, EvidenceArtifactRefSchema, RunDetailProjectionSchema } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, RunEventEnvelope, StepFinalizedPayload, SubActionRecordedPayload } from '@vostride/agent-qa-schema'
 
 // Frozen pre-423 v2 DDL, copied before the v3 change. Never derived from current MIGRATIONS.
 const V2_SQL: string[] = [
@@ -92,6 +97,122 @@ it('MIGRATION-FRESH: creates complete nullable v3 directly on a SQLite file', ()
     'ALTER TABLE run_sub_actions ADD COLUMN evidence_state_json TEXT',
   ])
   expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
+})
+
+async function detail(db: DashboardDatabase, runId: string) {
+  const forbidden = () => { throw new Error('Cannot reconstruct facts from handoff or config') }
+  const registry = createFunctionRegistry({
+    deps: {
+      runDetail: createDashboardRunDetailReader(db),
+      runs: { get: forbidden }, config: { getMasked: forbidden },
+    } as unknown as FunctionDeps,
+    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+    resolveExecutionContext: () => 'local-interactive',
+  })
+  return RunDetailProjectionSchema.parse(await invokeFunction(
+    registry, RUNS_DETAIL_FUNCTION_ID, { runId: asRunId(runId) },
+    { surface: 'dashboard', grantedScopes: ['read'], safeMode: false, origin: 'human' } as FunctionCaller,
+  ))
+}
+
+function recorded() {
+  const sha = 'a'.repeat(64)
+  const consoleRef = EvidenceArtifactRefSchema.parse({ id: `console-evidence:${sha}`, sha })
+  const ariaRef = EvidenceArtifactRefSchema.parse({ id: `aria-state:${sha}`, sha })
+  const step: StepFinalizedPayload = {
+    testIndex: 0, stepIndex: 1, cacheStatus: 'bypass',
+    verifierVerdict: { pass: true, reasoning: 'recorded' }, selfHealOccurred: false,
+    briefDigest: 'new-digest', status: 'passed',
+    evidence: {
+      console: { kind: 'console', state: 'present', ref: consoleRef, counts: { total: 3, errors: 1, warnings: 2 } },
+      network: { kind: 'network', state: 'absent', reason: 'failed' },
+      a11y: { kind: 'a11y', state: 'absent', reason: 'unsupported' },
+      variables: { kind: 'variables', state: 'present', counts: { count: 1 } },
+    },
+    variableSnapshot: JSON.parse('{"__proto__":{"value":"[secret]","source":"capture"}}'),
+  }
+  const child: SubActionRecordedPayload = {
+    testIndex: 0, stepIndex: 1, subActionIndex: 0, plan: 'recorded',
+    plannedAction: { type: 'navigate', to: 'url', url: 'https://example.invalid' },
+    result: { success: true }, screenStateHash: 'new-hash',
+    artifactRefs: [ariaRef], ariaEvidence: { kind: 'aria', state: 'present', ref: ariaRef },
+  }
+  return { step, child }
+}
+
+it('EVID-V2-HISTORY: old NULLs read unavailable while subscriber facts survive restart exactly', async () => {
+  const raw = open('evidence.db')
+  seedV2(raw)
+  // A valid historical action, independent of new producer payloads.
+  raw.exec(`UPDATE run_sub_actions SET planned_action = '{"type":"navigate","to":"url","url":"https://example.invalid"}'`)
+  raw.close()
+  const db = new DashboardDatabase({ dbPath: join(dir, 'evidence.db') })
+  const { step, child } = recorded()
+  try {
+    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId: 'new' } })
+    let seq = 0
+    const emit = (type: RunEventEnvelope['type'], payload: unknown) => ingest.handler({
+      runId: 'new', type, payload, seq: ++seq, ts: Date.now(),
+    } as RunEventEnvelope)
+    emit('runStarted', {})
+    emit('testStarted', { testIndex: 0, testId: 'test', name: 'member' })
+    // Exercise the upsert path too: the initial row has no optional facts.
+    emit('stepFinalized', { ...step, evidence: undefined, variableSnapshot: undefined })
+    emit('subActionRecorded', { ...child, ariaEvidence: undefined, artifactRefs: undefined })
+    emit('subActionRecorded', child)
+    emit('stepFinalized', step)
+    await ingest.finalize({})
+  } finally { db.close() }
+  const cold = new DashboardDatabase({ dbPath: join(dir, 'evidence.db') })
+  try {
+    const rows = cold.readRunDetailRows('new')!
+    expect(rows.steps).toHaveLength(1)
+    expect(rows.steps[0]?.evidence).toEqual(step.evidence)
+    expect(rows.steps[0]?.variableSnapshot).toEqual(step.variableSnapshot)
+    expect(rows.subActions[0]?.ariaEvidence).toEqual(child.ariaEvidence)
+    expect(rows.subActions[0]?.artifactRefs).toEqual(child.artifactRefs)
+    expect(rows.steps[0]).not.toHaveProperty('tokenUsage')
+    expect(rows.steps[0]).not.toHaveProperty('modelUsage')
+    const old = await detail(cold, 'old')
+    for (const kind of ['console', 'network', 'a11y', 'variables'] as const) {
+      expect(old.steps[0]?.evidence?.[kind]).toEqual({ kind, state: 'absent', reason: 'unavailable' })
+    }
+    expect(old.steps[0]).not.toHaveProperty('variableSnapshot')
+    expect(old.subActions[0]?.ariaEvidence).toEqual({ kind: 'aria', state: 'absent', reason: 'unavailable' })
+    expect(old.steps[0]?.tokenUsage).toEqual({ promptTokens: 3, completionTokens: 4, totalTokens: 7 })
+    const absent = await detail(cold, 'old-null')
+    expect(absent.steps[0]).not.toHaveProperty('tokenUsage')
+    const result = await detail(cold, 'new')
+    expect(result.steps[0]?.evidence).toEqual(step.evidence)
+    expect(result.steps[0]?.variableSnapshot).toEqual(step.variableSnapshot)
+    expect(result.subActions[0]?.ariaEvidence).toEqual(child.ariaEvidence)
+  } finally { cold.close() }
+  const persisted = open('evidence.db')
+  expect(persisted.prepare('SELECT evidence_json, variable_snapshot_json, model_usage_json FROM run_steps WHERE run_id = ?').get('new'))
+    .toEqual({ evidence_json: JSON.stringify(step.evidence), variable_snapshot_json: JSON.stringify(step.variableSnapshot), model_usage_json: null })
+})
+
+it('EVID-UPSERT-OMISSION: insert and replace mirror defined facts, then omit absent fields', () => {
+  const db = new DashboardDatabase({ dbPath: join(dir, 'upsert.db') })
+  try {
+    db.insertRun({ id: 'new', name: 'new', status: 'passed', duration: 0, startedAt: '', endedAt: '' })
+    const { step, child } = recorded()
+    const input = { runId: 'new', ...step }
+    const subInput = { runId: 'new', ...child }
+    db.insertRunStep(input)
+    db.insertRunSubAction(subInput)
+    expect(db.readRunDetailRows('new')?.steps[0]?.evidence).toEqual(step.evidence)
+    expect(db.readRunDetailRows('new')?.subActions[0]?.ariaEvidence).toEqual(child.ariaEvidence)
+    const absentStep = { ...input, evidence: undefined, variableSnapshot: undefined }
+    const absentChild = { ...subInput, ariaEvidence: undefined, artifactRefs: undefined }
+    db.insertRunStep(absentStep)
+    db.insertRunSubAction(absentChild)
+    const rows = db.readRunDetailRows('new')!
+    expect(rows.steps[0]).not.toHaveProperty('evidence')
+    expect(rows.steps[0]).not.toHaveProperty('variableSnapshot')
+    expect(rows.subActions[0]).not.toHaveProperty('ariaEvidence')
+    expect(rows.subActions[0]).not.toHaveProperty('artifactRefs')
+  } finally { db.close() }
 })
 it('MIGRATION-V2-HISTORY: retains every prior value and NULL with exactly four added columns', () => {
   const db = open('history.db')
