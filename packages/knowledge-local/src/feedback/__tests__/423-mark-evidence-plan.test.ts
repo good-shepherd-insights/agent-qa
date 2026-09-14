@@ -13,27 +13,12 @@ import { canaryOutcomeObservationId } from '../../serving/canary-observation-id.
 import * as readerEntry from '../../reader.js'
 import { appendMarkEvidence, type AppendMarkEvidenceInput, type AppendMarkEvidenceOutcome } from '../mark-evidence.js'
 
-type PlannedEffect =
-  | { direction: 'confirm'; alreadyAppended: boolean }
-  | { direction: 'overturn'; overturnsEvidenceToken: string; overturnsCurationJobId: string; alreadyAppended: boolean }
-type PlannedTarget =
-  | { recordId: string; kind: 'unreadable' }
-  | { recordId: string; kind: 'effects'; productKey: string; served: boolean; buildOrdinal: number;
-    effects: PlannedEffect[] }
-interface PlannedEvidence { targets: PlannedTarget[]; correlationIncomplete?: true }
-interface PlannerApi {
-  planMarkEvidence(input: Omit<AppendMarkEvidenceInput, 'auditBaseDir' | 'executionContext' | 'lease' | 'mark'
-    | 'includeAlreadyAppended'> & { mark: { runId: string; kind: AppendMarkEvidenceInput['mark']['kind'];
-      markId?: string } }): PlannedEvidence
-  projectMarkEvidenceOutcome(plan: PlannedEvidence, options: { includeAlreadyAppended: boolean }): AppendMarkEvidenceOutcome
-}
-
-function planner(): PlannerApi {
-  const entry = readerEntry as unknown as Partial<PlannerApi>
-  expect(typeof entry.planMarkEvidence, 'the /reader entry must export planMarkEvidence').toBe('function')
-  expect(typeof entry.projectMarkEvidenceOutcome, 'the /reader entry must export projectMarkEvidenceOutcome')
+function planner() {
+  // Select the actual /reader entry exports so the planning half is proven reachable without the writer.
+  expect(typeof readerEntry.planMarkEvidence, 'the /reader entry must export planMarkEvidence').toBe('function')
+  expect(typeof readerEntry.projectMarkEvidenceOutcome, 'the /reader entry must export projectMarkEvidenceOutcome')
     .toBe('function')
-  return entry as PlannerApi
+  return readerEntry
 }
 
 function treeBytes(dir: string): Map<string, string> {
@@ -215,7 +200,7 @@ describe('423-17 mark evidence planning half (D-16)', () => {
     expect(incomplete.correlationIncomplete).toBe(true)
     expect(api.projectMarkEvidenceOutcome(incomplete, { includeAlreadyAppended: false }))
       .toMatchObject({ correlationIncomplete: true })
-    expect(() => api.planMarkEvidence({ knowledgeRoot, mark: { runId: 'other-run', kind: 'false-pass' },
+    expect(() => api.planMarkEvidence({ knowledgeRoot, mark: { runId: asRunId('other-run'), kind: 'false-pass' },
       servedRecordIds: [], handoff: handoff() })).toThrow('another run')
   })
 

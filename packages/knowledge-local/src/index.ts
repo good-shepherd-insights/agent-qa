@@ -857,6 +857,8 @@ export { floorProse, type FloorProseInput } from './feedback/floor-prose.js'
 export { MarkPlanIntegrityError } from './review/propose-review.js'
 export { appendMarkEvidence, MARK_EVIDENCE_TOKEN_PREFIX, type AppendMarkEvidenceInput,
   type AppendMarkEvidenceOutcome } from './feedback/mark-evidence.js'
+export { markEvidenceEvent, planMarkEvidence, projectMarkEvidenceOutcome, type MarkEvidenceEffect,
+  type MarkEvidencePlan, type MarkEvidenceTarget, type PlanMarkEvidenceInput } from './feedback/mark-evidence-plan.js'
 export { materializePolicy, policySectionMarkers, policyShelfPath, PolicyTextRefusedError,
   POLICY_MATERIALIZE_EGRESS_CHANNEL } from './policy/materialize.js'
 export type { MaterializePolicyInput, MaterializeOutcome } from './policy/materialize.js'

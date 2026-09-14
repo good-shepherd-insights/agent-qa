@@ -100,3 +100,9 @@ export { canaryPostureFactsFor, standingReceiptDigestsFor, lowerTrustSharesFor,
   type CanaryPostureFacts, type StandingReceiptDigest, type LowerTrustShare,
 } from './gates/canary-posture-facts.js'
 export { pendingGateInconsistencyFor } from './review/gate-inconsistency-read.js'
+// 2026-09-15, 423 D-16: the mark evidence PLANNING half. It resolves and folds committed bundles,
+// takes no lease and mints no markId; appendMarkEvidence executes the same plan on the main entry.
+export { MARK_EVIDENCE_TOKEN_PREFIX, markEvidenceEvent, planMarkEvidence, projectMarkEvidenceOutcome }
+  from './feedback/mark-evidence-plan.js'
+export type { MarkEvidenceEffect, MarkEvidencePlan, MarkEvidenceTarget, PlanMarkEvidenceInput }
+  from './feedback/mark-evidence-plan.js'
