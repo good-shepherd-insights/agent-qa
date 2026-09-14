@@ -13,6 +13,7 @@ import {
   LiveViewUnavailableError,
   RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
+  RUNS_EVIDENCE_FUNCTION_ID,
   RUNS_EVENTS_FUNCTION_ID,
   RUNS_KNOWLEDGE_FUNCTION_ID,
   RUNS_MARK_FUNCTION_ID,
@@ -246,6 +247,7 @@ export function composeDashboardAgentHost(
     // same reason. `packages/dashboard-server` may not import this package (validate:arch), so the
     // id reaches it the only way an id can — as data from the composition that already knows it.
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
+    runsEvidenceFunctionId: RUNS_EVIDENCE_FUNCTION_ID,
     // 405-05 (D-12/D-13): the fourth id the run-service routes dispatch, on the same footing and
     // for the same reason — with the sharper one that this route serves BYTES, and the alternative
     // to an id is `packages/dashboard-server` constructing an evidence store from two URL segments.

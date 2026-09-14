@@ -503,6 +503,7 @@ function dashboardRollCallHost(
     // 405-01: the seam carries a fourth op id. This fixture dispatches only the ask, so this one
     // is named and never reached — the SHAPE is what has to be complete.
     runsDetailFunctionId: 'runs.detail',
+    runsEvidenceFunctionId: 'runs.evidence',
     // 405-05: a fifth. Same posture — the SHAPE has to be complete; this fixture reaches only the
     // ask, and artifact BYTES are masked on every door anyway (D-09: the seam never unmasks a blob).
     runsArtifactFunctionId: 'runs.artifact',

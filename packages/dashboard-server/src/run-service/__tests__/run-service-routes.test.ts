@@ -332,7 +332,7 @@ describe('the refusal-shape census walks the module\'s OWN route table', () => {
     // below drive it unauthenticated the day it lands.
     expect(RUN_SERVICE_ROUTE_TABLE.length).toBeGreaterThanOrEqual(7)
     const handlers = RUN_SERVICE_ROUTE_TABLE.map((row) => row.handler).sort()
-    expect(handlers).toEqual(['analysis', 'artifact', 'detail', 'events', 'liveUrl', 'ok', 'start'])
+    expect(handlers).toEqual(['analysis', 'artifact', 'detail', 'events', 'evidence', 'liveUrl', 'ok', 'start'])
   })
 
   it('refuses a MISSING token on every row with one body shape', async () => {

@@ -136,6 +136,8 @@ export interface AgentHost {
    * to the CLI, MCP and chat instead of to the browser alone.
    */
   readonly runsDetailFunctionId: string
+  /** The evidence op identity supplied by the same composition as the detail reader. */
+  readonly runsEvidenceFunctionId: string
   /**
    * The agent package's `runs.artifact` id, on `runsDetailFunctionId`'s exact footing (405 D-13).
    *

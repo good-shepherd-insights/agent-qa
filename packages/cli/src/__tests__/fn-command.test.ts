@@ -794,6 +794,7 @@ describe('agent-qa fn (generic function invoker)', () => {
       'runs.detail': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
       'runs.digest': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
+      'runs.evidence': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 407-01 D-05: `bound` rather than `unbound`, and that is the row worth reading. The op
       // declares no optional-dep binding key — its substrate is the REQUIRED runs port — so unlike

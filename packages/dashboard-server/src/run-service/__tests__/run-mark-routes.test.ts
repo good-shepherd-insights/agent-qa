@@ -43,6 +43,7 @@ function fixture() {
   const host: AgentHost = {
     agentAskFunctionId: 'test:ask', runsPostProcessingFunctionId: 'test:post',
     runsEventsFunctionId: 'test:events', runsDetailFunctionId: 'test:detail',
+    runsEvidenceFunctionId: 'test:evidence',
     runsArtifactFunctionId: 'test:artifact', analysisGetFunctionId: 'test:analysis',
     runsKnowledgeFunctionId: 'test:knowledge',
     foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'fixture' }, foldLines: [] }),

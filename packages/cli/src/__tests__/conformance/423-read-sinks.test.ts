@@ -16,6 +16,8 @@ import {
 import {
   DashboardDatabase,
   createDashboardRunDetailReader,
+  createRunServiceRoutes,
+  type RunServicePorts,
   serveRunDetailRead,
   startServer,
 } from '@vostride/agent-qa-dashboard'
@@ -29,6 +31,7 @@ import { chromium, type Browser, type Page } from 'playwright-core'
 
 import { composeDashboardAgentHost } from '../../commands/dashboard.js'
 import { createDisplayUnmasker } from '../../composition/display-unmask.js'
+import { matchServiceBearer } from '../../composition/run-service-token-resolution.js'
 import { PACKAGES_ROOT } from './spawned-chat.js'
 
 const AUTH_TOKEN = 'synthetic-423-cookie-token'
@@ -106,12 +109,21 @@ async function startFixture(display?: { name: string; attributes: Record<string,
   await new Promise<void>((resolve) => machine.listen(0, '127.0.0.1', resolve))
   const machineAddress = machine.address()
   if (machineAddress === null || typeof machineAddress === 'string') throw new Error('Machine fixture did not bind')
+  const remote = createServer(createRunServiceRoutes({ agentHost,
+    verifyBearer: header => matchServiceBearer(header, [{ name: 'test', tokenEnvVar: 'AGENT_QA_TEST_TOKEN',
+      value: 'synthetic-evidence-client', trustScope: { project: 'test' } }]),
+  } as RunServicePorts))
+  await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
+  const remoteAddress = remote.address()
+  if (remoteAddress === null || typeof remoteAddress === 'string') throw new Error('Remote fixture did not bind')
   return {
     root, db, runId, origin, authPlaceholder, allowedPlaceholder, unmask, evidenceRef, evidenceDocument,
     machineUrl: `http://127.0.0.1:${machineAddress.port}`,
+    remoteUrl: `http://127.0.0.1:${remoteAddress.port}/run/${runId}/evidence?kind=console&testIndex=0&stepIndex=0`,
     async close() {
       await started.close()
       await new Promise<void>((resolve, reject) => machine.close((error) => error ? reject(error) : resolve()))
+      await new Promise<void>((resolve, reject) => remote.close((error) => error ? reject(error) : resolve()))
       db.close()
       setActiveMaskingContextResolver(() => undefined)
       mask.dispose()
@@ -139,6 +151,18 @@ describe('423 guarded human read', () => {
     const artifact = await fetch(`${url}/artifacts/${fixture.evidenceRef.sha}`)
     expect(await artifact.text()).toBe(JSON.stringify(fixture.evidenceDocument))
     expect(artifact.headers.get('etag')).toBe(`"${fixture.evidenceRef.sha}"`)
+  })
+
+  it('HTTP-EVIDENCE-MACHINE real authenticated router retains placeholders and durable masked bytes', async () => {
+    expect((await fetch(fixture.remoteUrl)).status).toBe(401)
+    const response = await fetch(fixture.remoteUrl, { headers: { Authorization: 'Bearer synthetic-evidence-client' } })
+    expect(response.status).toBe(200)
+    const raw = await response.text()
+    expect(raw).toContain(fixture.authPlaceholder)
+    expect(raw).toContain(fixture.allowedPlaceholder)
+    expect(raw).not.toContain(AUTH_TOKEN)
+    expect(raw).not.toContain(ALLOWED)
+    expect(JSON.stringify(fixture.db.readRunDetailRows(fixture.runId))).not.toContain(AUTH_TOKEN)
   })
 
   it('C423-HUMAN-DETAIL-SANITIZED: T-405-38 restores then sanitizes durable HTTP output', async () => {

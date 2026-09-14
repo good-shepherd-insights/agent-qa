@@ -35,7 +35,7 @@ import {
 // 405-01 (D-03): the durable run-detail read. One arm below, above the `/api/runs/:id` catch-all,
 // formatting nothing and opening no database.
 import { unmaskTreeForDisplay } from '../masking/display-tree.js'
-import { serveRunArtifact, serveRunDetailRead } from '../run-service/run-detail-routes.js'
+import { serveRunArtifact, serveRunDetailRead, serveRunEvidenceRead } from '../run-service/run-detail-routes.js'
 // 406-01 (D-04): the failure view's read. One arm below, beside the detail arm and above the
 // `/api/runs/:id` catch-all, formatting nothing and opening no database.
 import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
@@ -2267,6 +2267,22 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         })
         return
       }
+    }
+
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/evidence$/.test(path)) {
+      if (!deps.agentHost) {
+        jsonNoCors(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/evidence'.length))
+      } catch {
+        jsonNoCors(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      serveRunEvidenceRead(req, res, { runId, host: deps.agentHost, boundary: 'human' })
+      return
     }
 
     // GET /api/runs/:id/detail — the durable run-detail projection (405-01, D-03).

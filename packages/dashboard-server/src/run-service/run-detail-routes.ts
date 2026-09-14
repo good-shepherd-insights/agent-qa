@@ -20,6 +20,8 @@ import { redactAuthStateValue as sanitizeAuthStateForResponse } from '@vostride/
 import {
   RunsArtifactInputSchema,
   RunsDetailInputSchema,
+  RunsEvidenceInputSchema,
+  RunsEvidenceResultSchema,
   type RunDetailProjection,
   type RunsArtifactResult,
 } from '@vostride/agent-qa-schema'
@@ -164,6 +166,47 @@ export interface RunDetailReadDeps {
    * CONTEXT.md integration point; reversing it back is adding `boundary: 'human'` to that dispatch.
    */
   readonly boundary?: 'human' | 'machine'
+}
+
+/** Parsed evidence shares the guarded display boundary; raw artifacts never enter this path. */
+export function serveRunEvidenceRead(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: RunDetailReadDeps,
+): void {
+  if (deps.boundary === 'human' && refuseCrossSiteRequest(req)) {
+    respondJson(res, 403, { error: 'cross_site_refused' })
+    return
+  }
+  const query = new URL(req.url ?? '/', 'http://localhost').searchParams
+  const entries: Array<[string, unknown]> = [['runId', deps.runId]]
+  const seen = new Set(['runId'])
+  for (const [key, value] of query) {
+    if (seen.has(key)) {
+      respondJson(res, 400, { error: 'invalid_evidence_input' })
+      return
+    }
+    seen.add(key)
+    if (key === 'testIndex' || key === 'stepIndex' || key === 'subActionIndex') {
+      // Do not coerce blanks, fractions, exponents or signed values into a recorded index.
+      entries.push([key, /^(0|[1-9][0-9]*)$/.test(value) ? Number(value) : value])
+    } else entries.push([key, value])
+  }
+  const parsed = RunsEvidenceInputSchema.safeParse(Object.fromEntries(entries))
+  if (!parsed.success) {
+    respondJson(res, 400, { error: 'invalid_evidence_input' })
+    return
+  }
+  void deps.host.invokeFunction(deps.host.registry, deps.host.runsEvidenceFunctionId,
+    parsed.data, deps.host.caller).then(result => {
+    const body = RunsEvidenceResultSchema.parse(result)
+    respondJson(res, 200, deps.boundary === 'human'
+      ? sanitizeAuthStateForResponse(unmaskTreeForDisplay(deps.host, body, { runId: deps.runId }))
+      : body)
+  }).catch((error: unknown) => {
+    const refusal = refusalFor(error)
+    respondJson(res, refusal.status, refusal.body)
+  })
 }
 
 /** `GET /api/runs/:id/detail` — what the rebuilt run-detail page reads (D-03). */

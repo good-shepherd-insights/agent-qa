@@ -275,6 +275,7 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // this package at all, so the id has to be HANDED to it; a literal there would be a name it
   // cannot type-check against the spec that answers to it. A string is not a dispatch handle.
   'RUNS_EVENTS_FUNCTION_ID',
+  'RUNS_EVIDENCE_FUNCTION_ID',
   // 407-01 (D-05): the Knowledge panel read's id, on the footing of every op-id constant around
   // it. The route that serves `GET /api/runs/:id/knowledge` lives in `packages/dashboard-server`,
   // which may not import the agent package at all, so the name reaches it as DATA from the

@@ -116,7 +116,7 @@ import { readJsonBody } from '../server/body-parser.js'
 // 405-05 (D-12 / 402 D-16): THE SAME TWO ADAPTERS THE LOCAL DOOR CALLS. Imported rather than
 // re-implemented, because "both doors answer the same bytes" is a claim about there being one
 // implementation — two that agree today are two that can stop agreeing.
-import { serveRunArtifact, serveRunDetailRead } from './run-detail-routes.js'
+import { serveRunArtifact, serveRunDetailRead, serveRunEvidenceRead } from './run-detail-routes.js'
 import { serveRunAnalysisRead } from './run-analysis-routes.js'
 
 /**
@@ -219,6 +219,7 @@ export type RunServiceRouteHandlerName =
   // makes that literal: the verdict above the table applies to these rows by construction, and the
   // census that drives every row unauthenticated inherits them the day they land.
   | 'detail'
+  | 'evidence'
   | 'artifact'
   // 406-01 (D-04): the failure view's read, on the two rows above's exact footing — the local
   // door's `GET /api/runs/:id/analysis` mounts the SAME adapter, so 408's embed and every thin
@@ -274,6 +275,8 @@ const RUN_SERVICE_LIVE_URL_PATTERN = /^\/run\/([^/]+)\/live-url$/
  */
 export const RUN_SERVICE_DETAIL_TEMPLATE = '/run/:runId/detail'
 const RUN_SERVICE_DETAIL_PATTERN = /^\/run\/([^/]+)\/detail$/
+const RUN_SERVICE_EVIDENCE_TEMPLATE = '/run/:runId/evidence'
+const RUN_SERVICE_EVIDENCE_PATTERN = /^\/run\/([^/]+)\/evidence$/
 /**
  * The ref-resolving artifact READ (405-05, D-12 / 402 D-16) — the remote twin of the local door's
  * `GET /api/runs/:runId/artifacts/:sha`, and the row 402 D-16 named by anticipation.
@@ -334,6 +337,8 @@ export const RUN_SERVICE_ROUTE_TABLE: readonly RunServiceRouteRow[] = Object.fre
     handler: 'detail',
     pattern: RUN_SERVICE_DETAIL_PATTERN,
   },
+  { method: 'GET', path: RUN_SERVICE_EVIDENCE_TEMPLATE, handler: 'evidence',
+    pattern: RUN_SERVICE_EVIDENCE_PATTERN },
   {
     method: 'GET',
     path: RUN_SERVICE_ARTIFACT_TEMPLATE,
@@ -1107,8 +1112,12 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
           return
         case 'artifact':
           handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
-            // THE SHA RAW. Not decoded — see `RUN_SERVICE_ARTIFACT_TEMPLATE`.
             serveRunArtifact(req, res, { runId, sha: matched.params[1] ?? '', host })
+          })
+          return
+        case 'evidence':
+          handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
+            serveRunEvidenceRead(req, res, { runId, host })
           })
           return
         case 'analysis':
