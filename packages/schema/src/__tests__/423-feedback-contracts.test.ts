@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import {
+  MARK_DISPOSITIONS,
   MARK_GOLD_CHANNELS,
   MARK_PREVIEW_DRAFT_KINDS,
   MARK_PREVIEW_EVIDENCE_DIRECTIONS,
@@ -9,9 +10,11 @@ import {
   MARK_PREVIEW_OUTCOMES,
   MARK_PREVIEW_REFUSALS,
   MARK_PROPOSAL_STATES,
+  MARK_QUARANTINE_CLASSES,
   MARK_TARGET_REASONS,
   MARKS,
   MARKS_HISTORY_OUTCOMES,
+  MarkDispositionSchema,
   MarkPreviewDraftSchema,
   MarkPreviewEvidenceEffectSchema,
   MarkPreviewKnowledgeRecordSchema,
@@ -39,6 +42,9 @@ const LATEST_KINDS = ['first', 'supersedes'] as const
 const DRAFT_KINDS = ['confirmed-bug', 'knowledge', 'test-edit', 'no-draftable-fix'] as const
 const EVIDENCE_DIRECTIONS = ['confirm', 'overturn'] as const
 const RECORD_EVIDENCE_KINDS = ['effects', 'unreadable'] as const
+// 2026-09-15, 423-25: the inherited 419 vocabularies the quarantined and already-marked arms carry.
+const QUARANTINE_CLASSES = ['flake', 'environment', 'timeout'] as const
+const DISPOSITIONS = ['quarantined', 'drafted', 'no-draftable-fix', 'confirmed-bug'] as const
 
 const runId = asRunId('run-feedback-contract')
 type Options = { options: readonly { shape: Record<string, { value?: unknown }> }[] }
@@ -151,5 +157,34 @@ describe('C423-FEEDBACK-RESULTS-EXACT', () => {
     expect(MarkPreviewEvidenceEffectSchema.safeParse({ direction: 'withdraw' }).success).toBe(false)
     expect(MarkPreviewKnowledgeRecordSchema.safeParse({ recordId: 'r', contentAbsence: { reason: 'not-found' }, served: true,
       evidence: { kind: 'skipped' } }).success).toBe(false)
+  })
+
+  test('pins the inherited quarantine classes and prior dispositions the preview arms carry', () => {
+    const previewArms = (RunsMarkPreviewResultSchema as unknown as Options).options
+    const quarantined = previewArms.find(option => option.shape.kind!.value === 'quarantined')!
+    expect([...MARK_QUARANTINE_CLASSES]).toEqual([...QUARANTINE_CLASSES])
+    expect((quarantined.shape.class as unknown as { options: string[] }).options).toEqual([...QUARANTINE_CLASSES])
+    const base = PREVIEW_CASES.quarantined as Record<string, unknown>
+    for (const value of QUARANTINE_CLASSES) {
+      expect(RunsMarkPreviewResultSchema.safeParse({ ...base, class: value }).success, value).toBe(true)
+    }
+    expect(RunsMarkPreviewResultSchema.safeParse({ ...base, class: 'unclassified' }).success).toBe(false)
+
+    expect([...MARK_DISPOSITIONS]).toEqual([...DISPOSITIONS])
+    expect(armsOf(MarkDispositionSchema, 'kind')).toEqual([...DISPOSITIONS])
+    const alreadyMarked = previewArms.find(option => option.shape.kind!.value === 'already-marked')!
+    const prior = alreadyMarked.shape.prior as unknown as { shape: { disposition: unknown } }
+    expect(prior.shape.disposition).toBe(MarkDispositionSchema)
+    const repeat = PREVIEW_CASES['already-marked'] as { prior: Record<string, unknown> } & Record<string, unknown>
+    const cases: Record<(typeof DISPOSITIONS)[number], unknown> = {
+      quarantined: { kind: 'quarantined', class: 'flake' },
+      drafted: { kind: 'drafted', fix: 'fact', proposalId: 'proposal-1', proposalKind: 'knowledge' },
+      'no-draftable-fix': { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
+      'confirmed-bug': { kind: 'confirmed-bug', confirmedRecords: 0 },
+    }
+    for (const kind of DISPOSITIONS) {
+      expect(RunsMarkPreviewResultSchema.safeParse({ ...repeat, prior: { ...repeat.prior, disposition: cases[kind] } }).success, kind).toBe(true)
+    }
+    expect(RunsMarkPreviewResultSchema.safeParse({ ...repeat, prior: { ...repeat.prior, disposition: { kind: 'withdrawn' } } }).success).toBe(false)
   })
 })

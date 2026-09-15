@@ -22,3 +22,16 @@ test('MODEL-USAGE-OPTIONAL: bus and persisted step share the schema-owned option
   expectTypeOf<RunStepTokenUsage>().toEqualTypeOf<ModelTokenUsage>()
   expectTypeOf<RunDetailStep['tokenUsage']>().toEqualTypeOf<ModelTokenUsage | undefined>()
 })
+
+// 2026-09-15, 423-25: the remaining introduced arms, spelled by hand. Cache creation stays out of
+// the contract by explicit phase exclusion, so its absence is pinned too.
+test('C423-MODEL-USAGE-ARMS-EXACT: call counters, attempt kinds and reported fields are exactly the recorded arms', () => {
+  type Attempt = ModelUsageObservations['attempts'][number]
+  expectTypeOf<keyof ModelUsage>().toEqualTypeOf<'roles' | 'calls' | 'inputTokens' | 'outputTokens' | 'cachedInputTokens'>()
+  expectTypeOf<keyof ModelUsage['calls']>().toEqualTypeOf<'started' | 'succeeded' | 'failed'>()
+  expectTypeOf<Attempt['kind']>().toEqualTypeOf<'start' | 'success' | 'failure'>()
+  expectTypeOf<keyof NonNullable<Attempt['report']>>()
+    .toEqualTypeOf<'inputTokens' | 'outputTokens' | 'cachedInputTokens' | 'respondingModelId'>()
+  expectTypeOf<keyof ModelTokenUsage>().toEqualTypeOf<'promptTokens' | 'completionTokens' | 'totalTokens' | 'cachedInputTokens'>()
+  expectTypeOf<Extract<keyof ModelUsage | keyof ModelTokenUsage, `cacheCreation${string}`>>().toEqualTypeOf<never>()
+})

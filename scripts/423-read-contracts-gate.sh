@@ -234,7 +234,7 @@ function censusMutation() {
   const MODEL_USAGE = 'packages/schema/src/run/model-usage.ts'
   const FEEDBACK = 'packages/schema/src/functions/feedback.ts'
   const instruments = {
-    'usage-walls': { pkg: 'packages/schema', files: [USAGE, USAGE_D], typecheck: true, count: 10 },
+    'usage-walls': { pkg: 'packages/schema', files: [USAGE, USAGE_D], typecheck: true, count: 18 },
     'feedback-runtime': { pkg: 'packages/schema', files: [FEED], typecheck: false, count: 6 },
   }
   const u = (file, name) => cell('usage-walls', file, name)
