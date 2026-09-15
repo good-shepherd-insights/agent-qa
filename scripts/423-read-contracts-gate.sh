@@ -178,9 +178,16 @@ async function vitest(label, pkg, files, { typecheck, extra = [], env } = {}) {
   try { json = JSON.parse(fs.readFileSync(report, 'utf8')) } catch {}
   const cells = []
   const loadFailures = []
+  const unnamedTypeFiles = []
   for (const file of json?.testResults ?? []) {
     const relative = path.relative(path.join(ROOT, pkg), file.name)
-    if ((file.assertionResults ?? []).length === 0 || (file.message ?? '') !== '') {
+    const empty = (file.assertionResults ?? []).length === 0
+    // A .test-d.ts holding only top-level expectTypeOf assertions typechecks as a passed file with
+    // no named cell. It is counted and reported, never a load failure; the focused step still
+    // requires a named cell in every 423 file.
+    if (empty && (file.message ?? '') === '' && file.status === 'passed' && relative.endsWith('.test-d.ts')) {
+      unnamedTypeFiles.push(relative)
+    } else if (empty || (file.message ?? '') !== '') {
       loadFailures.push(`${relative}: ${(file.message || 'no cells').split('\n')[0]}`)
     }
     for (const assertion of file.assertionResults ?? []) {
@@ -189,7 +196,7 @@ async function vitest(label, pkg, files, { typecheck, extra = [], env } = {}) {
   }
   const passed = cells.filter(cell => cell.status === 'passed')
   return {
-    ...result, reported: json !== undefined, cells, loadFailures,
+    ...result, reported: json !== undefined, cells, loadFailures, unnamedTypeFiles,
     failed: cells.filter(cell => cell.status === 'failed'),
     runtimePassed: passed.filter(cell => !cell.file.endsWith('.test-d.ts')).length,
     typePassed: passed.filter(cell => cell.file.endsWith('.test-d.ts')).length,
@@ -469,7 +476,7 @@ async function full() {
     const run = await vitest('suite-cli', 'packages/cli', [], { extra: ['--exclude', 'src/__tests__/conformance/knowledge-tab-dom.test.ts'] })
     totals.runtime += run.runtimePassed
     totals.type += run.typePassed
-    const base = `exit=${run.exit} cells=${run.cells.length} runtime=${run.runtimePassed} type=${run.typePassed} failed=${run.failed.length} ${run.secs}s`
+    const base = `exit=${run.exit} cells=${run.cells.length} runtime=${run.runtimePassed} type=${run.typePassed} failed=${run.failed.length}${run.unnamedTypeFiles.length ? ` unnamed-type-files=${run.unnamedTypeFiles.join(",")}` : ""} ${run.secs}s`
     if (!run.reported || run.cells.length === 0) return { ok: false, detail: `${base} no counted report` }
     if (run.exit === 0 && run.failed.length === 0 && run.loadFailures.length === 0) return { ok: true, detail: base }
     if (run.loadFailures.length > 0) return { ok: false, detail: `${base} load=${run.loadFailures.join(' | ')}` }

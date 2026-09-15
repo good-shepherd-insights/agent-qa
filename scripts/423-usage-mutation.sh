@@ -68,7 +68,7 @@ const instruments = {
   'model-observation': { pkg: 'packages/model', files: [AUTH, AUTH_D], typecheck: true, count: 60 },
   'runner-coverage': { pkg: 'packages/runner', files: [COVER], typecheck: false, count: 23 },
   'dashboard-cold': { pkg: 'packages/dashboard-server', files: [COLD], typecheck: false, count: 20 },
-  'schema-usage': { pkg: 'packages/schema', files: [ROLES, ROLES_D], typecheck: true, count: 17 },
+  'schema-usage': { pkg: 'packages/schema', files: [ROLES, ROLES_D], typecheck: true, count: 18 },
 }
 
 const auth = (name, count) => cell('model-authority', AUTH, name, count)

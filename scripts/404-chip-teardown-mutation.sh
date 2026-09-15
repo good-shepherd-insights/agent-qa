@@ -121,8 +121,13 @@ REQUIRED_M2="declares EXACTLY the four status words, in the order a stage passes
 ALLOWED_M2="declares EXACTLY the four status words, in the order a stage passes through them
 maps EVERY job status, claimed and unclaimed, identically for both stages"
 
-REQUIRED_M3="drives enqueue -> analyze-run -> curate-memory -> exactly one notification row"
-ALLOWED_M3="drives enqueue -> analyze-run -> curate-memory -> exactly one notification row
+# 2026-09-15, 423-25: re-spelled to the 422 writer cell names; the three added names are the measured
+# notification-row blast of the same mutation.
+REQUIRED_M3="drives enqueue -> analyze-run -> curate-memory -> propose-improvements -> exactly one notification row"
+ALLOWED_M3="drives enqueue -> analyze-run -> curate-memory -> propose-improvements -> exactly one notification row
+inserts the successor before it considers the terminal — no record at stage two
+lands a failed proposal stage without retracting the committed curation
+records the staged counts a bound port reported
 notifies on the FAILURE terminal, reporting the failed stage honestly
 lands curation: failed when the fold never completes
 recovers when a retry completes the fold
@@ -146,7 +151,10 @@ apply_mutation () {
         "$REPO_ROOT/$VOCAB_SUBJECT" ;;
     M3)
       # The writer stamps a third stage into the durable row. See the header on the cast.
-      perl -0pi -e "s/      curation,\n    \},\n  \}\n\}/      curation,\n      issues: { status: 'reserved' },\n    } as unknown as RunNotification['stages'],\n  }\n}/" \
+      # 2026-09-15, 423-25: re-spelled onto the writer's current tail. 422-07 (878fe5f7a) appended
+      # the proposals spread after curation, so the old anchor matched nothing and the leg went
+      # green without mutating.
+      perl -0pi -e "s/      \.\.\.\(proposals === undefined \? \{\} : \{ proposals \}\),\n    \},\n  \}\n\}/      ...(proposals === undefined ? {} : { proposals }),\n      issues: { status: 'reserved' },\n    } as unknown as RunNotification['stages'],\n  }\n}/" \
         "$REPO_ROOT/$WRITER_SUBJECT" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac

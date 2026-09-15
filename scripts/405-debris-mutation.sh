@@ -122,9 +122,9 @@ echo
 REQUIRED_G="no production source spells the legacy execution-events SSE route"
 ALLOWED_G="no production source spells the legacy execution-events SSE route"
 
-REQUIRED_D="the version-2 DDL declares no healing column"
+REQUIRED_D="the version-3 DDL declares no healing column"
 # The lexical arm sees the same bytes from the other side — see the header note on D.
-ALLOWED_D="the version-2 DDL declares no healing column
+ALLOWED_D="the version-3 DDL declares no healing column
 no production source spells the v1 healing attempt list"
 
 REQUIRED_U="declares no member naming a screenshot, a healing capture, a video or a path"
@@ -149,7 +149,9 @@ apply_mutation () {
     D)
       # A healing column back on the step projection. Nothing PRODUCES it — which is exactly why
       # only a closed-shape cell over the DDL can see it arrive.
-      perl -0pi -e "s/        total_tokens INTEGER,\n        PRIMARY KEY \(run_id, test_index, step_index\)/        total_tokens INTEGER,\n        ${NEEDLE_HEALING} TEXT,\n        PRIMARY KEY (run_id, test_index, step_index)/" \
+      # 2026-09-15, 423-25: re-spelled onto the last v3 step column (423-05 appended three after
+      # total_tokens), and to the cell 423-05 renamed to version-3.
+      perl -0pi -e "s/        model_usage_json TEXT,\n        PRIMARY KEY \(run_id, test_index, step_index\)/        model_usage_json TEXT,\n        ${NEEDLE_HEALING} TEXT,\n        PRIMARY KEY (run_id, test_index, step_index)/" \
         "$REPO_ROOT/$DDL_SUBJECT" ;;
     U)
       # A recording-path member back on the UI step type — declared and never assigned, which is how
