@@ -915,3 +915,15 @@ this register exists not to make.
 apple-darwin25). The mutation script is written to the bash 3.2 subset — indexed arrays and `i % n`
 rotation, no associative arrays, no `mapfile` — because that is what `/bin/bash` is on this platform
 and a script that needs a newer shell is a gate that will not run.
+
+## 2026-09-15 — Phase 423 reconciliation: the first additive migration returns nothing retired (Phase 423 plan 25, D-08)
+
+<!-- RECONCILIATION-423:start -->
+Dated 2026-09-15. Phase 423 deleted nothing from this register and restored nothing it retired. It is recorded here because D-08 is the first time the dashboard database admits a migration after the 405 hard cut, and a reader of the 2026-08-27 and 2026-08-28 sections needs to know the register still holds.
+
+What changed, stated exactly (evidence: 423-05-SUMMARY.md, cells `MIGRATION-FRESH`, `MIGRATION-V2-HISTORY`, `MIGRATION-ROLLBACK` and `EVID-V2-HISTORY`): `SCHEMA_VERSION` is 3; exactly v2 gains four nullable TEXT columns (`run_steps.evidence_json`, `variable_snapshot_json`, `model_usage_json` and `run_sub_actions.evidence_state_json`) in one transaction; a fresh database is created at v3 directly; v1 and every other nonzero version are still refused by name. The column spellings avoid every retired needle.
+
+What was preserved: no retired v1 DDL, table, column or path-addressed artifact route returned, and no second evidence source beside the v2 contracts was added. The `405-debris-deleted` fence, updated only for the version pin in 423-05, stayed green, and the 405 run-detail, debris and failure-banner mutation legs plus the 412 issue-slot and 404 chip-teardown legs passed serially on the restored build in `validate:423-read-contracts` on 2026-09-15 (GATE-423-COMPLETE, agent-qa head `9ab15aa44`). The debris gate's leg D anchor and cell name were re-spelled for the v3 columns first; the first full run had found that leg unable to apply its patch.
+
+Out of this register: the typed evidence documents are new sha-addressed artifacts under the existing immutable content-addressed route; they are not a return of the path-addressed artifacts this register retired.
+<!-- RECONCILIATION-423:end -->
