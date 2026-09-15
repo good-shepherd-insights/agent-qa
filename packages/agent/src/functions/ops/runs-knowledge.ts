@@ -567,6 +567,10 @@ export const runsKnowledgeSpec: FunctionSpec<RunsKnowledgeInput, RunKnowledgePro
         changes: joinedChanges,
         canaryAttributions,
         ...(curationSnapshot === undefined ? {} : { curationSnapshot }),
+        // Withheld by the nested read: the snapshot and sinceThen stay absent, the rows stay served.
+        ...(status?.curationSnapshotWithheld === undefined
+          ? {}
+          : { curationSnapshotWithheld: status.curationSnapshotWithheld }),
         ...(sinceThen === undefined
           ? {}
           : { sinceThen: { changes: sinceThen, count: sinceThen.length } }),

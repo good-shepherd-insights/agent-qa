@@ -226,7 +226,9 @@ export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } fro
 // deliberately does not widen. Nothing persists a digest — it is composed live, keyed by runId,
 // which is what makes "exactly one digest per run" structural rather than throttled.
 export {
+  CURATION_SNAPSHOT_WITHHELD_REASONS,
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  CurationSnapshotWithheldSchema,
   POST_PROCESSING_CHIP_STATUSES,
   POST_PROCESSING_DETAIL_STAGES,
   PostProcessingStageDetailSchema,
@@ -241,6 +243,7 @@ export {
   isPostProcessingChipStatus,
 } from './notification/index'
 export type {
+  CurationSnapshotWithheldReason,
   PostProcessingChipStatus,
   PostProcessingChips,
   PostProcessingDetailStage,

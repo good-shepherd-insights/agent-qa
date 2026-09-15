@@ -15,6 +15,7 @@ import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '../notification/run-not
 import type { RunNotification } from '../notification/run-notification'
 import { CurationSnapshotSchema } from '../notification/curation-snapshot'
 import {
+  CurationSnapshotWithheldSchema,
   POST_PROCESSING_CHIP_STATUSES,
   POST_PROCESSING_DETAIL_STAGES,
   PostProcessingStageDetailSchema,
@@ -319,6 +320,8 @@ export const PostProcessingStatusSchema = z.object({
   chips: PostProcessingChipsSchema,
   stageDetails: z.partialRecord(z.enum(POST_PROCESSING_DETAIL_STAGES), PostProcessingStageDetailSchema).optional(),
   curationSnapshot: CurationSnapshotSchema.optional(),
+  /** A recorded snapshot that could not be projected safely (423 D-15); never beside curationSnapshot. */
+  curationSnapshotWithheld: CurationSnapshotWithheldSchema.optional(),
   notification: RunNotificationSchema.optional(),
 }).strict() satisfies z.ZodType<PostProcessingStatus>
 
@@ -1086,6 +1089,11 @@ export const RunKnowledgeProjectionSchema = z.discriminatedUnion('kind', [
        * completed no snapshot (a failed or pre-423 chain) — never five zeros.
        */
       curationSnapshot: CurationSnapshotSchema.optional(),
+      /**
+       * The nested post-processing read withheld this run's snapshot (423 D-15): present beside an
+       * absent {@link curationSnapshot} and an absent {@link sinceThen}; the learned rows stay served.
+       */
+      curationSnapshotWithheld: CurationSnapshotWithheldSchema.optional(),
       /**
        * Attributed changes whose recorded identity is not in {@link curationSnapshot}, such as a
        * later promotion of a record the snapshot already names. Present only beside a snapshot.

@@ -20,7 +20,6 @@
 // that pins it costs a test file and not a store.
 
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
-import { z } from 'zod'
 import {
   maskedMarker,
   CurationSnapshotSchema,
@@ -37,6 +36,8 @@ import type {
   MaskFn,
   RunsPostProcessingInput,
   CurationSnapshot,
+  CurationSnapshotWithheldReason,
+  RunNotification,
 } from '@vostride/agent-qa-schema'
 
 import { chainJobIdsForRun } from '../../jobs/chain-identity.js'
@@ -130,13 +131,15 @@ function projectStageDetails(
   return Object.keys(details).length === 0 ? undefined : details
 }
 
-function projectCurationSnapshot(snapshot: CurationSnapshot, mask: MaskFn): CurationSnapshot {
-  const refuse = () => new z.ZodError([{
-    code: 'custom', path: ['curationSnapshot'],
-    message: 'The recorded curation snapshot cannot be projected safely.',
-  }])
+type CurationSnapshotProjection =
+  | { kind: 'served'; snapshot: CurationSnapshot }
+  | { kind: 'withheld'; reason: 'projection-refused' }
+
+const refused = (): CurationSnapshotProjection => ({ kind: 'withheld', reason: 'projection-refused' })
+
+function projectCurationSnapshot(snapshot: CurationSnapshot, mask: MaskFn): CurationSnapshotProjection {
   const source = CurationSnapshotSchema.safeParse(snapshot)
-  if (!source.success) throw refuse()
+  if (!source.success) return refused()
   const projected = {
     ...source.data,
     rows: source.data.rows.map(row => ({
@@ -157,10 +160,54 @@ function projectCurationSnapshot(snapshot: CurationSnapshot, mask: MaskFn): Cura
     })),
   }
   // Discriminants and constrained hex digests remain structural facts. If redaction
-  // collapses identities, refuse rather than merge rows or fabricate a new breakdown.
+  // collapses identities, withhold rather than merge rows or fabricate a new breakdown.
   const result = CurationSnapshotSchema.safeParse(projected)
-  if (!result.success) throw refuse()
-  return result.data
+  if (!result.success) return refused()
+  return { kind: 'served', snapshot: result.data }
+}
+
+type RecordedSnapshots =
+  | { kind: 'served'; checkpoint?: CurationSnapshot; nested?: CurationSnapshot }
+  | { kind: 'withheld'; reason: CurationSnapshotWithheldReason }
+
+/**
+ * One verdict for both recorded copies (423 D-15, Gap 2). With no masking context every identity
+ * would collapse to one marker, so projection is not attempted; with one, either copy refusing
+ * withholds both, so the checkpoint and the notification can never disagree.
+ */
+function projectRecordedSnapshots(
+  state: PostProcessingChainState | undefined,
+  mask: MaskFn | undefined,
+): RecordedSnapshots {
+  const recorded = {
+    checkpoint: state?.curationSnapshot,
+    nested: state?.notification?.stages.curation.curationSnapshot,
+  }
+  if (recorded.checkpoint === undefined && recorded.nested === undefined) return { kind: 'served' }
+  if (mask === undefined) return { kind: 'withheld', reason: 'masking-unavailable' }
+  const served: { checkpoint?: CurationSnapshot; nested?: CurationSnapshot } = {}
+  for (const key of ['checkpoint', 'nested'] as const) {
+    const snapshot = recorded[key]
+    if (snapshot === undefined) continue
+    const projection = projectCurationSnapshot(snapshot, mask)
+    if (projection.kind === 'withheld') return projection
+    served[key] = projection.snapshot
+  }
+  return { kind: 'served', ...served }
+}
+
+function withNestedSnapshot(
+  notification: RunNotification,
+  snapshot: CurationSnapshot | undefined,
+): RunNotification {
+  const { curationSnapshot: _recorded, ...curation } = notification.stages.curation
+  return {
+    ...notification,
+    stages: {
+      ...notification.stages,
+      curation: { ...curation, ...(snapshot === undefined ? {} : { curationSnapshot: snapshot }) },
+    },
+  }
 }
 
 export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostProcessingStatus> = {
@@ -214,29 +261,20 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
       state,
       mask,
     )
-    const curationSnapshot = state?.curationSnapshot === undefined
-      ? undefined
-      : projectCurationSnapshot(state.curationSnapshot, mask)
+    const snapshots = projectRecordedSnapshots(state, masking === undefined ? undefined : mask)
+    const curationSnapshot = snapshots.kind === 'served' ? snapshots.checkpoint : undefined
     const recordedNotification = state?.notification
-    const nestedSnapshot = recordedNotification?.stages.curation.curationSnapshot
-    const notification = recordedNotification === undefined || nestedSnapshot === undefined
+    const notification = recordedNotification?.stages.curation.curationSnapshot === undefined
       ? recordedNotification
-      : {
-          ...recordedNotification,
-          stages: {
-            ...recordedNotification.stages,
-            curation: {
-              ...recordedNotification.stages.curation,
-              curationSnapshot: projectCurationSnapshot(nestedSnapshot, mask),
-            },
-          },
-        }
+      : withNestedSnapshot(recordedNotification,
+          snapshots.kind === 'served' ? snapshots.nested : undefined)
 
     return {
       runId,
       chips: projectPostProcessingChips(state),
       ...(stageDetails === undefined ? {} : { stageDetails }),
       ...(curationSnapshot === undefined ? {} : { curationSnapshot }),
+      ...(snapshots.kind === 'withheld' ? { curationSnapshotWithheld: { reason: snapshots.reason } } : {}),
       // Absence is spread away rather than padded (the `runs-get.ts` idiom): a chain in flight
       // has no record yet, and a rendered `null` would be a second spelling of what a missing
       // key already says.

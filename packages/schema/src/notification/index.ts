@@ -11,6 +11,8 @@ export type {
   RunNotificationVerdictSummary,
 } from './run-notification'
 export {
+  CURATION_SNAPSHOT_WITHHELD_REASONS,
+  CurationSnapshotWithheldSchema,
   POST_PROCESSING_CHIP_STATUSES,
   POST_PROCESSING_DETAIL_STAGES,
   PostProcessingStageDetailSchema,
@@ -35,6 +37,7 @@ export type {
   RunsDigestInput,
 } from './run-digest'
 export type {
+  CurationSnapshotWithheldReason,
   PostProcessingChipStatus,
   PostProcessingChips,
   PostProcessingDetailStage,

@@ -83,6 +83,21 @@ export const PostProcessingStageDetailSchema = z.object({
   lastFailureReason: z.string().optional(),
 }).strict() satisfies z.ZodType<PostProcessingStageDetail>
 
+/**
+ * Why a recorded curation snapshot was not served (423 D-15, Gap 2). The read degrades the
+ * snapshot, never itself: chips, stage details and the notification are served either way.
+ */
+export type CurationSnapshotWithheldReason = 'masking-unavailable' | 'projection-refused'
+
+export const CURATION_SNAPSHOT_WITHHELD_REASONS = [
+  'masking-unavailable',
+  'projection-refused',
+] as const satisfies readonly CurationSnapshotWithheldReason[]
+
+export const CurationSnapshotWithheldSchema = z.object({
+  reason: z.enum(CURATION_SNAPSHOT_WITHHELD_REASONS),
+}).strict() satisfies z.ZodType<{ reason: CurationSnapshotWithheldReason }>
+
 export interface PostProcessingStatus {
   runId: string
   chips: PostProcessingChips
@@ -90,6 +105,11 @@ export interface PostProcessingStatus {
   stageDetails?: Partial<Record<PostProcessingDetailStage, PostProcessingStageDetail>>
   /** Validated completed curation, available before the proposals stage reaches terminal. */
   curationSnapshot?: CurationSnapshot
+  /**
+   * Present iff a recorded snapshot exists and could not be projected safely; never beside
+   * curationSnapshot. One flag governs both the checkpoint copy and the notification's nested copy.
+   */
+  curationSnapshotWithheld?: { reason: CurationSnapshotWithheldReason }
   /**
    * Present only once the chain reached its terminal and wrote its one row (D-09). Absent is
    * the ordinary state of a chain still in flight — never rendered as a failure.
