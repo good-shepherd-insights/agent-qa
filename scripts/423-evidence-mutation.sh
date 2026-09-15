@@ -63,7 +63,7 @@ const instruments = {
   'runner-aria': { pkg: 'packages/runner', files: [ARIA_T], typecheck: false, count: 11 },
   'runner-policy': { pkg: 'packages/runner', files: [POLICY_T], typecheck: false, count: 5 },
   'agent-read': { pkg: 'packages/agent', files: [READ_T], typecheck: false, count: 38 },
-  'store': { pkg: 'packages/runner-local', files: [STORE_T], typecheck: false, count: 10 },
+  'store': { pkg: 'packages/runner-local', files: [STORE_T], typecheck: false, count: 17 },
   'cli-read-posture': { pkg: 'packages/cli', files: [POSTURE_T], typecheck: false, count: 3, env: { VITEST_MAX_WORKERS: '1' } },
 }
 
@@ -206,6 +206,7 @@ const legs = [
     allowed: [
       'INTERRUPTED-BLOB: partial write failure never publishes a successful ref or target',
       'INTERRUPTED-BLOB: sync failure at stage 1 never returns a successful reference',
+      'DIR-FSYNC-TOLERATED: an EINVAL refusal on the file fsync itself still throws and publishes nothing',
     ].map(name => cell('store', STORE_T, name)),
     greens: [
       ...['MASK-BEFORE-HASH', 'DEDUP', 'JSON-KINDS', 'DURABLE-PARENTS'].map(name => cell('store', STORE_T, name)),

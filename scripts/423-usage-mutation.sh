@@ -67,7 +67,7 @@ const instruments = {
   'model-authority': { pkg: 'packages/model', files: [AUTH], typecheck: false, count: 54 },
   'model-observation': { pkg: 'packages/model', files: [AUTH, AUTH_D], typecheck: true, count: 60 },
   'runner-coverage': { pkg: 'packages/runner', files: [COVER], typecheck: false, count: 23 },
-  'dashboard-cold': { pkg: 'packages/dashboard-server', files: [COLD], typecheck: false, count: 21 },
+  'dashboard-cold': { pkg: 'packages/dashboard-server', files: [COLD], typecheck: false, count: 22 },
   'schema-usage': { pkg: 'packages/schema', files: [ROLES, ROLES_D], typecheck: true, count: 18 },
 }
 
