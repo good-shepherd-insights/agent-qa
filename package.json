@@ -63,7 +63,9 @@
     "validate:423-evidence-mutation": "bash scripts/423-evidence-mutation.sh",
     "validate:423-evidence-mutation-selftest": "bash scripts/423-evidence-mutation-selftest.sh",
     "validate:423-usage-mutation": "bash scripts/423-usage-mutation.sh",
-    "validate:423-usage-mutation-selftest": "bash scripts/423-usage-mutation-selftest.sh"
+    "validate:423-usage-mutation-selftest": "bash scripts/423-usage-mutation-selftest.sh",
+    "validate:423-curation-mutation": "bash scripts/423-curation-mutation.sh",
+    "validate:423-curation-mutation-selftest": "bash scripts/423-curation-mutation-selftest.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

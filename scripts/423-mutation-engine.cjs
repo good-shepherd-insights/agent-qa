@@ -37,7 +37,11 @@ const { spawn, spawnSync } = require('node:child_process')
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 const MODES = ['', 'neutered', 'fatal', 'SIGINT', 'SIGTERM', 'SIGHUP']
 
-/** A cell reference: an exact title, or every title starting with an ID token, counted. */
+/**
+ * A cell reference: an exact title, or every title starting with an ID token, counted. A name
+ * containing ' > ' is matched against the describe path instead (`Describe > title`), so a cell
+ * whose ID lives on its describe block is still named exactly.
+ */
 function cell(instrument, file, name, count = 1) {
   return { instrument, file, name, count }
 }
@@ -46,6 +50,11 @@ function titleMatches(spec, title) {
   if (title === spec.name) return true
   if (!title.startsWith(spec.name)) return false
   return /^[\s:]/.test(title.slice(spec.name.length))
+}
+
+function cellMatches(spec, title, ancestors = []) {
+  if (spec.name.includes(' > ')) return titleMatches(spec, [...ancestors, title].join(' > '))
+  return titleMatches(spec, title)
 }
 
 function describeCell(spec) {
@@ -263,7 +272,7 @@ function runGate(spec) {
       }
       for (const assertion of file.assertionResults ?? []) {
         if (!['passed', 'failed'].includes(assertion.status)) continue
-        cells.push({ file: relative, title: assertion.title,
+        cells.push({ file: relative, title: assertion.title, ancestors: assertion.ancestorTitles ?? [],
           id: [relative, ...assertion.ancestorTitles, assertion.title].join(' > '), status: assertion.status })
       }
     }
@@ -278,7 +287,7 @@ function runGate(spec) {
   }
 
   function matched(parsed, ref) {
-    return parsed.cells.filter(item => item.file === ref.file && titleMatches(ref, item.title))
+    return parsed.cells.filter(item => item.file === ref.file && cellMatches(ref, item.title, item.ancestors))
   }
 
   function namedFor(instrumentName) {
@@ -314,7 +323,7 @@ function runGate(spec) {
     }
     const admitted = [...leg.reds, ...(leg.allowed ?? [])]
     for (const failure of parsed.cells.filter(item => item.status === 'failed')) {
-      if (!admitted.some(ref => ref.file === failure.file && titleMatches(ref, failure.title))) {
+      if (!admitted.some(ref => ref.file === failure.file && cellMatches(ref, failure.title, failure.ancestors))) {
         throw new Error(`${leg.id}: red a cell outside its allowed list: ${failure.id}`)
       }
     }
@@ -432,7 +441,8 @@ function runGate(spec) {
       mustReject('no JSON verdicts', () => checkRed({ ...result, report: undefined }, leg))
       mustReject('a missing named cell', () => checkRed({ ...result, report: { ...result.report,
         testResults: result.report.testResults.map(file => ({ ...file,
-          assertionResults: file.assertionResults.filter(item => !titleMatches(leg.reds[0], item.title)) })) } }, leg))
+          assertionResults: file.assertionResults.filter(item =>
+            !cellMatches(leg.reds[0], item.title, item.ancestorTitles ?? [])) })) } }, leg))
       if (leg.reds.some(ref => ref.file.endsWith('.test-d.ts'))) {
         mustReject('a missing type assertion', () => checkRed({ ...result,
           log: result.log.replace(/TypeCheckError:/g, 'TypeCheck:') }, leg))
@@ -626,4 +636,4 @@ function runSelftest(spec) {
   })
 }
 
-module.exports = { runGate, runSelftest, cell, applyEdits, titleMatches }
+module.exports = { runGate, runSelftest, cell, applyEdits, titleMatches, cellMatches }
