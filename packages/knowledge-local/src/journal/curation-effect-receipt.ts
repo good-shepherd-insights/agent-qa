@@ -92,15 +92,13 @@ export function listCurationEffectReceipts(knowledgeRoot: string): CurationEffec
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw error
   }
+  // OS metadata and editor files are noise, not receipts: the writer alone mints canonical names,
+  // and a canonical-named file with malformed content still refuses in parseReceipt.
   return entries
     .filter((entry) => !entry.name.includes('.tmp-'))
+    .filter((entry) => entry.isFile() && /^[0-9a-f]{64}-[0-9a-f]{64}\.json$/.test(entry.name))
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((entry) => {
-    if (!entry.isFile() || !/^[0-9a-f]{64}-[0-9a-f]{64}\.json$/.test(entry.name)) {
-      throw new TypeError('invalid curation effect receipt')
-    }
-    return parseReceipt(readFileSync(join(dir, entry.name), 'utf8'), entry.name)
-  })
+    .map((entry) => parseReceipt(readFileSync(join(dir, entry.name), 'utf8'), entry.name))
 }
 
 export interface WriteCurationEffectReceiptOptions extends BundleEgressOptions {
