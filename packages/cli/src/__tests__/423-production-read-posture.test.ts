@@ -1,19 +1,25 @@
 // 423 Gap 1: runs.evidence over the production composition. No test installs a masking resolver;
 // every read below reaches its masking context only through the host's own cold read scope.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { DashboardDatabase, createDashboardRunDetailReader } from '@vostride/agent-qa-dashboard'
+import {
+  DashboardDatabase, createDashboardRunDetailReader, createRunServiceRoutes, startServer, type RunServicePorts,
+} from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
-import { maskedMarker } from '@vostride/agent-qa-schema'
+import { maskedMarker, type EvidenceDocument } from '@vostride/agent-qa-schema'
 
+import { composeDashboardAgentHost } from '../commands/dashboard.js'
+import { createDisplayUnmasker } from '../composition/display-unmask.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
+import { matchServiceBearer } from '../composition/run-service-token-resolution.js'
 
 const SECRET = 'synthetic-production-secret-423'
 const MARKER = maskedMarker('secret')
@@ -33,8 +39,8 @@ function fixtureBytes(root: string): unknown {
       entry.isDirectory() ? fixtureBytes(join(root, entry.name)) : readFileSync(join(root, entry.name), 'hex')])
 }
 
-const networkDocument = {
-  schemaVersion: 1 as const, kind: 'network' as const, records: [
+const networkDocument: Extract<EvidenceDocument, { kind: 'network' }> = {
+  schemaVersion: 1, kind: 'network', records: [
     {
       url: 'https://app.test/api/orders', method: 'POST', status: 200,
       requestHeaders: { 'content-type': 'application/json', 'x-request-id': 'req-423' },
@@ -104,6 +110,40 @@ function productionFixture() {
   return { root, configPath, agentQaRoot, secretsFile, runId, db, host, networkRef, read }
 }
 
+async function listen(server: ReturnType<typeof createServer>): Promise<string> {
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  cleanups.push(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())))
+  const address = server.address()
+  if (address === null || typeof address === 'string') throw new Error('HTTP fixture did not bind')
+  return `http://127.0.0.1:${address.port}`
+}
+
+// The local human door and the bearer machine door over the SAME composed host, as dashboard.ts
+// wires them. The display unmasker holds no store, so nothing a read masks can be restored here.
+async function startDoors(f: ReturnType<typeof productionFixture>) {
+  const agentHost = composeDashboardAgentHost(
+    f.host, { subscribe: () => () => undefined, emit() {} }, undefined, undefined,
+    createDisplayUnmasker({
+      agentQaRoot: f.agentQaRoot, secretStores: () => [], env: () => ({}), authStatePayloads: () => [],
+    }),
+  )
+  const started = await startServer({ db: f.db, port: 0, agentHost })
+  cleanups.push(() => started.close())
+  const address = started.server.address()
+  if (address === null || typeof address === 'string') throw new Error('Dashboard fixture did not bind')
+  const origin = `http://127.0.0.1:${address.port}`
+  const remote = await listen(createServer(createRunServiceRoutes({ agentHost,
+    verifyBearer: header => matchServiceBearer(header, [{ name: 'test', tokenEnvVar: 'AGENT_QA_TEST_TOKEN',
+      value: 'synthetic-evidence-client', trustScope: { project: 'test' } }]),
+  } as RunServicePorts)))
+  const query = 'kind=network&testIndex=0&stepIndex=0'
+  return {
+    human: `${origin}/api/runs/${f.runId}/evidence?${query}`,
+    machine: `${remote}/run/${f.runId}/evidence?${query}`,
+    artifact: `${origin}/api/runs/${f.runId}/artifacts/${f.networkRef.sha}`,
+  }
+}
+
 describe('423 production read posture', () => {
   it('COLD-EVIDENCE-HOST reads multi-key network and variables evidence readable with the declared secret masked', async () => {
     const f = productionFixture()
@@ -141,5 +181,58 @@ describe('423 production read posture', () => {
     expect(await f.read('variables')).toEqual(variables)
     expect(fixtureBytes(f.root)).toEqual(before)
     expect(readFileSync(join(f.agentQaRoot, 'execution_audit.jsonl'), 'utf8')).not.toContain(SECRET)
+  })
+
+  it('COLD-EVIDENCE-HTTP serves readable masked evidence on the human and bearer doors and immutable bytes on the sha route', async () => {
+    const f = productionFixture()
+    const doors = await startDoors(f)
+
+    const human = await fetch(doors.human)
+    expect(human.status).toBe(200)
+    const humanRaw = await human.text()
+    const humanBody = JSON.parse(humanRaw)
+    expect(humanBody).toMatchObject({ outcome: 'ready', document: { records: [
+      { requestHeaders: { 'content-type': 'application/json', 'x-request-id': 'req-423' },
+        responseHeaders: { 'content-type': 'application/json', 'x-trace': MARKER } },
+      { requestHeaders: {}, responseHeaders: {} },
+    ] } })
+    expect(humanRaw).not.toContain(SECRET)
+
+    expect((await fetch(doors.machine)).status).toBe(401)
+    const machine = await fetch(doors.machine, { headers: { Authorization: 'Bearer synthetic-evidence-client' } })
+    expect(machine.status).toBe(200)
+    const machineRaw = await machine.text()
+    expect(JSON.parse(machineRaw)).toMatchObject({ outcome: 'ready', document: { records: [
+      { requestHeaders: { 'x-request-id': 'req-423' }, responseHeaders: { 'x-trace': MARKER } },
+      { requestHeaders: {}, responseHeaders: {} },
+    ] } })
+    expect(machineRaw).not.toContain(SECRET)
+
+    const artifact = await fetch(doors.artifact)
+    expect(artifact.status).toBe(200)
+    expect(artifact.headers.get('etag')).toBe(`"${f.networkRef.sha}"`)
+    const served = Buffer.from(await artifact.arrayBuffer())
+    expect(served).toEqual(Buffer.from(JSON.stringify(networkDocument)))
+    expect(served).toEqual(Buffer.from(new FsEvidenceArtifactStore({ root: f.agentQaRoot, runId: f.runId }).getBlob(f.networkRef.sha)!))
+    expect(getActiveMaskingContext()).toBeUndefined()
+  })
+
+  it('COLD-EVIDENCE-UNAVAILABLE answers masking-unavailable with the capture kept when cold sources are missing', async () => {
+    const f = productionFixture()
+    const doors = await startDoors(f)
+    rmSync(f.secretsFile)
+
+    const result = await f.read('network')
+    expect(result).toEqual({
+      address: { runId: f.runId, testIndex: 0, stepIndex: 0, kind: 'network' },
+      outcome: 'read-error', code: 'masking-unavailable',
+      capture: { kind: 'network', state: 'present', ref: f.networkRef, counts: { total: 2, failed: 0, errored: 0 } },
+    })
+    expect(result).not.toHaveProperty('document')
+    expect(getActiveMaskingContext()).toBeUndefined()
+
+    const human = await fetch(doors.human)
+    expect(human.status).toBe(200)
+    expect(await human.json()).toEqual(result)
   })
 })

@@ -198,9 +198,52 @@ it('EVIDENCE-MASK masks free-text keys and values with the live context while pr
   variables.step.variableSnapshot = { 'synthetic-sensitive': { value: 'synthetic-sensitive', source: 'capture' } }
   expect(await variables.read()).toMatchObject({ outcome: 'ready', document: { records: { [masking.mask('synthetic-sensitive')]: { value: masking.mask('synthetic-sensitive'), source: 'capture' } } } })
 })
-it('EVIDENCE-MASK-NO-CONTEXT fails closed for document prose', async () => {
+it('EVIDENCE-MASK-NO-CONTEXT refuses a valid document it cannot mask as masking-unavailable', async () => {
   setActiveMaskingContextResolver(() => undefined)
-  expect(await fixture('aria').read()).toMatchObject({ outcome: 'ready', document: { tree: maskedMarker('secret') } })
+  const f = fixture('console')
+  const result = await f.read()
+  expect(result).toEqual({ address: f.address, outcome: 'read-error', code: 'masking-unavailable', capture: f.entry })
+  expect(JSON.stringify(result)).not.toContain('recorded console')
+  expect(JSON.stringify(result)).not.toContain('"document"')
+  expect(JSON.stringify(result)).not.toContain(maskedMarker('secret'))
+  expect(f.readBlob).toHaveBeenCalledWith(runId, 'ref' in f.entry ? f.entry.ref.sha : '')
+})
+it('EVIDENCE-MULTI-KEY keeps distinct keys, empty maps and stored order, and refuses masked key collisions', async () => {
+  const masking = createMaskingContext()
+  masking.register('recorded response')
+  setActiveMaskingContextResolver(() => masking)
+  const network: EvidenceDocument = { schemaVersion: 1, kind: 'network', records: [
+    { url: 'https://example.test/api', method: 'POST', status: 200,
+      requestHeaders: { 'content-type': 'application/json', 'x-request-id': 'req-1' },
+      responseHeaders: { 'x-trace': 'trace-1', 'content-type': 'text/plain' },
+      startTime: 1, endTime: 2, body: 'recorded response' },
+    { url: 'https://example.test/health', method: 'GET', status: 204, requestHeaders: {}, responseHeaders: {}, startTime: 3, endTime: 4 },
+  ] }
+  const f = fixture('network', network)
+  const read = await f.read()
+  expect(read).toMatchObject({ outcome: 'ready' })
+  const records = (read as { document: Extract<EvidenceDocument, { kind: 'network' }> }).document.records
+  const stored = (network as Extract<EvidenceDocument, { kind: 'network' }>).records
+  expect(records).toHaveLength(stored.length)
+  stored.forEach((record, index) => {
+    expect(records[index]!.url).toBe(record.url)
+    expect(Object.entries(records[index]!.requestHeaders)).toEqual(Object.entries(record.requestHeaders))
+    expect(Object.entries(records[index]!.responseHeaders)).toEqual(Object.entries(record.responseHeaders))
+  })
+  expect(records[1]!.requestHeaders).toEqual({})
+  expect(records[1]!.responseHeaders).toEqual({})
+  expect(records[0]!.body).toBe(masking.mask('recorded response'))
+  expect(records[0]!.body).toMatch(/^<SECRET_\d+>$/)
+
+  const variables = fixture('variables')
+  variables.step.variableSnapshot = { second: { value: 'two', source: 'env' }, first: { value: 'one', source: 'inline' } }
+  const snapshot = await variables.read()
+  expect(snapshot).toMatchObject({ outcome: 'ready' })
+  expect(Object.entries((snapshot as { document: { records: object } }).document.records))
+    .toEqual([['second', { value: 'two', source: 'env' }], ['first', { value: 'one', source: 'inline' }]])
+
+  setActiveMaskingContextResolver(() => ({ mask: () => 'collapsed', unmask: text => text }))
+  expect(await f.read()).toEqual({ address: f.address, outcome: 'read-error', code: 'invalid-document', capture: f.entry })
 })
 it('EVIDENCE-PORTS reports missing bindings, missing runs and storage errors distinctly', async () => {
   const f = fixture('console')
