@@ -39,6 +39,8 @@ export const RUN_EVIDENCE_BLOBS_SUBDIR = 'blobs'
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/
 
+const DIRECTORY_SYNC_TOLERATED_CODES = ['EINVAL', 'EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EBADF', 'EISDIR'] as const
+
 export interface FsEvidenceArtifactStoreConfig {
   /** Runtime root (e.g. DEFAULT_AGENT_QA_DIR = '.agent-qa'). */
   root: string
@@ -108,7 +110,14 @@ export class FsEvidenceArtifactStore implements EvidenceArtifactStorePort {
     // mkdir(recursive) may have created any part of the run family. Sync each parent
     // entry as well, including when a competing writer created it before this call.
     for (let path = this.dir; ; path = dirname(path)) {
-      this.syncPath(path)
+      try {
+        this.syncPath(path)
+      } catch (error) {
+        // The file bytes were synced before rename. Some filesystems refuse directory fsync,
+        // and that refusal is not data loss.
+        const code = (error as NodeJS.ErrnoException).code
+        if (!DIRECTORY_SYNC_TOLERATED_CODES.some(tolerated => tolerated === code)) throw error
+      }
       if (path === this.durabilityRoot || dirname(path) === path) return
     }
   }
