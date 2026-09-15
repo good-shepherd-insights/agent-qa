@@ -339,6 +339,22 @@ describe('Wave 18 cold read masking recovery', () => {
     expect(read.host.jobs).not.toHaveBeenCalled()
   })
 
+  it('COLD-KNOWLEDGE-WITHHELD keeps the knowledge read ready and names the withheld snapshot', async () => {
+    const p = project()
+    await publish(p, snapshot(p.runId))
+    rmSync(p.secretFile)
+    const read = cold(p)
+    const knowledge = await invokeFunction(
+      read.host.registry, 'runs.knowledge', { runId: p.runId }, CLI_FUNCTION_CALLER,
+    ) as { kind: string, learned: Record<string, unknown> }
+    expect(knowledge.kind).toBe('ready')
+    expect(knowledge.learned.curationSnapshotWithheld).toEqual({ reason: 'masking-unavailable' })
+    expect(knowledge.learned).not.toHaveProperty('curationSnapshot')
+    expect(knowledge.learned).not.toHaveProperty('sinceThen')
+    expect(read.host.jobs).not.toHaveBeenCalled()
+    expect(getActiveMaskingContext()).toBeUndefined()
+  })
+
   it('COLD-ROTATION preserves historical tokens while newly masked text cannot restore through their indices', async () => {
     const p = project()
     const historical = 'historical-retained-value'
