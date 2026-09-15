@@ -944,9 +944,13 @@ async function runMemberAttempt(
 
       result.id = stepId
     } catch (error) {
+      const message = getErrorMessage(error)
       result = { ...completedExecution, ...(createAbortedStepResult(instruction, 0, stepAbortController.signal) ?? {
-        name: instruction, status: 'failed', duration: 0, error: getErrorMessage(error),
+        name: instruction, status: 'failed', duration: 0,
+        error: config.secretRedactor ? config.secretRedactor.redactString(message) : message,
       }) }
+      // completedExecution predates the normal path's redaction; nothing raw may be recorded.
+      result = redactSecretValue(result, config.secretRedactor)
     } finally {
       clearStepScope()
     }
