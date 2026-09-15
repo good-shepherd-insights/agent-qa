@@ -69,7 +69,7 @@ const CHAIN_T = 'src/jobs/__tests__/chain-identity.test.ts'
 const instruments = {
   'schema-curation': { pkg: 'packages/schema', files: [CUR, CUR_D], typecheck: true, count: 21 },
   'schema-stages': { pkg: 'packages/schema', files: [STG, STG_D], typecheck: true, count: 18 },
-  'curation-store': { pkg: 'packages/knowledge-local', files: [SNAPSHOT, RECOVERY], typecheck: false, count: 28 },
+  'curation-store': { pkg: 'packages/knowledge-local', files: [SNAPSHOT, RECOVERY], typecheck: false, count: 30 },
   'runs-knowledge': { pkg: 'packages/agent', files: [RUNS], typecheck: false, count: 68 },
   'chain-notification': { pkg: 'packages/agent', files: [CHAIN_T], typecheck: false, count: 13 },
 }

@@ -835,7 +835,9 @@ export async function curateCompletedRun(
           drainKind: drain.kind,
           handoffHolderPid: drain.kind === 'handed-off' ? drain.holder.pid : null,
           candidateIds: sortedCandidateIds(candidates),
-          ...(validated?.success === true ? { snapshot: validated.data } : {}),
+          // WR-08: the counts travel beside the snapshot, which is exactly when the rerun short-circuit
+          // answers from this receipt; a handed-off receipt has no counts of its own to record.
+          ...(validated?.success === true ? { snapshot: validated.data, curated, deprecated } : {}),
         }
       }
       if (!complete) {

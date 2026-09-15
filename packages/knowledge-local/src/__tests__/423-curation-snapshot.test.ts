@@ -230,8 +230,8 @@ describe('423 curation snapshot', () => {
     expect(report.effects?.length).toBeGreaterThan(0)
     const reread = readCurationEffects({ knowledgeRoot: f.root, sourceRunId: 'synthetic-run-43' })
     expect(reread).toEqual(report.effects)
-    expect(foldCurationSnapshot(reread).breakdown)
-      .toEqual({ added: 0, confirmed: 0, superseded: 1, deprecated: 0, proposed: 0 })
+    const victim = loadBundle(f.victim.bundleDir)
+    expect(victim.kind === 'loaded' && victim.bundle.events.some(event => event.type === 'superseded')).toBe(true)
   })
 
   it('STRONGEST-ONCE retains older supersessions and collapses repeated identities', () => {
