@@ -65,6 +65,16 @@ runSelftest({
       reds: ['src/functions/__tests__/runs-knowledge.test.ts > SNAPSHOT-STABLE'] },
     { id: 'C11', claim: 'NOTIFICATION-COPY', subject: 'packages/agent/src/jobs/chain-identity.ts',
       reds: ['src/jobs/__tests__/chain-identity.test.ts > NOTIFICATION-COPY: direct completed curation detaches the authoritative snapshot'] },
+    { id: 'C12', claim: 'C423-WITHHELD-EXACT', subject: 'packages/schema/src/notification/post-processing-status.ts',
+      reds: [
+        `${STG} > C423-WITHHELD-EXACT > pins the withheld reasons to an independent exact list through both barrels`,
+        `${STG} > C423-WITHHELD-EXACT > accepts each hand-spelled reason and rejects a third reason or an extra key`,
+        `${STG} > C423-WITHHELD-EXACT > parses a served snapshot alone and a withheld flag alone on the public result`,
+        `${STG_D} > C423-WITHHELD-EXACT > pins exactly two withheld reasons in both directions through both barrels`,
+        `${STG_D} > C423-WITHHELD-EXACT > refuses a third withheld reason at the type boundary`,
+      ] },
+    { id: 'C13', claim: 'POSTPROCESSING-SNAPSHOT-WITHHELD', subject: 'packages/agent/src/functions/ops/runs-post-processing.ts',
+      reds: ['src/functions/__tests__/runs-post-processing.test.ts > POSTPROCESSING-SNAPSHOT-WITHHELD'] },
   ],
 })
 NODE

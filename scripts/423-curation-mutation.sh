@@ -24,6 +24,8 @@
 #   C09  the effect receipt admits a second schema version                     -> EFFECT-RECEIPT-ROUNDTRIP (receipt census)
 #   C10  runs.knowledge re-reads the snapshot's changes from the current diff  -> SNAPSHOT-STABLE
 #   C11  the terminal notification carries the live snapshot, not its copy    -> NOTIFICATION-COPY
+#   C12  a third withheld reason joins the withheld union and list            -> C423-WITHHELD-EXACT runtime+type
+#   C13  a refused snapshot projection throws instead of withholding          -> POSTPROCESSING-SNAPSHOT-WITHHELD
 #
 # C06 and C07 are the "replay classification loss" pair: one loses the original disposition at
 # read time, the other loses the durable receipt across a crash between receipt and checkpoint.
@@ -38,7 +40,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_423_CURATION_MUTATION_LEG=C01..C11 runs one leg (normal or neutered runs only).
+# AGENT_QA_423_CURATION_MUTATION_LEG=C01..C13 runs one leg (normal or neutered runs only).
 # AGENT_QA_423_CURATION_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24 and workspace tools are required. No downloads or provider calls. Ends with a
@@ -56,6 +58,7 @@ const COMMIT = 'packages/knowledge-local/src/curator/commit.ts'
 const RECEIPT = 'packages/knowledge-local/src/journal/curation-effect-receipt.ts'
 const KNOWLEDGE = 'packages/agent/src/functions/ops/runs-knowledge.ts'
 const CHAIN = 'packages/agent/src/jobs/chain-identity.ts'
+const READ = 'packages/agent/src/functions/ops/runs-post-processing.ts'
 
 const CUR = 'src/__tests__/423-curation-contracts.test.ts'
 const CUR_D = 'src/__tests__/423-curation-contracts.test-d.ts'
@@ -65,13 +68,15 @@ const SNAPSHOT = 'src/__tests__/423-curation-snapshot.test.ts'
 const RECOVERY = 'src/__tests__/423-curation-recovery.test.ts'
 const RUNS = 'src/functions/__tests__/runs-knowledge.test.ts'
 const CHAIN_T = 'src/jobs/__tests__/chain-identity.test.ts'
+const READ_T = 'src/functions/__tests__/runs-post-processing.test.ts'
 
 const instruments = {
   'schema-curation': { pkg: 'packages/schema', files: [CUR, CUR_D], typecheck: true, count: 21 },
-  'schema-stages': { pkg: 'packages/schema', files: [STG, STG_D], typecheck: true, count: 18 },
+  'schema-stages': { pkg: 'packages/schema', files: [STG, STG_D], typecheck: true, count: 23 },
   'curation-store': { pkg: 'packages/knowledge-local', files: [SNAPSHOT, RECOVERY], typecheck: false, count: 30 },
-  'runs-knowledge': { pkg: 'packages/agent', files: [RUNS], typecheck: false, count: 68 },
+  'runs-knowledge': { pkg: 'packages/agent', files: [RUNS], typecheck: false, count: 69 },
   'chain-notification': { pkg: 'packages/agent', files: [CHAIN_T], typecheck: false, count: 13 },
+  'post-processing-read': { pkg: 'packages/agent', files: [READ_T], typecheck: false, count: 13 },
 }
 
 const cur = name => cell('schema-curation', CUR, name)
@@ -82,6 +87,9 @@ const snap = (name, count) => cell('curation-store', SNAPSHOT, name, count)
 const rec = (name, count) => cell('curation-store', RECOVERY, name, count)
 const runs = name => cell('runs-knowledge', RUNS, name)
 const chain = (name, count) => cell('chain-notification', CHAIN_T, name, count)
+const withheld = name => cell('schema-stages', STG, `C423-WITHHELD-EXACT > ${name}`)
+const withheldD = name => cell('schema-stages', STG_D, `C423-WITHHELD-EXACT > ${name}`)
+const read = (name, count) => cell('post-processing-read', READ_T, name, count)
 
 const legs = [
   {
@@ -212,10 +220,39 @@ const legs = [
       chain('NOTIFICATION-COPY: a present invalid snapshot fails generically rather than disappearing'),
       chain('still reads counts off the finishing job when curate-memory itself is the terminal')],
   },
+  {
+    subject: STAGES, instrument: 'schema-stages', claim: 'C423-WITHHELD-EXACT', operation: 'widen the withheld reason union and list with a fold-failed member',
+    edits: [
+      { from: "export type CurationSnapshotWithheldReason = 'masking-unavailable' | 'projection-refused'\n\n"
+          + "export const CURATION_SNAPSHOT_WITHHELD_REASONS = [\n  'masking-unavailable',\n  'projection-refused',\n]",
+        to: "export type CurationSnapshotWithheldReason = 'masking-unavailable' | 'projection-refused' | 'fold-failed'\n\n"
+          + "export const CURATION_SNAPSHOT_WITHHELD_REASONS = [\n  'masking-unavailable',\n  'projection-refused',\n  'fold-failed',\n]" },
+    ],
+    reds: [withheld('pins the withheld reasons to an independent exact list through both barrels'),
+      withheld('accepts each hand-spelled reason and rejects a third reason or an extra key'),
+      withheld('parses a served snapshot alone and a withheld flag alone on the public result'),
+      withheldD('pins exactly two withheld reasons in both directions through both barrels'),
+      withheldD('refuses a third withheld reason at the type boundary')],
+    allowed: [],
+    greens: [stg('pins the public detail list and schema to independent exact vocabularies'),
+      stg('accepts the hand-spelled three detail stages and rejects a fourth'),
+      stg('keeps exactly two required chips with exactly four statuses'),
+      stgD('pins three detail stages in both directions through public exports'),
+      stgD('refuses a fourth stage and third chip at the type boundary')],
+  },
+  {
+    subject: READ, instrument: 'post-processing-read', claim: 'POSTPROCESSING-SNAPSHOT-WITHHELD', operation: 'throw the projection refusal instead of withholding the snapshot',
+    edits: [{ from: "const refused = (): CurationSnapshotProjection => ({ kind: 'withheld', reason: 'projection-refused' })\n",
+      to: "const refused = (): CurationSnapshotProjection => { throw new Error('The recorded curation snapshot cannot be projected safely.') }\n" }],
+    reds: [read('POSTPROCESSING-SNAPSHOT-WITHHELD')],
+    allowed: [read('NOTIFICATION-MASK-COLLISION')],
+    greens: [read('POSTPROCESSING-SNAPSHOT-EARLY'), read('POSTPROCESSING-HISTORICAL-COUNTS', 2),
+      read('NOTIFICATION-MASK'), read('THREE-STAGE-ROWS'), read('MASK-NO-CONTEXT')],
+  },
 ]
 
 runGate({
   slug: '423-curation-mutation', envPrefix: 'AGENT_QA_423_CURATION_MUTATION', idPrefix: 'C',
-  instruments, legs, expectedLegs: 11, banner: 'CURATION_MUTATION_OK',
+  instruments, legs, expectedLegs: 13, banner: 'CURATION_MUTATION_OK',
 })
 NODE
