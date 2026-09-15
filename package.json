@@ -65,7 +65,11 @@
     "validate:423-usage-mutation": "bash scripts/423-usage-mutation.sh",
     "validate:423-usage-mutation-selftest": "bash scripts/423-usage-mutation-selftest.sh",
     "validate:423-curation-mutation": "bash scripts/423-curation-mutation.sh",
-    "validate:423-curation-mutation-selftest": "bash scripts/423-curation-mutation-selftest.sh"
+    "validate:423-curation-mutation-selftest": "bash scripts/423-curation-mutation-selftest.sh",
+    "validate:423-feedback-read-mutation": "bash scripts/423-feedback-read-mutation.sh",
+    "validate:423-feedback-read-mutation-selftest": "bash scripts/423-feedback-read-mutation-selftest.sh",
+    "validate:423-rung-mutation": "bash scripts/423-rung-mutation.sh",
+    "validate:423-rung-mutation-selftest": "bash scripts/423-rung-mutation-selftest.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
