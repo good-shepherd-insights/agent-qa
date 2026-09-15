@@ -646,3 +646,36 @@ it('MIGRATION-ROLLBACK: version stamp shares the same transaction as all four AL
   expect(db.pragma('user_version', { simple: true })).toBe(2)
   expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
 })
+
+it('MIGRATION-RACE-IDEMPOTENT: a second opener that read version 2 before the first migrated adds nothing and throws nothing', () => {
+  const first = open('race.db')
+  seedV2(first)
+  const before = data(first)
+  const second = open('race.db')
+  const pragma = second.pragma.bind(second)
+  let staleReads = 0
+  vi.spyOn(second, 'pragma').mockImplementation((sql, options) => {
+    if (sql === 'user_version' && staleReads === 0) {
+      staleReads += 1
+      const observed = pragma(sql, options)
+      runSqliteMigrations(first, MIGRATIONS, 3)
+      expect(observed).toBe(2)
+      return 2
+    }
+    return pragma(sql, options)
+  })
+  expect(() => runSqliteMigrations(second, MIGRATIONS, 3)).not.toThrow()
+  expect(staleReads).toBe(1)
+  expect(first.pragma('user_version', { simple: true })).toBe(3)
+  expect(pragma('user_version', { simple: true })).toBe(3)
+  for (const [table, names] of [
+    ['run_steps', ['evidence_json', 'variable_snapshot_json', 'model_usage_json']],
+    ['run_sub_actions', ['evidence_state_json']],
+  ] as const) {
+    const columns = (second.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name)
+    for (const name of names) expect(columns.filter(column => column === name)).toHaveLength(1)
+  }
+  nullableColumns(second)
+  const after = data(second)
+  for (const table of tables) expect(after[table]).toHaveLength(before[table]!.length)
+})
