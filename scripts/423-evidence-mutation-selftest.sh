@@ -54,6 +54,11 @@ runSelftest({
       reds: ['src/functions/__tests__/423-runs-evidence.test.ts > EVID-MISSING-BLOB'] },
     { id: 'E11', claim: 'CONCURRENT-BLOB', subject: 'packages/runner-local/src/evidence-artifact-store.ts',
       reds: ['src/__tests__/423-json-evidence.test.ts > CONCURRENT-BLOB'] },
+    { id: 'E12', claim: 'COLD-EVIDENCE-HOST', subject: 'packages/agent-local/src/composition/compose-local-agent.ts',
+      reds: ['src/__tests__/423-production-read-posture.test.ts > COLD-EVIDENCE-HOST'],
+      crossing: '@vostride/agent-qa-agent-local' },
+    { id: 'E13', claim: 'EVIDENCE-MASK-NO-CONTEXT', subject: 'packages/agent/src/functions/ops/runs-evidence.ts',
+      reds: ['src/functions/__tests__/423-runs-evidence.test.ts > EVIDENCE-MASK-NO-CONTEXT'] },
   ],
 })
 NODE

@@ -27,7 +27,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_423_EVIDENCE_MUTATION_LEG=E01..E11 runs one leg (normal or neutered runs only).
+# AGENT_QA_423_EVIDENCE_MUTATION_LEG=E01..E13 runs one leg (normal or neutered runs only).
 # AGENT_QA_423_EVIDENCE_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24 and workspace tools are required. No downloads or provider calls. Ends with a
@@ -45,6 +45,7 @@ const ARIA = 'packages/runner/src/loop/evidence.ts'
 const POLICY = 'packages/runner/src/run/network-evidence-policy.ts'
 const READ = 'packages/agent/src/functions/ops/runs-evidence.ts'
 const STORE = 'packages/runner-local/src/evidence-artifact-store.ts'
+const COMPOSE = 'packages/agent-local/src/composition/compose-local-agent.ts'
 
 const RT = 'src/__tests__/423-read-contracts.test.ts'
 const TD = 'src/__tests__/423-read-contracts.test-d.ts'
@@ -53,19 +54,23 @@ const ARIA_T = 'src/loop/__tests__/423-aria-evidence.test.ts'
 const POLICY_T = 'src/run/__tests__/423-network-policy.test.ts'
 const READ_T = 'src/functions/__tests__/423-runs-evidence.test.ts'
 const STORE_T = 'src/__tests__/423-json-evidence.test.ts'
+const POSTURE_T = 'src/__tests__/423-production-read-posture.test.ts'
 
 const instruments = {
   'schema-sets': { pkg: 'packages/schema', files: [RT, TD], typecheck: true, count: 20 },
   'runner-finalization': { pkg: 'packages/runner', files: [FIN], typecheck: false, count: 66 },
   'runner-aria': { pkg: 'packages/runner', files: [ARIA_T], typecheck: false, count: 11 },
   'runner-policy': { pkg: 'packages/runner', files: [POLICY_T], typecheck: false, count: 5 },
-  'agent-read': { pkg: 'packages/agent', files: [READ_T], typecheck: false, count: 37 },
+  'agent-read': { pkg: 'packages/agent', files: [READ_T], typecheck: false, count: 38 },
   'store': { pkg: 'packages/runner-local', files: [STORE_T], typecheck: false, count: 10 },
+  'cli-read-posture': { pkg: 'packages/cli', files: [POSTURE_T], typecheck: false, count: 3, env: { VITEST_MAX_WORKERS: '1' } },
 }
 
 const s = (file, name, count) => cell('schema-sets', file, name, count)
 const fin = name => cell('runner-finalization', FIN, name)
 const aria = name => cell('runner-aria', ARIA_T, name)
+const posture = name => cell('cli-read-posture', POSTURE_T, name)
+const read = name => cell('agent-read', READ_T, name)
 const ALL_SETS_RT = ['C423-HEADERS-EXACT', 'C423-CONTENT-TYPES-EXACT', 'C423-KINDS-EXACT', 'C423-ABSENCE-EXACT', 'C423-REFS-EXACT']
 const setGreens = (...moved) => [
   ...ALL_SETS_RT.filter(name => !moved.includes(name)).map(name => s(RT, name)),
@@ -206,10 +211,36 @@ const legs = [
       cell('store', STORE_T, 'INTERRUPTED-BLOB: sync failure at stage 2 never returns a successful reference'),
     ],
   },
+  {
+    // The production host reaches runs.evidence only through the rebuilt agent-local dist.
+    subject: COMPOSE, instrument: 'cli-read-posture', claim: 'COLD-EVIDENCE-HOST', operation: 'drop runs.evidence from the cold read-scope allowlist',
+    crossing: { pkg: '@vostride/agent-qa-agent-local', dir: 'packages/agent-local', marker: 'evidence423allowlist' },
+    edits: [{
+      from: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'runs.evidence',\n] as const",
+      to: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'evidence423allowlist',\n] as const",
+    }],
+    reds: [posture('COLD-EVIDENCE-HOST')],
+    allowed: [posture('COLD-EVIDENCE-HTTP')],
+    greens: [posture('COLD-EVIDENCE-UNAVAILABLE')],
+  },
+  {
+    subject: READ, instrument: 'agent-read', claim: 'EVIDENCE-MASK-NO-CONTEXT', operation: 'answer a no-context read by masking every string with the shared secret marker instead of the typed masking-unavailable arm',
+    edits: [{
+      from: "    if (context === undefined) return error('masking-unavailable', capture)\n    try {\n      const mask: MaskFn = text => context.mask(text)\n",
+      to: "    try {\n      const mask: MaskFn = context === undefined ? () => '\u241fmasked:secret\u241f' : text => context.mask(text)\n",
+    }],
+    reds: [read('EVIDENCE-MASK-NO-CONTEXT')],
+    allowed: [],
+    greens: [
+      ...['console', 'network', 'a11y', 'aria', 'variables'].map(kind =>
+        read(`EVIDENCE-ALL-KINDS > ${kind} present returns its validated recorded document`)),
+      read('EVIDENCE-MULTI-KEY'),
+    ],
+  },
 ]
 
 runGate({
   slug: '423-evidence-mutation', envPrefix: 'AGENT_QA_423_EVIDENCE_MUTATION', idPrefix: 'E',
-  instruments, legs, expectedLegs: 11, banner: 'EVIDENCE_MUTATION_OK',
+  instruments, legs, expectedLegs: 13, banner: 'EVIDENCE_MUTATION_OK',
 })
 NODE
