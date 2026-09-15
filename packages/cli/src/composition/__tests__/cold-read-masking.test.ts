@@ -208,8 +208,10 @@ describe('Wave 18 cold read masking recovery', () => {
       expect(await read.read()).not.toHaveProperty('curationSnapshot')
       expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
       await publish(p, snapshot(p.runId))
-      await expect(read.read()).rejects.toMatchObject({ name: 'ZodError', issues: [{ code: 'custom',
-        message: 'The recorded curation snapshot cannot be projected safely.' }] })
+      const withheld = await read.read()
+      expect(withheld).toMatchObject({ chips: { curation: 'done' },
+        curationSnapshotWithheld: { reason: 'masking-unavailable' } })
+      expect(withheld).not.toHaveProperty('curationSnapshot')
     },
   )
 
@@ -351,10 +353,9 @@ describe('Wave 18 cold read masking recovery', () => {
     if (kind === 'invalid') writeFileSync(p.secretFile, 'INVALID-NAME=synthetic-value\n')
     if (kind === 'unreadable') { rmSync(p.secretFile); mkdirSync(p.secretFile) }
     const read = cold(p)
-    await expect(read.read()).rejects.toMatchObject({
-      name: 'ZodError', issues: [{ code: 'custom', path: ['curationSnapshot'],
-        message: 'The recorded curation snapshot cannot be projected safely.' }],
-    })
+    const withheld = await read.read()
+    expect(withheld).toHaveProperty('curationSnapshotWithheld', { reason: 'masking-unavailable' })
+    expect(withheld).not.toHaveProperty('curationSnapshot')
     expect(getActiveMaskingContext()).toBeUndefined()
   })
 
@@ -367,10 +368,10 @@ describe('Wave 18 cold read masking recovery', () => {
     recorded.rows[0]!.changes[1]!.change.observationId = recorded.rows[0]!.changes[0]!.change.observationId
     writeFileSync(p.secretFile, `FIRST=${first}\nSECOND=${second}\n`)
     await publish(p, recorded)
-    await expect(cold(p).read()).rejects.toMatchObject({
-      name: 'ZodError', issues: [{ code: 'custom', path: ['curationSnapshot'],
-        message: 'The recorded curation snapshot cannot be projected safely.' }],
-    })
+    const withheld = await cold(p).read()
+    expect(withheld).toHaveProperty('curationSnapshotWithheld', { reason: 'projection-refused' })
+    expect(withheld).not.toHaveProperty('curationSnapshot')
+    expect(JSON.stringify(withheld)).not.toContain(first)
     expect(recorded.rows[0]!.changes).toHaveLength(2)
     expect(getActiveMaskingContext()).toBeUndefined()
   })
