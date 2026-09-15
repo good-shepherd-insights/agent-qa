@@ -229,6 +229,34 @@ describe('the real post-run kinds (388 D-04)', () => {
     ])
   })
 
+  it('CURATE-SNAPSHOT-DEGRADES publishes the committed counts without a malformed snapshot and completes', async () => {
+    const malformed = {
+      schemaVersion: 1,
+      rows: [],
+      breakdown: { added: 5, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+    }
+    const { context, published } = contextForKind('curate-memory', 'job_curate_degraded', {
+      runId: RUN_ID,
+      executionContext: 'local-headless',
+    })
+    const handled = createRealJobKindRegistry({
+      loadCompletedRunHandoff: () => HANDOFF,
+      curateRun: async () => ({ curated: 2, deprecated: 1, complete: true, snapshot: malformed as never }),
+      persistAnalysis: () => {},
+    }).require('curate-memory').handler(context)
+
+    await expect(handled).resolves.toMatchObject({ status: 'complete' })
+    const outcome = await handled
+    if (outcome.status !== 'complete') throw new Error(`expected complete, got ${outcome.status}`)
+    expect(published).toEqual([
+      { checkpointId: 'candidates-authored', value: { runId: RUN_ID } },
+      { checkpointId: 'bundle-committed', value: { runId: RUN_ID, curated: 2, deprecated: 1 } },
+    ])
+    expect(successorKinds(outcome.next)).toEqual(['propose-improvements'])
+    expect((outcome.next[0]?.payload as { upstream: { curation: unknown } }).upstream.curation)
+      .toEqual({ curated: 2, deprecated: 1, complete: true })
+  })
+
   it('keeps the scripted stand-ins when no capabilities are bound', async () => {
     // NEGATIVE CONTROL for the two cases above: the assertions there would be satisfied just
     // as well by a build that had replaced the stand-ins outright, which would break every

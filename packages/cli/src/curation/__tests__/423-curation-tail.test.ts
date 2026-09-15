@@ -20,6 +20,7 @@ const snapshot = CurationSnapshotSchema.parse({ schemaVersion: 1,
       sourceRunId: RUN_ID, observationId: `observation-${i}`,
       ...(bucket === 'superseded' ? { byRecordId: 'replacement' } : {}) } }],
   })), breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 } })
+const malformedSnapshot = { ...snapshot, breakdown: { ...snapshot.breakdown, added: 20 } }
 function tempRoot() { const root = mkdtempSync(join(tmpdir(), '423-curation-tail-')); roots.push(root); return root }
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
@@ -85,12 +86,35 @@ describe('423 curation tail snapshot', () => {
       observationIds: [LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId({ ...f.canaryDetail, runId: RUN_ID })] }))
   })
 
-  it('TAIL-VALIDATION rejects malformed supplied snapshot before writing receipt bytes', async () => {
-    const f = fixture()
-    await tailModule.curateCompletedRun(f.input)
-    const base = JSON.parse(readFileSync(join(f.root, tailModule.CURATION_TAIL_RECEIPT_FILE), 'utf8'))
-    const invalid = { ...base, snapshot: { ...snapshot, breakdown: { ...snapshot.breakdown, added: 20 } } }
-    expect(() => tailModule.defaultCurationTailOperations().writeCurationTailReceipt(f.root, invalid)).toThrow()
+  it('TAIL-VALIDATION omits a malformed supplied snapshot from the written receipt', async () => {
+    const f = fixture({ snapshot: malformedSnapshot })
+    await expect(tailModule.curateCompletedRun(f.input)).resolves.toMatchObject({ complete: true })
+    const written = tailModule.readCurationTailReceipt(f.root)
+    expect(written).toBeDefined()
+    expect(written).not.toHaveProperty('snapshot')
+    expect(readFileSync(join(f.root, tailModule.CURATION_TAIL_RECEIPT_FILE), 'utf8')).not.toContain('"snapshot"')
+    const invalid = { ...written, snapshot: malformedSnapshot }
+    expect(() => tailModule.defaultCurationTailOperations().writeCurationTailReceipt(f.root, invalid as never)).toThrow()
+  })
+
+  it.each([
+    ['a malformed drain snapshot', { snapshot: malformedSnapshot }],
+    ['a failed snapshot fold', { snapshot: undefined, snapshotFoldFailed: true }],
+  ] as const)('TAIL-SNAPSHOT-DEGRADES completes on %s and records no snapshot', async (_label, over) => {
+    const f = fixture(over)
+    const writeCurationTailReceipt = vi.fn()
+    const input = { ...f.input, operations: { ...f.input.operations,
+      readCurationTailReceipt: () => undefined, writeCurationTailReceipt } } as tailModule.CurateCompletedRunInput
+    const folded = tailModule.curateCompletedRun(input)
+    await expect(folded).resolves.toMatchObject({ complete: true, drainKind: 'drained' })
+    expect(await folded).not.toHaveProperty('snapshot')
+    expect(writeCurationTailReceipt).toHaveBeenCalledTimes(1)
+    expect(writeCurationTailReceipt.mock.calls[0]![1]).not.toHaveProperty('snapshot')
+    const warn = f.input.log.warn as ReturnType<typeof vi.fn>
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(
+      'curation snapshot could not be validated and was not recorded; committed bundles are unaffected')
+    expect(String(warn.mock.calls[0]![0])).not.toMatch(/record-|observation-|replacement/)
   })
 
   it('CURATE-CAPABILITY-SNAPSHOT terminal preserves complete snapshot through the real tail adapter', async () => {

@@ -82,6 +82,7 @@ function commitFixture(executionContext: 'ci' | 'local-interactive' = 'ci') {
   return { root, authority, deps, claimed, supersede, victim, victimJob, add, draft, job, checkpoint, rows }
 }
 
+import * as curationSnapshotModule from '../curator/curation-snapshot.js'
 import { foldCurationSnapshot, readCurationEffects } from '../curator/curation-snapshot.js'
 import { drainQueue } from '../curator/drain.js'
 
@@ -201,6 +202,36 @@ describe('423 curation snapshot', () => {
     expect(resumed.remaining, JSON.stringify(resumed)).toBe(0)
     expect(resumed.snapshot?.breakdown).toEqual({ added: 0, confirmed: 0, superseded: 1, deprecated: 0, proposed: mode === 'single' ? 0 : 1 })
     expect(resumed.snapshot?.rows).toHaveLength(mode === 'single' ? 1 : 2)
+  })
+
+  it('SNAPSHOT-FOLD-DEGRADES keeps a committed drain drained when only the snapshot projection throws', async () => {
+    const f = commitFixture('local-interactive')
+    // No committed effect set reaches the fold's own refusal through the shipped commit paths, so the
+    // projection is made to refuse once; the effects underneath are real commits.
+    vi.spyOn(curationSnapshotModule, 'foldCurationSnapshot').mockImplementationOnce(() => {
+      throw new TypeError('conflicting curation classification')
+    })
+    let claimed = false
+    const drained = drainQueue({ knowledgeRoot: f.root, auditBaseDir: f.deps.auditBaseDir, lease: f.authority,
+      author: async () => ({ kind: 'authored', deltas: [f.supersede], authorship: f.checkpoint(f.supersede).authorship }),
+      executionContext: 'local-interactive', policy: f.deps.policy, maintenance: 'skip', sourceRunId: 'synthetic-run-43',
+      operations: {
+        claimNextJob: () => { if (claimed) return undefined; claimed = true; return f.claimed },
+        commitCurationDelta: (deps, job, checkpoint) => commitCurationDelta(deps, job,
+          { ...checkpoint, neighborIds: [f.victim.bundleId] }),
+      } })
+    await expect(drained).resolves.toMatchObject({ kind: 'drained' })
+    const report = await drained
+    expect(report.committed).toBe(1)
+    expect({ failures: report.failures, requeued: report.requeued, remaining: report.remaining })
+      .toEqual({ failures: 0, requeued: 0, remaining: 0 })
+    expect(report).not.toHaveProperty('snapshot')
+    expect(report).toHaveProperty('snapshotFoldFailed', true)
+    expect(report.effects?.length).toBeGreaterThan(0)
+    const reread = readCurationEffects({ knowledgeRoot: f.root, sourceRunId: 'synthetic-run-43' })
+    expect(reread).toEqual(report.effects)
+    expect(foldCurationSnapshot(reread).breakdown)
+      .toEqual({ added: 0, confirmed: 0, superseded: 1, deprecated: 0, proposed: 0 })
   })
 
   it('STRONGEST-ONCE retains older supersessions and collapses repeated identities', () => {
