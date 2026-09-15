@@ -27,7 +27,7 @@
 // (see `run-detail-reader.ts`: the reader declares its own structural port type and imports
 // nothing from the agent package).
 
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createServer, type Server, type ServerResponse } from 'node:http'
 import { createHash } from 'node:crypto'
@@ -41,6 +41,9 @@ import {
   RUNS_DETAIL_FUNCTION_ID,
   RUNS_EVIDENCE_FUNCTION_ID,
   RUNS_KNOWLEDGE_FUNCTION_ID,
+  RUNS_MARK_FUNCTION_ID,
+  RUNS_MARK_PREVIEW_FUNCTION_ID,
+  RUNS_MARKS_HISTORY_FUNCTION_ID,
   createFunctionRegistry,
   invokeFunction,
   type FunctionDeps,
@@ -53,8 +56,16 @@ import {
 // driving them is that a reader written in this file would be a second containment rule.
 import { createEvidenceBlobReader } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
+import { AUTH_STATE_REDACTION_MARKER } from '@vostride/agent-qa-core'
 import {
+  RunsMarkPreviewResultSchema,
+  RunsMarksHistoryResultSchema,
+  maskedMarker,
   projectSubActionRecorded,
+  type FeedbackReadsPort,
+  type MarkReceipt,
+  type RunsMarkInput,
+  type RunsMarkPreviewResult,
   type Action,
   type ArtifactRef,
   type FunctionCaller,
@@ -139,6 +150,7 @@ const REGISTRY_CALLER: FunctionCaller = {
 function depsWith(
   runDetail: FunctionDeps['runDetail'],
   evidenceBlobs?: FunctionDeps['evidenceBlobs'],
+  feedbackReads?: FeedbackReadsPort,
 ): FunctionDeps {
   return {
     runs: {
@@ -167,15 +179,17 @@ function depsWith(
     },
     ...(runDetail === undefined ? {} : { runDetail }),
     ...(evidenceBlobs === undefined ? {} : { evidenceBlobs }),
+    ...(feedbackReads === undefined ? {} : { feedbackReads }),
   } as unknown as FunctionDeps
 }
 
 function composeRegistry(
   runDetail: FunctionDeps['runDetail'],
   evidenceBlobs?: FunctionDeps['evidenceBlobs'],
+  feedbackReads?: FeedbackReadsPort,
 ): FunctionRegistry {
   return createFunctionRegistry({
-    deps: depsWith(runDetail, evidenceBlobs),
+    deps: depsWith(runDetail, evidenceBlobs, feedbackReads),
     // Discards every row: this file asserts on the path, never on the audit trail.
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
@@ -203,6 +217,9 @@ function hostOver(registry: FunctionRegistry): AgentHost {
     // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
     // workspace still satisfies the interface.
     runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
+    runsMarkFunctionId: RUNS_MARK_FUNCTION_ID,
+    runsMarksHistoryFunctionId: RUNS_MARKS_HISTORY_FUNCTION_ID,
+    runsMarkPreviewFunctionId: RUNS_MARK_PREVIEW_FUNCTION_ID,
     invokeFunction: (
       handle: AgentRegistryHandle,
       functionId: string,
@@ -509,6 +526,321 @@ describe('423 typed evidence HTTP doors', () => {
     expect(f.seen).not.toContain('display')
   })
 })
+// ---- 423-21 (D-18): the two feedback reads on both HTTP doors ---------------------------------
+//
+// The routes format nothing: the registry's own ops answer through a file-backed read port, so the
+// HTTP bodies are compared with a direct invocation of the same registry. The real ledger and
+// proposals-store host lives in the CLI, whose 423-feedback-reads suite drives these same routes
+// over its real stores.
+
+const FEEDBACK_NOTE_SECRET = 'synthetic-423-21-note-token'
+const FEEDBACK_AUTH_TOKEN = 'synthetic-423-21-cookie-token'
+const FEEDBACK_AUTH_STATE = JSON.stringify({
+  cookies: [{ name: 'session', value: FEEDBACK_AUTH_TOKEN, domain: 'app.test', path: '/' }], origins: [],
+})
+const FIRST_MARK = 'mark_0123456789ab'
+const SECOND_MARK = 'mark_0123456789ac'
+
+function feedbackReceipts(): MarkReceipt[] {
+  const base = { schemaVersion: 1 as const, runId: RUN_ID as MarkReceipt['runId'], testIndex: 0, runSlug: slugBranch(RUN_ID),
+    origin: 'user' as const, gold: [], evidence: { confirmed: 0, overturned: 0 } }
+  return [
+    { ...base, markId: FIRST_MARK, kind: 'false-fail', ordinal: 1, markedAt: 1, note: `note ${FEEDBACK_NOTE_SECRET}`,
+      disposition: { kind: 'drafted', fix: 'fact', proposalId: 'proposal-423-21', proposalKind: 'knowledge' } },
+    { ...base, markId: SECOND_MARK, kind: 'confirmed-bug', ordinal: 2, markedAt: 2, supersedes: FIRST_MARK,
+      disposition: { kind: 'confirmed-bug', confirmedRecords: 0 } },
+  ]
+}
+
+function feedbackPreview(runId: string): RunsMarkPreviewResult {
+  return RunsMarkPreviewResultSchema.parse({
+    kind: 'consequences', runId, prospective: true, markKind: 'false-fail', member: { testIndex: 0 },
+    resolvedStep: { stepIndex: 0, reason: 'failing-step' }, latest: { kind: 'supersedes', markId: SECOND_MARK, ordinal: 2 },
+    basis: { ledgerOrdinal: 2, priorMarkOrdinal: 2 }, markedDecisionCount: 1,
+    groundTruth: [{ testIndex: 0, stepIndex: 0, verdict: 'pass',
+      recordedVerdict: { pass: false, reasoning: `timed out near ${FEEDBACK_NOTE_SECRET}` }, correctedAction: false }],
+    labels: [{ testIndex: 0, stepIndex: 0, decisionOrdinal: 0, sourceCassetteId: 'cassette-423-21', channel: 'user-mark',
+      correction: { verdict: 'pass' } }],
+    knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
+    draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
+  })
+}
+
+/** A read port over files under `root`: it opens, parses and returns; it never creates or writes. */
+function fileFeedbackReads(root: string, calls: string[], options: { withPreview?: boolean } = {}): FeedbackReadsPort {
+  const runDir = (runId: string) => join(root, 'runs', slugBranch(runId))
+  return {
+    history: async (runId) => {
+      calls.push('history')
+      if (!existsSync(runDir(runId))) return { kind: 'run-not-found' }
+      const receipts = JSON.parse(readFileSync(join(runDir(runId), 'marks.json'), 'utf8')) as MarkReceipt[]
+      return { kind: 'history', entries: receipts.map(receipt => receipt.disposition.kind === 'drafted'
+        ? { receipt, proposal: { state: 'pending' as const, applyInFlight: false } } : { receipt }) }
+    },
+    ...(options.withPreview === false ? {} : {
+      preview: async (input: RunsMarkInput) => {
+        calls.push('preview')
+        if (!existsSync(runDir(input.runId))) return { kind: 'run-not-found', runId: input.runId }
+        return JSON.parse(readFileSync(join(runDir(input.runId), 'preview.json'), 'utf8')) as RunsMarkPreviewResult
+      },
+    }),
+  }
+}
+
+function pathMap(root: string): [string, string][] {
+  const walk = (path: string): [string, string][] => lstatSync(path).isDirectory()
+    ? [[path, 'dir'], ...readdirSync(path).sort().flatMap(name => walk(join(path, name)))]
+    : [[path, createHash('sha256').update(readFileSync(path)).digest('hex')]]
+  return walk(root)
+}
+
+async function serveFeedbackReads(options: { withPreview?: boolean; unbound?: boolean } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-21-feedback-http-'))
+  roots.push(root)
+  mkdirSync(join(root, 'runs', slugBranch(RUN_ID)), { recursive: true })
+  writeFileSync(join(root, 'runs', slugBranch(RUN_ID), 'marks.json'), JSON.stringify(feedbackReceipts()))
+  writeFileSync(join(root, 'runs', slugBranch(RUN_ID), 'preview.json'), JSON.stringify(feedbackPreview(RUN_ID)))
+  const db = new DashboardDatabase({ dbPath: ':memory:' })
+  databases.push(db)
+  const portCalls: string[] = []
+  const registry = composeRegistry(createDashboardRunDetailReader(db), undefined,
+    options.unbound === true ? undefined : fileFeedbackReads(root, portCalls, options))
+  const seen: string[] = []
+  const baseHost = hostOver(registry)
+  const host: AgentHost = { ...baseHost,
+    invokeFunction: (...args) => { seen.push(args[1]); return baseHost.invokeFunction(...args) },
+    unmaskForDisplay: (text) => { seen.push('display'); return text },
+  }
+  const started = await startServer({ db, port: 0, agentHost: host })
+  closers.push(started.close)
+  const remote = createServer(createRunServiceRoutes({ agentHost: host,
+    verifyBearer: header => header === 'Bearer synthetic-feedback-client'
+      ? { kind: 'token', clientId: 'test', trustScope: { project: 'test' } }
+      : { kind: 'refused', reason: 'invalid_token' },
+  } as RunServicePorts))
+  servers.push(remote)
+  await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
+  return { root, db, registry, seen, portCalls,
+    local: `http://127.0.0.1:${(started.server.address() as AddressInfo).port}/api/runs`,
+    remote: `http://127.0.0.1:${(remote.address() as AddressInfo).port}/run`,
+    headers: { Authorization: 'Bearer synthetic-feedback-client' },
+  }
+}
+
+/** The same routes on a real socket, with a host that answers a planted masked body and restores it. */
+async function serveRestoringFeedbackHost(body: unknown) {
+  const db = new DashboardDatabase({ dbPath: ':memory:' })
+  databases.push(db)
+  const restored: Array<string | undefined> = []
+  const host = { ...hostOver(composeRegistry(undefined)),
+    invokeFunction: () => Promise.resolve(body),
+    unmaskForDisplay: (text: string, scope?: { runId: string }) => {
+      restored.push(scope?.runId)
+      return text.split('<SECRET_0>').join('restored-note-value').split('<SECRET_1>').join(FEEDBACK_AUTH_STATE)
+    },
+  } as AgentHost
+  const started = await startServer({ db, port: 0, agentHost: host })
+  closers.push(started.close)
+  const remote = createServer(createRunServiceRoutes({ agentHost: host,
+    verifyBearer: () => ({ kind: 'token', clientId: 'test', trustScope: { project: 'test' } }),
+  } as RunServicePorts))
+  servers.push(remote)
+  await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
+  return { restored,
+    local: `http://127.0.0.1:${(started.server.address() as AddressInfo).port}/api/runs/${RUN_ID}`,
+    remote: `http://127.0.0.1:${(remote.address() as AddressInfo).port}/run/${RUN_ID}`,
+    headers: { Authorization: 'Bearer any' },
+  }
+}
+
+const previewInput = (runId: string = RUN_ID): RunsMarkInput =>
+  ({ runId: runId as RunsMarkInput['runId'], kind: 'false-fail', note: `preview ${FEEDBACK_NOTE_SECRET}` })
+
+const postJson = (url: string, body: unknown, headers: Record<string, string> = {}) =>
+  fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body) })
+
+describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
+  it('HTTP-MARKS-HISTORY: both doors answer runs.marks.history exactly as the registry does, guarded and masked', async () => {
+    const f = await serveFeedbackReads()
+    const expected = await invokeFunction(f.registry, RUNS_MARKS_HISTORY_FUNCTION_ID, { runId: RUN_ID }, REGISTRY_CALLER)
+    // A cold registry holds no masking authority for this read, so free text is fully redacted.
+    expect(RunsMarksHistoryResultSchema.parse(expected)).toMatchObject({ kind: 'history', entries: [
+      { markId: FIRST_MARK, note: maskedMarker('secret'), active: false, supersededBy: SECOND_MARK,
+        proposal: { state: 'pending', applyInFlight: false } },
+      { markId: SECOND_MARK, active: true, supersedes: FIRST_MARK },
+    ] })
+    f.seen.length = 0
+
+    const local = await fetch(`${f.local}/${RUN_ID}/marks`)
+    expect(local.status).toBe(200)
+    expect(local.headers.get('access-control-allow-origin')).toBeNull()
+    expect(await local.json()).toEqual(expected)
+    expect(f.seen).toEqual([RUNS_MARKS_HISTORY_FUNCTION_ID, ...f.seen.slice(1).map(() => 'display')])
+
+    f.seen.length = 0
+    expect((await fetch(`${f.remote}/${RUN_ID}/marks`)).status).toBe(401)
+    expect(f.seen).toEqual([])
+    const remote = await fetch(`${f.remote}/${RUN_ID}/marks`, { headers: f.headers })
+    expect(remote.status).toBe(200)
+    expect(await remote.json()).toEqual(expected)
+    expect(f.seen, 'the bearer door never restores').toEqual([RUNS_MARKS_HISTORY_FUNCTION_ID])
+
+    // Typed outcomes are results, not transport errors, on both doors.
+    const unknownRun = 'r_no-such-run-was-ever-marked-here-at-all'
+    const missing = await invokeFunction(f.registry, RUNS_MARKS_HISTORY_FUNCTION_ID, { runId: unknownRun }, REGISTRY_CALLER)
+    for (const [origin, headers] of [[f.local, {}], [f.remote, f.headers]] as const) {
+      const answer = await fetch(`${origin}/${unknownRun}/marks`, { headers })
+      expect(answer.status).toBe(200)
+      expect(await answer.json()).toEqual(missing)
+    }
+
+    f.seen.length = 0
+    const crossSite = await fetch(`${f.local}/${RUN_ID}/marks`, { headers: { Origin: 'https://foreign.test', 'Sec-Fetch-Site': 'cross-site' } })
+    expect(crossSite.status).toBe(403)
+    expect(await crossSite.json()).toEqual({ error: 'cross_site_refused' })
+    for (const [origin, headers] of [[f.local, {}], [f.remote, f.headers]] as const) {
+      const extra = await fetch(`${origin}/${RUN_ID}/marks?runId=${RUN_ID}`, { headers })
+      expect(extra.status).toBe(400)
+      expect(await extra.json()).toEqual({ error: 'invalid_marks_input' })
+      const invalid = await fetch(`${origin}/..%2Fescape/marks`, { headers })
+      expect(invalid.status).toBe(400)
+      expect(await invalid.json()).toEqual({ error: 'invalid_run_id' })
+    }
+    expect(f.seen, 'refusals precede dispatch').toEqual([])
+
+    const unbound = await serveFeedbackReads({ unbound: true })
+    for (const [origin, headers] of [[unbound.local, {}], [unbound.remote, unbound.headers]] as const) {
+      const answer = await fetch(`${origin}/${RUN_ID}/marks`, { headers })
+      expect(answer.status).toBe(503)
+      expect((await answer.json() as { error: string }).error).toBe('agent_host_unavailable')
+    }
+
+    // The local human door restores, then sanitizes restored auth state; the bearer door stays masked.
+    const masked = { kind: 'history', runId: RUN_ID, entries: [{ note: 'note <SECRET_0> and <SECRET_1>' }] }
+    const restoring = await serveRestoringFeedbackHost(masked)
+    const human = await fetch(`${restoring.local}/marks`)
+    expect(human.status).toBe(200)
+    const humanRaw = await human.text()
+    expect(JSON.parse(humanRaw)).toEqual({ ...masked, entries: [{ note: AUTH_STATE_REDACTION_MARKER }] })
+    expect(humanRaw).not.toContain(FEEDBACK_AUTH_TOKEN)
+    expect(restoring.restored.length).toBeGreaterThan(0)
+    expect(new Set(restoring.restored)).toEqual(new Set([RUN_ID]))
+    restoring.restored.length = 0
+    const machine = await fetch(`${restoring.remote}/marks`, { headers: restoring.headers })
+    expect(await machine.json()).toEqual(masked)
+    expect(restoring.restored).toEqual([])
+    const plainNote = await serveRestoringFeedbackHost({ ...masked, entries: [{ note: 'note <SECRET_0>' }] })
+    expect(await (await fetch(`${plainNote.local}/marks`)).json())
+      .toEqual({ ...masked, entries: [{ note: 'note restored-note-value' }] })
+  })
+
+  it('HTTP-MARK-PREVIEW: both doors POST the exact runs.mark input to runs.mark.preview and answer as the registry does', async () => {
+    const f = await serveFeedbackReads()
+    const expected = await invokeFunction(f.registry, RUNS_MARK_PREVIEW_FUNCTION_ID, previewInput(), REGISTRY_CALLER)
+    expect(RunsMarkPreviewResultSchema.parse(expected)).toMatchObject({ kind: 'consequences', prospective: true,
+      groundTruth: [{ recordedVerdict: { reasoning: maskedMarker('secret') } }] })
+    f.seen.length = 0
+    f.portCalls.length = 0
+
+    const local = await postJson(`${f.local}/${RUN_ID}/mark-preview`, previewInput())
+    expect(local.status).toBe(200)
+    expect(local.headers.get('access-control-allow-origin')).toBeNull()
+    expect(await local.json()).toEqual(expected)
+    expect(f.seen[0]).toBe(RUNS_MARK_PREVIEW_FUNCTION_ID)
+    expect(f.seen).not.toContain(RUNS_MARK_FUNCTION_ID)
+
+    f.seen.length = 0
+    expect((await postJson(`${f.remote}/${RUN_ID}/mark-preview`, previewInput())).status).toBe(401)
+    expect(f.seen).toEqual([])
+    const remote = await postJson(`${f.remote}/${RUN_ID}/mark-preview`, previewInput(), f.headers)
+    expect(remote.status).toBe(200)
+    expect(await remote.json()).toEqual(expected)
+    expect(f.seen).toEqual([RUNS_MARK_PREVIEW_FUNCTION_ID])
+    expect(f.portCalls).toEqual(['preview', 'preview'])
+
+    f.seen.length = 0
+    const crossSite = await postJson(`${f.local}/${RUN_ID}/mark-preview`, previewInput(),
+      { Origin: 'https://foreign.test', 'Sec-Fetch-Site': 'cross-site' })
+    expect(crossSite.status).toBe(403)
+    expect(await crossSite.json()).toEqual({ error: 'cross_site_refused' })
+    const otherRun = 'r_another-run-the-url-does-not-name-at-all-here'
+    const { runId: _omitted, ...withoutRunId } = previewInput()
+    const refusals: Array<[unknown, string]> = [
+      [previewInput(otherRun), 'run_id_mismatch'],
+      [withoutRunId, 'invalid_mark_preview_input'],
+      [{ ...previewInput(), confirmScope: 'scope-1' }, 'invalid_mark_preview_input'],
+      [{ ...previewInput(), basis: { ledgerOrdinal: 2 } }, 'invalid_mark_preview_input'],
+      [{ ...previewInput(), kind: 'not-a-mark' }, 'invalid_mark_preview_input'],
+      [[previewInput()], 'invalid_mark_preview_input'],
+      ['{"runId":', 'invalid_mark_preview_input'],
+    ]
+    for (const [origin, headers] of [[f.local, {}], [f.remote, f.headers]] as const) {
+      for (const [body, error] of refusals) {
+        const answer = await postJson(`${origin}/${RUN_ID}/mark-preview`, body, headers)
+        expect(answer.status, JSON.stringify(body)).toBe(400)
+        expect(await answer.json()).toEqual({ error })
+      }
+      expect((await fetch(`${origin}/${RUN_ID}/mark-preview`, { headers })).status, 'preview is POST only').not.toBe(200)
+    }
+    expect(f.seen, 'refusals precede dispatch').toEqual([])
+
+    // Typed refusals are the op's own outcomes and travel as results.
+    const unknownRun = 'r_no-such-run-was-ever-marked-here-at-all'
+    const missing = await invokeFunction(f.registry, RUNS_MARK_PREVIEW_FUNCTION_ID, previewInput(unknownRun), REGISTRY_CALLER)
+    for (const [origin, headers] of [[f.local, {}], [f.remote, f.headers]] as const) {
+      const answer = await postJson(`${origin}/${unknownRun}/mark-preview`, previewInput(unknownRun), headers)
+      expect(answer.status).toBe(200)
+      expect(await answer.json()).toEqual(missing)
+    }
+
+    const historyOnly = await serveFeedbackReads({ withPreview: false })
+    for (const [origin, headers] of [[historyOnly.local, {}], [historyOnly.remote, historyOnly.headers]] as const) {
+      const answer = await postJson(`${origin}/${RUN_ID}/mark-preview`, previewInput(), headers)
+      expect(answer.status).toBe(503)
+      expect(await answer.json()).toMatchObject({ error: 'agent_host_unavailable' })
+    }
+
+    const masked = feedbackPreview(RUN_ID) as Extract<RunsMarkPreviewResult, { kind: 'consequences' }>
+    const placeholderBody = { ...masked, groundTruth: [{ ...masked.groundTruth[0]!,
+      recordedVerdict: { pass: false, reasoning: 'near <SECRET_0>' }, correctedExpectation: '<SECRET_1>' }] }
+    const restoring = await serveRestoringFeedbackHost(placeholderBody)
+    const human = await postJson(`${restoring.local}/mark-preview`, previewInput())
+    expect(human.status).toBe(200)
+    const humanRaw = await human.text()
+    expect(JSON.parse(humanRaw)).toMatchObject({ groundTruth: [{ recordedVerdict: { reasoning: 'near restored-note-value' },
+      correctedExpectation: AUTH_STATE_REDACTION_MARKER }] })
+    expect(humanRaw).not.toContain(FEEDBACK_AUTH_TOKEN)
+    restoring.restored.length = 0
+    const machine = await postJson(`${restoring.remote}/mark-preview`, previewInput(), restoring.headers)
+    expect(await machine.json()).toEqual(placeholderBody)
+    expect(restoring.restored).toEqual([])
+  })
+
+  it('FEEDBACK-HTTP-WRITES-NOTHING: every feedback HTTP leg leaves the read store and the dashboard rows unchanged', async () => {
+    const f = await serveFeedbackReads()
+    const before = pathMap(f.root)
+    const rowsBefore = JSON.stringify(f.db.readRunDetailRows(RUN_ID))
+    for (const [origin, headers] of [[f.local, {}], [f.remote, f.headers]] as const) {
+      expect((await fetch(`${origin}/${RUN_ID}/marks`, { headers })).status).toBe(200)
+      expect((await postJson(`${origin}/${RUN_ID}/mark-preview`, previewInput(), headers)).status).toBe(200)
+      expect((await postJson(`${origin}/${RUN_ID}/mark-preview`, previewInput('r_another-run-the-url-does-not-name-at-all-here'), headers)).status).toBe(400)
+      expect((await fetch(`${origin}/r_no-such-run-was-ever-marked-here-at-all/marks`, { headers })).status).toBe(200)
+      expect((await postJson(`${origin}/r_no-such-run-was-ever-marked-here-at-all/mark-preview`,
+        previewInput('r_no-such-run-was-ever-marked-here-at-all'), headers)).status).toBe(200)
+    }
+    expect(pathMap(f.root)).toEqual(before)
+    expect(existsSync(join(f.root, 'runs', slugBranch('r_no-such-run-was-ever-marked-here-at-all')))).toBe(false)
+    expect(JSON.stringify(f.db.readRunDetailRows(RUN_ID))).toBe(rowsBefore)
+    expect(f.seen.filter(id => id !== 'display').sort()).toEqual([
+      RUNS_MARK_PREVIEW_FUNCTION_ID, RUNS_MARK_PREVIEW_FUNCTION_ID, RUNS_MARK_PREVIEW_FUNCTION_ID, RUNS_MARK_PREVIEW_FUNCTION_ID,
+      RUNS_MARKS_HISTORY_FUNCTION_ID, RUNS_MARKS_HISTORY_FUNCTION_ID, RUNS_MARKS_HISTORY_FUNCTION_ID, RUNS_MARKS_HISTORY_FUNCTION_ID,
+    ])
+    expect(f.seen).not.toContain(RUNS_MARK_FUNCTION_ID)
+    expect(f.portCalls.sort()).toEqual(['history', 'history', 'history', 'history', 'preview', 'preview', 'preview', 'preview'])
+  })
+})
+
 /** Bytes that WANT to be a document. The sniffer has no arm that can grant it (T-405-15). */
 const SVG_BYTES = new TextEncoder().encode(
   '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',

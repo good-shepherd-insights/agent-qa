@@ -1,11 +1,12 @@
 // 2026-09-15, 423 D-16: the consequence plan runs.mark consumes, previewed with no write.
 import { createHash } from 'node:crypto'
+import { createServer, type Server } from 'node:http'
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import * as agent from '@vostride/agent-qa-agent'
 import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
-import { createConfirmRegistry } from '@vostride/agent-qa-dashboard'
+import { createConfirmRegistry, createRunServiceRoutes, DashboardDatabase, startServer, type RunServicePorts } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 import { asEvidenceToken, asRecordId, asRunId, maskedMarker, RunsMarkInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarkPreviewResult, type RunsMarksHistoryResult, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
@@ -14,6 +15,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { composeDashboardDoor, DASHBOARD_FUNCTION_CALLER } from '../commands/dashboard.js'
 import { createFnCommand } from '../commands/fn.js'
 import * as host from '../composition/local-agent-host.js'
+import { matchServiceBearer } from '../composition/run-service-token-resolution.js'
 import { FsMarkLedger } from '../eval-session-composition.js'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
 import { createFeedbackReadsPortForHost, type FeedbackReadsHostDeps } from '../gates/feedback-read-host.js'
@@ -934,5 +936,115 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
       .mark(input())
     expect(marked).toMatchObject({ kind: 'marked', receipt: { ordinal: 4, supersedes: template.receipts[1]!.markId,
       evidence: viaRegistry.knowledge.evidence, gold: viaRegistry.labels.map(label => ({ channel: label.channel, sourceCassetteId: label.sourceCassetteId })) } })
+  }, 180_000)
+})
+
+// 2026-09-15, 423-21 D-18: both feedback reads over the shipped dashboard door's two HTTP boundaries,
+// against the same real ledger, proposals store and preview inputs the fn parity cells use.
+describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
+  const roots: string[] = []
+  const closers: Array<() => void | Promise<void>> = []
+  let template: MarkedTemplate
+
+  beforeAll(async () => { template = await markedTemplate(roots) }, 180_000)
+  afterEach(async () => {
+    setActiveMaskingContextResolver(() => undefined)
+    for (const close of closers.splice(0).reverse()) await close()
+  })
+  afterAll(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+
+  async function httpScene() {
+    const root = mkdtempSync(join(tmpdir(), '423-21-http-')); roots.push(root)
+    cpSync(template.root, root, { recursive: true })
+    writeFileSync(join(root, '.env.secrets.local'), `HISTORY_SYNTHETIC_TOKEN=${SECRET}\n`)
+    const agentQaRoot = join(root, '.agent-qa')
+    const configPath = join(root, 'agent-qa.config.yaml')
+    const door = composeDashboardDoor({ configPath, agentQaRoot, boundOrigin: () => undefined,
+      confirms: createConfirmRegistry({ timeoutMs: 1_000 }) })
+    closers.push(() => door.host.close())
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
+    closers.push(() => db.close())
+    const started = await startServer({ db, port: 0, agentHost: door.agentHost })
+    closers.push(() => started.close())
+    const remote: Server = createServer(createRunServiceRoutes({ agentHost: door.agentHost,
+      verifyBearer: header => matchServiceBearer(header, [{ name: 'test', tokenEnvVar: 'AGENT_QA_TEST_TOKEN',
+        value: 'synthetic-423-21-client', trustScope: { project: 'test' } }]),
+    } as RunServicePorts))
+    await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
+    closers.push(() => new Promise<void>(resolve => remote.close(() => resolve())))
+    const port = (server: { address(): unknown }) => (server.address() as { port: number }).port
+    return { root, agentQaRoot, configPath, door,
+      stores: [join(agentQaRoot, 'runs'), join(agentQaRoot, 'proposals'), join(agentQaRoot, 'eval'), join(root, 'agent-qa-knowledge'), join(root, 'agent-qa-eval')],
+      doors: [
+        { name: 'local-human', base: `http://127.0.0.1:${port(started.server)}/api/runs`, headers: {} as Record<string, string> },
+        { name: 'remote-machine', base: `http://127.0.0.1:${port(remote)}/run`, headers: { Authorization: 'Bearer synthetic-423-21-client' } },
+      ] }
+  }
+  const storeMaps = (stores: readonly string[]) => stores.map(tree)
+  const previewBody = (): RunsMarkInput => ({ runId: template.runId, kind: 'false-pass', note: `preview ${SECRET}` })
+  const post = (url: string, body: unknown, headers: Record<string, string>) =>
+    fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) })
+
+  it('HTTP-MARKS-HISTORY: GET marks on both doors equals the registry and fn result over the real ledger', async () => {
+    const s = await httpScene()
+    const before = storeMaps(s.stores)
+    const viaRegistry = await agent.invokeFunction(s.door.host.registry, HISTORY, { runId: template.runId }, DASHBOARD_FUNCTION_CALLER)
+    const viaOp = await historyOf(createFeedbackReadsPortForHost({ agentQaRoot: s.agentQaRoot }), template.runId)
+    expect(viaRegistry).toEqual(viaOp)
+    const entries = historyEntries(RunsMarksHistoryResultSchema.parse(viaRegistry))
+    expect(entries.map(entry => [entry.ordinal, entry.active, entry.proposal?.state ?? null]))
+      .toEqual([[1, false, 'rejected'], [2, true, null], [3, true, 'pending']])
+    for (const door of s.doors) {
+      const response = await fetch(`${door.base}/${template.runId}/marks`, { headers: door.headers })
+      expect(response.status, door.name).toBe(200)
+      const raw = await response.text()
+      expect(JSON.parse(raw), door.name).toEqual(viaRegistry)
+      expect(raw, door.name).not.toContain(SECRET)
+    }
+    expect(storeMaps(s.stores)).toEqual(before)
+  }, 180_000)
+
+  it('HTTP-MARK-PREVIEW: POST mark-preview on both doors equals the registry preview over the real stores', async () => {
+    const s = await httpScene()
+    const before = storeMaps(s.stores)
+    const viaRegistry = await agent.invokeFunction(s.door.host.registry, PREVIEW, previewBody(), DASHBOARD_FUNCTION_CALLER)
+    const viaOp = await runsMarkPreviewSpec.invoke(previewBody(), { feedbackReads: createFeedbackReadsPortForHost({
+      agentQaRoot: s.agentQaRoot, configPath: s.configPath }) } as never)
+    expect(viaRegistry).toEqual(viaOp)
+    const [, second] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
+    expect(consequencesOf(RunsMarkPreviewResultSchema.parse(viaRegistry))).toMatchObject({ prospective: true, markKind: 'false-pass',
+      latest: { kind: 'supersedes', markId: second.markId, ordinal: 2 }, basis: { ledgerOrdinal: 3, priorMarkOrdinal: 2 } })
+    for (const door of s.doors) {
+      const response = await post(`${door.base}/${template.runId}/mark-preview`, previewBody(), door.headers)
+      expect(response.status, door.name).toBe(200)
+      const raw = await response.text()
+      expect(JSON.parse(raw), door.name).toEqual(viaRegistry)
+      expect(raw, door.name).not.toContain(SECRET)
+      const refused = await post(`${door.base}/${template.runId}/mark-preview`, { ...previewBody(), runId: asRunId(generateRunId()) }, door.headers)
+      expect(refused.status, door.name).toBe(400)
+      expect(await refused.json()).toEqual({ error: 'run_id_mismatch' })
+    }
+    expect(storeMaps(s.stores)).toEqual(before)
+  }, 180_000)
+
+  it('FEEDBACK-HTTP-WRITES-NOTHING: HTTP history and preview leave every store byte-identical and create nothing', async () => {
+    const s = await httpScene()
+    const runDir = join(s.agentQaRoot, 'runs', template.runSlug)
+    // A claimed proposal is exactly what a reaping listing would rename.
+    const [, , third] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
+    expect(claimPendingProposal(s.agentQaRoot, proposalIdOf(third))).toMatchObject({ kind: 'consumed' })
+    const before = storeMaps(s.stores)
+    const unknown = asRunId(generateRunId())
+    for (const door of s.doors) {
+      for (let repeat = 0; repeat < 2; repeat += 1) {
+        expect((await fetch(`${door.base}/${template.runId}/marks`, { headers: door.headers })).status).toBe(200)
+        expect((await post(`${door.base}/${template.runId}/mark-preview`, previewBody(), door.headers)).status).toBe(200)
+      }
+      expect(await (await fetch(`${door.base}/${unknown}/marks`, { headers: door.headers })).json()).toEqual({ kind: 'run-not-found', runId: unknown })
+      expect(await (await post(`${door.base}/${unknown}/mark-preview`, { ...previewBody(), runId: unknown }, door.headers)).json())
+        .toEqual({ kind: 'run-not-found', runId: unknown })
+    }
+    expect(storeMaps(s.stores)).toEqual(before)
+    expect(existsSync(join(runDir, 'mark-intent.json'))).toBe(false)
   }, 180_000)
 })
