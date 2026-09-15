@@ -59,6 +59,12 @@ runSelftest({
       crossing: '@vostride/agent-qa-agent-local' },
     { id: 'E13', claim: 'EVIDENCE-MASK-NO-CONTEXT', subject: 'packages/agent/src/functions/ops/runs-evidence.ts',
       reds: ['src/functions/__tests__/423-runs-evidence.test.ts > EVIDENCE-MASK-NO-CONTEXT'] },
+    { id: 'E14', claim: 'EVID-TIMEOUT-NAVIGATE', subject: 'packages/runner/src/run/member-runner.ts',
+      reds: ['src/run/__tests__/423-read-finalization.test.ts > EVID-TIMEOUT-NAVIGATE'] },
+    { id: 'E15', claim: 'EVID-TIMEOUT-DEADLINE', subject: 'packages/runner/src/run/member-runner.ts',
+      reds: ['src/run/__tests__/423-read-finalization.test.ts > EVID-TIMEOUT-DEADLINE'] },
+    { id: 'E16', claim: 'EVID-CATCH-REDACTED', subject: 'packages/runner/src/run/member-runner.ts',
+      reds: ['src/run/__tests__/423-read-finalization.test.ts > EVID-CATCH-REDACTED'] },
   ],
 })
 NODE

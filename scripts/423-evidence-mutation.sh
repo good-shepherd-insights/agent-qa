@@ -27,7 +27,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_423_EVIDENCE_MUTATION_LEG=E01..E13 runs one leg (normal or neutered runs only).
+# AGENT_QA_423_EVIDENCE_MUTATION_LEG=E01..E16 runs one leg (normal or neutered runs only).
 # AGENT_QA_423_EVIDENCE_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24 and workspace tools are required. No downloads or provider calls. Ends with a
@@ -46,6 +46,7 @@ const POLICY = 'packages/runner/src/run/network-evidence-policy.ts'
 const READ = 'packages/agent/src/functions/ops/runs-evidence.ts'
 const STORE = 'packages/runner-local/src/evidence-artifact-store.ts'
 const COMPOSE = 'packages/agent-local/src/composition/compose-local-agent.ts'
+const MEMBER = 'packages/runner/src/run/member-runner.ts'
 
 const RT = 'src/__tests__/423-read-contracts.test.ts'
 const TD = 'src/__tests__/423-read-contracts.test-d.ts'
@@ -58,7 +59,7 @@ const POSTURE_T = 'src/__tests__/423-production-read-posture.test.ts'
 
 const instruments = {
   'schema-sets': { pkg: 'packages/schema', files: [RT, TD], typecheck: true, count: 20 },
-  'runner-finalization': { pkg: 'packages/runner', files: [FIN], typecheck: false, count: 66 },
+  'runner-finalization': { pkg: 'packages/runner', files: [FIN], typecheck: false, count: 69 },
   'runner-aria': { pkg: 'packages/runner', files: [ARIA_T], typecheck: false, count: 11 },
   'runner-policy': { pkg: 'packages/runner', files: [POLICY_T], typecheck: false, count: 5 },
   'agent-read': { pkg: 'packages/agent', files: [READ_T], typecheck: false, count: 38 },
@@ -237,10 +238,40 @@ const legs = [
       read('EVIDENCE-MULTI-KEY'),
     ],
   },
+  {
+    subject: MEMBER, instrument: 'runner-finalization', claim: 'EVID-TIMEOUT-NAVIGATE', operation: 'discard the navigation timeout result instead of recording it',
+    edits: [{
+      from: "      if (aborted.status === 'failed') recordBeforeStart(0, 'Navigate to test URL', aborted)\n",
+      to: '',
+    }],
+    reds: [fin('EVID-TIMEOUT-NAVIGATE')],
+    allowed: [],
+    greens: [fin('EVID-TIMEOUT'), cell('runner-finalization', FIN, 'EVID-ABORT-BEFORE', 4), fin('EVID-TIMEOUT-DEADLINE')],
+  },
+  {
+    subject: MEMBER, instrument: 'runner-finalization', claim: 'EVID-TIMEOUT-DEADLINE', operation: 'break on the between-steps deadline without recording a row',
+    edits: [{
+      from: "      recordBeforeStart(stepIndex, rawInstruction, createTimeoutStepResult(rawInstruction, 'test', testTimeout))\n",
+      to: '',
+    }],
+    reds: [fin('EVID-TIMEOUT-DEADLINE')],
+    allowed: [],
+    greens: [fin('EVID-TIMEOUT'), cell('runner-finalization', FIN, 'EVID-ABORT-BEFORE', 4), fin('EVID-TIMEOUT-NAVIGATE')],
+  },
+  {
+    subject: MEMBER, instrument: 'runner-finalization', claim: 'EVID-CATCH-REDACTED', operation: 'record the catch-path result without the declared-secret redactor',
+    edits: [{
+      from: "        error: config.secretRedactor ? config.secretRedactor.redactString(message) : message,\n      }) }\n      // completedExecution predates the normal path's redaction; nothing raw may be recorded.\n      result = redactSecretValue(result, config.secretRedactor)\n",
+      to: "        error: message,\n      }) }\n",
+    }],
+    reds: [fin('EVID-CATCH-REDACTED')],
+    allowed: [],
+    greens: [fin('EVID-TIMEOUT'), cell('runner-finalization', FIN, 'EVID-ABORT-BEFORE', 4), fin('VARIABLE-MASK-NAMES')],
+  },
 ]
 
 runGate({
   slug: '423-evidence-mutation', envPrefix: 'AGENT_QA_423_EVIDENCE_MUTATION', idPrefix: 'E',
-  instruments, legs, expectedLegs: 13, banner: 'EVIDENCE_MUTATION_OK',
+  instruments, legs, expectedLegs: 16, banner: 'EVIDENCE_MUTATION_OK',
 })
 NODE
