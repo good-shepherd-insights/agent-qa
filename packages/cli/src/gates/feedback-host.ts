@@ -2,12 +2,12 @@ import { dirname, resolve } from 'node:path'
 import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
-import { chainJobIdsForRun, RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
-import { createKnowledgeReader, createKnowledgeReview, DIGEST_JOB_ID_SOURCE, LOCAL_CURATION_CAPABILITIES, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
+import { RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import { createKnowledgeReader, createKnowledgeReview, LOCAL_CURATION_CAPABILITIES, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import { RunsMarkInputSchema, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { wordImprovementPlan } from './feedback-wording.js'
-import { decideMarkDraft, loadMarkTarget, markFeedbackInput, planMarkFeedback, readMarkDraftFacts } from './feedback-plan.js'
+import { decideMarkDraft, loadMarkTarget, markEvidenceCurationJobIds, markFeedbackInput, planMarkFeedback, readMarkDraftFacts } from './feedback-plan.js'
 import { resolveEvalSession, resolveProductPartition, FsMarkLedger, freezeGoldenTrajectory, slugBranch } from '../eval-session-composition.js'
 
 export { resolveMarkMember } from './feedback-plan.js'
@@ -94,7 +94,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
               executionContext: session.executionContext, lease: { leaseId: lease.leaseId, epoch: lease.epoch },
               mark, servedRecordIds, handoff,
               includeAlreadyAppended: true,
-              curationJobIds: [chainJobIdsForRun(input.runId, DIGEST_JOB_ID_SOURCE).curateMemory] })
+              curationJobIds: markEvidenceCurationJobIds(input.runId) })
             if (evidence.correlationIncomplete) throw new Error('Mark evidence correlation incomplete; gold/evidence may have landed, no receipt appended')
             mark.evidence = { confirmed: evidence.confirmed, overturned: evidence.overturned }
           } finally { curation.maintenance.releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }

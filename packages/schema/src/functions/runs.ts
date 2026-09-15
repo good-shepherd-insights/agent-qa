@@ -7,7 +7,7 @@ import type { Action } from '../action/index'
 import { RecordedRetrievalRungSchema } from '../brief/retrieval-rung'
 import { ServedRetrievalTraceV1Schema } from '../brief/retrieval-trace'
 import { BRIEF_WHY_NO_TRACE_REASONS } from '../knowledge/review-verbs'
-import { InspectRecordViewSchema, RecordChangeSchema } from '../knowledge/maintenance-views'
+import { RecordChangeSchema } from '../knowledge/maintenance-views'
 import type { VerifierVerdict } from '../handoff/step-evidence'
 import type { ArtifactRef } from '../ids/artifact-ref'
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
@@ -40,6 +40,7 @@ import { EXECUTION_CONTEXT_VALUES } from '../run/run-status'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
 import type { Verdict } from '../verdict/verdict'
 import { RunDetailMemberMarkSchema, type RunDetailMemberMark } from './feedback'
+import { oneJoinArm, recordJoinShape } from './record-join'
 
 export const RUN_SUMMARY_SCHEMA_VERSION = 1
 
@@ -866,66 +867,6 @@ export const RunsKnowledgeInputSchema = z.object({
 }).strict()
 
 export type RunsKnowledgeInput = z.infer<typeof RunsKnowledgeInputSchema>
-
-/**
- * Why a row carries no joined record content (423 D-20/D-21).
- *
- * `not-found` is the store's own answer for this identity (for example a purged record), while
- * `scan-incomplete` means the batch read could not finish and `not-bound` means this host binds no
- * batch record read. The row itself is always retained.
- */
-export const RUN_KNOWLEDGE_CONTENT_ABSENCE_REASONS = [
-  'not-found',
-  'scan-incomplete',
-  'not-bound',
-] as const
-
-export const RunKnowledgeContentAbsenceSchema = z.object({
-  reason: z.enum(RUN_KNOWLEDGE_CONTENT_ABSENCE_REASONS),
-}).strict()
-
-/**
- * The record as the maintenance read shows it NOW (423 D-21). Every `current*` member is read-time
- * state; the row it rides on keeps its own historical `change`/`atOrdinal` or served trust/status.
- */
-export const RunKnowledgeRecordContentSchema = z.object({
-  content: z.string(),
-  summary: z.string(),
-  kind: InspectRecordViewSchema.shape.kind,
-  applicability: z.object({
-    product: z.string(),
-    scope: z.string(),
-    anchors: z.array(z.string()),
-    openedAtOrdinal: z.number().int().nonnegative(),
-    closedAtOrdinal: z.number().int().nonnegative().optional(),
-  }).strict(),
-  currentStatus: InspectRecordViewSchema.shape.status,
-  currentTrust: z.object({
-    confirmations: z.number().int().nonnegative(),
-    contradictions: z.number().int().nonnegative(),
-    evidenceTokens: z.array(z.string()),
-    lastEventOrdinal: z.number().int().nonnegative(),
-    trustNarrative: z.string().optional(),
-  }).strict(),
-}).strict()
-
-export type RunKnowledgeRecordContent = z.infer<typeof RunKnowledgeRecordContentSchema>
-export type RunKnowledgeContentAbsence = z.infer<typeof RunKnowledgeContentAbsenceSchema>
-
-const recordJoinShape = {
-  recordContent: RunKnowledgeRecordContentSchema.optional(),
-  contentAbsence: RunKnowledgeContentAbsenceSchema.optional(),
-}
-
-function oneJoinArm(
-  row: { recordContent?: unknown; contentAbsence?: unknown },
-  ctx: z.RefinementCtx,
-) {
-  if (row.recordContent !== undefined && row.contentAbsence !== undefined) {
-    ctx.addIssue({ code: 'custom', path: ['contentAbsence'],
-      message: 'a joined row carries record content or its absence, never both' })
-  }
-}
 
 /** A learned change with the read-time record join beside its unchanged historical fields. */
 export const RunKnowledgeLearnedChangeSchema = RecordChangeSchema.safeExtend(recordJoinShape)

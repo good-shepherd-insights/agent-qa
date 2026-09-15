@@ -27,7 +27,12 @@ function consequences(overrides: Record<string, unknown> = {}) {
       recordedVerdict: { pass: false, reasoning: 'banner missing' }, correctedAction: false }],
     labels: [{ testIndex: 1, stepIndex: 2, decisionOrdinal: 0, sourceCassetteId: 'leaf-1-2-0', channel: 'user-mark',
       correction: { verdict: 'pass' } }],
-    knowledge: { servedRecordIds: ['record-a'], appendsEvidence: true },
+    knowledge: { servedRecordIds: ['record-a'], appendsEvidence: true,
+      records: [{ recordId: 'record-a', recordContent: { content: 'banner body', summary: 'banner summary', kind: 'fact',
+        applicability: { product: 'storefront', scope: 'product:storefront', anchors: ['el:banner'], openedAtOrdinal: 1 },
+        currentStatus: 'active', currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: ['token-a'], lastEventOrdinal: 2 } },
+      served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] } }],
+      evidence: { confirmed: 1, overturned: 0 } },
     draft: { kind: 'knowledge', fix: 'fact', target: { grain: 'record', recordId: 'record-a' } },
     latest: { kind: 'first' },
     basis: { ledgerOrdinal: 0 },
@@ -222,6 +227,27 @@ describe('423-37 runs.mark.preview contract (D-16/D-17)', () => {
     expect(masked.result.groundTruth).toEqual([{ testIndex: 1, stepIndex: 2, verdict: 'pass',
       recordedVerdict: { pass: false, reasoning: masking.mask(`reasoning ${secret}`) },
       correctedExpectation: masking.mask(`expect ${secret}`), correctedAction: true }])
+    // 423-19 D-17: reached-record content and overturned evidence tokens cross the same mask; ids stay structural.
+    const reached = { ...falsePass, knowledge: { servedRecordIds: ['record-a'], appendsEvidence: true, evidence: { confirmed: 1, overturned: 1 },
+      records: [{ recordId: 'record-a', recordContent: { content: `body ${secret}`, summary: `summary ${secret}`, kind: 'fact',
+        applicability: { product: 'storefront', scope: 'product:storefront', anchors: [`el:${secret}`], openedAtOrdinal: 1 },
+        currentStatus: 'active', currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [`token ${secret}`], lastEventOrdinal: 2,
+          trustNarrative: `narrative ${secret}` } },
+      served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' },
+        { direction: 'overturn', overturnsEvidenceToken: `prior ${secret}`, overturnsCurationJobId: 'canary-job' }] } }] } }
+    const reachedMasked = (await previewOf(reached)).result as { knowledge: { records: Record<string, unknown>[] } }
+    expect(JSON.stringify(reachedMasked)).not.toContain(secret)
+    expect(reachedMasked.knowledge.records[0]).toEqual({ recordId: 'record-a', recordContent: { content: masking.mask(`body ${secret}`),
+      summary: masking.mask(`summary ${secret}`), kind: 'fact', applicability: { product: 'storefront', scope: 'product:storefront',
+        anchors: [masking.mask(`el:${secret}`)], openedAtOrdinal: 1 }, currentStatus: 'active', currentTrust: { confirmations: 1,
+        contradictions: 0, evidenceTokens: [masking.mask(`token ${secret}`)], lastEventOrdinal: 2, trustNarrative: masking.mask(`narrative ${secret}`) } },
+    served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' },
+      { direction: 'overturn', overturnsEvidenceToken: masking.mask(`prior ${secret}`), overturnsCurationJobId: 'canary-job' }] } })
+    // A non-false-pass overturn, a missing join arm and miscounted effects are refused at parse time.
+    expect(parse({ ...reached, markKind: 'false-fail', labels: [reached.labels[0]] })).toBe(false)
+    expect(parse({ ...reached, knowledge: { ...reached.knowledge, evidence: { confirmed: 1, overturned: 0 } } })).toBe(false)
+    const { recordContent: _content, ...unjoined } = reached.knowledge.records[0]!
+    expect(parse({ ...reached, knowledge: { ...reached.knowledge, records: [unjoined] } })).toBe(false)
     setActiveMaskingContextResolver(() => undefined)
     const cold = await previewOf(sensitive)
     expect(cold.result.groundTruth).toMatchObject([{ recordedVerdict: { reasoning: maskedMarker('secret') },

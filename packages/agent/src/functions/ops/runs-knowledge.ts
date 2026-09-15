@@ -32,7 +32,9 @@
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
   maskedMarker,
+  maskRecordContent,
   NO_KNOWLEDGE_READER_TRUNCATION,
+  projectRecordContent,
   RecordedRetrievalRungSchema,
   RunKnowledgeProjectionSchema,
   RunsKnowledgeInputSchema,
@@ -251,35 +253,14 @@ type RecordJoin =
  *
  * Trust and status are copied from the maintenance view (`deriveBundleTrust`'s answer), never
  * recomputed, and are named `current*` so no reader mistakes them for what the row recorded.
- * Record identities are not joined strings: the row's own id stays exactly what it was.
+ * Record identities are not joined strings: the row's own id stays exactly what it was. The pick
+ * and the mask are the schema's shared join, which runs.mark.preview's knowledge records use too.
  */
 function recordContentOf(
   result: Extract<KnowledgeRecordShowResult, { kind: 'found' }>,
   mask: MaskFn,
 ): RecordContent {
-  const { record } = result
-  return {
-    content: mask(result.body),
-    summary: mask(result.summary),
-    kind: record.kind,
-    applicability: {
-      product: mask(record.product),
-      scope: mask(record.scope),
-      anchors: record.anchors.map(mask),
-      openedAtOrdinal: record.openedAtOrdinal,
-      ...(record.closedAtOrdinal === undefined ? {} : { closedAtOrdinal: record.closedAtOrdinal }),
-    },
-    currentStatus: record.status,
-    currentTrust: {
-      confirmations: record.confirmations,
-      contradictions: record.contradictions,
-      evidenceTokens: record.evidenceTokens.map(mask),
-      lastEventOrdinal: record.lastEventOrdinal,
-      ...(record.trustNarrative === undefined || record.trustNarrative === null
-        ? {}
-        : { trustNarrative: mask(record.trustNarrative) }),
-    },
-  }
+  return maskRecordContent(projectRecordContent(result), mask)
 }
 
 /**

@@ -19,7 +19,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { canaryOutcomeObservationId } from '@vostride/agent-qa-knowledge-local/reader'
+import { canaryOutcomeObservationId, planMarkEvidence, projectMarkEvidenceOutcome } from '@vostride/agent-qa-knowledge-local/reader'
 import {
   AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
   CHAT_HELP_TEXT,
@@ -603,6 +603,12 @@ export interface LocalCurationCapabilities {
   readonly fileMarkTestDraft: typeof fileMarkTestDraft
   readonly withdrawPendingProposal: typeof withdrawPendingProposal
   readonly appendMarkEvidence: typeof appendMarkEvidence
+  /**
+   * 2026-09-15, 423 D-16/D-17: the lease-free planning half appendMarkEvidence executes, so a
+   * consequence preview names every confirm/overturn effect without the writer. Reads only.
+   */
+  readonly planMarkEvidence: typeof planMarkEvidence
+  readonly projectMarkEvidenceOutcome: typeof projectMarkEvidenceOutcome
   readonly triageMark: typeof triageMark
   readonly servedIdsOn: typeof servedIdsOn
   readonly procedureReadOn: typeof procedureReadOn
@@ -647,6 +653,8 @@ export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.fre
   fileMarkTestDraft,
   withdrawPendingProposal,
   appendMarkEvidence,
+  planMarkEvidence,
+  projectMarkEvidenceOutcome,
   triageMark,
   servedIdsOn,
   procedureReadOn,

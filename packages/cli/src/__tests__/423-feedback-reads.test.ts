@@ -4,7 +4,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rea
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import * as agent from '@vostride/agent-qa-agent'
-import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { createConfirmRegistry } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
@@ -142,7 +142,7 @@ describe('423-35 shared mark consequence plan (D-16)', () => {
     expect(refused).toMatchObject({ kind: 'step-not-found', stepCount: 1 })
     expect(refused).toEqual(await port.mark(missing))
     const ambiguous: RunsMarkInput = { runId, kind: 'false-fail', correctedAction }
-    expect(await preview(f.previewDeps, ambiguous)).toEqual({ kind: 'quarantined', class: 'flake',
+    expect(await preview(f.previewDeps, ambiguous)).toEqual({ kind: 'quarantined', class: 'flake', member: { testIndex: 0, testId: member.testId },
       resolvedStep: { stepIndex: 0, reason: 'failing-step' }, latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 } })
     expect(hashes(f.root)).toEqual(before)
     expect(await port.mark(ambiguous)).toMatchObject({ kind: 'marked',
@@ -664,9 +664,13 @@ describe('423-19 content-led consequence preview over the read host (D-16/D-17)'
     expect(previewed).toMatchObject({ latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 },
       knowledge: { evidence: { confirmed: 1, overturned: 0 } } })
     expect(previewed.basis).not.toHaveProperty('priorMarkOrdinal')
-    // The intent's minted id and time belong to the writer; the preview neither reports nor replaces them.
-    expectNoMint(previewed)
-    expect(JSON.stringify(previewed)).not.toContain(intent.mark.markId)
+    // The intent's id and time belong to the writer. Its evidence already landed, so the id appears only
+    // as the served record's current trust token, read-time state, and the preview mints nothing else.
+    expectNoMint(previewed, [intent.mark.markId])
+    expect(previewed.knowledge.records[0]!.recordContent!.currentTrust.evidenceTokens).toContain(`mark:${intent.mark.markId}`)
+    const { recordContent: _current, ...planned } = previewed.knowledge.records[0]!
+    expect(JSON.stringify({ ...previewed, knowledge: { ...previewed.knowledge, records: [planned] } })).not.toContain(intent.mark.markId)
+    expect(JSON.stringify(previewed)).not.toContain(String(intent.mark.markedAt))
     expect(readFileSync(intentPath)).toEqual(intentBytes)
     expect(tree(f.root)).toEqual(before)
 
@@ -720,7 +724,8 @@ describe('423-19 content-led consequence preview over the read host (D-16/D-17)'
           openedAtOrdinal: shown.record.openedAtOrdinal },
         currentStatus: shown.record.status,
         currentTrust: { confirmations: shown.record.confirmations, contradictions: shown.record.contradictions,
-          evidenceTokens: shown.record.evidenceTokens, lastEventOrdinal: shown.record.lastEventOrdinal } },
+          evidenceTokens: shown.record.evidenceTokens, lastEventOrdinal: shown.record.lastEventOrdinal,
+          ...(shown.record.trustNarrative ? { trustNarrative: shown.record.trustNarrative } : {}) } },
       served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] } }],
       evidence: { confirmed: 1, overturned: 0 } })
     // Content leads the record: identity first, then the joined content, then its effects.
@@ -741,7 +746,8 @@ describe('423-19 content-led consequence preview over the read host (D-16/D-17)'
     expect(cold.knowledge.records[0]).toMatchObject({ recordId: f.published.id, served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] } })
 
     // A reader with no batch join keeps the record id and its effect under a named absence.
-    const unjoined = consequencesOf(await rawPreview(previewReadsFor(f, { reader: {} as never }), { runId, kind: 'false-fail' }))
+    const unbatched = { ...createKnowledgeReader(() => f.knowledgeRoot), showRecords: undefined }
+    const unjoined = consequencesOf(await rawPreview(previewReadsFor(f, { reader: unbatched }), { runId, kind: 'false-fail' }))
     expect(unjoined.knowledge.records).toEqual([{ recordId: f.published.id, contentAbsence: { reason: 'not-bound' }, served: true,
       evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] } }])
     expect(tree(f.root)).toEqual(before)

@@ -1,7 +1,7 @@
 // 2026-09-15, 423 D-16/D-17: what runs.mark would do for this exact input, through the read-only
 // feedbackReads port. The result is prospective: no intent, lease, model call, id mint or write.
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
-import { RunsMarkInputSchema, RunsMarkPreviewResultSchema, maskedMarker } from '@vostride/agent-qa-schema'
+import { RunsMarkInputSchema, RunsMarkPreviewResultSchema, maskRecordContent, maskedMarker } from '@vostride/agent-qa-schema'
 import type { MaskFn, RunsMarkInput, RunsMarkPreviewResult } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
@@ -10,11 +10,24 @@ import { runsMarkSpec } from './runs-mark.js'
 
 export const RUNS_MARK_PREVIEW_FUNCTION_ID = 'runs.mark.preview'
 
-// Only free text crosses the mask. Ids, kinds, counts, addresses and cassette ids stay structural.
+// Only free text crosses the mask. Ids, kinds, counts, addresses and cassette ids stay structural;
+// joined record content and evidence tokens are masked exactly as runs.knowledge masks them.
 function maskResult(result: RunsMarkPreviewResult, mask: MaskFn): RunsMarkPreviewResult {
   if (result.kind !== 'consequences') return result
   return {
     ...result,
+    knowledge: {
+      ...result.knowledge,
+      records: result.knowledge.records.map(record => ({
+        ...record,
+        ...(record.recordContent === undefined ? {} : { recordContent: maskRecordContent(record.recordContent, mask) }),
+        evidence: record.evidence.kind === 'unreadable' ? record.evidence : {
+          kind: 'effects' as const,
+          effects: record.evidence.effects.map(effect => effect.direction === 'confirm' ? effect
+            : { ...effect, overturnsEvidenceToken: mask(effect.overturnsEvidenceToken) }),
+        },
+      })),
+    },
     groundTruth: result.groundTruth.map(item => ({
       ...item,
       recordedVerdict: { ...item.recordedVerdict, reasoning: mask(item.recordedVerdict.reasoning) },
@@ -25,7 +38,7 @@ function maskResult(result: RunsMarkPreviewResult, mask: MaskFn): RunsMarkPrevie
 
 export const runsMarkPreviewSpec: FunctionSpec<RunsMarkInput, RunsMarkPreviewResult> = {
   id: RUNS_MARK_PREVIEW_FUNCTION_ID,
-  summary: 'Preview what runs.mark would do for this exact input: its refusals, resolved step, labels, knowledge reach and draft kind, without writing.',
+  summary: 'Preview what runs.mark would do for this exact input: its refusals, resolved step, labels, the knowledge records it reaches with their content and evidence effects, and draft kind, without writing.',
   requiredScopes: ['read'],
   resultKind: 'unary',
   boundThrough: 'feedbackReads',

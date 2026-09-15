@@ -1,14 +1,14 @@
 // 2026-09-15, 423 D-16: the deterministic half of runs.mark, shared by the writer and its preview.
 // Nothing here opens an intent, lease, model or audit dir, mints an id or time, or writes.
 import { dirname, resolve } from 'node:path'
-import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
-import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
-import { RunsMarkInputSchema, type CompletedRunHandoff, type ImprovementPlan, type KnowledgeTargetRef, type MarkAddress, type MarkQuarantineClass, type MarkReceipt, type NoDraftableFixChecked, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import { chainJobIdsForRun, type KnowledgeReaderPort } from '@vostride/agent-qa-agent'
+import { createKnowledgeReader, DIGEST_JOB_ID_SOURCE, LOCAL_CURATION_CAPABILITIES, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
+import { projectRecordContent, RunsMarkInputSchema, type CompletedRunHandoff, type ImprovementPlan, type KnowledgeRecordShowResult, type KnowledgeTargetRef, type MarkAddress, type MarkPreviewKnowledge, type MarkPreviewKnowledgeRecord, type MarkQuarantineClass, type MarkReceipt, type NoDraftableFixChecked, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 import { canonicalJson, FsHandoffSource, FsMarkLedger, previewMarkLabels, resolveEvalSession, resolveMarkLabelTargets, slugBranch, type GoldenTrajectoryTarget, type MarkGroundTruthPreview, type MarkLabelPreviewItem } from '../eval-session-composition.js'
 
-export type MarkPlanCuration = Pick<LocalCurationCapabilities, 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'readFeedbackRecord'>
+export type MarkPlanCuration = Pick<LocalCurationCapabilities, 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'readFeedbackRecord' | 'planMarkEvidence' | 'projectMarkEvidenceOutcome'>
 type MarkMember = CompletedRunHandoff['tests'][number]
 type MarkStep = MarkMember['steps'][number]
 export type ServedRecordFacts = NonNullable<ReturnType<LocalCurationCapabilities['readFeedbackRecord']>>
@@ -46,6 +46,11 @@ export function loadMarkTarget(agentQaRoot: string, input: RunsMarkInput): MarkT
   return { kind: 'target', handoff, member, address: { runId: input.runId, testIndex: member.testIndex,
     ...(member.testId === undefined ? {} : { testId: member.testId }),
     ...(input.stepIndex === undefined ? {} : { stepIndex: input.stepIndex }) } }
+}
+
+/** The curation job whose positives a false-pass may overturn; the writer and its preview pass the same ids. */
+export function markEvidenceCurationJobIds(runId: string): string[] {
+  return [chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE).curateMemory]
 }
 
 /** The note is deliberately absent: only the kind and the correction make a mark a repeat. */
@@ -155,13 +160,17 @@ export type MarkDraftPreview =
   | { kind: 'test-edit'; testRef: string }
   | { kind: 'no-draftable-fix'; checked: NoDraftableFixChecked }
 
+export interface MarkPreviewMember { testIndex: number; testId?: string }
+
 export type MarkConsequencePreview =
   | MarkTargetRefusal
   | MarkPlanRefusal
-  | Extract<MarkFeedbackPlan, { kind: 'already-marked' | 'quarantined' }>
-  | { kind: 'consequences'; resolvedStep: MarkResolvedStep; decisionCount: number
+  | Extract<MarkFeedbackPlan, { kind: 'already-marked' }>
+  | (Extract<MarkFeedbackPlan, { kind: 'quarantined' }> & { member: MarkPreviewMember })
+  | { kind: 'consequences'; member: MarkPreviewMember; resolvedStep: MarkResolvedStep; decisionCount: number
     groundTruth: MarkGroundTruthPreview[]; labels: MarkLabelPreviewItem[]
-    knowledge: { servedRecordIds: string[]; appendsEvidence: boolean }
+    /** Unmasked: the op masks joined content and evidence tokens at its boundary. */
+    knowledge: MarkPreviewKnowledge
     draft: MarkDraftPreview; withdraws?: MarkWithdrawal; latest: MarkLatest; basis: MarkPlanBasis }
 
 export interface MarkPreviewDeps {
@@ -178,6 +187,31 @@ export interface MarkPreviewDeps {
 // preview: only the draft kind, fix and target are projected, never deltas or feedback sources.
 const PLANNING_MARK_ID = 'mark_000000000000'
 
+type RecordJoin = Pick<MarkPreviewKnowledgeRecord, 'recordContent' | 'contentAbsence'>
+
+/**
+ * D-17 via D-20's batch join: one maintenance scan over every reached record. No batch read is a
+ * named `not-bound`, an unfinished scan is `scan-incomplete` for all, a miss is `not-found`.
+ */
+async function joinReachedRecords(reader: KnowledgeReaderPort, recordIds: readonly string[]): Promise<(recordId: string) => RecordJoin> {
+  const showRecords = reader.showRecords
+  if (showRecords === undefined) return () => ({ contentAbsence: { reason: 'not-bound' } })
+  if (recordIds.length === 0) return () => ({ contentAbsence: { reason: 'not-found' } })
+  let results: readonly KnowledgeRecordShowResult[]
+  try {
+    results = await showRecords.call(reader, { recordIds })
+  } catch (error) {
+    // Read by name, as runs.knowledge does: only the store's own incomplete-scan refusal folds.
+    if (!(error instanceof Error && error.name === 'KnowledgeMaintenanceScanError')) throw error
+    return () => ({ contentAbsence: { reason: 'scan-incomplete' } })
+  }
+  const found = new Map(results.flatMap(result => result.kind === 'found' ? [[result.record.recordId, projectRecordContent(result)] as const] : []))
+  return recordId => {
+    const recordContent = found.get(recordId)
+    return recordContent === undefined ? { contentAbsence: { reason: 'not-found' } } : { recordContent }
+  }
+}
+
 export async function previewMarkConsequences(deps: MarkPreviewDeps, raw: unknown): Promise<MarkConsequencePreview> {
   const input = RunsMarkInputSchema.parse(raw)
   const curation = deps.curation ?? LOCAL_CURATION_CAPABILITIES
@@ -188,15 +222,44 @@ export async function previewMarkConsequences(deps: MarkPreviewDeps, raw: unknow
   const plan = planMarkFeedback({ input, handoff, member, address, prior: ledger.latestFor(address),
     ledgerOrdinal: ledger.read().length, curation })
   if (plan.kind === 'refused') return plan.outcome
+  const previewMember: MarkPreviewMember = { testIndex: member.testIndex, ...(member.testId === undefined ? {} : { testId: member.testId }) }
+  if (plan.kind === 'quarantined') return { ...plan, member: previewMember }
   if (plan.kind !== 'effects') return plan
   const labels = previewMarkLabels({ handoff, address, mark: input })
   if (labels.kind !== 'labels') throw new Error('mark label preview disagrees with the resolved mark plan')
-  let draft: MarkDraftPreview = { kind: 'confirmed-bug' }
-  if (input.kind !== 'confirmed-bug') {
+  let store: { knowledgeRoot: string; reader: KnowledgeReaderPort } | undefined
+  const storeOf = async () => {
+    if (store !== undefined) return store
     const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
     const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, dirname(resolve(deps.configPath)))
-    const reader = deps.reader ?? createKnowledgeReader(() => knowledgeRoot, undefined, undefined,
-      deps.resolveTrustPriors ?? trustPriorsForHost(deps).resolve)
+    store = { knowledgeRoot, reader: deps.reader ?? createKnowledgeReader(() => knowledgeRoot, undefined, undefined,
+      deps.resolveTrustPriors ?? trustPriorsForHost(deps).resolve) }
+    return store
+  }
+
+  let knowledge: MarkPreviewKnowledge = { ...plan.knowledge, records: [], evidence: { confirmed: 0, overturned: 0 } }
+  if (plan.knowledge.appendsEvidence) {
+    const { knowledgeRoot, reader } = await storeOf()
+    // The writer's append plans these exact inputs under its lease; here the plan is only read.
+    const evidencePlan = curation.planMarkEvidence({ knowledgeRoot, mark: { runId: input.runId, kind: input.kind },
+      servedRecordIds: plan.knowledge.servedRecordIds, handoff, curationJobIds: markEvidenceCurationJobIds(input.runId) })
+    const joinFor = await joinReachedRecords(reader, evidencePlan.targets.map(target => target.recordId))
+    const records = evidencePlan.targets.map((target): MarkPreviewKnowledgeRecord => ({
+      recordId: target.recordId,
+      ...joinFor(target.recordId),
+      served: target.kind === 'effects' ? target.served : plan.knowledge.servedRecordIds.includes(target.recordId),
+      evidence: target.kind === 'unreadable' ? { kind: 'unreadable' } : { kind: 'effects', effects: target.effects.map(effect =>
+        effect.direction === 'confirm' ? { direction: 'confirm' as const } : { direction: 'overturn' as const,
+          overturnsEvidenceToken: effect.overturnsEvidenceToken, overturnsCurationJobId: effect.overturnsCurationJobId }) },
+    }))
+    // A resumed writer reports its complete logical effect, so duplicates inside one plan still count.
+    const { confirmed, overturned } = curation.projectMarkEvidenceOutcome(evidencePlan, { includeAlreadyAppended: true })
+    knowledge = { ...plan.knowledge, records, evidence: { confirmed, overturned } }
+  }
+
+  let draft: MarkDraftPreview = { kind: 'confirmed-bug' }
+  if (input.kind !== 'confirmed-bug') {
+    const { knowledgeRoot, reader } = await storeOf()
     const step = member.steps[plan.resolvedStep.stepIndex]!
     const { served, procedure } = await readMarkDraftFacts({ reader, curation, knowledgeRoot, member, step })
     const improvement = curation.applyFeedback(markFeedbackInput({ markId: PLANNING_MARK_ID, runId: input.runId,
@@ -211,7 +274,7 @@ export async function previewMarkConsequences(deps: MarkPreviewDeps, raw: unknow
       : decided.kind === 'test-edit' ? { kind: 'test-edit', testRef: decided.plan.testRef }
         : { kind: 'no-draftable-fix', checked: decided.checked }
   }
-  return { kind: 'consequences', resolvedStep: plan.resolvedStep, decisionCount: plan.decisionCount,
-    groundTruth: labels.groundTruth, labels: labels.labels, knowledge: plan.knowledge, draft,
+  return { kind: 'consequences', member: previewMember, resolvedStep: plan.resolvedStep, decisionCount: plan.decisionCount,
+    groundTruth: labels.groundTruth, labels: labels.labels, knowledge, draft,
     ...(plan.withdraws === undefined ? {} : { withdraws: plan.withdraws }), latest: plan.latest, basis: plan.basis }
 }

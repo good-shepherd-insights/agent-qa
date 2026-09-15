@@ -9,6 +9,7 @@ import { DeltaSchema, KnowledgeTargetRefSchema, ProposalIdSchema } from '../know
 import { PROPOSAL_ENVELOPE_STATUSES, ProposalDecisionRecordSchema } from '../proposal/envelope'
 import { runIdSchema as runIdCodec, type RunId } from '../run/run-id'
 import { VERDICT_CLASSES, type VerdictClass } from '../verdict/verdict'
+import { recordJoinShape } from './record-join'
 
 // Reuse the canonical path validator before its type-only branding transform. The bytes
 // are unchanged; this structural schema also supports output JSON-schema projection.
@@ -316,14 +317,73 @@ export const MarkPreviewLabelSchema = z.object({
 }).strict()
 export type MarkPreviewLabel = z.infer<typeof MarkPreviewLabelSchema>
 
+export const MARK_PREVIEW_EVIDENCE_DIRECTIONS = ['confirm', 'overturn'] as const
+export const MARK_PREVIEW_RECORD_EVIDENCE_KINDS = ['effects', 'unreadable'] as const
+
+/** One evidence event the writer's append would land; an overturn names the prior positive it reverses. */
+export const MarkPreviewEvidenceEffectSchema = z.discriminatedUnion('direction', [
+  z.object({ direction: z.literal('confirm') }).strict(),
+  z.object({ direction: z.literal('overturn'), overturnsEvidenceToken: z.string(), overturnsCurationJobId: z.string().min(1) }).strict(),
+])
+export type MarkPreviewEvidenceEffect = z.infer<typeof MarkPreviewEvidenceEffectSchema>
+
 /**
- * The knowledge the mark would reach, as the writer's own evidence inputs. Concrete per-record
- * confirm/overturn effects and joined content (D-17) are additive fields planned by 423-19.
+ * 2026-09-15, 423 D-17: one record the mark reaches, led by its joined content (or the typed reason
+ * there is none) and followed by its complete planned effects. A record the store cannot read keeps
+ * its id and is `unreadable`, exactly as the writer skips it.
+ */
+export const MarkPreviewKnowledgeRecordSchema = z.object({
+  recordId: z.string().min(1),
+  ...recordJoinShape,
+  /** Served on a targeted step; otherwise reached only by false-pass correlation. */
+  served: z.boolean(),
+  evidence: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('effects'), effects: z.array(MarkPreviewEvidenceEffectSchema).min(1) }).strict(),
+    z.object({ kind: z.literal('unreadable') }).strict(),
+  ]),
+}).strict().superRefine((record, ctx) => {
+  if ((record.recordContent === undefined) === (record.contentAbsence === undefined)) {
+    ctx.addIssue({ code: 'custom', path: ['recordContent'], message: 'a reached record leads with its content or the typed absence of it' })
+  }
+  if (record.evidence.kind !== 'effects') return
+  const confirms = record.evidence.effects.filter(effect => effect.direction === 'confirm').length
+  if (confirms !== (record.served ? 1 : 0) || (record.served && record.evidence.effects[0]!.direction !== 'confirm')) {
+    ctx.addIssue({ code: 'custom', path: ['evidence'], message: 'a served record is confirmed first and once; an unserved record is only overturned' })
+  }
+})
+export type MarkPreviewKnowledgeRecord = z.infer<typeof MarkPreviewKnowledgeRecordSchema>
+const _evidenceDirectionsCover: ExactlyEqual<(typeof MARK_PREVIEW_EVIDENCE_DIRECTIONS)[number], MarkPreviewEvidenceEffect['direction']> = true
+void _evidenceDirectionsCover
+const _recordEvidenceKindsCover: ExactlyEqual<(typeof MARK_PREVIEW_RECORD_EVIDENCE_KINDS)[number], MarkPreviewKnowledgeRecord['evidence']['kind']> = true
+void _recordEvidenceKindsCover
+
+/**
+ * The knowledge the mark would reach: the writer's own evidence inputs, every reached record
+ * (served targets first, then correlated unserved records) and the receipt evidence counts the
+ * append would report. Effects are prospective; nothing is appended by a preview.
  */
 export const MarkPreviewKnowledgeSchema = z.object({
   servedRecordIds: z.array(z.string().min(1)),
   appendsEvidence: z.boolean(),
-}).strict()
+  records: z.array(MarkPreviewKnowledgeRecordSchema),
+  evidence: z.object({ confirmed: indexSchema, overturned: indexSchema }).strict(),
+}).strict().superRefine((knowledge, ctx) => {
+  const ids = knowledge.records.map(record => record.recordId)
+  if (new Set(ids).size !== ids.length) ctx.addIssue({ code: 'custom', path: ['records'], message: 'each reached record appears once' })
+  const served = knowledge.records.filter(record => record.served).map(record => record.recordId)
+  if (served.join('\n') !== [...new Set(knowledge.servedRecordIds)].join('\n')
+    || knowledge.records.slice(0, served.length).some(record => !record.served)) {
+    ctx.addIssue({ code: 'custom', path: ['records'], message: 'the served records lead, in served order, and no others are served' })
+  }
+  if (!knowledge.appendsEvidence && knowledge.records.length > 0) {
+    ctx.addIssue({ code: 'custom', path: ['records'], message: 'a mark that appends no evidence reaches no record' })
+  }
+  const effects = knowledge.records.flatMap(record => record.evidence.kind === 'effects' ? record.evidence.effects : [])
+  const confirmed = effects.filter(effect => effect.direction === 'confirm').length
+  if (knowledge.evidence.confirmed !== confirmed || knowledge.evidence.overturned !== effects.length - confirmed) {
+    ctx.addIssue({ code: 'custom', path: ['evidence'], message: 'the evidence counts are the planned effects' })
+  }
+})
 export type MarkPreviewKnowledge = z.infer<typeof MarkPreviewKnowledgeSchema>
 
 /** applyFeedback's plan kind and target. The drafted wording is a model call and is never previewed. */
@@ -380,6 +440,10 @@ export const RunsMarkPreviewResultSchema = z.discriminatedUnion('kind', [
     }
     if (value.markKind !== 'false-pass' && value.labels.some(label => label.channel === 'overturned-verdict')) {
       ctx.addIssue({ code: 'custom', path: ['labels'], message: 'only a false-pass freezes an overturned verdict' })
+    }
+    if (value.markKind !== 'false-pass' && (value.knowledge.evidence.overturned > 0
+      || value.knowledge.records.some(record => !record.served))) {
+      ctx.addIssue({ code: 'custom', path: ['knowledge'], message: 'only a false-pass overturns or reaches an unserved record' })
     }
     const foreign = [...value.groundTruth, ...value.labels].some(item => item.testIndex !== value.member.testIndex)
     if (foreign) ctx.addIssue({ code: 'custom', path: ['member'], message: 'ground truth and labels belong to the resolved member' })

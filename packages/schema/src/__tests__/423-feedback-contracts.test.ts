@@ -3,7 +3,9 @@ import { describe, expect, test } from 'vitest'
 import {
   MARK_GOLD_CHANNELS,
   MARK_PREVIEW_DRAFT_KINDS,
+  MARK_PREVIEW_EVIDENCE_DIRECTIONS,
   MARK_PREVIEW_LATEST_KINDS,
+  MARK_PREVIEW_RECORD_EVIDENCE_KINDS,
   MARK_PREVIEW_OUTCOMES,
   MARK_PREVIEW_REFUSALS,
   MARK_PROPOSAL_STATES,
@@ -11,6 +13,8 @@ import {
   MARKS,
   MARKS_HISTORY_OUTCOMES,
   MarkPreviewDraftSchema,
+  MarkPreviewEvidenceEffectSchema,
+  MarkPreviewKnowledgeRecordSchema,
   MarkPreviewLatestSchema,
   MarkProposalCurrentSchema,
   RunsMarkOutcomeSchema,
@@ -33,6 +37,8 @@ const TARGET_REASONS = ['step-mark', 'failing-step', 'passing-verdict'] as const
 const GOLD_CHANNELS = ['user-mark', 'overturned-verdict'] as const
 const LATEST_KINDS = ['first', 'supersedes'] as const
 const DRAFT_KINDS = ['confirmed-bug', 'knowledge', 'test-edit', 'no-draftable-fix'] as const
+const EVIDENCE_DIRECTIONS = ['confirm', 'overturn'] as const
+const RECORD_EVIDENCE_KINDS = ['effects', 'unreadable'] as const
 
 const runId = asRunId('run-feedback-contract')
 type Options = { options: readonly { shape: Record<string, { value?: unknown }> }[] }
@@ -60,7 +66,7 @@ const PREVIEW_CASES: Record<(typeof PREVIEW_OUTCOMES)[number], unknown> = {
     resolvedStep: { stepIndex: 0, reason: 'failing-step' }, markedDecisionCount: 1,
     groundTruth: [{ testIndex: 0, stepIndex: 0, verdict: 'pass', recordedVerdict: { pass: false, reasoning: 'r' }, correctedAction: false }],
     labels: [{ testIndex: 0, stepIndex: 0, decisionOrdinal: 0, sourceCassetteId: 'leaf', channel: 'user-mark', correction: { verdict: 'pass' } }],
-    knowledge: { servedRecordIds: [], appendsEvidence: false },
+    knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
     draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: true } },
     latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 } },
   quarantined: { kind: 'quarantined', runId, prospective: true, markKind: 'false-pass', member, class: 'timeout',
@@ -136,5 +142,14 @@ describe('C423-FEEDBACK-RESULTS-EXACT', () => {
     expect(RunsMarkPreviewResultSchema.safeParse({ ...base, labels: [{ ...(base.labels as object[])[0], channel: 'silver' }] }).success).toBe(false)
     expect(RunsMarkPreviewResultSchema.safeParse({ ...base, latest: { kind: 'replaces', markId: 'mark_000000000001', ordinal: 1 } }).success).toBe(false)
     expect(MarkPreviewDraftSchema.safeParse({ kind: 'wording', text: 'x' }).success).toBe(false)
+    // 423-19 D-17: the reached-record evidence vocabularies.
+    expect([...MARK_PREVIEW_EVIDENCE_DIRECTIONS]).toEqual([...EVIDENCE_DIRECTIONS])
+    expect(armsOf(MarkPreviewEvidenceEffectSchema, 'direction')).toEqual([...EVIDENCE_DIRECTIONS])
+    expect([...MARK_PREVIEW_RECORD_EVIDENCE_KINDS]).toEqual([...RECORD_EVIDENCE_KINDS])
+    const recordEvidence = (MarkPreviewKnowledgeRecordSchema as unknown as { shape: { evidence: unknown } }).shape.evidence
+    expect(armsOf(recordEvidence, 'kind')).toEqual([...RECORD_EVIDENCE_KINDS])
+    expect(MarkPreviewEvidenceEffectSchema.safeParse({ direction: 'withdraw' }).success).toBe(false)
+    expect(MarkPreviewKnowledgeRecordSchema.safeParse({ recordId: 'r', contentAbsence: { reason: 'not-found' }, served: true,
+      evidence: { kind: 'skipped' } }).success).toBe(false)
   })
 })

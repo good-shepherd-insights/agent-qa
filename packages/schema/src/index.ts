@@ -1666,6 +1666,8 @@ export {
   MARK_PREVIEW_LATEST_KINDS, MARK_PREVIEW_DRAFT_KINDS, MarkPreviewBasisSchema, MarkPreviewLatestSchema,
   MarkPreviewGroundTruthSchema, MarkPreviewLabelSchema, MarkPreviewKnowledgeSchema, MarkPreviewDraftSchema,
   MarkPreviewWithdrawalSchema, RunsMarkPreviewResultSchema,
+  MARK_PREVIEW_EVIDENCE_DIRECTIONS, MARK_PREVIEW_RECORD_EVIDENCE_KINDS, MarkPreviewEvidenceEffectSchema,
+  MarkPreviewKnowledgeRecordSchema,
 } from './functions/feedback'
 export type {
   MarkQuarantineClass, MarkFixKind, MarkDisposition, NoDraftableFixChecked, MarkAddress,
@@ -1674,8 +1676,12 @@ export type {
   MarkProposalState, MarkProposalCurrent, RunsMarksHistoryInput, MarkHistoryEntry,
   RunsMarksHistoryResult, MarkHistoryReadEntry, MarkHistoryRead, FeedbackReadsPort,
   MarkPreviewBasis, MarkPreviewLatest, MarkPreviewGroundTruth, MarkPreviewLabel, MarkPreviewKnowledge,
-  MarkPreviewDraft, MarkPreviewWithdrawal, RunsMarkPreviewResult,
+  MarkPreviewDraft, MarkPreviewWithdrawal, RunsMarkPreviewResult, MarkPreviewEvidenceEffect,
+  MarkPreviewKnowledgeRecord,
 } from './functions/feedback'
+// 2026-09-15, 423 D-20/D-17: the one read-time record join, shared by runs.knowledge and runs.mark.preview
+export { projectRecordContent, maskRecordContent } from './functions/record-join'
+export type { RunKnowledgeRecordContent, RunKnowledgeContentAbsence } from './functions/record-join'
 export { MarkProposalStampSchema } from './knowledge/proposal'
 export type { MarkProposalStamp } from './knowledge/proposal'
 export { KnowledgeMarkInputSchema } from './knowledge/review-verbs'

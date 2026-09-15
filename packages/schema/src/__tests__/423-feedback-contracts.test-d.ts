@@ -3,7 +3,9 @@ import { describe, expectTypeOf, test } from 'vitest'
 import type {
   MARK_GOLD_CHANNELS,
   MARK_PREVIEW_DRAFT_KINDS,
+  MARK_PREVIEW_EVIDENCE_DIRECTIONS,
   MARK_PREVIEW_LATEST_KINDS,
+  MARK_PREVIEW_RECORD_EVIDENCE_KINDS,
   MARK_PREVIEW_OUTCOMES,
   MARK_PREVIEW_REFUSALS,
   MARK_PROPOSAL_STATES,
@@ -14,6 +16,8 @@ import type {
 import type {
   Mark,
   MarkPreviewDraft,
+  MarkPreviewEvidenceEffect,
+  MarkPreviewKnowledgeRecord,
   MarkPreviewLabel,
   MarkPreviewLatest,
   MarkProposalCurrent,
@@ -87,5 +91,11 @@ describe('C423-FEEDBACK-RESULTS-EXACT', () => {
     expectTypeOf<MarkPreviewDraft['kind']>().toEqualTypeOf<Draft>()
     expectTypeOf<Exclude<(typeof MARK_PREVIEW_DRAFT_KINDS)[number], MarkPreviewDraft['kind']>>().toEqualTypeOf<never>()
     expectTypeOf<Exclude<MarkPreviewDraft['kind'], (typeof MARK_PREVIEW_DRAFT_KINDS)[number]>>().toEqualTypeOf<never>()
+    type Direction = 'confirm' | 'overturn'
+    type RecordEvidence = 'effects' | 'unreadable'
+    expectTypeOf<MarkPreviewEvidenceEffect['direction']>().toEqualTypeOf<Direction>()
+    expectTypeOf<(typeof MARK_PREVIEW_EVIDENCE_DIRECTIONS)[number]>().toEqualTypeOf<Direction>()
+    expectTypeOf<MarkPreviewKnowledgeRecord['evidence']['kind']>().toEqualTypeOf<RecordEvidence>()
+    expectTypeOf<(typeof MARK_PREVIEW_RECORD_EVIDENCE_KINDS)[number]>().toEqualTypeOf<RecordEvidence>()
   })
 })
