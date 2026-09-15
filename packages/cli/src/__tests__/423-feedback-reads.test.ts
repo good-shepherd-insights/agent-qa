@@ -941,6 +941,40 @@ describe('423-19 runs.mark.preview registration and composed invocation (D-16)',
     expect(marked).toMatchObject({ kind: 'marked', receipt: { ordinal: 4, supersedes: template.receipts[1]!.markId,
       evidence: viaRegistry.knowledge.evidence, gold: viaRegistry.labels.map(label => ({ channel: label.channel, sourceCassetteId: label.sourceCassetteId })) } })
   }, 180_000)
+
+  it('PREVIEW-LEDGER-CORRUPT-PARITY: preview reads the ledger once, and a corrupt ledger fails it with runs.mark\'s own typed error', async () => {
+    const s = coldScene()
+    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot,
+      confirm: { surface: 'tty-prompt', ask: async () => true }, resolveExecutionContext: () => 'local-interactive' })
+    closers.push(() => composed.close())
+    const failureOf = async (opId: string) => await agent.invokeFunction(composed.registry, opId, input(), host.CLI_FUNCTION_CALLER)
+      .then(result => { throw new Error(`${opId} answered ${JSON.stringify(result)} over a corrupt ledger`) }, (error: unknown) => error)
+    const reads = vi.spyOn(FsMarkLedger.prototype, 'read')
+    try {
+      expect(await agent.invokeFunction(composed.registry, PREVIEW, input(), host.CLI_FUNCTION_CALLER))
+        .toMatchObject({ kind: 'consequences', basis: { ledgerOrdinal: 3, priorMarkOrdinal: 2 } })
+      expect(reads).toHaveBeenCalledTimes(1)
+
+      // The HISTORY-CORRUPT fixture: the second receipt line is torn.
+      const ledger = join(s.agentQaRoot, 'runs', template.runSlug, 'marks.jsonl')
+      const lines = readFileSync(ledger, 'utf8').split('\n')
+      lines[1] = '{"torn":'
+      writeFileSync(ledger, lines.join('\n'))
+      const before = storeMaps(s.stores)
+
+      reads.mockClear()
+      const previewed = await failureOf(PREVIEW)
+      expect(reads).toHaveBeenCalledTimes(1)
+      expect(storeMaps(s.stores)).toEqual(before)
+      const marked = await failureOf('runs.mark')
+      expect(storeMaps(s.stores)).toEqual(before)
+
+      expect(marked).toMatchObject({ name: 'MarkLedgerCorruptError', line: 2 })
+      expect(previewed).toMatchObject({ name: 'MarkLedgerCorruptError', line: 2 })
+      expect((previewed as Error).constructor).toBe((marked as Error).constructor)
+      expect((previewed as Error).message).toBe((marked as Error).message)
+    } finally { reads.mockRestore() }
+  }, 180_000)
 })
 
 // 2026-09-15, 423-21 D-18: both feedback reads over the shipped dashboard door's two HTTP boundaries,
