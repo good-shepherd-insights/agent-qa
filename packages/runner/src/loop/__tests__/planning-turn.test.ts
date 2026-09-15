@@ -166,6 +166,23 @@ describe('executePlanningTurn', () => {
     expect(res.callRecord?.unsupportedFeatures).toEqual(['seed'])
   })
 
+  it.each([
+    ['reports', { response: { modelId: 'resolved-unscoped-model' } }],
+    ['omits', {}],
+  ] as const)('PLANNING-TURN-UNSCOPED-IDENTITY: an unscoped turn keeps the SDK response model id when it %s one', async (_label, response) => {
+    await scriptResponses([{
+      toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })],
+      usage: USAGE,
+      ...response,
+    }])
+
+    const res = await executePlanningTurn(turnOptions())
+
+    expect(res.ok).toBe(true)
+    if ('response' in response) expect(res.callRecord?.resolvedModelId).toBe('resolved-unscoped-model')
+    else expect(res.callRecord).not.toHaveProperty('resolvedModelId')
+  })
+
   it('Test 1: an immediate action call returns the plan with zero exchanges (v1 one-shot path)', async () => {
     await scriptResponses([{ toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })], usage: USAGE }])
 
