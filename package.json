@@ -61,7 +61,9 @@
     "validate:panel-mutation": "bash scripts/421-panel-mutation.sh",
     "validate:quarantine-mutation": "bash scripts/422-quarantine-mutation.sh",
     "validate:423-evidence-mutation": "bash scripts/423-evidence-mutation.sh",
-    "validate:423-evidence-mutation-selftest": "bash scripts/423-evidence-mutation-selftest.sh"
+    "validate:423-evidence-mutation-selftest": "bash scripts/423-evidence-mutation-selftest.sh",
+    "validate:423-usage-mutation": "bash scripts/423-usage-mutation.sh",
+    "validate:423-usage-mutation-selftest": "bash scripts/423-usage-mutation-selftest.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
