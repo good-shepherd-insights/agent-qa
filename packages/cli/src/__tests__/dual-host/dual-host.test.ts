@@ -5,6 +5,7 @@ import { CurationSnapshotSchema } from '@vostride/agent-qa-schema'
 
 import {
   PERMITTED_RUN_RECEIPT_DIFF_FIELDS,
+  SNAPSHOT_BOUND_RUN_RECEIPT_FIELDS,
   buildFixture,
   compareRunReceipts,
   payloadsForFixture,
@@ -31,6 +32,10 @@ function assertCompletedSnapshot(oneShot: LegReport, daemon: LegReport, expected
     tables.find(table => table.table === 'records')!.rows.map(row => row.bundle_id).sort(),
   )
   expect(daemon.runReceipt).not.toHaveProperty('snapshot')
+  // WR-08: the inline drain records its counts beside the snapshot; the hand-off has none of its own.
+  expect(SNAPSHOT_BOUND_RUN_RECEIPT_FIELDS).toEqual(['curated', 'deprecated'])
+  expect(oneShot.runReceipt).toMatchObject({ curated: expectedCount, deprecated: 0 })
+  for (const field of SNAPSHOT_BOUND_RUN_RECEIPT_FIELDS) expect(daemon.runReceipt).not.toHaveProperty(field)
   // Equal completed snapshots remain comparable, and a snapshot is never an ignored field.
   expect(() => compareRunReceipts(oneShot.runReceipt, { ...oneShot.runReceipt })).not.toThrow()
   const empty = { schemaVersion: 1, rows: [], breakdown: {
@@ -45,6 +50,13 @@ function assertCompletedSnapshot(oneShot: LegReport, daemon: LegReport, expected
   expect(omitted).toBeDefined()
   expect(() => compareRunReceipts(withoutSnapshot, { ...daemon.runReceipt, snapshot }))
     .toThrow(/snapshot/u)
+  expect(() => compareRunReceipts(withoutSnapshot, daemon.runReceipt)).toThrow(/curated, deprecated/u)
+  expect(() => compareRunReceipts(oneShot.runReceipt, { ...daemon.runReceipt, curated: expectedCount, deprecated: 0 }))
+    .toThrow(/curated, deprecated/u)
+  expect(() => compareRunReceipts({ ...oneShot.runReceipt, curated: -1 }, daemon.runReceipt)).toThrow(/curated/u)
+  const withoutCounts = Object.fromEntries(Object.entries(oneShot.runReceipt)
+    .filter(([key]) => !(SNAPSHOT_BOUND_RUN_RECEIPT_FIELDS as readonly string[]).includes(key)))
+  expect(() => compareRunReceipts(oneShot.runReceipt, withoutCounts)).toThrow(/curated, deprecated/u)
   expect(() => compareRunReceipts({ ...oneShot.runReceipt, drainKind: 'handed-off' }, daemon.runReceipt))
     .toThrow(/snapshot/u)
 }

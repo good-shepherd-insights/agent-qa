@@ -23,6 +23,8 @@ export const PERMITTED_RUN_RECEIPT_DIFF_FIELDS = [
   'drainKind',
   'handoffHolderPid',
 ] as const
+/** WR-08 (423-43): written only beside a validated snapshot, so they share its asymmetry. */
+export const SNAPSHOT_BOUND_RUN_RECEIPT_FIELDS = ['curated', 'deprecated'] as const
 
 export type FixtureVariant = 'mixed' | 'over-ttl' | 'empty'
 
@@ -39,6 +41,17 @@ export interface DualHostFixture {
   readonly delayedCandidateId: string | null
 }
 
+/** Only an inline drain against a hand-off to a live standing writer may omit completion fields. */
+function completionOnlyAsymmetry(
+  oneShot: Record<string, unknown>,
+  daemon: Record<string, unknown>,
+): boolean {
+  return Object.hasOwn(oneShot, 'snapshot') && !Object.hasOwn(daemon, 'snapshot')
+    && oneShot.drainKind === 'drained' && oneShot.handoffHolderPid === null
+    && daemon.drainKind === 'handed-off' && typeof daemon.handoffHolderPid === 'number'
+    && Number.isInteger(daemon.handoffHolderPid) && daemon.handoffHolderPid > 0
+}
+
 /**
  * Compare every receipt field, validating completion-only snapshot asymmetry separately.
  * New, missing, or mutated fields are named in the failure instead of being hidden by a projection.
@@ -48,6 +61,7 @@ export function compareRunReceipts(
   daemon: Record<string, unknown>,
 ): void {
   const permitted = new Set<string>(PERMITTED_RUN_RECEIPT_DIFF_FIELDS)
+  const snapshotBound = new Set<string>(SNAPSHOT_BOUND_RUN_RECEIPT_FIELDS)
   const fields = [...new Set([...Object.keys(oneShot), ...Object.keys(daemon)])].sort()
   const unexpected = fields.filter((field) => {
     if (permitted.has(field)) return false
@@ -56,11 +70,15 @@ export function compareRunReceipts(
     if (field === 'snapshot') {
       if ((oneShotHasField && !CurationSnapshotSchema.safeParse(oneShot.snapshot).success)
         || (daemonHasField && !CurationSnapshotSchema.safeParse(daemon.snapshot).success)) return true
+      if (oneShotHasField !== daemonHasField) return !completionOnlyAsymmetry(oneShot, daemon)
+    }
+    if (snapshotBound.has(field)) {
+      const unbound = (receipt: Record<string, unknown>): boolean => Object.hasOwn(receipt, field)
+        && (!Object.hasOwn(receipt, 'snapshot') || typeof receipt[field] !== 'number'
+          || !Number.isInteger(receipt[field]) || receipt[field] < 0)
+      if (unbound(oneShot) || unbound(daemon)) return true
       if (oneShotHasField !== daemonHasField) {
-        return !(oneShotHasField && !daemonHasField && oneShot.drainKind === 'drained'
-          && oneShot.handoffHolderPid === null && daemon.drainKind === 'handed-off'
-          && typeof daemon.handoffHolderPid === 'number'
-          && Number.isInteger(daemon.handoffHolderPid) && daemon.handoffHolderPid > 0)
+        return !(oneShotHasField && completionOnlyAsymmetry(oneShot, daemon))
       }
     }
     if (oneShotHasField !== daemonHasField) return true
