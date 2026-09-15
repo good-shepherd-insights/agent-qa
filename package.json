@@ -71,7 +71,8 @@
     "validate:423-rung-mutation": "bash scripts/423-rung-mutation.sh",
     "validate:423-rung-mutation-selftest": "bash scripts/423-rung-mutation-selftest.sh",
     "validate:423-read-sinks-mutation": "bash scripts/423-read-sinks-mutation.sh",
-    "validate:423-read-sinks-mutation-selftest": "bash scripts/423-read-sinks-mutation-selftest.sh"
+    "validate:423-read-sinks-mutation-selftest": "bash scripts/423-read-sinks-mutation-selftest.sh",
+    "validate:423-read-contracts": "bash scripts/423-read-contracts-gate.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
