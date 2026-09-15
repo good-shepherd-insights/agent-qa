@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -257,6 +257,21 @@ describe('423 curation effect recovery', () => {
     expect(readdirSync(dir)).toHaveLength(1)
     expect(() => writeCurationEffectReceipt({ ...options, receipt: { ...row, sourceRunId: 'foreign' } })).toThrow('conflicting')
     writeFileSync(file, '{"schemaVersion":99}')
+    expect(() => listCurationEffectReceipts(root)).toThrow('invalid curation effect receipt')
+  })
+  it('EFFECT-LISTING-IGNORES-FOREIGN skips non-receipt entries while a malformed canonical receipt still refuses', () => {
+    const root = temporaryRoot()
+    const authority = writer(root)
+    const row = receipt()
+    writeCurationEffectReceipt({ knowledgeRoot: root, authority, auditBaseDir: join(root, 'audit'), receipt: row })
+    const dir = join(root, COMPLETED_EFFECTS_SUBDIR)
+    const canonical = join(dir, readdirSync(dir)[0]!)
+    writeFileSync(join(dir, '.DS_Store'), 'Bud1')
+    writeFileSync(join(dir, 'notes.txt'), 'operator notes')
+    mkdirSync(join(dir, `${'b'.repeat(64)}-${'c'.repeat(64)}.json`))
+    expect(() => listCurationEffectReceipts(root)).not.toThrow()
+    expect(listCurationEffectReceipts(root)).toEqual([row])
+    writeFileSync(canonical, '{"torn":')
     expect(() => listCurationEffectReceipts(root)).toThrow('invalid curation effect receipt')
   })
   it('INTENT-HISTORICAL preserves old intents and versioned original disposition', () => {
