@@ -107,6 +107,7 @@ const FAMILIES = [
   { id: 'curation-buckets', run: 'schema', runtime: [CUR, 'C423-BUCKETS-EXACT'], type: [CUR_D, 'C423-BUCKETS-EXACT'] },
   { id: 'curation-snapshot-arms', run: 'schema', runtime: [CUR, 'SNAPSHOT-DISCRIMINANTS'], type: [CUR_D, 'SNAPSHOT-COUNTS-EXACT'] },
   { id: 'curation-stages', run: 'schema', runtime: [STAGE, 'C423-STAGES-EXACT'], type: [STAGE_D, 'C423-STAGES-EXACT'] },
+  { id: 'curation-withheld', run: 'schema', runtime: [STAGE, 'C423-WITHHELD-EXACT'], type: [STAGE_D, 'C423-WITHHELD-EXACT'] },
   { id: 'curation-receipt', run: 'knowledge-local', runtime: [RECEIPT, 'EFFECT-RECEIPT-ROUNDTRIP'] },
   { id: 'feedback-results', run: 'schema', runtime: [FEED, 'C423-FEEDBACK-RESULTS-EXACT'], type: [FEED_D, 'C423-FEEDBACK-RESULTS-EXACT'] },
   { id: 'feedback-inherited-arms', run: 'schema', runtime: [FEED, INHERITED_ARMS] },
