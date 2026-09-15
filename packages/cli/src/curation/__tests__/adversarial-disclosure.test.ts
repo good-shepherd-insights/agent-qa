@@ -17,7 +17,12 @@ import { join } from 'node:path'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { guardRunNotification, type RunNotification } from '@vostride/agent-qa-schema'
+import {
+  CurationSnapshotSchema,
+  guardRunNotification,
+  type RecordChange,
+  type RunNotification,
+} from '@vostride/agent-qa-schema'
 import type { ProposeGate1Report } from '@vostride/agent-qa-agent'
 import {
   ADVERSARIAL_MANIFEST_FILE,
@@ -192,6 +197,51 @@ describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
     })
     expect(line).not.toContain('bundle-')
     expect(line).toContain('ungated remaining 1')
+  })
+})
+
+function snapshotChange(recordId: string, change: RecordChange['change'], atOrdinal: number): RecordChange {
+  return { schemaVersion: 1, recordId, change, atOrdinal }
+}
+
+describe('the chain terminal line and the five-bucket curation breakdown (423 D-15)', () => {
+  it('CHAIN-LINE-FIVE-BUCKETS: prints the recorded breakdown instead of the legacy pair', () => {
+    const curationSnapshot = CurationSnapshotSchema.parse({
+      schemaVersion: 1,
+      rows: [
+        { recordId: 'added-1', bucket: 'added',
+          changes: [{ bucket: 'added', change: snapshotChange('added-1', 'added', 1) }] },
+        { recordId: 'confirmed-1', bucket: 'confirmed',
+          changes: [{ bucket: 'confirmed', change: snapshotChange('confirmed-1', 'confirmed', 2) }] },
+        { recordId: 'deprecated-1', bucket: 'deprecated',
+          changes: [{ bucket: 'deprecated', change: snapshotChange('deprecated-1', 'deprecated', 3) }] },
+        { recordId: 'proposed-1', bucket: 'proposed',
+          changes: [{ bucket: 'proposed', change: snapshotChange('proposed-1', 'added', 4) }] },
+        { recordId: 'proposed-2', bucket: 'proposed',
+          changes: [{ bucket: 'proposed', change: snapshotChange('proposed-2', 'confirmed', 5) }] },
+      ],
+      breakdown: { added: 1, confirmed: 1, superseded: 0, deprecated: 1, proposed: 2 },
+    })
+    const recorded = guardRunNotification(notification({
+      curation: { status: 'done', curated: 2, deprecated: 1, curationSnapshot },
+    }))
+    const line = renderChainTerminalLine(recorded)
+    expect(line).toContain(
+      'curation: done (added 1, confirmed 1, superseded 0, deprecated 1, proposed 2',
+    )
+    expect(line).not.toContain('curated,')
+    expect(line).not.toContain('1 deprecated')
+
+    expect(renderChainTerminalLine(notification())).toContain('curation: done (2 curated, 1 deprecated)')
+
+    const zero = CurationSnapshotSchema.parse({
+      schemaVersion: 1,
+      rows: [],
+      breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+    })
+    expect(renderChainTerminalLine(notification({
+      curation: { status: 'done', curated: 0, deprecated: 0, curationSnapshot: zero },
+    }))).toContain('curation: done (added 0, confirmed 0, superseded 0, deprecated 0, proposed 0)')
   })
 })
 
