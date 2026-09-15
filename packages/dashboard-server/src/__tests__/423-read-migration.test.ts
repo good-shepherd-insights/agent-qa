@@ -185,6 +185,37 @@ it('USAGE-COLD-ROUNDTRIP: real model attempts survive final event, subscriber an
   expect(run.event.modelUsage?.roles.verifier?.respondingModelIds).toHaveLength(1)
 })
 
+it('TIMEOUT-DETAIL-ROUNDTRIP: a timeout failure summary lands on the member row and reads back from runs.detail', async () => {
+  const runId = asRunId(generateRunId())
+  const testId = generateTestId()
+  const dbPath = join(dir, `${runId}.db`)
+  const db = new DashboardDatabase({ dbPath })
+  const masking = buildRunMaskingContext({ env: {} })
+  masking.register('synthetic-unrelated-secret-423-42')
+  const bus = createRunEventBus({ runId })
+  const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+  bus.subscribe(1, event => ingest.handler(event))
+  const summary = 'Step 1/1 "Navigate to test URL" failed: Test timed out after 5ms'
+  try {
+    bus.publish('runStarted', {})
+    bus.publish('testStarted', { testIndex: 0, testId, name: 'Timeout roundtrip' })
+    const failureSummary = masking.mask(summary)
+    expect(failureSummary).toBe(summary)
+    bus.publish('testFinished', { testIndex: 0, testId, outcome: 'timeout', failureSummary })
+    bus.publish('runFinished', { aggregateVerdict: 'failed' })
+    await ingest.finalize({})
+  } finally { bus.close(); db.close(); masking.dispose() }
+  const cold = new DashboardDatabase({ dbPath })
+  try {
+    expect(cold.readRunDetailRows(runId)!.members[0]?.failureSummary).toBe(summary)
+    const projection = await detail(cold, runId)
+    expect(projection.members).toHaveLength(1)
+    expect(projection.members[0]).toMatchObject({ testIndex: 0, outcome: 'timeout' })
+    expect(projection.members[0]?.failureSummary).toContain('timed out')
+    expect(projection.members[0]?.failureSummary).toBe(summary)
+  } finally { cold.close() }
+})
+
 it('USAGE-EXTRACTION-FINAL: final publication includes late extraction and own variable names', async () => {
   const run = await usageRun()
   expect(run.extractionStarted).toBe(true)

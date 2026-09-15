@@ -736,6 +736,19 @@ test('EVID-TIMEOUT: non-cooperative started execution gets one timeout row and n
   expect(f.terminals()[0].error).toContain('Step timed out')
 })
 
+test('EVID-CATCH-REDACTED: a thrown step error crosses the declared-secret redactor before it is recorded', async () => {
+  const f = fixture()
+  // Three characters sit below the live masker's floor, so only the declared redactor can catch it.
+  f.config.secretRedactor = { redactString: text => text.replaceAll('abc', '[secret]') }
+  f.config.executeStep = async () => { throw new Error('provider said abc twice: abc') }
+  const result = await runMemberTest(f.member, f.config)
+  expect(result.steps[0].status).toBe('failed')
+  expect(result.steps[0].error).toBe('provider said [secret] twice: [secret]')
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0].error).not.toContain('abc')
+  expect(JSON.stringify(result)).not.toContain('abc')
+})
+
 test.each(['missing-mask', 'missing-store', 'bad-ref', 'missing-drain'] as const)(
   'EVID-UNBOUND: %s does not claim successful durable content', async kind => {
     const f = fixture()
