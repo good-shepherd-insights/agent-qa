@@ -53,7 +53,9 @@ function titleMatches(spec, title) {
 }
 
 function cellMatches(spec, title, ancestors = []) {
-  if (spec.name.includes(' > ')) return titleMatches(spec, [...ancestors, title].join(' > '))
+  // Typecheck verdicts prefix their describe path with the file itself; that is not a describe.
+  const describes = ancestors.filter(name => !/\.test(?:-d)?\.tsx?$/.test(name))
+  if (spec.name.includes(' > ')) return titleMatches(spec, [...describes, title].join(' > '))
   return titleMatches(spec, title)
 }
 
