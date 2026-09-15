@@ -45,7 +45,9 @@ import {
   RUNS_MARK_PREVIEW_FUNCTION_ID,
   RUNS_MARKS_HISTORY_FUNCTION_ID,
   createFunctionRegistry,
+  createMaskingContext,
   invokeFunction,
+  type CreateFunctionRegistryOptions,
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
@@ -54,7 +56,7 @@ import {
 // `validate:arch` walks `src` with `__tests__` excluded and reconciles only runtime
 // `dependencies`, so the production edges these packages forbid stay forbidden. The point of
 // driving them is that a reader written in this file would be a second containment rule.
-import { createEvidenceBlobReader } from '@vostride/agent-qa-agent-local'
+import { createEvidenceBlobReader, runSafetyScope } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import { AUTH_STATE_REDACTION_MARKER } from '@vostride/agent-qa-core'
 import {
@@ -187,8 +189,10 @@ function composeRegistry(
   runDetail: FunctionDeps['runDetail'],
   evidenceBlobs?: FunctionDeps['evidenceBlobs'],
   feedbackReads?: FeedbackReadsPort,
+  withReadScope?: CreateFunctionRegistryOptions['withReadScope'],
 ): FunctionRegistry {
   return createFunctionRegistry({
+    ...(withReadScope === undefined ? {} : { withReadScope }),
     deps: depsWith(runDetail, evidenceBlobs, feedbackReads),
     // Discards every row: this file asserts on the path, never on the audit trail.
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
@@ -420,6 +424,13 @@ const PNG_BYTES = new Uint8Array([
 ])
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
 
+// The production host enters a cold masking scope for runs.evidence (423-39); without one the op
+// answers masking-unavailable, so the doors would never reach the recorded evidence.
+const coldEvidenceReadScope: NonNullable<CreateFunctionRegistryOptions['withReadScope']> = (functionId, invoke) =>
+  functionId === RUNS_EVIDENCE_FUNCTION_ID
+    ? runSafetyScope({ maskingContext: createMaskingContext() }, invoke)
+    : invoke()
+
 async function serveEvidence() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-http-evidence-'))
   roots.push(root)
@@ -437,7 +448,8 @@ async function serveEvidence() {
       a11y: { kind: 'a11y', state: 'absent', reason: 'unsupported' },
       variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
     } })
-  const registry = composeRegistry(createDashboardRunDetailReader(db), createEvidenceBlobReader({ agentQaRoot: root }))
+  const registry = composeRegistry(createDashboardRunDetailReader(db), createEvidenceBlobReader({ agentQaRoot: root }),
+    undefined, coldEvidenceReadScope)
   const seen: string[] = []
   const baseHost = hostOver(registry)
   const host: AgentHost = { ...baseHost,
