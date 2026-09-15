@@ -46,6 +46,7 @@ function fixture() {
     runsEvidenceFunctionId: 'test:evidence',
     runsArtifactFunctionId: 'test:artifact', analysisGetFunctionId: 'test:analysis',
     runsKnowledgeFunctionId: 'test:knowledge',
+    runsMarksHistoryFunctionId: 'test:marks-history', runsMarkPreviewFunctionId: 'test:mark-preview',
     foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: 'fixture' }, foldLines: [] }),
     listDeclarations: () => [], onSessionEvent: () => () => undefined,
     registry, runsMarkFunctionId: RUNS_MARK_FUNCTION_ID, enterRunTriggerScope: enter,

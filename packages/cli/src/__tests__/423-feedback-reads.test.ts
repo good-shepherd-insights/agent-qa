@@ -1027,6 +1027,39 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     expect(storeMaps(s.stores)).toEqual(before)
   }, 180_000)
 
+  // Measured 2026-09-15 and pinned for the open owner decision: runs.marks.history and runs.mark.preview are
+  // outside compose-local-agent's cold read-scope allowlist. A cold host fully redacts their free text,
+  // so the human door has nothing to restore. With a masking context active, only the declared secret
+  // span is masked; the door restores no placeholder it has no run sidecar for and shows a chip.
+  it('HTTP-FEEDBACK-HUMAN-POSTURE: the local human door shows cold full redaction, and warm plain text with secret chips', async () => {
+    const s = await httpScene()
+    const [human, machine] = s.doors as [typeof s.doors[0], typeof s.doors[1]]
+    const read = async (door: typeof human) => {
+      const history = RunsMarksHistoryResultSchema.parse(await (await fetch(`${door.base}/${template.runId}/marks`, { headers: door.headers })).json())
+      const preview = consequencesOf(RunsMarkPreviewResultSchema.parse(
+        await (await post(`${door.base}/${template.runId}/mark-preview`, previewBody(), door.headers)).json()))
+      return { notes: historyEntries(history).map(entry => entry.note ?? null),
+        reasoning: preview.groundTruth.map(item => item.recordedVerdict.reasoning),
+        content: preview.knowledge.records.map(record => record.recordContent?.content ?? null) }
+    }
+    const redacted = maskedMarker('secret')
+    const cold = { notes: [redacted, null, redacted], reasoning: [redacted], content: [redacted] }
+    expect(await read(human)).toEqual(cold)
+    expect(await read(machine)).toEqual(cold)
+
+    const masking = createMaskingContext()
+    masking.register(SECRET)
+    setActiveMaskingContextResolver(() => masking)
+    const warmHuman = await read(human)
+    expect(warmHuman.notes).toEqual(['first run-level note', null, `step note ${redacted}`])
+    expect(warmHuman.reasoning).toEqual(['The recorded state advanced'])
+    expect(warmHuman.content).toEqual(['The Held checkout marked button was resolved and verified.'])
+    // The bearer door keeps the recorded placeholder instead of a display chip.
+    const warmMachine = await read(machine)
+    expect(warmMachine.notes).toEqual(['first run-level note', null, masking.mask(`step note ${SECRET}`)])
+    expect(JSON.stringify([warmHuman, warmMachine])).not.toContain(SECRET)
+  }, 180_000)
+
   it('FEEDBACK-HTTP-WRITES-NOTHING: HTTP history and preview leave every store byte-identical and create nothing', async () => {
     const s = await httpScene()
     const runDir = join(s.agentQaRoot, 'runs', template.runSlug)

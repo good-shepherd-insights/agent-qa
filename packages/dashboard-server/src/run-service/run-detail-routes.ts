@@ -22,12 +22,17 @@ import {
   RunsDetailInputSchema,
   RunsEvidenceInputSchema,
   RunsEvidenceResultSchema,
+  RunsMarkInputSchema,
+  RunsMarkPreviewResultSchema,
+  RunsMarksHistoryInputSchema,
+  RunsMarksHistoryResultSchema,
   type RunDetailProjection,
   type RunsArtifactResult,
 } from '@vostride/agent-qa-schema'
 
 import type { AgentHost } from '../chat/host.js'
 import { unmaskTreeForDisplay } from '../masking/display-tree.js'
+import { readJsonBody } from '../server/body-parser.js'
 import { refuseCrossSiteRequest } from '../server/cross-site.js'
 
 /** A refusal, already carrying its status and its single-key body. */
@@ -207,6 +212,84 @@ export function serveRunEvidenceRead(
     const refusal = refusalFor(error)
     respondJson(res, refusal.status, refusal.body)
   })
+}
+
+/**
+ * Answer one feedback read's typed result. Its outcomes, refusals included, are the op's result
+ * and travel as 200; only thrown classes map to status codes. The human door restores and then
+ * sanitizes restored auth state; every other door answers the op's masked body.
+ */
+function respondFeedbackRead(
+  res: ServerResponse,
+  deps: RunDetailReadDeps,
+  functionId: string,
+  input: unknown,
+  parse: (result: unknown) => unknown,
+): void {
+  void deps.host.invokeFunction(deps.host.registry, functionId, input, deps.host.caller).then(result => {
+    const body = parse(result)
+    respondJson(res, 200, deps.boundary === 'human'
+      ? sanitizeAuthStateForResponse(unmaskTreeForDisplay(deps.host, body, { runId: deps.runId }))
+      : body)
+  }).catch((error: unknown) => {
+    const refusal = refusalFor(error)
+    respondJson(res, refusal.status, refusal.body)
+  })
+}
+
+/** 2026-09-15, 423-21 D-18: `GET …/:runId/marks` — runs.marks.history on either door. */
+export function serveRunMarksHistoryRead(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: RunDetailReadDeps,
+): void {
+  if (deps.boundary === 'human' && refuseCrossSiteRequest(req) !== undefined) {
+    respondJson(res, 403, { error: 'cross_site_refused' })
+    return
+  }
+  // The op's input is the run id alone; a query string is a second, unvalidated address.
+  if (new URL(req.url ?? '/', 'http://localhost').search !== '') {
+    respondJson(res, 400, { error: 'invalid_marks_input' })
+    return
+  }
+  const parsed = RunsMarksHistoryInputSchema.safeParse({ runId: deps.runId })
+  if (!parsed.success) {
+    respondJson(res, 400, { error: 'invalid_run_id' })
+    return
+  }
+  respondFeedbackRead(res, deps, deps.host.runsMarksHistoryFunctionId, parsed.data,
+    result => RunsMarksHistoryResultSchema.parse(result))
+}
+
+/**
+ * 2026-09-15, 423-21 D-18: `POST …/:runId/mark-preview` — runs.mark.preview on either door.
+ *
+ * POST carries the exact runs.mark input, but the op is read-tier: it plans and writes nothing, so
+ * no confirm scope is accepted. The body's runId must name the URL's run, so a page cannot preview
+ * one run under another run's address.
+ */
+export function serveRunMarkPreviewRead(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: RunDetailReadDeps,
+): void {
+  if (deps.boundary === 'human' && refuseCrossSiteRequest(req) !== undefined) {
+    respondJson(res, 403, { error: 'cross_site_refused' })
+    return
+  }
+  void readJsonBody<unknown>(req).then((body) => {
+    const parsed = RunsMarkInputSchema.safeParse(body)
+    if (!parsed.success) {
+      respondJson(res, 400, { error: 'invalid_mark_preview_input' })
+      return
+    }
+    if (parsed.data.runId !== deps.runId) {
+      respondJson(res, 400, { error: 'run_id_mismatch' })
+      return
+    }
+    respondFeedbackRead(res, deps, deps.host.runsMarkPreviewFunctionId, parsed.data,
+      result => RunsMarkPreviewResultSchema.parse(result))
+  }, () => { respondJson(res, 400, { error: 'invalid_mark_preview_input' }) })
 }
 
 /** `GET /api/runs/:id/detail` — what the rebuilt run-detail page reads (D-03). */

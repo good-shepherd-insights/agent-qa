@@ -176,6 +176,8 @@ function plantedHost(read: {
     // workspace still satisfies the interface.
     runsKnowledgeFunctionId: 'test:planted-run-knowledge-op',
     runsMarkFunctionId: 'test:planted-run-mark-op',
+    runsMarksHistoryFunctionId: 'test:planted-run-marks-history-op',
+    runsMarkPreviewFunctionId: 'test:planted-run-mark-preview-op',
     invokeFunction: (_registry, functionId): Promise<unknown> => {
       if (functionId === PP_ID) return Promise.resolve(read.status())
       if (functionId === EVENTS_ID) {

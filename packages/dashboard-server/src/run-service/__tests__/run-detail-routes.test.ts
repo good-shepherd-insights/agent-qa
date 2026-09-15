@@ -643,7 +643,7 @@ async function serveRestoringFeedbackHost(body: unknown) {
   closers.push(started.close)
   const remote = createServer(createRunServiceRoutes({ agentHost: host,
     verifyBearer: () => ({ kind: 'token', clientId: 'test', trustScope: { project: 'test' } }),
-  } as RunServicePorts))
+  } as unknown as RunServicePorts))
   servers.push(remote)
   await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve))
   return { restored,
@@ -717,12 +717,15 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     }
 
     // The local human door restores, then sanitizes restored auth state; the bearer door stays masked.
-    const masked = { kind: 'history', runId: RUN_ID, entries: [{ note: 'note <SECRET_0> and <SECRET_1>' }] }
+    const history = RunsMarksHistoryResultSchema.parse(expected)
+    if (history.kind !== 'history') throw new Error('expected a history result')
+    const withNote = (note: string) => ({ ...history, entries: history.entries.map((entry, index) => index === 0 ? { ...entry, note } : entry) })
+    const masked = withNote('<SECRET_1>')
     const restoring = await serveRestoringFeedbackHost(masked)
     const human = await fetch(`${restoring.local}/marks`)
     expect(human.status).toBe(200)
     const humanRaw = await human.text()
-    expect(JSON.parse(humanRaw)).toEqual({ ...masked, entries: [{ note: AUTH_STATE_REDACTION_MARKER }] })
+    expect(JSON.parse(humanRaw)).toEqual(withNote(AUTH_STATE_REDACTION_MARKER))
     expect(humanRaw).not.toContain(FEEDBACK_AUTH_TOKEN)
     expect(restoring.restored.length).toBeGreaterThan(0)
     expect(new Set(restoring.restored)).toEqual(new Set([RUN_ID]))
@@ -730,9 +733,8 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
     const machine = await fetch(`${restoring.remote}/marks`, { headers: restoring.headers })
     expect(await machine.json()).toEqual(masked)
     expect(restoring.restored).toEqual([])
-    const plainNote = await serveRestoringFeedbackHost({ ...masked, entries: [{ note: 'note <SECRET_0>' }] })
-    expect(await (await fetch(`${plainNote.local}/marks`)).json())
-      .toEqual({ ...masked, entries: [{ note: 'note restored-note-value' }] })
+    const plainNote = await serveRestoringFeedbackHost(withNote('note <SECRET_0>'))
+    expect(await (await fetch(`${plainNote.local}/marks`)).json()).toEqual(withNote('note restored-note-value'))
   })
 
   it('HTTP-MARK-PREVIEW: both doors POST the exact runs.mark input to runs.mark.preview and answer as the registry does', async () => {

@@ -88,6 +88,8 @@ function plantHost(options: PlantOptions): PlantedHost {
     // workspace still satisfies the interface.
     runsKnowledgeFunctionId: 'test:planted-run-knowledge-op',
     runsMarkFunctionId: 'test:planted-run-mark-op',
+    runsMarksHistoryFunctionId: 'test:planted-run-marks-history-op',
+    runsMarkPreviewFunctionId: 'test:planted-run-mark-preview-op',
     invokeFunction: (registry, functionId, input, caller): Promise<unknown> => {
       calls.push({ registry, functionId, input, caller })
       if (functionId === PP_ID) {

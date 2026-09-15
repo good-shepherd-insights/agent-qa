@@ -186,6 +186,10 @@ export interface AgentHost {
   readonly runsKnowledgeFunctionId: string
   /** 2026-09-08, 419 D-13: the eighth op id arrives as data, on the knowledge id's footing. */
   readonly runsMarkFunctionId: string
+  /** 2026-09-15, 423-21 D-18: the marks-history read id, supplied as data like its neighbours. */
+  readonly runsMarksHistoryFunctionId: string
+  /** 2026-09-15, 423-21 D-18: the read-tier mark consequence preview id. */
+  readonly runsMarkPreviewFunctionId: string
   /** Names the run-confirm channel; the door still proves reachability at gate evaluation. */
   readonly enterRunTriggerScope?: <T>(scopeId: string, run: () => T) => T
   /**

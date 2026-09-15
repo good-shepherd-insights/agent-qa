@@ -35,7 +35,13 @@ import {
 // 405-01 (D-03): the durable run-detail read. One arm below, above the `/api/runs/:id` catch-all,
 // formatting nothing and opening no database.
 import { unmaskTreeForDisplay } from '../masking/display-tree.js'
-import { serveRunArtifact, serveRunDetailRead, serveRunEvidenceRead } from '../run-service/run-detail-routes.js'
+import {
+  serveRunArtifact,
+  serveRunDetailRead,
+  serveRunEvidenceRead,
+  serveRunMarkPreviewRead,
+  serveRunMarksHistoryRead,
+} from '../run-service/run-detail-routes.js'
 // 406-01 (D-04): the failure view's read. One arm below, beside the detail arm and above the
 // `/api/runs/:id` catch-all, formatting nothing and opening no database.
 import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
@@ -2101,6 +2107,24 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
       return
     }
 
+    // 423-21 D-18: the read-tier consequence preview. POST carries runs.mark's exact input; the
+    // adapter guards, parses and dispatches the registered op, and this arm owns no feedback logic.
+    if (req.method === 'POST' && /^\/api\/runs\/[^/]+\/mark-preview$/.test(path)) {
+      if (deps.agentHost === undefined) {
+        jsonNoCors(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/mark-preview'.length))
+      } catch {
+        jsonNoCors(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      serveRunMarkPreviewRead(req, res, { runId, host: deps.agentHost, boundary: 'human' })
+      return
+    }
+
     // POST /api/runs/:id/cancel — cancel a pending or running execution
     if (path.startsWith('/api/runs/') && path.endsWith('/cancel') && req.method === 'POST') {
       if (!jobQueue) {
@@ -2282,6 +2306,23 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return
       }
       serveRunEvidenceRead(req, res, { runId, host: deps.agentHost, boundary: 'human' })
+      return
+    }
+
+    // 423-21 D-18: marks history, above the `/api/runs/:id` catch-all like its read siblings.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/marks$/.test(path)) {
+      if (!deps.agentHost) {
+        jsonNoCors(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/marks'.length))
+      } catch {
+        jsonNoCors(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      serveRunMarksHistoryRead(req, res, { runId, host: deps.agentHost, boundary: 'human' })
       return
     }
 

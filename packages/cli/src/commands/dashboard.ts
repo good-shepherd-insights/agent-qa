@@ -17,6 +17,8 @@ import {
   RUNS_EVENTS_FUNCTION_ID,
   RUNS_KNOWLEDGE_FUNCTION_ID,
   RUNS_MARK_FUNCTION_ID,
+  RUNS_MARK_PREVIEW_FUNCTION_ID,
+  RUNS_MARKS_HISTORY_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
   type ConfigReaderPort,
@@ -261,6 +263,8 @@ export function composeDashboardAgentHost(
     // and learned, and the dashboard package can only learn its name as data.
     runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
     runsMarkFunctionId: RUNS_MARK_FUNCTION_ID,
+    runsMarksHistoryFunctionId: RUNS_MARKS_HISTORY_FUNCTION_ID,
+    runsMarkPreviewFunctionId: RUNS_MARK_PREVIEW_FUNCTION_ID,
     ...(enterRunTriggerScope === undefined ? {} : { enterRunTriggerScope }),
     // 400-15: THE ONE PLACE THE ASKING CONVERSATION IS KNOWN AND STILL AHEAD OF EVERYTHING THAT
     // NEEDS IT. `handleTurn` makes exactly one call here per turn, carrying the browser's

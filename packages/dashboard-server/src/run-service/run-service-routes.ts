@@ -116,7 +116,13 @@ import { readJsonBody } from '../server/body-parser.js'
 // 405-05 (D-12 / 402 D-16): THE SAME TWO ADAPTERS THE LOCAL DOOR CALLS. Imported rather than
 // re-implemented, because "both doors answer the same bytes" is a claim about there being one
 // implementation — two that agree today are two that can stop agreeing.
-import { serveRunArtifact, serveRunDetailRead, serveRunEvidenceRead } from './run-detail-routes.js'
+import {
+  serveRunArtifact,
+  serveRunDetailRead,
+  serveRunEvidenceRead,
+  serveRunMarkPreviewRead,
+  serveRunMarksHistoryRead,
+} from './run-detail-routes.js'
 import { serveRunAnalysisRead } from './run-analysis-routes.js'
 
 /**
@@ -225,6 +231,9 @@ export type RunServiceRouteHandlerName =
   // door's `GET /api/runs/:id/analysis` mounts the SAME adapter, so 408's embed and every thin
   // client parse one path shape whichever credential they hold.
   | 'analysis'
+  // 2026-09-15, 423-21 D-18: the two feedback reads, masked on this door like the rows above.
+  | 'marks'
+  | 'markPreview'
   | 'ok'
 
 export interface RunServiceRouteRow {
@@ -306,6 +315,11 @@ const RUN_SERVICE_ARTIFACT_PATTERN = /^\/run\/([^/]+)\/artifacts\/([^/]+)$/
  */
 export const RUN_SERVICE_ANALYSIS_TEMPLATE = '/run/:runId/analysis'
 const RUN_SERVICE_ANALYSIS_PATTERN = /^\/run\/([^/]+)\/analysis$/
+/** 2026-09-15, 423-21 D-18: runs.marks.history and runs.mark.preview behind the same verdict. */
+export const RUN_SERVICE_MARKS_TEMPLATE = '/run/:runId/marks'
+const RUN_SERVICE_MARKS_PATTERN = /^\/run\/([^/]+)\/marks$/
+export const RUN_SERVICE_MARK_PREVIEW_TEMPLATE = '/run/:runId/mark-preview'
+const RUN_SERVICE_MARK_PREVIEW_PATTERN = /^\/run\/([^/]+)\/mark-preview$/
 export const RUN_SERVICE_OK_ROUTE = '/ok'
 
 /**
@@ -351,6 +365,9 @@ export const RUN_SERVICE_ROUTE_TABLE: readonly RunServiceRouteRow[] = Object.fre
     handler: 'analysis',
     pattern: RUN_SERVICE_ANALYSIS_PATTERN,
   },
+  { method: 'GET', path: RUN_SERVICE_MARKS_TEMPLATE, handler: 'marks', pattern: RUN_SERVICE_MARKS_PATTERN },
+  { method: 'POST', path: RUN_SERVICE_MARK_PREVIEW_TEMPLATE, handler: 'markPreview',
+    pattern: RUN_SERVICE_MARK_PREVIEW_PATTERN },
   { method: 'GET', path: RUN_SERVICE_OK_ROUTE, handler: 'ok' },
 ] as const)
 
@@ -1129,6 +1146,16 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
             // `run-service-routes.test.ts` that greps this very block — which is the review the
             // reversal deserves.
             serveRunAnalysisRead(req, res, { runId, host })
+          })
+          return
+        case 'marks':
+          handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
+            serveRunMarksHistoryRead(req, res, { runId, host })
+          })
+          return
+        case 'markPreview':
+          handleAgentRead(req, res, matched.params[0] ?? '', (runId, host) => {
+            serveRunMarkPreviewRead(req, res, { runId, host })
           })
           return
         case 'ok':
