@@ -21,6 +21,12 @@ import { createRoot, type Root } from "react-dom/client"
 import { MemoryRouter } from "react-router"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import {
+  CurationSnapshotSchema,
+  RunKnowledgeProjectionSchema,
+  type RunKnowledgeProjection,
+} from "@vostride/agent-qa-schema"
+
 import { KnowledgeLearned } from "@/components/run-detail/knowledge-learned"
 import { routes } from "@/lib/routes"
 import {
@@ -34,6 +40,7 @@ import {
   LEARNED_HEADING,
   REVIEW_PROPOSALS_CTA,
   STORE_READ_INCOMPLETE_TEXT,
+  learnedView,
   pendingProposalsLine,
   type LearnedRowView,
   type LearnedView,
@@ -620,5 +627,153 @@ describe("projection text reaches the DOM as TEXT, never as markup (T-407-21)", 
 
     expect(host.querySelector("li[data-record-change] a")).toBeNull()
     expect(host.querySelector("[data-record-ref]")?.textContent).toBe(hostile)
+  })
+})
+
+// 423 D-15 · WIN #313. The op now serves a fixed curation snapshot and a separately counted
+// since-then section beside `learned.changes`. These cells drive schema-valid projections through
+// the real `learnedView` into the real component, so the failed-chain fix is protected on the path
+// a page actually takes, and the snapshot's presence or absence is stated rather than inferred.
+const RUN_423 = "run-423-24-learned"
+type ReadyProjection = Extract<RunKnowledgeProjection, { kind: "ready" }>
+type LearnedChange = ReadyProjection["learned"]["changes"][number]
+
+function joinedContent(recordId: string): NonNullable<LearnedChange["recordContent"]> {
+  return {
+    content: `body ${recordId}`,
+    summary: `summary ${recordId}`,
+    kind: "fact",
+    applicability: { product: "shop", scope: "checkout", anchors: ["page:/checkout"], openedAtOrdinal: 3 },
+    currentStatus: "active",
+    currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [], lastEventOrdinal: 30 },
+  }
+}
+
+function recorded(recordId: string, change: LearnedChange["change"], atOrdinal: number, extra: Partial<LearnedChange> = {}) {
+  return {
+    schemaVersion: 1 as const, recordId, change, atOrdinal, sourceRunId: RUN_423,
+    evidenceToken: `receipt-${recordId}-${String(atOrdinal)}`, ...extra,
+  }
+}
+
+function fiveBucketSnapshot() {
+  return CurationSnapshotSchema.parse({
+    schemaVersion: 1,
+    rows: [
+      { recordId: "fact-added", bucket: "added", changes: [{ bucket: "added", change: recorded("fact-added", "added", 20) }] },
+      { recordId: "fact-confirmed", bucket: "confirmed", changes: [{ bucket: "confirmed", change: recorded("fact-confirmed", "confirmed", 21) }] },
+      { recordId: "fact-victim", bucket: "superseded", byRecordId: "fact-replacement", changes: [
+        { bucket: "superseded", change: recorded("fact-victim", "superseded", 22, { byRecordId: "fact-replacement" }) },
+        { bucket: "added", change: recorded("fact-replacement", "added", 22) },
+      ] },
+      { recordId: "fact-deprecated", bucket: "deprecated", changes: [{ bucket: "deprecated", change: recorded("fact-deprecated", "deprecated", 23) }] },
+      { recordId: "fact-proposed", bucket: "proposed", changes: [{ bucket: "proposed", change: recorded("fact-proposed", "added", 24) }] },
+    ],
+    breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 },
+  })
+}
+
+function joined(change: ReturnType<typeof recorded>): LearnedChange {
+  return { ...change, recordContent: joinedContent(change.recordId) }
+}
+
+function readyProjection(
+  status: ReadyProjection["curation"]["status"],
+  learned: Partial<ReadyProjection["learned"]>,
+  counts?: { curated: number; deprecated: number },
+): ReadyProjection {
+  return RunKnowledgeProjectionSchema.parse({
+    kind: "ready", runId: RUN_423, buildOrdinal: 2, knowledgeStore: "bound", steps: [],
+    curation: { status, ...(counts === undefined ? {} : { counts }) },
+    learned: { changes: [], canaryAttributions: [], ...learned },
+  }) as ReadyProjection
+}
+
+function snapshotChanges(): LearnedChange[] {
+  return fiveBucketSnapshot().rows.flatMap(row => row.changes.map(entry => joined(entry.change)))
+}
+
+function sectionOf(host: HTMLElement): HTMLElement {
+  const section = host.querySelector<HTMLElement>("[data-learned-state]")
+  if (section === null) throw new Error("expected the Learned section")
+  return section
+}
+
+describe("423 D-15: a failed chain keeps its learned rows beside the snapshot sections (WIN #313)", () => {
+  it("FAILED-CHAIN-ROWS-RETAINED: a chain that learned before failing paints every served change, joined or absent", () => {
+    const projection = readyProjection("failed", {
+      changes: [
+        joined(recorded("fact-before-failure", "added", 20)),
+        { ...recorded("fact-purged-since", "confirmed", 21), contentAbsence: { reason: "not-found" } },
+      ],
+    })
+    const host = render(learnedView(projection))
+
+    expect(stateOf(host)).toBe("failed")
+    expect(rowsOf(host).map(el => el.getAttribute("data-record-id")))
+      .toEqual(["fact-before-failure", "fact-purged-since"])
+    expect(rowsOf(host).map(el => el.getAttribute("data-record-change"))).toEqual(["added", "confirmed"])
+    expect(host.querySelector("[data-learned-chain-note]")?.textContent).toBe(CURATION_FAILED_PARTIAL_TEXT)
+    expect(host.querySelector("[data-learned-sentence]")).toBeNull()
+    expect(host.textContent).not.toContain(CURATION_FAILED_TEXT)
+  })
+
+  it("FAILED-NO-SNAPSHOT: an absent snapshot is stated on the half, with no since-then count and no invented counts", () => {
+    const projection = readyProjection("failed", { changes: [joined(recorded("fact-before-failure", "added", 20))] })
+    const view = learnedView(projection)
+    const host = render(view)
+    const section = sectionOf(host)
+
+    expect(view.curationSnapshot).toBeUndefined()
+    expect(section.getAttribute("data-learned-snapshot")).toBe("absent")
+    expect(section.hasAttribute("data-learned-since-then")).toBe(false)
+    expect(host.querySelector("[data-learned-count-line]")).toBeNull()
+    expect(rowsOf(host).length).toBe(1)
+    expect(rowsOf(host)[0]?.hasAttribute("data-learned-section")).toBe(false)
+  })
+
+  it("FAILED-NO-SNAPSHOT: a historical settled chain states the same absence and keeps its legacy counts", () => {
+    const projection = readyProjection("done", { changes: [joined(recorded("fact-legacy", "confirmed", 9))] }, { curated: 1, deprecated: 0 })
+    const host = render(learnedView(projection))
+
+    expect(sectionOf(host).getAttribute("data-learned-snapshot")).toBe("absent")
+    expect(host.querySelector("[data-learned-count-line]")?.textContent).toBe("curated 1 fact, deprecated 0")
+    expect(rowsOf(host).length).toBe(1)
+  })
+
+  it("ALL-FIVE-BUCKETS: a completed snapshot is recorded, and every change it names stays in this run's curation", () => {
+    const snapshot = fiveBucketSnapshot()
+    const changes = snapshotChanges()
+    const projection = readyProjection("done", {
+      changes, curationSnapshot: snapshot, sinceThen: { changes: [], count: 0 },
+    }, { curated: 4, deprecated: 1 })
+    const view = learnedView(projection)
+    const host = render(view)
+    const section = sectionOf(host)
+
+    expect(view.curationSnapshot).toEqual({ breakdown: snapshot.breakdown, sinceThenCount: 0 })
+    expect(section.getAttribute("data-learned-snapshot")).toBe("recorded")
+    expect(section.getAttribute("data-learned-since-then")).toBe("0")
+    expect(rowsOf(host).map(el => el.getAttribute("data-record-id"))).toEqual(changes.map(row => row.recordId))
+    expect(rowsOf(host).map(el => el.getAttribute("data-learned-section"))).toEqual(changes.map(() => "curation"))
+  })
+
+  it("LATER-LINKED-ROWS: a later promotion is painted as a since-then row beside the unchanged curation rows", () => {
+    const snapshot = fiveBucketSnapshot()
+    const later = joined(recorded("fact-added", "promoted", 91))
+    const projection = readyProjection("done", {
+      changes: [...snapshotChanges(), later], curationSnapshot: snapshot, sinceThen: { changes: [later], count: 1 },
+    }, { curated: 4, deprecated: 1 })
+    const view = learnedView(projection)
+    const host = render(view)
+    const rows = rowsOf(host)
+
+    expect(view.curationSnapshot?.sinceThenCount).toBe(1)
+    expect(sectionOf(host).getAttribute("data-learned-since-then")).toBe("1")
+    expect(rows.length).toBe(8)
+    expect(rows.at(-1)?.getAttribute("data-record-change")).toBe("promoted")
+    expect(rows.at(-1)?.getAttribute("data-record-id")).toBe("fact-added")
+    expect(rows.map(el => el.getAttribute("data-learned-section")))
+      .toEqual([...snapshotChanges().map(() => "curation"), "since-then"])
   })
 })
