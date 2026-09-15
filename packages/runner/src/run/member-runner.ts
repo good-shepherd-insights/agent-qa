@@ -234,6 +234,25 @@ function getErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function createTimeoutStepResult(name: string, scope: 'test' | 'step', timeoutMs: number): StepResult {
+  const error = createTimeoutAbortReason(scope, timeoutMs).message
+  const plannedAction = { type: 'waitFor', on: 'text', text: '', timeoutMs: 0 } as unknown as Action
+  return {
+    name,
+    status: 'failed',
+    duration: 0,
+    error,
+    trace: {
+      observation: '',
+      reasoning: error,
+      plannedAction,
+      result: 'failure',
+      error,
+      screenStateBefore: '',
+    },
+  }
+}
+
 function createAbortedStepResult(
   name: string,
   duration: number,
@@ -309,6 +328,25 @@ async function runMemberAttempt(
   let idCounter = 0
   const makeId = (kind: string): string => `${kind}-t${config.testIndex}-${idCounter++}`
 
+  // Redact each value separately so the general result walker cannot discard prototype-named keys.
+  const snapshotVariables = (): StepResult['variableSnapshot'] => Object.fromEntries(
+    Object.entries(variableStore.snapshot()).map(
+      ([name, entry]) => [name, { ...entry, value: redactSecretValue(entry.value, config.secretRedactor) }],
+    ),
+  )
+
+  // A failure decided before a step scope exists (navigation timeout, deadline between steps)
+  // still gets exactly one announced, finalized row, so the durable row set equals steps[].
+  const recordBeforeStart = (stepIndex: number, stepText: string, unredacted: StepResult) => {
+    config.sink.stepStarted({ stepIndex, stepText })
+    const finalizer = createStepReadFinalizer(config, stepIndex, member.name, toolSchemaDigest)
+    const result = redactSecretValue(unredacted, config.secretRedactor)
+    result.id = makeId('step')
+    result.variableSnapshot = snapshotVariables()
+    finalizer.finish(result)
+    steps.push(result)
+  }
+
   let testFailed = false
   const testTimeout = (member.meta?.timeout as number | undefined) ?? config.timeouts?.test
   const testDeadline = testTimeout ? startTime + testTimeout : 0
@@ -361,6 +399,7 @@ async function runMemberAttempt(
         'Navigate to test URL',
       )
       if (!aborted) throw err
+      if (aborted.status === 'failed') recordBeforeStart(0, 'Navigate to test URL', aborted)
       testFailed = aborted.status !== 'cancelled'
       shouldRunSteps = false
     }
@@ -376,13 +415,14 @@ async function runMemberAttempt(
 
   for (let stepIndex = 0; shouldRunSteps && stepIndex < member.steps.length; stepIndex++) {
     if (cancelled) break
-    if (testDeadline && performance.now() >= testDeadline) {
+    const stepDef = member.steps[stepIndex]
+    const rawInstruction = typeof stepDef === 'string' ? stepDef : stepDef.step
+    if (testDeadline && testTimeout && performance.now() >= testDeadline) {
+      recordBeforeStart(stepIndex, rawInstruction, createTimeoutStepResult(rawInstruction, 'test', testTimeout))
       testFailed = true
       break
     }
 
-    const stepDef = member.steps[stepIndex]
-    const rawInstruction = typeof stepDef === 'string' ? stepDef : stepDef.step
     const perStepTimeout = typeof stepDef !== 'string' ? stepDef.timeout : undefined
     const stepTimeout = perStepTimeout ?? config.timeouts?.step
     const stepAbortController = new AbortController()
@@ -427,11 +467,8 @@ async function runMemberAttempt(
     config.sink.stepStarted({ stepIndex, stepText: rawInstruction })
     const recordResult = (result: StepResult) => {
       result.id = stepId
-      // Sample only once all attempted extraction/inline work has settled. Redact each
-      // value separately so the general result walker cannot discard prototype-named keys.
-      result.variableSnapshot = Object.fromEntries(Object.entries(variableStore.snapshot()).map(
-        ([name, entry]) => [name, { ...entry, value: redactSecretValue(entry.value, config.secretRedactor) }],
-      ))
+      // Sample only once all attempted extraction/inline work has settled.
+      result.variableSnapshot = snapshotVariables()
       const modelFacts = modelScope?.finish()
       // This replaces the old loop population, never adds it a second time. The neutral
       // snapshot is also available to the later typed final-event binding (423-31).
