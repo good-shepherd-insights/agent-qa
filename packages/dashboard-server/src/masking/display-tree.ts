@@ -46,7 +46,13 @@ export function unmaskTreeForDisplay(
   if (isPlainObject(value)) {
     const out: Record<string, unknown> = {}
     for (const [key, entry] of Object.entries(value)) {
-      out[key] = unmaskTreeForDisplay(host, entry, scope)
+      // A `__proto__` key must stay data; plain assignment would replace the output's prototype.
+      Object.defineProperty(out, key, {
+        value: unmaskTreeForDisplay(host, entry, scope),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
     }
     return out
   }
