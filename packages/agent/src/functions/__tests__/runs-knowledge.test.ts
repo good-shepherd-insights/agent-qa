@@ -382,6 +382,27 @@ describe('423 current content and fixed historical sections', () => {
     expect(RunKnowledgeProjectionSchema.parse(first)).toEqual(first)
   })
 
+  it('KNOWLEDGE-SNAPSHOT-WITHHELD: an unprojectable snapshot keeps every learned row and names its absence', async () => {
+    const snapshot = CurationSnapshotSchema.parse({ schemaVersion: 1,
+      rows: ['first-learned', 'second-learned'].map(recordId => ({ recordId, bucket: 'added',
+        changes: [{ bucket: 'added', change: change({ recordId, change: 'added', atOrdinal: 20, sourceRunId: RUN_ID }) }] })),
+      breakdown: { added: 2, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } })
+    const diff = snapshot.rows.map(row => row.changes[0]!.change)
+    setActiveMaskingContextResolver(() => undefined)
+    const options: DepsOptions = { bindPostProcessing: true, chain: { curationSnapshot: snapshot,
+      curateMemory: { status: 'done', claimed: false } }, knowledge: { diffSince: async () => diff,
+      showRecords: async ({ recordIds }) => recordIds.map(currentRecord) } }
+    await expect(ready(options)).resolves.toMatchObject({ kind: 'ready',
+      learned: { curationSnapshotWithheld: { reason: 'masking-unavailable' } } })
+    const result = await ready(options)
+    expect(result.learned.changes.map(row => row.recordId)).toEqual(['first-learned', 'second-learned'])
+    expect(result.learned.changes).toHaveLength(diff.length)
+    expect(result.learned).not.toHaveProperty('curationSnapshot')
+    expect(result.learned).not.toHaveProperty('sinceThen')
+    expect(result.learned).toHaveProperty('curationSnapshotWithheld', { reason: 'masking-unavailable' })
+    expect(RunKnowledgeProjectionSchema.safeParse(result).success).toBe(true)
+  })
+
   it('LATER-PROMOTION: the same record and a distinct same-ordinal confirmation remain since then', async () => {
     const snapshot = fixedSnapshot()
     const later = [change({ recordId: 'added', change: 'promoted', atOrdinal: 91, sourceRunId: RUN_ID }),

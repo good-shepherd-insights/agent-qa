@@ -85,8 +85,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
     expect(result).not.toHaveProperty('curationSnapshot')
   })
 
-  it('NOTIFICATION-MASK-COLLISION: nested identity collisions fail generically without deleting history', async () => {
-    setActiveMaskingContextResolver(() => undefined)
+  it('NOTIFICATION-MASK-COLLISION: nested identity collisions withhold generically without deleting history', async () => {
     const recorded: CurationSnapshot = { schemaVersion: 1,
       rows: [{ recordId: 'synthetic-record', bucket: 'confirmed', changes: [
         { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'synthetic-record',
@@ -99,11 +98,13 @@ describe('423 checkpoint-backed snapshot projection', () => {
       stages: { analysis: { status: 'done' as const },
         curation: { status: 'done' as const, curationSnapshot: recorded } } } satisfies RunNotification
     const before = JSON.stringify(notification)
-    await expect(read({ notification })).rejects.toMatchObject({ name: 'ZodError' })
+    setActiveMaskingContextResolver(() => ({ mask: () => maskedMarker('secret'), unmask: text => text }))
+    await expect(read({ notification })).resolves.toHaveProperty('curationSnapshotWithheld', { reason: 'projection-refused' })
+    const result = await read({ notification })
+    expect(result.notification?.stages.curation).toEqual({ status: 'done' })
     expect(JSON.stringify(notification)).toBe(before)
-    try { await read({ notification }) } catch (error) {
-      expect(String(error)).not.toContain('synthetic-secret')
-    }
+    expect(JSON.stringify(result)).not.toContain('synthetic-secret')
+    expect(PostProcessingStatusSchema.parse(result)).toEqual(result)
   })
 
   it('POSTPROCESSING-SNAPSHOT-EARLY copies exact masked facts beside three details and two chips', async () => {
@@ -171,24 +172,65 @@ describe('423 checkpoint-backed snapshot projection', () => {
     }
   })
 
-  it('POSTPROCESSING-SNAPSHOT-MASK-REFUSAL fails closed when masking collapses distinct record identities', async () => {
+  it('POSTPROCESSING-SNAPSHOT-WITHHELD degrades the snapshot, never the read', async () => {
     const recorded = CurationSnapshotSchema.parse({ schemaVersion: 1,
       rows: ['first-record', 'second-record'].map(recordId => ({ recordId, bucket: 'added',
         changes: [{ bucket: 'added', change: { schemaVersion: 1, recordId, change: 'added', atOrdinal: 1 } }],
       })),
       breakdown: { added: 2, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })
-    await expect(read({ curationSnapshot: recorded })).rejects.toMatchObject({
-      name: 'ZodError',
-      issues: [{ code: 'custom', path: ['curationSnapshot'],
-        message: 'The recorded curation snapshot cannot be projected safely.' }],
+    const pending = { analysis: 'pending', curation: 'pending' }
+
+    setActiveMaskingContextResolver(() => undefined)
+    await expect(read({ curationSnapshot: recorded })).resolves.toEqual({ runId: RUN_ID, chips: pending,
+      curationSnapshotWithheld: { reason: 'masking-unavailable' } })
+    const unavailable = await read({ curationSnapshot: recorded })
+    expect(PostProcessingStatusSchema.safeParse(unavailable).success).toBe(true)
+    expect(JSON.stringify(await read({ curationSnapshot: snapshot() }))).not.toContain('synthetic-snapshot-secret')
+
+    const notification = { schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, runId: RUN_ID,
+      outcome: 'done' as const, verdictSummary: { total: 0, byClass: {} },
+      stages: { analysis: { status: 'done' as const },
+        curation: { status: 'done' as const, curated: 2, deprecated: 0, curationSnapshot: recorded } },
+    } satisfies RunNotification
+    const nested = await read({ notification })
+    expect(nested).toHaveProperty('curationSnapshotWithheld', { reason: 'masking-unavailable' })
+    expect(nested).not.toHaveProperty('curationSnapshot')
+    expect(nested.notification?.stages.curation).toEqual({ status: 'done', curated: 2, deprecated: 0 })
+    expect(notification.stages.curation.curationSnapshot).toBe(recorded)
+    expect(PostProcessingStatusSchema.safeParse(nested).success).toBe(true)
+
+    setActiveMaskingContextResolver(() => ({ mask: () => 'collided-identity', unmask: text => text }))
+    const collided = await read({
+      analyzeRun: { status: 'done', claimed: false, attempts: 1 },
+      curateMemory: { status: 'done', claimed: false, attempts: 2 },
+      curationSnapshot: recorded,
     })
+    expect(collided).toEqual({ runId: RUN_ID, chips: { analysis: 'done', curation: 'done' },
+      stageDetails: { analysis: { attempts: 1 }, curation: { attempts: 2 } },
+      curationSnapshotWithheld: { reason: 'projection-refused' } })
+    expect(PostProcessingStatusSchema.safeParse(collided).success).toBe(true)
+
+    setActiveMaskingContextResolver(() => createMaskingContext())
     const invalid = { ...recorded, 'synthetic-raw-secret-key': 'synthetic-raw-secret-value' }
-    await expect(read({ curationSnapshot: invalid })).rejects.toMatchObject({
-      name: 'ZodError',
-      issues: [{ code: 'custom', path: ['curationSnapshot'],
-        message: 'The recorded curation snapshot cannot be projected safely.' }],
-    })
+    const refused = await read({ curationSnapshot: invalid })
+    expect(refused).toEqual({ runId: RUN_ID, chips: pending,
+      curationSnapshotWithheld: { reason: 'projection-refused' } })
+    expect(JSON.stringify(refused)).not.toContain('synthetic-raw-secret-key')
+    expect(JSON.stringify(refused)).not.toContain('synthetic-raw-secret-value')
+    for (const identity of ['first-record', 'second-record']) {
+      expect(JSON.stringify(collided)).not.toContain(identity)
+      expect(JSON.stringify(refused)).not.toContain(identity)
+    }
+
+    const empty = CurationSnapshotSchema.parse({ schemaVersion: 1, rows: [],
+      breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } })
+    const served = await read({ curationSnapshot: empty })
+    expect(served).toEqual({ runId: RUN_ID, chips: pending, curationSnapshot: empty })
+    expect(served).not.toHaveProperty('curationSnapshotWithheld')
+    setActiveMaskingContextResolver(() => undefined)
+    expect(await read({ curationSnapshot: empty })).toEqual({ runId: RUN_ID, chips: pending,
+      curationSnapshotWithheld: { reason: 'masking-unavailable' } })
   })
 })
 
