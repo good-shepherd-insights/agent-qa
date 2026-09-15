@@ -24,9 +24,10 @@
 // Publishing them here — with the shape of the `ready` arm they hang off — is what keeps those
 // plans pure additions to a proven module rather than three private spellings of one contract.
 
-import { TRACE_TRUNCATION_TOP_K, formatEntityUri, parseShortId } from '@vostride/agent-qa-schema'
+import { TRACE_TRUNCATION_TOP_K, canonicalJson, formatEntityUri, parseShortId } from '@vostride/agent-qa-schema'
 import type {
   BriefWhyNoTraceReason,
+  CurationBreakdown,
   PostProcessingChipStatus,
   PromotionPath,
   RecordChange,
@@ -806,6 +807,21 @@ export interface LearnedRowView {
   readonly ref?: string
   /** Where the reference goes in THIS build, when it goes anywhere. Never a minted route. */
   readonly href?: string
+  /**
+   * Which of the op's two sections this change is in (423 D-15). Present only beside a recorded
+   * snapshot: without one there is nothing to section against, and the half says so instead.
+   */
+  readonly section?: LearnedRowSection
+}
+
+export type LearnedRowSection = 'curation' | 'since-then'
+
+/** The fixed curation snapshot, as far as this half reads it (423 D-15). */
+export interface LearnedSnapshotView {
+  /** Copied verbatim from the checkpoint; never re-counted from rows. */
+  readonly breakdown: CurationBreakdown
+  /** `learned.sinceThen.count`, verbatim. Absent when the op served no since-then section. */
+  readonly sinceThenCount?: number
 }
 
 /**
@@ -857,6 +873,11 @@ export interface LearnedView {
    * in `sentence` unchanged. It never carries a fact about the store read (407-26 · G-407-12).
    */
   readonly chainNote?: string
+  /**
+   * Present exactly when the op served curation's fixed snapshot (423 D-15). Absent for a failed
+   * or pre-423 chain, and the component states that absence rather than painting zero counts.
+   */
+  readonly curationSnapshot?: LearnedSnapshotView
 }
 
 /** The pending-proposals line: a COUNT and a door, never any proposal content (D-11). */
@@ -1001,7 +1022,7 @@ function learnedRecordRef(recordId: string): string | undefined {
   return parseShortId(recordId)?.kind === 'MEM' ? formatEntityUri('MEM', recordId) : undefined
 }
 
-function learnedRow(row: RecordChange, index: number): LearnedRowView {
+function learnedRow(row: RecordChange, index: number, section?: LearnedRowSection): LearnedRowView {
   const ref = learnedRecordRef(row.recordId)
   const href = ref === undefined ? undefined : entityRefRoute(ref)
   return {
@@ -1012,6 +1033,7 @@ function learnedRow(row: RecordChange, index: number): LearnedRowView {
     ...(row.promotionReceiptDigest === undefined ? {} : { promotionReceiptDigest: row.promotionReceiptDigest }),
     ...(ref === undefined ? {} : { ref }),
     ...(href === undefined ? {} : { href }),
+    ...(section === undefined ? {} : { section }),
   }
 }
 
@@ -1085,22 +1107,40 @@ export function learnedView(
   // before this fold is an arm that can deny a record without having looked at it, and no comment
   // prevents the next arm from being written above it — leaving no code between the fold and the
   // returns does.
+  //
+  // SECTIONED BY THE OP'S OWN LISTS (423 D-15). `sinceThen.changes` is a filter over the same
+  // `changes` array, so membership is whole-row equality; this module never re-derives the
+  // snapshot identity rule the op applied.
+  const { curationSnapshot, sinceThen } = projection.learned
+  const sinceThenRows = new Set((sinceThen?.changes ?? []).map(row => canonicalJson(row)))
+  const sectionOf = (row: RecordChange): LearnedRowSection | undefined =>
+    curationSnapshot === undefined
+      ? undefined
+      : sinceThenRows.has(canonicalJson(row)) ? 'since-then' : 'curation'
   const rows = projection.learned.changes
     .filter(row => LEARNED_CHANGE_KIND_SET.has(row.change))
-    .map((row, index) => learnedRow(row, index))
+    .map((row, index) => learnedRow(row, index, sectionOf(row)))
+  const snapshot = curationSnapshot === undefined
+    ? {}
+    : {
+        curationSnapshot: {
+          breakdown: curationSnapshot.breakdown,
+          ...(sinceThen === undefined ? {} : { sinceThenCount: sinceThen.count }),
+        },
+      }
 
   if (status === 'pending' || status === 'running') {
     // `rows: []` here is now a STATEMENT, not a consequence of ordering: the rows are in scope and
     // this arm declines to list them, because an unsettled chain has not finished deciding (D-12).
-    return { state: status, sentence: DELTAS_PENDING_TEXT, rows: [], ...degraded, ...readNote }
+    return { state: status, sentence: DELTAS_PENDING_TEXT, rows: [], ...degraded, ...readNote, ...snapshot }
   }
 
   if (status === 'failed') {
     // A SETTLED chain that fell over cannot un-commit what it already wrote. With records to list,
     // the failure is a note BESIDE them; with none, the arm is the object that shipped before.
     return rows.length > 0
-      ? { state: 'failed', rows, chainNote: CURATION_FAILED_PARTIAL_TEXT, ...degraded, ...readNote }
-      : { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [], ...degraded, ...readNote }
+      ? { state: 'failed', rows, chainNote: CURATION_FAILED_PARTIAL_TEXT, ...degraded, ...readNote, ...snapshot }
+      : { state: 'failed', sentence: CURATION_FAILED_TEXT, rows: [], ...degraded, ...readNote, ...snapshot }
   }
 
   const state: LearnedState = counts === undefined ? 'counts-absent' : 'done'
@@ -1111,23 +1151,23 @@ export function learnedView(
 
   // ROWS BEFORE SENTENCES, AND BEFORE THE FLAG (REVIEW CR-01). A record the store served is the
   // answer; the partial read is a note beside it.
-  if (rows.length > 0) return { state, countLine, rows, ...degraded, ...readNote }
+  if (rows.length > 0) return { state, countLine, rows, ...degraded, ...readNote, ...snapshot }
 
   // NOTHING TO LIST AND NOBODY COULD LOOK — the one arm where the sentence IS the answer, so it
   // carries no note: a second door beneath a sentence that already names one is a nag (407-14).
   if (projection.learned.scanIncomplete === true) {
-    return { state, countLine, sentence: CHANGES_UNREADABLE_TEXT, rows: [], scanIncomplete: true }
+    return { state, countLine, sentence: CHANGES_UNREADABLE_TEXT, rows: [], scanIncomplete: true, ...snapshot }
   }
 
   // Below here the read was CLEAN — the flag would have been answered above — so no spread is
   // needed on the three-sentence ladder, and adding one would only suggest it could be reached.
   if (counts === undefined) {
-    return { state, countLine, sentence: COUNTS_NOT_RECORDED_SENTENCE, rows: [] }
+    return { state, countLine, sentence: COUNTS_NOT_RECORDED_SENTENCE, rows: [], ...snapshot }
   }
 
   return counts.curated === 0 && counts.deprecated === 0
-    ? { state, countLine, sentence: CHANGED_NOTHING_TEXT, rows: [] }
-    : { state, countLine, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [] }
+    ? { state, countLine, sentence: CHANGED_NOTHING_TEXT, rows: [], ...snapshot }
+    : { state, countLine, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [], ...snapshot }
 }
 
 /**

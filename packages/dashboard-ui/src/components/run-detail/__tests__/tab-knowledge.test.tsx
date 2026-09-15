@@ -310,7 +310,7 @@ function change(recordId: string, kind: LearnedChange["change"], atOrdinal: numb
   }
 }
 
-function joined(row: ReturnType<typeof change>): LearnedChange {
+function joined(row: LearnedChange): LearnedChange {
   return {
     ...row,
     recordContent: {

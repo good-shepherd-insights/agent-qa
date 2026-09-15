@@ -673,7 +673,7 @@ function fiveBucketSnapshot() {
   })
 }
 
-function joined(change: ReturnType<typeof recorded>): LearnedChange {
+function joined(change: LearnedChange): LearnedChange {
   return { ...change, recordContent: joinedContent(change.recordId) }
 }
 
@@ -770,7 +770,7 @@ describe("423 D-15: a failed chain keeps its learned rows beside the snapshot se
 
     expect(view.curationSnapshot?.sinceThenCount).toBe(1)
     expect(sectionOf(host).getAttribute("data-learned-since-then")).toBe("1")
-    expect(rows.length).toBe(8)
+    expect(rows.length).toBe(snapshotChanges().length + 1)
     expect(rows.at(-1)?.getAttribute("data-record-change")).toBe("promoted")
     expect(rows.at(-1)?.getAttribute("data-record-id")).toBe("fact-added")
     expect(rows.map(el => el.getAttribute("data-learned-section")))

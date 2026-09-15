@@ -120,6 +120,10 @@ export function KnowledgeLearned({
     <section
       data-learned-state={view.state}
       {...(view.scanIncomplete === true ? { "data-learned-read": "incomplete" } : {})}
+      data-learned-snapshot={view.curationSnapshot === undefined ? "absent" : "recorded"}
+      {...(view.curationSnapshot?.sinceThenCount === undefined
+        ? {}
+        : { "data-learned-since-then": String(view.curationSnapshot.sinceThenCount) })}
       className="space-y-2"
     >
       <div className="flex flex-wrap items-baseline gap-2">
@@ -225,6 +229,7 @@ function RecordRow({ row }: { row: LearnedRowView }) {
     <li
       data-record-change={row.kind}
       data-record-id={row.recordId}
+      {...(row.section === undefined ? {} : { "data-learned-section": row.section })}
       className="flex flex-wrap items-baseline gap-2 text-sm"
     >
       <Badge {...KIND_LOOK[row.kind]}>{row.kind}</Badge>
