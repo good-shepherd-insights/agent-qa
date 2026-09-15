@@ -159,6 +159,11 @@ interface DrainReportBase {
   effects?: readonly CurationSnapshotChange[]
   /** Certified only after a complete drain; absent for historical missing receipts. */
   snapshot?: CurationSnapshot
+  /**
+   * The effects committed; only the projection over them failed, so `snapshot` is absent. Never a
+   * failure: the drain stays complete and nothing is retried or refolded.
+   */
+  snapshotFoldFailed?: true
   jobsProcessed: number
   committed: number
   /**
@@ -1289,7 +1294,12 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     updateRemaining(result, options.knowledgeRoot, lease.leaseId)
     if (result.kind === 'drained' && result.failures === 0 && result.requeued === 0
       && result.remaining === 0 && result.effects !== undefined && result.effects.length > 0) {
-      result.snapshot = foldCurationSnapshot(result.effects)
+      // Not recordFailure: a failure count would make a committed drain incomplete and retry it.
+      try {
+        result.snapshot = foldCurationSnapshot(result.effects)
+      } catch {
+        result.snapshotFoldFailed = true
+      }
     }
   }
 }

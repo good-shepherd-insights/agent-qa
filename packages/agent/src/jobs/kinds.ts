@@ -1151,9 +1151,12 @@ function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandl
           + 'under its declared bound',
       }
     }
-    const curationSnapshot = counts.snapshot === undefined
+    // WR-02. The bundles are committed by now: a snapshot that does not validate is omitted and the
+    // legacy counts are published alone, rather than throwing into a retry of a finished fold.
+    const parsedSnapshot = counts.snapshot === undefined
       ? undefined
-      : CurationSnapshotSchema.parse(counts.snapshot)
+      : CurationSnapshotSchema.safeParse(counts.snapshot)
+    const curationSnapshot = parsedSnapshot?.success === true ? parsedSnapshot.data : undefined
     await context.publishCheckpoint('bundle-committed', {
       runId: record.runId,
       curated: counts.curated,

@@ -420,6 +420,10 @@ function misdirectionHarmLine(
     + `${refused === 0 ? '' : `; ${refused} refused by the queue`}.`
 }
 
+/** Fixed text: the warning names no row content. */
+const SNAPSHOT_NOT_RECORDED_WARNING =
+  'curation snapshot could not be validated and was not recorded; committed bundles are unaffected'
+
 function incompleteWarning(runId: string, details?: string): string {
   const diagnostic = details === undefined ? '' : ` (${details})`
   return `Post-verdict knowledge curation incomplete for ${runId}${diagnostic}; it will resume on the next run.`
@@ -816,14 +820,22 @@ export async function curateCompletedRun(
         && drain.requeued === 0
         && (drain.kind === 'handed-off' || drain.remaining === undefined || drain.remaining === 0)
       if (complete && (drain.kind === 'drained' || drain.kind === 'handed-off')) {
+        // The bundles already committed, so a snapshot that cannot be validated is omitted rather
+        // than failing the fold; it is never repaired, refolded or zero-filled.
+        const validated = drain.kind !== 'drained' || drain.snapshot === undefined
+          ? undefined
+          : CurationSnapshotSchema.safeParse(drain.snapshot)
+        if ((drain.kind === 'drained' && drain.snapshotFoldFailed === true)
+          || (validated !== undefined && !validated.success)) {
+          input.log.warn(SNAPSHOT_NOT_RECORDED_WARNING)
+        }
         completedReceipt = {
           ...receiptIdentity,
           canary: canaries.canary,
           drainKind: drain.kind,
           handoffHolderPid: drain.kind === 'handed-off' ? drain.holder.pid : null,
           candidateIds: sortedCandidateIds(candidates),
-          ...(drain.kind !== 'drained' || drain.snapshot === undefined ? {}
-            : { snapshot: CurationSnapshotSchema.parse(drain.snapshot) }),
+          ...(validated?.success === true ? { snapshot: validated.data } : {}),
         }
       }
       if (!complete) {
