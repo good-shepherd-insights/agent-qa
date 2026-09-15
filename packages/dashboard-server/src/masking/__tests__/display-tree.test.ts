@@ -75,4 +75,22 @@ describe('unmaskTreeForDisplay', () => {
     expect(unmaskTreeForDisplay(host, '<SECRET_0>', SCOPE)).toBe('v')
     expect(unmaskTreeForDisplay(host, 7, SCOPE)).toBe(7)
   })
+
+  it('DISPLAY-TREE-PROTO-KEY: a variable named __proto__ stays an own property in input order', () => {
+    const { host } = recordingHost()
+    const input = JSON.parse(
+      '{"__proto__":{"value":"<SECRET_0>","source":"inline"},"name":{"value":"plain","source":"inline"}}',
+    ) as Record<string, unknown>
+
+    const out = unmaskTreeForDisplay(host, input, SCOPE) as Record<string, unknown>
+
+    expect(Object.hasOwn(out, '__proto__')).toBe(true)
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect(Object.keys(out)).toEqual(['__proto__', 'name'])
+    expect(JSON.stringify(out)).toBe(
+      '{"__proto__":{"value":"v","source":"inline"},"name":{"value":"plain","source":"inline"}}',
+    )
+    expect(unmaskTreeForDisplay(host, {}, SCOPE)).toEqual({})
+    expect(unmaskTreeForDisplay(host, [], SCOPE)).toEqual([])
+  })
 })
