@@ -2,12 +2,15 @@ import { describe, expectTypeOf, test } from 'vitest'
 import type { z } from 'zod'
 
 import {
+  CURATION_SNAPSHOT_WITHHELD_REASONS,
+  CurationSnapshotWithheldSchema,
   POST_PROCESSING_CHIP_STATUSES,
   POST_PROCESSING_DETAIL_STAGES,
   PostProcessingStageDetailSchema,
   PostProcessingStatusSchema,
 } from '../index'
 import type {
+  CurationSnapshotWithheldReason,
   JobConclusionKind,
   PostProcessingChips,
   PostProcessingChipStatus,
@@ -79,5 +82,38 @@ describe('C423-STAGES-EXACT', () => {
     >()
     expectTypeOf<Notification.PostProcessingStageDetail>().toEqualTypeOf<PostProcessingStageDetail>()
     expectTypeOf<Extract<keyof PostProcessingStageDetail, 'cancelRequestedAt'>>().toEqualTypeOf<never>()
+  })
+})
+
+type ExactlyEqual<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false
+
+// Independent literal union; the never-bar fails to compile the moment either side grows.
+describe('C423-WITHHELD-EXACT', () => {
+  test('pins exactly two withheld reasons in both directions through both barrels', () => {
+    const listMatchesUnion: ExactlyEqual<
+      (typeof CURATION_SNAPSHOT_WITHHELD_REASONS)[number],
+      CurationSnapshotWithheldReason
+    > = true
+    expectTypeOf(listMatchesUnion).toEqualTypeOf<true>()
+    expectTypeOf<CurationSnapshotWithheldReason>().toEqualTypeOf<
+      'masking-unavailable' | 'projection-refused'
+    >()
+    expectTypeOf<Notification.CurationSnapshotWithheldReason>().toEqualTypeOf<
+      CurationSnapshotWithheldReason
+    >()
+    expectTypeOf<z.infer<typeof CurationSnapshotWithheldSchema>>().toEqualTypeOf<{
+      reason: 'masking-unavailable' | 'projection-refused'
+    }>()
+    expectTypeOf<PostProcessingStatus['curationSnapshotWithheld']>().toEqualTypeOf<
+      { reason: CurationSnapshotWithheldReason } | undefined
+    >()
+  })
+
+  test('refuses a third withheld reason at the type boundary', () => {
+    // @ts-expect-error a third reason is not a member of the closed withheld set
+    const third: CurationSnapshotWithheldReason = 'fold-failed'
+    expectTypeOf(third).toEqualTypeOf<CurationSnapshotWithheldReason>()
+    expectTypeOf<Extract<CurationSnapshotWithheldReason, 'fold-failed'>>().toEqualTypeOf<never>()
   })
 })

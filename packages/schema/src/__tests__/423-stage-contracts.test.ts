@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest'
 
 import {
+  CURATION_SNAPSHOT_WITHHELD_REASONS,
+  CurationSnapshotWithheldSchema,
   POST_PROCESSING_CHIP_STATUSES,
   POST_PROCESSING_DETAIL_STAGES,
   PostProcessingStageDetailSchema,
@@ -110,5 +112,41 @@ describe('C423-STAGES-EXACT', () => {
     ]) {
       expect(PostProcessingStatusSchema.safeParse({ ...legacy, chips }).success).toBe(false)
     }
+  })
+})
+
+describe('C423-WITHHELD-EXACT', () => {
+  const emptySnapshot = {
+    schemaVersion: 1,
+    rows: [],
+    breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+  }
+
+  test('pins the withheld reasons to an independent exact list through both barrels', () => {
+    expect(CURATION_SNAPSHOT_WITHHELD_REASONS).toEqual(['masking-unavailable', 'projection-refused'])
+    expect(notification.CURATION_SNAPSHOT_WITHHELD_REASONS).toBe(CURATION_SNAPSHOT_WITHHELD_REASONS)
+    expect(notification.CurationSnapshotWithheldSchema).toBe(CurationSnapshotWithheldSchema)
+    expect(Object.keys(CurationSnapshotWithheldSchema.shape)).toEqual(['reason'])
+  })
+
+  test('accepts each hand-spelled reason and rejects a third reason or an extra key', () => {
+    for (const reason of ['masking-unavailable', 'projection-refused']) {
+      expect(CurationSnapshotWithheldSchema.safeParse({ reason }).success).toBe(true)
+    }
+    expect(CurationSnapshotWithheldSchema.safeParse({ reason: 'fold-failed' }).success).toBe(false)
+    expect(
+      CurationSnapshotWithheldSchema.safeParse({ reason: 'projection-refused', detail: 'raw' }).success,
+    ).toBe(false)
+  })
+
+  test('parses a served snapshot alone and a withheld flag alone on the public result', () => {
+    const served = { ...legacy, curationSnapshot: emptySnapshot }
+    const withheld = { ...legacy, curationSnapshotWithheld: { reason: 'masking-unavailable' } }
+    expect(PostProcessingStatusSchema.safeParse(served).data).toEqual(served)
+    expect(PostProcessingStatusSchema.safeParse(withheld).data).toEqual(withheld)
+    expect(
+      PostProcessingStatusSchema.safeParse({ ...legacy, curationSnapshotWithheld: { reason: 'fold-failed' } })
+        .success,
+    ).toBe(false)
   })
 })
