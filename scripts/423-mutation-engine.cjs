@@ -191,10 +191,12 @@ function runGate(spec) {
       seen.add(file)
       let text
       try { text = fs.readFileSync(file, 'utf8') } catch { continue }
-      for (const match of text.matchAll(/(?:from|import)\s*\(?\s*'(\.[^']*)'/g)) {
-        const specifier = match[1].replace(/\.js$/, '')
-        for (const candidate of [`${specifier}.ts`, `${specifier}.tsx`, path.join(specifier, 'index.ts')]) {
-          const resolved = path.resolve(path.dirname(file), candidate)
+      // Both quote styles, and the `@/` alias a Vite package maps onto its own `src/`.
+      for (const match of text.matchAll(/(?:from|import)\s*\(?\s*(['"])(\.[^'"]*|@\/[^'"]*)\1/g)) {
+        const specifier = match[2].replace(/\.js$/, '')
+        const base = specifier.startsWith('@/') ? path.join(root, pkg, 'src', specifier.slice(2)) : path.resolve(path.dirname(file), specifier)
+        for (const candidate of [`${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts'), path.join(base, 'index.tsx')]) {
+          const resolved = candidate
           if (fs.existsSync(resolved) && fs.lstatSync(resolved).isFile()) {
             stack.push(resolved)
             break
@@ -223,9 +225,18 @@ function runGate(spec) {
         if (!leg.subject.startsWith(`${leg.crossing.dir}/src/`)) {
           throw new Error(`${leg.id}: ${leg.subject} is not source of ${leg.crossing.pkg}`)
         }
-        const imports = instrument.files.some(file =>
-          fs.readFileSync(path.join(root, instrument.pkg, file), 'utf8').includes(`'${leg.crossing.pkg}'`))
-        if (!imports) throw new Error(`${leg.id}: no ${leg.instrument} file imports ${leg.crossing.pkg}`)
+        // A package import reaches the dist through module resolution. A built app bundle has no
+        // importable entry, so its leg names the literal by which the instrument serves that dist,
+        // and the literal must occur in the instrument's own relative-import closure.
+        if (leg.crossing.reference === undefined) {
+          const imports = instrument.files.some(file =>
+            fs.readFileSync(path.join(root, instrument.pkg, file), 'utf8').includes(`'${leg.crossing.pkg}'`))
+          if (!imports) throw new Error(`${leg.id}: no ${leg.instrument} file imports ${leg.crossing.pkg}`)
+        } else {
+          if (!closures.has(leg.instrument)) closures.set(leg.instrument, relativeClosure(instrument.pkg, instrument.files))
+          const served = [...closures.get(leg.instrument)].some(file => fs.readFileSync(file, 'utf8').includes(leg.crossing.reference))
+          if (!served) throw new Error(`${leg.id}: no ${leg.instrument} closure file serves ${leg.crossing.pkg} by ${leg.crossing.reference}`)
+        }
         if (!leg.edits.some(edit => edit.to.includes(leg.crossing.marker))) {
           throw new Error(`${leg.id}: the arrival marker is not planted by any hunk`)
         }
@@ -357,7 +368,7 @@ function runGate(spec) {
     const exit = await new Promise((resolve, reject) => {
       child = spawn(process.execPath, args, {
         cwd: path.join(root, instrument.pkg), detached: true, stdio: ['ignore', fd, fd],
-        env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+        env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0', ...(instrument.env ?? {}) },
       })
       const timer = setTimeout(() => { timedOut = true; stopChild('SIGKILL') }, 600_000)
       child.on('error', error => { clearTimeout(timer); reject(error) })
