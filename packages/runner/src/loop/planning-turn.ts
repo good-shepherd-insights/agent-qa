@@ -306,7 +306,11 @@ export async function executePlanningTurn(
     }))
     const result = observed.result
 
-    lastResponseModelId = observed.respondingModelId
+    // D-09: a scoped turn takes only the provider-observed id; unscoped callers keep the
+    // pre-423 SDK response identity.
+    lastResponseModelId = observed.scoped
+      ? observed.respondingModelId
+      : (observed.respondingModelId ?? observed.result.response?.modelId)
     for (const w of result.warnings ?? []) {
       if (w.type === 'unsupported') unsupported.add(w.feature)
     }

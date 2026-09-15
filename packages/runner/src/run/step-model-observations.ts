@@ -16,13 +16,16 @@ type ScopedModel = Exclude<LanguageModel, string> & { [invocationCapability]?: (
 export async function withStepModelCall<T>(
   model: LanguageModel,
   call: (model: LanguageModel) => Promise<T>,
-): Promise<{ result: T; respondingModelId?: string }> {
+): Promise<{ result: T; scoped: boolean; respondingModelId?: string }> {
   const invocation = typeof model === 'object' && model !== null
     ? (model as ScopedModel)[invocationCapability]?.() : undefined
   try {
     const result = await call(invocation?.model ?? model)
     const respondingModelId = invocation?.respondingModelId()
-    return { result, ...(respondingModelId === undefined ? {} : { respondingModelId }) }
+    return {
+      result, scoped: invocation !== undefined,
+      ...(respondingModelId === undefined ? {} : { respondingModelId }),
+    }
   } finally {
     invocation?.finish()
   }
