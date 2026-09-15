@@ -812,3 +812,127 @@ describe('423-19 content-led consequence preview over the read host (D-16/D-17)'
       .toEqual(written.receipt.gold.map(item => [item.channel, item.sourceCassetteId]))
   }, 120_000)
 })
+
+// 2026-09-15, 423 D-16/D-18: runs.mark.preview registered and bound on every CLI host composition.
+// Plan 423-21 projects it to MCP as agent_qa_preview_run_mark; fn reaches it now, with no model.
+const PREVIEW = 'runs.mark.preview'
+
+describe('423-19 runs.mark.preview registration and composed invocation (D-16)', () => {
+  const roots: string[] = []
+  const closers: Array<() => void | Promise<void>> = []
+  let template: MarkedTemplate
+
+  beforeAll(async () => { template = await markedTemplate(roots) }, 180_000)
+  afterEach(async () => {
+    process.exitCode = 0
+    setActiveMaskingContextResolver(() => undefined)
+    for (const close of closers.splice(0).reverse()) await close()
+  })
+  afterAll(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+
+  function coldScene() {
+    const root = mkdtempSync(join(tmpdir(), '423-19-binding-')); roots.push(root)
+    cpSync(template.root, root, { recursive: true })
+    writeFileSync(join(root, '.env.secrets.local'), `HISTORY_SYNTHETIC_TOKEN=${SECRET}\n`)
+    const agentQaRoot = join(root, '.agent-qa')
+    return { root, configPath: join(root, 'agent-qa.config.yaml'), agentQaRoot,
+      stores: [join(agentQaRoot, 'runs'), join(agentQaRoot, 'proposals'), join(agentQaRoot, 'eval'), join(root, 'agent-qa-knowledge'), join(root, 'agent-qa-eval')] }
+  }
+  const storeMaps = (stores: readonly string[]) => stores.map(tree)
+  // The run-level address's latest mark is the confirmed-bug at ordinal 2, so a false-pass supersedes it.
+  const input = (): RunsMarkInput => ({ runId: template.runId, kind: 'false-pass', note: `preview ${SECRET}` })
+
+  /** A cold host holds no masking authority for this read, so the op's no-context mask fully redacts free text. */
+  async function expectedColdPreview(s: ReturnType<typeof coldScene>) {
+    const reads = createFeedbackReadsPortForHost({ agentQaRoot: s.agentQaRoot, configPath: s.configPath })
+    expect(typeof reads.preview, 'gates/feedback-read-host must expose preview').toBe('function')
+    return await runsMarkPreviewSpec.invoke(input(), { feedbackReads: reads } as never) as RunsMarkPreviewResult
+  }
+
+  function expectColdMaskedPreview(value: unknown) {
+    const result = consequencesOf(RunsMarkPreviewResultSchema.parse(value))
+    const [, second] = template.receipts as [MarkReceipt, MarkReceipt, MarkReceipt]
+    expect(result).toMatchObject({ runId: template.runId, prospective: true, markKind: 'false-pass', member: { testIndex: 0 },
+      resolvedStep: { stepIndex: 0, reason: 'passing-verdict' }, latest: { kind: 'supersedes', markId: second.markId, ordinal: 2 },
+      basis: { ledgerOrdinal: 3, priorMarkOrdinal: 2 } })
+    expect(result.labels.map(label => label.channel)).toEqual(['user-mark', 'overturned-verdict'])
+    expect(result.groundTruth[0]!.recordedVerdict.reasoning).toBe(maskedMarker('secret'))
+    expect(result.knowledge.records[0]).toMatchObject({ served: true, recordContent: { content: maskedMarker('secret'), summary: maskedMarker('secret') } })
+    expect(JSON.stringify(result)).not.toContain(SECRET)
+    expectNoMint(result, template.receipts.map(receipt => receipt.markId))
+    return result
+  }
+
+  it('PREVIEW-REGISTRY-BINDING: the cold CLI host binds preview through the read host; history-only or writer-only bindings stay unbound', async () => {
+    expect(Reflect.get(agent, 'RUNS_MARK_PREVIEW_FUNCTION_ID')).toBe(PREVIEW)
+    expect(Reflect.get(agent, 'runsMarkPreviewSpec')).toBeUndefined()
+
+    const s = coldScene()
+    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, confirm: undefined,
+      resolveExecutionContext: () => 'local-headless' })
+    closers.push(() => composed.close())
+    expect(composed.registry.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === PREVIEW)).toMatchObject({
+      bindingStatus: 'bound', requiredScopes: ['read'], resultKind: 'unary', risk: { readOnly: true } })
+    // runs.mark keeps its own tier and binding beside the read.
+    expect(composed.registry.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === 'runs.mark'))
+      .toMatchObject({ bindingStatus: 'bound', requiredScopes: ['knowledge-write'] })
+    const before = storeMaps(s.stores)
+    const expected = await expectedColdPreview(s)
+    const composedResult = await agent.invokeFunction(composed.registry, PREVIEW, input(), host.CLI_FUNCTION_CALLER)
+    expect(composedResult).toEqual(expected)
+    expectColdMaskedPreview(composedResult)
+    expect(storeMaps(s.stores)).toEqual(before)
+    expect(existsSync(join(s.agentQaRoot, 'runs', template.runSlug, 'mark-intent.json'))).toBe(false)
+    // The exact input is still refused before the port: a preview basis is not an input field.
+    await expect(agent.invokeFunction(composed.registry, PREVIEW, { ...input(), basis: { ledgerOrdinal: 3 } }, host.CLI_FUNCTION_CALLER)).rejects.toThrow()
+
+    const historyOnly = agent.createFunctionRegistry({ auditSink: auditless, resolveExecutionContext: () => 'local-headless',
+      deps: { feedbackReads: createFeedbackReadsPortForHost({ agentQaRoot: s.agentQaRoot }) } as never })
+    await expect(agent.invokeFunction(historyOnly, PREVIEW, input(), host.CLI_FUNCTION_CALLER)).rejects.toBeInstanceOf(agent.FunctionNotBoundError)
+    const writerOnly = agent.createFunctionRegistry({ auditSink: auditless, resolveExecutionContext: () => 'local-headless',
+      deps: { feedback: { mark: refuse('feedback.mark'), marksFor: refuse('feedback.marksFor') } } as never })
+    expect(writerOnly.list(host.CLI_FUNCTION_CALLER).find(entry => entry.id === PREVIEW)?.bindingStatus).toBe('unbound')
+    await expect(agent.invokeFunction(writerOnly, PREVIEW, input(), host.CLI_FUNCTION_CALLER)).rejects.toBeInstanceOf(agent.FunctionNotBoundError)
+    expect(storeMaps(s.stores)).toEqual(before)
+  }, 180_000)
+
+  it('PREVIEW-FN-PARITY: agent-qa fn, the CLI registry and the dashboard door return one masked preview with unchanged stores', async () => {
+    const s = coldScene()
+    const before = storeMaps(s.stores)
+
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => { stdout.push(values.map(String).join(' ')) })
+    const errors = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => { stderr.push(values.map(String).join(' ')) })
+    process.exitCode = undefined
+    try {
+      await new Command().exitOverride().option('--config <path>').addCommand(createFnCommand())
+        .parseAsync(['--config', s.configPath, 'fn', PREVIEW, '--input', JSON.stringify(input()), '--json'], { from: 'user' })
+    } finally { log.mockRestore(); errors.mockRestore() }
+    expect(stderr).toEqual([])
+    expect(process.exitCode).toBeUndefined()
+    const viaFn = expectColdMaskedPreview(JSON.parse(stdout.join('\n')))
+
+    const composed = host.composeCliLocalAgent({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, confirm: undefined,
+      resolveExecutionContext: () => 'local-headless' })
+    closers.push(() => composed.close())
+    const viaRegistry = expectColdMaskedPreview(await agent.invokeFunction(composed.registry, PREVIEW, input(), host.CLI_FUNCTION_CALLER))
+
+    const door = composeDashboardDoor({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, boundOrigin: () => undefined,
+      confirms: createConfirmRegistry({ timeoutMs: 1_000 }) })
+    closers.push(() => door.host.close())
+    expect(door.host.registry.list(DASHBOARD_FUNCTION_CALLER).find(entry => entry.id === PREVIEW)?.bindingStatus).toBe('bound')
+    const viaDashboard = expectColdMaskedPreview(await agent.invokeFunction(door.host.registry, PREVIEW, input(), DASHBOARD_FUNCTION_CALLER))
+
+    expect(viaFn).toEqual(viaRegistry)
+    expect(viaDashboard).toEqual(viaRegistry)
+    expect(viaRegistry).toEqual(await expectedColdPreview(s))
+    expect(storeMaps(s.stores)).toEqual(before)
+
+    // The writer still lands what the preview promised, through its own unchanged transaction.
+    const marked = await createFeedbackPortForHost({ configPath: s.configPath, agentQaRoot: s.agentQaRoot, randomUuid: () => '00000000-0000-4000-8000-00000000abcd' })
+      .mark(input())
+    expect(marked).toMatchObject({ kind: 'marked', receipt: { ordinal: 4, supersedes: template.receipts[1]!.markId,
+      evidence: viaRegistry.knowledge.evidence, gold: viaRegistry.labels.map(label => ({ channel: label.channel, sourceCassetteId: label.sourceCassetteId })) } })
+  }, 180_000)
+})
