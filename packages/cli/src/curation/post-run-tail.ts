@@ -92,7 +92,7 @@ import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 import { buildPromotionPostureResolver, promotionPostureResolverForHost } from './promotion-posture.js'
 import { LOCAL_CURATION_CAPABILITIES, latestBuildOrdinal } from '@vostride/agent-qa-agent-local'
 import { createReplayGatePortForHost, type ReplayGateClaimAuthority } from '../gates/replay-gate-host.js'
-import type { ScopeKey } from '@vostride/agent-qa-schema'
+import { CURATION_BREAKDOWN_BUCKETS, type ScopeKey } from '@vostride/agent-qa-schema'
 import {
   buildTrustPriorsResolver,
   TrustPriorsRefusedError,
@@ -1299,6 +1299,13 @@ export type CircularityGuardDisclosure =
  * bundle reports its status, and a `0 curated` would say it curated nothing, which is a
  * different claim from never having got that far.
  *
+ * 423 D-15: the curation clause has TWO SENTENCES and never prints both. A row that recorded a
+ * `curationSnapshot` renders its breakdown as the five fixed buckets (`added N, confirmed N,
+ * superseded N, deprecated N, proposed N`), every one printed because a recorded snapshot measured
+ * all five. A row without one — every notification written before 423, and any run whose snapshot
+ * could not be folded — renders the legacy `N curated, M deprecated` pair exactly as before, since
+ * the pair is all those rows carry; five buckets are never synthesized from it.
+ *
  * 422 D-13/D-14/D-19: the third stage joins it, and the SAME rule governs every number it adds —
  * absent is not zero. `stages.proposals` absent renders `not recorded` (a v2 row, or a chain that
  * halted at the fold), a recorded stage with no counts renders `staged not recorded` (no staging
@@ -1328,12 +1335,15 @@ export function renderChainTerminalLine(
     .map(([className, count]) => `${className} ${count}`)
   const verdicts = `verdicts ${verdictSummary.total}`
     + (classes.length === 0 ? '' : ` (${classes.join(', ')})`)
-  const counts = [
-    ...(stages.curation.curated === undefined ? [] : [`${stages.curation.curated} curated`]),
-    ...(stages.curation.deprecated === undefined
-      ? []
-      : [`${stages.curation.deprecated} deprecated`]),
-  ]
+  const breakdown = stages.curation.curationSnapshot?.breakdown
+  const counts = breakdown !== undefined
+    ? CURATION_BREAKDOWN_BUCKETS.map(bucket => `${bucket} ${breakdown[bucket]}`)
+    : [
+        ...(stages.curation.curated === undefined ? [] : [`${stages.curation.curated} curated`]),
+        ...(stages.curation.deprecated === undefined
+          ? []
+          : [`${stages.curation.deprecated} deprecated`]),
+      ]
   const canary = report?.canary
   const nonSignalTotal = canary === undefined ? 0
     : NON_SIGNAL_CLASSES.reduce((sum, name) => sum + canary.nonSignal[name], 0)
