@@ -16,7 +16,7 @@ export interface DashboardSqliteDatabase {
   exec(sql: string): void
   prepare(sql: string): DashboardSqliteStatement
   pragma(source: string, options?: { simple?: boolean }): unknown
-  transaction<T>(operation: () => T): () => T
+  transaction<T>(operation: () => T, options?: { immediate?: boolean }): () => T
 }
 
 function bind(parameters: unknown[]): SQLInputValue[] {
@@ -61,9 +61,10 @@ class NodeSqliteDatabase implements DashboardSqliteDatabase {
     return firstRow ? Object.values(firstRow)[0] : undefined
   }
 
-  transaction<T>(operation: () => T): () => T {
+  transaction<T>(operation: () => T, options: { immediate?: boolean } = {}): () => T {
+    const begin = options.immediate ? 'BEGIN IMMEDIATE' : 'BEGIN'
     return () => {
-      this.#database.exec('BEGIN')
+      this.#database.exec(begin)
       try {
         const result = operation()
         this.#database.exec('COMMIT')

@@ -318,24 +318,13 @@ export function runSqliteMigrations(
   schemaVersion: number,
 ): void {
   const currentVersion = db.pragma('user_version', { simple: true }) as number
-  if (currentVersion > schemaVersion) {
-    throw new Error(
-      `SQLite database user_version ${currentVersion} is not compatible with schema version ${schemaVersion}. `
-      + 'Remove the dashboard database or use a compatible agent-qa version.',
-    )
-  }
+  if (currentVersion > schemaVersion) throw incompatibleVersionError(currentVersion, schemaVersion)
   if (currentVersion === schemaVersion) return
 
   // 423 D-08 narrows the old hard cut only for v2 -> v3. No intermediate
   // migration chain or shape inference is allowed.
   const upgradingV2 = currentVersion === 2 && schemaVersion === 3
-  if (currentVersion !== 0 && !upgradingV2) {
-    throw new Error(
-      `SQLite database user_version ${currentVersion} predates schema version ${schemaVersion}, `
-      + 'and this build performs no migration for that version. '
-      + 'Remove the dashboard database or use a compatible agent-qa version.',
-    )
-  }
+  if (currentVersion !== 0 && !upgradingV2) throw unmigratedVersionError(currentVersion, schemaVersion)
 
   // One current fresh-schema entry, with its explicitly approved v2 additions.
   const runnableMigrations = migrations.filter(migration => migration.version <= schemaVersion)
@@ -356,15 +345,38 @@ export function runSqliteMigrations(
   db.pragma('foreign_keys = OFF')
   try {
     const runAll = db.transaction(() => {
+      if (upgradingV2) {
+        // The version read above happened before the write lock. Another opener may have
+        // finished this upgrade in between, so the decision is re-made under the lock.
+        const lockedVersion = db.pragma('user_version', { simple: true }) as number
+        if (lockedVersion === schemaVersion) return
+        if (lockedVersion > schemaVersion) throw incompatibleVersionError(lockedVersion, schemaVersion)
+        if (lockedVersion !== 2) throw unmigratedVersionError(lockedVersion, schemaVersion)
+      }
       for (const sql of statements) {
         db.exec(sql)
       }
       db.pragma(`user_version = ${terminal.version}`)
-    })
+    }, { immediate: upgradingV2 })
     runAll()
   } finally {
     db.pragma('foreign_keys = ON')
   }
+}
+
+function incompatibleVersionError(version: number, schemaVersion: number): Error {
+  return new Error(
+    `SQLite database user_version ${version} is not compatible with schema version ${schemaVersion}. `
+    + 'Remove the dashboard database or use a compatible agent-qa version.',
+  )
+}
+
+function unmigratedVersionError(version: number, schemaVersion: number): Error {
+  return new Error(
+    `SQLite database user_version ${version} predates schema version ${schemaVersion}, `
+    + 'and this build performs no migration for that version. '
+    + 'Remove the dashboard database or use a compatible agent-qa version.',
+  )
 }
 
 export class DashboardDatabase {
