@@ -24,6 +24,9 @@
 // rather than a mid-flight read.
 // RE-MEASURED 2026-09-08 (419 D-19/D-20): fourteen tools; 48 declarations / 24 projected /
 // 24 unprojected. runs.mark arrives projected; knowledge.gates.list moves to the read door.
+// RE-MEASURED 2026-09-15 (423-21 D-04/D-18): sixteen tools; 51 declarations / 26 projected /
+// 25 unprojected. runs.marks.history and runs.mark.preview arrive as two read tools, and
+// runs.evidence lands unprojected on runs.detail's completed-run footing.
 // The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
@@ -80,7 +83,13 @@ import {
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import {
+  FunctionScopeSchema,
+  RunsMarkInputSchema,
+  RunsMarkPreviewResultSchema,
+  RunsMarksHistoryInputSchema,
+  RunsMarksHistoryResultSchema,
+} from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -92,6 +101,7 @@ import {
   DEGRADED_OUTPUT_CONTRACTS,
   UNPROJECTED_OPS,
 } from '../mapping.js'
+import { toRegisterToolConfig } from '../projection.js'
 import { V1_TOOL_MIGRATION_MAP, type V1MigrationArm } from '../migration-map.js'
 
 /**
@@ -134,10 +144,12 @@ const PINNED_TOOL_NAMES: readonly string[] = [
   'agent_qa_apply_proposal',
   'agent_qa_get_entity',
   'agent_qa_get_run_digest',
+  'agent_qa_get_run_marks',
   'agent_qa_list_knowledge_gates',
   'agent_qa_list_proposals',
   'agent_qa_list_runs',
   'agent_qa_mark_run',
+  'agent_qa_preview_run_mark',
   'agent_qa_propose_config_change',
   'agent_qa_propose_knowledge_change',
   'agent_qa_refine_test',
@@ -152,8 +164,10 @@ const PINNED_TOOL_OPS: Readonly<Record<string, readonly string[]>> = {
   agent_qa_apply_proposal: ['knowledge.proposal.apply'],
   agent_qa_get_entity: ['entities.resolve', 'entities.get'],
   agent_qa_get_run_digest: ['runs.digest'],
+  agent_qa_get_run_marks: ['runs.marks.history'],
   agent_qa_list_knowledge_gates: ['knowledge.gates.list'],
   agent_qa_mark_run: ['runs.mark'],
+  agent_qa_preview_run_mark: ['runs.mark.preview'],
   agent_qa_list_proposals: ['proposals.list'],
   agent_qa_list_runs: ['runs.list'],
   agent_qa_propose_config_change: [
@@ -268,7 +282,13 @@ function armSizes(entries: readonly (readonly [string, V1MigrationArm])[]): Reco
 
 /** MCPS-02's stated band. Asserted AT the bound, not implied by the exact pin above it. */
 const MCPS_02_MIN_TOOLS = 8
-const MCPS_02_MAX_TOOLS = 15
+/**
+ * 2026-09-15 (423-21, REQUIREMENTS reconciliation 7): MCPS-02's "~8-15" ceiling is widened to the
+ * MX milestone's decided catalogue. D-18 publishes the two feedback reads here, and PXH-AGENT-04
+ * (Phase 431) projects six knowledge reads, so the decided total is 16 + 6. The exact name and op
+ * pins above still red on every change; this bound only states how far the owner has decided to go.
+ */
+const MX_MAX_TOOLS = 22
 
 describe('the pinned catalogue (D-04)', () => {
   it('declares exactly the pinned sorted tool-name list', () => {
@@ -287,9 +307,9 @@ describe('the pinned catalogue (D-04)', () => {
   // still passes here and reds the exact pin, and a drop to seven reds here.
   it('holds a tool count inside the MCPS-02 band, at both ends', () => {
     const count = AGENT_QA_TOOL_PROJECTIONS.length
-    expect(count).toBe(14)
+    expect(count).toBe(16)
     expect(count).toBeGreaterThanOrEqual(MCPS_02_MIN_TOOLS)
-    expect(count).toBeLessThanOrEqual(MCPS_02_MAX_TOOLS)
+    expect(count).toBeLessThanOrEqual(MX_MAX_TOOLS)
   })
 
   it('declares exactly the pinned App carriers, with the pinned runId source (408 D-05)', () => {
@@ -395,9 +415,10 @@ describe('the partition law (D-03 / D-15)', () => {
     // The denominator, stated where a reader can see it move. Not a rule — a MEASUREMENT, and the
     // sentence in the header is only true while this cell is green.
     // 2026-09-08, 419 D-19/D-20: mark arrives and gates becomes projected (48/24/24).
-    expect(declarations().length).toBe(48)
-    expect(projectedOpIds().length).toBe(24)
-    expect(UNPROJECTED_OPS.length).toBe(24)
+    // 2026-09-15, 423-21 D-04/D-18: two feedback reads projected, evidence unprojected (51/26/25).
+    expect(declarations().length).toBe(51)
+    expect(projectedOpIds().length).toBe(26)
+    expect(UNPROJECTED_OPS.length).toBe(25)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -429,6 +450,9 @@ describe('the partition law (D-03 / D-15)', () => {
     // `runs.knowledge` arrived in 407 and 397 could not have ruled on it. Membership is still
     // spelled by op id, so an entry stamped `'407'` because it was easier reds here.
     const ADJUDICATED_BY_407 = new Set(['runs.knowledge'])
+    // 2026-09-15 (423-21 D-04). The same widening for the same reason: `runs.evidence` arrived in
+    // 423 and no earlier phase could have ruled on it. Membership is spelled by op id.
+    const ADJUDICATED_BY_423 = new Set(['runs.evidence'])
     const expectedAdjudicator = (opId: string): string =>
       ADJUDICATED_BY_398.has(opId)
         ? '398'
@@ -436,7 +460,7 @@ describe('the partition law (D-03 / D-15)', () => {
           ? '408'
           : ADJUDICATED_BY_405.has(opId)
             ? '405'
-            : ADJUDICATED_BY_407.has(opId) ? '407' : '397'
+            : ADJUDICATED_BY_407.has(opId) ? '407' : ADJUDICATED_BY_423.has(opId) ? '423' : '397'
     for (const entry of UNPROJECTED_OPS) {
       expect(entry.reason.length, entry.opId).toBeGreaterThan(20)
       expect(entry.adjudication, entry.opId).toBe(expectedAdjudicator(entry.opId))
@@ -464,6 +488,10 @@ describe('the partition law (D-03 / D-15)', () => {
       UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_407.has(entry.opId)).map((e) => e.opId),
       'the 407-adjudicated pin names entries the scoping note does not carry',
     ).toEqual([...ADJUDICATED_BY_407])
+    expect(
+      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_423.has(entry.opId)).map((e) => e.opId),
+      'the 423-adjudicated pin names entries the scoping note does not carry',
+    ).toEqual([...ADJUDICATED_BY_423])
   })
 
   // D-03's own note leads the list, and the ORDER is part of the decision: a reader scanning the
@@ -595,4 +623,45 @@ describe('the degradation list names tools that exist (D-16)', () => {
 const PINNED_CREDENTIAL_REQUIRED = ['agent_qa_mark_run']
 it('419 D-20 pins the credential-required vocabulary', () => {
   expect(AGENT_QA_TOOL_PROJECTIONS.filter(row => row.credential === 'required').map(row => row.name)).toEqual(PINNED_CREDENTIAL_REQUIRED)
+})
+
+// 2026-09-15, 423-21 D-18/D-04: the two feedback reads are read tools with their ops' own strict
+// contracts, and the evidence read is the one new op on the unprojected side.
+describe('423-21 feedback read tools (D-18)', () => {
+  it('MCP-TWO-TOOLS: two read-only feedback tools over their exact contracts, evidence unprojected, no new write authority', () => {
+    const byName = new Map(AGENT_QA_TOOL_PROJECTIONS.map((projection) => [projection.name, projection]))
+    const declarationsById = new Map(declarations().map((declaration) => [declaration.id, declaration]))
+    const expected = [
+      ['agent_qa_get_run_marks', 'runs.marks.history', RunsMarksHistoryInputSchema, RunsMarksHistoryResultSchema],
+      ['agent_qa_preview_run_mark', 'runs.mark.preview', RunsMarkInputSchema, RunsMarkPreviewResultSchema],
+    ] as const
+    for (const [tool, opId, input, output] of expected) {
+      const projection = byName.get(tool)
+      expect(projection, tool).toBeDefined()
+      expect(projection).toEqual({ name: tool, ops: [opId], kind: 'read' })
+      // The exact schema singletons the ops validate with, never copies.
+      expect(AGENT_QA_OP_CONTRACTS[opId]?.input, `${opId} input`).toBe(input)
+      expect(AGENT_QA_OP_CONTRACTS[opId]?.output, `${opId} output`).toBe(output)
+      expect(AGENT_QA_COMPOSED_CONTRACTS[tool], `${tool} inherits its op contract`).toBeUndefined()
+      const declaration = declarationsById.get(opId)
+      expect(declaration?.requiredScopes, `${opId} scopes`).toEqual(['read'])
+      expect(declaration?.risk.readOnly, `${opId} risk`).toBe(true)
+      expect(declaration?.requiresHumanOrigin, `${opId} origin`).not.toBe(true)
+      const config = toRegisterToolConfig(projection!, [{ id: opId, summary: declaration!.summary,
+        requiredScopes: declaration!.requiredScopes, risk: declaration!.risk, input, output }], { input, output }, (text) => text)
+      expect(config.annotations, `${tool} annotations`).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true })
+      expect(config.outputSchema, `${tool} advertises its strict output`).toBeDefined()
+    }
+    // The preview is the mark writer's exact input, read-tier: it adds no credential and no apply door.
+    expect(byName.get('agent_qa_preview_run_mark')?.credential).toBeUndefined()
+    expect(byName.get('agent_qa_mark_run')).toMatchObject({ kind: 'apply', credential: 'required', ops: ['runs.mark'] })
+    expect(declarationsById.get('runs.mark')?.requiredScopes).toEqual(['knowledge-write'])
+
+    const evidence = UNPROJECTED_OPS.find((entry) => entry.opId === 'runs.evidence')
+    expect(evidence).toMatchObject({ adjudication: '423' })
+    expect(evidence?.reason).toContain('2026-09-15')
+    expect(evidence?.reason).toContain('mid-flight workflow read')
+    expect(projectedOpIds()).not.toContain('runs.evidence')
+    expect(declarationsById.get('runs.evidence')?.requiredScopes).toEqual(['read'])
+  })
 })

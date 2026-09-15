@@ -8,8 +8,9 @@ import * as agent from '@vostride/agent-qa-agent'
 import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { createConfirmRegistry, createRunServiceRoutes, DashboardDatabase, startServer, type RunServicePorts } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
+import { AGENT_QA_OP_CONTRACTS, UNPROJECTED_OPS } from '@vostride/agent-qa-mcp'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { asEvidenceToken, asRecordId, asRunId, maskedMarker, RunsMarkInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarkPreviewResult, type RunsMarksHistoryResult, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
+import { asEvidenceToken, asRecordId, asRunId, maskedMarker, RunsEvidenceInputSchema, RunsMarkInputSchema, RunsMarksHistoryInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarkPreviewResult, type RunsMarksHistoryResult, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { composeDashboardDoor, DASHBOARD_FUNCTION_CALLER } from '../commands/dashboard.js'
@@ -21,6 +22,9 @@ import { createFeedbackPortForHost } from '../gates/feedback-host.js'
 import { createFeedbackReadsPortForHost, type FeedbackReadsHostDeps } from '../gates/feedback-read-host.js'
 import { previewMarkConsequences as preview } from '../gates/feedback-plan.js'
 import { files, markFixture } from '../gates/__tests__/feedback-fixture.js'
+import { RUN_SERVICE_ROUTE_BINDINGS, registryDeclarations } from './conformance/adapters.js'
+import { catalogDocFieldsOf } from './conformance/catalog.js'
+import { censusDiff, OP_INPUT_CONTRACTS, scenarioRowFor, scenarioTableOpIds, unprojectedReasonKeyOf } from './conformance/scenario-table.js'
 
 // 2026-09-15, 423 D-16: eval initialization, gold freeze and the wording model call refuse while a
 // preview runs. A key-only session only resolves configured roots; it reads no secret or auth state.
@@ -1080,4 +1084,84 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     expect(storeMaps(s.stores)).toEqual(before)
     expect(existsSync(join(runDir, 'mark-intent.json'))).toBe(false)
   }, 180_000)
+})
+
+// 2026-09-15, 423-21 D-04/D-18: the three new read ops, adjudicated against the one registry by the
+// conformance tables every surface leg reads: input contract, scenario row, MCP ruling, doc
+// adjudication, authed remote route binding and read policy points.
+describe('423-21 read-op adjudication (D-04/D-18)', () => {
+  const NEW_READS = ['runs.evidence', 'runs.marks.history', 'runs.mark.preview'] as const
+  const declarationOf = (opId: string) => {
+    const declaration = registryDeclarations().find(entry => entry.id === opId)
+    if (declaration === undefined) throw new Error(`${opId} is not registered`)
+    return declaration
+  }
+
+  it('OP-INPUT-PARTITION: each new read pairs its own input singleton, once, and the table keys equal the registry', () => {
+    const contracts = OP_INPUT_CONTRACTS as Record<string, unknown>
+    expect(contracts['runs.evidence']).toBe(RunsEvidenceInputSchema)
+    expect(contracts['runs.marks.history']).toBe(RunsMarksHistoryInputSchema)
+    // The preview is runs.mark's exact input: one schema object serves both ops.
+    expect(contracts['runs.mark.preview']).toBe(RunsMarkInputSchema)
+    expect(contracts['runs.mark']).toBe(RunsMarkInputSchema)
+    for (const opId of ['runs.marks.history', 'runs.mark.preview'] as const) {
+      expect(AGENT_QA_OP_CONTRACTS[opId]?.input, opId).toBe(contracts[opId])
+    }
+    expect(AGENT_QA_OP_CONTRACTS['runs.evidence']).toBeUndefined()
+    const registryIds = registryDeclarations().map(entry => entry.id)
+    expect(registryIds).toHaveLength(51)
+    expect(censusDiff(registryIds, Object.keys(contracts))).toEqual({ missing: [], stray: [] })
+  })
+
+  it('OP-REGISTRY-SCENARIO: one scenario row, one MCP ruling, one doc adjudication and one remote route per new read', () => {
+    expect(censusDiff(registryDeclarations().map(entry => entry.id), scenarioTableOpIds())).toEqual({ missing: [], stray: [] })
+    const tools: Record<string, unknown> = {
+      'runs.evidence': { unprojected: 'not-mid-flight-read' },
+      'runs.marks.history': { reachable: { tool: 'agent_qa_get_run_marks' } },
+      'runs.mark.preview': { reachable: { tool: 'agent_qa_preview_run_mark' } },
+    }
+    const routes: Record<string, string> = {
+      'runs.evidence': 'GET /run/:runId/evidence',
+      'runs.marks.history': 'GET /run/:runId/marks',
+      'runs.mark.preview': 'POST /run/:runId/mark-preview',
+    }
+    for (const opId of NEW_READS) {
+      const rows = scenarioTableOpIds().filter(id => id === opId)
+      expect(rows, opId).toHaveLength(1)
+      const row = scenarioRowFor(opId)!
+      const contract = (OP_INPUT_CONTRACTS as Record<string, { safeParse(value: unknown): { success: boolean } }>)[opId]!
+      expect(contract.safeParse(row.input).success, `${opId} scenario input`).toBe(true)
+      expect(row.perSurface).toEqual({ chat: { reachable: true }, mcp: tools[opId], fn: { reachable: true } })
+      // Markers are the op's required first-arm output fields, derived by the table's one rule.
+      const output = declarationOf(opId).output as { oneOf?: Array<{ required?: string[] }>; anyOf?: Array<{ required?: string[] }>; required?: string[] }
+      const first = output.oneOf?.[0] ?? output.anyOf?.[0] ?? output
+      expect([...row.renderExpect.markers].sort(), `${opId} markers`).toEqual([...(first.required ?? [])].sort())
+      expect(() => catalogDocFieldsOf(opId), `${opId} doc adjudication`).not.toThrow()
+      expect(RUN_SERVICE_ROUTE_BINDINGS.filter(binding => 'opId' in binding && binding.opId === opId).map(binding => binding.key), opId)
+        .toEqual([routes[opId]])
+    }
+    const ruled = UNPROJECTED_OPS.filter(entry => entry.opId === 'runs.evidence')
+    expect(ruled).toHaveLength(1)
+    expect(unprojectedReasonKeyOf(ruled[0]!.reason)).toBe('not-mid-flight-read')
+    // The widened completed-run reads keep the same one-rule marker sets over the 51-op registry.
+    for (const opId of ['runs.detail', 'runs.postprocessing', 'runs.knowledge'] as const) {
+      const output = declarationOf(opId).output as { oneOf?: Array<{ required?: string[] }>; anyOf?: Array<{ required?: string[] }>; required?: string[] }
+      const first = output.oneOf?.[0] ?? output.anyOf?.[0] ?? output
+      expect([...scenarioRowFor(opId)!.renderExpect.markers].sort(), `${opId} markers`).toEqual([...(first.required ?? [])].sort())
+    }
+  })
+
+  it('READ-POLICY-POINTS: the new reads carry read policy points and read-tier declarations; runs.mark keeps its ask', () => {
+    const readPoints = scenarioRowFor('runs.postprocessing')!.policyPoints
+    expect(readPoints).toEqual({ grant: 'allow', refuse: 'deny' })
+    for (const opId of NEW_READS) {
+      expect(scenarioRowFor(opId)?.policyPoints, opId).toEqual(readPoints)
+      const declaration = declarationOf(opId)
+      expect(declaration.requiredScopes, opId).toEqual(['read'])
+      expect(declaration.risk, opId).toMatchObject({ readOnly: true })
+      expect(declaration.requiresHumanOrigin, opId).not.toBe(true)
+    }
+    expect(scenarioRowFor('runs.mark')?.policyPoints).toEqual({ grant: 'allow', refuse: 'deny', ask: 'ask' })
+    expect(declarationOf('runs.mark').requiredScopes).toEqual(['knowledge-write'])
+  })
 })
