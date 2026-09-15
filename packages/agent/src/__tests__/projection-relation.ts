@@ -66,6 +66,7 @@ import { runsArtifactSpec } from '../functions/ops/runs-artifact.js'
 import { runsDetailSpec } from '../functions/ops/runs-detail.js'
 import { runsEvidenceSpec } from '../functions/ops/runs-evidence.js'
 import { runsMarkSpec } from '../functions/ops/runs-mark.js'
+import { runsMarkPreviewSpec } from '../functions/ops/runs-mark-preview.js'
 import { runsMarksHistorySpec } from '../functions/ops/runs-marks-history.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsKnowledgeSpec } from '../functions/ops/runs-knowledge.js'
@@ -202,6 +203,7 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'runs.evidence': runsEvidenceSpec,
   // 419 GATE3-01: project the real mark validators through the same inert-declaration law.
   'runs.mark': runsMarkSpec,
+  'runs.mark.preview': runsMarkPreviewSpec,
   'runs.marks.history': runsMarksHistorySpec,
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,

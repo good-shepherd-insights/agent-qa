@@ -1706,7 +1706,10 @@ export interface ComposeLocalAgentInput {
   /** Immutable neutral data resolved by the host, reused until recomposition. */
   readonly resolveTrustPriors?: CreateLocalKnowledgeStoreConfig['resolveTrustPriors']
   readonly feedback?: FeedbackPort
-  /** 423 D-19: read-only mark history; absent leaves runs.marks.history unbound by name. */
+  /**
+   * 423 D-19/D-16: read-only mark history and consequence preview; absent leaves runs.marks.history
+   * and runs.mark.preview unbound by name, and a port without `preview` leaves only the preview unbound.
+   */
   readonly feedbackReads?: FeedbackReadsPort
   /** DATA across the wall: host preparation may await; candidate evaluation is synchronous. */
   readonly resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined>

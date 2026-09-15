@@ -126,6 +126,7 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   'runs.liveurl': { runId: 'run-alpha' },
   // 419 GATE3-01: valid input lets this census reach the actual binding check.
   'runs.mark': { runId: 'run-alpha', kind: 'false-fail' },
+  'runs.mark.preview': { runId: 'run-alpha', kind: 'false-fail' },
   'runs.marks.history': { runId: 'run-alpha' },
   'runs.postprocessing': { runId: 'run-alpha' },
   // 405 D-03: a PARSING input on its `runs.` siblings' reasoning — `runId` is required, so the

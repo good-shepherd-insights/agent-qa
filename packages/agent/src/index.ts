@@ -102,6 +102,8 @@ export { RunNotFoundError } from './functions/ops/runs-get.js'
 export { RUNS_MARK_FUNCTION_ID } from './functions/ops/runs-mark.js'
 // 423 D-19: identity only; the history spec stays behind invokeFunction.
 export { RUNS_MARKS_HISTORY_FUNCTION_ID } from './functions/ops/runs-marks-history.js'
+// 423 D-16: identity only; the preview spec stays behind invokeFunction.
+export { RUNS_MARK_PREVIEW_FUNCTION_ID } from './functions/ops/runs-mark-preview.js'
 // 416 D-17: the gate-history op identity and its named unbound refusal.
 export { KNOWLEDGE_GATES_LIST_FUNCTION_ID, KnowledgeGatesUnboundError } from './functions/ops/knowledge-gates-list.js'
 export { RunNotRecordedError } from './functions/ops/runs-start.js'

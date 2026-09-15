@@ -3849,7 +3849,10 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       ),
     }),
     // 423 D-19: a dedicated read host, so history never reaches the writer's lock, lease or draft path.
-    feedbackReads: createFeedbackReadsPortForHost({ agentQaRoot: input.agentQaRoot }),
+    // 423 D-16: its preview plans against this project's knowledge root with read capabilities only. The
+    // writer above binds the authoring draft edit, so the preview reports a test edit where runs.mark drafts one.
+    feedbackReads: createFeedbackReadsPortForHost({ agentQaRoot: input.agentQaRoot, configPath: input.configPath,
+      resolveTrustPriors, canDraftTestEdit: true }),
     resolvePromotionPosture,
     resolveTrustPriors,
     agentQaRoot: input.agentQaRoot,
