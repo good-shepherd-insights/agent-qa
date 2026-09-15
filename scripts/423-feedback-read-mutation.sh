@@ -64,7 +64,7 @@ const KEYS = 'src/functions/__tests__/optional-dep-keys.test.ts'
 const PORTS_D = 'src/functions/__tests__/port-split.test-d.ts'
 
 const instruments = {
-  'feedback-reads': { pkg: 'packages/cli', files: [READS], typecheck: false, count: 26 },
+  'feedback-reads': { pkg: 'packages/cli', files: [READS], typecheck: false, count: 27 },
   'evidence-planner': { pkg: 'packages/knowledge-local', files: [EVIDENCE], typecheck: false, count: 4 },
   'feedback-results': { pkg: 'packages/schema', files: [RESULTS, RESULTS_D], typecheck: true, count: 11 },
   'feedback-bindings': { pkg: 'packages/agent', files: [KEYS, PORTS_D], typecheck: true, count: 7 },

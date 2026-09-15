@@ -40,6 +40,28 @@ export class MarkLedgerCorruptError extends Error {
   }
 }
 
+/** The one latest-per-address rule, over receipts a caller has already read once. */
+export function latestMarkReceiptsPerAddress(receipts: readonly MarkReceipt[]): MarkReceipt[] {
+  const latest = new Map<string, MarkReceipt>()
+  for (const receipt of receipts) {
+    const key = markAddressKey(receipt)
+    if ((latest.get(key)?.ordinal ?? 0) < receipt.ordinal) latest.set(key, receipt)
+  }
+  return [...latest.values()].sort((a, b) =>
+    a.testIndex - b.testIndex || (a.stepIndex ?? -1) - (b.stepIndex ?? -1),
+  )
+}
+
+export function latestMarkReceiptFor(
+  receipts: readonly MarkReceipt[],
+  runId: string,
+  address: MarkAddress,
+): MarkReceipt | undefined {
+  if (address.runId !== runId) return undefined
+  return latestMarkReceiptsPerAddress(receipts).find(receipt => markAddressKey(receipt) === markAddressKey(address)
+    && (address.testId === undefined || receipt.testId === address.testId))
+}
+
 export class MarkLedgerNoRunError extends Error {
   constructor() {
     super('run-not-found: mark ledger requires a completed run handoff')
@@ -91,20 +113,13 @@ export class FsMarkLedger {
   }
 
   latestPerAddress(): MarkReceipt[] {
-    const latest = new Map<string, MarkReceipt>()
-    for (const receipt of this.read()) {
-      const key = markAddressKey(receipt)
-      if ((latest.get(key)?.ordinal ?? 0) < receipt.ordinal) latest.set(key, receipt)
-    }
-    return [...latest.values()].sort((a, b) =>
-      a.testIndex - b.testIndex || (a.stepIndex ?? -1) - (b.stepIndex ?? -1),
-    )
+    return latestMarkReceiptsPerAddress(this.read())
   }
 
   latestFor(address: MarkAddress): MarkReceipt | undefined {
+    // A foreign address never reads this run's ledger.
     if (address.runId !== this.runId) return undefined
-    return this.latestPerAddress().find(receipt => markAddressKey(receipt) === markAddressKey(address)
-      && (address.testId === undefined || receipt.testId === address.testId))
+    return latestMarkReceiptFor(this.read(), this.runId, address)
   }
 
   /** Private resumable state is admitted only while this run's existing lock is held. */

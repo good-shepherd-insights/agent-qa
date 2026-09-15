@@ -24,6 +24,8 @@ export {
   MarkLedgerBusyError,
   MarkLedgerCorruptError,
   MarkLedgerNoRunError,
+  latestMarkReceiptFor,
+  latestMarkReceiptsPerAddress,
 } from './mark-ledger.js'
 export type { ArtifactSource, HandoffSource } from '@vostride/agent-qa-eval'
 

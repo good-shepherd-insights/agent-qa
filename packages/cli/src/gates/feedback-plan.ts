@@ -6,7 +6,7 @@ import { createKnowledgeReader, DIGEST_JOB_ID_SOURCE, LOCAL_CURATION_CAPABILITIE
 import { projectRecordContent, RunsMarkInputSchema, type CompletedRunHandoff, type ImprovementPlan, type KnowledgeRecordShowResult, type KnowledgeTargetRef, type MarkAddress, type MarkPreviewKnowledge, type MarkPreviewKnowledgeRecord, type MarkQuarantineClass, type MarkReceipt, type NoDraftableFixChecked, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
-import { canonicalJson, FsHandoffSource, FsMarkLedger, previewMarkLabels, resolveEvalSession, resolveMarkLabelTargets, slugBranch, type GoldenTrajectoryTarget, type MarkGroundTruthPreview, type MarkLabelPreviewItem } from '../eval-session-composition.js'
+import { canonicalJson, FsHandoffSource, FsMarkLedger, latestMarkReceiptFor, previewMarkLabels, resolveEvalSession, resolveMarkLabelTargets, slugBranch, type GoldenTrajectoryTarget, type MarkGroundTruthPreview, type MarkLabelPreviewItem } from '../eval-session-composition.js'
 
 export type MarkPlanCuration = Pick<LocalCurationCapabilities, 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'readFeedbackRecord' | 'planMarkEvidence' | 'projectMarkEvidenceOutcome'>
 type MarkMember = CompletedRunHandoff['tests'][number]
@@ -219,8 +219,11 @@ export async function previewMarkConsequences(deps: MarkPreviewDeps, raw: unknow
   if (target.kind !== 'target') return target
   const { handoff, member, address } = target
   const ledger = new FsMarkLedger({ root: deps.agentQaRoot, runId: input.runId })
-  const plan = planMarkFeedback({ input, handoff, member, address, prior: ledger.latestFor(address),
-    ledgerOrdinal: ledger.read().length, curation })
+  // One read (WR-10). A corrupt ledger throws runs.mark's own MarkLedgerCorruptError, uncaught: the
+  // preview has exactly the writer's refusal arms and mints no ledger-corrupt arm of its own.
+  const receipts = ledger.read()
+  const plan = planMarkFeedback({ input, handoff, member, address, prior: latestMarkReceiptFor(receipts, input.runId, address),
+    ledgerOrdinal: receipts.length, curation })
   if (plan.kind === 'refused') return plan.outcome
   const previewMember: MarkPreviewMember = { testIndex: member.testIndex, ...(member.testId === undefined ? {} : { testId: member.testId }) }
   if (plan.kind === 'quarantined') return { ...plan, member: previewMember }
