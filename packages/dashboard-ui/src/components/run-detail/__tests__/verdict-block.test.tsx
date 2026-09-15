@@ -157,11 +157,24 @@ describe('419 member mark control', () => {
     expect(onMark).toHaveBeenCalledExactlyOnceWith(4, undefined, 'false-pass', undefined, { correctedAction })
   })
 
-  it('copies the standing chip, drafted triage and chat confirm door', () => {
+  it('copies the standing chip, drafted triage and a runnable review command for the recorded proposal (423 D-19)', async () => {
+    const writeText = vi.fn(async (_text: string) => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     render({ marks: [mark] }, { onMark: vi.fn() })
     expect(container.querySelector('[data-mark-chip]')?.textContent).toBe('marked false-fail by user · 2')
     expect(container.querySelector('[data-mark-triage]')?.textContent).toBe('drafted: fact → proposal prop_0123456789ab')
-    expect(container.querySelector('[data-mark-confirm-link]')?.getAttribute('href')).toBe('/chat')
+    expect(container.querySelector('[data-verdict-block] a')).toBeNull()
+    const review = container.querySelector<HTMLButtonElement>('button[data-mark-review]')!
+    expect(review.getAttribute('data-review-command')).toBe('agent-qa proposals show prop_0123456789ab')
+    expect(review.getAttribute('aria-label')).toBe('Copy review command: agent-qa proposals show prop_0123456789ab')
+    await act(async () => { review.click() })
+    expect(writeText).toHaveBeenCalledExactlyOnceWith('agent-qa proposals show prop_0123456789ab')
+    expect(review.getAttribute('data-copy-status')).toBe('copied')
+  })
+
+  it('never puts a non-canonical proposal id into a copied command — it points at the pending list instead', () => {
+    render({ marks: [{ ...mark, disposition: { ...mark.disposition, proposalId: "prop_x'; rm -rf ~" } as RunDetailMemberMark['disposition'] }] }, { onMark: vi.fn() })
+    expect(container.querySelector('[data-mark-review]')?.getAttribute('data-review-command')).toBe('agent-qa proposals list --status pending')
   })
 
   it.each([
@@ -171,7 +184,7 @@ describe('419 member mark control', () => {
   ] as const)('renders %s without a draft link', (disposition, text) => {
     render({ marks: [{ ...mark, disposition }] }, { onMark: vi.fn() })
     expect(container.querySelector('[data-mark-triage]')?.textContent).toBe(text)
-    expect(container.querySelector('[data-mark-confirm-link]')).toBeNull()
+    expect(container.querySelector('[data-mark-review]')).toBeNull()
   })
 
   it('renders the existing denial and answer-confirm remedy', () => {

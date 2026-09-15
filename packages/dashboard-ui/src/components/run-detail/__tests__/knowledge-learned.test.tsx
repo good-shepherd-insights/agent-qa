@@ -28,7 +28,6 @@ import {
 } from "@vostride/agent-qa-schema"
 
 import { KnowledgeLearned } from "@/components/run-detail/knowledge-learned"
-import { routes } from "@/lib/routes"
 import {
   CHANGED_NOTHING_TEXT,
   CHANGES_NOT_AVAILABLE_TEXT,
@@ -570,22 +569,41 @@ describe("the proposals line is a count and a door (D-11, T-407-22)", () => {
     count: 3,
     line: pendingProposalsLine(3),
     ctaText: REVIEW_PROPOSALS_CTA,
-    href: routes.chat,
+    command: "agent-qa proposals list --status pending",
   }
 
-  it("stamps the count on the line and renders the single CTA pointing where proposals are reviewed", () => {
+  it("stamps the count on the line and renders the single CTA as the runnable review command (423 D-19)", async () => {
     const host = render({ state: "done", countLine: "nothing curated", sentence: CHANGED_NOTHING_TEXT, rows: [] }, proposals)
 
     const line = host.querySelector("[data-pending-proposals]")
     expect(line?.getAttribute("data-pending-proposals")).toBe("3")
     expect(line?.textContent).toContain(pendingProposalsLine(3))
 
-    const cta = host.querySelector<HTMLAnchorElement>("a[data-review-proposals]")
-    expect(cta?.textContent).toBe(REVIEW_PROPOSALS_CTA)
-    // The projection's own `ctaText` and the component's import must be the SAME spelling — a
-    // component rendering one while a consumer reads the other is two CTAs wearing one name.
-    expect(cta?.textContent).toBe(proposals.ctaText)
-    expect(cta?.getAttribute("href")).toBe(routes.chat)
+    const cta = host.querySelector<HTMLButtonElement>("button[data-review-proposals]")
+    expect(host.querySelector("[data-pending-proposals] a")).toBeNull()
+    expect(cta?.getAttribute("href")).toBeNull()
+    expect(cta?.getAttribute("data-review-command")).toBe("agent-qa proposals list --status pending")
+    expect(cta?.textContent).toContain("agent-qa proposals list --status pending")
+    // The projection's own `ctaText` still names the control for assistive technology, and it
+    // leads the accessible name so the visible command is part of it.
+    expect(cta?.getAttribute("aria-label")).toBe(`${proposals.ctaText}: agent-qa proposals list --status pending`)
+
+    const writeText = vi.fn(async (_text: string) => undefined)
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } })
+    await act(async () => { cta?.click() })
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("agent-qa proposals list --status pending")
+    expect(cta?.getAttribute("data-copy-status")).toBe("copied")
+  })
+
+  it("says so when the clipboard is unavailable, and keeps the command readable on the control", async () => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined })
+    const host = render({ state: "done", countLine: "nothing curated", sentence: CHANGED_NOTHING_TEXT, rows: [] }, proposals)
+    const cta = host.querySelector<HTMLButtonElement>("button[data-review-proposals]")
+    await act(async () => { cta?.click() })
+    expect(cta?.getAttribute("data-copy-status")).toBe("failed")
+    expect(host.querySelector("[data-review-command-status]")?.textContent)
+      .toBe("Could not copy the review command. Run: agent-qa proposals list --status pending")
+    expect(cta?.textContent).toContain("agent-qa proposals list --status pending")
   })
 
   it("renders NO line and NO attribute when the page passed no proposals — a zero is not news", () => {

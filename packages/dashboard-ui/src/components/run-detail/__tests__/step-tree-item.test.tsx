@@ -48,6 +48,14 @@ describe('419 step marking', () => {
     expect(container.querySelector('[data-mark-triage]')?.textContent).toBe('confirmed-bug: no fix drafted')
     expect(readFileSync('src/components/run-detail/step-tree-item.tsx', 'utf8')).not.toContain('dangerouslySetInnerHTML')
   })
+  it('offers a drafted step receipt a runnable review command, never a chat link (423 D-19)', () => {
+    mount([{ markId: 'mark_0123456789ae', kind: 'false-fail', ordinal: 4, stepIndex: 2,
+      disposition: { kind: 'drafted', fix: 'caution', proposalId: 'prop_step-review', proposalKind: 'knowledge' } }])
+    expect(container.querySelector('[data-step-mark] a')).toBeNull()
+    const review = container.querySelector<HTMLButtonElement>('[data-step-mark] button[data-mark-review]')
+    expect(review?.getAttribute('data-review-command')).toBe('agent-qa proposals show prop_step-review')
+    expect(review?.textContent).toContain('agent-qa proposals show prop_step-review')
+  })
   it('cancel does not submit', () => {
     const onMark = mount()
     click('[data-mark-kind="false-pass"]')

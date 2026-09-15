@@ -28,7 +28,6 @@ import { RETRIEVAL_RUNGS, RETRIEVAL_RUNG_REASONS } from '@vostride/agent-qa-sche
 
 import type { KnowledgeRead } from '@/lib/api'
 import { curationFactsText } from '@/lib/post-processing-view'
-import { routes } from '@/lib/routes'
 import {
   ATTRIBUTION_PENDING_TEXT,
   ATTRIBUTION_UNKNOWN_TEXT,
@@ -1543,7 +1542,7 @@ describe('the proposals line is a COUNT and a door, never any proposal content (
       count: 1,
       line: '1 proposal awaits your decision',
       ctaText: REVIEW_PROPOSALS_CTA,
-      href: routes.chat,
+      command: 'agent-qa proposals list --status pending',
     })
   })
 

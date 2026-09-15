@@ -25,11 +25,21 @@ import { generateRunId } from '@vostride/agent-qa-ids'
 import { AUTH_STATE_REDACTION_MARKER } from '@vostride/agent-qa-core'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { maskedMarker, type RunDetailProjection } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  MarkReceiptSchema,
+  ProposalsListInputSchema,
+  ProposalsShowInputSchema,
+  maskedMarker,
+  type CompletedRunHandoff,
+  type MarkReceipt,
+  type RunDetailProjection,
+} from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chromium, type Browser, type Page } from 'playwright-core'
 
 import { composeDashboardAgentHost } from '../../commands/dashboard.js'
+import { createProposalsCommand } from '../../commands/proposals.js'
 import { createDisplayUnmasker } from '../../composition/display-unmask.js'
 import { matchServiceBearer } from '../../composition/run-service-token-resolution.js'
 import { PACKAGES_ROOT } from './spawned-chat.js'
@@ -41,7 +51,10 @@ const AUTH_STATE = JSON.stringify({
 })
 const ALLOWED = 'Restored "display" label'
 
-async function startFixture(display?: { name: string; attributes: Record<string, string> }) {
+async function startFixture(
+  display?: { name: string; attributes: Record<string, string> },
+  extraDeps?: (runId: string) => Partial<FunctionDeps>,
+) {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-sinks-'))
   const db = new DashboardDatabase({ dbPath: join(root, 'dashboard.db') })
   const runId = generateRunId()
@@ -85,7 +98,10 @@ async function startFixture(display?: { name: string; attributes: Record<string,
     cacheStatus: 'miss', verifierVerdict: null, selfHealOccurred: false, briefDigest: '',
   })
   const registry = createFunctionRegistry({
-    deps: { runDetail: createDashboardRunDetailReader(db), evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: root }) } as FunctionDeps,
+    deps: {
+      runDetail: createDashboardRunDetailReader(db), evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: root }),
+      ...extraDeps?.(runId),
+    } as FunctionDeps,
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
   })
@@ -306,5 +322,146 @@ describe('423 rendered run-detail sinks', () => {
     expect.soft(attrs).not.toMatch(/<SECRET_|<EMAIL_|␟masked:/u)
     expect.soft(attrs).not.toContain(AUTH_TOKEN)
     expect.soft(await dialog.getByRole('button', { name: `Copy ${DISPLAY_KEY} value`, exact: true }).count()).toBe(1)
+  })
+})
+
+// 423 D-19 · SC5: run detail's review controls re-homed off `routes.chat`. The three controls that
+// used to navigate to Chat (member mark, step mark, Knowledge proposals CTA) are driven on the
+// built bundle over real registry reads, by keyboard, and what they copy is parsed by the shipped
+// `agent-qa proposals` command tree. Scoped to the routed page's own `<main>` (inside the sidebar
+// inset): the global sidebar's
+// Chat entry is 430's removal, not this plan's.
+const MEMBER_PROPOSAL = 'prop_member-423-24'
+const STEP_PROPOSAL = 'prop_step-423-24'
+
+function draftedReceipt(runId: string, ordinal: number, proposalId: string, stepIndex?: number): MarkReceipt {
+  return MarkReceiptSchema.parse({
+    schemaVersion: 1, markId: `mark_${String(ordinal).padStart(12, '0')}`, runId, testIndex: 0,
+    ...(stepIndex === undefined ? {} : { stepIndex }), runSlug: 'read-sink-review', kind: 'false-fail',
+    origin: 'user', ordinal, markedAt: ordinal,
+    disposition: { kind: 'drafted', fix: 'fact', proposalId, proposalKind: 'knowledge' },
+    gold: [], evidence: { confirmed: 0, overturned: 0 },
+  })
+}
+
+function reviewDeps(runId: string): Partial<FunctionDeps> {
+  return {
+    feedback: {
+      marksFor: async () => [draftedReceipt(runId, 1, MEMBER_PROPOSAL), draftedReceipt(runId, 2, STEP_PROPOSAL, 0)],
+      mark: async () => { throw new Error('read-only review fixture') },
+    },
+    runs: {
+      get: async (id: unknown) => String(id) === runId
+        ? { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId, buildOrdinal: 1, tests: [] } as unknown as CompletedRunHandoff
+        : undefined,
+    },
+    knowledge: { diffSince: async () => [] },
+    proposalsInbox: {
+      list: async () => [{ envelope: { status: 'pending' } }, { envelope: { status: 'applied' } }],
+    },
+  } as unknown as Partial<FunctionDeps>
+}
+
+/** Parse a copied command with the SHIPPED command tree; only the action bodies are replaced. */
+async function parseProposalsCommand(command: string): Promise<{ name: string; args: unknown[] }> {
+  const tokens = command.split(' ')
+  expect(tokens.slice(0, 2)).toEqual(['agent-qa', 'proposals'])
+  const proposals = createProposalsCommand().exitOverride()
+  let captured: { name: string; args: unknown[] } | undefined
+  for (const sub of proposals.commands) {
+    sub.exitOverride()
+    sub.action((...args: unknown[]) => { captured = { name: sub.name(), args: args.slice(0, -1) } })
+  }
+  await proposals.parseAsync(tokens.slice(2), { from: 'user' })
+  if (captured === undefined) throw new Error(`no proposals subcommand accepted: ${command}`)
+  return captured
+}
+
+async function tabTo(page: Page, selector: string): Promise<void> {
+  for (let index = 0; index < 400; index++) {
+    if (await page.locator(selector).evaluate(element => element === document.activeElement)) return
+    await page.keyboard.press('Tab')
+  }
+  throw new Error(`Keyboard could not reach ${selector}`)
+}
+
+async function regionTargets(page: Page): Promise<string[]> {
+  return page.locator('main main').evaluate(region => [...region.querySelectorAll('[href],[action],[formaction],[data-href]')]
+    .map(element => element.getAttribute('href') ?? element.getAttribute('action')
+      ?? element.getAttribute('formaction') ?? element.getAttribute('data-href') ?? ''))
+}
+
+describe('423 run-detail review pointers', () => {
+  let fixture: Awaited<ReturnType<typeof startFixture>>
+  let browser: Browser
+  let page: Page
+  const navigations: string[] = []
+
+  beforeAll(async () => {
+    fixture = await startFixture({ name: 'Review pointer fixture', attributes: {} }, reviewDeps)
+    browser = await chromium.launch({ headless: true })
+    page = await browser.newPage()
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: async (text: string) => { (window as unknown as { copied: string }).copied = text } },
+      })
+    })
+    page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations.push(frame.url()) })
+    await page.goto(`${fixture.origin}/runs/${fixture.runId}`)
+    await page.waitForSelector('[data-member-mark] [data-mark-triage]', { timeout: 15_000 })
+    await page.waitForSelector('[data-step-mark] [data-mark-triage]', { timeout: 15_000 })
+  }, 30_000)
+  afterAll(async () => {
+    await browser?.close()
+    await fixture?.close()
+  })
+
+  it('NO-CHAT-TARGET: no run-detail target is routes.chat, and all three controls copy a runnable review command by keyboard', async () => {
+    const detailUrl = page.url()
+    const chatPath = '/chat'
+    const pathOf = (target: string) => new URL(target, fixture.origin).pathname
+
+    const controls = [
+      { selector: '[data-member-mark] [data-mark-review]', expected: `agent-qa proposals show ${MEMBER_PROPOSAL}`, target: MEMBER_PROPOSAL, key: 'Enter' },
+      { selector: '[data-step-mark] [data-mark-review]', expected: `agent-qa proposals show ${STEP_PROPOSAL}`, target: STEP_PROPOSAL, key: 'Space' },
+    ]
+    expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
+    expect(await page.locator('[data-member-mark] [data-mark-triage]').textContent()).toContain(MEMBER_PROPOSAL)
+    expect(await page.locator('[data-step-mark] [data-mark-triage]').textContent()).toContain(STEP_PROPOSAL)
+
+    await page.keyboard.press('m')
+    await page.waitForSelector('[data-review-proposals]')
+    expect(await page.locator('[data-pending-proposals]').getAttribute('data-pending-proposals')).toBe('1')
+    expect((await regionTargets(page)).map(pathOf)).not.toContain(chatPath)
+    controls.push({ selector: '[data-review-proposals]', expected: 'agent-qa proposals list --status pending', target: 'pending', key: 'Enter' })
+
+    for (const control of controls) {
+      const element = page.locator(control.selector)
+      expect(await element.evaluate(node => node.tagName)).toBe('BUTTON')
+      expect(await element.getAttribute('href')).toBeNull()
+      expect(await element.getAttribute('data-review-command')).toBe(control.expected)
+      expect(await element.getAttribute('aria-label')).toContain(control.expected)
+      expect(await element.textContent()).toContain(control.expected)
+
+      await page.evaluate(() => { (window as unknown as { copied?: string }).copied = undefined })
+      await tabTo(page, control.selector)
+      await page.keyboard.press(control.key)
+      await expect.poll(() => page.evaluate(() => (window as unknown as { copied?: string }).copied)).toBe(control.expected)
+      expect(await element.evaluate(node => node === document.activeElement)).toBe(true)
+      expect(await element.getAttribute('data-copy-status')).toBe('copied')
+
+      const parsed = await parseProposalsCommand(control.expected)
+      if (control.target === 'pending') {
+        expect(parsed.name).toBe('list')
+        const status = (parsed.args[0] as { status?: string }).status
+        expect(ProposalsListInputSchema.parse({ status })).toEqual({ status: 'pending' })
+      } else {
+        expect(parsed.name).toBe('show')
+        expect(ProposalsShowInputSchema.parse({ proposalId: parsed.args[0] })).toEqual({ proposalId: control.target })
+      }
+    }
+
+    expect(page.url()).toBe(detailUrl)
+    expect(navigations.map(pathOf)).not.toContain(chatPath)
   })
 })
