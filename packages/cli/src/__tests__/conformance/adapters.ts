@@ -43,7 +43,10 @@ import {
   ANALYSIS_GET_FUNCTION_ID,
   RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
+  RUNS_EVIDENCE_FUNCTION_ID,
   RUNS_LIVE_URL_FUNCTION_ID,
+  RUNS_MARK_PREVIEW_FUNCTION_ID,
+  RUNS_MARKS_HISTORY_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
   type ChatResolverTable,
   type CreateFunctionRegistryOptions,
@@ -64,7 +67,10 @@ import {
   RUN_SERVICE_ARTIFACT_TEMPLATE,
   RUN_SERVICE_DETAIL_TEMPLATE,
   RUN_SERVICE_EVENTS_TEMPLATE,
+  RUN_SERVICE_EVIDENCE_TEMPLATE,
   RUN_SERVICE_LIVE_URL_TEMPLATE,
+  RUN_SERVICE_MARK_PREVIEW_TEMPLATE,
+  RUN_SERVICE_MARKS_TEMPLATE,
   RUN_SERVICE_OK_ROUTE,
   RUN_SERVICE_ROUTE_TABLE,
   RUN_SERVICE_START_ROUTE,
@@ -72,7 +78,10 @@ import {
 import {
   FunctionScopeSchema,
   RunServiceReadinessSchema,
+  RunsEvidenceResultSchema,
   RunsLiveUrlResultSchema,
+  RunsMarkPreviewResultSchema,
+  RunsMarksHistoryResultSchema,
   RunStartAcknowledgementSchema,
 } from '@vostride/agent-qa-schema'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
@@ -967,6 +976,11 @@ export const RUN_SERVICE_ROUTE_BINDINGS: readonly RunServiceRouteBinding[] = Obj
     // the same shared adapter — `serveRunAnalysisRead`, one function object, two doors.
     opId: ANALYSIS_GET_FUNCTION_ID,
   }),
+  // 2026-09-15 (423-21, D-04/D-18): the typed evidence read and the two feedback reads, each
+  // dispatched through the shared adapter the local door calls, masked on this door.
+  Object.freeze({ key: `GET ${RUN_SERVICE_EVIDENCE_TEMPLATE}`, opId: RUNS_EVIDENCE_FUNCTION_ID }),
+  Object.freeze({ key: `GET ${RUN_SERVICE_MARKS_TEMPLATE}`, opId: RUNS_MARKS_HISTORY_FUNCTION_ID }),
+  Object.freeze({ key: `POST ${RUN_SERVICE_MARK_PREVIEW_TEMPLATE}`, opId: RUNS_MARK_PREVIEW_FUNCTION_ID }),
   Object.freeze({
     key: `GET ${RUN_SERVICE_OK_ROUTE}`,
     // Readiness reports four facts this process measures about itself. It owns no capability, on the
@@ -1266,6 +1280,35 @@ export async function enumerateRunServiceOpIds(): Promise<SurfaceEnumeration> {
       }
     }
 
+    if (runId !== undefined) {
+      // 423-21 (D-04/D-18): the evidence and feedback read rows, DRIVEN. Each counts as answered on
+      // the op's own vocabulary: a body its result contract parses, or the evidence read's own
+      // `unknown_run` refusal for a run whose projection has not landed yet. 503 is never accepted.
+      const run = encodeURIComponent(runId)
+      const evidence = await fetch(`${origin}/run/${run}/evidence?kind=console&testIndex=0&stepIndex=0`,
+        { headers: bearer })
+      if (evidence.status === 200) {
+        if (RunsEvidenceResultSchema.safeParse(await evidence.json()).success) {
+          keys.push(`GET ${RUN_SERVICE_EVIDENCE_TEMPLATE}`)
+        }
+      } else if (evidence.status === 404) {
+        const body = await evidence.json().catch(() => undefined) as { error?: string } | undefined
+        if (body?.error === 'unknown_run') keys.push(`GET ${RUN_SERVICE_EVIDENCE_TEMPLATE}`)
+      }
+      const marks = await fetch(`${origin}/run/${run}/marks`, { headers: bearer })
+      if (marks.status === 200 && RunsMarksHistoryResultSchema.safeParse(await marks.json()).success) {
+        keys.push(`GET ${RUN_SERVICE_MARKS_TEMPLATE}`)
+      }
+      const preview = await fetch(`${origin}/run/${run}/mark-preview`, {
+        method: 'POST',
+        headers: { ...bearer, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, kind: 'confirmed-bug' }),
+      })
+      if (preview.status === 200 && RunsMarkPreviewResultSchema.safeParse(await preview.json()).success) {
+        keys.push(`POST ${RUN_SERVICE_MARK_PREVIEW_TEMPLATE}`)
+      }
+    }
+
     const ok = await fetch(`${origin}${RUN_SERVICE_OK_ROUTE}`, { headers: bearer })
     if (ok.status === 200) {
       try {
@@ -1315,10 +1358,14 @@ export const runServiceSurfaceAdapter: SurfaceAdapter = Object.freeze({
       // route. 405-05 added the two run-shaped reads and 406-01 the analysis read, so the count is
       // seven paths of which five dispatch — and every one of the five is a row a reader can point
       // at, which is the property this entry exists to keep true.
-      why: 'the route table publishes seven paths and only five of them dispatch — runs.start, '
-        + 'runs.liveurl, runs.detail, runs.artifact and analysis.get; a remote caller addresses '
-        + 'one run it started, reads its events, its detail, its artifacts and its analysis, and '
-        + 'mints a view link for it, and nothing else. No route reaches any other read',
+      // 423-21: the evidence read and the two feedback reads joined, so ten paths of which eight
+      // dispatch — still every one of them a row a reader can point at.
+      why: 'the route table publishes ten paths and only eight of them dispatch — runs.start, '
+        + 'runs.liveurl, runs.detail, runs.artifact, analysis.get, runs.evidence, '
+        + 'runs.marks.history and runs.mark.preview; a remote caller addresses one run it '
+        + 'started, reads its events, its detail, its artifacts, its evidence, its analysis and '
+        + 'its marks, previews a mark on it and mints a view link for it, and nothing else. No '
+        + 'route reaches any other read',
     }),
     Object.freeze({
       capability: 'run cancellation',

@@ -236,6 +236,9 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     Object.freeze(['runs.detail', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.digest', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.events', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    // 2026-09-15 (423-21, D-04): in SORT position after `runs.events`. The typed evidence read has
+    // no shipped documentation page; a person meets it through the run-detail evidence tabs.
+    Object.freeze(['runs.evidence', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     // 2026-08-29 (407-01, D-05): in SORT position after `runs.get`. The used-and-learned READ has
     // no shipped documentation page — the surface a person meets it through is the dashboard's
@@ -259,6 +262,9 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     Object.freeze(['runs.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     // 2026-09-08, 419-11: the mark door has no shipped documentation page yet.
     Object.freeze(['runs.mark', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    // 2026-09-15 (423-21, D-18): the two feedback reads have no shipped documentation page yet.
+    Object.freeze(['runs.mark.preview', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['runs.marks.history', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
   ])
 
 /**

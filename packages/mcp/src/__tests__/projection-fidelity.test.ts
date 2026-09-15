@@ -240,9 +240,10 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
     // Integrity: the loop above would pass vacuously over an empty advertisement, and a cell that
     // can pass by checking nothing is the cell most likely to. The arithmetic, so a future reader
     // can tell a real change from a broken loop:
-    //   inputs  — 9 single/pipeline/mark tools + 12 fold arms (2 + 7 + 3) = 21
-    //   outputs — 14 tools less the 2 declared degradations              = 12
-    expect(checked).toBe(33)
+    //   inputs  — 11 single/pipeline/mark tools + 12 fold arms (2 + 7 + 3) = 23
+    //   outputs — 16 tools less the 2 declared degradations               = 14
+    // 2026-09-15 (423-21 D-18): the two feedback read tools add one input and one output each.
+    expect(checked).toBe(37)
   })
 
   // IDENTITY, NOT AGREEMENT — and this cell exists because the one above it was measured BLIND to
@@ -276,8 +277,8 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
       expect(advertised!.output, `${projection.name} output identity`).toBe(own.output)
       checked += 2
     }
-    // 8 non-union, non-apply tools contributing both sides.
-    expect(checked).toBe(16)
+    // 10 non-union, non-apply tools contributing both sides (423-21 D-18 adds the two feedback reads).
+    expect(checked).toBe(20)
   })
 
   // Pitfall 3, and the field-level half of D-16's "descriptions live on the zod schemas" clause.

@@ -284,7 +284,7 @@ const RUN_SERVICE_LIVE_URL_PATTERN = /^\/run\/([^/]+)\/live-url$/
  */
 export const RUN_SERVICE_DETAIL_TEMPLATE = '/run/:runId/detail'
 const RUN_SERVICE_DETAIL_PATTERN = /^\/run\/([^/]+)\/detail$/
-const RUN_SERVICE_EVIDENCE_TEMPLATE = '/run/:runId/evidence'
+export const RUN_SERVICE_EVIDENCE_TEMPLATE = '/run/:runId/evidence'
 const RUN_SERVICE_EVIDENCE_PATTERN = /^\/run\/([^/]+)\/evidence$/
 /**
  * The ref-resolving artifact READ (405-05, D-12 / 402 D-16) — the remote twin of the local door's

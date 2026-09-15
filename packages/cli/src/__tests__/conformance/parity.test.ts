@@ -2609,17 +2609,18 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
 
     // THE ARITHMETIC, so a future reader can tell a real change from a loop that stopped ranging.
-    // Twenty-four projected capabilities, on each side, every one of them either compared or
-    // carrying a declared exception:
-    //   inputs  — 24 less the 2 proposal apply doors and 1 pipeline downstream op = 21
-    //   outputs — 24 less the 2 degraded contracts and 1 pipeline downstream op   = 21
+    // Twenty-six projected capabilities, on each side, every one of them either compared or
+    // carrying a declared exception (2026-09-15, 423-21 D-18: the two feedback read tools add one
+    // compared input and one compared output each):
+    //   inputs  — 26 less the 2 proposal apply doors and 1 pipeline downstream op = 23
+    //   outputs — 26 less the 2 degraded contracts and 1 pipeline downstream op   = 23
     const projectedOpCount = AGENT_QA_TOOL_PROJECTIONS.reduce(
       (total, projection) => total + projection.ops.length,
       0,
     )
     const exceptionTotal = [...exceptionsTaken.values()].reduce((total, at) => total + at, 0)
-    expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(21)
-    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(21)
+    expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(23)
+    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(23)
     expect(
       inputsCompared + outputsCompared + exceptionTotal,
       'every projected capability must be compared or excepted on BOTH sides — no skip-lists',

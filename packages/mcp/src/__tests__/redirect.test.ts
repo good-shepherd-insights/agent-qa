@@ -80,6 +80,9 @@ const FIXTURE_OP_SCOPES: Readonly<Record<string, readonly FunctionScope[]>> = Ob
   'authoring.draft.verify': ['test-write'],
   'runs.start': ['run'],
   'runs.mark': ['knowledge-write'],
+  // 2026-09-15, 423-21 D-18: the two feedback reads are read-tier.
+  'runs.marks.history': ['read'],
+  'runs.mark.preview': ['read'],
   'knowledge.gates.list': ['read'],
   'config.field.set': ['config-write'],
   'config.target.create': ['config-write'],

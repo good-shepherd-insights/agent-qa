@@ -76,11 +76,13 @@ import {
   RunsDetailInputSchema,
   RunsDigestInputSchema,
   RunsEventsInputSchema,
+  RunsEvidenceInputSchema,
   RunsKnowledgeInputSchema,
   RunsLiveUrlInputSchema,
   RunsGetInputSchema,
   RunsListInputSchema,
   RunsMarkInputSchema,
+  RunsMarksHistoryInputSchema,
   RunsPostProcessingInputSchema,
   RunsStartInputSchema,
 } from '@vostride/agent-qa-schema'
@@ -142,11 +144,16 @@ export const OP_INPUT_CONTRACTS = {
   'runs.detail': RunsDetailInputSchema,
   'runs.digest': RunsDigestInputSchema,
   'runs.events': RunsEventsInputSchema,
+  // 2026-09-15, 423-21 D-04/D-18: the typed evidence read and the two feedback reads. The preview
+  // validates with runs.mark's exact input singleton; it adds no input schema of its own.
+  'runs.evidence': RunsEvidenceInputSchema,
   'runs.knowledge': RunsKnowledgeInputSchema,
   'runs.liveurl': RunsLiveUrlInputSchema,
   'runs.get': RunsGetInputSchema,
   'runs.list': RunsListInputSchema,
   'runs.mark': RunsMarkInputSchema,
+  'runs.mark.preview': RunsMarkInputSchema,
+  'runs.marks.history': RunsMarksHistoryInputSchema,
   'runs.postprocessing': RunsPostProcessingInputSchema,
   'runs.start': RunsStartInputSchema,
 } as const
@@ -1174,6 +1181,21 @@ export const SCENARIO_TABLE = Object.freeze([
     renderExpect: { markers: ['payload', 'runId', 'seq', 'ts', 'type'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
+  // 2026-09-15, 423-21 D-04: the typed evidence read. In SORT position after `runs.events`.
+  // Unprojected over MCP on `runs.detail`'s completed-run footing, with read policy points. Its
+  // markers are the ready arm's four required keys: the address read, the recorded entry, the
+  // outcome and the parsed document.
+  scenario({
+    opId: 'runs.evidence',
+    input: { runId: FIXTURE_RUN_ID, testIndex: 0, stepIndex: 0, kind: 'console' },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['address', 'document', 'evidence', 'outcome'] },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
   scenario({
     opId: 'runs.get',
     input: { runId: FIXTURE_RUN_ID },
@@ -1280,6 +1302,48 @@ export const SCENARIO_TABLE = Object.freeze([
     },
     renderExpect: { markers: ['receipt', 'kind'] },
     policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
+  }),
+  // 2026-09-15, 423-21 D-16/D-18: the consequence preview. runs.mark's exact input, answered
+  // read-tier: READ policy points (the postprocessing row's), never the writer's ask. Its markers
+  // are the consequences arm's required keys.
+  scenario({
+    opId: 'runs.mark.preview',
+    input: { runId: FIXTURE_RUN_ID, kind: 'confirmed-bug' },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_preview_run_mark' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'basis',
+        'draft',
+        'groundTruth',
+        'kind',
+        'knowledge',
+        'labels',
+        'latest',
+        'markKind',
+        'markedDecisionCount',
+        'member',
+        'prospective',
+        'resolvedStep',
+        'runId',
+      ],
+    },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
+  // 2026-09-15, 423-21 D-18/D-19: marks history, a read tool with read policy points.
+  scenario({
+    opId: 'runs.marks.history',
+    input: { runId: FIXTURE_RUN_ID },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_get_run_marks' } },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['entries', 'kind', 'runId'] },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
     opId: 'runs.postprocessing',

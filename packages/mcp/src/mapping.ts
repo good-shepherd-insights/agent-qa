@@ -7,10 +7,12 @@
 // module is where that data lives so a single artifact can be pinned by the bump guard and ranged
 // over by 397's parity suite. Anything that is not data belongs in `projection.ts` or `catalog.ts`.
 //
-// 2026-09-08, 419 D-19/D-20: fourteen tools over twenty-four registry ops; the other TWENTY-FOUR
-// ops are listed below in `UNPROJECTED_OPS` with a reason each. Twenty-four plus twenty-four is the
+// 2026-09-15, 423-21 D-04/D-18: sixteen tools over twenty-six registry ops; the other TWENTY-FIVE
+// ops are listed below in `UNPROJECTED_OPS` with a reason each. Twenty-six plus twenty-five is the
 // registry's own count, and `__tests__/mapping-bump-guard.test.ts` asserts that partition against
-// the registry's enumeration rather than against the arithmetic in this sentence.
+// the registry's enumeration rather than against the arithmetic in this sentence. The two new
+// tools are the feedback reads (marks history and the mark consequence preview); the typed
+// evidence read lands unprojected on `runs.detail`'s completed-run footing.
 //
 // 2026-08-17 (398 D-09): the unprojected side moved from nineteen to twenty when `agent.explain`
 // was registered. This sentence is prose and the guard is the mechanism — but the prose is updated
@@ -94,6 +96,9 @@ import {
   RunsListOutputSchema,
   RunsMarkInputSchema,
   RunsMarkOutcomeSchema,
+  RunsMarkPreviewResultSchema,
+  RunsMarksHistoryInputSchema,
+  RunsMarksHistoryResultSchema,
   RunsStartInputSchema,
   TOOL_FOLD_DISCRIMINANT,
 } from '@vostride/agent-qa-schema'
@@ -221,6 +226,13 @@ export interface ToolOpContracts {
  */
 export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = Object.freeze({
   'runs.mark': Object.freeze({ input: RunsMarkInputSchema, output: RunsMarkOutcomeSchema }),
+  // 2026-09-15, 423-21 D-18: the feedback reads keep their ops' own strict contracts. The preview
+  // takes runs.mark's exact input and answers the read-only plan result.
+  'runs.marks.history': Object.freeze({
+    input: RunsMarksHistoryInputSchema,
+    output: RunsMarksHistoryResultSchema,
+  }),
+  'runs.mark.preview': Object.freeze({ input: RunsMarkInputSchema, output: RunsMarkPreviewResultSchema }),
   'knowledge.gates.list': Object.freeze({
     input: KnowledgeGatesListInputSchema,
     output: KnowledgeGatesListResultSchema,
@@ -316,7 +328,7 @@ export const AGENT_QA_OP_CONTRACTS: Readonly<Record<string, ToolOpContracts>> = 
 })
 
 /**
- * THE CATALOGUE. Twelve tools, and the bump guard pins this exact list by name and by op set.
+ * THE CATALOGUE. Sixteen tools, and the bump guard pins this exact list by name and by op set.
  *
  * The read side is D-02: one universal entity door plus the three reads a workflow needs mid-flight
  * (runs list, run digest, the proposal inbox). The write side is propose-then-apply and nothing
@@ -392,6 +404,19 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
     ops: Object.freeze(['runs.mark']),
     kind: 'apply',
     credential: 'required',
+  }),
+  // 2026-09-15, 423-21 D-18: marks history and the mark consequence preview beside the mark
+  // writer. Both are read projections: no credential, no apply envelope and no write scope, so
+  // `agent_qa_mark_run` stays the only door that lands a mark.
+  Object.freeze({
+    name: 'agent_qa_get_run_marks',
+    ops: Object.freeze(['runs.marks.history']),
+    kind: 'read',
+  }),
+  Object.freeze({
+    name: 'agent_qa_preview_run_mark',
+    ops: Object.freeze(['runs.mark.preview']),
+    kind: 'read',
   }),
   Object.freeze({
     name: 'agent_qa_list_knowledge_gates',
@@ -613,7 +638,9 @@ export interface UnprojectedOp {
    * closed set with no member would also be exactly the empty literal the bump guard's
    * non-vacuity check passes silently over, which is the hole that check exists to close.
    */
-  readonly adjudication: '397' | '398' | '405' | '407' | '408'
+  // WIDENED AGAIN on 2026-09-15 (423-21, D-04) for `runs.evidence`, on the same reasoning: 397
+  // could not have ruled on an op registered in 423. Membership is spelled by op id in the guard.
+  readonly adjudication: '397' | '398' | '405' | '407' | '408' | '423'
 }
 
 export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
@@ -706,6 +733,18 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + "already renders a record's card and the digest carries what triage needs. Deferred as its "
       + 'own seam, not omitted.',
     adjudication: '407',
+  }),
+  Object.freeze({
+    opId: 'runs.evidence',
+    reason:
+      'D-04 (dated 2026-09-15, 423-21): not a mid-flight workflow read per D-02 — this is one '
+      + "COMPLETED run step's parsed evidence document (console, network, variables, accessibility "
+      + 'or ARIA), read by the dashboard evidence tabs, and it is unprojected on exactly the footing '
+      + 'its sibling `runs.detail` is. A network document alone may carry hundreds of records, so it '
+      + 'is a large one-shot payload with no shape a `tools/call` round trip wants, and a planner '
+      + 'mid-flight has no use for a finished step\'s captured traffic. The raw SHA bytes stay on '
+      + '`runs.artifact` and the two HTTP doors. Deferred as its own seam, not omitted.',
+    adjudication: '423',
   }),
   Object.freeze({
     opId: 'runs.liveurl',
