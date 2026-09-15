@@ -140,7 +140,7 @@ fi
 leg_subject () {
   case "$1" in
     M1) echo "$SUBSCRIBER_SUBJECT" ;;
-    M2) echo "$LOOP_SUBJECT" ;;
+    M2) echo "$FINALIZER_SUBJECT" ;;
     M2L) echo "$LOOP_SUBJECT" ;;
     M3) echo "$UNMASK_SUBJECT" ;;
   esac
@@ -316,10 +316,15 @@ apply_mutation () {
       perl -0pi -e "s/          handleSubActionRecorded\(envelope\.payload as SubActionRecordedPayload\)\n/          void \(envelope.payload as SubActionRecordedPayload\)\n/" \
         "$REPO_ROOT/$SUBSCRIBER_SUBJECT" ;;
     M2)
-      # Pre-423 spelling, kept until re-measured: the loop's emit as the carrier of the page's spend.
-      require_anchor M2 "$LOOP_SUBJECT" ', error, tokenUsage: tokenUsage() })'
-      perl -0pi -e "s/, error, tokenUsage: tokenUsage\(\) \}\)\n/, error \}\)\n/" \
-        "$REPO_ROOT/$LOOP_SUBJECT" ;;
+      # The member's ONE final publication loses both usage carriers and nothing else: the buffered
+      # loop extra is destructured without its `tokenUsage`, and the finished model scope is not
+      # forwarded. Evidence entries, variables, status, duration and error still publish, so the
+      # step is finalized exactly as before with no spend on it — which the page must call
+      # unmeasured. Dropping only one carrier would leave the other able to answer for it.
+      require_anchor M2 "$FINALIZER_SUBJECT" '    const { status: _status, durationMs: _duration, error: _error, ...extra } = pending?.extra ?? {}'
+      require_anchor M2 "$FINALIZER_SUBJECT" '      ...(modelObservations === undefined ? {} : { modelObservations }),'
+      perl -0pi -e 's/    const \{ status: _status, durationMs: _duration, error: _error, \.\.\.extra \} = pending\?\.extra \?\? \{\}\n/    const { status: _status, durationMs: _duration, error: _error, tokenUsage: _tokenUsage, ...extra } = pending?.extra ?? {}\n/; s/      \.\.\.\(modelObservations === undefined \? \{\} : \{ modelObservations \}\),\n//' \
+        "$REPO_ROOT/$FINALIZER_SUBJECT" ;;
     M2L)
       # The additive-optional field dropped at the loop's ONE emit that carries it. The accumulator
       # and the legacy trace two lines below are untouched, so this is precisely the 405-04 append
@@ -353,7 +358,7 @@ assert_landed () {
     echo "FATAL: mutation $leg changed no byte — its pattern no longer matches the subject" >&2
     exit 1
   fi
-  if false; then
+  if [ "$leg" = "M2" ]; then
     if grep -qF 'modelObservations === undefined ? {} : { modelObservations }' "$REPO_ROOT/$subject" \
       || ! grep -qF 'tokenUsage: _tokenUsage, ...extra' "$REPO_ROOT/$subject"; then
       echo "FATAL: mutation M2 landed only one of its two hunks" >&2

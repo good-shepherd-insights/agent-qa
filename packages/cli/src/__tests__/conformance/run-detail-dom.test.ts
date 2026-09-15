@@ -710,8 +710,10 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     expect(
       observed.tokenSummary,
       'the page reports this step as unmeasured. The stub answers non-zero `usage` on every arm, '
-      + 'so an unmeasured reading means the runner summed no model call, the emit dropped the '
-      + `triple, or the projection lost it.${context()}`,
+      + 'so an unmeasured reading means the step scope observed no model call, the member\'s final '
+      + 'publication (`step-read-finalization.ts`) dropped its usage, or the projection lost it. '
+      + '`405-run-detail-mutation.sh` M2 removes exactly that publication\'s usage and must red '
+      + `this cell alone.${context()}`,
     ).not.toBe(TOKENS_NOT_MEASURED_LABEL)
   })
 
