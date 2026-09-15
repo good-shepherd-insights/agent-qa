@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 56,
+  "rowCount": 59,
   "rows": [
     {
       "alias": "digest",
@@ -2014,6 +2014,69 @@
       ]
     },
     {
+      "description": "Read validated evidence recorded on one run step or ARIA sub-action.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "kind": "console",
+          "runId": "<RUNID>",
+          "stepIndex": 0,
+          "testIndex": 0
+        }
+      },
+      "id": "runs.evidence",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "console",
+              "network",
+              "a11y",
+              "aria",
+              "variables"
+            ],
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "stepIndex": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "subActionIndex": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "testIndex": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runId",
+          "testIndex",
+          "stepIndex",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
       "description": "Read one completed run in full, including its member-test outcomes.",
       "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
       "docPath": null,
@@ -2212,6 +2275,112 @@
       ]
     },
     {
+      "description": "Preview what runs.mark would do for this exact input: its refusals, resolved step, labels, the knowledge records it reaches with their content and evidence effects, and draft kind, without writing.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "kind": "false-fail",
+          "runId": "<RUNID>"
+        }
+      },
+      "id": "runs.mark.preview",
+      "kind": "op",
+      "mcpTool": "agent_qa_preview_run_mark",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "correctedAction": {
+            "additionalProperties": {},
+            "properties": {
+              "type": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          "correctedExpectation": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "false-fail",
+              "false-pass",
+              "confirmed-bug"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "stepIndex": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "testId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Read every mark on a run in ordinal order with supersession and each drafted proposal's current state.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "runId": "<RUNID>"
+        }
+      },
+      "id": "runs.marks.history",
+      "kind": "op",
+      "mcpTool": "agent_qa_get_run_marks",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
       "description": "Read one run's post-processing chip statuses from durable job state.",
       "docAnchor": "agent job queue",
       "docPath": "docs/queues.md",
@@ -2341,5 +2510,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "c84c6e566f86f5b7a17a2419ce430029c81718f7af40822fef6b107ad76f538b"
+  "rowsDigest": "27384fc31cd7aed4aad6b1d0c323cd45198d625ac95b8557d1f4e15f831a35af"
 }
