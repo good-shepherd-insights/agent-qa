@@ -78,10 +78,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { MarkCorrectionFields, type MarkCorrection } from './mark-correction-fields'
-import { Link } from 'react-router'
 import { MARKS, type Mark } from '@vostride/agent-qa-schema'
 import { DenialBlock } from '@/chat/chat-transcript'
-import { routes } from '@/lib/routes'
+import { COPY_REVIEW_COMMAND_LABEL, proposalReviewCommand } from '@/lib/knowledge-view'
+import { ReviewCommandButton } from '@/components/id-badge'
 import { MARK_LABELS, markChipText, markTriageText, type OnMark, type MarkDenial } from '@/lib/analysis-view'
 import { EvidenceIncomplete } from "@/components/run-detail/evidence-incomplete"
 import { MaskedText } from "@/components/run-detail/masked-text"
@@ -205,7 +205,7 @@ export function MemberMarkControls({ view, onMark, markDenial, markPending = fal
               <span data-mark-chip>{markChipText(mark)}</span>
               <span data-mark-triage><MaskedText text={markTriageText(mark)} /></span>
               {mark.disposition.kind === 'drafted' ? (
-                <Link data-mark-confirm-link to={routes.chat} className={`${MARK_ACTION_CLASS} border-border bg-background`}>review in chat</Link>
+                <ReviewCommandButton data-mark-review command={proposalReviewCommand(mark.disposition.proposalId)} label={COPY_REVIEW_COMMAND_LABEL} className={`${MARK_ACTION_CLASS} border-border bg-background`} />
               ) : null}
             </>
           )}

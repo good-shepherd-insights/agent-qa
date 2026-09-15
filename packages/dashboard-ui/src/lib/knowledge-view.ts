@@ -24,7 +24,13 @@
 // Publishing them here — with the shape of the `ready` arm they hang off — is what keeps those
 // plans pure additions to a proven module rather than three private spellings of one contract.
 
-import { TRACE_TRUNCATION_TOP_K, canonicalJson, formatEntityUri, parseShortId } from '@vostride/agent-qa-schema'
+import {
+  ProposalIdSchema,
+  TRACE_TRUNCATION_TOP_K,
+  canonicalJson,
+  formatEntityUri,
+  parseShortId,
+} from '@vostride/agent-qa-schema'
 import type {
   BriefWhyNoTraceReason,
   CurationBreakdown,
@@ -45,7 +51,6 @@ import type {
 
 import { entityRefRoute } from '@/chat/entity-card'
 import { COUNTS_NOT_RECORDED_TEXT, curationFactsText } from './post-processing-view'
-import { routes } from './routes'
 
 import type { KnowledgeRead } from './api'
 
@@ -409,6 +414,38 @@ export const CHANGED_NOTHING_TEXT = 'Curation ran and changed nothing.'
 
 /** The one CTA in the whole tab (D-11) — where proposals are reviewed, never a proposal itself. */
 export const REVIEW_PROPOSALS_CTA = 'Review proposals'
+
+/**
+ * The runnable review command for every pending proposal (423 D-19 · SC5).
+ *
+ * `agent-qa proposals list` is the terminal door over the registry's `proposals.list` op. There is
+ * no dashboard inbox and this module mints no route, so the CTA hands a reader the command itself.
+ */
+export const PENDING_PROPOSALS_REVIEW_COMMAND = 'agent-qa proposals list --status pending'
+
+/**
+ * The runnable review command for one drafted proposal, over the `proposals.show` op.
+ *
+ * ONLY A CANONICAL ID IS INTERPOLATED. The mark receipt's `proposalId` is a plain string on the
+ * wire; a value that is not a `prop_` id (a masked marker, or anything with shell metacharacters)
+ * never reaches a copied command, and the reader is pointed at the pending list instead.
+ */
+export function proposalReviewCommand(proposalId: string): string {
+  return ProposalIdSchema.safeParse(proposalId).success
+    ? `agent-qa proposals show ${proposalId}`
+    : PENDING_PROPOSALS_REVIEW_COMMAND
+}
+
+/** The accessible purpose of a mark's review control; the command itself follows it. */
+export const COPY_REVIEW_COMMAND_LABEL = 'Copy review command'
+
+/** Announced when the review command reached the clipboard. */
+export const REVIEW_COMMAND_COPIED_TEXT = 'Review command copied to the clipboard'
+
+/** Announced when it did not, with the command spelled out so it can still be run. */
+export function reviewCommandCopyFailedText(command: string): string {
+  return `Could not copy the review command. Run: ${command}`
+}
 
 /**
  * The pending-proposals line (D-11).
@@ -885,7 +922,8 @@ export interface ProposalsView {
   readonly count: number
   readonly line: string
   readonly ctaText: string
-  readonly href: string
+  /** A runnable CLI command (423 D-19), never a route: there is no dashboard proposals inbox. */
+  readonly command: string
 }
 
 /** The rung that served THIS run, if the evidence recorded one (D-13). */
@@ -1186,10 +1224,9 @@ function proposalsView(count: number | undefined): ProposalsView | undefined {
     count,
     line: pendingProposalsLine(count),
     ctaText: REVIEW_PROPOSALS_CTA,
-    // Proposals are reviewed through `/fn proposals.list` in chat; no dashboard inbox route
-    // exists, and this module does not mint one. `routes` is the same builder every other page
-    // navigates with, so a rename moves this link rather than leaving it pointing at nothing.
-    href: routes.chat,
+    // No dashboard inbox route exists and this module mints none; the run-detail CTA no longer
+    // targets Chat (423 D-19 · SC5). It carries the terminal command over `proposals.list`.
+    command: PENDING_PROPOSALS_REVIEW_COMMAND,
   }
 }
 

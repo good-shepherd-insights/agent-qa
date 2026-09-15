@@ -57,10 +57,10 @@
 
 import { Link } from "react-router"
 
+import { ReviewCommandButton } from "@/components/id-badge"
 import { Badge } from "@/components/ui/badge"
 import {
   LEARNED_HEADING,
-  REVIEW_PROPOSALS_CTA,
   promotionPathLabel,
   type LearnedChangeKind,
   type LearnedRowView,
@@ -186,18 +186,16 @@ export function KnowledgeLearned({
         >
           <span className="tabular-nums">{proposals.line}</span>
           {/*
-            THE CTA WORDS ARE IMPORTED, like every other sentence in this tab (403-05 D-5).
-            `ProposalsView.ctaText` carries the same constant for anything reading the projection
-            rather than the DOM; the cells assert the two agree, so there is one spelling and it
-            lives in `lib/knowledge-view.ts`.
+            THE CTA IS A RUNNABLE COMMAND, NOT A ROUTE (423 D-19 · SC5). No dashboard inbox exists,
+            so the control shows and copies `ProposalsView.command`; `ctaText` names it for
+            assistive technology. Both come from `lib/knowledge-view.ts`.
           */}
-          <Link
+          <ReviewCommandButton
             data-review-proposals
-            to={proposals.href}
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            {REVIEW_PROPOSALS_CTA}
-          </Link>
+            command={proposals.command}
+            label={proposals.ctaText}
+            className="font-mono text-xs text-primary underline-offset-4 hover:underline"
+          />
         </p>
       )}
     </section>

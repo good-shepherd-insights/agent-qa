@@ -1565,7 +1565,7 @@ describe('the proposals line is a COUNT and a door, never any proposal content (
       curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
       pendingProposalCount: 2,
     })
-    expect(Object.keys(proposals ?? {}).sort()).toEqual(['count', 'ctaText', 'href', 'line'])
+    expect(Object.keys(proposals ?? {}).sort()).toEqual(['command', 'count', 'ctaText', 'line'])
   })
 })
 

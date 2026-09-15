@@ -417,9 +417,10 @@ describe('423 run-detail review pointers', () => {
   })
 
   it('NO-CHAT-TARGET: no run-detail target is routes.chat, and all three controls copy a runnable review command by keyboard', async () => {
-    const detailUrl = page.url()
     const chatPath = '/chat'
     const pathOf = (target: string) => new URL(target, fixture.origin).pathname
+    const detailPath = pathOf(page.url())
+    const navigatedBefore = navigations.length
 
     const controls = [
       { selector: '[data-member-mark] [data-mark-review]', expected: `agent-qa proposals show ${MEMBER_PROPOSAL}`, target: MEMBER_PROPOSAL, key: 'Enter' },
@@ -461,7 +462,9 @@ describe('423 run-detail review pointers', () => {
       }
     }
 
-    expect(page.url()).toBe(detailUrl)
+    // Viewer state (`?tab=knowledge` from the `m` shortcut) may change; the page never leaves run detail.
+    expect(pathOf(page.url())).toBe(detailPath)
+    expect(navigations.slice(navigatedBefore).map(pathOf).filter(path => path !== detailPath)).toEqual([])
     expect(navigations.map(pathOf)).not.toContain(chatPath)
   })
 })
