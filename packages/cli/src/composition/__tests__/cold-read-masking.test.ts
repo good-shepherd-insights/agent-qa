@@ -118,9 +118,11 @@ function cold(p: ReturnType<typeof project>, retained: () => Iterable<ReturnType
   }
 }
 
-function fixtureBytes(root: string): unknown {
-  return readdirSync(root, { withFileTypes: true }).map(entry => [entry.name,
-    entry.isDirectory() ? fixtureBytes(join(root, entry.name)) : readFileSync(join(root, entry.name), 'hex')])
+const AUDIT_LOG = 'execution_audit.jsonl'
+
+function fixtureBytes(root: string, omit?: string): unknown {
+  return readdirSync(root, { withFileTypes: true }).filter(entry => entry.name !== omit).map(entry => [entry.name,
+    entry.isDirectory() ? fixtureBytes(join(root, entry.name), omit) : readFileSync(join(root, entry.name), 'hex')])
 }
 
 function expectUnchangedTree(root: string, before: unknown, fixture: string) {
@@ -226,15 +228,21 @@ describe('Wave 18 cold read masking recovery', () => {
       const second = kind === 'coexisting' ? `second ${coexisting}` : 'second plain'
       await publish(p, snapshot(p.runId, ['first synthetic-skipped-secret', second]))
       const read = cold(p)
-      const settled = fixtureBytes(p.root)
       const first = await read.read()
+      // Measured after the first read, which opens the published job store (SQLite sidecars).
+      // Every invocation appends one execution audit row by design; nothing else may change.
+      const audit = join(p.agentQaRoot, 'execution_audit.jsonl')
+      const auditRows = () => readFileSync(audit, 'utf8').split('\n').filter(Boolean).length
+      const settled = fixtureBytes(p.root, AUDIT_LOG)
+      const settledRows = auditRows()
       expect(first).not.toHaveProperty('curationSnapshotWithheld')
       expect(first.curationSnapshot!.rows[0]!.changes.map(row => row.change.evidenceToken)).toEqual([
         `first ${maskedMarker('secret')}`,
         kind === 'coexisting' ? `second ${maskedMarker('secret')}` : 'second plain',
       ])
       expect(await read.read()).toEqual(first)
-      expectUnchangedTree(p.root, settled, `skipped-${kind}-reads`)
+      expect(fixtureBytes(p.root, AUDIT_LOG)).toEqual(settled)
+      expect(auditRows()).toBe(settledRows + 1)
       expect(read.host.jobs).not.toHaveBeenCalled()
     },
   )

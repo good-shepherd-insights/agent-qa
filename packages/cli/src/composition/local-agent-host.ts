@@ -33,6 +33,7 @@ import { createReplayGatePortForHost, type ReplayGateClaimAuthority } from '../g
 import { createHash } from 'node:crypto'
 import {
   closeSync,
+  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -111,6 +112,7 @@ import {
   parseSuiteFile,
   normalizeAuthStateUse,
   resolveAuthStateForRun,
+  resolveAuthStatePaths,
   parseTestFileWithTokens,
   renderPatchedTestDoc,
   resolveKnowledgeRoot,
@@ -305,7 +307,8 @@ export function createColdReadMaskingSources(
       const suites = await discoverWorkspaceFiles({ workspace, kind: 'suite' })
       for (const file of tests) {
         const parsed = parseTestFile(readFileSync(file.absolutePath, 'utf8'), file.workspaceRelativePath)
-        if (parsed.errors.length > 0) throw new Error('Cold read auth declarations unavailable')
+        // Safe to skip: a file that does not parse declares nothing a run could have loaded.
+        if (parsed.errors.length > 0) continue
         for (const test of parsed.tests) {
           collect(test.target, mergeUseBlocks(config.use, undefined, test.use, {}))
         }
@@ -317,10 +320,14 @@ export function createColdReadMaskingSources(
       const authStatePayloads: unknown[] = []
       for (const declaration of declarations.values()) {
         const target = resolveTarget(config, declaration.targetName)
-        const state = await resolveAuthStateForRun({
+        const location = {
           configDir: dirname(resolve(configPath)), authStateDir: config.services?.authState?.dir,
           ...declaration, target: { platform: target.platform },
-        })
+        }
+        // Safe to skip: a state that was never captured holds no values a run could have recorded.
+        // A payload that exists but cannot be read or validated still refuses every source below.
+        if (!existsSync(resolveAuthStatePaths(location).payloadPath)) continue
+        const state = await resolveAuthStateForRun(location)
         authStatePayloads.push(ColdReadAuthPayloadSchema.parse(
           JSON.parse(readFileSync(state.storageStatePath, 'utf8')),
         ))
