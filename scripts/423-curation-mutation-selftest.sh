@@ -23,6 +23,7 @@ const STG = 'src/__tests__/423-stage-contracts.test.ts'
 const STG_D = 'src/__tests__/423-stage-contracts.test-d.ts'
 const SNAPSHOT = 'src/__tests__/423-curation-snapshot.test.ts'
 const RECOVERY = 'src/__tests__/423-curation-recovery.test.ts'
+const COLD_T = 'src/composition/__tests__/cold-read-masking.test.ts'
 
 runSelftest({
   slug: '423-curation-mutation',
@@ -75,6 +76,12 @@ runSelftest({
       ] },
     { id: 'C13', claim: 'POSTPROCESSING-SNAPSHOT-WITHHELD', subject: 'packages/agent/src/functions/ops/runs-post-processing.ts',
       reds: ['src/functions/__tests__/runs-post-processing.test.ts > POSTPROCESSING-SNAPSHOT-WITHHELD'] },
+    { id: 'C14', claim: 'COLD-AUTH-SKIPPED', subject: 'packages/cli/src/composition/local-agent-host.ts',
+      reds: [
+        `${COLD_T} > COLD-AUTH-SKIPPED missing`,
+        `${COLD_T} > COLD-AUTH-SKIPPED capture-missing`,
+        `${COLD_T} > COLD-AUTH-SKIPPED coexisting`,
+      ] },
   ],
 })
 NODE
