@@ -889,7 +889,7 @@
       "classifies": true,
       "id": "runs.knowledge",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "f035b10b8ced9d4da06a738415ceb912c5a0a8cc8e4b54e220e147ce5836fc73",
+      "outputSchemaDigest": "47cb4d78207d9e988e689e9890a230f6cc123c67e888dcd5d03901e1f07c7913",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
@@ -1010,7 +1010,7 @@
       "classifies": true,
       "id": "runs.postprocessing",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "efee7db140ac4b077d9b669b010ddaf01a79a141a2f8062a45b88faba6b8fc13",
+      "outputSchemaDigest": "85e39f7c1ef386a2a5add985823cd1df57ba9a69c2bab4f47508ed0db1079dd3",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
