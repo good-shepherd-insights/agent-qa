@@ -59,7 +59,9 @@
     "lint:namespace": "! grep -r '@agent-qa/' packages/ --include='*.ts' --include='*.json' --include='*.js' -l --exclude-dir=node_modules --exclude-dir=dist",
     "validate:label-mutation": "bash scripts/420-label-mutation.sh",
     "validate:panel-mutation": "bash scripts/421-panel-mutation.sh",
-    "validate:quarantine-mutation": "bash scripts/422-quarantine-mutation.sh"
+    "validate:quarantine-mutation": "bash scripts/422-quarantine-mutation.sh",
+    "validate:423-evidence-mutation": "bash scripts/423-evidence-mutation.sh",
+    "validate:423-evidence-mutation-selftest": "bash scripts/423-evidence-mutation-selftest.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
