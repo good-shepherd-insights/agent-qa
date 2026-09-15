@@ -62,6 +62,15 @@ describe('423 curation tail snapshot', () => {
     expect(f.info).toHaveBeenCalledWith('curation: added 1, confirmed 1, superseded 1, deprecated 1, proposed 1')
   })
 
+  it('TAIL-RECEIPT-COUNTS persists curated and deprecated so a rerun short-circuit returns them without draining', async () => {
+    const f = fixture({ committed: 3, deprecated: 1 })
+    expect(await tailModule.curateCompletedRun(f.input)).toMatchObject({ curated: 3, deprecated: 1, complete: true, snapshot })
+    expect(tailModule.readCurationTailReceipt(f.root)).toMatchObject({ curated: 3, deprecated: 1, snapshot })
+    const second = await tailModule.curateCompletedRun(f.input)
+    expect(second).toEqual({ curated: 3, deprecated: 1, complete: true, drainKind: 'drained', candidateIds: [], snapshot })
+    expect(f.drainQueue).toHaveBeenCalledTimes(1)
+  })
+
   it('TAIL-LEGACY-READ retains historical counters without minting a snapshot', async () => {
     const f = fixture({ snapshot: undefined })
     await tailModule.curateCompletedRun(f.input)
