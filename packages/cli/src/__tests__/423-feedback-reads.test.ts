@@ -8,7 +8,7 @@ import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { createConfirmRegistry } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
-import { asRunId, maskedMarker, RunsMarkOutcomeSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarksHistoryResult, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
+import { asEvidenceToken, asRecordId, asRunId, maskedMarker, RunsMarkInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarkPreviewResult, type RunsMarksHistoryResult, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { composeDashboardDoor, DASHBOARD_FUNCTION_CALLER } from '../commands/dashboard.js'
@@ -20,8 +20,32 @@ import { createFeedbackReadsPortForHost, type FeedbackReadsHostDeps } from '../g
 import { previewMarkConsequences as preview } from '../gates/feedback-plan.js'
 import { files, markFixture } from '../gates/__tests__/feedback-fixture.js'
 
+// 2026-09-15, 423 D-16: eval initialization, gold freeze and the wording model call refuse while a
+// preview runs. A key-only session only resolves configured roots; it reads no secret or auth state.
+const denial = vi.hoisted(() => ({ active: false }))
+vi.mock('../eval-session-composition.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../eval-session-composition.js')>()
+  const deny = (name: string) => { if (denial.active) throw new Error(`preview must not call ${name}`) }
+  return { ...actual,
+    freezeGoldenTrajectory: (...args: Parameters<typeof actual.freezeGoldenTrajectory>) => {
+      deny('freezeGoldenTrajectory'); return actual.freezeGoldenTrajectory(...args) },
+    resolveEvalSession: async (input?: Parameters<typeof actual.resolveEvalSession>[0]) => {
+      if (input?.keyOnly !== true) deny('resolveEvalSession')
+      return await actual.resolveEvalSession(input) } }
+})
+vi.mock('../gates/feedback-wording.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../gates/feedback-wording.js')>()
+  return { ...actual, wordImprovementPlan: async (...args: Parameters<typeof actual.wordImprovementPlan>) => {
+    if (denial.active) throw new Error('preview must not call wordImprovementPlan')
+    return await actual.wordImprovementPlan(...args) } }
+})
+
 const { claimPendingProposal, showProposalEnvelope } = await import(new URL('../../../knowledge-local/src/review/proposals-store.js', import.meta.url).href)
 const { runsMarksHistorySpec } = await import(new URL('../../../agent/src/functions/ops/runs-marks-history.js', import.meta.url).href)
+const { runsMarkPreviewSpec } = await import(new URL('../../../agent/src/functions/ops/runs-mark-preview.js', import.meta.url).href)
+const { showRecords } = await import(new URL('../../../knowledge-local/src/show-records.js', import.meta.url).href)
+const { appendOutcomeEvent } = await import(new URL('../../../knowledge-local/src/bundle-append.js', import.meta.url).href)
+const { createPromotionFloorFixture } = await import(new URL('../../../knowledge-local/src/curator/__tests__/fixtures/promotion-floor-fixture.js', import.meta.url).href)
 
 const refuse = (name: string) => () => { throw new Error(`preview must not call ${name}`) }
 /** Every writer, lease and draft capability throws; only the deterministic reads remain. */
@@ -488,4 +512,297 @@ describe('423-18 marks history registration and host binding (D-19)', () => {
     expect(viaDashboard).toEqual(viaRegistry)
     expect(storeMaps(s.stores)).toEqual(before)
   })
+})
+
+// 2026-09-15, 423 D-16/D-17: runs.mark.preview through the read host, content-led and write-free.
+const CONTENT_SECRET = 'Held checkout marked'
+type PreviewFixture = ReturnType<typeof markFixture>
+type Consequences = Extract<RunsMarkPreviewResult, { kind: 'consequences' }>
+const MARK_ID = /mark_[0-9a-f]{12}/g
+
+/** Writer lease, ledger transaction/intent, gold freeze, eval initialization and the wording model all throw. */
+async function denying<T>(run: () => Promise<T>): Promise<T> {
+  const spies = (['transact', 'prepareIntent', 'checkpointIntent', 'append'] as const)
+    .map(name => vi.spyOn(FsMarkLedger.prototype, name).mockImplementation(refuse(`FsMarkLedger.${name}`) as never))
+  denial.active = true
+  try { return await run() } finally {
+    denial.active = false
+    for (const spy of spies) spy.mockRestore()
+  }
+}
+
+function previewReadsFor(f: { agentQaRoot: string; configPath: string }, extra: Partial<FeedbackReadsHostDeps> = {}): FeedbackReadsPort {
+  return createFeedbackReadsPortForHost({ agentQaRoot: f.agentQaRoot, configPath: f.configPath, curation: readOnlyCuration(), ...extra })
+}
+
+function previewPort(reads: FeedbackReadsPort) {
+  expect(typeof reads.preview, 'gates/feedback-read-host must expose preview').toBe('function')
+  return reads.preview!.bind(reads)
+}
+
+/** The host answer, unmasked, under every negative capability. */
+async function rawPreview(reads: FeedbackReadsPort, input: RunsMarkInput): Promise<RunsMarkPreviewResult> {
+  const preview = previewPort(reads)
+  return await denying(() => preview(input))
+}
+
+/** The real op: exact input parse, live mask and strict result parse over the host answer. */
+async function opPreview(reads: FeedbackReadsPort, input: RunsMarkInput): Promise<RunsMarkPreviewResult> {
+  previewPort(reads)
+  return await denying(async () => await runsMarkPreviewSpec.invoke(input, { feedbackReads: reads } as never) as RunsMarkPreviewResult)
+}
+
+function consequencesOf(result: RunsMarkPreviewResult): Consequences {
+  if (result.kind !== 'consequences') throw new Error(`expected consequences, got ${result.kind}`)
+  return result
+}
+
+/** No receipt, gold id, timestamp or fresh mark id: only mark ids already in the ledger may appear. */
+function expectNoMint(result: RunsMarkPreviewResult, known: readonly string[] = []) {
+  const text = JSON.stringify(result)
+  expect(text).not.toMatch(/"(markedAt|cassetteId|receipt|proposalUuid)"/)
+  expect([...new Set(text.match(MARK_ID) ?? [])].filter(id => !known.includes(id))).toEqual([])
+}
+
+function bundleDirOf(f: PreviewFixture, recordId: string) {
+  return join(f.knowledgeRoot, 'memory', 'storefront', 'bundles', recordId)
+}
+
+describe('423-19 content-led consequence preview over the read host (D-16/D-17)', () => {
+  const roots: string[] = []
+  afterEach(() => {
+    setActiveMaskingContextResolver(() => undefined)
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+  function fixture() {
+    const f = markFixture(); roots.push(f.root)
+    return f
+  }
+  function copyOf(f: PreviewFixture) {
+    const root = mkdtempSync(join(tmpdir(), '423-19-scene-')); roots.push(root)
+    cpSync(f.root, root, { recursive: true })
+    const rebase = (path: string) => join(root, path.slice(f.root.length))
+    return { ...f, root, agentQaRoot: rebase(f.agentQaRoot), configPath: rebase(f.configPath), knowledgeRoot: rebase(f.knowledgeRoot),
+      runDir: rebase(f.runDir), deps: { ...f.deps, agentQaRoot: rebase(f.agentQaRoot), configPath: rebase(f.configPath) } }
+  }
+
+  it('PREVIEW-WRITES-NOTHING: valid, refused, repeated, quarantined, false-pass, missing and corrupt previews keep every path and byte', async () => {
+    const f = fixture()
+    const runId = f.handoff.runId
+    const prior = await createFeedbackPortForHost(f.deps).mark({ runId, stepIndex: 0, kind: 'false-fail' })
+    if (prior.kind !== 'marked') throw new Error('expected the prior step mark')
+    const known = [prior.receipt.markId]
+    // An orphaned intent is exactly what a writer transaction would inspect and clean up.
+    writeFileSync(join(f.runDir, 'mark-intent.json'), '{"stage":"prepared"}\n')
+    const reads = previewReadsFor(f)
+    const before = tree(f.root)
+    const cases: [RunsMarkInput, RunsMarkPreviewResult['kind']][] = [
+      [{ runId, kind: 'false-fail' }, 'consequences'],
+      [{ runId, kind: 'confirmed-bug' }, 'consequences'],
+      [{ runId, kind: 'false-pass' }, 'consequences'],
+      [{ runId, stepIndex: 5, kind: 'false-fail' }, 'step-not-found'],
+      [{ runId, testId: 'absent-member', kind: 'confirmed-bug' }, 'member-not-found'],
+      [{ runId: asRunId(generateRunId()), kind: 'confirmed-bug' }, 'run-not-found'],
+      [{ runId, stepIndex: 0, kind: 'false-fail', note: 'only the note moved' }, 'already-marked'],
+    ]
+    for (const [input, kind] of cases) {
+      const result = await opPreview(reads, input)
+      expect(result.kind, JSON.stringify(input)).toBe(kind)
+      expectNoMint(result, known)
+      expect(tree(f.root)).toEqual(before)
+    }
+
+    const quarantine = copyOf(f)
+    const quarantinedHandoff = { ...f.handoff, tests: [{ ...f.handoff.tests[0]!, rootCause: { class: 'environment' as const, producer: 'deterministic-classifier', confidence: 1, evidence: { citedSteps: [0], citedAnchors: [], citedArtifacts: [], rationale: 'Recorded classification' }, memoryMisdirectionRuledOut: true, perTest: 0 } }] }
+    writeFileSync(join(quarantine.runDir, 'handoff.json'), JSON.stringify(quarantinedHandoff))
+    const quarantineBefore = tree(quarantine.root)
+    expect(await opPreview(previewReadsFor(quarantine), { runId, kind: 'false-pass' }))
+      .toMatchObject({ kind: 'quarantined', prospective: true, markKind: 'false-pass', class: 'environment', member: { testIndex: 0 } })
+    expect(tree(quarantine.root)).toEqual(quarantineBefore)
+
+    // A purged served record and a corrupt served bundle are typed absences, not writes or crashes.
+    const purged = copyOf(f)
+    rmSync(bundleDirOf(purged, f.published.id), { recursive: true })
+    const purgedBefore = tree(purged.root)
+    expect(consequencesOf(await opPreview(previewReadsFor(purged), { runId, kind: 'confirmed-bug' })).knowledge.records)
+      .toEqual([{ recordId: f.published.id, contentAbsence: { reason: 'not-found' }, served: true, evidence: { kind: 'unreadable' } }])
+    expect(tree(purged.root)).toEqual(purgedBefore)
+    const corrupt = copyOf(f)
+    writeFileSync(join(bundleDirOf(corrupt, f.published.id), 'manifest.json'), '{"torn":')
+    const corruptBefore = tree(corrupt.root)
+    expect(consequencesOf(await opPreview(previewReadsFor(corrupt), { runId, kind: 'confirmed-bug' })).knowledge)
+      .toMatchObject({ records: [{ recordId: f.published.id, contentAbsence: { reason: 'scan-incomplete' }, served: true, evidence: { kind: 'unreadable' } }],
+        evidence: { confirmed: 0, overturned: 0 } })
+    expect(tree(corrupt.root)).toEqual(corruptBefore)
+
+    // A corrupt ledger refuses the read the writer would refuse, with its bytes left in place.
+    const torn = copyOf(f)
+    writeFileSync(join(torn.runDir, 'marks.jsonl'), '{"torn":\n')
+    const tornBefore = tree(torn.root)
+    await expect(denying(() => previewPort(previewReadsFor(torn))({ runId, kind: 'confirmed-bug' }))).rejects.toThrow()
+    expect(tree(torn.root)).toEqual(tornBefore)
+
+    // A host without a config binds history only, so preview stays unbound by name.
+    expect(createFeedbackReadsPortForHost({ agentQaRoot: f.agentQaRoot }).preview).toBeUndefined()
+  }, 120_000)
+
+  it('INTENT-UNCHANGED: an in-flight mark intent is observed without cleanup, and only the writer resumes it', async () => {
+    const f = fixture()
+    const runId = f.handoff.runId
+    const input: RunsMarkInput = { runId, kind: 'false-fail', note: 'interrupted' }
+    await expect(createFeedbackPortForHost({ ...f.deps, word: async () => { throw new Error('model unavailable') } }).mark(input))
+      .rejects.toThrow('model unavailable')
+    const intentPath = join(f.runDir, 'mark-intent.json')
+    const intent = JSON.parse(readFileSync(intentPath, 'utf8')) as { stage: string; mark: MarkReceipt }
+    expect(intent.stage).toBe('evidence')
+    expect(new FsMarkLedger({ root: f.agentQaRoot, runId }).read()).toEqual([])
+    const before = tree(f.root)
+    const intentBytes = readFileSync(intentPath)
+
+    const reads = previewReadsFor(f)
+    const previewed = consequencesOf(await rawPreview(reads, input))
+    expect(previewed).toMatchObject({ latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 },
+      knowledge: { evidence: { confirmed: 1, overturned: 0 } } })
+    expect(previewed.basis).not.toHaveProperty('priorMarkOrdinal')
+    // The intent's minted id and time belong to the writer; the preview neither reports nor replaces them.
+    expectNoMint(previewed)
+    expect(JSON.stringify(previewed)).not.toContain(intent.mark.markId)
+    expect(readFileSync(intentPath)).toEqual(intentBytes)
+    expect(tree(f.root)).toEqual(before)
+
+    const resumed = await createFeedbackPortForHost(f.deps).mark(input)
+    expect(resumed).toMatchObject({ kind: 'marked', receipt: { markId: intent.mark.markId, markedAt: intent.mark.markedAt, ordinal: 1,
+      evidence: previewed.knowledge.evidence } })
+    expect(existsSync(intentPath)).toBe(false)
+  }, 120_000)
+
+  it('BASIS-RACE: the basis is an observation; a mark landing after preview is re-evaluated by the unchanged writer', async () => {
+    const f = fixture()
+    const runId = f.handoff.runId
+    const port = createFeedbackPortForHost(f.deps)
+    const reads = previewReadsFor(f)
+    const input: RunsMarkInput = { runId, kind: 'false-fail' }
+    const stale = consequencesOf(await opPreview(reads, input))
+    expect(stale).toMatchObject({ latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 } })
+    // The observed basis is not a token runs.mark accepts.
+    expect(RunsMarkInputSchema.safeParse({ ...input, basis: stale.basis }).success).toBe(false)
+    expect(RunsMarkInputSchema.safeParse({ ...input, priorMarkOrdinal: 0 }).success).toBe(false)
+
+    const racing = await port.mark({ runId, kind: 'confirmed-bug' })
+    if (racing.kind !== 'marked') throw new Error('expected the racing mark')
+    const landed = await port.mark(input)
+    expect(landed).toMatchObject({ kind: 'marked', receipt: { ordinal: 2, supersedes: racing.receipt.markId } })
+
+    const fresh = await opPreview(reads, { runId, kind: 'confirmed-bug' })
+    expect(fresh).toMatchObject({ kind: 'consequences', latest: { kind: 'supersedes', ordinal: 2 },
+      basis: { ledgerOrdinal: 2, priorMarkOrdinal: 2 } })
+    // A stale consequences preview never outranks the writer's identical-repeat rule.
+    const repeatPreview = consequencesOf(await opPreview(reads, { runId, kind: 'confirmed-bug', note: 'raced' }))
+    expect(repeatPreview.basis).toEqual({ ledgerOrdinal: 2, priorMarkOrdinal: 2 })
+    expect(await port.mark({ runId, kind: 'confirmed-bug' })).toMatchObject({ kind: 'marked', receipt: { ordinal: 3 } })
+    expect(await port.mark({ runId, kind: 'confirmed-bug', note: 'raced' })).toMatchObject({ kind: 'already-marked' })
+    expect(await opPreview(reads, { runId, kind: 'confirmed-bug', note: 'raced' }))
+      .toMatchObject({ kind: 'already-marked', prior: { ordinal: 3, kind: 'confirmed-bug', testIndex: 0 }, basis: { ledgerOrdinal: 3, priorMarkOrdinal: 3 } })
+  }, 120_000)
+
+  it('PREVIEW-CONTENT: served targets lead with joined content and their effects; typed absences keep ids and effects', async () => {
+    const f = fixture()
+    const runId = f.handoff.runId
+    const reads = previewReadsFor(f)
+    const before = tree(f.root)
+    const raw = consequencesOf(await rawPreview(reads, { runId, kind: 'false-fail' }))
+    const [shown] = showRecords({ knowledgeRoot: f.knowledgeRoot, recordIds: [f.published.id] })
+    if (shown?.kind !== 'found') throw new Error('expected the served record to be shown')
+    expect(raw.knowledge).toEqual({ servedRecordIds: [f.published.id], appendsEvidence: true,
+      records: [{ recordId: f.published.id, recordContent: {
+        content: shown.body, summary: shown.summary, kind: shown.record.kind,
+        applicability: { product: shown.record.product, scope: shown.record.scope, anchors: shown.record.anchors,
+          openedAtOrdinal: shown.record.openedAtOrdinal },
+        currentStatus: shown.record.status,
+        currentTrust: { confirmations: shown.record.confirmations, contradictions: shown.record.contradictions,
+          evidenceTokens: shown.record.evidenceTokens, lastEventOrdinal: shown.record.lastEventOrdinal } },
+      served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] } }],
+      evidence: { confirmed: 1, overturned: 0 } })
+    // Content leads the record: identity first, then the joined content, then its effects.
+    expect(Object.keys(raw.knowledge.records[0]!)).toEqual(['recordId', 'recordContent', 'served', 'evidence'])
+    expect(raw.knowledge.records[0]!.recordContent!.content).toContain(CONTENT_SECRET)
+    expect(tree(f.root)).toEqual(before)
+
+    // Joined content crosses the live mask; without a context it is fully redacted.
+    const masking = createMaskingContext()
+    masking.register(CONTENT_SECRET)
+    setActiveMaskingContextResolver(() => masking)
+    const masked = consequencesOf(await opPreview(reads, { runId, kind: 'false-fail' }))
+    expect(masked.knowledge.records[0]!.recordContent).toMatchObject({ content: masking.mask(shown.body), summary: masking.mask(shown.summary) })
+    expect(JSON.stringify(masked)).not.toContain(CONTENT_SECRET)
+    setActiveMaskingContextResolver(() => undefined)
+    const cold = consequencesOf(await opPreview(reads, { runId, kind: 'false-fail' }))
+    expect(cold.knowledge.records[0]!.recordContent).toMatchObject({ content: maskedMarker('secret'), summary: maskedMarker('secret') })
+    expect(cold.knowledge.records[0]).toMatchObject({ recordId: f.published.id, served: true, evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] } })
+
+    // A reader with no batch join keeps the record id and its effect under a named absence.
+    const unjoined = consequencesOf(await rawPreview(previewReadsFor(f, { reader: {} as never }), { runId, kind: 'false-fail' }))
+    expect(unjoined.knowledge.records).toEqual([{ recordId: f.published.id, contentAbsence: { reason: 'not-bound' }, served: true,
+      evidence: { kind: 'effects', effects: [{ direction: 'confirm' }] } }])
+    expect(tree(f.root)).toEqual(before)
+
+    const written = await createFeedbackPortForHost(f.deps).mark({ runId, kind: 'false-fail' })
+    expect(written).toMatchObject({ kind: 'marked', receipt: { evidence: raw.knowledge.evidence } })
+  }, 120_000)
+
+  it('CORRELATED-EVIDENCE: false-pass keeps both directions on a served record and overturns correlated unserved records', async () => {
+    const f = fixture()
+    const runId = f.handoff.runId
+    const unserved = createPromotionFloorFixture({ knowledgeRoot: f.knowledgeRoot, auditBaseDir: f.agentQaRoot }).publishHeldCandidate('unserved').published
+    const unrelated = createPromotionFloorFixture({ knowledgeRoot: f.knowledgeRoot, auditBaseDir: f.agentQaRoot }).publishHeldCandidate('unrelated').published
+    const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(f.knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('fixture must hold writer authority')
+    const helpful = (recordId: string, observationId: string, token: string) => expect(appendOutcomeEvent({ knowledgeRoot: f.knowledgeRoot,
+      productKey: 'storefront', auditBaseDir: f.agentQaRoot, commitArtifacts: 'none', writerLeaseId: lease.leaseId, writerEpoch: lease.epoch },
+    asRecordId(recordId), { type: 'helpful', evidenceToken: asEvidenceToken(token), curationJobId: `canary-${token}`, buildOrdinal: 43, observationId }).kind).toBe('appended')
+    // The deterministic emitter's persisted observation address for this run's step.
+    helpful(f.published.id, `${runId}:test-0:step-0`, 'served-positive')
+    helpful(unserved.id, `${runId}:test-0:step-0`, 'unserved-positive')
+    helpful(unrelated.id, 'another-run:test-0:step-0', 'unrelated-positive')
+    expect(LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot: f.knowledgeRoot, leaseId: lease.leaseId }).kind).toBe('released')
+
+    const reads = previewReadsFor(f)
+    const before = tree(f.root)
+    const previewed = consequencesOf(await rawPreview(reads, { runId, kind: 'false-pass' }))
+    expect(tree(f.root)).toEqual(before)
+    expect(previewed.knowledge.records.map(record => [record.recordId, record.served, record.evidence])).toEqual([
+      [f.published.id, true, { kind: 'effects', effects: [{ direction: 'confirm' },
+        { direction: 'overturn', overturnsEvidenceToken: 'served-positive', overturnsCurationJobId: 'canary-served-positive' }] }],
+      [unserved.id, false, { kind: 'effects', effects: [
+        { direction: 'overturn', overturnsEvidenceToken: 'unserved-positive', overturnsCurationJobId: 'canary-unserved-positive' }] }],
+    ])
+    expect(previewed.knowledge.servedRecordIds).toEqual([f.published.id])
+    // Correlated records carry joined content too; the unrelated positive is never reached.
+    expect(previewed.knowledge.records[1]!.recordContent?.summary).toContain('unserved')
+    expect(JSON.stringify(previewed)).not.toContain(unrelated.id)
+    expect(previewed.knowledge.evidence).toEqual({ confirmed: 1, overturned: 2 })
+
+    const written = await createFeedbackPortForHost(f.deps).mark({ runId, kind: 'false-pass' })
+    expect(written).toMatchObject({ kind: 'marked', receipt: { evidence: { confirmed: 1, overturned: 2 } } })
+  }, 120_000)
+
+  it('FALSE-PASS-TWO-LABELS: false-pass previews the two labels the freeze lands, with no gold id, receipt or time', async () => {
+    const f = fixture()
+    const runId = f.handoff.runId
+    const reads = previewReadsFor(f)
+    const before = tree(f.root)
+    const previewed = consequencesOf(await opPreview(reads, { runId, kind: 'false-pass' }))
+    expect(tree(f.root)).toEqual(before)
+    expectNoMint(previewed)
+    expect(RunsMarkPreviewResultSchema.parse(previewed)).toEqual(previewed)
+    expect(previewed).toMatchObject({ prospective: true, markKind: 'false-pass', member: { testIndex: 0, testId: f.handoff.tests[0]!.testId },
+      resolvedStep: { stepIndex: 0, reason: 'passing-verdict' }, markedDecisionCount: 1 })
+    expect(previewed.labels.map(label => [label.channel, label.correction])).toEqual([
+      ['user-mark', { verdict: 'fail' }], ['overturned-verdict', { verdict: 'fail' }]])
+    const written = await createFeedbackPortForHost(f.deps).mark({ runId, kind: 'false-pass' })
+    if (written.kind !== 'marked') throw new Error('expected the false-pass mark')
+    expect(written.receipt.gold).toHaveLength(2)
+    expect(previewed.labels.map(label => [label.channel, label.sourceCassetteId]))
+      .toEqual(written.receipt.gold.map(item => [item.channel, item.sourceCassetteId]))
+  }, 120_000)
 })
