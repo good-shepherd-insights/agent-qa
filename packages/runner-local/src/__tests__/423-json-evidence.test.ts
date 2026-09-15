@@ -206,3 +206,40 @@ test('DURABLE-PARENTS: a returned reference synchronizes the complete newly-crea
   // File, blobs directory, run directory, runs directory, root, and root parent.
   expect(fsyncSync).toHaveBeenCalledTimes(6)
 })
+
+const directoryRefusals = ['EINVAL', 'EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EBADF', 'EISDIR'] as const
+test.each(directoryRefusals)('DIR-FSYNC-TOLERATED: directory fsync refusal %s after the synced file still returns the reference', code => {
+  const { store, dir } = fixture()
+  const original = vi.mocked(fsyncSync).getMockImplementation()!
+  let calls = 0
+  vi.mocked(fsyncSync).mockImplementation(fd => {
+    if (++calls === 2) throw Object.assign(new Error('synthetic refusal'), { code })
+    original(fd)
+  })
+  try {
+    expect(store.persistEvidenceDocument(document)).toEqual({ id: `console-evidence:${sha}`, sha })
+    expect(calls).toBeGreaterThan(2)
+    expect(Buffer.from(store.getBlob(sha)!)).toEqual(bytes)
+    expect(readdirSync(dir)).toEqual([sha])
+  } finally {
+    vi.mocked(fsyncSync).mockImplementation(original)
+  }
+})
+
+test('DIR-FSYNC-TOLERATED: an EINVAL refusal on the file fsync itself still throws and publishes nothing', () => {
+  const { store, dir } = fixture()
+  const original = vi.mocked(fsyncSync).getMockImplementation()!
+  let calls = 0
+  vi.mocked(fsyncSync).mockImplementation(fd => {
+    if (++calls === 1) throw Object.assign(new Error('synthetic refusal'), { code: 'EINVAL' })
+    original(fd)
+  })
+  try {
+    expect(() => store.persistEvidenceDocument(document)).toThrow('synthetic refusal')
+    expect(store.hasBlob(sha)).toBe(false)
+    expect(store.getBlob(sha)).toBeUndefined()
+    expect(readdirSync(dir)).toEqual([])
+  } finally {
+    vi.mocked(fsyncSync).mockImplementation(original)
+  }
+})
