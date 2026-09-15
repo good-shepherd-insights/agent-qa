@@ -130,14 +130,40 @@ function expectUnchangedTree(root: string, before: unknown, fixture: string) {
     before: sha256hex(JSON.stringify(before)), after: sha256hex(JSON.stringify(after)) }))
 }
 
-async function authFixture(p: ReturnType<typeof project>, value: string) {
+async function authFixture(p: ReturnType<typeof project>, value: string, stateName = 'current-session') {
   const paths = resolveAuthStatePaths({ configDir: p.root, targetName: 'local',
-    stateName: 'current-session', target: { platform: 'web' } })
+    stateName, target: { platform: 'web' } })
   await writeAuthStateFiles(paths, { payload: { cookies: [{ name: 'session', value,
     domain: '127.0.0.1', path: '/', expires: -1, httpOnly: true, secure: false, sameSite: 'Lax' }], origins: [] },
-  metadata: { version: 1, kind: 'web', target: 'local', name: 'current-session',
+  metadata: { version: 1, kind: 'web', target: 'local', name: stateName,
     capturedAt: '2026-09-14T00:00:00.000Z' } })
   return paths
+}
+
+type AuthDeclarationKind = 'missing' | 'capture-missing' | 'missing-metadata' | 'unreadable' | 'invalid-json'
+  | 'null' | 'indexeddb' | 'malformed-cookie' | 'wrong-metadata' | 'invalid-declaration'
+
+async function authDeclarationFixture(p: ReturnType<typeof project>, kind: AuthDeclarationKind) {
+  mkdirSync(join(p.root, 'tests'))
+  writeFileSync(join(p.root, 'tests', 'current.yaml'), JSON.stringify({ 'test-id': generateTestId(),
+    name: 'Current declaration', target: 'local', steps: ['Inspect page'], use: { authState: kind === 'capture-missing'
+      ? { name: 'current-session', load: false, capture: true } : 'current-session' } }))
+  const paths = await authFixture(p, 'synthetic-auth-only-secret')
+  if (kind === 'missing' || kind === 'capture-missing') rmSync(paths.payloadPath)
+  if (kind === 'missing-metadata') rmSync(paths.metadataPath)
+  if (kind === 'unreadable') { rmSync(paths.payloadPath); mkdirSync(paths.payloadPath) }
+  if (kind === 'invalid-json') writeFileSync(paths.payloadPath, '{')
+  if (kind === 'null') writeFileSync(paths.payloadPath, 'null')
+  if (kind === 'indexeddb') writeFileSync(paths.payloadPath, JSON.stringify({ cookies: [], origins: [
+    { origin: 'http://127.0.0.1:1', localStorage: [], indexedDB: [{ value: 'unsupported-secret' }] },
+  ] }))
+  if (kind === 'malformed-cookie') writeFileSync(paths.payloadPath, JSON.stringify({ cookies: [{ value: 42 }], origins: [] }))
+  if (kind === 'wrong-metadata') writeFileSync(paths.metadataPath, JSON.stringify({ version: 1, kind: 'web',
+    target: 'foreign', name: 'current-session', capturedAt: '2026-09-14T00:00:00.000Z' }))
+  if (kind === 'invalid-declaration') {
+    writeFileSync(join(p.root, 'tests', 'invalid.yaml'), JSON.stringify({ 'test-id': generateTestId(),
+      name: 'Invalid declaration', target: 'local', steps: ['Inspect page'], use: { authState: { name: 'INVALID' } } }))
+  }
 }
 
 describe('Wave 18 cold read masking recovery', () => {
@@ -176,29 +202,47 @@ describe('Wave 18 cold read masking recovery', () => {
     expect(read.host.jobs).not.toHaveBeenCalled()
   })
 
-  it.each(['missing', 'capture-missing', 'missing-metadata', 'unreadable', 'invalid-json', 'null', 'indexeddb', 'malformed-cookie', 'wrong-metadata', 'invalid-declaration'] as const)(
+  it.each(['missing', 'capture-missing', 'invalid-declaration', 'coexisting'] as const)(
+    'COLD-AUTH-SKIPPED %s keeps every resolvable source and serves the masked snapshot', async kind => {
+      const p = project()
+      await authDeclarationFixture(p, kind === 'coexisting' ? 'missing' : kind)
+      const coexisting = 'synthetic-coexisting-cookie'
+      if (kind === 'coexisting') {
+        writeFileSync(join(p.root, 'tests', 'second.yaml'), JSON.stringify({ 'test-id': generateTestId(),
+          name: 'Second declaration', target: 'local', steps: ['Inspect page'], use: { authState: 'second-session' } }))
+        await authFixture(p, coexisting, 'second-session')
+      }
+      const secrets = 'CURRENT=synthetic-skipped-secret\n'
+      writeFileSync(p.secretFile, secrets)
+      const before = fixtureBytes(p.root)
+      const sources = await createColdReadMaskingSources(p.configPath)()
+      expect(sources).toBeDefined()
+      // invalid-declaration's sibling file still declares the captured current-session state.
+      expect(sources!.authStatePayloads).toHaveLength(kind === 'missing' || kind === 'capture-missing' ? 0 : 1)
+      expect(sources!.secretsContent).toBe(secrets)
+      expectUnchangedTree(p.root, before, `skipped-${kind}`)
+      expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
+      expect(existsSync(join(p.agentQaRoot, 'job-checkpoints'))).toBe(false)
+      const second = kind === 'coexisting' ? `second ${coexisting}` : 'second plain'
+      await publish(p, snapshot(p.runId, ['first synthetic-skipped-secret', second]))
+      const read = cold(p)
+      const settled = fixtureBytes(p.root)
+      const first = await read.read()
+      expect(first).not.toHaveProperty('curationSnapshotWithheld')
+      expect(first.curationSnapshot!.rows[0]!.changes.map(row => row.change.evidenceToken)).toEqual([
+        `first ${maskedMarker('secret')}`,
+        kind === 'coexisting' ? `second ${maskedMarker('secret')}` : 'second plain',
+      ])
+      expect(await read.read()).toEqual(first)
+      expectUnchangedTree(p.root, settled, `skipped-${kind}-reads`)
+      expect(read.host.jobs).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['missing-metadata', 'unreadable', 'invalid-json', 'null', 'indexeddb', 'malformed-cookie', 'wrong-metadata'] as const)(
     'COLD-AUTH-REFUSAL %s never creates partial masking authority', async kind => {
       const p = project()
-      mkdirSync(join(p.root, 'tests'))
-      writeFileSync(join(p.root, 'tests', 'current.yaml'), JSON.stringify({ 'test-id': generateTestId(),
-        name: 'Current declaration', target: 'local', steps: ['Inspect page'], use: { authState: kind === 'capture-missing'
-          ? { name: 'current-session', load: false, capture: true } : 'current-session' } }))
-      const paths = await authFixture(p, 'synthetic-auth-only-secret')
-      if (kind === 'missing' || kind === 'capture-missing') rmSync(paths.payloadPath)
-      if (kind === 'missing-metadata') rmSync(paths.metadataPath)
-      if (kind === 'unreadable') { rmSync(paths.payloadPath); mkdirSync(paths.payloadPath) }
-      if (kind === 'invalid-json') writeFileSync(paths.payloadPath, '{')
-      if (kind === 'null') writeFileSync(paths.payloadPath, 'null')
-      if (kind === 'indexeddb') writeFileSync(paths.payloadPath, JSON.stringify({ cookies: [], origins: [
-        { origin: 'http://127.0.0.1:1', localStorage: [], indexedDB: [{ value: 'unsupported-secret' }] },
-      ] }))
-      if (kind === 'malformed-cookie') writeFileSync(paths.payloadPath, JSON.stringify({ cookies: [{ value: 42 }], origins: [] }))
-      if (kind === 'wrong-metadata') writeFileSync(paths.metadataPath, JSON.stringify({ version: 1, kind: 'web',
-        target: 'foreign', name: 'current-session', capturedAt: '2026-09-14T00:00:00.000Z' }))
-      if (kind === 'invalid-declaration') {
-        writeFileSync(join(p.root, 'tests', 'invalid.yaml'), JSON.stringify({ 'test-id': generateTestId(),
-          name: 'Invalid declaration', target: 'local', steps: ['Inspect page'], use: { authState: { name: 'INVALID' } } }))
-      }
+      await authDeclarationFixture(p, kind)
       const before = fixtureBytes(p.root)
       expect(await createColdReadMaskingSources(p.configPath)()).toBeUndefined()
       expectUnchangedTree(p.root, before, `refusal-${kind}`)
