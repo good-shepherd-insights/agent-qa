@@ -11,6 +11,7 @@ import { executeStep } from '../../loop/index.js'
 import type { LoopPorts } from '../../loop/ports.js'
 import { VariableStore } from '../../variables/store.js'
 import { createStepReadFinalizer } from '../step-read-finalization.js'
+import { deriveMemberOutcome } from '../verdict.js'
 
 const secret = 'synthetic-live-secret-423'
 const hookId = 'h_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
@@ -557,6 +558,51 @@ test('EVID-ABORT-BEFORE: pre-aborted navigation creates no unstarted result or t
   expect(result.steps).toEqual([])
   expect(f.terminals()).toEqual([])
   expect(f.events.filter(event => event.type === 'stepStarted')).toEqual([])
+})
+
+test('EVID-TIMEOUT-NAVIGATE: a navigation timeout records one paired failed row and a timeout outcome', async () => {
+  const f = fixture()
+  f.member.url = 'https://example.test/'
+  f.config.timeouts = { test: 5 }
+  f.adapter.execute = async action => {
+    if (action.type === 'navigate') return new Promise(() => {})
+    return { success: true }
+  }
+  const result = await runMemberTest(f.member, f.config)
+  expect(result.status).toBe('failed')
+  expect(result.steps).toHaveLength(1)
+  expect(result.steps[0]).toMatchObject({ name: 'Navigate to test URL', status: 'failed' })
+  expect(result.steps[0].error).toMatch(/^Test timed out after \d+ms$/)
+  const started = f.events.filter(event => event.type === 'stepStarted')
+  expect(started.map(event => event.payload)).toEqual([
+    expect.objectContaining({ stepIndex: 0, stepText: 'Navigate to test URL' }),
+  ])
+  expect(f.terminals()).toHaveLength(1)
+  expect(f.terminals()[0]).toMatchObject({ stepIndex: 0, status: 'failed', error: result.steps[0].error })
+  expect(result.failureSummary).toContain('timed out')
+  expect(deriveMemberOutcome(result)).toBe('timeout')
+})
+
+test('EVID-TIMEOUT-DEADLINE: a deadline between steps records the unstarted step as one paired timeout row', async () => {
+  const f = fixture()
+  f.member.steps = ['Busy step', 'Never starts']
+  f.config.timeouts = { test: 5 }
+  f.config.executeStep = async instruction => {
+    const until = performance.now() + 20
+    while (performance.now() < until) { /* hold the thread without yielding a macrotask */ }
+    return { name: instruction, status: 'passed', duration: 20 }
+  }
+  const result = await runMemberTest(f.member, f.config)
+  expect(result.status).toBe('failed')
+  expect(result.steps).toHaveLength(2)
+  expect(result.steps[0].status).toBe('passed')
+  expect(result.steps[1]).toMatchObject({ name: 'Never starts', status: 'failed' })
+  expect(result.steps[1].error).toMatch(/^Test timed out after \d+ms$/)
+  expect(f.events.filter(event => event.type === 'stepStarted')).toHaveLength(2)
+  expect(f.terminals()).toHaveLength(2)
+  expect(f.terminals()[1]).toMatchObject({ stepIndex: 1, status: 'failed', error: result.steps[1].error })
+  expect(result.failureSummary).toContain('timed out')
+  expect(deriveMemberOutcome(result)).toBe('timeout')
 })
 
 test('EVID-ABORT-DURING: runJS cancellation produces exactly one cancelled terminal', async () => {
