@@ -1,7 +1,7 @@
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import {
   EvidenceDocumentSchema, EvidenceEntrySchema, RunsEvidenceInputSchema, RunsEvidenceResultSchema,
-  maskedMarker, sha256hexBytes, utf8Decode, utf8Encode,
+  sha256hexBytes, utf8Decode, utf8Encode,
 } from '@vostride/agent-qa-schema'
 import type {
   EvidenceDocument, EvidenceEntry, MaskFn, RunDetailRows, RunsEvidenceInput, RunsEvidenceResult,
@@ -121,9 +121,11 @@ export const runsEvidenceSpec: FunctionSpec<RunsEvidenceInput, RunsEvidenceResul
     }
     const parsed = EvidenceDocumentSchema.safeParse(rawDocument)
     if (!parsed.success || parsed.data.kind !== address.kind) return error('invalid-document', capture)
+    // A valid document that no context can mask is unreadable, never evidence and never invalid.
+    const context = getActiveMaskingContext()
+    if (context === undefined) return error('masking-unavailable', capture)
     try {
-      const context = getActiveMaskingContext()
-      const mask: MaskFn = context === undefined ? () => maskedMarker('secret') : text => context.mask(text)
+      const mask: MaskFn = text => context.mask(text)
       const document = maskDocument(parsed.data, mask)
       return RunsEvidenceResultSchema.parse({ address, outcome: 'ready', evidence: capture, document })
     } catch { return error('invalid-document', capture) }

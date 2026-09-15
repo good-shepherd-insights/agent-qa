@@ -23,9 +23,14 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
+// Every dispatch appends the gate's audit row, and SQLite rewrites its shared-memory read index on
+// any read; neither is a byte the read itself produced, so both stay outside the tree proof.
+const DISPATCH_BOOKKEEPING = new Set(['execution_audit.jsonl', 'dashboard.db-shm'])
+
 function fixtureBytes(root: string): unknown {
-  return readdirSync(root, { withFileTypes: true }).map(entry => [entry.name,
-    entry.isDirectory() ? fixtureBytes(join(root, entry.name)) : readFileSync(join(root, entry.name), 'hex')])
+  return readdirSync(root, { withFileTypes: true }).filter(entry => !DISPATCH_BOOKKEEPING.has(entry.name))
+    .map(entry => [entry.name,
+      entry.isDirectory() ? fixtureBytes(join(root, entry.name)) : readFileSync(join(root, entry.name), 'hex')])
 }
 
 const networkDocument = {
@@ -135,5 +140,6 @@ describe('423 production read posture', () => {
     expect(await f.read('network')).toEqual(network)
     expect(await f.read('variables')).toEqual(variables)
     expect(fixtureBytes(f.root)).toEqual(before)
+    expect(readFileSync(join(f.agentQaRoot, 'execution_audit.jsonl'), 'utf8')).not.toContain(SECRET)
   })
 })

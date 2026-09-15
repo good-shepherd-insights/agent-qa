@@ -838,7 +838,7 @@ export const RunsEvidenceResultSchema = z.union([
     address: RunsEvidenceInputSchema,
     outcome: z.literal('read-error'),
     code: z.enum(['address-not-found', 'ambiguous-address', 'invalid-entry', 'ref-not-owned',
-      'sha-mismatch', 'invalid-document', 'storage-read-failed', 'snapshot-missing']),
+      'sha-mismatch', 'invalid-document', 'storage-read-failed', 'snapshot-missing', 'masking-unavailable']),
     capture: EvidenceEntrySchema.optional(),
   }),
 ]).refine(value => {

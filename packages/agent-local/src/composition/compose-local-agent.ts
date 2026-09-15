@@ -2682,6 +2682,13 @@ function chatToolsetHash(registry: FunctionRegistry | undefined): string {
   return sha256hex16(chatToolsetIds(registry).join('\n'))
 }
 
+// The cold read-scope allowlist: unary reads that mask stored text at read time and so need a
+// masking context on doors that enter none. 423 gap closure widened it with runs.evidence; the two
+// feedback reads (runs.mark.preview, runs.marks.history) are decided by 423-46.
+const COLD_READ_SCOPE_FUNCTION_IDS = [
+  'runs.postprocessing', 'runs.knowledge', 'runs.evidence',
+] as const satisfies readonly string[]
+
 export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost {
   const clock = input.clock ?? SYSTEM_CLOCK
 
@@ -3244,9 +3251,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   const registry = createFunctionRegistry({
     ...(input.readMaskingSources === undefined ? {} : {
       withReadScope: async (functionId: string, invoke: () => Promise<unknown>) => {
-        // These two reads share the snapshot projector. Do not change unrelated reads or
-        // replace the context of a run/turn that already holds masking authority.
-        if ((functionId !== 'runs.postprocessing' && functionId !== 'runs.knowledge')
+        // Do not change reads outside the allowlist or replace the context of a run/turn that
+        // already holds masking authority.
+        if (!(COLD_READ_SCOPE_FUNCTION_IDS as readonly string[]).includes(functionId)
           || getActiveMaskingContext() !== undefined) return invoke()
         let masking: ReturnType<typeof buildRunMaskingContext> | undefined
         try {
@@ -3263,8 +3270,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             } })
           }
         } catch {
-          // Unavailable or invalid sources never authorize an empty context. The op's
-          // existing no-context mask remains authoritative, including collision refusal.
+          // Unavailable or invalid sources never authorize an empty context. Each op's own
+          // no-context arm remains authoritative (runs.evidence answers masking-unavailable).
         }
         if (masking === undefined) return invoke()
         const coldMasking = masking
