@@ -86,12 +86,19 @@ GOLDEN="$ROOT/$GOLDEN_REL"
 # the "every capability declares a classifier" leg and the both-ways census — measure the TREE and
 # are deliberately NOT listed, so a regen attempted while an op ships without a fold still refuses.
 #
+# THE FIFTH NAME (2026-09-15, 423-38) is admitted on the same rule and no other. Its subject is the
+# committed golden ledger and the committed capability catalog each agreeing with the live tree for
+# the six read contracts Phase 423 added or widened, so it is red exactly when a regeneration is
+# owed and never for a tree fault: the positive all-door parity and masking cells beside it in
+# `423-read-contracts.test.ts` measure the TREE and are deliberately NOT listed.
+#
 # A PLAIN MULTI-LINE STRING, not a heredoc inside a command substitution — measured on the bash 3.2
 # macOS ships, where the heredoc form dies at an unrelated line with `arg: unbound variable`.
 ALLOWED_RED_NAMES="the parity suite ranges the registry census over every rostered surface matches the committed golden registry, op by op and field by field
 the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
 the capability catalog census carries exactly the capabilities the committed golden ledger records (D-01)
-399.1 D-01 — the classifier census: no capability ships without a fold agrees with the committed ledger, so an op that STOPS folding is a reviewed diff"
+399.1 D-01 — the classifier census: no capability ships without a fold agrees with the committed ledger, so an op that STOPS folding is a reviewed diff
+423-38 committed artifacts carry the reviewed read contracts GOLDEN-CATALOG-COMPLETE: the committed golden ledger and capability catalog carry every addressed read op as the live tree declares it"
 # Vacuity floor. A gate that passed because the suite collected nothing is the CI-shaped version of
 # the failure this whole phase exists to prevent. Measured 2026-08-16: 71 tests in the directory;
 # 2026-08-17 (398-07): 133, after 398's manifest, catalog and explain cells joined the same suite.

@@ -70,12 +70,19 @@ CATALOG="$ROOT/$CATALOG_REL"
 #
 # The names are vitest's `fullName`: the describe title and the cell title, joined by one space.
 #
+# THE THIRD NAME (2026-09-15, 423-38) is admitted on the rule above: its subject is the committed
+# catalog (and the committed golden it is census-tied to) agreeing with the live tree for the six
+# read contracts Phase 423 added or widened. After the golden writer has run, it stays red only on
+# the catalog half, which is exactly the state this script exists to let a person out of. The
+# all-door parity and masking cells beside it measure the TREE and are deliberately NOT listed.
+#
 # A PLAIN MULTI-LINE STRING, not a heredoc inside a command substitution. Measured 2026-08-17 on the
 # bash 3.2 macOS ships: `VAR="$(cat <<'X' ... X )"` mis-parses there and the script dies at an
 # unrelated line with `arg: unbound variable`, which is the least helpful diagnosis available for
 # it. The rest of this file avoids bash-4 idioms for the same reason the header states.
 ALLOWED_RED_NAMES="the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
-the catalog's migration map projection (D-14, XPLN-03) lands in the COMMITTED artifact, entry for entry, as the shipped map declares it"
+the catalog's migration map projection (D-14, XPLN-03) lands in the COMMITTED artifact, entry for entry, as the shipped map declares it
+423-38 committed artifacts carry the reviewed read contracts GOLDEN-CATALOG-COMPLETE: the committed golden ledger and capability catalog carry every addressed read op as the live tree declares it"
 # Vacuity floor. A gate that passed because the suite collected nothing is the CI-shaped version of
 # the failure this artifact exists to prevent. Measured 2026-08-16: 88 tests in the directory;
 # 2026-08-17 (398-08): 115, after the manifest legs, the `init --agent` cells and the two shipped-
