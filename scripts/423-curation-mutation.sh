@@ -26,7 +26,9 @@
 #   C11  the terminal notification carries the live snapshot, not its copy    -> NOTIFICATION-COPY
 #   C12  a third withheld reason joins the withheld union and list            -> C423-WITHHELD-EXACT runtime+type
 #   C13  a refused snapshot projection throws instead of withholding          -> POSTPROCESSING-SNAPSHOT-WITHHELD
-#   C14  cold masking refuses every source when one auth payload is missing   -> COLD-AUTH-SKIPPED
+#   C14  cold masking refuses every source when a state was never captured    -> COLD-AUTH-SKIPPED
+#   C15  a whole file's declarations are discarded when any document fails    -> COLD-AUTH-SKIPPED multi-document
+#   C16  a declaration is skipped on an absent payload even with live metadata -> COLD-AUTH-REFUSAL payload-lost
 #
 # C06 and C07 are the "replay classification loss" pair: one loses the original disposition at
 # read time, the other loses the durable receipt across a crash between receipt and checkpoint.
@@ -41,7 +43,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_423_CURATION_MUTATION_LEG=C01..C14 runs one leg (normal or neutered runs only).
+# AGENT_QA_423_CURATION_MUTATION_LEG=C01..C16 runs one leg (normal or neutered runs only).
 # AGENT_QA_423_CURATION_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24 and workspace tools are required. No downloads or provider calls. Ends with a
@@ -80,7 +82,7 @@ const instruments = {
   'runs-knowledge': { pkg: 'packages/agent', files: [RUNS], typecheck: false, count: 69 },
   'chain-notification': { pkg: 'packages/agent', files: [CHAIN_T], typecheck: false, count: 13 },
   'post-processing-read': { pkg: 'packages/agent', files: [READ_T], typecheck: false, count: 13 },
-  'cold-read': { pkg: 'packages/cli', files: [COLD_T], typecheck: false, count: 28, env: { VITEST_MAX_WORKERS: '1' } },
+  'cold-read': { pkg: 'packages/cli', files: [COLD_T], typecheck: false, count: 30, env: { VITEST_MAX_WORKERS: '1' } },
 }
 
 const cur = name => cell('schema-curation', CUR, name)
@@ -255,18 +257,40 @@ const legs = [
       read('NOTIFICATION-MASK'), read('THREE-STAGE-ROWS'), read('MASK-NO-CONTEXT')],
   },
   {
-    subject: COLD, instrument: 'cold-read', claim: 'COLD-AUTH-SKIPPED', operation: "refuse every cold source when one declaration's payload file is missing",
-    edits: [{ from: '        if (!existsSync(resolveAuthStatePaths(location).payloadPath)) continue\n', to: '' }],
+    subject: COLD, instrument: 'cold-read', claim: 'COLD-AUTH-SKIPPED', operation: 'refuse every cold source when a declaration was never captured',
+    edits: [{ from: '        if (!existsSync(paths.payloadPath) && !existsSync(paths.metadataPath)) continue\n', to: '' }],
     reds: [coldRead('COLD-AUTH-SKIPPED missing'), coldRead('COLD-AUTH-SKIPPED capture-missing'),
       coldRead('COLD-AUTH-SKIPPED coexisting')],
     allowed: [],
-    greens: [coldRead('COLD-AUTH-SKIPPED invalid-declaration'), coldRead('COLD-AUTH-REFUSAL', 7), coldRead('COLD-AUTH'),
+    greens: [coldRead('COLD-AUTH-SKIPPED invalid-declaration'), coldRead('COLD-AUTH-REFUSAL', 8), coldRead('COLD-AUTH'),
       coldRead('COLD-AUTH-INHERITANCE', 3), coldRead('COLD-KNOWLEDGE-WITHHELD')],
+  },
+  {
+    subject: COLD, instrument: 'cold-read', claim: 'COLD-AUTH-SKIPPED', operation: "discard a whole file's declarations when any document in it fails to parse",
+    edits: [{ from: '        for (const test of parsed.tests) {\n'
+        + '          collect(test.target, mergeUseBlocks(config.use, undefined, test.use, {}))\n',
+      to: '        if (parsed.errors.length > 0) continue\n'
+        + '        for (const test of parsed.tests) {\n'
+        + '          collect(test.target, mergeUseBlocks(config.use, undefined, test.use, {}))\n' }],
+    reds: [coldRead('COLD-AUTH-SKIPPED multi-document')],
+    allowed: [],
+    greens: [coldRead('COLD-AUTH-SKIPPED invalid-declaration'), coldRead('COLD-AUTH-SKIPPED missing'),
+      coldRead('COLD-AUTH-SKIPPED capture-missing'), coldRead('COLD-AUTH-SKIPPED coexisting'),
+      coldRead('COLD-AUTH-REFUSAL', 8), coldRead('COLD-AUTH-INHERITANCE', 3)],
+  },
+  {
+    subject: COLD, instrument: 'cold-read', claim: 'COLD-AUTH-REFUSAL', operation: 'skip a declaration whose payload is absent even when its metadata remains',
+    edits: [{ from: '        if (!existsSync(paths.payloadPath) && !existsSync(paths.metadataPath)) continue\n',
+      to: '        if (!existsSync(paths.payloadPath)) continue\n' }],
+    reds: [coldRead('COLD-AUTH-REFUSAL payload-lost')],
+    allowed: [],
+    greens: [coldRead('COLD-AUTH-SKIPPED', 5), coldRead('COLD-AUTH-REFUSAL missing-metadata'),
+      coldRead('COLD-AUTH-REFUSAL wrong-metadata'), coldRead('COLD-AUTH-INHERITANCE', 3), coldRead('COLD-AUTH')],
   },
 ]
 
 runGate({
   slug: '423-curation-mutation', envPrefix: 'AGENT_QA_423_CURATION_MUTATION', idPrefix: 'C',
-  instruments, legs, expectedLegs: 14, banner: 'CURATION_MUTATION_OK',
+  instruments, legs, expectedLegs: 16, banner: 'CURATION_MUTATION_OK',
 })
 NODE

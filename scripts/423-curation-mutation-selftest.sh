@@ -82,6 +82,10 @@ runSelftest({
         `${COLD_T} > COLD-AUTH-SKIPPED capture-missing`,
         `${COLD_T} > COLD-AUTH-SKIPPED coexisting`,
       ] },
+    { id: 'C15', claim: 'COLD-AUTH-SKIPPED', subject: 'packages/cli/src/composition/local-agent-host.ts',
+      reds: [`${COLD_T} > COLD-AUTH-SKIPPED multi-document`] },
+    { id: 'C16', claim: 'COLD-AUTH-REFUSAL', subject: 'packages/cli/src/composition/local-agent-host.ts',
+      reds: [`${COLD_T} > COLD-AUTH-REFUSAL payload-lost`] },
   ],
 })
 NODE
