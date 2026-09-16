@@ -307,8 +307,10 @@ export function createColdReadMaskingSources(
       const suites = await discoverWorkspaceFiles({ workspace, kind: 'suite' })
       for (const file of tests) {
         const parsed = parseTestFile(readFileSync(file.absolutePath, 'utf8'), file.workspaceRelativePath)
-        // Safe to skip: a file that does not parse declares nothing a run could have loaded.
-        if (parsed.errors.length > 0) continue
+        // Collect from every document that parsed. parseTestFile walks parseAllDocuments and pushes
+        // into `tests` and `errors` independently, so a non-empty error list never means zero usable
+        // declarations — one bad document must not discard its siblings, whose states a run could
+        // have loaded. A file that yields no test contributes nothing through this loop already.
         for (const test of parsed.tests) {
           collect(test.target, mergeUseBlocks(config.use, undefined, test.use, {}))
         }
@@ -324,9 +326,13 @@ export function createColdReadMaskingSources(
           configDir: dirname(resolve(configPath)), authStateDir: config.services?.authState?.dir,
           ...declaration, target: { platform: target.platform },
         }
-        // Safe to skip: a state that was never captured holds no values a run could have recorded.
-        // A payload that exists but cannot be read or validated still refuses every source below.
-        if (!existsSync(resolveAuthStatePaths(location).payloadPath)) continue
+        const paths = resolveAuthStatePaths(location)
+        // Safe to skip, and ONLY this: a state that was never captured — neither payload nor
+        // metadata on disk — holds no values a run could have recorded. A payload absent beside a
+        // live metadata file is the opposite: a state that DID exist, whose values may sit in the
+        // run's recorded text, so it falls through to resolveAuthStateForRun, which throws when
+        // either file is missing or unreadable and is caught below into a refusal of every source.
+        if (!existsSync(paths.payloadPath) && !existsSync(paths.metadataPath)) continue
         const state = await resolveAuthStateForRun(location)
         authStatePayloads.push(ColdReadAuthPayloadSchema.parse(
           JSON.parse(readFileSync(state.storageStatePath, 'utf8')),
