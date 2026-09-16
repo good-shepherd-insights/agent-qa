@@ -10,6 +10,7 @@ import { createConfirmRegistry, createRunServiceRoutes, DashboardDatabase, start
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { AGENT_QA_OP_CONTRACTS, UNPROJECTED_OPS } from '@vostride/agent-qa-mcp'
 import { createMaskingContext, setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
+import { ambientMaskingContextResolver } from '@vostride/agent-qa-safety-local'
 import { asEvidenceToken, asRecordId, asRunId, maskedMarker, RunsEvidenceInputSchema, RunsMarkInputSchema, RunsMarksHistoryInputSchema, RunsMarkOutcomeSchema, RunsMarkPreviewResultSchema, type FeedbackReadsPort, type MarkReceipt, type RunId, type RunsMarkInput, type RunsMarkPreviewResult, type RunsMarksHistoryResult, RunsMarksHistoryResultSchema } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -1065,11 +1066,23 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
     expect(storeMaps(s.stores)).toEqual(before)
   }, 180_000)
 
-  // Measured 2026-09-15 and pinned for the open owner decision: runs.marks.history and runs.mark.preview are
-  // outside compose-local-agent's cold read-scope allowlist. A cold host fully redacts their free text,
-  // so the human door has nothing to restore. With a masking context active, only the declared secret
-  // span is masked; the door restores no placeholder it has no run sidecar for and shows a chip.
-  it('HTTP-FEEDBACK-HUMAN-POSTURE: the local human door shows cold full redaction, and warm plain text with secret chips', async () => {
+  // Re-pinned 2026-09-16 for 423-46's owner decision (option A): `runs.marks.history` and
+  // `runs.mark.preview` JOINED compose-local-agent's cold read-scope allowlist, so a cold host — the
+  // dashboard after the run ends is the one that matters — resolves this project's declared secrets
+  // for the read and returns the free text readable with the declared span shown as a display chip.
+  // That is the posture warm hosts already had and what ROADMAP SC4 asks of the history read. Drop
+  // either id from `COLD_READ_SCOPE_FUNCTION_IDS` and this cell reds back to the full redaction it
+  // pinned from 423-21 until today (scripts/423-feedback-read-mutation.sh leg F10).
+  //
+  // THE AMBIENT MASKING RESOLVER IS PUT BACK FIRST, and that line is the measurement rather than
+  // hygiene beside it. Every other describe in this file "restores" the process resolver by
+  // installing `() => undefined`, which does not restore anything: it PINS the process answer to
+  // absent for every later reader, so the scope the host opens around an allowlisted read is
+  // invisible and every cold read falls to its own no-context arm. A cold posture measured under
+  // that pin is a measurement of the pin. Putting the ALS-backed resolver back is also what makes
+  // this cell answer the same way run alone and run inside the file.
+  it('HTTP-FEEDBACK-HUMAN-POSTURE: both doors show cold read-scope free text with declared-secret chips, and warm plain text with secret chips', async () => {
+    setActiveMaskingContextResolver(ambientMaskingContextResolver)
     const s = await httpScene()
     const [human, machine] = s.doors as [typeof s.doors[0], typeof s.doors[1]]
     const read = async (door: typeof human) => {
@@ -1081,9 +1094,17 @@ describe('423-21 feedback reads over both HTTP doors (D-18)', () => {
         content: preview.knowledge.records.map(record => record.recordContent?.content ?? null) }
     }
     const redacted = maskedMarker('secret')
-    const cold = { notes: [redacted, null, redacted], reasoning: [redacted], content: [redacted] }
-    expect(await read(human)).toEqual(cold)
-    expect(await read(machine)).toEqual(cold)
+    // The cold scope masks the FRESH span it resolved from this project's secrets file straight to
+    // the display marker, so both doors read alike: the bearer door has no recorded placeholder to
+    // keep here, because nothing was masked when the note was written.
+    const cold = { notes: ['first run-level note', null, `step note ${redacted}`],
+      reasoning: ['The recorded state advanced'],
+      content: ['The Held checkout marked button was resolved and verified.'] }
+    const coldHuman = await read(human)
+    const coldMachine = await read(machine)
+    expect(coldHuman).toEqual(cold)
+    expect(coldMachine).toEqual(cold)
+    expect(JSON.stringify([coldHuman, coldMachine])).not.toContain(SECRET)
 
     const masking = createMaskingContext()
     masking.register(SECRET)
