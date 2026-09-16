@@ -113,9 +113,14 @@ describe('JsonlAuditSink', () => {
     expect(row).not.toHaveProperty('redactedFingerprint')
   })
 
-  it('exports only the write-only sink, fingerprint helper, masking scope binding, execution-context detector, and readline confirm adapter', () => {
+  // 2026-09-16, 423-46: `ambientMaskingContextResolver` joins the roster. It is the resolver the
+  // module's single install site already passed to `setActiveMaskingContextResolver` — naming and
+  // exporting it adds no behaviour and no new authority, and it is what lets a caller that forces a
+  // masking context put the real one back instead of pinning the process answer to absent.
+  it('exports only the write-only sink, fingerprint helper, masking scope binding and its ambient resolver, execution-context detector, and readline confirm adapter', () => {
     expect(Object.keys(surface).sort()).toEqual([
       'JsonlAuditSink',
+      'ambientMaskingContextResolver',
       'createReadlineConfirm',
       'detectExecutionContext',
       'fingerprint',

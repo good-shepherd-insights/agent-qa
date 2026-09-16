@@ -927,3 +927,35 @@ What was preserved: no retired v1 DDL, table, column or path-addressed artifact 
 
 Out of this register: the typed evidence documents are new sha-addressed artifacts under the existing immutable content-addressed route; they are not a return of the path-addressed artifacts this register retired.
 <!-- RECONCILIATION-423:end -->
+
+## 2026-09-16 — the 404 chip-teardown freeze: an owner-accepted exception, and its new baseline (Phase 423 plan 46)
+
+This section extends the register; it rewrites nothing. The 2026-09-02 entry above still reads
+`scripts/404-chip-teardown-mutation.sh`, byte-identical to `9b0c3459`, and names
+`git diff --quiet 9b0c3459 -- scripts/404-chip-teardown-mutation.sh` as its check at every gate.
+**That diff no longer passes, and it has not passed since `9ab15aa44`.** The statement above stays
+as written because it was true when it was written and because a register that quietly re-baselines
+itself is not a register.
+
+**The owner accepted the exception on 2026-09-16.** Their words, verbatim: *"Both, but you decide
+what's recommended"*, over the two policy exceptions 423-VERIFICATION.md carried; the recommendation
+to accept both was the orchestrator's, recorded as the orchestrator's. Why acceptance is the honest
+verdict rather than a revert: the freeze was protecting a property that had already been lost.
+`422-07` (`878fe5f7a`) appended the proposals spread after `curation`, so the M3 leg's perl anchor
+matched nothing and the leg passed **without mutating anything** — and a leg that measures nothing
+is not a preserved measurement. `423-25` (`9ab15aa44`) re-spelled that anchor onto the writer's
+current tail and updated the M3 cell names, which is what put the leg back to measuring.
+
+**The new baseline, and what still holds.** From `9ab15aa44` the script is frozen again on the same
+409 D-10 terms — read, never edited for prose — and the check is
+`git diff --quiet 9ab15aa44 -- scripts/404-chip-teardown-mutation.sh`. The five sibling mutation
+scripts keep their own `428fd902` baseline, untouched by this. Nothing automated enforced the
+`9b0c3459` spelling (no test or script greps that baseline for this file), so what drifted was the
+register's accuracy, not a gate: the 423 acceptance gate exercises the script at step
+`mut-chip-teardown`, and `validate:423-read-contracts` ran it green on the restored build at
+`9ab15aa44` (recorded in the 2026-09-15 section above).
+
+| Check | Reads | Expected |
+|---|---|---|
+| `git diff --quiet 9ab15aa44 -- scripts/404-chip-teardown-mutation.sh` | the frozen script since 423-25 | **0** |
+| `git diff --quiet 9b0c3459 -- scripts/404-chip-teardown-mutation.sh` | the pre-423-25 spelling | **non-zero, expected** — superseded by the row above |
