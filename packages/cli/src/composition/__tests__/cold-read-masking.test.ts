@@ -144,14 +144,24 @@ async function authFixture(p: ReturnType<typeof project>, value: string, stateNa
 
 type AuthDeclarationKind = 'missing' | 'capture-missing' | 'missing-metadata' | 'unreadable' | 'invalid-json'
   | 'null' | 'indexeddb' | 'malformed-cookie' | 'wrong-metadata' | 'invalid-declaration'
+  | 'multi-document' | 'payload-lost'
 
 async function authDeclarationFixture(p: ReturnType<typeof project>, kind: AuthDeclarationKind) {
   mkdirSync(join(p.root, 'tests'))
-  writeFileSync(join(p.root, 'tests', 'current.yaml'), JSON.stringify({ 'test-id': generateTestId(),
+  const current = JSON.stringify({ 'test-id': generateTestId(),
     name: 'Current declaration', target: 'local', steps: ['Inspect page'], use: { authState: kind === 'capture-missing'
-      ? { name: 'current-session', load: false, capture: true } : 'current-session' } }))
+      ? { name: 'current-session', load: false, capture: true } : 'current-session' } })
+  // multi-document: ONE file, TWO documents — the valid declaration above and an invalid sibling
+  // document whose authState name AuthStateNameSchema rejects. parseTestFile returns 1 test, 1 error.
+  const invalidSibling = JSON.stringify({ 'test-id': generateTestId(), name: 'Invalid sibling document',
+    target: 'local', steps: ['Inspect page'], use: { authState: { name: 'INVALID' } } })
+  writeFileSync(join(p.root, 'tests', 'current.yaml'),
+    kind === 'multi-document' ? `${current}\n---\n${invalidSibling}\n` : current)
   const paths = await authFixture(p, 'synthetic-auth-only-secret')
-  if (kind === 'missing' || kind === 'capture-missing') rmSync(paths.payloadPath)
+  // missing / capture-missing model a state that was NEVER captured: neither file exists.
+  if (kind === 'missing' || kind === 'capture-missing') { rmSync(paths.payloadPath); rmSync(paths.metadataPath) }
+  // payload-lost models a state that WAS captured and then deleted or rotated away: its metadata remains.
+  if (kind === 'payload-lost') rmSync(paths.payloadPath)
   if (kind === 'missing-metadata') rmSync(paths.metadataPath)
   if (kind === 'unreadable') { rmSync(paths.payloadPath); mkdirSync(paths.payloadPath) }
   if (kind === 'invalid-json') writeFileSync(paths.payloadPath, '{')
@@ -204,7 +214,7 @@ describe('Wave 18 cold read masking recovery', () => {
     expect(read.host.jobs).not.toHaveBeenCalled()
   })
 
-  it.each(['missing', 'capture-missing', 'invalid-declaration', 'coexisting'] as const)(
+  it.each(['missing', 'capture-missing', 'invalid-declaration', 'multi-document', 'coexisting'] as const)(
     'COLD-AUTH-SKIPPED %s keeps every resolvable source and serves the masked snapshot', async kind => {
       const p = project()
       await authDeclarationFixture(p, kind === 'coexisting' ? 'missing' : kind)
@@ -219,13 +229,20 @@ describe('Wave 18 cold read masking recovery', () => {
       const before = fixtureBytes(p.root)
       const sources = await createColdReadMaskingSources(p.configPath)()
       expect(sources).toBeDefined()
-      // invalid-declaration's sibling file still declares the captured current-session state.
+      // invalid-declaration's sibling FILE and multi-document's sibling DOCUMENT both still leave
+      // the captured current-session declaration standing, so each seeds exactly one payload.
       expect(sources!.authStatePayloads).toHaveLength(kind === 'missing' || kind === 'capture-missing' ? 0 : 1)
       expect(sources!.secretsContent).toBe(secrets)
       expectUnchangedTree(p.root, before, `skipped-${kind}`)
       expect(existsSync(join(p.agentQaRoot, 'agent-jobs.db'))).toBe(false)
       expect(existsSync(join(p.agentQaRoot, 'job-checkpoints'))).toBe(false)
-      const second = kind === 'coexisting' ? `second ${coexisting}` : 'second plain'
+      // The one binding both the publish site and the expectation site read. An arm that carries a
+      // captured value publishes it in clear and expects it back masked, which is what proves the
+      // surviving declaration seeded the mask; every other arm keeps its unmasked `second plain`,
+      // which proves the mask is narrow as well as present.
+      const secondValue = kind === 'coexisting' ? coexisting
+        : kind === 'multi-document' ? 'synthetic-auth-only-secret' : undefined
+      const second = secondValue === undefined ? 'second plain' : `second ${secondValue}`
       await publish(p, snapshot(p.runId, ['first synthetic-skipped-secret', second]))
       const read = cold(p)
       const first = await read.read()
@@ -238,7 +255,7 @@ describe('Wave 18 cold read masking recovery', () => {
       expect(first).not.toHaveProperty('curationSnapshotWithheld')
       expect(first.curationSnapshot!.rows[0]!.changes.map(row => row.change.evidenceToken)).toEqual([
         `first ${maskedMarker('secret')}`,
-        kind === 'coexisting' ? `second ${maskedMarker('secret')}` : 'second plain',
+        secondValue === undefined ? 'second plain' : `second ${maskedMarker('secret')}`,
       ])
       expect(await read.read()).toEqual(first)
       expect(fixtureBytes(p.root, AUDIT_LOG)).toEqual(settled)
@@ -247,7 +264,8 @@ describe('Wave 18 cold read masking recovery', () => {
     },
   )
 
-  it.each(['missing-metadata', 'unreadable', 'invalid-json', 'null', 'indexeddb', 'malformed-cookie', 'wrong-metadata'] as const)(
+  it.each(['missing-metadata', 'payload-lost', 'unreadable', 'invalid-json', 'null', 'indexeddb',
+    'malformed-cookie', 'wrong-metadata'] as const)(
     'COLD-AUTH-REFUSAL %s never creates partial masking authority', async kind => {
       const p = project()
       await authDeclarationFixture(p, kind)
