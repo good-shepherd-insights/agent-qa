@@ -218,8 +218,10 @@ const legs = [
     subject: COMPOSE, instrument: 'cli-read-posture', claim: 'COLD-EVIDENCE-HOST', operation: 'drop runs.evidence from the cold read-scope allowlist',
     crossing: { pkg: '@vostride/agent-qa-agent-local', dir: 'packages/agent-local', marker: 'evidence423allowlist' },
     edits: [{
-      from: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'runs.evidence',\n] as const",
-      to: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'evidence423allowlist',\n] as const",
+      // 423-46 widened the list with the two feedback reads, so the anchor is re-spelled onto the
+      // current literal. The leg's meaning is unchanged: it drops runs.evidence and nothing else.
+      from: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n] as const",
+      to: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'evidence423allowlist', 'runs.marks.history', 'runs.mark.preview',\n] as const",
     }],
     reds: [posture('COLD-EVIDENCE-HOST')],
     allowed: [posture('COLD-EVIDENCE-HTTP')],

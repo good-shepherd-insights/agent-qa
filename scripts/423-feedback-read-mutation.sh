@@ -24,6 +24,7 @@
 #   F07  marks history gains a ledger-locked outcome arm and list member       -> C423-FEEDBACK-RESULTS-EXACT runtime+type
 #   F08  preview gains an effects outcome arm and list member                  -> C423-FEEDBACK-RESULTS-EXACT runtime+type
 #   F09  a feedbackDrafts binding joins the dep-key union, roster and deps     -> C423-FEEDBACK-BINDINGS-EXACT runtime+type
+#   F10  both feedback reads leave the cold read-scope allowlist               -> HTTP-FEEDBACK-HUMAN-POSTURE
 #
 # The independent oracles F07-F09 read are the schema-owned 423-feedback-contracts runtime and
 # `.test-d.ts` walls, and the agent-owned optional-dep-keys / port-split walls, all run with
@@ -55,6 +56,7 @@ const PLAN = 'packages/cli/src/gates/feedback-plan.ts'
 const PLANNER = 'packages/knowledge-local/src/feedback/mark-evidence-plan.ts'
 const FEEDBACK = 'packages/schema/src/functions/feedback.ts'
 const SPEC = 'packages/agent/src/functions/spec.ts'
+const COMPOSE = 'packages/agent-local/src/composition/compose-local-agent.ts'
 
 const READS = 'src/__tests__/423-feedback-reads.test.ts'
 const EVIDENCE = 'src/feedback/__tests__/423-mark-evidence-plan.test.ts'
@@ -190,10 +192,31 @@ const legs = [
     greens: [keys(BINDINGS_ID, 'binds the mark writer through feedback and both feedback reads through feedbackReads'),
       portsD('pins the read binding to history and preview, with no writer verb')],
   },
+  {
+    // 423-46: the owner's decided cold posture is a MEMBERSHIP, and membership is the shape a green
+    // suite cannot see — an allowlist that lost a member still composes, still serves both reads and
+    // still answers every parity cell, because those cells run under a process resolver this file's
+    // other describes pin to absent. Only the posture cell, which puts the ambient resolver back,
+    // can tell a host that resolved this project's secrets from a host that fell to its no-context
+    // arm. The sentinel replaces both ids at once and matches no registered op, so the two feedback
+    // reads leave the list together while runs.evidence keeps its own membership.
+    //
+    // The production host reaches the allowlist only through the rebuilt agent-local dist.
+    subject: COMPOSE, instrument: 'feedback-reads', claim: 'HTTP-FEEDBACK-HUMAN-POSTURE', operation: 'drop the two feedback reads from the cold read-scope allowlist',
+    crossing: { pkg: '@vostride/agent-qa-agent-local', dir: 'packages/agent-local', marker: 'feedback423allowlist' },
+    edits: [{
+      from: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',\n] as const",
+      to: "const COLD_READ_SCOPE_FUNCTION_IDS = [\n  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'feedback423allowlist',\n] as const",
+    }],
+    reds: [reads('HTTP-FEEDBACK-HUMAN-POSTURE')],
+    allowed: [],
+    greens: [reads('HISTORY-FN-PARITY'), reads('PREVIEW-FN-PARITY'), reads('HTTP-MARKS-HISTORY'), reads('HTTP-MARK-PREVIEW'),
+      reads('FEEDBACK-HTTP-WRITES-NOTHING')],
+  },
 ]
 
 runGate({
   slug: '423-feedback-read-mutation', envPrefix: 'AGENT_QA_423_FEEDBACK_READ_MUTATION', idPrefix: 'F',
-  instruments, legs, expectedLegs: 9, banner: 'FEEDBACK_READ_MUTATION_OK',
+  instruments, legs, expectedLegs: 10, banner: 'FEEDBACK_READ_MUTATION_OK',
 })
 NODE

@@ -53,6 +53,8 @@ runSelftest({
         `${PORTS_D} > pins the optional dep key union and its runtime roster in both directions`,
         `${PORTS_D} > binds the feedback writer and the read-only feedback observations as two optional deps`,
       ] },
+    { id: 'F10', claim: 'HTTP-FEEDBACK-HUMAN-POSTURE', subject: 'packages/agent-local/src/composition/compose-local-agent.ts',
+      crossing: '@vostride/agent-qa-agent-local', reds: [`${READS} > HTTP-FEEDBACK-HUMAN-POSTURE`] },
   ],
 })
 NODE
