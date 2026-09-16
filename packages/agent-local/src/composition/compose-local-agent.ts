@@ -2683,10 +2683,16 @@ function chatToolsetHash(registry: FunctionRegistry | undefined): string {
 }
 
 // The cold read-scope allowlist: unary reads that mask stored text at read time and so need a
-// masking context on doors that enter none. 423 gap closure widened it with runs.evidence; the two
-// feedback reads (runs.mark.preview, runs.marks.history) are decided by 423-46.
+// masking context on doors that enter none. 423 gap closure widened it with runs.evidence, and
+// 423-46 widened it again with the two feedback reads on the owner's recorded decision (2026-09-16,
+// option A): a cold host — the dashboard once the run ends — shows each mark note, the recorded
+// reasoning and the joined record content readable with declared-secret spans chipped, rather than
+// replacing all three with the display marker. ROADMAP SC4 asks the history read for each mark's
+// note, and one mechanism now answers for all five reads. Membership is pinned by
+// HTTP-FEEDBACK-HUMAN-POSTURE (423-feedback-reads.test.ts) through leg F10 of
+// scripts/423-feedback-read-mutation.sh.
 const COLD_READ_SCOPE_FUNCTION_IDS = [
-  'runs.postprocessing', 'runs.knowledge', 'runs.evidence',
+  'runs.postprocessing', 'runs.knowledge', 'runs.evidence', 'runs.marks.history', 'runs.mark.preview',
 ] as const satisfies readonly string[]
 
 export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost {
