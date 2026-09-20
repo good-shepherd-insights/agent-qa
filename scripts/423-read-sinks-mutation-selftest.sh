@@ -17,7 +17,7 @@ const path = require('node:path')
 const { runSelftest } = require(path.join(process.cwd(), 'scripts/423-mutation-engine.cjs'))
 
 const UI = '@vostride/agent-qa-dashboard-ui'
-const DRAWER = 'packages/dashboard-ui/src/components/run-detail/artifact-drawer.tsx'
+const DRAWER = 'packages/dashboard-ui/src/components/run-detail/artifact-attribute-rows.tsx'
 const ROUTES = 'packages/dashboard-server/src/run-service/run-detail-routes.ts'
 const VIEW = 'packages/dashboard-ui/src/lib/knowledge-view.ts'
 const SINKS = 'src/__tests__/conformance/423-read-sinks.test.ts'

@@ -55,7 +55,7 @@ exec node --input-type=commonjs - <<'NODE'
 const path = require('node:path')
 const { runGate, cell } = require(path.join(process.cwd(), 'scripts/423-mutation-engine.cjs'))
 
-const DRAWER = 'packages/dashboard-ui/src/components/run-detail/artifact-drawer.tsx'
+const DRAWER = 'packages/dashboard-ui/src/components/run-detail/artifact-attribute-rows.tsx'
 const RUN_PAGE = 'packages/dashboard-ui/src/pages/run-detail.tsx'
 const ROUTES = 'packages/dashboard-server/src/run-service/run-detail-routes.ts'
 const MEMBER = 'packages/dashboard-ui/src/components/run-detail/verdict-block.tsx'
