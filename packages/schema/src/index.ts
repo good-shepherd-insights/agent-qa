@@ -151,6 +151,19 @@ export {
 } from './ids/artifact-ref'
 export type { EvidenceRefPrefix, EvidenceArtifactRef } from './ids/artifact-ref'
 export {
+  RECORDING_STATES,
+  RECORDING_CONTENT_TYPES,
+  RECORDING_REF_PREFIX,
+  RecordingRefSchema,
+  RecordingEntrySchema,
+} from './run/recording'
+export type {
+  RecordingState,
+  RecordingContentType,
+  RecordingRef,
+  RecordingEntry,
+} from './run/recording'
+export {
   EVIDENCE_KINDS,
   NETWORK_CREDENTIAL_HEADERS,
   NETWORK_BODY_CONTENT_TYPES,
