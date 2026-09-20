@@ -7,6 +7,7 @@ import type {
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
+  RecordingCapability,
 } from '@vostride/agent-qa-runner'
 import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
@@ -20,6 +21,7 @@ import { validateAction } from './action-validator.js'
 import { waitForPageReady } from './smart-wait.js'
 import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './compound-web.js'
 import type { RefMap } from './types.js'
+import { createScreencastRecording } from './recording.js'
 
 // Browser-context snapshot hygiene: hide framework-injected [data-agent-qa-internal]
 // overlays from the ARIA snapshot (they would otherwise receive ai-mode refs and
@@ -79,8 +81,11 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
   // test teardown (D-12/D-18); cleanup() drains both so nothing bleeds across tests (Pitfall 7).
   private armedRoutes = new Set<string>()
   private pendingDialogArm: ((dialog: Dialog) => void) | null = null
+  private recordingCapability: RecordingCapability | undefined
+  private recordingConfig: PlatformConfig['recording']
 
   async setup(config: PlatformConfig): Promise<void> {
+    this.recordingConfig = config.recording
     if (!config.farmSession) {
       throw new Error('FarmWebAdapter requires config.farmSession to be set')
     }
@@ -110,12 +115,6 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
 
     const contextOptions: Record<string, unknown> = {
       viewport: config.browser?.viewport ?? { width: 1280, height: 720 },
-    }
-    if (config.recording?.enabled) {
-      contextOptions.recordVideo = {
-        dir: config.recording.videoDir,
-        size: config.recording.videoSize ?? config.browser?.viewport ?? { width: 1280, height: 720 },
-      }
     }
     if (config.authState?.storageStatePath) {
       contextOptions.storageState = config.authState.storageStatePath
@@ -170,7 +169,18 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
     this.attachLogListeners(this.page)
   }
 
+  get recording(): RecordingCapability | undefined {
+    if (!this.page || !this.context || !this.recordingConfig) return undefined
+    return this.recordingCapability ??= createScreencastRecording(
+      () => this.page,
+      this.recordingConfig,
+    )
+  }
+
   async cleanup(): Promise<void> {
+    try { await this.recordingCapability?.stop() } catch { /* best-effort */ }
+    this.recordingCapability = undefined
+    this.recordingConfig = undefined
     // Pitfall 7: clear persistent route interception, network emulation, and any pending
     // dialog arm BEFORE closing the browser so state never bleeds into the next test.
     if (this.context) {
@@ -307,16 +317,6 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
 
   getPage(): Page | null {
     return this.page
-  }
-
-  async getVideoPath(): Promise<string | null> {
-    try {
-      const video = this.page?.video()
-      if (!video) return null
-      return await video.path()
-    } catch {
-      return null
-    }
   }
 
   markFailed(): void {
