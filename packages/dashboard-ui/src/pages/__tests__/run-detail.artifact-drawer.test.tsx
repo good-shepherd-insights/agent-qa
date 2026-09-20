@@ -662,7 +662,7 @@ describe("RunDetailPage artifact drawer", () => {
     expect(searchParams(view).get("tab")).toBe("network")
   })
 
-  it("opens the drawer on a sha-keyed screenshot tab when a cited artifact is clicked (D-02)", async () => {
+  it("opens the lightbox for an orphan cited artifact without opening the drawer (D-02)", async () => {
     fetchRunAnalysisMock.mockResolvedValue(analysisCiting(CITED_SHA))
     const view = await renderAt("/runs/run-1?step=0:0&sub=0")
 
@@ -673,10 +673,8 @@ describe("RunDetailPage artifact drawer", () => {
     })
     await flushRender()
 
-    const drawer = view.querySelector('[data-testid="artifact-drawer"]') as HTMLElement
-    expect(drawer).not.toBeNull()
-    expect(drawer.getAttribute("data-tab")).toBe("screenshot")
-    expect(drawer.getAttribute("data-screenshot-sha"), "the sha travels to the tab").toBe(CITED_SHA)
+    expect(view.querySelector('[data-testid="artifact-drawer"]')).toBeNull()
+    expect(document.querySelector('[data-player-lightbox]')).not.toBeNull()
     expect(searchParams(view).get("step"), "opening evidence navigates nowhere").toBe("0:0")
   })
 

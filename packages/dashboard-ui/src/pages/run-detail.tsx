@@ -274,10 +274,6 @@ export default function RunDetailPage() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [artifactDrawerOpen, setArtifactDrawerOpen] = useState(false)
   const [artifactDrawerTab, setArtifactDrawerTab] = useState<ArtifactDrawerTab>("test")
-  // WHICH cited artifact the drawer was opened with (406-08 · D-02). `null` for every other way in
-  // — the `i` / `c` / `m` shortcuts and the navbar action all open the drawer with nothing in hand,
-  // and the screenshot tab is not offered at all in that state.
-  const [artifactDrawerSha, setArtifactDrawerSha] = useState<string | null>(null)
   const [lightboxSha, setLightboxSha] = useState<string | null>(null)
   const [pendingCitationSha, setPendingCitationSha] = useState<string | null>(null)
   const citationOpener = useRef<HTMLElement | null>(null)
@@ -520,9 +516,8 @@ export default function RunDetailPage() {
     void loadArtifact()
   }, [artifactDrawerOpen, artifactError, artifactLoading, artifactResponse, loadArtifact, run?.id])
 
-  const openArtifactDrawer = useCallback((tab: ArtifactDrawerTab = "test", sha?: string) => {
+  const openArtifactDrawer = useCallback((tab: ArtifactDrawerTab = "test") => {
     setArtifactDrawerTab(tab)
-    setArtifactDrawerSha(sha ?? null)
     setArtifactDrawerOpen(true)
   }, [])
 
@@ -1131,7 +1126,6 @@ export default function RunDetailPage() {
             run={run}
             open={artifactDrawerOpen}
             tab={artifactDrawerTab}
-            screenshotSha={artifactDrawerSha}
             response={artifactResponse}
             loading={artifactLoading}
             error={artifactError}

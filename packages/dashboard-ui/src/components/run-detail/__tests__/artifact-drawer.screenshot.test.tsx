@@ -77,7 +77,7 @@ function mountDrawer(over: {
         run={RUN as never}
         open
         tab={over.tab ?? "test"}
-        screenshotSha={over.screenshotSha === undefined ? SHA : over.screenshotSha}
+        {...{ screenshotSha: over.screenshotSha === undefined ? SHA : over.screenshotSha }}
         response={null}
         loading={false}
         error={null}
