@@ -181,7 +181,7 @@ export interface LoopEventEmitPort {
     evidence: SubActionEvidence,
     subActionIndex: number,
     /** Capture-time ARIA state; the projector appends its ref beside the decision screenshot. */
-    extra?: { ariaEvidence?: SubActionRecordedPayload['ariaEvidence'] },
+    extra?: { ariaEvidence?: SubActionRecordedPayload['ariaEvidence']; recordingOffsetMs?: number },
   ): void
 }
 
@@ -231,6 +231,7 @@ export interface ProcedureFlowCarry {
  * fields and minus the v1 cache-key inputs (those move behind the cache port).
  */
 export interface LoopPorts {
+  recordingZeroMs?: number
   adapter: PlatformAdapter
   planner: Planner
   verifier?: Verifier

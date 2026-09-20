@@ -163,6 +163,11 @@ const DEFAULT_SETTLE_INTERVAL_MS = 0
 
 type LiveDecisionEvidence = Pick<RecordSubActionInput, 'exchanges' | 'callRecord' | 'decisionScreenshotRef'>
 
+function recordingOffsetFrom(zeroMs: number | undefined): number | undefined {
+  if (zeroMs === undefined) return undefined
+  return Math.max(0, Math.round(performance.now() - zeroMs))
+}
+
 // The 8 surviving return paths (v1 had 9; the exec-fail-limit path is deleted, D-10):
 //   1. planner stepFailed          → failed  (no execution)
 //   2. setVariable + stepComplete  → passed  (short-circuit, no verify)
@@ -215,8 +220,12 @@ export async function executeStep(
     scope: { tier: 'test', key: context.testName },
     asOfBuild: ports.knowledgeAsOfBuild ?? 0,
     onSubActionRecorded: (evidence, index) => {
+      const recordingOffsetMs = recordingOffsetFrom(ports.recordingZeroMs)
       const ariaEvidence = persistAriaEvidence(evidence, ports.masking, ports.evidenceArtifacts)
-      ports.events?.subActionRecorded(evidence, index, { ariaEvidence })
+      ports.events?.subActionRecorded(evidence, index, {
+        ariaEvidence,
+        ...(recordingOffsetMs !== undefined ? { recordingOffsetMs } : {}),
+      })
     },
     modelProfile: ports.modelProfiles?.planner,
     verifierIdentity: ports.modelProfiles?.verifier
