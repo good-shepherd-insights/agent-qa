@@ -228,6 +228,7 @@ interface PageObservation {
   readonly stepCount: number
   /** `data-artifact-state` on the screenshot pane, or nothing when neither state rendered. */
   readonly artifactState?: string
+  readonly initialPlayerSource?: string
   /** The decision screenshot's `src`, if the page rendered an `<img>` at all. */
   readonly screenshotSrc?: string
   /** The `[data-token-summary]` sentence, as painted. */
@@ -387,6 +388,7 @@ async function observeRunDetail(
 ): Promise<PageObservation> {
   const page: Page = await context_.newPage()
   let waitFailure: string | undefined
+  let initialPlayerSource: string | undefined
   const responses: RecordedResponse[] = []
   const pendingBodies: Promise<void>[] = []
   page.on('response', (response) => {
@@ -426,6 +428,8 @@ async function observeRunDetail(
     const subActions = page.locator('[data-sub-action]')
     if ((await subActions.count()) > 0) {
       await subActions.first().locator('button').first().click()
+      initialPlayerSource = await page.locator('[data-player]').getAttribute('data-player-source') ?? undefined
+      await page.locator('[data-player] [data-slot="toggle-group-item"]').filter({ hasText: /^Frames$/ }).click()
       // THE REASONING SECTION IS OPENED THE WAY A PERSON OPENS IT. It is a collapsible that starts
       // closed and UNMOUNTS its content, so the plan is not in the document until the section is
       // clicked — a cell that read the DOM without clicking would report "the page painted no
@@ -502,6 +506,7 @@ async function observeRunDetail(
 
     return {
       finalUrl: page.url(),
+      initialPlayerSource,
       ...(waitFailure === undefined ? {} : { waitFailure }),
       planText,
       treeActionFamily,
@@ -679,6 +684,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
 
   it('(1c) decision screenshot: an <img> on the artifact route whose response was 200 image/png', () => {
     const observed = firstVisit()
+    expect(observed.initialPlayerSource, context()).toBe('video')
     expect(
       observed.artifactState,
       'the overview rendered no screenshot pane at all for the selected sub-action. A ref-bearing '

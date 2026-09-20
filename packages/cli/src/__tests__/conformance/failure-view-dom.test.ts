@@ -597,6 +597,7 @@ async function observeRunDetail(
     const subActions = page.locator('[data-sub-action]')
     if ((await subActions.count()) > 0) {
       await subActions.first().locator('button').first().click().catch(() => undefined)
+      await page.locator('[data-player] [data-slot="toggle-group-item"]').filter({ hasText: /^Frames$/ }).click()
     }
 
     // The screenshot pane is the one fact whose completion is a NETWORK event rather than a paint:
@@ -1289,7 +1290,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     // A REF KNOWN ABSENT IS NEVER REQUESTED (D-17). The op already said the bytes are gone; asking
     // anyway would turn a known fact into a 404 the page would then have to interpret.
     expect(
-      page.artifactRequests,
+      page.artifactRequests.filter(url => url.endsWith(`/artifacts/${recorded.deletedSha}`)),
       'the page asked the door for bytes it had just been told are gone. `present === false` is '
       + 'read BEFORE any `img` is mounted; a request here means the page is learning about absence '
       + `from a failed image load instead of from the op.${context()}`,
