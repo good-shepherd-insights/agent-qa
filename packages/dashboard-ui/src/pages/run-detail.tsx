@@ -766,7 +766,8 @@ export default function RunDetailPage() {
           .catch(() => toast.error("Failed to start re-run"))
       },
       escape: () => {
-        if (artifactDrawerOpen) setArtifactDrawerOpen(false)
+        if (lightboxSha) setLightboxSha(null)
+        else if (artifactDrawerOpen) setArtifactDrawerOpen(false)
         else setSelection(null)
       },
       'shift+?': () => setShortcutsOpen(prev => !prev),
@@ -777,7 +778,7 @@ export default function RunDetailPage() {
     }
     return map
   }, [navItems, currentNavIdx, selection, run, navigate, artifactDrawerOpen, pipelineRef, openArtifactDrawer,
-    visibleGroups, playhead, playerSource, playerMember])
+    visibleGroups, playhead, playerSource, playerMember, lightboxSha])
 
   useKeyboardShortcuts(shortcuts)
 
