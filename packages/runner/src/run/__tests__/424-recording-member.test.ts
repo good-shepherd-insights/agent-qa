@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import type { RecordingEntry } from '@vostride/agent-qa-schema'
+import type { RecordingEntry, SubActionRecordedPayload } from '@vostride/agent-qa-schema'
+import { executeStep } from '../../loop/index.js'
 import { createRunEventBus } from '../bus.js'
 import { createMemberEventSink } from '../event-sink.js'
 import { runMemberTest, type MemberRunConfig, type MemberTest } from '../member-runner.js'
@@ -11,6 +12,11 @@ const absent = (reason: 'failed' | 'unsupported' | 'not-captured'): RecordingEnt
 
 function fixture() {
   const order: string[] = []
+  const children: SubActionRecordedPayload[] = []
+  const bus = createRunEventBus({ runId: 'synthetic-recording-run' })
+  bus.subscribe(1, event => {
+    if (event.type === 'subActionRecorded') children.push(event.payload as SubActionRecordedPayload)
+  })
   const start = vi.fn(async () => { order.push('start'); return {} as { zeroMs?: number } })
   const stop = vi.fn(async () => {
     order.push('stop')
@@ -21,7 +27,7 @@ function fixture() {
   const adapter = { ...makeAdapter(), recording: { start, stop } }
   const config: MemberRunConfig = {
     adapter, planner: makePlanner(), plannerModel: fakeModel, verifierModel: fakeModel,
-    sink: createMemberEventSink({ bus: createRunEventBus({ runId: 'synthetic-recording-run' }),
+    sink: createMemberEventSink({ bus,
       masking: { mask: text => text, unmask: text => text }, testIndex: 0 }),
     testIndex: 0, abortSignal: new AbortController().signal,
     recording: { enabled: true },
@@ -33,7 +39,7 @@ function fixture() {
     },
   }
   const member: MemberTest = { testId: 'synthetic-recording-member', name: 'Recording', filePath: 'synthetic.yaml', steps: ['Run'] }
-  return { config, member, adapter, start, stop, persist, discard, order }
+  return { config, member, adapter, start, stop, persist, discard, order, children }
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -121,6 +127,49 @@ test('REC-MEMBER-DURATION-ONLY-WITH-ZERO: duration uses the monotonic stop-call 
   expect((await runMemberTest(f.member, f.config)).recording).toEqual({ ...present, durationMs: 26 })
   const noZero = fixture()
   expect((await runMemberTest(noZero.member, noZero.config)).recording).toEqual(present)
+})
+
+test('OFFSET-PER-ATTEMPT-ZERO: retries use their own start and absent clocks stay absent', async () => {
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(0)
+  const f = fixture()
+  f.member.meta = { retries: 1 }
+  f.member.steps = ['Click Log in', 'Click Log in again']
+  f.start.mockImplementationOnce(async () => {
+    clock.mockReturnValue(125)
+    return { zeroMs: 100 }
+  }).mockImplementationOnce(async () => {
+    clock.mockReturnValue(1050)
+    return { zeroMs: 1000 }
+  })
+  let executed = 0
+  f.config.executeStep = async (...args) => {
+    const result = await executeStep(...args)
+    return executed++ === 0 ? { ...result, status: 'failed' } : result
+  }
+  const result = await runMemberTest(f.member, f.config)
+  expect(result.retryCount).toBe(1)
+  expect(result.status).toBe('passed')
+  expect(result.recording).toEqual({ ...present, durationMs: 50 })
+  expect(f.children.map(child => [child.stepIndex, child.recordingOffsetMs]))
+    .toEqual([[0, 25], [0, 50], [1, 50]])
+  expect(f.discard).toHaveBeenCalledOnce()
+  expect(f.start).toHaveBeenCalledTimes(2)
+  expect(f.stop).toHaveBeenCalledTimes(2)
+
+  for (const arm of ['android-no-zero', 'off', 'unsupported', 'failed-start'] as const) {
+    const missing = fixture()
+    missing.config.executeStep = executeStep
+    if (arm === 'android-no-zero') missing.config.adapter = { ...missing.adapter, platform: 'android' }
+    if (arm === 'off') missing.config.recording = { enabled: false }
+    if (arm === 'unsupported') missing.config.adapter = makeAdapter()
+    if (arm === 'failed-start') missing.start.mockRejectedValue(new Error('start failed'))
+    const result = await runMemberTest(missing.member, missing.config)
+    expect(result.status).toBe('passed')
+    expect(result.recording).toEqual(arm === 'android-no-zero' ? present
+      : absent(arm === 'off' ? 'not-captured' : arm === 'unsupported' ? 'unsupported' : 'failed'))
+    expect(missing.children).toHaveLength(1)
+    expect(missing.children[0]).not.toHaveProperty('recordingOffsetMs')
+  }
 })
 
 test('REC-NEVER-SUPPRESSES-RUN: failure folds preserve verdict, steps and summary', async () => {
