@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { asRunId, EVIDENCE_ABSENCE_REASONS } from '@vostride/agent-qa-schema'
+import { asRunId, EVIDENCE_ABSENCE_REASONS, RunsEvidenceResultSchema } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, EvidenceEntry, RunDetailStep, RunsEvidenceResult } from '@vostride/agent-qa-schema'
 import type { RunEvidenceRead } from '../api'
 import * as view from '../evidence-state-view'
@@ -73,22 +73,29 @@ test('C424-COPY-RULES', () => {
   }
 })
 
-const present: EvidenceEntry = {
+const present = {
   kind: 'a11y', state: 'present',
   ref: { id: `a11y-evidence:${'a'.repeat(64)}`, sha: 'a'.repeat(64) },
   counts: { minor: 0, moderate: 0, serious: 0, critical: 0 },
-}
-const address = { runId: asRunId('fixture run'), testIndex: 0, stepIndex: 2, kind: 'a11y' as const }
+} satisfies EvidenceEntry
+const entries = {
+  a11y: present,
+  console: { kind: 'console', state: 'present', ref: { id: `console-evidence:${'a'.repeat(64)}`, sha: 'a'.repeat(64) }, counts: { total: 0, errors: 0, warnings: 0 } },
+  network: { kind: 'network', state: 'present', ref: { id: `network-evidence:${'a'.repeat(64)}`, sha: 'a'.repeat(64) }, counts: { total: 0, failed: 0, errored: 0 } },
+  aria: { kind: 'aria', state: 'present', ref: { id: `aria-state:${'a'.repeat(64)}`, sha: 'a'.repeat(64) } },
+  variables: { kind: 'variables', state: 'present', counts: { count: 0 } },
+} satisfies Record<EvidenceDocument['kind'], EvidenceEntry>
+const address = { runId: asRunId('fixture-run'), testIndex: 0, stepIndex: 2, kind: 'a11y' as const }
 const input = { kind: 'a11y' as const, selection: 'step' as const, entry: present, read: 'idle' as const }
 function ready(document: EvidenceDocument): RunEvidenceRead {
-  return { kind: 'read', result: { address: { ...address, kind: document.kind }, outcome: 'ready', evidence: present, document } }
+  return { kind: 'read', result: RunsEvidenceResultSchema.parse({ address: { ...address, kind: document.kind }, outcome: 'ready', evidence: entries[document.kind], document }) }
 }
 function step(stepIndex: number, captured = false, testIndex = 0): RunDetailStep {
   return {
     testIndex, stepIndex, cacheStatus: 'miss', verifierVerdict: { pass: true, reasoning: 'ok' },
     selfHealOccurred: false, briefDigest: 'fixture',
     evidence: {
-      a11y: captured ? present as Extract<EvidenceEntry, { kind: 'a11y' }> : { kind: 'a11y', state: 'absent', reason: 'not-captured' },
+      a11y: captured ? present : { kind: 'a11y', state: 'absent', reason: 'not-captured' },
       console: { kind: 'console', state: 'absent', reason: 'not-captured' },
       network: { kind: 'network', state: 'absent', reason: 'not-captured' },
       variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
@@ -108,7 +115,7 @@ test('VIEW-EMPTY-INPUTS', () => {
     { schemaVersion: 1, kind: 'variables', records: {} },
     { schemaVersion: 1, kind: 'aria', tree: '' },
   ] satisfies EvidenceDocument[]) {
-    expect(view.resolveEvidenceView({ ...input, kind: document.kind, selection: 'sub-action', read: ready(document) })).toMatchObject({ kind: 'state', state: 'empty', ...view.EVIDENCE_COPY[document.kind].empty })
+    expect(view.resolveEvidenceView({ ...input, kind: document.kind, entry: entries[document.kind], selection: 'sub-action', read: ready(document) })).toMatchObject({ kind: 'state', state: 'empty', ...view.EVIDENCE_COPY[document.kind].empty })
   }
   expect(view.resolveEvidenceView({ ...input, kind: 'aria' })).toMatchObject({ kind: 'state', state: 'no-selection' })
   expect(view.resolveEvidenceView({ ...input, entry: undefined })).toMatchObject({ kind: 'state', state: 'unavailable' })
@@ -116,7 +123,7 @@ test('VIEW-EMPTY-INPUTS', () => {
     expect(view.resolveEvidenceView({ ...input, read })).toEqual({ kind: 'loading' })
   }
   const document = { schemaVersion: 1, kind: 'aria', tree: 'button "Continue"' } as const
-  expect(view.resolveEvidenceView({ ...input, kind: 'aria', selection: 'sub-action', read: ready(document) })).toEqual({ kind: 'records', document })
+  expect(view.resolveEvidenceView({ ...input, kind: 'aria', entry: entries.aria, selection: 'sub-action', read: ready(document) })).toEqual({ kind: 'records', document })
 })
 
 test('VIEW-LOAD-FAILURE-NEVER-EMPTY', () => {

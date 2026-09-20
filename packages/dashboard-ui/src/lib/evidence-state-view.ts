@@ -1,4 +1,6 @@
-import type { EvidenceAbsenceReason } from '@vostride/agent-qa-schema'
+import { Ban, CircleCheck, CircleDashed, FileQuestionMark, MousePointerClick, TriangleAlert, type LucideIcon } from 'lucide-react'
+import type { EvidenceAbsenceReason, EvidenceDocument, EvidenceEntry, RecordingEntry, RunDetailStep, StepEvidenceEntries } from '@vostride/agent-qa-schema'
+import type { RunEvidenceRead } from './api'
 import { EVIDENCE_INCOMPLETE_LABEL } from './run-detail-view'
 
 export type EvidenceState = 'empty' | 'not-captured' | 'unsupported' | 'unavailable' | 'failed' | 'no-selection'
@@ -22,6 +24,10 @@ export const EVIDENCE_TONE_OF_STATE = {
   empty: 'positive', 'not-captured': 'neutral', unsupported: 'neutral',
   unavailable: 'neutral', failed: 'alert', 'no-selection': 'neutral',
 } as const satisfies Record<EvidenceState, EvidenceTone>
+export const EVIDENCE_ICON_OF_STATE = {
+  empty: CircleCheck, 'not-captured': CircleDashed, unsupported: Ban,
+  unavailable: FileQuestionMark, failed: TriangleAlert, 'no-selection': MousePointerClick,
+} satisfies Record<EvidenceState, LucideIcon>
 
 export const EVIDENCE_LOADING_LABEL = 'Loading records'
 export const EVIDENCE_INCOMPLETE_EXPLANATION = `${EVIDENCE_INCOMPLETE_LABEL} — this was recorded, but the saved file is no longer on disk.`
@@ -244,4 +250,81 @@ export const EVIDENCE_COPY = {
     unavailable: CopyPair
     failed: { load: CopyPair }
   }
+}
+
+export type EvidenceView =
+  | { kind: 'records'; document: EvidenceDocument }
+  | { kind: 'loading' }
+  | ({
+      kind: 'state'
+      state: EvidenceState
+      failure?: EvidenceFailure
+      incomplete?: boolean
+      action?:
+        | { type: 'retry'; label: string }
+        | { type: 'step'; label: string; description: string; stepIndex: number }
+    } & CopyPair)
+
+export function recordedElsewhere(
+  steps: readonly RunDetailStep[],
+  currentStepIndex: number,
+  kind: keyof StepEvidenceEntries,
+): RunDetailStep | undefined {
+  let nearest: RunDetailStep | undefined
+  for (const step of steps) {
+    if (step.stepIndex === currentStepIndex || step.evidence?.[kind].state !== 'present') continue
+    const distance = Math.abs(step.stepIndex - currentStepIndex)
+    const nearestDistance = nearest ? Math.abs(nearest.stepIndex - currentStepIndex) : Infinity
+    if (distance < nearestDistance || (distance === nearestDistance && step.stepIndex > nearest!.stepIndex)) {
+      nearest = step
+    }
+  }
+  return nearest
+}
+
+export function resolveEvidenceView({ kind, selection, entry, read, elsewhere }: {
+  kind: Exclude<EvidenceKindLabel, 'frame'>
+  selection: 'none' | 'hook' | 'execution-log' | 'step' | 'sub-action'
+  entry: EvidenceEntry | RecordingEntry | undefined
+  read: 'idle' | 'loading' | RunEvidenceRead
+  elsewhere?: { steps: readonly RunDetailStep[]; currentStepIndex: number }
+}): EvidenceView {
+  const stateView = (state: EvidenceState, failure?: EvidenceFailure, incomplete?: boolean): EvidenceView => {
+    const copy = state === 'failed' ? EVIDENCE_COPY[kind].failed[failure ?? 'capture'] : EVIDENCE_COPY[kind][state]
+    const result: Extract<EvidenceView, { kind: 'state' }> = {
+      kind: 'state', state, ...copy,
+      ...(failure ? { failure } : {}),
+      ...(incomplete ? { incomplete: true, explanation: EVIDENCE_INCOMPLETE_EXPLANATION } : {}),
+    }
+    if (state === 'failed' && failure === 'load') {
+      result.action = { type: 'retry', label: EVIDENCE_RETRY_LABELS[kind] }
+    } else if (state === 'not-captured' && elsewhere && kind !== 'aria' && kind !== 'video') {
+      const step = recordedElsewhere(elsewhere.steps, elsewhere.currentStepIndex, kind)
+      if (step) result.action = {
+        type: 'step', stepIndex: step.stepIndex,
+        label: GO_TO_STEP_LABEL(step.stepIndex + 1),
+        description: RECORDED_ELSEWHERE_LABEL(step.stepIndex + 1),
+      }
+    }
+    return result
+  }
+  const absentView = (absent: { reason: EvidenceAbsenceReason; evidenceIncomplete?: boolean }) => {
+    if (absent.evidenceIncomplete) return stateView('unavailable', undefined, true)
+    const state = EVIDENCE_STATE_OF_REASON[absent.reason]
+    return stateView(state, state === 'failed' ? 'capture' : undefined)
+  }
+  if (selection === 'none' || selection === 'hook' || selection === 'execution-log'
+    || (kind === 'aria' && selection !== 'sub-action')) return stateView('no-selection')
+  if (!entry) return stateView('unavailable')
+  if (entry.state === 'absent') return absentView(entry)
+  if ('ref' in entry && entry.ref.evidenceIncomplete) return stateView('unavailable', undefined, true)
+  if (read === 'idle' || read === 'loading') return { kind: 'loading' }
+  if (read.kind === 'failed' || read.result.outcome === 'read-error') return stateView('failed', 'load')
+  if (read.result.outcome === 'absent') return absentView(read.result.evidence)
+  const document = read.result.document
+  if (document.kind !== kind) return stateView('failed', 'load')
+  const empty = document.kind === 'aria' ? document.tree.length === 0
+    : document.kind === 'variables' ? Object.keys(document.records).length === 0
+      : document.records.length === 0
+  return empty ? stateView('empty') : { kind: 'records', document }
 }
