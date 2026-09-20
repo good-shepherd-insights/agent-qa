@@ -156,6 +156,7 @@ export const LoggingConfigSchema = z.object({
 
 export const RecordingConfigSchema = z.object({
   enabled: z.boolean().optional(),
+  keepFailuresOnly: z.boolean().optional(),
 }).strict()
 
 export const AccessibilityConfigSchema = z.object({
