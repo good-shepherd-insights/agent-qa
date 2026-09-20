@@ -279,6 +279,7 @@ export default function RunDetailPage() {
   // and the screenshot tab is not offered at all in that state.
   const [artifactDrawerSha, setArtifactDrawerSha] = useState<string | null>(null)
   const [lightboxSha, setLightboxSha] = useState<string | null>(null)
+  const [pendingCitationSha, setPendingCitationSha] = useState<string | null>(null)
   const citationOpener = useRef<HTMLElement | null>(null)
   useEffect(() => { setLightboxSha(null) }, [id])
   const [artifactResponse, setArtifactResponse] = useState<RunArtifactResponse | null>(null)
@@ -572,12 +573,14 @@ export default function RunDetailPage() {
       const marker = findMarkerBySha(buildTimelineModel(group), sha)
       if (!marker) continue
       if (!visibleGroups.includes(group)) {
+        setPendingCitationSha(sha)
         const next = new URLSearchParams(searchParams)
         next.delete('member')
         next.set('step', runDetailStepKey(marker.testIndex, marker.stepIndex))
         next.set('sub', String(marker.subActionIndex))
         next.delete('tab')
         setSearchParams(next, { replace: true })
+        return
       }
       setPlayheadFrom(marker)
       setSourceChoice({ member: `${id}:${group.member.testIndex}:${group.member.recording?.state}`, source: 'frames' })
@@ -587,6 +590,12 @@ export default function RunDetailPage() {
     citationOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setLightboxSha(sha)
   }, [groups, visibleGroups, searchParams, setSearchParams, setPlayheadFrom, id])
+  useEffect(() => {
+    if (pendingCitationSha && memberFilter === MEMBER_FILTER_ALL) {
+      setPendingCitationSha(null)
+      handleCitedArtifact(pendingCitationSha)
+    }
+  }, [pendingCitationSha, memberFilter, handleCitedArtifact])
   const foldedFrame = selection?.type === "step" && !playheadTarget
     ? latestUsableFrame(selectedStep?.subActions ?? []) : undefined
   const timelineSignals = useMemo(() => Object.fromEntries(
@@ -785,7 +794,7 @@ export default function RunDetailPage() {
   // 405-07 there are no child runs to name; a stale one in a bookmarked link must not survive into
   // the rewritten query.
   useEffect(() => {
-    if (isLoading || detail === undefined) return
+    if (isLoading || detail === undefined || pendingCitationSha) return
     const step = hasStepId(selection)
       ? displaySteps.find(s => s.id === selection.stepId)
       : null
@@ -811,7 +820,7 @@ export default function RunDetailPage() {
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true })
     }
-  }, [selection, playhead, activeTab, displaySteps, searchParams, setSearchParams, isLoading, detail])
+  }, [selection, playhead, activeTab, displaySteps, searchParams, setSearchParams, isLoading, detail, pendingCitationSha])
 
   // Scroll selected item into view
   useEffect(() => {
