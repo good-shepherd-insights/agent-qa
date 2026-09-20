@@ -250,6 +250,29 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     expect(result.success).toBe(true)
   })
 
+  it('REC-KNOB-PARSES: preserves optional failures-only recording settings', () => {
+    for (const keepFailuresOnly of [true, false]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace({
+        services: { recording: { keepFailuresOnly } },
+      }))
+      expect(result.success).toBe(true)
+      if (result.success) expect(result.data.services?.recording).toEqual({ keepFailuresOnly })
+    }
+    const empty = AgentQaConfigSchema.parse(withWorkspace({ services: { recording: {} } }))
+    expect(empty.services?.recording).toEqual({})
+    const absent = AgentQaConfigSchema.parse(withWorkspace({ services: {} }))
+    expect(absent.services).not.toHaveProperty('recording')
+  })
+
+  it('REC-KNOB-STRICT: accepts the knob but rejects unknown recording keys', () => {
+    const recording = { keepFailuresOnly: true }
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({ services: { recording } })).success)
+      .toBe(true)
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({
+      services: { recording: { ...recording, videoDir: 'videos' } },
+    })).success).toBe(false)
+  })
+
   it('accepts a complete service runtime path config sample', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({
       services: {
