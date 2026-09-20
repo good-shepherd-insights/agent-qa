@@ -179,7 +179,8 @@ export function Timeline({ model, playhead, source, runId, memberLabel, signals,
                 data-marker-result={marker.result} data-marker-frame={marker.frame} data-marker-current={marker === current}
                 tabIndex={-1} aria-hidden='true' className='absolute top-0 flex h-6 -translate-x-1/2 items-center justify-center'
                 style={{ left: `${marker.position * 100}%`, width: density === 'glyph' ? 24 : Math.max(8, trackWidth / model.markers.length) }}>
-                <span className={cn('flex h-4 w-4 items-center justify-center rounded-full bg-background',
+                <span className={cn('flex items-center justify-center bg-background',
+                  tick ? 'h-3 w-1 rounded-sm' : 'h-4 w-4 rounded-full',
                   marker.frame === 'absent' && 'border border-dashed border-muted-foreground',
                   marker === current && 'ring-2 ring-primary', RESULT_TONES[marker.result])}>
                   {tick ? <span className='h-3 w-1 bg-current' /> : <Icon className='h-3 w-3' strokeWidth={3} />}

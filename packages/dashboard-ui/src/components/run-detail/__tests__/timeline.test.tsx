@@ -257,3 +257,11 @@ test('TIMELINE-BADGE-ROVING', () => {
   expect(document.activeElement).toBe(buttons[1])
   expect(group.querySelectorAll('[tabindex="0"]')).toHaveLength(1)
 })
+
+test('TIMELINE-DENSITY-RENDER keeps ticks compact and failures recognizable', () => {
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(60)
+  render()
+  expect(query('[data-marker-result="passed"]').querySelector('.h-4.w-4')).toBeNull()
+  expect(query('[data-marker-result="passed"]').querySelector('.h-3.w-1')).not.toBeNull()
+  expect(query('[data-marker-result="failed"]').querySelector('.lucide-x')).not.toBeNull()
+})
