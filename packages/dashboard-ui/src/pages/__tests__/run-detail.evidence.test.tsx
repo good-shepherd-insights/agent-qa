@@ -374,7 +374,7 @@ function historicalPage() {
     const url = String(input)
     let body: unknown
     if (url.endsWith('/detail')) body = {
-      runId, members: [{ testIndex: 0, name: 'Checkout', attempts: 1, recording: { state: 'absent', reason: 'unavailable' } }],
+      runId: url.split('/').at(-2), members: [{ testIndex: 0, name: 'Checkout', attempts: 1, recording: { state: 'absent', reason: 'unavailable' } }],
       steps: [{ testIndex: 0, stepIndex: 0, stepText: 'Check checkout', cacheStatus: 'miss',
         verifierVerdict: { pass: true, reasoning: '' }, selfHealOccurred: false, briefDigest: '', evidence: selected.evidence }],
       subActions: [{ ...subAction, ariaEvidence: { kind: 'aria', state: 'absent', reason: 'unavailable' } }],

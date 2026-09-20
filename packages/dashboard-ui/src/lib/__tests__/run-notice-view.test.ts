@@ -6,7 +6,7 @@ const unavailable = { state: 'absent', reason: 'unavailable' } as const
 function historical(): RunDetailProjection {
   return {
     runId: 'historical',
-    members: [0, 1].map(testIndex => ({ testIndex, name: 'Checkout', attempts: 1, recording: unavailable })),
+    members: [0, 1].map(testIndex => ({ testIndex, name: 'Checkout', attempts: 1, recording: { ...unavailable } })),
     steps: [0, 1].flatMap(testIndex => [0, 1].map(stepIndex => ({
       testIndex, stepIndex, cacheStatus: 'miss', verifierVerdict: { pass: true, reasoning: '' },
       selfHealOccurred: false, briefDigest: '', evidence: {
@@ -15,7 +15,7 @@ function historical(): RunDetailProjection {
       },
     }))),
     subActions: [0, 1].map(testIndex => ({
-      testIndex, stepIndex: 1, subActionIndex: 0, plan: 'Wait', plannedAction: { type: 'wait', ms: 1 },
+      testIndex, stepIndex: 1, subActionIndex: 0, plan: 'Wait', plannedAction: { type: 'delay', ms: 1 },
       screenStateHash: 'a'.repeat(64), result: { success: true }, ariaEvidence: { kind: 'aria', ...unavailable },
     })),
     tokens: { measuredSteps: 0, unmeasuredSteps: 4 },

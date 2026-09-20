@@ -41,6 +41,8 @@ import { bannerRung, projectKnowledgeView } from "@/lib/knowledge-view"
 import { projectAnalysisView, type OnMark, type MarkDenial } from "@/lib/analysis-view"
 import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
+import { RunNotice } from '@/components/run-detail/run-notice'
+import { isPreMilestoneRun } from '@/lib/run-notice-view'
 import { usePageTitle } from "@/hooks/use-page-title"
 import { copyTextOf } from "@/lib/display-text"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
@@ -948,6 +950,8 @@ export default function RunDetailPage() {
             postProcessingRead === undefined ? undefined : projectPostProcessingView(postProcessingRead)
           }
         />
+
+        {detail && isPreMilestoneRun(detail) && <RunNotice key={run.id} runId={run.id} />}
 
         <ResizablePanelGroup
           orientation="horizontal"
