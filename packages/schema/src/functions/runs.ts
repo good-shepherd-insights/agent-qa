@@ -33,6 +33,7 @@ import {
   AriaEvidenceDocumentSchema, VariablesEvidenceDocumentSchema, VariableSnapshotSchema,
 } from '../run/evidence'
 import type { AriaEvidenceEntry, StepEvidenceEntries, VariableSnapshot } from '../run/evidence'
+import { RecordingEntrySchema, type RecordingEntry } from '../run/recording'
 import type { RecordedActionResult } from '../result/index'
 import { runIdSchema } from '../run/run-id'
 import type { GroundingEvidence } from '../screen/target-descriptor'
@@ -499,6 +500,7 @@ export interface RunDetailMember {
   failureSummary?: string
   retryCount?: number
   attempts: number
+  recording?: RecordingEntry
   /**
    * 419 D-15: the LATEST mark per address on this member — the run-level entry
    * (no stepIndex) first, then step entries ascending. Absent when the host binds
@@ -552,6 +554,7 @@ export interface RunDetailSubAction {
   artifactRefs?: readonly RunDetailArtifactRef[]
   /** Before-tree evidence belongs to this sub-action, never its parent step. */
   ariaEvidence?: AriaEvidenceEntry
+  recordingOffsetMs?: number
 }
 
 /**
@@ -688,6 +691,7 @@ export const RunDetailMemberSchema = z.object({
   retryCount: z.number().int().nonnegative().optional(),
   attempts: z.number().int().positive(),
   marks: z.array(RunDetailMemberMarkSchema).optional(),
+  recording: RecordingEntrySchema.optional(),
 }).strict() satisfies z.ZodType<RunDetailMember>
 
 export const RunStepTokenUsageSchema = z.object({
@@ -731,6 +735,7 @@ export const RunDetailSubActionSchema = z.object({
   screenStateHashAfter: z.string().optional(),
   artifactRefs: z.array(ArtifactRefSchema).optional(),
   ariaEvidence: EvidenceEntrySchema.and(z.object({ kind: z.literal('aria') })).optional(),
+  recordingOffsetMs: z.number().finite().nonnegative().optional(),
 }).strict() satisfies z.ZodType<RunDetailSubAction>
 
 export const RunTokenTotalsSchema = z.object({
@@ -771,6 +776,12 @@ export const RunDetailProjectionSchema = z.object({
 export const RunsArtifactInputSchema = z.object({
   runId: runIdSchema,
   sha: z.string().regex(/^[0-9a-f]{64}$/),
+  range: z.strictObject({
+    start: z.number().int().nonnegative(),
+    end: z.number().int().nonnegative().optional(),
+  }).refine(range => range.end === undefined || range.end >= range.start, {
+    message: 'Range end must not be below start',
+  }).optional(),
 }).strict()
 
 export type RunsArtifactInput = z.infer<typeof RunsArtifactInputSchema>
@@ -799,6 +810,11 @@ export const RunsArtifactResultSchema = z.object({
   contentType: z.string(),
   byteLength: z.number().int().nonnegative(),
   bytesBase64: z.string(),
+  totalLength: z.number().int().nonnegative().optional(),
+  range: z.strictObject({
+    start: z.number().int().nonnegative(),
+    end: z.number().int().nonnegative(),
+  }).optional(),
 }).strict()
 
 export type RunsArtifactResult = z.infer<typeof RunsArtifactResultSchema>

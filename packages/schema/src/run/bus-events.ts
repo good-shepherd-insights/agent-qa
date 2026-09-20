@@ -9,6 +9,7 @@ import type { RecordedRetrievalRung } from '../brief/retrieval-rung'
 import type { VerifierVerdict } from '../handoff/step-evidence'
 import type { AriaEvidenceEntry, StepEvidenceEntries, VariableSnapshot } from './evidence'
 import type { ModelTokenUsage, ModelUsage } from './model-usage'
+import type { RecordingEntry } from './recording'
 
 /**
  * The bus schema version, declared once per run in `runStarted.payload.busSchemaVersion`
@@ -196,6 +197,7 @@ export interface TestFinishedPayload {
   durationMs?: number
   failureSummary?: string
   retryCount?: number
+  recording?: RecordingEntry
   readonly steps?: never
 }
 
@@ -285,6 +287,7 @@ export interface SubActionRecordedPayload {
   artifactRefs?: readonly ArtifactRef[]
   /** 423 D-02: before-tree capture state; its present ref also rides artifactRefs. */
   ariaEvidence?: AriaEvidenceEntry
+  recordingOffsetMs?: number
   readonly stateBefore?: never
   readonly screenshot?: never
 }

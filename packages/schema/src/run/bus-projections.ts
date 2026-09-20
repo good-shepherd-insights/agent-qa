@@ -141,7 +141,10 @@ export function projectSubActionRecorded(
   evidence: SubActionEvidence,
   ids: { testIndex: number; stepIndex: number; subActionIndex: number },
   mask: MaskFn,
-  extra?: { ariaEvidence?: SubActionRecordedPayload['ariaEvidence'] },
+  extra?: {
+    ariaEvidence?: SubActionRecordedPayload['ariaEvidence']
+    recordingOffsetMs?: number
+  },
 ): SubActionRecordedPayload {
   const { stateBefore, stateAfter, decisionScreenshotRef, localEffect, ...rest } = evidence
   void stateBefore
@@ -168,6 +171,7 @@ export function projectSubActionRecorded(
       : {}),
     ...(artifactRefs.length > 0 ? { artifactRefs } : {}),
     ...(extra?.ariaEvidence !== undefined ? { ariaEvidence: extra.ariaEvidence } : {}),
+    ...(extra?.recordingOffsetMs !== undefined ? { recordingOffsetMs: extra.recordingOffsetMs } : {}),
   }
   return maskPayloadStrings(payload, mask)
 }
@@ -179,7 +183,12 @@ export function projectSubActionRecorded(
 export function projectTestFinished(
   outcome: PerTestOutcome,
   mask: MaskFn,
-  extra?: { durationMs?: number; failureSummary?: string; retryCount?: number },
+  extra?: {
+    durationMs?: number
+    failureSummary?: string
+    retryCount?: number
+    recording?: TestFinishedPayload['recording']
+  },
 ): TestFinishedPayload {
   const { steps, ...rest } = outcome
   void steps
@@ -196,6 +205,7 @@ export function projectTestFinished(
       ? { failureSummary: extra.failureSummary }
       : {}),
     ...(extra?.retryCount !== undefined ? { retryCount: extra.retryCount } : {}),
+    ...(extra?.recording !== undefined ? { recording: extra.recording } : {}),
   }
   return maskPayloadStrings(payload, mask)
 }

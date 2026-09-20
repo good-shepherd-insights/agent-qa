@@ -69,10 +69,14 @@ test('REC-BYTES-GONE', () => {
 
 const evidence: SubActionEvidence = {
   plan: 'Wait briefly',
-  plannedAction: { type: 'wait', duration: 1 },
+  plannedAction: { type: 'navigate', to: 'url', url: 'https://example.test' },
   result: { success: true },
   stateBefore: {
     platform: 'web', tree: 'root', elements: [], refMap: {}, timestamp: 0,
+    metadata: {
+      captureMode: 'textOnly', coordSpace: 'viewport', viewportWidth: 1280, viewportHeight: 720,
+      scroll: { offsetX: 0, offsetY: 0, contentWidth: 1280, contentHeight: 720 },
+    },
   },
 }
 const ids = { testIndex: 0, stepIndex: 0, subActionIndex: 0 }
