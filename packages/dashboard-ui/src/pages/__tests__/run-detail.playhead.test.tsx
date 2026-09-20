@@ -108,10 +108,10 @@ function recordedProjection() {
 
 function citedProjection(sha = '9'.repeat(64)) {
   const detail = projection()
-  detail.members.push({ testIndex: 2, name: 'Cited member', attempts: 1 })
-  detail.steps.push({ ...detail.steps[0]!, testIndex: 2, stepIndex: 3 })
-  detail.subActions.push({ ...detail.subActions[0]!, testIndex: 2, stepIndex: 3, subActionIndex: 1,
-    artifactRefs: [{ id: 'decision-screenshot:cited', sha: '9'.repeat(64) }] })
+  detail.members = [...detail.members, { testIndex: 2, name: 'Cited member', attempts: 1 }]
+  detail.steps = [...detail.steps, { ...detail.steps[0]!, testIndex: 2, stepIndex: 3 }]
+  detail.subActions = [...detail.subActions, { ...detail.subActions[0]!, testIndex: 2, stepIndex: 3, subActionIndex: 1,
+    artifactRefs: [{ id: 'decision-screenshot:cited', sha: '9'.repeat(64) }] }]
   detailRead.mockResolvedValue(detail)
   analysisRead.mockResolvedValue({ runId: 'run-1', clusters: [],
     verdicts: [{ perTest: 0, testId: 't_checkout', class: 'unknown', producer: 'deterministic-classifier', confidence: 0,

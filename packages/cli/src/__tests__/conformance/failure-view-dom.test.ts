@@ -267,6 +267,12 @@ interface PageHarvest {
   readonly verdictBlockText: string
   /** Every artifact-byte URL this page asked for. */
   readonly artifactRequests: readonly string[]
+  readonly artifactResponses: readonly string[]
+  readonly playheadBeforeCitation: string | null
+  readonly playheadAfterCitation: string | null
+  readonly playerSource: string | null
+  readonly playerImage: string | null
+  readonly drawerOpened: boolean
 }
 
 /** One `analyze-run` job row, read out of the durable store after the dashboard exited. */
@@ -585,7 +591,10 @@ async function observeRunDetail(
   const page: Page = await context_.newPage()
   let waitFailure: string | undefined
   const requests: string[] = []
+  const responses: string[] = []
+  let playheadBeforeCitation: string | null = null
   page.on('request', (request) => { requests.push(request.url()) })
+  page.on('response', response => { if (response.ok()) responses.push(response.url()) })
   try {
     await page.goto(`${origin}/runs/${encodeURIComponent(runId)}`)
     await page.locator(settleSelector).first()
@@ -598,6 +607,16 @@ async function observeRunDetail(
     if ((await subActions.count()) > 0) {
       await subActions.first().locator('button').first().click().catch(() => undefined)
       await page.locator('[data-player] [data-slot="toggle-group-item"]').filter({ hasText: /^Frames$/ }).click()
+    }
+
+    const citation = page.locator('[data-cited-artifact]').first()
+    if (await citation.count()) {
+      await page.locator('[data-player] [data-slot="toggle-group-item"]').filter({ hasText: /^Video$/ }).click()
+      await page.locator('[data-sub-action]').first().locator('button').first().focus()
+      await page.keyboard.press('Escape')
+      playheadBeforeCitation = await page.locator('[data-playhead-row]').getAttribute('data-sub-action-id').catch(() => null)
+      await page.getByRole('tab', { name: /^Network/ }).click()
+      await citation.click()
     }
 
     // The screenshot pane is the one fact whose completion is a NETWORK event rather than a paint:
@@ -613,7 +632,7 @@ async function observeRunDetail(
         const src = await page.locator('[data-artifact-state="available"] img').first()
           .getAttribute('src').catch(() => null)
         if (src === null) return true
-        return requests.some((url) => url.endsWith(src))
+        return responses.some((url) => url.endsWith(src))
       },
       PAGE_BUDGET_MS,
       50,
@@ -633,6 +652,10 @@ async function observeRunDetail(
         Array.from(document.querySelectorAll(selector))
           .map((element) => (element.textContent ?? '').trim())
       return {
+        playheadAfterCitation: document.querySelector('[data-playhead-row]')?.getAttribute('data-sub-action-id') ?? null,
+        playerSource: document.querySelector('[data-player]')?.getAttribute('data-player-source') ?? null,
+        playerImage: document.querySelector('[data-player] img')?.getAttribute('src') ?? null,
+        drawerOpened: document.querySelector('[data-slot="sheet-content"]') !== null,
         members: attribute('[data-member]', 'data-member'),
         memberOutcomes: attribute('[data-member-outcome]', 'data-member-outcome'),
         verdictProducers: attribute('[data-verdict-block]', 'data-verdict-producer'),
@@ -650,9 +673,9 @@ async function observeRunDetail(
         ).map((element) =>
           `${element.getAttribute('data-cited-artifact-state') ?? '?'}:`
           + `${element.getAttribute('data-cited-artifact-sha') ?? '?'}`),
-        missingEvidence: Array.from(document.querySelectorAll('[data-evidence-missing]')).map(
+        missingEvidence: Array.from(document.querySelectorAll('[data-evidence-incomplete]:not([data-evidence-state])')).map(
           (element) =>
-            `${element.getAttribute('data-evidence-missing') ?? '?'} :: `
+            `${element.getAttribute('data-evidence-incomplete') ?? '?'} :: `
             + `${(element.textContent ?? '').trim()}`,
         ),
         evidenceStates: attribute('[data-evidence-state="unavailable"][data-evidence-incomplete]', 'data-evidence-state'),
@@ -674,6 +697,8 @@ async function observeRunDetail(
       ...(waitFailure === undefined ? {} : { waitFailure }),
       ...harvested,
       artifactRequests: requests.filter((url) => url.includes('/artifacts/')),
+      artifactResponses: responses.filter((url) => url.includes('/artifacts/')),
+      playheadBeforeCitation,
     }
   } finally {
     await page.close()
@@ -1090,7 +1115,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     expect(
       page.citedArtifacts,
       'the cited artifact is not a clickable affordance on the page. The bytes are present, so the '
-      + `ref must render as the button that opens the drawer's sha-keyed screenshot tab.${context()}`,
+      + `ref must render as the button that selects its frame on the timeline.${context()}`,
     ).toEqual([sha])
     expect(
       page.citedArtifactStates,
@@ -1111,6 +1136,12 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       page.artifactRequests.some((url) => url.endsWith(`/artifacts/${sha ?? '(none)'}`)),
       `the page never asked the door for the screenshot bytes it claims to be showing.${context()}`,
     ).toBe(true)
+    expect(page.playheadBeforeCitation).toBeNull()
+    expect(page.playheadAfterCitation).toBe('0:0-0')
+    expect(page.playerSource).toBe('frames')
+    expect(page.playerImage).toBe(`/api/runs/${encodeURIComponent(recorded.red!.runId)}/artifacts/${sha}`)
+    expect(page.artifactResponses.some(url => url.endsWith(page.playerImage ?? '(none)'))).toBe(true)
+    expect(page.drawerOpened).toBe(false)
   })
 
   it('(1d) masking: no delimiter, no placeholder, and no planted value in the verdict the model wrote', () => {
@@ -1304,7 +1335,8 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       page.citedArtifactStates,
       'the cited artifact does not render as `incomplete` under its own sha. It must keep its place '
       + `in the row — never dropped, never a button that opens nothing.${context()}`,
-    ).toEqual([`incomplete:${sha}`])
+    ).toEqual([`unavailable:${sha}`])
+    expect(page.drawerOpened).toBe(false)
     expect(
       page.citedArtifacts,
       'the absent cited artifact is STILL a button. An affordance that opens nothing is the worse '

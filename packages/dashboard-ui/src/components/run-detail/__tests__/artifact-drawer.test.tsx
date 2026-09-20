@@ -73,7 +73,7 @@ function mount(data: RunArtifactResponse | null = response(), options: {
   }
   act(() => root!.render(
     <ArtifactDrawer run={options.row ?? data?.run ?? run} open tab={options.tab}
-      screenshotSha={null} response={data} loading={options.loading ?? false}
+      response={data} loading={options.loading ?? false}
       error={options.error ?? null} onOpenChange={() => {}} onTabChange={() => {}}
       onRetry={options.onRetry ?? (() => {})} />,
   ))
