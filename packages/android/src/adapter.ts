@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type {
   ActionsFor,
   ActionResult,
@@ -8,6 +11,7 @@ import type {
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
+  RecordingCapability,
   ScrollPrimitives,
   ScrollUntilVisibleMeta,
 } from '@vostride/agent-qa-runner'
@@ -424,10 +428,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   private activeWebContext: string | null = null
   // Cached so we skip redundant switchContext round-trips.
   private currentContext: string | null = null
-  // Video recording state
-  private recordingEnabled = false
-  private videoDir: string | null = null
-  private videoPath: string | null = null
+  private recordingCapability: RecordingCapability | undefined
   private consoleLogs: ConsoleLogEntry[] = []
   private consoleDrainIndex = 0
   private captureConsole = true
@@ -475,38 +476,11 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
     }
 
-    // Start screen recording if configured
-    if (config.recording?.enabled && this.driver) {
-      this.videoDir = config.recording.videoDir
-      const videoSize = config.recording.videoSize
-        ? `${config.recording.videoSize.width}x${config.recording.videoSize.height}`
-        : undefined
-      // Try WebdriverIO wrapper first (works across Appium 1.x + 2.x), then mobile: command
-      try {
-        await (this.driver as any).startRecordingScreen({ videoSize, timeLimit: 1800, forceRestart: true })
-        this.recordingEnabled = true
-      } catch {
-        try {
-          await this.driver.execute('mobile: startScreenRecording', {
-            videoSize, timeLimit: 1800, forceRestart: true,
-          })
-          this.recordingEnabled = true
-        } catch {
-          // Recording not supported by this Appium/device setup
-        }
-      }
-    }
   }
 
   async cleanup(): Promise<void> {
-    // Stop recording before closing the session
-    if (this.recordingEnabled && this.driver) {
-      try {
-        await this.stopAndSaveRecording()
-      } catch {
-        // best-effort
-      }
-    }
+    try { await this.recordingCapability?.stop() } catch { /* best-effort */ }
+    this.recordingCapability = undefined
 
     try {
       if (this.driver) {
@@ -524,7 +498,6 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     this.appRegistry = null
     this.activeWebContext = null
     this.currentContext = null
-    this.recordingEnabled = false
   }
 
   // Whether we've ever successfully observed via a web context.
@@ -663,42 +636,34 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     return newLogs.filter(e => e.level === level)
   }
 
-  // ---------------------------------------------------------------------------
-  // Video recording
-  // ---------------------------------------------------------------------------
-
-  async getVideoPath(): Promise<string | null> {
-    if (this.recordingEnabled && !this.videoPath && this.driver) {
-      await this.stopAndSaveRecording()
+  get recording(): RecordingCapability | undefined {
+    const driver = this.driver
+    const config = this.config?.recording
+    if (!driver || !config) return undefined
+    if (this.recordingCapability) return this.recordingCapability
+    let running = false
+    this.recordingCapability = {
+      async start() {
+        if (running) throw new Error('Recording already started')
+        running = true
+        const videoSize = config.videoSize
+          ? `${config.videoSize.width}x${config.videoSize.height}`
+          : undefined
+        await driver.startRecordingScreen({ videoSize, timeLimit: 1800, forceRestart: true })
+        return {}
+      },
+      async stop() {
+        if (!running) return undefined
+        const base64Video = await driver.stopRecordingScreen()
+        running = false
+        if (!base64Video) return undefined
+        await mkdir(config.videoDir, { recursive: true })
+        const stagingPath = join(config.videoDir, `${randomUUID()}.mp4`)
+        await writeFile(stagingPath, Buffer.from(base64Video, 'base64'))
+        return { stagingPath, contentType: 'video/mp4' }
+      },
     }
-    return this.videoPath
-  }
-
-  private async stopAndSaveRecording(): Promise<void> {
-    if (!this.driver || !this.videoDir) return
-    this.recordingEnabled = false
-
-    let base64Video: string | undefined
-    // Try WebdriverIO wrapper first, then mobile: command
-    try {
-      base64Video = await (this.driver as any).stopRecordingScreen()
-    } catch {
-      try {
-        base64Video = await this.driver.execute('mobile: stopScreenRecording') as unknown as string
-      } catch {
-        // Recording stop failed
-      }
-    }
-    if (!base64Video) return
-
-    const { mkdirSync, writeFileSync } = await import('node:fs')
-    const { join } = await import('node:path')
-
-    mkdirSync(this.videoDir, { recursive: true })
-    const filename = `android-${Date.now()}.mp4`
-    const filePath = join(this.videoDir, filename)
-    writeFileSync(filePath, Buffer.from(base64Video, 'base64'))
-    this.videoPath = filePath
+    return this.recordingCapability
   }
 
   // ---------------------------------------------------------------------------
