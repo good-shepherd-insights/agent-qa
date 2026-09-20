@@ -3,6 +3,12 @@ import { Badge } from "@/components/ui/badge"
 import { ChevronRight, Search, X, Copy, Check } from "lucide-react"
 import type { DisplayStep } from "@/lib/display-step"
 import { cn } from "@/lib/utils"
+import { useEvidenceRecords } from '@/hooks/use-evidence-records'
+import { EVIDENCE_COPY, resolveEvidenceView } from '@/lib/evidence-state-view'
+import { copyTextOf } from '@/lib/display-text'
+import { splitMaskedText } from '@/lib/masked-text'
+import { EvidenceLoading, EvidenceState } from './evidence-state'
+import { MaskedText } from './masked-text'
 
 export function formatRelativeTime(offsetMs: number): string {
   if (offsetMs >= 1000) return `+${(offsetMs / 1000).toFixed(1)}s`
@@ -28,9 +34,13 @@ interface NetworkEntry {
 }
 
 interface TabNetworkProps {
-  step: Pick<DisplayStep, "stepOrder" | "displayStepOrder" | "networkLogs">
+  step: Pick<DisplayStep, 'stepOrder' | 'displayStepOrder' | 'networkLogs' | 'testIndex' | 'stepIndex' | 'evidence'> | null
   allSteps: Array<Pick<DisplayStep, "stepOrder" | "displayStepOrder" | "networkLogs">>
   platform?: string
+  runId?: string | null
+  selection?: Parameters<typeof resolveEvidenceView>[0]['selection']
+  evidenceSteps?: DisplayStep[]
+  onSelectStep?: (stepId: string) => void
 }
 
 function statusColor(status: number) {
@@ -49,8 +59,8 @@ function HeadersTable({ headers }: { headers: Record<string, string> }) {
     <div className="space-y-0.5">
       {entries.map(([key, val]) => (
         <div key={key} className="flex gap-2 text-xs font-mono">
-          <span className="text-muted-foreground shrink-0">{key}:</span>
-          <span className="break-all">{val}</span>
+          <span className="text-muted-foreground shrink-0"><MaskedText text={key} />:</span>
+          <span className="break-all"><MaskedText text={val} /></span>
         </div>
       ))}
     </div>
@@ -70,7 +80,7 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   const handleCopy = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
-    navigator.clipboard.writeText(text)
+    navigator.clipboard.writeText(copyTextOf(text))
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }, [text])
@@ -86,21 +96,12 @@ function ResponseBody({ body, contentType }: { body: string; contentType: string
   if (ct.includes('application/json')) {
     try {
       const pretty = JSON.stringify(JSON.parse(body), null, 2)
-      return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all">{pretty}</pre>
+      return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all"><MaskedText text={pretty} /></pre>
     } catch {
-      return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all">{body}</pre>
+      return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all"><MaskedText text={body} /></pre>
     }
   }
-  if (ct.includes('image/svg+xml')) {
-    return <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(body)}`} alt="SVG response" className="max-h-48" />
-  }
-  if (body.startsWith('data:image/')) {
-    return <img src={body} alt="Image response" className="max-h-48 rounded-sm" />
-  }
-  if (ct.includes('image/')) {
-    return <span className="text-xs text-muted-foreground italic">Image not previewable (re-run test to capture)</span>
-  }
-  return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all">{body}</pre>
+  return <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all"><MaskedText text={body} /></pre>
 }
 
 function ExpandedDetail({ entry }: { entry: NetworkEntry }) {
@@ -123,7 +124,7 @@ function ExpandedDetail({ entry }: { entry: NetworkEntry }) {
           {isPost && (
             <DetailSection label="Request Body">
               {entry.requestBody ? (
-                <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all">{entry.requestBody}</pre>
+                <pre className="text-xs font-mono bg-background/60 rounded-sm px-3 py-2 overflow-x-auto max-h-48 whitespace-pre-wrap break-all"><MaskedText text={entry.requestBody} /></pre>
               ) : (
                 <span className="text-xs text-muted-foreground italic">No request body</span>
               )}
@@ -150,7 +151,7 @@ function ExpandedDetail({ entry }: { entry: NetworkEntry }) {
                 <div className="flex flex-wrap gap-3">
                   {validTimings.map(([phase, ms]) => (
                     <div key={phase} className="text-xs font-mono">
-                      <span className="text-muted-foreground">{phase}:</span>{" "}
+                      <span className="text-muted-foreground"><MaskedText text={phase} />:</span>{" "}
                       <span>{Math.round(ms)}ms</span>
                     </div>
                   ))}
@@ -165,19 +166,42 @@ function ExpandedDetail({ entry }: { entry: NetworkEntry }) {
 }
 
 function HighlightMatch({ text, query }: { text: string; query: string }) {
-  if (!query) return <>{text}</>
+  if (!query || splitMaskedText(text).some(segment => segment.kind === 'masked')) return <MaskedText text={text} />
   const idx = text.toLowerCase().indexOf(query.toLowerCase())
-  if (idx === -1) return <>{text}</>
+  if (idx === -1) return <MaskedText text={text} />
   return (
     <>
-      {text.slice(0, idx)}
-      <mark className="bg-yellow-400/30 text-inherit rounded-sm px-0.5">{text.slice(idx, idx + query.length)}</mark>
-      {text.slice(idx + query.length)}
+      <MaskedText text={text.slice(0, idx)} />
+      <mark className="bg-yellow-400/30 text-inherit rounded-sm px-0.5"><MaskedText text={text.slice(idx, idx + query.length)} /></mark>
+      <MaskedText text={text.slice(idx + query.length)} />
     </>
   )
 }
 
-export function TabNetwork({ step, allSteps, platform }: TabNetworkProps) {
+export function TabNetwork({ step, allSteps, platform, runId, selection = step ? 'step' : 'none', evidenceSteps = [], onSelectStep }: TabNetworkProps) {
+  const entry = step?.evidence?.network
+  const { read, retry } = useEvidenceRecords(step?.testIndex !== undefined && step.stepIndex !== undefined
+    ? { runId: runId ?? '', testIndex: step.testIndex, stepIndex: step.stepIndex, kind: 'network' } : null,
+  entry?.state === 'present' && !entry.ref.evidenceIncomplete && (selection === 'step' || selection === 'sub-action'))
+  if (step && step.testIndex === undefined && (selection === 'step' || selection === 'sub-action')) return <NetworkRecords step={step} allSteps={allSteps} platform={platform} />
+  const memberSteps = evidenceSteps.filter(s => s.testIndex === step?.testIndex && s.stepIndex !== undefined)
+    .map(s => ({ ...s, stepIndex: s.stepIndex! }))
+  const view = resolveEvidenceView({ kind: 'network', selection, entry, read,
+    elsewhere: step?.stepIndex === undefined ? undefined : { steps: memberSteps, currentStepIndex: step.stepIndex } })
+  if (view.kind === 'loading') return <EvidenceLoading kind="network" />
+  if (view.kind === 'state') {
+    const action = view.action
+    return <EvidenceState {...view} kind="network"
+      explanation={action?.type === 'step' ? `${view.explanation} ${action.description}` : view.explanation}
+      actionLabel={action?.label} onAction={action?.type === 'retry' ? retry : action?.type === 'step' && onSelectStep
+        ? () => { const target = memberSteps.find(s => s.stepIndex === action.stepIndex); if (target) onSelectStep(target.id) } : undefined} />
+  }
+  if (view.document.kind !== 'network' || !step) return null
+  const selected = { ...step, networkLogs: view.document.records }
+  return <NetworkRecords key={`${runId}:${step.testIndex}:${step.stepIndex}`} step={selected} allSteps={[selected]} platform={platform} />
+}
+
+function NetworkRecords({ step, allSteps, platform }: Omit<TabNetworkProps, 'step'> & { step: NonNullable<TabNetworkProps['step']> }) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
 
   const accumulatedLogs = useMemo(() => {
@@ -225,13 +249,8 @@ export function TabNetwork({ step, allSteps, platform }: TabNetworkProps) {
 
   if (accumulatedLogs.length === 0) {
     const isMobile = platform === 'android' || platform === 'ios'
-    return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm py-12">
-        {isMobile
-          ? 'Network capture is not available for mobile tests'
-          : 'No network requests captured for this step'}
-      </div>
-    )
+    const state = isMobile ? 'unsupported' : 'empty'
+    return <EvidenceState kind="network" state={state} {...EVIDENCE_COPY.network[state]} />
   }
 
   return (

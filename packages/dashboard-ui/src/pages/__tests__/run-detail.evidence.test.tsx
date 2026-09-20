@@ -237,7 +237,7 @@ it('A11Y-GROUP-ORDER keeps fixed impact ordering and stored order within a group
 const ariaEntry = { kind: 'aria', state: 'present', ref: { id: `aria-state:${sha}`, sha } } as const
 const subAction: RunDetailSubAction = {
   testIndex: 0, stepIndex: 0, subActionIndex: 2, plan: 'Inspect',
-  plannedAction: { type: 'wait', ms: 100 }, result: { success: true }, screenStateHash: sha,
+  plannedAction: { type: 'navigate', to: 'url', url: 'https://example.com' }, result: { success: true }, screenStateHash: sha,
   ariaEvidence: ariaEntry,
 }
 function completeStep() {
@@ -322,4 +322,42 @@ for (const kind of ['network', 'console'] as const) it(`RECORDS-${kind.toUpperCa
   expect(container.textContent).not.toContain('earlier')
   expect(container.querySelector('[data-masked="secret"]')).not.toBeNull()
   expect(container.querySelector('img')).toBeNull()
+  if (kind === 'network') {
+    await act(async () => { container.querySelector<HTMLTableRowElement>('tbody tr')!.click() })
+    expect(container.querySelector('pre')?.textContent).toContain('<img src=x>')
+    expect(container.querySelector('pre [data-masked="secret"]')).not.toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+  }
+})
+
+it('A11Y-RECORDED-ELSEWHERE-PAGE selects the offered step through the page state', async () => {
+  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    let body: unknown
+    if (url.includes('/evidence?')) body = ready(1)
+    else if (url.endsWith('/detail')) body = {
+      runId, members: [{ testIndex: 0, name: 'Checkout', attempts: 1 }],
+      steps: [0, 1].map(stepIndex => ({ testIndex: 0, stepIndex, stepText: `Checkout ${stepIndex}`, cacheStatus: 'miss',
+        verifierVerdict: { pass: true, reasoning: '' }, selfHealOccurred: false, briefDigest: '',
+        evidence: step(stepIndex, stepIndex === 1 ? present : { kind: 'a11y', state: 'absent', reason: 'not-captured' }).evidence })),
+      subActions: [], tokens: { measuredSteps: 0, unmeasuredSteps: 2 },
+    }
+    else if (url.endsWith('/analysis')) body = { runId, verdicts: [], sentences: [], clusters: [] }
+    else if (url.endsWith('/knowledge')) body = { kind: 'evidence-incomplete', runId }
+    else if (url.includes('/execution-logs')) body = { logs: [] }
+    else if (url === `/api/runs/${runId}`) body = { run: {
+      id: runId, name: 'Checkout', status: 'passed', platform: 'web', duration: 0,
+      attributes: {}, metadata: null, startedAt: null, endedAt: null, createdAt: '2026-09-20',
+    } }
+    else throw new Error(`Unexpected test request: ${url}`)
+    return { ok: true, json: async () => body }
+  })
+  await act(async () => { root.render(<MemoryRouter initialEntries={[`/runs/${runId}?step=0:0&tab=a11y`]}>
+    <Routes><Route path="/runs/:id" element={<RunDetailPage />} /></Routes>
+  </MemoryRouter>) })
+  expect(container.textContent).toContain('Recorded on step 2')
+  await act(async () => { container.querySelector<HTMLButtonElement>('[data-evidence-state="not-captured"] button')!.click() })
+  await flushRecords()
+  expect(fetchMock).toHaveBeenCalledWith(`/api/runs/${runId}/evidence?testIndex=0&stepIndex=1&kind=a11y`)
+  expect(container.querySelector('[data-a11y-impact="critical"]')).not.toBeNull()
 })

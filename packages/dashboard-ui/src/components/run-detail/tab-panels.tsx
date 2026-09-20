@@ -15,7 +15,6 @@ import type { DisplayStep } from "@/lib/display-step"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
 import { resolveEvidenceView } from '@/lib/evidence-state-view'
-import { EvidenceState } from './evidence-state'
 
 interface TabPanelsProps {
   activeTab: string
@@ -57,18 +56,19 @@ export function TabPanels({
   useEffect(() => {
     if (activeTab !== 'console' && activeTab !== 'network') return
     const ref = activeTab === 'console' ? consoleScrollRef : networkScrollRef
-    requestAnimationFrame(() => {
+    const scrollToEnd = () => {
       const viewport = ref.current?.querySelector('[data-slot="scroll-area-viewport"]')
       if (viewport) viewport.scrollTop = viewport.scrollHeight
-    })
+    }
+    const frame = requestAnimationFrame(scrollToEnd)
+    const observer = new MutationObserver(scrollToEnd)
+    if (ref.current) observer.observe(ref.current, { childList: true, subtree: true })
+    return () => { cancelAnimationFrame(frame); observer.disconnect() }
   }, [activeTab, step?.id])
 
-  const selection = hasExecutionLogs ? 'execution-log' : !step ? 'none' : subAction ? 'sub-action' : 'step'
-  const noEvidenceSelection = selection === 'none' || selection === 'execution-log'
-  const noSelection = (kind: 'network' | 'console' | 'aria') => {
-    const view = resolveEvidenceView({ kind, selection, entry: undefined, read: 'idle' })
-    return view.kind === 'state' ? <EvidenceState {...view} kind={kind} /> : null
-  }
+  const selection: Parameters<typeof resolveEvidenceView>[0]['selection'] = hasExecutionLogs
+    ? executionLogs.some(log => log.type === 'hook') ? 'hook' : 'execution-log'
+    : !step ? 'none' : subAction ? 'sub-action' : 'step'
 
   return (
     <Tabs
@@ -115,7 +115,7 @@ export function TabPanels({
       <TabsContent value="network" className="flex-1 min-h-0">
         <div ref={networkScrollRef} className="h-full">
           <ScrollArea className="h-full">
-            {noEvidenceSelection || !step ? noSelection('network') : <TabNetwork step={step} allSteps={allSteps} platform={platform} />}
+            <TabNetwork step={step} allSteps={allSteps} platform={platform} runId={runId} selection={selection} evidenceSteps={allSteps} onSelectStep={onSelectStep} />
           </ScrollArea>
         </div>
       </TabsContent>
@@ -123,14 +123,14 @@ export function TabPanels({
       <TabsContent value="console" className="flex-1 min-h-0">
         <div ref={consoleScrollRef} className="h-full">
           <ScrollArea className="h-full">
-            {!step && !hasExecutionLogs ? noSelection('console') : <TabConsole step={step ?? { stepOrder: 0, displayStepOrder: 0 }} allSteps={allSteps} executionLogs={executionLogs} isHookStep={hasExecutionLogs} />}
+            <TabConsole step={step} allSteps={allSteps} executionLogs={executionLogs} isHookStep={hasExecutionLogs} runId={runId} selection={selection} evidenceSteps={allSteps} onSelectStep={onSelectStep} />
           </ScrollArea>
         </div>
       </TabsContent>
 
       <TabsContent value="aria" className="flex flex-1 min-h-0 overflow-hidden">
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {noEvidenceSelection || !step ? noSelection('aria') : <TabAriaTree step={step} />}
+          <TabAriaTree step={step} subAction={subAction} runId={runId} selection={selection} />
         </div>
       </TabsContent>
 

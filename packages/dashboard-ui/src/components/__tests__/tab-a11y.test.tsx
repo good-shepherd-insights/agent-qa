@@ -32,6 +32,7 @@ async function renderA11y(
   accessibilityViolations: AccessibilityViolation[] | null,
   reason: 'not-captured' | 'unavailable' = 'unavailable',
 ) {
+  vi.useFakeTimers()
   container = document.createElement("div")
   document.body.appendChild(container)
   root = createRoot(container)
@@ -55,6 +56,7 @@ async function renderA11y(
   await act(async () => {
     root!.render(<TabA11y step={step} runId={runId} />)
   })
+  await act(async () => { await vi.advanceTimersByTimeAsync(250) })
 
   return container
 }
@@ -67,6 +69,7 @@ afterEach(() => {
   if (container) container.remove()
   container = null
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe("TabA11y", () => {

@@ -3,12 +3,13 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import type { RunEvidenceRead } from '@/lib/api'
+import type { EvidenceKind } from '@vostride/agent-qa-schema'
 
 const { fetchRecords } = vi.hoisted(() => ({ fetchRecords: vi.fn() }))
 vi.mock('@/lib/api', () => ({ fetchRunEvidence: fetchRecords }))
 const modules = import.meta.glob('../use-evidence-records.ts')
 const key = { runId: 'run_test', testIndex: 0, stepIndex: 0, kind: 'a11y' as const }
-type Key = typeof key
+type Key = Omit<typeof key, 'kind'> & { kind: EvidenceKind; subActionIndex?: number }
 type Hook = (key: Key | null, enabled: boolean) => { read: 'idle' | 'loading' | RunEvidenceRead; retry: () => void }
 let container: HTMLDivElement
 let root: Root
@@ -75,6 +76,8 @@ it('RECORDS-STALE-DISCARDED rejects an old address response and clears it during
   expect(current.read).toEqual({ kind: 'failed', error: 'offline' })
   await render({ ...key, runId: 'run_other' })
   expect(current.read).toBe('loading')
+  await render({ ...key, stepIndex: 1 })
+  expect(current.read).toBe('loading')
 })
 
 it('RECORDS-RETRY reissues the current key after a rejected client read', async () => {
@@ -89,4 +92,21 @@ it('RECORDS-RETRY reissues the current key after a rejected client read', async 
   expect(fetchRecords).toHaveBeenCalledTimes(2)
   expect(fetchRecords).toHaveBeenLastCalledWith(key)
   expect(current.read).toEqual({ kind: 'failed', error: 'offline' })
+})
+
+it('RECORDS-KEY covers member, kind and sub-action changes and disable/re-enable', async () => {
+  await load()
+  for (const address of [key, { ...key, testIndex: 1 }, { ...key, kind: 'aria' as const, subActionIndex: 0 },
+    { ...key, kind: 'aria' as const, subActionIndex: 1 }]) {
+    await render(address)
+    expect(current.read).toBe('loading')
+    await tick()
+    expect(fetchRecords).toHaveBeenLastCalledWith(address)
+  }
+  await render(key, false)
+  expect(current.read).toBe('idle')
+  await render(key)
+  expect(current.read).toBe('loading')
+  await tick()
+  expect(fetchRecords).toHaveBeenCalledTimes(5)
 })

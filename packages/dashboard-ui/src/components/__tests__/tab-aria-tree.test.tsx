@@ -16,7 +16,8 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { NO_ARIA_TREE_LABEL, TabAriaTree } from "@/components/run-detail/tab-aria-tree"
+import { TabAriaTree } from "@/components/run-detail/tab-aria-tree"
+import { EVIDENCE_COPY } from '@/lib/evidence-state-view'
 import { fromRunDetailStep } from "@/lib/display-step"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -67,8 +68,8 @@ describe("TabAriaTree", () => {
   it("says no snapshot was captured, in its own words and in a readable posture", async () => {
     const view = await renderTree()
 
-    expect(view.textContent).toContain(NO_ARIA_TREE_LABEL)
-    expect(view.querySelector('[data-aria-tree-state="not-captured"]')).not.toBeNull()
+    expect(view.textContent).toContain(EVIDENCE_COPY.aria['no-selection'].title)
+    expect(view.querySelector('[data-evidence-kind="aria"][data-evidence-state="no-selection"]')).not.toBeNull()
   })
 
   it("offers no before/after toggle over snapshots nothing recorded", async () => {

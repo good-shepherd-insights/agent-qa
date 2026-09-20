@@ -5,12 +5,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { ExecutionLogEntry, LiveExecutionLogEntry } from "@/lib/api"
 import type { DisplayStep } from "@/lib/display-step"
 import { cn } from "@/lib/utils"
+import { useEvidenceRecords } from '@/hooks/use-evidence-records'
+import { EVIDENCE_COPY, resolveEvidenceView } from '@/lib/evidence-state-view'
+import { splitMaskedText } from '@/lib/masked-text'
+import { EvidenceLoading, EvidenceState } from './evidence-state'
+import { MaskedText } from './masked-text'
 
 interface TabConsoleProps {
-  step: Pick<DisplayStep, "stepOrder" | "displayStepOrder" | "consoleLogs">
+  step: Pick<DisplayStep, 'stepOrder' | 'displayStepOrder' | 'consoleLogs' | 'testIndex' | 'stepIndex' | 'evidence'> | null
   allSteps: Array<Pick<DisplayStep, "stepOrder" | "displayStepOrder" | "consoleLogs">>
   executionLogs?: Array<ExecutionLogEntry | LiveExecutionLogEntry>
   isHookStep?: boolean
+  runId?: string | null
+  selection?: Parameters<typeof resolveEvidenceView>[0]['selection']
+  evidenceSteps?: DisplayStep[]
+  onSelectStep?: (stepId: string) => void
 }
 
 function levelTextColor(level: string): string {
@@ -35,19 +44,44 @@ function phaseColor(phase: string): string {
 const LOG_LEVELS = ['error', 'warn', 'info', 'log', 'debug'] as const
 
 function HighlightMatch({ text, query }: { text: string; query: string }) {
-  if (!query) return <>{text}</>
+  if (!query || splitMaskedText(text).some(segment => segment.kind === 'masked')) return <MaskedText text={text} />
   const idx = text.toLowerCase().indexOf(query.toLowerCase())
-  if (idx === -1) return <>{text}</>
+  if (idx === -1) return <MaskedText text={text} />
   return (
     <>
-      {text.slice(0, idx)}
-      <mark className="bg-yellow-400/30 text-inherit rounded-sm px-0.5">{text.slice(idx, idx + query.length)}</mark>
-      {text.slice(idx + query.length)}
+      <MaskedText text={text.slice(0, idx)} />
+      <mark className="bg-yellow-400/30 text-inherit rounded-sm px-0.5"><MaskedText text={text.slice(idx, idx + query.length)} /></mark>
+      <MaskedText text={text.slice(idx + query.length)} />
     </>
   )
 }
 
-export function TabConsole({ step, allSteps, executionLogs, isHookStep }: TabConsoleProps) {
+export function TabConsole({ step, allSteps, executionLogs, isHookStep, runId, selection = step ? 'step' : 'none', evidenceSteps = [], onSelectStep }: TabConsoleProps) {
+  const hasHookOutput = Boolean(isHookStep && executionLogs?.length)
+  const entry = step?.evidence?.console
+  const { read, retry } = useEvidenceRecords(step?.testIndex !== undefined && step.stepIndex !== undefined
+    ? { runId: runId ?? '', testIndex: step.testIndex, stepIndex: step.stepIndex, kind: 'console' } : null,
+  !hasHookOutput && entry?.state === 'present' && !entry.ref.evidenceIncomplete && (selection === 'step' || selection === 'sub-action'))
+  if (hasHookOutput) return <ConsoleRecords step={{ stepOrder: 0, displayStepOrder: 0 }} allSteps={[]} executionLogs={executionLogs} isHookStep />
+  if (step && step.testIndex === undefined && (selection === 'step' || selection === 'sub-action')) return <ConsoleRecords step={step} allSteps={allSteps} />
+  const memberSteps = evidenceSteps.filter(s => s.testIndex === step?.testIndex && s.stepIndex !== undefined)
+    .map(s => ({ ...s, stepIndex: s.stepIndex! }))
+  const view = resolveEvidenceView({ kind: 'console', selection, entry, read,
+    elsewhere: step?.stepIndex === undefined ? undefined : { steps: memberSteps, currentStepIndex: step.stepIndex } })
+  if (view.kind === 'loading') return <EvidenceLoading kind="console" />
+  if (view.kind === 'state') {
+    const action = view.action
+    return <EvidenceState {...view} kind="console"
+      explanation={action?.type === 'step' ? `${view.explanation} ${action.description}` : view.explanation}
+      actionLabel={action?.label} onAction={action?.type === 'retry' ? retry : action?.type === 'step' && onSelectStep
+        ? () => { const target = memberSteps.find(s => s.stepIndex === action.stepIndex); if (target) onSelectStep(target.id) } : undefined} />
+  }
+  if (view.document.kind !== 'console' || !step) return null
+  const selected = { ...step, consoleLogs: view.document.records }
+  return <ConsoleRecords key={`${runId}:${step.testIndex}:${step.stepIndex}`} step={selected} allSteps={[selected]} />
+}
+
+function ConsoleRecords({ step, allSteps, executionLogs, isHookStep }: Omit<TabConsoleProps, 'step'> & { step: NonNullable<TabConsoleProps['step']> }) {
   const accumulatedLogs = useMemo(() => {
     const currentOrder = step.displayStepOrder ?? step.stepOrder
     const logs: Array<{ level: string; text: string; location?: { url: string; lineNumber: number; columnNumber: number }; timestamp: number; isCurrent: boolean }> = []
@@ -91,11 +125,7 @@ export function TabConsole({ step, allSteps, executionLogs, isHookStep }: TabCon
   const hasConsoleLogs = accumulatedLogs.length > 0
 
   if (!hasHookOutput && !hasConsoleLogs) {
-    return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm py-12">
-        No console output captured for this step
-      </div>
-    )
+    return <EvidenceState kind="console" state="empty" {...EVIDENCE_COPY.console.empty} />
   }
 
   return (
@@ -142,7 +172,7 @@ export function TabConsole({ step, allSteps, executionLogs, isHookStep }: TabCon
               <div key={log.id} className="border border-border/50 rounded-sm overflow-hidden">
                 <div className="flex items-center gap-2 px-2 py-1.5 bg-muted/20 border-b border-border/30">
                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
-                    {log.name}
+                    <MaskedText text={log.name} />
                   </Badge>
                   <Badge className={cn("text-[10px] px-1.5 py-0", phaseColor(log.phase))}>
                     {log.phase}
@@ -156,10 +186,10 @@ export function TabConsole({ step, allSteps, executionLogs, isHookStep }: TabCon
                   <span className="text-[10px] text-muted-foreground ml-auto">{log.duration}ms</span>
                 </div>
                 {log.stdout && (
-                  <pre className="px-3 py-2 font-mono text-xs whitespace-pre-wrap text-foreground/90">{log.stdout}</pre>
+                  <pre className="px-3 py-2 font-mono text-xs whitespace-pre-wrap text-foreground/90"><MaskedText text={log.stdout} /></pre>
                 )}
                 {log.stderr && (
-                  <pre className="px-3 py-2 font-mono text-xs whitespace-pre-wrap text-red-400/80 border-t border-border/30">{log.stderr}</pre>
+                  <pre className="px-3 py-2 font-mono text-xs whitespace-pre-wrap text-red-400/80 border-t border-border/30"><MaskedText text={log.stderr} /></pre>
                 )}
               </div>
             ))}
@@ -178,7 +208,7 @@ export function TabConsole({ step, allSteps, executionLogs, isHookStep }: TabCon
             !entry.isCurrent && "opacity-40"
           )}>
             <span className={cn("shrink-0 text-[10px]", levelTextColor(entry.level))}>
-              {entry.level}
+              <MaskedText text={entry.level} />
             </span>
             <span className="text-muted-foreground/60 shrink-0 text-[10px] tabular-nums">
               {new Date(entry.timestamp).toLocaleTimeString()}

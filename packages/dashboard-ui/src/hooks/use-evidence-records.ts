@@ -18,9 +18,10 @@ export function useEvidenceRecords(key: EvidenceRecordsKey | null, enabled: bool
   const stepIndex = key?.stepIndex
   const kind = key?.kind
   const subActionIndex = key?.subActionIndex
-  const address = JSON.stringify([runId, testIndex, stepIndex, kind, subActionIndex])
   const [attempt, setAttempt] = useState(0)
-  const [result, setResult] = useState<{ address: string; attempt: number; read: RunEvidenceRead }>()
+  const address = JSON.stringify([enabled, runId, testIndex, stepIndex, kind, subActionIndex, attempt])
+  const [result, setResult] = useState<{ address: string; read?: RunEvidenceRead }>({ address })
+  if (result.address !== address) setResult({ address })
   const retry = useCallback(() => setAttempt(value => value + 1), [])
   useEffect(() => {
     if (!enabled || !runId || testIndex === undefined || stepIndex === undefined || !kind) return
@@ -29,12 +30,12 @@ export function useEvidenceRecords(key: EvidenceRecordsKey | null, enabled: bool
       void fetchRunEvidence({ runId: asRunId(runId), testIndex, stepIndex, kind,
         ...(subActionIndex === undefined ? {} : { subActionIndex }) })
         .catch((error: unknown): RunEvidenceRead => ({ kind: 'failed', error: error instanceof Error ? error.message : String(error) }))
-        .then(read => { if (!cancelled) setResult({ address, attempt, read }) })
+        .then(read => { if (!cancelled) setResult({ address, read }) })
     }, EVIDENCE_FETCH_DEBOUNCE_MS)
     return () => { cancelled = true; clearTimeout(timer) }
   }, [enabled, runId, testIndex, stepIndex, kind, subActionIndex, address, attempt])
   const read: 'idle' | 'loading' | RunEvidenceRead = !enabled || !key ? 'idle'
     : !runId ? { kind: 'failed', error: 'Missing run address' }
-      : result?.address === address && result.attempt === attempt ? result.read : 'loading'
+      : result.address === address && result.read ? result.read : 'loading'
   return { read, retry }
 }

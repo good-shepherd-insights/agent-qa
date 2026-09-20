@@ -1,33 +1,31 @@
-// THE ARIA-TREE TAB, ON THE DURABLE STEP (405-11 · D-14 / DETL-06, RESEARCH D2).
-//
-// THE SNAPSHOT HAS NO PRODUCER, AND THIS TAB SAYS SO RATHER THAN GUESSING. It used to read a
-// per-step reasoning trace over its own HTTP call and paint the before/after accessibility
-// snapshots out of it. That trace table and its route went with the v1 projection, and the bus
-// deliberately collapses a `ScreenState` to a sha256 before it reaches the wire — so no durable
-// row anywhere carries this text.
-//
-// SO THE TAB STAYS AND ITS EMPTY STATE BECOMES THE TRUTH, which is not the same as deleting it. A
-// reader who opens ARIA Tree and finds nothing has learned a real fact about what this run
-// recorded; a tab that vanished would have taught them nothing, and a tab that rendered the hash
-// as though it were a tree would have taught them something false. The screen-state hash pair IS
-// rendered — on the overview, as a comparable short id beside a changed/unchanged verdict.
-
-import type { DisplayStep } from "@/lib/display-step"
-
-/** What the tab says when nothing recorded a tree for this step. */
-export const NO_ARIA_TREE_LABEL = "No ARIA tree snapshot available for this step"
+import type { RunDetailSubAction } from '@vostride/agent-qa-schema'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { useEvidenceRecords } from '@/hooks/use-evidence-records'
+import type { DisplayStep } from '@/lib/display-step'
+import { resolveEvidenceView } from '@/lib/evidence-state-view'
+import { EvidenceLoading, EvidenceState } from './evidence-state'
+import { MaskedText } from './masked-text'
 
 interface TabAriaTreeProps {
-  step: DisplayStep
+  step: DisplayStep | null
+  subAction?: RunDetailSubAction | null
+  runId?: string | null
+  selection?: Parameters<typeof resolveEvidenceView>[0]['selection']
 }
 
-export function TabAriaTree(_props: TabAriaTreeProps) {
-  return (
-    <div
-      data-aria-tree-state="not-captured"
-      className="flex items-center justify-center h-full text-muted-foreground text-sm py-12"
-    >
-      {NO_ARIA_TREE_LABEL}
-    </div>
-  )
+export function TabAriaTree({ step, subAction, runId, selection = subAction ? 'sub-action' : step ? 'step' : 'none' }: TabAriaTreeProps) {
+  const entry = subAction?.ariaEvidence
+  const { read, retry } = useEvidenceRecords(subAction ? {
+    runId: runId ?? '', testIndex: subAction.testIndex, stepIndex: subAction.stepIndex,
+    subActionIndex: subAction.subActionIndex, kind: 'aria',
+  } : null, selection === 'sub-action' && entry?.state === 'present' && !entry.ref.evidenceIncomplete)
+  const view = resolveEvidenceView({ kind: 'aria', selection: subAction ? selection : 'none', entry, read })
+  if (view.kind === 'loading') return <EvidenceLoading kind="aria" />
+  if (view.kind === 'state') return <EvidenceState {...view} kind="aria"
+    actionLabel={view.action?.label} onAction={view.action?.type === 'retry' ? retry : undefined} />
+  return view.document.kind === 'aria' ? (
+    <ScrollArea className="h-full min-h-0 w-full">
+      <pre className="p-3 font-mono text-xs whitespace-pre-wrap break-words"><MaskedText text={view.document.tree} /></pre>
+    </ScrollArea>
+  ) : null
 }
