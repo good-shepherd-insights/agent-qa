@@ -7,7 +7,7 @@ import type { Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { capture, recordingFixture, type RecordingFixture } from './recording-dom-fixture.js'
 import { populatedRunSpawnEnv, POPULATED_SECRET_ENV_VAR, POPULATED_SECRET_VALUE } from './populated-run-fixture.js'
-import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard, type SpawnedDashboard } from './spawned-chat.js'
+import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard } from './spawned-chat.js'
 
 // Real producer + shipped bundle. Only historical/orphan test arrangements edit the temporary
 // durable fixture, explicitly below; no route mocks, fake media, skips or user-workspace captures.
@@ -17,7 +17,7 @@ const inside = (a: Box, b: Box) => a.x >= b.x - 0.5 && a.right <= b.right + 0.5 
 const failures: Record<string, string> = {}
 let fixture: RecordingFixture | undefined
 let reader: Awaited<ReturnType<typeof spawnDashboard>> | undefined
-let timeline: { numbers: number; badges: Box[]; readout: string; member: Box; first: Box; steps: number } | undefined
+let timeline: { numbers: number; badges: Box[]; readout: string; member: Box; first: Box; trackViewport: Box; steps: number } | undefined
 const tabs: Array<{ width: number; document: number; viewport: number; scroll: number; client: number; moved: number; triggers: Array<{ box: Box; count?: Box; contentFits: boolean }> }> = []
 const lightboxes: Array<{ width: number; document: number; viewport: number; image: Box; dialog: Box; loaded: boolean }> = []
 let notice: { dismiss: Box; viewport: number; explanation: Box; pane: Box; lines: number } | undefined
@@ -26,6 +26,7 @@ let chips: Array<{ chip: Box; row: Box; clip: Box; text: string; visible: boolea
 async function measureChips(page: Page) {
   const fill = page.locator('[data-sub-action] [data-action-family="input"]').first()
   await fill.scrollIntoViewIfNeeded()
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
   chips.push(...await page.locator('[data-sub-action] [data-masked]').evaluateAll(elements => {
     const box = (element: Element) => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
     return elements.map(chip => ({ chip: box(chip), row: box(chip.closest('[data-sub-action]')!),
@@ -93,8 +94,9 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
         const box = (element: Element) => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
         const member = timeline.querySelector(':scope > span')!
         const first = timeline.querySelector('[data-timeline-segment]')!
+        const trackViewport = timeline.querySelector('[data-timeline-track]')!.parentElement!.parentElement!
         const signals = timeline.querySelector('[data-timeline-signals]')!
-        return { member: box(member), first: box(first),
+        return { member: box(member), first: box(first), trackViewport: box(trackViewport),
           numbers: [...signals.querySelectorAll(':scope > div > span')].filter(element => element.getBoundingClientRect().width > 0).length,
           badges: [...signals.querySelectorAll('[data-step-signal]')].map(box),
           steps: signals.children.length, readout: timeline.querySelector('[data-timeline-readout]')?.textContent ?? '',
@@ -109,6 +111,9 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       await page.setViewportSize({ width: 1280, height: 800 })
       await measureChips(page)
       await capture(page, 'masked-chip-desktop')
+      await page.setViewportSize({ width: 1920, height: 800 })
+      await measureChips(page)
+      await capture(page, 'masked-chip-wide-control')
       await page.setViewportSize({ width: 400, height: 800 })
 
       // deviceScaleFactor is a density test, not browser zoom. Also use a 640 CSS-pixel viewport
@@ -190,7 +195,12 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
     expect(timeline!.numbers).toBe(0)
     expect(timeline!.badges.length).toBeGreaterThan(0)
     expect(timeline!.readout).toMatch(/^#\d+\/\d+$/u)
-    expect(overlaps(timeline!.member, timeline!.first)).toBe(false)
+    // Scrolled-out segments keep their un-clipped DOMRect. The actual painted track starts
+    // at its overflow viewport, so an offscreen rectangle under the label is not overlap.
+    expect(timeline!.member.right).toBeLessThanOrEqual(timeline!.trackViewport.x)
+    const paintedFirst = { ...timeline!.first, x: Math.max(timeline!.first.x, timeline!.trackViewport.x),
+      right: Math.min(timeline!.first.right, timeline!.trackViewport.right) }
+    expect(overlaps(timeline!.member, paintedFirst)).toBe(false)
   })
   it('LAYOUT-BADGES-400', () => {
     expect(timeline, JSON.stringify(failures)).toBeDefined()
@@ -230,6 +240,7 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
   })
   it('LAYOUT-MASKED-CHIP-TRUNCATION', () => {
     expect(chips.length, JSON.stringify(failures)).toBeGreaterThan(0)
+    expect(chips.some(entry => entry.visible && inside(entry.chip, entry.clip)), 'Wide control must show a whole chip; hiding every chip is not a fix').toBe(true)
     for (const entry of chips) {
       expect(entry.text).toBeTruthy()
       expect(!entry.visible || !overlaps(entry.chip, entry.clip) || (inside(entry.chip, entry.row) && inside(entry.chip, entry.clip)), JSON.stringify(entry)).toBe(true)

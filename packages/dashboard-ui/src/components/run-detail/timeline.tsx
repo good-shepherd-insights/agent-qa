@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { Accessibility, Check, Globe, RefreshCw, Terminal, X } from 'lucide-react'
 import { STEP_SIGNALS, signalBadgeName, stepSignals, type StepSignal } from '@/lib/evidence-counts'
 import { nearestMarker, snapToMarker, type Playhead, type PlayerSource, type TimelineMarker, type TimelineModel } from '@/lib/playhead'
@@ -30,6 +30,8 @@ const RESULT_TONES = { passed: 'text-emerald-500', failed: 'text-red-500', heale
 export function Timeline({ model, playhead, source, runId, memberLabel, signals, seekFraction, onPlayheadChange, onSeekFraction, onOpenSignal }: TimelineProps) {
   const viewport = useRef<HTMLDivElement>(null)
   const track = useRef<HTMLDivElement>(null)
+  const signalRow = useRef<HTMLDivElement>(null)
+  const [signalTrackWidth, setSignalTrackWidth] = useState(0)
   const dragging = useRef<number | null>(null)
   const [hovered, setHovered] = useState<number | null>(null)
   const [thumbFocused, setThumbFocused] = useState(false)
@@ -52,7 +54,24 @@ export function Timeline({ model, playhead, source, runId, memberLabel, signals,
   }, [])
   const current = model.markers.find(marker => marker.testIndex === playhead?.testIndex
     && marker.stepIndex === playhead.stepIndex && marker.subActionIndex === playhead.subActionIndex)
-  const trackWidth = Math.max(width, model.markers.length * SCROLL_SLOT_PX)
+  // Both rows share one scale. Reserve each signal group's measured width within its
+  // segment, extending the scrollable track instead of painting across the next group.
+  useLayoutEffect(() => {
+    const groups = signalRow.current?.children
+    if (!groups) return
+    let minimum = 0
+    for (const [index, segment] of model.segments.entries()) {
+      const group = groups[index]
+      const fraction = segment.end - segment.start
+      if (!group || fraction <= 0) continue
+      const widths = [...group.children].map(child => child.getBoundingClientRect().width).filter(value => value > 0)
+      const required = widths.reduce((sum, value) => sum + value, 0) + Math.max(0, widths.length - 1) * 4 + 8
+      minimum = Math.max(minimum, required / fraction)
+    }
+    setSignalTrackWidth(Math.ceil(minimum))
+  }, [model, signals, narrow, width])
+  const minimumTrackWidth = Math.max(model.markers.length * SCROLL_SLOT_PX, signalTrackWidth)
+  const trackWidth = Math.max(width, minimumTrackWidth)
   const position = source === 'video' && seekFraction !== undefined ? Math.max(0, Math.min(1, seekFraction)) : current?.position
   const density = markerDensity(width / Math.max(1, model.markers.length))
   const badges = model.segments.flatMap(segment => {
@@ -125,10 +144,10 @@ export function Timeline({ model, playhead, source, runId, memberLabel, signals,
   return (
     <TooltipProvider><div data-timeline data-timeline-axis={model.axis} data-timeline-member={model.testIndex}
       className='flex h-[60px] min-w-0 items-center gap-2 border-b px-3 py-2'>
-      {memberLabel && <span className='max-w-40 truncate text-xs text-muted-foreground'><MaskedText text={memberLabel} /></span>}
+      {memberLabel && <span className='max-w-[25%] shrink-0 truncate text-xs text-muted-foreground sm:max-w-40'><MaskedText text={memberLabel} /></span>}
       <div ref={viewport} className='min-w-0 flex-1 overflow-x-auto'>
-        <div style={{ minWidth: model.markers.length * SCROLL_SLOT_PX }}>
-          <div data-timeline-signals role='group' aria-label={TIMELINE_COPY.signals} onKeyDown={moveSignal} className='relative mb-1 flex h-4'>
+        <div style={{ minWidth: minimumTrackWidth }}>
+          <div ref={signalRow} data-timeline-signals role='group' aria-label={TIMELINE_COPY.signals} onKeyDown={moveSignal} className='relative mb-1 flex h-4'>
             {model.segments.map(segment => {
               const stepIndex = segment.step.stepIndex
               const counts = signals?.[stepIndex] ?? stepSignals(segment.step.evidence)
@@ -144,7 +163,7 @@ export function Timeline({ model, playhead, source, runId, memberLabel, signals,
                     tabIndex={activeBadge === `${stepIndex}:${kind}` ? 0 : -1}
                     onFocus={() => setSignalFocus(`${stepIndex}:${kind}`)}
                     aria-label={copyTextOf(signalBadgeName(kind, count, stepIndex + 1))}
-                    className='flex items-center gap-1 rounded-sm text-[10px] font-medium tabular-nums focus-visible:ring-2 focus-visible:ring-ring/50'
+                    className='flex shrink-0 items-center gap-1 rounded-sm text-[10px] font-medium tabular-nums focus-visible:ring-2 focus-visible:ring-ring/50'
                     onClick={() => onOpenSignal(stepIndex, kind)}>
                     <Icon aria-hidden='true' className='h-3 w-3' />{count}
                   </button>

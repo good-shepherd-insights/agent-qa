@@ -108,7 +108,7 @@ describe('recording and parent selection on the shipped bundle (424-29)', () => 
     expect(src).toMatch(/\/api\/runs\/[^/]+\/artifacts\/[a-f0-9]{64}$/u)
     expect(seek?.length).toBe(1)
     expect(seek!.end).toBeGreaterThan(0)
-    expect(Math.abs(seek!.actual - seek!.requested)).toBeLessThan(1)
+    expect(Math.abs(seek!.actual - seek!.requested)).toBeLessThan(Math.min(1, seek!.requested / 2))
   })
   it('RECORDING-RANGE-206', () => {
     expect(failure).toBeUndefined()

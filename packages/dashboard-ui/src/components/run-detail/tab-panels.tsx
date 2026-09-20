@@ -126,7 +126,7 @@ export function TabPanels({
       onValueChange={onTabChange}
       className="flex h-full min-h-0 flex-col overflow-hidden gap-0"
     >
-      <TabsList variant="line" className="w-full justify-start border-b px-3 h-9 shrink-0 rounded-none">
+      <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b px-3 h-9 shrink-0 rounded-none [&_[role=tab]]:shrink-0">
         <TabsTrigger value="overview" className="text-xs rounded-none flex-initial">Overview</TabsTrigger>
         {evidenceTrigger('variables', 'env', 'Variables')}
         {evidenceTrigger('network', 'network', 'Network')}
