@@ -137,7 +137,8 @@ const legs = [
     subject: MEMBER, instrument: 'member', claim: 'REC-MEMBER-NOT-REQUESTED',
     operation: 'settle an unrequested recording without an explicit absence entry',
     edits: [{ from: "  if (recording.state !== 'staged') return recording\n", to: "  if (recording.state !== 'staged') return config.recording?.enabled ? recording : undefined\n" }],
-    reds: [member('REC-MEMBER-NOT-REQUESTED')], allowed: [],
+    reds: [member('REC-MEMBER-NOT-REQUESTED')],
+    allowed: [member('OFFSET-PER-ATTEMPT-ZERO'), member('REC-NEVER-SUPPRESSES-RUN')],
     greens: [member('REC-MEMBER-PRESENT'), member('REC-MEMBER-UNSUPPORTED'), member('REC-MEMBER-PER-ATTEMPT'), shell('REC-SHELL-SKIP-NOT-CAPTURED')],
   },
   {
@@ -165,8 +166,8 @@ const legs = [
     subject: DB, instrument: 'db', claim: 'REC-SUB-UPSERT-OMISSION',
     operation: 'overwrite recording_json with NULL on an omitted upsert',
     edits: [{ from: '        recording_json = COALESCE(excluded.recording_json, run_members.recording_json)\n', to: '        recording_json = excluded.recording_json\n' }],
-    reds: [sub('REC-SUB-UPSERT-OMISSION')], allowed: [],
-    greens: [sub('REC-SUB-MEMBER-MIRRORED', 6), sub('REC-SUB-ABSENT-KEY-NULL'), sub('REC-SUB-OFFSET-ZERO'), migration('MIGRATION-V1-REFUSE')],
+    reds: [sub('REC-SUB-UPSERT-OMISSION')], allowed: [sub('REC-SUB-MEMBER-MIRRORED', 6)],
+    greens: [sub('REC-COLD-READBACK'), sub('REC-SUB-ABSENT-KEY-NULL'), sub('REC-SUB-OFFSET-ZERO'), migration('MIGRATION-V1-REFUSE')],
   },
   {
     subject: DETAIL, instrument: 'agent', claim: 'DETAIL-REC-NULL-UNAVAILABLE',
@@ -186,7 +187,8 @@ const legs = [
     subject: ARTIFACT, instrument: 'agent', claim: 'ARTIFACT-RANGE-UNSATISFIABLE',
     operation: 'remove the unsatisfiable-range throw',
     edits: [{ from: '      if (start >= totalLength) throw new ArtifactRangeNotSatisfiableError(totalLength)\n', to: '' }],
-    reds: [artifact('ARTIFACT-RANGE-UNSATISFIABLE', 2)], allowed: [],
+    reds: [artifact('ARTIFACT-RANGE-UNSATISFIABLE', 2)],
+    allowed: [artifact('uses the whole-read fallback when range verbs are absent')],
     greens: [artifact('ARTIFACT-NO-RANGE-UNCHANGED'), artifact('ARTIFACT-RANGE-CAP'), artifact('SNIFF-FROM-HEAD-NOT-SLICE'), detail('DETAIL-REC-BYTES-GONE', 2)],
   },
   {

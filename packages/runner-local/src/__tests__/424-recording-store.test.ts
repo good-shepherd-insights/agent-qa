@@ -87,10 +87,24 @@ test('REC-STORE-ATOMIC-PUBLISH: no partial target and no temporary survives publ
 })
 
 test('REC-STORE-STAGING-UNLINKED: success consumes staging bytes', () => {
-  const { store, staging } = fixture()
-  expect(store.persistRecording).toBeTypeOf('function')
-  store.persistRecording(staging)
-  expect(existsSync(staging)).toBe(false)
+  for (const path of ['rename', 'copy', 'existing'] as const) {
+    const { store, staging } = fixture()
+    expect(store.persistRecording).toBeTypeOf('function')
+    if (path === 'existing') {
+      store.persistRecording(staging)
+      writeFileSync(staging, bytes)
+    }
+    // Rename consumes its source itself. Copy and deduplication require the final unlink.
+    io.beforeRename = from => {
+      if (path === 'copy' && from === staging) {
+        throw Object.assign(new Error('cross device'), { code: 'EXDEV' })
+      }
+    }
+    const saved = store.persistRecording(staging)
+    expect(existsSync(staging), path).toBe(false)
+    expect(Buffer.from(store.getBlob(saved.ref.sha)!), path).toEqual(bytes)
+    io.beforeRename = undefined
+  }
 })
 
 test.each(['stage', 'publish', 'hash', 'file-sync', 'directory-sync', 'copy'])(
