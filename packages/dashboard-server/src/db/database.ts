@@ -226,6 +226,7 @@ function parseJsonColumn(value: unknown): unknown {
 
 function mapRunMemberRow(row: Record<string, unknown>): RunDetailMember {
   const outcome = optionalText(row.outcome)
+  const recording = parseJsonColumn(row.recording_json)
   return {
     testIndex: row.test_index as number,
     ...(optionalText(row.test_id) === undefined ? {} : { testId: row.test_id as string }),
@@ -242,6 +243,7 @@ function mapRunMemberRow(row: Record<string, unknown>): RunDetailMember {
       : { failureSummary: row.failure_summary as string }),
     ...(optionalInt(row.retry_count) === undefined ? {} : { retryCount: row.retry_count as number }),
     attempts: (optionalInt(row.attempts) ?? 1),
+    ...(recording === undefined ? {} : { recording: recording as RunDetailMember['recording'] }),
   }
 }
 
@@ -309,6 +311,9 @@ function mapRunSubActionRow(row: Record<string, unknown>): RunDetailSubAction {
     ...(ariaEvidence === undefined
       ? {}
       : { ariaEvidence: ariaEvidence as RunDetailSubAction['ariaEvidence'] }),
+    ...(optionalInt(row.recording_offset_ms) === undefined
+      ? {}
+      : { recordingOffsetMs: row.recording_offset_ms as number }),
   }
 }
 
@@ -585,13 +590,14 @@ export class DashboardDatabase {
     durationMs?: number
     failureSummary?: string
     retryCount?: number
+    recording?: RunDetailMember['recording']
   }): void {
     this.db.prepare(`
       INSERT INTO run_members (
         run_id, test_index, test_id, name, file_path, suite_id, suite_name, suite_index,
-        total_steps, outcome, duration_ms, failure_summary, retry_count
+        total_steps, outcome, duration_ms, failure_summary, retry_count, recording_json
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(run_id, test_index) DO UPDATE SET
         test_id = COALESCE(excluded.test_id, run_members.test_id),
         name = COALESCE(excluded.name, run_members.name),
@@ -603,7 +609,8 @@ export class DashboardDatabase {
         outcome = COALESCE(excluded.outcome, run_members.outcome),
         duration_ms = COALESCE(excluded.duration_ms, run_members.duration_ms),
         failure_summary = COALESCE(excluded.failure_summary, run_members.failure_summary),
-        retry_count = COALESCE(excluded.retry_count, run_members.retry_count)
+        retry_count = COALESCE(excluded.retry_count, run_members.retry_count),
+        recording_json = COALESCE(excluded.recording_json, run_members.recording_json)
     `).run(
       member.runId,
       member.testIndex,
@@ -618,6 +625,7 @@ export class DashboardDatabase {
       member.durationMs ?? null,
       member.failureSummary ?? null,
       member.retryCount ?? null,
+      member.recording === undefined ? null : JSON.stringify(member.recording),
     )
   }
 
@@ -717,13 +725,15 @@ export class DashboardDatabase {
     screenStateHashAfter?: string
     artifactRefs?: readonly unknown[]
     ariaEvidence?: RunDetailSubAction['ariaEvidence']
+    recordingOffsetMs?: RunDetailSubAction['recordingOffsetMs']
   }): void {
     this.db.prepare(`
       INSERT OR REPLACE INTO run_sub_actions (
         run_id, test_index, step_index, sub_action_index, plan, planned_action, grounding,
-        result, screen_state_hash, screen_state_hash_after, artifact_refs, evidence_state_json
+        result, screen_state_hash, screen_state_hash_after, artifact_refs, evidence_state_json,
+        recording_offset_ms
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       subAction.runId,
       subAction.testIndex,
@@ -737,6 +747,7 @@ export class DashboardDatabase {
       subAction.screenStateHashAfter ?? null,
       subAction.artifactRefs === undefined ? null : JSON.stringify(subAction.artifactRefs),
       subAction.ariaEvidence === undefined ? null : JSON.stringify(subAction.ariaEvidence),
+      subAction.recordingOffsetMs ?? null,
     )
   }
 
