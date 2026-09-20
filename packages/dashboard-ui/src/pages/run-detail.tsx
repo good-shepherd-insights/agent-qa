@@ -236,7 +236,7 @@ export default function RunDetailPage() {
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [artifactDrawerOpen, setArtifactDrawerOpen] = useState(false)
-  const [artifactDrawerTab, setArtifactDrawerTab] = useState<ArtifactDrawerTab>("attributes")
+  const [artifactDrawerTab, setArtifactDrawerTab] = useState<ArtifactDrawerTab>("test")
   // WHICH cited artifact the drawer was opened with (406-08 · D-02). `null` for every other way in
   // — the `i` / `c` / `m` shortcuts and the navbar action all open the drawer with nothing in hand,
   // and the screenshot tab is not offered at all in that state.
@@ -483,7 +483,7 @@ export default function RunDetailPage() {
     void loadArtifact()
   }, [artifactDrawerOpen, artifactError, artifactLoading, artifactResponse, loadArtifact, run?.id])
 
-  const openArtifactDrawer = useCallback((tab: ArtifactDrawerTab, sha?: string) => {
+  const openArtifactDrawer = useCallback((tab: ArtifactDrawerTab = "test", sha?: string) => {
     setArtifactDrawerTab(tab)
     setArtifactDrawerSha(sha ?? null)
     setArtifactDrawerOpen(true)
@@ -665,7 +665,7 @@ export default function RunDetailPage() {
       '5': () => setActiveTab(TAB_NAMES[4]),
       '6': () => setActiveTab(TAB_NAMES[5]),
       '7': () => setActiveTab(TAB_NAMES[6]),
-      i: () => openArtifactDrawer("attributes"),
+      i: () => openArtifactDrawer("test"),
       c: () => openArtifactDrawer("config"),
       // `M` RE-POINTED, NOT RETIRED (407 D-02). The v1 memory drawer tab this key opened is dead
       // debris that 407-05 deletes grep-clean; re-pointing it here rather than there means the

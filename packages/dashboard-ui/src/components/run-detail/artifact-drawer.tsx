@@ -15,7 +15,7 @@ import { ScreenshotViewer } from "@/components/screenshot-viewer"
 import type { RunArtifactResponse, RunRow } from "@/lib/api"
 import { routes } from "@/lib/routes"
 import { captureStateOf, DRAWER_COPY, DRAWER_TITLE_FALLBACK, ranAgainstParts } from "@/lib/drawer-view"
-import { ArtifactAttributeRows } from "./artifact-attribute-rows"
+import { ArtifactTestTab } from "./artifact-test-tab"
 import { ArtifactConfigTab } from "./artifact-config-tab"
 import { ArtifactTechnicalDetails } from "./artifact-technical-details"
 import { EvidenceIncomplete } from "./evidence-incomplete"
@@ -33,7 +33,7 @@ import { MaskedText } from "./masked-text"
 // The v1 `memory` tab that once sat beside them is deleted (407-05 · D-02): it read shapes no
 // producer has written since v1, and the run-detail Knowledge tab is the live surface for what a
 // run was served. `m` opens THAT, and the drawer no longer offers a second answer.
-export type ArtifactDrawerTab = "attributes" | "config" | "screenshot"
+export type ArtifactDrawerTab = "test" | "config" | "screenshot"
 
 /** The two tabs the artifact RECORD feeds. The screenshot tab reads blob bytes, not the record. */
 type ArtifactShellTab = Exclude<ArtifactDrawerTab, "screenshot">
@@ -41,7 +41,7 @@ type ArtifactShellTab = Exclude<ArtifactDrawerTab, "screenshot">
 interface ArtifactDrawerProps {
   run: RunRow
   open: boolean
-  tab: ArtifactDrawerTab
+  tab?: ArtifactDrawerTab
   /** The cited artifact's content address, or `null` when the drawer was opened any other way. */
   screenshotSha: string | null
   response: RunArtifactResponse | null
@@ -103,30 +103,6 @@ function MissingArtifactState() {
   )
 }
 
-function recordAt(value: unknown, key: string): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null
-  const next = (value as Record<string, unknown>)[key]
-  return next && typeof next === "object" && !Array.isArray(next)
-    ? next as Record<string, unknown>
-    : null
-}
-
-function stringAttributesFrom(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter((entry): entry is [string, string] => typeof entry[1] === "string")
-  return Object.fromEntries(entries)
-}
-
-function getRunAttributes(response: RunArtifactResponse): Record<string, string> {
-  const direct = stringAttributesFrom(response.run.attributes)
-  if (Object.keys(direct).length > 0) return direct
-
-  const payload = response.artifact?.payload
-  const metadata = recordAt(payload, "metadata")
-  return stringAttributesFrom(recordAt(metadata, "attributes"))
-}
-
 function ShellTabContent({
   tab,
   response,
@@ -134,8 +110,8 @@ function ShellTabContent({
   tab: ArtifactShellTab
   response: RunArtifactResponse
 }) {
-  if (tab === "attributes") {
-    return <ArtifactAttributeRows attributes={getRunAttributes(response)} />
+  if (tab === "test") {
+    return <ArtifactTestTab response={response} />
   }
 
   return <ArtifactConfigTab response={response} />
@@ -151,7 +127,7 @@ function DrawerBody({
   if (loading) return <LoadingState />
   if (error) return <ErrorState error={error} onRetry={onRetry} />
   if (!response) return <MissingArtifactState />
-  if (tab !== "attributes" && !response.artifact) return <MissingArtifactState />
+  if (tab !== "test" && !response.artifact) return <MissingArtifactState />
   return <ShellTabContent tab={tab} response={response} />
 }
 
@@ -194,7 +170,7 @@ function ScreenshotTab({ runId, sha }: { runId: string; sha: string | null }) {
 export function ArtifactDrawer({
   run,
   open,
-  tab,
+  tab = "test",
   screenshotSha,
   response,
   loading,
@@ -231,11 +207,11 @@ export function ArtifactDrawer({
         >
           <div className="border-b px-3">
             <TabsList variant="line" className="h-9 w-full justify-start">
-              <TabsTrigger value="attributes" className="max-w-32 flex-none">
-                Attributes
+              <TabsTrigger value="test" className="max-w-32 flex-none">
+                {DRAWER_COPY.test}
               </TabsTrigger>
               <TabsTrigger value="config" className="max-w-32 flex-none">
-                Config
+                {DRAWER_COPY.config}
               </TabsTrigger>
               {screenshotSha === null ? null : (
                 <TabsTrigger
@@ -249,9 +225,9 @@ export function ArtifactDrawer({
             </TabsList>
           </div>
           <ScrollArea className="min-h-0 flex-1">
-            <TabsContent value="attributes" className="m-0 px-4 py-4">
+            <TabsContent value="test" className="m-0 px-4 py-4">
               <DrawerBody
-                tab="attributes"
+                tab="test"
                 response={response}
                 loading={loading}
                 error={error}

@@ -58,7 +58,7 @@ interface RunNavbarProps {
    * (407-05 · D-02): the v1 `memory` tab is deleted, and `m` reaches the Knowledge tab through
    * the page's own shortcut map rather than through this prop.
    */
-  onOpenArtifacts?: (tab: "attributes" | "config") => void
+  onOpenArtifacts?: (tab: "test" | "config") => void
   /**
    * The post-processing projection to paint beside the verdict badge (404-07, D-20).
    *
@@ -190,7 +190,7 @@ export function RunNavbar({
           size="icon-sm"
           aria-label="Open run artifacts"
           title="Run details (I/C/M)"
-          onClick={() => onOpenArtifacts?.("attributes")}
+          onClick={() => onOpenArtifacts?.("test")}
         >
           <PanelRightOpen className="h-3.5 w-3.5" />
         </Button>

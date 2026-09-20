@@ -72,7 +72,7 @@ function mount(data: RunArtifactResponse | null = response(), options: {
     root = createRoot(container)
   }
   act(() => root!.render(
-    <ArtifactDrawer run={options.row ?? data?.run ?? run} open tab={options.tab ?? 'attributes'}
+    <ArtifactDrawer run={options.row ?? data?.run ?? run} open tab={options.tab}
       screenshotSha={null} response={data} loading={options.loading ?? false}
       error={options.error ?? null} onOpenChange={() => {}} onTabChange={() => {}}
       onRetry={options.onRetry ?? (() => {})} />,
@@ -171,7 +171,7 @@ describe('run-context drawer', () => {
   })
 
   it('DRAWER-TECHNICAL-COLLAPSED', () => {
-    for (const tab of ['attributes', 'config'] as const) {
+    for (const tab of ['test', 'config'] as const) {
       const drawer = mount(response(), { tab })
       const details = technicalDetails(drawer)
       expect(details.closest('[data-slot="tabs"]')).toBeNull()

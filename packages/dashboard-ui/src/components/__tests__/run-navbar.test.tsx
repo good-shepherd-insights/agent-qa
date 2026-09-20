@@ -258,7 +258,7 @@ describe("RunNavbar", () => {
     expect(container.querySelector('[data-run-token-summary]')).toBeNull()
   })
 
-  it("opens run details on the Attributes tab from the navbar action", () => {
+  it("opens run details on the Test tab from the navbar action", () => {
     const onOpenArtifacts = vi.fn()
     mount(
       <RunNavbar
@@ -278,7 +278,7 @@ describe("RunNavbar", () => {
     })
 
     expect(onOpenArtifacts).toHaveBeenCalledTimes(1)
-    expect(onOpenArtifacts).toHaveBeenCalledWith("attributes")
+    expect(onOpenArtifacts).toHaveBeenCalledWith("test")
   })
 
   it("toggles the shortcut popover once when closing from the trigger", () => {

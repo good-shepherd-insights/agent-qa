@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { ArtifactConfigTab } from "@/components/run-detail/artifact-config-tab"
+import { ArtifactTestTab } from "@/components/run-detail/artifact-test-tab"
 import type { RunArtifactResponse } from "@/lib/api"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -23,7 +24,7 @@ function mount(response: RunArtifactResponse) {
   document.body.appendChild(container)
   root = createRoot(container)
   act(() => {
-    root.render(<ArtifactConfigTab response={response} />)
+    root.render(<><ArtifactTestTab response={response} /><ArtifactConfigTab response={response} /></>)
   })
 }
 
@@ -84,8 +85,8 @@ function baseResponse(payload: Record<string, unknown>, missingSections: string[
   }
 }
 
-describe("ArtifactConfigTab", () => {
-  it("renders run, config, effective config, test source, runtime, and raw labels", () => {
+describe("Artifact record tabs", () => {
+  it("renders config, effective config, test source, runtime, and raw labels", () => {
     mount(baseResponse({
       config: {
         rawConfigContent: "targets:\n  local-chrome:\n    platform: web",
@@ -116,20 +117,16 @@ describe("ArtifactConfigTab", () => {
       errors: [{ code: "WARN", phase: "runtime", message: "example warning" }],
     }))
 
-    expect(container.textContent).toContain("Run Summary")
-    expect(container.textContent).toContain("Artifact config run")
-    expect(container.textContent).toContain("Global Config")
+    expect(container.textContent).not.toContain("Run Summary")
+    expect(container.textContent).toContain("Global config as written")
     expect(container.textContent).toContain("Raw global config")
-    expect(container.textContent).toContain("Effective Config")
-    expect(container.textContent).toContain("Source Snapshot")
+    expect(container.textContent).toContain("Effective config")
+    expect(container.textContent).toContain("Test as written")
     expect(container.textContent).toContain("Raw test YAML")
-    expect(container.textContent).toContain("Runtime and Errors")
+    expect(container.textContent).toContain("Runtime")
+    expect(container.textContent).toContain("Errors")
     expect(container.textContent).toContain("2 items")
     expect(container.textContent).toContain("example warning")
-    expect(container.textContent).toContain("Secrets file")
-    expect(container.textContent).toContain(".secrets.local")
-    expect(container.textContent).toContain("loaded")
-    expect(container.textContent).toContain("1 secret")
     expect(container.textContent).not.toContain("raw-secret-sentinel")
     expect(container.textContent).not.toContain("loginPassword")
   })
@@ -172,7 +169,7 @@ describe("ArtifactConfigTab", () => {
     mount(response)
 
     expect(container.textContent).toContain("Raw suite YAML")
-    expect(container.textContent).toContain("Suite Members")
+    expect(container.textContent).toContain("Suite members")
     expect(container.textContent).toContain("Raw member YAML")
 
     const members = Array.from(container.querySelectorAll("[data-suite-member-index]"))
@@ -187,11 +184,13 @@ describe("ArtifactConfigTab", () => {
     expect(link?.textContent).toBe("child-login")
   })
 
-  it("renders quiet missing config and source placeholders", () => {
+  it("renders quiet missing config and source sections", () => {
     mount(baseResponse({}, ["config", "source"]))
 
-    expect(container.textContent).toContain("Run Summary")
-    expect(container.textContent).toContain("Config was not captured for this run.")
-    expect(container.textContent).toContain("Source was not captured for this run.")
+    expect(container.textContent).not.toContain("Run Summary")
+    const sections = Array.from(container.querySelectorAll('[data-drawer-section]'))
+      .filter(section => section.getAttribute('data-drawer-section') !== 'run-attributes')
+    expect(sections).toHaveLength(7)
+    expect(sections.every(section => section.textContent?.endsWith('Not captured'))).toBe(true)
   })
 })

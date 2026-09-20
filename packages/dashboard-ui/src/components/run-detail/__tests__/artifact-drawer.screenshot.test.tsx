@@ -82,7 +82,7 @@ let container: HTMLDivElement
 let root: Root
 
 function mountDrawer(over: {
-  tab?: "attributes" | "config" | "screenshot"
+  tab?: "test" | "config" | "screenshot"
   screenshotSha?: string | null
 } = {}) {
   container = document.createElement("div")
@@ -124,7 +124,7 @@ describe("the screenshot tab opens what the verdict cited (D-02)", () => {
   })
 
   it("offers the tab only when a sha was clicked — the record-fed tabs are otherwise unchanged", () => {
-    const withSha = mountDrawer({ tab: "attributes" })
+    const withSha = mountDrawer({ tab: "test" })
     expect(withSha.querySelector('[data-artifact-drawer-tab="screenshot"]')).not.toBeNull()
 
     act(() => {
@@ -132,12 +132,12 @@ describe("the screenshot tab opens what the verdict cited (D-02)", () => {
     })
     container.remove()
 
-    const withoutSha = mountDrawer({ tab: "attributes", screenshotSha: null })
+    const withoutSha = mountDrawer({ tab: "test", screenshotSha: null })
     expect(
       withoutSha.querySelector('[data-artifact-drawer-tab="screenshot"]'),
       "a reader who pressed `i` sees the same record-fed tabs they always saw",
     ).toBeNull()
-    expect(withoutSha.textContent).toContain("Attributes")
+    expect(withoutSha.textContent).toContain("Test")
     expect(withoutSha.textContent).toContain("Config")
     // The v1 memory tab is deleted (407-05 · D-02). A drawer that still offered its trigger would
     // be the second surface claiming to show what a run remembered, which is the debris the
