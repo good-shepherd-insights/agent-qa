@@ -64,6 +64,7 @@ function LocationProbe() {
 let host: HTMLDivElement
 let root: Root
 beforeEach(() => {
+  localStorage.clear()
   detailRead.mockResolvedValue(projection())
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -97,6 +98,55 @@ function current() { return host.querySelector('[data-playhead-row]')?.getAttrib
 function selected() { return host.querySelector('[role="treeitem"][aria-selected="true"]') }
 function query() { return new URLSearchParams(host.querySelector('[data-location]')?.getAttribute('data-location') ?? '') }
 function frame() { return host.querySelector('[data-frame]')?.getAttribute('src') }
+
+function recordedProjection() {
+  const detail = projection()
+  detail.members[0]!.recording = { state: 'present', ref: { id: 'recording', sha: 'e'.repeat(64) }, durationMs: 10000 }
+  detail.subActions.forEach((sub, index) => { sub.recordingOffsetMs = index * 2000 })
+  detailRead.mockResolvedValue(detail)
+}
+
+it('OVERVIEW-PLAYER-FIRST-BLOCK', async () => {
+  await render()
+  const player = host.querySelector('[data-player]')
+  expect(player).not.toBeNull()
+  expect(player?.previousElementSibling).toBeNull()
+  expect(player?.nextElementSibling?.querySelector('[data-sub-action-plan]')?.textContent).toBe('Action 3')
+})
+
+it('OVERVIEW-OPENS-ON-VIDEO', async () => {
+  recordedProjection()
+  await render()
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
+  expect(host.querySelector('[data-player] img')).toBeNull()
+  expect(host.querySelector('video')?.autoplay).toBe(false)
+  expect(localStorage.length).toBe(0)
+})
+
+it('OVERVIEW-FRAMES-TOGGLE-SHOWS-FRAME', async () => {
+  recordedProjection()
+  await render()
+  const frames = [...host.querySelectorAll<HTMLButtonElement>('[data-player] button')].find(button => button.textContent === 'Frames')
+  expect(frames).toBeDefined()
+  act(() => frames!.click())
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
+  expect(host.querySelector('[data-artifact-state="available"] img')?.getAttribute('src')).toBe(routes.runArtifact('run-1', shas[2]!))
+  expect(localStorage.getItem('agent-qa.run-detail.player-source')).toBe('frames')
+})
+
+it('OVERVIEW-SEEK-REACHES-PLAYER', async () => {
+  recordedProjection()
+  await render()
+  const video = host.querySelector('video')
+  expect(video).not.toBeNull()
+  act(() => video!.dispatchEvent(new Event('loadedmetadata')))
+  expect(video!.currentTime).toBe(4)
+  const track = host.querySelector<HTMLElement>('[data-timeline-track]')!
+  vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 1000 } as DOMRect)
+  track.setPointerCapture = vi.fn()
+  act(() => track.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 750 })))
+  expect(video!.currentTime).toBe(7.5)
+})
 
 it('PLAYHEAD-PARENT-PARKS-LATEST-FRAME', async () => {
   await render()
