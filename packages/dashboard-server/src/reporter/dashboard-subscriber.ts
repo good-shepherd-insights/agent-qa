@@ -342,6 +342,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
         ...(payload.durationMs === undefined ? {} : { durationMs: payload.durationMs }),
         ...(payload.failureSummary === undefined ? {} : { failureSummary: payload.failureSummary }),
         ...(payload.retryCount === undefined ? {} : { retryCount: payload.retryCount }),
+        ...(payload.recording === undefined ? {} : { recording: payload.recording }),
       })
     } catch {
       // Non-darkening: a member row that will not write must not change the run row below.
@@ -443,6 +444,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
           : { screenStateHashAfter: payload.screenStateHashAfter }),
         ...(payload.artifactRefs === undefined ? {} : { artifactRefs: payload.artifactRefs }),
         ...(payload.ariaEvidence === undefined ? {} : { ariaEvidence: payload.ariaEvidence }),
+        ...(payload.recordingOffsetMs === undefined ? {} : { recordingOffsetMs: payload.recordingOffsetMs }),
       })
     } catch {
       // Same non-darkening rule as step rows.
