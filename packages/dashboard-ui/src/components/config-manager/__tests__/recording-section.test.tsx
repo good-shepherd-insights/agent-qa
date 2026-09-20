@@ -58,7 +58,9 @@ describe('RecordingSection', () => {
       'Every run records video by default so each run opens with the same player. Turn it off here.',
     )
     expect(view.textContent).toContain(recordingSection.RECORDING_SECTION_DESCRIPTION)
-    expect(switchFor(view, 'Keep recordings of failed tests only').getAttribute('aria-checked')).toBe('false')
+    expect(switchFor(view, 'Keep recordings of failed tests only').getAttribute('aria-checked')).toBe(
+      'false',
+    )
     expect(view.querySelector('h2')?.className).toBe('text-base font-semibold')
   })
 
@@ -91,8 +93,8 @@ describe('RecordingSection', () => {
     expect(keepFailures.getAttribute('aria-checked')).toBe('false')
     expect(mockUpdateSettings).not.toHaveBeenCalled()
 
-    const pendingSave = Promise.withResolvers<{ updated: boolean }>()
-    mockUpdateSettings.mockReturnValueOnce(pendingSave.promise)
+    let finishSave!: (value: { updated: boolean }) => void
+    mockUpdateSettings.mockReturnValueOnce(new Promise((resolve) => { finishSave = resolve }))
     const save = Array.from(view.querySelectorAll('button')).find(
       (button) => button.textContent === 'Save Changes',
     )!
@@ -107,7 +109,7 @@ describe('RecordingSection', () => {
     expect(save.querySelector('.animate-spin')).not.toBeNull()
     expect(onConfigChange).not.toHaveBeenCalled()
 
-    await act(async () => pendingSave.resolve({ updated: true }))
+    await act(async () => finishSave({ updated: true }))
     expect(onConfigChange).toHaveBeenCalledTimes(1)
     expect(save.disabled).toBe(false)
     expect(save.textContent).toBe('Save Changes')
