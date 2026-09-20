@@ -9,6 +9,25 @@ import type { RunArtifactResponse, RunRow } from '@/lib/api'
 import { DRAWER_COPY, DRAWER_TITLE_FALLBACK } from '@/lib/drawer-view'
 import { copyTextOf } from '@/lib/display-text'
 import { maskedLabel } from '../masked-chip'
+import { ArtifactConfigTab } from '../artifact-config-tab'
+import type { ComponentType } from 'react'
+
+const testTabs = import.meta.glob<{ ArtifactTestTab: ComponentType<{ response: RunArtifactResponse }> }>('../artifact-test-tab.tsx', { eager: true })
+
+function mountRecordTab(data: RunArtifactResponse, tab: 'test' | 'config' = 'test') {
+  const Component = tab === 'config' ? ArtifactConfigTab : testTabs['../artifact-test-tab.tsx']?.ArtifactTestTab
+  expect(Component, 'Test record content is available').toBeTypeOf('function')
+  const RecordTab = Component!
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+  act(() => root!.render(<RecordTab response={data} />))
+  return container
+}
+
+function sections(element: Element) {
+  return Array.from(element.querySelectorAll('[data-drawer-section]')).map(section => section.getAttribute('data-drawer-section'))
+}
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -80,6 +99,55 @@ afterEach(() => {
 })
 
 describe('run-context drawer', () => {
+  it('DRAWER-TEST-SECTION-ORDER', () => {
+    const data = response()
+    const childRunId = generateRunId()
+    data.run = { ...run, attributes: { channel: 'nightly' } }
+    data.artifact!.payload.source = {
+      kind: 'suite', rawYaml: 'name: Checkout suite', resolvedDefinition: { name: 'Checkout suite' },
+      members: [{ index: 0, name: 'Checkout', childRunId }],
+    }
+    const tab = mountRecordTab(data)
+    expect(sections(tab)).toEqual(['test-as-written', 'resolved-definition', 'suite-members', 'run-attributes'])
+    expect(tab.querySelector('a')?.getAttribute('href')).toBe(`/runs/${childRunId}`)
+    act(() => Array.from(tab.querySelectorAll('button')).find(button => button.textContent === 'Raw suite YAML')!.click())
+    expect(tab.querySelector('pre')?.textContent).toBe('name: Checkout suite')
+  })
+
+  it('DRAWER-ATTRIBUTES-ONLY-WHEN-PRESENT', () => {
+    const data = response()
+    const tab = mountRecordTab(data)
+    expect(sections(tab)).toEqual(['test-as-written', 'resolved-definition'])
+    expect(tab.textContent).not.toMatch(/no run attributes|did not record any attributes/i)
+    for (const attributes of [{ channel: 'nightly' }, { channel: 'nightly', owner: 'team' }]) {
+      data.run = { ...run, attributes }
+      const Component = testTabs['../artifact-test-tab.tsx'].ArtifactTestTab
+      act(() => root!.render(<Component response={data} />))
+      const rows = tab.querySelectorAll('[data-drawer-section="run-attributes"] tbody tr')
+      expect(rows).toHaveLength(Object.keys(attributes).length)
+      expect(Array.from(rows).every(row => row.querySelector('[aria-label^="Copy "]'))).toBe(true)
+    }
+  })
+
+  it('DRAWER-SUITE-MEMBERS-SUITES-ONLY', () => {
+    const data = response()
+    data.artifact!.payload.source = { kind: 'test', members: [{ index: 0, name: 'Unexpected member' }] }
+    const tab = mountRecordTab(data)
+    expect(sections(tab)).toEqual(['test-as-written', 'resolved-definition'])
+    expect(tab.textContent).not.toContain('Unexpected member')
+    expect(tab.textContent).toContain(DRAWER_COPY.notCaptured)
+  })
+
+  it('DRAWER-CONFIG-SECTION-ORDER', () => {
+    const tab = mountRecordTab(response(), 'config')
+    expect(sections(tab)).toEqual(['effective-config', 'global-config', 'model', 'runtime', 'errors'])
+    expect(Array.from(tab.querySelectorAll('h3')).map(heading => heading.textContent)).toEqual([
+      DRAWER_COPY.effectiveConfig, DRAWER_COPY.globalConfigAsWritten, DRAWER_COPY.model, DRAWER_COPY.runtime, DRAWER_COPY.errors,
+    ])
+    expect(tab.textContent).not.toMatch(/Artifact kind|Schema version|Finalized|Run Summary/)
+    expect(tab.textContent).toContain(DRAWER_COPY.notCaptured)
+  })
+
   it('DRAWER-HEADER-NO-ENVELOPE', () => {
     const drawer = mount()
     const header = drawer.querySelector('[data-slot="sheet-header"]')!
