@@ -275,7 +275,7 @@ export function VerdictBlock({
             ref.incomplete ? (
               <span
                 key={ref.id}
-                data-cited-artifact-state="incomplete"
+                data-cited-artifact-state="unavailable"
                 data-cited-artifact-sha={ref.sha}
                 className="inline-flex items-center"
               >
@@ -298,7 +298,7 @@ export function VerdictBlock({
 
       {view.missingEvidence === undefined ? null : (
         <div
-          data-evidence-missing={`${String(view.missingEvidence.missing)}/${String(view.missingEvidence.total)}`}
+          data-evidence-incomplete={`${String(view.missingEvidence.missing)}/${String(view.missingEvidence.total)}`}
           className="mt-1.5 text-[10px] text-muted-foreground"
         >
           {view.missingEvidenceText}

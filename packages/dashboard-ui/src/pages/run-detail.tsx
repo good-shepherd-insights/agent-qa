@@ -21,6 +21,7 @@ import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import { initialPlayerSource, storePlayerSource } from "@/lib/player-view"
+import { PlayerLightbox } from '@/components/run-detail/player-lightbox'
 import { Timeline } from '@/components/run-detail/timeline'
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
@@ -48,7 +49,7 @@ import { copyTextOf } from "@/lib/display-text"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
 import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
-import { buildTimelineModel, latestUsableFrame, type PlayerSource, parkTargetForStep, playheadFromSelection, selectionFromPlayhead, type Playhead } from '@/lib/playhead'
+import { buildTimelineModel, findMarkerBySha, latestUsableFrame, type PlayerSource, parkTargetForStep, playheadFromSelection, selectionFromPlayhead, type Playhead } from '@/lib/playhead'
 import { stepSignals } from '@/lib/evidence-counts'
 
 const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'] as const
@@ -277,6 +278,9 @@ export default function RunDetailPage() {
   // — the `i` / `c` / `m` shortcuts and the navbar action all open the drawer with nothing in hand,
   // and the screenshot tab is not offered at all in that state.
   const [artifactDrawerSha, setArtifactDrawerSha] = useState<string | null>(null)
+  const [lightboxSha, setLightboxSha] = useState<string | null>(null)
+  const citationOpener = useRef<HTMLElement | null>(null)
+  useEffect(() => { setLightboxSha(null) }, [id])
   const [artifactResponse, setArtifactResponse] = useState<RunArtifactResponse | null>(null)
   const [artifactLoading, setArtifactLoading] = useState(false)
   const [artifactError, setArtifactError] = useState<string | null>(null)
@@ -521,17 +525,6 @@ export default function RunDetailPage() {
     setArtifactDrawerOpen(true)
   }, [])
 
-  /**
-   * Open a cited artifact where the reader already looks (406-08 · D-02, second half).
-   *
-   * THE PAGE OWNS THE DRAWER AND THE BLOCK OWNS NOTHING. `VerdictBlock` hands up a sha; this turns
-   * it into the drawer's screenshot tab, and the drawer mints the URL through the one route minter.
-   * No route, no window and no second URL spelling is created anywhere along that path.
-   */
-  const onCitedArtifact = useCallback((sha: string) => {
-    openArtifactDrawer("screenshot", sha)
-  }, [openArtifactDrawer])
-
   const memberFilter = parseMemberFilter(searchParams.get("member"))
   const groups = useMemo(
     () => (detail ? groupRunDetail(detail) : []),
@@ -574,6 +567,26 @@ export default function RunDetailPage() {
   const playerMember = `${id}:${timelineGroup?.member.testIndex}:${recording?.state}`
   const playerSource = sourceChoice?.member === playerMember ? sourceChoice.source : initialPlayerSource(recording)
   const setPlayerSource = (source: PlayerSource) => setSourceChoice({ member: playerMember, source })
+  const handleCitedArtifact = useCallback((sha: string) => {
+    for (const group of groups) {
+      const marker = findMarkerBySha(buildTimelineModel(group), sha)
+      if (!marker) continue
+      if (!visibleGroups.includes(group)) {
+        const next = new URLSearchParams(searchParams)
+        next.delete('member')
+        next.set('step', runDetailStepKey(marker.testIndex, marker.stepIndex))
+        next.set('sub', String(marker.subActionIndex))
+        next.delete('tab')
+        setSearchParams(next, { replace: true })
+      }
+      setPlayheadFrom(marker)
+      setSourceChoice({ member: `${id}:${group.member.testIndex}:${group.member.recording?.state}`, source: 'frames' })
+      setActiveTab('overview')
+      return
+    }
+    citationOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setLightboxSha(sha)
+  }, [groups, visibleGroups, searchParams, setSearchParams, setPlayheadFrom, id])
   const foldedFrame = selection?.type === "step" && !playheadTarget
     ? latestUsableFrame(selectedStep?.subActions ?? []) : undefined
   const timelineSignals = useMemo(() => Object.fromEntries(
@@ -931,6 +944,7 @@ export default function RunDetailPage() {
 
   return (
     <TooltipProvider>
+      {lightboxSha && <PlayerLightbox runId={run.id} sha={lightboxSha} open onOpenChange={open => { if (!open) setLightboxSha(null) }} returnFocus={citationOpener.current} />}
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         {/*
           THE DURABLE RUNG RIDES THE READ THIS PAGE ALREADY MADE (407-10 · D-13). `bannerRung` is a
@@ -1025,7 +1039,7 @@ export default function RunDetailPage() {
                   markPending={markPending}
                   onCitedStep={onCitedStep}
                   onSelectMember={onSelectMember}
-                  onCitedArtifact={onCitedArtifact}
+                  onCitedArtifact={handleCitedArtifact}
                   selection={selection}
                   playhead={playhead}
                   onSelect={setSelection}
