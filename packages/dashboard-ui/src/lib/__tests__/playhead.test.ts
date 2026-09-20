@@ -13,8 +13,8 @@ function frame(index: number, extra: Partial<RunDetailArtifactRef> = {}): RunDet
 
 function action(subActionIndex: number, extra: Partial<RunDetailSubAction> = {}): RunDetailSubAction {
   return {
-    testIndex: 2, stepIndex: 3, subActionIndex, plan: 'wait',
-    plannedAction: { type: 'wait', duration: 1 }, result: { success: true },
+    testIndex: 2, stepIndex: 3, subActionIndex, plan: 'navigate',
+    plannedAction: { type: 'navigate', to: 'url', url: 'https://example.test' }, result: { success: true },
     screenStateHash: 'a'.repeat(64), artifactRefs: [frame(subActionIndex)], ...extra,
   }
 }
