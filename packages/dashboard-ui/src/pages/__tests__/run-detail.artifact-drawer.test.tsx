@@ -460,6 +460,16 @@ afterEach(() => {
 })
 
 describe("RunDetailPage artifact drawer", () => {
+  it("DRAWER-SHORTCUT-I-OPENS-TEST", async () => {
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
+    await act(async () => latestShortcuts().i(new KeyboardEvent("keydown", { key: "i" })))
+    await flushRender()
+    expect(view.querySelector('[data-testid="artifact-drawer"]')?.getAttribute('data-tab')).toBe('test')
+    await act(async () => latestShortcuts().c(new KeyboardEvent("keydown", { key: "c" })))
+    await flushRender()
+    expect(view.querySelector('[data-testid="artifact-drawer"]')?.getAttribute('data-tab')).toBe('config')
+  })
+
   it("opens Attributes with I and renders run attributes", async () => {
     const view = await renderAt("/runs/run-1?step=0:0&sub=0")
 

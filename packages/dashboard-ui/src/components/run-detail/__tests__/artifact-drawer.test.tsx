@@ -99,6 +99,14 @@ afterEach(() => {
 })
 
 describe('run-context drawer', () => {
+  it('DRAWER-TABS-TEST-FIRST', () => {
+    const drawer = mount()
+    expect(Array.from(drawer.querySelectorAll('[role="tab"]')).map(tab => tab.textContent)).toEqual(['Test', 'Config'])
+    expect(drawer.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Test')
+    expect(drawer.querySelector('[data-drawer-section="test-as-written"]')).not.toBeNull()
+    expect(drawer.querySelector('[data-drawer-section]')?.closest('[data-slot="scroll-area"]')).not.toBeNull()
+  })
+
   it('DRAWER-TEST-SECTION-ORDER', () => {
     const data = response()
     const childRunId = generateRunId()
