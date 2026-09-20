@@ -5,7 +5,7 @@ import { resolve as resolvePath } from 'node:path'
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
-import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
+import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths, workspaceRelativeIdentityPath } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, MemberLogScope, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate } from '@vostride/agent-qa-model'
@@ -92,11 +92,11 @@ import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { createShutdownController } from './shutdown-controller.js'
 import { buildDirectRunMembers } from './direct-run-members.js'
+import { resolveRecordingSetting, resolveRecordingStagingDir } from './recording-setting.js'
 import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type AgentQaUpdateNoticeContext } from '../version-notice.js'
 
 const RUNTIME_ARTIFACTS_DIR = DEFAULT_AGENT_QA_ARTIFACTS_DIR || '.agent-qa/artifacts'
 const RUNTIME_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
-const RUNTIME_VIDEOS_DIR = DEFAULT_AGENT_QA_VIDEOS_DIR || '.agent-qa/artifacts/videos'
 
 /** Model/runner capabilities stay on the existing authorized CLI import boundary. */
 export interface RunStepModelPorts {
@@ -523,23 +523,6 @@ function formatFrameworkError(message: string): FormattedFrameworkError {
     displayMessage: `Framework error: ${message}`,
     failureSummary: `Framework error: ${message.slice(0, 200)}`,
   }
-}
-
-function resolveDashboardVideoDir(
-  config: AgentQaConfig,
-  configDir: string,
-  dashboardEnabled: boolean,
-): string {
-  const recordingCfg = config.services?.recording as Record<string, unknown> | undefined
-  const configuredVideoDir = recordingCfg?.videoDir as string | undefined
-  if (configuredVideoDir) {
-    return resolvePath(configDir, configuredVideoDir)
-  }
-  if (dashboardEnabled) {
-    const dashArtifactsDir = (config.services?.dashboard as Record<string, unknown> | undefined)?.artifactsDir as string | undefined
-    return resolvePath(configDir, dashArtifactsDir ?? RUNTIME_ARTIFACTS_DIR, 'videos')
-  }
-  return resolvePath(configDir, RUNTIME_VIDEOS_DIR)
 }
 
 export interface RunOptions {
@@ -2736,13 +2719,12 @@ export async function produceSuiteRunMembers(
       platformConfig.browser.headless = opts.headless
     }
 
-    const recordingEnabled = opts.record ?? config.services?.recording?.enabled ?? false
-    if (recordingEnabled) {
-      const recordingCfg = config.services?.recording as Record<string, unknown> | undefined
+    const recording = resolveRecordingSetting(opts.record, config.services?.recording)
+    const anyTestNeedsRecording = testEntries.some(({ test }) => test.meta?.record === true)
+    if (recording.enabled || anyTestNeedsRecording) {
       platformConfig.recording = {
         enabled: true,
-        videoDir: resolveDashboardVideoDir(config, configDir, dashboardEnabled),
-        videoSize: recordingCfg?.videoSize as { width: number; height: number } | undefined,
+        videoDir: resolveRecordingStagingDir(configDir),
       }
     }
 
@@ -3301,6 +3283,7 @@ export async function produceSuiteRunMembers(
             suiteContext: (prepared.suite as any).context,
             filePath: absolutePath,
           }), {
+            recording: resolveRecordingSetting(opts.record, config.services?.recording, test.meta?.record),
             modelProfiles: prepared.modelProfiles,
             onEvidenceContext: ctx.setEvidenceContext,
           })
@@ -3685,7 +3668,7 @@ export async function produceDirectRunMembers(
   // ONE drive both paths call, not to each path's own copy of the arithmetic.
   const { LLMPlanner, LLMVerifier } = await import('@vostride/agent-qa-runner')
 
-  const recordingEnabled = opts.record ?? config.services?.recording?.enabled ?? false
+  const recording = resolveRecordingSetting(opts.record, config.services?.recording)
 
   // Wire action cache from config (logger wired after LogManager creation below)
   let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
@@ -3935,13 +3918,11 @@ export async function produceDirectRunMembers(
         }
 
         // Wire recording config for this platform adapter
-        const anyTestNeedsRecording = filtered.some(({ test: candidate }) => (candidate.meta as any)?.record === true)
-        if (recordingEnabled || anyTestNeedsRecording) {
-          const recCfg = config.services?.recording as Record<string, unknown> | undefined
+        const anyTestNeedsRecording = filtered.some(({ test: candidate }) => candidate.meta?.record === true)
+        if (recording.enabled || anyTestNeedsRecording) {
           platformConfig.recording = {
             enabled: true,
-            videoDir: resolveDashboardVideoDir(config, configDir, dashboardEnabled),
-            videoSize: recCfg?.videoSize as { width: number; height: number } | undefined,
+            videoDir: resolveRecordingStagingDir(configDir),
           }
         }
 
@@ -4043,20 +4024,7 @@ export async function produceDirectRunMembers(
         navigation: testMergedConfig.use?.timeout?.navigation,
       }
 
-      // Per-test recording override: meta.record takes priority over global
-      let testRecording: import('@vostride/agent-qa-runner').PlatformConfig['recording'] | undefined
-      const testRecordMeta = (testDef.meta as any)?.record
-      if (testRecordMeta === true || recordingEnabled) {
-        const recCfg2 = config.services?.recording as Record<string, unknown> | undefined
-        testRecording = {
-          enabled: true,
-          videoDir: resolveDashboardVideoDir(config, configDir, dashboardEnabled),
-          videoSize: recCfg2?.videoSize as { width: number; height: number } | undefined,
-        }
-      }
-      if (testRecordMeta === false) {
-        testRecording = undefined
-      }
+      const testRecording = resolveRecordingSetting(opts.record, config.services?.recording, testDef.meta?.record)
 
       const artifactContext = buildRunArtifactContext({
         kind: 'test',
@@ -4211,6 +4179,7 @@ export async function produceDirectRunMembers(
         contextWindow: plannerCfg.contextWindow,
         filePath,
       }), {
+        recording: testRecording,
         modelProfiles: { planner: plannerDeclared, verifier: verifierDeclared },
         onEvidenceContext: ctx.setEvidenceContext,
       })
@@ -4462,7 +4431,8 @@ export function createRunCommand(): Command {
     .option('--screenshot-dir <dir>', 'directory for failure screenshots')
     .option('--screenshot-mode <mode>', 'when to capture: failure (default) or every-step')
     .option('--reporter <names...>', 'select reporters (default: console)')
-    .option('--record', 'enable session video recording')
+    .option('--record', 'enable session video recording (services.recording.enabled)')
+    .option('--no-record', 'disable session video recording for this run (services.recording.enabled)')
     .option('--config-debug', 'print resolved config with source attribution for each test')
     .option('--test', 'discover and run tests via testMatch patterns (default when no flags)')
     .option('--suite', 'discover and run suites via suiteMatch patterns')

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -8,15 +8,8 @@ import { buildRunMaskingContext, createRunInvocationCore } from '@vostride/agent
 import { createRunCommand, produceDirectRunMembers, produceSuiteRunMembers } from '../commands/run.js'
 import type { RunInvocationInputs, SuiteRunMemberProductionInput } from '../commands/run.js'
 import { assembleCliRun } from '../composition/run-assembly.js'
+import { RECORDING_STAGING_DIRNAME, resolveRecordingSetting as resolve, resolveRecordingStagingDir } from '../commands/recording-setting.js'
 
-type Setting = { enabled: boolean; keepFailuresOnly: boolean }
-type Resolver = (flag?: boolean, config?: Partial<Setting>, meta?: boolean) => Setting
-const moduleUrl = new URL('../commands/recording-setting.ts', import.meta.url)
-const recordingModule = existsSync(moduleUrl) ? await import(moduleUrl.href) : {}
-function resolve(...args: Parameters<Resolver>): Setting {
-  expect(recordingModule.resolveRecordingSetting).toBeTypeOf('function')
-  return recordingModule.resolveRecordingSetting(...args)
-}
 const runSource = readFileSync(new URL('../commands/run.ts', import.meta.url), 'utf8')
 
 const boundary = vi.hoisted(() => ({
@@ -55,7 +48,7 @@ vi.mock('@vostride/agent-qa-web', () => ({
 }))
 
 it('REC-DEFAULT-ABSENT-KEY-ON: absent config and enabled both resolve on', () => {
-  expect(resolve()).toEqual({ enabled: true, keepFailuresOnly: false })
+  expect(resolve(undefined, undefined)).toEqual({ enabled: true, keepFailuresOnly: false })
   expect(resolve(undefined, {})).toEqual({ enabled: true, keepFailuresOnly: false })
 })
 
@@ -90,10 +83,9 @@ it('REC-DEFAULT-BOTH-PATHS-SHARE: both paths and member overrides use the resolv
 })
 
 it('REC-STAGING-NOT-LEGACY-DIR: staging sits beside runs regardless of workspace name', () => {
-  expect(recordingModule.resolveRecordingStagingDir).toBeTypeOf('function')
-  expect(recordingModule.RECORDING_STAGING_DIRNAME).toBe('recording-staging')
+  expect(RECORDING_STAGING_DIRNAME).toBe('recording-staging')
   for (const configDir of ['/tmp/project', '/tmp/videos', '/tmp/project with spaces']) {
-    const staging = recordingModule.resolveRecordingStagingDir(configDir)
+    const staging = resolveRecordingStagingDir(configDir)
     expect(staging).toBe(join(configDir, '.agent-qa', 'recording-staging'))
     expect(basename(staging)).not.toBe('videos')
   }
