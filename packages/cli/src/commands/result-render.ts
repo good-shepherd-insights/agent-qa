@@ -15,6 +15,8 @@
 // is chosen for a property no curated render has: it is STRUCTURALLY INCAPABLE of withholding a
 // field. A hand-picked join of the fields somebody thought mattered is a drop site with a list
 // attached, and RC-2 is that exact shape caught dropping `crossBoundary` above a confirm prompt.
+// Phase 424 narrows this for new runs.detail recording metadata only: human output names the
+// dashboard player and announces the omitted metadata; the machine payload remains complete.
 // The forty-third op is covered here by construction rather than by somebody remembering it.
 //
 // PER-OP FOLDS ADD AND NEVER SUPPRESS. A registry-declared `renderResult` composes a human sentence
@@ -29,8 +31,12 @@
 // would be a disclosure boundary with none of that cover, and a render that unmasked for itself
 // would put cleartext into whatever a caller did with the returned string.
 
-import type { ClauseResult } from '@vostride/agent-qa-schema'
+import { RunDetailProjectionSchema } from '@vostride/agent-qa-schema'
+import type { ClauseResult, RunDetailProjection } from '@vostride/agent-qa-schema'
 import pc from 'picocolors'
+
+export const RECORDING_SAVED_LINE = 'Recording saved: {size} MB{duration}. Open this run in the dashboard to play it.'
+export const RECORDING_FAILED_LINE = 'Recording could not be saved.'
 
 /**
  * Every executed clause's payload, as the lines a surface prints.
@@ -65,9 +71,36 @@ export function renderClauseResults(
   const lines: string[] = []
   for (const result of results) {
     if (receiptCount > 1) lines.push(pc.dim(result.functionId))
-    lines.push(renderPayload(result.payload))
+    const detail = result.functionId === 'runs.detail'
+      ? RunDetailProjectionSchema.safeParse(result.payload) : undefined
+    if (detail?.success) lines.push(...renderRunDetail(detail.data))
+    else lines.push(renderPayload(result.payload))
   }
   return lines
+}
+
+function renderRunDetail(detail: RunDetailProjection): string[] {
+  const recordingLines: string[] = []
+  let omitted = false
+  const members = detail.members.map(({ recording, ...member }) => {
+    if (recording === undefined) return member
+    omitted = true
+    const prefix = `Test ${member.testIndex + 1}: `
+    if (recording.state === 'present') {
+      const seconds = recording.durationMs === undefined ? undefined : Math.floor(recording.durationMs / 1000)
+      const duration = seconds === undefined ? ''
+        : `, ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+      recordingLines.push(prefix + RECORDING_SAVED_LINE
+        .replace('{size}', (recording.byteLength / 1_000_000).toFixed(1))
+        .replace('{duration}', duration))
+    } else if (recording.reason === 'failed') {
+      recordingLines.push(prefix + RECORDING_FAILED_LINE)
+    }
+    return member
+  })
+  return [renderPayload({ ...detail, members }), ...recordingLines,
+    ...(omitted ? ['Member capture metadata omitted; use agent-qa fn runs.detail --json for the full result.'] : []),
+  ]
 }
 
 /**

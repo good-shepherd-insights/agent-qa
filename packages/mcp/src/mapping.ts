@@ -707,7 +707,11 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
       + 'base64 body. A `tools/call` round trip is the wrong carriage for bytes: a conversation '
       + 'cannot render a PNG, and a tool that returned one would spend a context window on a '
       + 'payload no reader can read. The two HTTP doors are its carriage, and 408\'s embed is the '
-      + 'surface that renders it. Deferred as its own seam, not omitted.',
+      + 'surface that renders it. Deferred as its own seam, not omitted. '
+      + 'Phase 424 (dated 2026-09-20): the recording fact rides runs.detail; runs.artifact '
+      + 'answers a bounded slice when range is supplied; pulling a whole recording through unary '
+      + 'base64 is permitted and not recommended; no recording tool is projected because the '
+      + 'MX ceiling of 22 is fully allocated.',
     adjudication: '405',
   }),
   Object.freeze({
