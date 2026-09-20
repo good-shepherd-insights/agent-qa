@@ -26,13 +26,15 @@ import type {
   RunDetailMemberMark,
   RunDetailProjection,
   RunDetailStep,
+  RecordingEntry,
+  RunId,
   RunTokenTotals,
   RunModelSummary,
   RunsDetailInput,
 } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { ClauseVerdict, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, EvidenceBlobReaderPort, FunctionSpec } from '../spec.js'
 import { annotatePresence } from './evidence-presence.js'
 import { RunNotFoundError } from './runs-get.js'
 
@@ -122,6 +124,19 @@ export function projectRunModelSummary(steps: readonly RunDetailStep[]): RunMode
   }
 }
 
+async function projectMemberRecording(
+  recording: RecordingEntry | undefined,
+  port: EvidenceBlobReaderPort | undefined,
+  runId: RunId,
+): Promise<RecordingEntry> {
+  if (recording === undefined) return { state: 'absent', reason: 'unavailable' }
+  if (recording.state !== 'present') return recording
+  const [ref] = await annotatePresence(port, runId, [recording.ref])
+  return ref?.present === false
+    ? { state: 'absent', reason: 'unavailable', evidenceIncomplete: true }
+    : recording
+}
+
 export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> = {
   id: RUNS_DETAIL_FUNCTION_ID,
   summary: "Read one run's durable members, steps and sub-actions as the dashboard projected them.",
@@ -195,6 +210,11 @@ export const runsDetailSpec: FunctionSpec<RunsDetailInput, RunDetailProjection> 
         return { ...member, marks }
       })
     }
+
+    members = await Promise.all(members.map(async member => ({
+      ...member,
+      recording: await projectMemberRecording(member.recording, deps.evidenceBlobs, input.runId),
+    })))
 
     // READ-TIME PRESENCE, OPPORTUNISTICALLY (406 D-17). The projection recorded which blobs a
     // sub-action produced; only a stat taken now can say whether they survived. `boundThrough`
