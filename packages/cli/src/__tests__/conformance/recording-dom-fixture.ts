@@ -53,7 +53,7 @@ export async function recordingFixture(label: string, recordingOff = false, layo
         if (_req.url === '/broken') { res.writeHead(503); res.end('Synthetic failure'); return }
         res.setHeader('Content-Type', 'text/html')
         res.end('<!doctype html><html lang="en"><title>Evidence layout probe</title><body>'
-          + '<h1>Evidence layout probe</h1><label>Credential<input type="password" aria-label="Credential"></label>'
+          + '<h1>Evidence layout probe</h1><label>Credential<input type="password" role="textbox" aria-label="Credential"></label>'
           + '<button onclick="console.error(\'Synthetic console error\'); fetch(\'/broken\')">Acknowledge</button>'
           + '<p>Local synthetic fixture only</p></body></html>')
       })
@@ -142,5 +142,5 @@ export async function capture(page: Page, name: string) {
   const directory = process.env.AGENT_QA_424_CAPTURE_DIR
   if (!directory) return
   mkdirSync(directory, { recursive: true })
-  await page.screenshot({ path: join(directory, `${name}.png`), fullPage: true })
+  await page.screenshot({ path: join(directory, `${name}.png`), fullPage: true, animations: 'disabled' })
 }
