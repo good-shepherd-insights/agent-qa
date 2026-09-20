@@ -14,6 +14,13 @@ export type {
 } from './action/index'
 export type { ActionExecutor, ActionsFor } from './action/adapter'
 export { ACTION_WIRE_SCHEMAS_BY_TYPE, actionWireSchema } from './action/wire-schema'
+export {
+  type ActionFamily,
+  ACTION_FAMILIES,
+  ActionFamilySchema,
+  ACTION_FAMILY_BY_TYPE,
+  actionFamilyOf,
+} from './action/family'
 export type {
   EmittedTargetDescriptor,
   Fill,
