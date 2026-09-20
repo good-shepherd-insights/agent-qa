@@ -1,13 +1,14 @@
 /// <reference lib="dom" />
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { guardRunAnalysisArtifact, slugBranch, type RunDetailProjection } from '@vostride/agent-qa-schema'
-import type { Page } from 'playwright-core'
+import { chromium, type BrowserContext, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { capture, recordingFixture, type RecordingFixture } from './recording-dom-fixture.js'
 import { populatedRunSpawnEnv, POPULATED_SECRET_ENV_VAR, POPULATED_SECRET_VALUE } from './populated-run-fixture.js'
-import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard } from './spawned-chat.js'
+import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard, trackTempRoot } from './spawned-chat.js'
 
 // Real producer + shipped bundle. Only historical/orphan test arrangements edit the temporary
 // durable fixture, explicitly below; no route mocks, fake media, skips or user-workspace captures.
@@ -17,10 +18,12 @@ const inside = (a: Box, b: Box) => a.x >= b.x - 0.5 && a.right <= b.right + 0.5 
 const failures: Record<string, string> = {}
 let fixture: RecordingFixture | undefined
 let reader: Awaited<ReturnType<typeof spawnDashboard>> | undefined
+let zoomContext: BrowserContext | undefined
+let zoom: { factor: number; beforeWidth: number; afterWidth: number; beforeDpr: number; afterDpr: number } | undefined
 let timeline: { numbers: number; badges: Box[]; readout: string; member: Box; first: Box; trackViewport: Box; steps: number } | undefined
 const tabs: Array<{ width: number; document: number; viewport: number; scroll: number; client: number; moved: number; triggers: Array<{ box: Box; count?: Box; contentFits: boolean }> }> = []
 const lightboxes: Array<{ width: number; document: number; viewport: number; image: Box; dialog: Box; loaded: boolean }> = []
-let notice: { dismiss: Box; viewport: number; explanation: Box; pane: Box; lines: number } | undefined
+let notice: { dismiss: Box; viewport: number; explanation: Box; pane: Box; lines: number; textWidth: number; font: string; totalTextWidth: number; message: string; text: Box; lineBoxes: Box[]; icon: Box } | undefined
 let chips: Array<{ chip: Box; row: Box; clip: Box; text: string; visible: boolean }> = []
 
 async function measureChips(page: Page) {
@@ -116,15 +119,47 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       await capture(page, 'masked-chip-wide-control')
       await page.setViewportSize({ width: 400, height: 800 })
 
-      // deviceScaleFactor is a density test, not browser zoom. Also use a 640 CSS-pixel viewport
-      // at 2x density to exercise desktop-1280 reflow at 200%, and report both distinctly.
+      // Density and real browser zoom are separate checks. The temporary MV3 extension exists
+      // only in an isolated test profile and uses Chrome's own setZoom/getZoom APIs.
+      // https://playwright.dev/docs/chrome-extensions
+      // https://developer.chrome.com/docs/extensions/reference/api/tabs#method-setZoom
       const dense = await fixture.browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 })
       const densePage = await dense.newPage()
       await densePage.goto(url)
       await measureTabs(densePage, 'tab-strip-desktop-2x-density')
-      await densePage.setViewportSize({ width: 640, height: 400 })
-      await measureTabs(densePage, 'tab-strip-200-percent-reflow')
       await dense.close()
+      const zoomRoot = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-424-zoom-')))
+      const extension = join(zoomRoot, 'extension')
+      mkdirSync(extension)
+      writeFileSync(join(extension, 'manifest.json'), JSON.stringify({ manifest_version: 3,
+        name: 'Local evidence zoom probe', version: '1.0',
+        host_permissions: ['http://127.0.0.1/*'], background: { service_worker: 'background.js' } }))
+      writeFileSync(join(extension, 'background.js'), 'chrome.runtime.onInstalled.addListener(() => {})')
+      zoomContext = await chromium.launchPersistentContext(join(zoomRoot, 'profile'), {
+        channel: 'chromium', headless: true, viewport: { width: 1280, height: 800 },
+        args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+      })
+      const worker = zoomContext.serviceWorkers()[0] ?? await zoomContext.waitForEvent('serviceworker')
+      const zoomPage = await zoomContext.newPage()
+      await zoomPage.goto(url)
+      const before = await zoomPage.evaluate(() => ({ width: innerWidth, dpr: devicePixelRatio }))
+      const factor = await worker.evaluate(async url => {
+        const tabs = (globalThis as unknown as { chrome: { tabs: {
+          query(query: { url: string }): Promise<Array<{ id?: number }>>
+          setZoom(id: number, factor: number): Promise<void>
+          getZoom(id: number): Promise<number>
+        } } }).chrome.tabs
+        const [tab] = await tabs.query({ url })
+        if (tab?.id === undefined) throw new Error('The isolated extension found no fixture tab')
+        await tabs.setZoom(tab.id, 2)
+        return await tabs.getZoom(tab.id)
+      }, url)
+      await zoomPage.waitForFunction(dpr => devicePixelRatio >= dpr * 1.99, before.dpr)
+      const after = await zoomPage.evaluate(() => ({ width: innerWidth, dpr: devicePixelRatio }))
+      zoom = { factor, beforeWidth: before.width, afterWidth: after.width, beforeDpr: before.dpr, afterDpr: after.dpr }
+      await measureTabs(zoomPage, 'tab-strip-browser-200-percent')
+      await zoomContext.close()
+      zoomContext = undefined
 
       // Historical fixture: SQL NULL in the existing additive fields is precisely the migrated
       // pre-424 shape. Keep the real decision images, steps and identities; invent no new data.
@@ -144,9 +179,17 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
         const notice = document.querySelector('[data-run-notice]')!
         const text = notice.querySelector(':scope > span')!
         const pane = document.querySelector('[data-evidence-state="unavailable"]')!
+        const style = getComputedStyle(text)
+        const canvas = document.createElement('canvas').getContext('2d')!
+        canvas.font = style.font
+        const range = document.createRange()
+        range.selectNodeContents(text)
+        const lineBoxes = [...range.getClientRects()].map(r => ({ x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }))
         return { dismiss: box(notice.querySelector('button')!), viewport: innerWidth,
           explanation: box(pane.querySelector('p')!), pane: box(pane),
-          lines: box(text).height / parseFloat(getComputedStyle(text).lineHeight) }
+          lines: box(text).height / parseFloat(style.lineHeight), textWidth: box(text).width,
+          font: style.font, totalTextWidth: canvas.measureText(text.textContent ?? '').width, message: text.textContent ?? '',
+          text: box(text), lineBoxes, icon: box(notice.querySelector(':scope > svg')!) }
       })
       await capture(page, 'notice-and-absence-400')
       await capture(page, 'notice-wrap-400')
@@ -184,12 +227,12 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
         }))
         await capture(page, `lightbox-${width}`)
       }
-      if (process.env.AGENT_QA_424_CAPTURE_DIR) writeFileSync(join(process.env.AGENT_QA_424_CAPTURE_DIR, 'layout-observation.json'), JSON.stringify({ timeline, tabs, notice, lightboxes, chips }, null, 2))
+      if (process.env.AGENT_QA_424_CAPTURE_DIR) writeFileSync(join(process.env.AGENT_QA_424_CAPTURE_DIR, 'layout-observation.json'), JSON.stringify({ timeline, tabs, zoom, notice, lightboxes, chips }, null, 2))
       await context.close()
     } catch (error) { failures.drive = String(error) }
   }, 360_000)
 
-  afterAll(async () => { await reader?.stop(); await fixture?.close(); cleanupTempRoots() })
+  afterAll(async () => { await zoomContext?.close(); await reader?.stop(); await fixture?.close(); cleanupTempRoots() })
   it('LAYOUT-TIMELINE-400', () => {
     expect(timeline, JSON.stringify(failures)).toBeDefined()
     expect(timeline!.numbers).toBe(0)
@@ -212,6 +255,9 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
   })
   it('LAYOUT-TAB-STRIP-400-AND-ZOOM', () => {
     expect(tabs.length, JSON.stringify(failures)).toBe(3)
+    expect(zoom?.factor, JSON.stringify(failures)).toBe(2)
+    expect(zoom!.afterWidth).toBe(zoom!.beforeWidth / 2)
+    expect(zoom!.afterDpr).toBe(zoom!.beforeDpr * 2)
     for (const tab of tabs) {
       expect(tab.document).toBeLessThanOrEqual(tab.viewport)
       expect(tab.triggers.length).toBe(7)
@@ -226,7 +272,14 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
     expect(notice, JSON.stringify(failures)).toBeDefined()
     expect(notice!.dismiss.right).toBeLessThanOrEqual(notice!.viewport)
     expect(notice!.explanation.width).toBeLessThanOrEqual(notice!.pane.width)
-    expect(notice!.lines).toBeGreaterThanOrEqual(2)
+    // The 400px pane affords 304px of text, while the locked 12px copy measures 693px.
+    // Two lines cannot contain it. Preserve the locked copy/chrome and assert all three
+    // natural lines, without claiming the derived two-line backstop is satisfied literally.
+    expect(notice!.lines).toBe(3)
+    expect(notice!.message).toBe('This run was recorded before evidence was saved. Variables, network, console, ARIA, accessibility and video were not recorded.')
+    for (const line of notice!.lineBoxes) expect(inside(line, notice!.text)).toBe(true)
+    expect(overlaps(notice!.text, notice!.dismiss)).toBe(false)
+    expect(overlaps(notice!.text, notice!.icon)).toBe(false)
   })
   it('LAYOUT-LIGHTBOX-FITS', () => {
     expect(lightboxes.length, JSON.stringify(failures)).toBe(2)
