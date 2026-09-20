@@ -8,6 +8,10 @@ export type EvidenceTone = 'positive' | 'neutral' | 'alert'
 export const EVIDENCE_TONES = ['positive', 'neutral', 'alert'] as const satisfies readonly EvidenceTone[]
 export type EvidenceFailure = 'capture' | 'load'
 export const EVIDENCE_FAILURES = ['capture', 'load'] as const satisfies readonly EvidenceFailure[]
+export type EvidenceKindLabel = 'variables' | 'network' | 'console' | 'aria' | 'a11y' | 'video' | 'frame'
+export const EVIDENCE_KIND_LABELS = [
+  'variables', 'network', 'console', 'aria', 'a11y', 'video', 'frame',
+] as const satisfies readonly EvidenceKindLabel[]
 
 export const EVIDENCE_STATE_OF_REASON = {
   empty: 'empty', 'not-captured': 'not-captured', unsupported: 'unsupported',
