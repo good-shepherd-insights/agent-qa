@@ -10,6 +10,9 @@ export type {
   TimeoutConfig,
   RuntimeAuthStateConfig,
   LiveStreamCapability,
+  RecordingStart,
+  RecordingStop,
+  RecordingCapability,
 } from './platform.js'
 export type {
   KnowledgeHintReader,
@@ -156,6 +159,7 @@ export type {
   LoopLogger,
   LoopPorts,
   EvidenceArtifactStorePort,
+  PersistedRecording,
   WorkingMemoryPort,
   TokenAccounting,
   RunnerDegradeOptions,

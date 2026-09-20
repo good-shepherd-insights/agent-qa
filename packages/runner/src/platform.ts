@@ -7,6 +7,7 @@ import type {
   LiveFrame,
   LiveStreamKind,
   Platform,
+  RecordingContentType,
   ScreenState,
 } from '@vostride/agent-qa-schema'
 import type { ConsoleLogEntry, NetworkLogEntry } from './result.js'
@@ -54,6 +55,20 @@ export interface LiveStreamCapability {
   stop(): Promise<void>
 }
 
+export interface RecordingStart {
+  zeroMs?: number
+}
+
+export interface RecordingStop {
+  stagingPath: string
+  contentType: RecordingContentType
+}
+
+export interface RecordingCapability {
+  start(): Promise<RecordingStart>
+  stop(): Promise<RecordingStop | undefined>
+}
+
 export interface PlatformAdapter<P extends Platform = Platform> {
   readonly platform: P
 
@@ -68,6 +83,7 @@ export interface PlatformAdapter<P extends Platform = Platform> {
    * absence to `{ kind: 'none' }` and no surface ever falls back to screenshot polling.
    */
   readonly liveStream?: LiveStreamCapability
+  readonly recording?: RecordingCapability
   drainConsoleLogs?(level?: string): ConsoleLogEntry[]
   drainNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
 }

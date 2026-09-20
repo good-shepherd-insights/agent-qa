@@ -15,6 +15,7 @@ import type {
   ProcedureBodyPayload,
   ProcedureMatch,
   RecordedRetrievalRung,
+  RecordingRef,
   RecordId,
   ReadTrace,
   ScreenState,
@@ -192,12 +193,21 @@ export interface LoopEventEmitPort {
  * serves those bytes back, letting a host adapter satisfy eval's structurally identical
  * `ArtifactSource` without a runner-to-eval dependency. Both legs are synchronous.
  */
+export interface PersistedRecording {
+  ref: RecordingRef
+  byteLength: number
+}
+
 export interface EvidenceArtifactStorePort {
   persistDecisionScreenshot(bytes: Uint8Array): ArtifactRef
   /** Already live-masked JSON only. Optional for existing screenshot-only hosts. */
   persistEvidenceDocument?(document: Exclude<EvidenceDocument, { kind: 'variables' }>): ArtifactRef
   hasBlob?(sha: string): boolean
   getBlob(sha: string): Uint8Array | undefined
+  persistRecording?(stagingPath: string): PersistedRecording
+  blobSize?(sha: string): number | undefined
+  readBlobRange?(sha: string, start: number, end: number): Uint8Array | undefined
+  discardRecording?(stagingPath: string): void
 }
 
 /**
