@@ -7,6 +7,7 @@ import type {
   PostProcessingDisposition,
   PostProcessingStatus,
   RunDetailProjection,
+  RunArtifactKind,
   RunEventEnvelope,
   RunKnowledgeProjection,
   RunServiceReadiness,
@@ -103,16 +104,6 @@ export interface RunsFilter {
   limit?: number
   offset?: number
 }
-
-/**
- * What a finalized run artifact is ABOUT (405-11 · 405-07's deferral).
- *
- * TWO MEMBERS, NOT FOUR. The union used to admit a suite parent and a suite child; the store's
- * own column now REFUSES both, so nothing can write one and the two members were unreachable
- * breadth. 405-07 left them in place deliberately — the drawer switches on this value to paint a
- * badge, and narrowing a union a render site reads belongs with that render site, which is here.
- */
-export type RunArtifactKind = 'test' | 'unknown'
 
 export interface RunArtifactPayload {
   schemaVersion: number
