@@ -1,5 +1,5 @@
 import type { RunDetailArtifactRef, RunDetailSubAction } from '@vostride/agent-qa-schema'
-import { decisionScreenshotRef, type RunDetailStepGroup } from './run-detail-view'
+import { decisionScreenshotRef, type RunDetailGroup, type RunDetailStepGroup } from './run-detail-view'
 import { parseRunDetailStepKey, runDetailStepKey, type Selection } from './selection'
 
 export interface Playhead {
@@ -61,4 +61,63 @@ export function selectionFromPlayhead(playhead: Playhead | null | undefined): Se
   return playhead.subActionIndex === null
     ? { type: 'step', stepId }
     : { type: 'subaction', stepId, subIndex: playhead.subActionIndex }
+}
+
+export type TimelineAxis = 'unimplemented'
+export const TIMELINE_AXES = ['unimplemented'] as const satisfies readonly TimelineAxis[]
+export type MarkerResult = 'unimplemented'
+export const MARKER_RESULTS = ['unimplemented'] as const satisfies readonly MarkerResult[]
+export type MarkerFrame = 'unimplemented'
+export const MARKER_FRAMES = ['unimplemented'] as const satisfies readonly MarkerFrame[]
+export type PlayerSource = 'unimplemented'
+export const PLAYER_SOURCES = ['unimplemented'] as const satisfies readonly PlayerSource[]
+
+export interface TimelineMarker extends Playhead {
+  subActionIndex: number
+  ordinal: number
+  position: number
+  result: MarkerResult
+  frame: MarkerFrame
+  ref?: RunDetailArtifactRef
+  recordingOffsetMs?: number
+  subAction: RunDetailSubAction
+}
+
+export interface TimelineSegment extends RunDetailStepGroup {
+  start: number
+  end: number
+  markers: readonly TimelineMarker[]
+}
+
+export interface TimelineModel {
+  testIndex: number
+  axis: TimelineAxis
+  extent: number
+  segments: readonly TimelineSegment[]
+  markers: readonly TimelineMarker[]
+  playhead: Playhead | null
+}
+
+export function buildTimelineModel(group: RunDetailGroup): TimelineModel {
+  return { testIndex: group.member.testIndex, axis: 'unimplemented', extent: -1,
+    segments: [], markers: [], playhead: null }
+}
+
+export const SNAP_THRESHOLD_PX = 0
+type MarkerCentre = { marker: TimelineMarker; centrePx: number }
+
+export function nearestMarker(positionPx: number, centres: readonly MarkerCentre[]): TimelineMarker | undefined {
+  return undefined
+}
+
+export function snapToMarker(positionPx: number, centres: readonly MarkerCentre[]): TimelineMarker | undefined {
+  return undefined
+}
+
+export function findMarkerBySha(model: TimelineModel, sha: string): TimelineMarker | undefined {
+  return undefined
+}
+
+export function formatOffset(offsetMs: number | undefined, form: 'readout' | 'popover' = 'readout'): string | undefined {
+  return undefined
 }
