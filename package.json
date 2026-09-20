@@ -74,7 +74,9 @@
     "validate:423-read-sinks-mutation-selftest": "bash scripts/423-read-sinks-mutation-selftest.sh",
     "validate:423-read-contracts": "bash scripts/423-read-contracts-gate.sh",
     "validate:424-recording-mutation": "bash scripts/424-recording-mutation.sh",
-    "validate:424-recording-mutation-selftest": "bash scripts/424-recording-mutation-selftest.sh"
+    "validate:424-recording-mutation-selftest": "bash scripts/424-recording-mutation-selftest.sh",
+    "validate:424-playback-mutation": "bash scripts/424-playback-mutation.sh",
+    "validate:424-playback-mutation-selftest": "bash scripts/424-playback-mutation-selftest.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
