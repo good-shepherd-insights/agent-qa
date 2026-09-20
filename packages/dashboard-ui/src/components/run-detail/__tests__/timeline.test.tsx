@@ -87,7 +87,12 @@ test('TIMELINE-SELECTED-SEGMENT', () => {
   expect(query('[data-marker-current="true"]').innerHTML).toContain('ring-primary')
 })
 test('TIMELINE-SIGNAL-BADGES', () => {
-  const counts = stepSignals({ console: { kind: 'console', state: 'present', ref: { id: `console-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) }, counts: { total: 2, errors: 2, warnings: 0 } } })
+  const counts = stepSignals({
+    console: { kind: 'console', state: 'present', ref: { id: `console-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) }, counts: { total: 2, errors: 2, warnings: 0 } },
+    network: { kind: 'network', state: 'absent', reason: 'not-captured' },
+    a11y: { kind: 'a11y', state: 'absent', reason: 'not-captured' },
+    variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
+  })
   render({ signals: { 0: counts } })
   const button = query('[data-step-signal="console"]')
   expect(button.tagName).toBe('BUTTON')
