@@ -7,6 +7,7 @@ import { buildTimelineModel, type TimelineModel } from '@/lib/playhead'
 import { signalBadgeName, stepSignals } from '@/lib/evidence-counts'
 import { copyTextOf } from '@/lib/display-text'
 import type { RunDetailGroup } from '@/lib/run-detail-view'
+import { routes } from '@/lib/routes'
 
 const modules = import.meta.glob<typeof import('../timeline')>('../timeline.tsx', { eager: true })
 type Props = ComponentProps<typeof import('../timeline').Timeline>
@@ -124,4 +125,134 @@ test('TIMELINE-SLIDER-ARIA', () => {
   expect(slider.getAttribute('aria-valuetext')).toBe(`Step 1, sub-action 1 of 4: Filled with ${copyTextOf(maskedMarker('secret'))}, passed, 0:00`)
   expect(host.innerHTML).not.toContain(maskedMarker('secret'))
   expect(host.querySelectorAll('[tabindex="0"]')).toHaveLength(1)
+})
+
+function pointer(element: HTMLElement, type: string, clientX = 0) {
+  const event = new MouseEvent(type, { bubbles: true, clientX, button: 0 })
+  Object.defineProperty(event, 'pointerId', { value: 7 })
+  Object.defineProperty(event, 'pointerType', { value: 'mouse' })
+  act(() => element.dispatchEvent(event))
+}
+function track() {
+  const element = query('[data-timeline-track]')
+  vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({ left: 10, width: 400 } as DOMRect)
+  element.setPointerCapture = vi.fn()
+  element.hasPointerCapture = vi.fn(() => true)
+  element.releasePointerCapture = vi.fn()
+  return element
+}
+function address(index: number) {
+  const marker = model.markers[index]!
+  return { testIndex: marker.testIndex, stepIndex: marker.stepIndex, subActionIndex: marker.subActionIndex }
+}
+function key(element: HTMLElement, value: string) {
+  const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })
+  act(() => element.dispatchEvent(event))
+  expect(event.defaultPrevented).toBe(true)
+}
+async function hover(index: number) {
+  await act(async () => { pointer(query(`[data-marker-index="${index}"]`), 'pointerover'); await new Promise(resolve => setTimeout(resolve, 0)) })
+}
+function popover() { return document.querySelector<HTMLElement>('[data-timeline-popover]')! }
+
+test('TIMELINE-SNAP-FRAMES-NEAREST', () => {
+  render()
+  const element = track()
+  pointer(element, 'pointerdown', 208)
+  expect(change).toHaveBeenLastCalledWith(address(1))
+  expect(element.setPointerCapture).toHaveBeenCalledWith(7)
+  pointer(element, 'pointermove', 330)
+  expect(change).toHaveBeenLastCalledWith(address(3))
+  pointer(element, 'pointerup', 330)
+  expect(element.releasePointerCapture).toHaveBeenCalledWith(7)
+  pointer(element, 'pointermove', 60)
+  expect(change).toHaveBeenLastCalledWith(address(3))
+  expect(seek).not.toHaveBeenCalled()
+})
+test('TIMELINE-SNAP-VIDEO-FREE', () => {
+  render({ source: 'video' })
+  const element = track()
+  pointer(element, 'pointerdown', 72)
+  expect(change).toHaveBeenLastCalledWith(address(0))
+  expect(seek).toHaveBeenLastCalledWith(0.125)
+  pointer(element, 'pointermove', 210)
+  expect(seek).toHaveBeenLastCalledWith(0.5)
+  expect(change).toHaveBeenLastCalledWith(address(1))
+  pointer(element, 'pointercancel', 210)
+  pointer(element, 'pointermove', 400)
+  expect(seek).toHaveBeenLastCalledWith(0.5)
+})
+test('TIMELINE-KEYS-ON-THUMB', () => {
+  render({ playhead: model.markers[1]! })
+  const slider = query('[role="slider"]')
+  key(slider, 'ArrowRight'); expect(change).toHaveBeenLastCalledWith(address(2))
+  key(slider, 'ArrowLeft'); expect(change).toHaveBeenLastCalledWith(address(0))
+  key(slider, 'Home'); expect(change).toHaveBeenLastCalledWith(address(0))
+  key(slider, 'End'); expect(change).toHaveBeenLastCalledWith(address(3))
+  key(slider, 'PageDown'); expect(change).toHaveBeenLastCalledWith(address(2))
+  render({ playhead: model.markers[3]! })
+  key(query('[role="slider"]'), 'PageUp'); expect(change).toHaveBeenLastCalledWith(address(0))
+  const calls = change.mock.calls.length
+  act(() => query('[data-timeline]').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+  expect(change).toHaveBeenCalledTimes(calls)
+})
+test('TIMELINE-POPOVER-HOVER', async () => {
+  render()
+  expect(document.querySelector('img')).toBeNull()
+  await hover(1)
+  expect(popover()).not.toBeNull()
+  expect(popover().querySelector('img')?.getAttribute('src')).toBe(routes.runArtifact('run', 'a'.repeat(64)))
+  expect(popover().querySelector('[data-slot="skeleton"]')).not.toBeNull()
+  act(() => popover().querySelector('img')!.dispatchEvent(new Event('load')))
+  expect(popover().querySelector('[data-slot="skeleton"]')).toBeNull()
+  expect(popover().querySelector('[data-masked="secret"]')).not.toBeNull()
+  expect(popover().querySelector('.line-clamp-2')).not.toBeNull()
+  expect(popover().textContent).toContain('0:00.0')
+  expect(document.body.innerHTML).not.toContain(maskedMarker('secret'))
+  pointer(query('[data-marker-index="1"]'), 'pointerout')
+  expect(document.querySelector('img')).toBeNull()
+})
+test('TIMELINE-POPOVER-THUMB-FOCUS', async () => {
+  render({ playhead: model.markers[2]! })
+  await act(async () => query('[role="slider"]').focus())
+  expect(popover()).not.toBeNull()
+  expect(popover().dataset.timelinePopover).toBe('3')
+  render({ playhead: model.markers[0]! })
+  expect(popover().dataset.timelinePopover).toBe('1')
+})
+test('TIMELINE-POPOVER-ABSENT-FRAME', async () => {
+  render()
+  await hover(2)
+  expect(popover()).not.toBeNull()
+  expect(popover().querySelector('[data-evidence-state="unavailable"][data-evidence-kind="frame"]')).not.toBeNull()
+  expect(popover().querySelector('img')).toBeNull()
+  expect(popover().textContent).toContain('#2')
+  expect(popover().textContent).toContain('failed')
+})
+test('TIMELINE-POPOVER-THUMB-FAILED', async () => {
+  render()
+  await hover(1)
+  expect(popover()).not.toBeNull()
+  act(() => popover().querySelector('img')!.dispatchEvent(new Event('error')))
+  expect(popover().querySelector('[data-evidence-state="failed"][data-evidence-failure="load"]')).not.toBeNull()
+  expect(popover().querySelector('button')).toBeNull()
+})
+test('TIMELINE-REDUCED-MOTION', () => {
+  vi.mocked(window.matchMedia).mockImplementation(query => ({ matches: query.includes('reduced-motion'), addEventListener() {}, removeEventListener() {} }) as unknown as MediaQueryList)
+  render()
+  expect(query('[data-timeline-playhead]').className).not.toContain('transition')
+})
+test('TIMELINE-BADGE-ROVING', () => {
+  render({ signals: { 0: { console: 2, network: 1, a11y: undefined }, 1: { console: undefined, network: undefined, a11y: 3 } } })
+  const group = query('[role="group"]')
+  const buttons = group.querySelectorAll<HTMLButtonElement>('button')
+  expect(group.querySelectorAll('[tabindex="0"]')).toHaveLength(1)
+  act(() => buttons[0]!.focus())
+  key(buttons[0]!, 'ArrowRight')
+  expect(document.activeElement).toBe(buttons[1])
+  key(buttons[1]!, 'ArrowRight')
+  expect(document.activeElement).toBe(buttons[2])
+  key(buttons[2]!, 'ArrowLeft')
+  expect(document.activeElement).toBe(buttons[1])
+  expect(group.querySelectorAll('[tabindex="0"]')).toHaveLength(1)
 })
