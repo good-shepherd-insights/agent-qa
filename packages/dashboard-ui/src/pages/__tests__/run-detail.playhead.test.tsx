@@ -21,7 +21,6 @@ vi.mock('@/lib/api', () => ({
   watchPostProcessing: () => () => {},
 }))
 vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: () => {} }))
-vi.mock('@/components/run-detail/run-navbar', () => ({ RunNavbar: () => <header>Run</header> }))
 vi.mock('@/components/screenshot-viewer', () => ({ ScreenshotViewer: ({ src }: { src: string }) => <img data-frame src={src} /> }))
 vi.mock('@/components/run-detail/tab-aria-tree', () => ({
   TabAriaTree: ({ subAction }: { subAction?: { subActionIndex: number } }) => <div data-aria-sub={subAction?.subActionIndex} />,
@@ -105,6 +104,146 @@ function recordedProjection() {
   detail.subActions.forEach((sub, index) => { sub.recordingOffsetMs = index * 2000 })
   detailRead.mockResolvedValue(detail)
 }
+
+function press(key: string, target: Element = document.body, shiftKey = false) {
+  const event = new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true })
+  act(() => target.dispatchEvent(event))
+  return event
+}
+
+it.each(['ordinal', 'time'])('KEYS-ARROW-ORDER traverses addresses on the %s axis', async axis => {
+  if (axis === 'time') recordedProjection()
+  await render()
+  child(0)
+  for (const address of ['0:0-1', '0:0-2', '0:1-0']) {
+    expect(press('ArrowRight').defaultPrevented).toBe(true)
+    expect(current()).toBe(address)
+  }
+  press('ArrowLeft')
+  expect(current()).toBe('0:0-2')
+  expect(host.querySelector('[data-timeline-axis]')?.getAttribute('data-timeline-axis')).toBe(axis)
+})
+
+it('KEYS-ARROW-CROSSES-MEMBER walks into and back from the adjacent member', async () => {
+  const detail = projection()
+  detail.members.push({ testIndex: 1, name: 'Second member', attempts: 1 })
+  detail.steps.push({ ...detail.steps[0]!, testIndex: 1 })
+  detail.subActions.push({ ...detail.subActions[0]!, testIndex: 1 })
+  detailRead.mockResolvedValue(detail)
+  await render()
+  child(0, '0:1')
+  press('ArrowRight')
+  expect(current()).toBe('1:0-0')
+  press('ArrowRight')
+  expect(current()).toBe('1:0-0')
+  press('ArrowLeft')
+  expect(current()).toBe('0:1-0')
+})
+
+it('KEYS-V-TOGGLES-SOURCE persists only user toggles from any tab', async () => {
+  await render()
+  press('v')
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
+  expect(localStorage.getItem('agent-qa.run-detail.player-source')).toBe('video')
+  press('3')
+  press('v')
+  press('1')
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
+  expect(localStorage.getItem('agent-qa.run-detail.player-source')).toBe('frames')
+})
+
+it('KEYS-SPACE-PLAY-PAUSE acts only on a ready Overview video', async () => {
+  recordedProjection()
+  await render()
+  const video = host.querySelector('video')!
+  let paused = true
+  vi.spyOn(video, 'paused', 'get').mockImplementation(() => paused)
+  const play = vi.spyOn(video, 'play').mockImplementation(async () => { paused = false; video.dispatchEvent(new Event('play')) })
+  const pause = vi.spyOn(video, 'pause').mockImplementation(() => { paused = true; video.dispatchEvent(new Event('pause')) })
+  expect(press(' ').defaultPrevented).toBe(false)
+  act(() => video.dispatchEvent(new Event('loadedmetadata')))
+  expect(press(' ').defaultPrevented).toBe(true)
+  expect(play).toHaveBeenCalledTimes(1)
+  press(' ')
+  expect(pause).toHaveBeenCalledTimes(1)
+  press('3')
+  expect(press(' ').defaultPrevented).toBe(false)
+  press('1')
+  press('v')
+  expect(press(' ').defaultPrevented).toBe(false)
+})
+
+it('KEYS-IGNORED-IN-TABLIST leaves control scopes and editable inputs alone', async () => {
+  await render()
+  for (const role of ['tablist', 'radiogroup', 'tree', 'dialog']) {
+    const control = document.createElement('div')
+    control.setAttribute('role', role)
+    const target = document.createElement('span')
+    control.appendChild(target)
+    host.appendChild(control)
+    for (const key of ['ArrowLeft', 'ArrowRight', 'v', ' ']) {
+      expect(press(key, target).defaultPrevented, `${role}:${key}`).toBe(false)
+      expect(current()).toBe('0:0-2')
+      expect(localStorage.length).toBe(0)
+    }
+    control.remove()
+  }
+  for (const tag of ['input', 'textarea', 'select']) {
+    const input = document.createElement(tag)
+    host.appendChild(input)
+    expect(press('v', input).defaultPrevented).toBe(false)
+    expect(press('ArrowRight', input).defaultPrevented).toBe(false)
+    input.remove()
+  }
+  press('ArrowRight')
+  expect(current()).toBe('0:1-0')
+})
+
+it('KEYS-SPACE-STILL-ACTIVATES-BUTTON leaves native activation uncancelled', async () => {
+  recordedProjection()
+  await render()
+  const video = host.querySelector('video')!
+  const play = vi.spyOn(video, 'play').mockResolvedValue()
+  act(() => video.dispatchEvent(new Event('loadedmetadata')))
+  const button = host.querySelector<HTMLButtonElement>('[aria-label="Play recording"]')!
+  for (const key of [' ', 'v', 'ArrowLeft', 'ArrowRight']) {
+    expect(press(key, button).defaultPrevented).toBe(false)
+  }
+  expect(play).not.toHaveBeenCalled()
+  act(() => button.click())
+  expect(play).toHaveBeenCalledTimes(1)
+  press(' ')
+  expect(play).toHaveBeenCalledTimes(2)
+})
+
+it('KEYS-LEGACY-MAP-UNCHANGED keeps tree navigation, tabs, drawers and escape', async () => {
+  await render()
+  press('j'); expect(current()).toBe('0:0-0')
+  press('ArrowDown'); expect(current()).toBe('0:0-1')
+  press('k'); expect(current()).toBe('0:0-0')
+  press('ArrowUp'); expect(selected()?.getAttribute('data-step-id')).toBe('0:0')
+  press('ArrowDown', document.body, true); expect(current()).toBe('0:1-0')
+  press('ArrowUp', document.body, true); expect(current()).toBe('0:0-2')
+  for (const [index, tab] of ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'].entries()) {
+    press(String(index + 1)); expect(query().get('tab') ?? 'overview').toBe(tab)
+  }
+  press('m'); expect(query().get('tab')).toBe('knowledge')
+  press('i'); expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  press('Escape'); expect(document.querySelector('[role="dialog"]')).toBeNull()
+  press('c'); expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  press('Escape')
+  press('ArrowRight'); expect(current()).toBe('0:1-0')
+})
+
+it('KEYS-LEGEND-LISTS-NEW opens the shipped legend with Shift+?', async () => {
+  await render()
+  press('?', document.body, true)
+  const legend = host.querySelector('[role="dialog"][aria-label="Keyboard shortcuts"]')
+  expect(legend).not.toBeNull()
+  for (const copy of ['← →', 'Previous / next action', 'Space', 'Play / pause', 'V', 'Frames / Video']) {
+    expect(legend!.textContent).toContain(copy)
+  }
+})
 
 it('OVERVIEW-PLAYER-FIRST-BLOCK', async () => {
   await render()
