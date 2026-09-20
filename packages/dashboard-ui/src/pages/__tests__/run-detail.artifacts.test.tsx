@@ -269,7 +269,7 @@ describe("run detail renders the durable projection's five facts", () => {
     const view = await renderAt()
 
     expect(
-      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="incomplete"]'),
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="unavailable"][data-evidence-incomplete]'),
     ).not.toBeNull()
     expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
     expect(view.querySelector("img")).toBeNull()
@@ -296,7 +296,7 @@ describe("run detail renders the durable projection's five facts", () => {
 
     const view = await renderAt()
 
-    expect(view.querySelector('[data-evidence-state="incomplete"]')).not.toBeNull()
+    expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
     expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
     expect(view.querySelector("img")).toBeNull()
     expect(view.querySelector("[data-masked]")).toBeNull()

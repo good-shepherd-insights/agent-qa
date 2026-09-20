@@ -122,7 +122,7 @@ describe("TabOverview screenshot states", () => {
     expect(view.textContent).toContain(NO_SCREENSHOT_LABEL)
     expect(view.textContent).not.toContain(PENDING_SCREENSHOT_LABEL)
     expect(view.textContent).not.toContain(EVIDENCE_INCOMPLETE_LABEL)
-    expect(view.querySelector('[data-evidence-state="incomplete"]')).toBeNull()
+    expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).toBeNull()
     expect(view.querySelector("img")).toBeNull()
   })
 
@@ -143,7 +143,7 @@ describe("TabOverview screenshot states", () => {
     )
 
     expect(
-      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="incomplete"]'),
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="unavailable"][data-evidence-incomplete]'),
     ).not.toBeNull()
     expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
     expect(view.querySelector("img")).toBeNull()
@@ -163,7 +163,7 @@ describe("TabOverview screenshot states", () => {
 
     expect(view.querySelector("img")).toBeNull()
     expect(
-      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="incomplete"]'),
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="unavailable"][data-evidence-incomplete]'),
     ).not.toBeNull()
     expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
   })

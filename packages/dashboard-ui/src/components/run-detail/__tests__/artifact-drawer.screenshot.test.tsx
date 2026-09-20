@@ -149,14 +149,14 @@ describe("the screenshot tab opens what the verdict cited (D-02)", () => {
     const drawer = mountDrawer({ screenshotSha: null })
 
     expect(drawer.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
-    expect(drawer.querySelector('[data-evidence-state="incomplete"]')).not.toBeNull()
+    expect(drawer.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
     expect(drawer.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
     expect(drawer.querySelector('[data-testid="screenshot-viewer"]')).toBeNull()
   })
 
   it("says so when the blob vanished BETWEEN the read and the click (405 D-15)", () => {
     const drawer = mountDrawer()
-    expect(drawer.querySelector('[data-evidence-state="incomplete"]')).toBeNull()
+    expect(drawer.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).toBeNull()
 
     const img = drawer.querySelector('[data-testid="screenshot-viewer"]') as HTMLImageElement
     act(() => {
@@ -165,7 +165,7 @@ describe("the screenshot tab opens what the verdict cited (D-02)", () => {
 
     expect(drawer.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
     expect(
-      drawer.querySelector('[data-evidence-state="incomplete"]'),
+      drawer.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]'),
       "a click-time 404 is the same visible state as a read-time absence (D-18)",
     ).not.toBeNull()
     expect(drawer.querySelector('[data-testid="screenshot-viewer"]')).toBeNull()

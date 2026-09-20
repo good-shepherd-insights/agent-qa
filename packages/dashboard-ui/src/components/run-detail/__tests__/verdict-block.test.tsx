@@ -374,7 +374,7 @@ describe("evidence that is GONE is a chip where the link was, and a count beside
     expect(chip?.querySelector("button"), "and nothing inside it is one either").toBeNull()
 
     expect(
-      chip?.querySelector('[data-evidence-state="incomplete"]'),
+      chip?.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]'),
       "rendered through the ONE component, so the overview and this row cannot drift (D-18)",
     ).not.toBeNull()
     expect(chip?.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)

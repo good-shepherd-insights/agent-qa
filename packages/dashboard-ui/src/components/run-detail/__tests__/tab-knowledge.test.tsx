@@ -128,7 +128,7 @@ describe("the handoff was pruned (D-06)", () => {
     const view = mount(<TabKnowledge view={{ state: "evidence-incomplete" }} />)
 
     expect(stateOf(view)).toBe("evidence-incomplete")
-    expect(view.querySelector('[data-evidence-state="incomplete"]')).not.toBeNull()
+    expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
   })
 })
 

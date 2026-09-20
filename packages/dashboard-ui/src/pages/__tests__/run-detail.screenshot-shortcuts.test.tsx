@@ -401,7 +401,7 @@ describe("RunDetailPage decision screenshot", () => {
 
     expect(view.querySelector("img")).toBeNull()
     expect(
-      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="incomplete"]'),
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="unavailable"][data-evidence-incomplete]'),
     ).not.toBeNull()
     expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
   })
@@ -413,7 +413,7 @@ describe("RunDetailPage decision screenshot", () => {
 
     expect(view.querySelector("img")).toBeNull()
     expect(view.querySelector('[data-artifact-state="available"]')).toBeNull()
-    expect(view.querySelector('[data-evidence-state="incomplete"]')).toBeNull()
+    expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).toBeNull()
     expect(view.textContent).not.toContain(EVIDENCE_INCOMPLETE_LABEL)
   })
 

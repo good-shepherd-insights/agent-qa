@@ -116,7 +116,7 @@ describe('EvidenceIncomplete', () => {
   it('paints the pane variant under the one attribute and the one label', () => {
     const view = mount(<EvidenceIncomplete variant="pane" />)
 
-    const node = view.querySelector('[data-evidence-state="incomplete"]')
+    const node = view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')
     expect(node).not.toBeNull()
     expect(node?.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
   })
@@ -131,7 +131,7 @@ describe('EvidenceIncomplete', () => {
   it('paints the inline variant as a span chip that is neither a button nor a link', () => {
     const view = mount(<EvidenceIncomplete variant="inline" />)
 
-    const node = view.querySelector('[data-evidence-state="incomplete"]')
+    const node = view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')
     expect(node).not.toBeNull()
     expect(node?.tagName).toBe('SPAN')
     expect(node?.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
@@ -153,7 +153,7 @@ describe('the overview decision screenshot reads presence', () => {
 
     expect(view.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
     expect(
-      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="incomplete"]'),
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="unavailable"][data-evidence-incomplete]'),
     ).not.toBeNull()
     expect(view.querySelector('img')).toBeNull()
     expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
@@ -167,7 +167,7 @@ describe('the overview decision screenshot reads presence', () => {
     })
 
     expect(
-      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="incomplete"]'),
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="unavailable"][data-evidence-incomplete]'),
     ).not.toBeNull()
     expect(view.querySelector('img')).toBeNull()
   })
@@ -177,7 +177,7 @@ describe('the overview decision screenshot reads presence', () => {
 
     expect(view.querySelector('[data-artifact-state="available"]')).not.toBeNull()
     expect(view.querySelector('img')?.getAttribute('src')).toBe(routes.runArtifact('run-1', SHA))
-    expect(view.querySelector('[data-evidence-state="incomplete"]')).toBeNull()
+    expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).toBeNull()
   })
 
   // Presence UNKNOWN is not an absence. A host whose store cannot stat leaves the key off entirely,
@@ -187,6 +187,6 @@ describe('the overview decision screenshot reads presence', () => {
 
     expect(view.querySelector('[data-artifact-state="available"]')).not.toBeNull()
     expect(view.querySelector('img')?.getAttribute('src')).toBe(routes.runArtifact('run-1', SHA))
-    expect(view.querySelector('[data-evidence-state="incomplete"]')).toBeNull()
+    expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).toBeNull()
   })
 })

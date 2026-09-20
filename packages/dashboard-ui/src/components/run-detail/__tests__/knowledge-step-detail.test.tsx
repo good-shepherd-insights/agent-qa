@@ -172,7 +172,7 @@ describe("a served line carries the trace that explains it, inline (D-04)", () =
     )
 
     expect(view.querySelector("li")?.getAttribute("data-trace-state")).toBe("artifact-missing")
-    expect(view.querySelector('[data-evidence-state="incomplete"]')).not.toBeNull()
+    expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
     // Nothing to expand: there is no answer behind a trigger that would open onto nothing.
     expect(view.textContent).not.toContain(WHY_TRIGGER_TEXT)
   })
@@ -184,7 +184,7 @@ describe("a served line carries the trace that explains it, inline (D-04)", () =
 
     expect(view.querySelector("li")?.getAttribute("data-trace-state")).toBe("pre-trace-run")
     expect(view.textContent).toContain(PRE_TRACE_TEXT)
-    expect(view.querySelector('[data-evidence-state="incomplete"]')).toBeNull()
+    expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).toBeNull()
   })
 
   it("says no evidence was recorded for the step when the trace holds nothing for this line", () => {
