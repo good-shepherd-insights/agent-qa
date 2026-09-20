@@ -86,7 +86,7 @@ export function Player({ model, playhead, source, recording, frame, runId, onSou
       {source === 'frames' && <PlayerFrame key={`${runId}:${selectedFrame?.sha ?? 'none'}:${playhead?.stepIndex}:${playhead?.subActionIndex}`}
         runId={runId} frame={selectedFrame} wholeStep={!marker} />}
       {source === 'video' && videoView.kind === 'state' && <div className='p-3' data-artifact-state='unavailable'>
-        <EvidenceState kind='video' {...videoView} />
+        <EvidenceState {...videoView} kind='video' />
       </div>}
       {marker && caption && <div data-player-caption data-frame-source-sub-action={caption.frameSourceSubAction}
         className='space-y-1 px-3 pb-3 text-sm font-medium [overflow-wrap:anywhere] [&_[data-action-family]]:text-sm [&_[data-action-family]]:font-medium'>
