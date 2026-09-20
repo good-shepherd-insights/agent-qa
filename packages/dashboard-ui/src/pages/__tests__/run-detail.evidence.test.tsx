@@ -5,8 +5,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { asRunId } from '@vostride/agent-qa-schema'
-import type { RunDetailStep, RunsEvidenceResult, StepEvidenceEntries } from '@vostride/agent-qa-schema'
+import type { EvidenceDocument, RunDetailStep, RunsEvidenceResult, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import { TabA11y } from '@/components/run-detail/tab-a11y'
+import { TabPanels } from '@/components/run-detail/tab-panels'
 import { fromRunDetailStep } from '@/lib/display-step'
 import { EVIDENCE_COPY } from '@/lib/evidence-state-view'
 import RunDetailPage from '@/pages/run-detail'
@@ -45,7 +46,7 @@ function step(stepIndex = 0, a11y = present) {
     },
   } satisfies RunDetailStep, [])
 }
-function ready(stepIndex = 0, records = [
+function ready(stepIndex = 0, records: Extract<EvidenceDocument, { kind: 'a11y' }>['records'] = [
   { ruleId: 'minor-rule', impact: 'minor' as const, help: 'Minor issue', description: 'minor description', helpUrl: 'https://example.com/minor', nodes: [] },
   { ruleId: 'critical-rule', impact: 'critical' as const, help: 'Critical issue', description: '<img src=x onerror=alert(1)>', helpUrl: 'https://example.com/critical', nodes: [] },
 ]): RunsEvidenceResult {
@@ -58,6 +59,7 @@ let container: HTMLDivElement
 let root: Root
 let fetchMock: ReturnType<typeof vi.fn>
 beforeEach(() => {
+  vi.useFakeTimers()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -68,10 +70,13 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 async function render(selected = step(), selectedRunId = runId) {
   await act(async () => { root.render(<TabA11y step={selected} runId={selectedRunId} />) })
+  await flushRecords()
 }
+async function flushRecords() { await act(async () => { await vi.advanceTimersByTimeAsync(250) }) }
 
 it('A11Y-READS-ARTIFACT reads the selected durable address and groups impacts', async () => {
   await render()
@@ -92,6 +97,7 @@ it.each(['network', 'http', 'json', 'read-error'])('A11Y-LOAD-FAILURE keeps %s f
   expect(container.querySelector('[data-evidence-state="empty"]')).toBeNull()
   fetchMock.mockResolvedValue(response(ready(0, [])))
   await act(async () => { container.querySelector('button')!.click() })
+  await flushRecords()
   expect(container.querySelector('[data-evidence-state="empty"]')).not.toBeNull()
 })
 
@@ -152,7 +158,77 @@ it('A11Y-NO-DEAD-FETCH mounts the page and opens A11y without calling the retire
       <Routes><Route path="/runs/:id" element={<RunDetailPage />} /></Routes>
     </MemoryRouter>)
   })
+  await flushRecords()
   expect(urls.some(url => url.includes('/evidence?'))).toBe(true)
   expect(container.querySelector('[data-a11y-impact="critical"]')).not.toBeNull()
   expect(urls.filter(url => url.endsWith('/access' + 'ibility'))).toEqual([])
+})
+
+async function panels(tab: string, selected: ReturnType<typeof step> | null = null, allSteps = selected ? [selected] : [], onSelectStep = vi.fn()) {
+  await act(async () => { root.render(<TabPanels activeTab={tab} onTabChange={() => {}}
+    step={selected} subAction={null} runId={runId} allSteps={allSteps} onSelectStep={onSelectStep} />) })
+  await flushRecords()
+}
+
+it('TAB-STRIP-ALWAYS-RENDERS keeps all seven tabs and Knowledge reachable with no selection', async () => {
+  await panels('knowledge')
+  expect(container.querySelectorAll('[role="tab"]')).toHaveLength(7)
+  expect(container.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe('Knowledge')
+})
+
+it('TAB-NO-SELECTION-ALL gives each evidence tab its own shared no-selection copy', async () => {
+  for (const [tab, kind] of [['env', 'variables'], ['network', 'network'], ['console', 'console'], ['aria', 'aria'], ['a11y', 'a11y']] as const) {
+    await panels(tab)
+    expect(container.querySelector(`[data-evidence-kind="${kind}"][data-evidence-state="no-selection"]`)).not.toBeNull()
+    expect(container.textContent).toContain(EVIDENCE_COPY[kind]['no-selection'].explanation)
+  }
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+for (const { label, tab, kind } of [
+  { label: 'VARIABLES', tab: 'env', kind: 'variables' },
+  { label: 'A11Y', tab: 'a11y', kind: 'a11y' },
+] as const) it(`TAB-LOAD-FAILURE-${label} retries the selected durable entry`, async () => {
+  const selected = step()
+  selected.evidence!.variables = { kind: 'variables', state: 'present', counts: { count: 1 } }
+  fetchMock.mockRejectedValue(new Error('offline'))
+  await act(async () => { root.render(<TabPanels activeTab={tab} onTabChange={() => {}}
+    step={selected} subAction={null} runId={runId} allSteps={[selected]} />) })
+  expect(fetchMock).not.toHaveBeenCalled()
+  await flushRecords()
+  expect(container.querySelector(`[data-evidence-kind="${kind}"][data-evidence-state="failed"][data-evidence-failure="load"]`)).not.toBeNull()
+  expect(container.querySelector('[data-evidence-state="empty"]')).toBeNull()
+  fetchMock.mockResolvedValue(response(kind === 'a11y' ? ready(0, []) : {
+    address: { runId, testIndex: 0, stepIndex: 0, kind }, outcome: 'ready',
+    evidence: selected.evidence!.variables, document: { schemaVersion: 1, kind, records: {} },
+  }))
+  await act(async () => { container.querySelector('[data-evidence-state="failed"] button')!.click() })
+  await flushRecords()
+  expect(container.querySelector(`[data-evidence-kind="${kind}"][data-evidence-state="empty"]`)).not.toBeNull()
+})
+
+it('A11Y-RECORDED-ELSEWHERE offers the nearest same-member later tie and selects it', async () => {
+  const selected = step(2, { kind: 'a11y', state: 'absent', reason: 'not-captured' })
+  const otherMember = { ...step(2), testIndex: 1 }
+  const onSelectStep = vi.fn()
+  await panels('a11y', selected, [step(1), selected, step(3), otherMember], onSelectStep)
+  expect(container.textContent).toContain('Recorded on step 4')
+  const action = container.querySelector('[data-evidence-state="not-captured"] button')!
+  expect(action.textContent).toBe('Go to step 4')
+  await act(async () => { (action as HTMLButtonElement).click() })
+  expect(onSelectStep).toHaveBeenCalledExactlyOnceWith('0:3')
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+it('A11Y-GROUP-ORDER keeps fixed impact ordering and stored order within a group', async () => {
+  const record = { ruleId: 'first', impact: 'minor' as const, help: 'Issue', description: '', helpUrl: '', nodes: [] }
+  const records = [record, { ...record, ruleId: 'critical', impact: 'critical' as const },
+    { ...record, ruleId: 'second' }, { ...record, ruleId: 'moderate', impact: 'moderate' as const },
+    { ...record, ruleId: 'serious', impact: 'serious' as const }]
+  fetchMock.mockResolvedValue(response(ready(0, records)))
+  await panels('a11y', step())
+  expect([...container.querySelectorAll('[data-a11y-impact]')].map(node => node.getAttribute('data-a11y-impact'))).toEqual(['critical', 'serious', 'moderate', 'minor'])
+  const minor = container.querySelector('[data-a11y-impact="minor"]')!
+  expect(minor.textContent!.indexOf('first')).toBeLessThan(minor.textContent!.indexOf('second'))
+  expect(minor.querySelector('h3')?.textContent).toBe('minor · 2')
 })
