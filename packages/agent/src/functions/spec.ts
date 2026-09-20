@@ -991,6 +991,10 @@ export interface RunDetailReaderPort {
 export interface EvidenceBlobReaderPort {
   /** One blob's bytes, or which KIND of absence this host is reporting. */
   read(runId: RunId, sha: string): Promise<EvidenceBlobLookup>
+  stat?(runId: RunId, sha: string): Promise<
+    { status: 'found'; byteLength: number } | { status: 'unknown_run' | 'blob_absent' }
+  >
+  readRange?(runId: RunId, sha: string, start: number, end: number): Promise<EvidenceBlobLookup>
   /**
    * The same question asked as a STAT — are the bytes still there — for read-time presence
    * annotation on the durable reads (Phase 406, D-17).

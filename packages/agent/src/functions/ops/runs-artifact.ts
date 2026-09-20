@@ -72,14 +72,26 @@ const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 const PNG_SIGNATURE: readonly number[] = [0x89, 0x50, 0x4e, 0x47]
 /** The JFIF/EXIF start-of-image marker plus its first marker byte. */
 const JPEG_SIGNATURE: readonly number[] = [0xff, 0xd8, 0xff]
+const WEBM_SIGNATURE: readonly number[] = [0x1a, 0x45, 0xdf, 0xa3]
+const MP4_FTYP_SIGNATURE: readonly number[] = [0x66, 0x74, 0x79, 0x70]
+
+export const ARTIFACT_RANGE_MAX_BYTES = 1048576
+export const EVIDENCE_SNIFF_HEAD_BYTES = 12
+
+export class ArtifactRangeNotSatisfiableError extends Error {
+  constructor(readonly totalLength: number) {
+    super('Artifact range starts beyond the available bytes')
+    this.name = 'ArtifactRangeNotSatisfiableError'
+  }
+}
 
 /** The type a blob gets when nothing recognises it — opaque, and never rendered as a document. */
 export const OPAQUE_EVIDENCE_CONTENT_TYPE = 'application/octet-stream'
 
-function startsWith(bytes: Uint8Array, signature: readonly number[]): boolean {
-  if (bytes.length < signature.length) return false
+function startsWith(bytes: Uint8Array, signature: readonly number[], offset = 0): boolean {
+  if (bytes.length < signature.length + offset) return false
   for (let i = 0; i < signature.length; i += 1) {
-    if (bytes[i] !== signature[i]) return false
+    if (bytes[i + offset] !== signature[i]) return false
   }
   return true
 }
@@ -99,6 +111,8 @@ function startsWith(bytes: Uint8Array, signature: readonly number[]): boolean {
 export function sniffEvidenceContentType(bytes: Uint8Array): string {
   if (startsWith(bytes, PNG_SIGNATURE)) return 'image/png'
   if (startsWith(bytes, JPEG_SIGNATURE)) return 'image/jpeg'
+  if (startsWith(bytes, WEBM_SIGNATURE)) return 'video/webm'
+  if (startsWith(bytes, MP4_FTYP_SIGNATURE, 4)) return 'video/mp4'
   return OPAQUE_EVIDENCE_CONTENT_TYPE
 }
 
@@ -164,6 +178,42 @@ export const runsArtifactSpec: FunctionSpec<RunsArtifactInput, RunsArtifactResul
     }
 
     const runId = String(input.runId)
+    if (input.range !== undefined) {
+      const assertFound = <T extends { status: string }>(lookup: T): void => {
+        if (lookup.status === 'unknown_run') throw new RunNotFoundError(runId)
+        if (lookup.status === 'blob_absent') throw new EvidenceBlobAbsentError(runId, input.sha)
+      }
+      let whole: Uint8Array | undefined
+      let totalLength: number
+      if (port.stat !== undefined && port.readRange !== undefined) {
+        const lookup = await port.stat(input.runId, input.sha)
+        assertFound(lookup)
+        if (lookup.status !== 'found') throw new EvidenceBlobAbsentError(runId, input.sha)
+        totalLength = lookup.byteLength
+      } else {
+        const lookup = await port.read(input.runId, input.sha)
+        assertFound(lookup)
+        if (lookup.status !== 'found') throw new EvidenceBlobAbsentError(runId, input.sha)
+        whole = lookup.bytes
+        totalLength = whole.length
+      }
+      const { start } = input.range
+      if (start >= totalLength) throw new ArtifactRangeNotSatisfiableError(totalLength)
+      const end = Math.min(input.range.end ?? totalLength - 1, totalLength - 1, start + ARTIFACT_RANGE_MAX_BYTES - 1)
+      const readSlice = async (from: number, to: number): Promise<Uint8Array> => {
+        if (whole !== undefined) return whole.slice(from, to + 1)
+        const lookup = await port.readRange!(input.runId, input.sha, from, to)
+        assertFound(lookup)
+        if (lookup.status !== 'found') throw new EvidenceBlobAbsentError(runId, input.sha)
+        return lookup.bytes
+      }
+      const head = await readSlice(0, Math.min(EVIDENCE_SNIFF_HEAD_BYTES, totalLength) - 1)
+      const bytes = await readSlice(start, end)
+      return {
+        runId, sha: input.sha, contentType: sniffEvidenceContentType(head),
+        byteLength: bytes.length, bytesBase64: encodeBase64(bytes), totalLength, range: { start, end },
+      }
+    }
     const lookup = await port.read(input.runId, input.sha)
     if (lookup.status === 'unknown_run') {
       // REUSED, NEVER RE-MINTED. `runs.get` already owns "no run is recorded under that id", and a
