@@ -108,7 +108,9 @@ function recordedProjection() {
 
 function citedProjection(sha = '9'.repeat(64)) {
   const detail = projection()
-  detail.members = [...detail.members, { testIndex: 2, name: 'Cited member', attempts: 1 }]
+  detail.members = [...detail.members, { testIndex: 2, name: 'Cited member', attempts: 1,
+    recording: { state: 'present', ref: { id: `recording:${'e'.repeat(64)}`, sha: 'e'.repeat(64) },
+      durationMs: 10000, contentType: 'video/webm', byteLength: 100 } }]
   detail.steps = [...detail.steps, { ...detail.steps[0]!, testIndex: 2, stepIndex: 3 }]
   detail.subActions = [...detail.subActions, { ...detail.subActions[0]!, testIndex: 2, stepIndex: 3, subActionIndex: 1,
     artifactRefs: [{ id: 'decision-screenshot:cited', sha: '9'.repeat(64) }] }]
