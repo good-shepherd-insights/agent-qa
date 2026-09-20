@@ -26,6 +26,10 @@ import {
   unlinkSync, writeFileSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { chmodSync, copyFileSync, fstatSync, readSync, realpathSync, statSync } from 'node:fs'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { RECORDING_REF_PREFIX } from '@vostride/agent-qa-schema'
+import type { PersistedRecording } from '@vostride/agent-qa-runner'
 
 import type { ArtifactRef, EvidenceDocument } from '@vostride/agent-qa-schema'
 import { EvidenceArtifactRefSchema, EvidenceDocumentSchema } from '@vostride/agent-qa-schema'
@@ -134,6 +138,126 @@ export class FsEvidenceArtifactStore implements EvidenceArtifactStorePort {
   hasBlob(sha: string): boolean {
     if (!SHA256_HEX_RE.test(sha)) return false
     return existsSync(join(this.dir, sha))
+  }
+
+  persistRecording(stagingPath: string): PersistedRecording {
+    this.assertRecordingStagingPath(stagingPath)
+    let recordingTemp: string | undefined
+    try {
+      const byteLength = statSync(stagingPath).size
+      if (byteLength === 0) throw new Error('Cannot persist an empty recording')
+      const hash = createHash('sha256')
+      const fd = openSync(stagingPath, 'r')
+      try {
+        const chunk = Buffer.allocUnsafe(1024 * 1024)
+        let total = 0
+        for (;;) {
+          const count = readSync(fd, chunk, 0, chunk.length, null)
+          if (count === 0) break
+          total += count
+          hash.update(chunk.subarray(0, count))
+        }
+        if (total !== byteLength) throw new Error('Recording changed while hashing')
+      } finally {
+        closeSync(fd)
+      }
+      const sha = hash.digest('hex')
+      const result: PersistedRecording = {
+        ref: { id: `${RECORDING_REF_PREFIX}${sha}`, sha }, byteLength,
+      }
+      mkdirSync(this.dir, { recursive: true })
+      const target = join(this.dir, sha)
+      if (this.blobSize(sha) !== undefined) {
+        this.syncPath(target)
+        this.syncDirectories()
+        return result
+      }
+      recordingTemp = join(this.dir, `.${sha}.${randomUUID()}.tmp`)
+      try {
+        renameSync(stagingPath, recordingTemp)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+        copyFileSync(stagingPath, recordingTemp)
+      }
+      chmodSync(recordingTemp, 0o600)
+      this.syncPath(recordingTemp)
+      renameSync(recordingTemp, target)
+      this.syncDirectories()
+      return result
+    } finally {
+      try {
+        if (recordingTemp !== undefined) this.unlinkRecordingStaging(recordingTemp)
+      } finally {
+        this.unlinkRecordingStaging(stagingPath)
+      }
+    }
+  }
+
+  blobSize(sha: string): number | undefined {
+    if (!SHA256_HEX_RE.test(sha)) return undefined
+    try {
+      return statSync(join(this.dir, sha)).size
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
+    }
+  }
+
+  readBlobRange(sha: string, start: number, end: number): Uint8Array | undefined {
+    if (!SHA256_HEX_RE.test(sha)) return undefined
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) return undefined
+    let fd: number
+    try {
+      fd = openSync(join(this.dir, sha), 'r')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
+    }
+    try {
+      const size = fstatSync(fd).size
+      if (start >= size) return undefined
+      const length = Math.min(end, size - 1) - start + 1
+      const bytes = new Uint8Array(length)
+      let offset = 0
+      while (offset < length) {
+        const count = readSync(fd, bytes, offset, length - offset, start + offset)
+        if (count === 0) throw new Error('Recording blob ended before the requested range')
+        offset += count
+      }
+      return bytes
+    } finally {
+      closeSync(fd)
+    }
+  }
+
+  discardRecording(stagingPath: string): void {
+    this.assertRecordingStagingPath(stagingPath)
+    this.unlinkRecordingStaging(stagingPath)
+  }
+
+  private assertRecordingStagingPath(stagingPath: string): void {
+    const inside = (dir: string, path: string) => {
+      const tail = relative(dir, path)
+      return tail === '' || (tail !== '..' && !tail.startsWith(`..${sep}`) && !isAbsolute(tail))
+    }
+    if (inside(resolve(this.dir), resolve(stagingPath))) {
+      throw new Error('Recording staging path must be outside the evidence blob directory')
+    }
+    try {
+      if (inside(realpathSync(this.dir), realpathSync(stagingPath))) {
+        throw new Error('Recording staging path must be outside the evidence blob directory')
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+
+  private unlinkRecordingStaging(path: string): void {
+    try {
+      unlinkSync(path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
   }
 
   getBlob(sha: string): Uint8Array | undefined {

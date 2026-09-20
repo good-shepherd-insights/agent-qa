@@ -29,6 +29,9 @@ vi.mock('node:fs', async importOriginal => {
 })
 
 const roots: string[] = []
+const readChunks = vi.mocked(readSync as (
+  fd: number, buffer: NodeJS.ArrayBufferView, offset: number, length: number, position: number | null,
+) => number)
 const bytes = Buffer.from('recording bytes: 0123456789')
 const sha = createHash('sha256').update(bytes).digest('hex')
 function fixture(payload = bytes) {
@@ -58,8 +61,8 @@ test('REC-STORE-HASH-BY-PATH: hashes all chunks into a schema-valid recording re
   expect(result).toEqual({ ref: { id: `recording:${digest}`, sha: digest }, byteLength: payload.length })
   expect(RecordingRefSchema.parse(result.ref)).toEqual(result.ref)
   expect(readFileSync).not.toHaveBeenCalled()
-  expect(vi.mocked(readSync).mock.calls.length).toBeGreaterThanOrEqual(3)
-  expect(vi.mocked(readSync).mock.calls.every(call => Number(call[3]) <= 1024 * 1024)).toBe(true)
+  expect(readChunks.mock.calls.length).toBeGreaterThanOrEqual(3)
+  expect(readChunks.mock.calls.every(call => call[3] <= 1024 * 1024)).toBe(true)
   expect(Buffer.from(store.getBlob(digest)!)).toEqual(payload)
 })
 
@@ -80,7 +83,7 @@ test('REC-STORE-ATOMIC-PUBLISH: no partial target and no temporary survives publ
   expect(publications).toBe(1)
   expect(readdirSync(dir)).toEqual([sha])
   expect(Buffer.from(store.getBlob(sha)!)).toEqual(bytes)
-  expect(fsyncSync).toHaveBeenCalledTimes(5)
+  expect(fsyncSync).toHaveBeenCalledTimes(6)
 })
 
 test('REC-STORE-STAGING-UNLINKED: success consumes staging bytes', () => {
@@ -97,7 +100,7 @@ test.each(['stage', 'publish', 'hash', 'file-sync', 'directory-sync', 'copy'])(
     const failure = Object.assign(new Error('injected recording failure'), { code: 'EIO' })
     let syncs = 0
     const originalSync = vi.mocked(fsyncSync).getMockImplementation()!
-    const originalRead = vi.mocked(readSync).getMockImplementation()!
+    const originalRead = readChunks.getMockImplementation()!
     const originalCopy = vi.mocked(copyFileSync).getMockImplementation()!
     io.beforeRename = (_from, to) => {
       if (stage === 'stage' || (stage === 'publish' && to === join(dir, sha))) throw failure
@@ -108,7 +111,7 @@ test.each(['stage', 'publish', 'hash', 'file-sync', 'directory-sync', 'copy'])(
       if ((stage === 'file-sync' && syncs === 1) || (stage === 'directory-sync' && syncs === 2)) throw failure
       originalSync(fd)
     })
-    if (stage === 'hash') vi.mocked(readSync).mockImplementation(() => { throw failure })
+    if (stage === 'hash') readChunks.mockImplementation(() => { throw failure })
     if (stage === 'copy') vi.mocked(copyFileSync).mockImplementation(() => { throw failure })
     try {
       expect(() => store.persistRecording(staging)).toThrow('injected recording failure')
@@ -116,7 +119,7 @@ test.each(['stage', 'publish', 'hash', 'file-sync', 'directory-sync', 'copy'])(
       expect(existsSync(dir) ? readdirSync(dir) : []).toEqual(stage === 'directory-sync' ? [sha] : [])
     } finally {
       vi.mocked(fsyncSync).mockImplementation(originalSync)
-      vi.mocked(readSync).mockImplementation(originalRead)
+      readChunks.mockImplementation(originalRead)
       vi.mocked(copyFileSync).mockImplementation(originalCopy)
     }
   },
@@ -140,7 +143,7 @@ test('REC-STORE-IDEMPOTENT: identical bytes share one durable blob', () => {
   expect(readdirSync(dir)).toEqual([sha])
   expect(existsSync(staging)).toBe(false)
   expect(renameSync).not.toHaveBeenCalled()
-  expect(fsyncSync).toHaveBeenCalledTimes(5)
+  expect(fsyncSync).toHaveBeenCalledTimes(6)
 })
 
 test('REC-STORE-EXDEV-FALLBACK: cross-device staging copies privately before atomic publication', () => {
@@ -201,20 +204,20 @@ test('REC-STORE-RANGE: reads inclusive clamped slices and refuses out-of-bounds 
   for (const start of [-1, 0.5, NaN, Infinity]) expect(store.readBlobRange(sha, start, 8)).toBeUndefined()
   for (const end of [NaN, Infinity, 0.5]) expect(store.readBlobRange(sha, 0, end)).toBeUndefined()
   expect(readFileSync).not.toHaveBeenCalled()
-  expect(vi.mocked(readSync).mock.calls.map(call => [call[3], call[4]])).toEqual([[5, 3], [1, bytes.length - 1]])
+  expect(readChunks.mock.calls.map(call => [call[3], call[4]])).toEqual([[5, 3], [1, bytes.length - 1]])
 })
 
 test('REC-STORE-RANGE: short reads fill the requested slice without zero padding', () => {
   const { store } = fixture()
   expect(store.readBlobRange).toBeTypeOf('function')
   store.persistDecisionScreenshot(bytes)
-  const original = vi.mocked(readSync).getMockImplementation()!
-  vi.mocked(readSync).mockImplementation((fd, buffer, offset, length, position) =>
+  const original = readChunks.getMockImplementation()!
+  readChunks.mockImplementation((fd, buffer, offset, length, position) =>
     original(fd, buffer, offset, Math.min(Number(length), 2), position))
   try {
     expect(Buffer.from(store.readBlobRange(sha, 3, 9)!)).toEqual(bytes.subarray(3, 10))
   } finally {
-    vi.mocked(readSync).mockImplementation(original)
+    readChunks.mockImplementation(original)
   }
 })
 
