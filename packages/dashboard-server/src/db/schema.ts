@@ -28,24 +28,21 @@
 // subscriber's `hookFinished` arm → the hook panel), `token_events` (the live-editor ws handler →
 // the insights page — D-20's verdict, measured, not assumed), and the construction-data columns on
 // `runs` that the queue and the settle path write.
-// 423 D-08: v3 permits exactly one additive upgrade from v2. The v1 refusal remains.
-export const SCHEMA_VERSION = 3
+// 424 D-13: v4 permits exactly one additive upgrade from v3.
+export const SCHEMA_VERSION = 4
 
 export interface DashboardMigration {
   version: number
   sql: string[]
-  /** Sole approved historical upgrade; fresh databases use sql directly. */
-  fromV2Sql?: string[]
+  fromV3Sql?: string[]
 }
 
 export const MIGRATIONS: DashboardMigration[] = [
   {
-    version: 3,
-    fromV2Sql: [
-      'ALTER TABLE run_steps ADD COLUMN evidence_json TEXT',
-      'ALTER TABLE run_steps ADD COLUMN variable_snapshot_json TEXT',
-      'ALTER TABLE run_steps ADD COLUMN model_usage_json TEXT',
-      'ALTER TABLE run_sub_actions ADD COLUMN evidence_state_json TEXT',
+    version: 4,
+    fromV3Sql: [
+      'ALTER TABLE run_members ADD COLUMN recording_json TEXT',
+      'ALTER TABLE run_sub_actions ADD COLUMN recording_offset_ms REAL',
     ],
     sql: [
       `CREATE TABLE IF NOT EXISTS runs (
@@ -141,6 +138,7 @@ export const MIGRATIONS: DashboardMigration[] = [
         retry_count INTEGER,
         -- D-17 ordinal. Starts at 1 and rises on testRetryScheduled; never reset by an upsert.
         attempts INTEGER NOT NULL DEFAULT 1,
+        recording_json TEXT,
         PRIMARY KEY (run_id, test_index)
       )`,
       // The token columns are NULLABLE AND NEVER DEFAULT 0 (D-05/D-06). The retired v1 projection
@@ -183,6 +181,7 @@ export const MIGRATIONS: DashboardMigration[] = [
         screen_state_hash_after TEXT,
         artifact_refs TEXT,
         evidence_state_json TEXT,
+        recording_offset_ms REAL,
         PRIMARY KEY (run_id, test_index, step_index, sub_action_index)
       )`,
       'CREATE INDEX IF NOT EXISTS idx_run_members_run ON run_members(run_id)',

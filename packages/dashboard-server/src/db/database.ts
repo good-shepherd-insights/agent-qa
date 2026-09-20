@@ -321,12 +321,10 @@ export function runSqliteMigrations(
   if (currentVersion > schemaVersion) throw incompatibleVersionError(currentVersion, schemaVersion)
   if (currentVersion === schemaVersion) return
 
-  // 423 D-08 narrows the old hard cut only for v2 -> v3. No intermediate
-  // migration chain or shape inference is allowed.
-  const upgradingV2 = currentVersion === 2 && schemaVersion === 3
-  if (currentVersion !== 0 && !upgradingV2) throw unmigratedVersionError(currentVersion, schemaVersion)
+  const upgradingV3 = currentVersion === 3 && schemaVersion === 4
+  if (currentVersion !== 0 && !upgradingV3) throw unmigratedVersionError(currentVersion, schemaVersion)
 
-  // One current fresh-schema entry, with its explicitly approved v2 additions.
+  // One current fresh-schema entry, with its explicitly approved v3 additions.
   const runnableMigrations = migrations.filter(migration => migration.version <= schemaVersion)
   const terminal = runnableMigrations.length === 1 ? runnableMigrations[0] : undefined
   if (terminal === undefined || terminal.version !== schemaVersion) {
@@ -337,27 +335,27 @@ export function runSqliteMigrations(
     )
   }
 
-  const statements = upgradingV2 ? terminal.fromV2Sql : terminal.sql
+  const statements = upgradingV3 ? terminal.fromV3Sql : terminal.sql
   if (statements === undefined) {
-    throw new Error('Missing approved SQLite user_version 2 to schema version 3 migration')
+    throw new Error('Missing approved SQLite user_version 3 to schema version 4 migration')
   }
 
   db.pragma('foreign_keys = OFF')
   try {
     const runAll = db.transaction(() => {
-      if (upgradingV2) {
+      if (upgradingV3) {
         // The version read above happened before the write lock. Another opener may have
         // finished this upgrade in between, so the decision is re-made under the lock.
         const lockedVersion = db.pragma('user_version', { simple: true }) as number
         if (lockedVersion === schemaVersion) return
         if (lockedVersion > schemaVersion) throw incompatibleVersionError(lockedVersion, schemaVersion)
-        if (lockedVersion !== 2) throw unmigratedVersionError(lockedVersion, schemaVersion)
+        if (lockedVersion !== 3) throw unmigratedVersionError(lockedVersion, schemaVersion)
       }
       for (const sql of statements) {
         db.exec(sql)
       }
       db.pragma(`user_version = ${terminal.version}`)
-    }, { immediate: upgradingV2 })
+    }, { immediate: upgradingV3 })
     runAll()
   } finally {
     db.pragma('foreign_keys = ON')
