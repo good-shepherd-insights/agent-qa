@@ -60,6 +60,7 @@ let container: HTMLDivElement
 let root: Root
 let fetchMock: ReturnType<typeof vi.fn>
 beforeEach(() => {
+  sessionStorage.clear()
   vi.useFakeTimers()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -360,4 +361,87 @@ it('A11Y-RECORDED-ELSEWHERE-PAGE selects the offered step through the page state
   await flushRecords()
   expect(fetchMock).toHaveBeenCalledWith(`/api/runs/${runId}/evidence?testIndex=0&stepIndex=1&kind=a11y`)
   expect(container.querySelector('[data-a11y-impact="critical"]')).not.toBeNull()
+})
+
+const noticeText = 'This run was recorded before evidence was saved. Variables, network, console, ARIA, accessibility and video were not recorded.'
+
+function historicalPage() {
+  const selected = completeStep()
+  for (const kind of ['variables', 'network', 'console', 'a11y'] as const) {
+    Object.assign(selected.evidence!, { [kind]: { kind, state: 'absent', reason: 'unavailable' } })
+  }
+  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    let body: unknown
+    if (url.endsWith('/detail')) body = {
+      runId, members: [{ testIndex: 0, name: 'Checkout', attempts: 1, recording: { state: 'absent', reason: 'unavailable' } }],
+      steps: [{ testIndex: 0, stepIndex: 0, stepText: 'Check checkout', cacheStatus: 'miss',
+        verifierVerdict: { pass: true, reasoning: '' }, selfHealOccurred: false, briefDigest: '', evidence: selected.evidence }],
+      subActions: [{ ...subAction, ariaEvidence: { kind: 'aria', state: 'absent', reason: 'unavailable' } }],
+      tokens: { measuredSteps: 0, unmeasuredSteps: 1 },
+    }
+    else if (url.endsWith('/analysis')) body = { runId, verdicts: [], sentences: [], clusters: [] }
+    else if (url.endsWith('/knowledge')) body = { kind: 'evidence-incomplete', runId }
+    else if (url.includes('/execution-logs')) body = { logs: [] }
+    else if (/\/api\/runs\/[^/]+$/.test(url)) body = { run: {
+      id: url.split('/').at(-1), name: 'Checkout', status: 'passed', platform: 'web', duration: 0,
+      attributes: {}, metadata: null, startedAt: null, endedAt: null, createdAt: '2026-09-20',
+    } }
+    else throw new Error(`Unexpected test request: ${url}`)
+    return { ok: true, json: async () => body }
+  })
+}
+
+async function renderHistorical(id: string = runId, mountKey = id) {
+  await act(async () => { root.render(<MemoryRouter key={mountKey} initialEntries={[`/runs/${id}?step=0:0&sub=2`]}>
+    <Routes><Route path='/runs/:id' element={<RunDetailPage />} /></Routes>
+  </MemoryRouter>) })
+}
+
+it('NOTICE-NEUTRAL-STATUS names the missing evidence quietly under the header', async () => {
+  historicalPage()
+  await renderHistorical()
+  const notice = container.querySelector('[data-run-notice]')
+  expect(notice).not.toBeNull()
+  expect(notice!.getAttribute('role')).toBe('status')
+  expect(notice!.className).not.toContain('amber')
+  expect(notice!.textContent).toBe(noticeText)
+  expect(notice!.querySelector('[aria-label="Dismiss notice"]')).not.toBeNull()
+  expect(notice!.previousElementSibling?.querySelector('[aria-label="Keyboard shortcuts"]')).not.toBeNull()
+})
+
+it('NOTICE-DISMISS-PER-RUN remembers only a boolean for the dismissed run this session', async () => {
+  historicalPage()
+  await renderHistorical()
+  const dismiss = container.querySelector<HTMLButtonElement>('[data-run-notice] [aria-label="Dismiss notice"]')
+  expect(dismiss).not.toBeNull()
+  act(() => dismiss!.click())
+  expect(container.querySelector('[data-run-notice]')).toBeNull()
+  expect(sessionStorage.length).toBe(1)
+  expect(sessionStorage.key(0)).toContain(runId)
+  expect(sessionStorage.getItem(sessionStorage.key(0)!)).toBe('true')
+  await renderHistorical(runId, 'remount')
+  expect(container.querySelector('[data-run-notice]')).toBeNull()
+  await renderHistorical(asRunId(generateRunId()))
+  expect(container.querySelector('[data-run-notice]')).not.toBeNull()
+})
+
+it('PRE-MILESTONE-RUN-WHOLE retains the ordinal timeline, Video and five unavailable tabs', async () => {
+  historicalPage()
+  await renderHistorical()
+  expect(container.querySelector('[data-run-notice]')?.textContent).toBe(noticeText)
+  expect(container.querySelector('[data-timeline-axis]')?.getAttribute('data-timeline-axis')).toBe('ordinal')
+  expect(container.querySelector('[data-player-source="frames"]')).not.toBeNull()
+  const video = container.querySelector<HTMLButtonElement>('[data-player] [aria-label^="Video"]')!
+  expect(video.getAttribute('aria-label')).toContain('unavailable')
+  act(() => video.click())
+  expect(container.querySelector('[data-evidence-kind="video"][data-evidence-state="unavailable"]')).not.toBeNull()
+  for (const [tab, kind] of [['env', 'variables'], ['network', 'network'], ['console', 'console'], ['aria', 'aria'], ['a11y', 'a11y']] as const) {
+    const trigger = container.querySelector<HTMLElement>(`[role="tab"][aria-controls$="-${tab}"]`)!
+    expect(trigger).not.toBeNull()
+    act(() => trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })))
+    expect(container.querySelector(`[data-evidence-kind="${kind}"][data-evidence-state="unavailable"]`)).not.toBeNull()
+    expect(container.querySelector(`[data-evidence-kind="${kind}"]`)?.textContent).toContain('not recorded')
+  }
+  expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/evidence?'))).toBe(false)
 })
