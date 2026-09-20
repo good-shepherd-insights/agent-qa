@@ -1890,6 +1890,25 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "range": {
+            "additionalProperties": false,
+            "properties": {
+              "end": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "start": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "start"
+            ],
+            "type": "object"
+          },
           "runId": {
             "type": "string"
           },
@@ -2510,5 +2529,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "27384fc31cd7aed4aad6b1d0c323cd45198d625ac95b8557d1f4e15f831a35af"
+  "rowsDigest": "40e61738d57b3622890bba457a7d6318e0c27ec92c4c9aa75fee0c61b501de89"
 }
