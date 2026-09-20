@@ -27,6 +27,7 @@ import {
   RunsMarksHistoryInputSchema,
   RunsMarksHistoryResultSchema,
   type RunDetailProjection,
+  type RunsArtifactInput,
   type RunsArtifactResult,
 } from '@vostride/agent-qa-schema'
 
@@ -381,13 +382,26 @@ export function serveRunDetailRead(
 /** The immutable-caching header set a CONTENT ADDRESS earns (D-12). */
 const ARTIFACT_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
+export function parseSingleByteRange(header: string | undefined): RunsArtifactInput['range'] {
+  const match = header === undefined ? null : /^bytes=(\d+)-(\d*)$/.exec(header)
+  if (match === null) return undefined
+  const start = Number(match[1])
+  const end = match[2] === '' ? undefined : Number(match[2])
+  if (!Number.isSafeInteger(start) ||
+      (end !== undefined && (!Number.isSafeInteger(end) || end < start))) return undefined
+  return { start, ...(end === undefined ? {} : { end }) }
+}
+
 export type RunArtifactReadOutcome =
   | {
     readonly kind: 'ok'
     readonly sha: string
     readonly contentType: string
     readonly bytes: Buffer
+    readonly range?: RunsArtifactResult['range']
+    readonly totalLength?: number
   }
+  | { readonly kind: 'range-not-satisfiable'; readonly totalLength: number }
   | RunDetailRefusal
 
 /**
@@ -426,6 +440,7 @@ export async function readRunArtifact(
   host: AgentHost,
   runId: string,
   sha: string,
+  range?: RunsArtifactInput['range'],
 ): Promise<RunArtifactReadOutcome> {
   const parsed = RunsArtifactInputSchema.safeParse({ runId, sha })
   if (!parsed.success) {
@@ -445,7 +460,7 @@ export async function readRunArtifact(
     const result = await host.invokeFunction(
       host.registry,
       host.runsArtifactFunctionId,
-      parsed.data,
+      { ...parsed.data, ...(range === undefined ? {} : { range }) },
       host.caller,
     ) as RunsArtifactResult
     return {
@@ -455,8 +470,15 @@ export async function readRunArtifact(
       // The ONE decode in the product. The op encodes without a host API because its package may
       // not name one; this package may, and this is the layer whose job is bytes on a socket.
       bytes: Buffer.from(result.bytesBase64, 'base64'),
+      ...(result.range === undefined ? {} : { range: result.range, totalLength: result.totalLength }),
     }
   } catch (error) {
+    if (errorNameOf(error) === 'ArtifactRangeNotSatisfiableError') {
+      const totalLength = (error as { totalLength?: unknown }).totalLength
+      if (typeof totalLength === 'number' && Number.isSafeInteger(totalLength) && totalLength >= 0) {
+        return { kind: 'range-not-satisfiable', totalLength }
+      }
+    }
     return artifactRefusalFor(error)
   }
 }
@@ -491,7 +513,9 @@ export function serveRunArtifact(
   res: ServerResponse,
   deps: RunArtifactReadDeps,
 ): void {
-  void readRunArtifact(deps.host, deps.runId, deps.sha).then(
+  const revalidating = req.headers['if-none-match'] === `"${deps.sha}"`
+  const range = revalidating ? undefined : parseSingleByteRange(req.headers.range)
+  void readRunArtifact(deps.host, deps.runId, deps.sha, range).then(
     (outcome) => {
       if (outcome.kind === 'refused') {
         respondJson(res, outcome.status, outcome.body)
@@ -501,21 +525,37 @@ export function serveRunArtifact(
         res.destroy()
         return
       }
-      const etag = `"${outcome.sha}"`
+      const etag = `"${deps.sha}"`
+      const headers = {
+        ETag: etag,
+        'Cache-Control': ARTIFACT_CACHE_CONTROL,
+        'X-Content-Type-Options': 'nosniff',
+        'Accept-Ranges': 'bytes',
+      }
       // THE VALIDATOR IS COMPARED WHOLE, against the quoted form this door writes. No weak-match
       // and no list parse: this door mints exactly one validator per resource and a request that
       // presents anything else has not seen this resource.
       if (req.headers['if-none-match'] === etag) {
-        res.writeHead(304, { ETag: etag, 'Cache-Control': ARTIFACT_CACHE_CONTROL })
+        res.writeHead(304, headers)
         res.end()
         return
       }
-      res.writeHead(200, {
+      if (outcome.kind === 'range-not-satisfiable') {
+        res.writeHead(416, {
+          ...headers,
+          'Content-Range': `bytes */${outcome.totalLength}`,
+          'Content-Length': 0,
+        })
+        res.end()
+        return
+      }
+      res.writeHead(outcome.range === undefined ? 200 : 206, {
+        ...headers,
         'Content-Type': outcome.contentType,
         'Content-Length': outcome.bytes.byteLength,
-        ETag: etag,
-        'Cache-Control': ARTIFACT_CACHE_CONTROL,
-        'X-Content-Type-Options': 'nosniff',
+        ...(outcome.range === undefined ? {} : {
+          'Content-Range': `bytes ${outcome.range.start}-${outcome.range.end}/${outcome.totalLength}`,
+        }),
       })
       res.end(outcome.bytes)
     },
