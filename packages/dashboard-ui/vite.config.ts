@@ -12,6 +12,11 @@ export default defineConfig({
     // remembers cache changes…` did, on the fifth automatic CI run (2026-08-02). Matches the
     // 30s default the other 19 package configs now carry.
     testTimeout: 30_000,
+    typecheck: {
+      enabled: true,
+      tsconfig: './tsconfig.json',
+      include: ['src/**/*.test-d.ts'],
+    },
   },
   plugins: [react(), tailwindcss()],
   resolve: {
