@@ -959,3 +959,20 @@ register's accuracy, not a gate: the 423 acceptance gate exercises the script at
 |---|---|---|
 | `git diff --quiet 9ab15aa44 -- scripts/404-chip-teardown-mutation.sh` | the frozen script since 423-25 | **0** |
 | `git diff --quiet 9b0c3459 -- scripts/404-chip-teardown-mutation.sh` | the pre-423-25 spelling | **non-zero, expected** — superseded by the row above |
+
+## 2026-09-21 — Phase 424: one evidence reader, member recording refs and one player
+
+This section appends to the register; it does not change any earlier deletion or baseline. Recording bytes use the existing immutable sha-addressed artifact route. No path-addressed video route, `runs.video_path` column, retention policy or GC returns.
+
+| Removed contract | Fence that detects its return |
+|---|---|
+| Dashboard accessibility summary helper and dead route call | `405-debris-deleted.test.ts` needles `fetchAccessibility` + `Summary` and `)}/access` + `ibility`; `run-detail.evidence.test.tsx` exercises the typed artifact read and load failures. |
+| `TestResult.videoPath` and runner `getVideoPath` probe | Source census: `rg -n 'videoPath|getVideoPath' packages/runner/src/result.ts packages/runner/src/run/member-runner.ts` must have no matches. Member recording lifecycle cells in `424-recording-member.test.ts` prove explicit member entries instead. |
+| Web context `recordVideo` wiring and videos-directory resolver | Source census: `rg -n 'recordVideo|getVideoPath|videosDir|resolveVideosDir' packages/web/src/adapter.ts packages/web/src/farm-adapter.ts` must have no matches. The pre-existing videos-dir debris needles remain in `405-debris-deleted.test.ts`; `424-recording.screencast.test.ts` proves finalization before artifact persistence. |
+| `RunArtifactRuntimeSnapshot.videoPath` | Source census: `rg -n 'videoPath' packages/schema/src/run/run-artifact.ts` must have no matches; member recording schema/runtime/type cells live in `424-recording-contracts.test.ts` and its test-d twin. |
+| Drawer Attributes and Screenshot tabs | `artifact-drawer.test.tsx` pins the remaining tabs and Attributes absence; `artifact-drawer.screenshot.test.tsx` pins no Screenshot tab. Screenshot citations now select the playhead or open the dedicated lightbox; the unchanged failure-view gate exercises the retargeted citation cells. |
+| Seventh `data-evidence-state` value, `incomplete` | `EVIDENCE-STATE-SIX-VALUES` in `evidence-state-census.test.ts` scans all production UI literals; `C424-STATES-EXACT` runtime/type walls and playback P03 prove the closed set. Incomplete evidence retains its inline label through the shared unavailable state. |
+
+WINDOWS 285's constant ARIA stub is fixed by Plan 09: `ARIA-READS-SUB-ACTION` reads the selected sha-addressed document as masked text; `TAB-LOAD-FAILURE-ARIA` proves retry and never-empty behavior. Historical empty documents are not silently substituted for failed loads.
+
+SC1's added run-detail mutation proof is P01/P02/P22 in `scripts/424-playback-mutation.sh`; phase-range git log and diff confirm `scripts/405-run-detail-mutation.sh` and its inventory are unchanged. Database option A refuses unreleased v2 and retains only the locked v3-to-v4 additive step. No old section's historical v2-to-v3 account is rewritten.
