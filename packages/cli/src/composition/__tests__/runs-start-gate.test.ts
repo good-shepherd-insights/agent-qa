@@ -917,6 +917,14 @@ describe('the door census — every way a caller can name a run id (CR-04)', () 
         + '`run-door-invocation-census.test.ts` makes the complete-set claim that no file in this '
         + 'package acquires `startRun`, and the STARTRUN_PIN now build-enforces it repo-wide.',
     },
+    'dashboard-ui/src/hooks/use-evidence-records.ts': {
+      role: 'read: evidence for an existing run',
+      reaches: false,
+      verdict:
+        'UNABLE TO COLLIDE: fetchRunEvidence reads records for an existing run through the '
+        + 'dashboard evidence API. It does not invoke run creation; the hook remains scanned '
+        + 'and the dedicated E1 read-classification cell pins this distinction.',
+    },
   }
 
   it('the scanned set ranges the files the claim is about — the discovery self-check', () => {
@@ -985,8 +993,11 @@ describe('the door census — every way a caller can name a run id (CR-04)', () 
 
   it('every E1 site either reaches the identity step or is recorded as unable to collide', () => {
     const bypassing = Object.entries(E1_SITES).filter(([, site]) => !site.reaches)
-    // Exactly one, and its verdict is what carries the evidence.
-    expect(bypassing.map(([file]) => file)).toEqual(['cli/src/curation/post-run-tail.ts'])
+    expect(bypassing.map(([file]) => file)).toEqual([
+      'cli/src/curation/post-run-tail.ts',
+      'dashboard-ui/src/hooks/use-evidence-records.ts',
+    ])
     expect(bypassing[0]![1].verdict).toContain('already FINISHED')
+    expect(bypassing[1]![1].verdict).toContain('fetchRunEvidence reads records for an existing run')
   })
 })
