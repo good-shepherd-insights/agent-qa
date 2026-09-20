@@ -23,6 +23,16 @@ test('C424-STEP-SIGNALS-EXACT', async () => {
   expect((await helper()).STEP_SIGNALS).toEqual(['console', 'network', 'a11y'])
 })
 
+test('C424-EVIDENCE-SCOPES-EXACT', async () => {
+  const scopes = import.meta.glob('../../components/run-detail/evidence-scope-line.tsx')
+  const load = scopes['../../components/run-detail/evidence-scope-line.tsx']
+  expect(load, 'the scope line exports its closed vocabulary').toBeTypeOf('function')
+  const module = await load!() as typeof import('../../components/run-detail/evidence-scope-line')
+  expect(module.EVIDENCE_SCOPES).toEqual(['step', 'sub-action'])
+  expect(module.SCOPE_LINE_STEP(2, 3)).toBe('Step 2 of 3 · whole step')
+  expect(module.SCOPE_LINE_SUB_ACTION(2, 3, 1)).toBe('Sub-action #2 of 3 · step 1')
+})
+
 test('COUNTS-ABSENT-NOT-ZERO', async () => {
   const { stepSignals, tabCounts } = await helper()
   for (const reason of ['empty', 'not-captured', 'unsupported', 'unavailable', 'failed'] as const) {
