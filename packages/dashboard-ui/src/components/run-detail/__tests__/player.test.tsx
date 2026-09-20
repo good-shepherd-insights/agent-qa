@@ -5,10 +5,12 @@ import { asRef, maskedMarker } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { buildTimelineModel, latestUsableFrame, type TimelineModel } from '@/lib/playhead'
 import type { RunDetailGroup } from '@/lib/run-detail-view'
-import { PLAYER_COPY } from '@/lib/player-view'
+import { PLAYER_COPY, VIDEO_UNTIMED_NOTE } from '@/lib/player-view'
+import { createFakeMedia } from '@/test/media-facade'
 import { routes } from '@/lib/routes'
 
 const modules = import.meta.glob<typeof import('../player')>('../player.tsx', { eager: true })
+const lightboxes = import.meta.glob<typeof import('../player-lightbox')>('../player-lightbox.tsx', { eager: true })
 type Props = ComponentProps<typeof import('../player').Player>
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root
@@ -104,4 +106,145 @@ test('PLAYER-FRAME-NOT-CAPTURED-ROWS', () => {
   expect(query('[data-evidence-kind="frame"]').textContent).toContain('No screenshot for this action')
   render({ model: { ...model, markers: [], segments: [] }, playhead: null })
   expect(query('[data-evidence-kind="frame"]').textContent).toContain('No screenshots for this step')
+})
+
+function recording() {
+  return { state: 'present' as const, ref: { id: `recording:${sha}` as const, sha }, contentType: 'video/webm' as const, byteLength: 100, durationMs: 20000 }
+}
+function video(extra: Partial<Props> = {}) {
+  group.member.recording = recording()
+  model = buildTimelineModel(group)
+  const media = createFakeMedia(Infinity)
+  render({ source: 'video', recording: recording(), media, ...extra })
+  return media
+}
+function metadata(media: ReturnType<typeof createFakeMedia>) { act(() => media.fire('loadedmetadata')) }
+function button(name: string) { return query(`button[aria-label="${name}"]`) as HTMLButtonElement }
+
+test('PLAYER-OPENS-ON-VIDEO', () => {
+  const media = video()
+  expect(query('[data-player]').dataset.playerSource).toBe('video')
+  expect(query('video')).not.toBeNull()
+  expect(media.paused).toBe(true)
+  expect(button(PLAYER_COPY.play).disabled).toBe(true)
+  metadata(media)
+  expect(button(PLAYER_COPY.play).disabled).toBe(false)
+})
+test('PLAYER-VIDEO-ATTRIBUTES', () => {
+  video()
+  const element = query('video') as HTMLVideoElement
+  expect(element.src).toContain(routes.runArtifact('run', sha))
+  expect(element.preload).toBe('metadata')
+  expect(element.muted).toBe(true)
+  expect(element.playsInline).toBe(true)
+  expect(element.hasAttribute('autoplay')).toBe(false)
+  expect(element.hasAttribute('controls')).toBe(false)
+  expect(element.hasAttribute('poster')).toBe(false)
+})
+test('PLAYER-PARKED-AT-MARKER', () => {
+  const media = video()
+  metadata(media)
+  expect(media.currentTime).toBe(0)
+  render({ source: 'video', recording: recording(), media, playhead: model.markers[1]! })
+  expect(media.currentTime).toBe(10)
+  render({ source: 'video', recording: recording(), media, playhead: model.markers[1]!, seekFraction: 0.75 })
+  expect(media.currentTime).toBe(15)
+  expect(query('[data-player-time]').textContent).toContain('0:20')
+  expect(query('[data-player-time]').textContent).not.toContain('Infinity')
+})
+test('PLAYER-PLAY-ADVANCES-PLAYHEAD', async () => {
+  const media = video()
+  metadata(media)
+  await act(async () => button(PLAYER_COPY.play).click())
+  expect(media.paused).toBe(false)
+  act(() => media.fire('timeupdate', 12))
+  expect(change).toHaveBeenLastCalledWith({ testIndex: 0, stepIndex: 0, subActionIndex: 1 })
+  render({ source: 'video', recording: recording(), media, playhead: model.markers[1]! })
+  expect(media.currentTime).toBe(12)
+  act(() => media.fire('timeupdate', 13))
+  expect(change).toHaveBeenCalledTimes(1)
+  act(() => button(PLAYER_COPY.pause).click())
+  expect(media.paused).toBe(true)
+})
+test('PLAYER-END-PARKS-LAST', async () => {
+  const media = video()
+  metadata(media)
+  await act(async () => button(PLAYER_COPY.play).click())
+  act(() => media.fire('ended', 20))
+  expect(media.paused).toBe(true)
+  expect(media.currentTime).toBe(20)
+  expect(button(PLAYER_COPY.play)).not.toBeNull()
+})
+for (const reason of ['unsupported', 'not-captured', 'failed', 'unavailable'] as const) {
+  test(`PLAYER-VIDEO-${reason.toUpperCase()}`, () => {
+    render({ source: 'video', recording: { state: 'absent', reason } })
+    const pane = query('[data-evidence-kind="video"]')
+    expect(pane.dataset.evidenceState).toBe(reason)
+    expect(pane.hasAttribute('data-evidence-incomplete')).toBe(false)
+    expect(query('video')).toBeNull()
+  })
+}
+test('PLAYER-VIDEO-BYTES-GONE', async () => {
+  render({ source: 'video', recording: { state: 'absent', reason: 'unavailable', evidenceIncomplete: true } })
+  expect(query('[data-evidence-kind="video"]').dataset.evidenceIncomplete).toBe('true')
+  const media = video()
+  await act(async () => media.fire('error'))
+  expect(query('[data-evidence-kind="video"]').dataset.evidenceState).toBe('unavailable')
+  expect(query('[data-evidence-kind="video"]').dataset.evidenceIncomplete).toBe('true')
+})
+test('PLAYER-VIDEO-LOAD-FAILURE', async () => {
+  vi.mocked(fetch).mockResolvedValue({ status: 500 } as Response)
+  const media = video()
+  await act(async () => media.fire('error'))
+  const pane = query('[data-evidence-kind="video"]')
+  expect(pane.dataset.evidenceState).toBe('failed')
+  expect(pane.dataset.evidenceFailure).toBe('load')
+  expect(pane.textContent).toContain('Retry loading the recording')
+  expect(pane.textContent).toContain('switch to Frames')
+  act(() => pane.querySelector('button')!.click())
+  expect(query('video')).not.toBeNull()
+  expect(button(PLAYER_COPY.play).disabled).toBe(true)
+})
+test('PLAYER-VIDEO-UNTIMED-NOTE', async () => {
+  delete group.steps[0]!.subActions[1]!.recordingOffsetMs
+  const media = video()
+  metadata(media)
+  expect(query('[data-player]').textContent).toContain(VIDEO_UNTIMED_NOTE)
+  expect(media.paused).toBe(true)
+  render({ source: 'video', recording: recording(), media, playhead: model.markers[1]!, seekFraction: 0.8 })
+  expect(media.seeks).toEqual([])
+  await act(async () => button(PLAYER_COPY.play).click())
+  act(() => media.fire('timeupdate', 15))
+  expect(change).not.toHaveBeenCalled()
+  expect(query('[data-player-time]').textContent).toContain('0:15')
+})
+
+function lightbox(onOpenChange = vi.fn(), returnFocus?: HTMLElement) {
+  const module = lightboxes['../player-lightbox.tsx']
+  expect(module, 'PlayerLightbox exists').toBeDefined()
+  const { PlayerLightbox } = module!
+  act(() => root.render(<PlayerLightbox runId='run' sha={sha} open onOpenChange={onOpenChange} returnFocus={returnFocus} />))
+  return document.querySelector<HTMLElement>('[data-player-lightbox]')!
+}
+test('LIGHTBOX-NOTE-AND-CLOSE', async () => {
+  const close = vi.fn()
+  const pane = lightbox(close)
+  expect(pane.textContent).toContain(PLAYER_COPY.lightboxTitle)
+  expect(pane.textContent).toContain(PLAYER_COPY.lightboxNote)
+  expect(pane.querySelector('img')?.getAttribute('src')).toBe(routes.runArtifact('run', sha))
+  expect(pane.querySelectorAll('[data-slot="dialog-close"]')).toHaveLength(1)
+  act(() => pane.querySelector<HTMLButtonElement>(`[aria-label="${PLAYER_COPY.lightboxClose}"]`)!.click())
+  expect(close).toHaveBeenCalledWith(false)
+  close.mockClear()
+  act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(close).toHaveBeenCalledWith(false)
+})
+test('LIGHTBOX-FOCUS-RETURNS', async () => {
+  const trigger = document.createElement('button')
+  document.body.append(trigger)
+  trigger.focus()
+  lightbox(vi.fn(), trigger)
+  await act(async () => root.render(null))
+  expect(document.activeElement).toBe(trigger)
+  trigger.remove()
 })
