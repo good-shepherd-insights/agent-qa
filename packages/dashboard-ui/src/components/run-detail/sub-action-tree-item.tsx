@@ -1,30 +1,8 @@
-// ONE RECORDED SUB-ACTION IN THE DURABLE TREE (405-08 · D-16).
-//
-// REPOINTED OFF THE v1 SHAPE. This item used to take `SubActionData` — the v1 projection's row —
-// and reverse-engineer a label out of an untyped `plannedAction` blob with a `JSON.parse` and a
-// try/catch. The durable projection carries the planner's OWN sentence in `plan`, so the item
-// renders that verbatim instead of re-deriving a worse one from the action it produced.
-//
-// THE CACHE ANSWER COMES FROM THE STEP. `RunDetailSubAction` records no `cached` flag; the
-// projection records `cacheStatus` on the step, and a step served from cache served every action
-// under it. So `cached` is a prop the step passes down rather than a fact this row invents.
-//
-// `data-sub-action-result` CARRIES THE RAW WORD, not the presentation, because 405-12's Playwright
-// cells address the built bundle and a page that painted the right word into the wrong element
-// would still pass a text assertion.
-//
-// THE LABEL IS A PRODUCER STRING AND THEREFORE GOES THROUGH `MaskedText` (D-10, T-405-40). It was
-// rendered raw here until 405-12 drove the shipped bundle against a real masked run and read a
-// marker delimiter out of a text node in this row — the exact state D-10 forbids, invisible to
-// every cell in the repository because they all supplied unmasked fixture text. The overview beside
-// it has painted every producer string through the seam since 405-11; this row is the same class of
-// string and had simply never been asked.
+import type { RunDetailSubAction } from '@vostride/agent-qa-schema'
 
-import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
-
-import { MaskedText } from "@/components/run-detail/masked-text"
-import { CacheStatusIconWrapper } from "./cache-status-marker"
-import { cn } from "@/lib/utils"
+import { ActionSentence } from './action-sentence'
+import { CacheStatusIconWrapper } from './cache-status-marker'
+import { cn } from '@/lib/utils'
 
 interface SubActionTreeItemProps {
   sub: RunDetailSubAction
@@ -43,17 +21,6 @@ function resultWord(sub: RunDetailSubAction): 'success' | 'failure' {
 
 export function SubActionTreeItem({ sub, stepId, cached, isSelected, onSelect }: SubActionTreeItemProps) {
   const result = resultWord(sub)
-  const statusHost = (
-    <span className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center">
-      <span
-        className={cn(
-          "h-1.5 w-1.5 shrink-0 rounded-full",
-          result === 'success' ? "bg-emerald-500" : "bg-red-500",
-        )}
-      />
-    </span>
-  )
-
   return (
     <li
       role="treeitem"
@@ -71,22 +38,21 @@ export function SubActionTreeItem({ sub, stepId, cached, isSelected, onSelect }:
         )}
         onClick={onSelect}
       >
-        {cached ? (
-          <CacheStatusIconWrapper
-            marker="sub-action-status"
-            state="cached"
-            tone="primary"
-            label="Cached action"
-          >
-            {statusHost}
-          </CacheStatusIconWrapper>
-        ) : (
-          statusHost
-        )}
-        <span className="text-xs text-muted-foreground shrink-0">#{sub.subActionIndex + 1}</span>
-        <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground">
-          <MaskedText text={sub.plan} />
-        </span>
+        <ActionSentence
+          sub={sub}
+          wrap='truncate'
+          ordinal={sub.subActionIndex + 1}
+          wrapIcon={cached ? (icon) => (
+            <CacheStatusIconWrapper
+              marker='sub-action-status'
+              state='cached'
+              tone='primary'
+              label='Cached action'
+            >
+              {icon}
+            </CacheStatusIconWrapper>
+          ) : undefined}
+        />
       </button>
     </li>
   )

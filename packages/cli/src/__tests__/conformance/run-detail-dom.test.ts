@@ -220,6 +220,8 @@ interface PageObservation {
   readonly waitFailure?: string
   /** The `[data-sub-action-plan]` text, as painted. */
   readonly planText: string
+  readonly treeActionFamily?: string
+  readonly treePlanCount: number
   /** How many `[data-sub-action]` rows the durable tree drew. */
   readonly subActionCount: number
   /** How many `[data-step-id]` rows the durable tree drew. */
@@ -431,7 +433,7 @@ async function observeRunDetail(
       const reasoning = page.getByRole('button', { name: REASONING_SECTION_LABEL }).first()
       if ((await reasoning.count()) > 0) await reasoning.click().catch(() => undefined)
       await page
-        .locator('[data-sub-action-plan]')
+        .locator('[data-reasoning-children] [data-sub-action-plan]')
         .first()
         .waitFor({ state: 'attached', timeout: PAGE_BUDGET_MS })
         .catch(() => undefined)
@@ -491,7 +493,9 @@ async function observeRunDetail(
 
     const artifactState = await attributeOf('[data-artifact-state]', 'data-artifact-state')
     const screenshotSrc = await attributeOf('[data-artifact-state="available"] img', 'src')
-    const planText = (await textOf('[data-sub-action-plan]')) ?? ''
+    const planText = (await textOf('[data-reasoning-children] [data-sub-action-plan]')) ?? ''
+    const treeActionFamily = await attributeOf('[data-sub-action] [data-action-family]', 'data-action-family')
+    const treePlanCount = await page.locator('[data-sub-action] [data-sub-action-plan]').count()
     const tokenSummary = await textOf('[data-token-summary]')
     const runTokenSummary = await textOf('[data-run-token-summary]')
     const screenStateHash = await attributeOf('[data-screen-state]', 'data-screen-state')
@@ -500,6 +504,8 @@ async function observeRunDetail(
       finalUrl: page.url(),
       ...(waitFailure === undefined ? {} : { waitFailure }),
       planText,
+      treeActionFamily,
+      treePlanCount,
       subActionCount: harvested.subActionCount,
       stepCount: harvested.stepCount,
       ...(artifactState === undefined ? {} : { artifactState }),
@@ -657,6 +663,8 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       + 'reasoning is the `plan` string the projection carries; an empty node means the row, the '
       + `op, the route or the render lost it.${context()}`,
     ).not.toBe('')
+    expect(observed.treeActionFamily, `the tree row has no action-family icon.${context()}`).toBeTruthy()
+    expect(observed.treePlanCount, 'planner reasoning belongs in Overview, outside the tree').toBe(0)
   })
 
   it('(1b) sub-action timeline: the durable tree draws at least one recorded sub-action', () => {

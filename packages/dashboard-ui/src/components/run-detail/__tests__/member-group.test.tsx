@@ -295,8 +295,8 @@ describe("a member that never ran renders honestly, never as an empty tree (D-18
   })
 })
 
-describe("a sub-action carries its plan and its result word (D-16)", () => {
-  it("renders the producer's plan text and addresses itself by ordinal", () => {
+describe("a sub-action carries its action sentence and its result word (D-16)", () => {
+  it("renders the action sentence and addresses itself by ordinal", () => {
     const view = mount(
       <ul>
         <SubActionTreeItem
@@ -311,7 +311,9 @@ describe("a sub-action carries its plan and its result word (D-16)", () => {
 
     const item = view.querySelector('[data-sub-action="0"]')
     expect(item).toBeTruthy()
-    expect(view.textContent).toContain("click the primary button")
+    expect(view.textContent).toContain("Clicked")
+    expect(view.textContent).not.toContain("click the primary button")
+    expect(item?.querySelector('[data-action-family="pointer"]')).toBeTruthy()
     expect(item?.getAttribute("data-sub-action-result")).toBe("success")
   })
 

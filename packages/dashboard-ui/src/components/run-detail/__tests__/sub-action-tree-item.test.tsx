@@ -9,7 +9,11 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
 let container: HTMLDivElement
-afterEach(() => { act(() => root?.unmount()); root = undefined; container?.remove() })
+afterEach(() => {
+  act(() => root?.unmount())
+  root = undefined
+  container?.remove()
+})
 
 function mount(success = false, cached = false) {
   const sub: RunDetailSubAction = {
