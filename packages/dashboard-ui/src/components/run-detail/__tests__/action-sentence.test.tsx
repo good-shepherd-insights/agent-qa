@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { maskedMarker, type RunDetailSubAction } from '@vostride/agent-qa-schema'
+import { asRef, maskedMarker, type RunDetailSubAction } from '@vostride/agent-qa-schema'
 import { afterEach, expect, it } from 'vitest'
 import { copyTextOf } from '@/lib/display-text'
 
@@ -18,7 +18,7 @@ it('SENTENCE-SECRET-CHIP renders masked parts, safe names and the outcome icon',
   const secret = maskedMarker('secret')
   const sub: RunDetailSubAction = {
     testIndex: 0, stepIndex: 0, subActionIndex: 0, plan: 'Do not render reasoning here',
-    plannedAction: { type: 'fill', ref: 'e1', text: secret, clearMode: 'replace', submit: false },
+    plannedAction: { type: 'fill', ref: asRef('e1'), text: secret, clearMode: 'replace', submit: false },
     grounding: { descriptor: { name: '<img src=x onerror=alert(1)>' }, attempts: [] },
     result: { success: false }, screenStateHash: 'screen',
   }
