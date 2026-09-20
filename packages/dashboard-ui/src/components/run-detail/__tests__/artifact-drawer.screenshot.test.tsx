@@ -1,26 +1,9 @@
 // @vitest-environment jsdom
-//
-// THE DRAWER'S SCREENSHOT TAB (406-08 · DETL-04, D-02 second half; 405 D-12 / D-15).
-//
-// A CITED SCREENSHOT OPENS WHERE THE READER ALREADY LOOKS. The failure view's cited-artifact link
-// does not mint a window, an inline pane or a route of its own — it opens the artifact drawer a
-// person already reaches with `i` / `c` / `m`, on a fourth tab keyed by the sha it was clicked
-// with. These cells pin the three things that makes true: the tab exists when there is a sha, its
-// image `src` is the ONE minter's (`routes.runArtifact`) and nothing else's, and the three v1 tabs
-// are still exactly where they were.
-//
-// THE CLICK-TIME 404 IS STILL HONEST (405 D-15). A blob can vanish between the durable read that
-// said `present` and the request this tab makes; the viewer says so through `onUnavailable` and the
-// tab paints the SAME `EvidenceIncomplete` the read-time absence paints. One state, one component,
-// two roads to it — which is D-18 restated at the third ref site.
-//
-// A FAITHFUL VIEWER DOUBLE, NOT A BLANK. The mock renders the `img` the real viewer renders and
-// fires `onUnavailable` from its `onError`, so these cells measure the seam rather than the mock.
-
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import { PlayerLightbox } from "@/components/run-detail/player-lightbox"
 import { ArtifactDrawer } from "@/components/run-detail/artifact-drawer"
 import { routes } from "@/lib/routes"
 import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
@@ -82,7 +65,7 @@ let container: HTMLDivElement
 let root: Root
 
 function mountDrawer(over: {
-  tab?: "test" | "config" | "screenshot"
+  tab?: "test" | "config"
   screenshotSha?: string | null
 } = {}) {
   container = document.createElement("div")
@@ -93,7 +76,7 @@ function mountDrawer(over: {
       <ArtifactDrawer
         run={RUN as never}
         open
-        tab={over.tab ?? "screenshot"}
+        tab={over.tab ?? "test"}
         screenshotSha={over.screenshotSha === undefined ? SHA : over.screenshotSha}
         response={null}
         loading={false}
@@ -114,60 +97,54 @@ afterEach(() => {
   container.remove()
 })
 
-describe("the screenshot tab opens what the verdict cited (D-02)", () => {
-  it("mints its image src through the ONE route minter and nothing else", () => {
+function mountLightbox() {
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+  act(() => root.render(<PlayerLightbox runId={RUN_ID} sha={SHA} open onOpenChange={() => {}} />))
+  return document.querySelector('[data-player-lightbox]')!
+}
+
+afterEach(() => { vi.unstubAllGlobals() })
+
+describe('the lightbox opens what the verdict cited (D-02)', () => {
+  it('mints its image src through the ONE route minter and nothing else', () => {
+    const lightbox = mountLightbox()
+    expect(lightbox.querySelector('img')?.getAttribute('src')).toBe(routes.runArtifact(RUN_ID, SHA))
+    expect(lightbox.querySelector('[data-artifact-state="available"]')).not.toBeNull()
+  })
+
+  it('offers only the record-fed tabs even when a sha was clicked', () => {
     const drawer = mountDrawer()
-
-    const img = drawer.querySelector('[data-testid="screenshot-viewer"]')
-    expect(img?.getAttribute("src")).toBe(routes.runArtifact(RUN_ID, SHA))
-    expect(drawer.querySelector('[data-artifact-state="available"]')).not.toBeNull()
+    expect(drawer.querySelector('[data-artifact-drawer-tab="screenshot"]')).toBeNull()
+    expect([...drawer.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(['Test', 'Config'])
+    expect(drawer.textContent).not.toContain('Memory')
   })
 
-  it("offers the tab only when a sha was clicked — the record-fed tabs are otherwise unchanged", () => {
-    const withSha = mountDrawer({ tab: "test" })
-    expect(withSha.querySelector('[data-artifact-drawer-tab="screenshot"]')).not.toBeNull()
-
-    act(() => {
-      root.unmount()
-    })
-    container.remove()
-
-    const withoutSha = mountDrawer({ tab: "test", screenshotSha: null })
-    expect(
-      withoutSha.querySelector('[data-artifact-drawer-tab="screenshot"]'),
-      "a reader who pressed `i` sees the same record-fed tabs they always saw",
-    ).toBeNull()
-    expect(withoutSha.textContent).toContain("Test")
-    expect(withoutSha.textContent).toContain("Config")
-    // The v1 memory tab is deleted (407-05 · D-02). A drawer that still offered its trigger would
-    // be the second surface claiming to show what a run remembered, which is the debris the
-    // Knowledge tab replaced.
-    expect(withoutSha.textContent).not.toContain("Memory")
+  it('paints the ONE absence component when the cited sha has no bytes to open', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 404 }))
+    const lightbox = mountLightbox()
+    await act(async () => { lightbox.querySelector('img')!.dispatchEvent(new Event('error')) })
+    expect(lightbox.querySelector('[data-evidence-kind="frame"][data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
+    expect(lightbox.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
+    expect(lightbox.querySelector('img')).toBeNull()
   })
 
-  it("paints the ONE absence component when there is no sha to open", () => {
-    const drawer = mountDrawer({ screenshotSha: null })
-
-    expect(drawer.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
-    expect(drawer.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
-    expect(drawer.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
-    expect(drawer.querySelector('[data-testid="screenshot-viewer"]')).toBeNull()
+  it('says so when the blob vanished BETWEEN the read and the click (405 D-15)', async () => {
+    const fetch = vi.fn().mockResolvedValue({ status: 404 })
+    vi.stubGlobal('fetch', fetch)
+    const lightbox = mountLightbox()
+    expect(lightbox.querySelector('[data-evidence-incomplete]')).toBeNull()
+    await act(async () => { lightbox.querySelector('img')!.dispatchEvent(new Event('error')) })
+    expect(fetch).toHaveBeenCalledWith(routes.runArtifact(RUN_ID, SHA), expect.objectContaining({ method: 'HEAD' }))
+    expect(lightbox.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
+    expect(lightbox.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
+    expect(lightbox.querySelector('img')).toBeNull()
   })
 
-  it("says so when the blob vanished BETWEEN the read and the click (405 D-15)", () => {
-    const drawer = mountDrawer()
-    expect(drawer.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).toBeNull()
-
-    const img = drawer.querySelector('[data-testid="screenshot-viewer"]') as HTMLImageElement
-    act(() => {
-      img.dispatchEvent(new Event("error"))
-    })
-
-    expect(drawer.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
-    expect(
-      drawer.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]'),
-      "a click-time 404 is the same visible state as a read-time absence (D-18)",
-    ).not.toBeNull()
-    expect(drawer.querySelector('[data-testid="screenshot-viewer"]')).toBeNull()
+  it('DRAWER-NO-SCREENSHOT-TAB offers exactly Test and Config', () => {
+    const drawer = mountDrawer({ tab: 'config' })
+    expect([...drawer.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(['Test', 'Config'])
+    expect(drawer.querySelector('[data-artifact-drawer-tab="screenshot"]')).toBeNull()
   })
 })
