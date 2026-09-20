@@ -190,3 +190,79 @@ it.each(['1junk', '-1', '99', '9007199254740992', 'NaN', ''])('PLAYHEAD-URL-MALF
   expect(frame()).toBeUndefined()
   expect(query().has('sub')).toBe(false)
 })
+
+it('TIMELINE-VISIBLE-EVERY-TAB', async () => {
+  await render()
+  for (let tab = 1; tab <= 7; tab++) {
+    key(String(tab))
+    const timeline = host.querySelector('[data-timeline]')
+    expect(timeline).not.toBeNull()
+    expect(timeline!.compareDocumentPosition(host.querySelector('[role="tablist"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  }
+  expect(host.querySelector('[data-timeline]')?.textContent).not.toContain('Checkout')
+})
+
+it('TIMELINE-BADGE-OPENS-TAB', async () => {
+  const detail = projection()
+  detail.steps[1]!.evidence = {
+    variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
+    network: { kind: 'network', state: 'absent', reason: 'not-captured' },
+    a11y: { kind: 'a11y', state: 'absent', reason: 'not-captured' },
+    console: { kind: 'console', state: 'present', ref: { id: 'console-evidence:errors', sha: shas[0]! }, counts: { total: 2, errors: 2, warnings: 0 } },
+  }
+  detailRead.mockResolvedValue(detail)
+  await render()
+  click('[data-timeline] [data-step-signal="console"]')
+  expect(selected()?.getAttribute('data-step-id')).toBe('0:1')
+  expect(current()).toBe('0:1-0')
+  expect(host.querySelector('[role="tab"][data-state="active"]')?.textContent).toContain('Console')
+  expect(query().get('tab')).toBe('console')
+})
+
+it('TIMELINE-MEMBER-SWITCH', async () => {
+  const detail = projection()
+  detailRead.mockResolvedValue({
+    ...detail,
+    members: [...detail.members, { testIndex: 3, name: 'Returns', attempts: 1 }],
+    steps: [...detail.steps, { ...detail.steps[0]!, testIndex: 3 }],
+    subActions: [...detail.subActions, ...detail.subActions.slice(0, 2).map(sub => ({ ...sub, testIndex: 3 }))],
+  })
+  await render()
+  expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('0')
+  parent('3:0')
+  expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('3')
+  expect(host.querySelector('[data-timeline]')?.textContent).toContain('#3')
+  expect(host.querySelector('[data-timeline]')?.textContent).toContain('Returns')
+  parent('0:1')
+  act(() => host.querySelector('[role="slider"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+  expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('3')
+  expect(current()).toBe('3:0-0')
+  expect(selected()?.getAttribute('data-step-id')).toBe('3:0')
+})
+
+it('PLAYHEAD-SCRUB-FOLLOWS-TREE-TABS-URL', async () => {
+  await render()
+  const track = host.querySelector<HTMLElement>('[data-timeline-track]')
+  expect(track).not.toBeNull()
+  track!.getBoundingClientRect = () => ({ left: 0, width: 400 }) as DOMRect
+  track!.setPointerCapture = vi.fn()
+  key('5')
+  act(() => track!.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 50, bubbles: true })))
+  expect(current()).toBe('0:0-0')
+  expect(selected()?.getAttribute('data-step-id')).toBe('0:0')
+  expect(host.querySelectorAll('[role="treeitem"][aria-selected="true"]')).toHaveLength(1)
+  expect(host.querySelectorAll('[data-playhead-row]')).toHaveLength(1)
+  expect(host.querySelector('[data-aria-sub]')?.getAttribute('data-aria-sub')).toBe('0')
+  expect(query().get('sub')).toBe('0')
+  expect(query().get('tab')).toBe('aria')
+  key('1')
+  expect(frame()).toBe(routes.runArtifact('run-1', shas[0]!))
+})
+
+it('TIMELINE-FAILED-DETAIL-REPLACES-PANEL', async () => {
+  detailRead.mockRejectedValue(new Error('Read failed'))
+  await render()
+  expect(host.querySelector('[data-timeline]')).toBeNull()
+  expect(host.querySelector('[role="tablist"]')).toBeNull()
+  expect(host.querySelector('[data-run-detail-error]')).not.toBeNull()
+})
