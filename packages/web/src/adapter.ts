@@ -8,6 +8,7 @@ import type {
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
+  RecordingCapability,
 } from '@vostride/agent-qa-runner'
 import type { LiveFrame } from '@vostride/agent-qa-schema'
 import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
@@ -21,6 +22,7 @@ import { waitForPageReady } from './smart-wait.js'
 import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './compound-web.js'
 import type { RefMap } from './types.js'
 import { formatMissingBrowserError, isPlaywrightMissingBrowserError } from './browser-install-error.js'
+import { createScreencastRecording } from './recording.js'
 
 // Browser-context hygiene: hide framework-injected [data-agent-qa-internal] overlays
 // from the ARIA snapshot (they would otherwise get ai-mode refs and pollute the state),
@@ -123,11 +125,14 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private browserName: 'chromium' | 'firefox' | 'webkit' = 'chromium'
   private screencast: CDPSession | null = null
   private screencastCapability: LiveStreamCapability | null = null
+  private recordingCapability: RecordingCapability | undefined
+  private recordingConfig: PlatformConfig['recording']
   // 403-02: the PRODUCT's frame identity, and the CDP ack token it maps to. See `liveStream`.
   private screencastFrameSeq = 0
   private screencastAckTokens = new Map<number, number>()
 
   async setup(config: PlatformConfig): Promise<void> {
+    this.recordingConfig = config.recording
     const { chromium, firefox, webkit } = await import('playwright-core')
     const launchers = { chromium, firefox, webkit } as const
     const browserName = config.browser?.name ?? 'chromium'
@@ -156,12 +161,6 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
     const contextOptions: Record<string, unknown> = {
       viewport: config.browser?.viewport ?? { width: 1280, height: 720 },
-    }
-    if (config.recording?.enabled) {
-      contextOptions.recordVideo = {
-        dir: config.recording.videoDir,
-        size: config.recording.videoSize ?? config.browser?.viewport ?? { width: 1280, height: 720 },
-      }
     }
     if (config.authState?.storageStatePath) {
       contextOptions.storageState = config.authState.storageStatePath
@@ -277,8 +276,19 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     return capability
   }
 
+  get recording(): RecordingCapability | undefined {
+    if (!this.page || !this.context || !this.recordingConfig) return undefined
+    return this.recordingCapability ??= createScreencastRecording(
+      () => this.page,
+      this.recordingConfig,
+    )
+  }
+
   async cleanup(): Promise<void> {
     this.intentionalClose = true
+    try { await this.recordingCapability?.stop() } catch { /* best-effort */ }
+    this.recordingCapability = undefined
+    this.recordingConfig = undefined
     // 403: stop the screencast before the browser goes away so the CDP session is detached cleanly.
     try { await this.screencastCapability?.stop() } catch { /* best-effort */ }
     this.screencastCapability = null
@@ -411,16 +421,6 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
   getPage(): Page | null {
     return this.page
-  }
-
-  async getVideoPath(): Promise<string | null> {
-    try {
-      const video = this.page?.video()
-      if (!video) return null
-      return await video.path()
-    } catch {
-      return null
-    }
   }
 
   drainConsoleLogs(level?: string): ConsoleLogEntry[] {
