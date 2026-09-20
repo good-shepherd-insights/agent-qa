@@ -58,7 +58,11 @@ const legs = [
     operation: 'remove the parent-step resolution fold',
     edits: [edit(noFold, '    return address\n')],
     reds: [page('PLAYHEAD-PARENT-PARKS-LATEST-FRAME')],
-    allowed: ['PLAYHEAD-PARENT-SUBSTITUTED', 'PLAYHEAD-TREE-FOLLOWS', 'PLAYHEAD-TREE-MOVES-PLAYHEAD', 'PLAYHEAD-ONE-RING-ONE-BAR', 'OVERVIEW-FRAMES-TOGGLE-SHOWS-FRAME'].map(page),
+    // These controls also inspect the parent-derived playhead or its synchronized UI.
+    allowed: ['PLAYHEAD-PARENT-SUBSTITUTED', 'PLAYHEAD-TREE-FOLLOWS', 'PLAYHEAD-TREE-MOVES-PLAYHEAD',
+      'PLAYHEAD-ONE-RING-ONE-BAR', 'KEYS-IGNORED-IN-TABLIST', 'KEYS-LEGACY-MAP-UNCHANGED',
+      'OVERVIEW-PLAYER-FIRST-BLOCK', 'OVERVIEW-SEEK-REACHES-PLAYER', 'PLAYHEAD-DRIVES-TABS',
+      'PLAYHEAD-URL-REPLACE', 'TIMELINE-BADGE-OPENS-TAB', 'TIMELINE-MEMBER-SWITCH'].map(page),
     greens: ['CITED-JUMPS-PLAYHEAD', 'CITED-UNMATCHED-OPENS-LIGHTBOX', 'PLAYHEAD-URL-RESTORE'].map(page),
   },
   {
@@ -75,7 +79,8 @@ const legs = [
     edits: [edit(
       "export type EvidenceState = 'empty' | 'not-captured' | 'unsupported' | 'unavailable' | 'failed' | 'no-selection'\nexport const EVIDENCE_STATES = [\n  'empty', 'not-captured', 'unsupported', 'unavailable', 'failed', 'no-selection',\n] as const satisfies readonly EvidenceState[]\n",
       "export type EvidenceState = 'empty' | 'not-captured' | 'unsupported' | 'unavailable' | 'failed' | 'no-selection' | 'expired'\nexport const EVIDENCE_STATES = [\n  'empty', 'not-captured', 'unsupported', 'unavailable', 'failed', 'no-selection', 'expired',\n] as const satisfies readonly EvidenceState[]\n")],
-    reds: exact('absence', A, AT, 'C424-STATES-EXACT'), allowed: [a('C424-COPY-TOTAL')],
+    reds: exact('absence', A, AT, 'C424-STATES-EXACT'),
+    allowed: [a('C424-COPY-TOTAL'), cell('absence', 'src/components/run-detail/__tests__/evidence-state.test.tsx', 'STATE-PANE-TONES')],
     greens: [a('C424-TONES-EXACT'), a('VIEW-LOAD-FAILURE-NEVER-EMPTY')],
   },
   {
@@ -150,7 +155,8 @@ const legs = [
     operation: 'choose time when only some sub-actions have offsets',
     edits: [edit('    && steps.every(entry => entry.subActions.every(action => action.recordingOffsetMs !== undefined))\n',
       '    && steps.every(entry => entry.subActions.some(action => action.recordingOffsetMs !== undefined))\n')],
-    reds: [p('AXIS-ONE-MISSING-ORDINAL')], allowed: [],
+    // some() also changes the empty-step time-axis case (every() is vacuously true).
+    reds: [p('AXIS-ONE-MISSING-ORDINAL')], allowed: [p('MODEL-ZERO-SUBACTIONS')],
     greens: [p('AXIS-ALL-OFFSETS-TIME'), p('AXIS-HISTORICAL-ORDINAL')],
   },
   {
@@ -158,8 +164,9 @@ const legs = [
     operation: 'exclude the snap threshold boundary',
     edits: [edit('    Math.abs(positionPx - centre.centrePx) <= SNAP_THRESHOLD_PX))\n',
       '    Math.abs(positionPx - centre.centrePx) < SNAP_THRESHOLD_PX))\n')],
-    reds: [p('SNAP-THRESHOLD-INCLUSIVE')], allowed: [],
-    greens: [p('SNAP-TIE-EARLIER'), p('NEAREST-TIE-EARLIER')],
+    // The snap tie fixtures sit exactly 12px from both markers, so they share the boundary.
+    reds: [p('SNAP-THRESHOLD-INCLUSIVE')], allowed: [p('SNAP-TIE-EARLIER')],
+    greens: [p('PARENT-FRAME-SUBSTITUTED'), p('NEAREST-TIE-EARLIER')],
   },
   {
     subject: DRAWER, instrument: 'drawer', claim: 'C424-CAPTURE-STATES-EXACT',
@@ -202,7 +209,9 @@ const legs = [
     edits: [edit("    text: outcome === 'succeeded' ? verb.past : `Tried to ${verb.infinitive}`,\n",
       "    text: verb.past,\n")],
     reds: [v('SENTENCE-FAILURE-TRIED')],
-    allowed: ['SENTENCE-NAVIGATE-BRANCHES', 'SENTENCE-INSPECT-BRANCHES', 'SENTENCE-UNKNOWN-TYPE'].map(v),
+    // The renderer's masked-chip cell also asserts the failed fill sentence verbatim.
+    allowed: [...['SENTENCE-NAVIGATE-BRANCHES', 'SENTENCE-INSPECT-BRANCHES', 'SENTENCE-UNKNOWN-TYPE'].map(v),
+      cell('vocabulary', 'src/components/run-detail/__tests__/action-sentence.test.tsx', 'SENTENCE-SECRET-CHIP')],
     greens: [v('SENTENCE-SUCCESS-PAST'), v('C424-VERBS-TOTAL')],
   },
   {
@@ -240,4 +249,3 @@ runGate({
   expectedLegs: 22, banner: 'PLAYBACK_MUTATION_OK', instruments, legs,
 })
 NODE
-

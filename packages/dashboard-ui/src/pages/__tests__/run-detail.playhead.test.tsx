@@ -365,6 +365,7 @@ it('PLAYHEAD-PARENT-PARKS-LATEST-FRAME', async () => {
   await render()
   parent()
   expect(frame()).toBe(routes.runArtifact('run-1', shas[2]!))
+  expect(current()).toBe('0:0-2')
   expect(selected()?.getAttribute('data-step-id')).toBe('0:0')
   expect(host.querySelector('[data-sub-action-id][aria-selected="true"]')).toBeNull()
 })
