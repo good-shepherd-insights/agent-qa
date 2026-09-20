@@ -166,6 +166,13 @@ it('CITED-LIGHTBOX-FOCUS-RETURNS to the citing button', async () => {
   expect(document.querySelector('[data-player-lightbox]')).toBeNull()
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
   expect(document.activeElement).toBe(citation)
+  const before = current()
+  act(() => citation.click())
+  await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+  expect(document.querySelector('[data-player-lightbox]')).toBeNull()
+  expect(current()).toBe(before)
+  expect(document.activeElement).toBe(citation)
 })
 
 function press(key: string, target: Element = document.body, shiftKey = false) {
