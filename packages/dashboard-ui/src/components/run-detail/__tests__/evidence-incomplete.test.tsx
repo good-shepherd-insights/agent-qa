@@ -28,12 +28,6 @@ import { asRef } from '@vostride/agent-qa-schema'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-vi.mock('@/components/ui/badge', () => ({
-  Badge: ({ children, className }: { children: ReactNode; className?: string }) => (
-    <span data-testid="badge" className={className}>{children}</span>
-  ),
-}))
-
 // A faithful double, not a blank: it renders the `img` the real viewer renders, so the arms below
 // measure the seam rather than the mock.
 vi.mock('@/components/screenshot-viewer', () => ({
@@ -109,6 +103,16 @@ afterEach(() => {
 })
 
 describe('EvidenceIncomplete', () => {
+  it.each(['pane', 'inline'] as const)('INCOMPLETE-WRAPPER-DELEGATES: %s uses the shared frame state', (variant) => {
+    const view = mount(<EvidenceIncomplete variant={variant} />)
+    const node = view.firstElementChild
+    expect(node?.getAttribute('data-evidence-state')).toBe('unavailable')
+    expect(node?.hasAttribute('data-evidence-incomplete')).toBe(true)
+    expect(node?.getAttribute('data-evidence-kind')).toBe('frame')
+    expect(node?.getAttribute('data-evidence-tone')).toBe('neutral')
+    expect(node?.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
+  })
+
   it('paints the pane variant under the one attribute and the one label', () => {
     const view = mount(<EvidenceIncomplete variant="pane" />)
 
