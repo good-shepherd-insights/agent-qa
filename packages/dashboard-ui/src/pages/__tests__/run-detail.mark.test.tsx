@@ -28,7 +28,6 @@ const {
   fetchRunDetailMock,
   fetchRunArtifactMock,
   fetchExecutionLogsMock,
-  fetchAccessibilitySummaryMock,
 } = vi.hoisted(() => ({
   markRunMock: vi.fn(),
   fetchRunAnalysisMock: vi.fn(),
@@ -36,7 +35,6 @@ const {
   fetchRunDetailMock: vi.fn(),
   fetchRunArtifactMock: vi.fn(),
   fetchExecutionLogsMock: vi.fn(),
-  fetchAccessibilitySummaryMock: vi.fn(),
 }))
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -51,7 +49,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
-  fetchAccessibilitySummary: fetchAccessibilitySummaryMock,
+  fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
   triggerRun: vi.fn(),
   // This whole-module mock REPLACES `@/lib/api`, so an omitted export is `undefined` at the call
   // site and every cell here dies before it asserts. The real `watchPostProcessing` constructs an
@@ -261,19 +259,8 @@ beforeEach(() => {
   fetchRunDetailMock.mockReset()
   fetchRunArtifactMock.mockReset()
   fetchExecutionLogsMock.mockReset()
-  fetchAccessibilitySummaryMock.mockReset()
 
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
-  fetchAccessibilitySummaryMock.mockResolvedValue({
-    enabled: null,
-    total: 0,
-    bySeverity: { critical: 0, serious: 0, moderate: 0, minor: 0 },
-    byRule: [],
-    stepsWithViolations: 0,
-    scannedSteps: 0,
-    unscannedSteps: 0,
-    totalSteps: 0,
-  })
   fetchRunArtifactMock.mockResolvedValue({ run: { id: RUN_ID }, artifact: null, children: [], missingSections: ["artifact"] })
   fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id) }))
   fetchRunDetailMock.mockResolvedValue(TWO_MEMBERS)

@@ -64,7 +64,6 @@ const {
   fetchRunAnalysisMock,
   fetchRunArtifactMock,
   fetchExecutionLogsMock,
-  fetchAccessibilitySummaryMock,
   pushPostProcessing,
 } = vi.hoisted(() => {
   // The captured `onRead`, module-level so a cell can push a frame after mount (RESEARCH
@@ -77,7 +76,6 @@ const {
     fetchRunAnalysisMock: vi.fn(),
     fetchRunArtifactMock: vi.fn(),
     fetchExecutionLogsMock: vi.fn(),
-    fetchAccessibilitySummaryMock: vi.fn(),
     pushPostProcessing: {
       capture: (next: ((read: unknown) => void) | undefined) => { onRead = next },
       send: (read: unknown) => { onRead?.(read) },
@@ -93,7 +91,7 @@ vi.mock("@/lib/api", () => ({
   fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
-  fetchAccessibilitySummary: fetchAccessibilitySummaryMock,
+  fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
   triggerRun: vi.fn(),
   watchPostProcessing: (_id: string, options: { onRead: (read: unknown) => void }) => {
     pushPostProcessing.capture(options.onRead)
@@ -288,19 +286,8 @@ beforeEach(() => {
   fetchRunAnalysisMock.mockReset()
   fetchRunArtifactMock.mockReset()
   fetchExecutionLogsMock.mockReset()
-  fetchAccessibilitySummaryMock.mockReset()
 
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
-  fetchAccessibilitySummaryMock.mockResolvedValue({
-    enabled: null,
-    total: 0,
-    bySeverity: { critical: 0, serious: 0, moderate: 0, minor: 0 },
-    byRule: [],
-    stepsWithViolations: 0,
-    scannedSteps: 0,
-    unscannedSteps: 0,
-    totalSteps: 0,
-  })
   fetchRunArtifactMock.mockResolvedValue({ run: { id: RUN_ID }, artifact: null, children: [], missingSections: ["artifact"] })
   fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id) }))
   fetchRunDetailMock.mockResolvedValue(TWO_MEMBERS)

@@ -38,7 +38,6 @@ const {
   fetchRunArtifactMock,
   fetchActiveExecutionsMock,
   fetchExecutionLogsMock,
-  fetchAccessibilitySummaryMock,
   navigateMock,
 } = vi.hoisted(() => ({
   fetchRunMock: vi.fn(),
@@ -46,7 +45,6 @@ const {
   fetchRunArtifactMock: vi.fn(),
   fetchActiveExecutionsMock: vi.fn(),
   fetchExecutionLogsMock: vi.fn(),
-  fetchAccessibilitySummaryMock: vi.fn(),
   navigateMock: vi.fn(),
 }))
 
@@ -68,7 +66,7 @@ vi.mock("@/lib/api", () => ({
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
-  fetchAccessibilitySummary: fetchAccessibilitySummaryMock,
+  fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
   triggerRun: vi.fn(),
   // 2026-08-27 (404-07): run detail now subscribes a post-processing chip client on mount. This
   // whole-module mock REPLACES `@/lib/api`, so an omitted export is `undefined` at the call site
@@ -238,7 +236,6 @@ beforeEach(() => {
   fetchRunArtifactMock.mockReset()
   fetchActiveExecutionsMock.mockReset()
   fetchExecutionLogsMock.mockReset()
-  fetchAccessibilitySummaryMock.mockReset()
   navigateMock.mockReset()
 
   fetchActiveExecutionsMock.mockResolvedValue({ executions: [] })
@@ -251,16 +248,6 @@ beforeEach(() => {
     tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
   })
   fetchRunArtifactMock.mockResolvedValue({ run: { id: RUN_ID }, artifact: null, children: [], missingSections: ["artifact"] })
-  fetchAccessibilitySummaryMock.mockResolvedValue({
-    enabled: null,
-    total: 0,
-    bySeverity: { critical: 0, serious: 0, moderate: 0, minor: 0 },
-    byRule: [],
-    stepsWithViolations: 0,
-    scannedSteps: 0,
-    unscannedSteps: 0,
-    totalSteps: 0,
-  })
 })
 
 afterEach(() => {

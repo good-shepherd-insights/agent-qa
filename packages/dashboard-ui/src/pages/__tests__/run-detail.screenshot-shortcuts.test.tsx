@@ -25,7 +25,6 @@ const {
   fetchRunArtifactMock,
   fetchActiveExecutionsMock,
   fetchExecutionLogsMock,
-  fetchAccessibilitySummaryMock,
   useKeyboardShortcutsMock,
   latestShortcuts,
 } = vi.hoisted(() => {
@@ -36,7 +35,6 @@ const {
     fetchRunArtifactMock: vi.fn(),
     fetchActiveExecutionsMock: vi.fn(),
     fetchExecutionLogsMock: vi.fn(),
-    fetchAccessibilitySummaryMock: vi.fn(),
     useKeyboardShortcutsMock: vi.fn((shortcuts: Record<string, (event: KeyboardEvent) => void>) => {
       latest = shortcuts
     }),
@@ -58,7 +56,7 @@ vi.mock("@/lib/api", () => ({
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
-  fetchAccessibilitySummary: fetchAccessibilitySummaryMock,
+  fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
   triggerRun: vi.fn(),
   // 2026-08-27 (404-07): run detail now subscribes a post-processing chip client on mount. This
   // whole-module mock REPLACES `@/lib/api`, so an omitted export is `undefined` at the call site
@@ -333,21 +331,10 @@ beforeEach(() => {
   fetchRunArtifactMock.mockReset()
   fetchActiveExecutionsMock.mockReset()
   fetchExecutionLogsMock.mockReset()
-  fetchAccessibilitySummaryMock.mockReset()
   useKeyboardShortcutsMock.mockClear()
 
   fetchActiveExecutionsMock.mockResolvedValue({ executions: [] })
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
-  fetchAccessibilitySummaryMock.mockResolvedValue({
-    enabled: null,
-    total: 0,
-    bySeverity: { critical: 0, serious: 0, moderate: 0, minor: 0 },
-    byRule: [],
-    stepsWithViolations: 0,
-    scannedSteps: 0,
-    unscannedSteps: 0,
-    totalSteps: 0,
-  })
   fetchRunArtifactMock.mockResolvedValue({ run: makeRun("run-1"), artifact: null, children: [], missingSections: ["artifact"] })
   fetchRunMock.mockImplementation(async (id: string) => ({ run: makeRun(id) }))
   fetchRunDetailMock.mockImplementation(async (id: string) => makeProjection(id))

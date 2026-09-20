@@ -49,14 +49,12 @@ const {
   fetchRunKnowledgeMock,
   fetchRunArtifactMock,
   fetchExecutionLogsMock,
-  fetchAccessibilitySummaryMock,
 } = vi.hoisted(() => ({
   fetchRunMock: vi.fn(),
   fetchRunDetailMock: vi.fn(),
   fetchRunKnowledgeMock: vi.fn(),
   fetchRunArtifactMock: vi.fn(),
   fetchExecutionLogsMock: vi.fn(),
-  fetchAccessibilitySummaryMock: vi.fn(),
 }))
 
 vi.mock("@/lib/api", () => ({
@@ -67,7 +65,7 @@ vi.mock("@/lib/api", () => ({
   fetchRunKnowledge: fetchRunKnowledgeMock,
   fetchRunArtifact: fetchRunArtifactMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
-  fetchAccessibilitySummary: fetchAccessibilitySummaryMock,
+  fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
   triggerRun: vi.fn(),
   // The real watcher opens an `EventSource` and a 3 s interval against a `fetch` these cells do
   // not stub; its own behaviour is measured in `run-detail.post-processing.test.tsx`.
@@ -276,7 +274,6 @@ beforeEach(() => {
     fetchRunKnowledgeMock,
     fetchRunArtifactMock,
     fetchExecutionLogsMock,
-    fetchAccessibilitySummaryMock,
   ]) {
     mock.mockReset()
   }
@@ -290,16 +287,6 @@ beforeEach(() => {
     missingSections: ["artifact"],
   })
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
-  fetchAccessibilitySummaryMock.mockResolvedValue({
-    enabled: null,
-    total: 0,
-    bySeverity: { critical: 0, serious: 0, moderate: 0, minor: 0 },
-    byRule: [],
-    stepsWithViolations: 0,
-    scannedSteps: 0,
-    unscannedSteps: 0,
-    totalSteps: 0,
-  })
 })
 
 afterEach(() => {

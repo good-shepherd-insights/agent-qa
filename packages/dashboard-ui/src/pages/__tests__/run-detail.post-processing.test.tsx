@@ -36,7 +36,6 @@ const {
   fetchRunDetailMock,
   fetchRunArtifactMock,
   fetchExecutionLogsMock,
-  fetchAccessibilitySummaryMock,
   watchPostProcessingMock,
   disposeMock,
   navbarProps,
@@ -45,7 +44,6 @@ const {
   fetchRunDetailMock: vi.fn(),
   fetchRunArtifactMock: vi.fn(),
   fetchExecutionLogsMock: vi.fn(),
-  fetchAccessibilitySummaryMock: vi.fn(),
   watchPostProcessingMock: vi.fn(),
   disposeMock: vi.fn(),
   navbarProps: [] as Array<{ postProcessing: unknown; hasPostProcessing: unknown }>,
@@ -66,7 +64,7 @@ vi.mock("@/lib/api", async () => {
     fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
     fetchRunArtifact: fetchRunArtifactMock,
     fetchExecutionLogs: fetchExecutionLogsMock,
-    fetchAccessibilitySummary: fetchAccessibilitySummaryMock,
+    fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
     fetchActiveExecutions: vi.fn(),
     triggerRun: vi.fn(),
     watchPostProcessing: watchPostProcessingMock,
@@ -217,14 +215,12 @@ beforeEach(() => {
   fetchRunMock.mockReset()
   fetchRunArtifactMock.mockReset()
   fetchExecutionLogsMock.mockReset()
-  fetchAccessibilitySummaryMock.mockReset()
   watchPostProcessingMock.mockReset()
   disposeMock.mockReset()
 
   watchPostProcessingMock.mockReturnValue(disposeMock)
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
   fetchRunArtifactMock.mockResolvedValue({ run: { id: RUN_ID }, artifact: null, children: [], missingSections: ["artifact"] })
-  fetchAccessibilitySummaryMock.mockResolvedValue({ enabled: null, total: 0, violations: [], byImpact: {}, steps: [] })
   fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id) }))
   fetchRunDetailMock.mockImplementation(async (id: string) => ({
     runId: id,
