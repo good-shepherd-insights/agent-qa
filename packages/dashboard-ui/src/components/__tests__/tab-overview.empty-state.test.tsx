@@ -1,30 +1,12 @@
 // @vitest-environment jsdom
 
-// THE OVERVIEW'S SCREENSHOT STATES (405-11 · D-14 / D-15).
-//
-// FOUR STATES, AND NONE OF THEM MAY LOOK LIKE ANOTHER. "Still expected" and "never captured" were
-// already distinct here and stay word-for-word unchanged. This plan adds the two D-15 states the
-// ref shape makes possible: a blob that IS addressable renders an image minted through the one
-// route minter, and a blob the producer already flagged as gone renders a visible refusal instead
-// of a broken image element. 406-05 re-pinned the refusal to `EVIDENCE_INCOMPLETE_LABEL` and its
-// `data-evidence-state` attribute: the pane's own `data-artifact-state` wrapper still says WHICH
-// slot refused, the nested attribute says WHICH absence it is, and the two are asserted together
-// so a wrapper painted around the wrong word cannot pass.
-//
-// The `src` is asserted against `routes.runArtifact` BY CALLING IT, not by writing the URL out. A
-// literal here would pass while the page minted a different path, which is exactly the drift the
-// one-minter law exists to prevent.
-
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import {
-  NO_SCREENSHOT_LABEL,
-  PENDING_SCREENSHOT_LABEL,
-  TabOverview,
-  type ScreenshotEmptyState,
-} from "@/components/run-detail/tab-overview"
+import { TabOverview } from "@/components/run-detail/tab-overview"
+import { EVIDENCE_COPY } from "@/lib/evidence-state-view"
+import { buildTimelineModel } from "@/lib/playhead"
 import { fromRunDetailStep } from "@/lib/display-step"
 import { routes } from "@/lib/routes"
 import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
@@ -47,8 +29,7 @@ vi.mock("@/components/reasoning-pipeline", () => ({
 
 const SHA = "a1b2c3d4".repeat(8)
 
-const STEP = fromRunDetailStep(
-  {
+const RAW_STEP = {
     testIndex: 0,
     stepIndex: 0,
     stepText: "Open dashboard",
@@ -58,9 +39,8 @@ const STEP = fromRunDetailStep(
     briefDigest: "d00",
     status: "passed",
     durationMs: 1000,
-  },
-  [],
-)
+  } as const
+const STEP = fromRunDetailStep(RAW_STEP, [])
 
 function makeSubAction(artifactRefs?: readonly ArtifactRef[]): RunDetailSubAction {
   return {
@@ -80,7 +60,7 @@ let root: Root | null = null
 
 async function renderOverview(
   subAction: RunDetailSubAction | null,
-  screenshotEmptyState: ScreenshotEmptyState = "absent",
+  _legacyState: "pending" | "absent" = "absent",
 ) {
   container = document.createElement("div")
   document.body.appendChild(container)
@@ -92,7 +72,8 @@ async function renderOverview(
         step={STEP}
         subAction={subAction}
         runId="run-1"
-        screenshotEmptyState={screenshotEmptyState}
+        model={buildTimelineModel({ member: { testIndex: 0, name: "Test", attempts: 1 }, steps: [{ step: RAW_STEP, subActions: subAction ? [subAction] : [] }] })}
+        playhead={subAction ?? null}
       />,
     )
   })
@@ -101,6 +82,7 @@ async function renderOverview(
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals()
   if (root) act(() => root!.unmount())
   root = null
   container?.remove()
@@ -111,16 +93,16 @@ describe("TabOverview screenshot states", () => {
   it("shows pending copy while a screenshot is still expected", async () => {
     const view = await renderOverview(null, "pending")
 
-    expect(view.textContent).toContain(PENDING_SCREENSHOT_LABEL)
-    expect(view.textContent).not.toContain(NO_SCREENSHOT_LABEL)
+    expect(view.textContent).toContain(EVIDENCE_COPY.frame["not-captured"].step.title)
+    expect(view.textContent).not.toContain(EVIDENCE_COPY.frame["not-captured"]["sub-action"].title)
     expect(view.querySelector("img")).toBeNull()
   })
 
   it("shows absent copy when this turn recorded no decision screenshot", async () => {
     const view = await renderOverview(makeSubAction([]), "absent")
 
-    expect(view.textContent).toContain(NO_SCREENSHOT_LABEL)
-    expect(view.textContent).not.toContain(PENDING_SCREENSHOT_LABEL)
+    expect(view.textContent).toContain(EVIDENCE_COPY.frame["not-captured"]["sub-action"].title)
+    expect(view.textContent).not.toContain(EVIDENCE_COPY.frame["not-captured"].step.title)
     expect(view.textContent).not.toContain(EVIDENCE_INCOMPLETE_LABEL)
     expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).toBeNull()
     expect(view.querySelector("img")).toBeNull()
@@ -154,6 +136,7 @@ describe("TabOverview screenshot states", () => {
       makeSubAction([{ id: `decision-screenshot:${SHA}`, sha: SHA }]),
     )
 
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 404 }))
     const image = view.querySelector("img")
     expect(image).not.toBeNull()
 

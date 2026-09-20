@@ -101,7 +101,7 @@ function frame() { return host.querySelector('[data-frame]')?.getAttribute('src'
 
 function recordedProjection() {
   const detail = projection()
-  detail.members[0]!.recording = { state: 'present', ref: { id: 'recording', sha: 'e'.repeat(64) }, durationMs: 10000 }
+  detail.members[0]!.recording = { state: 'present', ref: { id: `recording:${'e'.repeat(64)}`, sha: 'e'.repeat(64) }, durationMs: 10000, contentType: 'video/webm', byteLength: 100 }
   detail.subActions.forEach((sub, index) => { sub.recordingOffsetMs = index * 2000 })
   detailRead.mockResolvedValue(detail)
 }
@@ -111,6 +111,8 @@ it('OVERVIEW-PLAYER-FIRST-BLOCK', async () => {
   const player = host.querySelector('[data-player]')
   expect(player).not.toBeNull()
   expect(player?.previousElementSibling).toBeNull()
+  const reasoning = [...player!.nextElementSibling!.querySelectorAll('button')].find(button => button.textContent?.includes('Reasoning'))
+  act(() => reasoning!.click())
   expect(player?.nextElementSibling?.querySelector('[data-sub-action-plan]')?.textContent).toBe('Action 3')
 })
 
@@ -163,6 +165,7 @@ it('PLAYHEAD-PARENT-SUBSTITUTED', async () => {
   await render()
   expect(frame()).toBe(routes.runArtifact('run-1', shas[1]!))
   expect(current()).toBe('0:0-1')
+  expect(host.querySelector('[data-player-caption]')?.textContent).toContain('Showing #2 of 3')
 })
 
 it('PLAYHEAD-TREE-FOLLOWS', async () => {

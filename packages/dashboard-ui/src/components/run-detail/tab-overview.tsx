@@ -1,47 +1,9 @@
-// THE OVERVIEW PANEL, ON THE DURABLE PROJECTION (405-11 · DETL-01/02/03, D-06, D-10, D-14, D-15,
-// RESEARCH D2).
-//
-// FIVE FACTS AND WHERE EACH ONE COMES FROM. The reasoning is the planner's own `plan` sentence; the
-// screenshot is minted from an `artifactRefs` entry through the one route minter; the screen
-// context is the recorded state-hash pair, because the bus carries no screen TEXT; the tokens are
-// the step's own measurement, absent-and-all; the result is the raw recorded word. Nothing here is
-// re-derived from something adjacent — the panel renders what the read returned, and says so when
-// the read returned nothing.
-//
-// EVERY PRODUCER STRING GOES THROUGH `MaskedText` (D-10, T-405-40). The plan, the planned action,
-// the recorded error and the step error all travel through the display-unmask seam, which rewrites
-// a placeholder it could not restore into a typed marker. Rendering one of those directly would put
-// a marker — or a raw placeholder — into a text node a person reads. There is no
-// `dangerouslySetInnerHTML` in this file.
-//
-// AN ABSENT BLOB IS A STATE, NOT A BROKEN IMAGE (D-15, widened by 406's D-17 / D-18). THREE roads
-// reach one visible node: a ref the producer already flagged `evidenceIncomplete`, a ref the
-// durable read itself found gone (`present: false` — D-17 stats the store at read time, so the
-// pane can refuse BEFORE asking), and a request that 404s on click. None of them is requested
-// twice and none of them is drawn as a broken image: "the evidence is gone" and "the page is
-// broken" must never look the same.
-//
-// PRESENCE UNKNOWN IS NOT AN ABSENCE, which is why the predicate reads `present === false` rather
-// than `!present`. A host whose store cannot stat leaves the key off entirely; treating that as
-// gone would make the page claim, on the strength of not having asked, that bytes it never looked
-// for are missing. The click-time refusal still covers the blob that really is.
-//
-// THE WORD ITSELF COMES FROM ONE COMPONENT (D-18). `EvidenceIncomplete` is shared with the failure
-// view's cited links, so the two surfaces cannot describe one fact in two words. The
-// `data-artifact-state` wrapper stays here — it is what the shipped-binary cells measure the PANE
-// by, while `data-evidence-state` is what they measure the STATE by.
+import { Brain, Play, ShieldCheck, Target } from "lucide-react"
 
-import { useState } from "react"
-import { Brain, Camera, Play, ShieldCheck, Target } from "lucide-react"
-
-import { ScreenshotViewer } from "@/components/screenshot-viewer"
 import { ReasoningPipeline } from "@/components/reasoning-pipeline"
 import type { SectionDef, ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { EvidenceIncomplete } from "@/components/run-detail/evidence-incomplete"
 import { MaskedText } from "@/components/run-detail/masked-text"
-import { routes } from "@/lib/routes"
 import {
-  decisionScreenshotRef,
   screenStateChangeLabel,
   screenStateChip,
   stepTokenTotals,
@@ -50,19 +12,23 @@ import {
 import type { DisplayStep } from "@/lib/display-step"
 import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
 
-/** What the pane says when this turn recorded no screenshot at all — distinct from an absent blob. */
-export const NO_SCREENSHOT_LABEL = "No screenshot captured"
+import { Player, type PlayerProps } from "./player"
 
-/** What the pane says while a screenshot is still expected on a run that has not finished. */
-export const PENDING_SCREENSHOT_LABEL = "Waiting for screenshot"
+export interface OverviewPlayerProps {
+  model?: PlayerProps["model"] | null
+  playhead?: PlayerProps["playhead"]
+  recording?: PlayerProps["recording"]
+  frame?: PlayerProps["frame"]
+  playerSource?: PlayerProps["source"]
+  onPlayerSourceChange?: PlayerProps["onSourceChange"]
+  onPlayheadChange?: PlayerProps["onPlayheadChange"]
+  seekFraction?: number
+}
 
-export type ScreenshotEmptyState = "pending" | "absent"
-
-interface TabOverviewProps {
+interface TabOverviewProps extends OverviewPlayerProps {
   step: DisplayStep
   subAction: RunDetailSubAction | null
   runId: string | null
-  screenshotEmptyState?: ScreenshotEmptyState
   pipelineRef?: React.RefObject<ReasoningPipelineHandle | null>
 }
 
@@ -173,78 +139,19 @@ function ScreenStateChips({ sub }: { sub: RunDetailSubAction }) {
   )
 }
 
-function ScreenshotAbsent({ label }: { label: string }) {
-  return (
-    <div className="h-full w-full py-12">
-      <div className="flex min-h-[16rem] w-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-        <Camera className="h-8 w-8" />
-        <span className="text-sm font-medium text-foreground">{label}</span>
-      </div>
-    </div>
-  )
-}
-
-/**
- * The screenshot the planner looked at when it decided this turn (D-14 / D-15).
- *
- * ONE SHOT, NO SIDES. The bus records a single decision screenshot per sub-action, so there is no
- * before/after pair to toggle between; the segmented control that used to sit here selected between
- * two path-addressed captures whose producer is gone.
- *
- * A REF KNOWN ABSENT IS NEVER REQUESTED (D-17). Whether the producer flagged it or the durable read
- * stat'd the store and found nothing, we already know the bytes are not there; asking anyway would
- * turn a known fact into a network round-trip whose 404 we would then have to interpret. All three
- * roads end at the same visible node — the first two just do not lie about having looked.
- */
-function DecisionScreenshot({
-  runId,
-  subAction,
-  emptyState,
-}: {
-  runId: string | null
-  subAction: RunDetailSubAction | null
-  emptyState: ScreenshotEmptyState
-}) {
-  const [failedSha, setFailedSha] = useState<string | null>(null)
-
-  const ref = subAction === null ? undefined : decisionScreenshotRef(subAction)
-  if (ref === undefined || runId === null) {
-    return (
-      <ScreenshotAbsent
-        label={emptyState === "pending" ? PENDING_SCREENSHOT_LABEL : NO_SCREENSHOT_LABEL}
-      />
-    )
-  }
-
-  if (ref.evidenceIncomplete === true || ref.present === false || failedSha === ref.sha) {
-    return (
-      <div data-artifact-state="unavailable" className="h-full w-full">
-        <EvidenceIncomplete variant="pane" />
-      </div>
-    )
-  }
-
-  return (
-    <div data-artifact-state="available" className="p-3 min-w-0">
-      <ScreenshotViewer
-        src={routes.runArtifact(runId, ref.sha)}
-        className="w-full rounded-sm overflow-hidden"
-        onUnavailable={() => setFailedSha(ref.sha)}
-      />
-    </div>
-  )
-}
-
 export function TabOverview({
   step,
   subAction,
   runId,
-  screenshotEmptyState = "absent",
+  model, playhead = null, recording, frame, playerSource = "frames",
+  onPlayerSourceChange = () => {}, onPlayheadChange = () => {}, seekFraction,
   pipelineRef,
 }: TabOverviewProps) {
   return (
-    <>
-      <DecisionScreenshot runId={runId} subAction={subAction} emptyState={screenshotEmptyState} />
+    <div data-overview>
+      {model && runId && <Player model={model} playhead={playhead} recording={recording} frame={frame}
+        source={playerSource} runId={runId} onSourceChange={onPlayerSourceChange}
+        onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} />}
       <div className="border-t">
         <div className="p-3 space-y-3 min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -281,6 +188,6 @@ export function TabOverview({
           ) : null}
         </div>
       </div>
-    </>
+    </div>
   )
 }

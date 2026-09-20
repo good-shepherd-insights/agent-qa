@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EvidenceIncomplete } from '@/components/run-detail/evidence-incomplete'
 import { TabOverview } from '@/components/run-detail/tab-overview'
+import { buildTimelineModel } from "@/lib/playhead"
 import { fromRunDetailStep } from '@/lib/display-step'
 import { routes } from '@/lib/routes'
 import { EVIDENCE_INCOMPLETE_LABEL, SCREENSHOT_UNAVAILABLE_LABEL } from '@/lib/run-detail-view'
@@ -42,8 +43,7 @@ vi.mock('@/components/reasoning-pipeline', () => ({
 
 const SHA = 'a1b2c3d4'.repeat(8)
 
-const STEP = fromRunDetailStep(
-  {
+const RAW_STEP = {
     testIndex: 0,
     stepIndex: 0,
     stepText: 'Open dashboard',
@@ -53,9 +53,8 @@ const STEP = fromRunDetailStep(
     briefDigest: 'd00',
     status: 'passed',
     durationMs: 1000,
-  },
-  [],
-)
+  } as const
+const STEP = fromRunDetailStep(RAW_STEP, [])
 
 function makeSubAction(artifactRefs: readonly RunDetailArtifactRef[]): RunDetailSubAction {
   return {
@@ -89,7 +88,9 @@ async function renderOverview(ref: RunDetailArtifactRef): Promise<HTMLDivElement
   root = createRoot(container)
   await act(async () => {
     root!.render(
-      <TabOverview step={STEP} subAction={makeSubAction([ref])} runId="run-1" />,
+      <TabOverview step={STEP} subAction={makeSubAction([ref])} runId="run-1"
+        model={buildTimelineModel({ member: { testIndex: 0, name: "Test", attempts: 1 }, steps: [{ step: RAW_STEP, subActions: [makeSubAction([ref])] }] })}
+        playhead={makeSubAction([ref])} />,
     )
   })
   return container

@@ -2,7 +2,7 @@ import { useRef, useEffect } from "react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { TabOverview } from "./tab-overview"
-import type { ScreenshotEmptyState } from "./tab-overview"
+import type { OverviewPlayerProps } from "./tab-overview"
 import { TabEnv } from "./tab-env"
 import { TabNetwork } from "./tab-network"
 import { TabConsole } from "./tab-console"
@@ -22,7 +22,7 @@ import { copyTextOf } from '@/lib/display-text'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EvidenceScopeLine, type EvidenceScope } from './evidence-scope-line'
 
-interface TabPanelsProps {
+interface TabPanelsProps extends OverviewPlayerProps {
   activeTab: string
   onTabChange: (tab: string) => void
   step: DisplayStep | null
@@ -31,7 +31,6 @@ interface TabPanelsProps {
   allSteps: DisplayStep[]
   executionLogs?: ExecutionLogEntry[]
   platform?: string
-  screenshotEmptyState?: ScreenshotEmptyState
   pipelineRef?: React.RefObject<ReasoningPipelineHandle | null>
   /**
    * The Knowledge tab's whole input (407-02 · D-01). `undefined` is the read that has not landed
@@ -50,7 +49,7 @@ export function TabPanels({
   allSteps,
   executionLogs = [],
   platform,
-  screenshotEmptyState = "absent",
+  model, playhead, recording, frame, playerSource, onPlayerSourceChange, onPlayheadChange, seekFraction,
   pipelineRef,
   knowledge,
   onSelectStep,
@@ -150,7 +149,9 @@ export function TabPanels({
             step={step}
             subAction={subAction}
             runId={runId}
-            screenshotEmptyState={screenshotEmptyState}
+            model={model} playhead={playhead} recording={recording} frame={frame}
+            playerSource={playerSource} onPlayerSourceChange={onPlayerSourceChange}
+            onPlayheadChange={onPlayheadChange} seekFraction={seekFraction}
             pipelineRef={pipelineRef}
           />}
         </ScrollArea>

@@ -341,6 +341,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.unstubAllGlobals()
   if (root) {
     act(() => root!.unmount())
   }
@@ -390,6 +391,7 @@ describe("RunDetailPage decision screenshot", () => {
   })
 
   it("renders a visible refusal, and no image, when the blob request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 404 }))
     const view = await renderAt("/runs/run-1?step=0:0&sub=0")
 
     const image = view.querySelector("img")

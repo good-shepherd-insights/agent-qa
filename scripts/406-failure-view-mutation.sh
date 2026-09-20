@@ -125,13 +125,12 @@
 #
 # THE MUTATED EXPRESSIONS ARE SPELLED LITERALLY AT THEIR SITES, ON PURPOSE. `ref.incomplete ?` is
 # written once in `verdict-block.tsx` and is not hoisted into a helper — 406-08 says so at the call
-# site — and `ref.present === false` is written out in `tab-overview.tsx`'s predicate rather than
-# folded into a `refIsAbsent()`. A hoist would leave these patterns matching nothing, which is a
-# FATAL by this script's law rather than a tidier component. The patterns and the sites:
+# site. The shared frameUsable predicate in lib/playhead.ts owns the frame presence check;
+# M3a follows that predicate. A missing literal remains fatal. The patterns and the sites:
 #
 #   M1   packages/safety/src/guardrail/detectors.ts        `isFractionalTail`'s round-trip tail
 #   M2   .../run-detail/verdict-block.tsx                  `ref.incomplete ? (` … `) : (`
-#   M3a  .../run-detail/tab-overview.tsx                   `ref.present === false ||`
+#   M3a  .../lib/playhead.ts                             `&& ref.present !== false`
 #   M3b  .../run-detail/verdict-block.tsx                  `ref.incomplete ? (` … `) : (`
 #   M4   .../run-detail/verdict-block.tsx                  `view.marks !== undefined && onMark`
 #
@@ -196,7 +195,7 @@ esac
 
 SEAM_SUBJECT="packages/safety/src/guardrail/detectors.ts"
 VERDICT_SUBJECT="packages/dashboard-ui/src/components/run-detail/verdict-block.tsx"
-OVERVIEW_SUBJECT="packages/dashboard-ui/src/components/run-detail/tab-overview.tsx"
+OVERVIEW_SUBJECT="packages/dashboard-ui/src/lib/playhead.ts"
 
 SUBJECT_PATHS=("$SEAM_SUBJECT" "$VERDICT_SUBJECT" "$OVERVIEW_SUBJECT")
 
@@ -404,7 +403,7 @@ apply_mutation () {
       # `evidenceIncomplete` flag and the failed-load fallback both stay, so the pane can still reach
       # `unavailable` by the two roads that do not know in advance; what this leg removes is the one
       # road that DOES — D-17's read-time stat — and with it the page's ability to avoid asking.
-      perl -0pi -e 's/ref\.evidenceIncomplete === true \|\| ref\.present === false \|\| failedSha === ref\.sha/ref.evidenceIncomplete === true || failedSha === ref.sha/' \
+      perl -0pi -e 's/ref\.evidenceIncomplete !== true && ref\.present !== false/ref.evidenceIncomplete !== true/' \
         "$REPO_ROOT/$OVERVIEW_SUBJECT" ;;
     M3b)
       # THE TERNARY COLLAPSED TO ITS BUTTON BRANCH. Same expression as M2, the opposite wrong answer:

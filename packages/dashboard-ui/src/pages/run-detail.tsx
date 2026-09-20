@@ -20,6 +20,7 @@ import { ArtifactDrawer, type ArtifactDrawerTab } from "@/components/run-detail/
 import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
+import { initialPlayerSource } from "@/lib/player-view"
 import { Timeline } from '@/components/run-detail/timeline'
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
@@ -45,7 +46,7 @@ import { copyTextOf } from "@/lib/display-text"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
 import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
-import { buildTimelineModel, parkTargetForStep, playheadFromSelection, selectionFromPlayhead, type Playhead } from '@/lib/playhead'
+import { buildTimelineModel, latestUsableFrame, type PlayerSource, parkTargetForStep, playheadFromSelection, selectionFromPlayhead, type Playhead } from '@/lib/playhead'
 import { stepSignals } from '@/lib/evidence-counts'
 
 const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'] as const
@@ -560,6 +561,13 @@ export default function RunDetailPage() {
   const timelineGroup = visibleGroups.find(group => group.member.testIndex === playhead?.testIndex)
     ?? visibleGroups[0]
   const timelineModel = useMemo(() => timelineGroup ? buildTimelineModel(timelineGroup) : null, [timelineGroup])
+  const recording = timelineGroup?.member.recording
+  const [sourceChoice, setSourceChoice] = useState<{ member: string; source: PlayerSource }>()
+  const playerMember = `${id}:${timelineGroup?.member.testIndex}:${recording?.state}`
+  const playerSource = sourceChoice?.member === playerMember ? sourceChoice.source : initialPlayerSource(recording)
+  const setPlayerSource = (source: PlayerSource) => setSourceChoice({ member: playerMember, source })
+  const foldedFrame = selection?.type === "step" && !playheadTarget
+    ? latestUsableFrame(selectedStep?.subActions ?? []) : undefined
   const timelineSignals = useMemo(() => Object.fromEntries(
     timelineGroup?.steps.map(({ step }) => [step.stepIndex, stepSignals(step.evidence)]) ?? [],
   ), [timelineGroup])
@@ -1028,7 +1036,7 @@ export default function RunDetailPage() {
                   <Timeline
                     model={timelineModel}
                     playhead={playhead}
-                    source='frames'
+                    source={playerSource}
                     runId={run.id}
                     signals={timelineSignals}
                     memberLabel={hasMemberChrome ? `${memberHandleLabel(timelineGroup.member.testIndex)} · ${memberDisplayName(timelineGroup.member)}` : undefined}
@@ -1047,6 +1055,9 @@ export default function RunDetailPage() {
                   onTabChange={setActiveTab}
                   step={selectedStep}
                   subAction={playheadSubAction}
+                  model={timelineModel} playhead={playhead} recording={recording} frame={foldedFrame}
+                  playerSource={playerSource} onPlayerSourceChange={setPlayerSource}
+                  onPlayheadChange={setPlayheadFrom} seekFraction={seekFraction}
                   runId={selectedStep?.rawRunId ?? run.id}
                   allSteps={displaySteps}
                   executionLogs={selection?.type === 'hook' && selectedHookLog ? [selectedHookLog]
