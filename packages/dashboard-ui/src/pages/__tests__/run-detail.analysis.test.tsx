@@ -557,7 +557,7 @@ describe("evidence the durable read found MISSING is said so, and changes nothin
     }))
     const view = await renderPage()
 
-    const chip = view.querySelector('[data-member="0"] [data-cited-artifact-state="incomplete"]')
+    const chip = view.querySelector('[data-member="0"] [data-cited-artifact-state="unavailable"]')
     expect(chip?.getAttribute("data-cited-artifact-sha"), "the ref keeps its place").toBe(SHA_GONE)
     expect(chip?.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
     expect(chip?.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
@@ -566,8 +566,8 @@ describe("evidence the durable read found MISSING is said so, and changes nothin
       "the artifact that IS there is still one click from the sentence",
     ).not.toBeNull()
 
-    const count = view.querySelector('[data-member="0"] [data-evidence-missing]')
-    expect(count?.getAttribute("data-evidence-missing")).toBe("1/2")
+    const count = view.querySelector('[data-member="0"] [data-evidence-incomplete="1/2"]')
+    expect(count?.getAttribute("data-evidence-incomplete")).toBe("1/2")
     expect(count?.textContent).toBe(missingEvidenceLine({ missing: 1, total: 2 }))
 
     expect(
@@ -581,7 +581,7 @@ describe("evidence the durable read found MISSING is said so, and changes nothin
     ).toBe("deterministic-classifier")
 
     expect(
-      view.querySelector('[data-member="1"] [data-evidence-missing]'),
+      view.querySelector('[data-member="1"] [data-evidence-incomplete]'),
       "the passed member is untouched — it has no block at all",
     ).toBeNull()
   })
@@ -603,8 +603,8 @@ describe("evidence the durable read found MISSING is said so, and changes nothin
     }))
     const view = await renderPage()
 
-    expect(view.querySelector('[data-member="0"] [data-evidence-missing]')).toBeNull()
-    expect(view.querySelector('[data-member="0"] [data-cited-artifact-state="incomplete"]')).toBeNull()
+    expect(view.querySelector('[data-member="0"] [data-evidence-incomplete="1/2"]')).toBeNull()
+    expect(view.querySelector('[data-member="0"] [data-cited-artifact-state="unavailable"]')).toBeNull()
     expect(view.querySelector(`[data-member="0"] [data-cited-artifact="${SHA_PRESENT}"]`)).not.toBeNull()
   })
 })

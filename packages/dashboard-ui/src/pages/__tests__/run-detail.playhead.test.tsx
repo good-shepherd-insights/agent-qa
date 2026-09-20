@@ -9,11 +9,11 @@ import RunDetailPage from '@/pages/run-detail'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { detailRead } = vi.hoisted(() => ({ detailRead: vi.fn() }))
+const { detailRead, analysisRead } = vi.hoisted(() => ({ detailRead: vi.fn(), analysisRead: vi.fn() }))
 vi.mock('@/lib/api', () => ({
   fetchRun: async () => ({ run: { id: 'run-1', name: 'Checkout run', status: 'passed', attributes: {}, platform: 'web' } }),
   fetchRunDetail: detailRead,
-  fetchRunAnalysis: async () => ({ runId: '', verdicts: [], sentences: [], clusters: [] }),
+  fetchRunAnalysis: analysisRead,
   fetchRunKnowledge: async () => ({ kind: 'evidence-incomplete', runId: '' }),
   fetchExecutionLogs: async () => ({ logs: [] }),
   fetchRunEvidence: async () => ({ kind: 'failed', error: 'No records in this fixture' }),
@@ -65,6 +65,7 @@ let root: Root
 beforeEach(() => {
   localStorage.clear()
   detailRead.mockResolvedValue(projection())
+  analysisRead.mockResolvedValue({ runId: 'run-1', verdicts: [], sentences: [], clusters: [] })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -104,6 +105,67 @@ function recordedProjection() {
   detail.subActions.forEach((sub, index) => { sub.recordingOffsetMs = index * 2000 })
   detailRead.mockResolvedValue(detail)
 }
+
+function citedProjection(sha = '9'.repeat(64)) {
+  const detail = projection()
+  detail.members.push({ testIndex: 2, name: 'Cited member', attempts: 1 })
+  detail.steps.push({ ...detail.steps[0]!, testIndex: 2, stepIndex: 3 })
+  detail.subActions.push({ ...detail.subActions[0]!, testIndex: 2, stepIndex: 3, subActionIndex: 1,
+    artifactRefs: [{ id: 'decision-screenshot:cited', sha: '9'.repeat(64) }] })
+  detailRead.mockResolvedValue(detail)
+  analysisRead.mockResolvedValue({ runId: 'run-1', clusters: [],
+    verdicts: [{ perTest: 0, testId: 't_checkout', class: 'unknown', producer: 'deterministic-classifier', confidence: 0,
+      evidence: { citedSteps: [], citedArtifacts: [{ id: 'cited', sha }] } }],
+    sentences: [{ perTest: 0, testId: 't_checkout', sentence: 'See screenshot' }],
+  })
+  return sha
+}
+
+it('CITED-JUMPS-PLAYHEAD crosses a hidden member and updates the URL', async () => {
+  const sha = citedProjection()
+  await render('/runs/run-1?member=0')
+  click(`[data-cited-artifact="${sha}"]`)
+  expect(current()).toBe('2:3-1')
+  expect(query().get('step')).toBe('2:3')
+  expect(query().get('sub')).toBe('1')
+  expect(query().has('member')).toBe(false)
+  expect(frame()).toBe(routes.runArtifact('run-1', sha))
+  expect(document.querySelector('[data-artifact-drawer-tab]')).toBeNull()
+})
+
+it('CITED-SWITCHES-TO-FRAMES activates Overview without storing a preference', async () => {
+  const sha = citedProjection()
+  localStorage.setItem('agent-qa.run-detail.player-source', 'video')
+  await render('/runs/run-1?tab=network')
+  click(`[data-cited-artifact="${sha}"]`)
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
+  expect(query().has('tab')).toBe(false)
+  expect(localStorage.getItem('agent-qa.run-detail.player-source')).toBe('video')
+})
+
+it('CITED-UNMATCHED-OPENS-LIGHTBOX leaves the playhead in place', async () => {
+  const sha = citedProjection('8'.repeat(64))
+  await render()
+  const before = current()
+  click(`[data-cited-artifact="${sha}"]`)
+  const lightbox = document.querySelector('[data-player-lightbox]')
+  expect(lightbox).not.toBeNull()
+  expect(lightbox?.textContent).toContain('has no place on the timeline')
+  expect(lightbox?.querySelector('img')?.getAttribute('src')).toBe(routes.runArtifact('run-1', sha))
+  expect(current()).toBe(before)
+  expect(document.querySelector('[data-artifact-drawer-tab]')).toBeNull()
+})
+
+it('CITED-LIGHTBOX-FOCUS-RETURNS to the citing button', async () => {
+  const sha = citedProjection('8'.repeat(64))
+  await render()
+  const citation = host.querySelector<HTMLButtonElement>(`[data-cited-artifact="${sha}"]`)!
+  act(() => { citation.focus(); citation.click() })
+  expect(document.querySelector('[data-player-lightbox]')).not.toBeNull()
+  await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Close screenshot"]')!.click() })
+  expect(document.querySelector('[data-player-lightbox]')).toBeNull()
+  expect(document.activeElement).toBe(citation)
+})
 
 function press(key: string, target: Element = document.body, shiftKey = false) {
   const event = new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true })

@@ -367,7 +367,7 @@ describe("evidence that is GONE is a chip where the link was, and a count beside
     expect(block.querySelector(`[data-cited-artifact="${SHA_PRESENT}"]`), "its sibling still opens")
       .not.toBeNull()
 
-    const chip = block.querySelector('[data-cited-artifact-state="incomplete"]')
+    const chip = block.querySelector('[data-cited-artifact-state="unavailable"]')
     expect(chip?.getAttribute("data-cited-artifact-sha"), "the ref is named, not silently dropped")
       .toBe(SHA_GONE)
     expect(chip?.tagName, "not a button").not.toBe("BUTTON")
@@ -390,15 +390,15 @@ describe("evidence that is GONE is a chip where the link was, and a count beside
 
     // ADDRESSED THE WAY 406-10 ADDRESSES IT — by the attribute's VALUE, not by reading it back off
     // a node found some other way. The count is the selector, so a wrong count is a missing node.
-    const count = block.querySelector('[data-evidence-missing="1/2"]')
+    const count = block.querySelector('[data-evidence-incomplete="1/2"]')
     expect(count, "one of two, and the attribute says which").not.toBeNull()
     expect(count?.textContent).toBe(missingEvidenceLine({ missing: 1, total: 2 }))
   })
 
   it("renders NO count line when every cited artifact is there", () => {
     const block = render({ citedArtifacts: [{ id: "art_0", sha: SHA_PRESENT, incomplete: false }] })
-    expect(block.querySelector("[data-evidence-missing]")).toBeNull()
-    expect(block.querySelector('[data-cited-artifact-state="incomplete"]')).toBeNull()
+    expect(block.querySelector("[data-evidence-incomplete=\"1/1\"]")).toBeNull()
+    expect(block.querySelector('[data-cited-artifact-state="unavailable"]')).toBeNull()
   })
 
   it("does NOT re-grade the verdict because a screenshot is gone", () => {
@@ -421,7 +421,7 @@ describe("evidence that is GONE is a chip where the link was, and a count beside
     expect(partial.querySelector("[data-verdict-sentence]")?.textContent).toBe(sentence)
   })
 
-  it("renders exactly ONE cited-artifact node when the only cited artifact is gone", () => {
+  it("CITED-BYTES-GONE-UNAVAILABLE renders exactly ONE cited-artifact node when the only cited artifact is gone", () => {
     // THE TWO MUTATIONS 406-11 LEGS, SHAPED AS ONE CELL. Dropping the absent ref would make this
     // zero; rendering it as an ordinary link would make it a BUTTON. Either edit reds here.
     const block = render({
@@ -434,10 +434,10 @@ describe("evidence that is GONE is a chip where the link was, and a count beside
     expect(nodes.length, "never zero — the reader would count fewer citations than the verdict made")
       .toBe(1)
     expect(nodes[0]?.tagName, "never a button — that is the plain-pass mutation").not.toBe("BUTTON")
-    expect(nodes[0]?.getAttribute("data-cited-artifact-state")).toBe("incomplete")
-    expect(block.querySelector("[data-evidence-missing]")?.getAttribute("data-evidence-missing"))
+    expect(nodes[0]?.getAttribute("data-cited-artifact-state")).toBe("unavailable")
+    expect(block.querySelector("[data-evidence-incomplete=\"1/1\"]")?.getAttribute("data-evidence-incomplete"))
       .toBe("1/1")
-    expect(block.querySelector("[data-evidence-missing]")?.textContent)
+    expect(block.querySelector("[data-evidence-incomplete=\"1/1\"]")?.textContent)
       .toBe(missingEvidenceLine({ missing: 1, total: 1 }))
   })
 })
