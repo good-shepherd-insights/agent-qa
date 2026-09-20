@@ -19,6 +19,7 @@ const seek = vi.fn()
 const openSignal = vi.fn()
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })))
   const group: RunDetailGroup = {
@@ -42,6 +43,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   host.remove()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 function render(extra: Partial<Props> = {}) {
@@ -85,7 +87,7 @@ test('TIMELINE-SELECTED-SEGMENT', () => {
   expect(query('[data-marker-current="true"]').innerHTML).toContain('ring-primary')
 })
 test('TIMELINE-SIGNAL-BADGES', () => {
-  const counts = stepSignals({ console: { kind: 'console', state: 'present', ref: { sha: 'b'.repeat(64) }, counts: { total: 2, errors: 2, warnings: 0 } } })
+  const counts = stepSignals({ console: { kind: 'console', state: 'present', ref: { id: `console-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) }, counts: { total: 2, errors: 2, warnings: 0 } } })
   render({ signals: { 0: counts } })
   const button = query('[data-step-signal="console"]')
   expect(button.tagName).toBe('BUTTON')
