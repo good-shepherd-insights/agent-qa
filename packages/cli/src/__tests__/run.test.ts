@@ -3649,8 +3649,8 @@ describe('run command — DashboardReporter wiring', () => {
   })
 })
 
-describe('run command — dashboard video recording root', () => {
-  it('uses .agent-qa/artifacts/videos for standalone recording by default', async () => {
+describe('run command — recording staging root', () => {
+  it('uses .agent-qa/recording-staging for standalone recording by default', async () => {
     const cfg = defaultConfig()
     mockResolveConfig.mockResolvedValue(cfg)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
@@ -3671,13 +3671,13 @@ describe('run command — dashboard video recording root', () => {
     expect(mockWebAdapterSetup).toHaveBeenCalledWith(
       expect.objectContaining({
         recording: expect.objectContaining({
-          videoDir: resolve(process.cwd(), '.agent-qa/artifacts/videos'),
+          videoDir: resolve(process.cwd(), '.agent-qa/recording-staging'),
         }),
       }),
     )
   })
 
-  it('uses artifactsDir/videos for suite recording in dashboard mode', async () => {
+  it('stages suite recording beside runs in dashboard mode', async () => {
     const { rootDir, suitePath, configPath } = await createTempSuiteWorkspace()
     const cfg = defaultConfig()
     cfg.services.dashboard = { dbPath: '.agent-qa/runs.db', artifactsDir: 'dashboard-artifacts' } as any
@@ -3695,11 +3695,11 @@ describe('run command — dashboard video recording root', () => {
     await runCommandWithGlobalArgs(['--config', configPath], '--record', suitePath)
 
     expect(mockWebAdapterSetup.mock.calls[0][0].recording).toEqual(expect.objectContaining({
-      videoDir: resolve(rootDir, 'dashboard-artifacts', 'videos'),
+      videoDir: resolve(rootDir, '.agent-qa', 'recording-staging'),
     }))
   })
 
-  it('uses artifactsDir/videos for adapter setup when standalone recording is enabled', async () => {
+  it('stages standalone recording beside runs despite a custom artifactsDir', async () => {
     const cfg = defaultConfig()
     cfg.services.dashboard = { dbPath: '.agent-qa/runs.db', artifactsDir: 'dashboard-artifacts' } as any
     mockResolveConfig.mockResolvedValue(cfg)
@@ -3721,13 +3721,13 @@ describe('run command — dashboard video recording root', () => {
     expect(mockWebAdapterSetup).toHaveBeenCalledWith(
       expect.objectContaining({
         recording: expect.objectContaining({
-          videoDir: resolve(process.cwd(), 'dashboard-artifacts', 'videos'),
+          videoDir: resolve(process.cwd(), '.agent-qa', 'recording-staging'),
         }),
       }),
     )
   })
 
-  it('uses artifactsDir/videos for per-test recording overrides in dashboard mode', async () => {
+  it('stages per-test recording overrides beside runs in dashboard mode', async () => {
     const cfg = defaultConfig()
     cfg.services.dashboard = { dbPath: '.agent-qa/runs.db', artifactsDir: 'dashboard-artifacts' } as any
     mockResolveConfig.mockResolvedValue(cfg)
@@ -3747,7 +3747,7 @@ describe('run command — dashboard video recording root', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(mockWebAdapterSetup.mock.calls[0][0].recording).toEqual(expect.objectContaining({
-      videoDir: resolve(process.cwd(), 'dashboard-artifacts', 'videos'),
+      videoDir: resolve(process.cwd(), '.agent-qa', 'recording-staging'),
     }))
   })
 })
