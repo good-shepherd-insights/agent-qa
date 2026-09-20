@@ -91,7 +91,11 @@ export const SEQUENTIAL_BASELINE: ReadonlyArray<{
     "payload": {
       "testId": "charlie",
       "testIndex": 2,
-      "outcome": "skipped"
+      "outcome": "skipped",
+      "recording": {
+        "state": "absent",
+        "reason": "not-captured"
+      }
     }
   },
   {

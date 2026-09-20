@@ -15,7 +15,7 @@ async function run(failFast = false) {
     scope: { tier: 'suite', key: 'synthetic' }, executionContext: 'local-headless',
     buildOrdinal: 1, configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
     masking: { mask: text => text.replaceAll('synthetic-secret', '[secret]'), unmask: text => text },
-    members: ['first', 'second'].map(testId => ({ testId, name: testId,
+    members: ['first', 'second'].map(testId => ({ testId, name: testId, filePath: 'synthetic.yaml',
       ...(failFast ? { failFastGroup: 'group' } : {}) })),
     executor: async member => {
       executed.push(member.testId)

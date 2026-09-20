@@ -304,7 +304,9 @@ export function startRun(config: RunConfig): RunSession {
         outcomeSlots[i] = skip
         memberOutcomeSlots[i] = 'skipped'
         memberQuarantinedSlots[i] = quarantined
-        bus.publish('testFinished', projectTestFinished(skip, mask))
+        bus.publish('testFinished', projectTestFinished(skip, mask, {
+          recording: { state: 'absent', reason: 'not-captured' },
+        }))
         return
       }
 
@@ -502,6 +504,7 @@ export function startRun(config: RunConfig): RunSession {
           durationMs: result.duration,
           failureSummary: result.failureSummary,
           retryCount: result.retryCount,
+          ...(result.recording !== undefined ? { recording: result.recording } : {}),
         }),
       )
     }
