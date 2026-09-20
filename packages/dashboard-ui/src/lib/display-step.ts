@@ -2,6 +2,7 @@ import type {
   RunDetailStep,
   RunDetailSubAction,
   RunStepTokenUsage,
+  StepEvidenceEntries,
   VerifierVerdict,
 } from '@vostride/agent-qa-schema'
 
@@ -63,6 +64,7 @@ export interface DisplayStep {
   selfHealOccurred?: boolean
   /** ABSENT when the step reported no usage — never a zero (D-05/D-06). */
   tokenUsage?: RunStepTokenUsage
+  evidence?: StepEvidenceEntries
 
   // ---- live-editor fields; a durable step carries none of them ----
   liveSubActions?: LiveSubAction[] | null
@@ -134,6 +136,7 @@ export function fromRunDetailStep(
     verifierVerdict: step.verifierVerdict,
     selfHealOccurred: step.selfHealOccurred,
     tokenUsage: step.tokenUsage,
+    evidence: step.evidence,
   }
 }
 

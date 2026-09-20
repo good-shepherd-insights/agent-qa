@@ -11,6 +11,8 @@ import type {
   RunKnowledgeProjection,
   RunServiceReadiness,
   RunsLiveUrlResult,
+  RunsEvidenceInput,
+  RunsEvidenceResult,
   RunsMarkInput,
   GateRemedy,
   RunsMarkOutcome,
@@ -366,6 +368,25 @@ export async function fetchRun(id: string): Promise<{ run: RunRow }> {
  */
 export async function fetchRunDetail(id: string): Promise<RunDetailProjection> {
   return request(`/api/runs/${encodeURIComponent(id)}/detail`)
+}
+
+export type RunEvidenceRead =
+  | { kind: 'read'; result: RunsEvidenceResult }
+  | { kind: 'failed'; error: string }
+
+export async function fetchRunEvidence(input: RunsEvidenceInput): Promise<RunEvidenceRead> {
+  const query = new URLSearchParams({
+    testIndex: String(input.testIndex),
+    stepIndex: String(input.stepIndex),
+    kind: input.kind,
+  })
+  if (input.subActionIndex !== undefined) query.set('subActionIndex', String(input.subActionIndex))
+  try {
+    const result = await request<RunsEvidenceResult>(`/api/runs/${encodeURIComponent(input.runId)}/evidence?${query}`)
+    return { kind: 'read', result }
+  } catch (error) {
+    return { kind: 'failed', error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 export class MarkDeniedError extends Error {

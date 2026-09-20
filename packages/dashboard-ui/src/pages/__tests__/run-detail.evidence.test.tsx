@@ -3,13 +3,15 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId } from '@vostride/agent-qa-ids'
+import { asRunId } from '@vostride/agent-qa-schema'
 import type { RunDetailStep, RunsEvidenceResult, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import { TabA11y } from '@/components/run-detail/tab-a11y'
 import { fromRunDetailStep } from '@/lib/display-step'
+import { EVIDENCE_COPY } from '@/lib/evidence-state-view'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const runId = generateRunId()
+const runId = asRunId(generateRunId())
 const sha = 'a'.repeat(64)
 const present: StepEvidenceEntries['a11y'] = {
   kind: 'a11y', state: 'present', ref: { id: `a11y-evidence:${sha}`, sha },
@@ -92,5 +94,12 @@ it('A11Y-STALE-DISCARDED ignores a response after the selected address changes',
 it.each(['empty', 'not-captured', 'unsupported', 'unavailable', 'failed'] as const)('A11Y-ABSENCE maps %s without fetching', async reason => {
   await render(step(0, { kind: 'a11y', state: 'absent', reason }))
   expect(container.querySelector(`[data-evidence-state="${reason}"]`)).not.toBeNull()
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+it('A11Y-NO-SELECTION uses the shared neutral state', async () => {
+  await act(async () => { root.render(<TabA11y step={null} runId={runId} />) })
+  expect(container.querySelector('[data-evidence-state="no-selection"][data-evidence-tone="neutral"][role="status"]')).not.toBeNull()
+  expect(container.textContent).toContain(EVIDENCE_COPY.a11y['no-selection'].title)
   expect(fetchMock).not.toHaveBeenCalled()
 })

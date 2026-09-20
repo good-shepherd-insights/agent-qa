@@ -135,7 +135,7 @@ export function TabPanels({
 
       <TabsContent value="a11y" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
-          <TabA11y step={step} summary={accessibilitySummary} />
+          <TabA11y step={step} runId={runId} />
         </ScrollArea>
       </TabsContent>
 
