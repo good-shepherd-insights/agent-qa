@@ -19,9 +19,10 @@ vi.mock('../run-detail/tab-knowledge', () => ({ TabKnowledge: () => <div>Knowled
 const sha = 'a'.repeat(64)
 const subAction = {
   testIndex: 0, stepIndex: 1, subActionIndex: 1,
-  action: { type: 'navigate', url: 'https://example.com' },
+  plan: 'Open page', plannedAction: { type: 'navigate', to: 'url', url: 'https://example.com' },
+  result: { success: true }, screenStateHash: sha,
   ariaEvidence: { kind: 'aria', state: 'absent', reason: 'not-captured' },
-} as RunDetailSubAction
+} satisfies RunDetailSubAction
 function step(): DisplayStep {
   return {
     id: '0:1', name: 'Open page', status: 'passed', duration: 1,
@@ -39,6 +40,7 @@ function step(): DisplayStep {
 let container: HTMLDivElement
 let root: Root
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -46,6 +48,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.unstubAllGlobals()
 })
 function Panels(props: Partial<ComponentProps<typeof TabPanels>>) {
   const [tab, setTab] = useState('overview')

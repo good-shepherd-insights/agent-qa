@@ -15,6 +15,12 @@ import type { DisplayStep } from "@/lib/display-step"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
 import { resolveEvidenceView } from '@/lib/evidence-state-view'
+import { Accessibility, CircleX, Globe } from 'lucide-react'
+import type { EvidenceKind } from '@vostride/agent-qa-schema'
+import { absentTriggerName, countedTriggerName, tabCounts } from '@/lib/evidence-counts'
+import { copyTextOf } from '@/lib/display-text'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { EvidenceScopeLine, type EvidenceScope } from './evidence-scope-line'
 
 interface TabPanelsProps {
   activeTab: string
@@ -70,7 +76,52 @@ export function TabPanels({
     ? executionLogs.some(log => log.type === 'hook') ? 'hook' : 'execution-log'
     : !step ? 'none' : subAction ? 'sub-action' : 'step'
 
+  const counts = tabCounts(step?.evidence, subAction?.ariaEvidence, selection)
+  const durableStep = !hasExecutionLogs && step?.testIndex !== undefined && step.stepIndex !== undefined
+    ? step : null
+  const scopeLine = (scope: EvidenceScope) => durableStep && (
+    <EvidenceScopeLine
+      scope={scope}
+      step={durableStep.displayStepOrder}
+      total={scope === 'step' ? durableStep.displayStepTotal ?? allSteps.length : durableStep.subActions?.length ?? 0}
+      subAction={subAction ? subAction.subActionIndex + 1 : undefined}
+    />
+  )
+  const evidenceTrigger = (kind: EvidenceKind, value: string, label: string) => {
+    const count = kind === 'console' && hasExecutionLogs ? undefined : counts[kind]
+    const name = count?.kind === 'absent' ? absentTriggerName(kind, count.title)
+      : count ? countedTriggerName(kind, count) : undefined
+    const Icon = kind === 'console' ? CircleX : kind === 'network' ? Globe : Accessibility
+    const trigger = (
+      <TabsTrigger
+        value={value}
+        aria-label={name ? copyTextOf(name) : undefined}
+        className={`text-xs rounded-none flex-initial${count?.kind === 'absent' ? ' opacity-60 data-[state=active]:opacity-100' : ''}`}
+      >
+        {label}
+        {count && count.kind !== 'absent' && (
+          <span
+            data-tab-count={count.count}
+            data-tab-count-kind={count.kind}
+            aria-hidden="true"
+            className={`inline-flex items-center gap-1 tabular-nums ${count.kind === 'total' ? 'text-muted-foreground' : count.severity === 'moderate' ? 'text-amber-500' : 'text-red-500'}`}
+          >
+            {count.kind === 'problem' && <Icon className="h-3.5 w-3.5 size-3.5" />}
+            {count.count}
+          </span>
+        )}
+      </TabsTrigger>
+    )
+    return count?.kind === 'absent' ? (
+      <Tooltip>
+        <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+        <TooltipContent>{name}</TooltipContent>
+      </Tooltip>
+    ) : trigger
+  }
+
   return (
+    <TooltipProvider>
     <Tabs
       value={activeTab}
       onValueChange={onTabChange}
@@ -78,13 +129,11 @@ export function TabPanels({
     >
       <TabsList variant="line" className="w-full justify-start border-b px-3 h-9 shrink-0 rounded-none">
         <TabsTrigger value="overview" className="text-xs rounded-none flex-initial">Overview</TabsTrigger>
-        <TabsTrigger value="env" className="text-xs rounded-none flex-initial">Variables</TabsTrigger>
-        <TabsTrigger value="network" className="text-xs rounded-none flex-initial">Network</TabsTrigger>
-        <TabsTrigger value="console" className="text-xs rounded-none flex-initial">
-          {hasExecutionLogs ? 'stdout' : 'Console'}
-        </TabsTrigger>
-        <TabsTrigger value="aria" className="text-xs rounded-none flex-initial">ARIA Tree</TabsTrigger>
-        <TabsTrigger value="a11y" className="text-xs rounded-none flex-initial">A11y</TabsTrigger>
+        {evidenceTrigger('variables', 'env', 'Variables')}
+        {evidenceTrigger('network', 'network', 'Network')}
+        {evidenceTrigger('console', 'console', hasExecutionLogs ? 'stdout' : 'Console')}
+        {evidenceTrigger('aria', 'aria', 'ARIA Tree')}
+        {evidenceTrigger('a11y', 'a11y', 'A11y')}
         {/*
           THE TRIGGER IS STATIC TAB METADATA (UI-SPEC, Knowledge tab trigger). It renders with its
           six siblings whatever the `runs.knowledge` read is doing: the loading state and the error
@@ -96,6 +145,7 @@ export function TabPanels({
 
       <TabsContent value="overview" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
+          {scopeLine('sub-action')}
           {step && <TabOverview
             step={step}
             subAction={subAction}
@@ -108,6 +158,7 @@ export function TabPanels({
 
       <TabsContent value="env" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
+          {scopeLine('step')}
           <TabEnv step={step} executionLogs={executionLogs} runId={runId} selection={selection} allSteps={allSteps} onSelectStep={onSelectStep} />
         </ScrollArea>
       </TabsContent>
@@ -115,6 +166,7 @@ export function TabPanels({
       <TabsContent value="network" className="flex-1 min-h-0">
         <div ref={networkScrollRef} className="h-full">
           <ScrollArea className="h-full">
+            {scopeLine('step')}
             <TabNetwork step={step} allSteps={allSteps} platform={platform} runId={runId} selection={selection} evidenceSteps={allSteps} onSelectStep={onSelectStep} />
           </ScrollArea>
         </div>
@@ -123,12 +175,14 @@ export function TabPanels({
       <TabsContent value="console" className="flex-1 min-h-0">
         <div ref={consoleScrollRef} className="h-full">
           <ScrollArea className="h-full">
+            {scopeLine('step')}
             <TabConsole step={step} allSteps={allSteps} executionLogs={executionLogs} isHookStep={hasExecutionLogs} runId={runId} selection={selection} evidenceSteps={allSteps} onSelectStep={onSelectStep} />
           </ScrollArea>
         </div>
       </TabsContent>
 
-      <TabsContent value="aria" className="flex flex-1 min-h-0 overflow-hidden">
+      <TabsContent value="aria" className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        {scopeLine('sub-action')}
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <TabAriaTree step={step} subAction={subAction} runId={runId} selection={selection} />
         </div>
@@ -136,6 +190,7 @@ export function TabPanels({
 
       <TabsContent value="a11y" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
+          {scopeLine('step')}
           <TabA11y step={step} runId={runId} selection={selection} allSteps={allSteps} onSelectStep={onSelectStep} />
         </ScrollArea>
       </TabsContent>
@@ -146,5 +201,6 @@ export function TabPanels({
         </ScrollArea>
       </TabsContent>
     </Tabs>
+    </TooltipProvider>
   )
 }
