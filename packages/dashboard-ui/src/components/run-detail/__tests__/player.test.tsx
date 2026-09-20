@@ -5,7 +5,7 @@ import { asRef, maskedMarker } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { buildTimelineModel, latestUsableFrame, type TimelineModel } from '@/lib/playhead'
 import type { RunDetailGroup } from '@/lib/run-detail-view'
-import { PLAYER_COPY, VIDEO_UNTIMED_NOTE } from '@/lib/player-view'
+import { PLAYER_COPY, PLAYER_SOURCE_STORAGE_KEY, VIDEO_UNTIMED_NOTE } from '@/lib/player-view'
 import { createFakeMedia } from '@/test/media-facade'
 import { routes } from '@/lib/routes'
 
@@ -22,6 +22,7 @@ const sourceChange = vi.fn()
 const sha = 'a'.repeat(64)
 beforeEach(() => {
   vi.clearAllMocks()
+  HTMLElement.prototype.scrollIntoView = vi.fn()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('fetch', vi.fn(async () => ({ status: 404 })))
   group = {
@@ -245,6 +246,45 @@ test('LIGHTBOX-FOCUS-RETURNS', async () => {
   trigger.focus()
   lightbox(vi.fn(), trigger)
   await act(async () => root.render(null))
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
   expect(document.activeElement).toBe(trigger)
   trigger.remove()
+})
+
+test('PLAYER-PREFERENCE-EXPLICIT-TOGGLE-ONLY', () => {
+  const storage = { getItem: vi.fn(() => 'video'), setItem: vi.fn() }
+  vi.stubGlobal('localStorage', storage)
+  render()
+  expect(storage.setItem).not.toHaveBeenCalled()
+  act(() => query('[data-slot="toggle-group-item"][aria-label^="Video"]').click())
+  expect(storage.setItem).toHaveBeenCalledWith(PLAYER_SOURCE_STORAGE_KEY, 'video')
+})
+test('PLAYER-VIDEO-SPEED-AND-CLEANUP', async () => {
+  const media = video()
+  metadata(media)
+  act(() => button(PLAYER_COPY.speed).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === '2×')!
+  expect(option).toBeDefined()
+  act(() => option.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  expect(media.playbackRate).toBe(2)
+  await act(async () => button(PLAYER_COPY.play).click())
+  render({ source: 'frames' })
+  expect(media.paused).toBe(true)
+  act(() => media.fire('timeupdate', 15))
+  expect(change).not.toHaveBeenCalled()
+})
+test('LIGHTBOX-OVERLAY-CLOSE', async () => {
+  const close = vi.fn()
+  lightbox(close)
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+  const overlay = document.querySelector('[data-slot="dialog-overlay"]')!
+  act(() => overlay.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 })))
+  expect(close).toHaveBeenCalledWith(false)
+})
+test('LIGHTBOX-FRAME-LOAD-FAILURE', async () => {
+  vi.mocked(fetch).mockResolvedValue({ status: 500 } as Response)
+  const pane = lightbox()
+  await act(async () => pane.querySelector('img')!.dispatchEvent(new Event('error')))
+  expect(pane.querySelector<HTMLElement>('[data-evidence-kind="frame"]')?.dataset.evidenceFailure).toBe('load')
+  expect(pane.textContent).toContain('Retry loading the screenshot')
 })
