@@ -1,5 +1,7 @@
 import { expect, test } from 'vitest'
-import { EVIDENCE_ABSENCE_REASONS } from '@vostride/agent-qa-schema'
+import { asRunId, EVIDENCE_ABSENCE_REASONS } from '@vostride/agent-qa-schema'
+import type { EvidenceDocument, EvidenceEntry, RunDetailStep, RunsEvidenceResult } from '@vostride/agent-qa-schema'
+import type { RunEvidenceRead } from '../api'
 import * as view from '../evidence-state-view'
 import { EVIDENCE_INCOMPLETE_LABEL } from '../run-detail-view'
 
@@ -69,4 +71,112 @@ test('C424-COPY-RULES', () => {
     expect(copy.failed.capture.explanation).toContain('nothing to retry')
     expect(copy.failed.load.explanation).not.toContain('nothing to retry')
   }
+})
+
+const present: EvidenceEntry = {
+  kind: 'a11y', state: 'present',
+  ref: { id: `a11y-evidence:${'a'.repeat(64)}`, sha: 'a'.repeat(64) },
+  counts: { minor: 0, moderate: 0, serious: 0, critical: 0 },
+}
+const address = { runId: asRunId('fixture run'), testIndex: 0, stepIndex: 2, kind: 'a11y' as const }
+const input = { kind: 'a11y' as const, selection: 'step' as const, entry: present, read: 'idle' as const }
+function ready(document: EvidenceDocument): RunEvidenceRead {
+  return { kind: 'read', result: { address: { ...address, kind: document.kind }, outcome: 'ready', evidence: present, document } }
+}
+function step(stepIndex: number, captured = false, testIndex = 0): RunDetailStep {
+  return {
+    testIndex, stepIndex, cacheStatus: 'miss', verifierVerdict: { pass: true, reasoning: 'ok' },
+    selfHealOccurred: false, briefDigest: 'fixture',
+    evidence: {
+      a11y: captured ? present as Extract<EvidenceEntry, { kind: 'a11y' }> : { kind: 'a11y', state: 'absent', reason: 'not-captured' },
+      console: { kind: 'console', state: 'absent', reason: 'not-captured' },
+      network: { kind: 'network', state: 'absent', reason: 'not-captured' },
+      variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
+    },
+  }
+}
+
+test('VIEW-EMPTY-INPUTS', () => {
+  expect(view.resolveEvidenceView).toBeTypeOf('function')
+  for (const selection of ['none', 'hook', 'execution-log'] as const) {
+    expect(view.resolveEvidenceView({ ...input, selection })).toMatchObject({ kind: 'state', state: 'no-selection', ...view.EVIDENCE_COPY.a11y['no-selection'] })
+  }
+  for (const document of [
+    { schemaVersion: 1, kind: 'a11y', records: [] },
+    { schemaVersion: 1, kind: 'console', records: [] },
+    { schemaVersion: 1, kind: 'network', records: [] },
+    { schemaVersion: 1, kind: 'variables', records: {} },
+    { schemaVersion: 1, kind: 'aria', tree: '' },
+  ] satisfies EvidenceDocument[]) {
+    expect(view.resolveEvidenceView({ ...input, kind: document.kind, selection: 'sub-action', read: ready(document) })).toMatchObject({ kind: 'state', state: 'empty', ...view.EVIDENCE_COPY[document.kind].empty })
+  }
+  expect(view.resolveEvidenceView({ ...input, kind: 'aria' })).toMatchObject({ kind: 'state', state: 'no-selection' })
+  expect(view.resolveEvidenceView({ ...input, entry: undefined })).toMatchObject({ kind: 'state', state: 'unavailable' })
+  for (const read of ['idle', 'loading'] as const) {
+    expect(view.resolveEvidenceView({ ...input, read })).toEqual({ kind: 'loading' })
+  }
+  const document = { schemaVersion: 1, kind: 'aria', tree: 'button "Continue"' } as const
+  expect(view.resolveEvidenceView({ ...input, kind: 'aria', selection: 'sub-action', read: ready(document) })).toEqual({ kind: 'records', document })
+})
+
+test('VIEW-LOAD-FAILURE-NEVER-EMPTY', () => {
+  expect(view.resolveEvidenceView).toBeTypeOf('function')
+  const codes = ['address-not-found', 'ambiguous-address', 'invalid-entry', 'ref-not-owned', 'sha-mismatch', 'invalid-document', 'storage-read-failed', 'snapshot-missing', 'masking-unavailable'] as const
+  const reads: RunEvidenceRead[] = [
+    { kind: 'failed', error: 'private diagnostic' },
+    ...codes.map(code => ({ kind: 'read' as const, result: { address, outcome: 'read-error' as const, code } })),
+    ready({ schemaVersion: 1, kind: 'console', records: [] }),
+  ]
+  for (const read of reads) {
+    const result = view.resolveEvidenceView({ ...input, read })
+    expect(result).toMatchObject({ kind: 'state', state: 'failed', failure: 'load', ...view.EVIDENCE_COPY.a11y.failed.load, action: { type: 'retry', label: view.EVIDENCE_RETRY_LABELS.a11y } })
+    expect(JSON.stringify(result)).not.toContain('private diagnostic')
+  }
+  const failed: EvidenceEntry = { kind: 'a11y', state: 'absent', reason: 'failed' }
+  for (const result of [
+    view.resolveEvidenceView({ ...input, entry: failed }),
+    view.resolveEvidenceView({ ...input, read: { kind: 'read', result: { address, outcome: 'absent', evidence: failed } } }),
+  ]) {
+    expect(result).toMatchObject({ kind: 'state', state: 'failed', failure: 'capture', ...view.EVIDENCE_COPY.a11y.failed.capture })
+    expect(result).not.toHaveProperty('action')
+  }
+})
+
+test('VIEW-ABSENCE-REASONS preserves every recorded reason and bytes-gone explanation', () => {
+  expect(view.resolveEvidenceView).toBeTypeOf('function')
+  for (const reason of EVIDENCE_ABSENCE_REASONS) {
+    expect(view.resolveEvidenceView({ ...input, entry: { kind: 'a11y', state: 'absent', reason } })).toMatchObject({ kind: 'state', state: reason })
+  }
+  const evidence: Extract<RunsEvidenceResult, { outcome: 'absent' }>['evidence'] = { kind: 'a11y', state: 'absent', reason: 'unavailable', evidenceIncomplete: true }
+  for (const result of [
+    view.resolveEvidenceView({ ...input, entry: evidence }),
+    view.resolveEvidenceView({ ...input, read: { kind: 'read', result: { address, outcome: 'absent', evidence } } }),
+    view.resolveEvidenceView({ ...input, kind: 'video', entry: { state: 'absent', reason: 'unavailable', evidenceIncomplete: true } }),
+  ]) {
+    expect(result).toMatchObject({ kind: 'state', state: 'unavailable', incomplete: true, explanation: view.EVIDENCE_INCOMPLETE_EXPLANATION })
+    expect(result).not.toHaveProperty('action')
+  }
+})
+
+test('RECORDED-ELSEWHERE-NEAREST', () => {
+  expect(view.recordedElsewhere).toBeTypeOf('function')
+  const steps = [step(8, true), step(2), step(0, true), step(3, true), step(1)]
+  expect(view.recordedElsewhere(steps, 2, 'a11y')).toBe(steps[3])
+  expect(view.recordedElsewhere(steps, 2, 'network')).toBeUndefined()
+  expect(view.recordedElsewhere([], 2, 'a11y')).toBeUndefined()
+  expect(view.recordedElsewhere([step(2, true)], 2, 'a11y')).toBeUndefined()
+  const elsewhere = { steps, currentStepIndex: 2 }
+  const result = view.resolveEvidenceView({ ...input, entry: steps[1]?.evidence?.a11y, elsewhere })
+  expect(result).toMatchObject({ kind: 'state', state: 'not-captured', action: { type: 'step', stepIndex: 3, label: view.GO_TO_STEP_LABEL(4), description: view.RECORDED_ELSEWHERE_LABEL(4) } })
+  for (const reason of ['empty', 'unsupported', 'unavailable', 'failed'] as const) {
+    expect(view.resolveEvidenceView({ ...input, entry: { kind: 'a11y', state: 'absent', reason }, elsewhere })).not.toHaveProperty('action')
+  }
+})
+
+test('RECORDED-ELSEWHERE-TIE-LATER', () => {
+  expect(view.recordedElsewhere).toBeTypeOf('function')
+  const before = step(1, true)
+  const after = step(3, true)
+  expect(view.recordedElsewhere([before, step(2), after], 2, 'a11y')).toBe(after)
+  expect(view.recordedElsewhere([after, step(2), before], 2, 'a11y')).toBe(after)
 })
