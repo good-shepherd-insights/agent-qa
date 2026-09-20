@@ -111,6 +111,7 @@ async function renderPanels() {
         subAction={null}
         runId="run-1"
         allSteps={[]}
+        onSelectStep={() => {}}
       />,
     )
   })
@@ -175,6 +176,8 @@ describe("TabPanels", () => {
             },
           }}
           executionLogs={[]}
+          runId={null}
+          selection="step"
         />,
       )
     })

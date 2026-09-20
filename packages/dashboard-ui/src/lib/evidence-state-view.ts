@@ -265,12 +265,14 @@ export type EvidenceView =
         | { type: 'step'; label: string; description: string; stepIndex: number }
     } & CopyPair)
 
-export function recordedElsewhere(
-  steps: readonly RunDetailStep[],
+type EvidenceStep = Pick<RunDetailStep, 'stepIndex' | 'evidence'>
+
+export function recordedElsewhere<T extends EvidenceStep>(
+  steps: readonly T[],
   currentStepIndex: number,
   kind: keyof StepEvidenceEntries,
-): RunDetailStep | undefined {
-  let nearest: RunDetailStep | undefined
+): T | undefined {
+  let nearest: T | undefined
   for (const step of steps) {
     if (step.stepIndex === currentStepIndex || step.evidence?.[kind].state !== 'present') continue
     const distance = Math.abs(step.stepIndex - currentStepIndex)
@@ -287,7 +289,7 @@ export function resolveEvidenceView({ kind, selection, entry, read, elsewhere }:
   selection: 'none' | 'hook' | 'execution-log' | 'step' | 'sub-action'
   entry: EvidenceEntry | RecordingEntry | undefined
   read: 'idle' | 'loading' | RunEvidenceRead
-  elsewhere?: { steps: readonly RunDetailStep[]; currentStepIndex: number }
+  elsewhere?: { steps: readonly EvidenceStep[]; currentStepIndex: number }
 }): EvidenceView {
   const stateView = (state: EvidenceState, failure?: EvidenceFailure, incomplete?: boolean): EvidenceView => {
     const copy = state === 'failed' ? EVIDENCE_COPY[kind].failed[failure ?? 'capture'] : EVIDENCE_COPY[kind][state]

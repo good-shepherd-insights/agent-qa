@@ -1,14 +1,11 @@
-import { useEffect, useState } from 'react'
 import type { EvidenceDocument } from '@vostride/agent-qa-schema'
-import { asRunId } from '@vostride/agent-qa-schema'
 import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
-import { fetchRunEvidence, type RunEvidenceRead } from '@/lib/api'
+import { useEvidenceRecords } from '@/hooks/use-evidence-records'
 import type { DisplayStep } from '@/lib/display-step'
 import { copyTextOf } from '@/lib/display-text'
-import { EVIDENCE_COPY, EVIDENCE_LOADING_LABEL, EVIDENCE_STATE_OF_REASON, type EvidenceFailure, type EvidenceState as State } from '@/lib/evidence-state-view'
+import { resolveEvidenceView } from '@/lib/evidence-state-view'
 import { cn } from '@/lib/utils'
-import { EvidenceState } from './evidence-state'
+import { EvidenceState, EvidenceLoading } from './evidence-state'
 import { MaskedText } from './masked-text'
 
 function impactColor(impact: string): string {
@@ -19,13 +16,6 @@ function impactColor(impact: string): string {
     case 'minor': return 'bg-blue-500/15 text-blue-500 border-blue-500/20'
     default: return 'bg-muted text-muted-foreground'
   }
-}
-
-function Absence({ state, failure = 'capture', incomplete, onRetry }: { state: State; failure?: EvidenceFailure; incomplete?: boolean; onRetry?: () => void }) {
-  const copy = EVIDENCE_COPY.a11y
-  return <EvidenceState kind="a11y" state={state} failure={failure} incomplete={incomplete}
-    {...(state === 'failed' ? copy.failed[failure] : copy[state])}
-    actionLabel={onRetry ? copy.retry : undefined} onAction={onRetry} />
 }
 
 function Violations({ records }: { records: Extract<EvidenceDocument, { kind: 'a11y' }>['records'] }) {
@@ -54,36 +44,31 @@ function Violations({ records }: { records: Extract<EvidenceDocument, { kind: 'a
   )
 }
 
-export function TabA11y({ step, runId }: { step: DisplayStep | null; runId: string | null }) {
+export function TabA11y({ step, runId, selection = step ? 'step' : 'none', allSteps = [], onSelectStep }: {
+  step: DisplayStep | null
+  runId: string | null
+  selection?: Parameters<typeof resolveEvidenceView>[0]['selection']
+  allSteps?: DisplayStep[]
+  onSelectStep?: (stepId: string) => void
+}) {
   const entry = step?.evidence?.a11y
   const testIndex = step?.testIndex
   const stepIndex = step?.stepIndex
-  const key = JSON.stringify([runId, testIndex, stepIndex, 'a11y'])
-  const [attempt, setAttempt] = useState(0)
-  const [read, setRead] = useState<{ key: string; attempt: number; result: RunEvidenceRead }>()
-  useEffect(() => {
-    if (entry?.state !== 'present' || !runId || testIndex === undefined || stepIndex === undefined) return
-    let cancelled = false
-    void fetchRunEvidence({ runId: asRunId(runId), testIndex, stepIndex, kind: 'a11y' }).then(result => {
-      if (!cancelled) setRead({ key, attempt, result })
-    })
-    return () => { cancelled = true }
-  }, [runId, testIndex, stepIndex, key, entry, attempt])
-
-  if (!step) return <Absence state="no-selection" />
-  if (!entry) return <Absence state="unavailable" />
-  if (entry.state === 'absent') return <Absence state={EVIDENCE_STATE_OF_REASON[entry.reason]} incomplete={entry.evidenceIncomplete} />
-  const retry = () => setAttempt(value => value + 1)
-  if (!runId || testIndex === undefined || stepIndex === undefined) return <Absence state="failed" failure="load" />
-  if (!read || read.key !== key || read.attempt !== attempt) return (
-    <div data-evidence-loading data-evidence-kind="a11y" aria-busy="true" className="space-y-2 p-3">
-      <span role="status" className="sr-only">{EVIDENCE_LOADING_LABEL}</span>
-      <Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" />
-    </div>
-  )
-  if (read.result.kind === 'failed' || read.result.result.outcome === 'read-error') return <Absence state="failed" failure="load" onRetry={retry} />
-  const result = read.result.result
-  if (result.outcome === 'absent') return <Absence state={EVIDENCE_STATE_OF_REASON[result.evidence.reason]} incomplete={result.evidence.evidenceIncomplete} />
-  if (result.document.kind !== 'a11y') return <Absence state="failed" failure="load" onRetry={retry} />
-  return result.document.records.length === 0 ? <Absence state="empty" /> : <Violations records={result.document.records} />
+  const enabled = entry?.state === 'present' && !entry.ref.evidenceIncomplete
+    && (selection === 'step' || selection === 'sub-action')
+  const { read, retry } = useEvidenceRecords(testIndex !== undefined && stepIndex !== undefined
+    ? { runId: runId ?? '', testIndex, stepIndex, kind: 'a11y' } : null, enabled)
+  const memberSteps = allSteps.filter(s => s.testIndex === testIndex && s.stepIndex !== undefined)
+    .map(s => ({ ...s, stepIndex: s.stepIndex! }))
+  const view = resolveEvidenceView({ kind: 'a11y', selection, entry, read,
+    elsewhere: stepIndex === undefined ? undefined : { steps: memberSteps, currentStepIndex: stepIndex } })
+  if (view.kind === 'loading') return <EvidenceLoading kind="a11y" />
+  if (view.kind === 'state') {
+    const action = view.action
+    return <EvidenceState {...view} kind="a11y"
+      explanation={action?.type === 'step' ? `${view.explanation} ${action.description}` : view.explanation}
+      actionLabel={action?.label} onAction={action?.type === 'retry' ? retry : action?.type === 'step' && onSelectStep
+        ? () => { const target = memberSteps.find(s => s.stepIndex === action.stepIndex); if (target) onSelectStep(target.id) } : undefined} />
+  }
+  return view.document.kind === 'a11y' ? <Violations records={view.document.records} /> : null
 }

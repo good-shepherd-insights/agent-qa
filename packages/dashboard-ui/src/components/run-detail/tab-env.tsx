@@ -4,10 +4,18 @@ import { ChevronRight, CheckCircle2, XCircle } from "lucide-react"
 import { cn, formatDuration } from "@/lib/utils"
 import type { ExecutionLogEntry, LiveExecutionLogEntry } from "@/lib/api"
 import type { DisplayStep } from "@/lib/display-step"
+import { useEvidenceRecords } from '@/hooks/use-evidence-records'
+import { EVIDENCE_COPY, resolveEvidenceView } from '@/lib/evidence-state-view'
+import { EvidenceLoading, EvidenceState } from './evidence-state'
+import { MaskedText } from './masked-text'
 
 interface TabEnvProps {
-  step: Pick<DisplayStep, "variableSnapshot">
+  step: Pick<DisplayStep, 'variableSnapshot' | 'testIndex' | 'stepIndex' | 'evidence'> | null
   executionLogs?: Array<ExecutionLogEntry | LiveExecutionLogEntry>
+  runId?: string | null
+  selection?: Parameters<typeof resolveEvidenceView>[0]['selection']
+  allSteps?: DisplayStep[]
+  onSelectStep?: (stepId: string) => void
 }
 
 function sourceColor(source: string): string {
@@ -52,7 +60,28 @@ function EmptySection({ message }: { message: string }) {
   )
 }
 
-export function TabEnv({ step, executionLogs = [] }: TabEnvProps) {
+export function TabEnv({ step, executionLogs = [], runId, selection = step ? 'step' : 'none', allSteps = [], onSelectStep }: TabEnvProps) {
+  const entry = step?.evidence?.variables
+  const { read, retry } = useEvidenceRecords(step?.testIndex !== undefined && step.stepIndex !== undefined
+    ? { runId: runId ?? '', testIndex: step.testIndex, stepIndex: step.stepIndex, kind: 'variables' } : null,
+  entry?.state === 'present' && (selection === 'step' || selection === 'sub-action'))
+  if (step && step.testIndex === undefined && selection === 'step') return <Variables step={step} executionLogs={executionLogs} />
+  const memberSteps = allSteps.filter(s => s.testIndex === step?.testIndex && s.stepIndex !== undefined)
+    .map(s => ({ ...s, stepIndex: s.stepIndex! }))
+  const view = resolveEvidenceView({ kind: 'variables', selection, entry, read,
+    elsewhere: step?.stepIndex === undefined ? undefined : { steps: memberSteps, currentStepIndex: step.stepIndex } })
+  if (view.kind === 'loading') return <EvidenceLoading kind="variables" />
+  if (view.kind === 'state') {
+    const action = view.action
+    return <EvidenceState {...view} kind="variables"
+      explanation={action?.type === 'step' ? `${view.explanation} ${action.description}` : view.explanation}
+      actionLabel={action?.label} onAction={action?.type === 'retry' ? retry : action?.type === 'step' && onSelectStep
+        ? () => { const target = memberSteps.find(s => s.stepIndex === action.stepIndex); if (target) onSelectStep(target.id) } : undefined} />
+  }
+  return view.document.kind === 'variables' ? <Variables step={{ variableSnapshot: view.document.records }} /> : null
+}
+
+function Variables({ step, executionLogs = [] }: { step: Pick<DisplayStep, 'variableSnapshot'>; executionLogs?: Array<ExecutionLogEntry | LiveExecutionLogEntry> }) {
   const snapshot = step.variableSnapshot
   const envEntries = snapshot ? Object.entries(snapshot) : []
 
@@ -63,7 +92,7 @@ export function TabEnv({ step, executionLogs = [] }: TabEnvProps) {
     <div className="py-1">
       <SectionHeader title="Env" count={envEntries.length} defaultOpen={envEntries.length > 0}>
         {envEntries.length === 0 ? (
-          <EmptySection message="No variables at this step" />
+          <EvidenceState kind="variables" state="empty" {...EVIDENCE_COPY.variables.empty} />
         ) : (
           <div className="px-3 pb-2">
             <table className="w-full text-sm">
@@ -77,8 +106,8 @@ export function TabEnv({ step, executionLogs = [] }: TabEnvProps) {
               <tbody>
                 {envEntries.map(([key, meta]) => (
                   <tr key={key} className="border-b border-border/50">
-                    <td className="py-1.5 px-2 font-mono text-xs text-muted-foreground">{key}</td>
-                    <td className="py-1.5 px-2 font-mono text-xs break-all">{meta.value}</td>
+                    <td className="py-1.5 px-2 font-mono text-xs text-muted-foreground"><MaskedText text={key} /></td>
+                    <td className="py-1.5 px-2 font-mono text-xs break-all"><MaskedText text={meta.value} /></td>
                     <td className="py-1.5 px-2">
                       <Badge className={cn("text-[10px] px-1.5 py-0 border", sourceColor(meta.source))}>
                         {meta.source}

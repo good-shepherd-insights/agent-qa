@@ -17,7 +17,6 @@ import { EmptyState } from "@/components/empty-state"
 import { useOptionalProductTour } from "@/components/product-tour"
 import { RunNavbar } from "@/components/run-detail/run-navbar"
 import { ArtifactDrawer, type ArtifactDrawerTab } from "@/components/run-detail/artifact-drawer"
-import { HookDetailPanel } from "@/components/run-detail/hook-detail-panel"
 import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
@@ -559,15 +558,6 @@ export default function RunDetailPage() {
     allExecutionLogs.filter(l => l.stepId !== null),
     [allExecutionLogs]
   )
-  const selectedStepLogs = useMemo(() => {
-    if (!selectedStep) return []
-    return stepExecutionLogs.filter((log) => {
-      if (log.stepId === selectedStep.id) return true
-      if (!log.stepId) return false
-      if (selectedStep.rawRunId && log.runId && selectedStep.rawRunId !== log.runId) return false
-      return Number.parseInt(log.stepId, 10) === selectedStep.rawStepOrder
-    })
-  }, [stepExecutionLogs, selectedStep])
   const selectedHookLog = useMemo(() =>
     selection?.type === 'hook'
       ? allExecutionLogs.find(l => l.id === selection.hookId) ?? null
@@ -980,11 +970,6 @@ export default function RunDetailPage() {
 
           <ResizablePanel defaultSize={65} minSize={30} data-tour-id="tour-run-detail-reasoning">
             <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-              {selection?.type === 'hook' && selectedHookLog ? (
-                <HookDetailPanel log={selectedHookLog} />
-              ) : selection?.type === 'execution' && selectedExecutionLog ? (
-                <HookDetailPanel log={selectedExecutionLog} />
-              ) : (
                 <TabPanels
                   activeTab={activeTab}
                   onTabChange={setActiveTab}
@@ -992,12 +977,13 @@ export default function RunDetailPage() {
                   subAction={selectedSubAction}
                   runId={selectedStep?.rawRunId ?? run.id}
                   allSteps={displaySteps}
-                  executionLogs={selectedStepLogs}
+                  executionLogs={selection?.type === 'hook' && selectedHookLog ? [selectedHookLog]
+                    : selection?.type === 'execution' && selectedExecutionLog ? [selectedExecutionLog] : []}
                   platform={run.platform}
                   pipelineRef={pipelineRef}
                   knowledge={knowledgeView}
+                  onSelectStep={stepId => setSelection({ type: 'step', stepId })}
                 />
-              )}
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>
