@@ -82,6 +82,8 @@ const FORBIDDEN: { label: string; needle: string }[] = [
   { label: 'the deleted live-feed replay buffer getter', needle: 'getBuffered' + 'Events' },
   { label: 'the deleted parent-link column', needle: 'parent_run' + '_id' },
   { label: 'the deleted run-level recording column', needle: 'video' + '_path' },
+  { label: 'the deleted accessibility summary helper', needle: 'fetchAccessibility' + 'Summary' },
+  { label: 'the deleted accessibility route tail', needle: ')}/access' + 'ibility' },
 ]
 
 const SCAN_EXCLUDED_DIRS = new Set(['dist', 'node_modules', '.turbo', 'coverage', '__tests__'])

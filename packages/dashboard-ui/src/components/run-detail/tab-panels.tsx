@@ -9,7 +9,7 @@ import { TabConsole } from "./tab-console"
 import { TabAriaTree } from "./tab-aria-tree"
 import { TabA11y } from "./tab-a11y"
 import { TabKnowledge } from "./tab-knowledge"
-import type { AccessibilitySummary, ExecutionLogEntry } from "@/lib/api"
+import type { ExecutionLogEntry } from "@/lib/api"
 import type { KnowledgeView } from "@/lib/knowledge-view"
 import type { DisplayStep } from "@/lib/display-step"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
@@ -23,7 +23,6 @@ interface TabPanelsProps {
   runId: string | null
   allSteps: DisplayStep[]
   executionLogs?: ExecutionLogEntry[]
-  accessibilitySummary?: AccessibilitySummary | null
   platform?: string
   screenshotEmptyState?: ScreenshotEmptyState
   pipelineRef?: React.RefObject<ReasoningPipelineHandle | null>
@@ -42,7 +41,6 @@ export function TabPanels({
   runId,
   allSteps,
   executionLogs = [],
-  accessibilitySummary,
   platform,
   screenshotEmptyState = "absent",
   pipelineRef,

@@ -22,8 +22,8 @@ import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
-import type { RunRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary, KnowledgeRead, PostProcessingRead } from "@/lib/api"
+import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
+import type { RunRow, ExecutionLogEntry, RunArtifactResponse, KnowledgeRead, PostProcessingRead } from "@/lib/api"
 import type { AnalysisGetOutput, RunDetailProjection, RunDetailSubAction } from "@vostride/agent-qa-schema"
 import {
   MEMBER_FILTER_ALL,
@@ -214,7 +214,6 @@ export default function RunDetailPage() {
 
   const [selection, setSelection] = useState<Selection | null>(null)
   const [allExecutionLogs, setAllExecutionLogs] = useState<ExecutionLogEntry[]>([])
-  const [accessibilitySummary, setAccessibilitySummary] = useState<AccessibilitySummary | null>(null)
 
   // THE CHIP CLIENT LIVES HERE, NOT IN THE HEADER (404-07, D-20 / 400 D-13). The navbar is
   // presentational: it takes a view and paints it. A header that fetched for itself would open one
@@ -523,25 +522,6 @@ export default function RunDetailPage() {
     if (!hasStepId(selection)) return null
     return displaySteps.find(s => s.id === selection.stepId) ?? null
   }, [selection, displaySteps])
-
-  const accessibilityRunId = selectedStep?.rawRunId ?? run?.id ?? null
-
-  useEffect(() => {
-    if (!accessibilityRunId) {
-      setAccessibilitySummary(null)
-      return
-    }
-    setAccessibilitySummary(null)
-    let cancelled = false
-    fetchAccessibilitySummary(accessibilityRunId)
-      .then((summary) => {
-        if (!cancelled) setAccessibilitySummary(summary)
-      })
-      .catch(() => {
-        if (!cancelled) setAccessibilitySummary(null)
-      })
-    return () => { cancelled = true }
-  }, [accessibilityRunId])
 
   // THE SELECTED SUB-ACTION IS THE DURABLE ONE (405-11 · D-16).
   //
@@ -1013,7 +993,6 @@ export default function RunDetailPage() {
                   runId={selectedStep?.rawRunId ?? run.id}
                   allSteps={displaySteps}
                   executionLogs={selectedStepLogs}
-                  accessibilitySummary={accessibilitySummary}
                   platform={run.platform}
                   pipelineRef={pipelineRef}
                   knowledge={knowledgeView}

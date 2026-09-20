@@ -1085,17 +1085,6 @@ export async function fetchTokenEventStats(opts?: { from?: string; to?: string }
   return request(`/api/token-events/stats${query}`)
 }
 
-export interface AccessibilitySummary {
-  enabled: boolean | null
-  total: number
-  bySeverity: { critical: number; serious: number; moderate: number; minor: number }
-  byRule: Array<{ ruleId: string; count: number; impact: string }>
-  stepsWithViolations: number
-  scannedSteps: number
-  unscannedSteps: number
-  totalSteps: number
-}
-
 // Log API
 
 export interface LogEntry {
@@ -1121,10 +1110,6 @@ export async function fetchRunLogs(
     offset: opts?.offset,
   })
   return request(`/api/runs/${encodeURIComponent(runId)}/logs${query}`)
-}
-
-export async function fetchAccessibilitySummary(runId: string): Promise<AccessibilitySummary> {
-  return request(`/api/runs/${encodeURIComponent(runId)}/accessibility`)
 }
 
 // Config & LLM settings API
