@@ -1,6 +1,10 @@
-import { actionFamilyOf, type Action, type ActionFamily, type RunDetailSubAction } from '@vostride/agent-qa-schema'
-import { Braces, CircleDashed, Compass, Hand, Hourglass, MousePointerClick, ScanEye,
-  Smartphone, Terminal, TextCursorInput, Wrench, type LucideIcon } from 'lucide-react'
+import {
+  actionFamilyOf, type Action, type ActionFamily, type RunDetailSubAction,
+} from '@vostride/agent-qa-schema'
+import {
+  Braces, CircleDashed, Compass, Hand, Hourglass, MousePointerClick, ScanEye,
+  Smartphone, Terminal, TextCursorInput, Wrench, type LucideIcon,
+} from 'lucide-react'
 import { copyTextOf } from './display-text'
 
 export const ACTION_VERBS = {
@@ -81,7 +85,9 @@ const NAVIGATION_VERBS = {
   reload: { past: 'Reloaded the page', infinitive: 'reload the page' },
   url: { past: 'Navigated to', infinitive: 'navigate to' },
 } as const
-const INSPECT_LABELS = { console: 'console', network: 'network', cookies: 'cookies', localStorage: 'local storage' } as const
+const INSPECT_LABELS = {
+  console: 'console', network: 'network', cookies: 'cookies', localStorage: 'local storage',
+} as const
 
 export type ActionSentencePart = { kind: 'text'; text: string } | { kind: 'masked'; text: string }
 export interface ActionSentenceModel {
@@ -109,10 +115,17 @@ export function buildActionSentence(sub: RunDetailSubAction): ActionSentenceMode
   if (action.type === 'navigate' && Object.hasOwn(NAVIGATION_VERBS, action.to)) {
     verb = NAVIGATION_VERBS[action.to]
   }
-  const parts: ActionSentencePart[] = [{ kind: 'text', text: outcome === 'succeeded' ? verb.past : `Tried to ${verb.infinitive}` }]
+  const parts: ActionSentencePart[] = [{
+    kind: 'text',
+    text: outcome === 'succeeded' ? verb.past : `Tried to ${verb.infinitive}`,
+  }]
   const text = (value: string) => { parts.push({ kind: 'text', text: value }) }
   const masked = (value: string) => { parts.push({ kind: 'masked', text: value }) }
-  const quoted = (value: string) => { text(" '"); masked(value); text("'") }
+  const quoted = (value: string) => {
+    text(" '")
+    masked(value)
+    text("'")
+  }
 
   if (action.type === 'navigate') {
     if (action.to === 'url') quoted(action.url)
@@ -125,19 +138,31 @@ export function buildActionSentence(sub: RunDetailSubAction): ActionSentenceMode
     }
   } else if (action.type === 'setVariable') {
     if (action.name) quoted(action.name)
-    if (action.value !== undefined) { text(' to '); masked(action.value) }
+    if (action.value !== undefined) {
+      text(' to ')
+      masked(action.value)
+    }
   } else {
     const name = sub.grounding?.descriptor.name || plannedTarget(action)
     const role = sub.grounding?.descriptor.role
     const value = action.type === 'fill' ? action.text
       : action.type === 'select' || action.type === 'paste' ? action.value : undefined
     if (action.type === 'select' || action.type === 'paste') {
-      if (value !== undefined) { text(' '); masked(value) }
+      if (value !== undefined) {
+        text(' ')
+        masked(value)
+      }
       if (name || role) text(action.type === 'select' ? ' in' : ' into')
     }
     if (name) quoted(name)
-    else if (role) { text(/^[aeiou]/i.test(role) ? ' an ' : ' a '); masked(role) }
-    if (action.type === 'fill' && value !== undefined) { text(' with '); masked(value) }
+    else if (role) {
+      text(/^[aeiou]/i.test(role) ? ' an ' : ' a ')
+      masked(role)
+    }
+    if (action.type === 'fill' && value !== undefined) {
+      text(' with ')
+      masked(value)
+    }
   }
   if (outcome === 'failed') text(ACTION_FAILURE_SUFFIX)
   return { family, outcome, parts }

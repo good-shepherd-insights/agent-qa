@@ -9,7 +9,10 @@ const modules = import.meta.glob<typeof import('../action-sentence')>('../action
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
 let container: HTMLDivElement
-afterEach(() => { act(() => root?.unmount()); container?.remove() })
+afterEach(() => {
+  act(() => root?.unmount())
+  container?.remove()
+})
 
 it('SENTENCE-SECRET-CHIP renders masked parts, safe names and the outcome icon', () => {
   const module = modules['../action-sentence.tsx']
