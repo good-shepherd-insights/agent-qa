@@ -4,13 +4,14 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import { asRunId } from '@vostride/agent-qa-schema'
-import type { EvidenceDocument, RunDetailStep, RunsEvidenceResult, StepEvidenceEntries } from '@vostride/agent-qa-schema'
+import { asRunId, maskedMarker } from '@vostride/agent-qa-schema'
+import type { EvidenceDocument, RunDetailStep, RunDetailSubAction, RunsEvidenceResult, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import { TabA11y } from '@/components/run-detail/tab-a11y'
 import { TabPanels } from '@/components/run-detail/tab-panels'
 import { fromRunDetailStep } from '@/lib/display-step'
 import { EVIDENCE_COPY } from '@/lib/evidence-state-view'
 import RunDetailPage from '@/pages/run-detail'
+import type { ExecutionLogEntry } from '@/lib/api'
 
 vi.mock('@/lib/api', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/api')>(),
@@ -231,4 +232,94 @@ it('A11Y-GROUP-ORDER keeps fixed impact ordering and stored order within a group
   const minor = container.querySelector('[data-a11y-impact="minor"]')!
   expect(minor.textContent!.indexOf('first')).toBeLessThan(minor.textContent!.indexOf('second'))
   expect(minor.querySelector('h3')?.textContent).toBe('minor · 2')
+})
+
+const ariaEntry = { kind: 'aria', state: 'present', ref: { id: `aria-state:${sha}`, sha } } as const
+const subAction: RunDetailSubAction = {
+  testIndex: 0, stepIndex: 0, subActionIndex: 2, plan: 'Inspect',
+  plannedAction: { type: 'wait', ms: 100 }, result: { success: true }, screenStateHash: sha,
+  ariaEvidence: ariaEntry,
+}
+function completeStep() {
+  const selected = step()
+  selected.evidence!.console = { kind: 'console', state: 'present', counts: { total: 1, errors: 0, warnings: 0 }, ref: { id: `console-evidence:${sha}`, sha } }
+  selected.evidence!.network = { kind: 'network', state: 'present', counts: { total: 1, failed: 0, errored: 0 }, ref: { id: `network-evidence:${sha}`, sha } }
+  return selected
+}
+async function evidencePanels(tab: string, selected = completeStep(), action: RunDetailSubAction | null = subAction, logs: ExecutionLogEntry[] = [], allSteps = [selected]) {
+  await act(async () => { root.render(<TabPanels activeTab={tab} onTabChange={() => {}}
+    step={selected} subAction={action} runId={runId} allSteps={allSteps} executionLogs={logs} />) })
+  await flushRecords()
+}
+function documentResponse(document: EvidenceDocument): Response {
+  const evidence = document.kind === 'aria' ? ariaEntry : completeStep().evidence![document.kind]
+  return response({ address: { runId, testIndex: 0, stepIndex: 0, kind: document.kind, ...(document.kind === 'aria' ? { subActionIndex: 2 } : {}) }, outcome: 'ready', evidence,
+    document } as RunsEvidenceResult)
+}
+
+for (const kind of ['network', 'console', 'aria'] as const) it(`TAB-LOAD-FAILURE-${kind.toUpperCase()} offers a working retry and never claims empty`, async () => {
+  fetchMock.mockRejectedValue(new Error('offline'))
+  await evidencePanels(kind)
+  expect(container.querySelector(`[data-evidence-kind="${kind}"][data-evidence-state="failed"][data-evidence-failure="load"]`)).not.toBeNull()
+  expect(container.querySelector('[data-evidence-state="empty"]')).toBeNull()
+  fetchMock.mockResolvedValue(documentResponse(kind === 'aria'
+    ? { schemaVersion: 1, kind, tree: '' } : { schemaVersion: 1, kind, records: [] }))
+  await act(async () => { container.querySelector<HTMLButtonElement>('[data-evidence-state="failed"] button')!.click() })
+  await flushRecords()
+  expect(container.querySelector(`[data-evidence-kind="${kind}"][data-evidence-state="empty"]`)).not.toBeNull()
+})
+
+it('HOOK-STDOUT-KEPT keeps only stdout and no-selection on the other evidence tabs', async () => {
+  const selected = completeStep()
+  selected.consoleLogs = [{ level: 'log', timestamp: 1, text: 'browser content must stay out' }]
+  const logs = [{ id: 'hook-output', name: 'Setup', type: 'hook', phase: 'setup', status: 'passed', duration: 1, stdout: 'hook says hello' }] as ExecutionLogEntry[]
+  for (const tab of ['env', 'network', 'aria', 'a11y']) {
+    await evidencePanels(tab, selected, null, logs)
+    expect(container.querySelector('[data-evidence-state="no-selection"]')).not.toBeNull()
+  }
+  await evidencePanels('console', selected, null, logs)
+  expect(container.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe('stdout')
+  expect(container.textContent).toContain('hook says hello')
+  expect(container.textContent).not.toContain('browser content must stay out')
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+it('PRE-MILESTONE-UNAVAILABLE-ALL-TABS says not recorded on every historical evidence tab', async () => {
+  const selected = completeStep()
+  for (const kind of ['variables', 'network', 'console', 'a11y'] as const) {
+    Object.assign(selected.evidence!, { [kind]: { kind, state: 'absent', reason: 'unavailable' } })
+  }
+  for (const tab of ['env', 'network', 'console', 'aria', 'a11y']) {
+    await evidencePanels(tab, selected, { ...subAction, ariaEvidence: { kind: 'aria', state: 'absent', reason: 'unavailable' } })
+    expect(container.querySelector('[data-evidence-state="unavailable"]')).not.toBeNull()
+    expect(container.textContent).toContain('not recorded')
+    expect(container.querySelector('[data-evidence-state="empty"]')).toBeNull()
+  }
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+it('ARIA-READS-SUB-ACTION renders the selected artifact as masked text, never markup', async () => {
+  fetchMock.mockResolvedValue(documentResponse({ schemaVersion: 1, kind: 'aria', tree: `button ${maskedMarker('secret')} <img src=x onerror=alert(1)>` }))
+  await evidencePanels('aria')
+  expect(fetchMock).toHaveBeenCalledExactlyOnceWith(`/api/runs/${runId}/evidence?testIndex=0&stepIndex=0&kind=aria&subActionIndex=2`)
+  expect(container.querySelector('pre')?.textContent).toContain('button')
+  expect(container.querySelector('[data-masked="secret"]')).not.toBeNull()
+  expect(container.querySelector('img')).toBeNull()
+  await evidencePanels('aria', completeStep(), null)
+  expect(container.querySelector('[data-evidence-state="no-selection"]')).not.toBeNull()
+})
+
+for (const kind of ['network', 'console'] as const) it(`RECORDS-${kind.toUpperCase()} shows exactly the selected step with masked text`, async () => {
+  const selected = completeStep()
+  const earlier = { ...step(0), consoleLogs: [{ level: 'log', timestamp: 0, text: 'earlier console' }],
+    networkLogs: [{ url: 'https://example.com/earlier', method: 'GET', status: 200, requestHeaders: {}, responseHeaders: {}, startTime: 0, endTime: 1 }] }
+  fetchMock.mockResolvedValue(documentResponse(kind === 'console'
+    ? { schemaVersion: 1, kind, records: [{ level: 'error', timestamp: 1, text: `selected ${maskedMarker('secret')} <img src=x>` }] }
+    : { schemaVersion: 1, kind, records: [{ url: `https://example.com/selected-${maskedMarker('secret')}`, method: 'GET', status: 200,
+      requestHeaders: {}, responseHeaders: { 'content-type': 'text/html' }, body: `<img src=x> ${maskedMarker('secret')}`, startTime: 2, endTime: 3 }] }))
+  await evidencePanels(kind, selected, subAction, [], [earlier, selected])
+  expect(container.textContent).toContain('selected')
+  expect(container.textContent).not.toContain('earlier')
+  expect(container.querySelector('[data-masked="secret"]')).not.toBeNull()
+  expect(container.querySelector('img')).toBeNull()
 })
