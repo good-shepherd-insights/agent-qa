@@ -24,10 +24,10 @@
 
 import type { LanguageModel } from 'ai'
 import type { StepModelScopeFactory, StepModelScopeKey } from './ports.js'
-import { computeToolSchemaDigest } from '@vostride/agent-qa-schema'
-import type { DeclaredModelProfile, MaskingContext } from '@vostride/agent-qa-schema'
+import { computeToolSchemaDigest, RecordingEntrySchema } from '@vostride/agent-qa-schema'
+import type { DeclaredModelProfile, MaskingContext, RecordingEntry } from '@vostride/agent-qa-schema'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
-import type { Action, ActionResult, PlatformAdapter, RuntimeAuthStateConfig } from '../platform.js'
+import type { Action, ActionResult, PlatformAdapter, RecordingCapability, RecordingStop, RuntimeAuthStateConfig } from '../platform.js'
 import type { AccessibilityViolation, StepResult, TestResult } from '../result.js'
 import type {
   EvidenceArtifactStorePort,
@@ -195,6 +195,7 @@ export interface MemberRunConfig {
 
   // --- run config ---
   captureScreenshots?: boolean
+  recording?: { enabled: boolean; keepFailuresOnly?: boolean }
   accessibility?: {
     enabled: boolean
     standard?: 'wcag2a' | 'wcag2aa' | 'wcag2aaa'
@@ -224,6 +225,67 @@ export interface MemberRunConfig {
 interface RerunContext {
   attempt: number
   previousFailureSummary?: string
+}
+
+type AttemptRecording =
+  | RecordingEntry
+  | ({ state: 'staged'; durationMs?: number } & RecordingStop)
+
+type StartedRecording =
+  | { state: 'started'; capability: RecordingCapability; zeroMs?: number }
+  | RecordingEntry
+
+async function startAttemptRecording(config: MemberRunConfig): Promise<StartedRecording> {
+  if (!config.recording?.enabled) return { state: 'absent', reason: 'not-captured' }
+  const capability = config.adapter.recording
+  if (!capability) return { state: 'absent', reason: 'unsupported' }
+  try {
+    const { zeroMs } = await capability.start()
+    return { state: 'started', capability, ...(zeroMs !== undefined ? { zeroMs } : {}) }
+  } catch {
+    return { state: 'absent', reason: 'failed' }
+  }
+}
+
+async function stopAttemptRecording(started: StartedRecording): Promise<AttemptRecording> {
+  if (started.state !== 'started') return started
+  const stoppedAt = performance.now()
+  try {
+    const staged = await started.capability.stop()
+    if (!staged) return { state: 'absent', reason: 'failed' }
+    return {
+      state: 'staged', ...staged,
+      ...(started.zeroMs !== undefined ? { durationMs: Math.round(stoppedAt - started.zeroMs) } : {}),
+    }
+  } catch {
+    return { state: 'absent', reason: 'failed' }
+  }
+}
+
+function settleMemberRecording(
+  recording: AttemptRecording,
+  config: MemberRunConfig,
+  discard: boolean,
+): RecordingEntry {
+  if (recording.state !== 'staged') return recording
+  let persisted = false
+  try {
+    if (discard) return { state: 'absent', reason: 'not-captured' }
+    if (!config.evidenceArtifacts?.persistRecording) return { state: 'absent', reason: 'failed' }
+    const { ref, byteLength } = config.evidenceArtifacts.persistRecording(recording.stagingPath)
+    const entry = RecordingEntrySchema.parse({
+      state: 'present', ref, byteLength, contentType: recording.contentType,
+      ...(recording.durationMs !== undefined ? { durationMs: recording.durationMs } : {}),
+    })
+    persisted = true
+    return entry
+  } catch {
+    return { state: 'absent', reason: 'failed' }
+  } finally {
+    if (!persisted) {
+      try { config.evidenceArtifacts?.discardRecording?.(recording.stagingPath) } catch {}
+    }
+  }
 }
 
 function getErrorMessage(error: unknown): string {
@@ -293,7 +355,7 @@ async function runMemberAttempt(
   config: MemberRunConfig,
   toolSchemaDigest: string,
   rerunContext?: RerunContext,
-): Promise<TestResult> {
+): Promise<{ result: TestResult; recording: AttemptRecording }> {
   const startTime = performance.now()
   const steps: StepResult[] = []
   const previousSteps: {
@@ -412,6 +474,11 @@ async function runMemberAttempt(
   // step. Loop-side state only: never serialized, never in evidence or the handoff; its
   // lifetime is this test member.
   const procedureFlow: { carry?: ProcedureFlowCarry } = {}
+
+  const startedRecording = await startAttemptRecording(config)
+  let recording: AttemptRecording
+  let completedAttempt = false
+  try {
 
   for (let stepIndex = 0; shouldRunSteps && stepIndex < member.steps.length; stepIndex++) {
     if (cancelled) break
@@ -977,17 +1044,16 @@ async function runMemberAttempt(
     })
   }
 
-  const adapterFlags = config.adapter as { isBrowserDisconnected?: boolean; getVideoPath?: () => Promise<string | undefined> }
-  const isDisconnected = adapterFlags.isBrowserDisconnected === true
-
-  let videoPath: string | undefined
-  if (typeof adapterFlags.getVideoPath === 'function') {
-    try {
-      videoPath = (await adapterFlags.getVideoPath()) ?? undefined
-    } catch {
-      // ignore video-path capture failure
-    }
+  completedAttempt = true
+  } finally {
+    recording = await stopAttemptRecording(startedRecording)
+    if (!completedAttempt) settleMemberRecording(recording, config, true)
+    config.abortSignal.removeEventListener('abort', onExternalAbort)
+    if (testDeadlineTimer) clearTimeout(testDeadlineTimer)
   }
+
+  const adapterFlags = config.adapter as { isBrowserDisconnected?: boolean }
+  const isDisconnected = adapterFlags.isBrowserDisconnected === true
 
   const failureSummary = isDisconnected
     ? 'Browser closed by user'
@@ -997,10 +1063,7 @@ async function runMemberAttempt(
         ? `Test cancelled after ${steps.length} step(s)`
         : undefined
 
-  config.abortSignal.removeEventListener('abort', onExternalAbort)
-  if (testDeadlineTimer) clearTimeout(testDeadlineTimer)
-
-  return {
+  return { recording, result: {
     runId: undefined,
     name: member.name,
     filePath: member.filePath,
@@ -1008,9 +1071,8 @@ async function runMemberAttempt(
     steps,
     duration: performance.now() - startTime,
     metadata: member.meta as Record<string, unknown> | undefined,
-    videoPath,
     failureSummary: failureSummary || undefined,
-  }
+  } }
 }
 
 /**
@@ -1054,11 +1116,14 @@ export async function runMemberTest(
       })
     }
     const rerunContext: RerunContext | undefined = attempt > 0 ? { attempt, previousFailureSummary } : undefined
-    const result = await runMemberAttempt(member, config, toolSchemaDigest, rerunContext)
+    const { result, recording } = await runMemberAttempt(member, config, toolSchemaDigest, rerunContext)
+    const willRetry = result.status !== 'passed' && attempt < maxRetries
+    const entry = settleMemberRecording(recording, config,
+      willRetry || (config.recording?.keepFailuresOnly === true && result.status === 'passed'))
 
     if (result.status === 'passed') {
       return {
-        ...result, duration: performance.now() - startTime, retryCount: attempt,
+        ...result, recording: entry, duration: performance.now() - startTime, retryCount: attempt,
         ...(firstFailedAttempt !== undefined ? { firstFailedAttempt } : {}),
       }
     }
@@ -1069,7 +1134,7 @@ export async function runMemberTest(
       const { firstFailedAttempt: _nested, ...original } = result
       firstFailedAttempt = { attempt, result: structuredClone(original) }
     }
-    lastResult = result
+    lastResult = { ...result, ...(!willRetry ? { recording: entry } : {}) }
     previousFailureSummary = result.failureSummary || undefined
   }
 

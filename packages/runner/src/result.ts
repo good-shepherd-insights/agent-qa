@@ -1,4 +1,4 @@
-import type { StepEvidence } from '@vostride/agent-qa-schema'
+import type { RecordingEntry, StepEvidence } from '@vostride/agent-qa-schema'
 import type { Action } from './platform.js'
 
 export type StepStatus = 'passed' | 'failed' | 'healed' | 'skipped' | 'cancelled'
@@ -151,7 +151,7 @@ export interface TestResult {
   duration: number
   metadata?: Record<string, unknown>
   retryCount?: number
-  videoPath?: string
+  recording?: RecordingEntry
   failureSummary?: string
   /** One detached actual failure, retained only when a subsequent attempt runs. */
   firstFailedAttempt?: {

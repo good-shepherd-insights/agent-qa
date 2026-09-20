@@ -114,7 +114,6 @@ export interface RunArtifactRuntimeSnapshot extends ArtifactRecord {
   duration?: number
   startedAt?: string
   endedAt?: string
-  videoPath?: string | null
   failureSummary?: string | null
 }
 

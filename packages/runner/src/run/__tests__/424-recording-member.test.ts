@@ -21,7 +21,8 @@ function fixture() {
   const adapter = { ...makeAdapter(), recording: { start, stop } }
   const config: MemberRunConfig = {
     adapter, planner: makePlanner(), plannerModel: fakeModel, verifierModel: fakeModel,
-    sink: createMemberEventSink({ bus: createRunEventBus({ runId: 'synthetic-recording-run' }), testIndex: 0 }),
+    sink: createMemberEventSink({ bus: createRunEventBus({ runId: 'synthetic-recording-run' }),
+      masking: { mask: text => text, unmask: text => text }, testIndex: 0 }),
     testIndex: 0, abortSignal: new AbortController().signal,
     recording: { enabled: true },
     evidenceArtifacts: { persistDecisionScreenshot: () => ({ id: `decision-screenshot:${ref.sha}`, sha: ref.sha }),
@@ -96,7 +97,10 @@ test('REC-MEMBER-KEEP-FAILURES-ONLY: only passed final attempts are dropped', as
 test('REC-MEMBER-PER-ATTEMPT: retry discards first staging and snapshots no recording', async () => {
   const f = fixture()
   f.member.meta = { retries: 1 }
-  f.stop.mockResolvedValueOnce({ stagingPath: 'first.webm', contentType: 'video/webm' })
+  f.stop.mockImplementationOnce(async () => {
+    f.order.push('stop')
+    return { stagingPath: 'first.webm', contentType: 'video/webm' }
+  })
   let attempt = 0
   f.config.executeStep = async name => ({ name, status: attempt++ === 0 ? 'failed' : 'passed', duration: 0 })
   const result = await runMemberTest(f.member, f.config)
