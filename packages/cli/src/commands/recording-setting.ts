@@ -1,5 +1,4 @@
 import { resolve } from 'node:path'
-import type { AgentQaConfig } from '@vostride/agent-qa-core'
 
 export interface RecordingSetting {
   enabled: boolean
@@ -10,7 +9,7 @@ export const RECORDING_STAGING_DIRNAME = 'recording-staging'
 
 export function resolveRecordingSetting(
   flag: boolean | undefined,
-  config: NonNullable<AgentQaConfig['services']>['recording'],
+  config: Partial<RecordingSetting> | undefined,
   meta?: boolean,
 ): RecordingSetting {
   return {
