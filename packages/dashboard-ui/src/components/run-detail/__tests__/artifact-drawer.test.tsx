@@ -119,7 +119,8 @@ describe('run-context drawer', () => {
     const tab = mountRecordTab(data)
     expect(sections(tab)).toEqual(['test-as-written', 'resolved-definition'])
     expect(tab.textContent).not.toMatch(/no run attributes|did not record any attributes/i)
-    for (const attributes of [{ channel: 'nightly' }, { channel: 'nightly', owner: 'team' }]) {
+    const samples: Record<string, string>[] = [{ channel: 'nightly' }, { channel: 'nightly', owner: 'team' }]
+    for (const attributes of samples) {
       data.run = { ...run, attributes }
       const Component = testTabs['../artifact-test-tab.tsx'].ArtifactTestTab
       act(() => root!.render(<Component response={data} />))
