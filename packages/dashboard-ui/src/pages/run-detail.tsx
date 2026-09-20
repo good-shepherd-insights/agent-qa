@@ -20,6 +20,7 @@ import { ArtifactDrawer, type ArtifactDrawerTab } from "@/components/run-detail/
 import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
+import { Timeline } from '@/components/run-detail/timeline'
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
 import type { RunRow, ExecutionLogEntry, RunArtifactResponse, KnowledgeRead, PostProcessingRead } from "@/lib/api"
@@ -30,6 +31,7 @@ import {
   filterGroups,
   groupRunDetail,
   memberDisplayName,
+  memberHandleLabel,
   parseMemberFilter,
   showMemberChrome,
 } from "@/lib/run-detail-view"
@@ -43,7 +45,8 @@ import { copyTextOf } from "@/lib/display-text"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
 import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
-import { parkTargetForStep, playheadFromSelection, selectionFromPlayhead, type Playhead } from '@/lib/playhead'
+import { buildTimelineModel, parkTargetForStep, playheadFromSelection, selectionFromPlayhead, type Playhead } from '@/lib/playhead'
+import { stepSignals } from '@/lib/evidence-counts'
 
 const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'] as const
 
@@ -223,15 +226,18 @@ export default function RunDetailPage() {
 
   const [selection, setTreeSelection] = useState<Selection | null>(null)
   const [playheadTarget, setPlayheadTarget] = useState<Playhead | null>(null)
+  const [seekFraction, setSeekFraction] = useState<number>()
   const setSelection = useCallback((next: Selection | null) => {
     setTreeSelection(next)
     setPlayheadTarget(null)
+    setSeekFraction(undefined)
   }, [])
   const setPlayheadFrom = useCallback((address: Playhead) => {
     const next = selectionFromPlayhead(address)
     if (!hasStepId(next)) return
     setTreeSelection({ type: 'step', stepId: next.stepId })
     setPlayheadTarget(address)
+    setSeekFraction(undefined)
   }, [])
   const [allExecutionLogs, setAllExecutionLogs] = useState<ExecutionLogEntry[]>([])
 
@@ -551,6 +557,12 @@ export default function RunDetailPage() {
   const playheadSubAction = useMemo<RunDetailSubAction | null>(() =>
     selectedStep?.subActions?.find(sub => sub.subActionIndex === playhead?.subActionIndex) ?? null,
   [selectedStep, playhead])
+  const timelineGroup = visibleGroups.find(group => group.member.testIndex === playhead?.testIndex)
+    ?? visibleGroups[0]
+  const timelineModel = useMemo(() => timelineGroup ? buildTimelineModel(timelineGroup) : null, [timelineGroup])
+  const timelineSignals = useMemo(() => Object.fromEntries(
+    timelineGroup?.steps.map(({ step }) => [step.stepIndex, stepSignals(step.evidence)]) ?? [],
+  ), [timelineGroup])
 
   type NavItem =
     | { type: 'hook'; logId: string }
@@ -992,6 +1004,44 @@ export default function RunDetailPage() {
 
           <ResizablePanel defaultSize={65} minSize={30} data-tour-id="tour-run-detail-reasoning">
             <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+              {detail === null ? (
+                <div data-run-detail-error className='flex flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground'>
+                  {RUN_DETAIL_UNAVAILABLE_LABEL}
+                </div>
+              ) : <>
+                {timelineModel && timelineGroup && <div className='shrink-0' onKeyDownCapture={event => {
+                  if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'slider') return
+                  if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+                  const index = timelineModel.markers.findIndex(marker => marker.stepIndex === playhead?.stepIndex && marker.subActionIndex === playhead.subActionIndex)
+                  const direction = event.key === 'ArrowRight' ? 1 : -1
+                  if (index < 0 || index !== (direction === 1 ? timelineModel.markers.length - 1 : 0)) return
+                  for (let member = visibleGroups.indexOf(timelineGroup) + direction; member >= 0 && member < visibleGroups.length; member += direction) {
+                    const markers = buildTimelineModel(visibleGroups[member]!).markers
+                    const target = direction === 1 ? markers[0] : markers.at(-1)
+                    if (!target) continue
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setPlayheadFrom(target)
+                    break
+                  }
+                }}>
+                  <Timeline
+                    model={timelineModel}
+                    playhead={playhead}
+                    source='frames'
+                    runId={run.id}
+                    signals={timelineSignals}
+                    memberLabel={hasMemberChrome ? `${memberHandleLabel(timelineGroup.member.testIndex)} · ${memberDisplayName(timelineGroup.member)}` : undefined}
+                    seekFraction={seekFraction}
+                    onPlayheadChange={setPlayheadFrom}
+                    onSeekFraction={setSeekFraction}
+                    onOpenSignal={(stepIndex, kind) => {
+                      setSelection({ type: 'step', stepId: runDetailStepKey(timelineModel.testIndex, stepIndex) })
+                      setActiveTab(kind)
+                    }}
+                  />
+                </div>}
+                <div className='flex min-h-0 flex-1 flex-col'>
                 <TabPanels
                   activeTab={activeTab}
                   onTabChange={setActiveTab}
@@ -1006,6 +1056,8 @@ export default function RunDetailPage() {
                   knowledge={knowledgeView}
                   onSelectStep={stepId => setSelection({ type: 'step', stepId })}
                 />
+                </div>
+              </>}
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>

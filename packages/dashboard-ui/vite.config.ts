@@ -7,6 +7,7 @@ import path from 'path'
 // package has no separate vitest.config.ts, so vitest reads this file.
 export default defineConfig({
   test: {
+    setupFiles: ['./src/test/browser-observers.ts'],
     // The 5s vitest default is tuned for a fast dev machine. A 2-core CI runner is 3-6x slower,
     // and jsdom component tests that drive several state transitions cross it — `TestsPage >
     // remembers cache changes…` did, on the fifth automatic CI run (2026-08-02). Matches the
