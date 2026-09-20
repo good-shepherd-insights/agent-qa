@@ -202,7 +202,7 @@ for (const { label, tab, kind } of [
     address: { runId, testIndex: 0, stepIndex: 0, kind }, outcome: 'ready',
     evidence: selected.evidence!.variables, document: { schemaVersion: 1, kind, records: {} },
   }))
-  await act(async () => { container.querySelector('[data-evidence-state="failed"] button')!.click() })
+  await act(async () => { container.querySelector<HTMLButtonElement>('[data-evidence-state="failed"] button')!.click() })
   await flushRecords()
   expect(container.querySelector(`[data-evidence-kind="${kind}"][data-evidence-state="empty"]`)).not.toBeNull()
 })

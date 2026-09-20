@@ -96,13 +96,13 @@ export function TabPanels({
 
       <TabsContent value="overview" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
-          <TabOverview
+          {step && <TabOverview
             step={step}
             subAction={subAction}
             runId={runId}
             screenshotEmptyState={screenshotEmptyState}
             pipelineRef={pipelineRef}
-          />
+          />}
         </ScrollArea>
       </TabsContent>
 
