@@ -13,7 +13,7 @@ import type {
 import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 
-// 423-25 (R-26): measurement of a SYNTHETIC finalized-v3 fixture. Nothing here is a production
+// 423-25 (R-26): measurement of a SYNTHETIC finalized-v4 fixture. Nothing here is a production
 // maximum, a snapshot cap or an input to the locked inline/blob layout (D-03/D-07/D-08).
 const LABEL = 'SYNTHETIC fixture measurement; not a production maximum, cap or layout input'
 const RUN_ID = 'synthetic-row-budget-run'
@@ -33,7 +33,7 @@ interface Snapshot {
 }
 interface Measurements {
   fresh: { before: Snapshot; after: Snapshot; categories: Record<string, number>; eventBytes: Record<string, number>; coldSteps: number }
-  historical: { v2: Snapshot; v3: Snapshot; absentFields: string[] }
+  historical: { v3: Snapshot; v4: Snapshot; absentFields: string[] }
   network: { blobBytes: number; bodyBytes: { request: number; response: number }; stepEvidenceBytes: number; bodyInDatabase: boolean; secretInBlob: boolean; secretInDatabase: boolean }
   dbstatError?: string
 }
@@ -100,7 +100,7 @@ type Evidence = NonNullable<StepFinalizedPayload['evidence']>
 const verdict = { pass: true, reasoning: 'synthetic verifier verdict' }
 
 async function freshFixture(root: string) {
-  const path = join(root, 'fresh-v3.db')
+  const path = join(root, 'fresh-v4.db')
   new DashboardDatabase({ dbPath: path }).close()
   const before = snapshot(path)
   const masking = buildRunMaskingContext({ env: {} })
@@ -216,7 +216,7 @@ async function freshFixture(root: string) {
   } finally { cold.close() }
 
   const blob = Buffer.from(store.getBlob(networkRef.sha)!)
-  const databaseBytes = Buffer.concat(readdirSync(root).filter(name => name.startsWith('fresh-v3.db'))
+  const databaseBytes = Buffer.concat(readdirSync(root).filter(name => name.startsWith('fresh-v4.db'))
     .map(name => readFileSync(join(root, name))))
   const bodyMarker = FILLER.repeat(8)
   return {
@@ -277,7 +277,29 @@ function historicalFixture(root: string) {
     }
     raw.exec('PRAGMA user_version = 2')
   } finally { raw.close() }
-  const v2 = snapshot(path)
+  const refused = snapshot(path)
+  const history = () => {
+    const reader = new DatabaseSync(path, { readOnly: true })
+    try {
+      const schema = reader.prepare('SELECT * FROM sqlite_master ORDER BY name').all()
+      const data = ['runs', 'run_members', 'run_steps', 'run_sub_actions', 'execution_logs', 'token_events', 'run_artifacts']
+        .map(table => reader.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all())
+      return { schema, data }
+    } finally { reader.close() }
+  }
+  const before = history()
+  expect(() => new DashboardDatabase({ dbPath: path })).toThrow('user_version 2')
+  expect(snapshot(path)).toEqual(refused)
+  expect(history()).toEqual(before)
+  const historical = createDashboardSqliteDatabase(path)
+  try {
+    historical.exec('ALTER TABLE run_steps ADD COLUMN evidence_json TEXT')
+    historical.exec('ALTER TABLE run_steps ADD COLUMN variable_snapshot_json TEXT')
+    historical.exec('ALTER TABLE run_steps ADD COLUMN model_usage_json TEXT')
+    historical.exec('ALTER TABLE run_sub_actions ADD COLUMN evidence_state_json TEXT')
+    historical.exec('PRAGMA user_version = 3')
+  } finally { historical.close() }
+  const v3 = snapshot(path)
   const db = new DashboardDatabase({ dbPath: path })
   const absentFields: string[] = []
   try {
@@ -288,13 +310,13 @@ function historicalFixture(root: string) {
     if (rows.steps.every(row => !('modelUsage' in row))) absentFields.push('modelUsage')
     if (rows.subActions.every(row => !('ariaEvidence' in row))) absentFields.push('ariaEvidence')
   } finally { db.close() }
-  return { v2, v3: snapshot(path), absentFields }
+  return { v3, v4: snapshot(path), absentFields }
 }
 
 async function measureFixtures(root: string): Promise<Measurements> {
   const { fresh, network } = await freshFixture(root)
   const historical = historicalFixture(root)
-  const dbstatError = [fresh.before, fresh.after, historical.v2, historical.v3].find(item => item.dbstatError)?.dbstatError
+  const dbstatError = [fresh.before, fresh.after, historical.v3, historical.v4].find(item => item.dbstatError)?.dbstatError
   return { fresh, historical, network, ...(dbstatError === undefined ? {} : { dbstatError }) }
 }
 
@@ -308,11 +330,11 @@ function report(cell: string, value: unknown): void {
   console.info(cell, JSON.stringify({ label: LABEL, ...value as object }))
 }
 
-it('ROW-BUDGET-LOGICAL: finalized v3 rows report UTF-8 logical value bytes per table, column and category', () => {
+it('ROW-BUDGET-LOGICAL: finalized v4 rows report UTF-8 logical value bytes per table, column and category', () => {
   const { before, after, categories, eventBytes, coldSteps } = measured.fresh
   report('ROW-BUDGET-LOGICAL', { categories, eventBytes, coldSteps, before: before.logical, after: after.logical,
-    historicalV2: measured.historical.v2.logical, historicalV3: measured.historical.v3.logical })
-  expect(after.userVersion).toBe(3)
+    historicalV3: measured.historical.v3.logical, historicalV4: measured.historical.v4.logical })
+  expect(after.userVersion).toBe(4)
   expect(coldSteps).toBe(6)
   for (const table of TABLES) {
     expect(before.logical[table].rows).toBe(0)
@@ -329,26 +351,26 @@ it('ROW-BUDGET-LOGICAL: finalized v3 rows report UTF-8 logical value bytes per t
   expect(categories['variables-large']).toBeGreaterThan(40_000)
   expect(categories['network-32kib']).toBeLessThan(NETWORK_BODY_MAX_BYTES)
   for (const column of ['evidence_json', 'variable_snapshot_json', 'model_usage_json']) {
-    expect(measured.historical.v3.logical.run_steps.columns[column]).toBe(0)
+    expect(measured.historical.v4.logical.run_steps.columns[column]).toBe(0)
   }
 })
 
-it('ROW-BUDGET-PAGES: PRAGMA page_size and page_count before and after insertion, fresh v3 and populated v2-to-v3', () => {
+it('ROW-BUDGET-PAGES: PRAGMA page_size and page_count before and after insertion, fresh v4 and populated v3-to-v4 with v2 refused', () => {
   const { fresh, historical } = measured
   report('ROW-BUDGET-PAGES', {
     fresh: { before: fresh.before.pages, after: fresh.after.pages,
       deltaPages: fresh.after.pages.pageCount - fresh.before.pages.pageCount,
       deltaBytes: fresh.after.pages.bytes - fresh.before.pages.bytes },
-    historical: { v2: historical.v2.pages, v3: historical.v3.pages,
-      deltaPages: historical.v3.pages.pageCount - historical.v2.pages.pageCount },
+    historical: { v3: historical.v3.pages, v4: historical.v4.pages,
+      deltaPages: historical.v4.pages.pageCount - historical.v3.pages.pageCount },
   })
   expect(fresh.before.pages.pageSize).toBeGreaterThan(0)
   expect(fresh.after.pages.pageSize).toBe(fresh.before.pages.pageSize)
   expect(fresh.after.pages.pageCount).toBeGreaterThan(fresh.before.pages.pageCount)
   expect(fresh.after.pages.bytes).toBe(fresh.after.pages.pageSize * fresh.after.pages.pageCount)
-  expect(historical.v2.userVersion).toBe(2)
   expect(historical.v3.userVersion).toBe(3)
-  expect(historical.v2.pages.pageCount).toBeGreaterThan(0)
+  expect(historical.v4.userVersion).toBe(4)
+  expect(historical.v3.pages.pageCount).toBeGreaterThan(0)
   expect(historical.absentFields).toEqual(['evidence', 'variableSnapshot', 'modelUsage', 'ariaEvidence'])
 })
 
@@ -358,7 +380,7 @@ it('ROW-BUDGET-PAYLOAD: dbstat page, payload and unused bytes for run_steps and 
   }
   const { fresh, historical } = measured
   report('ROW-BUDGET-PAYLOAD', { fresh: { before: fresh.before.btrees, after: fresh.after.btrees },
-    historical: { v2: historical.v2.btrees, v3: historical.v3.btrees } })
+    historical: { v3: historical.v3.btrees, v4: historical.v4.btrees } })
   for (const table of TABLES) {
     const after = fresh.after.btrees[table]!
     expect(after.pages).toBeGreaterThan(0)
@@ -366,7 +388,7 @@ it('ROW-BUDGET-PAYLOAD: dbstat page, payload and unused bytes for run_steps and 
     expect(after.bytes).toBe(after.pages * fresh.after.pages.pageSize)
     expect(after.unusedBytes).toBeGreaterThanOrEqual(0)
     expect(after.payloadBytes).toBeGreaterThan(fresh.before.btrees[table]!.payloadBytes)
-    expect(historical.v3.btrees[table]!.payloadBytes).toBe(historical.v2.btrees[table]!.payloadBytes)
+    expect(historical.v4.btrees[table]!.payloadBytes).toBe(historical.v3.btrees[table]!.payloadBytes)
   }
   expect(fresh.after.btrees.run_steps!.overflowPages).toBeGreaterThan(0)
 })
