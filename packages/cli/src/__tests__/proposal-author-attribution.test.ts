@@ -338,12 +338,12 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
     // mint existed would turn a working entry point into a poisoned one — the one-sided-fix
     // regression this project has minted three times.
     expect(typeof record.origin.at).toBe('number')
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(Number(record.origin.at) + 1)
+    vi.useFakeTimers({ toFake: ['Date'], now: Number(record.origin.at) + 1 })
     try {
       const applied = await accept(applyingHost(workspace), record.id)
       expect(JSON.stringify(applied)).toContain('applied')
     } finally {
-      clock.mockRestore()
+      vi.useRealTimers()
     }
 
     // AND IT IS ATTRIBUTED HONESTLY. Not `chat` — that is the fabrication this plan closes — and
