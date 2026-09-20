@@ -972,6 +972,17 @@ describe('the door census — every way a caller can name a run id (CR-04)', () 
     expect(source).not.toContain('RunsStartInputSchema')
   })
 
+  it('E1 — the evidence-read hook stays scanned and is classified as unable to start a run', () => {
+    const file = 'dashboard-ui/src/hooks/use-evidence-records.ts'
+    const source = stripComments(readFileSync(join(PACKAGES_ROOT, file), 'utf8'))
+    expect(shippedSourceFiles()).toContain(join(PACKAGES_ROOT, file))
+    expect(REQUEST_RUN_ID_RE.test(source)).toBe(true)
+    expect(E1_SITES[file]?.reaches).toBe(false)
+    expect(E1_SITES[file]?.role).toBe('read: evidence for an existing run')
+    expect(source).toMatch(/fetchRunEvidence\(\{\s*runId:\s*asRunId\(runId\)/)
+    expect(source).not.toMatch(/\b(?:startRun|invokeRun|invokeFunction)\s*\(/)
+  })
+
   it('every E1 site either reaches the identity step or is recorded as unable to collide', () => {
     const bypassing = Object.entries(E1_SITES).filter(([, site]) => !site.reaches)
     // Exactly one, and its verdict is what carries the evidence.
