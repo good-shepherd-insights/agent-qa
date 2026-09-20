@@ -1,0 +1,181 @@
+// @vitest-environment jsdom
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { generateRunId } from '@vostride/agent-qa-ids'
+import { maskedMarker } from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ArtifactDrawer, type ArtifactDrawerTab } from '../artifact-drawer'
+import type { RunArtifactResponse, RunRow } from '@/lib/api'
+import { DRAWER_COPY, DRAWER_TITLE_FALLBACK } from '@/lib/drawer-view'
+import { copyTextOf } from '@/lib/display-text'
+import { maskedLabel } from '../masked-chip'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const run: RunRow = {
+  id: generateRunId(), name: 'Checkout suite', filePath: null, status: 'passed', duration: 1,
+  attributes: {}, environment: null, metadata: null, startedAt: null, endedAt: null,
+  failureSummary: null, errorLog: null, memoryLog: null, testId: null, suiteId: null,
+  platform: 'web', testFileContent: null, modelName: null, llmProvider: null,
+  parentRunId: null, attemptNumber: 1, retryCount: 0, maxRetries: 0,
+  createdAt: '2026-09-20T00:00:00Z',
+}
+
+function response(sealed = true): RunArtifactResponse {
+  return {
+    run,
+    artifact: {
+      runId: run.id, kind: 'test', schemaVersion: 17,
+      createdAt: run.createdAt, updatedAt: run.createdAt,
+      finalizedAt: sealed ? '2026-09-20T01:00:00Z' : null,
+      payload: {
+        schemaVersion: 17,
+        config: {
+          runtime: { targetName: 'staging', platform: 'web' },
+          effectiveConfig: { use: { browser: { name: 'chromium' } } },
+          model: { planner: { model: 'test-model' } },
+        },
+      },
+    },
+    missingSections: [],
+  }
+}
+
+let root: Root | undefined
+let container: HTMLDivElement
+
+function mount(data: RunArtifactResponse | null = response(), options: {
+  tab?: ArtifactDrawerTab; row?: RunRow; loading?: boolean; error?: string; onRetry?: () => void
+} = {}) {
+  if (!root) {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  }
+  act(() => root!.render(
+    <ArtifactDrawer run={options.row ?? data?.run ?? run} open tab={options.tab ?? 'attributes'}
+      screenshotSha={null} response={data} loading={options.loading ?? false}
+      error={options.error ?? null} onOpenChange={() => {}} onTabChange={() => {}}
+      onRetry={options.onRetry ?? (() => {})} />,
+  ))
+  return document.querySelector('[data-slot="sheet-content"]')!
+}
+
+function technicalDetails(drawer: Element) {
+  const details = drawer.querySelector('[data-technical-details]')
+  expect(details).not.toBeNull()
+  return details!
+}
+
+function expand(details: Element) {
+  const trigger = details.querySelector('button')!
+  act(() => trigger.click())
+}
+
+afterEach(() => {
+  act(() => root?.unmount())
+  root = undefined
+  container?.remove()
+  vi.restoreAllMocks()
+})
+
+describe('run-context drawer', () => {
+  it('DRAWER-HEADER-NO-ENVELOPE', () => {
+    const drawer = mount()
+    const header = drawer.querySelector('[data-slot="sheet-header"]')!
+    expect(header.querySelector('h2')?.textContent).toBe(run.name)
+    expect(header.textContent).toContain('staging · web chromium · test-model')
+    expect(header.textContent).not.toContain(run.id)
+    expect(header.textContent).not.toContain('17')
+    expect(header.querySelector('[data-slot="badge"]')).toBeNull()
+    expect(header.querySelector('h2')?.classList.contains('line-clamp-2')).toBe(true)
+    expect(header.querySelector('h2')?.classList.contains('font-medium')).toBe(true)
+    expect(header.querySelector('[data-slot="sheet-description"]')?.classList.contains('truncate')).toBe(true)
+  })
+
+  it('DRAWER-TECHNICAL-COLLAPSED', () => {
+    for (const tab of ['attributes', 'config'] as const) {
+      const drawer = mount(response(), { tab })
+      const details = technicalDetails(drawer)
+      expect(details.closest('[data-slot="tabs"]')).toBeNull()
+      expect(details.compareDocumentPosition(drawer.querySelector('[data-slot="tabs"]')!) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+      expect(details.getAttribute('data-state')).toBe('closed')
+      expect(details.textContent).toBe(DRAWER_COPY.technicalDetails)
+      expand(details)
+      expect(Array.from(details.querySelectorAll('dt')).map(row => row.textContent)).toEqual([
+        DRAWER_COPY.runId, DRAWER_COPY.artifactKind, DRAWER_COPY.schemaVersion, DRAWER_COPY.captureSealedAt,
+      ])
+      expect(Array.from(details.querySelectorAll('dd')).map(row => row.textContent)).toEqual([
+        run.id, 'Test', '17', response().artifact!.finalizedAt,
+      ])
+      expect(Array.from(details.querySelectorAll('dd')).every(row => row.classList.contains('break-all'))).toBe(true)
+      expand(details)
+    }
+  })
+
+  it('DRAWER-UNSEALED-LINE', () => {
+    const drawer = mount(response(false))
+    const lines = drawer.querySelectorAll('[data-capture-state="unsealed"]')
+    expect(lines).toHaveLength(1)
+    expect(lines[0].getAttribute('role')).toBe('status')
+    expect(lines[0].textContent).toBe(DRAWER_COPY.unsealedCapture)
+    expect(lines[0].querySelector('svg')).not.toBeNull()
+    const details = technicalDetails(drawer)
+    expand(details)
+    expect(details.textContent).not.toContain(DRAWER_COPY.captureSealedAt)
+  })
+
+  it('DRAWER-SEALED-SILENT', () => {
+    const drawer = mount()
+    expect(drawer.querySelector('[data-capture-state]')).toBeNull()
+    expect(drawer.textContent).not.toMatch(/\b(finalized|open)\b/i)
+    const details = technicalDetails(drawer)
+    expect(drawer.textContent).not.toContain(response().artifact!.finalizedAt)
+    expand(details)
+    expect(details.textContent).toContain(DRAWER_COPY.captureSealedAt)
+    expect(details.textContent).toContain(response().artifact!.finalizedAt)
+  })
+
+  it('DRAWER-COPY-RUN-ID', () => {
+    const data = response()
+    data.run = { ...run, id: `${run.id} ${maskedMarker('secret')}` }
+    data.artifact!.runId = data.run.id
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const details = technicalDetails(mount(data))
+    expand(details)
+    const copy = details.querySelector<HTMLButtonElement>(`[aria-label="${DRAWER_COPY.copyRunId}"]`)
+    expect(copy).not.toBeNull()
+    act(() => copy!.click())
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(copyTextOf(data.run.id))
+    expect(details.textContent).not.toContain(maskedMarker('secret'))
+  })
+
+  it('masks header producer text and degrades absent names and config', () => {
+    const data = response()
+    data.run = { ...run, name: `Checkout ${maskedMarker('email')}` }
+    data.artifact!.payload.config = { runtime: { targetName: maskedMarker('secret') } }
+    const header = mount(data).querySelector('[data-slot="sheet-header"]')!
+    expect(header.textContent).toContain(`Checkout ${maskedLabel('email')}`)
+    expect(header.textContent).toContain(maskedLabel('secret'))
+    expect(header.textContent).not.toContain(maskedMarker('secret'))
+    data.run = { ...run, name: '' }
+    data.artifact!.payload.config = undefined
+    const absent = mount(data).querySelector('[data-slot="sheet-header"]')!
+    expect(absent.querySelector('h2')?.textContent).toBe(DRAWER_TITLE_FALLBACK(run.id))
+    expect(absent.textContent).toContain(DRAWER_COPY.configNotCaptured)
+  })
+
+  it('keeps load states and retries with the drawer label', () => {
+    expect(mount(null, { loading: true }).textContent).toContain('Loading artifact data...')
+    expect(mount(null).textContent).toContain('Artifact data is not available for this run')
+    const onRetry = vi.fn()
+    const drawer = mount(null, { error: maskedMarker('secret'), onRetry })
+    expect(drawer.textContent).toContain('Could not load artifact data')
+    expect(drawer.textContent).toContain(maskedLabel('secret'))
+    const retry = Array.from(drawer.querySelectorAll('button')).find(button => button.textContent === DRAWER_COPY.retry)
+    expect(retry).toBeDefined()
+    act(() => retry!.click())
+    expect(onRetry).toHaveBeenCalledOnce()
+  })
+})
