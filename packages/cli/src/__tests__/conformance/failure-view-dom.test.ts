@@ -251,7 +251,7 @@ interface PageHarvest {
   readonly citedArtifactStates: readonly string[]
   /** Every `[data-evidence-missing]` count line, as `<attribute> :: <text>`. */
   readonly missingEvidence: readonly string[]
-  /** Every `data-evidence-state` on the page — the ONE component's contract (D-18). */
+  /** Every unavailable state with the incomplete flag on the page (D-18). */
   readonly evidenceStates: readonly string[]
   /** Every `data-artifact-state` — the overview pane's own word. */
   readonly artifactStates: readonly string[]
@@ -654,7 +654,7 @@ async function observeRunDetail(
             `${element.getAttribute('data-evidence-missing') ?? '?'} :: `
             + `${(element.textContent ?? '').trim()}`,
         ),
-        evidenceStates: attribute('[data-evidence-state]', 'data-evidence-state'),
+        evidenceStates: attribute('[data-evidence-state="unavailable"][data-evidence-incomplete]', 'data-evidence-state'),
         artifactStates: attribute('[data-artifact-state]', 'data-artifact-state'),
         chips: Array.from(document.querySelectorAll('[data-chip]')).map((element) =>
           `${element.getAttribute('data-chip') ?? '?'}=`
@@ -1277,10 +1277,10 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     ).toEqual(['unavailable'])
     expect(
       page.evidenceStates,
-      'the unavailable pane does not carry `data-evidence-state="incomplete"`. That attribute is '
+      'the unavailable pane does not carry `data-evidence-state="unavailable"` with `data-evidence-incomplete`. That pair is '
       + 'the ONE component\'s contract and both ref sites wear it — the pane here and the inline '
       + `chip in (3c) — which is why there are two.${context()}`,
-    ).toEqual(['incomplete', 'incomplete'])
+    ).toEqual(['unavailable', 'unavailable'])
     expect(
       page.bodyText,
       `the page does not show the published \`evidence incomplete\` word.${context()}`,
