@@ -59,7 +59,7 @@ async function errorImage() {
 test('PLAYER-OPENS-ON-FRAMES', () => {
   render({ recording: { state: 'absent', reason: 'not-captured' } })
   expect(query('[data-player]').dataset.playerSource).toBe('frames')
-  const video = query('[data-slot="toggle-group-item"][value="video"]')
+  const video = query('[data-slot="toggle-group-item"][aria-label^="Video"]')
   expect(video.getAttribute('aria-label')).toBe('Video — No recording for this test')
   expect(video.className).toContain('opacity-60')
   expect(video.hasAttribute('disabled')).toBe(false)
@@ -86,7 +86,7 @@ test('PLAYER-CAPTION-SUBSTITUTION', () => {
   expect(caption.textContent).toContain(PLAYER_COPY.substitution(1, 2))
   expect(caption.dataset.frameSourceSubAction).toBe('0')
   expect(caption.className).toContain('[overflow-wrap:anywhere]')
-  expect(caption.querySelector('[data-action-family]')?.className).toContain('text-sm')
+  expect(caption.className).toContain('[&_[data-action-family]]:text-sm')
   expect(caption.textContent).toContain('#1')
   expect(caption.textContent).toContain('passed')
   expect(caption.textContent).toContain('0:00')
