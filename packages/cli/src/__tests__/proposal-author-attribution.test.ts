@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { CHAT_DOOR_SURFACE } from '../commands/chat.js'
 import {
@@ -337,8 +337,14 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
     // IT STILL APPLIES. A read-side hardening that refused envelopes minted before the write-side
     // mint existed would turn a working entry point into a poisoned one — the one-sided-fix
     // regression this project has minted three times.
-    const applied = await accept(applyingHost(workspace), record.id)
-    expect(JSON.stringify(applied)).toContain('applied')
+    expect(typeof record.origin.at).toBe('number')
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Number(record.origin.at) + 1)
+    try {
+      const applied = await accept(applyingHost(workspace), record.id)
+      expect(JSON.stringify(applied)).toContain('applied')
+    } finally {
+      clock.mockRestore()
+    }
 
     // AND IT IS ATTRIBUTED HONESTLY. Not `chat` — that is the fabrication this plan closes — and
     // not any other surface either: nothing recorded one, so nothing may claim one.
