@@ -1,6 +1,5 @@
 import { useState } from "react"
-import { AlertCircle } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+import { AlertCircle, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
@@ -15,9 +14,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScreenshotViewer } from "@/components/screenshot-viewer"
 import type { RunArtifactResponse, RunRow } from "@/lib/api"
 import { routes } from "@/lib/routes"
-import { cn } from "@/lib/utils"
+import { captureStateOf, DRAWER_COPY, DRAWER_TITLE_FALLBACK, ranAgainstParts } from "@/lib/drawer-view"
 import { ArtifactAttributeRows } from "./artifact-attribute-rows"
 import { ArtifactConfigTab } from "./artifact-config-tab"
+import { ArtifactTechnicalDetails } from "./artifact-technical-details"
 import { EvidenceIncomplete } from "./evidence-incomplete"
 import { MaskedText } from "./masked-text"
 
@@ -82,7 +82,7 @@ function ErrorState({ error, onRetry }: { error: string; onRetry: () => void }) 
           </p>
           <p className="mt-2 break-words font-mono text-xs text-red-500"><MaskedText text={error} /></p>
           <Button className="mt-3" size="sm" variant="outline" onClick={onRetry}>
-            Retry
+            {DRAWER_COPY.retry}
           </Button>
         </div>
       </div>
@@ -204,39 +204,25 @@ export function ArtifactDrawer({
   onRetry,
 }: ArtifactDrawerProps) {
   const artifact = response?.artifact ?? null
-  const description = run.name || `Run ${run.id}`
+  const title = run.name || DRAWER_TITLE_FALLBACK(run.id)
+  const parts = ranAgainstParts(artifact?.payload.config)
+  const description = parts.length > 0 ? parts.join(' · ') : DRAWER_COPY.configNotCaptured
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-[min(820px,92vw)] sm:max-w-none gap-0 overflow-hidden p-0">
         <SheetHeader className="border-b px-4 py-3 pr-12">
-          <SheetTitle className="text-base leading-snug">Run details</SheetTitle>
+          <SheetTitle className="text-base leading-snug font-medium line-clamp-2"><MaskedText text={title} /></SheetTitle>
           <SheetDescription className="truncate text-xs"><MaskedText text={description} /></SheetDescription>
-          <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
-            <span className="break-all font-mono">{run.id}</span>
-            {artifact ? (
-              <>
-                <Badge variant="outline" className="text-[10px]">
-                  {artifact.kind}
-                </Badge>
-                <Badge variant="outline" className="text-[10px]">
-                  schema {artifact.schemaVersion}
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "text-[10px]",
-                    artifact.finalizedAt
-                      ? "border-emerald-500/20 text-emerald-500"
-                      : "border-amber-500/25 text-amber-500",
-                  )}
-                >
-                  {artifact.finalizedAt ? "finalized" : "open"}
-                </Badge>
-              </>
-            ) : null}
-          </div>
         </SheetHeader>
+
+        {artifact && captureStateOf(artifact) === 'unsealed' ? (
+          <div role="status" data-capture-state="unsealed"
+            className="m-4 flex items-start gap-2 rounded-sm border border-amber-500/25 bg-amber-500/5 p-3 text-sm">
+            <TriangleAlert className="h-4 w-4 shrink-0 text-amber-500" />
+            <span>{DRAWER_COPY.unsealedCapture}</span>
+          </div>
+        ) : null}
 
         <Tabs
           value={tab}
@@ -289,6 +275,7 @@ export function ArtifactDrawer({
             </TabsContent>
           </ScrollArea>
         </Tabs>
+        {artifact ? <ArtifactTechnicalDetails runId={run.id} artifact={artifact} /> : null}
       </SheetContent>
     </Sheet>
   )
