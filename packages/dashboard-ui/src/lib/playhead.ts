@@ -63,14 +63,14 @@ export function selectionFromPlayhead(playhead: Playhead | null | undefined): Se
     : { type: 'subaction', stepId, subIndex: playhead.subActionIndex }
 }
 
-export type TimelineAxis = 'unimplemented'
-export const TIMELINE_AXES = ['unimplemented'] as const satisfies readonly TimelineAxis[]
-export type MarkerResult = 'unimplemented'
-export const MARKER_RESULTS = ['unimplemented'] as const satisfies readonly MarkerResult[]
-export type MarkerFrame = 'unimplemented'
-export const MARKER_FRAMES = ['unimplemented'] as const satisfies readonly MarkerFrame[]
-export type PlayerSource = 'unimplemented'
-export const PLAYER_SOURCES = ['unimplemented'] as const satisfies readonly PlayerSource[]
+export type TimelineAxis = 'time' | 'ordinal'
+export const TIMELINE_AXES = ['time', 'ordinal'] as const satisfies readonly TimelineAxis[]
+export type MarkerResult = 'passed' | 'failed' | 'healed'
+export const MARKER_RESULTS = ['passed', 'failed', 'healed'] as const satisfies readonly MarkerResult[]
+export type MarkerFrame = 'available' | 'absent'
+export const MARKER_FRAMES = ['available', 'absent'] as const satisfies readonly MarkerFrame[]
+export type PlayerSource = 'frames' | 'video'
+export const PLAYER_SOURCES = ['frames', 'video'] as const satisfies readonly PlayerSource[]
 
 export interface TimelineMarker extends Playhead {
   subActionIndex: number
@@ -99,25 +99,89 @@ export interface TimelineModel {
 }
 
 export function buildTimelineModel(group: RunDetailGroup): TimelineModel {
-  return { testIndex: group.member.testIndex, axis: 'unimplemented', extent: -1,
-    segments: [], markers: [], playhead: null }
+  const steps = [...group.steps].sort((a, b) => a.step.stepIndex - b.step.stepIndex).map(entry => ({
+    ...entry,
+    subActions: [...entry.subActions].sort((a, b) => a.subActionIndex - b.subActionIndex),
+  }))
+  const recording = group.member.recording
+  const duration = recording?.state === 'present' ? recording.durationMs : undefined
+  const axis: TimelineAxis = duration !== undefined && Number.isFinite(duration) && duration >= 0
+    && steps.every(entry => entry.subActions.every(action => action.recordingOffsetMs !== undefined))
+    ? 'time' : 'ordinal'
+  const extent = axis === 'time' ? duration! : steps.reduce((sum, entry) => sum + Math.max(1, entry.subActions.length), 0)
+  const markers: TimelineMarker[] = []
+  let slot = 0
+  const segments: TimelineSegment[] = steps.map(entry => {
+    const start = slot
+    const stepMarkers = entry.subActions.map(subAction => {
+      const ref = decisionScreenshotRef(subAction)
+      const offset = subAction.recordingOffsetMs
+      const marker: TimelineMarker = {
+        testIndex: subAction.testIndex,
+        stepIndex: subAction.stepIndex,
+        subActionIndex: subAction.subActionIndex,
+        ordinal: markers.length + 1,
+        position: axis === 'time'
+          ? extent === 0 ? (offset! > 0 ? 1 : 0) : Math.min(1, Math.max(0, offset! / extent))
+          : (slot + 0.5) / extent,
+        result: subAction.result.success ? 'passed' : 'failed',
+        frame: frameUsable(ref) ? 'available' : 'absent',
+        ...(ref ? { ref } : {}),
+        ...(offset === undefined ? {} : { recordingOffsetMs: offset }),
+        subAction,
+      }
+      slot++
+      markers.push(marker)
+      return marker
+    })
+    if (entry.subActions.length === 0) slot++
+    return { ...entry, start: start / extent, end: slot / extent, markers: stepMarkers }
+  })
+  if (axis === 'time') {
+    let nextStart = 1
+    for (let index = segments.length - 1; index >= 0; index--) {
+      const segment = segments[index]!
+      segment.start = segment.markers[0]?.position ?? nextStart
+      segment.end = nextStart
+      nextStart = segment.start
+    }
+  }
+  return { testIndex: group.member.testIndex, axis, extent, segments, markers,
+    playhead: steps[0] ? parkTargetForStep(steps[0]) : null }
 }
 
-export const SNAP_THRESHOLD_PX = 0
+export const SNAP_THRESHOLD_PX = 12
 type MarkerCentre = { marker: TimelineMarker; centrePx: number }
 
 export function nearestMarker(positionPx: number, centres: readonly MarkerCentre[]): TimelineMarker | undefined {
-  return undefined
+  let nearest: TimelineMarker | undefined
+  let distance = Infinity
+  for (const centre of centres) {
+    const candidateDistance = Math.abs(positionPx - centre.centrePx)
+    if (candidateDistance < distance
+      || (candidateDistance === distance && nearest && centre.marker.ordinal < nearest.ordinal)) {
+      nearest = centre.marker
+      distance = candidateDistance
+    }
+  }
+  return nearest
 }
 
 export function snapToMarker(positionPx: number, centres: readonly MarkerCentre[]): TimelineMarker | undefined {
-  return undefined
+  return nearestMarker(positionPx, centres.filter(centre =>
+    Math.abs(positionPx - centre.centrePx) <= SNAP_THRESHOLD_PX))
 }
 
 export function findMarkerBySha(model: TimelineModel, sha: string): TimelineMarker | undefined {
-  return undefined
+  return model.markers.find(marker => marker.ref?.sha === sha)
 }
 
 export function formatOffset(offsetMs: number | undefined, form: 'readout' | 'popover' = 'readout'): string | undefined {
-  return undefined
+  if (offsetMs === undefined || !Number.isFinite(offsetMs) || offsetMs < 0) return undefined
+  const seconds = Math.floor(offsetMs / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const tail = String(seconds % 60).padStart(2, '0')
+  const time = minutes < 60 ? `${minutes}:${tail}`
+    : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${tail}`
+  return form === 'popover' ? `${time}.${Math.floor(offsetMs / 100) % 10}` : time
 }
