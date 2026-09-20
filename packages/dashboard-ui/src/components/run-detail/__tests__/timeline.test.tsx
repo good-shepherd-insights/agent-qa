@@ -214,6 +214,7 @@ test('TIMELINE-POPOVER-HOVER', async () => {
 })
 test('TIMELINE-POPOVER-THUMB-FOCUS', async () => {
   render({ playhead: model.markers[2]! })
+  act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true })))
   await act(async () => query('[role="slider"]').focus())
   expect(popover()).not.toBeNull()
   expect(popover().dataset.timelinePopover).toBe('3')
