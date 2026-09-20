@@ -94,6 +94,30 @@ export function statEvidenceBlob(
     : 'blob_absent'
 }
 
+export function statEvidenceBlobSize(
+  input: CreateEvidenceBlobReaderInput,
+  runId: string,
+  sha: string,
+): Awaited<ReturnType<NonNullable<EvidenceBlobReaderPort['stat']>>> {
+  if (!SHA256_HEX_RE.test(sha)) return { status: 'blob_absent' }
+  if (!runDirectoryExists(input, runId)) return { status: 'unknown_run' }
+  const byteLength = new FsEvidenceArtifactStore({ root: input.agentQaRoot, runId }).blobSize(sha)
+  return byteLength === undefined ? { status: 'blob_absent' } : { status: 'found', byteLength }
+}
+
+export function readEvidenceBlobRange(
+  input: CreateEvidenceBlobReaderInput,
+  runId: string,
+  sha: string,
+  start: number,
+  end: number,
+): EvidenceBlobLookup {
+  if (!SHA256_HEX_RE.test(sha)) return { status: 'blob_absent' }
+  if (!runDirectoryExists(input, runId)) return { status: 'unknown_run' }
+  const bytes = new FsEvidenceArtifactStore({ root: input.agentQaRoot, runId }).readBlobRange(sha, start, end)
+  return bytes === undefined ? { status: 'blob_absent' } : { status: 'found', bytes }
+}
+
 /**
  * The op's PORT over {@link lookupEvidenceBlob}.
  *
@@ -113,6 +137,9 @@ export function createEvidenceBlobReader(
       Promise.resolve(lookupEvidenceBlob(input, String(runId), sha)),
     has: (runId: RunId, sha: string): Promise<EvidenceBlobPresence> =>
       Promise.resolve(statEvidenceBlob(input, String(runId), sha)),
+    stat: (runId, sha) => Promise.resolve(statEvidenceBlobSize(input, String(runId), sha)),
+    readRange: (runId, sha, start, end) =>
+      Promise.resolve(readEvidenceBlobRange(input, String(runId), sha, start, end)),
   }
 }
 
