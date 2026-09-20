@@ -11,6 +11,7 @@ interface SubActionTreeItemProps {
   /** Whether the owning step was served from cache (D-16). */
   cached: boolean
   isSelected: boolean
+  isPlayheadRow?: boolean
   onSelect: () => void
 }
 
@@ -19,25 +20,28 @@ function resultWord(sub: RunDetailSubAction): 'success' | 'failure' {
   return sub.result.success ? 'success' : 'failure'
 }
 
-export function SubActionTreeItem({ sub, stepId, cached, isSelected, onSelect }: SubActionTreeItemProps) {
+export function SubActionTreeItem({ sub, stepId, cached, isSelected, isPlayheadRow = false, onSelect }: SubActionTreeItemProps) {
   const result = resultWord(sub)
   return (
     <li
       role="treeitem"
       aria-level={2}
       aria-selected={isSelected}
+      aria-current={isPlayheadRow ? true : undefined}
+      data-playhead-row={isPlayheadRow ? '' : undefined}
       data-sub-action={String(sub.subActionIndex)}
       data-sub-action-result={result}
       data-sub-action-id={`${stepId}-${String(sub.subActionIndex)}`}
     >
       <button
         className={cn(
-          "flex w-full items-center gap-2 py-1.5 px-3 text-left rounded-[2px] text-sm",
+          "relative flex w-full items-center gap-2 py-1.5 px-3 text-left rounded-[2px] text-sm",
           "hover:bg-muted/50 transition-colors",
           isSelected && "bg-primary/10 ring-1 ring-primary/30"
         )}
         onClick={onSelect}
       >
+        {isPlayheadRow && <span aria-hidden='true' className='absolute inset-y-1 left-0 w-0.5 bg-primary' />}
         <ActionSentence
           sub={sub}
           wrap='truncate'

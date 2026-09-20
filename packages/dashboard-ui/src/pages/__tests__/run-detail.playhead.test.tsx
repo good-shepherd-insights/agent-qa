@@ -43,7 +43,7 @@ function projection(): RunDetailProjection {
     members: [{ testIndex: 0, name: 'Checkout', attempts: 1 }],
     steps: [0, 1].map(stepIndex => ({
       testIndex: 0, stepIndex, stepText: `Step ${stepIndex + 1}`, cacheStatus: 'miss',
-      verifierVerdict: { pass: true }, selfHealOccurred: false, briefDigest: 'digest', status: 'passed',
+      verifierVerdict: { pass: true, reasoning: 'Complete' }, selfHealOccurred: false, briefDigest: 'digest', status: 'passed',
     })),
     subActions: [0, 1, 2, 3].map(index => ({
       testIndex: 0, stepIndex: index === 3 ? 1 : 0, subActionIndex: index === 3 ? 0 : index,
@@ -95,7 +95,7 @@ function parent(step = '0:0') { click(`[data-step-id="${step}"] > button`) }
 function child(index: number, step = '0:0') { click(`[data-sub-action-id="${step}-${index}"] > button`) }
 function current() { return host.querySelector('[data-playhead-row]')?.getAttribute('data-sub-action-id') }
 function selected() { return host.querySelector('[role="treeitem"][aria-selected="true"]') }
-function query() { return new URLSearchParams(host.querySelector('[data-location]')?.getAttribute('data-location')) }
+function query() { return new URLSearchParams(host.querySelector('[data-location]')?.getAttribute('data-location') ?? '') }
 function frame() { return host.querySelector('[data-frame]')?.getAttribute('src') }
 
 it('PLAYHEAD-PARENT-PARKS-LATEST-FRAME', async () => {
@@ -108,7 +108,7 @@ it('PLAYHEAD-PARENT-PARKS-LATEST-FRAME', async () => {
 
 it('PLAYHEAD-PARENT-SUBSTITUTED', async () => {
   const detail = projection()
-  detail.subActions[2]!.artifactRefs[0]!.evidenceIncomplete = true
+  detail.subActions[2]!.artifactRefs![0]!.evidenceIncomplete = true
   detailRead.mockResolvedValue(detail)
   await render()
   expect(frame()).toBe(routes.runArtifact('run-1', shas[1]!))

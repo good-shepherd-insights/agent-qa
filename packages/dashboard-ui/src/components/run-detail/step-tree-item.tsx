@@ -14,6 +14,7 @@ import { CacheStatusIconWrapper } from "./cache-status-marker"
 import type { ExecutionLogEntry } from "@/lib/api"
 import type { DisplayStep } from "@/lib/display-step"
 import type { Selection } from "@/lib/selection"
+import type { Playhead } from '@/lib/playhead'
 import { cn, formatDuration } from "@/lib/utils"
 
 function StepStatusIcon({ status }: { status: string }) {
@@ -41,12 +42,13 @@ interface StepTreeItemProps {
   isSelected: boolean
   isExpanded: boolean
   selection: Selection | null
+  playhead?: Playhead | null
   onSelect: (sel: Selection | null) => void
   inlineLogs?: ExecutionLogEntry[]
   embedded?: boolean
 }
 
-export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect, inlineLogs = [], embedded = false, onMark, marks, markDenial, markPending = false }: StepTreeItemProps) {
+export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead, onSelect, inlineLogs = [], embedded = false, onMark, marks, markDenial, markPending = false }: StepTreeItemProps) {
   const [kind, setKind] = useState<Mark>()
   const [note, setNote] = useState('')
   const [correction, setCorrection] = useState<MarkCorrection>()
@@ -203,6 +205,7 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect
               sub={sub}
               stepId={step.id}
               cached={servedFromCache}
+              isPlayheadRow={playhead?.testIndex === sub.testIndex && playhead.stepIndex === sub.stepIndex && playhead.subActionIndex === sub.subActionIndex}
               isSelected={
                 selection?.type === 'subaction' &&
                 selection.stepId === step.id &&

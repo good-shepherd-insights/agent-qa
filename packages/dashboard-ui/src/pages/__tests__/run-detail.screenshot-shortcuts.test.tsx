@@ -373,11 +373,11 @@ describe("RunDetailPage decision screenshot", () => {
     const view = await renderAt("/runs/run-1")
     const location = view.querySelector('[data-testid="location"]') as HTMLElement
 
-    expect(location.getAttribute("data-search")).toBe("?step=0%3A0")
+    expect(location.getAttribute("data-search")).toBe("?step=0%3A0&sub=0")
 
     await flushRender()
 
-    expect(location.getAttribute("data-search")).toBe("?step=0%3A0")
+    expect(location.getAttribute("data-search")).toBe("?step=0%3A0&sub=0")
   })
 
   it("renders the selected sub-action's decision screenshot from its ref, through the one minter", async () => {

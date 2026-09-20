@@ -43,6 +43,14 @@ import { copyTextOf } from "@/lib/display-text"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
 import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
+import { parkTargetForStep, playheadFromSelection, selectionFromPlayhead, type Playhead } from '@/lib/playhead'
+
+const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'] as const
+
+function tabFromUrl(searchParams: URLSearchParams): string {
+  const tab = searchParams.get('tab')
+  return TAB_NAMES.find(name => name === tab) ?? 'overview'
+}
 
 /**
  * Which step a link is pointing at (405-08 · D-16).
@@ -67,7 +75,9 @@ function getSelectionFromUrlOrFirst(
     const targetStep = displaySteps.find((step) => step.id === urlStepKey)
     if (targetStep) {
       if (urlSubIndex != null) {
-        return { type: "subaction", stepId: targetStep.id, subIndex: Number.parseInt(urlSubIndex, 10) }
+        const subIndex = /^\d+$/.test(urlSubIndex) ? Number(urlSubIndex) : NaN
+        if (!Number.isSafeInteger(subIndex) || !targetStep.subActions?.some(sub => sub.subActionIndex === subIndex)) return null
+        return { type: "subaction", stepId: targetStep.id, subIndex }
       }
       return { type: "step", stepId: targetStep.id }
     }
@@ -211,7 +221,18 @@ export default function RunDetailPage() {
   const stepTreeScrollRef = useRef<HTMLDivElement | null>(null)
   const skippedInitialDefaultSelectionRef = useRef<string | null>(null)
 
-  const [selection, setSelection] = useState<Selection | null>(null)
+  const [selection, setTreeSelection] = useState<Selection | null>(null)
+  const [playheadTarget, setPlayheadTarget] = useState<Playhead | null>(null)
+  const setSelection = useCallback((next: Selection | null) => {
+    setTreeSelection(next)
+    setPlayheadTarget(null)
+  }, [])
+  const setPlayheadFrom = useCallback((address: Playhead) => {
+    const next = selectionFromPlayhead(address)
+    if (!hasStepId(next)) return
+    setTreeSelection({ type: 'step', stepId: next.stepId })
+    setPlayheadTarget(address)
+  }, [])
   const [allExecutionLogs, setAllExecutionLogs] = useState<ExecutionLogEntry[]>([])
 
   // THE CHIP CLIENT LIVES HERE, NOT IN THE HEADER (404-07, D-20 / 400 D-13). The navbar is
@@ -247,11 +268,7 @@ export default function RunDetailPage() {
   const artifactLoadedRunIdRef = useRef<string | null>(null)
   const artifactRequestRef = useRef(0)
 
-  const [activeTab, setActiveTab] = useState<string>(() => {
-    const param = searchParams.get('tab')
-    if (param === 'screenshot') return 'overview'
-    return param ?? 'overview'
-  })
+  const [activeTab, setActiveTab] = useState<string>(() => tabFromUrl(searchParams))
 
   useEffect(() => {
     if (!run?.status) return
@@ -522,21 +539,18 @@ export default function RunDetailPage() {
     return displaySteps.find(s => s.id === selection.stepId) ?? null
   }, [selection, displaySteps])
 
-  // THE SELECTED SUB-ACTION IS THE DURABLE ONE (405-11 · D-16).
-  //
-  // The tree selects by ordinal within the step, and the step now carries the projection's own
-  // `subActions` in the producer's order, so the panel below reads the SAME row the tree
-  // highlighted. Before this plan the panel read a v1 shape whose producer was already deleted, so
-  // it resolved to nothing on every selection and the overview rendered its no-selection state for
-  // runs that had recorded plenty.
-  //
-  // An ordinal that names no recorded sub-action resolves to `null` rather than throwing: `?sub=`
-  // is hand-editable, and the failure mode of a wrong answer here is the step's own view, never a
-  // crash.
-  const selectedSubAction = useMemo<RunDetailSubAction | null>(() => {
-    if (!isSubactionSelection(selection) || !selectedStep) return null
-    return selectedStep.subActions?.[selection.subIndex] ?? null
-  }, [selection, selectedStep])
+  const playhead = useMemo<Playhead | null>(() => {
+    const address = playheadFromSelection(selection)
+    if (!address || !selectedStep) return null
+    if (playheadTarget?.testIndex === address.testIndex && playheadTarget.stepIndex === address.stepIndex) return playheadTarget
+    if (selection?.type === 'subaction') return address
+    const group = groups.find(entry => entry.member.testIndex === address.testIndex)
+      ?.steps.find(entry => entry.step.stepIndex === address.stepIndex)
+    return group ? parkTargetForStep(group) : null
+  }, [selection, selectedStep, playheadTarget, groups])
+  const playheadSubAction = useMemo<RunDetailSubAction | null>(() =>
+    selectedStep?.subActions?.find(sub => sub.subActionIndex === playhead?.subActionIndex) ?? null,
+  [selectedStep, playhead])
 
   type NavItem =
     | { type: 'hook'; logId: string }
@@ -602,17 +616,18 @@ export default function RunDetailPage() {
   }, [displaySteps, expandedStepId, stepExecutionLogs, setupHooks, teardownHooks])
 
   const currentNavIdx = useMemo(() => {
-    if (!selection) return -1
+    const cursor = playheadTarget ? selectionFromPlayhead(playheadTarget) : selection
+    if (!cursor) return -1
     return navItems.findIndex(item => {
-      if (selection.type === 'hook' && item.type === 'hook') return item.logId === selection.hookId
-      if (selection.type === 'step' && item.type === 'step') return item.stepId === selection.stepId
-      if (selection.type === 'subaction' && item.type === 'sub')
-        return item.stepId === selection.stepId && item.subIndex === selection.subIndex
-      if (selection.type === 'execution' && item.type === 'exec')
-        return item.logId === selection.logId
+      if (cursor.type === 'hook' && item.type === 'hook') return item.logId === cursor.hookId
+      if (cursor.type === 'step' && item.type === 'step') return item.stepId === cursor.stepId
+      if (cursor.type === 'subaction' && item.type === 'sub')
+        return item.stepId === cursor.stepId && item.subIndex === cursor.subIndex
+      if (cursor.type === 'execution' && item.type === 'exec')
+        return item.logId === cursor.logId
       return false
     })
-  }, [navItems, selection])
+  }, [navItems, selection, playheadTarget])
 
   function navItemToSelection(item: NavItem): Selection {
     if (item.type === 'hook') return { type: 'hook', hookId: item.logId }
@@ -621,26 +636,31 @@ export default function RunDetailPage() {
     return { type: 'subaction', stepId: item.stepId, subIndex: item.subIndex }
   }
 
-  const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'] as const
+  function selectNavItem(item: NavItem) {
+    const next = navItemToSelection(item)
+    const address = playheadFromSelection(next)
+    if (item.type === 'sub' && address) setPlayheadFrom(address)
+    else setSelection(next)
+  }
 
   const shortcuts = useMemo(() => {
     const map: Record<string, (e: KeyboardEvent) => void> = {
       arrowdown: () => {
         if (navItems.length === 0) return
         if (currentNavIdx === -1) {
-          setSelection(navItemToSelection(navItems[0]))
+          selectNavItem(navItems[0])
         } else {
           const next = Math.min(currentNavIdx + 1, navItems.length - 1)
-          setSelection(navItemToSelection(navItems[next]))
+          selectNavItem(navItems[next])
         }
       },
       arrowup: () => {
         if (navItems.length === 0) return
         if (currentNavIdx === -1) {
-          setSelection(navItemToSelection(navItems[navItems.length - 1]))
+          selectNavItem(navItems[navItems.length - 1])
         } else {
           const prev = Math.max(currentNavIdx - 1, 0)
-          setSelection(navItemToSelection(navItems[prev]))
+          selectNavItem(navItems[prev])
         }
       },
       j: () => { map.arrowdown({} as KeyboardEvent) },
@@ -705,6 +725,7 @@ export default function RunDetailPage() {
   // 405-07 there are no child runs to name; a stale one in a bookmarked link must not survive into
   // the rewritten query.
   useEffect(() => {
+    if (isLoading || detail === undefined) return
     const step = hasStepId(selection)
       ? displaySteps.find(s => s.id === selection.stepId)
       : null
@@ -716,8 +737,8 @@ export default function RunDetailPage() {
       next.delete('step')
     }
     next.delete('run')
-    if (isSubactionSelection(selection)) {
-      next.set('sub', String(selection.subIndex))
+    if (playhead?.subActionIndex != null) {
+      next.set('sub', String(playhead.subActionIndex))
     } else {
       next.delete('sub')
     }
@@ -730,7 +751,7 @@ export default function RunDetailPage() {
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true })
     }
-  }, [selection, activeTab, displaySteps, searchParams, setSearchParams])
+  }, [selection, playhead, activeTab, displaySteps, searchParams, setSearchParams, isLoading, detail])
 
   // Scroll selected item into view
   useEffect(() => {
@@ -957,6 +978,7 @@ export default function RunDetailPage() {
                   onSelectMember={onSelectMember}
                   onCitedArtifact={onCitedArtifact}
                   selection={selection}
+                  playhead={playhead}
                   onSelect={setSelection}
                   setupHooks={setupHooks}
                   teardownHooks={teardownHooks}
@@ -974,7 +996,7 @@ export default function RunDetailPage() {
                   activeTab={activeTab}
                   onTabChange={setActiveTab}
                   step={selectedStep}
-                  subAction={selectedSubAction}
+                  subAction={playheadSubAction}
                   runId={selectedStep?.rawRunId ?? run.id}
                   allSteps={displaySteps}
                   executionLogs={selection?.type === 'hook' && selectedHookLog ? [selectedHookLog]

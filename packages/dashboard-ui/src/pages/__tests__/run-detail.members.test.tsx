@@ -315,7 +315,7 @@ describe("the page reads ONE durable projection and groups it by member (D-16)",
     const view = await renderAt("/runs/run-1?step=1:0")
 
     expect(view.querySelector('[data-testid="tab-panels"]')?.getAttribute("data-step-id")).toBe("1:0")
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute("data-search")).toContain("step=1%3A0")
+    expect(new URLSearchParams(view.querySelector('[data-testid="location"]')?.getAttribute('data-search') ?? '').get('step')).toBe('1:0')
   })
 
   it("falls back to the first visible step for a key that names nothing, and never throws", async () => {

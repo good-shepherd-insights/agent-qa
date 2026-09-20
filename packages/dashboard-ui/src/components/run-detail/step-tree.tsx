@@ -28,6 +28,7 @@ import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
 import type { RunDetailGroup } from "@/lib/run-detail-view"
 import type { MemberVerdictView, OnMark, MarkDenial } from "@/lib/analysis-view"
 import { hasStepId, type Selection } from "@/lib/selection"
+import type { Playhead } from '@/lib/playhead'
 
 interface StepTreeProps {
   onMark?: OnMark
@@ -59,6 +60,7 @@ interface StepTreeProps {
   onSelectMember?: (testIndex: number) => void
   onCitedArtifact?: (sha: string) => void
   selection: Selection | null
+  playhead?: Playhead | null
   onSelect: (sel: Selection | null) => void
   setupHooks?: ExecutionLogEntry[]
   teardownHooks?: ExecutionLogEntry[]
@@ -147,6 +149,7 @@ export function StepTree({
   onSelectMember,
   onCitedArtifact,
   selection,
+  playhead,
   onSelect,
   setupHooks = [],
   teardownHooks = [],
@@ -231,6 +234,7 @@ export function StepTree({
                   isSelected={hasStepId(selection) && selection.stepId === step.id}
                   isExpanded={true}
                   selection={selection}
+                  playhead={playhead}
                   onSelect={onSelect}
                   inlineLogs={logsByStep.get(step.id) ?? []}
                 />
