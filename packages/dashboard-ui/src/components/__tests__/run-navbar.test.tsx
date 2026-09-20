@@ -197,7 +197,7 @@ describe("RunNavbar", () => {
   // are the only artifact addressing now and no producer writes a recording ref, so the header has
   // no video surface at all - an honest absence, not a surviving path. If a recording producer
   // lands later, this cell is what has to change, and it will change to assert a MINTED href.
-  it("offers no recording action while no producer records one by ref", () => {
+  it("lists the source shortcut without restoring the retired recording link", () => {
     mount(
       <RunNavbar
         run={baseRun}
@@ -208,7 +208,7 @@ describe("RunNavbar", () => {
 
     expect(container.querySelector('a[aria-label="Open recording"]')).toBeNull()
     expect(container.querySelectorAll('a[href^="/api/videos/"]')).toHaveLength(0)
-    expect(container.textContent).not.toContain("Video")
+    expect(container.textContent).toContain("Frames / Video")
   })
 
   // D-06 CARRIED INTO THE HEADER. The old span summed three per-step counters and was guarded on a

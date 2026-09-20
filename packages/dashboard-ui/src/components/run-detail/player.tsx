@@ -10,6 +10,7 @@ import { EVIDENCE_COPY, resolveEvidenceView } from '@/lib/evidence-state-view'
 import { formatOffset, frameUsable, type PlayerSource, type Playhead, type TimelineModel, type UsableFrame } from '@/lib/playhead'
 import { captionModel, mediaErrorView, PLAYER_COPY, PLAYBACK_SPEEDS, storePlayerSource, VIDEO_UNTIMED_NOTE } from '@/lib/player-view'
 import { routes } from '@/lib/routes'
+import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import type { MediaFacade } from '@/test/media-facade'
 import { ActionSentence } from './action-sentence'
 import { EvidenceState } from './evidence-state'
@@ -69,13 +70,14 @@ export interface PlayerProps {
   onPlayheadChange: (playhead: Playhead) => void
   seekFraction?: number
   media?: MediaFacade
+  isTimelineKeyIgnored?: (event: KeyboardEvent) => boolean
 }
 
 function addressKey(playhead: Playhead | null | undefined) {
   return playhead ? `${playhead.testIndex}:${playhead.stepIndex}:${playhead.subActionIndex}` : ''
 }
 
-function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, onPlayheadChange, header }: PlayerProps & {
+function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, onPlayheadChange, isTimelineKeyIgnored, header }: PlayerProps & {
   recording: Extract<RecordingEntry, { state: 'present' }>
   header: ReactNode
 }) {
@@ -153,16 +155,25 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, o
     if (active.current) active.current.playbackRate = speed
   }, [speed, attempt])
 
+  function togglePlayback() {
+    const facade = active.current
+    if (!ready || !facade) return false
+    if (facade.paused) void facade.play().catch(() => { setError(mediaErrorView('video', {})); setReady(false) })
+    else facade.pause()
+  }
+
+  useKeyboardShortcuts({
+    ' ': event => {
+      if (!isTimelineKeyIgnored || isTimelineKeyIgnored(event)) return false
+      return togglePlayback()
+    },
+  })
+
   return <>
     <div className='flex items-center gap-2 px-3 py-2'>
       {header}
       <Button size='icon-sm' variant='ghost' aria-label={playing ? PLAYER_COPY.pause : PLAYER_COPY.play} disabled={!ready}
-        onClick={() => {
-          const facade = active.current
-          if (!facade) return
-          if (facade.paused) void facade.play().catch(() => { setError(mediaErrorView('video', {})); setReady(false) })
-          else facade.pause()
-        }}>
+        onClick={togglePlayback}>
         {playing ? <Pause className='h-4 w-4' /> : <Play className='h-4 w-4' />}
       </Button>
       <Select value={String(speed)} onValueChange={value => {

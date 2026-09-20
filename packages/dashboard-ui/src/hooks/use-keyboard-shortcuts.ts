@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react"
 
-type ShortcutMap = Record<string, (e: KeyboardEvent) => void>
+type ShortcutMap = Record<string, (e: KeyboardEvent) => unknown>
 
 export function useKeyboardShortcuts(shortcuts: ShortcutMap): void {
   const shortcutsRef = useRef(shortcuts)
@@ -35,8 +35,7 @@ export function useKeyboardShortcuts(shortcuts: ShortcutMap): void {
         const compoundKey = `shift+${key}`
         const fn = shortcutsRef.current[compoundKey]
         if (fn) {
-          e.preventDefault()
-          fn(e)
+          if (fn(e) !== false) e.preventDefault()
           return
         }
       }
@@ -54,8 +53,7 @@ export function useKeyboardShortcuts(shortcuts: ShortcutMap): void {
 
       const fn = shortcutsRef.current[key]
       if (fn) {
-        e.preventDefault()
-        fn(e)
+        if (fn(e) !== false) e.preventDefault()
       }
     }
 

@@ -49,7 +49,7 @@ export function TabPanels({
   allSteps,
   executionLogs = [],
   platform,
-  model, playhead, recording, frame, playerSource, onPlayerSourceChange, onPlayheadChange, seekFraction,
+  model, playhead, recording, frame, playerSource, onPlayerSourceChange, onPlayheadChange, seekFraction, isTimelineKeyIgnored,
   pipelineRef,
   knowledge,
   onSelectStep,
@@ -152,6 +152,7 @@ export function TabPanels({
             model={model} playhead={playhead} recording={recording} frame={frame}
             playerSource={playerSource} onPlayerSourceChange={onPlayerSourceChange}
             onPlayheadChange={onPlayheadChange} seekFraction={seekFraction}
+            isTimelineKeyIgnored={isTimelineKeyIgnored}
             pipelineRef={pipelineRef}
           />}
         </ScrollArea>

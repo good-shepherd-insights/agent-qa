@@ -23,6 +23,7 @@ export interface OverviewPlayerProps {
   onPlayerSourceChange?: PlayerProps["onSourceChange"]
   onPlayheadChange?: PlayerProps["onPlayheadChange"]
   seekFraction?: number
+  isTimelineKeyIgnored?: PlayerProps["isTimelineKeyIgnored"]
 }
 
 interface TabOverviewProps extends OverviewPlayerProps {
@@ -144,14 +145,14 @@ export function TabOverview({
   subAction,
   runId,
   model, playhead = null, recording, frame, playerSource = "frames",
-  onPlayerSourceChange = () => {}, onPlayheadChange = () => {}, seekFraction,
+  onPlayerSourceChange = () => {}, onPlayheadChange = () => {}, seekFraction, isTimelineKeyIgnored,
   pipelineRef,
 }: TabOverviewProps) {
   return (
     <div data-overview>
       {model && runId && <Player model={model} playhead={playhead} recording={recording} frame={frame}
         source={playerSource} runId={runId} onSourceChange={onPlayerSourceChange}
-        onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} />}
+        onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} isTimelineKeyIgnored={isTimelineKeyIgnored} />}
       <div className="border-t">
         <div className="p-3 space-y-3 min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">

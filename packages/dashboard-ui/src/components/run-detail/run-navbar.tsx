@@ -216,6 +216,9 @@ export function RunNavbar({
                 <div>
                   <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-2">Navigation</h4>
                   <ShortcutLegend hints={[
+                    { key: '← →', label: 'Previous / next action' },
+                    { key: 'Space', label: 'Play / pause' },
+                    { key: 'V', label: 'Frames / Video' },
                     { key: "\u2191 / K", label: "Previous item" },
                     { key: "\u2193 / J", label: "Next item" },
                     { key: "Shift+\u2191", label: "Previous step" },

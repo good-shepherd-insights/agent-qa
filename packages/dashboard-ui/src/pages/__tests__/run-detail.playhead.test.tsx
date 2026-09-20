@@ -126,9 +126,9 @@ it.each(['ordinal', 'time'])('KEYS-ARROW-ORDER traverses addresses on the %s axi
 
 it('KEYS-ARROW-CROSSES-MEMBER walks into and back from the adjacent member', async () => {
   const detail = projection()
-  detail.members.push({ testIndex: 1, name: 'Second member', attempts: 1 })
-  detail.steps.push({ ...detail.steps[0]!, testIndex: 1 })
-  detail.subActions.push({ ...detail.subActions[0]!, testIndex: 1 })
+  detail.members = [...detail.members, { testIndex: 1, name: 'Second member', attempts: 1 }]
+  detail.steps = [...detail.steps, { ...detail.steps[0]!, testIndex: 1 }]
+  detail.subActions = [...detail.subActions, { ...detail.subActions[0]!, testIndex: 1 }]
   detailRead.mockResolvedValue(detail)
   await render()
   child(0, '0:1')

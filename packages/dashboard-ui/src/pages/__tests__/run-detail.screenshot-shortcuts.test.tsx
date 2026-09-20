@@ -421,13 +421,13 @@ describe("RunDetailPage decision screenshot", () => {
 
   // A retired key must be GONE, not silently rebound. A page that still answered `a` would be
   // doing something a reader has no way to predict.
-  it("binds no screenshot side-selection key, and no video key", async () => {
+  it("binds the source toggle without screenshot side-selection keys", async () => {
     await renderAt("/runs/run-1?step=0:0&sub=0")
 
     const bound = Object.keys(latestShortcuts())
     expect(bound).not.toContain("a")
     expect(bound).not.toContain("b")
-    expect(bound).not.toContain("v")
+    expect(bound).toContain("v")
   })
 
   it("keeps the selection and the URL untouched when the viewer is on another tab", async () => {

@@ -20,7 +20,7 @@ import { ArtifactDrawer, type ArtifactDrawerTab } from "@/components/run-detail/
 import { StepTree } from "@/components/run-detail/step-tree"
 import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
-import { initialPlayerSource } from "@/lib/player-view"
+import { initialPlayerSource, storePlayerSource } from "@/lib/player-view"
 import { Timeline } from '@/components/run-detail/timeline'
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
@@ -121,6 +121,12 @@ function scrollElementIntoContainerView(container: HTMLElement, element: HTMLEle
   container.scrollTop = top
 }
 
+
+export function isTimelineKeyIgnored(event: KeyboardEvent): boolean {
+  return !(event.target instanceof Element) || event.target.closest(
+    'button, [role="tablist"], [role="radiogroup"], [role="tree"], [role="dialog"]:not([data-state="closed"]), dialog[open]',
+  ) !== null
+}
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -664,7 +670,25 @@ export default function RunDetailPage() {
   }
 
   const shortcuts = useMemo(() => {
-    const map: Record<string, (e: KeyboardEvent) => void> = {
+    const moveMarker = (event: KeyboardEvent, direction: number) => {
+      if (isTimelineKeyIgnored(event)) return false
+      const markers = visibleGroups.flatMap(group => buildTimelineModel(group).markers)
+      if (markers.length === 0) return false
+      const index = markers.findIndex(marker => marker.testIndex === playhead?.testIndex
+        && marker.stepIndex === playhead.stepIndex && marker.subActionIndex === playhead.subActionIndex)
+      const next = index < 0 ? (direction === 1 ? 0 : markers.length - 1)
+        : Math.max(0, Math.min(markers.length - 1, index + direction))
+      setPlayheadFrom(markers[next]!)
+    }
+    const map: Record<string, (e: KeyboardEvent) => void | boolean> = {
+      arrowleft: event => moveMarker(event, -1),
+      arrowright: event => moveMarker(event, 1),
+      v: event => {
+        if (isTimelineKeyIgnored(event)) return false
+        const source = playerSource === 'video' ? 'frames' : 'video'
+        storePlayerSource(source)
+        setPlayerSource(source)
+      },
       arrowdown: () => {
         if (navItems.length === 0) return
         if (currentNavIdx === -1) {
@@ -733,7 +757,8 @@ export default function RunDetailPage() {
       'shift+$': () => pipelineRef.current?.togglePhase(3),
     }
     return map
-  }, [navItems, currentNavIdx, selection, run, navigate, artifactDrawerOpen, pipelineRef, openArtifactDrawer])
+  }, [navItems, currentNavIdx, selection, run, navigate, artifactDrawerOpen, pipelineRef, openArtifactDrawer,
+    visibleGroups, playhead, playerSource, playerMember])
 
   useKeyboardShortcuts(shortcuts)
 
@@ -1058,6 +1083,7 @@ export default function RunDetailPage() {
                   model={timelineModel} playhead={playhead} recording={recording} frame={foldedFrame}
                   playerSource={playerSource} onPlayerSourceChange={setPlayerSource}
                   onPlayheadChange={setPlayheadFrom} seekFraction={seekFraction}
+                  isTimelineKeyIgnored={isTimelineKeyIgnored}
                   runId={selectedStep?.rawRunId ?? run.id}
                   allSteps={displaySteps}
                   executionLogs={selection?.type === 'hook' && selectedHookLog ? [selectedHookLog]
