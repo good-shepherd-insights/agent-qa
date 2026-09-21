@@ -98,12 +98,16 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
     }
   }
   const clusters: TimelineMarker[][] = []
-  const markerX = (marker: TimelineMarker) => Math.max(14, Math.min(width - 14, marker.position * width))
+  const markerX = (marker: TimelineMarker) => marker.position * width
   for (const marker of model.markers) {
     const previous = clusters.at(-1)
     if (previous && markerX(marker) - markerX(previous[0]!) < 28) previous.push(marker)
     else clusters.push([marker])
   }
+  const playheadPosition = position ?? current?.position ?? 0
+  // The circle becomes the visible playhead where the pill would cover its glyph.
+  // Keep the slider itself focusable and at the exact unmodified rail coordinate.
+  const alignedCluster = clusters.find(cluster => Math.abs(cluster[0]!.position - playheadPosition) * width <= 10)
   const context = (marker: TimelineMarker) => {
     const member = members?.find(entry => entry.model.testIndex === marker.testIndex)
     return `${member ? `${member.label}, ` : ''}Step ${marker.stepIndex + 1}`
@@ -133,21 +137,22 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
           style={{ left: `${member.start * 100}%`, width: `${(member.end - member.start) * 100}%` }} />)}
         {(current || position !== undefined) && <>
           <div aria-hidden='true' className='absolute left-0 top-3 h-1 rounded-full bg-primary/50'
-            style={{ width: `${(position ?? current?.position ?? 0) * 100}%` }} />
+            style={{ width: `${playheadPosition * 100}%` }} />
           <span ref={slider} data-timeline-playhead role='slider' tabIndex={0}
             aria-label={memberLabel ? `${TIMELINE_COPY.slider}: ${copyTextOf(memberLabel)}` : TIMELINE_COPY.slider}
             aria-orientation='horizontal' onKeyDown={navigate}
             aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((position ?? 0) * 100)}
             aria-valuetext={current ? timelineValueText(current, model.markers.length) : 'No actions recorded for this test'}
-            style={{ left: `${(position ?? current?.position ?? 0) * 100}%` }}
-            className='pointer-events-none absolute top-[5px] z-10 h-[18px] w-1.5 -translate-x-1/2 rounded-full bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring' />
+            style={{ left: `${playheadPosition * 100}%` }}
+            data-playhead-circle={alignedCluster ? true : undefined}
+            className={`pointer-events-none absolute z-10 -translate-x-1/2 rounded-full ${alignedCluster ? 'top-1 h-5 w-5 bg-transparent' : 'top-[5px] h-[18px] w-1.5 bg-primary'} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring`} />
         </>}
         {clusters.map(cluster => {
           const marker = cluster[0]!
           const family = buildActionSentence(marker.subAction).family
           const Icon = family ? ACTION_FAMILY_ICONS[family] : UNKNOWN_ACTION_ICON
-          const style = { left: `clamp(14px, ${marker.position * 100}%, calc(100% - 14px))` }
-          const active = cluster.some(entry => entry === current)
+          const style = { left: `${marker.position * 100}%` }
+          const active = cluster === alignedCluster
           const classes = 'absolute top-0 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-ring'
           const circle = `flex h-5 w-5 items-center justify-center rounded-full border ${active ? 'border-primary/60 bg-primary/15 text-primary' : 'border-muted-foreground/30 bg-background text-muted-foreground hover:bg-muted'}`
           return cluster.length === 1 ? <button key={marker.ordinal} type='button' data-timeline-marker={marker.ordinal} data-timeline-active={active || undefined} aria-current={active ? 'step' : undefined} style={style} className={classes}

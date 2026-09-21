@@ -47,6 +47,21 @@ async function seek(page: Page, seconds: number) {
 
 // One captured pointer, through every member and back. Identity is checked at every
 // move so a replacement track cannot pass merely by processing independent clicks.
+function clockLabel(seconds: number) {
+  const whole = Math.floor(seconds)
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`
+}
+async function assertSuiteClock(page: Page, durations: number[], member: number) {
+  const prefix = durations.slice(0, member).reduce((sum, value) => sum + value, 0)
+  const total = durations.reduce((sum, value) => sum + value, 0)
+  await expect.poll(() => page.locator('[data-player-time]').evaluate((element, prefix) =>
+    Math.abs(Number((element as HTMLElement).dataset.playerElapsedMs) / 1000 - prefix - document.querySelector('video')!.currentTime), prefix)).toBeLessThan(0.001)
+  const row = await page.locator('[data-player-time]').evaluate(element => ({ elapsedMs: Number((element as HTMLElement).dataset.playerElapsedMs), totalMs: Number((element as HTMLElement).dataset.playerTotalMs), text: element.textContent }))
+  expect(row.totalMs / 1000).toBeCloseTo(total, 5)
+  expect(row.text).toBe(`${clockLabel(row.elapsedMs / 1000)} / ${clockLabel(total)}`)
+  return row
+}
+
 async function dragSuite(page: Page, durations?: number[]) {
   const track = page.locator('[data-timeline-track]')
   await track.evaluate(element => { (window as unknown as { dragTrack: Element }).dragTrack = element })
@@ -80,6 +95,7 @@ async function dragSuite(page: Page, durations?: number[]) {
       if (durations) {
         await mediaReady(page)
         await expect.poll(() => page.locator('video').evaluate(video => (video as HTMLVideoElement).currentTime)).toBeCloseTo(durations[member]! * target.local, 1)
+        observations[`clock-drag-${member}`] = await assertSuiteClock(page, durations, member)
       }
       rows.push({ member, fraction: target.fraction, stableTrack: true })
     }
@@ -212,6 +228,8 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier 
       await clickMarker(page, detail.subActions.indexOf(sub!) + 1)
       await expect.poll(() => page.locator('video').evaluate(video => (video as HTMLVideoElement).currentTime)).toBeCloseTo((witness.startMs + witness.endMs) / 2000, 3)
       await page.locator('[data-annotation="point"]').waitFor()
+      expect(await page.getByRole('button', { name: 'Hide annotations', exact: true }).getAttribute('aria-pressed')).toBe('true')
+      observations[`default-annotation-${width}`] = { enabledBeforeAnyToggle: true, visible: true }
       await page.getByRole('button', { name: 'Grounding', exact: true }).click()
       const descriptor = page.locator('[data-grounding-descriptor]')
       expect(await descriptor.textContent()).toContain('button Café 日本語')
@@ -233,7 +251,7 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier 
         const marker = player.querySelector('[data-timeline-marker-group], [data-timeline-marker]')!
         const icon = marker.querySelector('svg')!.getBoundingClientRect()
         const circle = marker.querySelector('[data-timeline-circle]')!.getBoundingClientRect()
-        return { thumb: { width: thumb.width, height: thumb.height }, icon: { width: icon.width, height: icon.height },
+        return { circlePlayhead: !!player.querySelector('[data-playhead-circle]'), thumb: { width: thumb.width, height: thumb.height }, icon: { width: icon.width, height: icon.height },
           circleOnRail: Math.abs(circle.top + circle.height / 2 - track.top - 14) < 1,
           noStems: !player.querySelector('[data-timeline-stem]'), activeMarker: !!player.querySelector('[data-timeline-active="true"]'),
           timeRight: time.left >= track.right, timeAligned: Math.abs(time.top + time.height / 2 - track.top - 14) < 2,
@@ -241,7 +259,7 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier 
           toolbarInside: toolbar.right <= preview.right && toolbar.bottom <= preview.bottom,
           noStepZoom: !player.querySelector('[aria-label="Media zoom"], [aria-label="Zoom in"], [aria-label="Zoom out"]') }
       })
-      expect(layout.thumb).toEqual({ width: 6, height: 18 })
+      expect(layout.thumb).toEqual(layout.circlePlayhead ? { width: 20, height: 20 } : { width: 6, height: 18 })
       expect(layout.icon).toEqual({ width: 12, height: 12 })
       expect(layout.circleOnRail && layout.noStems && layout.activeMarker).toBe(true)
       expect(layout.timeRight && layout.timeAligned && layout.toolbarInside && layout.noStepZoom).toBe(true)
@@ -249,7 +267,11 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier 
       expect(layout.toolbarWidth).toBeLessThanOrEqual(34)
       observations[`layout-${width}`] = layout
       for (const mode of ['normal', 'magnifier', 'fullscreen'] as const) {
-        if (mode === 'fullscreen') await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click()
+        if (mode === 'fullscreen') {
+          await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click()
+          expect(await page.getByRole('button', { name: 'Hide annotations', exact: true }).getAttribute('aria-pressed')).toBe('true')
+          expect(await page.locator('[data-media-transform] [data-annotation="point"]').count()).toBe(1)
+        }
         const lens = mode !== 'normal' ? await lensProof(page, annotation.point, `new-recording-${mode}-${width}`) : undefined
         await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
         const geometry = await page.locator('[data-player]').evaluate((player, point) => {
@@ -373,6 +395,18 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
       await page.getByRole('combobox', { name: 'Playback speed' }).click()
       await page.getByRole('option', { name: `${speed}×`, exact: true }).click()
       rates.push(await page.locator('video').evaluate(video => (video as HTMLVideoElement).playbackRate))
+      const trigger = page.getByRole('combobox', { name: 'Playback speed' })
+      expect((await trigger.boundingBox())!.width).toBeLessThanOrEqual(60)
+      expect(await trigger.textContent()).toBe(`${speed}×`)
+      const textBounds = await trigger.evaluate(element => {
+        const value = element.querySelector('[data-slot="select-value"]')!
+        const range = document.createRange(); range.selectNodeContents(value)
+        return { text: range.getBoundingClientRect().right, value: value.getBoundingClientRect().right,
+          chevron: element.querySelector(':scope > svg')!.getBoundingClientRect().left }
+      })
+      expect(textBounds.text).toBeLessThanOrEqual(textBounds.value + 0.5)
+      expect(textBounds.text).toBeLessThanOrEqual(textBounds.chevron)
+      await capture(page, `speed-${speed}`)
     }
     expect(rates).toEqual([0.5, 1, 2, 4, 8, 16])
     await page.getByRole('combobox', { name: 'Playback speed' }).click()
@@ -439,6 +473,29 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     await expect.poll(() => page.locator('video').getAttribute('src')).toContain(detail.members[1]!.recording!.state === 'present' ? detail.members[1]!.recording!.ref.sha : 'missing')
     await mediaReady(page)
     expect(await page.locator('video').evaluate(video => ({ rate: (video as HTMLVideoElement).playbackRate, paused: (video as HTMLVideoElement).paused }))).toEqual({ rate: 2, paused: false })
+    await page.getByRole('button', { name: 'Pause recording', exact: true }).click()
+    observations.clockHandoffSecond = await assertSuiteClock(page, durations, 1)
+    await seek(page, durations[1]! - 0.1)
+    await page.getByRole('button', { name: 'Play recording', exact: true }).click()
+    await expect.poll(() => page.locator('video').getAttribute('src')).toContain(detail.members[2]!.recording!.state === 'present' ? detail.members[2]!.recording!.ref.sha : 'missing')
+    await mediaReady(page)
+    await page.getByRole('button', { name: 'Pause recording', exact: true }).click()
+    observations.clockHandoffThird = await assertSuiteClock(page, durations, 2)
+    await capture(page, 'suite-clock-third-member')
+    await page.getByRole('radio', { name: 'Frames', exact: true }).click()
+    expect(await page.locator('[data-player-time]').count()).toBe(0)
+    await page.getByRole('radio', { name: 'Video', exact: true }).click()
+    await mediaReady(page)
+    await assertSuiteClock(page, durations, 2)
+    await page.locator('[data-member-filter]').click()
+    await page.getByRole('option', { name: detail.members[1]!.name!, exact: true }).click()
+    await mediaReady(page)
+    observations.filteredClock = await assertSuiteClock(page, [durations[1]!], 0)
+    expect(await page.locator('[data-timeline-member-span]').count()).toBe(1)
+    await page.locator('[data-member-filter]').click()
+    await page.getByRole('option', { name: 'All tests (3)', exact: true }).click()
+    await mediaReady(page)
+    await assertSuiteClock(page, durations, 1)
     // Actual dispatches can all be tightly clustered. Arrange one visible action only
     // for the independent singleton hover/focus layout control, retaining its real facts.
     const singleton = structuredClone(detail)
@@ -453,6 +510,47 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     expect(await marker.getAttribute('aria-label')).toContain('Step')
     await marker.click()
     await capture(page, 'suite-singleton-marker')
+    // Explicit endpoint arrangement over real recordings: the same mapping must
+    // paint and hit-test 0/1. This changes presentation offsets, not media facts.
+    const endpoints = structuredClone(detail)
+    endpoints.subActions = [endpoints.subActions[0]!, endpoints.subActions[1]!, endpoints.subActions.at(-1)!]
+    endpoints.subActions.forEach((action, index) => {
+      if (action.result.annotation) delete action.result.annotation.recording
+      action.recordingOffsetMs = index < 2 ? 0 : durations[2]! * 1000
+    })
+    await page.unroute('**/api/runs/*/detail')
+    await page.route('**/api/runs/*/detail', route => route.fulfill({ json: endpoints }))
+    for (const width of [1280, 400]) {
+      await page.setViewportSize({ width, height: 900 })
+      await ready(page)
+      await mediaReady(page)
+      for (const ordinal of [1, 3]) {
+        await clickMarker(page, ordinal)
+        const expected = ordinal === 1 ? 0 : 1
+        const geometry = await page.locator('[data-timeline-track]').evaluate((track, expected) => {
+          const rect = track.getBoundingClientRect()
+          const slider = track.querySelector('[role="slider"]')!
+          const thumb = slider.getBoundingClientRect()
+          const circle = track.querySelector('[data-timeline-active] [data-timeline-circle]')!.getBoundingClientRect()
+          return { delta: Math.abs(circle.x + circle.width / 2 - (rect.x + rect.width * expected)),
+            thumbDelta: Math.abs(thumb.x + thumb.width / 2 - (rect.x + rect.width * expected)),
+            pill: getComputedStyle(slider).backgroundColor, hiddenPill: slider.getAttribute('data-playhead-circle'),
+            inside: circle.left >= 0 && circle.right <= innerWidth }
+        }, expected)
+        expect(geometry.delta).toBeLessThan(0.5)
+        expect(geometry.thumbDelta).toBeLessThan(0.5)
+        expect(geometry.pill).toBe('rgba(0, 0, 0, 0)')
+        expect(geometry.hiddenPill).toBe('true')
+        expect(geometry.inside).toBe(true)
+        observations[`endpoint-${width}-${ordinal}`] = geometry
+        await capture(page, `endpoint-${width}-${ordinal}`)
+      }
+      const rail = (await page.locator('[data-timeline-track]').boundingBox())!
+      await page.mouse.click(rail.x + rail.width * 0.5, rail.y + 2)
+      expect(await page.getByRole('slider').getAttribute('data-playhead-circle')).toBeNull()
+      expect(await page.getByRole('slider').evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+      await capture(page, `free-playhead-${width}`)
+    }
     observations.media = { durations, stored, tail, target, local, rates, samples, cueTimes, continuation: true }
   } finally { await page.close() }
 }, 120_000)
@@ -467,6 +565,8 @@ it('SUITE-BROWSER-GAPS: dense actions remain individually reachable and missing 
     await mediaReady(page)
     await page.setViewportSize({ width: 1280, height: 900 })
     observations.gapDrag = await dragSuite(page)
+    expect(await page.locator('[data-player-time]').getAttribute('data-player-total-ms')).toBeNull()
+    expect(await page.locator('[data-player-time]').textContent()).toContain('/ —')
     await page.setViewportSize({ width: 400, height: 900 })
     await page.getByRole('slider').press('Home')
     await mediaReady(page)
@@ -483,6 +583,7 @@ it('SUITE-BROWSER-GAPS: dense actions remain individually reachable and missing 
     await page.getByRole('button', { name: 'Play recording', exact: true }).click()
     await page.locator('[data-evidence-kind="video"][data-evidence-state="not-captured"]').waitFor()
     expect(await page.locator('video').count()).toBe(0)
+    expect(await page.locator('[data-player-time]').textContent()).toBe('— / —')
     await capture(page, 'suite-missing-recording-400')
     // Hold one real metadata response while the same gesture crosses every member.
     // Selection/gesture ownership must remain live even before the batch can settle.
@@ -498,6 +599,7 @@ it('SUITE-BROWSER-GAPS: dense actions remain individually reachable and missing 
       expect(await page.locator('[data-media-durations-ready="true"]').count()).toBe(0)
       await page.setViewportSize({ width: 1280, height: 900 })
       observations.delayedMetadataDrag = await dragSuite(page)
+      expect(await page.locator('[data-player-time]').getAttribute('data-player-total-ms')).toBeNull()
     } finally { release() }
     await page.locator('[data-media-durations-ready="true"]').waitFor()
     await page.unroute(`**/artifacts/${third.ref.sha}`)
@@ -512,6 +614,7 @@ it('SUITE-BROWSER-GAPS: dense actions remain individually reachable and missing 
     expect(offset).toBeDefined()
     await seek(page, offset! / 1000)
     expect(await page.locator('[data-annotation]').count()).toBe(0)
+    expect(await page.locator('[title^="This recording has no saved timing"]').count()).toBe(1)
     observations.gaps = { denseChoices: true, missingContinuationStopped: true, historicalCompletionOffsetNoOverlay: true }
   } finally { await page.close() }
 }, 120_000)
