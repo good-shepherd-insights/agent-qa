@@ -15,6 +15,7 @@ import {
   AuthStateConfigSchema,
   ServicesSchema,
   VisionServiceSchema,
+  RecordingConfigSchema,
 } from '../schema/services-schema.js'
 
 const validWorkspace = {
@@ -256,12 +257,29 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         services: { recording: { keepFailuresOnly } },
       }))
       expect(result.success).toBe(true)
-      if (result.success) expect(result.data.services?.recording).toEqual({ keepFailuresOnly })
+      if (result.success) expect(result.data.services?.recording).toEqual({ enabled: true, keepFailuresOnly })
     }
     const empty = AgentQaConfigSchema.parse(withWorkspace({ services: { recording: {} } }))
-    expect(empty.services?.recording).toEqual({})
+    expect(empty.services?.recording).toEqual({ enabled: true })
     const absent = AgentQaConfigSchema.parse(withWorkspace({ services: {} }))
-    expect(absent.services).not.toHaveProperty('recording')
+    expect(absent.services?.recording).toEqual({ enabled: true })
+  })
+
+  it('REC-SCHEMA-DEFAULT: materializes default-on through omitted containers without mutating input', () => {
+    for (const input of [{}, { services: {} }, { services: { recording: {} } }]) {
+      const config = withWorkspace(input)
+      const original = structuredClone(config)
+      expect(AgentQaConfigSchema.parse(config).services?.recording).toEqual({ enabled: true })
+      expect(config).toEqual(original)
+    }
+    expect(RecordingConfigSchema.parse({})).toEqual({ enabled: true })
+    expect(ServicesSchema.parse({}).recording).toEqual({ enabled: true })
+    for (const enabled of [true, false]) {
+      expect(RecordingConfigSchema.parse({ enabled })).toEqual({ enabled })
+      expect(AgentQaConfigSchema.parse(withWorkspace({
+        services: { recording: { enabled } },
+      })).services?.recording).toEqual({ enabled })
+    }
   })
 
   it('REC-KNOB-STRICT: accepts the knob but rejects unknown recording keys', () => {

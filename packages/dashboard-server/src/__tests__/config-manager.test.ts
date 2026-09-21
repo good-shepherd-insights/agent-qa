@@ -87,6 +87,8 @@ import { createRouter } from '../server/routes.js'
 import { writeFile, readFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 
 let dir: string
 let configPath: string
@@ -239,6 +241,44 @@ async function invokeRoute(
 }
 
 describe('ConfigManager', () => {
+  it.each([undefined, {}, { keepFailuresOnly: true }, { keepFailuresOnly: false }, { enabled: true }, { enabled: false }])(
+    'keeps authored recording omissions through GET, no-op and unrelated saves: %j', async recording => {
+      const source = {
+        workspace: {
+          testMatch: ['tests/**/*.yaml'], suiteMatch: ['suites/**/*.yaml'],
+          hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local',
+        },
+        use: { mobile: { appState: 'preserve' } },
+        ...(recording === undefined ? {} : { services: { recording } }),
+      }
+      await writeFile(configPath, stringifyYaml(source))
+      const response = await invokeRoute('/api/config')
+      expect(response.status).toBe(200)
+      const authored = JSON.parse(response.body).config
+      expect(authored).toEqual(source)
+      expect(AgentQaConfigSchema.parse(authored).services?.recording)
+        .toEqual({ enabled: true, ...recording })
+      const section = authored.services?.recording
+      for (const body of [
+        section === undefined ? {} : { 'services.recording': section },
+        { 'services.logging': { level: 'warn' } },
+      ]) {
+        expect((await invokeRoute('/api/config/settings', {
+          method: 'PUT', body: JSON.stringify(body),
+        })).status).toBe(200)
+        const saved = parseYaml(await readFile(configPath, 'utf8'))
+        expect(saved.services?.recording).toEqual(recording)
+        expect(AgentQaConfigSchema.parse(saved).services?.recording)
+          .toEqual({ enabled: true, ...recording })
+      }
+      const beforeInvalid = await readFile(configPath, 'utf8')
+      expect((await invokeRoute('/api/config/settings', {
+        method: 'PUT', body: JSON.stringify({ 'services.recording': { videoDir: 'videos' } }),
+      })).status).toBe(400)
+      expect(await readFile(configPath, 'utf8')).toBe(beforeInvalid)
+    },
+  )
+
   describe('key ordering preservation', () => {
     it('replaceSection preserves key position in YAML', async () => {
       await manager.replaceSection('use.healing', { maxAttempts: 10 })

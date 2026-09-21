@@ -24,21 +24,30 @@ interface RecordingSectionProps {
   onConfigChange: () => void
 }
 
+interface AuthoredRecording {
+  enabled?: boolean
+  keepFailuresOnly?: boolean
+}
+
 export function RecordingSection({ config, onConfigChange }: RecordingSectionProps) {
-  const recording = ((config.services as any)?.recording ?? {}) as {
-    enabled?: boolean
-    keepFailuresOnly?: boolean
-  }
-  const [enabled, setEnabled] = useState(recording.enabled ?? true)
-  const [keepFailuresOnly, setKeepFailuresOnly] = useState(recording.keepFailuresOnly ?? false)
+  const recording = (config.services as { recording?: AuthoredRecording } | undefined)?.recording
+  // Keep the authored values distinct from their displayed runtime defaults.
+  const [enabled, setEnabled] = useState(recording?.enabled)
+  const [keepFailuresOnly, setKeepFailuresOnly] = useState(recording?.keepFailuresOnly)
   const [saving, setSaving] = useState(false)
 
   async function handleSave() {
     setSaving(true)
     try {
-      await updateSettings({
-        'services.recording': { enabled, keepFailuresOnly },
-      })
+      const value = {
+        ...(enabled === undefined ? {} : { enabled }),
+        ...(keepFailuresOnly === undefined ? {} : { keepFailuresOnly }),
+      }
+      await updateSettings(
+        recording === undefined && Object.keys(value).length === 0
+          ? {}
+          : { 'services.recording': value },
+      )
       onConfigChange()
       toast.success('Changes saved')
     } catch {
@@ -60,7 +69,7 @@ export function RecordingSection({ config, onConfigChange }: RecordingSectionPro
             <Label htmlFor="recording-enabled">Enabled</Label>
             <p className="text-xs text-muted-foreground">{RECORDING_ENABLED_HELP}</p>
           </div>
-          <Switch id="recording-enabled" checked={enabled} onCheckedChange={setEnabled} />
+          <Switch id="recording-enabled" checked={enabled ?? true} onCheckedChange={setEnabled} />
         </div>
 
         <div className="flex items-center justify-between">
@@ -70,7 +79,7 @@ export function RecordingSection({ config, onConfigChange }: RecordingSectionPro
           </div>
           <Switch
             id="recording-keep-failures-only"
-            checked={keepFailuresOnly}
+            checked={keepFailuresOnly ?? false}
             onCheckedChange={setKeepFailuresOnly}
           />
         </div>

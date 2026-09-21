@@ -34,7 +34,7 @@ export const PluginsSchema = z.object({
 
 const AgentQaConfigSchemaInner = z.object({
   workspace: WorkspaceSchema,
-  services: ServicesSchema.optional(),
+  services: ServicesSchema.prefault({}).optional(),
   // D-08: slim replacement for the retired v1 memory config surface; prefaulted so parsed
   // configs always materialize knowledge defaults (zod 4 .default() short-circuits without
   // parsing — .prefault() runs the inner defaults) — matches the providers `.default([])`

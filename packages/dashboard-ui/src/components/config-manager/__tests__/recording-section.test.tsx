@@ -51,6 +51,33 @@ afterEach(() => {
 })
 
 describe('RecordingSection', () => {
+  it.each([
+    [undefined, {}],
+    [{}, { 'services.recording': {} }],
+    [{ keepFailuresOnly: true }, { 'services.recording': { keepFailuresOnly: true } }],
+    [{ enabled: true }, { 'services.recording': { enabled: true } }],
+    [{ enabled: false }, { 'services.recording': { enabled: false } }],
+  ])('preserves authored omissions on a no-op save: %j', async (recording, expected) => {
+    const { view } = await renderSection({ services: { recording } })
+    const save = Array.from(view.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Save Changes',
+    )!
+    await act(async () => save.click())
+    expect(mockUpdateSettings).toHaveBeenCalledExactlyOnceWith(expected)
+  })
+
+  it('changes failures-only without persisting an unchosen enabled default', async () => {
+    const { view } = await renderSection({})
+    await act(async () => switchFor(view, 'Keep recordings of failed tests only').click())
+    const save = Array.from(view.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Save Changes',
+    )!
+    await act(async () => save.click())
+    expect(mockUpdateSettings).toHaveBeenCalledExactlyOnceWith({
+      'services.recording': { keepFailuresOnly: true },
+    })
+  })
+
   it('RECORDING-SECTION-DEFAULT-ON: shows recording enabled when config is absent', async () => {
     const { view } = await renderSection({})
     expect(switchFor(view, 'Enabled').getAttribute('aria-checked')).toBe('true')

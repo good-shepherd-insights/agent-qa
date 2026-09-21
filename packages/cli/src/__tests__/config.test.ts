@@ -51,6 +51,18 @@ afterEach(async () => {
 })
 
 describe('loadConfigFile', () => {
+  it.each([undefined, {}, { keepFailuresOnly: true }, { enabled: true }, { enabled: false }])(
+    'resolves recording defaults without rewriting the authored file: %j', async recording => {
+      const configPath = join(TMP_DIR, 'recording-default.yaml')
+      const input = makeValidConfig({ services: recording === undefined ? undefined : { recording } })
+      const source = JSON.stringify(input)
+      await writeFile(configPath, source)
+      const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+      expect(config.services?.recording).toEqual({ enabled: true, ...recording })
+      expect(await readFile(configPath, 'utf8')).toBe(source)
+    },
+  )
+
   it('parses valid YAML config', async () => {
     const configPath = join(TMP_DIR, 'agent-qa.config.yaml')
     await writeFile(

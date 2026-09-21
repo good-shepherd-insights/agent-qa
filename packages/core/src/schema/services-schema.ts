@@ -155,7 +155,7 @@ export const LoggingConfigSchema = z.object({
 }).strict()
 
 export const RecordingConfigSchema = z.object({
-  enabled: z.boolean().optional(),
+  enabled: z.boolean().default(true),
   keepFailuresOnly: z.boolean().optional(),
 }).strict()
 
@@ -179,7 +179,8 @@ export const ServicesSchema = z.object({
   cache: CacheConfigSchema.optional(),
   authState: AuthStateConfigSchema.optional(),
   logging: LoggingConfigSchema.optional(),
-  recording: RecordingConfigSchema.optional(),
+  // Parse omitted containers too, while retaining optional authoring/input compatibility.
+  recording: RecordingConfigSchema.prefault({}).optional(),
   accessibility: AccessibilityConfigSchema.optional(),
   vision: VisionServiceSchema.optional(),
 }).strict()
