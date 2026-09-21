@@ -7,6 +7,18 @@ import { describe, it, expect } from 'vitest'
 import { routes } from '@/lib/routes'
 
 describe('canonical dashboard routes', () => {
+  it('encodes raw run-detail IDs as exactly one segment, preserving canonical IDs', () => {
+    expect(routes.runDetail('r_canonical-run')).toBe('/runs/r_canonical-run')
+    for (const raw of ['a/b', 'a?b', 'a#b', 'a%b', 'a b', 'a%2Fb']) {
+      const href = routes.runDetail(raw)
+      expect(href).toBe(`/runs/${encodeURIComponent(raw)}`)
+      const url = new URL(href, 'https://dashboard.test')
+      expect(url.pathname.split('/')).toHaveLength(3)
+      expect(decodeURIComponent(url.pathname.slice('/runs/'.length))).toBe(raw)
+      expect(url.search).toBe('')
+      expect(url.hash).toBe('')
+    }
+  })
   it('keeps only the live top-level helpers', () => {
     expect(routes.runs).toBe('/runs')
     expect(routes.tests).toBe('/tests')

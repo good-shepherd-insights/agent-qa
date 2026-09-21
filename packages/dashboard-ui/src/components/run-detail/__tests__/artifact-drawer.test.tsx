@@ -120,6 +120,12 @@ describe('run-context drawer', () => {
     expect(tab.querySelector('a')?.getAttribute('href')).toBe(`/runs/${childRunId}`)
     act(() => Array.from(tab.querySelectorAll('button')).find(button => button.textContent === 'Raw suite YAML')!.click())
     expect(tab.querySelector('pre')?.textContent).toBe('name: Checkout suite')
+    for (const raw of ['a/b', 'a?b', 'a#b', 'a%b', 'a b', 'a%2Fb']) {
+      data.artifact!.payload.source = { kind: 'suite', members: [{ index: 0, name: 'Child', childRunId: raw }] }
+      const Component = testTabs['../artifact-test-tab.tsx'].ArtifactTestTab
+      act(() => root!.render(<Component response={data} />))
+      expect(tab.querySelector('a')?.getAttribute('href')).toBe(`/runs/${encodeURIComponent(raw)}`)
+    }
   })
 
   it('DRAWER-ATTRIBUTES-ONLY-WHEN-PRESENT', () => {

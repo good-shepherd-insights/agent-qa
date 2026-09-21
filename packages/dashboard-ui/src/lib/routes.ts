@@ -12,7 +12,7 @@ export const routes = {
   insights: '/insights',
   config: '/config',
 
-  runDetail: (id: string) => `/runs/${id}`,
+  runDetail: (id: string) => `/runs/${encodeURIComponent(id)}`,
   runLive: (id: string) => `/runs/${id}/live`,
   runDetailOrLive: (id: string, status: string) =>
     shouldRouteRunToLive(status) ? `/runs/${id}/live` : `/runs/${id}`,
