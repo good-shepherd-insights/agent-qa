@@ -851,11 +851,11 @@ export class DashboardDatabase {
 
     const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[]
     const runs = this.applyRegexAttributePredicates(rows.map(r => this.mapRunRow(r)), input.attributePredicates)
-    if (!hasRegex) return runs
+    if (!hasRegex) return this.withMemberExecutionDuration(runs)
 
     const start = input.offset ?? 0
     const end = input.limit !== undefined ? start + input.limit : undefined
-    return runs.slice(start, end)
+    return this.withMemberExecutionDuration(runs.slice(start, end))
   }
 
   private buildTrendsFromRuns(runs: RunRow[]): {
@@ -933,7 +933,30 @@ export class DashboardDatabase {
 
   getRun(id: string): RunRow | undefined {
     const row = this.db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as Record<string, unknown> | undefined
-    return row ? this.mapRunRow(row) : undefined
+    return row ? this.withMemberExecutionDuration([this.mapRunRow(row)])[0] : undefined
+  }
+
+  /** Read-only repair for old last-member totals. Complete measured member work is cumulative,
+   * including parallel members; it is neither recording length nor run wall-clock time.
+   * Incomplete legacy projections retain their stored fallback. Bound queries to returned rows,
+   * after pagination, with one aggregate per batch rather than a lookup for every list row.
+   */
+  private withMemberExecutionDuration(runs: RunRow[]): RunRow[] {
+    for (let offset = 0; offset < runs.length; offset += 400) {
+      const batch = runs.slice(offset, offset + 400)
+      const totals = this.db.prepare(`
+        SELECT run_id, SUM(duration_ms) AS duration FROM run_members
+        WHERE run_id IN (${batch.map(() => '?').join(',')})
+        GROUP BY run_id
+        HAVING COUNT(*) = COUNT(duration_ms) AND MIN(duration_ms) >= 0
+      `).all(...batch.map(run => run.id)) as Array<{ run_id: string; duration: number }>
+      const byId = new Map(totals.map(row => [row.run_id, row.duration]))
+      for (const run of batch) {
+        const duration = byId.get(run.id)
+        if (duration !== undefined && Number.isFinite(duration)) run.duration = duration
+      }
+    }
+    return runs
   }
 
   listRunAttributeKeys(opts: { limit?: number; q?: string } = {}): AttributeKeySuggestion[] {

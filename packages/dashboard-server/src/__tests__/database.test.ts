@@ -37,6 +37,28 @@ function columnNames(tableName: string): string[] {
 }
 
 describe('DashboardDatabase', () => {
+  it('SUITE-DURATION-READ projects complete member work for detail and paginated lists without rewriting history', () => {
+    const durations = [31631.826750000007, 38765.66812499997, 35742.61929200002]
+    const id = insertSampleRun({ duration: durations[2], parallel: true })
+    for (const [testIndex, durationMs] of durations.entries()) {
+      db.upsertRunMember({ runId: id, testIndex, durationMs, outcome: 'passed' })
+    }
+    const before = db.readRunDetailRows(id)
+    expect(db.getRun(id)?.duration).toBeCloseTo(106140.114167, 7)
+    expect(db.getRuns({ limit: 1 })[0].duration).toBeCloseTo(106140.114167, 7)
+    expect(db['db'].prepare('SELECT duration FROM runs WHERE id = ?').get(id)).toEqual({ duration: durations[2] })
+    expect(db.readRunDetailRows(id)).toEqual(before)
+    db.upsertRunMember({ runId: id, testIndex: 1, durationMs: 0 })
+    expect(db.getRun(id)?.duration).toBe(durations[0] + durations[2])
+    db.upsertRunMember({ runId: id, testIndex: 3 })
+    expect(db.getRun(id)?.duration).toBe(durations[2]) // Incomplete legacy projection: stored fallback.
+    const zero = insertSampleRun({ duration: 123 })
+    db.upsertRunMember({ runId: zero, testIndex: 0, durationMs: 0 })
+    expect(db.getRun(zero)?.duration).toBe(0)
+    expect(db.getRuns().find(run => run.id === zero)?.duration).toBe(0)
+    expect(db.getRun(insertSampleRun({ duration: 42 }))?.duration).toBe(42)
+  })
+
   describe('schema creation', () => {
     // 2026-08-27 (405-01, D-02): the version moved to 2 as a HARD CUT. `MIGRATIONS` is no longer
     // a chain — it is the ONE terminal entry stamped at `SCHEMA_VERSION`, because no database is

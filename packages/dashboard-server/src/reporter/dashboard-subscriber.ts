@@ -195,6 +195,8 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   let runId: string | undefined
   /** `stepStarted.stepText` cached per `testIndex:stepIndex` for the step-row name. */
   const stepNames = new Map<string, string>()
+  // A terminal replay/replacement updates one handle, never adds another attempt's work.
+  const memberDurations = new Map<number, number | undefined>()
   let startedAtMs = 0
   let finalized = false
 
@@ -348,7 +350,11 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
       // Non-darkening: a member row that will not write must not change the run row below.
     }
     const status = toRunStatus(payload.outcome)
-    const duration = typeof payload.durationMs === 'number' ? payload.durationMs : Date.now() - startedAtMs
+    memberDurations.set(payload.testIndex, payload.durationMs)
+    const measured = [...memberDurations.values()]
+    const duration = measured.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)
+      ? measured.reduce<number>((sum, value) => sum + value!, 0)
+      : Date.now() - startedAtMs // Preserve the legacy fallback when execution timing is missing.
     const endedAt = now()
     db.updateRun(id, {
       status,
@@ -493,6 +499,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   function handleTestRetryScheduled(payload: TestRetryScheduledPayload): void {
     const id = targetForTest(payload)
     if (!id) return
+    memberDurations.delete(payload.testIndex)
     try {
       db.deleteMemberProjection(id, payload.testIndex)
       db.incrementRunMemberAttempts(id, payload.testIndex)

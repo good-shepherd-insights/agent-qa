@@ -80,6 +80,27 @@ function subActionRecorded(overrides: Record<string, unknown> = {}): Record<stri
 }
 
 describe('createDashboardRunIngest', () => {
+  it('SUITE-DURATION-WRITE accumulates parallel member work once and replaces retries, including zero', async () => {
+    const runId = db.insertPendingRun({ name: 'Duration probe', parallel: true })
+    const ingest = createDashboardRunIngest({ db, correlationEnv: { runId } })
+    ingest.handler(ev(runId, 'runStarted', { memberTestCount: 3 }))
+    const durations = [31631.826750000007, 38765.66812499997, 35742.61929200002]
+    for (const testIndex of [2, 0, 1]) {
+      ingest.handler(ev(runId, 'testFinished', { testIndex, outcome: 'passed', durationMs: durations[testIndex] }))
+    }
+    const stored = () => db['db'].prepare('SELECT duration FROM runs WHERE id = ?').get(runId) as { duration: number }
+    expect(stored().duration).toBeCloseTo(106140.114167, 7)
+    ingest.handler(ev(runId, 'testFinished', { testIndex: 1, outcome: 'passed', durationMs: durations[1] }))
+    expect(stored().duration).toBeCloseTo(106140.114167, 7)
+    ingest.handler(ev(runId, 'testRetryScheduled', { testIndex: 1 }))
+    ingest.handler(ev(runId, 'testFinished', { testIndex: 1, outcome: 'passed', durationMs: 0 }))
+    ingest.handler(ev(runId, 'runFinished', { aggregateVerdict: 'passed' }))
+    await ingest.finalize({})
+    expect(stored().duration).toBe(durations[0] + durations[2])
+    expect(db.getRun(runId)?.duration).toBe(stored().duration)
+    expect(db.getRunArtifact(runId)?.payload.runtime?.duration).toBe(stored().duration)
+  })
+
   it('plain run: envelope stream produces run + finalized run_artifacts rows readable via getRunArtifact', async () => {
     const runId = 'r_plain-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
     const busRunId = 'run-bus-1'
