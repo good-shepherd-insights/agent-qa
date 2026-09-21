@@ -37,7 +37,7 @@ const instruments = {
   vocabulary: { pkg: 'packages/dashboard-ui', files: [V, 'src/components/run-detail/__tests__/action-sentence.test.tsx'], typecheck: false, count: 11 },
   playhead: { pkg: 'packages/dashboard-ui', files: [P, PT], typecheck: true, count: 30 },
   notice: { pkg: 'packages/dashboard-ui', files: [N], typecheck: false, count: 3 },
-  page: { pkg: 'packages/dashboard-ui', files: [PAGE_T], typecheck: false, count: 37 },
+  page: { pkg: 'packages/dashboard-ui', files: [PAGE_T], typecheck: false, count: 42 },
   browser: { pkg: 'packages/cli', files: [DOM], typecheck: false, count: 4, env: { VITEST_MAX_WORKERS: '1' } },
 }
 const a = name => cell('absence', A, name)
@@ -60,7 +60,7 @@ const legs = [
     reds: [page('PLAYHEAD-PARENT-PARKS-LATEST-FRAME')],
     // These controls also inspect the parent-derived playhead or its synchronized UI.
     allowed: ['PLAYHEAD-PARENT-SUBSTITUTED', 'PLAYHEAD-TREE-FOLLOWS', 'PLAYHEAD-TREE-MOVES-PLAYHEAD',
-      'PLAYHEAD-ONE-RING-ONE-BAR', 'KEYS-IGNORED-IN-TABLIST', 'KEYS-LEGACY-MAP-UNCHANGED',
+      'PLAYHEAD-ONE-SELECTION-ONE-BOX', 'KEYS-IGNORED-IN-TABLIST', 'KEYS-LEGACY-MAP-UNCHANGED',
       'OVERVIEW-PREVIEW-THEN-FOOTER', 'OVERVIEW-SEEK-REACHES-PLAYER', 'PLAYHEAD-DRIVES-TABS',
       'PLAYHEAD-URL-REPLACE', 'EVIDENCE-TAB-COUNTS remain available without timeline signals', 'TIMELINE-MEMBER-SWITCH'].map(page),
     greens: ['CITED-JUMPS-PLAYHEAD', 'CITED-UNMATCHED-OPENS-LIGHTBOX', 'PLAYHEAD-URL-RESTORE'].map(page),

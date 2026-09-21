@@ -64,6 +64,11 @@ export interface PlayerProps {
   onSourceChange: (source: PlayerSource) => void
   onPlayheadChange: (playhead: Playhead) => void
   seekFraction?: number
+  seekRevision?: number
+  onProgress?: (testIndex: number, seconds: number) => void
+  onPlayheadObserved?: (playhead: Playhead) => void
+  onRecordingEnded?: () => void
+  autoPlay?: boolean
   media?: MediaFacade
   timeline?: ReactNode
   isTimelineKeyIgnored?: (event: KeyboardEvent) => boolean
@@ -89,20 +94,21 @@ function addressKey(playhead: Playhead | null | undefined) {
   return playhead ? `${playhead.testIndex}:${playhead.stepIndex}:${playhead.subActionIndex}` : ''
 }
 
-function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, onPlayheadChange, isTimelineKeyIgnored, timeline, caption, header }: PlayerProps & {
+function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, seekRevision, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded, autoPlay, speed, setSpeed, isTimelineKeyIgnored, timeline, caption, header }: PlayerProps & {
   recording: Extract<RecordingEntry, { state: 'present' }>
   caption: ReactNode
   header: ReactNode
+  speed: number
+  setSpeed: (speed: number) => void
 }) {
   const element = useRef<HTMLVideoElement>(null)
   const active = useRef<MediaFacade | null>(null)
-  const latest = useRef({ model, playhead, onPlayheadChange })
-  latest.current = { model, playhead, onPlayheadChange }
+  const latest = useRef({ model, playhead, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded })
+  latest.current = { model, playhead, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded }
   const followed = useRef('')
   const [ready, setReady] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
-  const [speed, setSpeed] = useState(1)
   const [error, setError] = useState<ReturnType<typeof mediaErrorView>>()
   const [attempt, setAttempt] = useState(0)
   const url = routes.runArtifact(runId, recording.ref.sha)
@@ -115,34 +121,51 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, o
     if (!facade) return
     active.current = facade
     const controller = new AbortController()
+    let animation: number | undefined
+    const stopAnimation = () => {
+      if (animation !== undefined) cancelAnimationFrame(animation)
+      animation = undefined
+    }
     const loaded = () => {
       setReady(true)
       setTime(facade.currentTime)
     }
     const update = () => {
       setTime(facade.currentTime)
+      latest.current.onProgress?.(latest.current.model.testIndex, facade.currentTime)
       if (facade.paused || latest.current.model.axis !== 'time') return
       const current = latest.current.model.markers.filter(candidate => candidate.recordingOffsetMs! <= facade.currentTime * 1000)
         .reduce<typeof marker>((last, candidate) => !last || candidate.recordingOffsetMs! >= last.recordingOffsetMs! ? candidate : last, undefined)
       if (!current || addressKey(current) === addressKey(latest.current.playhead) || addressKey(current) === followed.current) return
       followed.current = addressKey(current)
-      latest.current.onPlayheadChange({ testIndex: current.testIndex, stepIndex: current.stepIndex, subActionIndex: current.subActionIndex })
+      const observe = latest.current.onPlayheadObserved ?? latest.current.onPlayheadChange
+      observe({ testIndex: current.testIndex, stepIndex: current.stepIndex, subActionIndex: current.subActionIndex })
     }
-    const ended = () => { facade.pause(); setPlaying(false); setTime(facade.currentTime) }
+    const tick = () => {
+      animation = undefined
+      if (facade.paused || controller.signal.aborted) return
+      update()
+      animation = requestAnimationFrame(tick)
+    }
+    const ended = () => {
+      stopAnimation(); facade.pause(); setPlaying(false); setTime(facade.currentTime)
+      latest.current.onRecordingEnded?.()
+    }
     const failed = () => {
       facade.pause()
       void probeMediaError(url, controller.signal).then(result => {
         if (!controller.signal.aborted) { setError(mediaErrorView('video', result)); setReady(false) }
       })
     }
-    const onPlay = () => setPlaying(true)
-    const onPause = () => setPlaying(false)
-    const events: Record<string, EventListener> = { loadedmetadata: loaded, timeupdate: update, ended, error: failed, play: onPlay, pause: onPause }
+    const onPlay = () => { setPlaying(true); stopAnimation(); animation = requestAnimationFrame(tick) }
+    const onPause = () => { setPlaying(false); stopAnimation() }
+    const events: Record<string, EventListener> = { loadedmetadata: loaded, timeupdate: update, seeked: update, ended, error: failed, play: onPlay, pause: onPause }
     for (const [name, listener] of Object.entries(events)) facade.addEventListener(name, listener)
     if (!facade.paused) facade.pause()
     if (!media && element.current && element.current.readyState >= 1) loaded()
     return () => {
       controller.abort()
+      stopAnimation()
       for (const [name, listener] of Object.entries(events)) facade.removeEventListener(name, listener)
       if (!facade.paused) facade.pause()
       active.current = null
@@ -162,11 +185,17 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, o
     followed.current = ''
     active.current.currentTime = Math.max(0, Math.min(1, seekFraction)) * recording.durationMs / 1000
     setTime(active.current.currentTime)
-  }, [ready, model.axis, seekFraction, recording.durationMs])
+  }, [ready, model.axis, seekFraction, seekRevision, recording.durationMs])
 
   useEffect(() => {
     if (active.current) active.current.playbackRate = speed
   }, [speed, attempt])
+
+  useEffect(() => {
+    if (ready && autoPlay) void active.current?.play().catch(() => {
+      setError(mediaErrorView('video', {})); setReady(false)
+    })
+  }, [ready, autoPlay])
 
   function togglePlayback() {
     const facade = active.current
@@ -209,6 +238,7 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, o
 }
 
 export function Player(props: PlayerProps) {
+  const [speed, setSpeed] = useState(1)
   const { model, playhead, source, recording, frame, runId, onSourceChange } = props
   const marker = model.markers.find(candidate => candidate.testIndex === playhead?.testIndex
     && candidate.stepIndex === playhead.stepIndex && candidate.subActionIndex === playhead.subActionIndex)
@@ -235,7 +265,7 @@ export function Player(props: PlayerProps) {
   return (
     <section data-player data-player-source={source}>
       {source === 'video' && recording?.state === 'present' && !absent
-        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} recording={recording} caption={title} header={toggle} />
+        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} speed={speed} setSpeed={setSpeed} recording={recording} caption={title} header={toggle} />
         : <>
       <div data-player-preview className='[&>[data-artifact-state]]:pb-0'>
       {source === 'frames' && <PlayerFrame key={`${runId}:${selectedFrame?.sha ?? 'none'}:${playhead?.stepIndex}:${playhead?.subActionIndex}`}

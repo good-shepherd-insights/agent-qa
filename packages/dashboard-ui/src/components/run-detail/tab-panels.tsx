@@ -50,7 +50,7 @@ export function TabPanels({
   executionLogs = [],
   platform,
   model, playhead, recording, frame, playerSource, onPlayerSourceChange, onPlayheadChange, seekFraction, isTimelineKeyIgnored,
-  pipelineRef, timeline,
+  pipelineRef, timeline, seekRevision, onProgress, onPlayheadObserved, onRecordingEnded, autoPlay,
   knowledge,
   onSelectStep,
 }: TabPanelsProps) {
@@ -144,14 +144,15 @@ export function TabPanels({
 
       <TabsContent value="overview" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
-          {step && <TabOverview
+          {(step || model) && <TabOverview
             timeline={timeline}
             step={step}
             subAction={subAction}
             runId={runId}
             model={model} playhead={playhead} recording={recording} frame={frame}
             playerSource={playerSource} onPlayerSourceChange={onPlayerSourceChange}
-            onPlayheadChange={onPlayheadChange} seekFraction={seekFraction}
+            onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} seekRevision={seekRevision}
+            onProgress={onProgress} onPlayheadObserved={onPlayheadObserved} onRecordingEnded={onRecordingEnded} autoPlay={autoPlay}
             isTimelineKeyIgnored={isTimelineKeyIgnored}
             pipelineRef={pipelineRef}
           />}

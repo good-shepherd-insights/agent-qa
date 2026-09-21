@@ -9,13 +9,13 @@ import RunDetailPage from '@/pages/run-detail'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { detailRead, analysisRead } = vi.hoisted(() => ({ detailRead: vi.fn(), analysisRead: vi.fn() }))
+const { detailRead, analysisRead, executionRead } = vi.hoisted(() => ({ detailRead: vi.fn(), analysisRead: vi.fn(), executionRead: vi.fn() }))
 vi.mock('@/lib/api', () => ({
   fetchRun: async () => ({ run: { id: 'run-1', name: 'Checkout run', status: 'passed', attributes: {}, platform: 'web' } }),
   fetchRunDetail: detailRead,
   fetchRunAnalysis: analysisRead,
   fetchRunKnowledge: async () => ({ kind: 'evidence-incomplete', runId: '' }),
-  fetchExecutionLogs: async () => ({ logs: [] }),
+  fetchExecutionLogs: executionRead,
   fetchRunEvidence: async () => ({ kind: 'failed', error: 'No records in this fixture' }),
   fetchRunArtifact: vi.fn(), triggerRun: vi.fn(), markRun: vi.fn(),
   watchPostProcessing: () => () => {},
@@ -65,6 +65,7 @@ let root: Root
 beforeEach(() => {
   localStorage.clear()
   detailRead.mockResolvedValue(projection())
+  executionRead.mockResolvedValue({ logs: [] })
   analysisRead.mockResolvedValue({ runId: 'run-1', verdicts: [], sentences: [], clusters: [] })
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -452,7 +453,7 @@ it('PLAYHEAD-JK-MOVES-PLAYHEAD', async () => {
   expect(current()).toBe('0:0-0')
 })
 
-it('PLAYHEAD-ONE-RING-ONE-BAR', async () => {
+it('PLAYHEAD-ONE-SELECTION-ONE-BOX', async () => {
   await render()
   for (const move of [() => child(0), () => parent(), () => key('j'), () => parent('0:1')]) {
     move()
@@ -540,22 +541,22 @@ it('TIMELINE-MEMBER-SWITCH', async () => {
     subActions: [...detail.subActions, ...detail.subActions.slice(0, 2).map(sub => ({ ...sub, testIndex: 3 }))],
   })
   await render()
-  expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('0')
+  expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('suite')
   expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
   press('v')
   expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
   parent('3:0')
   expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
   expect(localStorage.getItem('agent-qa.run-detail.player-source')).toBe('video')
-  expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('3')
-  expect(host.querySelector('[role="slider"]')?.getAttribute('aria-label')).toContain('#3')
-  expect(host.querySelector('[role="slider"]')?.getAttribute('aria-label')).toContain('Returns')
+  expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('suite')
+  expect(host.querySelector('[role="slider"]')?.getAttribute('aria-label')).toContain('All tests')
+  expect(host.querySelector('[role="slider"]')?.getAttribute('aria-label')).toContain('All tests')
   parent('0:1')
   expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
   act(() => host.querySelector('[role="slider"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
-  expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('3')
+  expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('suite')
   expect(current()).toBe('3:0-0')
-  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
   expect(selected()?.getAttribute('data-sub-action-id')).toBe('3:0-0')
 })
 
@@ -613,4 +614,113 @@ it('UP-DOWN-STABLE-ACTION-ORDER crosses steps/members and reverses without paren
   expect(selected()?.getAttribute('data-step-id')).toBe('0:1')
   press('ArrowUp', document.body, true)
   expect(selected()?.getAttribute('data-step-id')).toBe('0:0')
+})
+
+function suiteProjection() {
+  const detail = recordedProjection()
+  const recording = detail.members[0]!.recording!
+  detail.members = [...detail.members, { testIndex: 3, name: 'Second recording', attempts: 1,
+    recording: { ...recording, state: 'present', ref: { id: `recording:${'f'.repeat(64)}`, sha: 'f'.repeat(64) },
+      durationMs: 20000, contentType: 'video/webm', byteLength: 100 } }]
+  detail.steps = [...detail.steps, { ...detail.steps[0]!, testIndex: 3 }]
+  detail.subActions = [...detail.subActions, ...detail.subActions.slice(0, 2).map((sub, index) => ({ ...sub, testIndex: 3, recordingOffsetMs: 1000 + index * 4000 }))]
+  detailRead.mockResolvedValue(detail)
+  return detail
+}
+
+it('SUITE-PAGE-SEEK maps global positions to the correct local recording and action', async () => {
+  suiteProjection()
+  await render()
+  expect(host.querySelectorAll('[data-timeline]')).toHaveLength(1)
+  expect(host.querySelectorAll('[data-timeline-member-span]')).toHaveLength(2)
+  const track = host.querySelector<HTMLElement>('[data-timeline-track]')!
+  vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 1000 } as DOMRect)
+  track.setPointerCapture = vi.fn()
+  act(() => track.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 600 })))
+  const video = host.querySelector('video')!
+  act(() => video.dispatchEvent(new Event('loadedmetadata')))
+  expect(video.src).toContain('f'.repeat(64))
+  expect(video.currentTime).toBeCloseTo(8)
+  expect(current()).toBe('3:0-1')
+  expect(query().get('step')).toBe('3:0')
+  expect(host.querySelector<HTMLElement>('[data-timeline-playhead]')!.style.left).toBe('60%')
+  // Observation updates the pill between markers, never re-issues the 8-second seek.
+  act(() => { video.currentTime = 9; video.dispatchEvent(new Event('timeupdate')) })
+  expect(parseFloat(host.querySelector<HTMLElement>('[data-timeline-playhead]')!.style.left)).toBeCloseTo(190 / 3)
+  expect(video.currentTime).toBe(9)
+  expect(host.querySelector('video')).toBe(video)
+})
+
+it('SUITE-FILTER limits the combined rail to the displayed member', async () => {
+  suiteProjection()
+  await render('/runs/run-1?member=3')
+  const spans = host.querySelectorAll('[data-timeline-member-span]')
+  expect(spans).toHaveLength(1)
+  expect(spans[0]!.getAttribute('data-timeline-member-span')).toBe('3')
+})
+
+it('UP-DOWN-EMPTY-HOOK-LOG preserves reachable non-action rows and modal/input guards', async () => {
+  const detail = projection()
+  detail.steps = [...detail.steps, { ...detail.steps[0]!, stepIndex: 2 }]
+  detailRead.mockResolvedValue(detail)
+  const log = { runId: 'run-1', type: 'hook', name: 'Setup command', status: 'passed', duration: 1,
+    stdout: null, stderr: null, returnData: null, variables: null, createdAt: '' }
+  executionRead.mockResolvedValue({ logs: [
+    { ...log, id: 'setup', stepId: null, phase: 'setup' },
+    { ...log, id: 'inline', stepId: '0', phase: 'inline' },
+    { ...log, id: 'teardown', stepId: null, phase: 'teardown' },
+  ] })
+  await render()
+  child(0)
+  press('ArrowUp')
+  expect(selected()?.getAttribute('data-execution-id')).toBe('inline')
+  press('ArrowUp')
+  expect(selected()?.textContent).toContain('Setup command')
+  press('ArrowDown')
+  expect(selected()?.getAttribute('data-execution-id')).toBe('inline')
+  press('ArrowDown')
+  expect(current()).toBe('0:0-0')
+  parent('0:1')
+  press('ArrowDown')
+  expect(selected()?.getAttribute('data-step-id')).toBe('0:2')
+  press('ArrowDown')
+  expect(selected()?.textContent).toContain('Setup command')
+  press('ArrowUp')
+  expect(selected()?.getAttribute('data-step-id')).toBe('0:2')
+  parent('0:1')
+  for (const kind of ['input', 'dialog']) {
+    const element = document.createElement(kind === 'input' ? 'input' : 'div')
+    if (kind === 'dialog') element.setAttribute('role', 'dialog')
+    host.appendChild(element)
+    expect(press('ArrowDown', element).defaultPrevented).toBe(false)
+    expect(current()).toBe('0:1-0')
+    element.remove()
+  }
+})
+
+it('SUITE-PLAYBACK continues at local zero, then stops at a missing member without skipping it', async () => {
+  const detail = suiteProjection()
+  detail.members = [...detail.members, { testIndex: 5, name: 'No recording', attempts: 1, recording: { state: 'absent', reason: 'unsupported' } },
+    { ...detail.members[1]!, testIndex: 7, name: 'After gap' }]
+  detailRead.mockResolvedValue(detail)
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+  await render()
+  const first = host.querySelector('video')!
+  act(() => first.dispatchEvent(new Event('loadedmetadata')))
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Play recording"]')!.click())
+  act(() => first.dispatchEvent(new Event('ended')))
+  const second = host.querySelector('video')!
+  expect(second).not.toBe(first)
+  expect(second.src).toContain('f'.repeat(64))
+  await act(async () => second.dispatchEvent(new Event('loadedmetadata')))
+  expect(second.currentTime).toBe(0)
+  expect(play).toHaveBeenCalledTimes(2)
+  act(() => second.dispatchEvent(new Event('ended')))
+  expect(host.querySelector('video')).toBeNull()
+  expect(host.querySelector('[data-evidence-kind="video"]')?.getAttribute('data-evidence-state')).toBe('unsupported')
+  expect(host.querySelector('[data-timeline-empty-member="5"]')).not.toBeNull()
+  expect(host.querySelectorAll('[data-timeline-member-span]')).toHaveLength(4)
+  expect(play).toHaveBeenCalledTimes(2)
+  vi.restoreAllMocks()
 })

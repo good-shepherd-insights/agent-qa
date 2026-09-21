@@ -18,11 +18,16 @@ export interface OverviewPlayerProps {
   onPlayerSourceChange?: PlayerProps["onSourceChange"]
   onPlayheadChange?: PlayerProps["onPlayheadChange"]
   seekFraction?: number
+  seekRevision?: number
+  onProgress?: PlayerProps["onProgress"]
+  onPlayheadObserved?: PlayerProps["onPlayheadObserved"]
+  onRecordingEnded?: PlayerProps["onRecordingEnded"]
+  autoPlay?: boolean
   isTimelineKeyIgnored?: PlayerProps["isTimelineKeyIgnored"]
 }
 
 interface TabOverviewProps extends OverviewPlayerProps {
-  step: DisplayStep
+  step: DisplayStep | null
   subAction: RunDetailSubAction | null
   runId: string | null
   pipelineRef?: React.RefObject<ReasoningPipelineHandle | null>
@@ -117,13 +122,14 @@ export function TabOverview({
   runId,
   model, playhead = null, recording, frame, playerSource = "frames",
   onPlayerSourceChange = () => {}, onPlayheadChange = () => {}, seekFraction, isTimelineKeyIgnored,
-  pipelineRef, timeline,
+  pipelineRef, timeline, seekRevision, onProgress, onPlayheadObserved, onRecordingEnded, autoPlay,
 }: TabOverviewProps) {
   return (
     <div data-overview>
       {model && runId && <Player timeline={timeline} model={model} playhead={playhead} recording={recording} frame={frame}
         source={playerSource} runId={runId} onSourceChange={onPlayerSourceChange}
-        onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} isTimelineKeyIgnored={isTimelineKeyIgnored} />}
+        onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} seekRevision={seekRevision}
+        onProgress={onProgress} onPlayheadObserved={onPlayheadObserved} onRecordingEnded={onRecordingEnded} autoPlay={autoPlay} isTimelineKeyIgnored={isTimelineKeyIgnored} />}
       <div className="border-t">
         <div className="p-3 space-y-3 min-w-0">
           {subAction === null ? null : (
@@ -134,7 +140,7 @@ export function TabOverview({
             />
           )}
 
-          {step.error ? (
+          {step?.error ? (
             <div>
               <p className="text-xs text-muted-foreground font-medium mb-0.5">Error</p>
               <div

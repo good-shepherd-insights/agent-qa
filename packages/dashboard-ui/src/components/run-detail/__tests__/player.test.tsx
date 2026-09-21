@@ -193,6 +193,62 @@ test('PLAYER-END-PARKS-LAST', async () => {
   expect(media.currentTime).toBe(20)
   expect(button(PLAYER_COPY.play)).not.toBeNull()
 })
+test('PLAYER-CONTINUOUS-PROGRESS observes real media between markers without seek feedback and cancels frames', async () => {
+  const callbacks = new Map<number, FrameRequestCallback>()
+  let sequence = 0
+  vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+    callbacks.set(++sequence, callback)
+    return sequence
+  }))
+  vi.stubGlobal('cancelAnimationFrame', vi.fn((id: number) => callbacks.delete(id)))
+  const progress = vi.fn()
+  const observed = vi.fn()
+  const media = video({ onProgress: progress, onPlayheadObserved: observed })
+  metadata(media)
+  await act(async () => button(PLAYER_COPY.play).click())
+  const seeks = [...media.seeks]
+  // Change media time without emitting timeupdate: the frame sampler must observe it.
+  media.currentTime = 3.25
+  media.seeks.pop()
+  act(() => {
+    const [id, callback] = callbacks.entries().next().value!
+    callbacks.delete(id); callback(16)
+  })
+  expect(progress).toHaveBeenLastCalledWith(0, 3.25)
+  expect(observed).not.toHaveBeenCalled()
+  render({ source: 'video', recording: recording(), media, onProgress: progress, onPlayheadObserved: observed })
+  expect(media.seeks).toEqual(seeks)
+  expect(media.currentTime).toBe(3.25)
+  act(() => button(PLAYER_COPY.pause).click())
+  expect(callbacks.size).toBe(0)
+  await act(async () => button(PLAYER_COPY.play).click())
+  expect(callbacks.size).toBe(1)
+  render({ source: 'frames' })
+  expect(callbacks.size).toBe(0)
+  expect(media.paused).toBe(true)
+})
+
+test('PLAYER-REPEATED-SEEK and member continuation preserve explicit offsets and speed', async () => {
+  const ended = vi.fn()
+  const media = video({ onRecordingEnded: ended })
+  metadata(media)
+  act(() => button(PLAYER_COPY.speed).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  const speed = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === '4×')!
+  act(() => speed.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  render({ source: 'video', recording: recording(), media, seekFraction: 0.25, seekRevision: 1, onRecordingEnded: ended })
+  act(() => media.fire('timeupdate', 8))
+  render({ source: 'video', recording: recording(), media, seekFraction: 0.25, seekRevision: 2, onRecordingEnded: ended })
+  expect(media.currentTime).toBe(5)
+  act(() => media.fire('ended', 20))
+  expect(ended).toHaveBeenCalledOnce()
+  const next = createFakeMedia(20)
+  render({ source: 'video', model: { ...model, testIndex: 1 }, recording: recording(), media: next, seekFraction: 0, autoPlay: true })
+  await act(async () => next.fire('loadedmetadata'))
+  expect(next.currentTime).toBe(0)
+  expect(next.paused).toBe(false)
+  expect(next.playbackRate).toBe(4)
+  expect(media.paused).toBe(true)
+})
 for (const reason of ['unsupported', 'not-captured', 'failed', 'unavailable'] as const) {
   test(`PLAYER-VIDEO-${reason.toUpperCase()}`, () => {
     render({ source: 'video', recording: { state: 'absent', reason } })

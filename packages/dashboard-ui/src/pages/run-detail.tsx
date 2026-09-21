@@ -22,6 +22,7 @@ import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import { initialPlayerSource, storePlayerSource } from "@/lib/player-view"
 import { PlayerLightbox } from '@/components/run-detail/player-lightbox'
+import { buildSuiteTimeline, suiteSeek, suiteProgress } from '@/lib/suite-timeline'
 import { Timeline } from '@/components/run-detail/timeline'
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
@@ -236,8 +237,15 @@ export default function RunDetailPage() {
   const [selection, setTreeSelection] = useState<Selection | null>(null)
   const [playheadTarget, setPlayheadTarget] = useState<Playhead | null>(null)
   const [seekFraction, setSeekFraction] = useState<number>()
+  const [seekRevision, setSeekRevision] = useState(0)
+  const [observedPosition, setObservedPosition] = useState<number>()
+  const [timelineMemberIndex, setTimelineMemberIndex] = useState<number>()
+  const [continueMember, setContinueMember] = useState<number>()
   const setSelection = useCallback((next: Selection | null) => {
     setTreeSelection(next)
+    setTimelineMemberIndex(undefined)
+    setContinueMember(undefined)
+    setObservedPosition(undefined)
     setPlayheadTarget(null)
     setSeekFraction(undefined)
   }, [])
@@ -245,6 +253,9 @@ export default function RunDetailPage() {
     const next = selectionFromPlayhead(address)
     if (!hasStepId(next)) return
     setTreeSelection(next)
+    setTimelineMemberIndex(undefined)
+    setContinueMember(undefined)
+    setObservedPosition(undefined)
     setPlayheadTarget(address)
     setSeekFraction(undefined)
   }, [])
@@ -554,14 +565,51 @@ export default function RunDetailPage() {
   const playheadSubAction = useMemo<RunDetailSubAction | null>(() =>
     selectedStep?.subActions?.find(sub => sub.subActionIndex === playhead?.subActionIndex) ?? null,
   [selectedStep, playhead])
-  const timelineGroup = visibleGroups.find(group => group.member.testIndex === playhead?.testIndex)
+  const timelineGroup = visibleGroups.find(group => group.member.testIndex === (timelineMemberIndex ?? playhead?.testIndex))
     ?? visibleGroups[0]
   const timelineModel = useMemo(() => timelineGroup ? buildTimelineModel(timelineGroup) : null, [timelineGroup])
+  const suiteModel = useMemo(() => buildSuiteTimeline(visibleGroups), [visibleGroups])
   const recording = timelineGroup?.member.recording
   const [sourceChoice, setSourceChoice] = useState<{ member: string; source: PlayerSource }>()
   const playerMember = `${id}:${timelineGroup?.member.testIndex}:${recording?.state}`
   const playerSource = sourceChoice?.member === playerMember ? sourceChoice.source : initialPlayerSource(recording, timelineModel?.axis ?? 'ordinal')
-  const setPlayerSource = (source: PlayerSource) => setSourceChoice({ member: playerMember, source })
+  const setPlayerSource = (source: PlayerSource) => {
+    setContinueMember(undefined)
+    setObservedPosition(undefined)
+    setSourceChoice({ member: playerMember, source })
+  }
+  const observePlayhead = (address: Playhead) => {
+    setTreeSelection(selectionFromPlayhead(address))
+    setPlayheadTarget(address)
+  }
+  const seekSuite = (fraction: number, address?: Playhead) => {
+    const target = suiteSeek(suiteModel, fraction, address)
+    if (!target) return
+    if (address ?? target.playhead) setPlayheadFrom((address ?? target.playhead)!)
+    else { setSelection(null); setTimelineMemberIndex(target.member.model.testIndex) }
+    const member = target.member.group.member
+    // An explicit video scrub keeps Video, including a truthful absence pane at gaps.
+    if (playerSource === 'video') setSourceChoice({ member: `${id}:${member.testIndex}:${member.recording?.state}`, source: 'video' })
+    setSeekFraction(target.localFraction)
+    setSeekRevision(value => value + 1)
+    setObservedPosition(fraction)
+  }
+  const advanceRecording = () => {
+    const index = visibleGroups.findIndex(group => group === timelineGroup)
+    const next = visibleGroups[index + 1]
+    if (!next) { setContinueMember(undefined); return }
+    const model = buildTimelineModel(next)
+    const address = model.markers[0] ?? model.playhead
+    if (address) setPlayheadFrom(address)
+    else { setSelection(null); setTimelineMemberIndex(next.member.testIndex) }
+    const recording = next.member.recording
+    setSourceChoice({ member: `${id}:${next.member.testIndex}:${recording?.state}`, source: 'video' })
+    setSeekFraction(model.axis === 'time' ? 0 : undefined)
+    setSeekRevision(value => value + 1)
+    const playable = recording?.state === 'present' && !recording.ref.evidenceIncomplete
+    setContinueMember(playable ? next.member.testIndex : undefined)
+    setObservedPosition(suiteModel.members[index + 1]?.start)
+  }
   const handleCitedArtifact = useCallback((sha: string) => {
     for (const group of groups) {
       const marker = findMarkerBySha(buildTimelineModel(group), sha)
@@ -641,7 +689,10 @@ export default function RunDetailPage() {
       if (!step.subActions?.length) items.push({ type: 'step', stepId: step.id })
       {
         for (const log of stepExecutionLogs) {
-          if (log.stepId === step.id) items.push({ type: 'exec', stepId: step.id, logId: log.id })
+          // Match the tree's single-member ordinal ownership rule; never guess a suite owner.
+          if (visibleGroups.length === 1 && (log.stepId === step.id || Number(log.stepId) === step.rawStepOrder)) {
+            items.push({ type: 'exec', stepId: step.id, logId: log.id })
+          }
         }
         for (const sub of step.subActions ?? []) {
           items.push({ type: 'sub', stepId: step.id, subIndex: sub.subActionIndex })
@@ -654,7 +705,7 @@ export default function RunDetailPage() {
       items.push({ type: 'hook', logId: hook.id })
     }
     return items
-  }, [displaySteps, stepExecutionLogs, setupHooks, teardownHooks])
+  }, [displaySteps, stepExecutionLogs, setupHooks, teardownHooks, visibleGroups.length])
 
   const currentNavIdx = useMemo(() => {
     const cursor = selection?.type === 'step' && playhead?.subActionIndex !== null
@@ -686,6 +737,8 @@ export default function RunDetailPage() {
   }
 
   const shortcuts = useMemo(() => {
+    const navigationIgnored = (event: KeyboardEvent) => event.target instanceof Element
+      && event.target.closest('[role="dialog"]:not([data-state="closed"]), dialog[open], [role="listbox"], [role="combobox"]') !== null
     const moveMarker = (event: KeyboardEvent, direction: number) => {
       if (isTimelineKeyIgnored(event)) return false
       const markers = visibleGroups.flatMap(group => buildTimelineModel(group).markers)
@@ -705,7 +758,8 @@ export default function RunDetailPage() {
         storePlayerSource(source)
         setPlayerSource(source)
       },
-      arrowdown: () => {
+      arrowdown: event => {
+        if (navigationIgnored(event)) return false
         if (navItems.length === 0) return
         if (currentNavIdx === -1) {
           selectNavItem(navItems[0])
@@ -714,7 +768,8 @@ export default function RunDetailPage() {
           selectNavItem(navItems[next])
         }
       },
-      arrowup: () => {
+      arrowup: event => {
+        if (navigationIgnored(event)) return false
         if (navItems.length === 0) return
         if (currentNavIdx === -1) {
           selectNavItem(navItems[navItems.length - 1])
@@ -723,14 +778,16 @@ export default function RunDetailPage() {
           selectNavItem(navItems[prev])
         }
       },
-      j: () => { map.arrowdown({} as KeyboardEvent) },
-      k: () => { map.arrowup({} as KeyboardEvent) },
-      'shift+arrowdown': () => {
+      j: event => map.arrowdown(event),
+      k: event => map.arrowup(event),
+      'shift+arrowdown': event => {
+        if (navigationIgnored(event)) return false
         const index = displaySteps.findIndex(step => step.id === expandedStepId)
         const next = displaySteps[index + 1]
         if (next) setSelection({ type: 'step', stepId: next.id })
       },
-      'shift+arrowup': () => {
+      'shift+arrowup': event => {
+        if (navigationIgnored(event)) return false
         const index = displaySteps.findIndex(step => step.id === expandedStepId)
         const previous = displaySteps[index - 1]
         if (previous) setSelection({ type: 'step', stepId: previous.id })
@@ -1061,39 +1118,25 @@ export default function RunDetailPage() {
               ) : <>
                 <div className='flex min-h-0 flex-1 flex-col'>
                 <TabPanels
-                  timeline={timelineModel && timelineGroup && <div className='shrink-0' onKeyDownCapture={event => {
-                  if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'slider') return
-                  if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
-                  const index = timelineModel.markers.findIndex(marker => marker.stepIndex === playhead?.stepIndex && marker.subActionIndex === playhead.subActionIndex)
-                  const direction = event.key === 'ArrowRight' ? 1 : -1
-                  if (index < 0 || index !== (direction === 1 ? timelineModel.markers.length - 1 : 0)) return
-                  for (let member = visibleGroups.indexOf(timelineGroup) + direction; member >= 0 && member < visibleGroups.length; member += direction) {
-                    const markers = buildTimelineModel(visibleGroups[member]!).markers
-                    const target = direction === 1 ? markers[0] : markers.at(-1)
-                    if (!target) continue
-                    event.preventDefault()
-                    event.stopPropagation()
-                    setPlayheadFrom(target)
-                    break
-                  }
-                }}>
-                  <Timeline
-                    model={timelineModel}
+                  timeline={<Timeline
+                    model={suiteModel}
                     playhead={playhead}
                     source={playerSource}
-                    memberLabel={hasMemberChrome ? `${memberHandleLabel(timelineGroup.member.testIndex)} · ${memberDisplayName(timelineGroup.member)}` : undefined}
-                    seekFraction={seekFraction}
+                    memberLabel={suiteModel.members.length > 1 ? 'All tests' : suiteModel.members[0]?.label}
+                    observedPosition={observedPosition}
                     onPlayheadChange={setPlayheadFrom}
-                    onSeekFraction={setSeekFraction}
-                  />
-                </div>}
+                    onSeekFraction={seekSuite}
+                  />}
                   activeTab={activeTab}
                   onTabChange={setActiveTab}
                   step={selectedStep}
                   subAction={playheadSubAction}
                   model={timelineModel} playhead={playhead} recording={recording} frame={foldedFrame}
                   playerSource={playerSource} onPlayerSourceChange={setPlayerSource}
-                  onPlayheadChange={setPlayheadFrom} seekFraction={seekFraction}
+                  onPlayheadChange={setPlayheadFrom} seekFraction={seekFraction} seekRevision={seekRevision}
+                  onPlayheadObserved={observePlayhead}
+                  onProgress={(testIndex, seconds) => setObservedPosition(suiteProgress(suiteModel, testIndex, seconds))}
+                  onRecordingEnded={advanceRecording} autoPlay={continueMember === timelineGroup?.member.testIndex}
                   isTimelineKeyIgnored={isTimelineKeyIgnored}
                   runId={selectedStep?.rawRunId ?? run.id}
                   allSteps={displaySteps}
