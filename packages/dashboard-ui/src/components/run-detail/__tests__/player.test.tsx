@@ -194,7 +194,11 @@ test('PLAYER-VIDEO-BYTES-GONE', async () => {
   expect(query('[data-evidence-kind="video"]').dataset.evidenceIncomplete).toBe('true')
 })
 test('PLAYER-VIDEO-LOAD-FAILURE', async () => {
-  vi.mocked(fetch).mockResolvedValue({ status: 500 } as Response)
+  for (const status of [206, 500, 503, undefined]) {
+  const cancel = vi.fn(async () => undefined)
+  vi.mocked(fetch).mockReset()
+  if (status === undefined) vi.mocked(fetch).mockRejectedValue(new TypeError('network unavailable'))
+  else vi.mocked(fetch).mockResolvedValue({ status, body: { cancel } } as unknown as Response)
   const media = video()
   await act(async () => media.fire('error'))
   const pane = query('[data-evidence-kind="video"]')
@@ -205,6 +209,18 @@ test('PLAYER-VIDEO-LOAD-FAILURE', async () => {
   act(() => pane.querySelector('button')!.click())
   expect(query('video')).not.toBeNull()
   expect(button(PLAYER_COPY.play).disabled).toBe(true)
+  expect(fetch).toHaveBeenLastCalledWith(routes.runArtifact('run', sha), {
+    method: 'GET', headers: { Range: 'bytes=0-0' }, signal: expect.any(AbortSignal),
+  })
+  if (status !== undefined) expect(cancel).toHaveBeenCalledOnce()
+  render({ source: 'frames' })
+  await errorImage()
+  const frame = query('[data-evidence-kind="frame"]')
+  expect(frame.dataset.evidenceState).toBe('failed')
+  expect(frame.dataset.evidenceFailure).toBe('load')
+  act(() => frame.querySelector('button')!.click())
+  expect(query('img')).not.toBeNull()
+  }
 })
 test('PLAYER-VIDEO-UNTIMED-NOTE', async () => {
   delete group.steps[0]!.subActions[1]!.recordingOffsetMs

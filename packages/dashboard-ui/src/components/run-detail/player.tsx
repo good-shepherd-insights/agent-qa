@@ -10,19 +10,11 @@ import { EVIDENCE_COPY, resolveEvidenceView } from '@/lib/evidence-state-view'
 import { formatOffset, frameUsable, type PlayerSource, type Playhead, type TimelineModel, type UsableFrame } from '@/lib/playhead'
 import { captionModel, mediaErrorView, PLAYER_COPY, PLAYBACK_SPEEDS, storePlayerSource, VIDEO_UNTIMED_NOTE } from '@/lib/player-view'
 import { routes } from '@/lib/routes'
+import { probeMediaError } from '@/lib/media-error-probe'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import type { MediaFacade } from '@/test/media-facade'
 import { ActionSentence } from './action-sentence'
 import { EvidenceState } from './evidence-state'
-
-export async function probeMediaError(url: string, signal: AbortSignal) {
-  try {
-    const response = await fetch(url, { method: 'HEAD', signal })
-    return { status: response.status }
-  } catch {
-    return {}
-  }
-}
 
 export function PlayerFrame({ runId, frame, wholeStep = false }: {
   runId: string
