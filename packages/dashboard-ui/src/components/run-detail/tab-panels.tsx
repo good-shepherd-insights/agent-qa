@@ -161,7 +161,8 @@ export function TabPanels({
       <TabsContent value="env" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
           {scopeLine('step')}
-          <TabEnv step={step} executionLogs={executionLogs} runId={runId} selection={selection} allSteps={allSteps} onSelectStep={onSelectStep} />
+          {/* Isolate evidence panes from ScrollArea's direct-child display:block rule. */}
+          <div><TabEnv step={step} executionLogs={executionLogs} runId={runId} selection={selection} allSteps={allSteps} onSelectStep={onSelectStep} /></div>
         </ScrollArea>
       </TabsContent>
 
@@ -169,7 +170,7 @@ export function TabPanels({
         <div ref={networkScrollRef} className="h-full">
           <ScrollArea className="h-full">
             {scopeLine('step')}
-            <TabNetwork step={step} allSteps={allSteps} platform={platform} runId={runId} selection={selection} evidenceSteps={allSteps} onSelectStep={onSelectStep} />
+            <div><TabNetwork step={step} allSteps={allSteps} platform={platform} runId={runId} selection={selection} evidenceSteps={allSteps} onSelectStep={onSelectStep} /></div>
           </ScrollArea>
         </div>
       </TabsContent>
@@ -178,7 +179,7 @@ export function TabPanels({
         <div ref={consoleScrollRef} className="h-full">
           <ScrollArea className="h-full">
             {scopeLine('step')}
-            <TabConsole step={step} allSteps={allSteps} executionLogs={executionLogs} isHookStep={hasExecutionLogs} runId={runId} selection={selection} evidenceSteps={allSteps} onSelectStep={onSelectStep} />
+            <div><TabConsole step={step} allSteps={allSteps} executionLogs={executionLogs} isHookStep={hasExecutionLogs} runId={runId} selection={selection} evidenceSteps={allSteps} onSelectStep={onSelectStep} /></div>
           </ScrollArea>
         </div>
       </TabsContent>
@@ -193,7 +194,7 @@ export function TabPanels({
       <TabsContent value="a11y" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
           {scopeLine('step')}
-          <TabA11y step={step} runId={runId} selection={selection} allSteps={allSteps} onSelectStep={onSelectStep} />
+          <div><TabA11y step={step} runId={runId} selection={selection} allSteps={allSteps} onSelectStep={onSelectStep} /></div>
         </ScrollArea>
       </TabsContent>
 
