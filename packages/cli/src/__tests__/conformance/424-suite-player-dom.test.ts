@@ -357,13 +357,15 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     expect(durations[0]! - stored[0]!).toBeGreaterThan(0.2)
     const track = page.locator('[data-timeline-track]')
     const bounds = (await track.boundingBox())!
-    observations.continuousDrag = await dragSuite(page, durations)
-    const target = durations[0]! + durations[1]! * 0.2
-    await page.mouse.click(bounds.x + bounds.width * target / durations.reduce((sum, value) => sum + value, 0), bounds.y + 12)
+    const drag = await dragSuite(page, durations)
+    observations.continuousDrag = drag
+    const target = drag.find(row => row.member === 1)!.fraction * durations.reduce((sum, value) => sum + value, 0)
+    const expectedLocal = target - durations[0]!
+    await page.mouse.click(bounds.x + bounds.width * target / durations.reduce((sum, value) => sum + value, 0), bounds.y + 2)
     await mediaReady(page)
     await expect.poll(() => page.locator('video').getAttribute('src')).toContain(detail.members[1]!.recording!.state === 'present' ? detail.members[1]!.recording!.ref.sha : 'missing')
     const local = await page.locator('video').evaluate(video => (video as HTMLVideoElement).currentTime)
-    expect(Math.abs(local - durations[1]! * 0.2)).toBeLessThan(0.15)
+    expect(Math.abs(local - expectedLocal)).toBeLessThan(0.15)
     await page.getByRole('slider').press('Home')
     await mediaReady(page)
     const rates = []
