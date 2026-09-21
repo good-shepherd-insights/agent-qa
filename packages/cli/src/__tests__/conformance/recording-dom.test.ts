@@ -13,7 +13,7 @@ let failure: string | undefined
 let seekFailure: string | undefined
 let src = ''
 let seek: { length: number; end: number; requested: number; actual: number } | undefined
-let parent: { selected: string | null; childCount: number; markerInSegment: boolean; caption: string; image: string; answered: boolean; latestFrame: boolean } | undefined
+let parent: { selected: string | null; childCount: number; sliderMatchesAction: boolean; caption: string; image: string; answered: boolean; latestFrame: boolean } | undefined
 let off: { initial: string | null; state: string | null; kind: string | null } | undefined
 
 describe('recording and parent selection on the shipped bundle (424-29)', () => {
@@ -60,17 +60,13 @@ describe('recording and parent selection on the shipped bundle (424-29)', () => 
         return image?.complete && image.naturalWidth > 0
       })
       parent = await row.evaluate(row => {
-        const marker = document.querySelector('[data-marker-current="true"]')
-        const segment = document.querySelector(`[data-timeline-segment="${row.getAttribute('data-step-id')}"]`)
-        const markerBox = marker?.getBoundingClientRect()
-        const segmentBox = segment?.getBoundingClientRect()
+        const slider = document.querySelector('[data-overview] [role="slider"]')
         const children = [...row.querySelectorAll('[data-sub-action]')]
         const current = row.querySelector('[data-playhead-row]')
         const image = document.querySelector<HTMLImageElement>('[data-artifact-state="available"] img')
         return {
           selected: row.getAttribute('aria-selected'), childCount: children.length,
-          markerInSegment: !!markerBox && !!segmentBox && markerBox.x + markerBox.width / 2 >= segmentBox.x
-            && markerBox.x + markerBox.width / 2 <= segmentBox.right + 4,
+          sliderMatchesAction: slider?.getAttribute('aria-valuenow') === String(children.length),
           caption: document.querySelector('[data-player-caption]')?.textContent ?? '',
           image: image?.src ?? '', answered: !!image?.complete && image.naturalWidth > 0,
           latestFrame: current === children.at(-1),
@@ -121,9 +117,10 @@ describe('recording and parent selection on the shipped bundle (424-29)', () => 
   })
   it('PARENT-STEP-PARKS-PLAYHEAD', () => {
     expect(failure).toBeUndefined()
-    expect(parent).toMatchObject({ selected: 'true', markerInSegment: true, answered: true, latestFrame: true })
+    expect(parent).toMatchObject({ selected: 'true', sliderMatchesAction: true, answered: true, latestFrame: true })
     expect(parent!.childCount).toBeGreaterThanOrEqual(2)
-    expect(parent!.caption).toMatch(/#2/u)
+    expect(parent!.caption).toContain('Clicked')
+    expect(parent!.caption).not.toMatch(/#2|passed|Sub-action/u)
     expect(parent!.image).toMatch(/\/api\/runs\/[^/]+\/artifacts\/[a-f0-9]{64}$/u)
     expect(ledger.some(response => response.url === parent!.image && response.status === 200)).toBe(true)
   })

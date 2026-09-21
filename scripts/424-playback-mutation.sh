@@ -34,7 +34,7 @@ const instruments = {
   absence: { pkg: 'packages/dashboard-ui', files: [A, AT, 'src/components/run-detail/__tests__/evidence-state.test.tsx'], typecheck: true, count: 18 },
   counts: { pkg: 'packages/dashboard-ui', files: [C, CT], typecheck: true, count: 8 },
   drawer: { pkg: 'packages/dashboard-ui', files: [D, DT], typecheck: true, count: 6 },
-  vocabulary: { pkg: 'packages/dashboard-ui', files: [V, 'src/components/run-detail/__tests__/action-sentence.test.tsx'], typecheck: false, count: 10 },
+  vocabulary: { pkg: 'packages/dashboard-ui', files: [V, 'src/components/run-detail/__tests__/action-sentence.test.tsx'], typecheck: false, count: 11 },
   playhead: { pkg: 'packages/dashboard-ui', files: [P, PT], typecheck: true, count: 30 },
   notice: { pkg: 'packages/dashboard-ui', files: [N], typecheck: false, count: 3 },
   page: { pkg: 'packages/dashboard-ui', files: [PAGE_T], typecheck: false, count: 37 },

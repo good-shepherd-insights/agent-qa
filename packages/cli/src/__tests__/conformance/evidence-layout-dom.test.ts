@@ -20,7 +20,7 @@ let fixture: RecordingFixture | undefined
 let reader: Awaited<ReturnType<typeof spawnDashboard>> | undefined
 let zoomContext: BrowserContext | undefined
 let zoom: { factor: number; beforeWidth: number; afterWidth: number; beforeDpr: number; afterDpr: number } | undefined
-let timeline: { numbers: number; badges: Box[]; readout: string; member: Box; first: Box; trackViewport: Box; steps: number } | undefined
+let timeline: { box: Box; track: Box; thumb: Box; text: string; decorations: number; inOverview: boolean; actionCount: number } | undefined
 const tabs: Array<{ width: number; document: number; viewport: number; scroll: number; client: number; moved: number; triggers: Array<{ box: Box; count?: Box; contentFits: boolean }> }> = []
 const lightboxes: Array<{ width: number; document: number; viewport: number; height: number; image: Box; dialog: Box; close: Box; notePadding: string[]; loaded: boolean }> = []
 let notice: { dismiss: Box; viewport: number; explanation: Box; pane: Box; lines: number; textWidth: number; font: string; totalTextWidth: number; message: string; text: Box; lineBoxes: Box[]; icon: Box } | undefined
@@ -95,18 +95,13 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
 
       timeline = await page.locator('[data-timeline]').evaluate(timeline => {
         const box = (element: Element) => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
-        const member = timeline.querySelector(':scope > span')!
-        const first = timeline.querySelector('[data-timeline-segment]')!
-        const trackViewport = timeline.querySelector('[data-timeline-track]')!.parentElement!.parentElement!
-        const signals = timeline.querySelector('[data-timeline-signals]')!
-        return { member: box(member), first: box(first), trackViewport: box(trackViewport),
-          numbers: [...signals.querySelectorAll(':scope > div > span')].filter(element => element.getBoundingClientRect().width > 0).length,
-          badges: [...signals.querySelectorAll('[data-step-signal]')].map(box),
-          steps: signals.children.length, readout: timeline.querySelector('[data-timeline-readout]')?.textContent ?? '',
+        const slider = timeline.querySelector('[role="slider"]')!
+        return { box: box(timeline), track: box(timeline.querySelector('[data-timeline-track]')!), thumb: box(slider),
+          text: timeline.textContent ?? '', decorations: timeline.querySelectorAll('svg, [data-step-signal], [data-timeline-marker], [data-timeline-segment], [data-timeline-readout]').length,
+          inOverview: !!timeline.closest('[data-overview]'), actionCount: Number(slider.getAttribute('aria-valuemax')),
         }
       })
       await capture(page, 'timeline-400')
-      await capture(page, 'badges-400')
       await measureTabs(page, 'tab-strip-400')
       await measureChips(page)
       if ((await page.locator('body').textContent())?.includes(POPULATED_SECRET_VALUE)) throw new Error('Synthetic credential was not masked')
@@ -240,23 +235,13 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
   afterAll(async () => { await zoomContext?.close(); await reader?.stop(); await fixture?.close(); cleanupTempRoots() })
   it('LAYOUT-TIMELINE-400', () => {
     expect(timeline, JSON.stringify(failures)).toBeDefined()
-    expect(timeline!.numbers).toBe(0)
-    expect(timeline!.badges.length).toBeGreaterThan(0)
-    expect(timeline!.readout).toMatch(/^#\d+\/\d+$/u)
-    // Scrolled-out segments keep their un-clipped DOMRect. The actual painted track starts
-    // at its overflow viewport, so an offscreen rectangle under the label is not overlap.
-    expect(timeline!.member.right).toBeLessThanOrEqual(timeline!.trackViewport.x)
-    const paintedFirst = { ...timeline!.first, x: Math.max(timeline!.first.x, timeline!.trackViewport.x),
-      right: Math.min(timeline!.first.right, timeline!.trackViewport.right) }
-    expect(overlaps(timeline!.member, paintedFirst)).toBe(false)
-  })
-  it('LAYOUT-BADGES-400', () => {
-    expect(timeline, JSON.stringify(failures)).toBeDefined()
-    expect(timeline!.steps).toBeGreaterThanOrEqual(3)
-    expect(timeline!.badges.length).toBeGreaterThanOrEqual(6)
-    for (const [i, badge] of timeline!.badges.entries()) {
-      for (const other of timeline!.badges.slice(i + 1)) expect(overlaps(badge, other), JSON.stringify({ badge, other })).toBe(false)
-    }
+    expect(timeline!.inOverview).toBe(true)
+    expect(timeline!.text).toBe('')
+    expect(timeline!.decorations).toBe(0)
+    expect(timeline!.box.height).toBeLessThanOrEqual(36)
+    expect(inside(timeline!.track, timeline!.box)).toBe(true)
+    expect(inside(timeline!.thumb, timeline!.box)).toBe(true)
+    expect(timeline!.actionCount).toBeGreaterThanOrEqual(6)
   })
   it('LAYOUT-TAB-STRIP-400-AND-ZOOM', () => {
     expect(tabs.length, JSON.stringify(failures)).toBe(3)

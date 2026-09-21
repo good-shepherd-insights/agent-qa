@@ -25,6 +25,85 @@ afterAll(async () => {
   cleanupTempRoots()
 })
 
+it('REVIEW-MINIMAL-OVERVIEW: one and many actions keep annotations aligned at desktop and 400px', async () => {
+  const measured = []
+  // Explicit geometry arrangement over the shipped page/server. The SVG is synthetic evidence,
+  // not an owner capture or a claim about the producer's timing/annotation accuracy.
+  const screenshot = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="#f7f8fa"/><text x="40" y="60" font-size="28" fill="#263648">Products</text>'
+    + [200, 400, 600].map((x, i) => `<rect x="${x - 60}" y="260" width="120" height="80" rx="8" fill="#fff" stroke="#718096"/><text x="${x}" y="305" text-anchor="middle" font-size="18" fill="#263648">Item ${i + 1}</text>`).join('') + '</svg>'
+  for (const count of [1, 3]) for (const width of [1280, 400]) {
+    const page = await fixture.browser.newPage({ viewport: { width, height: 900 } })
+    try {
+      const projection = structuredClone(detail)
+      const base = projection.subActions.find(sub => sub.artifactRefs?.some(ref => ref.id.startsWith('decision-screenshot:')))!
+      expect(base).toBeDefined()
+      const ref = base.artifactRefs!.find(ref => ref.id.startsWith('decision-screenshot:'))!
+      projection.members = projection.members.filter(member => member.testIndex === base.testIndex)
+      projection.steps = projection.steps.filter(step => step.testIndex === base.testIndex && step.stepIndex === base.stepIndex)
+      projection.subActions = Array.from({ length: count }, (_, index) => ({
+        ...structuredClone(base), subActionIndex: index, recordingOffsetMs: undefined,
+        grounding: { descriptor: { role: 'button', name: `\uF291 Products ${index + 1}` }, attempts: [] },
+        result: { success: true, annotation: { kind: 'point' as const, viewport: { width: 800, height: 600 },
+          point: { x: (index + 1) * 200, y: 300, boundingBox: { x: (index + 1) * 200 - 60, y: 260, width: 120, height: 80 } } } },
+      }))
+      await page.route(`**/artifacts/${ref.sha}`, route => route.fulfill({ contentType: 'image/svg+xml', body: screenshot }))
+      await page.addInitScript(() => localStorage.setItem('agent-qa.run-detail.player-source', 'frames'))
+      await arrange(page, projection)
+      await page.locator('[data-annotation="point"]').waitFor()
+      await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-player] img')?.naturalWidth === 800)
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      const observation = await page.locator('[data-overview]').evaluate((overview, count) => {
+        const image = overview.querySelector<HTMLImageElement>('img')!
+        const box = image.getBoundingClientRect()
+        const scale = Math.min(box.width / image.naturalWidth, box.height / image.naturalHeight)
+        const dot = overview.querySelector('[data-annotation="point"]')!.getBoundingClientRect()
+        const region = overview.querySelector('[data-annotation="region"]')!.getBoundingClientRect()
+        const timeline = overview.querySelector('[data-timeline]')!
+        return { count, width: innerWidth, image: { width: box.width, height: box.height },
+          expectedX: box.x + (box.width - 800 * scale) / 2 + count * 200 * scale,
+          expectedY: box.y + (box.height - 600 * scale) / 2 + 300 * scale,
+          actualX: dot.x + dot.width / 2, actualY: dot.y + dot.height / 2,
+          regionWidth: region.width, expectedRegionWidth: 120 * scale,
+          title: overview.querySelector('[data-player-caption]')!.textContent,
+          timelineText: timeline.textContent, timelineHeight: timeline.getBoundingClientRect().height,
+          decorations: timeline.querySelectorAll('svg, [data-timeline-marker], [data-step-signal]').length,
+          scopeLines: overview.querySelectorAll('[data-evidence-scope]').length,
+          connectors: [...document.querySelectorAll('[data-step-id]')].map(step => getComputedStyle(step, '::before').content),
+          rows: [...document.querySelectorAll('[data-sub-action]')].map(row => row.textContent),
+        }
+      }, count)
+      measured.push(observation)
+      expect(Math.abs(observation.actualX - observation.expectedX), JSON.stringify(observation)).toBeLessThan(1)
+      expect(Math.abs(observation.actualY - observation.expectedY)).toBeLessThan(1)
+      expect(Math.abs(observation.regionWidth - observation.expectedRegionWidth)).toBeLessThan(1)
+      expect(observation.title).toBe(`Clicked 'Products ${count}'`)
+      expect(observation.timelineText).toBe('')
+      expect(observation.timelineHeight).toBeLessThanOrEqual(36)
+      expect(observation.decorations).toBe(0)
+      expect(observation.scopeLines).toBe(0)
+      expect(observation.rows).toEqual(Array.from({ length: count }, (_, index) => `Clicked 'Products ${index + 1}'`))
+      expect(observation.connectors.every(content => content === 'none' || content === 'normal')).toBe(true)
+      await capture(page, `owner-overview-${count}-actions-${width}`)
+      const slider = page.getByRole('slider')
+      await slider.focus()
+      await slider.press('Home')
+      await expect.poll(() => page.locator('[data-player-caption]').textContent()).toBe("Clicked 'Products 1'")
+      const track = await page.locator('[data-timeline-track]').boundingBox()
+      await page.mouse.click(track!.x + track!.width - 1, track!.y + track!.height / 2)
+      await expect.poll(() => page.locator('[data-player-caption]').textContent()).toBe(`Clicked 'Products ${count}'`)
+      expect(new URL(page.url()).searchParams.get('sub')).toBe(String(count - 1))
+      await page.getByRole('tab', { name: /^Network/ }).click()
+      expect(await page.locator('[data-timeline]').count()).toBe(0)
+      await page.getByRole('tab', { name: 'Overview', exact: true }).click()
+      await page.getByRole('radio', { name: 'Video', exact: true }).click()
+      expect(await page.locator('[data-annotation]').count()).toBe(0)
+      await page.getByRole('radio', { name: 'Frames', exact: true }).click()
+      await page.locator('[data-annotation="point"]').waitFor()
+    } finally { await page.close() }
+  }
+  observations.ownerOverview = measured
+}, 120_000)
+
 async function arrange(page: Page, projection: RunDetailProjection) {
   await page.route('**/api/runs/*/detail', route => route.fulfill({ json: projection }))
   await page.goto(url)
