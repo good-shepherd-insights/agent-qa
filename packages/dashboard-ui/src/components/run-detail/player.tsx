@@ -110,6 +110,8 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
   const latest = useRef({ model, playhead, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded })
   latest.current = { model, playhead, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded }
   const followed = useRef('')
+  const mediaReady = useRef(false)
+  const consumedSeek = useRef<{ fraction: number; revision: number | undefined } | null>(null)
   const [ready, setReady] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
@@ -126,6 +128,9 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
     const facade = media ?? element.current
     if (!facade) return
     active.current = facade
+    mediaReady.current = false
+    consumedSeek.current = null
+    setReady(false)
     const controller = new AbortController()
     let animation: number | undefined
     const stopAnimation = () => {
@@ -133,6 +138,7 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
       animation = undefined
     }
     const loaded = () => {
+      mediaReady.current = true
       setReady(true)
       view.onAvailability?.(true)
       setTime(facade.currentTime)
@@ -182,19 +188,27 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
   }, [media, url, attempt])
 
   useEffect(() => {
-    if (!ready || model.axis !== 'time' || offset === undefined || !active.current) return
+    if (!ready || !mediaReady.current || model.axis !== 'time' || offset === undefined || !active.current) return
     if (followed.current === key) { followed.current = ''; return }
     active.current.currentTime = offset / 1000
     setTime(active.current.currentTime)
   }, [ready, model.axis, key, offset])
 
   useEffect(() => {
-    if (!ready || model.axis !== 'time' || seekFraction === undefined || !Number.isFinite(seekFraction)
+    if (seekFraction === undefined || !Number.isFinite(seekFraction)) {
+      consumedSeek.current = null
+      return
+    }
+    if (!ready || !mediaReady.current || model.axis !== 'time'
       || recording.durationMs === undefined || !active.current) return
+    // Duration publication is an observation, not another command. Keep an
+    // unconsumed command pending until metadata/timing is usable for this media.
+    if (consumedSeek.current?.fraction === seekFraction && consumedSeek.current.revision === seekRevision) return
     followed.current = ''
     active.current.currentTime = Math.max(0, Math.min(1, seekFraction)) * recording.durationMs / 1000
+    consumedSeek.current = { fraction: seekFraction, revision: seekRevision }
     setTime(active.current.currentTime)
-  }, [ready, model.axis, seekFraction, seekRevision, recording.durationMs])
+  }, [ready, model.axis, seekFraction, seekRevision, recording.durationMs, media, url, attempt])
 
   useEffect(() => {
     if (active.current) active.current.playbackRate = speed

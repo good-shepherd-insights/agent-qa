@@ -313,6 +313,64 @@ test('PLAYER-CONTINUOUS-PROGRESS observes real media between markers without see
   expect(media.paused).toBe(true)
 })
 
+test.each([undefined, 1])('PLAYER-CONSUMED-SEEK ignores late duration publication (revision %s)', async seekRevision => {
+  const media = video({ seekFraction: 0.25, seekRevision })
+  metadata(media)
+  expect(media.currentTime).toBe(5)
+  await act(async () => button(PLAYER_COPY.play).click())
+  act(() => media.fire('timeupdate', 8))
+  const seeks = [...media.seeks]
+  const longer = { ...recording(), durationMs: 30000 }
+  render({ source: 'video', recording: longer, media, seekFraction: 0.25, seekRevision })
+  expect(media.currentTime).toBe(8)
+  expect(media.seeks).toEqual(seeks)
+  expect(media.paused).toBe(false)
+  expect(query('[data-player-time]').textContent).toContain('0:30')
+  // A fresh command still uses the newly observed duration, including the same fraction.
+  render({ source: 'video', recording: longer, media, seekFraction: 0.25, seekRevision: 2 })
+  expect(media.currentTime).toBe(7.5)
+  render({ source: 'video', recording: longer, media, seekFraction: 0.5 })
+  expect(media.currentTime).toBe(15)
+})
+
+test('PLAYER-PENDING-SEEK waits for metadata and a timed model without consuming intent', () => {
+  const media = video({ seekFraction: 0.25, seekRevision: 1 })
+  const { durationMs: _duration, ...unknown } = recording()
+  render({ source: 'video', recording: unknown, model: { ...model, axis: 'ordinal' }, media, seekFraction: 0.25, seekRevision: 1 })
+  expect(media.seeks).toEqual([])
+  metadata(media)
+  expect(media.seeks).toEqual([])
+  render({ source: 'video', recording: { ...recording(), durationMs: 30000 }, media, seekFraction: 0.25, seekRevision: 1 })
+  expect(media.currentTime).toBe(7.5)
+  const seeks = [...media.seeks]
+  act(() => media.fire('resize'))
+  expect(media.seeks).toEqual(seeks)
+})
+
+test('PLAYER-SEEK-IDENTITY reapplies on source changes and retry only after metadata', async () => {
+  const media = video({ seekFraction: 0.25, seekRevision: 1 })
+  metadata(media)
+  expect(media.currentTime).toBe(5)
+  const replacement = createFakeMedia(20)
+  render({ source: 'video', recording: recording(), media: replacement, seekFraction: 0.25, seekRevision: 1 })
+  expect(replacement.seeks).toEqual([])
+  metadata(replacement)
+  expect(replacement.currentTime).toBe(5)
+  vi.mocked(fetch).mockResolvedValue({ status: 503 } as Response)
+  await act(async () => replacement.fire('error'))
+  act(() => query('[data-evidence-kind="video"] button').click())
+  const seeks = [...replacement.seeks]
+  expect(button(PLAYER_COPY.play).disabled).toBe(true)
+  metadata(replacement)
+  expect(replacement.seeks).toEqual([...seeks, 0, 5])
+  render({ source: 'frames' })
+  const next = createFakeMedia(20)
+  render({ source: 'video', recording: recording(), media: next, seekFraction: 0.25, seekRevision: 1 })
+  expect(next.seeks).toEqual([])
+  metadata(next)
+  expect(next.currentTime).toBe(5)
+})
+
 test('PLAYER-REPEATED-SEEK and member continuation preserve explicit offsets and speed', async () => {
   const ended = vi.fn()
   const media = video({ onRecordingEnded: ended })
