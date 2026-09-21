@@ -227,6 +227,8 @@ test('PLAYER-VIDEO-UNTIMED-NOTE', async () => {
   const media = video()
   metadata(media)
   expect(query('[data-player]').textContent).toContain(VIDEO_UNTIMED_NOTE)
+  expect(query('[data-player]').textContent).not.toContain('has no per-action timing')
+  expect(query('[data-player-caption]').textContent).toContain('0:00')
   expect(media.paused).toBe(true)
   render({ source: 'video', recording: recording(), media, playhead: model.markers[1]!, seekFraction: 0.8 })
   expect(media.seeks).toEqual([])
@@ -234,6 +236,14 @@ test('PLAYER-VIDEO-UNTIMED-NOTE', async () => {
   act(() => media.fire('timeupdate', 15))
   expect(change).not.toHaveBeenCalled()
   expect(query('[data-player-time]').textContent).toContain('0:15')
+  group.steps[0]!.subActions[1]!.recordingOffsetMs = 10000
+  const { durationMs: _duration, ...withoutDuration } = recording()
+  group.member.recording = withoutDuration
+  model = buildTimelineModel(group)
+  expect(model.axis).toBe('ordinal')
+  render({ model, source: 'video', recording: withoutDuration, media, playhead: model.markers[1]! })
+  expect(query('[data-player-caption]').textContent).toContain('0:10')
+  expect(query('[data-player]').textContent).toContain('cannot be synchronized with the selected action')
 })
 
 function lightbox(onOpenChange = vi.fn(), returnFocus?: HTMLElement) {
