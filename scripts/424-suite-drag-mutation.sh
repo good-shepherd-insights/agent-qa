@@ -24,8 +24,8 @@ runGate({ slug: '424-suite-drag-mutation', envPrefix: 'AGENT_QA_424_SUITE_DRAG_M
     { subject: 'packages/dashboard-ui/src/components/run-detail/tab-overview.tsx', instrument: 'grounding',
       claim: 'grounding cleans captured glyphs at display without losing masking or real text', operation: 'render the raw descriptor name',
       edits: [{ from: 'name === undefined ? undefined : displayTargetName(name)', to: 'name' }],
-      reds: [cell('grounding', grounding, 'TabOverview screenshot states cleans icon glyphs from grounding display without changing Unicode or stored evidence')],
-      greens: [cell('grounding', grounding, 'TabOverview screenshot states refuses without requesting when the ref says the evidence is incomplete')], allowed: [] },
+      reds: [cell('grounding', grounding, 'cleans icon glyphs from grounding display without changing Unicode or stored evidence')],
+      greens: [cell('grounding', grounding, 'refuses without requesting when the ref says the evidence is incomplete')], allowed: [] },
   ],
 })
 NODE
