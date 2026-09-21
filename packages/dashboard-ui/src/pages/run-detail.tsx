@@ -244,7 +244,7 @@ export default function RunDetailPage() {
   const setPlayheadFrom = useCallback((address: Playhead) => {
     const next = selectionFromPlayhead(address)
     if (!hasStepId(next)) return
-    setTreeSelection({ type: 'step', stepId: next.stepId })
+    setTreeSelection(next)
     setPlayheadTarget(address)
     setSeekFraction(undefined)
   }, [])
@@ -638,8 +638,8 @@ export default function RunDetailPage() {
     // member-grouped projection in handle-then-ordinal order, so keyboard navigation walks the
     // tree exactly as drawn without a second grouping pass to keep in step with the first.
     for (const step of displaySteps) {
-      items.push({ type: 'step', stepId: step.id })
-      if (step.id === expandedStepId) {
+      if (!step.subActions?.length) items.push({ type: 'step', stepId: step.id })
+      {
         for (const log of stepExecutionLogs) {
           if (log.stepId === step.id) items.push({ type: 'exec', stepId: step.id, logId: log.id })
         }
@@ -654,10 +654,11 @@ export default function RunDetailPage() {
       items.push({ type: 'hook', logId: hook.id })
     }
     return items
-  }, [displaySteps, expandedStepId, stepExecutionLogs, setupHooks, teardownHooks])
+  }, [displaySteps, stepExecutionLogs, setupHooks, teardownHooks])
 
   const currentNavIdx = useMemo(() => {
-    const cursor = playheadTarget ? selectionFromPlayhead(playheadTarget) : selection
+    const cursor = selection?.type === 'step' && playhead?.subActionIndex !== null
+      ? selectionFromPlayhead(playhead) : selection
     if (!cursor) return -1
     return navItems.findIndex(item => {
       if (cursor.type === 'hook' && item.type === 'hook') return item.logId === cursor.hookId
@@ -668,7 +669,7 @@ export default function RunDetailPage() {
         return item.logId === cursor.logId
       return false
     })
-  }, [navItems, selection, playheadTarget])
+  }, [navItems, selection, playhead])
 
   function navItemToSelection(item: NavItem): Selection {
     if (item.type === 'hook') return { type: 'hook', hookId: item.logId }
@@ -725,17 +726,14 @@ export default function RunDetailPage() {
       j: () => { map.arrowdown({} as KeyboardEvent) },
       k: () => { map.arrowup({} as KeyboardEvent) },
       'shift+arrowdown': () => {
-        if (navItems.length === 0) return
-        const nextStepIdx = navItems.findIndex((item, i) => i > currentNavIdx && item.type === 'step')
-        if (nextStepIdx !== -1) setSelection(navItemToSelection(navItems[nextStepIdx]))
+        const index = displaySteps.findIndex(step => step.id === expandedStepId)
+        const next = displaySteps[index + 1]
+        if (next) setSelection({ type: 'step', stepId: next.id })
       },
       'shift+arrowup': () => {
-        if (navItems.length === 0) return
-        let prevStepIdx = -1
-        for (let i = currentNavIdx - 1; i >= 0; i--) {
-          if (navItems[i].type === 'step') { prevStepIdx = i; break }
-        }
-        if (prevStepIdx !== -1) setSelection(navItemToSelection(navItems[prevStepIdx]))
+        const index = displaySteps.findIndex(step => step.id === expandedStepId)
+        const previous = displaySteps[index - 1]
+        if (previous) setSelection({ type: 'step', stepId: previous.id })
       },
       '1': () => setActiveTab(TAB_NAMES[0]),
       '2': () => setActiveTab(TAB_NAMES[1]),
@@ -774,7 +772,7 @@ export default function RunDetailPage() {
     }
     return map
   }, [navItems, currentNavIdx, selection, run, navigate, artifactDrawerOpen, pipelineRef, openArtifactDrawer,
-    visibleGroups, playhead, playerSource, playerMember, lightboxSha])
+    visibleGroups, playhead, playerSource, playerMember, lightboxSha, displaySteps, expandedStepId])
 
   useKeyboardShortcuts(shortcuts)
 

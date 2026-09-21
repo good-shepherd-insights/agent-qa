@@ -291,10 +291,10 @@ it('KEYS-SPACE-STILL-ACTIVATES-BUTTON leaves native activation uncancelled', asy
 
 it('KEYS-LEGACY-MAP-UNCHANGED keeps tree navigation, tabs, drawers and escape', async () => {
   await render()
-  press('j'); expect(current()).toBe('0:0-0')
+  child(0); expect(current()).toBe('0:0-0')
   press('ArrowDown'); expect(current()).toBe('0:0-1')
   press('k'); expect(current()).toBe('0:0-0')
-  press('ArrowUp'); expect(selected()?.getAttribute('data-step-id')).toBe('0:0')
+  press('ArrowUp'); expect(current()).toBe('0:0-0')
   press('ArrowDown', document.body, true); expect(current()).toBe('0:1-0')
   press('ArrowUp', document.body, true); expect(current()).toBe('0:0-2')
   for (const [index, tab] of ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'].entries()) {
@@ -429,7 +429,7 @@ it('PLAYHEAD-TREE-FOLLOWS', async () => {
   await render()
   expect(current()).toBe('0:0-2')
   expect(host.querySelector('[data-playhead-row]')?.getAttribute('aria-current')).toBe('true')
-  expect(host.querySelector('[data-playhead-row] .bg-primary.w-0\\.5')).not.toBeNull()
+  expect(host.querySelector('[data-playhead-row] > button')?.className).toContain('ring-inset')
 })
 
 it('PLAYHEAD-TREE-MOVES-PLAYHEAD', async () => {
@@ -444,9 +444,8 @@ it('PLAYHEAD-TREE-MOVES-PLAYHEAD', async () => {
 
 it('PLAYHEAD-JK-MOVES-PLAYHEAD', async () => {
   await render()
-  key('j')
-  expect(current()).toBe('0:0-0')
-  expect(selected()?.getAttribute('data-step-id')).toBe('0:0')
+  child(0)
+  expect(selected()?.getAttribute('data-sub-action-id')).toBe('0:0-0')
   key('j')
   expect(current()).toBe('0:0-1')
   key('k')
@@ -557,7 +556,7 @@ it('TIMELINE-MEMBER-SWITCH', async () => {
   expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('3')
   expect(current()).toBe('3:0-0')
   expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
-  expect(selected()?.getAttribute('data-step-id')).toBe('3:0')
+  expect(selected()?.getAttribute('data-sub-action-id')).toBe('3:0-0')
 })
 
 it('PLAYHEAD-SCRUB-FOLLOWS-TREE-TABS-URL', async () => {
@@ -568,7 +567,7 @@ it('PLAYHEAD-SCRUB-FOLLOWS-TREE-TABS-URL', async () => {
   track!.setPointerCapture = vi.fn()
   act(() => track!.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 50, bubbles: true })))
   expect(current()).toBe('0:0-0')
-  expect(selected()?.getAttribute('data-step-id')).toBe('0:0')
+  expect(selected()?.getAttribute('data-sub-action-id')).toBe('0:0-0')
   expect(host.querySelectorAll('[role="treeitem"][aria-selected="true"]')).toHaveLength(1)
   expect(host.querySelectorAll('[data-playhead-row]')).toHaveLength(1)
   key('5')
@@ -585,4 +584,33 @@ it('TIMELINE-FAILED-DETAIL-REPLACES-PANEL', async () => {
   expect(host.querySelector('[data-timeline]')).toBeNull()
   expect(host.querySelector('[role="tablist"]')).toBeNull()
   expect(host.querySelector('[data-run-detail-error]')).not.toBeNull()
+})
+
+it('UP-DOWN-STABLE-ACTION-ORDER crosses steps/members and reverses without parent detours', async () => {
+  const detail = projection()
+  detail.members = [...detail.members, { testIndex: 1, name: 'Second', attempts: 1 }]
+  detail.steps = [...detail.steps, { ...detail.steps[0]!, testIndex: 1 }]
+  detail.subActions = [...detail.subActions, ...detail.subActions.slice(0, 2).map(sub => ({ ...sub, testIndex: 1 }))]
+  detailRead.mockResolvedValue(detail)
+  await render()
+  child(0)
+  const order = ['0:0-0', '0:0-1', '0:0-2', '0:1-0', '1:0-0', '1:0-1']
+  for (const address of order.slice(1)) {
+    press('ArrowDown')
+    expect(current()).toBe(address)
+    expect(selected()?.getAttribute('data-sub-action-id')).toBe(address)
+    expect(selected()?.querySelector('button')?.className).toContain('rounded-md')
+  }
+  press('ArrowDown')
+  expect(current()).toBe(order.at(-1))
+  for (const address of order.slice(0, -1).reverse()) {
+    press('ArrowUp')
+    expect(current()).toBe(address)
+  }
+  press('ArrowUp')
+  expect(current()).toBe(order[0])
+  press('ArrowDown', document.body, true)
+  expect(selected()?.getAttribute('data-step-id')).toBe('0:1')
+  press('ArrowUp', document.body, true)
+  expect(selected()?.getAttribute('data-step-id')).toBe('0:0')
 })

@@ -44,7 +44,7 @@ it('TREE-ROW-FAMILY-ICON keeps the icon, failure words, cache marker and row add
   expect(row.getAttribute('aria-selected')).toBe('true')
   expect(row.querySelector('[data-cache-marker="sub-action-status"]')?.parentElement?.querySelector('svg.lucide-mouse-pointer-2')).not.toBeNull()
   const button = row.querySelector('button')!
-  expect(button.className).toContain('bg-primary/10 ring-1 ring-primary/30')
+  expect(button.className).toContain('rounded-md bg-primary/10 ring-1 ring-inset ring-primary/60')
   act(() => button.click())
   expect(onSelect).toHaveBeenCalledOnce()
 })

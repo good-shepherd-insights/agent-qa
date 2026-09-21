@@ -136,7 +136,8 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
         className={cn(
           "flex w-full items-start gap-2 py-2 px-3 text-left rounded-[2px]",
           "hover:bg-muted/50 transition-colors",
-          isSelected && selection?.type === 'step' && "bg-primary/10 ring-1 ring-primary/30"
+          isSelected && "rounded-md ring-1 ring-inset ring-border",
+          isSelected && selection?.type === 'step' && "bg-muted/30"
         )}
         onClick={() => onSelect({ type: 'step', stepId: step.id })}
       >

@@ -37,11 +37,10 @@ export function SubActionTreeItem({ sub, stepId, cached, isSelected, isPlayheadR
         className={cn(
           "relative flex w-full items-center gap-2 py-1.5 px-3 text-left rounded-[2px] text-sm",
           "hover:bg-muted/50 transition-colors",
-          isSelected && "bg-primary/10 ring-1 ring-primary/30"
+          (isSelected || isPlayheadRow) && "rounded-md bg-primary/10 ring-1 ring-inset ring-primary/60"
         )}
         onClick={onSelect}
       >
-        {isPlayheadRow && <span aria-hidden='true' className='absolute inset-y-1 left-0 w-0.5 bg-primary' />}
         <ActionSentence
           sub={sub}
           wrap='truncate'
