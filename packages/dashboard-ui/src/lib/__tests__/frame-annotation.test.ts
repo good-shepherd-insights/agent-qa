@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { ActionAnnotation, RunDetailSubAction } from '@vostride/agent-qa-schema'
-import { frameAnnotation } from '../frame-annotation'
+import { frameAnnotation, videoAnnotation } from '../frame-annotation'
 
 test('FRAME-ANNOTATION preserves all recorded geometry forms and failure bounds', () => {
   const viewport = { width: 800, height: 600 }
@@ -19,4 +19,15 @@ test('FRAME-ANNOTATION preserves all recorded geometry forms and failure bounds'
       .toMatchObject({ startPoint: point, pinchScale: scale > 1 ? 'out' : 'in' })
   }
   expect(frameAnnotation(undefined)).toBeUndefined()
+})
+
+test('VIDEO-ANNOTATION-BOUNDARIES refuses legacy, invalid, mismatched and outside-interval overlays', () => {
+  const annotation: ActionAnnotation = { kind: 'point', point: { x: 30, y: 40 }, viewport: { width: 800, height: 600 },
+    recording: { startMs: 125.5, endMs: 240.2, width: 800, height: 600, scene: 'recorded-page', transform: 'identity' } }
+  const sub = { plannedAction: { type: 'click' }, result: { success: true, annotation }, recordingOffsetMs: 9999 } as RunDetailSubAction
+  expect(videoAnnotation(sub, 125.5, 800, 600)).toBeDefined()
+  for (const time of [0, 125.4, 240.2, Infinity, NaN, 9999]) expect(videoAnnotation(sub, time, 800, 600)).toBeUndefined()
+  expect(videoAnnotation(sub, 130, 1280, 720)).toBeUndefined()
+  expect(videoAnnotation({ ...sub, result: { success: true, annotation: { ...annotation, recording: undefined } } }, 130, 800, 600)).toBeUndefined()
+  expect(videoAnnotation({ ...sub, result: { success: true, annotation: { ...annotation, point: { x: NaN, y: 10 } } } }, 130, 800, 600)).toBeUndefined()
 })

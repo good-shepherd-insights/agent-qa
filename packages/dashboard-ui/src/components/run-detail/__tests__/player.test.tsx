@@ -23,7 +23,11 @@ const sha = 'a'.repeat(64)
 beforeEach(() => {
   vi.clearAllMocks()
   HTMLElement.prototype.scrollIntoView = vi.fn()
-  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) { this.callback([{ target, contentRect: { width: 800, height: 450 } } as ResizeObserverEntry], this as unknown as ResizeObserver) }
+    unobserve() {} disconnect() {}
+  })
   vi.stubGlobal('fetch', vi.fn(async () => ({ status: 404 })))
   group = {
     member: { testIndex: 0, attempts: 1 },
@@ -55,6 +59,11 @@ function render(extra: Partial<Props> = {}) {
   act(() => root.render(<Player model={model} playhead={model.markers[0]!} source='frames' runId='run' onSourceChange={sourceChange} onPlayheadChange={change} {...extra} />))
 }
 function query(selector: string) { return host.querySelector<HTMLElement>(selector)! }
+function loadImage() {
+  const img = query('img')
+  Object.defineProperties(img, { naturalWidth: { value: 800 }, naturalHeight: { value: 600 } })
+  act(() => img.dispatchEvent(new Event('load')))
+}
 async function errorImage() {
   await act(async () => { query('img').dispatchEvent(new Event('error')); await Promise.resolve() })
 }
@@ -108,16 +117,16 @@ test('PLAYER-FRAME-ANNOTATION follows the shown frame, including parent fallback
   actions[1]!.result.annotation = { kind: 'region', viewport: { width: 800, height: 600 }, region: { boundingBox: { x: 300, y: 400, width: 50, height: 60 } } }
   model = buildTimelineModel(group)
   render({ playhead: model.markers[1]!, frame: latestUsableFrame(actions) })
-  act(() => query('img').dispatchEvent(new Event('load')))
+  loadImage()
   expect(query('[title="Hide annotations"]')).not.toBeNull()
   expect(query('.bg-turquoise-500')).not.toBeNull()
   expect(query('.border-emerald-500\\/70')).toBeNull()
   render({ playhead: model.markers[1]! })
   expect(query('img')).toBeNull()
-  expect(query('[title="Hide annotations"]')).toBeNull()
+  expect(button('Hide annotations').disabled).toBe(true)
   render({ frame: { index: 99, ref: model.markers[0]!.ref! } })
-  act(() => query('img').dispatchEvent(new Event('load')))
-  expect(query('[title="Hide annotations"]')).toBeNull()
+  loadImage()
+  expect(button('Hide annotations').disabled).toBe(true)
 })
 test('PLAYER-FRAME-NOT-CAPTURED-ROWS', () => {
   render({ playhead: model.markers[1]! })
@@ -138,6 +147,81 @@ function video(extra: Partial<Props> = {}) {
 }
 function metadata(media: ReturnType<typeof createFakeMedia>) { act(() => media.fire('loadedmetadata')) }
 function button(name: string) { return query(`button[aria-label="${name}"]`) as HTMLButtonElement }
+
+test('PLAYER-SHARED-FRAME-CONTROLS: visible toolbar retains annotated image through zoom, fullscreen, Escape and toggle', () => {
+  group.steps[0]!.subActions[0]!.result.annotation = { kind: 'point', viewport: { width: 800, height: 600 }, point: { x: 100, y: 200 } }
+  model = buildTimelineModel(group)
+  render()
+  loadImage()
+  const img = query('img')
+  const overlay = query('[data-annotation="point"]')
+  expect(overlay.style.left).toBe('75px') // 800x600 contained in 800x450 => 600x450
+  expect(query('[data-media-transform]').style.left).toBe('100px')
+  expect(query('[data-player-controls]').contains(button('Zoom in'))).toBe(true)
+  expect(host.querySelector('[title="View full size"]')).toBeNull()
+  act(() => button('Zoom in').click())
+  expect(query('[data-media-transform]').style.transform).toBe('scale(1.5)')
+  act(() => button('Enter fullscreen').click())
+  expect(query('[role="dialog"]')).not.toBeNull()
+  expect(query('img')).toBe(img)
+  expect(query('[data-annotation="point"]')).toBe(overlay)
+  expect(button('Zoom in').closest('[role="dialog"]')).not.toBeNull()
+  act(() => button('Hide annotations').click())
+  expect(query('[data-annotation]')).toBeNull()
+  act(() => button('Show annotations').click())
+  expect(query('[data-annotation]')).not.toBeNull()
+  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(query('[role="dialog"]')).toBeNull()
+  expect(document.activeElement).toBe(button('Enter fullscreen'))
+  expect(query('img')).toBe(img)
+  expect(document.body.style.overflow).toBe('')
+})
+
+test('PLAYER-VIDEO-ANNOTATION-INTERVAL: uses execution witness, same geometry and same live element in fullscreen', async () => {
+  group.steps[0]!.subActions[0]!.result.annotation = { kind: 'point', viewport: { width: 800, height: 600 }, point: { x: 100, y: 200 },
+    recording: { startMs: 2000, endMs: 4000, width: 800, height: 600, scene: 'recorded-page', transform: 'identity' } }
+  const media = video()
+  const element = query('video')
+  Object.defineProperties(element, { videoWidth: { value: 800 }, videoHeight: { value: 600 } })
+  metadata(media)
+  expect(query('[data-annotation]')).toBeNull()
+  act(() => media.fire('seeked', 2))
+  expect(query('[data-annotation="point"]').style.left).toBe('75px')
+  expect(query('[data-media-transform]').style.left).toBe('100px')
+  await act(async () => button(PLAYER_COPY.play).click())
+  media.playbackRate = 2
+  const seeks = [...media.seeks]
+  act(() => button('Zoom in').click())
+  act(() => button('Enter fullscreen').click())
+  expect(query('video')).toBe(element)
+  expect(host.querySelectorAll('video')).toHaveLength(1)
+  expect(media.currentTime).toBe(2)
+  expect(media.playbackRate).toBe(2)
+  expect(media.paused).toBe(false)
+  expect(media.seeks).toEqual(seeks)
+  expect(query('[role="dialog"] [data-annotation]')).not.toBeNull()
+  expect(query('[role="dialog"] button[aria-label="Pause recording"]')).not.toBeNull()
+  act(() => media.fire('timeupdate', 4))
+  expect(query('[data-annotation]')).toBeNull()
+  act(() => media.fire('seeked', 3))
+  expect(query('[data-annotation]')).not.toBeNull()
+  act(() => button('Hide annotations').click())
+  expect(query('[data-annotation]')).toBeNull()
+  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(query('video')).toBe(element)
+  render({ source: 'frames' })
+  expect(media.paused).toBe(true)
+  expect(query('video')).toBeNull()
+})
+
+test('PLAYER-MISSING-MEDIA-CONTROLS: same toolbar stays present and disabled with discoverable annotation limits', () => {
+  render({ playhead: model.markers[1]! })
+  for (const name of ['Zoom in', 'Zoom out', 'Hide annotations', 'Enter fullscreen']) expect(button(name).disabled).toBe(true)
+  render({ source: 'video', recording: { state: 'absent', reason: 'not-captured' } })
+  for (const name of ['Zoom in', 'Zoom out', 'Hide annotations', 'Enter fullscreen']) expect(button(name).disabled).toBe(true)
+  expect(query('[aria-label^="Video annotations require"]')).not.toBeNull()
+  expect(query('[aria-label^="Video annotations require"]').tabIndex).toBe(0)
+})
 
 test('PLAYER-OPENS-ON-VIDEO', () => {
   const media = video()

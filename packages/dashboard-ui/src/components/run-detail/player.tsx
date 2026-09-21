@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Pause, Play } from 'lucide-react'
+import { Pause, Play, Crosshair, Maximize2, Minimize2, ZoomIn, ZoomOut } from 'lucide-react'
 import type { RecordingEntry, RunDetailArtifactRef } from '@vostride/agent-qa-schema'
+import { validRecordedAnnotation } from '@vostride/agent-qa-schema'
 import { ScreenshotViewer } from '@/components/screenshot-viewer'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Button } from '@/components/ui/button'
@@ -11,18 +12,20 @@ import { formatOffset, frameUsable, type PlayerSource, type Playhead, type Timel
 import { captionModel, mediaErrorView, PLAYER_COPY, PLAYBACK_SPEEDS, storePlayerSource, VIDEO_UNTIMED_NOTE } from '@/lib/player-view'
 import { routes } from '@/lib/routes'
 import { probeMediaError } from '@/lib/media-error-probe'
-import { frameAnnotation } from '@/lib/frame-annotation'
+import { frameAnnotation, videoAnnotation } from '@/lib/frame-annotation'
+import { MediaViewport } from '@/components/media-viewport'
 import type { StepAnnotation } from '@/lib/api'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import type { MediaFacade } from '@/test/media-facade'
 import { ActionSentence } from './action-sentence'
 import { EvidenceState } from './evidence-state'
 
-export function PlayerFrame({ runId, frame, annotation, wholeStep = false }: {
+export function PlayerFrame({ runId, frame, annotation, wholeStep = false, embedded }: {
   runId: string
   frame?: RunDetailArtifactRef
   annotation?: StepAnnotation
   wholeStep?: boolean
+  embedded?: { zoom: number; annotationsVisible: boolean; fullscreen: boolean; onAvailability?: (available: boolean) => void }
 }) {
   const [error, setError] = useState<ReturnType<typeof mediaErrorView>>()
   const [attempt, setAttempt] = useState(0)
@@ -42,7 +45,7 @@ export function PlayerFrame({ runId, frame, annotation, wholeStep = false }: {
   )
   return (
     <div data-artifact-state='available' className='p-3'>
-      <ScreenshotViewer key={attempt} src={url!} annotation={annotation} onUnavailable={() => {
+      <ScreenshotViewer key={attempt} src={url!} annotation={annotation} embedded={embedded} onUnavailable={() => {
         request.current?.abort()
         const controller = new AbortController()
         request.current = controller
@@ -94,12 +97,13 @@ function addressKey(playhead: Playhead | null | undefined) {
   return playhead ? `${playhead.testIndex}:${playhead.stepIndex}:${playhead.subActionIndex}` : ''
 }
 
-function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, seekRevision, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded, autoPlay, speed, setSpeed, isTimelineKeyIgnored, timeline, caption, header }: PlayerProps & {
+function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, seekRevision, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded, autoPlay, speed, setSpeed, isTimelineKeyIgnored, timeline, caption, header, view }: PlayerProps & {
   recording: Extract<RecordingEntry, { state: 'present' }>
   caption: ReactNode
   header: ReactNode
   speed: number
   setSpeed: (speed: number) => void
+  view: { zoom: number; annotationsVisible: boolean; fullscreen: boolean; onAvailability?: (available: boolean) => void }
 }) {
   const element = useRef<HTMLVideoElement>(null)
   const active = useRef<MediaFacade | null>(null)
@@ -109,6 +113,7 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
   const [ready, setReady] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
   const [error, setError] = useState<ReturnType<typeof mediaErrorView>>()
   const [attempt, setAttempt] = useState(0)
   const url = routes.runArtifact(runId, recording.ref.sha)
@@ -128,7 +133,9 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
     }
     const loaded = () => {
       setReady(true)
+      view.onAvailability?.(true)
       setTime(facade.currentTime)
+      setDimensions({ width: element.current?.videoWidth ?? 0, height: element.current?.videoHeight ?? 0 })
     }
     const update = () => {
       setTime(facade.currentTime)
@@ -153,13 +160,14 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
     }
     const failed = () => {
       facade.pause()
+      view.onAvailability?.(false)
       void probeMediaError(url, controller.signal).then(result => {
         if (!controller.signal.aborted) { setError(mediaErrorView('video', result)); setReady(false) }
       })
     }
     const onPlay = () => { setPlaying(true); stopAnimation(); animation = requestAnimationFrame(tick) }
     const onPause = () => { setPlaying(false); stopAnimation() }
-    const events: Record<string, EventListener> = { loadedmetadata: loaded, timeupdate: update, seeked: update, ended, error: failed, play: onPlay, pause: onPause }
+    const events: Record<string, EventListener> = { loadedmetadata: loaded, resize: loaded, timeupdate: update, seeked: update, ended, error: failed, play: onPlay, pause: onPause }
     for (const [name, listener] of Object.entries(events)) facade.addEventListener(name, listener)
     if (!facade.paused) facade.pause()
     if (!media && element.current && element.current.readyState >= 1) loaded()
@@ -193,14 +201,14 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
 
   useEffect(() => {
     if (ready && autoPlay) void active.current?.play().catch(() => {
-      setError(mediaErrorView('video', {})); setReady(false)
+      setError(mediaErrorView('video', {})); setReady(false); view.onAvailability?.(false)
     })
   }, [ready, autoPlay])
 
   function togglePlayback() {
     const facade = active.current
     if (!ready || !facade) return false
-    if (facade.paused) void facade.play().catch(() => { setError(mediaErrorView('video', {})); setReady(false) })
+    if (facade.paused) void facade.play().catch(() => { setError(mediaErrorView('video', {})); setReady(false); view.onAvailability?.(false) })
     else facade.pause()
   }
 
@@ -215,7 +223,10 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
     <div data-player-preview className='px-3 pt-3' data-artifact-state={error ? 'unavailable' : 'available'}>
       {error ? <EvidenceState {...error} kind='video' onAction={() => {
         setError(undefined); setReady(false); setPlaying(false); followed.current = ''; setAttempt(value => value + 1)
-      }} /> : <video key={attempt} ref={element} src={url} preload='metadata' muted playsInline className='max-h-[50vh] w-full rounded-lg border' />}
+      }} /> : <MediaViewport {...dimensions} zoom={view.zoom} fullscreen={view.fullscreen}
+        annotation={view.annotationsVisible ? model.markers.map(candidate => videoAnnotation(candidate.subAction, time * 1000, dimensions.width, dimensions.height)).find(Boolean) : undefined}>
+        <video key={attempt} ref={element} src={url} preload='metadata' muted playsInline className='h-full w-full object-contain' />
+      </MediaViewport>}
     </div>
     <PlayerFooter timeline={timeline} caption={caption} note={model.axis === 'ordinal' ? VIDEO_UNTIMED_NOTE : undefined} controls={<>
       {header}
@@ -239,10 +250,38 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
 
 export function Player(props: PlayerProps) {
   const [speed, setSpeed] = useState(1)
+  const [zoom, setZoom] = useState(1)
+  const [annotationsVisible, setAnnotationsVisible] = useState(true)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [mediaAvailable, setMediaAvailable] = useState(false)
+  const section = useRef<HTMLElement>(null)
+  const fullscreenButton = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!fullscreen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    fullscreenButton.current?.focus()
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setFullscreen(false) }
+      if (event.key === 'Tab') {
+        const controls = [...section.current!.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]')]
+        const first = controls[0], last = controls.at(-1)
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+      }
+    }
+    window.addEventListener('keydown', keydown, true)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', keydown, true)
+      fullscreenButton.current?.focus()
+    }
+  }, [fullscreen])
   const { model, playhead, source, recording, frame, runId, onSourceChange } = props
   const marker = model.markers.find(candidate => candidate.testIndex === playhead?.testIndex
     && candidate.stepIndex === playhead.stepIndex && candidate.subActionIndex === playhead.subActionIndex)
   const selectedFrame = frame?.ref ?? marker?.ref
+  useEffect(() => { setMediaAvailable(false) }, [runId, model.testIndex, source, source === 'frames' ? selectedFrame?.sha : undefined, recording?.state === 'present' ? recording.ref.sha : undefined])
   // A parent-step fallback can show an earlier action. Its geometry must follow its bytes.
   const frameOwner = frame ? model.markers.find(candidate => candidate.testIndex === playhead?.testIndex
     && candidate.stepIndex === playhead.stepIndex && candidate.subActionIndex === frame.index
@@ -251,30 +290,50 @@ export function Player(props: PlayerProps) {
   const videoView = resolveEvidenceView({ kind: 'video', selection: 'sub-action', entry: recording, read: 'idle' })
   const absent = videoView.kind === 'state'
   const videoName = absent ? copyTextOf(`${PLAYER_COPY.video} — ${videoView.title}`) : PLAYER_COPY.video
+  const available = mediaAvailable && (source === 'frames' ? frameUsable(selectedFrame) : !absent)
+  const hasAnnotations = source === 'frames' ? !!frameAnnotation(frameOwner?.subAction)
+    : model.markers.some(candidate => candidate.subAction.result.annotation && validRecordedAnnotation(candidate.subAction.result.annotation))
+  const annotationTitle = source === 'video' && !hasAnnotations
+    ? 'Video annotations require captured execution timing and matching recorded-page geometry. Older or unsupported recordings have none.'
+    : annotationsVisible ? 'Hide annotations' : 'Show annotations'
   const toggle = <ToggleGroup type='single' value={source} aria-label={PLAYER_COPY.source} onValueChange={value => {
           if (value === 'frames' || value === 'video') { storePlayerSource(value); onSourceChange(value) }
         }}>
           <ToggleGroupItem value='frames' title={PLAYER_COPY.framesTooltip} className='text-xs'>{PLAYER_COPY.frames}</ToggleGroupItem>
           <ToggleGroupItem value='video' aria-label={videoName} title={videoName} className={`text-xs${absent ? ' opacity-60' : ''}`}>{PLAYER_COPY.video}</ToggleGroupItem>
         </ToggleGroup>
+  const controls = <>{toggle}
+    <Button size='icon-sm' variant='ghost' aria-label='Zoom out' disabled={!available || zoom <= 1} onClick={() => setZoom(value => Math.max(1, value - 0.5))}><ZoomOut className='h-4 w-4' /></Button>
+    <span className='text-xs tabular-nums' aria-label='Media zoom'>{Math.round(zoom * 100)}%</span>
+    <Button size='icon-sm' variant='ghost' aria-label='Zoom in' disabled={!available || zoom >= 3} onClick={() => setZoom(value => Math.min(3, value + 0.5))}><ZoomIn className='h-4 w-4' /></Button>
+    <span title={annotationTitle} tabIndex={!hasAnnotations ? 0 : undefined} aria-label={!hasAnnotations ? annotationTitle : undefined}>
+      <Button size='icon-sm' variant='ghost' aria-label={annotationsVisible ? 'Hide annotations' : 'Show annotations'} aria-pressed={annotationsVisible}
+        disabled={!available || !hasAnnotations} onClick={() => setAnnotationsVisible(value => !value)}><Crosshair className='h-4 w-4' /></Button>
+    </span>
+    <Button ref={fullscreenButton} size='icon-sm' variant='ghost' aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} disabled={!available && !fullscreen}
+      onClick={() => setFullscreen(value => !value)}>{fullscreen ? <Minimize2 className='h-4 w-4' /> : <Maximize2 className='h-4 w-4' />}</Button>
+  </>
+  const view = { zoom, annotationsVisible, fullscreen, onAvailability: setMediaAvailable }
   const title = marker && caption && <div data-player-caption data-frame-source-sub-action={caption.frameSourceSubAction}
         className='min-w-0 flex-1 basis-40 text-sm font-medium [overflow-wrap:anywhere] [&_[data-action-family]]:text-sm [&_[data-action-family]]:font-medium'>
         <ActionSentence sub={marker.subAction} wrap='free' />
         {caption.substitution && <p className='text-xs text-muted-foreground'>{caption.substitution}</p>}
       </div>
   return (
-    <section data-player data-player-source={source}>
+    <section ref={section} data-player data-player-source={source} role={fullscreen ? 'dialog' : undefined}
+      aria-modal={fullscreen ? true : undefined} aria-label={fullscreen ? 'Evidence media fullscreen' : undefined}
+      className={fullscreen ? 'fixed inset-0 z-50 overflow-auto bg-background p-4' : undefined}>
       {source === 'video' && recording?.state === 'present' && !absent
-        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} speed={speed} setSpeed={setSpeed} recording={recording} caption={title} header={toggle} />
+        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} speed={speed} setSpeed={setSpeed} recording={recording} caption={title} header={controls} view={view} />
         : <>
       <div data-player-preview className='[&>[data-artifact-state]]:pb-0'>
       {source === 'frames' && <PlayerFrame key={`${runId}:${selectedFrame?.sha ?? 'none'}:${playhead?.stepIndex}:${playhead?.subActionIndex}`}
-        runId={runId} frame={selectedFrame} annotation={frameAnnotation(frameOwner?.subAction)} wholeStep={!marker} />}
+        runId={runId} frame={selectedFrame} annotation={frameAnnotation(frameOwner?.subAction)} wholeStep={!marker} embedded={view} />}
       {source === 'video' && videoView.kind === 'state' && <div className='p-3' data-artifact-state='unavailable'>
         <EvidenceState {...videoView} kind='video' />
       </div>}
       </div>
-      <PlayerFooter timeline={props.timeline} caption={title} controls={toggle} />
+      <PlayerFooter timeline={props.timeline} caption={title} controls={controls} />
       </>}
     </section>
   )

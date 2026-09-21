@@ -26,7 +26,7 @@ export function createFakeMedia(duration = 60) {
     pause() { paused = true; events.dispatchEvent(new Event('pause')) },
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
-    fire(type: 'loadedmetadata' | 'timeupdate' | 'ended' | 'error', at?: number) {
+    fire(type: 'loadedmetadata' | 'timeupdate' | 'seeked' | 'resize' | 'ended' | 'error', at?: number) {
       if (at !== undefined) time = at
       if (type === 'ended') paused = true
       events.dispatchEvent(new Event(type))

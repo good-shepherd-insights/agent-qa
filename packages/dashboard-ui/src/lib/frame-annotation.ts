@@ -1,4 +1,5 @@
 import type { RunDetailSubAction } from '@vostride/agent-qa-schema'
+import { validRecordedAnnotation } from '@vostride/agent-qa-schema'
 import type { StepAnnotation } from './api'
 
 /** Adapt recorded geometry without inferring coordinates from the planned target. */
@@ -17,4 +18,14 @@ export function frameAnnotation(sub: RunDetailSubAction | undefined): StepAnnota
     case 'path': return { ...base, startPoint: annotation.path.start, endPoint: annotation.path.end }
     case 'pinch': return { ...base, startPoint: annotation.pinch.center, pinchScale: annotation.pinch.scale > 1 ? 'out' : 'in' }
   }
+}
+
+/** Completion offsets are deliberately irrelevant to video overlay visibility. */
+export function videoAnnotation(sub: RunDetailSubAction, timeMs: number, width: number, height: number): StepAnnotation | undefined {
+  const annotation = sub.result.annotation
+  const witness = annotation?.recording
+  if (!annotation || !witness || !validRecordedAnnotation(annotation) || !Number.isFinite(timeMs)
+    || width !== witness.width || height !== witness.height
+    || timeMs < witness.startMs || timeMs >= witness.endMs) return undefined
+  return frameAnnotation(sub)
 }
