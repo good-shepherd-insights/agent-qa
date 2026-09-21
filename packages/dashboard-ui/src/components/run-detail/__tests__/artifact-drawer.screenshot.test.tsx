@@ -136,7 +136,7 @@ describe('the lightbox opens what the verdict cited (D-02)', () => {
     const lightbox = mountLightbox()
     expect(lightbox.querySelector('[data-evidence-incomplete]')).toBeNull()
     await act(async () => { lightbox.querySelector('img')!.dispatchEvent(new Event('error')) })
-    expect(fetch).toHaveBeenCalledWith(routes.runArtifact(RUN_ID, SHA), expect.objectContaining({ method: 'HEAD' }))
+    expect(fetch).toHaveBeenCalledWith(routes.runArtifact(RUN_ID, SHA), expect.objectContaining({ method: 'GET', headers: { Range: 'bytes=0-0' } }))
     expect(lightbox.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
     expect(lightbox.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
     expect(lightbox.querySelector('img')).toBeNull()
