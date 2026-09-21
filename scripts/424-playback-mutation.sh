@@ -62,7 +62,10 @@ const legs = [
     allowed: ['PLAYHEAD-PARENT-SUBSTITUTED', 'PLAYHEAD-TREE-FOLLOWS', 'PLAYHEAD-TREE-MOVES-PLAYHEAD',
       'PLAYHEAD-ONE-SELECTION-ONE-BOX', 'KEYS-IGNORED-IN-TABLIST', 'KEYS-LEGACY-MAP-UNCHANGED',
       'OVERVIEW-PREVIEW-THEN-FOOTER', 'OVERVIEW-SEEK-REACHES-PLAYER', 'PLAYHEAD-DRIVES-TABS',
-      'PLAYHEAD-URL-REPLACE', 'EVIDENCE-TAB-COUNTS remain available without timeline signals', 'TIMELINE-MEMBER-SWITCH'].map(page),
+      'PLAYHEAD-URL-REPLACE', 'EVIDENCE-TAB-COUNTS remain available without timeline signals', 'TIMELINE-MEMBER-SWITCH',
+      // This navigation cell starts from an explicitly selected parent before ArrowDown;
+      // without the parking fold it cannot reach the following empty step (line685).
+      'UP-DOWN-EMPTY-HOOK-LOG preserves reachable non-action rows and modal/input guards'].map(page),
     greens: ['CITED-JUMPS-PLAYHEAD', 'CITED-UNMATCHED-OPENS-LIGHTBOX', 'PLAYHEAD-URL-RESTORE'].map(page),
   },
   {
