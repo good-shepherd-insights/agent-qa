@@ -23,7 +23,7 @@ import { FailureBanner } from "@/components/run-detail/failure-banner"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import { initialPlayerSource, storePlayerSource } from "@/lib/player-view"
 import { PlayerLightbox } from '@/components/run-detail/player-lightbox'
-import { buildSuiteTimeline, suiteSeek, suiteProgress } from '@/lib/suite-timeline'
+import { buildSuiteTimeline, suiteSeek, suiteProgress, suiteClock } from '@/lib/suite-timeline'
 import { Timeline } from '@/components/run-detail/timeline'
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { fetchRun, fetchRunAnalysis, fetchRunDetail, fetchRunKnowledge, triggerRun, fetchExecutionLogs, fetchRunArtifact, watchPostProcessing, markRun, MarkDeniedError } from "@/lib/api"
@@ -537,7 +537,7 @@ export default function RunDetailPage() {
     () => (detail ? groupRunDetail(detail) : []),
     [detail],
   )
-  const { groups, ready: mediaDurationsReady } = useRecordingDurations(recordedGroups, id ?? '')
+  const { groups, ready: mediaDurationsReady, decodedDurations } = useRecordingDurations(recordedGroups, id ?? '')
   const visibleGroups = useMemo(() => filterGroups(groups, memberFilter), [groups, memberFilter])
   // The op's bytes and the chip word, joined to member handles. The page composes no sentence.
   const analysisView = useMemo(
@@ -1135,6 +1135,7 @@ export default function RunDetailPage() {
                   step={selectedStep}
                   subAction={playheadSubAction}
                   model={timelineModel} playhead={playhead} recording={recording} frame={foldedFrame}
+                  clock={suiteClock(suiteModel, decodedDurations, timelineGroup?.member.testIndex ?? -1)}
                   playerSource={playerSource} onPlayerSourceChange={setPlayerSource}
                   onPlayheadChange={setPlayheadFrom} seekFraction={seekFraction} seekRevision={seekRevision}
                   onPlayheadObserved={observePlayhead}

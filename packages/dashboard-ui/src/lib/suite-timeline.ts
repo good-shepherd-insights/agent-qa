@@ -13,6 +13,24 @@ export interface SuiteTimelineModel extends TimelineModel {
   members: readonly SuiteTimelineMember[]
 }
 
+export interface SuiteClock {
+  offsetMs?: number
+  totalMs?: number
+}
+
+/** Clock scope follows visible members, using decoded media facts only. */
+export function suiteClock(model: SuiteTimelineModel, durations: ReadonlyMap<number, number>, testIndex: number): SuiteClock {
+  let elapsed: number | undefined = 0
+  let offsetMs: number | undefined
+  for (const member of model.members) {
+    if (member.model.testIndex === testIndex) offsetMs = elapsed
+    const duration = durations.get(member.model.testIndex)
+    elapsed = elapsed !== undefined && duration !== undefined && Number.isFinite(duration) && duration > 0
+      ? elapsed + duration : undefined
+  }
+  return { offsetMs, totalMs: elapsed }
+}
+
 /** Global positions are presentation coordinates. Recorded offsets always stay member-local. */
 export function buildSuiteTimeline(groups: readonly RunDetailGroup[]): SuiteTimelineModel {
   const models = groups.map(buildTimelineModel)

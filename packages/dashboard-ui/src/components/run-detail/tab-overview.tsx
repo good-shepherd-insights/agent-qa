@@ -14,6 +14,7 @@ export interface OverviewPlayerProps {
   model?: PlayerProps["model"] | null
   playhead?: PlayerProps["playhead"]
   recording?: PlayerProps["recording"]
+  clock?: PlayerProps["clock"]
   frame?: PlayerProps["frame"]
   playerSource?: PlayerProps["source"]
   onPlayerSourceChange?: PlayerProps["onSourceChange"]
@@ -123,14 +124,14 @@ export function TabOverview({
   runId,
   model, playhead = null, recording, frame, playerSource = "frames",
   onPlayerSourceChange = () => {}, onPlayheadChange = () => {}, seekFraction, isTimelineKeyIgnored,
-  pipelineRef, timeline, seekRevision, onProgress, onPlayheadObserved, onRecordingEnded, autoPlay,
+  pipelineRef, timeline, clock, seekRevision, onProgress, onPlayheadObserved, onRecordingEnded, autoPlay,
 }: TabOverviewProps) {
   return (
     <div data-overview>
       {model && runId && <Player timeline={timeline} model={model} playhead={playhead} recording={recording} frame={frame}
         source={playerSource} runId={runId} onSourceChange={onPlayerSourceChange}
         onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} seekRevision={seekRevision}
-        onProgress={onProgress} onPlayheadObserved={onPlayheadObserved} onRecordingEnded={onRecordingEnded} autoPlay={autoPlay} isTimelineKeyIgnored={isTimelineKeyIgnored} />}
+        clock={clock} onProgress={onProgress} onPlayheadObserved={onPlayheadObserved} onRecordingEnded={onRecordingEnded} autoPlay={autoPlay} isTimelineKeyIgnored={isTimelineKeyIgnored} />}
       <div className="border-t">
         <div className="p-3 space-y-3 min-w-0">
           {subAction === null ? null : (

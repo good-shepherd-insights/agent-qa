@@ -56,8 +56,10 @@ test('DECODED-SUITE batches bounded reads, caches by recording and refuses stale
     await act(async () => { for (const video of videos.slice(0, 3)) finish(video, 2) })
     expect(videos).toHaveLength(5)
     expect(observed!.ready).toBe(false)
+    expect(observed!.decodedDurations.size).toBe(0)
     await act(async () => { for (const video of videos.slice(3)) finish(video, 3) })
     expect(observed!.ready).toBe(true)
+    expect([...observed!.decodedDurations.values()]).toEqual([2000, 2000, 2000, 3000, 3000])
     expect(observed!.groups.map(group => group.member.recording?.state === 'present' && group.member.recording.durationMs)).toEqual([2000, 2000, 2000, 3000, 3000])
     expect(groups[0]!.member.recording).toMatchObject({ durationMs: 100 })
     await act(async () => root.render(<Probe runId='first' />))
@@ -68,6 +70,7 @@ test('DECODED-SUITE batches bounded reads, caches by recording and refuses stale
     expect(stale.every(video => !video.hasAttribute('src'))).toBe(true)
     await act(async () => { for (const video of stale) finish(video, 99) })
     expect(observed!.ready).toBe(false)
+    expect(observed!.decodedDurations.size).toBe(0)
     expect(observed!.groups[0]!.member.recording).toMatchObject({ durationMs: 100 })
   } finally { await act(async () => root.unmount()) }
   expect(videos.every(video => !video.hasAttribute('src'))).toBe(true)

@@ -70,5 +70,11 @@ export function useRecordingDurations(recordedGroups: readonly RunDetailGroup[],
     return duration === undefined || recording?.state !== 'present' ? group
       : { ...group, member: { ...group.member, recording: { ...recording, durationMs: duration } } }
   }), [recordedGroups, batch, ready, runId])
-  return { groups, ready }
+  const decodedDurations = useMemo(() => new Map(recordedGroups.flatMap(group => {
+    const recording = group.member.recording
+    const duration = ready && recording?.state === 'present'
+      ? batch.values.get(`${runId}:${group.member.testIndex}:${recording.ref.sha}`) : undefined
+    return duration === undefined ? [] : [[group.member.testIndex, duration] as const]
+  })), [recordedGroups, batch, ready, runId])
+  return { groups, ready, decodedDurations }
 }

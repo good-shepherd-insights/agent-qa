@@ -220,8 +220,8 @@ test('PLAYER-MISSING-MEDIA-CONTROLS: same toolbar stays present and disabled wit
   for (const name of ['Enable magnifier', 'Hide annotations', 'Enter fullscreen']) expect(button(name).disabled).toBe(true)
   render({ source: 'video', recording: { state: 'absent', reason: 'not-captured' } })
   for (const name of ['Enable magnifier', 'Hide annotations', 'Enter fullscreen']) expect(button(name).disabled).toBe(true)
-  expect(query('[aria-label^="Video annotations require"]')).not.toBeNull()
-  expect(query('[aria-label^="Video annotations require"]').tabIndex).toBe(0)
+  expect(query('[aria-label^="This recording has no saved timing"]')).not.toBeNull()
+  expect(query('[aria-label^="This recording has no saved timing"]').tabIndex).toBe(0)
 })
 
 test('PLAYER-OPENS-ON-VIDEO', () => {
@@ -254,6 +254,14 @@ test('PLAYER-PARKED-AT-MARKER', () => {
   expect(media.currentTime).toBe(15)
   expect(query('[data-player-time]').textContent).toContain('0:20')
   expect(query('[data-player-time]').textContent).not.toContain('Infinity')
+  render({ source: 'video', recording: recording(), media, playhead: model.markers[1]!, clock: { offsetMs: 30580.25, totalMs: 61369.5 } })
+  act(() => media.fire('timeupdate', 12))
+  expect(query('[data-player-time]').textContent).toBe('0:42 / 1:01')
+  expect(Number(query('[data-player-time]').dataset.playerElapsedMs)).toBe(42580.25)
+  expect(media.currentTime).toBe(12)
+  render({ source: 'video', recording: recording(), media, clock: { totalMs: undefined, offsetMs: undefined } })
+  expect(query('[data-player-time]').textContent).toBe('— / —')
+  expect(query('[data-player-time]').title).toContain('duration is missing or still loading')
 })
 test('PLAYER-PLAY-ADVANCES-PLAYHEAD', async () => {
   const media = video()

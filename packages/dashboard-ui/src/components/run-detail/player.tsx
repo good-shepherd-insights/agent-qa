@@ -18,6 +18,7 @@ import { MediaViewport } from '@/components/media-viewport'
 import type { StepAnnotation } from '@/lib/api'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import type { MediaFacade } from '@/test/media-facade'
+import type { SuiteClock } from '@/lib/suite-timeline'
 import { ActionSentence } from './action-sentence'
 import { EvidenceState } from './evidence-state'
 
@@ -75,6 +76,7 @@ export interface PlayerProps {
   autoPlay?: boolean
   media?: MediaFacade
   timeline?: ReactNode
+  clock?: SuiteClock
   isTimelineKeyIgnored?: (event: KeyboardEvent) => boolean
 }
 
@@ -99,7 +101,7 @@ function addressKey(playhead: Playhead | null | undefined) {
   return playhead ? `${playhead.testIndex}:${playhead.stepIndex}:${playhead.subActionIndex}` : ''
 }
 
-function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, seekRevision, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded, autoPlay, speed, setSpeed, isTimelineKeyIgnored, readoutHost, transportHost, toolbar, view }: PlayerProps & {
+function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, seekRevision, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded, autoPlay, speed, setSpeed, isTimelineKeyIgnored, readoutHost, transportHost, toolbar, view, clock }: PlayerProps & {
   recording: Extract<RecordingEntry, { state: 'present' }>
   readoutHost: HTMLElement | null
   transportHost: HTMLElement | null
@@ -247,10 +249,8 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
       </MediaViewport>}
       {toolbar}
     </div>
-    {readoutHost && createPortal(<span data-player-time className='mt-2.5 min-w-0 font-mono text-xs leading-4 tabular-nums'>
-      <span data-player-timestamp className='inline-block max-w-full [overflow-wrap:anywhere]'>{formatOffset(time * 1000) ?? '0:00'}</span>
-      {recording.durationMs !== undefined && <> / <span data-player-timestamp className='inline-block max-w-full [overflow-wrap:anywhere]'>{formatOffset(recording.durationMs)}</span></>}
-    </span>, readoutHost)}
+    {readoutHost && createPortal(<PlayerTime elapsedMs={clock ? clock.offsetMs === undefined ? undefined : clock.offsetMs + time * 1000 : time * 1000}
+      totalMs={clock ? clock.totalMs : recording.durationMs} />, readoutHost)}
     {transportHost && createPortal(<>
       <Button size='icon-sm' variant='ghost' aria-label={playing ? PLAYER_COPY.pause : PLAYER_COPY.play} disabled={!ready}
         onClick={togglePlayback}>
@@ -262,11 +262,20 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
         setSpeed(next)
         if (active.current) active.current.playbackRate = next
       }}>
-        <SelectTrigger aria-label={PLAYER_COPY.speed} size='sm' className='w-20 shrink-0'><SelectValue /></SelectTrigger>
+        <SelectTrigger aria-label={PLAYER_COPY.speed} size='sm' className='w-[60px] shrink-0 gap-0.5 px-1.5 [&>svg]:size-3'><SelectValue /></SelectTrigger>
         <SelectContent>{PLAYBACK_SPEEDS.map(value => <SelectItem key={value} value={String(value)}>{value}×</SelectItem>)}</SelectContent>
       </Select>
     </>, transportHost)}
   </>
+}
+
+function PlayerTime({ elapsedMs, totalMs }: { elapsedMs?: number; totalMs?: number }) {
+  return <span data-player-time data-player-elapsed-ms={elapsedMs} data-player-total-ms={totalMs}
+    title={totalMs === undefined ? 'Full playback time is unavailable because a recording duration is missing or still loading.' : undefined}
+    className='mt-2.5 min-w-0 font-mono text-xs leading-4 tabular-nums'>
+    <span data-player-timestamp className='inline-block max-w-full [overflow-wrap:anywhere]'>{formatOffset(elapsedMs) ?? '—'}</span>
+    {' / '}<span data-player-timestamp className='inline-block max-w-full [overflow-wrap:anywhere]'>{formatOffset(totalMs) ?? '—'}</span>
+  </span>
 }
 
 export function Player(props: PlayerProps) {
@@ -317,7 +326,7 @@ export function Player(props: PlayerProps) {
   const hasAnnotations = source === 'frames' ? !!frameAnnotation(frameOwner?.subAction)
     : model.markers.some(candidate => candidate.subAction.result.annotation && validRecordedAnnotation(candidate.subAction.result.annotation))
   const annotationTitle = source === 'video' && !hasAnnotations
-    ? 'Video annotations require captured execution timing and matching recorded-page geometry. Older or unsupported recordings have none.'
+    ? 'This recording has no saved timing to place action highlights on the video. Open Frames to see any saved action highlights.'
     : annotationsVisible ? 'Hide annotations' : 'Show annotations'
   const toggle = <ToggleGroup type='single' value={source} aria-label={PLAYER_COPY.source} onValueChange={value => {
           if (value === 'frames' || value === 'video') { storePlayerSource(value); onSourceChange(value) }
@@ -358,7 +367,9 @@ export function Player(props: PlayerProps) {
       {/* The gesture owner stays outside member-keyed media, including absent/source transitions. */}
       <PlayerFooter timeline={props.timeline} caption={title}
         note={source === 'video' && recording?.state === 'present' && !absent && model.axis === 'ordinal' ? VIDEO_UNTIMED_NOTE : undefined}
-        readout={<span ref={setReadoutHost} className={source === 'video' ? 'flex w-[13ch] shrink-0 font-mono text-xs' : 'contents'} />}
+        readout={<span ref={setReadoutHost} className={source === 'video' ? 'flex w-[13ch] shrink-0 font-mono text-xs' : 'contents'}>
+          {source === 'video' && (recording?.state !== 'present' || absent) && <PlayerTime totalMs={props.clock?.totalMs} />}
+        </span>}
         controls={<><span ref={setTransportHost} className='contents' />{toggle}</>} />
     </section>
   )

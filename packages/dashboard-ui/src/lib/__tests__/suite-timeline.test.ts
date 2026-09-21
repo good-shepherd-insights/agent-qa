@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { buildSuiteTimeline, suiteProgress, suiteSeek } from '../suite-timeline'
+import { buildSuiteTimeline, suiteProgress, suiteSeek, suiteClock } from '../suite-timeline'
 import type { RunDetailGroup } from '../run-detail-view'
 
 function member(testIndex: number, durationMs = 10000): RunDetailGroup {
@@ -63,4 +63,18 @@ test('SUITE-GAPS remain explicit and untimed members never gain action offsets',
   expect(gap.localFraction).toBeUndefined()
   expect(suiteProgress(model, 3, 5)).toBeUndefined()
   expect(suiteProgress(model, 0, 5)).toBeCloseTo(1 / 7)
+})
+
+
+test('SUITE-CLOCK accumulates decoded visible durations without rounding or guessing gaps', () => {
+  const model = buildSuiteTimeline([member(2), member(7), member(9)])
+  const durations = new Map([[2, 10234.5], [7, 20345.75], [9, 30789.25]])
+  expect(suiteClock(model, durations, 2)).toEqual({ offsetMs: 0, totalMs: 61369.5 })
+  expect(suiteClock(model, durations, 7)).toEqual({ offsetMs: 10234.5, totalMs: 61369.5 })
+  expect(suiteClock(model, durations, 9)).toEqual({ offsetMs: 30580.25, totalMs: 61369.5 })
+  expect(suiteClock(buildSuiteTimeline([member(7)]), durations, 7)).toEqual({ offsetMs: 0, totalMs: 20345.75 })
+  durations.delete(7)
+  expect(suiteClock(model, durations, 2)).toEqual({ offsetMs: 0, totalMs: undefined })
+  expect(suiteClock(model, durations, 9)).toEqual({ offsetMs: undefined, totalMs: undefined })
+  expect(suiteClock(model, new Map(), 7)).toEqual({ offsetMs: undefined, totalMs: undefined })
 })

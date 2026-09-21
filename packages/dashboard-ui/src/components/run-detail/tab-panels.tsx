@@ -50,7 +50,7 @@ export function TabPanels({
   executionLogs = [],
   platform,
   model, playhead, recording, frame, playerSource, onPlayerSourceChange, onPlayheadChange, seekFraction, isTimelineKeyIgnored,
-  pipelineRef, timeline, seekRevision, onProgress, onPlayheadObserved, onRecordingEnded, autoPlay,
+  pipelineRef, timeline, clock, seekRevision, onProgress, onPlayheadObserved, onRecordingEnded, autoPlay,
   knowledge,
   onSelectStep,
 }: TabPanelsProps) {
@@ -152,7 +152,7 @@ export function TabPanels({
             model={model} playhead={playhead} recording={recording} frame={frame}
             playerSource={playerSource} onPlayerSourceChange={onPlayerSourceChange}
             onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} seekRevision={seekRevision}
-            onProgress={onProgress} onPlayheadObserved={onPlayheadObserved} onRecordingEnded={onRecordingEnded} autoPlay={autoPlay}
+            clock={clock} onProgress={onProgress} onPlayheadObserved={onPlayheadObserved} onRecordingEnded={onRecordingEnded} autoPlay={autoPlay}
             isTimelineKeyIgnored={isTimelineKeyIgnored}
             pipelineRef={pipelineRef}
           />}
