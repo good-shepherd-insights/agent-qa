@@ -154,7 +154,7 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
           const style = { left: `${marker.position * 100}%` }
           const active = cluster === alignedCluster || (!alignedCluster && cluster.some(entry => entry === current))
           const classes = 'absolute top-0 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-ring'
-          const circle = `flex h-5 w-5 items-center justify-center rounded-full border ${active ? 'border-primary/60 bg-primary/15 text-primary' : 'border-muted-foreground/30 bg-background text-muted-foreground hover:bg-muted'}`
+          const circle = `flex h-5 w-5 items-center justify-center rounded-full border ${active ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/30 bg-background text-muted-foreground hover:bg-muted'}`
           return cluster.length === 1 ? <button key={marker.ordinal} type='button' data-timeline-marker={marker.ordinal} data-timeline-active={active || undefined} aria-current={active ? 'step' : undefined} style={style} className={classes}
               aria-label={copyTextOf(`${context(marker)}: ${timelineValueText(marker, model.markers.length)}`)}
               onPointerDown={event => beginDrag(event, marker)} onClick={event => { if (event.detail === 0) activate(marker) }}><span data-timeline-circle className={circle}><Icon aria-hidden='true' className='h-3 w-3' /></span></button>
