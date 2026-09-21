@@ -1,10 +1,13 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Page, BrowserContext } from 'playwright-core'
 import type { PlatformAdapter, PlatformConfig, RecordingCapability } from '@vostride/agent-qa-runner'
+import { createRunEventBus, createMemberEventSink, runMemberTest } from '@vostride/agent-qa-runner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { FarmWebAdapter } from '../farm-adapter.js'
+import { createScreencastRecording } from '../recording.js'
 
 let videoDir: string
 let adapter: FarmWebAdapter
@@ -83,6 +86,78 @@ it('REC-FARM-CLEANUP: cleanup stops recording even when finalization rejects', a
   await recording().start()
   stop.mockRejectedValue(new Error('connection closed'))
   await expect(adapter.cleanup()).resolves.toBeUndefined()
-  expect(stop).toHaveBeenCalledOnce()
+  expect(stop).toHaveBeenCalledTimes(2)
   expect((adapter as PlatformAdapter<'web'>).recording).toBeUndefined()
+})
+
+it.each(['shared-web', 'farm'] as const)('REC-WEB-RECOVERY-%s: failed stop discards partial staging and retry finalizes fresh bytes', async producer => {
+  const capability = producer === 'farm' ? recording() : createScreencastRecording(() => page, { enabled: true, videoDir })
+  start.mockImplementation(async ({ path }: { path: string }) => { await writeFile(path, 'partial') })
+  await capability.start()
+  const failedPath = start.mock.calls[0][0].path
+  stop.mockRejectedValueOnce(new Error('transient save failure'))
+  await expect(capability.stop()).rejects.toThrow('transient save failure')
+  expect(await readdir(videoDir)).toEqual([])
+  await capability.start()
+  const successPath = start.mock.calls[1][0].path
+  stop.mockImplementationOnce(async () => { await writeFile(successPath, 'final retry') })
+  const stopped = await capability.stop()
+  expect(stopped?.stagingPath).toBe(successPath)
+  expect(successPath).not.toBe(failedPath)
+  expect(await readFile(successPath, 'utf8')).toBe('final retry')
+})
+
+it('REC-WEB-RECOVERY-EXCLUSIVE: cleanup completes before reuse; persistent failure reaches driver again', async () => {
+  const capability = recording()
+  await capability.start()
+  const error = new Error('remote stop failed')
+  let release!: () => void
+  stop.mockRejectedValueOnce(error).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve }))
+  const stopping = expect(capability.stop()).rejects.toBe(error)
+  await vi.waitFor(() => expect(release).toBeDefined())
+  await expect(capability.start()).rejects.toThrow(/already/i)
+  release()
+  await stopping
+  await capability.start()
+  stop.mockRejectedValue(error)
+  await expect(capability.stop()).rejects.toBe(error)
+  await expect(capability.start()).rejects.toBe(error)
+  stop.mockResolvedValue(undefined)
+  await capability.start()
+  await capability.stop()
+})
+
+it('REC-FARM-RUNNER-RETRY: real runner persists only the fresh finalized attempt', async () => {
+  let path = ''
+  start.mockImplementation(async (options: { path: string }) => {
+    path = options.path
+    await writeFile(path, 'partial')
+  })
+  stop.mockRejectedValueOnce(new Error('first stop failed'))
+    .mockResolvedValueOnce(undefined)
+    .mockImplementation(async () => { await writeFile(path, 'retry recording') })
+  const ref = { id: `recording:${'a'.repeat(64)}` as const, sha: 'a'.repeat(64) }
+  const persistRecording = vi.fn((staged: string) => {
+    expect(start).toHaveBeenCalledTimes(2)
+    expect(staged).toBe(start.mock.calls[1][0].path)
+    expect(readFileSync(staged, 'utf8')).toBe('retry recording')
+    return { ref, byteLength: 15 }
+  })
+  let attempt = 0
+  const result = await runMemberTest({ testId: 'synthetic-retry', name: 'Retry', filePath: 'synthetic.yaml',
+    steps: ['Run'], meta: { retries: 1 } }, {
+    adapter, planner: {} as never, plannerModel: {} as never, verifierModel: {} as never,
+    sink: createMemberEventSink({ bus: createRunEventBus({ runId: 'synthetic-retry-run' }),
+      masking: { mask: text => text, unmask: text => text }, testIndex: 0 }),
+    testIndex: 0, abortSignal: new AbortController().signal, recording: { enabled: true },
+    evidenceArtifacts: { persistDecisionScreenshot: () => ({ id: `decision-screenshot:${ref.sha}`, sha: ref.sha }),
+      getBlob: () => undefined, persistRecording },
+    executeStep: async name => ({ name, status: attempt++ === 0 ? 'failed' : 'passed', duration: 0 }),
+  })
+  expect(result.status).toBe('passed')
+  expect(result.retryCount).toBe(1)
+  expect(result.recording).toMatchObject({ state: 'present', ref })
+  expect(result.firstFailedAttempt?.result).not.toHaveProperty('recording')
+  expect(persistRecording).toHaveBeenCalledOnce()
+  expect(await readdir(videoDir)).toHaveLength(1)
 })

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
   ActionsFor,
@@ -642,25 +642,59 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     if (!driver || !config) return undefined
     if (this.recordingCapability) return this.recordingCapability
     let running = false
+    let busy = false
+    let needsCleanup = false
+    async function recover() {
+      if (!needsCleanup) return
+      await driver!.stopRecordingScreen()
+      needsCleanup = false
+    }
     this.recordingCapability = {
       async start() {
-        if (running) throw new Error('Recording already started')
-        running = true
-        const videoSize = config.videoSize
-          ? `${config.videoSize.width}x${config.videoSize.height}`
-          : undefined
-        await driver.startRecordingScreen({ videoSize, timeLimit: 1800, forceRestart: true })
-        return {}
+        if (busy || running) throw new Error('Recording already started')
+        busy = true
+        try {
+          await recover()
+          const videoSize = config.videoSize
+            ? `${config.videoSize.width}x${config.videoSize.height}`
+            : undefined
+          needsCleanup = true
+          try {
+            await driver.startRecordingScreen({ videoSize, timeLimit: 1800, forceRestart: true })
+          } catch (error) {
+            try { await recover() } catch { /* Retry driver cleanup before reuse. */ }
+            throw error
+          }
+          needsCleanup = false
+          running = true
+          return {}
+        } finally { busy = false }
       },
       async stop() {
-        if (!running) return undefined
-        const base64Video = await driver.stopRecordingScreen()
-        running = false
-        if (!base64Video) return undefined
-        await mkdir(config.videoDir, { recursive: true })
-        const stagingPath = join(config.videoDir, `${randomUUID()}.mp4`)
-        await writeFile(stagingPath, Buffer.from(base64Video, 'base64'))
-        return { stagingPath, contentType: 'video/mp4' }
+        if (busy) throw new Error('Recording operation already in progress')
+        busy = true
+        try {
+          if (!running) { await recover(); return undefined }
+          running = false
+          let base64Video: string
+          try {
+            base64Video = await driver.stopRecordingScreen()
+          } catch (error) {
+            needsCleanup = true
+            try { await recover() } catch { /* Retry driver cleanup before reuse. */ }
+            throw error
+          }
+          if (!base64Video) return undefined
+          await mkdir(config.videoDir, { recursive: true })
+          const stagingPath = join(config.videoDir, `${randomUUID()}.mp4`)
+          try {
+            await writeFile(stagingPath, Buffer.from(base64Video, 'base64'))
+          } catch (error) {
+            await rm(stagingPath, { force: true }).catch(() => undefined)
+            throw error
+          }
+          return { stagingPath, contentType: 'video/mp4' }
+        } finally { busy = false }
       },
     }
     return this.recordingCapability

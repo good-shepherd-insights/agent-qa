@@ -1,8 +1,10 @@
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { PlatformAdapter, RecordingCapability } from '@vostride/agent-qa-runner'
+import { createRunEventBus, createMemberEventSink, runMemberTest } from '@vostride/agent-qa-runner'
 import { remote } from 'webdriverio'
 import { AndroidPlatformAdapter } from '../adapter.js'
 
@@ -109,4 +111,72 @@ it('REC-ANDROID-CLEANUP: running capture stops before session deletion', async (
   expect(driver.stopRecordingScreen.mock.invocationCallOrder[0])
     .toBeLessThan(driver.deleteSession.mock.invocationCallOrder[0])
   expect((adapter as PlatformAdapter<'android'>).recording).toBeUndefined()
+})
+
+it.each(['start', 'stop'] as const)('REC-ANDROID-RECOVER-%s: failed attempt never returns bytes and the same capability can retry', async failure => {
+  const capability = recording()
+  const error = new Error('transient recording failure')
+  if (failure === 'start') driver.startRecordingScreen.mockRejectedValueOnce(error)
+  else driver.stopRecordingScreen.mockRejectedValueOnce(error)
+  if (failure === 'start') await expect(capability.start()).rejects.toBe(error)
+  else {
+    await capability.start()
+    await expect(capability.stop()).rejects.toBe(error)
+  }
+  expect(await readdir(videoDir)).toEqual([])
+  driver.stopRecordingScreen.mockResolvedValue(Buffer.from('successful retry').toString('base64'))
+  await capability.start()
+  const stopped = await capability.stop()
+  expect(await readFile(stopped!.stagingPath, 'utf8')).toBe('successful retry')
+  expect(driver.startRecordingScreen).toHaveBeenCalledTimes(2)
+})
+
+it('REC-ANDROID-RECOVERY-EXCLUSIVE: pending cleanup owns the guard and persistent failures remain driver failures', async () => {
+  const capability = recording()
+  const error = new Error('driver cannot stop')
+  await capability.start()
+  let release!: () => void
+  driver.stopRecordingScreen.mockRejectedValueOnce(error)
+    .mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve }))
+  const stopping = expect(capability.stop()).rejects.toBe(error)
+  await vi.waitFor(() => expect(release).toBeDefined())
+  await expect(capability.start()).rejects.toThrow(/already/i)
+  release()
+  await stopping
+  await capability.start()
+  driver.stopRecordingScreen.mockRejectedValue(error)
+  await expect(capability.stop()).rejects.toBe(error)
+  await expect(capability.start()).rejects.toBe(error)
+  driver.stopRecordingScreen.mockResolvedValue('')
+  await capability.start()
+  await capability.stop()
+})
+
+it.each(['start', 'stop'] as const)('REC-ANDROID-RUNNER-RETRY-%s: only the successful retry reaches persistence', async failure => {
+  if (failure === 'start') driver.startRecordingScreen.mockRejectedValueOnce(new Error('first start failed'))
+  else driver.stopRecordingScreen.mockRejectedValueOnce(new Error('first stop failed'))
+  driver.stopRecordingScreen.mockResolvedValue(Buffer.from('retry recording').toString('base64'))
+  const ref = { id: `recording:${'a'.repeat(64)}` as const, sha: 'a'.repeat(64) }
+  const persistRecording = vi.fn((path: string) => {
+    expect(driver.startRecordingScreen).toHaveBeenCalledTimes(2)
+    expect(readFileSync(path, 'utf8')).toBe('retry recording')
+    return { ref, byteLength: 15 }
+  })
+  let attempt = 0
+  const result = await runMemberTest({ testId: 'synthetic-retry', name: 'Retry', filePath: 'synthetic.yaml',
+    steps: ['Run'], meta: { retries: 1 } }, {
+    adapter, planner: {} as never, plannerModel: {} as never, verifierModel: {} as never,
+    sink: createMemberEventSink({ bus: createRunEventBus({ runId: 'synthetic-retry-run' }),
+      masking: { mask: text => text, unmask: text => text }, testIndex: 0 }),
+    testIndex: 0, abortSignal: new AbortController().signal, recording: { enabled: true },
+    evidenceArtifacts: { persistDecisionScreenshot: () => ({ id: `decision-screenshot:${ref.sha}`, sha: ref.sha }),
+      getBlob: () => undefined, persistRecording },
+    executeStep: async name => ({ name, status: attempt++ === 0 ? 'failed' : 'passed', duration: 0 }),
+  })
+  expect(result.status).toBe('passed')
+  expect(result.retryCount).toBe(1)
+  expect(result.recording).toMatchObject({ state: 'present', ref })
+  expect(result.firstFailedAttempt?.result).not.toHaveProperty('recording')
+  expect(persistRecording).toHaveBeenCalledOnce()
+  expect(await readdir(videoDir)).toHaveLength(1)
 })
