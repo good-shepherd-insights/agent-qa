@@ -308,9 +308,9 @@ describe('the dashboard chat UI, in a real browser against the built bundle (400
 describe('the instrument this file runs on, asserted rather than assumed (400-09 task 1)', () => {
   it('drives the AUDITED playwright-core pin and never a version resolved at install time', () => {
     // THE SUPPLY-CHAIN CLAIM (T-400-SC), read off the manifest. The package-legitimacy audit
-    // approved `playwright-core@1.59.1` — the version already in this workspace's lockfile, from
-    // the canonical `microsoft/playwright` repository, with no postinstall — and `@playwright/test`
-    // was explicitly rejected as a net-new root package. A range here (`^1.59.1`) would make the
+    // approved the canonical `microsoft/playwright` package, with no postinstall. Phase 424-35
+    // upgraded the exact workspace pin to `playwright-core@1.61.0` with matching Chromium 1228;
+    // `@playwright/test` remains absent. A range here (`^1.61.0`) would make the
     // audited artifact and the installed one two different things after the next resolution, so
     // the assertion is on the EXACT pin.
     //
@@ -330,7 +330,7 @@ describe('the instrument this file runs on, asserted rather than assumed (400-09
       declared,
       'this package no longer declares playwright-core, so the browser these cells launch is '
       + 'whatever a hoist happened to leave in node_modules — an unaudited artifact',
-    ).toBe('1.59.1')
+    ).toBe('1.61.0')
 
     // And the runtime the cells actually launched is that package's own browser, not a system one.
     expect(
