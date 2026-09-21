@@ -247,7 +247,10 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
       </MediaViewport>}
       {toolbar}
     </div>
-    {readoutHost && createPortal(<span data-player-time className='mt-2.5 shrink-0 whitespace-nowrap font-mono text-xs leading-4 tabular-nums'>{formatOffset(time * 1000) ?? '0:00'}{recording.durationMs === undefined ? '' : ` / ${formatOffset(recording.durationMs)}`}</span>, readoutHost)}
+    {readoutHost && createPortal(<span data-player-time className='mt-2.5 min-w-0 font-mono text-xs leading-4 tabular-nums'>
+      <span data-player-timestamp className='inline-block max-w-full [overflow-wrap:anywhere]'>{formatOffset(time * 1000) ?? '0:00'}</span>
+      {recording.durationMs !== undefined && <> / <span data-player-timestamp className='inline-block max-w-full [overflow-wrap:anywhere]'>{formatOffset(recording.durationMs)}</span></>}
+    </span>, readoutHost)}
     {transportHost && createPortal(<>
       <Button size='icon-sm' variant='ghost' aria-label={playing ? PLAYER_COPY.pause : PLAYER_COPY.play} disabled={!ready}
         onClick={togglePlayback}>

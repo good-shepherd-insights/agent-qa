@@ -202,6 +202,26 @@ async function controls(page: Page, name: string, axis: 'time' | 'ordinal') {
   await page.locator('video').waitFor()
   await page.waitForFunction(() => document.querySelector('video')!.readyState >= 1)
   await footerGeometry(page)
+  const railBefore = await page.locator('[data-timeline-track]').boundingBox()
+  // Explicit long-duration layout data, including late elapsed time. Do not seek
+  // real short fixture bytes to an invented 111-hour instant.
+  await page.locator('video').evaluate(video => {
+    Object.defineProperty(video, 'currentTime', { configurable: true, get: () => 399_999 })
+    video.dispatchEvent(new Event('timeupdate'))
+  })
+  await expect.poll(() => page.locator('[data-player-time]').textContent()).toBe('111:06:39 / 111:06:40')
+  const railAfter = await page.locator('[data-timeline-track]').boundingBox()
+  expect(railAfter!.x).toBe(railBefore!.x)
+  expect(railAfter!.width).toBe(railBefore!.width)
+  expect(railAfter!.width).toBeGreaterThan(70)
+  for (const token of await page.locator('[data-player-timestamp]').all()) {
+    const geometry = await token.evaluate(element => {
+      const rect = element.getBoundingClientRect()
+      return { left: rect.left, right: rect.right, font: getComputedStyle(element).fontSize, viewport: innerWidth }
+    })
+    expect(geometry.right).toBeLessThanOrEqual(geometry.viewport)
+    expect(geometry.font).toBe('12px')
+  }
   const result = await page.locator('[data-player]').evaluate(player => {
     const box = player.getBoundingClientRect()
     const controls = [...player.querySelectorAll('[data-slot="toggle-group-item"],button[aria-label="Play recording"],button[aria-label="Playback speed"],[data-player-time]')]
@@ -212,6 +232,7 @@ async function controls(page: Page, name: string, axis: 'time' | 'ordinal') {
       } }) }
   })
   await capture(page, name)
+  await page.locator('video').evaluate(video => { Reflect.deleteProperty(video, 'currentTime') })
   // Keep the actual element identity across speed/time/play state updates; a remount resets media.
   await page.locator('video').evaluate(video => video.setAttribute('data-review-identity', 'original'))
   const rates = []
