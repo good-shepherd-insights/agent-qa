@@ -57,6 +57,58 @@ async function clickMarker(page: Page, ordinal: number) {
   throw new Error(`Missing action marker ${ordinal}`)
 }
 
+async function lensProof(page: Page, point: { x: number; y: number }, name: string) {
+  // Fullscreen changes the contain rectangle through ResizeObserver; target the
+  // settled media pixels, not the transient pre-observer rectangle.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  const media = page.locator('[data-media-transform] > video, [data-media-transform] > img')
+  const origin = await media.evaluate((element, point) => {
+    const rect = element.getBoundingClientRect()
+    const width = element instanceof HTMLVideoElement ? element.videoWidth : (element as HTMLImageElement).naturalWidth
+    const height = element instanceof HTMLVideoElement ? element.videoHeight : (element as HTMLImageElement).naturalHeight
+    return { x: rect.x + point.x / width * rect.width, y: rect.y + point.y / height * rect.height }
+  }, point)
+  if (await page.getByRole('button', { name: 'Enable magnifier', exact: true }).count()) await page.getByRole('button', { name: 'Enable magnifier', exact: true }).click()
+  await page.mouse.move(origin.x, origin.y)
+  await page.locator('[data-media-lens]').waitFor({ state: 'visible' })
+  const pixels = await page.locator('[data-media-lens]').evaluate((lens, origin) => {
+    const canvas = lens.querySelector('canvas')!
+    const media = document.querySelector<HTMLVideoElement | HTMLImageElement>('[data-media-transform] > video, [data-media-transform] > img')!
+    const box = media.getBoundingClientRect()
+    const nativeWidth = media instanceof HTMLVideoElement ? media.videoWidth : media.naturalWidth
+    const nativeHeight = media instanceof HTMLVideoElement ? media.videoHeight : media.naturalHeight
+    const scale = box.width / nativeWidth * 2.5
+    const oracle = document.createElement('canvas')
+    oracle.width = canvas.width; oracle.height = canvas.height
+    const context = oracle.getContext('2d')!
+    context.drawImage(media, (origin.x - box.x) / box.width * nativeWidth - canvas.width / scale / 2,
+      (origin.y - box.y) / box.height * nativeHeight - canvas.height / scale / 2,
+      canvas.width / scale, canvas.height / scale, 0, 0, canvas.width, canvas.height)
+    const actual = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
+    const expected = context.getImageData(0, 0, canvas.width, canvas.height).data
+    const colours = new Set<number>()
+    let error = 0
+    for (let index = 0; index < actual.length; index++) error += Math.abs(actual[index]! - expected[index]!)
+    for (let index = 0; index < actual.length; index += 4) colours.add(actual[index]! * 65536 + actual[index + 1]! * 256 + actual[index + 2]!)
+    const dot = lens.querySelector('[data-annotation="point"]')?.getBoundingClientRect()
+    const pixelsBox = canvas.getBoundingClientRect()
+    const viewport = document.querySelector('[data-media-viewport]')!.getBoundingClientRect()
+    const rect = lens.getBoundingClientRect()
+    return { meanPixelError: error / actual.length, colours: colours.size,
+      coordinates: { origin, box: box.toJSON(), dot: dot?.toJSON(), pixelsBox: pixelsBox.toJSON(), transform: lens.querySelector('[data-lens-annotation]')?.getAttribute('style') },
+      annotationError: dot ? Math.hypot(dot.x + dot.width / 2 - pixelsBox.x - canvas.width / 2, dot.y + dot.height / 2 - pixelsBox.y - canvas.height / 2) : null,
+      bounded: rect.left >= viewport.left && rect.right <= viewport.right && rect.top >= viewport.top && rect.bottom <= viewport.bottom }
+  }, origin)
+  observations[name] = pixels
+  await capture(page, name)
+  expect(pixels.meanPixelError, JSON.stringify(pixels)).toBeLessThan(2)
+  expect(pixels.colours).toBeGreaterThan(10)
+  expect(pixels.annotationError, 'The supported action is annotated inside the lens').not.toBeNull()
+  expect(pixels.annotationError, JSON.stringify(pixels)).toBeLessThan(1)
+  expect(pixels.bounded).toBe(true)
+  return pixels
+}
+
 it('SUITE-BROWSER-ORDER: arrows cross steps and members in both directions with one boxed action', async () => {
   expect(detail.members).toHaveLength(2)
   const addresses = detail.subActions.map(sub => `${sub.testIndex}:${sub.stepIndex}:${sub.subActionIndex}`)
@@ -94,7 +146,7 @@ it('SUITE-BROWSER-ORDER: arrows cross steps and members in both directions with 
   } finally { await page.close() }
 }, 120_000)
 
-it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, zoom and fullscreen', async () => {
+it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier and fullscreen', async () => {
   const sub = detail.subActions.find(sub => sub.result?.annotation?.kind === 'point' && sub.result.annotation.recording)
   expect(sub, 'real runner persisted a measured click and recording witness').toBeDefined()
   const annotation = sub!.result!.annotation!
@@ -112,14 +164,39 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, zoom and f
       await expect.poll(() => page.locator('video').evaluate(video => (video as HTMLVideoElement).currentTime)).toBeCloseTo((witness.startMs + witness.endMs) / 2000, 3)
       await page.locator('[data-annotation="point"]').waitFor()
       await page.locator('video').evaluate(video => video.setAttribute('data-witness-video', 'same'))
-      for (const mode of ['normal', 'zoom', 'fullscreen'] as const) {
-        if (mode === 'zoom') await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
+      const layout = await page.locator('[data-player]').evaluate(player => {
+        const rect = (selector: string) => player.querySelector(selector)!.getBoundingClientRect()
+        const thumb = rect('[data-timeline-playhead]')
+        const track = rect('[data-timeline-track]')
+        const time = rect('[data-player-time]')
+        const toolbar = rect('[data-player-preview-toolbar]')
+        const preview = rect('[data-player-preview]')
+        const source = player.querySelector('[data-player-controls] > :last-child')!
+        const marker = player.querySelector('[data-timeline-marker-group], [data-timeline-marker]')!
+        const icon = marker.querySelector('svg')!.getBoundingClientRect()
+        const stem = marker.querySelector('[data-timeline-stem]')!.getBoundingClientRect()
+        return { thumb: { width: thumb.width, height: thumb.height }, icon: { width: icon.width, height: icon.height },
+          stemTouchesRail: Math.abs(stem.top - track.top - 16) < 1,
+          timeRight: time.left >= track.right, timeAligned: Math.abs(time.top + time.height / 2 - track.top - 14) < 2,
+          sourceLast: source.getAttribute('aria-label'), toolbarWidth: toolbar.width,
+          toolbarInside: toolbar.right <= preview.right && toolbar.bottom <= preview.bottom,
+          noStepZoom: !player.querySelector('[aria-label="Media zoom"], [aria-label="Zoom in"], [aria-label="Zoom out"]') }
+      })
+      expect(layout.thumb).toEqual({ width: 6, height: 18 })
+      expect(layout.icon).toEqual({ width: 12, height: 12 })
+      expect(layout.stemTouchesRail).toBe(true)
+      expect(layout.timeRight && layout.timeAligned && layout.toolbarInside && layout.noStepZoom).toBe(true)
+      expect(layout.sourceLast).toBe('Playback source')
+      expect(layout.toolbarWidth).toBeLessThanOrEqual(34)
+      observations[`layout-${width}`] = layout
+      for (const mode of ['normal', 'magnifier', 'fullscreen'] as const) {
         if (mode === 'fullscreen') await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click()
+        const lens = mode !== 'normal' ? await lensProof(page, annotation.point, `new-recording-${mode}-${width}`) : undefined
         await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
         const geometry = await page.locator('[data-player]').evaluate((player, point) => {
           const media = player.querySelector<HTMLVideoElement>('video')!
           const box = media.getBoundingClientRect()
-          const dot = player.querySelector('[data-annotation="point"]')!.getBoundingClientRect()
+          const dot = player.querySelector('[data-media-transform] [data-annotation="point"]')!.getBoundingClientRect()
           const controls = player.querySelector('[data-player-controls]')!.getBoundingClientRect()
           return { time: media.currentTime, duration: media.duration, videoWidth: media.videoWidth, videoHeight: media.videoHeight,
             deltaX: Math.abs(dot.x + dot.width / 2 - box.x - point.x / media.videoWidth * box.width),
@@ -134,20 +211,67 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, zoom and f
         expect(geometry.videoHeight).toBe(witness.height)
         expect(geometry.controlsLeft).toBeGreaterThanOrEqual(0)
         expect(geometry.controlsRight).toBeLessThanOrEqual(width)
-        rows.push({ width, mode, witness, point: annotation.point, ...geometry })
+        rows.push({ width, mode, witness, point: annotation.point, lens, ...geometry })
         await capture(page, `new-recording-${mode}-${width}`)
       }
       await page.keyboard.press('Escape')
       expect(await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).evaluate(button => document.activeElement === button)).toBe(true)
+      await lensProof(page, annotation.point, `video-lens-paused-${width}`)
+      const before = await page.locator('video').evaluate(video => {
+        const source = video as HTMLVideoElement
+        return { time: source.currentTime, rate: source.playbackRate, paused: source.paused }
+      })
+      const live = await page.locator('video').evaluate(async video => {
+        const source = video as HTMLVideoElement
+        const proto = CanvasRenderingContext2D.prototype
+        const original = proto.drawImage
+        const samples: { time: number; same: boolean }[] = []
+        let seeks = 0
+        const seeking = () => { seeks++ }
+        source.addEventListener('seeking', seeking)
+        proto.drawImage = function (this: CanvasRenderingContext2D, ...args: unknown[]) {
+          if (this.canvas.closest('[data-media-lens]')) samples.push({ time: source.currentTime, same: args[0] === source })
+          return Reflect.apply(original, this, args)
+        } as typeof original
+        try {
+          const start = source.currentTime
+          await source.play()
+          await new Promise<void>((resolve, reject) => {
+            const deadline = performance.now() + 3000
+            const check = () => {
+              if (samples.length >= 4 && samples.at(-1)!.time - start >= 0.12) resolve()
+              else if (performance.now() > deadline) reject(new Error('Live lens did not redraw current video'))
+              else requestAnimationFrame(check)
+            }
+            check()
+          })
+          source.pause()
+          return { samples, seeks, rate: source.playbackRate, identity: source.dataset.witnessVideo }
+        } finally { proto.drawImage = original; source.removeEventListener('seeking', seeking); source.pause() }
+      })
+      expect(before.paused).toBe(true)
+      expect(live.samples.every(sample => sample.same)).toBe(true)
+      expect(live.seeks).toBe(0)
+      expect(live.rate).toBe(before.rate)
+      expect(live.identity).toBe('same')
+      observations[`live-lens-${width}`] = live
+      await seek(page, (witness.startMs + witness.endMs) / 2000)
+      await lensProof(page, annotation.point, `video-lens-after-seek-${width}`)
+      await page.mouse.move(0, 0)
+      expect(await page.locator('[data-media-lens]').count()).toBe(0)
       await page.getByRole('button', { name: 'Hide annotations', exact: true }).click()
       expect(await page.locator('[data-annotation]').count()).toBe(0)
       await page.getByRole('button', { name: 'Show annotations', exact: true }).click()
-      await page.locator('[data-annotation="point"]').waitFor()
+      await page.locator('[data-media-transform] [data-annotation="point"]').waitFor()
       await seek(page, Math.max(0, witness.startMs / 1000 - 0.05))
       expect(await page.locator('[data-annotation]').count()).toBe(0)
       await page.getByRole('radio', { name: 'Frames', exact: true }).click()
+      expect(await page.locator('[data-media-lens]').count()).toBe(0)
+      await capture(page, `suite-frame-normal-${width}`)
+      await lensProof(page, annotation.point, `suite-frame-magnifier-${width}`)
       await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click()
       await page.locator('[role="dialog"] img').waitFor()
+      await lensProof(page, annotation.point, `suite-frame-fullscreen-lens-${width}`)
       await capture(page, `suite-frame-fullscreen-${width}`)
     } finally { await page.close() }
   }
@@ -261,10 +385,12 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     await ready(page)
     const marker = page.locator('[data-timeline-track] > button[data-timeline-marker]').first()
     await marker.hover()
-    await page.locator('[data-timeline-marker-details]').first().waitFor()
     await marker.focus()
+    expect(await page.locator('[role="tooltip"], [data-timeline-marker-details]').count()).toBe(0)
+    expect(await marker.getAttribute('title')).toBeNull()
     expect(await marker.getAttribute('aria-label')).toContain('Step')
     await marker.click()
+    await capture(page, 'suite-singleton-marker')
     observations.media = { durations, stored, tail, target, local, rates, samples, cueTimes, continuation: true }
   } finally { await page.close() }
 }, 120_000)

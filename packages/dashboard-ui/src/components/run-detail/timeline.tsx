@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { CircleSlash, Layers } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ACTION_FAMILY_ICONS, UNKNOWN_ACTION_ICON, buildActionSentence } from '@/lib/action-vocabulary'
 import type { SuiteTimelineModel } from '@/lib/suite-timeline'
@@ -104,8 +103,8 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
   }
   if (model.markers.length === 0 && !members?.length) return null
   return (
-    <TooltipProvider><div data-timeline data-timeline-axis={model.axis} data-timeline-member={members ? 'suite' : model.testIndex} data-media-durations-ready={mediaDurationsReady}
-      className='min-w-0 px-5 py-1'>
+    <div data-timeline data-timeline-axis={model.axis} data-timeline-member={members ? 'suite' : model.testIndex} data-media-durations-ready={mediaDurationsReady}
+      className='min-w-0 flex-1 px-5 py-1'>
       <div ref={track} data-timeline-track className='relative h-14 touch-none cursor-pointer'
         onPointerDown={event => {
           if (event.button !== 0) return
@@ -120,7 +119,6 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
         onLostPointerCapture={() => { dragging.current = null }}>
         <div aria-hidden='true' className='absolute inset-x-0 top-3 h-1 rounded-full bg-muted' />
         {members?.map(member => <span key={member.model.testIndex} data-timeline-member-span={member.model.testIndex}
-          title={copyTextOf(`${member.label}${member.model.axis === 'ordinal' ? ' — Action timing unavailable' : ''}${member.group.member.recording?.state !== 'present' ? ' — Recording unavailable' : ''}`)}
           className={`absolute top-3 h-1 border-l border-background ${member.group.member.recording?.state !== 'present' ? 'bg-muted-foreground/30' : ''}`}
           style={{ left: `${member.start * 100}%`, width: `${(member.end - member.start) * 100}%` }} />)}
         {(current || position !== undefined) && <>
@@ -132,22 +130,21 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
             aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((position ?? 0) * 100)}
             aria-valuetext={current ? timelineValueText(current, model.markers.length) : 'No actions recorded for this test'}
             style={{ left: `${(position ?? current?.position ?? 0) * 100}%` }}
-            className='absolute top-0.5 h-6 w-2.5 -translate-x-1/2 rounded-full bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring' />
+            className='absolute top-[5px] h-[18px] w-1.5 -translate-x-1/2 rounded-full bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring' />
         </>}
         {clusters.map(cluster => {
           const marker = cluster[0]!
           const family = buildActionSentence(marker.subAction).family
           const Icon = family ? ACTION_FAMILY_ICONS[family] : UNKNOWN_ACTION_ICON
           const style = { left: `clamp(14px, ${marker.position * 100}%, calc(100% - 14px))` }
-          const classes = 'absolute top-7 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-md hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring'
-          return cluster.length === 1 ? <Tooltip key={marker.ordinal}>
-            <TooltipTrigger asChild><button type='button' data-timeline-marker={marker.ordinal} style={style} className={classes}
+          const classes = 'absolute top-7 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring'
+          const stem = <span data-timeline-stem aria-hidden='true' className='pointer-events-none absolute -top-3 left-1/2 h-5 w-px -translate-x-1/2 bg-muted-foreground/30' />
+          return cluster.length === 1 ? <button key={marker.ordinal} type='button' data-timeline-marker={marker.ordinal} style={style} className={classes}
               aria-label={copyTextOf(`${context(marker)}: ${timelineValueText(marker, model.markers.length)}`)}
-              onPointerDown={event => event.stopPropagation()} onClick={() => activate(marker)}><Icon aria-hidden='true' className='h-4 w-4' /></button></TooltipTrigger>
-            <TooltipContent data-timeline-marker-details><MaskedText text={context(marker)} /><ActionSentence sub={marker.subAction} /></TooltipContent>
-          </Tooltip> : <Popover key={marker.ordinal} open={openGroup === marker.ordinal} onOpenChange={open => setOpenGroup(open ? marker.ordinal : null)}>
+              onPointerDown={event => event.stopPropagation()} onClick={() => activate(marker)}>{stem}<Icon aria-hidden='true' className='h-3 w-3' /></button>
+            : <Popover key={marker.ordinal} open={openGroup === marker.ordinal} onOpenChange={open => setOpenGroup(open ? marker.ordinal : null)}>
             <PopoverTrigger asChild><button type='button' data-timeline-marker-group style={style} className={classes}
-              aria-label={`Choose from ${cluster.length} nearby actions`} onPointerDown={event => event.stopPropagation()}><Layers aria-hidden='true' className='h-4 w-4' /></button></PopoverTrigger>
+              aria-label={`Choose from ${cluster.length} nearby actions`} onPointerDown={event => event.stopPropagation()}>{stem}<Layers aria-hidden='true' className='h-3 w-3' /></button></PopoverTrigger>
             <PopoverContent className='max-h-64 w-80 overflow-y-auto p-1' aria-label='Nearby actions'
               onPointerDown={event => event.stopPropagation()}>
               {cluster.map(entry => <button key={entry.ordinal} type='button' data-timeline-marker={entry.ordinal} className='block w-full rounded p-2 text-left hover:bg-muted'
@@ -155,17 +152,15 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
             </PopoverContent>
           </Popover>
         })}
-        {members?.filter(member => member.model.markers.length === 0).map(member => <Tooltip key={`empty-${member.model.testIndex}`}>
-          <TooltipTrigger asChild><button type='button' data-timeline-empty-member={member.model.testIndex}
+        {members?.filter(member => member.model.markers.length === 0).map(member => <button key={`empty-${member.model.testIndex}`} type='button' data-timeline-empty-member={member.model.testIndex}
             aria-label={copyTextOf(`${member.label}: No actions recorded`)}
             className='absolute top-7 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-md hover:bg-muted'
             style={{ left: `${(member.start + member.end) * 50}%` }}
             onPointerDown={event => event.stopPropagation()} onClick={() => onSeekFraction((member.start + member.end) / 2)}>
-            <CircleSlash aria-hidden='true' className='h-4 w-4 text-muted-foreground' />
-          </button></TooltipTrigger>
-          <TooltipContent><MaskedText text={member.label} /> · No actions recorded</TooltipContent>
-        </Tooltip>)}
+            <span data-timeline-stem aria-hidden='true' className='pointer-events-none absolute -top-3 left-1/2 h-5 w-px bg-muted-foreground/30' />
+            <CircleSlash aria-hidden='true' className='h-3 w-3 text-muted-foreground' />
+          </button>)}
       </div>
-    </div></TooltipProvider>
+    </div>
   )
 }

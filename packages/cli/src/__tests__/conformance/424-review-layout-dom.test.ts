@@ -129,7 +129,7 @@ async function footerGeometry(page: Page, desktop = false) {
     const rect = footer.getBoundingClientRect()
     return {
       source: player.getAttribute('data-player-source'), width: innerWidth,
-      ordered: preview.nextElementSibling === footer && Boolean(footer.firstElementChild?.matches('[data-timeline]')),
+      ordered: preview.nextElementSibling === footer && Boolean(footer.firstElementChild?.matches('[data-player-timeline-row]')),
       mediaGap: rect.top - media.getBoundingClientRect().bottom, footerHeight: rect.height,
       controlsBelowBar: controls.top >= scrub.bottom, captionBelowBar: caption.top >= scrub.bottom,
       sameRow: Math.abs(caption.top + caption.height / 2 - controls.top - controls.height / 2) < 1,

@@ -148,7 +148,7 @@ function video(extra: Partial<Props> = {}) {
 function metadata(media: ReturnType<typeof createFakeMedia>) { act(() => media.fire('loadedmetadata')) }
 function button(name: string) { return query(`button[aria-label="${name}"]`) as HTMLButtonElement }
 
-test('PLAYER-SHARED-FRAME-CONTROLS: visible toolbar retains annotated image through zoom, fullscreen, Escape and toggle', () => {
+test('PLAYER-SHARED-FRAME-CONTROLS: visible toolbar retains annotated image through magnifier, fullscreen, Escape and toggle', () => {
   group.steps[0]!.subActions[0]!.result.annotation = { kind: 'point', viewport: { width: 800, height: 600 }, point: { x: 100, y: 200 } }
   model = buildTimelineModel(group)
   render()
@@ -157,15 +157,15 @@ test('PLAYER-SHARED-FRAME-CONTROLS: visible toolbar retains annotated image thro
   const overlay = query('[data-annotation="point"]')
   expect(overlay.style.left).toBe('75px') // 800x600 contained in 800x450 => 600x450
   expect(query('[data-media-transform]').style.left).toBe('100px')
-  expect(query('[data-player-controls]').contains(button('Zoom in'))).toBe(true)
+  expect(query('[data-player-preview-toolbar]').contains(button('Enable magnifier'))).toBe(true)
   expect(host.querySelector('[title="View full size"]')).toBeNull()
-  act(() => button('Zoom in').click())
-  expect(query('[data-media-transform]').style.transform).toBe('scale(1.5)')
+  act(() => button('Enable magnifier').click())
+  expect(button('Disable magnifier').getAttribute('aria-pressed')).toBe('true')
   act(() => button('Enter fullscreen').click())
   expect(query('[role="dialog"]')).not.toBeNull()
   expect(query('img')).toBe(img)
   expect(query('[data-annotation="point"]')).toBe(overlay)
-  expect(button('Zoom in').closest('[role="dialog"]')).not.toBeNull()
+  expect(button('Disable magnifier').closest('[role="dialog"]')).not.toBeNull()
   act(() => button('Hide annotations').click())
   expect(query('[data-annotation]')).toBeNull()
   act(() => button('Show annotations').click())
@@ -192,7 +192,7 @@ test('PLAYER-VIDEO-ANNOTATION-INTERVAL: uses execution witness, same geometry an
   await act(async () => button(PLAYER_COPY.play).click())
   media.playbackRate = 2
   const seeks = [...media.seeks]
-  act(() => button('Zoom in').click())
+  act(() => button('Enable magnifier').click())
   act(() => button('Enter fullscreen').click())
   expect(query('video')).toBe(element)
   expect(host.querySelectorAll('video')).toHaveLength(1)
@@ -217,9 +217,9 @@ test('PLAYER-VIDEO-ANNOTATION-INTERVAL: uses execution witness, same geometry an
 
 test('PLAYER-MISSING-MEDIA-CONTROLS: same toolbar stays present and disabled with discoverable annotation limits', () => {
   render({ playhead: model.markers[1]! })
-  for (const name of ['Zoom in', 'Zoom out', 'Hide annotations', 'Enter fullscreen']) expect(button(name).disabled).toBe(true)
+  for (const name of ['Enable magnifier', 'Hide annotations', 'Enter fullscreen']) expect(button(name).disabled).toBe(true)
   render({ source: 'video', recording: { state: 'absent', reason: 'not-captured' } })
-  for (const name of ['Zoom in', 'Zoom out', 'Hide annotations', 'Enter fullscreen']) expect(button(name).disabled).toBe(true)
+  for (const name of ['Enable magnifier', 'Hide annotations', 'Enter fullscreen']) expect(button(name).disabled).toBe(true)
   expect(query('[aria-label^="Video annotations require"]')).not.toBeNull()
   expect(query('[aria-label^="Video annotations require"]').tabIndex).toBe(0)
 })

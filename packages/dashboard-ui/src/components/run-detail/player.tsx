@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Pause, Play, Crosshair, Maximize2, Minimize2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Pause, Play, Crosshair, Maximize2, Minimize2, Search } from 'lucide-react'
 import type { RecordingEntry, RunDetailArtifactRef } from '@vostride/agent-qa-schema'
 import { validRecordedAnnotation } from '@vostride/agent-qa-schema'
 import { ScreenshotViewer } from '@/components/screenshot-viewer'
@@ -25,7 +25,7 @@ export function PlayerFrame({ runId, frame, annotation, wholeStep = false, embed
   frame?: RunDetailArtifactRef
   annotation?: StepAnnotation
   wholeStep?: boolean
-  embedded?: { zoom: number; annotationsVisible: boolean; fullscreen: boolean; onAvailability?: (available: boolean) => void }
+  embedded?: { magnifier: boolean; annotationsVisible: boolean; fullscreen: boolean; onAvailability?: (available: boolean) => void }
 }) {
   const [error, setError] = useState<ReturnType<typeof mediaErrorView>>()
   const [attempt, setAttempt] = useState(0)
@@ -77,17 +77,18 @@ export interface PlayerProps {
   isTimelineKeyIgnored?: (event: KeyboardEvent) => boolean
 }
 
-function PlayerFooter({ timeline, caption, controls, note }: {
+function PlayerFooter({ timeline, caption, controls, note, readout }: {
   timeline?: ReactNode
   caption: ReactNode
   controls: ReactNode
   note?: ReactNode
+  readout?: ReactNode
 }) {
   return <div data-player-footer className='pb-2'>
-    {timeline}
+    <div data-player-timeline-row className='flex min-w-0 items-start pr-3'>{timeline}{readout}</div>
     <div data-player-actions className='flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3'>
       {caption}
-      <div data-player-controls className='flex min-w-0 flex-wrap items-center gap-2'>{controls}</div>
+      <div data-player-controls className='ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2'>{controls}</div>
     </div>
     {note && <p className='px-3 pt-1 text-xs text-muted-foreground'>{note}</p>}
   </div>
@@ -97,13 +98,14 @@ function addressKey(playhead: Playhead | null | undefined) {
   return playhead ? `${playhead.testIndex}:${playhead.stepIndex}:${playhead.subActionIndex}` : ''
 }
 
-function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, seekRevision, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded, autoPlay, speed, setSpeed, isTimelineKeyIgnored, timeline, caption, header, view }: PlayerProps & {
+function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, seekRevision, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded, autoPlay, speed, setSpeed, isTimelineKeyIgnored, timeline, caption, header, toolbar, view }: PlayerProps & {
   recording: Extract<RecordingEntry, { state: 'present' }>
   caption: ReactNode
   header: ReactNode
+  toolbar: ReactNode
   speed: number
   setSpeed: (speed: number) => void
-  view: { zoom: number; annotationsVisible: boolean; fullscreen: boolean; onAvailability?: (available: boolean) => void }
+  view: { magnifier: boolean; annotationsVisible: boolean; fullscreen: boolean; onAvailability?: (available: boolean) => void }
 }) {
   const element = useRef<HTMLVideoElement>(null)
   const active = useRef<MediaFacade | null>(null)
@@ -235,16 +237,17 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
   })
 
   return <>
-    <div data-player-preview className='px-3 pt-3' data-artifact-state={error ? 'unavailable' : 'available'}>
+    <div data-player-preview className='relative px-3 pt-3' data-artifact-state={error ? 'unavailable' : 'available'}>
       {error ? <EvidenceState {...error} kind='video' onAction={() => {
         setError(undefined); setReady(false); setPlaying(false); followed.current = ''; setAttempt(value => value + 1)
-      }} /> : <MediaViewport {...dimensions} zoom={view.zoom} fullscreen={view.fullscreen}
+      }} /> : <MediaViewport {...dimensions} magnifier={view.magnifier} fullscreen={view.fullscreen} mediaKey={`${url}:${attempt}`}
         annotation={cue?.annotation} annotationLabel={cue?.recent ? 'Last recorded action' : undefined}>
         <video key={attempt} ref={element} src={url} preload='metadata' muted playsInline className='h-full w-full object-contain' />
       </MediaViewport>}
+      {toolbar}
     </div>
-    <PlayerFooter timeline={timeline} caption={caption} note={model.axis === 'ordinal' ? VIDEO_UNTIMED_NOTE : undefined} controls={<>
-      {header}
+    <PlayerFooter timeline={timeline} caption={caption} note={model.axis === 'ordinal' ? VIDEO_UNTIMED_NOTE : undefined}
+      readout={<span data-player-time className='mt-2.5 shrink-0 whitespace-nowrap font-mono text-xs leading-4 tabular-nums'>{formatOffset(time * 1000) ?? '0:00'}{recording.durationMs === undefined ? '' : ` / ${formatOffset(recording.durationMs)}`}</span>} controls={<>
       <Button size='icon-sm' variant='ghost' aria-label={playing ? PLAYER_COPY.pause : PLAYER_COPY.play} disabled={!ready}
         onClick={togglePlayback}>
         {playing ? <Pause className='h-4 w-4' /> : <Play className='h-4 w-4' />}
@@ -258,14 +261,14 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
         <SelectTrigger aria-label={PLAYER_COPY.speed} size='sm' className='w-20 shrink-0'><SelectValue /></SelectTrigger>
         <SelectContent>{PLAYBACK_SPEEDS.map(value => <SelectItem key={value} value={String(value)}>{value}×</SelectItem>)}</SelectContent>
       </Select>
-      <span data-player-time className='whitespace-nowrap font-mono text-xs tabular-nums'>{formatOffset(time * 1000) ?? '0:00'}{recording.durationMs === undefined ? '' : ` / ${formatOffset(recording.durationMs)}`}</span>
+      {header}
     </>} />
   </>
 }
 
 export function Player(props: PlayerProps) {
   const [speed, setSpeed] = useState(1)
-  const [zoom, setZoom] = useState(1)
+  const [magnifier, setMagnifier] = useState(false)
   const [annotationsVisible, setAnnotationsVisible] = useState(true)
   const [fullscreen, setFullscreen] = useState(false)
   const [mediaAvailable, setMediaAvailable] = useState(false)
@@ -317,18 +320,17 @@ export function Player(props: PlayerProps) {
           <ToggleGroupItem value='frames' title={PLAYER_COPY.framesTooltip} className='text-xs'>{PLAYER_COPY.frames}</ToggleGroupItem>
           <ToggleGroupItem value='video' aria-label={videoName} title={videoName} className={`text-xs${absent ? ' opacity-60' : ''}`}>{PLAYER_COPY.video}</ToggleGroupItem>
         </ToggleGroup>
-  const controls = <>{toggle}
-    <Button size='icon-sm' variant='ghost' aria-label='Zoom out' disabled={!available || zoom <= 1} onClick={() => setZoom(value => Math.max(1, value - 0.5))}><ZoomOut className='h-4 w-4' /></Button>
-    <span className='text-xs tabular-nums' aria-label='Media zoom'>{Math.round(zoom * 100)}%</span>
-    <Button size='icon-sm' variant='ghost' aria-label='Zoom in' disabled={!available || zoom >= 3} onClick={() => setZoom(value => Math.min(3, value + 0.5))}><ZoomIn className='h-4 w-4' /></Button>
+  const toolbar = <div data-player-preview-toolbar className='absolute bottom-2 right-5 z-20 flex flex-col rounded-md border bg-background/90 p-0.5 text-muted-foreground shadow-sm'>
+    <Button size='icon-sm' variant='ghost' className='h-7 w-7' aria-label={magnifier ? 'Disable magnifier' : 'Enable magnifier'} aria-pressed={magnifier}
+      disabled={!available} onClick={() => setMagnifier(value => !value)}><Search className='h-3.5 w-3.5' /></Button>
     <span title={annotationTitle} tabIndex={!hasAnnotations ? 0 : undefined} aria-label={!hasAnnotations ? annotationTitle : undefined}>
-      <Button size='icon-sm' variant='ghost' aria-label={annotationsVisible ? 'Hide annotations' : 'Show annotations'} aria-pressed={annotationsVisible}
-        disabled={!available || !hasAnnotations} onClick={() => setAnnotationsVisible(value => !value)}><Crosshair className='h-4 w-4' /></Button>
+      <Button size='icon-sm' variant='ghost' className='h-7 w-7' aria-label={annotationsVisible ? 'Hide annotations' : 'Show annotations'} aria-pressed={annotationsVisible}
+        disabled={!available || !hasAnnotations} onClick={() => setAnnotationsVisible(value => !value)}><Crosshair className='h-3.5 w-3.5' /></Button>
     </span>
-    <Button ref={fullscreenButton} size='icon-sm' variant='ghost' aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} disabled={!available && !fullscreen}
-      onClick={() => setFullscreen(value => !value)}>{fullscreen ? <Minimize2 className='h-4 w-4' /> : <Maximize2 className='h-4 w-4' />}</Button>
-  </>
-  const view = { zoom, annotationsVisible, fullscreen, onAvailability: setMediaAvailable }
+    <Button ref={fullscreenButton} size='icon-sm' variant='ghost' className='h-7 w-7' aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} disabled={!available && !fullscreen}
+      onClick={() => setFullscreen(value => !value)}>{fullscreen ? <Minimize2 className='h-3.5 w-3.5' /> : <Maximize2 className='h-3.5 w-3.5' />}</Button>
+  </div>
+  const view = { magnifier, annotationsVisible, fullscreen, onAvailability: setMediaAvailable }
   const title = marker && caption && <div data-player-caption data-frame-source-sub-action={caption.frameSourceSubAction}
         className='min-w-0 flex-1 basis-40 text-sm font-medium [overflow-wrap:anywhere] [&_[data-action-family]]:text-sm [&_[data-action-family]]:font-medium'>
         <ActionSentence sub={marker.subAction} wrap='free' />
@@ -339,16 +341,17 @@ export function Player(props: PlayerProps) {
       aria-modal={fullscreen ? true : undefined} aria-label={fullscreen ? 'Evidence media fullscreen' : undefined}
       className={fullscreen ? 'fixed inset-0 z-50 overflow-auto bg-background p-4' : undefined}>
       {source === 'video' && recording?.state === 'present' && !absent
-        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} speed={speed} setSpeed={setSpeed} recording={recording} caption={title} header={controls} view={view} />
+        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} speed={speed} setSpeed={setSpeed} recording={recording} caption={title} header={toggle} toolbar={toolbar} view={view} />
         : <>
-      <div data-player-preview className='[&>[data-artifact-state]]:pb-0'>
+      <div data-player-preview className='relative [&>[data-artifact-state]]:pb-0'>
       {source === 'frames' && <PlayerFrame key={`${runId}:${selectedFrame?.sha ?? 'none'}:${playhead?.stepIndex}:${playhead?.subActionIndex}`}
         runId={runId} frame={selectedFrame} annotation={frameAnnotation(frameOwner?.subAction)} wholeStep={!marker} embedded={view} />}
       {source === 'video' && videoView.kind === 'state' && <div className='p-3' data-artifact-state='unavailable'>
         <EvidenceState {...videoView} kind='video' />
       </div>}
+      {toolbar}
       </div>
-      <PlayerFooter timeline={props.timeline} caption={title} controls={controls} />
+      <PlayerFooter timeline={props.timeline} caption={title} controls={toggle} />
       </>}
     </section>
   )

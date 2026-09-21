@@ -30,7 +30,7 @@ runGate({ slug: '424-action-review-mutation', envPrefix: 'AGENT_QA_424_ACTION_RE
       operation: 'let portal pointerdown bubble into the rail scrub handler',
       crossing: { pkg: '@vostride/agent-qa-dashboard-ui', dir: 'packages/dashboard-ui', marker: 'review424bubble', reference: "join(PACKAGES_ROOT, 'dashboard-ui', 'dist')" },
       edits: [{ from: "aria-label='Nearby actions'\n              onPointerDown={event => event.stopPropagation()}", to: "aria-label='Nearby actions' data-review424bubble='review424bubble'" }],
-      reds: [cell('browser', browser, 'SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, zoom and fullscreen')],
+      reds: [cell('browser', browser, 'SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier and fullscreen')],
       greens: [cell('browser', browser, 'SUITE-BROWSER-ORDER: arrows cross steps and members in both directions with one boxed action'),
         cell('browser', browser, 'SUITE-BROWSER-GAPS: dense actions remain individually reachable and missing recordings stop continuation')],
       // The perceptible-cue workflow also clicks a grouped action once decoded tails

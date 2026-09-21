@@ -28,7 +28,7 @@ interface ScreenshotViewerProps {
    * does not pass this cannot produce a broken `img` by omission.
    */
   onUnavailable?: () => void
-  embedded?: { zoom: number; annotationsVisible: boolean; fullscreen: boolean; onAvailability?: (available: boolean) => void }
+  embedded?: { magnifier: boolean; annotationsVisible: boolean; fullscreen: boolean; onAvailability?: (available: boolean) => void }
 }
 
 export function ScreenshotViewer({
@@ -165,7 +165,7 @@ export function ScreenshotViewer({
   const annotationOverlays = imageLoaded && annotation && annotationsVisible && <MediaAnnotationOverlay annotation={annotation} refLabel={refLabel} renderedW={renderedW} renderedH={renderedH} offsetX={offsetX} offsetY={offsetY} />
 
   if (embedded) return <MediaViewport width={naturalSize.width} height={naturalSize.height}
-    zoom={embedded.zoom} fullscreen={embedded.fullscreen}
+    magnifier={embedded.magnifier} fullscreen={embedded.fullscreen} mediaKey={src}
     annotation={imageLoaded && embedded.annotationsVisible ? annotation ?? undefined : undefined}>
     <img src={src} alt='Step screenshot' className='h-full w-full object-contain'
       onLoad={handleImageLoad} onError={() => { setImageError(true); embedded.onAvailability?.(false); onUnavailable?.() }} />
