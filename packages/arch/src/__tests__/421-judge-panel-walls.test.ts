@@ -14,12 +14,17 @@ const read = (file: string) => readFileSync(`${root}/${file}`, 'utf8')
 const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 // Phase 421 introduced no runtime dependency or SDK change. These independently pinned
 // sets also prevent editing both package.json and ownership metadata to bless a new edge.
+// Re-blessed once since Phase 421, for the cli set only. Phase 424 plan 35, commit
+// 51a16ebc0, raised playwright-core from 1.59.1 to 1.61.0 in packages/cli, authorized by
+// Phase 424 plan 11's disposition: that release's public first-frame metadata is what the
+// local-web recording witnesses read. The cli digest below was recomputed from that tree
+// by this wall's own expression. No other pin moved and no ownership edge was widened.
 const dependencyPins = {
   eval: '3dfdd67ac8febb33dc7f7d027408677ff5f7852b02c6df15d221b5395c9b5371',
   'eval-local': '2a080fb9e46b9858ba6d8f2fb2739fa273db8d458e9ca9ed17545389c0d0216d',
   'knowledge-local': '65a609c2ac046b32cde426e3b4d7d7752dc432995c65f333f93a7c97f946ff3c',
   'agent-local': 'b2e720e8c49b10e5882523a1cffdfa8e502619dd3e1e799e1078eba3dc6d01d0',
-  cli: '35c501c849cd79e5986cff27141aa2b641c7a3fac3447cdc15be5125c50e168a',
+  cli: '0087836ed2fd263ec5e779e5a1abd44803b5787e33b2714d58037da9c8274d5b',
 }
 const internalPins: Record<string, string> = {
   eval: 'f09db8107041e27d15929be67224e779d7ecaca3b45594f7c63cee45c9c200ed',
