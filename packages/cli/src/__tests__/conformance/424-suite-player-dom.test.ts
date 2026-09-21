@@ -2,6 +2,7 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { maskedMarker, type RunDetailProjection } from '@vostride/agent-qa-schema'
+import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import type { Page } from 'playwright-core'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { recordingFixture, capture, type RecordingFixture } from './recording-dom-fixture.js'
@@ -172,11 +173,25 @@ async function lensProof(page: Page, point: { x: number; y: number }, name: stri
 
 it('SUITE-BROWSER-ORDER: arrows cross steps and members in both directions with one boxed action', async () => {
   expect(detail.members).toHaveLength(3)
+  // Arrange the historical last-member write only in this isolated fixture database.
+  // Both actual consumer pages must receive the measured sum from fresh server reads.
+  const database = new DashboardDatabase({ dbPath: join(fixture.project.root, '.agent-qa', 'runs.db') })
+  const storedDuration = database.getRun(fixture.drive.runId)!.duration
+  const executionMs = detail.members.reduce((sum, member) => sum + member.durationMs!, 0)
+  database.updateRun(fixture.drive.runId, { duration: detail.members.at(-1)!.durationMs! })
+  const seconds = executionMs / 1000
+  const executionLabel = executionMs < 1000 ? `${Math.round(executionMs)}ms`
+    : seconds < 60 ? `${Math.round(seconds * 10) / 10}s`
+      : `${Math.floor(seconds / 60)}m${Math.round(seconds % 60) ? ` ${Math.round(seconds % 60)}s` : ''}`
   const addresses = detail.subActions.map(sub => `${sub.testIndex}:${sub.stepIndex}:${sub.subActionIndex}`)
   expect(addresses.length).toBeGreaterThanOrEqual(14)
   const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {
     await ready(page)
+    const sharedRun = await fetch(`${fixture.dashboard.origin}/api/runs/${fixture.drive.runId}`).then(response => response.json()) as { run: { duration: number } }
+    expect(sharedRun.run.duration).toBeCloseTo(executionMs, 7)
+    await page.getByText(executionLabel, { exact: true }).waitFor()
+    await capture(page, 'suite-execution-duration-header')
     await page.getByRole('radio', { name: 'Frames', exact: true }).click()
     await page.getByRole('slider').press('Home')
     await page.getByRole('slider').evaluate(element => (element as HTMLElement).blur())
@@ -204,7 +219,16 @@ it('SUITE-BROWSER-ORDER: arrows cross steps and members in both directions with 
     expect(await page.locator('[data-timeline-member-span]').count()).toBe(3)
     observations.order = visit
     await capture(page, 'suite-action-box-desktop')
-  } finally { await page.close() }
+    await page.goto(`${fixture.dashboard.origin}/runs`)
+    const row = page.locator(`[data-runs-row-surface="${fixture.drive.runId}"]`)
+    await row.getByText(executionLabel, { exact: true }).waitFor()
+    await capture(page, 'suite-execution-duration-list')
+    observations.executionDuration = { measuredMembers: detail.members.map(member => member.durationMs), executionMs, executionLabel, historicalLastMember: detail.members.at(-1)!.durationMs, headerAndList: true }
+  } finally {
+    database.updateRun(fixture.drive.runId, { duration: storedDuration })
+    database.close()
+    await page.close()
+  }
 }, 120_000)
 
 it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier and fullscreen', async () => {
