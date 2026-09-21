@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
 import type { PlatformAdapter, RecordingCapability } from '@vostride/agent-qa-runner'
 import { WebPlatformAdapter } from '../adapter.js'
+import { createScreencastRecording } from '../recording.js'
 import { startLiveStreamFixturePage } from './fixtures/live-stream-fixture-page.js'
 import type { LiveStreamFixturePage } from './fixtures/live-stream-fixture-page.js'
 
@@ -101,4 +102,50 @@ it('REC-WEB-DOUBLE-START-THROWS: overlapping starts reject', async () => {
 
 it('REC-WEB-STOP-WITHOUT-START: idle stop resolves undefined', async () => {
   await expect(recording().stop()).resolves.toBeUndefined()
+})
+
+it('REC-ANNOTATION-REAL-FRAME: witnesses actual recorded-page dispatch time and observed identity pixels', async () => {
+  const capability = recording()
+  const page = adapter.getPage()!
+  await capability.start()
+  await page.waitForTimeout(350)
+  const finish = capability.beginAnnotation?.()
+  expect(finish).toBeTypeOf('function')
+  await page.waitForTimeout(120)
+  const witness = finish?.()
+  expect(witness).toMatchObject({ scene: 'recorded-page', transform: 'identity', ...page.viewportSize() })
+  expect(witness!.startMs).toBeGreaterThanOrEqual(0)
+  expect(witness!.endMs - witness!.startMs).toBeGreaterThanOrEqual(100)
+  const stale = capability.beginAnnotation?.()
+  await page.setViewportSize({ width: 600, height: 400 })
+  expect(stale?.()).toBeUndefined()
+  await page.waitForTimeout(100)
+  expect(capability.beginAnnotation?.()).toBeUndefined()
+  await capability.stop()
+  expect(capability.beginAnnotation?.()).toBeUndefined()
+})
+
+it('REC-ANNOTATION-PAGE-OWNERSHIP: page switches cannot inherit the original recording witness', async () => {
+  const capability = recording()
+  await capability.start()
+  await adapter.getPage()!.waitForTimeout(350)
+  const finish = capability.beginAnnotation?.()
+  expect(finish).toBeTypeOf('function')
+  const other = await adapter.getPage()!.context().newPage()
+  await other.goto(fixture.url)
+  await adapter.execute({ type: 'tab', action: 'switch', index: 1 })
+  expect(finish?.()).toBeUndefined()
+  expect(capability.beginAnnotation?.()).toBeUndefined()
+  await adapter.execute({ type: 'tab', action: 'switch', index: 0 })
+  expect(finish?.()).toBeUndefined()
+  await capability.stop()
+})
+
+it('REC-ANNOTATION-NONIDENTITY: custom video bounds withhold an unproven transform', async () => {
+  const capability = createScreencastRecording(() => adapter.getPage(), { enabled: true, videoDir,
+    videoSize: { width: 640, height: 360 } }, () => 0)
+  await capability.start()
+  await adapter.getPage()!.waitForTimeout(350)
+  expect(capability.beginAnnotation?.()).toBeUndefined()
+  await capability.stop()
 })

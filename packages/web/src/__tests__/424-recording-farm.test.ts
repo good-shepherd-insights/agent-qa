@@ -47,13 +47,33 @@ it('REC-FARM-CAPABILITY: farm uses the shared per-member screencast lifecycle', 
   await capability.start()
   const options = start.mock.calls[0][0]
   expect(options.size).toEqual({ width: 800, height: 600 })
-  expect(options).not.toHaveProperty('onFrame')
+  expect(options.onFrame).toBeTypeOf('function')
+  expect(capability.beginAnnotation?.()).toBeUndefined()
   expect(dirname(options.path)).toBe(videoDir)
   expect(options.path).toMatch(/[a-f0-9-]{36}\.webm$/)
   await expect(capability.stop()).resolves.toEqual({
     stagingPath: options.path, contentType: 'video/webm',
   })
   expect(stop).toHaveBeenCalledOnce()
+})
+
+it('REC-ANNOTATION-CLOCK: exact first-frame epoch maps dispatch interval and missing metadata withholds', async () => {
+  const capability = createScreencastRecording(() => page, { enabled: true, videoDir }, () => 0)
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(1000)
+  try {
+    await capability.start()
+    expect(capability.beginAnnotation?.()).toBeUndefined()
+    const onFrame = start.mock.calls[0][0].onFrame
+    // SOI + SOF0 for a measured 800x600 JPEG header.
+    const data = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 2, 88, 3, 32, 1, 1, 0x11, 0])
+    await onFrame({ data, timestamp: performance.timeOrigin + 900, viewportWidth: 800, viewportHeight: 600 })
+    const finish = capability.beginAnnotation?.()
+    clock.mockReturnValue(1040)
+    expect(finish?.()).toEqual({ startMs: 100, endMs: 140, scene: 'recorded-page', transform: 'identity', width: 800, height: 600 })
+    await onFrame({ data, timestamp: performance.timeOrigin + 1050, viewportWidth: 900, viewportHeight: 600 })
+    expect(capability.beginAnnotation?.()).toBeUndefined()
+    await capability.stop()
+  } finally { clock.mockRestore() }
 })
 
 it('REC-FARM-THROW-PROPAGATES: remote stop rejection remains a rejection', async () => {

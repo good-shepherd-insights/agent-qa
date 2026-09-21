@@ -108,7 +108,7 @@
     "ai": "6.0.174",
     "commander": "14.0.3",
     "picocolors": "1.1.1",
-    "playwright-core": "1.59.1",
+    "playwright-core": "1.61.0",
     "yaml": "2.8.4",
     "zod": "4.4.2"
   },

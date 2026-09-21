@@ -36,10 +36,13 @@ import {
   procedureSourceBinding,
   servingRecordMetadata,
   toRecordedActionResult,
+  validRecordingAnnotation,
+  validRecordedAnnotation,
 } from '@vostride/agent-qa-schema'
 import type {
   Action as SchemaAction,
   ActionAnnotation,
+  RecordingAnnotationWitness,
   ActionResult as SchemaActionResult,
   Anchor,
   AssertValueOp,
@@ -650,10 +653,14 @@ export async function executeStep(
           const resolveUpload = ports.resolveUploadPath
           actionToExecute = { ...actionForExecution, files: actionForExecution.files.map(f => resolveUpload(f)) }
         }
-        result = redactSecretValue(
-          await withAbort(ports.adapter.execute(actionToExecute), ports.abortSignal),
-          ports.secretRedactor,
-        )
+        let finishAnnotation: (() => RecordingAnnotationWitness | undefined) | undefined
+        try { finishAnnotation = ports.adapter.recording?.beginAnnotation?.() } catch { /* Optional evidence must not prevent execution. */ }
+        const executed = await withAbort(ports.adapter.execute(actionToExecute), ports.abortSignal)
+        let recordingAnnotation: RecordingAnnotationWitness | undefined
+        try { recordingAnnotation = finishAnnotation?.() } catch { /* Withhold an unproven interval. */ }
+        result = redactSecretValue({ ...executed,
+          ...(recordingAnnotation ? { recordingAnnotation } : {}),
+        }, ports.secretRedactor)
       }
       result = ports.safetyHooks?.runToolResult(result).result ?? result
     } catch (err) {
@@ -2847,8 +2854,13 @@ const ANNOTATABLE = new Set([
 function buildAnnotation(action: Action, execResult: ActionResult, viewport: Viewport, failed: boolean): ActionAnnotation | undefined {
   if (!ANNOTATABLE.has(action.type)) return undefined
   const annotation = collapseAnnotation(action, execResult, viewport)
-  if (failed && execResult.boundingBox) {
-    return { ...annotation, failureHighlight: execResult.boundingBox }
+  if (failed && execResult.boundingBox) annotation.failureHighlight = execResult.boundingBox
+  const measuredGeometry = action.type === 'drag' || action.type === 'swipe'
+    ? !!execResult.startCoordinates && !!execResult.endCoordinates
+    : action.type === 'scroll' ? !!execResult.coordinates || !!execResult.boundingBox : !!execResult.coordinates
+  if (measuredGeometry && validRecordingAnnotation(execResult.recordingAnnotation, viewport)) {
+    annotation.recording = execResult.recordingAnnotation
+    if (!validRecordedAnnotation(annotation)) delete annotation.recording
   }
   return annotation
 }

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { asRunId, EVIDENCE_ABSENCE_REASONS, RecordingEntrySchema } from '@vostride/agent-qa-schema'
 import type { SubActionRecordedPayload } from '@vostride/agent-qa-schema'
-import { createRunEventBus } from '@vostride/agent-qa-runner'
+import { createRunEventBus, createMemberEventSink, executeStep, makeScreenState } from '@vostride/agent-qa-runner'
 import { DashboardDatabase } from '../db/database.js'
 import { createDashboardSqliteDatabase } from '../db/sqlite.js'
 import { createDashboardRunIngest } from '../reporter/dashboard-subscriber.js'
@@ -53,6 +53,27 @@ function startBus() {
   bus.publish('runStarted', {})
   return { bus, ingest }
 }
+
+it('ANNOTATION-PRODUCER-COLD-READ: dispatch witness survives bus, result JSON and reopened read', async () => {
+  const { bus } = startBus()
+  const masking = { mask: (text: string) => text, unmask: (text: string) => text }
+  const witness = { startMs: 105.5, endMs: 140.25, scene: 'recorded-page' as const, transform: 'identity' as const, width: 390, height: 844 }
+  await executeStep('Click Log in', {
+    adapter: { platform: 'web', setup: async () => {}, cleanup: async () => {}, observe: async () => makeScreenState(),
+      execute: async () => ({ success: true, coordinates: { x: 40, y: 50 } }),
+      recording: { start: async () => ({}), stop: async () => undefined, beginAnnotation: () => () => witness },
+    },
+    planner: { plan: async () => ({ plan: { reasoning: 'Click', action: { type: 'click', ref: 'e2' }, confidence: 1, stepComplete: true, stepFailed: false } }) },
+    masking, events: createMemberEventSink({ bus, masking, testIndex: 0 }).loopEmitFor(0),
+  }, { stepInstruction: 'Click Log in', testName: 'Annotation', previousSteps: [],
+    plannerModel: {} as never, verifierModel: {} as never })
+  bus.publish('testFinished', { testIndex: 0, outcome: 'passed', recording })
+  db.close()
+  db = new DashboardDatabase({ dbPath })
+  const rows = await createDashboardRunDetailReader(db).read(runId)
+  expect(rows?.subActions[0]?.result.annotation?.recording).toEqual(witness)
+  expect(rows?.subActions[0]).not.toHaveProperty('recordingOffsetMs')
+})
 
 it.each([
   recording,

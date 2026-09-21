@@ -696,6 +696,8 @@ export type { RecordedActionResult } from './result/index'
 export type { VerifierVerdict, Decision } from './handoff/index'
 export type { BundleKind, FactSubtype, OriginStage } from './delta/index'
 export { toRecordedActionResult } from './result/index'
+export { validRecordingAnnotation, validRecordedAnnotation } from './result/index'
+export type { RecordingAnnotationWitness } from './result/index'
 export { computeEvidenceToken } from './ids/index'
 
 // 338 reader DTOs (PORT-03)

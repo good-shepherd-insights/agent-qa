@@ -126,6 +126,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private screencast: CDPSession | null = null
   private screencastCapability: LiveStreamCapability | null = null
   private recordingCapability: RecordingCapability | undefined
+  private recordingPageRevision = 0
   private recordingConfig: PlatformConfig['recording']
   // 403-02: the PRODUCT's frame identity, and the CDP ack token it maps to. See `liveStream`.
   private screencastFrameSeq = 0
@@ -281,6 +282,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     return this.recordingCapability ??= createScreencastRecording(
       () => this.page,
       this.recordingConfig,
+      () => this.recordingPageRevision,
     )
   }
 
@@ -718,6 +720,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
           await newPage.goto(action.url, { waitUntil: 'domcontentloaded' })
           await waitForPageReady(newPage)
           this.page = newPage
+          this.recordingPageRevision++
           return { success: true }
         }
         const pages = this.context!.pages()
@@ -739,6 +742,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
           return { success: false, error: `No tab found matching ${JSON.stringify({ index: action.index, title: action.title, url: action.url })}` }
         }
         this.page = target
+        this.recordingPageRevision++
         return { success: true }
       }
 

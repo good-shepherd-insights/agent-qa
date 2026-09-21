@@ -8,6 +8,7 @@ import type {
   LiveStreamKind,
   Platform,
   RecordingContentType,
+  RecordingAnnotationWitness,
   ScreenState,
 } from '@vostride/agent-qa-schema'
 import type { ConsoleLogEntry, NetworkLogEntry } from './result.js'
@@ -67,6 +68,8 @@ export interface RecordingStop {
 export interface RecordingCapability {
   start(): Promise<RecordingStart>
   stop(): Promise<RecordingStop | undefined>
+  /** Bracket one actual execution; completion withholds unsupported or changed scenes. */
+  beginAnnotation?(): (() => RecordingAnnotationWitness | undefined) | undefined
 }
 
 export interface PlatformAdapter<P extends Platform = Platform> {
@@ -94,6 +97,7 @@ export function assertNever(value: never): never {
 }
 
 export interface ActionResult {
+  recordingAnnotation?: RecordingAnnotationWitness
   success: boolean
   error?: string
   screenshot?: Buffer

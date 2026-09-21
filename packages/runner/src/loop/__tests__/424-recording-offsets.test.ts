@@ -5,7 +5,7 @@ import { executeStep } from '../index.js'
 import type { LoopPorts } from '../ports.js'
 import { createRunEventBus } from '../../run/bus.js'
 import { createMemberEventSink } from '../../run/event-sink.js'
-import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
+import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier, makeSafetyHooks } from './loop-harness.js'
 
 function fixture(path: 'live' | 'cache' | 'procedure' = 'live', zeroMs?: number) {
   const events: RunEventEnvelope[] = []
@@ -120,4 +120,74 @@ it('OFFSET-EQUAL-BOTH-PUBLISHED: a frozen clock retains both events in order', a
   f.ports.planner = makePlanner([makeActionPlan({ stepComplete: false }), makeActionPlan()])
   expect((await f.run()).status).toBe('passed')
   expect(f.children().map(child => [child.subActionIndex, child.recordingOffsetMs])).toEqual([[0, 25], [1, 25]])
+})
+
+it('ANNOTATION-AFTER-GATE: actual dispatch interval reaches evidence and bus without changing completion offset', async () => {
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(110)
+  const f = fixture('live', 100)
+  f.ports.safetyHooks = makeSafetyHooks({ runToolCallAsync: async call => {
+    clock.mockReturnValue(200); return { action: 'allow', call }
+  } })
+  const beginAnnotation = vi.fn(() => {
+    const startMs = performance.now() - 100
+    return () => ({ startMs, endMs: performance.now() - 100, scene: 'recorded-page' as const,
+      transform: 'identity' as const, width: 390, height: 844 })
+  })
+  f.ports.adapter = { ...f.ports.adapter, recording: {
+    start: async () => ({ zeroMs: 100 }), stop: async () => undefined, beginAnnotation,
+  }, execute: async () => { clock.mockReturnValue(240); return { success: true, coordinates: { x: 40, y: 50 } } } }
+  const result = await f.run()
+  expect(beginAnnotation).toHaveBeenCalledOnce()
+  const witness = { startMs: 100, endMs: 140, scene: 'recorded-page', transform: 'identity', width: 390, height: 844 }
+  expect(result.evidence?.subActions[0]?.result.annotation?.recording).toEqual(witness)
+  expect(f.children()[0]?.result.annotation?.recording).toEqual(witness)
+  expect(f.children()[0]?.recordingOffsetMs).toBe(140)
+})
+
+it('ANNOTATION-DENIED-ABSENT: policy denial never begins an execution witness', async () => {
+  const f = fixture()
+  const beginAnnotation = vi.fn()
+  f.ports.adapter = { ...f.ports.adapter, recording: { start: async () => ({}), stop: async () => undefined, beginAnnotation } }
+  f.ports.safetyHooks = makeSafetyHooks({ runToolCallAsync: async () => ({ action: 'deny', reason: 'denied' }) })
+  expect((await f.run()).status).toBe('failed')
+  expect(beginAnnotation).not.toHaveBeenCalled()
+  expect(f.children().every(child => child.result.annotation?.recording === undefined)).toBe(true)
+})
+
+it('ANNOTATION-RETRY-INTERVALS: failed and replanned attempts retain separate intervals', async () => {
+  const f = fixture()
+  let attempt = 0
+  f.ports.adapter = { ...f.ports.adapter, recording: { start: async () => ({}), stop: async () => undefined,
+    beginAnnotation: () => {
+      const startMs = ++attempt * 100
+      return () => ({ startMs, endMs: startMs + 30, scene: 'recorded-page', transform: 'identity', width: 390, height: 844 })
+    },
+  }, execute: async () => ({ success: attempt > 1, ...(attempt === 1 ? { error: 'temporary failure' } : {}), coordinates: { x: 40, y: 50 } }) }
+  expect((await f.run()).status).toBe('passed')
+  expect(f.children().map(child => [child.result.success, child.result.annotation?.recording?.startMs])).toEqual([[false, 100], [true, 200]])
+})
+
+it('ANNOTATION-HEAL-USES-FINAL-ATTEMPT: reground does not stretch the interval across failed dispatch', async () => {
+  const f = fixture()
+  let attempt = 0
+  f.ports.adapter = { ...f.ports.adapter, recording: { start: async () => ({}), stop: async () => undefined,
+    beginAnnotation: () => {
+      const startMs = ++attempt * 100
+      return () => ({ startMs, endMs: startMs + 20, scene: 'recorded-page', transform: 'identity', width: 390, height: 844 })
+    },
+  }, execute: async () => ({ success: attempt > 1, ...(attempt === 1 ? { error: 'Unknown ref "e2". Available refs: e1' } : {}), coordinates: { x: 40, y: 50 } }) }
+  expect((await f.run()).status).toBe('passed')
+  expect(attempt).toBe(2)
+  expect(f.children()).toHaveLength(1)
+  expect(f.children()[0]?.result.annotation?.recording).toMatchObject({ startMs: 200, endMs: 220 })
+  expect(f.children()[0]?.grounding).toBeDefined()
+})
+
+it('ANNOTATION-NO-GUESSED-GEOMETRY: missing execution coordinates never turn legacy zero points into overlays', async () => {
+  const f = fixture()
+  f.ports.adapter = { ...f.ports.adapter, recording: { start: async () => ({}), stop: async () => undefined,
+    beginAnnotation: () => () => ({ startMs: 10, endMs: 20, scene: 'recorded-page', transform: 'identity', width: 390, height: 844 }),
+  } }
+  await f.run()
+  expect(f.children()[0]?.result.annotation?.recording).toBeUndefined()
 })
