@@ -17,12 +17,13 @@ export interface TimelineProps {
   memberLabel?: string
   seekFraction?: number
   observedPosition?: number
+  mediaDurationsReady?: boolean
   onPlayheadChange: (playhead: Playhead) => void
   onSeekFraction: (fraction: number, address?: Playhead) => void
 }
 
 /** One compact scrubber; action details and evidence counts live in their respective panes. */
-export function Timeline({ model, playhead, source, memberLabel, seekFraction, observedPosition, onPlayheadChange, onSeekFraction }: TimelineProps) {
+export function Timeline({ model, playhead, source, memberLabel, seekFraction, observedPosition, mediaDurationsReady, onPlayheadChange, onSeekFraction }: TimelineProps) {
   const track = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(320)
   const [openGroup, setOpenGroup] = useState<number | null>(null)
@@ -103,7 +104,7 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
   }
   if (model.markers.length === 0 && !members?.length) return null
   return (
-    <TooltipProvider><div data-timeline data-timeline-axis={model.axis} data-timeline-member={members ? 'suite' : model.testIndex}
+    <TooltipProvider><div data-timeline data-timeline-axis={model.axis} data-timeline-member={members ? 'suite' : model.testIndex} data-media-durations-ready={mediaDurationsReady}
       className='min-w-0 px-5 py-1'>
       <div ref={track} data-timeline-track className='relative h-14 touch-none cursor-pointer'
         onPointerDown={event => {

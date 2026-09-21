@@ -27,6 +27,7 @@ afterAll(async () => {
 async function ready(page: Page) {
   await page.goto(url)
   await page.locator('[data-step-id]').first().waitFor()
+  await page.locator('[data-media-durations-ready="true"]').waitFor()
 }
 async function mediaReady(page: Page) {
   await page.waitForFunction(() => (document.querySelector('video')?.readyState ?? 0) >= 2)
@@ -158,8 +159,19 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
   try {
     await ready(page)
     await mediaReady(page)
-    const durations = detail.members.map(member => member.recording?.state === 'present' ? member.recording.durationMs! / 1000 : 0)
+    // Independently decode each actual artifact; stored monotonic durations deliberately
+    // differ from the encoded media tail and must not control presentation spans.
+    const sources = detail.members.map(member => member.recording?.state === 'present' ? `${fixture.dashboard.origin}/api/runs/${encodeURIComponent(fixture.drive.runId)}/artifacts/${member.recording.ref.sha}` : '')
+    const durations = await page.evaluate(async sources => Promise.all(sources.map(src => new Promise<number>((resolve, reject) => {
+      const media = document.createElement('video')
+      media.preload = 'metadata'
+      media.onloadedmetadata = () => { const duration = media.duration; media.removeAttribute('src'); media.load(); resolve(duration) }
+      media.onerror = () => reject(new Error('Independent metadata decode failed'))
+      media.src = src
+    }))), sources)
     expect(durations.every(duration => duration > 0)).toBe(true)
+    const stored = detail.members.map(member => member.recording?.state === 'present' ? member.recording.durationMs! / 1000 : 0)
+    expect(durations[0]! - stored[0]!).toBeGreaterThan(0.2)
     const track = page.locator('[data-timeline-track]')
     const bounds = (await track.boundingBox())!
     const target = durations[0]! + durations[1]! * 0.2
@@ -196,6 +208,19 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     expect(new Set(samples.map(sample => sample.left)).size).toBeGreaterThan(5)
     expect(samples.at(-1)!.time - samples[0]!.time).toBeGreaterThan(0.2)
     expect(await page.locator('video').getAttribute('data-seek-count')).toBe('0')
+    await page.getByRole('button', { name: 'Pause recording', exact: true }).click()
+    await seek(page, stored[0]! + 0.1)
+    await page.getByRole('button', { name: 'Play recording', exact: true }).click()
+    const tail = await page.evaluate(async () => {
+      const values = []
+      for (let index = 0; index < 4; index++) {
+        values.push({ time: document.querySelector('video')!.currentTime, left: (document.querySelector('[data-timeline-playhead]') as HTMLElement).style.left })
+        await new Promise(resolve => setTimeout(resolve, 40))
+      }
+      return values
+    })
+    expect(new Set(tail.map(sample => sample.left)).size).toBe(4)
+    expect(tail.every(sample => parseFloat(sample.left) < durations[0]! / (durations[0]! + durations[1]!) * 100)).toBe(true)
     await page.locator('video').evaluate(video => video.setAttribute('data-fullscreen-live', 'same'))
     await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click()
     expect(await page.locator('video[data-fullscreen-live="same"]').evaluate(video => !(video as HTMLVideoElement).paused)).toBe(true)
@@ -240,7 +265,7 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     await marker.focus()
     expect(await marker.getAttribute('aria-label')).toContain('Step')
     await marker.click()
-    observations.media = { durations, target, local, rates, samples, cueTimes, continuation: true }
+    observations.media = { durations, stored, tail, target, local, rates, samples, cueTimes, continuation: true }
   } finally { await page.close() }
 }, 120_000)
 

@@ -7,15 +7,17 @@ const path = require('node:path')
 const { runGate, cell } = require(path.join(process.cwd(), 'scripts/423-mutation-engine.cjs'))
 const helper = 'src/lib/__tests__/frame-annotation.test.ts'
 const browser = 'src/__tests__/conformance/424-suite-player-dom.test.ts'
+const durations = 'src/hooks/__tests__/use-recording-durations.test.tsx'
 const review = cell('helper', helper, 'VIDEO-ACTION-REVIEW uses measured midpoint and bounded labelled cue without changing execution facts')
 const controls = [
   cell('helper', helper, 'FRAME-ANNOTATION preserves all recorded geometry forms and failure bounds'),
   cell('helper', helper, 'VIDEO-ANNOTATION-BOUNDARIES refuses legacy, invalid, mismatched and outside-interval overlays'),
 ]
 runGate({ slug: '424-action-review-mutation', envPrefix: 'AGENT_QA_424_ACTION_REVIEW_MUTATION', idPrefix: 'R',
-  expectedLegs: 3, banner: 'ACTION_REVIEW_MUTATION_OK', instruments: {
+  expectedLegs: 4, banner: 'ACTION_REVIEW_MUTATION_OK', instruments: {
     helper: { pkg: 'packages/dashboard-ui', files: [helper], typecheck: false, count: 3 },
     browser: { pkg: 'packages/cli', files: [browser], typecheck: false, count: 4, env: { VITEST_MAX_WORKERS: '1' } },
+    durations: { pkg: 'packages/dashboard-ui', files: [durations], typecheck: false, count: 2 },
   }, legs: [
     { subject: 'packages/dashboard-ui/src/lib/frame-annotation.ts', instrument: 'helper', claim: 'measured action seek',
       operation: 'replace measured midpoint with legacy completion',
@@ -31,6 +33,11 @@ runGate({ slug: '424-action-review-mutation', envPrefix: 'AGENT_QA_424_ACTION_RE
       reds: [cell('browser', browser, 'SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, zoom and fullscreen')],
       greens: [cell('browser', browser, 'SUITE-BROWSER-ORDER: arrows cross steps and members in both directions with one boxed action'),
         cell('browser', browser, 'SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continued rate')], allowed: [] },
+    { subject: 'packages/dashboard-ui/src/hooks/use-recording-durations.ts', instrument: 'durations', claim: 'decoded durations govern suite presentation',
+      operation: 'keep the shorter persisted clock duration after metadata resolves',
+      edits: [{ from: 'durationMs: duration', to: 'durationMs: recording.durationMs' }],
+      reds: [cell('durations', durations, 'DECODED-SUITE batches bounded reads, caches by recording and refuses stale run completions')],
+      greens: [cell('durations', durations, 'DECODED-DURATION cleans up finite, failed and cancelled reads without guessing')], allowed: [] },
   ],
 })
 NODE

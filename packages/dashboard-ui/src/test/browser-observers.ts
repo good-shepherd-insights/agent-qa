@@ -1,4 +1,6 @@
 if (typeof window !== 'undefined') {
+  // jsdom has no media resource loader; real duration behavior is exercised in Chromium.
+  window.HTMLMediaElement.prototype.load = () => {}
   if (!window.matchMedia) {
     window.matchMedia = media => ({
       matches: false,

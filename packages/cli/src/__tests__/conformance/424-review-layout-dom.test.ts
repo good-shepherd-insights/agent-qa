@@ -249,6 +249,9 @@ it('REVIEW-VIDEO-CONTROLS: timed and ordinal long-duration controls fit at 400px
     const zoomPage = await zoomContext.newPage()
     for (const target of [page, zoomPage]) {
       await target.addInitScript(() => localStorage.setItem('agent-qa.run-detail.player-source', 'video'))
+      // This cell is explicitly a long-duration layout arrangement. The positive
+      // producer/media alignment proof lives in 424-suite-player-dom without this override.
+      await target.addInitScript(() => Object.defineProperty(HTMLMediaElement.prototype, 'duration', { configurable: true, get: () => 400_000 }))
     }
     for (const axis of ['time', 'ordinal'] as const) {
       const projection = structuredClone(detail)

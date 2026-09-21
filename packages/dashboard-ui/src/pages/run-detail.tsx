@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { useRecordingDurations } from '@/hooks/use-recording-durations'
 import { useParams, useNavigate, useSearchParams, useLocation } from "react-router"
 import { routes, arrivedOnVerdictFrom, VERDICT_ROW_CATCH_UP_MAX, VERDICT_ROW_CATCH_UP_MS } from "@/lib/routes"
 import { toast } from "sonner"
@@ -532,10 +533,11 @@ export default function RunDetailPage() {
   }, [])
 
   const memberFilter = parseMemberFilter(searchParams.get("member"))
-  const groups = useMemo(
+  const recordedGroups = useMemo(
     () => (detail ? groupRunDetail(detail) : []),
     [detail],
   )
+  const { groups, ready: mediaDurationsReady } = useRecordingDurations(recordedGroups, id ?? '')
   const visibleGroups = useMemo(() => filterGroups(groups, memberFilter), [groups, memberFilter])
   // The op's bytes and the chip word, joined to member handles. The page composes no sentence.
   const analysisView = useMemo(
@@ -1120,6 +1122,7 @@ export default function RunDetailPage() {
                 <TabPanels
                   timeline={<Timeline
                     model={suiteModel}
+                    mediaDurationsReady={mediaDurationsReady}
                     playhead={playhead}
                     source={playerSource}
                     memberLabel={suiteModel.members.length > 1 ? 'All tests' : suiteModel.members[0]?.label}
