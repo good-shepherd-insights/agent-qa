@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { RunDetailProjection } from '@vostride/agent-qa-schema'
+import { maskedMarker, type RunDetailProjection } from '@vostride/agent-qa-schema'
 import type { Page } from 'playwright-core'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { recordingFixture, capture, type RecordingFixture } from './recording-dom-fixture.js'
@@ -14,7 +14,7 @@ let detail: RunDetailProjection
 let url: string
 const observations: Record<string, unknown> = {}
 beforeAll(async () => {
-  fixture = await recordingFixture('suite-player', false, true)
+  fixture = await recordingFixture('suite-player', false, true, true)
   url = `${fixture.dashboard.origin}/runs/${encodeURIComponent(fixture.drive.runId)}`
   detail = await fetch(`${fixture.dashboard.origin}/api/runs/${encodeURIComponent(fixture.drive.runId)}/detail`).then(r => r.json()) as RunDetailProjection
 }, 360_000)
@@ -45,6 +45,48 @@ async function seek(page: Page, seconds: number) {
   }, seconds)
 }
 
+// One captured pointer, through every member and back. Identity is checked at every
+// move so a replacement track cannot pass merely by processing independent clicks.
+async function dragSuite(page: Page, durations?: number[]) {
+  const track = page.locator('[data-timeline-track]')
+  await track.evaluate(element => { (window as unknown as { dragTrack: Element }).dragTrack = element })
+  const bounds = (await track.boundingBox())!
+  const spans = await page.locator('[data-timeline-member-span]').evaluateAll(elements => elements.map(element => {
+    const style = (element as HTMLElement).style
+    return { start: parseFloat(style.left) / 100, width: parseFloat(style.width) / 100 }
+  }))
+  const centres = durations ? detail.subActions.map(action => {
+    const span = spans[action.testIndex]!
+    const witness = action.result.annotation?.recording
+    const offset = witness ? (witness.startMs + witness.endMs) / 2 : action.recordingOffsetMs!
+    return span.start + span.width * offset / 1000 / durations[action.testIndex]!
+  }) : []
+  const positions = spans.flatMap(span => {
+    const candidates = durations ? Array.from({ length: 81 }, (_, index) => (index + 10) / 100)
+      .filter(local => centres.every(centre => Math.abs(span.start + span.width * local - centre) * bounds.width > 14)) : [0.55, 0.7, 0.85]
+    expect(candidates.length, 'Three real free-time positions outside the existing 12px magnetic snap').toBeGreaterThanOrEqual(3)
+    return [candidates[0]!, candidates[Math.floor(candidates.length / 2)]!, candidates.at(-1)!]
+      .map(local => ({ fraction: span.start + span.width * local, local }))
+  })
+  const rows = []
+  await page.mouse.move(bounds.x + bounds.width * 0.03, bounds.y + 2)
+  await page.mouse.down()
+  try {
+    for (const target of [...positions, ...positions.slice().reverse()]) {
+      await page.mouse.move(bounds.x + bounds.width * target.fraction, bounds.y + 2)
+      const member = spans.findIndex(span => target.fraction >= span.start && target.fraction < span.start + span.width)
+      await expect.poll(() => page.locator('[data-sub-action][aria-selected="true"]').getAttribute('data-sub-action-id')).toMatch(new RegExp(`^${member}:`))
+      expect(await track.evaluate(element => element === (window as unknown as { dragTrack: Element }).dragTrack)).toBe(true)
+      if (durations) {
+        await mediaReady(page)
+        await expect.poll(() => page.locator('video').evaluate(video => (video as HTMLVideoElement).currentTime)).toBeCloseTo(durations[member]! * target.local, 1)
+      }
+      rows.push({ member, fraction: target.fraction, stableTrack: true })
+    }
+  } finally { await page.mouse.up() }
+  return rows
+}
+
 async function clickMarker(page: Page, ordinal: number) {
   const marker = page.locator(`[data-timeline-marker="${ordinal}"]`)
   if (await marker.count()) { await marker.click(); return }
@@ -69,6 +111,9 @@ async function lensProof(page: Page, point: { x: number; y: number }, name: stri
     return { x: rect.x + point.x / width * rect.width, y: rect.y + point.y / height * rect.height }
   }, point)
   if (await page.getByRole('button', { name: 'Enable magnifier', exact: true }).count()) await page.getByRole('button', { name: 'Enable magnifier', exact: true }).click()
+  const pressed = page.getByRole('button', { name: 'Disable magnifier', exact: true })
+  expect(await pressed.getAttribute('aria-pressed')).toBe('true')
+  expect(await pressed.evaluate(button => getComputedStyle(button).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
   await page.mouse.move(origin.x, origin.y)
   await page.locator('[data-media-lens]').waitFor({ state: 'visible' })
   const pixels = await page.locator('[data-media-lens]').evaluate((lens, origin) => {
@@ -110,7 +155,7 @@ async function lensProof(page: Page, point: { x: number; y: number }, name: stri
 }
 
 it('SUITE-BROWSER-ORDER: arrows cross steps and members in both directions with one boxed action', async () => {
-  expect(detail.members).toHaveLength(2)
+  expect(detail.members).toHaveLength(3)
   const addresses = detail.subActions.map(sub => `${sub.testIndex}:${sub.stepIndex}:${sub.subActionIndex}`)
   expect(addresses.length).toBeGreaterThanOrEqual(14)
   const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 900 } })
@@ -140,7 +185,7 @@ it('SUITE-BROWSER-ORDER: arrows cross steps and members in both directions with 
       await expect.poll(() => selected()).toBe(`${test}:${step}-${sub}`)
     }
     expect(await page.locator('[data-timeline]').count()).toBe(1)
-    expect(await page.locator('[data-timeline-member-span]').count()).toBe(2)
+    expect(await page.locator('[data-timeline-member-span]').count()).toBe(3)
     observations.order = visit
     await capture(page, 'suite-action-box-desktop')
   } finally { await page.close() }
@@ -157,12 +202,25 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier 
   for (const width of [1280, 400]) {
     const page = await fixture.browser.newPage({ viewport: { width, height: 900 } })
     try {
+      const grounding = structuredClone(detail)
+      const named = grounding.subActions.find(action => action.testIndex === sub!.testIndex && action.stepIndex === sub!.stepIndex && action.subActionIndex === sub!.subActionIndex)!
+      named.grounding = { descriptor: { role: 'button', name: `\uE001 Café 日本語 \u{F0001} ${maskedMarker('secret')}` }, attempts: [] }
+      await page.route('**/api/runs/*/detail', route => route.fulfill({ json: grounding }))
       await ready(page)
       await page.getByRole('radio', { name: 'Video', exact: true }).click()
       await mediaReady(page)
       await clickMarker(page, detail.subActions.indexOf(sub!) + 1)
       await expect.poll(() => page.locator('video').evaluate(video => (video as HTMLVideoElement).currentTime)).toBeCloseTo((witness.startMs + witness.endMs) / 2000, 3)
       await page.locator('[data-annotation="point"]').waitFor()
+      await page.getByRole('button', { name: 'Grounding', exact: true }).click()
+      const descriptor = page.locator('[data-grounding-descriptor]')
+      expect(await descriptor.textContent()).toContain('button Café 日本語')
+      expect(await descriptor.textContent()).not.toMatch(/[\uE000-\uF8FF\u{F0000}-\u{FFFFD}]/u)
+      expect(await descriptor.locator('[data-masked="secret"]').count()).toBe(1)
+      await descriptor.scrollIntoViewIfNeeded()
+      await capture(page, `grounding-circle-${width}`)
+      await page.locator('[data-player]').scrollIntoViewIfNeeded()
+
       await page.locator('video').evaluate(video => video.setAttribute('data-witness-video', 'same'))
       const layout = await page.locator('[data-player]').evaluate(player => {
         const rect = (selector: string) => player.querySelector(selector)!.getBoundingClientRect()
@@ -174,9 +232,10 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier 
         const source = player.querySelector('[data-player-controls] > :last-child')!
         const marker = player.querySelector('[data-timeline-marker-group], [data-timeline-marker]')!
         const icon = marker.querySelector('svg')!.getBoundingClientRect()
-        const stem = marker.querySelector('[data-timeline-stem]')!.getBoundingClientRect()
+        const circle = marker.querySelector('[data-timeline-circle]')!.getBoundingClientRect()
         return { thumb: { width: thumb.width, height: thumb.height }, icon: { width: icon.width, height: icon.height },
-          stemTouchesRail: Math.abs(stem.top - track.top - 16) < 1,
+          circleOnRail: Math.abs(circle.top + circle.height / 2 - track.top - 14) < 1,
+          noStems: !player.querySelector('[data-timeline-stem]'), activeMarker: !!player.querySelector('[data-timeline-active="true"]'),
           timeRight: time.left >= track.right, timeAligned: Math.abs(time.top + time.height / 2 - track.top - 14) < 2,
           sourceLast: source.getAttribute('aria-label'), toolbarWidth: toolbar.width,
           toolbarInside: toolbar.right <= preview.right && toolbar.bottom <= preview.bottom,
@@ -184,7 +243,7 @@ it('SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, magnifier 
       })
       expect(layout.thumb).toEqual({ width: 6, height: 18 })
       expect(layout.icon).toEqual({ width: 12, height: 12 })
-      expect(layout.stemTouchesRail).toBe(true)
+      expect(layout.circleOnRail && layout.noStems && layout.activeMarker).toBe(true)
       expect(layout.timeRight && layout.timeAligned && layout.toolbarInside && layout.noStepZoom).toBe(true)
       expect(layout.sourceLast).toBe('Playback source')
       expect(layout.toolbarWidth).toBeLessThanOrEqual(34)
@@ -298,8 +357,9 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     expect(durations[0]! - stored[0]!).toBeGreaterThan(0.2)
     const track = page.locator('[data-timeline-track]')
     const bounds = (await track.boundingBox())!
+    observations.continuousDrag = await dragSuite(page, durations)
     const target = durations[0]! + durations[1]! * 0.2
-    await page.mouse.click(bounds.x + bounds.width * target / (durations[0]! + durations[1]!), bounds.y + 12)
+    await page.mouse.click(bounds.x + bounds.width * target / durations.reduce((sum, value) => sum + value, 0), bounds.y + 12)
     await mediaReady(page)
     await expect.poll(() => page.locator('video').getAttribute('src')).toContain(detail.members[1]!.recording!.state === 'present' ? detail.members[1]!.recording!.ref.sha : 'missing')
     const local = await page.locator('video').evaluate(video => (video as HTMLVideoElement).currentTime)
@@ -344,7 +404,7 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
       return values
     })
     expect(new Set(tail.map(sample => sample.left)).size).toBe(4)
-    expect(tail.every(sample => parseFloat(sample.left) < durations[0]! / (durations[0]! + durations[1]!) * 100)).toBe(true)
+    expect(tail.every(sample => parseFloat(sample.left) < durations[0]! / durations.reduce((sum, value) => sum + value, 0) * 100)).toBe(true)
     await page.locator('video').evaluate(video => video.setAttribute('data-fullscreen-live', 'same'))
     await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click()
     expect(await page.locator('video[data-fullscreen-live="same"]').evaluate(video => !(video as HTMLVideoElement).paused)).toBe(true)
@@ -403,6 +463,11 @@ it('SUITE-BROWSER-GAPS: dense actions remain individually reachable and missing 
     await page.route('**/api/runs/*/detail', route => route.fulfill({ json: projection }))
     await ready(page)
     await mediaReady(page)
+    await page.setViewportSize({ width: 1280, height: 900 })
+    observations.gapDrag = await dragSuite(page)
+    await page.setViewportSize({ width: 400, height: 900 })
+    await page.getByRole('slider').press('Home')
+    await mediaReady(page)
     const group = page.locator('[data-timeline-marker-group]').first()
     await group.click()
     const choices = page.locator('[data-slot="popover-content"] [data-timeline-marker]')
@@ -417,6 +482,23 @@ it('SUITE-BROWSER-GAPS: dense actions remain individually reachable and missing 
     await page.locator('[data-evidence-kind="video"][data-evidence-state="not-captured"]').waitFor()
     expect(await page.locator('video').count()).toBe(0)
     await capture(page, 'suite-missing-recording-400')
+    // Hold one real metadata response while the same gesture crosses every member.
+    // Selection/gesture ownership must remain live even before the batch can settle.
+    await page.unroute('**/api/runs/*/detail')
+    const third = detail.members[2]!.recording!
+    if (third.state !== 'present') throw new Error('Third recording missing')
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    await page.route(`**/artifacts/${third.ref.sha}`, async route => { await held; await route.continue() })
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded' })
+      await page.locator('[data-step-id]').first().waitFor()
+      expect(await page.locator('[data-media-durations-ready="true"]').count()).toBe(0)
+      await page.setViewportSize({ width: 1280, height: 900 })
+      observations.delayedMetadataDrag = await dragSuite(page)
+    } finally { release() }
+    await page.locator('[data-media-durations-ready="true"]').waitFor()
+    await page.unroute(`**/artifacts/${third.ref.sha}`)
     // Historical completion offsets cannot substitute for the new interval and geometry.
     const historical = structuredClone(detail)
     for (const sub of historical.subActions) if (sub.result?.annotation) delete sub.result.annotation.recording

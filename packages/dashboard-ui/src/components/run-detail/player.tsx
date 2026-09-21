@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Pause, Play, Crosshair, Maximize2, Minimize2, Search } from 'lucide-react'
 import type { RecordingEntry, RunDetailArtifactRef } from '@vostride/agent-qa-schema'
 import { validRecordedAnnotation } from '@vostride/agent-qa-schema'
@@ -98,10 +99,10 @@ function addressKey(playhead: Playhead | null | undefined) {
   return playhead ? `${playhead.testIndex}:${playhead.stepIndex}:${playhead.subActionIndex}` : ''
 }
 
-function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, seekRevision, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded, autoPlay, speed, setSpeed, isTimelineKeyIgnored, timeline, caption, header, toolbar, view }: PlayerProps & {
+function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, seekRevision, onPlayheadChange, onPlayheadObserved, onProgress, onRecordingEnded, autoPlay, speed, setSpeed, isTimelineKeyIgnored, readoutHost, transportHost, toolbar, view }: PlayerProps & {
   recording: Extract<RecordingEntry, { state: 'present' }>
-  caption: ReactNode
-  header: ReactNode
+  readoutHost: HTMLElement | null
+  transportHost: HTMLElement | null
   toolbar: ReactNode
   speed: number
   setSpeed: (speed: number) => void
@@ -246,8 +247,8 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
       </MediaViewport>}
       {toolbar}
     </div>
-    <PlayerFooter timeline={timeline} caption={caption} note={model.axis === 'ordinal' ? VIDEO_UNTIMED_NOTE : undefined}
-      readout={<span data-player-time className='mt-2.5 shrink-0 whitespace-nowrap font-mono text-xs leading-4 tabular-nums'>{formatOffset(time * 1000) ?? '0:00'}{recording.durationMs === undefined ? '' : ` / ${formatOffset(recording.durationMs)}`}</span>} controls={<>
+    {readoutHost && createPortal(<span data-player-time className='mt-2.5 shrink-0 whitespace-nowrap font-mono text-xs leading-4 tabular-nums'>{formatOffset(time * 1000) ?? '0:00'}{recording.durationMs === undefined ? '' : ` / ${formatOffset(recording.durationMs)}`}</span>, readoutHost)}
+    {transportHost && createPortal(<>
       <Button size='icon-sm' variant='ghost' aria-label={playing ? PLAYER_COPY.pause : PLAYER_COPY.play} disabled={!ready}
         onClick={togglePlayback}>
         {playing ? <Pause className='h-4 w-4' /> : <Play className='h-4 w-4' />}
@@ -261,8 +262,7 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
         <SelectTrigger aria-label={PLAYER_COPY.speed} size='sm' className='w-20 shrink-0'><SelectValue /></SelectTrigger>
         <SelectContent>{PLAYBACK_SPEEDS.map(value => <SelectItem key={value} value={String(value)}>{value}×</SelectItem>)}</SelectContent>
       </Select>
-      {header}
-    </>} />
+    </>, transportHost)}
   </>
 }
 
@@ -272,6 +272,8 @@ export function Player(props: PlayerProps) {
   const [annotationsVisible, setAnnotationsVisible] = useState(true)
   const [fullscreen, setFullscreen] = useState(false)
   const [mediaAvailable, setMediaAvailable] = useState(false)
+  const [readoutHost, setReadoutHost] = useState<HTMLSpanElement | null>(null)
+  const [transportHost, setTransportHost] = useState<HTMLSpanElement | null>(null)
   const section = useRef<HTMLElement>(null)
   const fullscreenButton = useRef<HTMLButtonElement>(null)
   useEffect(() => {
@@ -321,7 +323,7 @@ export function Player(props: PlayerProps) {
           <ToggleGroupItem value='video' aria-label={videoName} title={videoName} className={`text-xs${absent ? ' opacity-60' : ''}`}>{PLAYER_COPY.video}</ToggleGroupItem>
         </ToggleGroup>
   const toolbar = <div data-player-preview-toolbar className='absolute bottom-2 right-5 z-20 flex flex-col rounded-md border bg-background/90 p-0.5 text-muted-foreground shadow-sm'>
-    <Button size='icon-sm' variant='ghost' className='h-7 w-7' aria-label={magnifier ? 'Disable magnifier' : 'Enable magnifier'} aria-pressed={magnifier}
+    <Button size='icon-sm' variant='ghost' className={`h-7 w-7${magnifier ? ' bg-primary/15 text-primary ring-1 ring-inset ring-primary/40' : ''}`} aria-label={magnifier ? 'Disable magnifier' : 'Enable magnifier'} aria-pressed={magnifier}
       disabled={!available} onClick={() => setMagnifier(value => !value)}><Search className='h-3.5 w-3.5' /></Button>
     <span title={annotationTitle} tabIndex={!hasAnnotations ? 0 : undefined} aria-label={!hasAnnotations ? annotationTitle : undefined}>
       <Button size='icon-sm' variant='ghost' className='h-7 w-7' aria-label={annotationsVisible ? 'Hide annotations' : 'Show annotations'} aria-pressed={annotationsVisible}
@@ -341,18 +343,20 @@ export function Player(props: PlayerProps) {
       aria-modal={fullscreen ? true : undefined} aria-label={fullscreen ? 'Evidence media fullscreen' : undefined}
       className={fullscreen ? 'fixed inset-0 z-50 overflow-auto bg-background p-4' : undefined}>
       {source === 'video' && recording?.state === 'present' && !absent
-        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} speed={speed} setSpeed={setSpeed} recording={recording} caption={title} header={toggle} toolbar={toolbar} view={view} />
-        : <>
-      <div data-player-preview className='relative [&>[data-artifact-state]]:pb-0'>
+        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} speed={speed} setSpeed={setSpeed} recording={recording} readoutHost={readoutHost} transportHost={transportHost} toolbar={toolbar} view={view} />
+        : <div data-player-preview className='relative [&>[data-artifact-state]]:pb-0'>
       {source === 'frames' && <PlayerFrame key={`${runId}:${selectedFrame?.sha ?? 'none'}:${playhead?.stepIndex}:${playhead?.subActionIndex}`}
         runId={runId} frame={selectedFrame} annotation={frameAnnotation(frameOwner?.subAction)} wholeStep={!marker} embedded={view} />}
       {source === 'video' && videoView.kind === 'state' && <div className='p-3' data-artifact-state='unavailable'>
         <EvidenceState {...videoView} kind='video' />
       </div>}
       {toolbar}
-      </div>
-      <PlayerFooter timeline={props.timeline} caption={title} controls={toggle} />
-      </>}
+      </div>}
+      {/* The gesture owner stays outside member-keyed media, including absent/source transitions. */}
+      <PlayerFooter timeline={props.timeline} caption={title}
+        note={source === 'video' && recording?.state === 'present' && !absent && model.axis === 'ordinal' ? VIDEO_UNTIMED_NOTE : undefined}
+        readout={<span ref={setReadoutHost} className={source === 'video' ? 'flex w-[13ch] shrink-0 font-mono text-xs' : 'contents'} />}
+        controls={<><span ref={setTransportHost} className='contents' />{toggle}</>} />
     </section>
   )
 }

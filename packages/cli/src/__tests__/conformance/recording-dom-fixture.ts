@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { parse, stringify } from 'yaml'
+import { generateTestId } from '@vostride/agent-qa-ids'
 import { chromium, type Browser, type Page } from 'playwright-core'
 import {
   POPULATED_RUN_ANCHORED_BUILDS, RUN_BUDGET_MS, drivePopulatedRun,
@@ -22,7 +23,7 @@ export interface RecordingFixture {
   close(): Promise<void>
 }
 
-export async function recordingFixture(label: string, recordingOff = false, layout = false): Promise<RecordingFixture> {
+export async function recordingFixture(label: string, recordingOff = false, layout = false, thirdMember = false): Promise<RecordingFixture> {
   if (process.platform === 'win32') throw new Error('POSIX dashboard lifecycle required; never skip')
   if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Node 24 or newer required')
   const executable = chromium.executablePath()
@@ -119,6 +120,18 @@ export async function recordingFixture(label: string, recordingOff = false, layo
       const test = parse(readFileSync(path, 'utf8'))
       test.steps = Array.from({ length: 6 }, (_, index) => `Fill Credential then click Acknowledge for round ${index + 1}`)
       writeFileSync(path, stringify(test))
+    }
+    if (thirdMember) {
+      const test = parse(readFileSync(join(project.root, project.testPath), 'utf8'))
+      test['test-id'] = generateTestId()
+      test.name = 'The third recording probe'
+      test.steps = ['Fill Credential then click Acknowledge']
+      const path = 'tests/third-recording.yaml'
+      writeFileSync(join(project.root, path), stringify(test))
+      const suitePath = join(project.root, project.suitePath)
+      const suite = parse(readFileSync(suitePath, 'utf8'))
+      suite.tests.push({ test: path, id: test['test-id'] })
+      writeFileSync(suitePath, stringify(suite))
     }
     if (recordingOff) {
       const config = JSON.parse(readFileSync(project.configPath, 'utf8'))
