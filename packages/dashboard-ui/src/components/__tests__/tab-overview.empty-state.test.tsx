@@ -11,7 +11,7 @@ import { fromRunDetailStep } from "@/lib/display-step"
 import { routes } from "@/lib/routes"
 import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
 import type { ArtifactRef, RunDetailSubAction } from "@vostride/agent-qa-schema"
-import { asRef } from "@vostride/agent-qa-schema"
+import { asRef, maskedMarker } from "@vostride/agent-qa-schema"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -23,9 +23,6 @@ vi.mock("@/components/screenshot-viewer", () => ({
   ),
 }))
 
-vi.mock("@/components/reasoning-pipeline", () => ({
-  ReasoningPipeline: () => <div data-testid="reasoning-pipeline" />,
-}))
 
 const SHA = "a1b2c3d4".repeat(8)
 
@@ -90,6 +87,20 @@ afterEach(() => {
 })
 
 describe("TabOverview screenshot states", () => {
+  it("cleans icon glyphs from grounding display without changing Unicode or stored evidence", async () => {
+    const sub = makeSubAction([])
+    const name = `\uE001 Café 日本語 \u{F0001} ${maskedMarker("secret")}`
+    sub.grounding = { descriptor: { role: "button", name }, attempts: [] }
+    const view = await renderOverview(sub)
+    const grounding = Array.from(view.querySelectorAll("button")).find(button => button.textContent?.includes("Grounding"))!
+    await act(async () => grounding.click())
+    const rendered = view.querySelector("[data-grounding-descriptor]")!
+    expect(rendered.textContent).toContain("button Café 日本語")
+    expect(rendered.textContent).not.toMatch(/[\uE000-\uF8FF\u{F0000}-\u{FFFFD}]/u)
+    expect(rendered.querySelector('[data-masked="secret"]')).not.toBeNull()
+    expect(sub.grounding.descriptor.name).toBe(name)
+  })
+
   it("shows pending copy while a screenshot is still expected", async () => {
     const view = await renderOverview(null, "pending")
 

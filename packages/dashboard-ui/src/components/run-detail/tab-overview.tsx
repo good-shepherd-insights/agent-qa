@@ -5,6 +5,7 @@ import type { SectionDef, ReasoningPipelineHandle } from "@/components/reasoning
 import { MaskedText } from "@/components/run-detail/masked-text"
 import type { DisplayStep } from "@/lib/display-step"
 import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
+import { displayTargetName } from "@/lib/action-vocabulary"
 
 import { Player, type PlayerProps } from "./player"
 
@@ -96,7 +97,7 @@ function buildSubActionSections(sub: RunDetailSubAction): SectionDef[] {
 
   if (sub.grounding !== undefined) {
     const { role, name } = sub.grounding.descriptor
-    const descriptor = [role, name].filter((part) => part !== undefined && part !== "").join(" ")
+    const descriptor = [role, name === undefined ? undefined : displayTargetName(name)].filter((part) => part !== undefined && part !== "").join(" ")
     if (descriptor !== "") {
       sections.push({
         key: "grounding",

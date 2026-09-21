@@ -37,7 +37,7 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
     return () => observer.disconnect()
   }, [])
   const slider = useRef<HTMLSpanElement>(null)
-  const dragging = useRef<number | null>(null)
+  const dragging = useRef<{ pointerId: number; startX: number; moved: boolean; group?: number } | null>(null)
   const current = model.markers.find(marker => marker.testIndex === playhead?.testIndex
     && marker.stepIndex === playhead.stepIndex && marker.subActionIndex === playhead.subActionIndex)
   const videoPosition = observedPosition ?? seekFraction
@@ -61,9 +61,21 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
       onSeekFraction(fraction)
     }
   }
+  function beginDrag(event: PointerEvent<HTMLElement>, marker?: TimelineMarker, group?: number) {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    slider.current?.focus({ preventScroll: true })
+    dragging.current = { pointerId: event.pointerId, startX: event.clientX, moved: false, group }
+    track.current!.setPointerCapture(event.pointerId)
+    if (marker) activate(marker)
+    else if (group === undefined) scrub(event.clientX)
+  }
   function finishDrag(event: PointerEvent<HTMLDivElement>) {
-    if (dragging.current !== event.pointerId) return
+    const gesture = dragging.current
+    if (gesture?.pointerId !== event.pointerId) return
     dragging.current = null
+    if (event.type === 'pointerup' && gesture.group !== undefined && !gesture.moved) setOpenGroup(value => value === gesture.group ? null : gesture.group!)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
   function navigate(event: KeyboardEvent<HTMLSpanElement>) {
@@ -105,16 +117,14 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
   return (
     <div data-timeline data-timeline-axis={model.axis} data-timeline-member={members ? 'suite' : model.testIndex} data-media-durations-ready={mediaDurationsReady}
       className='min-w-0 flex-1 px-5 py-1'>
-      <div ref={track} data-timeline-track className='relative h-14 touch-none cursor-pointer'
-        onPointerDown={event => {
-          if (event.button !== 0) return
-          event.preventDefault()
-          slider.current?.focus({ preventScroll: true })
-          dragging.current = event.pointerId
-          event.currentTarget.setPointerCapture(event.pointerId)
-          scrub(event.clientX)
+      <div ref={track} data-timeline-track className='relative h-7 touch-none cursor-pointer'
+        onPointerDown={event => beginDrag(event)}
+        onPointerMove={event => {
+          const gesture = dragging.current
+          if (gesture?.pointerId !== event.pointerId) return
+          if (Math.abs(event.clientX - gesture.startX) > 3) gesture.moved = true
+          if (gesture.group === undefined || gesture.moved) scrub(event.clientX)
         }}
-        onPointerMove={event => { if (dragging.current === event.pointerId) scrub(event.clientX) }}
         onPointerUp={finishDrag} onPointerCancel={finishDrag}
         onLostPointerCapture={() => { dragging.current = null }}>
         <div aria-hidden='true' className='absolute inset-x-0 top-3 h-1 rounded-full bg-muted' />
@@ -130,21 +140,23 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
             aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((position ?? 0) * 100)}
             aria-valuetext={current ? timelineValueText(current, model.markers.length) : 'No actions recorded for this test'}
             style={{ left: `${(position ?? current?.position ?? 0) * 100}%` }}
-            className='absolute top-[5px] h-[18px] w-1.5 -translate-x-1/2 rounded-full bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring' />
+            className='pointer-events-none absolute top-[5px] z-10 h-[18px] w-1.5 -translate-x-1/2 rounded-full bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring' />
         </>}
         {clusters.map(cluster => {
           const marker = cluster[0]!
           const family = buildActionSentence(marker.subAction).family
           const Icon = family ? ACTION_FAMILY_ICONS[family] : UNKNOWN_ACTION_ICON
           const style = { left: `clamp(14px, ${marker.position * 100}%, calc(100% - 14px))` }
-          const classes = 'absolute top-7 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring'
-          const stem = <span data-timeline-stem aria-hidden='true' className='pointer-events-none absolute -top-3 left-1/2 h-5 w-px -translate-x-1/2 bg-muted-foreground/30' />
-          return cluster.length === 1 ? <button key={marker.ordinal} type='button' data-timeline-marker={marker.ordinal} style={style} className={classes}
+          const active = cluster.some(entry => entry === current)
+          const classes = 'absolute top-0 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-ring'
+          const circle = `flex h-5 w-5 items-center justify-center rounded-full border ${active ? 'border-primary/60 bg-primary/15 text-primary' : 'border-muted-foreground/30 bg-background text-muted-foreground hover:bg-muted'}`
+          return cluster.length === 1 ? <button key={marker.ordinal} type='button' data-timeline-marker={marker.ordinal} data-timeline-active={active || undefined} aria-current={active ? 'step' : undefined} style={style} className={classes}
               aria-label={copyTextOf(`${context(marker)}: ${timelineValueText(marker, model.markers.length)}`)}
-              onPointerDown={event => event.stopPropagation()} onClick={() => activate(marker)}>{stem}<Icon aria-hidden='true' className='h-3 w-3' /></button>
+              onPointerDown={event => beginDrag(event, marker)} onClick={event => { if (event.detail === 0) activate(marker) }}><span data-timeline-circle className={circle}><Icon aria-hidden='true' className='h-3 w-3' /></span></button>
             : <Popover key={marker.ordinal} open={openGroup === marker.ordinal} onOpenChange={open => setOpenGroup(open ? marker.ordinal : null)}>
-            <PopoverTrigger asChild><button type='button' data-timeline-marker-group style={style} className={classes}
-              aria-label={`Choose from ${cluster.length} nearby actions`} onPointerDown={event => event.stopPropagation()}>{stem}<Layers aria-hidden='true' className='h-3 w-3' /></button></PopoverTrigger>
+            <PopoverTrigger asChild><button type='button' data-timeline-marker-group data-timeline-active={active || undefined} aria-current={active ? 'step' : undefined} style={style} className={classes}
+              aria-label={`Choose from ${cluster.length} nearby actions`} onPointerDown={event => beginDrag(event, undefined, marker.ordinal)}
+              onClick={event => { if (event.detail > 0) event.preventDefault() }}><span data-timeline-circle className={circle}><Layers aria-hidden='true' className='h-3 w-3' /></span></button></PopoverTrigger>
             <PopoverContent className='max-h-64 w-80 overflow-y-auto p-1' aria-label='Nearby actions'
               onPointerDown={event => event.stopPropagation()}>
               {cluster.map(entry => <button key={entry.ordinal} type='button' data-timeline-marker={entry.ordinal} className='block w-full rounded p-2 text-left hover:bg-muted'
@@ -154,11 +166,10 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
         })}
         {members?.filter(member => member.model.markers.length === 0).map(member => <button key={`empty-${member.model.testIndex}`} type='button' data-timeline-empty-member={member.model.testIndex}
             aria-label={copyTextOf(`${member.label}: No actions recorded`)}
-            className='absolute top-7 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-md hover:bg-muted'
+            className='absolute top-0 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-ring'
             style={{ left: `${(member.start + member.end) * 50}%` }}
-            onPointerDown={event => event.stopPropagation()} onClick={() => onSeekFraction((member.start + member.end) / 2)}>
-            <span data-timeline-stem aria-hidden='true' className='pointer-events-none absolute -top-3 left-1/2 h-5 w-px bg-muted-foreground/30' />
-            <CircleSlash aria-hidden='true' className='h-3 w-3 text-muted-foreground' />
+            onPointerDown={event => beginDrag(event)} onClick={event => { if (event.detail === 0) onSeekFraction((member.start + member.end) / 2) }}>
+            <span data-timeline-circle className='flex h-5 w-5 items-center justify-center rounded-full border border-muted-foreground/30 bg-background'><CircleSlash aria-hidden='true' className='h-3 w-3 text-muted-foreground' /></span>
           </button>)}
       </div>
     </div>
