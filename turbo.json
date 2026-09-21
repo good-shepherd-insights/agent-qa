@@ -11,6 +11,10 @@
     "test": {
       "dependsOn": ["build"]
     },
+    "@vostride/agent-qa-arch#test": {
+      "dependsOn": ["build"],
+      "cache": false
+    },
     "lint": {},
     "lint:namespace": {
       "cache": false
