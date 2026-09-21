@@ -147,7 +147,8 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
           </Tooltip> : <Popover key={marker.ordinal} open={openGroup === marker.ordinal} onOpenChange={open => setOpenGroup(open ? marker.ordinal : null)}>
             <PopoverTrigger asChild><button type='button' data-timeline-marker-group style={style} className={classes}
               aria-label={`Choose from ${cluster.length} nearby actions`} onPointerDown={event => event.stopPropagation()}><Layers aria-hidden='true' className='h-4 w-4' /></button></PopoverTrigger>
-            <PopoverContent className='max-h-64 w-80 overflow-y-auto p-1' aria-label='Nearby actions'>
+            <PopoverContent className='max-h-64 w-80 overflow-y-auto p-1' aria-label='Nearby actions'
+              onPointerDown={event => event.stopPropagation()}>
               {cluster.map(entry => <button key={entry.ordinal} type='button' data-timeline-marker={entry.ordinal} className='block w-full rounded p-2 text-left hover:bg-muted'
                 onClick={() => activate(entry)}><span className='text-xs'><MaskedText text={context(entry)} /></span><ActionSentence sub={entry.subAction} /></button>)}
             </PopoverContent>

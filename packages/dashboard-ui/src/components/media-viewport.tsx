@@ -3,11 +3,12 @@ import type { StepAnnotation } from '@/lib/api'
 import { MediaAnnotationOverlay } from './media-annotation-overlay'
 
 /** One measured contain rectangle for both media and overlays, including zoom and fullscreen. */
-export function MediaViewport({ children, width, height, annotation, zoom = 1, fullscreen = false }: {
+export function MediaViewport({ children, width, height, annotation, annotationLabel, zoom = 1, fullscreen = false }: {
   children: ReactNode
   width: number
   height: number
   annotation?: StepAnnotation
+  annotationLabel?: string
   zoom?: number
   fullscreen?: boolean
 }) {
@@ -36,5 +37,6 @@ export function MediaViewport({ children, width, height, annotation, zoom = 1, f
         {annotation && scale > 0 && <MediaAnnotationOverlay annotation={annotation} renderedW={w} renderedH={h} />}
       </div>
     </div>
+    {annotationLabel && <span data-video-action-cue className='sticky bottom-1 left-1 inline-block rounded bg-background/90 px-2 py-1 text-xs'>{annotationLabel}</span>}
   </div>
 }

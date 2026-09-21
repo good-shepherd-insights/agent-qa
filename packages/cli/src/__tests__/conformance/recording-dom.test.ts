@@ -66,7 +66,7 @@ describe('recording and parent selection on the shipped bundle (424-29)', () => 
         const image = document.querySelector<HTMLImageElement>('[data-artifact-state="available"] img')
         return {
           selected: row.getAttribute('aria-selected'), childCount: children.length,
-          sliderMatchesAction: slider?.getAttribute('aria-valuenow') === String(children.length),
+          sliderMatchesAction: slider?.getAttribute('aria-valuetext')?.includes(`sub-action ${children.length} of ${children.length}`) === true,
           caption: document.querySelector('[data-player-caption]')?.textContent ?? '',
           image: image?.src ?? '', answered: !!image?.complete && image.naturalWidth > 0,
           latestFrame: current === children.at(-1),

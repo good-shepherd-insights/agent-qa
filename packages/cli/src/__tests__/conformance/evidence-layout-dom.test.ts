@@ -20,7 +20,7 @@ let fixture: RecordingFixture | undefined
 let reader: Awaited<ReturnType<typeof spawnDashboard>> | undefined
 let zoomContext: BrowserContext | undefined
 let zoom: { factor: number; beforeWidth: number; afterWidth: number; beforeDpr: number; afterDpr: number } | undefined
-let timeline: { box: Box; track: Box; thumb: Box; text: string; decorations: number; inOverview: boolean; actionCount: number } | undefined
+let timeline: { box: Box; track: Box; thumb: Box; text: string; markers: number; signals: number; inOverview: boolean; percentageMax: number; context: string } | undefined
 const tabs: Array<{ width: number; document: number; viewport: number; scroll: number; client: number; moved: number; triggers: Array<{ box: Box; count?: Box; contentFits: boolean }> }> = []
 const lightboxes: Array<{ width: number; document: number; viewport: number; height: number; image: Box; dialog: Box; close: Box; notePadding: string[]; loaded: boolean }> = []
 let notice: { dismiss: Box; viewport: number; explanation: Box; pane: Box; lines: number; textWidth: number; font: string; totalTextWidth: number; message: string; text: Box; lineBoxes: Box[]; icon: Box } | undefined
@@ -97,8 +97,10 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
         const box = (element: Element) => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
         const slider = timeline.querySelector('[role="slider"]')!
         return { box: box(timeline), track: box(timeline.querySelector('[data-timeline-track]')!), thumb: box(slider),
-          text: timeline.textContent ?? '', decorations: timeline.querySelectorAll('svg, [data-step-signal], [data-timeline-marker], [data-timeline-segment], [data-timeline-readout]').length,
-          inOverview: !!timeline.closest('[data-overview]'), actionCount: Number(slider.getAttribute('aria-valuemax')),
+          text: timeline.textContent ?? '', markers: timeline.querySelectorAll('[data-timeline-marker], [data-timeline-marker-group]').length,
+          signals: timeline.querySelectorAll('[data-step-signal], [data-timeline-readout]').length,
+          inOverview: !!timeline.closest('[data-overview]'), percentageMax: Number(slider.getAttribute('aria-valuemax')),
+          context: slider.getAttribute('aria-valuetext') ?? '',
         }
       })
       await capture(page, 'timeline-400')
@@ -237,11 +239,13 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
     expect(timeline, JSON.stringify(failures)).toBeDefined()
     expect(timeline!.inOverview).toBe(true)
     expect(timeline!.text).toBe('')
-    expect(timeline!.decorations).toBe(0)
-    expect(timeline!.box.height).toBeLessThanOrEqual(36)
+    expect(timeline!.markers).toBeGreaterThan(0)
+    expect(timeline!.signals).toBe(0)
+    expect(timeline!.box.height).toBeLessThanOrEqual(64)
     expect(inside(timeline!.track, timeline!.box)).toBe(true)
     expect(inside(timeline!.thumb, timeline!.box)).toBe(true)
-    expect(timeline!.actionCount).toBeGreaterThanOrEqual(6)
+    expect(timeline!.percentageMax).toBe(100)
+    expect(timeline!.context).toMatch(/sub-action \d+ of 14/)
   })
   it('LAYOUT-TAB-STRIP-400-AND-ZOOM', () => {
     expect(tabs.length, JSON.stringify(failures)).toBe(3)

@@ -12,7 +12,7 @@ import { formatOffset, frameUsable, type PlayerSource, type Playhead, type Timel
 import { captionModel, mediaErrorView, PLAYER_COPY, PLAYBACK_SPEEDS, storePlayerSource, VIDEO_UNTIMED_NOTE } from '@/lib/player-view'
 import { routes } from '@/lib/routes'
 import { probeMediaError } from '@/lib/media-error-probe'
-import { frameAnnotation, videoAnnotation } from '@/lib/frame-annotation'
+import { frameAnnotation, videoActionOffset, videoActionCue } from '@/lib/frame-annotation'
 import { MediaViewport } from '@/components/media-viewport'
 import type { StepAnnotation } from '@/lib/api'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
@@ -118,8 +118,9 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
   const [attempt, setAttempt] = useState(0)
   const url = routes.runArtifact(runId, recording.ref.sha)
   const marker = model.markers.find(candidate => addressKey(candidate) === addressKey(playhead))
-  const offset = marker?.recordingOffsetMs
+  const offset = marker ? videoActionOffset(marker.subAction) : undefined
   const key = addressKey(playhead)
+  const cue = view.annotationsVisible ? videoActionCue(model.markers.map(candidate => candidate.subAction), time * 1000, dimensions.width, dimensions.height) : undefined
 
   useEffect(() => {
     const facade = media ?? element.current
@@ -141,8 +142,8 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
       setTime(facade.currentTime)
       latest.current.onProgress?.(latest.current.model.testIndex, facade.currentTime)
       if (facade.paused || latest.current.model.axis !== 'time') return
-      const current = latest.current.model.markers.filter(candidate => candidate.recordingOffsetMs! <= facade.currentTime * 1000)
-        .reduce<typeof marker>((last, candidate) => !last || candidate.recordingOffsetMs! >= last.recordingOffsetMs! ? candidate : last, undefined)
+      const current = latest.current.model.markers.filter(candidate => videoActionOffset(candidate.subAction)! <= facade.currentTime * 1000)
+        .reduce<typeof marker>((last, candidate) => !last || videoActionOffset(candidate.subAction)! >= videoActionOffset(last.subAction)! ? candidate : last, undefined)
       if (!current || addressKey(current) === addressKey(latest.current.playhead) || addressKey(current) === followed.current) return
       followed.current = addressKey(current)
       const observe = latest.current.onPlayheadObserved ?? latest.current.onPlayheadChange
@@ -224,7 +225,7 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, s
       {error ? <EvidenceState {...error} kind='video' onAction={() => {
         setError(undefined); setReady(false); setPlaying(false); followed.current = ''; setAttempt(value => value + 1)
       }} /> : <MediaViewport {...dimensions} zoom={view.zoom} fullscreen={view.fullscreen}
-        annotation={view.annotationsVisible ? model.markers.map(candidate => videoAnnotation(candidate.subAction, time * 1000, dimensions.width, dimensions.height)).find(Boolean) : undefined}>
+        annotation={cue?.annotation} annotationLabel={cue?.recent ? 'Last recorded action' : undefined}>
         <video key={attempt} ref={element} src={url} preload='metadata' muted playsInline className='h-full w-full object-contain' />
       </MediaViewport>}
     </div>

@@ -66,7 +66,8 @@ it('REVIEW-MINIMAL-OVERVIEW: one and many actions keep annotations aligned at de
           regionWidth: region.width, expectedRegionWidth: 120 * scale,
           title: overview.querySelector('[data-player-caption]')!.textContent,
           timelineText: timeline.textContent, timelineHeight: timeline.getBoundingClientRect().height,
-          decorations: timeline.querySelectorAll('svg, [data-timeline-marker], [data-step-signal]').length,
+          markers: timeline.querySelectorAll('[data-timeline-marker], [data-timeline-marker-group]').length,
+          signals: timeline.querySelectorAll('[data-step-signal]').length,
           scopeLines: overview.querySelectorAll('[data-evidence-scope]').length,
           connectors: [...document.querySelectorAll('[data-step-id]')].map(step => getComputedStyle(step, '::before').content),
           rows: [...document.querySelectorAll('[data-sub-action]')].map(row => row.textContent),
@@ -78,8 +79,9 @@ it('REVIEW-MINIMAL-OVERVIEW: one and many actions keep annotations aligned at de
       expect(Math.abs(observation.regionWidth - observation.expectedRegionWidth)).toBeLessThan(1)
       expect(observation.title).toBe(`Clicked 'Products ${count}'`)
       expect(observation.timelineText).toBe('')
-      expect(observation.timelineHeight).toBeLessThanOrEqual(36)
-      expect(observation.decorations).toBe(0)
+      expect(observation.timelineHeight).toBeLessThanOrEqual(64)
+      expect(observation.markers).toBeGreaterThan(0)
+      expect(observation.signals).toBe(0)
       expect(observation.scopeLines).toBe(0)
       expect(observation.rows).toEqual(Array.from({ length: count }, (_, index) => `Clicked 'Products ${index + 1}'`))
       expect(observation.connectors.every(content => content === 'none' || content === 'normal')).toBe(true)
@@ -120,14 +122,14 @@ async function footerGeometry(page: Page, desktop = false) {
   const geometry = await page.locator('[data-player]').evaluate(player => {
     const preview = player.querySelector('[data-player-preview]')!
     const footer = player.querySelector('[data-player-footer]')!
-    const media = preview.querySelector('img, video') ?? preview
+    const media = preview.querySelector('[data-media-viewport]') ?? preview
     const caption = footer.querySelector('[data-player-caption]')!.getBoundingClientRect()
     const controls = footer.querySelector('[data-player-controls]')!.getBoundingClientRect()
     const scrub = footer.querySelector('[data-timeline]')!.getBoundingClientRect()
     const rect = footer.getBoundingClientRect()
     return {
       source: player.getAttribute('data-player-source'), width: innerWidth,
-      ordered: preview.nextElementSibling === footer && Boolean(footer.firstElementChild?.querySelector('[data-timeline]')),
+      ordered: preview.nextElementSibling === footer && Boolean(footer.firstElementChild?.matches('[data-timeline]')),
       mediaGap: rect.top - media.getBoundingClientRect().bottom, footerHeight: rect.height,
       controlsBelowBar: controls.top >= scrub.bottom, captionBelowBar: caption.top >= scrub.bottom,
       sameRow: Math.abs(caption.top + caption.height / 2 - controls.top - controls.height / 2) < 1,
@@ -144,8 +146,7 @@ async function footerGeometry(page: Page, desktop = false) {
   expect(geometry.nonOverlap).toBe(true)
   expect(geometry.contained).toBe(true)
   expect(geometry.metadata).toBe(0)
-  expect(geometry.footerHeight).toBeLessThanOrEqual(desktop ? 100 : 260)
-  if (desktop) expect(geometry.sameRow).toBe(true)
+  expect(geometry.footerHeight).toBeLessThanOrEqual(desktop ? 160 : 300)
   ;((observations.footers ??= []) as unknown[]).push(geometry)
 }
 

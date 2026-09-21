@@ -29,3 +29,30 @@ export function videoAnnotation(sub: RunDetailSubAction, timeMs: number, width: 
     || timeMs < witness.startMs || timeMs >= witness.endMs) return undefined
   return frameAnnotation(sub)
 }
+
+/** A review seek lands within the measured action; persisted completion offsets stay intact. */
+export function videoActionOffset(sub: RunDetailSubAction): number | undefined {
+  const annotation = sub.result.annotation
+  const witness = annotation?.recording
+  return annotation && witness && validRecordedAnnotation(annotation) && witness.endMs > witness.startMs
+    ? (witness.startMs + witness.endMs) / 2 : sub.recordingOffsetMs
+}
+
+/** A labelled review cue, never an extension of the recorded execution interval.
+ * Unknown next-action geometry/timing cannot prove scene continuity, so withhold the hold. */
+export function videoActionCue(actions: readonly RunDetailSubAction[], timeMs: number, width: number, height: number): { annotation: StepAnnotation; recent: boolean } | undefined {
+  for (const [index, sub] of actions.entries()) {
+    const active = videoAnnotation(sub, timeMs, width, height)
+    if (active) return { annotation: active, recent: false }
+    const witness = sub.result.annotation?.recording
+    const next = actions[index + 1]
+    const nextWitness = next?.result.annotation?.recording
+    if (!witness || (next && (!nextWitness || !validRecordedAnnotation(next.result.annotation!)))) continue
+    const until = Math.min(witness.endMs + 350, nextWitness?.startMs ?? Infinity)
+    if (timeMs >= witness.endMs && timeMs < until) {
+      const annotation = videoAnnotation(sub, (witness.startMs + witness.endMs) / 2, width, height)
+      if (annotation) return { annotation, recent: true }
+    }
+  }
+  return undefined
+}

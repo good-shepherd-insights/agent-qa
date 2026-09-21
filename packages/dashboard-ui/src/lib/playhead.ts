@@ -1,6 +1,7 @@
 import type { RunDetailArtifactRef, RunDetailSubAction } from '@vostride/agent-qa-schema'
 import { decisionScreenshotRef, type RunDetailGroup, type RunDetailStepGroup } from './run-detail-view'
 import { parseRunDetailStepKey, runDetailStepKey, type Selection } from './selection'
+import { videoActionOffset } from './frame-annotation'
 
 export interface Playhead {
   testIndex: number
@@ -116,13 +117,14 @@ export function buildTimelineModel(group: RunDetailGroup): TimelineModel {
     const stepMarkers = entry.subActions.map(subAction => {
       const ref = decisionScreenshotRef(subAction)
       const offset = subAction.recordingOffsetMs
+      const playbackOffset = videoActionOffset(subAction)
       const marker: TimelineMarker = {
         testIndex: subAction.testIndex,
         stepIndex: subAction.stepIndex,
         subActionIndex: subAction.subActionIndex,
         ordinal: markers.length + 1,
         position: axis === 'time'
-          ? extent === 0 ? (offset! > 0 ? 1 : 0) : Math.min(1, Math.max(0, offset! / extent))
+          ? extent === 0 ? (playbackOffset! > 0 ? 1 : 0) : Math.min(1, Math.max(0, playbackOffset! / extent))
           : (slot + 0.5) / extent,
         result: subAction.result.success ? 'passed' : 'failed',
         frame: frameUsable(ref) ? 'available' : 'absent',

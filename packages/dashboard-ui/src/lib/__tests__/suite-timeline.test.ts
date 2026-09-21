@@ -34,6 +34,18 @@ test('SUITE-LOCAL-SEEK preserves order and recording-local offsets across bounda
   expect(buildSuiteTimeline([member(7)]).markers[0]!.position).toBe(0.1)
 })
 
+test('SUITE-WITNESS-SEEK uses measured review coordinates without rewriting completion offsets', () => {
+  const first = member(2)
+  const second = member(7, 20000)
+  second.steps[0]!.subActions[0]!.result.annotation = { kind: 'point', viewport: { width: 800, height: 600 }, point: { x: 40, y: 80 },
+    recording: { startMs: 200, endMs: 220, width: 800, height: 600, scene: 'recorded-page', transform: 'identity' } }
+  const model = buildSuiteTimeline([first, second])
+  const marker = model.markers[2]!
+  expect(marker.recordingOffsetMs).toBe(1000)
+  expect(marker.position).toBeCloseTo(10210 / 30000)
+  expect(suiteSeek(model, marker.position, marker)!.localFraction! * 20000).toBeCloseTo(210)
+})
+
 test('SUITE-GAPS remain explicit and untimed members never gain action offsets', () => {
   const untimed = member(3)
   delete untimed.steps[0]!.subActions[1]!.recordingOffsetMs
