@@ -11,7 +11,7 @@
 # So the bar is measured by mutation:
 #
 #   G  a retired needle re-appears in a PRODUCTION source, as a comment
-#   D  a healing column re-added to the version-2 DDL
+#   D  a healing column re-added to the version-4 DDL
 #   U  a recording-path member re-added to the UI step type
 #   A  the retired healing counter re-added to the analytics completion shape
 #
@@ -122,9 +122,9 @@ echo
 REQUIRED_G="no production source spells the legacy execution-events SSE route"
 ALLOWED_G="no production source spells the legacy execution-events SSE route"
 
-REQUIRED_D="the version-3 DDL declares no healing column"
+REQUIRED_D="the version-4 DDL declares no healing column"
 # The lexical arm sees the same bytes from the other side — see the header note on D.
-ALLOWED_D="the version-3 DDL declares no healing column
+ALLOWED_D="the version-4 DDL declares no healing column
 no production source spells the v1 healing attempt list"
 
 REQUIRED_U="declares no member naming a screenshot, a healing capture, a video or a path"
@@ -278,7 +278,7 @@ echo
 
 run_leg G "a retired needle re-appears in a production source, as a comment" \
   "$REQUIRED_G" "$ALLOWED_G" "$DASHBOARD_FILTER" "$DEBRIS_SUITE" "$GREP_SUBJECT"
-run_leg D "a healing column re-added to the version-2 DDL" \
+run_leg D "a healing column re-added to the version-4 DDL" \
   "$REQUIRED_D" "$ALLOWED_D" "$DASHBOARD_FILTER" "$DEBRIS_SUITE" "$DDL_SUBJECT"
 
 # ── U reads the COMPILER first, then the runtime cell (see the header).
@@ -310,7 +310,7 @@ run_leg A "the retired healing counter re-added to the analytics completion shap
   "$REQUIRED_A" "$ALLOWED_A" "$ANALYTICS_FILTER" "$ANALYTICS_SUITE" "$ANALYTICS_SUBJECT"
 
 echo "PASS — a retired needle in a production comment reds the inventory, a healing column reds the"
-echo "       version-2 DDL cell (and the lexical arm beside it), a recording-path member on the UI"
+echo "       version-4 DDL cell (and the lexical arm beside it), a recording-path member on the UI"
 echo "       step type neither compiles nor survives the declaration cell, and the retired analytics"
 echo "       counter reds the completion shape's key-set equality. Every subject restored byte-"
 echo "       identically, verified by sha256."
