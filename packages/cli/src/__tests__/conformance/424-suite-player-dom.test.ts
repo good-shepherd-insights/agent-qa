@@ -201,12 +201,6 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     expect(await page.locator('video[data-fullscreen-live="same"]').evaluate(video => !(video as HTMLVideoElement).paused)).toBe(true)
     await page.keyboard.press('Escape')
     await page.getByRole('button', { name: 'Pause recording', exact: true }).click()
-    const marker = page.locator('[data-timeline-track] > button[data-timeline-marker]').first()
-    await marker.hover()
-    await page.locator('[data-timeline-marker-details]').first().waitFor()
-    await marker.focus()
-    expect(await marker.getAttribute('aria-label')).toContain('Step')
-    await marker.click()
     const last = detail.subActions.filter(sub => sub.testIndex === 0).at(-1)!
     expect(last.result.annotation?.recording).toBeDefined()
     await clickMarker(page, detail.subActions.indexOf(last) + 1)
@@ -234,6 +228,18 @@ it('SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continue
     await expect.poll(() => page.locator('video').getAttribute('src')).toContain(detail.members[1]!.recording!.state === 'present' ? detail.members[1]!.recording!.ref.sha : 'missing')
     await mediaReady(page)
     expect(await page.locator('video').evaluate(video => ({ rate: (video as HTMLVideoElement).playbackRate, paused: (video as HTMLVideoElement).paused }))).toEqual({ rate: 2, paused: false })
+    // Actual dispatches can all be tightly clustered. Arrange one visible action only
+    // for the independent singleton hover/focus layout control, retaining its real facts.
+    const singleton = structuredClone(detail)
+    singleton.subActions = singleton.subActions.slice(0, 1)
+    await page.route('**/api/runs/*/detail', route => route.fulfill({ json: singleton }))
+    await ready(page)
+    const marker = page.locator('[data-timeline-track] > button[data-timeline-marker]').first()
+    await marker.hover()
+    await page.locator('[data-timeline-marker-details]').first().waitFor()
+    await marker.focus()
+    expect(await marker.getAttribute('aria-label')).toContain('Step')
+    await marker.click()
     observations.media = { durations, target, local, rates, samples, cueTimes, continuation: true }
   } finally { await page.close() }
 }, 120_000)
