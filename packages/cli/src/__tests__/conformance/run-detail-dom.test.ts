@@ -58,10 +58,10 @@
 // screenshot per sub-action and no post-action capture, so there is no second side to select. This
 // file asserts one `<img>` and one real 200, and nothing about a pair.
 //
-// THE ARIA-TREE TAB (WINDOWS #285). `TabAriaTree` renders a constant not-captured state because the
-// bus collapses a `ScreenState` to a sha256 before the wire. There is no producer, so there is
-// nothing here to measure and this file does not pretend otherwise. The screen CONTEXT that IS
-// recorded — the hash pair — is cell (1e), on the overview, where 405-11 put it.
+// THE ARIA-TREE TAB has its own Phase 423/424 evidence probes. Owner screenshots on 2026-09-21
+// (424-33) retire the duplicate Overview token and hash/state rows. Cells (1d)/(1e) now protect
+// the authoritative source facts plus the old DOM's absence; they no longer claim those facts
+// are visibly painted on Overview. Run-level accounting remains independently observed.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -151,7 +151,6 @@ function publishedConstant(relativePath: string, name: string): string {
   return entry[1] as string
 }
 
-const TOKENS_NOT_MEASURED_LABEL = publishedConstant('lib/run-detail-view.ts', 'TOKENS_NOT_MEASURED_LABEL')
 const MASKED_EMAIL_LABEL = publishedConstant('lib/run-detail-view.ts', 'MASKED_EMAIL_LABEL')
 
 /**
@@ -231,12 +230,14 @@ interface PageObservation {
   readonly initialPlayerSource?: string
   /** The decision screenshot's `src`, if the page rendered an `<img>` at all. */
   readonly screenshotSrc?: string
-  /** The `[data-token-summary]` sentence, as painted. */
+  /** Retired Overview metadata must stay absent (owner correction 424-33). */
   readonly tokenSummary?: string
+  readonly stepTokens?: number
   /** The `[data-run-token-summary]` sentence from the navbar, as painted. */
   readonly runTokenSummary?: string
-  /** The raw hash on `[data-screen-state]`, if the chip rendered. */
+  /** Recorded source fact, independent of its retired Overview chip. */
   readonly screenStateHash?: string
+  readonly screenStateChip?: string
   /** Every `data-masked` category the page painted, in document order. */
   readonly maskedCategories: readonly string[]
   /** Every `[data-masked]` chip's visible text. */
@@ -317,7 +318,7 @@ function context(): string {
     `page text: ${JSON.stringify((recorded.first?.bodyText ?? '').slice(0, 600))}`,
     `artifact state: ${recorded.first?.artifactState ?? '(none)'}; `
     + `screenshot src: ${recorded.first?.screenshotSrc ?? '(none)'}`,
-    `token summary: ${JSON.stringify(recorded.first?.tokenSummary ?? null)}`,
+    `recorded step tokens: ${JSON.stringify(recorded.first?.stepTokens ?? null)}`,
     `screen state: ${recorded.first?.screenStateHash ?? '(none)'}`,
     `masked chips: ${(recorded.first?.maskedCategories ?? []).join(', ') || '(none)'}`,
     `respawned: ${String(recorded.respawned)}; `
@@ -502,7 +503,12 @@ async function observeRunDetail(
     const treePlanCount = await page.locator('[data-sub-action] [data-sub-action-plan]').count()
     const tokenSummary = await textOf('[data-token-summary]')
     const runTokenSummary = await textOf('[data-run-token-summary]')
-    const screenStateHash = await attributeOf('[data-screen-state]', 'data-screen-state')
+    const screenStateChip = await attributeOf('[data-screen-state]', 'data-screen-state')
+    const detailResponse = await page.request.get(`${origin}/api/runs/${encodeURIComponent(runId)}/detail`)
+    expect(detailResponse.status()).toBe(200)
+    const detail = await detailResponse.json() as import('@vostride/agent-qa-schema').RunDetailProjection
+    const stepTokens = detail.steps[0]?.tokenUsage?.totalTokens
+    const screenStateHash = detail.subActions[0]?.screenStateHash
 
     return {
       finalUrl: page.url(),
@@ -516,8 +522,10 @@ async function observeRunDetail(
       ...(artifactState === undefined ? {} : { artifactState }),
       ...(screenshotSrc === undefined ? {} : { screenshotSrc }),
       ...(tokenSummary === undefined ? {} : { tokenSummary }),
+      ...(stepTokens === undefined ? {} : { stepTokens }),
       ...(runTokenSummary === undefined ? {} : { runTokenSummary }),
       ...(screenStateHash === undefined ? {} : { screenStateHash }),
+      ...(screenStateChip === undefined ? {} : { screenStateChip }),
       maskedCategories: harvested.maskedCategories,
       maskedChipText: harvested.maskedChipText,
       textNodes: harvested.textNodes,
@@ -715,34 +723,36 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     ).toBe(true)
   })
 
-  it('(1d) token usage: the step reports a measured spend, never the not-measured sentence', () => {
+  // Owner screenshots, 2026-09-21 / 424-33: remove the duplicate Overview row. The
+  // producer fact still matters: M2 must RED when final step publication drops usage.
+  it('(1d) token usage: recorded step spend survives removal of the redundant Overview row', () => {
     const observed = firstVisit()
     expect(
-      observed.tokenSummary,
-      `the overview painted no \`[data-token-summary]\` at all.${context()}`,
+      observed.stepTokens,
+      `the detail read lost the recorded step usage.${context()}`,
     ).toBeDefined()
     expect(
-      observed.tokenSummary,
+      observed.stepTokens,
       'the page reports this step as unmeasured. The stub answers non-zero `usage` on every arm, '
       + 'so an unmeasured reading means the step scope observed no model call, the member\'s final '
       + 'publication (`step-read-finalization.ts`) dropped its usage, or the projection lost it. '
       + '`405-run-detail-mutation.sh` M2 removes exactly that publication\'s usage and must red '
       + `this cell alone.${context()}`,
-    ).not.toBe(TOKENS_NOT_MEASURED_LABEL)
+    ).toBeGreaterThan(0)
+    expect(observed.tokenSummary).toBeUndefined()
   })
 
-  it('(1e) screen context: the recorded state hash is painted on the overview', () => {
+  it('(1e) screen context: recorded hash survives removal of the redundant Overview chip', () => {
     const observed = firstVisit()
     expect(
       observed.screenStateHash,
-      'the overview painted no `[data-screen-state]` chip. The bus collapses a `ScreenState` to a '
-      + 'sha256 before the wire, so the hash pair IS the screen context this page can honestly '
-      + `show, and its absence means the sub-action row carried none.${context()}`,
+      `the detail read lost the sub-action screen-state hash.${context()}`,
     ).toBeDefined()
     expect(
       observed.screenStateHash ?? '',
-      `the screen-state chip carries something that is not a recorded hash.${context()}`,
+      `the detail read carries an empty screen-state hash.${context()}`,
     ).not.toBe('')
+    expect(observed.screenStateChip).toBeUndefined()
   })
 
   it('(2a) the masking-seeded secret is VISIBLE on the page, and no placeholder reaches a text node', () => {

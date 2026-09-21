@@ -83,6 +83,7 @@ it('REVIEW-MINIMAL-OVERVIEW: one and many actions keep annotations aligned at de
       expect(observation.scopeLines).toBe(0)
       expect(observation.rows).toEqual(Array.from({ length: count }, (_, index) => `Clicked 'Products ${index + 1}'`))
       expect(observation.connectors.every(content => content === 'none' || content === 'normal')).toBe(true)
+      await footerGeometry(page, width >= 1280)
       await capture(page, `owner-overview-${count}-actions-${width}`)
       const slider = page.getByRole('slider')
       await slider.focus()
@@ -98,6 +99,9 @@ it('REVIEW-MINIMAL-OVERVIEW: one and many actions keep annotations aligned at de
       await page.getByRole('tab', { name: 'Overview', exact: true }).click()
       await page.getByRole('radio', { name: 'Video', exact: true }).click()
       expect(await page.locator('[data-annotation]').count()).toBe(0)
+      await page.waitForFunction(() => (document.querySelector('video')?.readyState ?? 0) >= 1)
+      await footerGeometry(page, width >= 1280)
+      await capture(page, `owner-video-${count}-actions-${width}`)
       await page.getByRole('radio', { name: 'Frames', exact: true }).click()
       await page.locator('[data-annotation="point"]').waitFor()
     } finally { await page.close() }
@@ -110,6 +114,39 @@ async function arrange(page: Page, projection: RunDetailProjection) {
   await page.goto(url)
   await page.locator('[data-step-id]').first().waitFor()
   await page.locator('[data-step-id]').first().locator(':scope > button').click()
+}
+
+async function footerGeometry(page: Page, desktop = false) {
+  const geometry = await page.locator('[data-player]').evaluate(player => {
+    const preview = player.querySelector('[data-player-preview]')!
+    const footer = player.querySelector('[data-player-footer]')!
+    const media = preview.querySelector('img, video') ?? preview
+    const caption = footer.querySelector('[data-player-caption]')!.getBoundingClientRect()
+    const controls = footer.querySelector('[data-player-controls]')!.getBoundingClientRect()
+    const scrub = footer.querySelector('[data-timeline]')!.getBoundingClientRect()
+    const rect = footer.getBoundingClientRect()
+    return {
+      source: player.getAttribute('data-player-source'), width: innerWidth,
+      ordered: preview.nextElementSibling === footer && Boolean(footer.firstElementChild?.querySelector('[data-timeline]')),
+      mediaGap: rect.top - media.getBoundingClientRect().bottom, footerHeight: rect.height,
+      controlsBelowBar: controls.top >= scrub.bottom, captionBelowBar: caption.top >= scrub.bottom,
+      sameRow: Math.abs(caption.top + caption.height / 2 - controls.top - controls.height / 2) < 1,
+      nonOverlap: caption.right <= controls.left || caption.bottom <= controls.top,
+      contained: [caption, controls].every(box => box.left >= rect.left && box.right <= rect.right),
+      metadata: document.querySelectorAll('[data-overview] [data-token-summary], [data-overview] [data-screen-state], [data-overview] [data-screen-state-change]').length,
+    }
+  })
+  expect(geometry.ordered, JSON.stringify(geometry)).toBe(true)
+  expect(geometry.mediaGap).toBeGreaterThanOrEqual(0)
+  expect(geometry.mediaGap).toBeLessThanOrEqual(4)
+  expect(geometry.controlsBelowBar).toBe(true)
+  expect(geometry.captionBelowBar).toBe(true)
+  expect(geometry.nonOverlap).toBe(true)
+  expect(geometry.contained).toBe(true)
+  expect(geometry.metadata).toBe(0)
+  expect(geometry.footerHeight).toBeLessThanOrEqual(desktop ? 100 : 260)
+  if (desktop) expect(geometry.sameRow).toBe(true)
+  ;((observations.footers ??= []) as unknown[]).push(geometry)
 }
 
 it('REVIEW-ABSENCE-LAYOUT: assembled evidence tabs preserve flex centering and 8px gaps', async () => {
@@ -163,6 +200,7 @@ async function controls(page: Page, name: string, axis: 'time' | 'ordinal') {
   await page.getByRole('radio', { name: 'Video', exact: true }).click()
   await page.locator('video').waitFor()
   await page.waitForFunction(() => document.querySelector('video')!.readyState >= 1)
+  await footerGeometry(page)
   const result = await page.locator('[data-player]').evaluate(player => {
     const box = player.getBoundingClientRect()
     const controls = [...player.querySelectorAll('[data-slot="toggle-group-item"],button[aria-label="Play recording"],button[aria-label="Playback speed"],[data-player-time]')]
@@ -173,13 +211,24 @@ async function controls(page: Page, name: string, axis: 'time' | 'ordinal') {
       } }) }
   })
   await capture(page, name)
-  await page.getByRole('combobox', { name: 'Playback speed', exact: true }).click()
-  await page.getByRole('option', { name: '2×', exact: true }).click()
-  expect(await page.locator('video').evaluate(video => (video as HTMLVideoElement).playbackRate)).toBe(2)
+  // Keep the actual element identity across speed/time/play state updates; a remount resets media.
+  await page.locator('video').evaluate(video => video.setAttribute('data-review-identity', 'original'))
+  const rates = []
+  for (const speed of [0.5, 1, 2, 4, 8, 16]) {
+    await page.getByRole('combobox', { name: 'Playback speed', exact: true }).click()
+    expect(await page.getByRole('option').allTextContents()).toEqual(['0.5×', '1×', '2×', '4×', '8×', '16×'])
+    await page.getByRole('option', { name: `${speed}×`, exact: true }).click()
+    const rate = await page.locator('video[data-review-identity="original"]').evaluate(video => (video as HTMLVideoElement).playbackRate)
+    expect(rate).toBe(speed)
+    rates.push(rate)
+  }
   await page.locator('video').evaluate(video => video.addEventListener('play', () => video.setAttribute('data-review-played', 'true'), { once: true }))
   await page.getByRole('button', { name: 'Play recording', exact: true }).click()
   await page.locator('video[data-review-played="true"]').waitFor()
-  return { initialSource, ...result }
+  const video = await page.locator('video').elementHandle()
+  await page.getByRole('radio', { name: 'Frames', exact: true }).click()
+  expect(await video!.evaluate(video => (video as HTMLVideoElement).paused)).toBe(true)
+  return { initialSource, rates, ...result }
 }
 
 it('REVIEW-VIDEO-CONTROLS: timed and ordinal long-duration controls fit at 400px and actual browser zoom', async () => {

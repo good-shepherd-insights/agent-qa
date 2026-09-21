@@ -3,6 +3,10 @@
 # 405-run-detail-mutation.sh — the acceptance bar for criteria 1 and 2 (405-12, D-04 / D-11).
 #
 # WHAT THIS PROVES, AND WHY A GREEN SUITE DOES NOT PROVE IT. `conformance/run-detail-dom.test.ts`
+# Owner correction 424-33 (2026-09-21) retires the visible Overview token/hash rows.
+# (1d)/(1e) now read the authoritative detail response and require the old DOM to be absent.
+# M2 still removes step usage; M1 still removes the sub-action carrying the hash. These are
+# source-contract probes now, not claims that removed metadata is visible on Overview.
 # asserts that ten facts are visible on run detail. A cell that asserts a fact is PRESENT is
 # exactly the kind that passes for free when it is looking at the wrong element, waiting on the
 # wrong node, or reading a fixture it accidentally produced itself. The only way to know a cell
