@@ -278,8 +278,8 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
     expect(notice!.dismiss.right).toBeLessThanOrEqual(notice!.viewport)
     expect(notice!.explanation.width).toBeLessThanOrEqual(notice!.pane.width)
     // The 400px pane affords 304px of text, while the locked 12px copy measures 693px.
-    // Two lines cannot contain it. Preserve the locked copy/chrome and assert all three
-    // natural lines, without claiming the derived two-line backstop is satisfied literally.
+    // The owner approved three readable lines at 400px. Preserve the copy/chrome and
+    // prove that every line and the dismissal remain visible without overlap.
     expect(notice!.lines).toBe(3)
     expect(notice!.message).toBe('This run was recorded before evidence was saved. Variables, network, console, ARIA, accessibility and video were not recorded.')
     for (const line of notice!.lineBoxes) expect(inside(line, notice!.text)).toBe(true)
