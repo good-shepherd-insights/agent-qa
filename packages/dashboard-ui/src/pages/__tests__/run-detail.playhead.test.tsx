@@ -318,11 +318,15 @@ it('KEYS-LEGEND-LISTS-NEW opens the shipped legend with Shift+?', async () => {
   }
 })
 
-it('OVERVIEW-SCRUBBER-THEN-PLAYER', async () => {
+it('OVERVIEW-PREVIEW-THEN-FOOTER', async () => {
   await render()
   const player = host.querySelector('[data-player]')
   expect(player).not.toBeNull()
-  expect(player?.previousElementSibling?.querySelector('[data-timeline]')).not.toBeNull()
+  const preview = player!.querySelector('[data-player-preview]')!
+  const footer = player!.querySelector('[data-player-footer]')!
+  expect(preview.nextElementSibling).toBe(footer)
+  expect(footer.querySelector('[data-timeline]')).not.toBeNull()
+  expect(player!.querySelectorAll('[data-timeline]')).toHaveLength(1)
   const reasoning = [...player!.nextElementSibling!.querySelectorAll('button')].find(button => button.textContent?.includes('Reasoning'))
   act(() => reasoning!.click())
   expect(player?.nextElementSibling?.querySelector('[data-sub-action-plan]')?.textContent).toBe('Action 3')

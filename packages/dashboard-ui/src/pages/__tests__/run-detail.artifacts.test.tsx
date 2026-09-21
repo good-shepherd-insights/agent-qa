@@ -26,10 +26,7 @@ import {
   EVIDENCE_INCOMPLETE_LABEL,
   MASKED_EMAIL_LABEL,
   MASKED_SECRET_LABEL,
-  SCREEN_STATE_CHANGED_LABEL,
-  SCREEN_STATE_UNCHANGED_LABEL,
   TOKENS_NOT_MEASURED_LABEL,
-  screenStateChip,
 } from "@/lib/run-detail-view"
 import { routes } from "@/lib/routes"
 
@@ -316,35 +313,25 @@ describe("run detail renders the durable projection's five facts", () => {
     expect(view.textContent).not.toContain("<EMAIL_")
   })
 
-  // RESEARCH D2. The bus carries no screen TEXT, so the honest surface is the hash pair: a short id
-  // a reader can compare by eye, plus the verdict the pair implies.
-  it("renders the screen-state chip and reads the pair for the changed verdict", async () => {
-    const view = await renderAt()
-
-    const chip = view.querySelector("[data-screen-state]")
-    expect(chip?.getAttribute("data-screen-state")).toBe(HASH_BEFORE)
-    expect(chip?.textContent).toBe(screenStateChip(HASH_BEFORE))
-    expect(view.querySelector("[data-screen-state-change]")?.textContent).toBe(SCREEN_STATE_CHANGED_LABEL)
+  // Owner correction, 2026-09-21 (424-33): Overview omits redundant hash/state rows.
+  it("omits screen-state metadata for both changed and unchanged recorded states", async () => {
+    for (const after of [HASH_BEFORE, HASH_AFTER]) {
+      const base = makeProjection()
+      fetchRunDetailMock.mockImplementation(async () => ({ ...base,
+        subActions: [{ ...base.subActions[0], screenStateHashAfter: after }],
+      }))
+      const view = await renderAt()
+      expect(view.querySelector("[data-screen-state], [data-screen-state-change]")).toBeNull()
+      expect(view.querySelector("[data-overview]")?.textContent).not.toContain(HASH_BEFORE)
+    }
   })
 
-  it("calls a recorded post-state identical to the pre-state unchanged", async () => {
-    const base = makeProjection()
-    fetchRunDetailMock.mockImplementation(async () => ({
-      ...base,
-      subActions: [{ ...base.subActions[0], screenStateHashAfter: HASH_BEFORE }],
-    }))
-
-    const view = await renderAt()
-
-    expect(view.querySelector("[data-screen-state-change]")?.textContent).toBe(SCREEN_STATE_UNCHANGED_LABEL)
-  })
-
-  // D-06 in both directions, at both grains. A measured step reports its spend; an unmeasured one
+  // D-06 accounting remains in the navbar. A measured run reports its spend; an unmeasured one
   // says so rather than reporting a zero nobody measured.
-  it("reports the step's own spend and the run's, from the projection", async () => {
+  it("keeps run accounting while omitting the redundant Overview token line", async () => {
     const view = await renderAt()
 
-    expect(view.querySelector("[data-token-summary]")?.textContent).toContain("1 of 1 steps")
+    expect(view.querySelector("[data-token-summary]")).toBeNull()
     expect(view.querySelector("[data-run-token-summary]")?.textContent).toContain("1 of 1 steps")
   })
 
@@ -359,8 +346,7 @@ describe("run detail renders the durable projection's five facts", () => {
 
     const view = await renderAt()
 
-    expect(view.querySelector("[data-token-summary]")?.textContent).toBe(TOKENS_NOT_MEASURED_LABEL)
+    expect(view.querySelector("[data-token-summary]")).toBeNull()
     expect(view.querySelector("[data-run-token-summary]")?.textContent).toContain(TOKENS_NOT_MEASURED_LABEL)
-    expect(view.querySelector("[data-token-summary]")?.textContent).not.toContain("0 tokens")
   })
 })

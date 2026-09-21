@@ -3,12 +3,6 @@ import { Brain, Play, ShieldCheck, Target } from "lucide-react"
 import { ReasoningPipeline } from "@/components/reasoning-pipeline"
 import type { SectionDef, ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { MaskedText } from "@/components/run-detail/masked-text"
-import {
-  screenStateChangeLabel,
-  screenStateChip,
-  stepTokenTotals,
-  tokenSummaryLine,
-} from "@/lib/run-detail-view"
 import type { DisplayStep } from "@/lib/display-step"
 import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
 
@@ -117,30 +111,6 @@ function buildSubActionSections(sub: RunDetailSubAction): SectionDef[] {
   return sections
 }
 
-/**
- * The screen this turn moved, as the only form of it the bus records (RESEARCH D2).
- *
- * A SHORT ID AND A VERDICT, not a tree. `ScreenState` is collapsed to a sha256 before it reaches
- * the wire, so "screen context" on this page honestly means the hash pair — and a full sha is not
- * something a reader can hold in their head long enough to compare two rows. The raw hash rides
- * `data-screen-state` for the DOM cells; the chip text is the part a person reads.
- */
-function ScreenStateChips({ sub }: { sub: RunDetailSubAction }) {
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <span
-        data-screen-state={sub.screenStateHash}
-        className="font-mono rounded-sm bg-muted/40 px-1.5 py-0.5 text-muted-foreground"
-      >
-        {screenStateChip(sub.screenStateHash)}
-      </span>
-      <span data-screen-state-change className="text-muted-foreground">
-        {screenStateChangeLabel(sub)}
-      </span>
-    </div>
-  )
-}
-
 export function TabOverview({
   step,
   subAction,
@@ -151,22 +121,11 @@ export function TabOverview({
 }: TabOverviewProps) {
   return (
     <div data-overview>
-      {timeline}
-      {model && runId && <Player model={model} playhead={playhead} recording={recording} frame={frame}
+      {model && runId && <Player timeline={timeline} model={model} playhead={playhead} recording={recording} frame={frame}
         source={playerSource} runId={runId} onSourceChange={onPlayerSourceChange}
         onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} isTimelineKeyIgnored={isTimelineKeyIgnored} />}
       <div className="border-t">
         <div className="p-3 space-y-3 min-w-0">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-            {/* D-06: the step's own spend, keyed on the ABSENCE of a sum rather than on a count,
-                so an unmeasured step can never read as a step that spent nothing. */}
-            <span data-token-summary className="text-xs text-muted-foreground">
-              {tokenSummaryLine(stepTokenTotals(step))}
-            </span>
-          </div>
-
-          {subAction === null ? null : <ScreenStateChips sub={subAction} />}
-
           {subAction === null ? null : (
             <ReasoningPipeline
               ref={pipelineRef}

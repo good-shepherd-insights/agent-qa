@@ -305,11 +305,16 @@ test('PLAYER-PREFERENCE-EXPLICIT-TOGGLE-ONLY', () => {
 test('PLAYER-VIDEO-SPEED-AND-CLEANUP', async () => {
   const media = video()
   metadata(media)
-  act(() => button(PLAYER_COPY.speed).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
-  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === '2×')!
-  expect(option).toBeDefined()
-  act(() => option.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
-  expect(media.playbackRate).toBe(2)
+  const element = query('video')
+  for (const speed of [0.5, 1, 2, 4, 8, 16]) {
+    act(() => button(PLAYER_COPY.speed).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(options.map(node => node.textContent)).toEqual(['0.5×', '1×', '2×', '4×', '8×', '16×'])
+    const option = options.find(node => node.textContent === `${speed}×`)!
+    act(() => option.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    expect(media.playbackRate).toBe(speed)
+    expect(query('video')).toBe(element)
+  }
   await act(async () => button(PLAYER_COPY.play).click())
   render({ source: 'frames' })
   expect(media.paused).toBe(true)

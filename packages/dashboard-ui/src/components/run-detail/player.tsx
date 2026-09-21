@@ -65,15 +65,33 @@ export interface PlayerProps {
   onPlayheadChange: (playhead: Playhead) => void
   seekFraction?: number
   media?: MediaFacade
+  timeline?: ReactNode
   isTimelineKeyIgnored?: (event: KeyboardEvent) => boolean
+}
+
+function PlayerFooter({ timeline, caption, controls, note }: {
+  timeline?: ReactNode
+  caption: ReactNode
+  controls: ReactNode
+  note?: ReactNode
+}) {
+  return <div data-player-footer className='pb-2'>
+    {timeline}
+    <div data-player-actions className='flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3'>
+      {caption}
+      <div data-player-controls className='flex min-w-0 flex-wrap items-center gap-2'>{controls}</div>
+    </div>
+    {note && <p className='px-3 pt-1 text-xs text-muted-foreground'>{note}</p>}
+  </div>
 }
 
 function addressKey(playhead: Playhead | null | undefined) {
   return playhead ? `${playhead.testIndex}:${playhead.stepIndex}:${playhead.subActionIndex}` : ''
 }
 
-function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, onPlayheadChange, isTimelineKeyIgnored, header }: PlayerProps & {
+function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, onPlayheadChange, isTimelineKeyIgnored, timeline, caption, header }: PlayerProps & {
   recording: Extract<RecordingEntry, { state: 'present' }>
+  caption: ReactNode
   header: ReactNode
 }) {
   const element = useRef<HTMLVideoElement>(null)
@@ -165,7 +183,12 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, o
   })
 
   return <>
-    <div className='flex flex-wrap items-center gap-2 px-3 py-2'>
+    <div data-player-preview className='px-3 pt-3' data-artifact-state={error ? 'unavailable' : 'available'}>
+      {error ? <EvidenceState {...error} kind='video' onAction={() => {
+        setError(undefined); setReady(false); setPlaying(false); followed.current = ''; setAttempt(value => value + 1)
+      }} /> : <video key={attempt} ref={element} src={url} preload='metadata' muted playsInline className='max-h-[50vh] w-full rounded-lg border' />}
+    </div>
+    <PlayerFooter timeline={timeline} caption={caption} note={model.axis === 'ordinal' ? VIDEO_UNTIMED_NOTE : undefined} controls={<>
       {header}
       <Button size='icon-sm' variant='ghost' aria-label={playing ? PLAYER_COPY.pause : PLAYER_COPY.play} disabled={!ready}
         onClick={togglePlayback}>
@@ -181,13 +204,7 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, o
         <SelectContent>{PLAYBACK_SPEEDS.map(value => <SelectItem key={value} value={String(value)}>{value}×</SelectItem>)}</SelectContent>
       </Select>
       <span data-player-time className='whitespace-nowrap font-mono text-xs tabular-nums'>{formatOffset(time * 1000) ?? '0:00'}{recording.durationMs === undefined ? '' : ` / ${formatOffset(recording.durationMs)}`}</span>
-    </div>
-    <div className='p-3' data-artifact-state={error ? 'unavailable' : 'available'}>
-      {error ? <EvidenceState {...error} kind='video' onAction={() => {
-        setError(undefined); setReady(false); setPlaying(false); followed.current = ''; setAttempt(value => value + 1)
-      }} /> : <video key={attempt} ref={element} src={url} preload='metadata' muted playsInline className='max-h-[50vh] w-full rounded-lg border' />}
-      {model.axis === 'ordinal' && <p className='pt-2 text-xs text-muted-foreground'>{VIDEO_UNTIMED_NOTE}</p>}
-    </div>
+    </>} />
   </>
 }
 
@@ -210,22 +227,25 @@ export function Player(props: PlayerProps) {
           <ToggleGroupItem value='frames' title={PLAYER_COPY.framesTooltip} className='text-xs'>{PLAYER_COPY.frames}</ToggleGroupItem>
           <ToggleGroupItem value='video' aria-label={videoName} title={videoName} className={`text-xs${absent ? ' opacity-60' : ''}`}>{PLAYER_COPY.video}</ToggleGroupItem>
         </ToggleGroup>
-  return (
-    <section data-player data-player-source={source}>
-      {marker && caption && <div data-player-caption data-frame-source-sub-action={caption.frameSourceSubAction}
-        className='space-y-1 px-3 py-2 text-sm font-medium [overflow-wrap:anywhere] [&_[data-action-family]]:text-sm [&_[data-action-family]]:font-medium'>
+  const title = marker && caption && <div data-player-caption data-frame-source-sub-action={caption.frameSourceSubAction}
+        className='min-w-0 flex-1 basis-40 text-sm font-medium [overflow-wrap:anywhere] [&_[data-action-family]]:text-sm [&_[data-action-family]]:font-medium'>
         <ActionSentence sub={marker.subAction} wrap='free' />
         {caption.substitution && <p className='text-xs text-muted-foreground'>{caption.substitution}</p>}
-      </div>}
+      </div>
+  return (
+    <section data-player data-player-source={source}>
       {source === 'video' && recording?.state === 'present' && !absent
-        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} recording={recording} header={toggle} />
-        : <div className='flex items-center gap-2 px-3 py-2'>{toggle}</div>}
+        ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} recording={recording} caption={title} header={toggle} />
+        : <>
+      <div data-player-preview className='[&>[data-artifact-state]]:pb-0'>
       {source === 'frames' && <PlayerFrame key={`${runId}:${selectedFrame?.sha ?? 'none'}:${playhead?.stepIndex}:${playhead?.subActionIndex}`}
         runId={runId} frame={selectedFrame} annotation={frameAnnotation(frameOwner?.subAction)} wholeStep={!marker} />}
       {source === 'video' && videoView.kind === 'state' && <div className='p-3' data-artifact-state='unavailable'>
         <EvidenceState {...videoView} kind='video' />
       </div>}
-
+      </div>
+      <PlayerFooter timeline={props.timeline} caption={title} controls={toggle} />
+      </>}
     </section>
   )
 }
