@@ -50,7 +50,7 @@ export function TabPanels({
   executionLogs = [],
   platform,
   model, playhead, recording, frame, playerSource, onPlayerSourceChange, onPlayheadChange, seekFraction, isTimelineKeyIgnored,
-  pipelineRef,
+  pipelineRef, timeline,
   knowledge,
   onSelectStep,
 }: TabPanelsProps) {
@@ -144,8 +144,8 @@ export function TabPanels({
 
       <TabsContent value="overview" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
-          {scopeLine('sub-action')}
           {step && <TabOverview
+            timeline={timeline}
             step={step}
             subAction={subAction}
             runId={runId}

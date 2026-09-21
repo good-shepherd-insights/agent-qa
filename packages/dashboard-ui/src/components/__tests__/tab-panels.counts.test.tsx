@@ -113,10 +113,12 @@ test('SCOPE-LINE-STEP-VS-SUB-ACTION', async () => {
     expect(scope?.textContent).toBe('Step 2 of 3 · whole step')
     expect(scope?.className).toContain('tabular-nums')
   }
-  for (const label of ['ARIA Tree', 'Overview']) {
+  for (const label of ['ARIA Tree']) {
     await select(label)
     expect(container.querySelector('[data-evidence-scope="sub-action"]')?.textContent).toBe('Sub-action #2 of 2 · step 2')
   }
+  await select('Overview')
+  expect(container.querySelector('[data-evidence-scope]')).toBeNull()
   await render({ step: null, subAction: null })
   expect(container.querySelector('[data-evidence-scope]')).toBeNull()
 })

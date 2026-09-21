@@ -45,7 +45,6 @@ export function SubActionTreeItem({ sub, stepId, cached, isSelected, isPlayheadR
         <ActionSentence
           sub={sub}
           wrap='truncate'
-          ordinal={sub.subActionIndex + 1}
           wrapIcon={cached ? (icon) => (
             <CacheStatusIconWrapper
               marker='sub-action-status'

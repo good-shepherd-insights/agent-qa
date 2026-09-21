@@ -128,8 +128,8 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
       data-step-id={step.id}
       className={cn(
         !embedded && "mx-2 mb-1.5 rounded-[2px]",
-        hasChildren && isExpanded && !embedded && "border border-border/70 bg-muted/15 relative before:absolute before:left-[19.5px] before:w-px before:bg-border/60 before:top-[19px] before:bottom-[13px]",
-        hasChildren && isExpanded && embedded && "relative before:absolute before:left-[19.5px] before:w-px before:bg-border/60 before:top-[19px] before:bottom-[13px]"
+        hasChildren && isExpanded && !embedded && "border border-border/70 bg-muted/15 relative",
+        hasChildren && isExpanded && embedded && "relative"
       )}
     >
       <button

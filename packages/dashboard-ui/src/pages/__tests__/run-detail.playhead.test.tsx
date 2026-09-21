@@ -318,11 +318,11 @@ it('KEYS-LEGEND-LISTS-NEW opens the shipped legend with Shift+?', async () => {
   }
 })
 
-it('OVERVIEW-PLAYER-FIRST-BLOCK', async () => {
+it('OVERVIEW-SCRUBBER-THEN-PLAYER', async () => {
   await render()
   const player = host.querySelector('[data-player]')
   expect(player).not.toBeNull()
-  expect(player?.previousElementSibling).toBeNull()
+  expect(player?.previousElementSibling?.querySelector('[data-timeline]')).not.toBeNull()
   const reasoning = [...player!.nextElementSibling!.querySelectorAll('button')].find(button => button.textContent?.includes('Reasoning'))
   act(() => reasoning!.click())
   expect(player?.nextElementSibling?.querySelector('[data-sub-action-plan]')?.textContent).toBe('Action 3')
@@ -497,18 +497,19 @@ it.each(['1junk', '-1', '99', '9007199254740992', 'NaN', ''])('PLAYHEAD-URL-MALF
   expect(query().has('sub')).toBe(false)
 })
 
-it('TIMELINE-VISIBLE-EVERY-TAB', async () => {
+it('TIMELINE-OVERVIEW-ONLY', async () => {
   await render()
-  for (let tab = 1; tab <= 7; tab++) {
+  expect(host.querySelector('[data-overview] [data-timeline]')).not.toBeNull()
+  for (let tab = 2; tab <= 7; tab++) {
     key(String(tab))
-    const timeline = host.querySelector('[data-timeline]')
-    expect(timeline).not.toBeNull()
-    expect(timeline!.compareDocumentPosition(host.querySelector('[role="tablist"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(host.querySelector('[data-timeline]')).toBeNull()
   }
-  expect(host.querySelector('[data-timeline]')?.textContent).not.toContain('Checkout')
+  key('1')
+  expect(host.querySelector('[data-overview] [data-timeline]')).not.toBeNull()
+  expect(host.querySelector('[data-timeline]')?.textContent).toBe('')
 })
 
-it('TIMELINE-BADGE-OPENS-TAB', async () => {
+it('EVIDENCE-TAB-COUNTS remain available without timeline signals', async () => {
   const detail = projection()
   detail.steps[1]!.evidence = {
     variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
@@ -518,10 +519,11 @@ it('TIMELINE-BADGE-OPENS-TAB', async () => {
   }
   detailRead.mockResolvedValue(detail)
   await render()
-  click('[data-timeline] [data-step-signal="console"]')
+  parent('0:1')
+  expect(host.querySelector('[data-step-signal]')).toBeNull()
+  key('4')
   expect(selected()?.getAttribute('data-step-id')).toBe('0:1')
   expect(current()).toBe('0:1-0')
-  expect(host.querySelector('[role="tab"][data-state="active"]')?.textContent).toContain('Console')
   expect(query().get('tab')).toBe('console')
 })
 
@@ -543,8 +545,8 @@ it('TIMELINE-MEMBER-SWITCH', async () => {
   expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
   expect(localStorage.getItem('agent-qa.run-detail.player-source')).toBe('video')
   expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('3')
-  expect(host.querySelector('[data-timeline]')?.textContent).toContain('#3')
-  expect(host.querySelector('[data-timeline]')?.textContent).toContain('Returns')
+  expect(host.querySelector('[role="slider"]')?.getAttribute('aria-label')).toContain('#3')
+  expect(host.querySelector('[role="slider"]')?.getAttribute('aria-label')).toContain('Returns')
   parent('0:1')
   expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
   act(() => host.querySelector('[role="slider"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
@@ -560,12 +562,12 @@ it('PLAYHEAD-SCRUB-FOLLOWS-TREE-TABS-URL', async () => {
   expect(track).not.toBeNull()
   track!.getBoundingClientRect = () => ({ left: 0, width: 400 }) as DOMRect
   track!.setPointerCapture = vi.fn()
-  key('5')
   act(() => track!.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 50, bubbles: true })))
   expect(current()).toBe('0:0-0')
   expect(selected()?.getAttribute('data-step-id')).toBe('0:0')
   expect(host.querySelectorAll('[role="treeitem"][aria-selected="true"]')).toHaveLength(1)
   expect(host.querySelectorAll('[data-playhead-row]')).toHaveLength(1)
+  key('5')
   expect(host.querySelector('[data-aria-sub]')?.getAttribute('data-aria-sub')).toBe('0')
   expect(query().get('sub')).toBe('0')
   expect(query().get('tab')).toBe('aria')

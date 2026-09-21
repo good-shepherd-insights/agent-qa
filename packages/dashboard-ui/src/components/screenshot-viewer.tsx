@@ -169,6 +169,7 @@ export function ScreenshotViewer({
     <>
       {annotation.failureHighlight && (
         <div
+          data-annotation='failure'
           className="absolute border-2 border-red-500/70 rounded-sm bg-red-500/15 animate-pulse pointer-events-none"
           style={{
             left: offsetX + annotation.failureHighlight.x * scaleX,
@@ -181,6 +182,7 @@ export function ScreenshotViewer({
       {annotation.boundingBox && (
         <>
           <div
+            data-annotation='region'
             className="absolute border-2 border-emerald-500/70 rounded-sm bg-emerald-500/10 pointer-events-none"
             style={{
               left: offsetX + annotation.boundingBox.x * scaleX,
@@ -204,6 +206,7 @@ export function ScreenshotViewer({
       )}
       {annotation.clickPoint && (
         <div
+          data-annotation='point'
           className="absolute pointer-events-none"
           style={{
             left: offsetX + annotation.clickPoint.x * scaleX,

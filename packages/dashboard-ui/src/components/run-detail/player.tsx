@@ -212,6 +212,11 @@ export function Player(props: PlayerProps) {
         </ToggleGroup>
   return (
     <section data-player data-player-source={source}>
+      {marker && caption && <div data-player-caption data-frame-source-sub-action={caption.frameSourceSubAction}
+        className='space-y-1 px-3 py-2 text-sm font-medium [overflow-wrap:anywhere] [&_[data-action-family]]:text-sm [&_[data-action-family]]:font-medium'>
+        <ActionSentence sub={marker.subAction} wrap='free' />
+        {caption.substitution && <p className='text-xs text-muted-foreground'>{caption.substitution}</p>}
+      </div>}
       {source === 'video' && recording?.state === 'present' && !absent
         ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} recording={recording} header={toggle} />
         : <div className='flex items-center gap-2 px-3 py-2'>{toggle}</div>}
@@ -220,12 +225,7 @@ export function Player(props: PlayerProps) {
       {source === 'video' && videoView.kind === 'state' && <div className='p-3' data-artifact-state='unavailable'>
         <EvidenceState {...videoView} kind='video' />
       </div>}
-      {marker && caption && <div data-player-caption data-frame-source-sub-action={caption.frameSourceSubAction}
-        className='space-y-1 px-3 pb-2 text-sm font-medium [overflow-wrap:anywhere] [&_[data-action-family]]:text-sm [&_[data-action-family]]:font-medium'>
-        <ActionSentence sub={marker.subAction} ordinal={caption.ordinal} wrap='free' />
-        <span className='text-xs text-muted-foreground'>{caption.result}{caption.offset === undefined ? '' : ` · ${caption.offset}`}</span>
-        {caption.substitution && <p className='text-xs text-muted-foreground'>{caption.substitution}</p>}
-      </div>}
+
     </section>
   )
 }

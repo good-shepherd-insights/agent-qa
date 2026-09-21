@@ -90,3 +90,12 @@ describe('action vocabulary', () => {
     expect(Object.keys(ACTION_FAMILY_ICONS).sort()).toEqual([...new Set(Object.values(ACTION_FAMILY_BY_TYPE))].sort())
   })
 })
+
+it('SENTENCE-TARGET-ICON-FONT removes decorative private-use glyphs only in display names', () => {
+  const { buildActionSentence, actionSentenceText } = vocabulary()
+  const name = '\uF291 Products 日本語 👩🏽‍💻 ' + maskedMarker('secret')
+  const recorded = sub(undefined, true, { name })
+  const text = actionSentenceText(buildActionSentence(recorded))
+  expect(text).toBe(`Clicked 'Products 日本語 👩🏽‍💻 ${copyTextOf(maskedMarker('secret'))}'`)
+  expect(recorded.grounding?.descriptor.name).toBe(name)
+})

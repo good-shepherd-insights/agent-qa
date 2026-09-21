@@ -15,6 +15,7 @@ import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
 import { Player, type PlayerProps } from "./player"
 
 export interface OverviewPlayerProps {
+  timeline?: React.ReactNode
   model?: PlayerProps["model"] | null
   playhead?: PlayerProps["playhead"]
   recording?: PlayerProps["recording"]
@@ -146,19 +147,17 @@ export function TabOverview({
   runId,
   model, playhead = null, recording, frame, playerSource = "frames",
   onPlayerSourceChange = () => {}, onPlayheadChange = () => {}, seekFraction, isTimelineKeyIgnored,
-  pipelineRef,
+  pipelineRef, timeline,
 }: TabOverviewProps) {
   return (
     <div data-overview>
+      {timeline}
       {model && runId && <Player model={model} playhead={playhead} recording={recording} frame={frame}
         source={playerSource} runId={runId} onSourceChange={onPlayerSourceChange}
         onPlayheadChange={onPlayheadChange} seekFraction={seekFraction} isTimelineKeyIgnored={isTimelineKeyIgnored} />}
       <div className="border-t">
         <div className="p-3 space-y-3 min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-            {subAction === null ? null : (
-              <span className="font-medium">Sub-action #{subAction.subActionIndex + 1}</span>
-            )}
             {/* D-06: the step's own spend, keyed on the ABSENCE of a sum rather than on a count,
                 so an unmeasured step can never read as a step that spent nothing. */}
             <span data-token-summary className="text-xs text-muted-foreground">

@@ -2,7 +2,7 @@ import {
   actionFamilyOf, type Action, type ActionFamily, type RunDetailSubAction,
 } from '@vostride/agent-qa-schema'
 import {
-  Braces, CircleDashed, Compass, Hand, Hourglass, MousePointerClick, ScanEye,
+  Braces, CircleDashed, Compass, Hand, Hourglass, MousePointer2, CircleCheck,
   Smartphone, Terminal, TextCursorInput, Wrench, type LucideIcon,
 } from 'lucide-react'
 import { copyTextOf } from './display-text'
@@ -68,8 +68,8 @@ export const ACTION_VERBS = {
 } satisfies Record<Action['type'], { past: string; infinitive: string }>
 
 export const ACTION_FAMILY_ICONS = {
-  pointer: MousePointerClick, input: TextCursorInput, gesture: Hand, navigate: Compass,
-  verify: ScanEye, extract: Braces, wait: Hourglass, device: Smartphone,
+  pointer: MousePointer2, input: TextCursorInput, gesture: Hand, navigate: Compass,
+  verify: CircleCheck, extract: Braces, wait: Hourglass, device: Smartphone,
   environment: Wrench, script: Terminal,
 } satisfies Record<ActionFamily, LucideIcon>
 
@@ -104,6 +104,11 @@ function plannedTarget(action: Action): string | undefined {
     return target.name || undefined
   }
   return undefined
+}
+
+/** Captured icon-font glyphs have no meaning without the originating font. Display only. */
+export function displayTargetName(name: string): string {
+  return name.replace(/[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]/gu, '').trim()
 }
 
 export function buildActionSentence(sub: RunDetailSubAction): ActionSentenceModel {
@@ -143,7 +148,7 @@ export function buildActionSentence(sub: RunDetailSubAction): ActionSentenceMode
       masked(action.value)
     }
   } else {
-    const name = sub.grounding?.descriptor.name || plannedTarget(action)
+    const name = displayTargetName(sub.grounding?.descriptor.name || plannedTarget(action) || '')
     const role = sub.grounding?.descriptor.role
     const value = action.type === 'fill' ? action.text
       : action.type === 'select' || action.type === 'paste' ? action.value : undefined

@@ -35,14 +35,14 @@ function mount(success = false, cached = false) {
 it('TREE-ROW-FAMILY-ICON keeps the icon, failure words, cache marker and row address', () => {
   const { row, onSelect } = mount(false, true)
   expect(row.querySelector('[data-action-family="pointer"][data-action-outcome="failed"]')).not.toBeNull()
-  expect(row.textContent).toBe("#3Tried to click 'Learn more' — failed")
+  expect(row.textContent).toBe("Tried to click 'Learn more' — failed")
   expect(row.querySelector('.h-1\\.5.rounded-full')).toBeNull()
   expect(row.getAttribute('data-sub-action-result')).toBe('failure')
   expect(row.getAttribute('data-sub-action-id')).toBe('0:0-2')
   expect(row.getAttribute('role')).toBe('treeitem')
   expect(row.getAttribute('aria-level')).toBe('2')
   expect(row.getAttribute('aria-selected')).toBe('true')
-  expect(row.querySelector('[data-cache-marker="sub-action-status"]')?.parentElement?.querySelector('svg.lucide-mouse-pointer-click')).not.toBeNull()
+  expect(row.querySelector('[data-cache-marker="sub-action-status"]')?.parentElement?.querySelector('svg.lucide-mouse-pointer-2')).not.toBeNull()
   const button = row.querySelector('button')!
   expect(button.className).toContain('bg-primary/10 ring-1 ring-primary/30')
   act(() => button.click())
@@ -53,7 +53,7 @@ it('TREE-ROW-NO-PLAN-TEXT uses a truncated sentence and keeps secrets behind chi
   const { row, sub } = mount(true)
   expect(row.textContent).not.toContain(sub.plan)
   expect(row.querySelector('[data-sub-action-plan]')).toBeNull()
-  expect(row.textContent).toBe("#3Clicked 'Learn more'")
+  expect(row.textContent).toBe("Clicked 'Learn more'")
   expect(row.querySelector('.truncate')).not.toBeNull()
   const secret = maskedMarker('secret')
   act(() => root!.render(<SubActionTreeItem sub={{ ...sub,

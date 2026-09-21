@@ -50,7 +50,6 @@ import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-
 import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
 import { buildTimelineModel, findMarkerBySha, latestUsableFrame, type PlayerSource, parkTargetForStep, playheadFromSelection, selectionFromPlayhead, type Playhead } from '@/lib/playhead'
-import { stepProblemCounts } from '@/lib/evidence-counts'
 
 const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'] as const
 
@@ -593,9 +592,6 @@ export default function RunDetailPage() {
   }, [pendingCitationSha, memberFilter, handleCitedArtifact])
   const foldedFrame = selection?.type === "step" && !playheadTarget
     ? latestUsableFrame(selectedStep?.subActions ?? []) : undefined
-  const timelineSignals = useMemo(() => Object.fromEntries(
-    timelineGroup?.steps.map(({ step }) => [step.stepIndex, stepProblemCounts(step.evidence)]) ?? [],
-  ), [timelineGroup])
 
   type NavItem =
     | { type: 'hook'; logId: string }
@@ -1065,7 +1061,9 @@ export default function RunDetailPage() {
                   {RUN_DETAIL_UNAVAILABLE_LABEL}
                 </div>
               ) : <>
-                {timelineModel && timelineGroup && <div className='shrink-0' onKeyDownCapture={event => {
+                <div className='flex min-h-0 flex-1 flex-col'>
+                <TabPanels
+                  timeline={timelineModel && timelineGroup && <div className='shrink-0' onKeyDownCapture={event => {
                   if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'slider') return
                   if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
                   const index = timelineModel.markers.findIndex(marker => marker.stepIndex === playhead?.stepIndex && marker.subActionIndex === playhead.subActionIndex)
@@ -1085,20 +1083,12 @@ export default function RunDetailPage() {
                     model={timelineModel}
                     playhead={playhead}
                     source={playerSource}
-                    runId={run.id}
-                    signals={timelineSignals}
                     memberLabel={hasMemberChrome ? `${memberHandleLabel(timelineGroup.member.testIndex)} · ${memberDisplayName(timelineGroup.member)}` : undefined}
                     seekFraction={seekFraction}
                     onPlayheadChange={setPlayheadFrom}
                     onSeekFraction={setSeekFraction}
-                    onOpenSignal={(stepIndex, kind) => {
-                      setSelection({ type: 'step', stepId: runDetailStepKey(timelineModel.testIndex, stepIndex) })
-                      setActiveTab(kind)
-                    }}
                   />
                 </div>}
-                <div className='flex min-h-0 flex-1 flex-col'>
-                <TabPanels
                   activeTab={activeTab}
                   onTabChange={setActiveTab}
                   step={selectedStep}
