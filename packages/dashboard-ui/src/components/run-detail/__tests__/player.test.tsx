@@ -102,6 +102,23 @@ test('PLAYER-ONE-MINTER', () => {
   render()
   expect(query('img').getAttribute('src')).toBe(routes.runArtifact('run', sha))
 })
+test('PLAYER-FRAME-ANNOTATION follows the shown frame, including parent fallback', () => {
+  const actions = group.steps[0]!.subActions
+  actions[0]!.result.annotation = { kind: 'point', viewport: { width: 800, height: 600 }, point: { x: 100, y: 200 } }
+  actions[1]!.result.annotation = { kind: 'region', viewport: { width: 800, height: 600 }, region: { boundingBox: { x: 300, y: 400, width: 50, height: 60 } } }
+  model = buildTimelineModel(group)
+  render({ playhead: model.markers[1]!, frame: latestUsableFrame(actions) })
+  act(() => query('img').dispatchEvent(new Event('load')))
+  expect(query('[title="Hide annotations"]')).not.toBeNull()
+  expect(query('.bg-turquoise-500')).not.toBeNull()
+  expect(query('.border-emerald-500\\/70')).toBeNull()
+  render({ playhead: model.markers[1]! })
+  expect(query('img')).toBeNull()
+  expect(query('[title="Hide annotations"]')).toBeNull()
+  render({ frame: { index: 99, ref: model.markers[0]!.ref! } })
+  act(() => query('img').dispatchEvent(new Event('load')))
+  expect(query('[title="Hide annotations"]')).toBeNull()
+})
 test('PLAYER-FRAME-NOT-CAPTURED-ROWS', () => {
   render({ playhead: model.markers[1]! })
   expect(query('[data-evidence-kind="frame"]').textContent).toContain('No screenshot for this action')

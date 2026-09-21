@@ -11,14 +11,17 @@ import { formatOffset, frameUsable, type PlayerSource, type Playhead, type Timel
 import { captionModel, mediaErrorView, PLAYER_COPY, PLAYBACK_SPEEDS, storePlayerSource, VIDEO_UNTIMED_NOTE } from '@/lib/player-view'
 import { routes } from '@/lib/routes'
 import { probeMediaError } from '@/lib/media-error-probe'
+import { frameAnnotation } from '@/lib/frame-annotation'
+import type { StepAnnotation } from '@/lib/api'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import type { MediaFacade } from '@/test/media-facade'
 import { ActionSentence } from './action-sentence'
 import { EvidenceState } from './evidence-state'
 
-export function PlayerFrame({ runId, frame, wholeStep = false }: {
+export function PlayerFrame({ runId, frame, annotation, wholeStep = false }: {
   runId: string
   frame?: RunDetailArtifactRef
+  annotation?: StepAnnotation
   wholeStep?: boolean
 }) {
   const [error, setError] = useState<ReturnType<typeof mediaErrorView>>()
@@ -39,7 +42,7 @@ export function PlayerFrame({ runId, frame, wholeStep = false }: {
   )
   return (
     <div data-artifact-state='available' className='p-3'>
-      <ScreenshotViewer key={attempt} src={url!} onUnavailable={() => {
+      <ScreenshotViewer key={attempt} src={url!} annotation={annotation} onUnavailable={() => {
         request.current?.abort()
         const controller = new AbortController()
         request.current = controller
@@ -193,6 +196,10 @@ export function Player(props: PlayerProps) {
   const marker = model.markers.find(candidate => candidate.testIndex === playhead?.testIndex
     && candidate.stepIndex === playhead.stepIndex && candidate.subActionIndex === playhead.subActionIndex)
   const selectedFrame = frame?.ref ?? marker?.ref
+  // A parent-step fallback can show an earlier action. Its geometry must follow its bytes.
+  const frameOwner = frame ? model.markers.find(candidate => candidate.testIndex === playhead?.testIndex
+    && candidate.stepIndex === playhead.stepIndex && candidate.subActionIndex === frame.index
+    && candidate.ref?.sha === frame.ref.sha) : marker
   const caption = marker ? captionModel(marker, frame) : undefined
   const videoView = resolveEvidenceView({ kind: 'video', selection: 'sub-action', entry: recording, read: 'idle' })
   const absent = videoView.kind === 'state'
@@ -209,7 +216,7 @@ export function Player(props: PlayerProps) {
         ? <PlayerVideo key={`${runId}:${model.testIndex}:${recording.ref.sha}`} {...props} recording={recording} header={toggle} />
         : <div className='flex items-center gap-2 px-3 py-2'>{toggle}</div>}
       {source === 'frames' && <PlayerFrame key={`${runId}:${selectedFrame?.sha ?? 'none'}:${playhead?.stepIndex}:${playhead?.subActionIndex}`}
-        runId={runId} frame={selectedFrame} wholeStep={!marker} />}
+        runId={runId} frame={selectedFrame} annotation={frameAnnotation(frameOwner?.subAction)} wholeStep={!marker} />}
       {source === 'video' && videoView.kind === 'state' && <div className='p-3' data-artifact-state='unavailable'>
         <EvidenceState {...videoView} kind='video' />
       </div>}
