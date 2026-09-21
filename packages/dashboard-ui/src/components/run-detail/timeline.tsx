@@ -152,7 +152,7 @@ export function Timeline({ model, playhead, source, memberLabel, seekFraction, o
           const family = buildActionSentence(marker.subAction).family
           const Icon = family ? ACTION_FAMILY_ICONS[family] : UNKNOWN_ACTION_ICON
           const style = { left: `${marker.position * 100}%` }
-          const active = cluster === alignedCluster
+          const active = cluster === alignedCluster || (!alignedCluster && cluster.some(entry => entry === current))
           const classes = 'absolute top-0 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-ring'
           const circle = `flex h-5 w-5 items-center justify-center rounded-full border ${active ? 'border-primary/60 bg-primary/15 text-primary' : 'border-muted-foreground/30 bg-background text-muted-foreground hover:bg-muted'}`
           return cluster.length === 1 ? <button key={marker.ordinal} type='button' data-timeline-marker={marker.ordinal} data-timeline-active={active || undefined} aria-current={active ? 'step' : undefined} style={style} className={classes}

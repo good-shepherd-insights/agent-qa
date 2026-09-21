@@ -162,6 +162,8 @@ test('TIMELINE-MARKERS retains one pill thumb and accessible icons without perma
   expect(host.querySelectorAll('[data-timeline-marker] svg')).toHaveLength(4)
   expect(host.querySelectorAll('[data-timeline-stem]')).toHaveLength(0)
   expect(host.querySelectorAll('[data-timeline-circle]')).toHaveLength(4)
+  render({ source: 'video', observedPosition: 0.5, playhead: model.markers[2]! })
+  expect(query('[aria-current="step"]').dataset.timelineMarker).toBe('3')
   expect(host.querySelectorAll('[data-timeline-signals], [data-timeline-readout], [data-timeline-segment]')).toHaveLength(0)
   render({ model: { ...model, markers: [], segments: [], playhead: null }, playhead: null })
   expect(query('[data-timeline]')).toBeNull()
