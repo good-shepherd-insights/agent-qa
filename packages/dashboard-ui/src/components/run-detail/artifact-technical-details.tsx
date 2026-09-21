@@ -17,7 +17,7 @@ export function ArtifactTechnicalDetails({ runId, artifact }: {
         {DRAWER_COPY.technicalDetails}
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2 text-xs">
+        <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2 text-xs">
           <dt className="text-muted-foreground">{DRAWER_COPY.runId}</dt>
           <dd className="flex min-w-0 items-start gap-2 break-all font-mono">
             <span className="min-w-0 flex-1"><MaskedText text={runId} /></span>

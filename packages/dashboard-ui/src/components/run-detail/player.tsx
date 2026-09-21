@@ -162,7 +162,7 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, o
   })
 
   return <>
-    <div className='flex items-center gap-2 px-3 py-2'>
+    <div className='flex flex-wrap items-center gap-2 px-3 py-2'>
       {header}
       <Button size='icon-sm' variant='ghost' aria-label={playing ? PLAYER_COPY.pause : PLAYER_COPY.play} disabled={!ready}
         onClick={togglePlayback}>
@@ -174,10 +174,10 @@ function PlayerVideo({ model, playhead, recording, runId, media, seekFraction, o
         setSpeed(next)
         if (active.current) active.current.playbackRate = next
       }}>
-        <SelectTrigger aria-label={PLAYER_COPY.speed} size='sm' className='w-20'><SelectValue /></SelectTrigger>
+        <SelectTrigger aria-label={PLAYER_COPY.speed} size='sm' className='w-20 shrink-0'><SelectValue /></SelectTrigger>
         <SelectContent>{PLAYBACK_SPEEDS.map(value => <SelectItem key={value} value={String(value)}>{value}×</SelectItem>)}</SelectContent>
       </Select>
-      <span data-player-time className='font-mono text-xs tabular-nums'>{formatOffset(time * 1000) ?? '0:00'}{recording.durationMs === undefined ? '' : ` / ${formatOffset(recording.durationMs)}`}</span>
+      <span data-player-time className='whitespace-nowrap font-mono text-xs tabular-nums'>{formatOffset(time * 1000) ?? '0:00'}{recording.durationMs === undefined ? '' : ` / ${formatOffset(recording.durationMs)}`}</span>
     </div>
     <div className='p-3' data-artifact-state={error ? 'unavailable' : 'available'}>
       {error ? <EvidenceState {...error} kind='video' onAction={() => {
@@ -200,8 +200,8 @@ export function Player(props: PlayerProps) {
   const toggle = <ToggleGroup type='single' value={source} aria-label={PLAYER_COPY.source} onValueChange={value => {
           if (value === 'frames' || value === 'video') { storePlayerSource(value); onSourceChange(value) }
         }}>
-          <ToggleGroupItem value='frames' title={PLAYER_COPY.framesTooltip}>{PLAYER_COPY.frames}</ToggleGroupItem>
-          <ToggleGroupItem value='video' aria-label={videoName} title={videoName} className={absent ? 'opacity-60' : undefined}>{PLAYER_COPY.video}</ToggleGroupItem>
+          <ToggleGroupItem value='frames' title={PLAYER_COPY.framesTooltip} className='text-xs'>{PLAYER_COPY.frames}</ToggleGroupItem>
+          <ToggleGroupItem value='video' aria-label={videoName} title={videoName} className={`text-xs${absent ? ' opacity-60' : ''}`}>{PLAYER_COPY.video}</ToggleGroupItem>
         </ToggleGroup>
   return (
     <section data-player data-player-source={source}>
@@ -214,7 +214,7 @@ export function Player(props: PlayerProps) {
         <EvidenceState {...videoView} kind='video' />
       </div>}
       {marker && caption && <div data-player-caption data-frame-source-sub-action={caption.frameSourceSubAction}
-        className='space-y-1 px-3 pb-3 text-sm font-medium [overflow-wrap:anywhere] [&_[data-action-family]]:text-sm [&_[data-action-family]]:font-medium'>
+        className='space-y-1 px-3 pb-2 text-sm font-medium [overflow-wrap:anywhere] [&_[data-action-family]]:text-sm [&_[data-action-family]]:font-medium'>
         <ActionSentence sub={marker.subAction} ordinal={caption.ordinal} wrap='free' />
         <span className='text-xs text-muted-foreground'>{caption.result}{caption.offset === undefined ? '' : ` · ${caption.offset}`}</span>
         {caption.substitution && <p className='text-xs text-muted-foreground'>{caption.substitution}</p>}

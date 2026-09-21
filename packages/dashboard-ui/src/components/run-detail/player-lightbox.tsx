@@ -19,7 +19,7 @@ export function PlayerLightbox({ runId, sha, open, onOpenChange, returnFocus }: 
       onCloseAutoFocus={event => { event.preventDefault(); opener.current?.focus() }}>
       <DialogTitle className='pr-8 text-sm font-medium'>{PLAYER_COPY.lightboxTitle}</DialogTitle>
       <PlayerFrame key={`${runId}:${sha}`} runId={runId} frame={{ id: `decision-screenshot:${sha}`, sha }} />
-      <DialogDescription className='text-xs'>{PLAYER_COPY.lightboxNote}</DialogDescription>
+      <DialogDescription className='py-8 text-xs'>{PLAYER_COPY.lightboxNote}</DialogDescription>
       <DialogClose asChild>
         <Button size='icon-sm' variant='ghost' className='absolute right-4 top-4' aria-label={PLAYER_COPY.lightboxClose}><X className='h-4 w-4' /></Button>
       </DialogClose>

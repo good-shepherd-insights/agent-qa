@@ -22,7 +22,7 @@ let zoomContext: BrowserContext | undefined
 let zoom: { factor: number; beforeWidth: number; afterWidth: number; beforeDpr: number; afterDpr: number } | undefined
 let timeline: { numbers: number; badges: Box[]; readout: string; member: Box; first: Box; trackViewport: Box; steps: number } | undefined
 const tabs: Array<{ width: number; document: number; viewport: number; scroll: number; client: number; moved: number; triggers: Array<{ box: Box; count?: Box; contentFits: boolean }> }> = []
-const lightboxes: Array<{ width: number; document: number; viewport: number; image: Box; dialog: Box; loaded: boolean }> = []
+const lightboxes: Array<{ width: number; document: number; viewport: number; height: number; image: Box; dialog: Box; close: Box; notePadding: string[]; loaded: boolean }> = []
 let notice: { dismiss: Box; viewport: number; explanation: Box; pane: Box; lines: number; textWidth: number; font: string; totalTextWidth: number; message: string; text: Box; lineBoxes: Box[]; icon: Box } | undefined
 let chips: Array<{ chip: Box; row: Box; clip: Box; text: string; visible: boolean }> = []
 
@@ -222,10 +222,15 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
         lightboxes.push(await page.evaluate(() => {
           const box = (element: Element) => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
           const image = document.querySelector<HTMLImageElement>('[data-player-lightbox] img')!
+          const note = getComputedStyle(document.querySelector('[data-player-lightbox] [data-slot="dialog-description"]')!)
           return { width: innerWidth, viewport: document.documentElement.clientWidth, document: document.documentElement.scrollWidth,
+            height: innerHeight, close: box(document.querySelector('[data-player-lightbox] [aria-label="Close screenshot"]')!),
+            notePadding: [note.paddingTop, note.paddingBottom],
             image: box(image), dialog: box(document.querySelector('[data-player-lightbox]')!), loaded: image.complete && image.naturalWidth > 0 }
         }))
         await capture(page, `lightbox-${width}`)
+        await page.getByRole('button', { name: 'Close screenshot', exact: true }).click()
+        await page.locator('[data-player-lightbox]').waitFor({ state: 'hidden' })
       }
       if (process.env.AGENT_QA_424_CAPTURE_DIR) writeFileSync(join(process.env.AGENT_QA_424_CAPTURE_DIR, 'layout-observation.json'), JSON.stringify({ timeline, tabs, zoom, notice, lightboxes, chips }, null, 2))
       await context.close()
@@ -289,6 +294,10 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       expect(inside(lightbox.image, lightbox.dialog)).toBe(true)
       expect(lightbox.dialog.x).toBeGreaterThanOrEqual(0)
       expect(lightbox.dialog.right).toBeLessThanOrEqual(lightbox.viewport)
+      expect(lightbox.dialog.y).toBeGreaterThanOrEqual(0)
+      expect(lightbox.dialog.bottom).toBeLessThanOrEqual(lightbox.height)
+      expect(inside(lightbox.close, lightbox.dialog)).toBe(true)
+      expect(lightbox.notePadding).toEqual(['32px', '32px'])
     }
   })
   it('LAYOUT-MASKED-CHIP-TRUNCATION', () => {
