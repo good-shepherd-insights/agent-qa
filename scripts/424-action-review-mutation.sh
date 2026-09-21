@@ -32,7 +32,10 @@ runGate({ slug: '424-action-review-mutation', envPrefix: 'AGENT_QA_424_ACTION_RE
       edits: [{ from: "aria-label='Nearby actions'\n              onPointerDown={event => event.stopPropagation()}", to: "aria-label='Nearby actions' data-review424bubble='review424bubble'" }],
       reds: [cell('browser', browser, 'SUITE-BROWSER-ANNOTATION: new recorded intervals align in normal, zoom and fullscreen')],
       greens: [cell('browser', browser, 'SUITE-BROWSER-ORDER: arrows cross steps and members in both directions with one boxed action'),
-        cell('browser', browser, 'SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continued rate')], allowed: [] },
+        cell('browser', browser, 'SUITE-BROWSER-GAPS: dense actions remain individually reachable and missing recordings stop continuation')],
+      // The perceptible-cue workflow also clicks a grouped action once decoded tails
+      // compress the rail; the planted portal bug prevents that menu closing.
+      allowed: [cell('browser', browser, 'SUITE-BROWSER-MEDIA: real progress, marker details, local seeks and continued rate')] },
     { subject: 'packages/dashboard-ui/src/hooks/use-recording-durations.ts', instrument: 'durations', claim: 'decoded durations govern suite presentation',
       operation: 'keep the shorter persisted clock duration after metadata resolves',
       edits: [{ from: 'durationMs: duration', to: 'durationMs: recording.durationMs' }],
