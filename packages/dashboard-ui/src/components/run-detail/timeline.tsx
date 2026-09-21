@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { Accessibility, Check, Globe, RefreshCw, Terminal, X } from 'lucide-react'
-import { STEP_SIGNALS, signalBadgeName, stepSignals, type StepSignal } from '@/lib/evidence-counts'
+import { STEP_SIGNALS, signalBadgeName, stepProblemCounts, PROBLEM_COUNT_TONES, type StepSignal } from '@/lib/evidence-counts'
 import { nearestMarker, snapToMarker, type Playhead, type PlayerSource, type TimelineMarker, type TimelineModel } from '@/lib/playhead'
 import { runDetailStepKey } from '@/lib/selection'
 import { markerDensity, SCROLL_SLOT_PX, TIMELINE_COPY, timelineReadout, timelineValueText } from '@/lib/timeline-view'
@@ -16,7 +16,7 @@ export interface TimelineProps {
   source: PlayerSource
   runId: string
   memberLabel?: string
-  signals?: Readonly<Record<number, ReturnType<typeof stepSignals>>>
+  signals?: Readonly<Record<number, ReturnType<typeof stepProblemCounts>>>
   seekFraction?: number
   onPlayheadChange: (playhead: Playhead) => void
   onSeekFraction: (fraction: number) => void
@@ -75,8 +75,8 @@ export function Timeline({ model, playhead, source, runId, memberLabel, signals,
   const position = source === 'video' && seekFraction !== undefined ? Math.max(0, Math.min(1, seekFraction)) : current?.position
   const density = markerDensity(width / Math.max(1, model.markers.length))
   const badges = model.segments.flatMap(segment => {
-    const counts = signals?.[segment.step.stepIndex] ?? stepSignals(segment.step.evidence)
-    return STEP_SIGNALS.filter(kind => (counts[kind] ?? 0) > 0).map(kind => `${segment.step.stepIndex}:${kind}`)
+    const counts = signals?.[segment.step.stepIndex] ?? stepProblemCounts(segment.step.evidence)
+    return STEP_SIGNALS.filter(kind => (counts[kind]?.count ?? 0) > 0).map(kind => `${segment.step.stepIndex}:${kind}`)
   })
   const activeBadge = signalFocus !== null && badges.includes(signalFocus) ? signalFocus : badges[0]
   function select(marker: TimelineMarker) {
@@ -150,20 +150,21 @@ export function Timeline({ model, playhead, source, runId, memberLabel, signals,
           <div ref={signalRow} data-timeline-signals role='group' aria-label={TIMELINE_COPY.signals} onKeyDown={moveSignal} className='relative mb-1 flex h-4'>
             {model.segments.map(segment => {
               const stepIndex = segment.step.stepIndex
-              const counts = signals?.[stepIndex] ?? stepSignals(segment.step.evidence)
+              const counts = signals?.[stepIndex] ?? stepProblemCounts(segment.step.evidence)
               return <div key={stepIndex} className='absolute flex h-4 items-center gap-1'
                 style={{ left: `${segment.start * 100}%`, width: `${(segment.end - segment.start) * 100}%` }}>
                 <span className='hidden text-[10px] font-medium sm:inline'>{stepIndex + 1}</span>
                 {segment.step.selfHealOccurred && <RefreshCw aria-hidden='true' className='h-3 w-3 shrink-0 text-amber-500' />}
                 {STEP_SIGNALS.map(kind => {
-                  const count = counts[kind]
-                  if (count === undefined || count <= 0) return null
+                  const problem = counts[kind]
+                  if (problem === undefined || problem.count <= 0) return null
+                  const { count, severity } = problem
                   const Icon = SIGNAL_ICONS[kind]
                   return <button key={kind} type='button' data-step-signal={kind} data-count={count}
                     tabIndex={activeBadge === `${stepIndex}:${kind}` ? 0 : -1}
                     onFocus={() => setSignalFocus(`${stepIndex}:${kind}`)}
                     aria-label={copyTextOf(signalBadgeName(kind, count, stepIndex + 1))}
-                    className='flex shrink-0 items-center gap-1 rounded-sm text-[10px] font-medium tabular-nums focus-visible:ring-2 focus-visible:ring-ring/50'
+                    className={cn('flex shrink-0 items-center gap-1 rounded-sm text-[10px] font-medium tabular-nums focus-visible:ring-2 focus-visible:ring-ring/50', PROBLEM_COUNT_TONES[severity])}
                     onClick={() => onOpenSignal(stepIndex, kind)}>
                     <Icon aria-hidden='true' className='h-3 w-3' />{count}
                   </button>

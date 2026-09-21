@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { asRef, maskedMarker } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { buildTimelineModel, type TimelineModel } from '@/lib/playhead'
-import { signalBadgeName, stepSignals } from '@/lib/evidence-counts'
+import { signalBadgeName, stepProblemCounts } from '@/lib/evidence-counts'
 import { copyTextOf } from '@/lib/display-text'
 import type { RunDetailGroup } from '@/lib/run-detail-view'
 import { routes } from '@/lib/routes'
@@ -88,7 +88,7 @@ test('TIMELINE-SELECTED-SEGMENT', () => {
   expect(query('[data-marker-current="true"]').innerHTML).toContain('ring-primary')
 })
 test('TIMELINE-SIGNAL-BADGES', () => {
-  const counts = stepSignals({
+  const counts = stepProblemCounts({
     console: { kind: 'console', state: 'present', ref: { id: `console-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) }, counts: { total: 2, errors: 2, warnings: 0 } },
     network: { kind: 'network', state: 'absent', reason: 'not-captured' },
     a11y: { kind: 'a11y', state: 'absent', reason: 'not-captured' },
@@ -98,10 +98,30 @@ test('TIMELINE-SIGNAL-BADGES', () => {
   const button = query('[data-step-signal="console"]')
   expect(button.tagName).toBe('BUTTON')
   expect(button.dataset.count).toBe('2')
+  expect(button.className).toContain('text-red-500')
   expect(button.getAttribute('aria-label')).toBe(signalBadgeName('console', 2, 1))
   expect(host.querySelectorAll('[data-step-signal]')).toHaveLength(1)
   act(() => button.click())
   expect(openSignal).toHaveBeenCalledWith(0, 'console')
+})
+
+test('TIMELINE-SIGNAL-SEVERITY follows recorded impact at equal totals and omits absent evidence', () => {
+  const ref = { id: `a11y-evidence:${'b'.repeat(64)}` as const, sha: 'b'.repeat(64) }
+  for (const impact of ['minor', 'moderate', 'serious', 'critical'] as const) {
+    model.segments[0]!.step.evidence = {
+      variables: { kind: 'variables', state: 'absent', reason: 'not-captured' },
+      console: { kind: 'console', state: 'absent', reason: 'failed' },
+      network: { kind: 'network', state: 'present', ref, counts: { total: 2, failed: 1, errored: 1 } },
+      a11y: { kind: 'a11y', state: 'present', ref, counts: { minor: 0, moderate: 0, serious: 0, critical: 0, [impact]: 2 } },
+    }
+    render()
+    const badge = query('[data-step-signal="a11y"]')
+    expect(badge.dataset.count).toBe('2')
+    expect(badge.getAttribute('aria-label')).toBe(signalBadgeName('a11y', 2, 1))
+    expect(badge.className).toContain(impact === 'minor' || impact === 'moderate' ? 'text-amber-500' : 'text-red-500')
+    expect(query('[data-step-signal="network"]').className).toContain('text-red-500')
+    expect(query('[data-step-signal="console"]')).toBeNull()
+  }
 })
 test('TIMELINE-HEALED-STEP-ROW-A', () => {
   render()
@@ -244,7 +264,10 @@ test('TIMELINE-REDUCED-MOTION', () => {
   expect(query('[data-timeline-playhead]').className).not.toContain('transition')
 })
 test('TIMELINE-BADGE-ROVING', () => {
-  render({ signals: { 0: { console: 2, network: 1, a11y: undefined }, 1: { console: undefined, network: undefined, a11y: 3 } } })
+  render({ signals: {
+    0: { console: { kind: 'problem', count: 2, severity: 'high' }, network: { kind: 'problem', count: 1, severity: 'high' }, a11y: undefined },
+    1: { console: undefined, network: undefined, a11y: { kind: 'problem', count: 3, severity: 'moderate' } },
+  } })
   const group = query('[role="group"]')
   const buttons = group.querySelectorAll<HTMLButtonElement>('button')
   expect(group.querySelectorAll('[tabindex="0"]')).toHaveLength(1)

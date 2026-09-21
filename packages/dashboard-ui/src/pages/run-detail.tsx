@@ -50,7 +50,7 @@ import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-
 import { hasStepId, isSubactionSelection, runDetailStepKey, type Selection } from "@/lib/selection"
 import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
 import { buildTimelineModel, findMarkerBySha, latestUsableFrame, type PlayerSource, parkTargetForStep, playheadFromSelection, selectionFromPlayhead, type Playhead } from '@/lib/playhead'
-import { stepSignals } from '@/lib/evidence-counts'
+import { stepProblemCounts } from '@/lib/evidence-counts'
 
 const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y', 'knowledge'] as const
 
@@ -594,7 +594,7 @@ export default function RunDetailPage() {
   const foldedFrame = selection?.type === "step" && !playheadTarget
     ? latestUsableFrame(selectedStep?.subActions ?? []) : undefined
   const timelineSignals = useMemo(() => Object.fromEntries(
-    timelineGroup?.steps.map(({ step }) => [step.stepIndex, stepSignals(step.evidence)]) ?? [],
+    timelineGroup?.steps.map(({ step }) => [step.stepIndex, stepProblemCounts(step.evidence)]) ?? [],
   ), [timelineGroup])
 
   type NavItem =

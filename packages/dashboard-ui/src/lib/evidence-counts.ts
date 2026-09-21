@@ -9,6 +9,8 @@ export type TabCount =
   | { kind: 'total'; count: number }
   | { kind: 'absent'; title: string; count?: never }
 
+export const PROBLEM_COUNT_TONES = { high: 'text-red-500', moderate: 'text-amber-500' } as const
+
 const TAB_NAMES = {
   variables: 'Variables', network: 'Network', console: 'Console', aria: 'ARIA Tree', a11y: 'A11y',
 } satisfies Record<EvidenceKind, string>
@@ -29,24 +31,34 @@ export function stepSignals(entries: StepEvidenceEntries | undefined): Record<St
   }
 }
 
+/** The same recorded problem count and severity drive tabs and timeline signals. */
+export function stepProblemCounts(entries: StepEvidenceEntries | undefined): Record<StepSignal, Extract<TabCount, { kind: 'problem' }> | undefined> {
+  const counts = stepSignals(entries)
+  const problem = (kind: StepSignal): Extract<TabCount, { kind: 'problem' }> | undefined => {
+    const count = counts[kind]
+    if (count === undefined) return undefined
+    const a11y = entries?.a11y
+    const severity = kind === 'a11y' && a11y?.state === 'present'
+      && a11y.counts.critical === 0 && a11y.counts.serious === 0 ? 'moderate' : 'high'
+    return { kind: 'problem', count, severity }
+  }
+  return { console: problem('console'), network: problem('network'), a11y: problem('a11y') }
+}
+
 export function tabCounts(
   entries: StepEvidenceEntries | undefined,
   aria?: AriaEvidenceEntry,
   selection: Parameters<typeof resolveEvidenceView>[0]['selection'] = 'sub-action',
 ): Record<EvidenceKind, TabCount | undefined> {
-  const signals = stepSignals(entries)
+  const signals = stepProblemCounts(entries)
   const countFor = (kind: EvidenceKind): TabCount | undefined => {
     const entry = kind === 'aria' ? aria : entries?.[kind]
     const view = resolveEvidenceView({ kind, entry, selection, read: 'idle' })
     if (view.kind === 'state') return { kind: 'absent', title: view.title }
     if (!entry || entry.state !== 'present' || entry.kind === 'aria') return undefined
     if (entry.kind !== 'variables') {
-      const count = signals[entry.kind]
-      if (count !== undefined) {
-        const severity = entry.kind === 'a11y' && entry.counts.critical === 0 && entry.counts.serious === 0
-          ? 'moderate' : 'high'
-        return { kind: 'problem', count, severity }
-      }
+      const problem = signals[entry.kind]
+      if (problem !== undefined) return problem
     }
     const total = entry.kind === 'variables' ? entry.counts.count
       : entry.kind === 'a11y' ? 0 : entry.counts.total

@@ -77,6 +77,16 @@ test('STRIP-PROBLEM-LOUD-TOTAL-QUIET', async () => {
   expect(total?.className).toContain('text-muted-foreground')
   expect(total?.querySelector('svg')).toBeNull()
   expect(trigger('A11y').querySelector('[data-tab-count-kind="problem"]')?.className).toContain('text-amber-500')
+  for (const impact of ['minor', 'moderate', 'serious', 'critical'] as const) {
+    const selected = step()
+    const a11y = selected.evidence!.a11y
+    if (a11y.state !== 'present') throw new Error('Expected present fixture')
+    a11y.counts = { minor: 0, moderate: 0, serious: 0, critical: 0, [impact]: 2 }
+    await render({ step: selected })
+    const badge = trigger('A11y').querySelector('[data-tab-count-kind="problem"]')!
+    expect(badge.getAttribute('data-tab-count')).toBe('2')
+    expect(badge.className).toContain(impact === 'minor' || impact === 'moderate' ? 'text-amber-500' : 'text-red-500')
+  }
 })
 
 test('STRIP-ABSENT-DIMMED-CLICKABLE', async () => {
