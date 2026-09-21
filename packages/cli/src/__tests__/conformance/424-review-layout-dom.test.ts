@@ -91,7 +91,8 @@ it('REVIEW-MINIMAL-OVERVIEW: one and many actions keep annotations aligned at de
       const track = await page.locator('[data-timeline-track]').boundingBox()
       await page.mouse.click(track!.x + track!.width - 1, track!.y + track!.height / 2)
       await expect.poll(() => page.locator('[data-player-caption]').textContent()).toBe(`Clicked 'Products ${count}'`)
-      expect(new URL(page.url()).searchParams.get('sub')).toBe(String(count - 1))
+      // Selection renders before the page's replace-navigation effect commits the URL.
+      await expect.poll(() => new URL(page.url()).searchParams.get('sub')).toBe(String(count - 1))
       await page.getByRole('tab', { name: /^Network/ }).click()
       expect(await page.locator('[data-timeline]').count()).toBe(0)
       await page.getByRole('tab', { name: 'Overview', exact: true }).click()
