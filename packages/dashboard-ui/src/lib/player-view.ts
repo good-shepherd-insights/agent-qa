@@ -1,7 +1,7 @@
 import type { RecordingEntry } from '@vostride/agent-qa-schema'
 import { buildActionSentence, RESULT_WORDS } from './action-vocabulary'
 import { EVIDENCE_COPY, EVIDENCE_RETRY_LABELS } from './evidence-state-view'
-import { formatOffset, type PlayerSource, type TimelineMarker, type UsableFrame } from './playhead'
+import { formatOffset, type PlayerSource, type TimelineAxis, type TimelineMarker, type UsableFrame } from './playhead'
 
 export const PLAYER_COPY = {
   frames: 'Frames',
@@ -20,8 +20,8 @@ export const PLAYER_SOURCE_STORAGE_KEY = 'agent-qa.run-detail.player-source'
 export const PLAYBACK_SPEEDS = [0.5, 1, 2] as const
 export const VIDEO_UNTIMED_NOTE = 'This recording cannot be synchronized with the selected action. Switch to Frames to see its screenshot.'
 
-export function initialPlayerSource(recording: RecordingEntry | undefined, storage?: Pick<Storage, 'getItem'>): PlayerSource {
-  if (recording?.state !== 'present') return 'frames'
+export function initialPlayerSource(recording: RecordingEntry | undefined, axis: TimelineAxis, storage?: Pick<Storage, 'getItem'>): PlayerSource {
+  if (recording?.state !== 'present' || axis === 'ordinal') return 'frames'
   try {
     return (storage ?? globalThis.localStorage)?.getItem(PLAYER_SOURCE_STORAGE_KEY) === 'frames' ? 'frames' : 'video'
   } catch {

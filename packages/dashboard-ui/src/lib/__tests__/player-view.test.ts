@@ -6,22 +6,29 @@ const recording: RecordingEntry = { state: 'present', ref: { id: `recording:${'a
 
 test('PLAYER-STORED-SOURCE', () => {
   const getItem = vi.fn(() => 'frames')
-  expect(initialPlayerSource(recording, { getItem })).toBe('frames')
+  expect(initialPlayerSource(recording, 'time', { getItem })).toBe('frames')
   expect(getItem).toHaveBeenCalledWith(PLAYER_SOURCE_STORAGE_KEY)
-  for (const value of ['video', 'bad', null]) expect(initialPlayerSource(recording, { getItem: () => value })).toBe('video')
+  for (const value of ['video', 'bad', null]) expect(initialPlayerSource(recording, 'time', { getItem: () => value })).toBe('video')
+  for (const value of ['frames', 'video', null]) {
+    const storage = { getItem: vi.fn(() => value), setItem: vi.fn() }
+    expect(initialPlayerSource(recording, 'ordinal', storage)).toBe('frames')
+    expect(storage.getItem).not.toHaveBeenCalled()
+    expect(storage.setItem).not.toHaveBeenCalled()
+  }
   const setItem = vi.fn()
   storePlayerSource('video', { setItem })
   expect(setItem).toHaveBeenCalledWith(PLAYER_SOURCE_STORAGE_KEY, 'video')
 })
 test('PLAYER-NO-OVERWRITE-WITHOUT-RECORDING', () => {
   const storage = { getItem: vi.fn(), setItem: vi.fn() }
-  expect(initialPlayerSource(undefined, storage)).toBe('frames')
-  expect(initialPlayerSource({ state: 'absent', reason: 'not-captured' }, storage)).toBe('frames')
+  expect(initialPlayerSource(undefined, 'ordinal', storage)).toBe('frames')
+  expect(initialPlayerSource({ state: 'absent', reason: 'not-captured' }, 'ordinal', storage)).toBe('frames')
   expect(storage.getItem).not.toHaveBeenCalled()
   expect(storage.setItem).not.toHaveBeenCalled()
 })
 test('PLAYER-STORAGE-UNAVAILABLE', () => {
-  expect(initialPlayerSource(recording, { getItem: () => { throw Error('denied') } })).toBe('video')
+  expect(initialPlayerSource(recording, 'time', { getItem: () => { throw Error('denied') } })).toBe('video')
+  expect(initialPlayerSource(recording, 'ordinal', { getItem: () => { throw Error('denied') } })).toBe('frames')
   expect(() => storePlayerSource('frames', { setItem: () => { throw Error('denied') } })).not.toThrow()
 })
 test('PLAYER-MEDIA-ERROR-CLASSIFICATION', () => {

@@ -75,8 +75,11 @@ it('REVIEW-ABSENCE-LAYOUT: assembled evidence tabs preserve flex centering and 8
   } finally { await page.close() }
 }, 120_000)
 
-async function controls(page: Page, name: string) {
+async function controls(page: Page, name: string, axis: 'time' | 'ordinal') {
   await page.getByRole('tab', { name: 'Overview', exact: true }).click()
+  const initialSource = await page.locator('[data-player]').getAttribute('data-player-source')
+  expect(initialSource).toBe(axis === 'ordinal' ? 'frames' : 'video')
+  expect(await page.evaluate(() => localStorage.getItem('agent-qa.run-detail.player-source'))).toBe('video')
   await page.getByRole('radio', { name: 'Video', exact: true }).click()
   await page.locator('video').waitFor()
   await page.waitForFunction(() => document.querySelector('video')!.readyState >= 1)
@@ -96,7 +99,7 @@ async function controls(page: Page, name: string) {
   await page.locator('video').evaluate(video => video.addEventListener('play', () => video.setAttribute('data-review-played', 'true'), { once: true }))
   await page.getByRole('button', { name: 'Play recording', exact: true }).click()
   await page.locator('video[data-review-played="true"]').waitFor()
-  return result
+  return { initialSource, ...result }
 }
 
 it('REVIEW-VIDEO-CONTROLS: timed and ordinal long-duration controls fit at 400px and actual browser zoom', async () => {
@@ -114,13 +117,16 @@ it('REVIEW-VIDEO-CONTROLS: timed and ordinal long-duration controls fit at 400px
   })
   try {
     const zoomPage = await zoomContext.newPage()
+    for (const target of [page, zoomPage]) {
+      await target.addInitScript(() => localStorage.setItem('agent-qa.run-detail.player-source', 'video'))
+    }
     for (const axis of ['time', 'ordinal'] as const) {
       const projection = structuredClone(detail)
       for (const member of projection.members) if (member.recording?.state === 'present') member.recording.durationMs = 400_000_000
       if (axis === 'ordinal') delete projection.subActions[0]!.recordingOffsetMs
       await page.unroute('**/api/runs/*/detail')
       await arrange(page, projection)
-      measured.push({ axis, ...(await controls(page, `review-video-${axis}-400`)) })
+      measured.push({ axis, ...(await controls(page, `review-video-${axis}-400`, axis)) })
       await zoomPage.unroute('**/api/runs/*/detail')
       await arrange(zoomPage, projection)
       const worker = zoomContext.serviceWorkers()[0] ?? await zoomContext.waitForEvent('serviceworker')
@@ -136,7 +142,7 @@ it('REVIEW-VIDEO-CONTROLS: timed and ordinal long-duration controls fit at 400px
         return tabs.getZoom(tab.id)
       }, zoomPage.url())
       await zoomPage.waitForFunction(() => devicePixelRatio === 2 && innerWidth === 640)
-      measured.push({ axis, factor, ...(await controls(zoomPage, `review-video-${axis}-zoom`)) })
+      measured.push({ axis, factor, ...(await controls(zoomPage, `review-video-${axis}-zoom`, axis)) })
     }
     observations.controls = measured
     for (const row of measured) {

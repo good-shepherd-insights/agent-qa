@@ -561,7 +561,7 @@ export default function RunDetailPage() {
   const recording = timelineGroup?.member.recording
   const [sourceChoice, setSourceChoice] = useState<{ member: string; source: PlayerSource }>()
   const playerMember = `${id}:${timelineGroup?.member.testIndex}:${recording?.state}`
-  const playerSource = sourceChoice?.member === playerMember ? sourceChoice.source : initialPlayerSource(recording)
+  const playerSource = sourceChoice?.member === playerMember ? sourceChoice.source : initialPlayerSource(recording, timelineModel?.axis ?? 'ordinal')
   const setPlayerSource = (source: PlayerSource) => setSourceChoice({ member: playerMember, source })
   const handleCitedArtifact = useCallback((sha: string) => {
     for (const group of groups) {

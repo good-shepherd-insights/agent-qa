@@ -104,6 +104,7 @@ function recordedProjection() {
   detail.members[0]!.recording = { state: 'present', ref: { id: `recording:${'e'.repeat(64)}`, sha: 'e'.repeat(64) }, durationMs: 10000, contentType: 'video/webm', byteLength: 100 }
   detail.subActions.forEach((sub, index) => { sub.recordingOffsetMs = index * 2000 })
   detailRead.mockResolvedValue(detail)
+  return detail
 }
 
 function citedProjection(sha = '9'.repeat(64)) {
@@ -328,12 +329,52 @@ it('OVERVIEW-PLAYER-FIRST-BLOCK', async () => {
 })
 
 it('OVERVIEW-OPENS-ON-VIDEO', async () => {
-  recordedProjection()
-  await render()
-  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
-  expect(host.querySelector('[data-player] img')).toBeNull()
-  expect(host.querySelector('video')?.autoplay).toBe(false)
-  expect(localStorage.length).toBe(0)
+  for (const timing of ['complete', 'missing-duration', 'missing-offset', 'missing-all'] as const) {
+    for (const preference of [null, 'video', 'frames']) {
+      act(() => root.unmount())
+      root = createRoot(host)
+      localStorage.clear()
+      if (preference) localStorage.setItem('agent-qa.run-detail.player-source', preference)
+      const detail = recordedProjection()
+      if (timing === 'missing-duration' || timing === 'missing-all') {
+        if (detail.members[0]!.recording?.state === 'present') delete detail.members[0]!.recording.durationMs
+      }
+      if (timing === 'missing-offset') delete detail.subActions[0]!.recordingOffsetMs
+      if (timing === 'missing-all') detail.subActions.forEach(sub => { delete sub.recordingOffsetMs })
+      await render('/runs/run-1?step=0%3A0&sub=1')
+      const ordinal = timing !== 'complete'
+      const source = ordinal || preference === 'frames' ? 'frames' : 'video'
+      expect(host.querySelector('[data-player]')?.getAttribute('data-player-source'), `${timing}/${preference}`).toBe(source)
+      expect(localStorage.getItem('agent-qa.run-detail.player-source')).toBe(preference)
+      expect(current()).toBe('0:0-1')
+      expect(query().get('sub')).toBe('1')
+      if (source === 'video') {
+        expect(host.querySelector('[data-player] img')).toBeNull()
+        expect(host.querySelector('video')?.autoplay).toBe(false)
+      } else {
+        expect(frame()).toBe(routes.runArtifact('run-1', shas[1]!))
+        expect(host.querySelector('video')).toBeNull()
+      }
+      if (ordinal) {
+        click('[data-slot="toggle-group-item"][aria-label^="Video"]')
+        const video = host.querySelector('video')!
+        expect(video).not.toBeNull()
+        act(() => video.dispatchEvent(new Event('loadedmetadata')))
+        expect(video.currentTime).toBe(0)
+        expect(host.querySelector('[data-player]')?.textContent).toContain('cannot be synchronized with the selected action')
+        child(2)
+        expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
+        expect(video.currentTime).toBe(0)
+        act(() => { video.currentTime = 8; video.dispatchEvent(new Event('timeupdate')) })
+        expect(current()).toBe('0:0-2')
+        expect(localStorage.getItem('agent-qa.run-detail.player-source')).toBe('video')
+        const frames = [...host.querySelectorAll<HTMLButtonElement>('[data-slot="toggle-group-item"]')]
+          .find(button => button.textContent === 'Frames')!
+        act(() => frames.click())
+        expect(frame()).toBe(routes.runArtifact('run-1', shas[2]!))
+      }
+    }
+  }
 })
 
 it('OVERVIEW-FRAMES-TOGGLE-SHOWS-FRAME', async () => {
@@ -485,23 +526,31 @@ it('TIMELINE-BADGE-OPENS-TAB', async () => {
 })
 
 it('TIMELINE-MEMBER-SWITCH', async () => {
-  const detail = projection()
+  const detail = recordedProjection()
+  delete detail.subActions[0]!.recordingOffsetMs
   detailRead.mockResolvedValue({
     ...detail,
-    members: [...detail.members, { testIndex: 3, name: 'Returns', attempts: 1 }],
+    members: [...detail.members, { testIndex: 3, name: 'Returns', attempts: 1, recording: detail.members[0]!.recording }],
     steps: [...detail.steps, { ...detail.steps[0]!, testIndex: 3 }],
     subActions: [...detail.subActions, ...detail.subActions.slice(0, 2).map(sub => ({ ...sub, testIndex: 3 }))],
   })
   await render()
   expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('0')
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
+  press('v')
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
   parent('3:0')
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
+  expect(localStorage.getItem('agent-qa.run-detail.player-source')).toBe('video')
   expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('3')
   expect(host.querySelector('[data-timeline]')?.textContent).toContain('#3')
   expect(host.querySelector('[data-timeline]')?.textContent).toContain('Returns')
   parent('0:1')
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('video')
   act(() => host.querySelector('[role="slider"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
   expect(host.querySelector('[data-timeline]')?.getAttribute('data-timeline-member')).toBe('3')
   expect(current()).toBe('3:0-0')
+  expect(host.querySelector('[data-player]')?.getAttribute('data-player-source')).toBe('frames')
   expect(selected()?.getAttribute('data-step-id')).toBe('3:0')
 })
 
