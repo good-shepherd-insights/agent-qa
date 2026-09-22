@@ -258,6 +258,11 @@ async function openDurableScene() {
 
   const runId = db.insertRun({ name: 'Read contract fixture', status: 'failed', duration: 1,
     startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
+  // 425 D-08: a SECOND run on the same scene — outcome-excluded, and with no job rows at all, so
+  // the exclusion fact is read over the same four doors as the ordinary chain above. Its chip
+  // words stay `pending`; the fact rides beside them rather than replacing either of them.
+  const excludedRunId = db.insertRun({ name: 'Excluded run fixture', status: 'passed', duration: 1,
+    startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
   writeMaskingDigests({ root, runId, key: resolveMaskingHostKey(root), entries: mask.snapshotRegistered() })
   const blobs = new FsEvidenceArtifactStore({ root, runId })
   const consoleRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'console', records: [
@@ -293,10 +298,15 @@ async function openDurableScene() {
     artifactRefs: [ariaRef], ariaEvidence: { kind: 'aria', state: 'present', ref: ariaRef as never } })
 
   const handoff = knowledgeHandoff(asRunId(runId), allowedPlaceholder)
+  const excludedHandoff = {
+    ...knowledgeHandoff(asRunId(excludedRunId), allowedPlaceholder),
+    excludedFromOutcomes: true,
+  } as unknown as CompletedRunHandoff
   const snapshot = curationSnapshot(runId)
   const deps = {
     runs: {
-      list: async () => [handoff], get: async (id: string) => (id === runId ? handoff : undefined),
+      list: async () => [handoff, excludedHandoff],
+      get: async (id: string) => (id === runId ? handoff : id === excludedRunId ? excludedHandoff : undefined),
       readEvents: async () => [], readStepEvidence: async () => ({ kind: 'run-not-recorded' as const }),
     },
     knowledge: {
@@ -309,7 +319,7 @@ async function openDurableScene() {
     config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },
     postProcessing: {
       idSource: { jobIdFor: (kind: string, key: string) => `${kind}:${key}` },
-      readChain: async () => ({
+      readChain: async (_ids: unknown, id: string) => id === excludedRunId ? undefined : ({
         analyzeRun: { status: 'done', claimed: false, attempts: 1 },
         curateMemory: { status: 'done', claimed: false, attempts: 2 },
         proposeImprovements: { status: 'queued', claimed: true, attempts: 1 },
@@ -325,7 +335,7 @@ async function openDurableScene() {
   const agentHost = composeDashboardAgentHost({ registry } as LocalAgentHost,
     { subscribe: () => () => undefined, emit() {} }, undefined, undefined, unmask)
   const doors = await openDoors({ registry, agentHost, db, maskText: text => mask.mask(text) })
-  return { root, db, runId, authPlaceholder, allowedPlaceholder, doors, snapshot,
+  return { root, db, runId, excludedRunId, authPlaceholder, allowedPlaceholder, doors, snapshot,
     async close() {
       await doors.close()
       db.close()
@@ -458,6 +468,22 @@ const READ_SCENARIOS: readonly ReadScenario[] = [
       expect(parsed.chips).toEqual({ analysis: 'done', curation: 'done' })
       expect(parsed).toMatchObject({ stageDetails: { analysis: { attempts: 1 }, curation: { attempts: 2 }, proposals: { attempts: 1 } } })
       expect(parsed).toHaveProperty('curationSnapshot', durable(scene).snapshot)
+      expect(parsed).not.toHaveProperty('notification')
+      // 425 D-08: an ordinary run answers NO exclusion key. The fact is minted from the durable
+      // handoff markers alone, so a run that carries neither carries no key to render.
+      expect(parsed).not.toHaveProperty('exclusion')
+    },
+  },
+  {
+    name: 'runs.postprocessing excluded run answers the exclusion fact with untouched chip words',
+    opId: 'runs.postprocessing', scene: 'durable',
+    input: scene => ({ runId: durable(scene).excludedRunId }),
+    http: { method: 'GET', path: input => `${run(input)}/post-processing`, machine: false,
+      envelope: result => ({ status: result, failures: {} }) },
+    expectPositive(result) {
+      const parsed = PostProcessingStatusSchema.parse(result)
+      expect(parsed.chips).toEqual({ analysis: 'pending', curation: 'pending' })
+      expect(parsed).toHaveProperty('exclusion', { reason: 'outcome-excluded' })
       expect(parsed).not.toHaveProperty('notification')
     },
   },
