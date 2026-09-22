@@ -483,6 +483,66 @@ describe('423 cold stage facts', () => {
     },
   )
 
+  // 425-13: the SETTLED shape, from a row the store wrote and a process that never held it. Every
+  // terminal transition releases the claim lease, so the start is the only instant a finished
+  // stage can be timed from — and this cell reads it off the real row, never off a literal.
+  it('DURABLE-START-SURVIVES-THE-LEASE: a settled stage carries its start and no lease after cold reopen', async () => {
+    const FAILED_RUN = 'run-425-start-failed'
+    const QUEUED_RUN = 'run-425-start-queued'
+    const writer = createHarness()
+    const jobs = await writer.host.jobs()
+    const fence = await jobs.store.adoptEpoch(1)
+    const done = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE).analyzeRun
+    const failed = chainJobIdsForRun(FAILED_RUN, DIGEST_JOB_ID_SOURCE).analyzeRun
+    const queued = chainJobIdsForRun(QUEUED_RUN, DIGEST_JOB_ID_SOURCE).analyzeRun
+
+    expect((await jobs.queue.enqueue('analyze-run', { runId: RUN_ID }, RUN_ID)).job.id).toBe(done)
+    expect(await jobs.store.claimNext(fence)).toMatchObject({ claimed: true, job: { id: done } })
+    await jobs.store.completeAndChain(done, [], fence)
+    expect((await jobs.queue.enqueue('analyze-run', { runId: FAILED_RUN }, FAILED_RUN)).job.id)
+      .toBe(failed)
+    expect(await jobs.store.claimNext(fence)).toMatchObject({ claimed: true, job: { id: failed } })
+    await jobs.store.recordFailure(failed, { kind: 'permanent', reason: 'analysis failed' }, fence)
+    expect((await jobs.queue.enqueue('analyze-run', { runId: QUEUED_RUN }, QUEUED_RUN)).job.id)
+      .toBe(queued)
+    await closeWriter(writer)
+
+    const rows = readQueue(writer.agentQaRoot).rows
+    const rowOf = (id: string) => rows.find(row => row.id === id)!
+    for (const id of [done, failed]) {
+      expect(rowOf(id).claimed_at).toBeNull()
+      expect(rowOf(id).started_at).not.toBeNull()
+    }
+    expect(rowOf(queued).started_at).toBeNull()
+
+    const masking = createMaskingContext()
+    setActiveMaskingContextResolver(() => masking)
+    const cold = createHarness(writer.agentQaRoot)
+    const statusOf = async (runId: string) => await invokeFunction(
+      cold.host.registry,
+      RUNS_POST_PROCESSING_FUNCTION_ID,
+      { runId },
+      CALLER,
+    ) as PostProcessingStatus
+
+    for (const [runId, id] of [[RUN_ID, done], [FAILED_RUN, failed]] as const) {
+      const detail = (await statusOf(runId)).stageDetails?.analysis
+      expect(detail).toBeDefined()
+      expect('claimedAt' in detail!, `${runId}: a settled stage holds no lease`).toBe(false)
+      expect(detail!.startedAt).toBe(String(rowOf(id).started_at))
+      const created = Date.parse(detail!.createdAt!)
+      const started = Date.parse(detail!.startedAt!)
+      const updated = Date.parse(detail!.updatedAt!)
+      expect(created).toBeLessThanOrEqual(started)
+      expect(started).toBeLessThanOrEqual(updated)
+    }
+
+    const never = (await statusOf(QUEUED_RUN)).stageDetails?.analysis
+    expect(never).toBeDefined()
+    expect('startedAt' in never!, 'a stage nobody claimed has no start: absent is not zero').toBe(false)
+    expect('claimedAt' in never!).toBe(false)
+  })
+
   it('MASK-FAILURE-REASON masks persisted prose with the active read context', async () => {
     const writer = createHarness()
     const jobs = await writer.host.jobs()

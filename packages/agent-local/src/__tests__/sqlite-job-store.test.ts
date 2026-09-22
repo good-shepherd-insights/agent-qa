@@ -1433,3 +1433,81 @@ describe('agent job store: requeueTerminal (413-13, the stand-in forget)', () =>
     })
   })
 })
+
+// 425-13: THE START OUTLIVES THE LEASE. `claimed_at` answers who holds a row right now and every
+// terminal transition releases it, so a card that timed a settled stage from it could never say how
+// long the stage took. `started_at` is written once, at the first claim, and cleared only by the
+// operator requeue. The stepping clock is what makes "once" observable: every `now()` is a later
+// instant, so a second claim that overwrote the column would read differently.
+describe('agent job store: durable start instant (425-13, PXH-RUN-03)', () => {
+  let root: string
+  let store: SqliteJobStore
+  let fence: JobStoreFence
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-start-'))
+    store = openStore(root)
+    fence = await store.adoptEpoch(1)
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('DURABLE-START-WRITTEN-ONCE: a retried claim keeps the first claim as the start', async () => {
+    await store.enqueue(insert('job_a', 'key-a'))
+    expect(rawRow(root, 'job_a')?.started_at).toBeNull()
+
+    await store.claimNext(fence)
+    const first = rawRow(root, 'job_a')
+    expect(first?.started_at).not.toBeNull()
+    expect(first?.started_at).toBe(first?.claimed_at)
+
+    await store.recordFailure(asJobId('job_a'), { kind: 'retry', reason: 'provider timed out' }, fence)
+    await store.claimNext(fence)
+    const second = rawRow(root, 'job_a')
+
+    expect(Number(second?.attempts)).toBe(2)
+    expect(second?.claimed_at).not.toBe(first?.claimed_at)
+    expect(
+      second?.started_at,
+      'the second claim is a second attempt at work that already began, not a new start',
+    ).toBe(first?.started_at)
+  })
+
+  it('DURABLE-START-SURVIVES-EVERY-TERMINAL: each terminal releases the lease and keeps the start; only the requeue clears it', async () => {
+    for (const id of ['job_done', 'job_failed', 'job_cancelled']) {
+      await store.enqueue(insert(id, id))
+    }
+
+    await store.claimNext(fence)
+    await store.completeAndChain(asJobId('job_done'), [], fence)
+    await store.claimNext(fence)
+    await store.recordFailure(asJobId('job_failed'), { kind: 'permanent', reason: 'bad payload' }, fence)
+    await store.claimNext(fence)
+    expect(await store.requestCancel(asJobId('job_cancelled'), fence)).toEqual({
+      outcome: 'cancel-requested',
+    })
+    await store.recordCancellation(asJobId('job_cancelled'), fence)
+
+    for (const [id, status] of [
+      ['job_done', 'done'],
+      ['job_failed', 'failed'],
+      ['job_cancelled', 'cancelled'],
+    ] as const) {
+      const row = rawRow(root, id)
+      expect(row?.status).toBe(status)
+      expect(row?.claimed_at, `${status} releases the lease`).toBeNull()
+      expect(row?.started_at, `${status} keeps the start`).not.toBeNull()
+    }
+
+    expect(await store.requeueTerminal(asJobId('job_done'), fence)).toEqual({ outcome: 'requeued' })
+    const requeued = rawRow(root, 'job_done')
+    expect(Number(requeued?.attempts)).toBe(0)
+    expect(
+      requeued?.started_at,
+      'a requeued row starts a new queue life; keeping the start would time one that no longer exists',
+    ).toBeNull()
+  })
+})

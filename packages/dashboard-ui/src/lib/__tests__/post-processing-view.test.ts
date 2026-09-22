@@ -583,6 +583,21 @@ describe('a card times the stage from the job row, and never from a clock of its
       .toBe(`Queued ${clock()} · started after 2.5s · finished in 5s · 2 attempts`)
   })
 
+  it('STAGE-TIMING-LINE-DURABLE-START: a settled row whose claim was released still says how long the stage took', () => {
+    expect(
+      stageTimingLine({ ...STORED, attempts: 1 }, 'complete'),
+      'the production settled shape — created, started, updated, and no lease — is fully timed',
+    ).toBe(`Queued ${clock()} · started after 2.5s · finished in 5s`)
+    expect(
+      stageTimingLine(
+        { createdAt: STORED.createdAt, claimedAt: LEASE, updatedAt: STORED.updatedAt },
+        'complete',
+      ),
+      'the load-bearing half: every terminal transition releases the lease, so a card that timed '
+        + 'from it could never answer how long a settled stage took — the question D-12 was written for',
+    ).toBe(`Queued ${clock()}`)
+  })
+
   it('STAGE-TIMING-LINE: a running stage ends at `running` and claims no finish', () => {
     const line = stageTimingLine({ ...STORED, attempts: 1 }, 'running')
     expect(line).toBe(`Queued ${clock()} · started after 2.5s · running`)
