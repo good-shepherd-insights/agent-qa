@@ -263,12 +263,17 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     })
     expect(lastNavbarView()).toEqual({
       kind: "chips",
-      analysis: { status: "running", state: "running", word: STAGE_INDICATOR_WORDS.analysis.running },
+      analysis: {
+        status: "running",
+        state: "running",
+        word: STAGE_INDICATOR_WORDS.analysis.running,
+        card: { outcome: "Analysis running" },
+      },
       curation: {
         status: "pending",
         state: "pending",
         word: STAGE_INDICATOR_WORDS.curation.pending,
-        posture: PENDING_POSTURE_TEXT.handedOff,
+        card: { outcome: `Curation queued — ${PENDING_POSTURE_TEXT.handedOff}` },
       },
     })
   })
@@ -280,7 +285,11 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     })
     expect(lastNavbarView()).toMatchObject({
       kind: "chips",
-      analysis: { status: "failed", reasonAbsent: FAILED_REASON_ABSENT_TEXT.handedOff },
+      analysis: {
+        status: "failed",
+        state: "failed",
+        card: { outcome: `Analysis failed — ${FAILED_REASON_ABSENT_TEXT.handedOff}` },
+      },
     })
   })
 

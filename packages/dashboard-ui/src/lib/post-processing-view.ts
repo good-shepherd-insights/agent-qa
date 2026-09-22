@@ -19,7 +19,10 @@
 // constants, so copy moves in one place and the tests move with it; prose inlined in a component
 // is prose that drifts from prose inlined in a test, and both of them stay green.
 
+import { CURATION_BREAKDOWN_BUCKETS } from '@vostride/agent-qa-schema'
 import type {
+  CurationBreakdown,
+  CurationSnapshotWithheldReason,
   PostProcessingChipStatus,
   PostProcessingDisposition,
 } from '@vostride/agent-qa-schema'
@@ -111,12 +114,48 @@ export const POST_PROCESSING_LOADING_LABEL = 'Post-processing status loading'
  */
 export const ANALYSIS_COMPLETE_NO_ISSUES_TEXT = 'Analysis complete — no issues found'
 
+/** A stage that is still moving says so, and says nothing else (D-13). */
+export const ANALYSIS_RUNNING_TEXT = 'Analysis running'
+export const CURATION_RUNNING_TEXT = 'Curation running'
+
+/** Whether the chain intends to try that stage again — its own line, never a parenthetical (D-12). */
+export const WILL_RETRY_TEXT = 'Will retry'
+
+/** The door lines. Plain muted text: the indicator the reader is already on IS the control (D-10). */
+export const OPEN_KNOWLEDGE_TAB_TEXT = 'Open Knowledge tab'
+export const OPEN_VERDICT_TEXT = 'Open verdict'
+
+/**
+ * A curation pass that touched nothing (D-17), replacing 407's `nothing curated`.
+ *
+ * Five zeros is arithmetically true and tells a reader nothing they can act on; naming the outcome
+ * as "no memory changes" is the fact, in the vocabulary the rest of the line already uses.
+ */
+export const NO_MEMORY_CHANGES_TEXT = 'no memory changes'
+
+/**
+ * What a pre-423 row says about the breakdown it never recorded (D-18).
+ *
+ * FIVE BUCKETS ARE NEVER SYNTHESIZED FROM TWO. A legacy `curated`/`deprecated` pair is not a
+ * breakdown with three buckets missing — it is a different, coarser measurement, and mapping it
+ * onto the five would invent three counts nobody took.
+ */
+export const BREAKDOWN_NOT_RECORDED_TEXT = 'Breakdown not recorded for this run'
+
+/** Why a recorded snapshot was not served (423 D-15, Gap 2) — the category, never a guess at counts. */
+export const BREAKDOWN_WITHHELD_TEXT: Record<CurationSnapshotWithheldReason, string> = {
+  'masking-unavailable': 'Breakdown not available for this run — masking unavailable',
+  'projection-refused': 'Breakdown not available for this run — projection refused',
+}
+
 /**
  * One stage's explanation card. Line 1 is mandatory: a card that could be empty is a hover that
  * rewards a reader with nothing, which is the failure the whole card exists to fix.
  */
 export interface StageCardView {
   readonly outcome: string
+  /** Why the outcome could not carry counts — the labelled absence, never a substitute for them. */
+  readonly note?: string
   readonly timing?: string
   readonly proposals?: string
   readonly retry?: string
@@ -128,6 +167,12 @@ export type StageIndicatorDoor = 'knowledge' | 'verdict'
 const DOOR_CLAUSE: Record<StageIndicatorDoor, string> = {
   knowledge: ' — open Knowledge tab',
   verdict: ' — open verdict',
+}
+
+/** The card line that closes a door indicator, keyed the same way as the spoken clause. */
+export const DOOR_LINE_TEXT: Record<StageIndicatorDoor, string> = {
+  knowledge: OPEN_KNOWLEDGE_TAB_TEXT,
+  verdict: OPEN_VERDICT_TEXT,
 }
 
 /**
@@ -176,18 +221,12 @@ export interface PostProcessingChipView {
   readonly state: StageIndicatorState
   /** The visible word, from {@link STAGE_INDICATOR_WORDS}. The component composes no sentence. */
   readonly word: string
-  /** The explanation card, when this plan has a sentence for the state. */
+  /**
+   * The explanation card. EVERY fact that used to sit beside the chip lives here now (D-09/D-12):
+   * the drain posture, the committed counts, the masked failure reason and the retry intent. The
+   * absence of a card is the absence of anything to say — never a fact that was dropped.
+   */
   readonly card?: StageCardView
-  /** The `pending` parenthetical: who, if anyone, is going to drain this chain (D-22). */
-  readonly posture?: string
-  /** What a terminal stage committed — curation's `curated N, deprecated M` (D-21). */
-  readonly facts?: string
-  /** The producer's masked, bounded failure text, forwarded without a single slice (D-21, T-404-01). */
-  readonly error?: string
-  /** Whether the chain intends to try that stage again. */
-  readonly willRetry?: boolean
-  /** Why there is no `error` to show, qualified by the posture that explains it (D-21 as narrowed). */
-  readonly reasonAbsent?: string
 }
 
 export type PostProcessingView =
@@ -265,34 +304,85 @@ export function curationFactsText(curated: number, deprecated: number): string {
  */
 export const COUNTS_NOT_RECORDED_TEXT = 'counts not recorded for this run'
 
-/** The `curation` chip's hover title once the page wires it as a door (D-01). */
-export const CURATION_CHIP_TITLE = 'Open the Knowledge tab (7)'
-
 /**
- * The clickable chip's accessible name — the WORD plus where pressing it goes.
- *
- * The visible badge already reads `curation done`; a screen reader hearing only that would be told
- * a status and not that it is a control. The name carries both, in that order, so the status is
- * still the first thing heard.
+ * The curation door's accessible name, kept as its own export (407 D-01's idiom) and now a thin
+ * call into the one name function, so the header and the Knowledge tab cannot drift apart.
  */
-export function curationChipAccessibleName(status: PostProcessingChipStatus): string {
-  return `curation ${status} — open Knowledge tab`
+export function curationChipAccessibleName(chip: PostProcessingChipView): string {
+  return stageIndicatorAccessibleName('curation', chip.state, chip.card?.outcome, 'knowledge')
 }
 
 /**
- * Curation's committed counts, as one sentence — or nothing.
+ * THE BREAKDOWN LINE, IN THE WORDING OF RECORD (D-17) — one function, two surfaces.
+ *
+ * The bucket ORDER is the schema's, shared with the CLI's chain-terminal line, so a person reading
+ * the terminal and the header sees the same run described the same way. Zeros are omitted HERE and
+ * kept THERE by decision: a log line is a record, a glance is a glance.
+ */
+export function curationBreakdownLine(breakdown: CurationBreakdown): string {
+  const parts = CURATION_BREAKDOWN_BUCKETS
+    .filter(bucket => breakdown[bucket] > 0)
+    .map(bucket => `${String(breakdown[bucket])} ${bucket}`)
+  return parts.length === 0 ? NO_MEMORY_CHANGES_TEXT : parts.join(' · ')
+}
+
+/** A pre-423 row's pair, rendered as what it is: two coarse counts, not a breakdown (D-18). */
+export function legacyCurationPairText(curated: number, deprecated: number): string {
+  return `${String(curated)} curated · ${String(deprecated)} deprecated`
+}
+
+/** `{Stage} queued`, plus who is going to move it when the run recorded a disposition (D-12/D-13). */
+export function stageQueuedText(stage: PostProcessingStage, posture?: string): string {
+  const queued = `${STAGE_INDICATOR_WORDS[stage].complete} queued`
+  return posture === undefined ? queued : `${queued} — ${posture}`
+}
+
+/** `{Stage} failed — {reason}`. The reason is the producer's, masked and unsliced (T-404-01). */
+export function stageFailedText(stage: PostProcessingStage, reason: string): string {
+  return `${STAGE_INDICATOR_WORDS[stage].complete} failed — ${reason}`
+}
+
+/**
+ * Curation's committed counts, as one sentence — or as the labelled absence of one.
+ *
+ * THE SNAPSHOT OUTRANKS THE PAIR (D-17/D-18). A run that recorded five buckets is described by
+ * them; a run that recorded only the legacy pair is described by the pair AND told, on its own
+ * line, that no breakdown exists — because a reader who sees two numbers where five usually live
+ * would otherwise conclude three buckets were empty.
  *
  * BOTH COUNTS OR NEITHER. The notification contract says a stage that never got as far as
  * committing reports its status and no counts at all, because zeros would claim it curated nothing,
  * which is a different thing from never having tried. Half a pair is the same ambiguity one field
  * down, so a row carrying one count and not the other says nothing here rather than implying a zero.
  */
-function curationFacts(read: ReadBody): string | undefined {
-  const curation = read.status.notification?.stages.curation
-  if (curation === undefined) return undefined
-  const { curated, deprecated } = curation
-  if (curated === undefined || deprecated === undefined) return undefined
-  return curationFactsText(curated, deprecated)
+export function curationCompleteText(read: ReadBody): StageCardView | undefined {
+  const complete = `${STAGE_INDICATOR_WORDS.curation.complete} complete`
+  const { notification, curationSnapshot, curationSnapshotWithheld } = read.status
+
+  if (curationSnapshot !== undefined) {
+    return { outcome: `${complete} — ${curationBreakdownLine(curationSnapshot.breakdown)}` }
+  }
+
+  const legacy = notification?.stages.curation
+  if (legacy?.curated !== undefined && legacy.deprecated !== undefined) {
+    return {
+      outcome: `${complete} — ${legacyCurationPairText(legacy.curated, legacy.deprecated)}`,
+      note: BREAKDOWN_NOT_RECORDED_TEXT,
+    }
+  }
+
+  if (curationSnapshotWithheld !== undefined) {
+    return { outcome: complete, note: BREAKDOWN_WITHHELD_TEXT[curationSnapshotWithheld.reason] }
+  }
+
+  // A SETTLED ROW THAT COMMITTED NO COUNTS SAYS SO (D-12). There IS a terminal row here — the chain
+  // reached its end and froze one — so the absence is a recorded absence.
+  if (notification !== undefined) return { outcome: `${complete} — ${COUNTS_NOT_RECORDED_TEXT}` }
+
+  // No terminal row at all: the chip word came from `chips.curation` with nothing behind it. The
+  // chain contract makes that unreachable, but the type permits it, and inventing a sentence about
+  // a row that does not exist is the one thing this module never does.
+  return undefined
 }
 
 /**
@@ -317,73 +407,56 @@ export function stagePresentationState(
   }
 }
 
+const STAGE_RUNNING_TEXT: Record<PostProcessingStage, string> = {
+  analysis: ANALYSIS_RUNNING_TEXT,
+  curation: CURATION_RUNNING_TEXT,
+}
+
 /**
- * The card's first line, for the states this plan has a sentence for.
+ * The card's first line, per state — the whole distance between a word and a sentence.
  *
- * 425-01 covers the settled analysis with nothing to report — the run shape that ships every day.
- * The remaining states keep their word and their glyph until Task 3 gives each one a sentence.
+ * The `complete` arm covers the two settled shapes this plan owns: analysis with nothing to report,
+ * and curation's counts. A settled analysis WITH verdicts gets its root-cause sentence in 425-08
+ * alongside the timing lines, and `excluded` gets its neutral sentence there too; until then those
+ * two reads keep their word and their glyph rather than a sentence this plan would have to invent.
  */
 function stageCard(
   stage: PostProcessingStage,
   state: StageIndicatorState,
   read: ReadBody,
 ): StageCardView | undefined {
-  const verdicts = read.status.notification?.verdictSummary.total
-  if (stage === 'analysis' && state === 'complete' && verdicts === 0) {
+  if (state === 'running') return { outcome: STAGE_RUNNING_TEXT[stage] }
+
+  if (state === 'pending') {
+    const posture = read.disposition === undefined ? undefined : PENDING_POSTURE_TEXT[read.disposition]
+    return { outcome: stageQueuedText(stage, posture) }
+  }
+
+  if (state === 'failed') {
+    const failure = read.failures?.[stage]
+    // No `*Failed` envelope in the record. See FAILED_REASON_ABSENT_TEXT — this is the honest
+    // rendering of an absence, not a fallback for a value we failed to look up.
+    const reason = failure?.error ?? FAILED_REASON_ABSENT_TEXT[read.disposition ?? 'unknown']
+    return {
+      outcome: stageFailedText(stage, reason),
+      ...(failure?.willRetry === true ? { retry: WILL_RETRY_TEXT } : {}),
+    }
+  }
+
+  if (state === 'complete' && stage === 'curation') return curationCompleteText(read)
+
+  if (state === 'complete' && read.status.notification?.verdictSummary.total === 0) {
     return { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT }
   }
+
   return undefined
-}
-
-/** The chip word plus whatever the read recorded beside it. Presentation is folded in above. */
-type ChipFacts = Omit<PostProcessingChipView, 'state' | 'word' | 'card'>
-
-function chipFacts(stage: PostProcessingStage, read: ReadBody): ChipFacts {
-  const status = read.status.chips[stage]
-
-  if (status === 'pending') {
-    const posture = read.disposition === undefined ? undefined : PENDING_POSTURE_TEXT[read.disposition]
-    return { status, ...(posture === undefined ? {} : { posture }) }
-  }
-
-  if (status === 'failed') {
-    const failure = read.failures?.[stage]
-    const error = failure?.error
-    if (error === undefined) {
-      // No `*Failed` envelope in the record. See FAILED_REASON_ABSENT_TEXT — this is the honest
-      // rendering of an absence, not a fallback for a value we failed to look up.
-      return { status, reasonAbsent: FAILED_REASON_ABSENT_TEXT[read.disposition ?? 'unknown'] }
-    }
-    return {
-      status,
-      error,
-      ...(failure?.willRetry === undefined ? {} : { willRetry: failure.willRetry }),
-    }
-  }
-
-  if (status === 'done' && stage === 'curation') {
-    const facts = curationFacts(read)
-    if (facts !== undefined) return { status, facts }
-    // A SETTLED ROW THAT COMMITTED NO COUNTS SAYS SO (D-12). There IS a terminal row here — the
-    // chain reached its end and froze one — so the absence is a recorded absence, and the honest
-    // rendering is that nobody wrote the numbers down. Blank would be indistinguishable from a chip
-    // whose read has not landed; `0` would be a measurement nobody made.
-    if (read.status.notification !== undefined) return { status, facts: COUNTS_NOT_RECORDED_TEXT }
-    // No terminal row at all: the chip word came from `chips.curation` with nothing behind it. The
-    // chain contract makes that unreachable, but the type permits it, and inventing a sentence about
-    // a row that does not exist is the one thing this module never does.
-    return { status }
-  }
-
-  // `running`, and `done` on a stage that commits no counts: one word, no parenthetical.
-  return { status }
 }
 
 function chipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChipView {
   const state = stagePresentationState(read, stage)
   const card = stageCard(stage, state, read)
   return {
-    ...chipFacts(stage, read),
+    status: read.status.chips[stage],
     state,
     word: STAGE_INDICATOR_WORDS[stage][state],
     ...(card === undefined ? {} : { card }),

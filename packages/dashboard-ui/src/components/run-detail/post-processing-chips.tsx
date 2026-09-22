@@ -6,9 +6,13 @@
 // component that remounts on every tab change, and would be a second answer to "what does this page
 // know about this chain".
 //
-// EVERY VISIBLE SENTENCE COMES FROM `post-processing-view.ts`. The posture parenthetical, the
-// absent-reason line and the unavailable heading are all exported constants, so the words a person
+// EVERY VISIBLE SENTENCE COMES FROM `post-processing-view.ts`. This file composes no prose at all:
+// it paints `view.word` on the root and `view.card`'s lines in the card, so the words a person
 // reads live beside the reasoning for them and cannot drift from the cells that pin them.
+//
+// THE HEADER IS A GLYPH AND A WORD (425 D-06/D-09). Every detail that used to sit beside the chip —
+// the drain posture, the committed counts, the failure reason, the refusal's error — now lives in
+// the card behind it, so the header stays scannable and nothing that left is lost.
 //
 // THE FAILURE TEXT IS A TEXT NODE AND NOTHING ELSE (T-404-01). It is the producer's masked, bounded
 // string, forwarded by the route and forwarded again by the projection; React escapes it on the way
@@ -16,9 +20,9 @@
 // `<img onerror=...>` and asserts no element was created.
 //
 // THE `data-*` ATTRIBUTES ARE THE CONTRACT 404-08's Playwright cells address on the built bundle.
-// They carry the RAW words — `data-chip-status="failed"`, not the label — because a cell reading
-// visible text would be asserting on presentation, and a page that painted the right word into the
-// wrong element would still pass.
+// `data-chip-status` carries the RAW store word and `data-stage-state` the presentation state, both
+// on the root, because a cell reading visible text would be asserting on presentation, and a page
+// that painted the right word into the wrong element would still pass.
 
 import { Circle, CircleCheck, CircleDashed, CircleMinus, CircleX, type LucideIcon } from "lucide-react"
 import type { ReactElement } from "react"
@@ -26,6 +30,7 @@ import { MaskedText } from "@/components/run-detail/masked-text"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   CHIPS_UNAVAILABLE_TEXT,
+  DOOR_LINE_TEXT,
   POST_PROCESSING_LOADING_LABEL,
   POST_PROCESSING_UNAVAILABLE_WORD,
   curationChipAccessibleName,
@@ -34,6 +39,7 @@ import {
   type PostProcessingStage,
   type PostProcessingView,
   type StageCardView,
+  type StageIndicatorDoor,
   type StagePresentationState,
 } from "@/lib/post-processing-view"
 
@@ -73,11 +79,22 @@ const CHIP_ROOT_CLASS = "inline-flex items-center gap-1 min-h-6 rounded-sm text-
 /** The one accent use this phase adds (UI-SPEC Color 1) — the same ring the primitives draw. */
 const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
-/** One line of a card. `masked` routes a PRODUCER string through the display-unmask seam. */
-type CardLine = { kind: string; text: string; masked?: boolean }
+/**
+ * One card, as its lines in reading order.
+ *
+ * The door line is LAST and only on a door root: it names what activating the indicator does, and
+ * an indicator with nowhere to go must not grow an instruction that goes nowhere.
+ */
+type CardLine = { kind: string; text: string }
 
-function stageCardLines(card: StageCardView | undefined): CardLine[] {
-  return card === undefined ? [] : [{ kind: "outcome", text: card.outcome }]
+function stageCardLines(card: StageCardView | undefined, door?: StageIndicatorDoor): CardLine[] {
+  if (card === undefined) return []
+  return [
+    { kind: "outcome", text: card.outcome },
+    ...(card.note === undefined ? [] : [{ kind: "note", text: card.note }]),
+    ...(card.retry === undefined ? [] : [{ kind: "retry", text: card.retry }]),
+    ...(door === undefined ? [] : [{ kind: "door", text: DOOR_LINE_TEXT[door] }]),
+  ]
 }
 
 /**
@@ -87,8 +104,9 @@ function stageCardLines(card: StageCardView | undefined): CardLine[] {
  * inside the header would give this surface its own delay and its own open-state bookkeeping, which
  * is two answers to "is a card open right now" on one page.
  *
- * EVERY LINE IS A TEXT NODE (T-404-01). Producer strings go through `MaskedText`, which paints
- * markers as chips and everything else as text; there is no `dangerouslySetInnerHTML` in this file.
+ * EVERY LINE IS A TEXT NODE (T-404-01). Lines go through `MaskedText`, which paints markers as
+ * chips and everything else as text; there is no `dangerouslySetInnerHTML` in this file. Routing
+ * every line rather than only the producer-bearing ones removes the question of which is which.
  */
 function WithCard({
   stage,
@@ -117,7 +135,7 @@ function WithCard({
               data-stage-card-line={line.kind}
               className={index === 0 ? "font-medium" : "text-muted-foreground"}
             >
-              {line.masked === true ? <MaskedText text={line.text} /> : line.text}
+              <MaskedText text={line.text} />
             </p>
           ))}
         </div>
@@ -143,47 +161,25 @@ function WithCard({
 function Chip({
   stage,
   chip,
-  onCurationClick,
+  onActivate,
+  door,
 }: {
   stage: PostProcessingStage
   chip: PostProcessingChipView
-  onCurationClick?: (() => void) | undefined
+  onActivate?: (() => void) | undefined
+  door?: StageIndicatorDoor | undefined
 }) {
   const { Glyph, glyphClass, wordClass } = INDICATOR_LOOK[chip.state]
-  const name = stageIndicatorAccessibleName(stage, chip.state, chip.card?.outcome)
-  const lines = stageCardLines(chip.card)
+  const isDoor = onActivate !== undefined && door !== undefined
+  const lines = stageCardLines(chip.card, isDoor ? door : undefined)
   const body = (
     <>
       <Glyph aria-hidden="true" className={`h-3.5 w-3.5 ${glyphClass}`} />
       <span className={wordClass}>{chip.word}</span>
-      {chip.posture === undefined ? null : (
-        <span data-chip-posture className="text-xs text-muted-foreground truncate">
-          ({chip.posture})
-        </span>
-      )}
-      {chip.facts === undefined ? null : (
-        <span data-chip-facts className="text-xs text-muted-foreground truncate">
-          {chip.facts}
-        </span>
-      )}
-      {chip.error === undefined ? null : (
-        <span
-          data-chip-error
-          {...(chip.willRetry === undefined ? {} : { "data-chip-will-retry": String(chip.willRetry) })}
-          className="text-xs text-destructive truncate max-w-[24rem]"
-        >
-          {chip.error}
-        </span>
-      )}
-      {chip.reasonAbsent === undefined ? null : (
-        <span data-chip-reason-absent className="text-xs text-muted-foreground truncate">
-          {chip.reasonAbsent}
-        </span>
-      )}
     </>
   )
 
-  if (stage === "curation" && onCurationClick !== undefined) {
+  if (isDoor) {
     return (
       <WithCard stage={stage} lines={lines}>
         <button
@@ -191,8 +187,12 @@ function Chip({
           data-chip={stage}
           data-chip-status={chip.status}
           data-stage-state={chip.state}
-          onClick={onCurationClick}
-          aria-label={curationChipAccessibleName(chip.status)}
+          onClick={onActivate}
+          aria-label={
+            stage === "curation"
+              ? curationChipAccessibleName(chip)
+              : stageIndicatorAccessibleName(stage, chip.state, chip.card?.outcome, door)
+          }
           className={`${CHIP_ROOT_CLASS} ${FOCUS_RING} cursor-pointer transition-colors hover:text-foreground`}
         >
           {body}
@@ -211,7 +211,9 @@ function Chip({
         className={`${CHIP_ROOT_CLASS} ${FOCUS_RING} cursor-default`}
       >
         {body}
-        <span className="sr-only">{name}</span>
+        <span className="sr-only">
+          {stageIndicatorAccessibleName(stage, chip.state, chip.card?.outcome)}
+        </span>
       </span>
     </WithCard>
   )
@@ -253,10 +255,8 @@ export function PostProcessingChips({
         stage="unavailable"
         lines={[
           { kind: "outcome", text: CHIPS_UNAVAILABLE_TEXT },
-          { kind: "error", text: view.error, masked: true },
-          ...(view.reason === undefined
-            ? []
-            : [{ kind: "reason", text: view.reason, masked: true }]),
+          { kind: "error", text: view.error },
+          ...(view.reason === undefined ? [] : [{ kind: "reason", text: view.reason }]),
         ]}
       >
         <span
@@ -275,7 +275,7 @@ export function PostProcessingChips({
   return (
     <span data-chips-state="chips" className="inline-flex items-center gap-2 min-w-0">
       <Chip stage="analysis" chip={view.analysis} />
-      <Chip stage="curation" chip={view.curation} onCurationClick={onCurationClick} />
+      <Chip stage="curation" chip={view.curation} onActivate={onCurationClick} door="knowledge" />
     </span>
   )
 }

@@ -7,11 +7,11 @@
 // while the real mount path is broken, and the cell would never know.
 //
 // THE DOM CONTRACT IS THE SUBJECT, not the styling. `data-chip`, `data-chip-status`,
-// `data-chip-posture`, `data-chip-facts`, `data-chip-error`, `data-chip-will-retry`,
-// `data-chip-reason-absent` and `data-chips-state` are what 404-08's Playwright cells address on
-// the built bundle, so every one of them is pinned here in the cheap medium first. Colours and
-// badge variants are deliberately NOT asserted — a cell that pinned `bg-emerald-500/15` would go
-// red on a design change that broke nothing a person relies on.
+// `data-stage-state`, `data-chips-state`, `data-stage-card` and `data-stage-card-line` are what
+// 404-08's Playwright cells address on the built bundle, so every one of them is pinned here in the
+// cheap medium first. Colours are deliberately NOT asserted — a cell that pinned `text-emerald-500`
+// would go red on a design change that broke nothing a person relies on. The GLYPH NAME is asserted
+// instead, because shape is what carries the state once the colour is stripped out (SC2).
 //
 // THE ABSENCE CELLS ARE THE POINT. `never blank` and `never pending` are claims about elements that
 // must NOT exist, and an assertion that only ever checks what IS rendered cannot see either one.
@@ -108,6 +108,14 @@ async function cardOf(host: HTMLElement, stage: "analysis" | "curation"): Promis
 
 function lineOf(card: HTMLElement, kind: string): string | undefined {
   return card.querySelector(`[data-stage-card-line="${kind}"]`)?.textContent ?? undefined
+}
+
+/** What a SIGHTED reader sees on a root — the `sr-only` name is a separate claim, asserted apart. */
+function visibleTextOf(el: HTMLElement): string {
+  return [...el.childNodes]
+    .filter((node) => !(node instanceof HTMLElement && node.classList.contains("sr-only")))
+    .map((node) => node.textContent ?? "")
+    .join("")
 }
 
 describe("two chips, in the ratified order, each saying its own word", () => {
@@ -334,8 +342,9 @@ describe("a failed chip is never blank (D-21 as narrowed)", () => {
     const card = await cardOf(host, "analysis")
     expect(lineOf(card, "outcome")).toBe("Analysis failed — analysis stage blew up on step 3")
     expect(lineOf(card, "retry")).toBe("Will retry")
-    // The reason never sat beside the indicator again (D-09): the root is a glyph and a word.
-    expect(chip(host, "analysis").textContent).not.toContain("blew up")
+    // The reason never sits beside the indicator again (D-09): the VISIBLE root is a glyph and a
+    // word. The accessible name still carries the outcome clause, which is where it belongs.
+    expect(visibleTextOf(chip(host, "analysis"))).toBe(STAGE_INDICATOR_WORDS.analysis.failed)
   })
 
   it("renders the posture-qualified absence when nobody recorded a reason — and NO error element", async () => {
@@ -346,7 +355,7 @@ describe("a failed chip is never blank (D-21 as narrowed)", () => {
     const card = await cardOf(host, "analysis")
     expect(lineOf(card, "outcome")).toBe(`Analysis failed — ${FAILED_REASON_ABSENT_TEXT.handedOff}`)
     expect(lineOf(card, "retry")).toBeUndefined()
-    expect(chip(host, "analysis").textContent).not.toBe("")
+    expect(visibleTextOf(chip(host, "analysis"))).toBe(STAGE_INDICATOR_WORDS.analysis.failed)
   })
 
   it("the failure text is a TEXT NODE — markup in it is escaped, never parsed (T-404-01)", async () => {
