@@ -62,6 +62,56 @@ two-writers-under-one-fence case the fence exists to exclude. The row keeps its 
 existing slot through the unique index instead of doubling it. The verb does not pump: the operator
 runs `agent-qa agent-jobs pump --only <kind>` next, so the forget and the re-run stay two steps.
 
+What a stage of the post-run chain *became* is a different question from how it drained, and it is
+answered off these same rows rather than off whichever drain produced them.
+[Reading stage outcomes](#reading-stage-outcomes) below is where that question lives:
+`agent-qa digest` for the run digest, `analysis.get` for the verdicts.
+
+## Reading stage outcomes
+
+A stage's outcome is a projection of the durable agent job row, never of the chip event a drain
+happened to push while somebody had a socket open. `runs.postprocessing` is the single producer: it
+reads the agent job queue's rows and answers the two chip words — `analysis` and `curation`, each
+one of `pending · running · done · failed`. That split is deliberate. A pushed frame is a
+convenience for a socket that happens to be open; the row is what a person who closed their laptop
+and came back is owed, and both have to say the same thing.
+
+Beside the two words the read carries what the rows actually recorded. `stageDetails` holds, per
+stage and only where the row recorded it, `attempts`, `createdAt`, `claimedAt`, `updatedAt`,
+`conclusionKind` and the masked `lastFailureKind` / `lastFailureReason`; the chip-less proposals
+stage appears there too. The persisted curation snapshot travels with its five buckets — `added`,
+`confirmed`, `superseded`, `deprecated`, `proposed` — and the chain's terminal notification appears
+once the chain wrote its one row, not before.
+
+A benchmark or a gate run never reaches the agent job queue at all: the post-verdict step enqueues
+nothing for it, so there is no chain to report on. Such a run answers an `exclusion` fact instead —
+a field on the read op, present iff the run's durable record carries the gate-run or
+outcome-excluded marker, and carrying `gate-run` or `outcome-excluded` as its reason. It is a
+sibling of the four chip words and never a fifth one, and it is never inferred from missing rows: a
+chain polled a second after its verdict has no rows either, and calling that an exclusion would
+tell a user their run was dropped. The dashboard's stage indicators and the cards they open render
+these fields and nothing else.
+
+There are two doors onto the same facts outside the dashboard, and the first is the run digest.
+`agent-qa digest <runId>` prints the digest op's own rendered lines — the `chain —` line carrying
+the two chip words, the verdict clusters for a run that has them, and the proposals minted this run
+with the counts beside them. Omit the id and it digests the most recently finished run; `--json`
+emits the structured digest instead of its lines. The command composes nothing of its own, so every
+surface that shows a digest is showing these same bytes.
+
+The second door is `analysis.get`, for the verdicts themselves. Invoke it the way any registry
+capability is invoked — `agent-qa fn analysis.get --input '{"runId":"<runId>"}' --json` — and it
+answers the resolved verdicts, the rendered sentences and the failure clusters that the dashboard's
+verdict block paints. It is the single producer of all three, so a sentence read on a run page and
+the same sentence read here are one rendering rather than two that agree until one of them changes.
+
+Knowing where a field comes from is what lets a reader tell a recorded absence from a value. The
+chip words and every `stageDetails` field come from the agent job row; the curated counts and the
+chain outcome come from the terminal notification the chain wrote; and the exclusion comes from the
+run's own completed-run handoff, the same document the enqueue skip reads. A field none of those
+three recorded is simply absent from the answer — never a zero, and never a word invented to fill
+the slot.
+
 ## What is deliberately *not* renamed
 
 Two collisions survive on purpose, and both are load-bearing to know about.
