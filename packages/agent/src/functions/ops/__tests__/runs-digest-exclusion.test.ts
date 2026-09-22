@@ -4,11 +4,12 @@
 // put on `PostProcessingStatus`, and deliberately left the digest op's arm unwritten. This is
 // that arm, measured where it matters: the value on `chain` and the words on the rendered line.
 //
-// ONE FOLD, TWO OPS. The fact is minted by `projectPostProcessingExclusion` over the durable
-// handoff this op ALREADY loads for its own run-not-found refusal — not re-derived here, not
-// read off missing job rows, and not read off `run.status`. A gate run's chain is never
-// enqueued, so an op that inferred exclusion from an empty chain would also call every
-// in-flight run excluded, one poll too early.
+// ONE FOLD, ONE PRODUCER (425-14). With a post-processing reader bound, the fact is the one
+// `runs.postprocessing` folded and the digest publishes it; only a host with no such reader falls
+// back to folding the handoff this op already loads for its own run-not-found refusal. Never read
+// off missing job rows, and never off `run.status`. A gate run's chain is never enqueued, so an op
+// that inferred exclusion from an empty chain would also call every in-flight run excluded, one
+// poll too early.
 //
 // The negative half is as load-bearing as the positive one: an ordinary run's chain must carry
 // no `exclusion` key at all and must render the two chip-word clauses byte-identically, or the
