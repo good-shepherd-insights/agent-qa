@@ -51,7 +51,7 @@ const {
   fetchExecutionLogsMock: vi.fn(),
   watchPostProcessingMock: vi.fn(),
   disposeMock: vi.fn(),
-  navbarProps: [] as Array<{ postProcessing: unknown; hasPostProcessing: unknown }>,
+  navbarProps: [] as Array<{ postProcessing: unknown; hasPostProcessing: unknown; models: unknown }>,
 }))
 
 vi.mock("@/lib/api", async () => {
@@ -79,8 +79,12 @@ vi.mock("@/lib/api", async () => {
 // The navbar becomes a PROBE rather than a stub: what it was handed is the observable, so a page
 // that wired the client but forgot to pass the view down has somewhere to be caught.
 vi.mock("@/components/run-detail/run-navbar", () => ({
-  RunNavbar: (props: { postProcessing?: unknown; hasPostProcessing?: unknown }) => {
-    navbarProps.push({ postProcessing: props.postProcessing, hasPostProcessing: props.hasPostProcessing })
+  RunNavbar: (props: { postProcessing?: unknown; hasPostProcessing?: unknown; models?: unknown }) => {
+    navbarProps.push({
+      postProcessing: props.postProcessing,
+      hasPostProcessing: props.hasPostProcessing,
+      models: props.models,
+    })
     return <div data-testid="run-navbar" />
   },
 }))
@@ -218,6 +222,13 @@ function lastNavbarView(): unknown {
   return last.postProcessing
 }
 
+/** The model summary the header was handed on its last render (425-05 · D-23). */
+function lastNavbarModels(): unknown {
+  const last = navbarProps.at(-1)
+  if (last === undefined) throw new Error("the navbar never rendered")
+  return last.models
+}
+
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn()
   navbarProps.length = 0
@@ -325,6 +336,36 @@ describe("run detail owns the chip client, and hands the navbar its projection",
       kind: "chips",
       analysis: { state: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
     })
+  })
+
+  // MODEL IDENTITY REACHES THE HEADER FROM THE DURABLE READ, AND FROM NOWHERE ELSE (425-05 · D-23).
+  //
+  // The page holds the `runs.detail` projection; the header is presentational and can only paint
+  // what it is handed. The observable is therefore the PROP, not a rendered string — a page that
+  // held the summary and forgot to pass it down would paint no model line and look, from the DOM,
+  // exactly like a pre-423 run that never recorded one.
+  it("PAGE-PASSES-MODELS: hands down the summary the read answered, and nothing when it answered none", async () => {
+    const models = { declared: [{ provider: "openai", modelId: "gpt-5.6-terra", stepCount: 3 }] }
+    fetchRunDetailMock.mockImplementation(async (id: string) => ({
+      runId: id,
+      members: [],
+      steps: [],
+      subActions: [],
+      tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
+      models,
+    }))
+    await renderPage()
+    expect(lastNavbarModels()).toEqual(models)
+
+    fetchRunDetailMock.mockImplementation(async (id: string) => ({
+      runId: id,
+      members: [],
+      steps: [],
+      subActions: [],
+      tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
+    }))
+    await renderPage()
+    expect(lastNavbarModels()).toBeUndefined()
   })
 
   it("invokes the disposer on unmount", async () => {
