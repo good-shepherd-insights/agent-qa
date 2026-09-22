@@ -76,7 +76,7 @@ const EXCL_D = 'src/__tests__/425-post-processing-exclusion.test-d.ts'
 const OP = 'src/functions/ops/__tests__/runs-post-processing.test.ts'
 
 const instruments = {
-  'ui-view': { pkg: 'packages/dashboard-ui', files: [VIEW, VIEW_D], typecheck: true, count: 47 },
+  'ui-view': { pkg: 'packages/dashboard-ui', files: [VIEW, VIEW_D], typecheck: true, count: 48 },
   schema: { pkg: 'packages/schema', files: [EXCL, EXCL_D], typecheck: true, count: 14 },
   'ui-chips': { pkg: 'packages/dashboard-ui', files: [CHIPS], typecheck: false, count: 31 },
   // The header rule and the function that feeds it, selected together: see H08's note above.
@@ -111,7 +111,7 @@ const legs = [
     reds: [cell('ui-view', VIEW_D, 'C425-STAGE-STATES-EXACT')],
     allowed: [view('STAGE-INDICATOR-WORDS')],
     greens: [view('ANALYSIS-COMPLETE-COPY'), view('EXCLUDED-FROM-FIELD', 3), view('PROJECTION-IDEMPOTENT'),
-      view('STAGE-TIMING-LINE', 8)],
+      view('STAGE-TIMING-LINE', 9)],
   },
   {
     subject: STATUS_SRC, instrument: 'schema', claim: 'C425-EXCLUSION-REASONS-EXACT',
@@ -171,7 +171,7 @@ const legs = [
     allowed: [],
     greens: [
       view('EXCLUDED-FROM-FIELD: a pending read WITHOUT the field is queued — the absence of rows proves nothing'),
-      view('STAGE-TIMING-LINE', 8), view('ANALYSIS-COMPLETE-COPY'), view('PROJECTION-IDEMPOTENT'),
+      view('STAGE-TIMING-LINE', 9), view('ANALYSIS-COMPLETE-COPY'), view('PROJECTION-IDEMPOTENT'),
     ],
   },
   {
@@ -311,6 +311,7 @@ const legs = [
     allowed: [
       view('STAGE-TIMING-LINE: clock, then the two durations, and attempts only past one'),
       view('STAGE-TIMING-LINE: a running stage ends at `running` and claims no finish'),
+      view('STAGE-TIMING-LINE: a stage queued to retry says when it started and claims no finish'),
       view('STAGE-TIMING-LINE: no row at all renders no line; an absent field renders no clause'),
       view('STAGE-TIMING-LINE: an unparseable timestamp drops its own clause and never renders NaN'),
       view('STAGE-TIMING-LINE: folds onto the stage that HAS a row, and onto neither when none does'),

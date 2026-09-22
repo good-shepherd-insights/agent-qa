@@ -604,6 +604,16 @@ describe('a card times the stage from the job row, and never from a clock of its
     expect(line).not.toContain('finished in')
   })
 
+  // THE PRODUCTION RETRY SHAPE: `markRetryable` releases the lease and keeps the write-once start,
+  // so the row reads `pending` while carrying a start and the instant its failure was recorded.
+  it('STAGE-TIMING-LINE: a stage queued to retry says when it started and claims no finish', () => {
+    const line = stageTimingLine({ ...STORED, attempts: 1, lastFailureKind: 'retry' }, 'pending')
+    expect(line).toBe(`Queued ${clock()} · started after 2.5s`)
+    expect(line).not.toContain('finished in')
+    expect(stageTimingLine({ ...STORED, attempts: 2, lastFailureKind: 'retry' }, 'pending'))
+      .toBe(`Queued ${clock()} · started after 2.5s · 2 attempts`)
+  })
+
   it('STAGE-TIMING-LINE: a pending stage with only a queue moment says exactly that', () => {
     expect(stageTimingLine({ createdAt: STORED.createdAt, attempts: 0 }, 'pending'))
       .toBe(`Queued ${clock()}`)

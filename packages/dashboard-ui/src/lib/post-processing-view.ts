@@ -422,7 +422,10 @@ export function stageTimingLine(
   const updated = instantOf(detail.updatedAt)
   const queuedAt = detail.createdAt === undefined ? undefined : formatClockTime(detail.createdAt)
   const startedAfter = spanText(created, started)
-  const finishedIn = state === 'running' ? undefined : spanText(started, updated)
+  // ONLY A SETTLED STAGE FINISHED. A row queued to retry keeps its write-once start and its
+  // failure's update instant, and the span between them is an attempt that failed, not a finish.
+  const settled = state === 'complete' || state === 'failed'
+  const finishedIn = settled ? spanText(started, updated) : undefined
 
   const clauses = [
     ...(queuedAt === undefined ? [] : [`Queued ${queuedAt}`]),
