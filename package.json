@@ -76,7 +76,9 @@
     "validate:424-recording-mutation": "bash scripts/424-recording-mutation.sh",
     "validate:424-recording-mutation-selftest": "bash scripts/424-recording-mutation-selftest.sh",
     "validate:424-playback-mutation": "bash scripts/424-playback-mutation.sh",
-    "validate:424-playback-mutation-selftest": "bash scripts/424-playback-mutation-selftest.sh"
+    "validate:424-playback-mutation-selftest": "bash scripts/424-playback-mutation-selftest.sh",
+    "validate:425-header-mutation": "bash scripts/425-header-mutation.sh",
+    "validate:425-header-mutation-selftest": "bash scripts/425-header-mutation-selftest.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
