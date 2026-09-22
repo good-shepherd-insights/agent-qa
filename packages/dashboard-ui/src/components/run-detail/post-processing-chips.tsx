@@ -264,6 +264,8 @@ export function PostProcessingChips({
   view: PostProcessingView | undefined
   /** What pressing the `curation` chip should do. Absent → the chip is not a control (D-01). */
   onCurationClick?: (() => void) | undefined
+  /** What pressing the `analysis` chip should do. Absent → the chip is not a control (D-11). */
+  onOpenVerdict?: (() => void) | undefined
 }) {
   if (view === undefined) {
     return (

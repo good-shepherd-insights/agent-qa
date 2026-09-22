@@ -35,6 +35,7 @@ import {
   COUNTS_NOT_RECORDED_TEXT,
   FAILED_REASON_ABSENT_TEXT,
   OPEN_KNOWLEDGE_TAB_TEXT,
+  OPEN_VERDICT_TEXT,
   PENDING_POSTURE_TEXT,
   POST_PROCESSING_LOADING_LABEL,
   POST_PROCESSING_UNAVAILABLE_WORD,
@@ -339,6 +340,142 @@ describe("the curation chip is a click-through into the Knowledge tab (D-01)", (
     expect(root.tagName).toBe("SPAN")
     expect(root.getAttribute("title")).toBeNull()
     expect(root.getAttribute("aria-label")).toBeNull()
+  })
+})
+
+// THE OTHER DOOR (425-09 · D-11, UI-SPEC S4). Curation always has a half of the Knowledge tab to
+// open; analysis has somewhere to go only on a run that produced a verdict, and only the PAGE can
+// know that. So the affordance is the presence of the callback and nothing else — the component
+// makes no judgement about run status, which is the rule `onCurationClick` has carried since
+// 407-09 and the reason a header rendered without a page behind it grows no dead control.
+describe("the analysis indicator is the door to the verdict when the page gave it one (D-11)", () => {
+  const FAILED_ANALYSIS = {
+    status: "failed",
+    card: { outcome: `Analysis failed — ${FAILED_REASON_ABSENT_TEXT.handedOff}` },
+  }
+  const SETTLED_CURATION = {
+    status: "done",
+    card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` },
+  }
+
+  /**
+   * A SECOND MOUNT INSIDE ONE CELL, torn down where it was made.
+   *
+   * The shared `mount` tracks exactly one root for `afterEach`, so a cell that mounts twice would
+   * leave the first tree attached to `document.body` — and the cards here are PORTALLED, read off
+   * `document`, so a stray tree is a stray card a later query could reach.
+   */
+  function mountAside(element: ReactElement): { host: HTMLElement; done: () => void } {
+    const aside = document.createElement("div")
+    document.body.append(aside)
+    const asideRoot = createRoot(aside)
+    act(() => { asideRoot.render(<TooltipProvider delayDuration={0}>{element}</TooltipProvider>) })
+    return { host: aside, done: () => { act(() => { asideRoot.unmount() }); aside.remove() } }
+  }
+
+  function chipsWithDoor(onOpenVerdict?: () => void): ReactElement {
+    return (
+      <PostProcessingChips
+        view={chipsView(FAILED_ANALYSIS, SETTLED_CURATION)}
+        onOpenVerdict={onOpenVerdict}
+      />
+    )
+  }
+
+  it("ANALYSIS-DOOR-ON-FAILED-RUN: a button that names where it goes and calls the page exactly once", async () => {
+    const onOpenVerdict = vi.fn()
+    const host = mount(chipsWithDoor(onOpenVerdict))
+    const root = chip(host, "analysis")
+
+    expect(root.tagName).toBe("BUTTON")
+    expect(root.getAttribute("type")).toBe("button")
+    expect(root.getAttribute("aria-label")).toBe(
+      stageIndicatorAccessibleName("analysis", "failed", FAILED_ANALYSIS.card.outcome, "verdict"),
+    )
+    // Spelled out as well as composed: the spoken clause is the contract UI-SPEC S3 names, and a
+    // change to the joiner that kept `stageIndicatorAccessibleName` self-consistent would be
+    // invisible to an equality against that same function.
+    expect(root.getAttribute("aria-label")!.endsWith(" — open verdict")).toBe(true)
+    // The root swaps ELEMENT, never contract.
+    expect(root.getAttribute("data-chip")).toBe("analysis")
+    expect(root.getAttribute("data-chip-status")).toBe("failed")
+    expect(root.getAttribute("data-stage-state")).toBe("failed")
+
+    const card = await cardOf(host, "analysis")
+    expect(lineOf(card, "door")).toBe(OPEN_VERDICT_TEXT)
+    expect([...card.querySelectorAll("[data-stage-card-line]")].at(-1)?.getAttribute("data-stage-card-line"))
+      .toBe("door")
+    // Text only inside the card: the indicator the reader is already on IS the control (D-10).
+    expect(card.querySelector("a, button")).toBeNull()
+
+    act(() => { root.click() })
+    expect(onOpenVerdict).toHaveBeenCalledTimes(1)
+
+    // THE OTHER HALF OF THE HEADER IS UNTOUCHED. A verdict door must not hand curation an
+    // affordance the page never gave it.
+    const curation = chip(host, "curation")
+    expect(curation.tagName).toBe("SPAN")
+    expect(curation.getAttribute("aria-label")).toBeNull()
+    expect(lineOf(await cardOf(host, "curation"), "door")).toBeUndefined()
+  })
+
+  it("ANALYSIS-NOT-A-CONTROL-WHEN-PASSED: no door from the page, no button, no door line", async () => {
+    const host = mount(
+      <PostProcessingChips
+        view={chipsView(
+          { status: "done", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
+          SETTLED_CURATION,
+        )}
+      />,
+    )
+    const root = chip(host, "analysis")
+
+    expect(root.tagName).toBe("SPAN")
+    expect(root.getAttribute("tabindex")).toBe("0")
+    expect(root.getAttribute("aria-label")).toBeNull()
+    expect(root.querySelector(".sr-only")?.textContent).toBe(
+      stageIndicatorAccessibleName("analysis", "complete", ANALYSIS_COMPLETE_NO_ISSUES_TEXT),
+    )
+    expect(lineOf(await cardOf(host, "analysis"), "door")).toBeUndefined()
+
+    // THE FALSIFICATION, IN THE SAME SCENE. "Still a span" was true before this plan existed and
+    // on its own proves nothing about the rule; the same component WITH a door must read
+    // differently, or the absence above is not what makes this root a span.
+    const aside = mountAside(chipsWithDoor(vi.fn()))
+    try {
+      expect(chip(aside.host, "analysis").tagName).toBe("BUTTON")
+    } finally {
+      aside.done()
+    }
+  })
+
+  it("the navbar FORWARDS the door rather than deciding it (the `onCurationClick` idiom)", () => {
+    const host = mount(
+      <MemoryRouter><RunNavbar
+        run={runRow("failed")}
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+        hasPostProcessing
+        postProcessing={chipsView(FAILED_ANALYSIS, SETTLED_CURATION)}
+        onOpenVerdict={() => {}}
+      /></MemoryRouter>,
+    )
+    expect(host.querySelector('[data-chip="analysis"]')?.tagName).toBe("BUTTON")
+
+    const aside = mountAside(
+      <MemoryRouter><RunNavbar
+        run={runRow("failed")}
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+        hasPostProcessing
+        postProcessing={chipsView(FAILED_ANALYSIS, SETTLED_CURATION)}
+      /></MemoryRouter>,
+    )
+    try {
+      expect(aside.host.querySelector('[data-chip="analysis"]')?.tagName).toBe("SPAN")
+    } finally {
+      aside.done()
+    }
   })
 })
 

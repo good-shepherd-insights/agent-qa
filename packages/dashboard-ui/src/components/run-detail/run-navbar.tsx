@@ -106,6 +106,17 @@ interface RunNavbarProps {
    */
   onCurationClick?: () => void
   /**
+   * What pressing the `analysis` chip should do (425-09 · PXH-RUN-03, D-11).
+   *
+   * FORWARDED, NOT DECIDED — the same rule as {@link RunNavbarProps.onCurationClick} one door
+   * along. Curation always has a half of the Knowledge tab to open, so the page passes its handler
+   * unconditionally; analysis has somewhere to go only on a run that produced a verdict, and this
+   * header knows neither the run's outcome nor whether a block is mounted. Absent → the analysis
+   * indicator stays the focusable `<span>` it has always been, which is what every surface that
+   * renders this header without a run-detail page behind it should get.
+   */
+  onOpenVerdict?: () => void
+  /**
    * The rung that served THIS run, as the durable `runs.knowledge` read recorded it (407-10 · D-13).
    *
    * UNDEFINED IS TWO FACTS THIS HEADER CANNOT TELL APART, and both render the same nothing: the
