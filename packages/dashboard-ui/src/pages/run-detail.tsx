@@ -561,6 +561,11 @@ export default function RunDetailPage() {
    * and focusing nothing would lose the reader entirely; the first group's own disclosure button
    * keeps focus inside the tree and leaves the verdict one keypress away.
    *
+   * THE TOGGLE IS NAMED BY CONTRACT, NOT BY ARIA STATE (425-14 · WR-01). `aria-expanded` is also
+   * emitted by the member-filter trigger and by the Error Details disclosure, and both render
+   * earlier in this same container on exactly the run the door is enabled for — a failed run with
+   * an error log. `[data-member-toggle]` is written only on the group's own disclosure.
+   *
    * `preventScroll` on the focus call because the scroll above already placed the target — without
    * it the browser scrolls a second time, to its own idea of where the element should sit.
    */
@@ -568,7 +573,7 @@ export default function RunDetailPage() {
     const container: ParentNode = stepTreeScrollRef.current ?? document
     const target =
       container.querySelector<HTMLElement>('[data-verdict-block]')
-      ?? container.querySelector<HTMLElement>('button[aria-expanded]')
+      ?? container.querySelector<HTMLElement>('[data-member-toggle]')
     if (target === null) return
     const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
     target.scrollIntoView({ block: 'center', behavior })

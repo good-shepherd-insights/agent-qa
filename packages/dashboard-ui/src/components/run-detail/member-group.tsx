@@ -165,6 +165,7 @@ export function MemberGroup({
       <div className="mt-3 mb-1 flex items-center gap-2 bg-muted/30 px-3 py-1.5 text-xs font-medium text-muted-foreground first:mt-0">
         <button
           type="button"
+          data-member-toggle
           aria-expanded={open}
           aria-label={memberDisplayName(member)}
           onClick={() => setOpen((prev) => !prev)}
