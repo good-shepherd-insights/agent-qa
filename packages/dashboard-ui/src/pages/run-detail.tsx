@@ -1012,6 +1012,7 @@ export default function RunDetailPage() {
         <RunNavbar
           run={run}
           tokens={detail?.tokens}
+          models={detail?.models}
           shortcutsOpen={shortcutsOpen}
           onToggleShortcuts={() => setShortcutsOpen(prev => !prev)}
           onOpenArtifacts={openArtifactDrawer}
