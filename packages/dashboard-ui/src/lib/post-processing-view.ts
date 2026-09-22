@@ -25,6 +25,7 @@ import type {
   CurationSnapshotWithheldReason,
   PostProcessingChipStatus,
   PostProcessingDisposition,
+  PostProcessingExclusionReason,
 } from '@vostride/agent-qa-schema'
 
 import type { PostProcessingRead } from './api'
@@ -113,6 +114,19 @@ export const POST_PROCESSING_LOADING_LABEL = 'Post-processing status loading'
  * is also how the accessible name splits it (`Analysis: complete, no issues found`).
  */
 export const ANALYSIS_COMPLETE_NO_ISSUES_TEXT = 'Analysis complete — no issues found'
+
+/**
+ * What a run the chain never enqueued says, per stage (D-08/D-13).
+ *
+ * NEUTRAL, NOT A FAILURE. A benchmark or gate run skipped the whole post-run chain by design
+ * (404 D-08), so its stages did not fail and are not queued — nothing was ever asked of them. The
+ * sentence states the rule rather than the run's condition, because the reader's question here is
+ * "why is there nothing here" and the answer is about the kind of run, not about this one.
+ */
+export const STAGE_EXCLUDED_TEXT: Record<PostProcessingStage, string> = {
+  analysis: 'Analysis excluded — benchmark and gate runs are not analysed',
+  curation: 'Curation excluded — benchmark and gate runs are not curated',
+}
 
 /** A stage that is still moving says so, and says nothing else (D-13). */
 export const ANALYSIS_RUNNING_TEXT = 'Analysis running'
@@ -230,7 +244,17 @@ export interface PostProcessingChipView {
 }
 
 export type PostProcessingView =
-  | { readonly kind: 'chips'; readonly analysis: PostProcessingChipView; readonly curation: PostProcessingChipView }
+  | {
+      readonly kind: 'chips'
+      readonly analysis: PostProcessingChipView
+      readonly curation: PostProcessingChipView
+      /**
+       * Present iff the READ carried `status.exclusion` (D-08). A SIBLING of the chip words, never
+       * a fifth one: the four-word vocabulary stays closed and the raw words survive underneath, so
+       * a surface that does not know about the exclusion still renders exactly what the store said.
+       */
+      readonly excluded?: { readonly reason: PostProcessingExclusionReason }
+    }
   | { readonly kind: 'unavailable'; readonly error: string; readonly reason?: string }
 
 /**

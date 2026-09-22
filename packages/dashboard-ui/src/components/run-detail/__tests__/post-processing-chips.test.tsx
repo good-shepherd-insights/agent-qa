@@ -34,6 +34,7 @@ import {
   PENDING_POSTURE_TEXT,
   POST_PROCESSING_LOADING_LABEL,
   POST_PROCESSING_UNAVAILABLE_WORD,
+  STAGE_EXCLUDED_TEXT,
   STAGE_INDICATOR_WORDS,
   stageIndicatorAccessibleName,
   type PostProcessingView,
@@ -465,6 +466,57 @@ describe("every indicator state is readable with the colour stripped out (D-06, 
       root = undefined
       container = undefined
     }
+  })
+})
+
+// A SKIPPED CHAIN READS NEUTRAL, AND THE STORE'S OWN WORDS SURVIVE UNDERNEATH (425-08 · D-08, SC2).
+//
+// The reason rides the CONTAINER as its own attribute rather than being spelled into a sentence a
+// cell would have to parse, and `data-chip-status` keeps the raw chip word on each root — so the
+// four-word vocabulary census still sees four words on a gate run, and a surface that does not know
+// about the exclusion still reads exactly what the store said.
+describe("a run the chain never enqueued reads excluded on both indicators (D-08)", () => {
+  function excludedView(reason: string): PostProcessingView {
+    const chipFor = (stage: "analysis" | "curation") => ({
+      status: "pending",
+      state: "excluded",
+      word: STAGE_INDICATOR_WORDS[stage].excluded,
+      card: { outcome: STAGE_EXCLUDED_TEXT[stage] },
+    })
+    return {
+      kind: "chips",
+      excluded: { reason },
+      analysis: chipFor("analysis"),
+      curation: chipFor("curation"),
+    } as unknown as PostProcessingView
+  }
+
+  it("EXCLUDED-PAINT: the reason on the container, both roots excluded, the raw words untouched", async () => {
+    const host = render(excludedView("outcome-excluded"))
+    const area = host.querySelector('[data-chips-state="chips"]')!
+
+    expect(area.getAttribute("data-postprocessing-excluded")).toBe("outcome-excluded")
+
+    for (const stage of ["analysis", "curation"] as const) {
+      const root = chip(host, stage)
+      expect(root.getAttribute("data-stage-state")).toBe("excluded")
+      // The store said `pending` and the store is still quoted verbatim (404 D-01).
+      expect(root.getAttribute("data-chip-status")).toBe("pending")
+      expect(root.tagName).toBe("SPAN")
+      expect(visibleTextOf(root)).toBe(STAGE_INDICATOR_WORDS[stage].excluded)
+      expect([...root.querySelector("svg")!.classList].find((c) => c.startsWith("lucide-")))
+        .toBe("lucide-circle-minus")
+      expect(lineOf(await cardOf(host, stage), "outcome")).toBe(STAGE_EXCLUDED_TEXT[stage])
+    }
+
+    // Nothing to open: an excluded run has no verdict to reach and nothing was curated.
+    expect(host.querySelector("button")).toBeNull()
+  })
+
+  it("EXCLUDED-PAINT: a view carrying no exclusion carries NO reason attribute at all", () => {
+    const host = render(chipsView({ status: "done" }, { status: "done" }))
+    const area = host.querySelector('[data-chips-state="chips"]')!
+    expect(area.hasAttribute("data-postprocessing-excluded")).toBe(false)
   })
 })
 

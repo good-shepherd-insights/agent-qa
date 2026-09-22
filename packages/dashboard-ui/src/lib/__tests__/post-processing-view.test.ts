@@ -13,6 +13,7 @@
 // daemon" and a lie. Blank is a lie by omission; `pending` is a lie outright.
 
 import { describe, expect, it } from 'vitest'
+import { POST_PROCESSING_EXCLUSION_REASONS } from '@vostride/agent-qa-schema'
 import type { CurationBreakdown, PostProcessingStatus } from '@vostride/agent-qa-schema'
 
 import type { PostProcessingRead } from '@/lib/api'
@@ -31,6 +32,7 @@ import {
   PENDING_POSTURE_TEXT,
   POST_PROCESSING_LOADING_LABEL,
   POST_PROCESSING_UNAVAILABLE_WORD,
+  STAGE_EXCLUDED_TEXT,
   STAGE_INDICATOR_WORDS,
   STAGE_PRESENTATION_STATES,
   WILL_RETRY_TEXT,
@@ -429,5 +431,97 @@ describe('an indicator says the stage, and says the state when it needs attentio
     })
     expect(POST_PROCESSING_UNAVAILABLE_WORD).toBe('Post-processing unavailable')
     expect(POST_PROCESSING_LOADING_LABEL).toBe('Post-processing status loading')
+  })
+})
+
+// THE EXCLUDED STATE COMES FROM THE READ'S OWN FIELD (425-08 · D-08, T-425-08-01).
+//
+// The op folds `exclusion` from the run's durable `gateRun` / `excludedFromOutcomes` markers — the
+// same markers the post-verdict enqueue skip reads — so the dashboard, the CLI exit line and the
+// digest say ONE thing (law 6). The projection therefore reads the FIELD and nothing else: not the
+// absence of job rows, not the run's own status, not a settled chip word. The negative arm below is
+// the half that matters, because a fold that guessed would still pass every positive assertion.
+describe('a skipped chain reads excluded because the read said so, never because rows are missing (D-08)', () => {
+  it('EXCLUDED-FROM-FIELD: paints BOTH indicators excluded while the chip words stay verbatim', () => {
+    for (const reason of POST_PROCESSING_EXCLUSION_REASONS) {
+      const view = chips(projectPostProcessingView(read({
+        status: status('pending', 'pending', undefined, { exclusion: { reason } }),
+      })))
+
+      expect(view.excluded).toEqual({ reason })
+      expect(view.analysis).toEqual({
+        status: 'pending',
+        state: 'excluded',
+        word: STAGE_INDICATOR_WORDS.analysis.excluded,
+        card: { outcome: STAGE_EXCLUDED_TEXT.analysis },
+      })
+      expect(view.curation).toEqual({
+        status: 'pending',
+        state: 'excluded',
+        word: STAGE_INDICATOR_WORDS.curation.excluded,
+        card: { outcome: STAGE_EXCLUDED_TEXT.curation },
+      })
+    }
+
+    expect(STAGE_EXCLUDED_TEXT.analysis)
+      .toBe('Analysis excluded — benchmark and gate runs are not analysed')
+    expect(STAGE_EXCLUDED_TEXT.curation)
+      .toBe('Curation excluded — benchmark and gate runs are not curated')
+  })
+
+  it('EXCLUDED-FROM-FIELD: outranks the chip words — a settled read carrying the field is still excluded', () => {
+    const view = chips(projectPostProcessingView(read({
+      status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} }), {
+        exclusion: { reason: 'gate-run' },
+      }),
+      disposition: 'drained',
+    })))
+
+    expect(view.excluded).toEqual({ reason: 'gate-run' })
+    expect(view.analysis.status).toBe('done')
+    expect(view.analysis.state).toBe('excluded')
+    expect(view.analysis.card?.outcome).toBe(STAGE_EXCLUDED_TEXT.analysis)
+    expect(view.curation.status).toBe('done')
+    expect(view.curation.state).toBe('excluded')
+    expect(view.curation.card?.outcome).toBe(STAGE_EXCLUDED_TEXT.curation)
+  })
+
+  it('EXCLUDED-FROM-FIELD: a pending read WITHOUT the field is queued — the absence of rows proves nothing', () => {
+    const view = chips(projectPostProcessingView(read({ disposition: 'handedOff' })))
+
+    expect(view.excluded).toBeUndefined()
+    expect(view.analysis.state).toBe('pending')
+    expect(view.analysis.card?.outcome)
+      .toBe(stageQueuedText('analysis', PENDING_POSTURE_TEXT.handedOff))
+    expect(view.curation.state).toBe('pending')
+    expect(view.curation.card?.outcome)
+      .toBe(stageQueuedText('curation', PENDING_POSTURE_TEXT.handedOff))
+  })
+})
+
+// PURE AND TOTAL, MEASURED RATHER THAN ASSERTED (PXH-RUN-03). A re-read arriving while a card is
+// open repaints that card from the NEW read alone, which is only safe if projecting a read twice
+// says the same thing and leaves the read's own bytes where it found them.
+describe('the projection is pure and total (PXH-RUN-03)', () => {
+  it('PROJECTION-IDEMPOTENT: the same read projects deep-equal twice, and is never mutated', () => {
+    const reads: PostProcessingRead[] = [
+      read({ status: status('pending', 'pending', undefined, { exclusion: { reason: 'outcome-excluded' } }) }),
+      read({ status: status('failed', 'failed'), disposition: 'handedOff', failures: {} }),
+      read({
+        status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} }), {
+          curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 1 }) },
+        }),
+        disposition: 'drained',
+      }),
+      { kind: 'unavailable', error: 'function_not_bound' },
+    ]
+
+    for (const subject of reads) {
+      const before = JSON.stringify(subject)
+      const first = projectPostProcessingView(subject)
+      const second = projectPostProcessingView(subject)
+      expect(second).toEqual(first)
+      expect(JSON.stringify(subject)).toBe(before)
+    }
   })
 })
