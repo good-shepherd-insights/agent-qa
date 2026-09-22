@@ -166,6 +166,7 @@ export function MemberGroup({
         <button
           type="button"
           data-member-toggle
+          {...(verdict === undefined ? {} : { "data-member-has-verdict": "" })}
           aria-expanded={open}
           aria-label={memberDisplayName(member)}
           onClick={() => setOpen((prev) => !prev)}

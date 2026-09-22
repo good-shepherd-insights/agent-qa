@@ -72,8 +72,10 @@ const {
    * How many verdict blocks and collapsed member groups the mocked tree mounts this render, and
    * whether the two OTHER `aria-expanded` emitters of the real scroll container (the member-filter
    * trigger and the Error Details disclosure) are mounted ahead of the groups (425-14 · WR-01).
+   * `verdictGroup` is the one collapsed group whose toggle carries the verdict-bearing contract
+   * attribute the real `MemberGroup` writes; unset, every group renders alike.
    */
-  treeScene: { blocks: 0, collapsedGroups: 0, trap: false },
+  treeScene: { blocks: 0, collapsedGroups: 0, trap: false, verdictGroup: undefined as number | undefined },
 }))
 
 vi.mock("@/lib/api", async () => {
@@ -141,7 +143,14 @@ vi.mock("@/components/run-detail/step-tree", () => ({
           </>
         ) : null}
         {Array.from({ length: treeScene.collapsedGroups }, (_, index) => (
-          <button key={`group-${String(index)}`} type="button" aria-expanded="false" data-member-toggle data-probe-group={String(index)} />
+          <button
+            key={`group-${String(index)}`}
+            type="button"
+            aria-expanded="false"
+            data-member-toggle
+            {...(treeScene.verdictGroup === index ? { "data-member-has-verdict": "" } : {})}
+            data-probe-group={String(index)}
+          />
         ))}
         {Array.from({ length: treeScene.blocks }, (_, index) => (
           <div key={`block-${String(index)}`} data-verdict-block data-probe-block={String(index)} tabIndex={-1} />
@@ -297,6 +306,7 @@ beforeEach(() => {
   treeScene.blocks = 0
   treeScene.collapsedGroups = 0
   treeScene.trap = false
+  treeScene.verdictGroup = undefined
   navigateTo = undefined
   fetchRunMock.mockReset()
   fetchRunArtifactMock.mockReset()
@@ -665,6 +675,34 @@ describe("the failed run's analysis indicator is the door to its verdict (D-11)"
       expect(document.activeElement, failure).not.toBe(errorDetails)
       expect(document.activeElement, failure).toBe(toggle)
       expect(scrolled.map(entry => entry.el), failure).toEqual([toggle])
+    } finally {
+      restore()
+    }
+  })
+
+  // WR-01 (425 review). Only a failed member mounts a verdict, so on a suite whose first member
+  // passed, the first group's toggle opens onto nothing. The fallback lands on the toggle of the
+  // group that holds the verdict, named by its own contract attribute rather than by tree order.
+  it("PAGE-OPENS-VERDICT-FALLBACK-FINDS-THE-FAILED-GROUP: skips a passed member's group ahead of it", async () => {
+    const restore = pinReducedMotion(false)
+    try {
+      fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id, "failed") }))
+      fetchRunAnalysisMock.mockResolvedValue(analysisWithVerdict())
+      treeScene.blocks = 0
+      treeScene.collapsedGroups = 2
+      treeScene.verdictGroup = 1
+      treeScene.trap = true
+      await renderPage()
+      const scrolled = recordScrolls()
+
+      await invokeDoor()
+
+      const passed = container!.querySelector<HTMLElement>('[data-probe-group="0"]')!
+      const failed = container!.querySelector<HTMLElement>('[data-probe-group="1"]')!
+      const failure = "the door sent the reader to a passed member's group, which holds no verdict"
+      expect(document.activeElement, failure).not.toBe(passed)
+      expect(document.activeElement, failure).toBe(failed)
+      expect(scrolled.map(entry => entry.el), failure).toEqual([failed])
     } finally {
       restore()
     }

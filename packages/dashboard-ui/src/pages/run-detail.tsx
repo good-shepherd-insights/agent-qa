@@ -558,8 +558,10 @@ export default function RunDetailPage() {
    * tree is rendering from. Member groups own their open state locally and default open.
    *
    * ...AND WHEN A READER HAS COLLAPSED THEM ALL, THE TOGGLE IS THE TARGET. Scrolling to nothing
-   * and focusing nothing would lose the reader entirely; the first group's own disclosure button
-   * keeps focus inside the tree and leaves the verdict one keypress away.
+   * and focusing nothing would lose the reader entirely. The target is the toggle of the group that
+   * HOLDS a verdict (`data-member-has-verdict`, written only on a group handed a verdict), so the
+   * verdict is one keypress away rather than behind a passed member's group that happens to come
+   * first (425 review WR-01). The first toggle remains only for a tree that marks no group.
    *
    * THE TOGGLE IS NAMED BY CONTRACT, NOT BY ARIA STATE (425-14 · WR-01). `aria-expanded` is also
    * emitted by the member-filter trigger and by the Error Details disclosure, and both render
@@ -573,6 +575,7 @@ export default function RunDetailPage() {
     const container: ParentNode = stepTreeScrollRef.current ?? document
     const target =
       container.querySelector<HTMLElement>('[data-verdict-block]')
+      ?? container.querySelector<HTMLElement>('[data-member-toggle][data-member-has-verdict]')
       ?? container.querySelector<HTMLElement>('[data-member-toggle]')
     if (target === null) return
     const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'

@@ -29,6 +29,7 @@ import { MASKED_MARKER_DELIMITER, asRef, maskedMarker } from "@vostride/agent-qa
 import { MemberGroup } from "@/components/run-detail/member-group"
 import { StepTree } from "@/components/run-detail/step-tree"
 import { statusBadgeLook } from "@/lib/status"
+import { provenanceLabel, type MemberVerdictView } from "@/lib/analysis-view"
 import { SubActionTreeItem } from "@/components/run-detail/sub-action-tree-item"
 import {
   DID_NOT_RUN_LABEL,
@@ -203,6 +204,47 @@ describe("every member wears its outcome, in the navbar's one palette (406 D-07)
     const view = tree([group(member(0, { name: "Login" }), [step(0, 0)])], true)
 
     expect(view.querySelector("[data-member-outcome]"), "no outcome is no badge").toBeNull()
+  })
+})
+
+describe("the toggle of a group that holds a verdict says so, collapsed or not (425 WR-01)", () => {
+  function verdictFor(testIndex: number): MemberVerdictView {
+    return {
+      testIndex,
+      sentence: 'observed (step 0): "Submit never became enabled"',
+      producer: "deterministic-classifier",
+      confidence: 0,
+      provenance: provenanceLabel("deterministic-classifier", 0),
+      citedSteps: [],
+      citedArtifacts: [],
+      siblings: [],
+    }
+  }
+
+  // The header's verdict door falls back to this toggle when the reader collapsed the group, so
+  // the marker must survive the collapse that unmounts the block itself.
+  it("MEMBER-TOGGLE-HAS-VERDICT: marks only the failed member's toggle, and keeps it when collapsed", () => {
+    const view = mount(
+      <ul role="tree">
+        <MemberGroup group={group(member(0, { name: "Login", outcome: "passed" }), [step(0, 0)])} showChrome />
+        <MemberGroup
+          group={group(member(1, { name: "Checkout", outcome: "failed" }), [step(1, 0)])}
+          showChrome
+          verdict={verdictFor(1)}
+        />
+      </ul>,
+    )
+
+    const toggles = [...view.querySelectorAll<HTMLElement>("[data-member-toggle]")]
+    expect(toggles).toHaveLength(2)
+    expect(toggles[0]!.hasAttribute("data-member-has-verdict"), "a passed member holds no verdict").toBe(false)
+    expect(toggles[1]!.hasAttribute("data-member-has-verdict")).toBe(true)
+    expect(view.querySelector("[data-verdict-block]"), "the open group mounts its block").not.toBeNull()
+
+    act(() => { toggles[1]!.click() })
+    expect(toggles[1]!.getAttribute("aria-expanded")).toBe("false")
+    expect(view.querySelector("[data-verdict-block]"), "collapsing unmounts the block").toBeNull()
+    expect(toggles[1]!.hasAttribute("data-member-has-verdict")).toBe(true)
   })
 })
 
