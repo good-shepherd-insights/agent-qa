@@ -69,10 +69,22 @@ function handoff(overrides: Partial<CompletedRunHandoff> = {}): CompletedRunHand
  * nothing — which is exactly why the fact cannot come from there.
  */
 async function digestFor(document: CompletedRunHandoff): Promise<RunDigest> {
+  return await digestOver({ get: () => document, list: [document], postProcessing: true })
+}
+
+/**
+ * The same scene with its two variables exposed (425-14 · WR-04): what each successive
+ * `runs.get` serves, and whether a post-processing reader is bound at all.
+ */
+async function digestOver(scene: {
+  get: () => CompletedRunHandoff
+  list: readonly CompletedRunHandoff[]
+  postProcessing: boolean
+}): Promise<RunDigest> {
   const deps: FunctionDeps = {
     runs: {
-      list: () => Promise.resolve([document]),
-      get: () => Promise.resolve(document),
+      list: () => Promise.resolve([...scene.list]),
+      get: () => Promise.resolve(scene.get()),
       readEvents: () => Promise.resolve([]),
       readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
@@ -94,10 +106,14 @@ async function digestFor(document: CompletedRunHandoff): Promise<RunDigest> {
         entries: [],
       }),
     },
-    postProcessing: {
-      idSource: TEST_ID_SOURCE,
-      readChain: () => Promise.resolve(undefined),
-    },
+    ...(scene.postProcessing
+      ? {
+          postProcessing: {
+            idSource: TEST_ID_SOURCE,
+            readChain: () => Promise.resolve(undefined),
+          },
+        }
+      : {}),
     proposalsInbox: { list: () => Promise.resolve([]) },
   } as unknown as FunctionDeps
 
@@ -150,4 +166,52 @@ describe('DIGEST-CHAIN-EXCLUDED', () => {
       expect('exclusion' in digest.chain).toBe(false)
       expect(chainLine(digest)).toBe('chain — analysis: pending · curation: pending')
     })
+})
+
+// ONE PRODUCER ON THE BOUND PATH (425-14 · WR-04, law 6). The digest loads the handoff first, for
+// its own not-found refusal; `runs.postprocessing` loads it second and folds the exclusion. Serving
+// a plain handoff to the first load and a gate run to every later one makes the two derivations
+// disagree, so the chain arm shows which one was published.
+describe('DIGEST-EXCLUSION-FROM-THE-STATUS', () => {
+  it('publishes the exclusion the post-processing read folded, not a second derivation', async () => {
+    let loads = 0
+    const plain = handoff()
+    const gate = handoff({ gateRun: true } as never)
+    const digest = await digestOver({
+      get: () => (loads++ === 0 ? plain : gate),
+      list: [plain],
+      postProcessing: true,
+    })
+
+    expect(
+      digest.chain,
+      'two derivations of one fact can disagree, and law 6 is the claim that only one of them is '
+        + 'published: the chain arm must carry the fold `runs.postprocessing` made',
+    ).toEqual({ analysis: 'pending', curation: 'pending', exclusion: { reason: 'gate-run' } })
+    expect(chainLine(digest))
+      .toBe('chain — analysis: excluded (gate-run) · curation: excluded (gate-run)')
+  })
+})
+
+// THE UNBOUND COMPOSITION. A host with no post-processing reader ran no fold, so the digest answers
+// from the handoff it already loaded — dropping the fact there would tell a reader their gate run
+// was simply pending.
+describe('DIGEST-EXCLUSION-WITHOUT-A-READER', () => {
+  it('still answers the exclusion from its own handoff when no reader is bound', async () => {
+    const gate = handoff({ gateRun: true } as never)
+    const digest = await digestOver({ get: () => gate, list: [gate], postProcessing: false })
+
+    expect(digest.chain).toHaveProperty('exclusion', { reason: 'gate-run' })
+    expect(chainLine(digest))
+      .toBe('chain — analysis: excluded (gate-run) · curation: excluded (gate-run)')
+  })
+
+  it('leaves an ordinary run with no exclusion key and the shipped two-word line', async () => {
+    const plain = handoff()
+    const digest = await digestOver({ get: () => plain, list: [plain], postProcessing: false })
+
+    expect(digest.chain).toEqual({ analysis: 'pending', curation: 'pending' })
+    expect('exclusion' in digest.chain).toBe(false)
+    expect(chainLine(digest)).toBe('chain — analysis: pending · curation: pending')
+  })
 })
