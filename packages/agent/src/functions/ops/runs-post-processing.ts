@@ -28,8 +28,10 @@ import {
   RunsPostProcessingInputSchema,
 } from '@vostride/agent-qa-schema'
 import type {
+  CompletedRunHandoff,
   PostProcessingChipStatus,
   PostProcessingChips,
+  PostProcessingExclusionReason,
   PostProcessingStatus,
   PostProcessingDetailStage,
   PostProcessingStageDetail,
@@ -102,6 +104,23 @@ export function projectPostProcessingChips(
     analysis: chipFor(state?.analyzeRun, 'pending'),
     curation: chipFor(state?.curateMemory, 'pending'),
   }
+}
+
+/**
+ * THE exclusion fold: the run's durable record → why its chain was never enqueued (425 D-08).
+ *
+ * Read from the SAME two markers the post-verdict enqueue skip reads, in the same
+ * short-circuit order, so the reason a surface renders is the reason the chain was actually
+ * skipped for. Never from the absence of job rows: a chain polled a second after its verdict
+ * has no rows either, and calling that an exclusion would tell a user their run was dropped.
+ * An absent document is an absent fact, never a refusal.
+ */
+export function projectPostProcessingExclusion(
+  document: CompletedRunHandoff | undefined,
+): { reason: PostProcessingExclusionReason } | undefined {
+  if (document?.gateRun === true) return { reason: 'gate-run' }
+  if (document?.excludedFromOutcomes === true) return { reason: 'outcome-excluded' }
+  return undefined
 }
 
 /** Copy only recorded DTO facts; queue state and cancellation requests are not detail fields. */
@@ -251,6 +270,11 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
     // id source — two copies of the hash input would be two chains that review identically.
     const ids = chainJobIdsForRun(runId, postProcessing.idSource)
     const state = await postProcessing.readChain(ids, runId)
+    // Through the REQUIRED runs port, and with no refusal on absence. The not-found throw
+    // `runs.get` and `runs.digest` raise is theirs: each NAMES a run, while a chain can
+    // legitimately be polled before its handoff lands (the skip runs after the write). An
+    // absent document simply carries no exclusion fact.
+    const exclusion = projectPostProcessingExclusion(await deps.runs.get(input.runId))
     // Resolve at invocation time: the host can bind a different masking scope for each read.
     // Without that scope, free-text failure fields fail closed with the shared display marker.
     const masking = getActiveMaskingContext()
@@ -275,6 +299,7 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
       ...(stageDetails === undefined ? {} : { stageDetails }),
       ...(curationSnapshot === undefined ? {} : { curationSnapshot }),
       ...(snapshots.kind === 'withheld' ? { curationSnapshotWithheld: { reason: snapshots.reason } } : {}),
+      ...(exclusion === undefined ? {} : { exclusion }),
       // Absence is spread away rather than padded (the `runs-get.ts` idiom): a chain in flight
       // has no record yet, and a rendered `null` would be a second spelling of what a missing
       // key already says.
