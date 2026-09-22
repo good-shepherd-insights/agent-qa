@@ -37,6 +37,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import {
   digestFetchCommand,
+  renderPostProcessingSummaryLine,
   runPostRunTail,
   type PostRunTailOperations,
   type RunPostRunTailOptions,
@@ -711,6 +712,49 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
       // daemon DOES drain still says so, under the very same posture.
       const analysisStage = stages.find((part) => part.startsWith('analysis:'))
       expect(analysisStage).toBe('analysis: pending (daemon will drain)')
+    })
+
+  // EXIT-LINE-EXCLUDED (425 D-08). A gate or benchmark run never enqueues a chain, so its chips
+  // read `pending` forever and the posture parenthetical promises a drain nobody will perform.
+  // The exclusion fact the op mints from the run's durable handoff replaces BOTH stage clauses
+  // with the word the digest chain line and the dashboard print — and takes the promise with it.
+  it('EXIT-LINE-EXCLUDED: renders both stages excluded with the reason and no posture promise',
+    () => {
+      const excluded: PostProcessingStatus = {
+        runId: RUN_ID,
+        chips: { analysis: 'pending', curation: 'pending' },
+        exclusion: { reason: 'gate-run' },
+      }
+      // `handed-off` is the ONE posture that pastes a promise onto every pending stage, which is
+      // what makes the absence below load-bearing rather than a coincidence of the plain fixture.
+      const line = renderPostProcessingSummaryLine(excluded, 'handed-off')
+      expect(line).toBe(
+        'post-processing — analysis: excluded (gate-run)'
+        + ' · curation: excluded (gate-run)'
+        + ' · trust priors: provisional',
+      )
+      expect(line).not.toContain('daemon will drain')
+      expect(line).not.toContain('deferred to a later local run')
+
+      // The reason is RENDERED, not a constant: the other member of the closed set reads as
+      // itself, in both clauses.
+      expect(renderPostProcessingSummaryLine(
+        { ...excluded, exclusion: { reason: 'outcome-excluded' } },
+        'handed-off',
+      )).toBe(
+        'post-processing — analysis: excluded (outcome-excluded)'
+        + ' · curation: excluded (outcome-excluded)'
+        + ' · trust priors: provisional',
+      )
+
+      // And the same status WITHOUT the field is byte-identical to what the shipped exit-line
+      // cells above pin — the arm is additive, keyed on the fact and on nothing else.
+      const { exclusion: _absent, ...ordinary } = excluded
+      expect(renderPostProcessingSummaryLine(ordinary, 'handed-off')).toBe(
+        'post-processing — analysis: pending (daemon will drain)'
+        + ' · curation: pending (deferred to a later local run)'
+        + ' · trust priors: provisional',
+      )
     })
 
   it('prints the human notification line at chain terminal, from the row (D-09/D-12)',
