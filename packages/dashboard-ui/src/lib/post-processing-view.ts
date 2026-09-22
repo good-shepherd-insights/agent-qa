@@ -464,6 +464,26 @@ function stageCard(
   return undefined
 }
 
+/**
+ * One indicator on a run the chain never enqueued (D-08).
+ *
+ * THE CHIP WORD IS STILL QUOTED VERBATIM. `status` carries whatever the store said — `pending` on
+ * every excluded run alive today — because the exclusion is a SIBLING fact and not a fifth word:
+ * the four-word census must still see four words, and a surface that does not know about the
+ * exclusion must still be able to read exactly what the store said.
+ *
+ * NO TIMING, EVER. There is no job row to time; a stage that was never enqueued has no queue
+ * moment, and rendering one would be the zero-for-an-absence this phase exists to remove.
+ */
+function excludedChipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChipView {
+  return {
+    status: read.status.chips[stage],
+    state: 'excluded',
+    word: STAGE_INDICATOR_WORDS[stage].excluded,
+    card: { outcome: STAGE_EXCLUDED_TEXT[stage] },
+  }
+}
+
 function chipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChipView {
   const state = stagePresentationState(read, stage)
   const card = stageCard(stage, state, read)
@@ -491,6 +511,21 @@ export function projectPostProcessingView(read: PostProcessingRead): PostProcess
       ...(read.reason === undefined ? {} : { reason: read.reason }),
     }
   }
+  // THE EXCLUSION GATE, AND ITS ONE INPUT (D-08, T-425-08-01). The op folds this field from the
+  // run's durable `gateRun` / `excludedFromOutcomes` markers — the same markers the post-verdict
+  // enqueue skip reads — so the CLI exit line, the digest and this header say ONE thing. Nothing
+  // else may reach this branch: not the absence of job rows (a chain polled before its first
+  // enqueue looks identical), not the run's status, not a pushed frame.
+  const exclusion = read.status.exclusion
+  if (exclusion !== undefined) {
+    return {
+      kind: 'chips',
+      analysis: excludedChipView('analysis', read),
+      curation: excludedChipView('curation', read),
+      excluded: { reason: exclusion.reason },
+    }
+  }
+
   return {
     kind: 'chips',
     analysis: chipView('analysis', read),

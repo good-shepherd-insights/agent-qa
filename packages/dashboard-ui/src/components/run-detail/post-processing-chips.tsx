@@ -272,8 +272,18 @@ export function PostProcessingChips({
     )
   }
 
+  // THE REASON RIDES THE CONTAINER AS ITS OWN ATTRIBUTE (425 D-08). The absence-spread rather than
+  // a `?? ''` default: an attribute present and empty is a claim that a reason was recorded and was
+  // blank, which is exactly the absent/zero conflation this phase is about. `data-chips-state`
+  // stays `chips` — the exclusion is a fact ABOUT the chips, not a fourth area state.
   return (
-    <span data-chips-state="chips" className="inline-flex items-center gap-2 min-w-0">
+    <span
+      data-chips-state="chips"
+      {...(view.excluded === undefined
+        ? {}
+        : { "data-postprocessing-excluded": view.excluded.reason })}
+      className="inline-flex items-center gap-2 min-w-0"
+    >
       <Chip stage="analysis" chip={view.analysis} />
       <Chip stage="curation" chip={view.curation} onActivate={onCurationClick} door="knowledge" />
     </span>
