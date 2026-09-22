@@ -82,9 +82,14 @@ import { JobStoreSchemaVersionError, UnknownJobRowError } from './store-errors.j
  * silent widening the gate exists to refuse.
  *
  * 4 (425 gap closure): the jobs table gained `started_at`, the instant a row was first claimed,
- * kept after the lease is released. A v3 database has no such column, so rather than being
- * widened on open — and then timing every settled stage from a column nothing ever wrote — it
- * is refused by name with the remedy in the message. The bump is the refusal.
+ * kept after the lease is released. Unlike 3, a widened v3 database would NOT print a wrong
+ * fact: the column is nullable, an old row reads `started_at IS NULL`, the reader omits the key
+ * and the timing line drops both duration clauses. The refusal is D-04 applied without an
+ * exception. `CREATE TABLE IF NOT EXISTS` leaves a v3 jobs table without the column, so an
+ * ungated open fails at the first statement naming `started_at` with a bare SQLite error; the
+ * only way to open it cleanly is an `ALTER TABLE` on open, which is the migration machinery
+ * D-04 excludes. So a v3 database is refused by name, with the remedy in the message, before
+ * any of that runs. What clearing it costs is written down in docs/queues.md.
  */
 export const AGENT_JOB_STORE_USER_VERSION = 4
 

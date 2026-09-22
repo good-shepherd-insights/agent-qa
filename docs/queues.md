@@ -62,6 +62,24 @@ two-writers-under-one-fence case the fence exists to exclude. The row keeps its 
 existing slot through the unique index instead of doubling it. The verb does not pump: the operator
 runs `agent-qa agent-jobs pump --only <kind>` next, so the forget and the re-run stay two steps.
 
+The store stamps its schema version into `agent-jobs.db` and refuses a database stamped at any other
+version. It never migrates one. Version 4 (Phase 425) added the jobs table's `started_at` column, so
+an `agent-jobs.db` written at version 3 is refused by name (`JobStoreSchemaVersionError`), and the
+message gives the remedy: clear agent job queue state, meaning delete `.agent-qa/agent-jobs.db`
+(with its `-wal` and `-shm` files) and its checkpoint directory `.agent-qa/agent-jobs/checkpoints/`,
+then re-enqueue. Until someone does, everything that opens or reads the store refuses too. That
+covers `agent-qa daemon` and the other hosts that open the agent job queue. It also covers the
+post-processing read behind the dashboard's stage indicators, which answers a
+`job_store_schema_version` refusal instead of chip words. And it covers `agent-qa digest`, because
+the digest calls that same read.
+
+Clearing costs the agent job queue's own history and nothing outside it. A run whose job rows are
+gone reads `pending` for both analysis and curation, because an absent row projects to `pending`. It
+also loses its `stageDetails` (and with them the stage timing), its chain-terminal notification with
+the curated counts, and the curation snapshot recorded in the checkpoints. Recorded runs, their
+completed-run handoffs, their evidence and `analysis.json` verdicts, and committed knowledge all
+live outside the agent job queue, and clearing it leaves them untouched.
+
 What a stage of the post-run chain *became* is a different question from how it drained, and it is
 answered off these same rows rather than off whichever drain produced them.
 [Reading stage outcomes](#reading-stage-outcomes) below is where that question lives:

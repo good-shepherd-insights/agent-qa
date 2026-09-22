@@ -174,10 +174,10 @@ describe('agent job store: schema version (D-04)', () => {
       // table existed is refused by name rather than silently widened — and for THIS addition
       // the silent widening would be worse than a missing column, because an empty
       // notifications table answers "this run was never notified" indistinguishably from a
-      // chain that really never terminated. 4 is 425's durable start instant: a database written
-      // before the column existed is refused by name rather than silently widened — and for THIS
-      // addition the silent widening would print a duration measured from a column that was never
-      // written.
+      // chain that really never terminated. 4 is 425's durable start instant. Widening would not
+      // print a wrong duration here (a null start drops both duration clauses); the database is
+      // refused because D-04 admits no ALTER-on-open path, and without the gate the first
+      // statement naming the missing column would fail with a bare SQLite error instead.
       expect(AGENT_JOB_STORE_USER_VERSION).toBe(4)
     } finally {
       store.close()
