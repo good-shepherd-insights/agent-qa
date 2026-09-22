@@ -26,14 +26,16 @@ import { RunNavbar } from "@/components/run-detail/run-navbar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   ANALYSIS_COMPLETE_NO_ISSUES_TEXT,
+  BREAKDOWN_NOT_RECORDED_TEXT,
   CHIPS_UNAVAILABLE_TEXT,
   COUNTS_NOT_RECORDED_TEXT,
   FAILED_REASON_ABSENT_TEXT,
+  OPEN_KNOWLEDGE_TAB_TEXT,
   PENDING_POSTURE_TEXT,
   POST_PROCESSING_LOADING_LABEL,
   POST_PROCESSING_UNAVAILABLE_WORD,
   STAGE_INDICATOR_WORDS,
-  curationChipAccessibleName,
+  stageIndicatorAccessibleName,
   type PostProcessingView,
   type StageIndicatorState,
 } from "@/lib/post-processing-view"
@@ -95,6 +97,19 @@ function chip(host: HTMLElement, stage: "analysis" | "curation"): HTMLElement {
   return found
 }
 
+/** Open a stage's card the way a keyboard reader does, and read it off the portal. */
+async function cardOf(host: HTMLElement, stage: "analysis" | "curation"): Promise<HTMLElement> {
+  const root = chip(host, stage)
+  await act(async () => { root.focus() })
+  const card = document.querySelector<HTMLElement>(`[data-stage-card="${stage}"]`)
+  if (card === null) throw new Error(`no ${stage} card opened`)
+  return card
+}
+
+function lineOf(card: HTMLElement, kind: string): string | undefined {
+  return card.querySelector(`[data-stage-card-line="${kind}"]`)?.textContent ?? undefined
+}
+
 describe("two chips, in the ratified order, each saying its own word", () => {
   it("renders analysis then curation, with the word in the attribute AND in the text", () => {
     const host = render(chipsView({ status: "running" }, { status: "pending" }))
@@ -109,14 +124,19 @@ describe("two chips, in the ratified order, each saying its own word", () => {
     expect(chip(host, "curation").textContent).toContain("pending")
   })
 
-  it("a running chip carries no parenthetical, no facts, no error and no absent-reason", () => {
-    const host = render(chipsView({ status: "running" }, { status: "running" }))
+  it("a running chip carries no parenthetical, no facts, no error and no absent-reason", async () => {
+    const host = render(chipsView(
+      { status: "running", card: { outcome: "Analysis running" } },
+      { status: "running", card: { outcome: "Curation running" } },
+    ))
     for (const stage of ["analysis", "curation"] as const) {
       const el = chip(host, stage)
-      expect(el.querySelector("[data-chip-posture]")).toBeNull()
-      expect(el.querySelector("[data-chip-facts]")).toBeNull()
-      expect(el.querySelector("[data-chip-error]")).toBeNull()
-      expect(el.querySelector("[data-chip-reason-absent]")).toBeNull()
+      // The detail left header chrome entirely (D-09/D-12): the root is a glyph and a word.
+      expect(el.querySelectorAll("span").length).toBe(2)
+      const card = await cardOf(host, stage)
+      expect(lineOf(card, "note")).toBeUndefined()
+      expect(lineOf(card, "retry")).toBeUndefined()
+      expect(lineOf(card, "door")).toBeUndefined()
     }
   })
 })
@@ -155,31 +175,71 @@ describe("a settled analysis indicator explains itself (D-13, roadmap SC3)", () 
 })
 
 describe("a pending chip says who is going to move it (D-22)", () => {
-  it("renders the posture the projection published, verbatim", () => {
-    const host = render(chipsView(
-      { status: "pending", posture: PENDING_POSTURE_TEXT.handedOff },
-      { status: "pending", posture: PENDING_POSTURE_TEXT.handedOff },
-    ))
-    const posture = chip(host, "analysis").querySelector("[data-chip-posture]")
-    expect(posture?.textContent).toContain(PENDING_POSTURE_TEXT.handedOff)
+  it("renders the posture the projection published, verbatim", async () => {
+    const queued = (stage: "Analysis" | "Curation") => ({
+      status: "pending",
+      card: { outcome: `${stage} queued — ${PENDING_POSTURE_TEXT.handedOff}` },
+    })
+    const host = render(chipsView(queued("Analysis"), queued("Curation")))
+    const card = await cardOf(host, "analysis")
+    expect(lineOf(card, "outcome")).toContain(PENDING_POSTURE_TEXT.handedOff)
   })
 
-  it("renders NO posture element when the run has not said one yet", () => {
-    const host = render(chipsView({ status: "pending" }, { status: "pending" }))
-    expect(chip(host, "analysis").querySelector("[data-chip-posture]")).toBeNull()
+  it("renders NO posture element when the run has not said one yet", async () => {
+    const host = render(chipsView(
+      { status: "pending", card: { outcome: "Analysis queued" } },
+      { status: "pending", card: { outcome: "Curation queued" } },
+    ))
+    const card = await cardOf(host, "analysis")
+    expect(lineOf(card, "outcome")).toBe("Analysis queued")
+    expect(chip(host, "analysis").textContent).not.toContain(PENDING_POSTURE_TEXT.handedOff)
   })
 })
 
 describe("a terminal chip says what it committed (D-21)", () => {
-  it("renders curation's counts in their own element", () => {
-    const host = render(chipsView({ status: "done" }, { status: "done", facts: "curated 4 facts, deprecated 2" }))
-    expect(chip(host, "curation").querySelector("[data-chip-facts]")?.textContent).toBe("curated 4 facts, deprecated 2")
-    expect(chip(host, "analysis").querySelector("[data-chip-facts]")).toBeNull()
+  it("renders curation's counts in its card, and never on the analysis card", async () => {
+    const host = render(chipsView(
+      { status: "done", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
+      { status: "done", card: { outcome: "Curation complete — 4 added · 2 deprecated" } },
+    ))
+    expect(lineOf(await cardOf(host, "curation"), "outcome"))
+      .toBe("Curation complete — 4 added · 2 deprecated")
+    expect(lineOf(await cardOf(host, "analysis"), "outcome")).toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
   })
 
-  it("renders the counts-absent line in the SAME slot — a `done` chip is never silent about counts (D-12)", () => {
-    const host = render(chipsView({ status: "done" }, { status: "done", facts: COUNTS_NOT_RECORDED_TEXT }))
-    expect(chip(host, "curation").querySelector("[data-chip-facts]")?.textContent).toBe(COUNTS_NOT_RECORDED_TEXT)
+  it("renders the counts-absent line in the SAME slot — a `done` chip is never silent about counts (D-12)", async () => {
+    const host = render(chipsView(
+      { status: "done" },
+      { status: "done", card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` } },
+    ))
+    expect(lineOf(await cardOf(host, "curation"), "outcome"))
+      .toBe(`Curation complete — ${COUNTS_NOT_RECORDED_TEXT}`)
+  })
+})
+
+// THE LEGACY COUNT SENTENCE LEAVES HEADER CHROME (D-16, PXH-RUN-04). RED under return: restore the
+// old `curated N facts, deprecated M` line anywhere in the chips DOM or in a card and this goes red.
+describe("`curated N facts, deprecated M` is gone from the header (D-16)", () => {
+  const LEGACY = /curated \d+ facts?, deprecated/
+
+  it("HEADER-NO-LEGACY-COUNT: neither a snapshot-bearing nor a legacy-pair read spells it", async () => {
+    for (const outcome of [
+      "Curation complete — 4 added · 2 deprecated",
+      "Curation complete — 4 curated · 2 deprecated",
+    ]) {
+      const host = render(chipsView(
+        { status: "done", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
+        { status: "done", card: { outcome, note: BREAKDOWN_NOT_RECORDED_TEXT } },
+      ))
+      expect(host.textContent ?? "").not.toMatch(LEGACY)
+      for (const stage of ["analysis", "curation"] as const) {
+        expect((await cardOf(host, stage)).textContent ?? "").not.toMatch(LEGACY)
+      }
+      act(() => { root?.unmount() })
+      container?.remove()
+      root = undefined
+      container = undefined
+    }
   })
 })
 
@@ -187,10 +247,15 @@ describe("a terminal chip says what it committed (D-21)", () => {
 // It does not know a tab, a route or a run. Absent the callback it is exactly the shipped `<span>` —
 // a header rendered without a page behind it must not grow an affordance that goes nowhere.
 describe("the curation chip is a click-through into the Knowledge tab (D-01)", () => {
+  const SETTLED_CURATION = {
+    status: "done",
+    card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` },
+  }
+
   function renderWithClick(onCurationClick: () => void): HTMLElement {
     return mount(
       <PostProcessingChips
-        view={chipsView({ status: "done" }, { status: "done", facts: COUNTS_NOT_RECORDED_TEXT })}
+        view={chipsView({ status: "done" }, SETTLED_CURATION)}
         onCurationClick={onCurationClick}
       />,
     )
@@ -204,16 +269,29 @@ describe("the curation chip is a click-through into the Knowledge tab (D-01)", (
     expect(root.getAttribute("type")).toBe("button")
     // A native tooltip beside a Radix one is two treatments of one concept (UI-SPEC S3).
     expect(root.getAttribute("title")).toBeNull()
-    expect(root.getAttribute("aria-label")).toBe(curationChipAccessibleName("done"))
+    expect(root.getAttribute("aria-label")).toBe(
+      stageIndicatorAccessibleName("curation", "complete", SETTLED_CURATION.card.outcome, "knowledge"),
+    )
   })
 
-  it("keeps every data attribute on the root when it becomes a button — the contract does not move", () => {
+  it("closes its card with the door line — the indicator itself is the control (D-10)", async () => {
+    const host = renderWithClick(vi.fn())
+    const card = await cardOf(host, "curation")
+
+    expect(lineOf(card, "door")).toBe(OPEN_KNOWLEDGE_TAB_TEXT)
+    expect([...card.querySelectorAll("[data-stage-card-line]")].at(-1)?.getAttribute("data-stage-card-line"))
+      .toBe("door")
+    expect(card.querySelector("a, button")).toBeNull()
+  })
+
+  it("keeps every data attribute on the root when it becomes a button — the contract does not move", async () => {
     const host = renderWithClick(vi.fn())
     const root = chip(host, "curation")
 
     expect(root.getAttribute("data-chip")).toBe("curation")
     expect(root.getAttribute("data-chip-status")).toBe("done")
-    expect(root.querySelector("[data-chip-facts]")?.textContent).toBe(COUNTS_NOT_RECORDED_TEXT)
+    expect(root.getAttribute("data-stage-state")).toBe("complete")
+    expect(lineOf(await cardOf(host, "curation"), "outcome")).toBe(SETTLED_CURATION.card.outcome)
   })
 
   it("calls the page's handler exactly once per click and never navigates itself", () => {
@@ -245,36 +323,41 @@ describe("the curation chip is a click-through into the Knowledge tab (D-01)", (
 })
 
 describe("a failed chip is never blank (D-21 as narrowed)", () => {
-  it("renders the producer's text VERBATIM and says whether the chain will try again", () => {
+  it("renders the producer's text VERBATIM and says whether the chain will try again", async () => {
     const host = render(chipsView(
-      { status: "failed", error: "analysis stage blew up on step 3", willRetry: true },
-      { status: "pending" },
+      {
+        status: "failed",
+        card: { outcome: "Analysis failed — analysis stage blew up on step 3", retry: "Will retry" },
+      },
+      { status: "pending", card: { outcome: "Curation queued" } },
     ))
-    const error = chip(host, "analysis").querySelector("[data-chip-error]")
-    expect(error?.textContent).toBe("analysis stage blew up on step 3")
-    expect(error?.getAttribute("data-chip-will-retry")).toBe("true")
-    expect(chip(host, "analysis").querySelector("[data-chip-reason-absent]")).toBeNull()
+    const card = await cardOf(host, "analysis")
+    expect(lineOf(card, "outcome")).toBe("Analysis failed — analysis stage blew up on step 3")
+    expect(lineOf(card, "retry")).toBe("Will retry")
+    // The reason never sat beside the indicator again (D-09): the root is a glyph and a word.
+    expect(chip(host, "analysis").textContent).not.toContain("blew up")
   })
 
-  it("renders the posture-qualified absence when nobody recorded a reason — and NO error element", () => {
+  it("renders the posture-qualified absence when nobody recorded a reason — and NO error element", async () => {
     const host = render(chipsView(
-      { status: "failed", reasonAbsent: FAILED_REASON_ABSENT_TEXT.handedOff },
-      { status: "pending" },
+      { status: "failed", card: { outcome: `Analysis failed — ${FAILED_REASON_ABSENT_TEXT.handedOff}` } },
+      { status: "pending", card: { outcome: "Curation queued" } },
     ))
-    const el = chip(host, "analysis")
-    expect(el.querySelector("[data-chip-reason-absent]")?.textContent).toBe(FAILED_REASON_ABSENT_TEXT.handedOff)
-    expect(el.querySelector("[data-chip-error]")).toBeNull()
-    expect(el.textContent).not.toBe("")
+    const card = await cardOf(host, "analysis")
+    expect(lineOf(card, "outcome")).toBe(`Analysis failed — ${FAILED_REASON_ABSENT_TEXT.handedOff}`)
+    expect(lineOf(card, "retry")).toBeUndefined()
+    expect(chip(host, "analysis").textContent).not.toBe("")
   })
 
-  it("the failure text is a TEXT NODE — markup in it is escaped, never parsed (T-404-01)", () => {
+  it("the failure text is a TEXT NODE — markup in it is escaped, never parsed (T-404-01)", async () => {
     const host = render(chipsView(
-      { status: "failed", error: "<img src=x onerror=alert(1)>" },
-      { status: "pending" },
+      { status: "failed", card: { outcome: "Analysis failed — <img src=x onerror=alert(1)>" } },
+      { status: "pending", card: { outcome: "Curation queued" } },
     ))
-    const error = chip(host, "analysis").querySelector("[data-chip-error]")
-    expect(error?.textContent).toBe("<img src=x onerror=alert(1)>")
-    expect(error?.querySelector("img")).toBeNull()
+    const card = await cardOf(host, "analysis")
+    const outcome = card.querySelector('[data-stage-card-line="outcome"]')
+    expect(outcome?.textContent).toBe("Analysis failed — <img src=x onerror=alert(1)>")
+    expect(outcome?.querySelector("img")).toBeNull()
   })
 })
 
