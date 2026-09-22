@@ -21,16 +21,20 @@ import { createRoot, type Root } from "react-dom/client"
 import { MemoryRouter } from "react-router"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { PostProcessingChips, CHIP_LABELS } from "@/components/run-detail/post-processing-chips"
+import { PostProcessingChips } from "@/components/run-detail/post-processing-chips"
 import { RunNavbar } from "@/components/run-detail/run-navbar"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import {
+  ANALYSIS_COMPLETE_NO_ISSUES_TEXT,
   CHIPS_UNAVAILABLE_TEXT,
   COUNTS_NOT_RECORDED_TEXT,
   CURATION_CHIP_TITLE,
   FAILED_REASON_ABSENT_TEXT,
   PENDING_POSTURE_TEXT,
+  STAGE_INDICATOR_WORDS,
   curationChipAccessibleName,
   type PostProcessingView,
+  type StageIndicatorState,
 } from "@/lib/post-processing-view"
 import type { RunRow } from "@/lib/api"
 
@@ -48,17 +52,36 @@ afterEach(() => {
   container = undefined
 })
 
+// The component carries NO provider on purpose (the page owns the one at `run-detail.tsx`), so a
+// real-primitive mount without this wrapper throws inside Radix before a card can ever open. The
+// delay mirrors the page's `delayDuration={0}`, so a focused root opens its card in the same tick.
 function mount(element: ReactElement): HTMLElement {
   container = document.createElement("div")
   document.body.append(container)
   root = createRoot(container)
-  act(() => { root?.render(element) })
+  act(() => { root?.render(<TooltipProvider delayDuration={0}>{element}</TooltipProvider>) })
   return container
+}
+
+/** The projection's own mapping, restated once so a loose record below need only name its word. */
+const STATE_OF: Record<string, StageIndicatorState> = {
+  done: "complete",
+  running: "running",
+  pending: "pending",
+  failed: "failed",
 }
 
 /** A chips view built from two loose chip records — the projection has its own cells. */
 function chipsView(analysis: Record<string, unknown>, curation: Record<string, unknown>): PostProcessingView {
-  return { kind: "chips", analysis, curation } as unknown as PostProcessingView
+  const chip = (stage: "analysis" | "curation", loose: Record<string, unknown>) => {
+    const state = (loose.state as StageIndicatorState | undefined) ?? STATE_OF[loose.status as string]!
+    return { state, word: STAGE_INDICATOR_WORDS[stage][state], ...loose }
+  }
+  return {
+    kind: "chips",
+    analysis: chip("analysis", analysis),
+    curation: chip("curation", curation),
+  } as unknown as PostProcessingView
 }
 
 function render(view: PostProcessingView | undefined): HTMLElement {
@@ -77,8 +100,10 @@ describe("two chips, in the ratified order, each saying its own word", () => {
     const stages = [...host.querySelectorAll("[data-chip]")].map((el) => el.getAttribute("data-chip"))
     expect(stages).toEqual(["analysis", "curation"])
     expect(chip(host, "analysis").getAttribute("data-chip-status")).toBe("running")
-    expect(chip(host, "analysis").textContent).toContain("running")
-    expect(chip(host, "analysis").textContent).toContain(CHIP_LABELS.analysis)
+    // The raw word rides the attribute; the VISIBLE word is the indicator's own, and the state is
+    // said again in the accessible name (D-07).
+    expect(chip(host, "analysis").textContent).toContain(STAGE_INDICATOR_WORDS.analysis.running)
+    expect(chip(host, "analysis").querySelector(".sr-only")?.textContent).toContain("running")
     expect(chip(host, "curation").getAttribute("data-chip-status")).toBe("pending")
     expect(chip(host, "curation").textContent).toContain("pending")
   })
@@ -92,6 +117,39 @@ describe("two chips, in the ratified order, each saying its own word", () => {
       expect(el.querySelector("[data-chip-error]")).toBeNull()
       expect(el.querySelector("[data-chip-reason-absent]")).toBeNull()
     }
+  })
+})
+
+// THE TRACER (425-01 · D-06/D-07/D-10/D-13, UI-SPEC S3/S4). One indicator, end to end: the glyph
+// and the word a person sees, the focusable root that reaches the card by keyboard, and the card's
+// first line — the phase's copy cell. Every later state hangs off this anatomy.
+describe("a settled analysis indicator explains itself (D-13, roadmap SC3)", () => {
+  it("TRACER-PASSING-ANALYSIS-CARD: glyph plus word on a focusable root, card line 1 is the sentence", async () => {
+    const host = render(chipsView(
+      {
+        status: "done",
+        state: "complete",
+        word: STAGE_INDICATOR_WORDS.analysis.complete,
+        card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT },
+      },
+      { status: "done", state: "complete", word: STAGE_INDICATOR_WORDS.curation.complete },
+    ))
+    const root = chip(host, "analysis")
+
+    expect(root.tagName).toBe("SPAN")
+    expect(root.getAttribute("tabindex")).toBe("0")
+    expect(root.getAttribute("data-stage-state")).toBe("complete")
+    expect(root.getAttribute("data-chip-status")).toBe("done")
+    expect(root.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true")
+    expect(root.textContent).toContain(STAGE_INDICATOR_WORDS.analysis.complete)
+    expect(root.querySelector(".sr-only")?.textContent).toBe("Analysis: complete, no issues found")
+
+    // Radix opens on focus as well as hover; the card is portalled, so it is read off `document`.
+    await act(async () => { root.focus() })
+    const card = document.querySelector('[data-stage-card="analysis"]')
+    expect(card).not.toBeNull()
+    expect(card!.querySelector('[data-stage-card-line="outcome"]')?.textContent)
+      .toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
   })
 })
 

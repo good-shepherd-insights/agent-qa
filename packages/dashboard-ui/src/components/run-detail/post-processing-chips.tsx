@@ -21,14 +21,19 @@
 // wrong element would still pass.
 
 import { Badge } from "@/components/ui/badge"
-import type * as React from "react"
+import { Circle, CircleCheck, CircleDashed, CircleX, type LucideIcon } from "lucide-react"
+import type { ReactElement } from "react"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   CHIPS_UNAVAILABLE_TEXT,
   CURATION_CHIP_TITLE,
+  STAGE_INDICATOR_WORDS,
   curationChipAccessibleName,
+  stageIndicatorAccessibleName,
   type PostProcessingChipView,
   type PostProcessingStage,
   type PostProcessingView,
+  type StageCardView,
 } from "@/lib/post-processing-view"
 import type { PostProcessingChipStatus } from "@vostride/agent-qa-schema"
 
@@ -38,31 +43,71 @@ export const CHIP_LABELS: Record<PostProcessingStage, string> = {
   curation: "curation",
 }
 
-type ChipLook = Pick<React.ComponentProps<typeof Badge>, "variant" | "className">
+type ChipLook = { Glyph: LucideIcon; glyphClass: string }
 
 /**
- * The four-word vocabulary as a closed switch onto badge looks.
+ * The four-word vocabulary as a closed switch onto a glyph.
  *
- * `done` borrows the verdict badge's emerald so a settled chain reads as settled at a glance;
- * `failed` is the same destructive as a failed run; `running` is amber with a slow pulse, which is
- * the one piece of motion in this header and exists to say "this is still moving" without a spinner
- * that competes with the step tree. `pending` is a bare outline: present, unstarted, not alarming.
+ * SHAPE CARRIES THE STATE AND COLOUR ONLY REINFORCES IT (425 D-06, roadmap SC2): a check, a dashed
+ * ring, an empty ring and a cross still separate four states with the colour stripped out, which a
+ * tinted badge never did. The tint moves onto the glyph alone; the header's one filled element is
+ * the verdict badge (UI-SPEC S2).
  */
 function chipLook(status: PostProcessingChipStatus): ChipLook {
   switch (status) {
     case "done":
-      return { className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" }
+      return { Glyph: CircleCheck, glyphClass: "text-emerald-500" }
     case "failed":
-      return { variant: "destructive" }
+      return { Glyph: CircleX, glyphClass: "text-destructive" }
     case "running":
-      return { className: "bg-amber-500/15 text-amber-500 border-amber-500/20 animate-pulse" }
+      return { Glyph: CircleDashed, glyphClass: "text-amber-500 motion-safe:animate-pulse" }
     case "pending":
-      return { variant: "outline" }
+      return { Glyph: Circle, glyphClass: "text-muted-foreground" }
   }
 }
 
 /** The chip root's shipped layout, shared by both roots below so they cannot drift apart. */
-const CHIP_ROOT_CLASS = "inline-flex items-center gap-1 min-w-0"
+const CHIP_ROOT_CLASS = "inline-flex items-center gap-1 min-h-6 rounded-sm text-xs"
+
+/** The one accent use this phase adds (UI-SPEC Color 1) — the same ring the primitives draw. */
+const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+
+/**
+ * The card, hung off the root as a Radix tooltip that opens on hover AND on keyboard focus (D-10).
+ *
+ * NO PROVIDER HERE. The page mounts the one tooltip provider (`run-detail.tsx`); a second one
+ * inside the header would give this surface its own delay and its own open-state bookkeeping, which
+ * is two answers to "is a card open right now" on one page.
+ */
+function WithCard({
+  stage,
+  card,
+  children,
+}: {
+  stage: PostProcessingStage | "unavailable"
+  card: StageCardView | undefined
+  children: ReactElement
+}) {
+  if (card === undefined) return children
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        side="bottom"
+        align="start"
+        sideOffset={4}
+        className="max-w-[320px] text-left break-words"
+        data-stage-card={stage}
+      >
+        <div className="space-y-1">
+          <p data-stage-card-line="outcome" className="font-medium">
+            {card.outcome}
+          </p>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 
 /**
  * One chip — a `<span>`, or a `<button>` when the page gave it somewhere to go (407-09 · D-01).
@@ -87,11 +132,12 @@ function Chip({
   chip: PostProcessingChipView
   onCurationClick?: (() => void) | undefined
 }) {
+  const { Glyph, glyphClass } = chipLook(chip.status)
+  const name = stageIndicatorAccessibleName(stage, chip.state, chip.card?.outcome)
   const body = (
     <>
-      <Badge {...chipLook(chip.status)}>
-        {CHIP_LABELS[stage]} {chip.status}
-      </Badge>
+      <Glyph aria-hidden="true" className={`h-3.5 w-3.5 ${glyphClass}`} />
+      <span className="text-muted-foreground">{chip.word}</span>
       {chip.posture === undefined ? null : (
         <span data-chip-posture className="text-xs text-muted-foreground truncate">
           ({chip.posture})
@@ -122,24 +168,36 @@ function Chip({
 
   if (stage === "curation" && onCurationClick !== undefined) {
     return (
-      <button
-        type="button"
-        data-chip={stage}
-        data-chip-status={chip.status}
-        onClick={onCurationClick}
-        title={CURATION_CHIP_TITLE}
-        aria-label={curationChipAccessibleName(chip.status)}
-        className={`${CHIP_ROOT_CLASS} cursor-pointer transition-colors hover:text-foreground`}
-      >
-        {body}
-      </button>
+      <WithCard stage={stage} card={chip.card}>
+        <button
+          type="button"
+          data-chip={stage}
+          data-chip-status={chip.status}
+          data-stage-state={chip.state}
+          onClick={onCurationClick}
+          title={CURATION_CHIP_TITLE}
+          aria-label={curationChipAccessibleName(chip.status)}
+          className={`${CHIP_ROOT_CLASS} ${FOCUS_RING} cursor-pointer transition-colors hover:text-foreground`}
+        >
+          {body}
+        </button>
+      </WithCard>
     )
   }
 
   return (
-    <span data-chip={stage} data-chip-status={chip.status} className={CHIP_ROOT_CLASS}>
-      {body}
-    </span>
+    <WithCard stage={stage} card={chip.card}>
+      <span
+        data-chip={stage}
+        data-chip-status={chip.status}
+        data-stage-state={chip.state}
+        tabIndex={0}
+        className={`${CHIP_ROOT_CLASS} ${FOCUS_RING} cursor-default`}
+      >
+        {body}
+        <span className="sr-only">{name}</span>
+      </span>
+    </WithCard>
   )
 }
 

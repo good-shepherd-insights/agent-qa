@@ -29,6 +29,126 @@ import type { PostProcessingRead } from './api'
 /** The two stages the chain runs. Named rather than indexed — the set is closed (404 D-01). */
 export type PostProcessingStage = 'analysis' | 'curation'
 
+/** The read route's own bytes, narrowed to the arm that answered. */
+export type PostProcessingReadBody = Extract<PostProcessingRead, { kind: 'read' }>
+
+/**
+ * HOW AN INDICATOR PRESENTS — which is NOT the four words the store says (425 D-06/D-07).
+ *
+ * The chip vocabulary stays exactly `pending · running · done · failed` (404 D-01, and a fifth word
+ * there would red the v54 census). Presentation needs two more states the store never spells: a run
+ * that skipped the whole chain (`excluded`, 425 D-08) and a store that could not be read at all
+ * (`unavailable`, 404 D-23). Keeping them in a SEPARATE closed set is what lets the header say both
+ * without widening what a producer can produce.
+ */
+export type StagePresentationState =
+  | 'complete'
+  | 'running'
+  | 'pending'
+  | 'failed'
+  | 'excluded'
+  | 'unavailable'
+
+export const STAGE_PRESENTATION_STATES = [
+  'complete',
+  'running',
+  'pending',
+  'failed',
+  'excluded',
+  'unavailable',
+] as const satisfies readonly StagePresentationState[]
+
+/** Every state a per-stage indicator can reach. The refusal is one root for both stages, not a stage. */
+export type StageIndicatorState = Exclude<StagePresentationState, 'unavailable'>
+
+/**
+ * The VISIBLE word per stage and state (D-07): the stage name alone when there is nothing to act on,
+ * the name plus the state word when there is.
+ *
+ * 425-01: the tracer fills the `complete` column, which is the name alone by definition; the state
+ * words arrive with the rest of the anatomy in 425-01 Task 2. The record is total from the start so
+ * a seventh state cannot compile, and no state renders a blank word in the meantime.
+ */
+export const STAGE_INDICATOR_WORDS: Record<
+  PostProcessingStage,
+  Record<Exclude<StagePresentationState, 'unavailable'>, string>
+> = {
+  analysis: {
+    complete: 'Analysis',
+    running: 'Analysis',
+    pending: 'Analysis',
+    failed: 'Analysis',
+    excluded: 'Analysis',
+  },
+  curation: {
+    complete: 'Curation',
+    running: 'Curation',
+    pending: 'Curation',
+    failed: 'Curation',
+    excluded: 'Curation',
+  },
+}
+
+/**
+ * Line 1 of a settled analysis card when the run has nothing to report (D-13, roadmap SC3).
+ *
+ * THE SENTENCE A PASSING RUN SHOWS EVERY DAY. `analysis done` told a person the machine finished;
+ * it never told them what the machine found. The em dash separates the state from its clause, which
+ * is also how the accessible name splits it (`Analysis: complete, no issues found`).
+ */
+export const ANALYSIS_COMPLETE_NO_ISSUES_TEXT = 'Analysis complete — no issues found'
+
+/**
+ * One stage's explanation card. Line 1 is mandatory: a card that could be empty is a hover that
+ * rewards a reader with nothing, which is the failure the whole card exists to fix.
+ */
+export interface StageCardView {
+  readonly outcome: string
+  readonly timing?: string
+  readonly proposals?: string
+  readonly retry?: string
+}
+
+/** Where activating an indicator goes. Absent → the indicator is not a control (D-10). */
+export type StageIndicatorDoor = 'knowledge' | 'verdict'
+
+const DOOR_CLAUSE: Record<StageIndicatorDoor, string> = {
+  knowledge: ' — open Knowledge tab',
+  verdict: ' — open verdict',
+}
+
+/**
+ * The clause an outcome sentence carries after its em dash, or nothing when it is one clause.
+ *
+ * The accessible name says the state in its own words (`Analysis: complete`) and then the clause,
+ * so repeating the sentence's own `Analysis complete` prefix would make a screen reader say the
+ * stage and the state twice.
+ */
+function outcomeClause(outcome: string): string | undefined {
+  const at = outcome.indexOf(' — ')
+  return at === -1 ? undefined : outcome.slice(at + 3)
+}
+
+/**
+ * What a screen reader hears on an indicator: the state first, then what happened, then where
+ * pressing it goes (UI-SPEC S3). A button root carries this as `aria-label`; a focusable span
+ * carries it in a trailing `sr-only` child, because `aria-label` on a generic element is not
+ * reliably announced.
+ */
+export function stageIndicatorAccessibleName(
+  stage: PostProcessingStage,
+  state: StageIndicatorState,
+  outcome?: string,
+  door?: StageIndicatorDoor,
+): string {
+  const clause = outcome === undefined ? undefined : outcomeClause(outcome)
+  return [
+    `${STAGE_INDICATOR_WORDS[stage].complete}: ${state}`,
+    clause === undefined ? '' : `, ${clause}`,
+    door === undefined ? '' : DOOR_CLAUSE[door],
+  ].join('')
+}
+
 /**
  * One chip, ready to paint.
  *
@@ -39,6 +159,12 @@ export type PostProcessingStage = 'analysis' | 'curation'
 export interface PostProcessingChipView {
   /** The chip word, VERBATIM from the store. Never re-derived, never defaulted. */
   readonly status: PostProcessingChipStatus
+  /** How the indicator presents. A presentation concern, never a claim about what the store said. */
+  readonly state: StageIndicatorState
+  /** The visible word, from {@link STAGE_INDICATOR_WORDS}. The component composes no sentence. */
+  readonly word: string
+  /** The explanation card, when this plan has a sentence for the state. */
+  readonly card?: StageCardView
   /** The `pending` parenthetical: who, if anyone, is going to drain this chain (D-22). */
   readonly posture?: string
   /** What a terminal stage committed — curation's `curated N, deprecated M` (D-21). */
@@ -95,7 +221,7 @@ export const FAILED_REASON_ABSENT_TEXT: Record<PostProcessingDisposition | 'unkn
 /** The chip area's heading when chip truth could not be read at all (D-23). */
 export const CHIPS_UNAVAILABLE_TEXT = 'post-processing status unavailable'
 
-type ReadBody = Extract<PostProcessingRead, { kind: 'read' }>
+type ReadBody = PostProcessingReadBody
 
 /**
  * THE COUNT LINE, IN THE WORDING OF RECORD (407-09 · LERN-02, D-09).
@@ -156,7 +282,50 @@ function curationFacts(read: ReadBody): string | undefined {
   return curationFactsText(curated, deprecated)
 }
 
-function chipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChipView {
+/**
+ * The store's word, as the state an indicator presents (D-06).
+ *
+ * A closed switch with no default: the chip vocabulary is ratified at four, and a fifth word must
+ * fail to compile here rather than fall through to a shape nobody chose.
+ */
+export function stagePresentationState(
+  read: ReadBody,
+  stage: PostProcessingStage,
+): StageIndicatorState {
+  switch (read.status.chips[stage]) {
+    case 'done':
+      return 'complete'
+    case 'running':
+      return 'running'
+    case 'pending':
+      return 'pending'
+    case 'failed':
+      return 'failed'
+  }
+}
+
+/**
+ * The card's first line, for the states this plan has a sentence for.
+ *
+ * 425-01 covers the settled analysis with nothing to report — the run shape that ships every day.
+ * The remaining states keep their word and their glyph until Task 3 gives each one a sentence.
+ */
+function stageCard(
+  stage: PostProcessingStage,
+  state: StageIndicatorState,
+  read: ReadBody,
+): StageCardView | undefined {
+  const verdicts = read.status.notification?.verdictSummary.total
+  if (stage === 'analysis' && state === 'complete' && verdicts === 0) {
+    return { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT }
+  }
+  return undefined
+}
+
+/** The chip word plus whatever the read recorded beside it. Presentation is folded in above. */
+type ChipFacts = Omit<PostProcessingChipView, 'state' | 'word' | 'card'>
+
+function chipFacts(stage: PostProcessingStage, read: ReadBody): ChipFacts {
   const status = read.status.chips[stage]
 
   if (status === 'pending') {
@@ -195,6 +364,17 @@ function chipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChi
 
   // `running`, and `done` on a stage that commits no counts: one word, no parenthetical.
   return { status }
+}
+
+function chipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChipView {
+  const state = stagePresentationState(read, stage)
+  const card = stageCard(stage, state, read)
+  return {
+    ...chipFacts(stage, read),
+    state,
+    word: STAGE_INDICATOR_WORDS[stage][state],
+    ...(card === undefined ? {} : { card }),
+  }
 }
 
 /**

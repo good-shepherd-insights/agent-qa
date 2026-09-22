@@ -23,7 +23,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import RunDetailPage from "@/pages/run-detail"
 import { routes } from "@/lib/routes"
-import { FAILED_REASON_ABSENT_TEXT, PENDING_POSTURE_TEXT } from "@/lib/post-processing-view"
+import {
+  ANALYSIS_COMPLETE_NO_ISSUES_TEXT,
+  FAILED_REASON_ABSENT_TEXT,
+  PENDING_POSTURE_TEXT,
+  STAGE_INDICATOR_WORDS,
+} from "@/lib/post-processing-view"
 import type { PostProcessingRead } from "@/lib/api"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -144,10 +149,15 @@ function runRow(id: string) {
   }
 }
 
-function statusRead(analysis: string, curation: string, extra: Record<string, unknown> = {}): PostProcessingRead {
+function statusRead(
+  analysis: string,
+  curation: string,
+  extra: Record<string, unknown> = {},
+  statusExtra: Record<string, unknown> = {},
+): PostProcessingRead {
   return {
     kind: "read",
-    status: { runId: RUN_ID, chips: { analysis, curation } },
+    status: { runId: RUN_ID, chips: { analysis, curation }, ...statusExtra },
     ...extra,
   } as unknown as PostProcessingRead
 }
@@ -253,8 +263,13 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     })
     expect(lastNavbarView()).toEqual({
       kind: "chips",
-      analysis: { status: "running" },
-      curation: { status: "pending", posture: PENDING_POSTURE_TEXT.handedOff },
+      analysis: { status: "running", state: "running", word: STAGE_INDICATOR_WORDS.analysis.running },
+      curation: {
+        status: "pending",
+        state: "pending",
+        word: STAGE_INDICATOR_WORDS.curation.pending,
+        posture: PENDING_POSTURE_TEXT.handedOff,
+      },
     })
   })
 
@@ -278,6 +293,28 @@ describe("run detail owns the chip client, and hands the navbar its projection",
       kind: "unavailable",
       error: "function_not_bound",
       reason: "runs.postprocessing is not bound",
+    })
+  })
+
+  // The tracer's page leg (425-01 · D-13): the outcome sentence must reach the navbar off the read
+  // the page already holds. A projection that only composed correctly in a unit test would pass its
+  // own cells and still hand this header nothing.
+  it("hands the navbar the passing run's analysis card, straight off the read (SC3)", async () => {
+    await renderPage()
+    await act(async () => {
+      onReadOf()(statusRead("done", "done", { disposition: "drained" }, {
+        notification: {
+          schemaVersion: 3,
+          runId: RUN_ID,
+          outcome: "done",
+          verdictSummary: { total: 0, byClass: {} },
+          stages: { analysis: { status: "done" }, curation: { status: "done" } },
+        },
+      }))
+    })
+    expect(lastNavbarView()).toMatchObject({
+      kind: "chips",
+      analysis: { state: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
     })
   })
 

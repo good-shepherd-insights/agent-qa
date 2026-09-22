@@ -17,14 +17,17 @@ import type { PostProcessingStatus } from '@vostride/agent-qa-schema'
 
 import type { PostProcessingRead } from '@/lib/api'
 import {
+  ANALYSIS_COMPLETE_NO_ISSUES_TEXT,
   CHIPS_UNAVAILABLE_TEXT,
   COUNTS_NOT_RECORDED_TEXT,
   CURATION_CHIP_TITLE,
   FAILED_REASON_ABSENT_TEXT,
   PENDING_POSTURE_TEXT,
+  STAGE_INDICATOR_WORDS,
   curationChipAccessibleName,
   curationFactsText,
   projectPostProcessingView,
+  stageIndicatorAccessibleName,
 } from '@/lib/post-processing-view'
 
 const RUN_ID = 'run_view'
@@ -37,12 +40,15 @@ function status(analysis: string, curation: string, notification?: unknown): Pos
   } as unknown as PostProcessingStatus
 }
 
-function notification(curation: Record<string, unknown>): unknown {
+function notification(
+  curation: Record<string, unknown>,
+  verdictSummary: unknown = { total: 1, byClass: {} },
+): unknown {
   return {
     schemaVersion: 2,
     runId: RUN_ID,
     outcome: 'done',
-    verdictSummary: { total: 1, byClass: {} },
+    verdictSummary,
     stages: { analysis: { status: 'done' }, curation },
   }
 }
@@ -80,8 +86,10 @@ describe('a refusal is its own state, never a pending chip (D-23)', () => {
 describe('a pending chip carries the run posture, read off the record (D-22)', () => {
   it('has NO posture while the run has not reached runFinished — no disposition is not a guess', () => {
     const view = chips(projectPostProcessingView(read({})))
-    expect(view.analysis).toEqual({ status: 'pending' })
-    expect(view.curation).toEqual({ status: 'pending' })
+    expect(view.analysis)
+      .toEqual({ status: 'pending', state: 'pending', word: STAGE_INDICATOR_WORDS.analysis.pending })
+    expect(view.curation)
+      .toEqual({ status: 'pending', state: 'pending', word: STAGE_INDICATOR_WORDS.curation.pending })
   })
 
   it('names each of the three postures by its published sentence', () => {
@@ -100,8 +108,10 @@ describe('a running chip says one word and nothing else', () => {
       status: status('running', 'running'),
       disposition: 'drained',
     })))
-    expect(view.analysis).toEqual({ status: 'running' })
-    expect(view.curation).toEqual({ status: 'running' })
+    expect(view.analysis)
+      .toEqual({ status: 'running', state: 'running', word: STAGE_INDICATOR_WORDS.analysis.running })
+    expect(view.curation)
+      .toEqual({ status: 'running', state: 'running', word: STAGE_INDICATOR_WORDS.curation.running })
   })
 })
 
@@ -131,7 +141,8 @@ describe('a terminal curation chip says what it committed (D-21, D-09 wording of
 
   it('keeps a bare `done` when there is no notification row at all — nothing to say counts about', () => {
     const view = chips(projectPostProcessingView(read({ status: status('done', 'done') })))
-    expect(view.curation).toEqual({ status: 'done' })
+    expect(view.curation)
+      .toEqual({ status: 'done', state: 'complete', word: STAGE_INDICATOR_WORDS.curation.complete })
   })
 
   it('renders both-zero as `nothing curated` rather than as two zeros', () => {
@@ -145,7 +156,8 @@ describe('a terminal curation chip says what it committed (D-21, D-09 wording of
     const view = chips(projectPostProcessingView(read({
       status: status('done', 'done', notification({ status: 'done', curated: 4, deprecated: 2 })),
     })))
-    expect(view.analysis).toEqual({ status: 'done' })
+    expect(view.analysis)
+      .toEqual({ status: 'done', state: 'complete', word: STAGE_INDICATOR_WORDS.analysis.complete })
   })
 })
 
@@ -221,5 +233,25 @@ describe('the count line is the wording of record, in one place (D-09)', () => {
     expect(CURATION_CHIP_TITLE).toBe('Open the Knowledge tab (7)')
     expect(curationChipAccessibleName('done')).toBe('curation done — open Knowledge tab')
     expect(curationChipAccessibleName('failed')).toBe('curation failed — open Knowledge tab')
+  })
+})
+
+// THE PASSING RUN EXPLAINS ITSELF (425-01 · D-13, roadmap SC3). The sentence a person reads on the
+// one run shape that ships every day — analysis settled, nothing to report — is the phase's copy
+// cell, and it is a CONSTANT so the card, the accessible name and this cell cannot drift apart.
+describe('a settled analysis with nothing to report says so in one sentence (D-13)', () => {
+  it('ANALYSIS-COMPLETE-COPY: publishes the sentence and projects it onto a no-verdict pass', () => {
+    expect(ANALYSIS_COMPLETE_NO_ISSUES_TEXT).toBe('Analysis complete — no issues found')
+
+    const view = chips(projectPostProcessingView(read({
+      status: status('done', 'done', notification({ status: 'done' }, { total: 0, byClass: {} })),
+      disposition: 'drained',
+    })))
+
+    expect(view.analysis.state).toBe('complete')
+    expect(view.analysis.word).toBe(STAGE_INDICATOR_WORDS.analysis.complete)
+    expect(view.analysis.card?.outcome).toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
+    expect(stageIndicatorAccessibleName('analysis', 'complete', ANALYSIS_COMPLETE_NO_ISSUES_TEXT))
+      .toBe('Analysis: complete, no issues found')
   })
 })
