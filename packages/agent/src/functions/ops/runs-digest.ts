@@ -323,10 +323,15 @@ export const runsDigestSpec: FunctionSpec<RunsDigestInput, RunDigest> = {
       .filter((entry) => entry.envelope.status === 'pending').length
 
     const curation = status?.notification?.stages.curation
-    // ONE FOLD, TWO OPS (law 6). Minted from the SAME durable markers `runs.postprocessing`
-    // reads, over the handoff this op already loaded above for its own refusal — never from an
-    // empty chain, which is also what an in-flight run's chain looks like one poll too early.
-    const exclusion = projectPostProcessingExclusion(document)
+    // ONE FOLD, ONE PRODUCER (law 6). On the bound path the fact is minted once, by the fold
+    // inside `runs.postprocessing`, and the digest publishes what that read carried rather than
+    // deriving it again — an ordinary run's status carries no exclusion key, so a `??` fallback
+    // here would re-derive on every ordinary run. The unbound arm is the one composition where no
+    // fold ran: there the digest answers from the handoff it already loaded for its own refusal,
+    // never from an empty chain, which is also what an in-flight run's chain looks like.
+    const exclusion = status === undefined
+      ? projectPostProcessingExclusion(document)
+      : status.exclusion
 
     const sections: Omit<RunDigest, 'lines'> = {
       runId,
