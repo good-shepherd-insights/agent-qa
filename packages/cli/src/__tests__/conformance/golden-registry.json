@@ -1010,7 +1010,7 @@
       "classifies": true,
       "id": "runs.postprocessing",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "c1d02da02b6fe63026ee86192764066da60c07c8f94f941c89df99a0bd2a0259",
+      "outputSchemaDigest": "342a4bf5166a53ba804417178fe669fcc4fe6e5d7ceb5f26b514add83360a423",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"
