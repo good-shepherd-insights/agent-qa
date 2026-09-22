@@ -6,6 +6,7 @@ import {
   getStatusBadgeClassName,
   isTerminalRunStatus,
   shouldRouteRunToLive,
+  statusBadgeLook,
 } from '@/lib/status'
 import { routes } from '@/lib/routes'
 
@@ -71,6 +72,40 @@ describe('dashboard status normalization', () => {
     expect(routes.runDetailOrLive('run-cancelled', 'cancelled')).toBe('/runs/run-cancelled')
     expect(routes.runDetailOrLive('run-failed', 'failed')).toBe('/runs/run-failed')
     expect(routes.runDetailOrLive('run-running', 'running')).toBe('/runs/run-running/live')
+  })
+
+  // THE FIFTH VERDICT WORD HAD NO LABEL (425-04 · D-02, PXH-RUN-01).
+  //
+  // `timeout` is a member of the run-status vocabulary (`runStatusValues`, schema
+  // functions/runs.ts), so a timed-out run reached the header and fell through to the default arm,
+  // which paints the raw lowercase word. PXH-RUN-01 names "Timed out" as one of the five words the
+  // reader must see. The arm is added to the ONE palette — D-01 forbids a second one — and reuses
+  // the `destructive` variant `getRunStatusDescriptor` already assigns that status as its tone.
+  // The six shipped arms are pinned verbatim beside it so adding the fifth word cannot re-spell
+  // the other four.
+  it('BADGE-TIMEOUT-ARM: the one palette labels a timed-out run and leaves the six shipped arms byte-identical', () => {
+    expect(statusBadgeLook('timeout')).toEqual({ label: 'Timed out', variant: 'destructive' })
+
+    expect(statusBadgeLook('passed')).toEqual({
+      label: 'Passed',
+      className: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/20',
+    })
+    expect(statusBadgeLook('failed')).toEqual({ label: 'Failed', variant: 'destructive' })
+    expect(statusBadgeLook('healed')).toEqual({
+      label: 'Healed',
+      className: 'bg-amber-500/15 text-amber-500 border-amber-500/20',
+    })
+    expect(statusBadgeLook('flaky')).toEqual({
+      label: 'Flaky',
+      className: 'bg-amber-500/15 text-amber-500 border-amber-500/20',
+    })
+    expect(statusBadgeLook('skipped')).toEqual({ label: 'Skipped', variant: 'secondary' })
+    expect(statusBadgeLook('cancelled')).toEqual({
+      label: 'Cancelled',
+      className: 'bg-muted text-muted-foreground border-border',
+    })
+
+    expect(statusBadgeLook('not-a-status')).toEqual({ label: 'not-a-status', variant: 'outline' })
   })
 
   it('keeps normalized danger and outline badges visually explicit', () => {

@@ -258,6 +258,45 @@ describe("RunNavbar", () => {
     expect(container.querySelector('[data-run-token-summary]')).toBeNull()
   })
 
+  // DOMINANCE IS SIZE AND FILL, NOT POSITION (425-04 · D-02, PXH-RUN-01).
+  //
+  // The row order is unchanged — Runs › name ↗ verdict — so the only thing that can make the
+  // verdict the header's dominant element is its own treatment. The cell reads the class list
+  // rather than a computed style because jsdom has no Tailwind: what is asserted is that the
+  // enlarged classes SURVIVED tailwind-merge and the `Badge` base sizes did not.
+  it("BADGE-DOMINANT: the verdict badge is the header's one enlarged, filled element", () => {
+    mount(
+      <RunNavbar run={baseRun} shortcutsOpen={false} onToggleShortcuts={() => {}} />,
+    )
+
+    const badges = container.querySelectorAll("[data-verdict-badge]")
+    expect(badges).toHaveLength(1)
+
+    const badge = badges[0] as HTMLElement
+    expect(badge.getAttribute("data-verdict-badge")).toBe("passed")
+
+    const classes = badge.className.split(/\s+/)
+    expect(classes).toContain("text-sm")
+    expect(classes).toContain("font-medium")
+    expect(classes).toContain("py-1")
+    expect(classes).not.toContain("text-xs")
+    expect(classes).not.toContain("py-0.5")
+  })
+
+  it("BADGE-TIMEOUT-ARM: a timed-out run's badge reads Timed out over the raw status word", () => {
+    mount(
+      <RunNavbar
+        run={{ ...baseRun, status: "timeout" }}
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+      />,
+    )
+
+    const badge = container.querySelector("[data-verdict-badge]")
+    expect(badge?.getAttribute("data-verdict-badge")).toBe("timeout")
+    expect(badge?.textContent).toBe("Timed out")
+  })
+
   it("opens run details on the Test tab from the navbar action", () => {
     const onOpenArtifacts = vi.fn()
     mount(
