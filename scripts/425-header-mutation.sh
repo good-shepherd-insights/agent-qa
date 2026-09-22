@@ -23,6 +23,7 @@
 #   H10  the Learned heading prefers the legacy pair over the snapshot -> LEARNED-BREAKDOWN-LINE
 #   H11  the reconciliation is set whenever a snapshot exists         -> RECONCILIATION-ONLY-ON-MISMATCH
 #   H12  exclusion is folded from an undefined chain state            -> EXCLUSION-FROM-HANDOFF
+#   H13  the card is timed from the released claim lease again        -> STAGE-TIMING-LINE-DURABLE-START
 #
 # H03 IS AIMED AT THE SLOT ITS CELL ACTUALLY WATCHES. HEADER-NO-LEGACY-COUNT renders a view the
 # cell builds by hand and then greps the whole chips DOM for the retired sentence, so a change to
@@ -46,7 +47,7 @@
 #   neutered  apply NO mutation; the run must FATAL with "<leg>: suite stayed green"
 #   fatal     mutate every subject, then throw; every subject must be restored
 #   SIGINT | SIGTERM | SIGHUP   the same, then deliver that signal to itself
-# AGENT_QA_425_HEADER_MUTATION_LEG=H01..H12 runs one leg (normal or neutered runs only).
+# AGENT_QA_425_HEADER_MUTATION_LEG=H01..H13 runs one leg (normal or neutered runs only).
 # AGENT_QA_425_HEADER_MUTATION_LIST=1 prints the declared inventory and exits.
 #
 # Installed Node 24 and workspace tools are required. No downloads or provider calls. Ends with a
@@ -75,12 +76,12 @@ const EXCL_D = 'src/__tests__/425-post-processing-exclusion.test-d.ts'
 const OP = 'src/functions/ops/__tests__/runs-post-processing.test.ts'
 
 const instruments = {
-  'ui-view': { pkg: 'packages/dashboard-ui', files: [VIEW, VIEW_D], typecheck: true, count: 46 },
+  'ui-view': { pkg: 'packages/dashboard-ui', files: [VIEW, VIEW_D], typecheck: true, count: 47 },
   schema: { pkg: 'packages/schema', files: [EXCL, EXCL_D], typecheck: true, count: 14 },
   'ui-chips': { pkg: 'packages/dashboard-ui', files: [CHIPS], typecheck: false, count: 31 },
   // The header rule and the function that feeds it, selected together: see H08's note above.
-  'ui-navbar': { pkg: 'packages/dashboard-ui', files: [NAVBAR, DETAIL], typecheck: false, count: 50 },
-  'ui-usage': { pkg: 'packages/dashboard-ui', files: [DETAIL], typecheck: false, count: 29 },
+  'ui-navbar': { pkg: 'packages/dashboard-ui', files: [NAVBAR, DETAIL], typecheck: false, count: 51 },
+  'ui-usage': { pkg: 'packages/dashboard-ui', files: [DETAIL], typecheck: false, count: 30 },
   'ui-knowledge': { pkg: 'packages/dashboard-ui', files: [KNOW], typecheck: false, count: 143 },
   'agent-op': { pkg: 'packages/agent', files: [OP], typecheck: false, count: 19 },
 }
@@ -193,7 +194,9 @@ const legs = [
       to: '  if (cachedInputTokens === undefined) return `cached input ${fullTokens.format(0)} (provider-reported)`\n',
     }],
     reds: [usage('CACHED-ONLY-WHEN-REPORTED: no cachedInputTokens, no line — whatever else is present')],
-    allowed: [],
+    // 425-14's unmeasured-run cell ends on the same fact for a run with no cache report at all, so
+    // it moves with the regression. Admitted rather than required: its subject is the coverage line.
+    allowed: [usage('USAGE-COVERAGE-ABSENT-IS-NOT-ZERO: says nothing about coverage when no step was measured')],
     greens: [
       usage('CACHED-ONLY-WHEN-REPORTED: a cache that covers every measured step states the sum alone'),
       usage('CACHED-ONLY-WHEN-REPORTED: a narrower window names its own denominator'),
@@ -293,10 +296,36 @@ const legs = [
       op('EXCLUSION-OP-READS-RUNS-PORT > omits the key for an ordinary run whose handoff carries neither marker'),
     ],
   },
+  {
+    subject: VIEW_SRC, instrument: 'ui-view', claim: 'STAGE-TIMING-LINE-DURABLE-START',
+    operation: 'time the card from the released claim lease again instead of the durable start instant',
+    edits: [{
+      from: '  const started = instantOf(detail.startedAt)\n',
+      to: '  const started = instantOf(detail.claimedAt)\n',
+    }],
+    reds: [view('STAGE-TIMING-LINE-DURABLE-START: a settled row whose claim was released still says how long the stage took')],
+    // EVERY TIMING CELL WHOSE FIXTURE CARRIES A DURABLE START MOVES WITH IT, and must: the
+    // regression IS "time from the lease", so each of those lines loses its durations (and the
+    // lease-only fixture gains one). Admitted rather than required — the fact this leg is aimed at
+    // is that a settled row with a released lease still says how long the stage took.
+    allowed: [
+      view('STAGE-TIMING-LINE: clock, then the two durations, and attempts only past one'),
+      view('STAGE-TIMING-LINE: a running stage ends at `running` and claims no finish'),
+      view('STAGE-TIMING-LINE: no row at all renders no line; an absent field renders no clause'),
+      view('STAGE-TIMING-LINE: an unparseable timestamp drops its own clause and never renders NaN'),
+      view('STAGE-TIMING-LINE: folds onto the stage that HAS a row, and onto neither when none does'),
+    ],
+    greens: [
+      view('STAGE-TIMING-LINE: a pending stage with only a queue moment says exactly that'),
+      view('STAGE-TIMING-LINE: reads both shapes the store actually writes — ISO with Z and the SQLite space form'),
+      view('STAGE-TIMING-LINE: an excluded run is never timed — nothing was ever enqueued to time'),
+      view('ANALYSIS-COMPLETE-COPY'), view('EXCLUDED-FROM-FIELD', 3), view('PROJECTION-IDEMPOTENT'),
+    ],
+  },
 ]
 
 runGate({
   slug: '425-header-mutation', envPrefix: 'AGENT_QA_425_HEADER_MUTATION', idPrefix: 'H',
-  instruments, legs, expectedLegs: 12, banner: 'HEADER_MUTATION_OK',
+  instruments, legs, expectedLegs: 13, banner: 'HEADER_MUTATION_OK',
 })
 NODE

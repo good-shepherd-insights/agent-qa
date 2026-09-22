@@ -82,6 +82,8 @@ runSelftest({
       ] },
     { id: 'H12', claim: 'EXCLUSION-FROM-HANDOFF', subject: OP_SRC,
       reds: [`${OP} > EXCLUSION-FROM-HANDOFF > folds the fact from the two durable markers and from nothing else`] },
+    { id: 'H13', claim: 'STAGE-TIMING-LINE-DURABLE-START', subject: VIEW_SRC,
+      reds: [`${VIEW} > STAGE-TIMING-LINE-DURABLE-START: a settled row whose claim was released still says how long the stage took`] },
   ],
 })
 NODE
