@@ -15,15 +15,18 @@
 
 import {
   asJobId,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   FunctionScopeSchema,
   POST_PROCESSING_CHIP_STATUSES,
 } from '@vostride/agent-qa-schema'
 import type {
+  CompletedRunHandoff,
   FunctionCaller,
   JobStatus,
   PostProcessingChipStatus,
   PostProcessingChips,
   PostProcessingStatus,
+  RunId,
   RunNotification,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -42,6 +45,7 @@ import type {
 import {
   RUNS_POST_PROCESSING_FUNCTION_ID,
   projectPostProcessingChips,
+  projectPostProcessingExclusion,
 } from '../runs-post-processing.js'
 
 const RUN_ID = 'run-388-chips'
@@ -355,5 +359,110 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
     await expect(
       invokeFunction(registry, RUNS_POST_PROCESSING_FUNCTION_ID, { runId: RUN_ID }, CALLER),
     ).rejects.toBeInstanceOf(FunctionNotBoundError)
+  })
+})
+
+// ------------------------------------------------------------------------------------------
+// The EXCLUSION fact (Phase 425, D-08). A gate run and an outcome-excluded run skip the whole
+// post-run chain, so their chip words stay `pending` and the op has to say WHY from the run's
+// durable record. The markers are the same two the enqueue skip reads — never the absence of
+// job rows, never the run's status.
+// ------------------------------------------------------------------------------------------
+
+function handoff(overrides: Partial<CompletedRunHandoff> = {}): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: RUN_ID as RunId,
+    scope: { tier: 'product', key: 'shop' },
+    buildOrdinal: 1,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'passed',
+    configDigests: { suiteConfigDigest: 'suite-digest', testConfigDigest: 'test-digest' },
+    startedAt: 1_000,
+    endedAt: 2_000,
+    tests: [],
+    ...overrides,
+  }
+}
+
+async function statusWithHandoff(
+  state: PostProcessingChainState | undefined,
+  document: CompletedRunHandoff | undefined,
+): Promise<{ status: PostProcessingStatus; askedFor: string[] }> {
+  const reader = recordingReader(state)
+  const askedFor: string[] = []
+  const registry = createFunctionRegistry({
+    deps: deps({
+      postProcessing: reader.port,
+      runs: {
+        list: () => Promise.resolve(document === undefined ? [] : [document]),
+        get: (runId) => {
+          askedFor.push(String(runId))
+          return Promise.resolve(document)
+        },
+        readEvents: () => Promise.resolve([]),
+        readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+      },
+    }),
+    resolveExecutionContext: () => 'local-headless',
+    auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+  })
+  const status = await invokeFunction(
+    registry,
+    RUNS_POST_PROCESSING_FUNCTION_ID,
+    { runId: RUN_ID },
+    CALLER,
+  ) as PostProcessingStatus
+  return { status, askedFor }
+}
+
+describe('EXCLUSION-FROM-HANDOFF', () => {
+  it('folds the fact from the two durable markers and from nothing else', () => {
+    expect(projectPostProcessingExclusion(undefined)).toBeUndefined()
+    expect(projectPostProcessingExclusion(handoff())).toBeUndefined()
+    expect(projectPostProcessingExclusion(handoff({ gateRun: true })))
+      .toEqual({ reason: 'gate-run' })
+    expect(projectPostProcessingExclusion(handoff({ excludedFromOutcomes: true })))
+      .toEqual({ reason: 'outcome-excluded' })
+  })
+
+  it('answers gate-run when both markers are set, in the enqueue skip order', () => {
+    expect(projectPostProcessingExclusion(handoff({ gateRun: true, excludedFromOutcomes: true })))
+      .toEqual({ reason: 'gate-run' })
+  })
+
+  it('never reads the fact off a failed run or off a finished chain', () => {
+    expect(projectPostProcessingExclusion(handoff({ aggregateVerdict: 'failed' })))
+      .toBeUndefined()
+  })
+})
+
+describe('EXCLUSION-OP-READS-RUNS-PORT', () => {
+  it('serves the exclusion beside untouched pending chips for a run with no job rows', async () => {
+    const { status, askedFor } = await statusWithHandoff(
+      undefined,
+      handoff({ excludedFromOutcomes: true }),
+    )
+
+    expect(status.chips).toEqual({ analysis: 'pending', curation: 'pending' })
+    expect(status.exclusion).toEqual({ reason: 'outcome-excluded' })
+    expect(askedFor).toEqual([RUN_ID])
+  })
+
+  it('omits the key and refuses nothing when the port has no handoff yet', async () => {
+    const { status, askedFor } = await statusWithHandoff(undefined, undefined)
+
+    expect(status).toEqual({
+      runId: RUN_ID,
+      chips: { analysis: 'pending', curation: 'pending' },
+    })
+    expect('exclusion' in status).toBe(false)
+    expect(askedFor).toEqual([RUN_ID])
+  })
+
+  it('omits the key for an ordinary run whose handoff carries neither marker', async () => {
+    const { status } = await statusWithHandoff({ analyzeRun: row('done') }, handoff())
+
+    expect('exclusion' in status).toBe(false)
   })
 })
