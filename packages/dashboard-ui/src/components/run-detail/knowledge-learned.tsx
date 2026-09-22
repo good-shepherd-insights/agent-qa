@@ -135,6 +135,19 @@ export function KnowledgeLearned({
         )}
       </div>
 
+      {/*
+        WHAT THE COUNT LINE COULD NOT RECORD, LABELLED (425-06 · D-18). A pre-423 pair is a
+        coarser measurement, not a breakdown with three buckets missing, and a withheld snapshot
+        is a refusal rather than a zero — so the absence gets its own paragraph beneath the
+        heading row. It is a SECOND ELEMENT and not a second clause on the count line, so a reader
+        scanning counts reads counts, and a cell can assert the absence rather than a substring.
+      */}
+      {view.countNote === undefined ? null : (
+        <p data-learned-count-note className="text-xs text-muted-foreground">
+          {view.countNote}
+        </p>
+      )}
+
       {view.sentence === undefined ? null : (
         <p data-learned-sentence className="text-sm text-muted-foreground">
           {view.sentence}

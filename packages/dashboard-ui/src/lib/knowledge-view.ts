@@ -25,6 +25,7 @@
 // plans pure additions to a proven module rather than three private spellings of one contract.
 
 import {
+  CURATION_BREAKDOWN_BUCKETS,
   ProposalIdSchema,
   TRACE_TRUNCATION_TOP_K,
   canonicalJson,
@@ -50,7 +51,13 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { entityRefRoute } from '@/chat/entity-card'
-import { COUNTS_NOT_RECORDED_TEXT, curationFactsText } from './post-processing-view'
+import {
+  BREAKDOWN_NOT_RECORDED_TEXT,
+  BREAKDOWN_WITHHELD_TEXT,
+  COUNTS_NOT_RECORDED_TEXT,
+  curationBreakdownLine,
+  legacyCurationPairText,
+} from './post-processing-view'
 
 import type { KnowledgeRead } from './api'
 
@@ -469,7 +476,7 @@ export function pendingProposalsLine(count: number): string {
  * teaching, not the store's bookkeeping. Under the earlier four-kind table the commonest curation
  * outcome — one new fact, nothing deprecated — was served by the op, correctly attributed, then
  * dropped here, and the half printed `Change records for this run are not available yet.` beside
- * `curated 1 fact, deprecated 0` (REVIEW CR-04, VERIFICATION gap 2).
+ * a count line saying one fact had been curated (REVIEW CR-04, VERIFICATION gap 2).
  *
  * `purged` stays out: a deletion is a maintenance action taken ON the store, never something a run
  * taught it. `promoted` is in — it is the promotions kind D-10 names.
@@ -1191,30 +1198,73 @@ export function learnedView(
   }
 
   const state: LearnedState = counts === undefined ? 'counts-absent' : 'done'
+
+  // THE HEADING AND THE CURATION CARD SPELL ONE NUMBER ONE WAY (425-06 · D-16/D-17). The line is
+  // `curationBreakdownLine` over the SAME persisted snapshot the card reads (423 D-15), so the two
+  // surfaces agree by construction rather than by two spellings that happen to match today.
+  //
+  // THE LADDER IS THE CARD'S LADDER, IN THE CARD'S ORDER (D-18, `curationCompleteText`). Snapshot
+  // outranks the legacy pair; the pair is printed AS a pair and told, on its own line, that no
+  // breakdown exists; a withheld snapshot names the category the read refused on; a settled row
+  // with neither keeps its own fragment. FIVE BUCKETS ARE NEVER SYNTHESIZED FROM TWO — a pre-423
+  // pair is a coarser measurement, not a breakdown with three buckets missing.
+  const breakdown = curationSnapshot?.breakdown
+  const withheld = projection.learned.curationSnapshotWithheld
   const countLine =
-    counts === undefined
-      ? COUNTS_NOT_RECORDED_TEXT
-      : curationFactsText(counts.curated, counts.deprecated)
+    breakdown !== undefined
+      ? curationBreakdownLine(breakdown)
+      : counts !== undefined
+        ? legacyCurationPairText(counts.curated, counts.deprecated)
+        : COUNTS_NOT_RECORDED_TEXT
+  const countNote =
+    breakdown !== undefined
+      ? {}
+      : counts !== undefined
+        ? { countNote: BREAKDOWN_NOT_RECORDED_TEXT }
+        : withheld !== undefined
+          ? { countNote: BREAKDOWN_WITHHELD_TEXT[withheld.reason] }
+          : {}
 
   // ROWS BEFORE SENTENCES, AND BEFORE THE FLAG (REVIEW CR-01). A record the store served is the
   // answer; the partial read is a note beside it.
-  if (rows.length > 0) return { state, countLine, rows, ...degraded, ...readNote, ...snapshot }
+  if (rows.length > 0) {
+    return { state, countLine, ...countNote, rows, ...degraded, ...readNote, ...snapshot }
+  }
 
   // NOTHING TO LIST AND NOBODY COULD LOOK — the one arm where the sentence IS the answer, so it
   // carries no note: a second door beneath a sentence that already names one is a nag (407-14).
   if (projection.learned.scanIncomplete === true) {
-    return { state, countLine, sentence: CHANGES_UNREADABLE_TEXT, rows: [], scanIncomplete: true, ...snapshot }
+    return {
+      state,
+      countLine,
+      ...countNote,
+      sentence: CHANGES_UNREADABLE_TEXT,
+      rows: [],
+      scanIncomplete: true,
+      ...snapshot,
+    }
   }
 
   // Below here the read was CLEAN — the flag would have been answered above — so no spread is
   // needed on the three-sentence ladder, and adding one would only suggest it could be reached.
+  //
+  // THE SENTENCE FOLLOWS THE SAME RECORD THE COUNT LINE DID (425-06). A snapshot-bearing run whose
+  // buckets are all zero HAS a record saying curation changed nothing, whether or not the legacy
+  // pair was also written — so it reads its own sentence rather than falling to the counts-absent
+  // one, which describes a row that recorded no measurement at all.
+  if (breakdown !== undefined) {
+    return CURATION_BREAKDOWN_BUCKETS.every(bucket => breakdown[bucket] === 0)
+      ? { state, countLine, ...countNote, sentence: CHANGED_NOTHING_TEXT, rows: [], ...snapshot }
+      : { state, countLine, ...countNote, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [], ...snapshot }
+  }
+
   if (counts === undefined) {
-    return { state, countLine, sentence: COUNTS_NOT_RECORDED_SENTENCE, rows: [], ...snapshot }
+    return { state, countLine, ...countNote, sentence: COUNTS_NOT_RECORDED_SENTENCE, rows: [], ...snapshot }
   }
 
   return counts.curated === 0 && counts.deprecated === 0
-    ? { state, countLine, sentence: CHANGED_NOTHING_TEXT, rows: [], ...snapshot }
-    : { state, countLine, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [], ...snapshot }
+    ? { state, countLine, ...countNote, sentence: CHANGED_NOTHING_TEXT, rows: [], ...snapshot }
+    : { state, countLine, ...countNote, sentence: CHANGES_NOT_AVAILABLE_TEXT, rows: [], ...snapshot }
 }
 
 /**

@@ -48,6 +48,7 @@ import {
   type LearnedView,
   type StepRowView,
 } from "@/lib/knowledge-view"
+import { legacyCurationPairText } from "@/lib/post-processing-view"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -260,7 +261,7 @@ describe("producer text reaches the DOM as TEXT, never as markup (T-407-06)", ()
 describe("the Learned half sits below the Used half in the ready arm (D-01 layout order)", () => {
   const learned: LearnedView = {
     state: "done",
-    countLine: "nothing curated",
+    countLine: legacyCurationPairText(0, 0),
     sentence: CHANGED_NOTHING_TEXT,
     rows: [],
   }

@@ -126,7 +126,7 @@ export const OPEN_KNOWLEDGE_TAB_TEXT = 'Open Knowledge tab'
 export const OPEN_VERDICT_TEXT = 'Open verdict'
 
 /**
- * A curation pass that touched nothing (D-17), replacing 407's `nothing curated`.
+ * A curation pass that touched nothing (D-17), replacing 407's folded both-zero phrase.
  *
  * Five zeros is arithmetically true and tells a reader nothing they can act on; naming the outcome
  * as "no memory changes" is the fact, in the vocabulary the rest of the line already uses.
@@ -276,31 +276,19 @@ export const CHIPS_UNAVAILABLE_TEXT = 'post-processing status unavailable'
 type ReadBody = PostProcessingReadBody
 
 /**
- * THE COUNT LINE, IN THE WORDING OF RECORD (407-09 · LERN-02, D-09).
- *
- * ONE FUNCTION, TWO SURFACES. The chip renders this string beside the `curation` badge and the
- * Knowledge tab's Learned heading renders the SAME string; `lib/knowledge-view.ts` imports this
- * rather than re-spelling it. Two spellings of one number is how a header and a panel end up
- * disagreeing about a run in front of the person reading both at once.
- *
- * THE NOUN IS PLURALISED AND THE SECOND COUNT IS BARE. `curated 1 fact, deprecated 1` reads as a
- * sentence; `deprecated 1 fact` would read as a second, different measurement of the same nouns.
- *
- * BOTH ZERO IS ITS OWN PHRASE. `curated 0 facts, deprecated 0` is arithmetically true and says
- * nothing a reader can act on; `nothing curated` is the fact.
+ * RETIRED 425-06 (D-16). The folded legacy sentence that stood here served one count line in two
+ * wordings of the SAME coarse pair; its last reader, the Knowledge tab's Learned heading, now
+ * takes {@link curationBreakdownLine} beside a recorded snapshot and {@link legacyCurationPairText}
+ * beside a pre-423 one. One function per measurement, and a pair that reads as a pair.
  */
-export function curationFactsText(curated: number, deprecated: number): string {
-  if (curated === 0 && deprecated === 0) return 'nothing curated'
-  const noun = curated === 1 ? 'fact' : 'facts'
-  return `curated ${String(curated)} ${noun}, deprecated ${String(deprecated)}`
-}
 
 /**
  * What a settled curation row says when it committed no counts (D-12).
  *
  * NEVER A ZERO. The notification row's counts are optional, and a stage that never got as far as
  * committing reports its status and nothing else. Rendering `0` there would claim somebody counted
- * and found none — which is what `nothing curated` above says, about a genuinely different row.
+ * and found none — which is what {@link NO_MEMORY_CHANGES_TEXT} says, about a genuinely
+ * different row.
  */
 export const COUNTS_NOT_RECORDED_TEXT = 'counts not recorded for this run'
 
