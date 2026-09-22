@@ -164,11 +164,74 @@ function publishedPollMs(): number {
   return Number(match[1])
 }
 
+/** A single-quoted exported string constant, read out of the shipped module rather than retyped. */
+function publishedConstant(relativePath: string, name: string): string {
+  const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
+  const match = new RegExp(`export const ${name}\\s*=\\s*'([^']+)'`, 'u').exec(source)
+  if (match === null) throw new Error(`${name} is no longer an exported single-quoted string in ${relativePath}`)
+  return match[1] as string
+}
+
 const POLL_MS = publishedPollMs()
 const REASON_ABSENT_HANDED_OFF =
   publishedRecordSentence('lib/post-processing-view.ts', 'FAILED_REASON_ABSENT_TEXT', 'handedOff')
 const PENDING_POSTURE_HANDED_OFF =
   publishedRecordSentence('lib/post-processing-view.ts', 'PENDING_POSTURE_TEXT', 'handedOff')
+const WILL_RETRY_TEXT = publishedConstant('lib/post-processing-view.ts', 'WILL_RETRY_TEXT')
+
+/**
+ * EVERY sentence the view can paint when nobody recorded a reason.
+ *
+ * The producer's reason and the absence that stands in for it used to be two different elements, so
+ * reading one proved it was not the other. They now share the card's outcome line, and the RED-run
+ * cell's claim — "the page shows the PRODUCER's text" — is only kept by telling them apart, which
+ * needs the whole record rather than the one key `(3b)` asserts on.
+ */
+const REASON_ABSENT_SENTENCES = ['handedOff', 'detached', 'drained', 'unknown'].map((key) =>
+  publishedRecordSentence('lib/post-processing-view.ts', 'FAILED_REASON_ABSENT_TEXT', key),
+)
+
+/**
+ * `stageFailedText`'s join for the analysis stage, spelled here rather than imported.
+ *
+ * The cli package cannot import dashboard-ui, so this prefix is the one half that is retyped; the
+ * reason half is still read out of the shipped module above, which is the half that could drift
+ * without anybody noticing.
+ */
+const ANALYSIS_FAILED_PREFIX = 'Analysis failed — '
+
+/**
+ * The three card-line addresses this file reads, spelled the way the component publishes them.
+ *
+ * `post-processing-chips.tsx` exports `STAGE_CARD_LINE_SELECTORS`, the closed record of all eight
+ * addresses (425-08), and importing it is what this file would do if the cli package could reach
+ * dashboard-ui. It cannot, so the three are re-spelled as LITERALS rather than built from a
+ * `${kind}` template — a selector nobody can grep for is a contract with no declaration site here
+ * either — and then checked against the published record below, so a re-spelling upstream reds this
+ * file loudly instead of quietly harvesting nothing.
+ */
+const STAGE_CARD_LINES = {
+  outcome: '[data-stage-card-line="outcome"]',
+  timing: '[data-stage-card-line="timing"]',
+  retry: '[data-stage-card-line="retry"]',
+} as const
+
+for (const [kind, selector] of Object.entries(STAGE_CARD_LINES)) {
+  const published = publishedRecordSentence(
+    'components/run-detail/post-processing-chips.tsx',
+    'STAGE_CARD_LINE_SELECTORS',
+    kind,
+  )
+  if (published !== selector) {
+    throw new Error(
+      `STAGE_CARD_LINE_SELECTORS.${kind} is now ${JSON.stringify(published)}; this file reads `
+      + `${JSON.stringify(selector)} and would harvest nothing`,
+    )
+  }
+}
+
+/** How long a focused indicator is given to open its card before the absence is taken as real. */
+const CARD_OPEN_BUDGET_MS = 5_000
 
 
 interface ChipTransition {
@@ -195,14 +258,19 @@ interface PageObservation {
   readonly html: string
   /** `data-chip` → `data-chip-status`, as painted at the end. */
   readonly painted: Record<string, string>
-  /** The `[data-chip-error]` text on the analysis chip, if the page painted one. */
-  readonly analysisError?: string
-  /** The `data-chip-will-retry` attribute on the analysis chip, if present. */
-  readonly analysisWillRetry?: string
-  /** The `[data-chip-reason-absent]` text on the analysis chip, if the page painted one. */
-  readonly analysisReasonAbsent?: string
-  /** The `[data-chip-posture]` text on the analysis chip, if the page painted one. */
-  readonly analysisPosture?: string
+  /**
+   * The analysis card's `outcome` line, read with the card open (425 D-09/D-12).
+   *
+   * THE WORDS DID NOT GO AWAY, THEY MOVED. The failure reason, the absent-reason sentence and the
+   * drain posture each used to be their own node beside the chip; they now arrive on this one line
+   * — `Analysis failed — {reason}`, `Analysis queued — {posture}`, or the settled sentence. A stage
+   * with nothing to say paints no card at all, so an absence here is a real absence.
+   */
+  readonly analysisOutcome?: string
+  /** The analysis card's `timing` line, if the read carried a job row to time (D-12). */
+  readonly analysisTiming?: string
+  /** The analysis card's `retry` line — painted only when the envelope carried a retry intent. */
+  readonly analysisRetry?: string
   /** Whether the FIRST read of the route carried a `disposition` — the D-13 window's marker. */
   readonly firstReadHadDisposition: boolean
   /** Whether the chain was already terminal on the first read. */
@@ -284,6 +352,14 @@ interface Recorded {
   coldControl?: { runId: string; exit: number | null; chips: Record<string, string>; stdout: string; stderr: string }
   /** The red run's own recorded log — the envelope trail an in-process drain leaves. */
   redRunEventTypes: string[]
+  /**
+   * What the READ said about the red chain's retry intent, straight off the failures fold.
+   *
+   * The card paints a retry line only when the envelope carried `willRetry: true`, so "the chain
+   * says whether it intends to try again" is a claim about agreement between the route and the
+   * page — which needs the route's answer recorded beside the page's.
+   */
+  redRunWillRetry?: boolean
   /** The handed-off run's own recorded log. A daemon-drained chain leaves NO chip line. */
   handedOffEventTypes: string[]
   /** Whatever stopped the drive, if anything did. */
@@ -652,18 +728,40 @@ async function harvest(
       ]),
     ),
   )
-  const analysisChip = page.locator('[data-chip="analysis"]')
-  const textOf = async (selector: string): Promise<string | undefined> => {
-    const node = analysisChip.locator(selector)
+  // THE CARD IS WHERE THE WORDS LIVE NOW (425 D-09/D-12), SO THE HARVEST OPENS IT.
+  //
+  // FOCUS, NOT HOVER. The page mounts one `TooltipProvider` with `delayDuration = 0` and Radix
+  // opens on focus with no delay at all; focus also works identically on the `<span>` root and on
+  // the `<button>` a failed run WITH verdicts gets (425-09), so no arm needs to know which it has.
+  //
+  // THE CARD IS PORTALLED, so it is located on the document rather than under the chip. Radix paints
+  // the content's children a SECOND time inside a visually-hidden `role="tooltip"` node for screen
+  // readers; `.first()` is the visible copy, which is the one a person reads.
+  //
+  // This runs after `html` and `painted` are captured above, so opening a card cannot disturb what
+  // the arm already recorded about the header.
+  const analysisChip = page.locator('[data-chip="analysis"]').first()
+  const analysisCard = page.locator('[data-stage-card="analysis"]').first()
+  const cardLine = async (selector: string): Promise<string | undefined> => {
+    const node = analysisCard.locator(selector)
     return (await node.count()) === 0 ? undefined : (await node.first().innerText()).trim()
   }
-  const analysisError = await textOf('[data-chip-error]')
-  const analysisReasonAbsent = await textOf('[data-chip-reason-absent]')
-  const analysisPosture = await textOf('[data-chip-posture]')
-  const willRetryNode = analysisChip.locator('[data-chip-error]')
-  const analysisWillRetry = (await willRetryNode.count()) === 0
-    ? undefined
-    : (await willRetryNode.first().getAttribute('data-chip-will-retry')) ?? undefined
+  let analysisOutcome: string | undefined
+  let analysisTiming: string | undefined
+  let analysisRetry: string | undefined
+  if ((await analysisChip.count()) > 0) {
+    await analysisChip.focus().catch(() => undefined)
+    // A stage with nothing to say renders no card, and that is a reading rather than a timeout.
+    const opened = await analysisCard
+      .waitFor({ state: 'attached', timeout: CARD_OPEN_BUDGET_MS })
+      .then(() => true)
+      .catch(() => false)
+    if (opened) {
+      analysisOutcome = await cardLine(STAGE_CARD_LINES.outcome)
+      analysisTiming = await cardLine(STAGE_CARD_LINES.timing)
+      analysisRetry = await cardLine(STAGE_CARD_LINES.retry)
+    }
+  }
   return {
     runId,
     transitions,
@@ -671,10 +769,9 @@ async function harvest(
     responses: traffic.responses,
     html,
     painted,
-    ...(analysisError === undefined ? {} : { analysisError }),
-    ...(analysisWillRetry === undefined ? {} : { analysisWillRetry }),
-    ...(analysisReasonAbsent === undefined ? {} : { analysisReasonAbsent }),
-    ...(analysisPosture === undefined ? {} : { analysisPosture }),
+    ...(analysisOutcome === undefined ? {} : { analysisOutcome }),
+    ...(analysisTiming === undefined ? {} : { analysisTiming }),
+    ...(analysisRetry === undefined ? {} : { analysisRetry }),
     firstReadHadDisposition: firstRead.hadDisposition,
     firstReadTerminal: firstRead.terminal,
     ...(firstRead.verdictAt === undefined ? {} : { verdictAt: firstRead.verdictAt }),
@@ -1005,6 +1102,7 @@ beforeAll(async () => {
           25,
         )
         const body = await readChain(dashboard.origin, redRunId)
+        recorded.redRunWillRetry = body.failures?.analysis?.willRetry
         recorded.redRun = await harvest(page, redRunId, traffic, {
           hadDisposition: body.disposition !== undefined,
           terminal: chainTerminal(body),
@@ -1362,21 +1460,30 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
         + 'chips, this cell and FAILED_REASON_ABSENT_TEXT are both out of date',
       ).not.toContain(chip)
     }
+    // THE CLAIM IS UNCHANGED AND THE ADDRESS IS NOT (425 D-09 · RESEARCH pitfall 4). The
+    // absent-reason sentence moved from its own node beside the chip onto the card's outcome line,
+    // so the cell reads the card — and asserts the WHOLE line, which is what keeps "shows no error
+    // text" a claim now that the producer's reason would be painted in the very same place.
     expect(
-      handed!.analysisReasonAbsent,
+      handed!.analysisOutcome,
       'a failed stage with no recorded reason renders the absence, qualified by the posture that '
-      + `explains it. painted: ${handed!.html.slice(0, 400)}`,
-    ).toBe(REASON_ABSENT_HANDED_OFF)
+      + 'explains it — and nothing else on the line, because there is no reason to show and a '
+      + 'producer\'s text appended here would be the lie by omission D-21 exists to refuse. '
+      + `painted: ${handed!.html.slice(0, 400)}`,
+    ).toBe(`${ANALYSIS_FAILED_PREFIX}${REASON_ABSENT_HANDED_OFF}`)
     expect(
-      handed!.analysisError,
-      'there is no reason to show, so there must be no error node at all — a blank one would be the '
-      + 'lie by omission D-21 exists to refuse',
+      handed!.analysisRetry,
+      'and the card claims no retry intent: no chip envelope was ever written, so there is no '
+      + '`willRetry` to forward and a retry line here would be invented',
     ).toBeUndefined()
     expect(
       handed!.html.includes('pending'),
       'and the settled chip never reads `pending` — the other lie the absent-reason line replaces',
     ).toBe(false)
-    console.log(`[404-08] (3b) absent-reason line: ${JSON.stringify(handed!.analysisReasonAbsent)}`)
+    console.log(
+      `[404-08] (3b) absent-reason outcome line: ${JSON.stringify(handed!.analysisOutcome)}, `
+      + `timing ${JSON.stringify(handed!.analysisTiming)}, retry ${JSON.stringify(handed!.analysisRetry)}`,
+    )
   }, 60_000)
 
   it('(4) return visit: exactly ONE read, no socket, painted terminal', () => {
@@ -1417,28 +1524,45 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
       + `reason to paint. recorded: ${JSON.stringify(recorded.redRunEventTypes)}`,
     ).toContain('analysisFailed')
     expect(red!.painted.analysis, `the analysis chip did not paint failed. html: ${red!.html.slice(0, 400)}`).toBe('failed')
+    // THE REASON MOVED ONTO THE CARD'S OUTCOME LINE (425 D-09/D-12), where it now shares an address
+    // with the absence sentence that stands in for it when nobody wrote one down. The claim is the
+    // same one 404-08 made — the PRODUCER's masked, bounded string reaches the browser — so the
+    // prefix is stripped and what is left is checked against the published absences.
     expect(
-      red!.analysisError,
+      red!.analysisOutcome,
       'a failed stage WITH a recorded reason paints the reason — never a blank, never `pending`',
     ).toBeDefined()
-    expect(red!.analysisError!.length, 'the painted reason is not empty').toBeGreaterThan(0)
     expect(
-      red!.analysisError!.length,
-      `T-404-01: the text a browser is handed is the producer's bounded string, ${String(red!.analysisError!.length)} `
+      (red!.analysisOutcome ?? '').startsWith(ANALYSIS_FAILED_PREFIX),
+      `the card's outcome line is not the stage's failure sentence: ${JSON.stringify(red!.analysisOutcome)}`,
+    ).toBe(true)
+    const redReason = (red!.analysisOutcome ?? '').slice(ANALYSIS_FAILED_PREFIX.length)
+    expect(redReason.length, 'the painted reason is not empty').toBeGreaterThan(0)
+    expect(
+      redReason.length,
+      `T-404-01: the text a browser is handed is the producer's bounded string, ${String(redReason.length)} `
       + 'chars here, and this page slices none of it',
     ).toBeLessThanOrEqual(500)
     expect(
-      red!.analysisWillRetry,
-      'and the chain says whether it intends to try again — the field the projection forwards only '
-      + 'when the envelope carried one',
-    ).toBeDefined()
+      REASON_ABSENT_SENTENCES,
+      'and it is the producer\'s OWN reason rather than the absence that stands in for a missing '
+      + 'one. The two used to be separate elements, so reading one proved it was not the other; '
+      + `they share a line now, so the cell tells them apart itself. read: ${JSON.stringify(redReason)}`,
+    ).not.toContain(redReason)
+    expect(
+      red!.analysisRetry,
+      'and the chain says whether it intends to try again — the line the projection paints only when '
+      + 'the envelope carried `willRetry`, asserted against what the read route answered: '
+      + `${JSON.stringify(recorded.redRunWillRetry)}`,
+    ).toBe(recorded.redRunWillRetry === true ? WILL_RETRY_TEXT : undefined)
     expect(
       red!.painted.analysis,
       'never `pending` once the stage is terminal — the folded 399 todo\'s whole complaint',
     ).not.toBe('pending')
     console.log(
       `[404-08] red run ${red!.runId} — analysis ${red!.painted.analysis}, `
-      + `error ${String(red!.analysisError?.length)} chars, willRetry ${String(red!.analysisWillRetry)}, `
+      + `reason ${String(redReason.length)} chars, retry ${JSON.stringify(red!.analysisRetry)} `
+      + `(read said willRetry ${String(recorded.redRunWillRetry)}), `
       + `curation ${red!.painted.curation}; trail ${JSON.stringify(recorded.redRunEventTypes)}`,
     )
   }, 60_000)
