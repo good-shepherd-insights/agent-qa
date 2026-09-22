@@ -115,7 +115,16 @@ reports the same pair from a database that holds none of this chain's rows
 asks the port for exactly the three ids chainJobIdsForRun derives
 projects a finished chain and attaches the notification the terminal wrote
 OMITS the notification key entirely while the chain is still in flight
-answers the all-pending projection for a host whose queue database is absent"
+answers the all-pending projection for a host whose queue database is absent
+serves the exclusion beside untouched pending chips for a run with no job rows
+omits the key and refuses nothing when the port has no handoff yet
+omits the key for an ordinary run whose handoff carries neither marker"
+# 2026-09-22, 425-12: the last three names are 425-02's exclusion cells, and they are the SAME
+# measured blast as the six above them — each asserts the whole chips object or the whole served
+# status, so a third arm on the projection reds them for the one reason M1 exists to catch. The
+# required cell is unchanged, and nothing about the exclusion fact itself is admitted here: M1
+# does not touch it, and the cell that measures the fold is EXCLUSION-FROM-HANDOFF, which stays
+# green under this mutation and has its own leg in scripts/425-header-mutation.sh.
 
 REQUIRED_M2="declares EXACTLY the four status words, in the order a stage passes through them"
 ALLOWED_M2="declares EXACTLY the four status words, in the order a stage passes through them
