@@ -43,10 +43,12 @@ import {
   CURATION_FAILED_TEXT,
   DELTAS_PENDING_TEXT,
   LEARNED_HEADING,
+  RECONCILIATION_UNATTRIBUTED_TEXT,
   REVIEW_PROPOSALS_CTA,
   STORE_READ_INCOMPLETE_TEXT,
   learnedView,
   pendingProposalsLine,
+  reconciliationCountText,
   type LearnedRowView,
   type LearnedView,
   type ProposalsView,
@@ -328,6 +330,83 @@ describe("the heading spells one number one way, and labels a coarser one (425-0
     const host = render({ state: "done", countLine: legacyCurationPairText(3, 1), rows: [] })
 
     expect(host.querySelector("[data-learned-count-note]")).toBeNull()
+  })
+})
+
+/**
+ * THE RECONCILIATION BLOCK, AT THE MOUNT (425-06 · D-19).
+ *
+ * TWO LINES AND TWO ATTRIBUTES, because the gap and its cause are two different claims: the first
+ * is arithmetic the reader can check, the second is an account of it the read had to justify. A
+ * cell addressing one must be able to assert the other, and a run whose numbers agree must be able
+ * to assert that neither element exists at all.
+ */
+describe("a mismatch is explained beneath the heading, and only when there is one (425-06)", () => {
+  const breakdown = { added: 3, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 }
+
+  it("RECONCILIATION-ONLY-ON-MISMATCH: renders the count and the cause as their own paragraphs", () => {
+    const host = render({
+      state: "done",
+      countLine: curationBreakdownLine(breakdown),
+      rows: [row()],
+      curationSnapshot: {
+        breakdown,
+        reconciliation: {
+          count: reconciliationCountText(3, 1),
+          cause: RECONCILIATION_UNATTRIBUTED_TEXT,
+        },
+      },
+    })
+
+    const block = host.querySelector("[data-learned-reconciliation]")
+    expect(block?.tagName).toBe("DIV")
+    const count = host.querySelector("[data-learned-reconciliation-count]")
+    const cause = host.querySelector("[data-learned-reconciliation-cause]")
+    expect(count?.tagName).toBe("P")
+    expect(count?.textContent).toBe("3 changes counted · 1 shown")
+    expect(count?.className).toContain("tabular-nums")
+    expect(count?.className).toContain("text-xs")
+    expect(cause?.tagName).toBe("P")
+    expect(cause?.textContent).toBe(RECONCILIATION_UNATTRIBUTED_TEXT)
+    expect(cause?.className).toContain("text-muted-foreground")
+  })
+
+  it("RECONCILIATION-ONLY-ON-MISMATCH: renders NO element at all when the numbers agree", () => {
+    const host = render({
+      state: "done",
+      countLine: curationBreakdownLine(breakdown),
+      rows: [row()],
+      curationSnapshot: { breakdown, sinceThenCount: 0 },
+    })
+
+    expect(host.querySelector("[data-learned-reconciliation]")).toBeNull()
+    expect(host.querySelector("[data-learned-reconciliation-count]")).toBeNull()
+    expect(host.querySelector("[data-learned-reconciliation-cause]")).toBeNull()
+  })
+
+  it("RECONCILIATION-CAUSE-FROM-READ: leaves the since-then attribute and its rows untouched", () => {
+    const host = render({
+      state: "failed",
+      rows: [row()],
+      chainNote: CURATION_FAILED_PARTIAL_TEXT,
+      curationSnapshot: {
+        breakdown,
+        sinceThenCount: 2,
+        reconciliation: {
+          count: reconciliationCountText(3, 1),
+          cause: CURATION_FAILED_PARTIAL_TEXT,
+        },
+      },
+    })
+
+    const section = host.querySelector("[data-learned-state]")
+    expect(section?.getAttribute("data-learned-since-then")).toBe("2")
+    expect(section?.getAttribute("data-learned-snapshot")).toBe("recorded")
+    expect(host.querySelector("[data-learned-reconciliation-cause]")?.textContent)
+      .toBe(CURATION_FAILED_PARTIAL_TEXT)
+    expect(host.querySelector("[data-learned-chain-note]")?.textContent)
+      .toBe(CURATION_FAILED_PARTIAL_TEXT)
+    expect(rowsOf(host).length).toBe(1)
   })
 })
 

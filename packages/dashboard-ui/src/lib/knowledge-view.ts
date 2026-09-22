@@ -419,6 +419,29 @@ export const STORE_READ_INCOMPLETE_TEXT = 'The knowledge store could not be full
 /** What the half says when curation settled having moved neither count (D-12). */
 export const CHANGED_NOTHING_TEXT = 'Curation ran and changed nothing.'
 
+/**
+ * The reconciliation's LAST cause, when the read justifies none of the others (425-06 · D-19).
+ *
+ * NEVER SILENT, NEVER A GUESS. A snapshot that counted more changes than the half can show is a
+ * disagreement between two producers, and the one thing this module must not do is pick whichever
+ * number looks tidier. Its two siblings — {@link CURATION_FAILED_PARTIAL_TEXT} and
+ * {@link CHANGES_UNREADABLE_TEXT} — are causes the read PROVED; this one is what honest ignorance
+ * sounds like, and it is a sentence rather than an absence precisely because a reader who can see
+ * the gap deserves to be told nobody could account for it.
+ */
+export const RECONCILIATION_UNATTRIBUTED_TEXT =
+  "The difference could not be attributed to this run's rows."
+
+/**
+ * `{counted} changes counted · {shown} shown` — the gap itself, before its cause (D-19).
+ *
+ * THE NOUN AGREES WITH THE COUNT and the second number is bare, the same idiom the breakdown line
+ * uses: `1 change counted · 0 shown` reads as a sentence, and `1 changes` reads as a bug.
+ */
+export function reconciliationCountText(counted: number, shown: number): string {
+  return `${String(counted)} ${counted === 1 ? 'change' : 'changes'} counted · ${String(shown)} shown`
+}
+
 /** The one CTA in the whole tab (D-11) — where proposals are reviewed, never a proposal itself. */
 export const REVIEW_PROPOSALS_CTA = 'Review proposals'
 
@@ -866,6 +889,16 @@ export interface LearnedSnapshotView {
   readonly breakdown: CurationBreakdown
   /** `learned.sinceThen.count`, verbatim. Absent when the op served no since-then section. */
   readonly sinceThenCount?: number
+  /**
+   * The snapshot's total against the curation rows this half can show (425-06 · D-19).
+   *
+   * PRESENT EXACTLY WHEN THEY DISAGREE. A heading that quietly printed five counted changes over
+   * two painted rows would leave the reader to spot the arithmetic themselves — and to guess at
+   * the reason if they did. So the gap is stated in `count` and accounted for in `cause`, and when
+   * the two numbers agree the member is absent rather than a line saying so: a reconciliation
+   * nobody needs is noise on every healthy run in the project.
+   */
+  readonly reconciliation?: { readonly count: string; readonly cause: string }
 }
 
 /**

@@ -60,6 +60,7 @@ import {
   PROCEDURE_HINT_TEXT,
   PRE_TRACE_TEXT,
   READ_FAILED_HEADING,
+  RECONCILIATION_UNATTRIBUTED_TEXT,
   REPLAY_FACT,
   REVIEW_PROPOSALS_CTA,
   HINT_FACT,
@@ -87,6 +88,7 @@ import {
   planSourceView,
   projectKnowledgeView,
   readFailedBody,
+  reconciliationCountText,
   replayedText,
   rungBannerText,
   showAllLinesLabel,
@@ -1135,7 +1137,6 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
       expect(view.countNote).toBeUndefined()
     }
   })
-
   it('drops the state sentence once there are rows — the rows ARE the answer', () => {
     const view = learnedFrom({
       curation: { status: 'done', counts: { curated: 3, deprecated: 1 } },
@@ -1143,6 +1144,136 @@ describe('a settled curation says what it changed, in the chip\'s own words (D-0
     })
     expect(view.rows.length).toBe(1)
     expect(view.sentence).toBeUndefined()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The reconciliation line (425-06 · D-19, roadmap SC4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A MISMATCH IS EXPLAINED BY ONE EXPLICIT LINE, AND ONLY WHEN THERE IS ONE (D-19).
+ *
+ * `counted` is the sum of the snapshot's five buckets; `shown` is the rows this half placed in the
+ * CURATION section, because 423 D-15 gives since-then rows their own counted line and folding them
+ * in here would hide a real gap behind a later promotion. The cause is never guessed: it is one of
+ * the two the read already proved, or the sentence that says so.
+ */
+describe('a count that disagrees with the rows says so, and says why (425-06 · D-19)', () => {
+  it('RECONCILIATION-ONLY-ON-MISMATCH: states the gap when the buckets total more than the rows', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 0 } },
+      learned: {
+        changes: [change('added', 'rec-a'), change('added', 'rec-b')],
+        canaryAttributions: [],
+        curationSnapshot: snapshotOf({ added: 3 }),
+      },
+    })
+
+    expect(view.rows.length).toBe(2)
+    expect(view.curationSnapshot?.reconciliation).toEqual({
+      count: '3 changes counted · 2 shown',
+      cause: RECONCILIATION_UNATTRIBUTED_TEXT,
+    })
+    expect(view.curationSnapshot?.reconciliation?.count).toBe(reconciliationCountText(3, 2))
+  })
+
+  it('RECONCILIATION-ONLY-ON-MISMATCH: carries NO reconciliation key when the two numbers agree', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      learned: {
+        changes: [change('added', 'rec-a'), change('added', 'rec-b')],
+        canaryAttributions: [],
+        curationSnapshot: snapshotOf({ added: 2 }),
+      },
+    })
+
+    expect(view.rows.length).toBe(2)
+    expect(view.curationSnapshot).toEqual({ breakdown: snapshotOf({ added: 2 }).breakdown })
+    expect(view.curationSnapshot?.reconciliation).toBeUndefined()
+    expect(JSON.stringify(view)).not.toContain('counted')
+  })
+
+  it('RECONCILIATION-ONLY-ON-MISMATCH: agrees the noun with the count — one change, zero shown', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 1, deprecated: 0 } },
+      learned: { changes: [], canaryAttributions: [], curationSnapshot: snapshotOf({ added: 1 }) },
+    })
+
+    expect(view.curationSnapshot?.reconciliation?.count).toBe('1 change counted · 0 shown')
+  })
+
+  it('RECONCILIATION-ONLY-ON-MISMATCH: a since-then row is not one of the rows shown (423 D-15)', () => {
+    const later = change('promoted', 'rec-later')
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 2, deprecated: 0 } },
+      learned: {
+        changes: [change('added', 'rec-a'), change('added', 'rec-b'), later],
+        canaryAttributions: [],
+        curationSnapshot: snapshotOf({ added: 2 }),
+        sinceThen: { changes: [later], count: 1 },
+      },
+    })
+
+    expect(view.rows.map(row => row.section)).toEqual(['curation', 'curation', 'since-then'])
+    expect(view.curationSnapshot?.sinceThenCount).toBe(1)
+    expect(view.curationSnapshot?.reconciliation).toBeUndefined()
+  })
+
+  it('RECONCILIATION-CAUSE-FROM-READ: a failed chain with retained rows names the chain', () => {
+    const view = learnedFrom({
+      curation: { status: 'failed' },
+      learned: {
+        changes: [change('added', 'rec-a')],
+        canaryAttributions: [],
+        curationSnapshot: snapshotOf({ added: 3 }),
+      },
+    })
+
+    expect(view.state).toBe('failed')
+    expect(view.rows.length).toBe(1)
+    expect(view.curationSnapshot?.reconciliation)
+      .toEqual({ count: '3 changes counted · 1 shown', cause: CURATION_FAILED_PARTIAL_TEXT })
+  })
+
+  it('RECONCILIATION-CAUSE-FROM-READ: an incomplete store scan names the store', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 0 } },
+      learned: {
+        changes: [change('added', 'rec-a')],
+        canaryAttributions: [],
+        curationSnapshot: snapshotOf({ added: 3 }),
+        scanIncomplete: true,
+      },
+    })
+
+    expect(view.curationSnapshot?.reconciliation)
+      .toEqual({ count: '3 changes counted · 1 shown', cause: CHANGES_UNREADABLE_TEXT })
+  })
+
+  it('RECONCILIATION-CAUSE-FROM-READ: pending and running carry none, whatever the counts say', () => {
+    for (const status of ['pending', 'running'] as const) {
+      const view = learnedFrom({
+        curation: { status },
+        learned: {
+          changes: [change('added', 'rec-a')],
+          canaryAttributions: [],
+          curationSnapshot: snapshotOf({ added: 3 }),
+        },
+      })
+
+      expect(view.rows).toEqual([])
+      expect(view.curationSnapshot?.reconciliation).toBeUndefined()
+    }
+  })
+
+  it('RECONCILIATION-CAUSE-FROM-READ: a run with no snapshot at all reconciles nothing', () => {
+    const view = learnedFrom({
+      curation: { status: 'done', counts: { curated: 3, deprecated: 0 } },
+      learned: { changes: [change('added', 'rec-a')], canaryAttributions: [] },
+    })
+
+    expect(view.curationSnapshot).toBeUndefined()
   })
 })
 
