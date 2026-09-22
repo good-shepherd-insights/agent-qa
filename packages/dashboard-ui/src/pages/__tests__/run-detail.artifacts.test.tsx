@@ -27,6 +27,7 @@ import {
   MASKED_EMAIL_LABEL,
   MASKED_SECRET_LABEL,
   TOKENS_NOT_MEASURED_LABEL,
+  tokenPairLine,
 } from "@/lib/run-detail-view"
 import { routes } from "@/lib/routes"
 
@@ -328,11 +329,25 @@ describe("run detail renders the durable projection's five facts", () => {
 
   // D-06 accounting remains in the navbar. A measured run reports its spend; an unmeasured one
   // says so rather than reporting a zero nobody measured.
+  //
+  // 425-05 (D-21/D-22): the header sentence is now the labelled PAIR, and coverage left it
+  // entirely — the undercount caveat lives in the usage card behind the line. The claim this cell
+  // makes is unchanged: the page's one token accounting is in the header, not in Overview.
   it("keeps run accounting while omitting the redundant Overview token line", async () => {
     const view = await renderAt()
 
     expect(view.querySelector("[data-token-summary]")).toBeNull()
-    expect(view.querySelector("[data-run-token-summary]")?.textContent).toContain("1 of 1 steps")
+    const line = view.querySelector("[data-run-token-summary]")
+    expect(line?.textContent).toContain(
+      tokenPairLine({
+        measuredSteps: 1,
+        unmeasuredSteps: 0,
+        promptTokens: 800,
+        completionTokens: 200,
+        totalTokens: 1000,
+      }),
+    )
+    expect(line?.textContent).not.toMatch(/of \d+ steps/)
   })
 
   it("never reports a zero for a step or a run nobody measured", async () => {
