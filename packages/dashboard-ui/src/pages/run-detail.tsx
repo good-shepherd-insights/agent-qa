@@ -544,6 +544,37 @@ export default function RunDetailPage() {
     () => projectAnalysisView(analysis, analysisChip, detail),
     [analysis, analysisChip, detail],
   )
+  /**
+   * THE HEADER'S ANALYSIS INDICATOR, OPENED (425-09 · D-11, PXH-RUN-03, UI-SPEC S4).
+   *
+   * THE DOOR MOVES SCROLL AND FOCUS AND NOTHING ELSE. It switches no tab, does not touch the
+   * playhead and does not change the selection — those are the page's own state, and a header
+   * control that rewrote them would be reaching past what it was asked for (the declined option in
+   * D-11). That also makes it idempotent for free: opening it twice lands the same reader in the
+   * same place, because there is no state for a second call to advance.
+   *
+   * THE FIRST MOUNTED BLOCK IS THE FIRST FAILED MEMBER. A passed member mounts no block at all, so
+   * tree order already answers "which member" without this page re-deriving the projection the
+   * tree is rendering from. Member groups own their open state locally and default open.
+   *
+   * ...AND WHEN A READER HAS COLLAPSED THEM ALL, THE TOGGLE IS THE TARGET. Scrolling to nothing
+   * and focusing nothing would lose the reader entirely; the first group's own disclosure button
+   * keeps focus inside the tree and leaves the verdict one keypress away.
+   *
+   * `preventScroll` on the focus call because the scroll above already placed the target — without
+   * it the browser scrolls a second time, to its own idea of where the element should sit.
+   */
+  const openVerdict = useCallback(() => {
+    const container: ParentNode = stepTreeScrollRef.current ?? document
+    const target =
+      container.querySelector<HTMLElement>('[data-verdict-block]')
+      ?? container.querySelector<HTMLElement>('button[aria-expanded]')
+    if (target === null) return
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+    target.scrollIntoView({ block: 'center', behavior })
+    target.focus({ preventScroll: true })
+  }, [])
+
   // CHROME KEYS ON THE RUN, NOT ON THE FILTER (D-16). A viewer who narrowed a five-member suite to
   // one member is still looking at a suite, and hiding the header and the picker would strand them
   // there with no way back.
@@ -1017,6 +1048,12 @@ export default function RunDetailPage() {
           onToggleShortcuts={() => setShortcutsOpen(prev => !prev)}
           onOpenArtifacts={openArtifactDrawer}
           onCurationClick={() => setActiveTab('knowledge')}
+          // THE DOOR EXISTS ONLY WHERE THERE IS SOMEWHERE TO GO (D-11). A passed run has no
+          // verdict to open, and neither has a failed run the op answered nothing about — which
+          // is also the excluded run's reading, since a chain that was never enqueued produced no
+          // verdicts. The header stays a focusable span in every one of those cases rather than
+          // growing a control that would do nothing.
+          onOpenVerdict={run.status === 'failed' && analysisView.size > 0 ? openVerdict : undefined}
           retrievalRung={bannerRung(knowledgeRead)}
           hasPostProcessing
           postProcessing={

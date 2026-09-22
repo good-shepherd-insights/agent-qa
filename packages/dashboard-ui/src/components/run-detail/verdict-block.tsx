@@ -227,11 +227,18 @@ export function VerdictBlock({
   markPending = false,
 }: VerdictBlockProps) {
   return (
+    // WHERE THE HEADER'S VERDICT DOOR LANDS (425-09 · D-11, UI-SPEC S4 / Color 2). `-1` is
+    // reachable programmatically and skipped by Tab, so a reader working through a failed run does
+    // not stop on every sentence on the way to the controls. The ring keys on `:focus` rather than
+    // `:focus-visible` because the door is activated by pointer as often as by keyboard, and a
+    // browser suppresses `:focus-visible` after a click — which would move a reader somewhere and
+    // then show them nothing about where they landed.
     <div
       data-verdict-block
       data-verdict-producer={view.producer}
       data-verdict-confidence={String(view.confidence)}
-      className="mx-2 mt-1 mb-1.5 rounded-[2px] border border-border/60 bg-muted/10 px-3 py-2 text-xs"
+      tabIndex={-1}
+      className="mx-2 mt-1 mb-1.5 rounded-[2px] border border-border/60 bg-muted/10 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring/50"
     >
       <span data-verdict-sentence className="select-text text-foreground/80">
         <MaskedText text={view.sentence} />
