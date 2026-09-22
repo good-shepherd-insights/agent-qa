@@ -16,7 +16,7 @@ import type { RunRow } from "@/lib/api"
 import { triggerRun } from "@/lib/api"
 import { tokenSummaryLine } from "@/lib/run-detail-view"
 import { statusBadgeLook } from "@/lib/status"
-import { formatDuration } from "@/lib/utils"
+import { cn, formatDuration } from "@/lib/utils"
 import type { RecordedRetrievalRung, RunTokenTotals } from "@vostride/agent-qa-schema"
 
 /**
@@ -32,10 +32,23 @@ import type { RecordedRetrievalRung, RunTokenTotals } from "@vostride/agent-qa-s
  * WHY THE SWITCH BECAME A LOOKUP. The attribute belongs on the badge ROOT, and seven `return`
  * arms meant seven places for it to drift out of. One render site is one place it can be wrong.
  * Nothing about what is painted changed.
+ *
+ * ENLARGED, NOT RE-PALETTED (2026-09-22, Phase 425 · D-02, PXH-RUN-01). Dominance comes from size
+ * and fill in an unchanged row order: the size classes go through `cn` so tailwind-merge drops the
+ * `Badge` base `text-xs px-2 py-0.5`, while `statusBadgeLook` keeps deciding the colour. A second
+ * palette would be two answers to one question about one run.
  */
 function StatusBadge({ status }: { status: string }) {
   const { label, ...look } = statusBadgeLook(status)
-  return <Badge data-verdict-badge={status} {...look}>{label}</Badge>
+  return (
+    <Badge
+      data-verdict-badge={status}
+      {...look}
+      className={cn(look.className, "text-sm font-medium px-2 py-1 rounded-sm")}
+    >
+      {label}
+    </Badge>
+  )
 }
 
 interface RunNavbarProps {

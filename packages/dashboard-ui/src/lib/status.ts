@@ -245,6 +245,13 @@ export function statusBadgeLook(status: string): StatusBadgeLook {
       return { label: 'Skipped', variant: 'secondary' }
     case 'cancelled':
       return { label: 'Cancelled', className: 'bg-muted text-muted-foreground border-border' }
+    // THE FIFTH VERDICT WORD (425-04 · D-02, PXH-RUN-01). `timeout` is in the run-status
+    // vocabulary (`runStatusValues`, schema functions/runs.ts), so without an arm here a timed-out
+    // run fell to the default and painted the raw lowercase word. This is an arm added to the ONE
+    // palette, not a second one (D-01): the variant is the danger tone `getRunStatusDescriptor`
+    // already assigns this status.
+    case 'timeout':
+      return { label: 'Timed out', variant: 'destructive' }
     default:
       return { label: status, variant: 'outline' }
   }
